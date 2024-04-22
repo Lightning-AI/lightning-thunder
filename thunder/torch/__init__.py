@@ -1525,6 +1525,37 @@ def where(pred: TensorLike, a: Number | TensorLike, b: Number | TensorLike, /) -
     return clang.where(pred, a, b)
 
 
+@torchsymbol(torch.nan_to_num, is_method=True)
+def nan_to_num(
+    a: TensorLike,
+    nan: None | Number = 0.0,
+    posinf: None | Number = None,
+    neginf: None | Number = None,
+    /,
+    out: None | TensorLike = None,
+):
+
+    utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
+
+    if dtypes.is_boolean_dtype(a.dtype) or dtypes.is_integer_dtype(a.dtype):
+        # NOTE PyTorch returns a.clone()
+        return a
+
+    if nan is None:
+        nan = 0.0
+
+    if posinf is None:
+        posinf = torch.finfo(to_torch_dtype(a.dtype)).max
+
+    if neginf is None:
+        neginf = torch.finfo(to_torch_dtype(a.dtype)).min
+
+    result = where(a != a, nan, a)
+    result = where(a == -float("inf"), neginf, result)
+    result = where(a == float("inf"), posinf, result)
+    return result
+
+
 #
 # Reduction operations
 #
