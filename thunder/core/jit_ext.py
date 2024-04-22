@@ -595,6 +595,8 @@ class GeneralJitCtx(MinimalCtx):
             co: CACHE_OPTIONS = get_cache_option()
             if co is CACHE_OPTIONS.CONSTANT_VALUES:
                 self.add_constraint((clang.check_tensor_shape_and_metadata, p_orig))
+            if co is CACHE_OPTIONS.SYMBOLIC_VALUES:
+                self.add_constraint((clang.check_tensor_shape_and_metadata, p_orig))
             elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
                 raise NotImplementedError(f"Unsupported cache option {co}")
             return p
@@ -614,8 +616,9 @@ class GeneralJitCtx(MinimalCtx):
                     self.add_constraint((clang.check_number_type_and_value, p, uvalue))
             elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
                 raise NotImplementedError(f"Unsupported cache option {co}")
-            if p is not uvalue:
-                value.register_proxy(p)
+            if co is CACHE_OPTIONS.SYMBOLIC_VALUES:
+                if p is not uvalue:
+                    value.register_proxy(p)
             return p
         elif isinstance(uvalue, dict):
             value.track_items()
