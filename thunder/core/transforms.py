@@ -6,7 +6,7 @@ from itertools import chain, compress
 from functools import lru_cache, partial, wraps
 import math
 from numbers import Number
-from typing import Any, Dict, Union, Optional, Tuple
+from typing import Any, Dict, Union, Optional
 from collections.abc import Callable
 from collections.abc import Hashable
 from collections.abc import Sequence
