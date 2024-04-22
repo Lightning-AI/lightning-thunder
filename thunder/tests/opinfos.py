@@ -2531,6 +2531,54 @@ where_opinfo = OpInfo(
 conditional_and_mask_ops.append(where_opinfo)
 
 
+def nan_to_num_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    cases = (
+        ((2, 1, 2), None, None, None),
+        ((4, 4), None, 1.0, None),
+        ((4, 4), None, None, 1.0),
+        ((5,), None, 1.0, 0.0),
+        ((8, 1, 6), 1, None, None),
+        ((8, 7, 5, 1), 1, 1.0, None),
+        ((8, 7, 5, 1), 1, None, 0.0),
+        ((8, 7, 5, 1), 1, 1.0, 0.0),
+    )
+
+    for a_shape, nan, posinf, neginf in cases:
+        yield SampleInput(make(a_shape, dtype=dtype, requires_grad=requires_grad), nan, posinf, neginf)
+
+
+def nan_to_num_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+    err_msg = "out is not None which is currently unsupported"
+    yield (
+        SampleInput(
+            make(
+                5,
+            ),
+            None,
+            None,
+            None,
+            make(
+                5,
+            ),
+        ),
+        NotImplementedError,
+        err_msg,
+    )
+
+
+nan_to_num_opinfo = OpInfo(
+    ltorch.nan_to_num,
+    supports_grad=True,
+    sample_input_generator=nan_to_num_sample_generator,
+    error_input_generator=nan_to_num_error_generator,
+    torch_reference=torch.nan_to_num,
+)
+conditional_and_mask_ops.append(nan_to_num_opinfo)
+
+
 def clamp_sample_generator(op, device, dtype, requires_grad, **kwargs):
     cases = (
         ((5,), (5,), (5,)),
