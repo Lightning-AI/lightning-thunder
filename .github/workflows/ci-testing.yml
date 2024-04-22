@@ -1,7 +1,7 @@
 name: CI testing
 
 # see: https://help.github.com/en/actions/reference/events-that-trigger-workflows
-on:  # Trigger the workflow on push or pull request, but only for the main branch
+on: # Trigger the workflow on push or pull request, but only for the main branch
   push:
     branches: [main]
   pull_request: {}
@@ -21,120 +21,118 @@ env:
   TORCH_URL_STABLE: "https://download.pytorch.org/whl/cpu"
 
 jobs:
-
   pytester:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: ["ubuntu-22.04", "macOS-12", "windows-2022"]
-        python-version: ['3.10']
-        requires: ['latest', 'nightly'] # , 'oldest'
+        python-version: ["3.10"]
+        requires: ["latest", "nightly"] # , 'oldest'
         include:
-          - { os: "ubuntu-22.04", python-version: '3.11', requires: 'latest' }
+          - { os: "ubuntu-22.04", python-version: "3.11", requires: "latest" }
 
     # Timeout: https://stackoverflow.com/a/59076067/4521646
     timeout-minutes: 35
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
 
-    - name: Setup Ubuntu
-      if: runner.os == 'ubuntu'
-      run: |
-        sudo apt-get install -y graphviz
+      - name: Setup Ubuntu
+        if: runner.os == 'ubuntu'
+        run: |
+          sudo apt-get install -y graphviz
 
-    - name: Set min. dependencies
-      if: matrix.requires == 'oldest'
-      run: |
-        for fpath in ('requirements/base.txt', 'requirements/test.txt'):
-            req = open(fpath).read().replace('>=', '==')
-            open(fpath, 'w').write(req)
-      shell: python
+      - name: Set min. dependencies
+        if: matrix.requires == 'oldest'
+        run: |
+          for fpath in ('requirements/base.txt', 'requirements/test.txt'):
+              req = open(fpath).read().replace('>=', '==')
+              open(fpath, 'w').write(req)
+        shell: python
 
-    - name: Get pip cache dir
-      id: pip-cache
-      run: echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
+      - name: Get pip cache dir
+        id: pip-cache
+        run: echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
 
-    - name: Cache pip
-      uses: actions/cache@v4
-      with:
-        path: ${{ steps.pip-cache.outputs.dir }}
-        key: ${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.requires }}-pip-${{ hashFiles('requirements/*.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.requires }}-pip-
-    - name: switch Torch source
-      run: |
-        if [[ "${{ matrix.requires }}" == "nightly" ]]; then
-          echo "TORCH_URL=$TORCH_URL_NIGHTLY" >> $GITHUB_ENV
-          echo "PIP_EXTRA_FLAG=--pre" >> $GITHUB_ENV
-        else
-          echo "TORCH_URL=$TORCH_URL_STABLE" >> $GITHUB_ENV
-        fi
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pip-cache.outputs.dir }}
+          key: ${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.requires }}-pip-${{ hashFiles('requirements/*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.requires }}-pip-
+      - name: switch Torch source
+        run: |
+          if [[ "${{ matrix.requires }}" == "nightly" ]]; then
+            echo "TORCH_URL=$TORCH_URL_NIGHTLY" >> $GITHUB_ENV
+            echo "PIP_EXTRA_FLAG=--pre" >> $GITHUB_ENV
+          else
+            echo "TORCH_URL=$TORCH_URL_STABLE" >> $GITHUB_ENV
+          fi
 
-    - name: Install package & dependencies
-      run: |
-        pip --version
-        pip install -e . -U \
-          -r requirements/test.txt \
-          --find-links=${TORCH_URL} ${PIP_EXTRA_FLAG}
-        pip list
-      shell: bash
+      - name: Install package & dependencies
+        run: |
+          pip --version
+          pip install -e . -U \
+            -r requirements/test.txt \
+            --find-links=${TORCH_URL} ${PIP_EXTRA_FLAG}
+          pip list
+        shell: bash
 
-    - name: Testing Local
-      if: matrix.python-version == '3.10'
-      run: |
-        coverage run --source thunder -m \
-          pytest thunder/tests/ \
-            --ignore=thunder/tests/distributed \
-            -v --datefmt="%Y%m%d-%H:%M:%S.%f" \
-            --random-order-seed=$GITHUB_RUN_ID \
-            -n 2 --durations=250
+      - name: Testing Local
+        if: matrix.python-version == '3.10'
+        run: |
+          coverage run --source thunder -m \
+            pytest thunder/tests/ \
+              --ignore=thunder/tests/distributed \
+              -v --datefmt="%Y%m%d-%H:%M:%S.%f" \
+              --random-order-seed=$GITHUB_RUN_ID \
+              -n 2 --durations=250
 
-    - name: Testing Distributed
-      # run all found tests in given past as standalone
-      if: matrix.python-version == '3.10' && runner.os == 'Linux'
-      run: bash scripts/run_standalone_tests.sh "thunder/tests/distributed"
+      - name: Testing Distributed
+        # run all found tests in given past as standalone
+        if: matrix.python-version == '3.10' && runner.os == 'Linux'
+        run: bash scripts/run_standalone_tests.sh "thunder/tests/distributed"
 
-    - name: Testing just a few
-      if: matrix.python-version == '3.11'
-      #continue-on-error: true
-      run: |
-        python -m pytest \
-          thunder/tests/test_interpreter.py \
-          -v --durations=50 --cov=thunder
-        python -m pytest thunder/tests/test_jit_general.py -v --durations=50 --cov=thunder
+      - name: Testing just a few
+        if: matrix.python-version == '3.11'
+        #continue-on-error: true
+        run: |
+          python -m pytest \
+            thunder/tests/test_interpreter.py \
+            -v --durations=50 --cov=thunder
+          python -m pytest thunder/tests/test_jit_general.py -v --durations=50 --cov=thunder
 
-    - name: Statistics
-      run: |
-        coverage report
-        coverage xml
+      - name: Statistics
+        run: |
+          coverage report
+          coverage xml
 
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4
-      with:
-        token: ${{ secrets.CODECOV_TOKEN }}
-        file: ./coverage.xml
-        flags: unittests
-        env_vars: OS,PYTHON
-        name: codecov-umbrella
-        fail_ci_if_error: false
-
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          file: ./coverage.xml
+          flags: unittests
+          env_vars: OS,PYTHON
+          name: codecov-umbrella
+          fail_ci_if_error: false
 
   testing-guardian:
     runs-on: ubuntu-latest
     needs: pytester
     if: always()
     steps:
-    - run: echo "${{ needs.pytester.result }}"
-    - name: failing...
-      if: needs.pytester.result == 'failure'
-      run: exit 1
-    - name: cancelled or skipped...
-      if: contains(fromJSON('["cancelled", "skipped"]'), needs.pytester.result)
-      timeout-minutes: 1
-      run: sleep 90
+      - run: echo "${{ needs.pytester.result }}"
+      - name: failing...
+        if: needs.pytester.result == 'failure'
+        run: exit 1
+      - name: cancelled or skipped...
+        if: contains(fromJSON('["cancelled", "skipped"]'), needs.pytester.result)
+        timeout-minutes: 1
+        run: sleep 90

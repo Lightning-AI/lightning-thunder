@@ -76,6 +76,7 @@ import thunder.executors.torchex
 import thunder.executors.nvfuserex
 
 pythonex = extend.get_executor("python")
+assert pythonex is not None
 
 
 _PACKAGE_ROOT = os.path.dirname(__file__)
@@ -147,6 +148,9 @@ from thunder.clang import *
 #
 
 # TODO Add more of these functions
+resolve_executors = extend.resolve_executors
+add_executor_lists = extend.add_executor_lists
+get_executor = extend.get_executor
 get_all_executors = extend.get_all_executors
 get_default_executors = extend.get_default_executors
 get_always_executors = extend.get_always_executors
@@ -174,8 +178,16 @@ set_execution_callback_file = _set_execution_file
 
 
 # Translates the Python function to a thunder program using the thunder interpreter
-def _general_frontend(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> TraceResults:
-    return thunder_general_jit(fn, args, kwargs, sharp_edges=sharp_edges)
+def _general_frontend(
+    fn: Callable,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    /,
+    *,
+    record_history: bool,
+    sharp_edges: SHARP_EDGES_OPTIONS,
+) -> TraceResults:
+    return thunder_general_jit(fn, args, kwargs, sharp_edges=sharp_edges, record_history=record_history)
 
 
 class ThunderModule(pytorch.nn.Module):
@@ -274,6 +286,19 @@ def _get_cache_info():
     return _cache_info_ctx.get()
 
 
+def add_executor_lists(
+    exc_list: None | Sequence[Executor | str], other_exc_list: None | Sequence[Executor | str]
+) -> Sequence[Executor]:
+    new_exc_list = []
+    exc_list = resolve_executors(exc_list)
+    other_exc_list = resolve_executors(other_exc_list)
+    for exc in itertools.chain(exc_list, other_exc_list):
+        if not exc in new_exc_list:
+            new_exc_list.append(exc)
+
+    return new_exc_list
+
+
 @run_once
 def _recursive_jit_call_warning() -> None:
     warnings.warn(
@@ -304,12 +329,13 @@ def jit(
     /,
     *,
     langctx: None | str | Any | LanguageContext = None,
-    executors: None | Sequence[Executor] = None,
+    executors: None | Sequence[Executor | str] = None,
     sharp_edges: None | SHARP_EDGES_OPTIONS | str = None,
     interpretation: None | INTERPRETATION_OPTIONS | str = None,
     cache: None | CACHE_OPTIONS | str = None,
     disable_torch_autograd: bool = False,  # TODO Revisit this UX for RC1
     additional_transforms: list | None = None,
+    record_history: bool = False,
     **compile_options,  # TODO RC1 Make this explicit -- dict of options
 ) -> Callable:
     """Just-in-time compile a callable (function or model).
@@ -318,8 +344,8 @@ def jit(
         fn: A :class:`~torch.nn.Module` or a function to compile.
     Keyword Args:
         langctx: the language context, which language / library to emulate. default: "torch" for PyTorch compatibility.
-        executors: list of executors to use. Defaults to the executors returned by `thunder.get_default_executors()` and always amened by `thunder.get_always_executors()`.
-                   You can get a list of all available executors with `thunder.get_all_executors()`.
+        executors: list of executors to use. Defaults to the executors returned by :func:`thunder.get_default_executors` and always amended by :func:`thunder.get_always_executors`.
+                   You can get a list of all available executors with :func:`thunder.get_all_executors`. You can also pass the name of an executor that's been registered, and it will be resolved with :func:`thunder.extend.get_executor`.
         sharp_edges: sharp edge detection action. What to do when thunder detects a construct that is likely to lead to errors. Can be ``"allow"``, ``"warn"``, ``"error"``. Defaults to ``"allow"``.
         cache: caching mode. default: ``"constant values"```
 
@@ -347,15 +373,20 @@ def jit(
     if additional_transforms is None:
         additional_transforms = []
 
+    # Resolve names of executors
+    executors = resolve_executors(executors)
+
     # TODO: verify that tutorials don't have false positives and enable warning by default
     # # Make sharp_edges == warn default if not supplied and if in the general jit
     # if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON and sharp_edges is None:
     #     sharp_edges = SHARP_EDGES_OPTIONS.WARN
 
     executor_lookasides = {}
-    for ex in executors or []:
+    for ex in executors:
         # TODO: sharp edge if lookasides are shadowed?
         executor_lookasides.update(ex._lookasides)
+
+    assert type(record_history) is bool
 
     # TODO RC1 Refine the compile data option to remove unused options
     cd = CompileData(
@@ -504,7 +535,9 @@ def jit(
             with langctxs.langctx(cd.langctx):
                 prologue_trc: TraceCtx
                 computation_trc: TraceCtx
-                jit_results: TraceResults = interpreter(fn, args, kwargs, sharp_edges=cd.sharp_edges)
+                jit_results: TraceResults = interpreter(
+                    fn, args, kwargs, record_history=record_history, sharp_edges=cd.sharp_edges
+                )
                 prologue_trc = jit_results.prologue_trace
                 computation_trc = jit_results.computation_trace
                 epilogue_trc = jit_results.epilogue_trace
@@ -563,10 +596,6 @@ def jit(
                 requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in inps)
 
                 if requires_grad:
-                    # thunder_backward may recursively call compile and wraps the result in a
-                    # torch.autograd.Function to support embedding of Thunder-compiled
-                    # functions in torch's Autograd
-
                     # Currently split_forward_backward also includes
                     # transform_for_execution and various sorting of symbols,
                     # applying transform_for_execution after this would be
