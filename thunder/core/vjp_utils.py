@@ -54,7 +54,7 @@ def make_aug_forward_and_backward(bsym: BoundSymbol) -> tuple[Callable, Callable
         joint_forward_backward is not None,
         lambda: f"Cannot generate forward and backward functions for {bsym.sym.name}",
     )
-    key = (bsym.sym, subkey := _make_cache_key(bsym.args, bsym.kwargs), executor)
+    key = (bsym.sym, executor, subkey := _make_cache_key(bsym.args, bsym.kwargs))
     cached_result = _cache.get(key, None) if subkey is not None else None
     if cached_result is not None and not getattr(joint_forward_backward, "_disable_caching", False):
         return cached_result
