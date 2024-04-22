@@ -190,9 +190,8 @@ torch_compile_executor = TorchCompileExecutor()
 register_executor(torch_compile_executor)
 
 
-def register_supported(id: Hashable):
-    checker = lambda *args, **kwargs: True
-    torch_compile_executor.register_supported(id, checker)
+def register_supported(_id: Hashable):
+    torch_compile_executor.register_supported(_id, checker=None)
 
 
 # This is an initial list to support rotary positional embeddings

@@ -1151,7 +1151,11 @@ def _var_mean_prim_grad(a: TensorProxy, /, dims: Sequence[int], *, correction: N
     # Computes var bwd
     normalization_scalar = n_elem_reduced - correction
     restored_gv = restore_reduced_dims(gv, dims, a.shape)
-    restored_mean = restore_reduced_dims(m, dims, a.shape)
+    # Inserting a conversion to the same dtype to disable nvFuser executors's
+    # bookend optimization (nv_enable_bookend), which can cause the backward
+    # pass to generate two kernels
+    mean_mdtype = prims.convert_element_type(m, m.dtype)
+    restored_mean = restore_reduced_dims(mean_mdtype, dims, a.shape)
     var_grad = (2 * restored_gv * (a - restored_mean)) / normalization_scalar
 
     put_grad(a, mean_grad + var_grad)
@@ -3083,43 +3087,6 @@ def embedding_backward(a, num_weights, padding_idx, scale_grad_by_freq, sparse, 
     padding_idx = -1 if padding_idx is None else padding_idx
     gweight = embedding_backward(g, a, num_weights, padding_idx, scale_grad_by_freq, sparse)
     return gweight
-
-
-@register_augmented_forward(prims.PrimIDs.BATCH_NORM)
-def batch_norm_aug_fwd(
-    a: TensorProxy,
-    weight: None | TensorProxy,
-    bias: None | TensorProxy,
-    running_mean: None | TensorProxy,
-    running_var: None | TensorProxy,
-    training: bool,
-    momentum: Number,
-    eps: Number,
-) -> VJPDual:
-    primal = prims.batch_norm(
-        a,
-        weight,
-        bias,
-        running_mean,
-        running_var,
-        training,
-        momentum,
-        eps,
-    )
-    output_mask = [x is not None for x in (a, weight, bias)]
-    output, save_mean, save_invstd = primal
-    residuals = (a, weight, running_mean, running_var, save_mean, save_invstd, training, eps, output_mask)
-    return VJPDual(primal, residuals)
-
-
-@register_backward(prims.PrimIDs.BATCH_NORM)
-def batch_norm_backward(a, weight, running_mean, running_var, save_mean, save_invstd, train, eps, output_mask, *grads):
-    from thunder.torch import batch_norm_backward
-
-    result = batch_norm_backward(
-        grads[0], a, weight, running_mean, running_var, save_mean, save_invstd, train, eps, output_mask
-    )
-    return *result, None, None
 
 
 @register_augmented_forward("torch.cumsum")

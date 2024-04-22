@@ -89,6 +89,10 @@ class TraceCtx:
 
         self._any_future_tensors = False
 
+        # This is a detail for enabling transformer_engine's autocast manager.
+        # We only want the forward function to be called with ctx manager.
+        self._include_te_fp8_autocast = False
+
     @property
     def prologue(self):
         return self._prologue
@@ -369,6 +373,15 @@ class TraceCtx:
             # Disable autocast since we already generated the trace with it in consideration (for when calling torch
             # operations)
             program.append("@no_autocast")
+
+            # NOTE: For TransformerEngine executor, we want to wrap the generated
+            # forward function in fp8_autocast ctx manager.
+            # In future, if other executor has similar requirements, we should
+            # add a new extension point for executors
+            from thunder.executors.transformer_engineex import _is_te_linear_enabled, _get_te_wrapper_string
+
+            if self._include_te_fp8_autocast and _is_te_linear_enabled(import_ctx, object_ctx):
+                program.append(_get_te_wrapper_string())
 
             # Prints the signature
             program.append(signature_str)
