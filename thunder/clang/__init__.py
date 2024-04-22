@@ -1213,7 +1213,7 @@ def matrix_transpose(a: TensorProxy) -> TensorProxy:
 # TODO: add scalar support
 # TODO: review hasattr pattern
 @clangop()
-def maybe_broadcast(*args, preserve_cpu_scalar_tensors=False):
+def maybe_broadcast(*args, preserve_cpu_scalar_tensors: bool = False):
     # torch sets preserve_cpu_scalar_tensors=True as default
     # but this throws error in several areas so I have set this to False
     # once this implementation has been confirmed, I can set this back to True and
