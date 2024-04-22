@@ -1033,10 +1033,10 @@ def _infer_tensor_properties(
 
     # Extracts actual values for shape
     # TODO RC1 Enable this
-    if using_symbolic_values():
-        raise NotImplementedError(
-            f"Trying to construct a tensor proxy while using symbolic values, but this is not yet supported"
-        )
+    #if using_symbolic_values():
+    #    raise NotImplementedError(
+    #        f"Trying to construct a tensor proxy while using symbolic values, but this is not yet supported"
+    #    )
 
     _shape = tuple(pyval(x) for x in _shape)
 
