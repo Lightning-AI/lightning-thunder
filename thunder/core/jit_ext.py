@@ -614,6 +614,8 @@ class GeneralJitCtx(MinimalCtx):
                     self.add_constraint((clang.check_number_type_and_value, p, uvalue))
             elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
                 raise NotImplementedError(f"Unsupported cache option {co}")
+            if p is not uvalue:
+                value.register_proxy(p)
             return p
         elif isinstance(uvalue, dict):
             value.track_items()
@@ -1403,7 +1405,7 @@ def thunder_general_jit(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDG
         )
 
     co: CACHE_OPTIONS = get_cache_option()
-    if co not in {CACHE_OPTIONS.CONSTANT_VALUES, CACHE_OPTIONS.NO_CACHING}:
+    if co not in {CACHE_OPTIONS.CONSTANT_VALUES, CACHE_OPTIONS.NO_CACHING, CACHE_OPTIONS.SYMBOLIC_VALUES}:
         raise NotImplementedError(f"Only constant constraints is supported")
 
     prologue_trace: TraceCtx = TraceCtx(fn)
@@ -1434,6 +1436,7 @@ def thunder_general_jit(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDG
         uncacheable_classes=(torch.Tensor, int, float, str, NoneType),
     )
 
+    # NOTE(jiej): numbers are baked in as constant here vvv
     with general_jit_ctx(ctx):
         with tracectx(computation_trace):
             result = jfn(*args, **kwargs)
