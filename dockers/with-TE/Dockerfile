@@ -31,6 +31,7 @@ RUN \
     cd TransformerEngine && \
     git submodule update --init --recursive && \
     find / -type d -name "include" -path "*/cudnn-*/include" && \
+    MAKEFLAGS="-j$(( $(nproc) / 4 ))" \
     pip install . && \
     cd .. && \
     rm -rf TransformerEngine
