@@ -1601,9 +1601,13 @@ def nan_to_num(
 
     utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
 
-    if dtypes.is_boolean_dtype(a.dtype) or dtypes.is_integer_dtype(a.dtype):
+    if dtypes.is_boolean_dtype(a.dtype):
         # NOTE PyTorch returns a.clone()
-        return a
+        return a - 0
+        
+    if dtypes.is_integer_dtype(a.dtype):
+        # NOTE PyTorch returns a.clone()
+        return a | a
 
     a_dtype_max = torch.finfo(to_torch_dtype(a.dtype)).max
     a_dtype_min = torch.finfo(to_torch_dtype(a.dtype)).min
