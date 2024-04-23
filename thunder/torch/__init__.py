@@ -1614,7 +1614,7 @@ def nan_to_num(
         nan = float("inf")
     elif nan < a_dtype_min:
         nan = -float("inf")
-    
+
     if posinf is None:
         posinf = torch.finfo(to_torch_dtype(a.dtype)).max
     elif posinf > a_dtype_max:
