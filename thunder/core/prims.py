@@ -3016,7 +3016,7 @@ def gather_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
                 index.shape[idx] <= a.shape[idx],
                 lambda: f"Expected 'index' size on all dimensions to be <= 'a', except `dim`. Found dim {idx}, where 'index' has {index.shape[idx]} and 'a' has {a.shape[idx]}",
             )
-    return TensorProxy(like=a)
+    return TensorProxy(like=a, shape=index.shape)
 
 
 gather = make_prim(PrimIDs.GATHER, "gather", meta=gather_meta)

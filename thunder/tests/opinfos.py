@@ -4375,6 +4375,7 @@ def gather_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
 gather_opinfo = OpInfo(
     ltorch.gather,
+    supports_grad=True,
     sample_input_generator=gather_sample_generator,
     torch_reference=torch.gather,
     test_directives=(
