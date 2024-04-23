@@ -234,6 +234,7 @@ class PrimIDs(Enum):
     ARGMIN = auto()
     TOPK = auto()
     # Scatter and gather prims (Experimental!)
+    GATHER = auto()
     INDEX_ADD = auto()
     INDEX_PUT = auto()
     SCATTER_ADD = auto()
@@ -2996,6 +2997,29 @@ def take_along_axis_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> Ten
 
 
 take_along_axis = make_prim(PrimIDs.TAKE_ALONG_AXIS, "take_along_axis", meta=take_along_axis_meta)
+
+
+def gather_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
+    utils.check_type(a, TensorProxy)
+    utils.check_type(index, TensorProxy)
+    utils.check_type(dim, int)
+    utils.check_same_device(a, index)
+    utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={index.dtype} was not an integer dtype")
+    utils.check(
+        index.ndim == a.ndim, lambda: f"Expected index (rank={index.ndim}) to have the same rank as a (rank={a.ndim})"
+    )
+    utils.validate_idx(a.ndim, dim)
+
+    for idx, l in enumerate(index.shape):
+        if idx != dim:
+            utils.check(
+                index.shape[idx] <= a.shape[idx],
+                lambda: f"Expected 'index' size on all dimensions to be <= 'a', except `dim`. Found dim {idx}, where 'index' has {index.shape[idx]} and 'a' has {a.shape[idx]}",
+            )
+    return TensorProxy(like=a)
+
+
+gather = make_prim(PrimIDs.GATHER, "gather", meta=gather_meta)
 
 
 def scatter_add_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:

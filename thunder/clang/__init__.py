@@ -1048,6 +1048,12 @@ def take_along_axis(a: TensorProxy, /, indices: TensorProxy, dim: int) -> Tensor
 
 
 @clangop()
+def gather(a: TensorProxy, /, indices: TensorProxy, dim: int) -> TensorProxy:
+    dim = utils.canonicalize_dim(a.ndim, dim)
+    return prims.gather(a, indices, dim)
+
+
+@clangop()
 def scatter_add(a: TensorProxy, /, indices: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     dim = utils.canonicalize_dim(a.ndim, dim)
     return prims.scatter_add(a, indices, value, dim)
