@@ -5,7 +5,7 @@ import torch
 
 import thunder
 import thunder.torch as ltorch
-from thunder.core import devices, dtypes
+from thunder.core import dtypes
 from thunder.tests.framework import instantiate, TorchExecutor
 import thunder.tests.bf16
 

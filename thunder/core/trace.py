@@ -310,7 +310,7 @@ class TraceCtx:
     # TODO issue "Add type annotations to Python function produced by traces"
     #   Consider extending the signature with type information, in particular the
     #   the type information of the return value might be interesting
-    def python(self, *, print_depth: int = 1) -> str:
+    def python(self, *, print_depth: int = 1, include_decorators: bool = True) -> str:
         token = set_tracectx(self)
 
         try:
@@ -362,26 +362,28 @@ class TraceCtx:
                         import_str = f"import {module.__name__} as {name}"
                 program.append(import_str)
 
-            program.append("from thunder.executors.torchex import no_autocast")
+            if include_decorators:
+                program.append("from thunder.executors.torchex import no_autocast")
 
             # Separates imports from the function for readability
             if len(import_ctx) > 0:
                 program.append("")
 
-            # Disable gradients since Thunder takes care of this (for when calling torch operations)
-            program.append("@torch.no_grad()")
-            # Disable autocast since we already generated the trace with it in consideration (for when calling torch
-            # operations)
-            program.append("@no_autocast")
+            if include_decorators:
+                # Disable gradients since Thunder takes care of this (for when calling torch operations)
+                program.append("@torch.no_grad()")
+                # Disable autocast since we already generated the trace with it in consideration (for when calling torch
+                # operations)
+                program.append("@no_autocast")
 
-            # NOTE: For TransformerEngine executor, we want to wrap the generated
-            # forward function in fp8_autocast ctx manager.
-            # In future, if other executor has similar requirements, we should
-            # add a new extension point for executors
-            from thunder.executors.transformer_engineex import _is_te_linear_enabled, _get_te_wrapper_string
+                # NOTE: For TransformerEngine executor, we want to wrap the generated
+                # forward function in fp8_autocast ctx manager.
+                # In the future, if other executor has similar requirements, we should
+                # add a new extension point for executors
+                from thunder.executors.transformer_engineex import _is_te_linear_enabled, _get_te_wrapper_string
 
-            if self._include_te_fp8_autocast and _is_te_linear_enabled(import_ctx, object_ctx):
-                program.append(_get_te_wrapper_string())
+                if self._include_te_fp8_autocast and _is_te_linear_enabled(import_ctx, object_ctx):
+                    program.append(_get_te_wrapper_string())
 
             # Prints the signature
             program.append(signature_str)

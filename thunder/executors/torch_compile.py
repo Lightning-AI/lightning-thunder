@@ -50,6 +50,7 @@ def make_compiled(
 ) -> Callable:
     from thunder import trace
     from thunder.core.transforms import eval_trace
+    from thunder.executors.torchex import no_autocast
 
     # Here we construct a trace that will be used to compile the function
     region_trace = TraceCtx(None)
@@ -79,14 +80,16 @@ def make_compiled(
     # TODO: issue "Try using _transform_for_operator_executor_execution for
     # torch.compile executor"
     torch_trace = trace(inline_trace=False)(torch_interpreted_func, *sorted_unique_inputs)
-    compiled_func = torch.compile(torch_trace.python_callable(), fullgraph=True)
-
-    # The default is 8. For each of `@torch.no_grad(), and `torch.autocast(device_type="cpu"|"cuda")` torch.compile
+    trace_callable = torch_trace.python_callable(include_decorators=False)
+    compiled_func = torch.compile(trace_callable, fullgraph=True)
+    # For each of `@torch.no_grad(), and `torch.autocast(device_type="cpu"|"cuda")` torch.compile
     # create caches with a guard for the wrapped function. Since the torch.compile caches are per code object, not
     # frame, all the dynamic copies of these context managers share the same code cache.
-    # Since Thunder generates many traces, all of them annotated with these context managers, we need to increase
-    # the limit here. Alternatively we could pull out the context managers outside of the `torch.compile` region
-    @torch._dynamo.config.patch("cache_size_limit", 64)
+    # Since Thunder generates many traces, all of them annotated with these context managers, we must put these context
+    # managers outside the `torch.compile` region
+    compiled_func = no_autocast(compiled_func)
+    compiled_func = torch.no_grad()(compiled_func)
+
     def compiled_func_wrapper(*args):
         if _TORCH_GREATER_EQUAL_2_3:
             return compiled_func(*args)
