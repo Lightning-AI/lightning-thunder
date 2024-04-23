@@ -36,7 +36,7 @@ op_skip = {
     "embedding",
     "index_put",
     "batch_norm",
-    "mse_loss"
+    "mse_loss",
 }
 
 if not torch.cuda.is_available():
