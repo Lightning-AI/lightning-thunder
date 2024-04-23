@@ -7247,7 +7247,7 @@ def mse_loss_sample_generator(op, device, dtype, requires_grad, **kwards):
         ((7, 18), (7, 18)),
         ((3, 4, 2, 3), (3, 4, 2, 3)),
         ((3,), (3, 1, 1)),
-        ((3, 1, 2), (2, 2))
+        ((3, 1, 2), (2, 2)),
     )
 
     reduction_options = ("none", "mean", "sum")
