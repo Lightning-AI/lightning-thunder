@@ -1604,7 +1604,7 @@ def nan_to_num(
     if dtypes.is_boolean_dtype(a.dtype):
         # NOTE PyTorch returns a.clone()
         return a - 0
-        
+
     if dtypes.is_integer_dtype(a.dtype):
         # NOTE PyTorch returns a.clone()
         return a | a
