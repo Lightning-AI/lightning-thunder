@@ -2537,10 +2537,25 @@ def nan_to_num_sample_generator(op, device, dtype, requires_grad, **kwargs):
     a = make((4, 4), dtype=dtype, requires_grad=requires_grad)
     double_max = torch.finfo(torch.float64).max
     double_min = torch.finfo(torch.float64).max
-    if dtype == torch.FloatType:
-        a = torch.tensor((0, float("nan"), float("inf"), -float("inf")))
-    elif dtype == torch.ComplexType:
-        a = torch.tensor((complex(0, 0), complex(float("nan"), float("nan")), complex(float("inf"), -float("inf"))))
+    nan = float("nan")
+    inf = float("inf")
+    if dtype.is_floating_point:
+        a = torch.tensor((0, nan, inf, -inf))
+    elif dtype.is_complex:
+        a = torch.tensor(
+            (
+                complex(0, 0),
+                complex(nan, nan),
+                complex(inf, -inf),
+                complex(nan, 0),
+                complex(nan, inf),
+                complex(inf, 0),
+                complex(0, inf),
+                complex(-inf, 0),
+                complex(nan, 5),
+                complex(inf, 3),
+            )
+        )
     # input tensor, nan, posinf, neginf
     cases = (
         (a, None, None, None),

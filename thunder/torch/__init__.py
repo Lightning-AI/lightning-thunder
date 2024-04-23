@@ -1597,7 +1597,29 @@ def nan_to_num(
     neginf: None | Number = None,
     /,
     out: None | TensorLike = None,
-):
+) -> TensorLike:
+    """Replaces NaN, positive infinity, and negative infinity values in input tensor with values specified by nan, posinf, and neginf.
+        When nan, posinf, and neginf values are greater than the a.dtype's max value, it is replaced with float("inf").
+        If they are smaller than the a.dtype's min value, it is replaced with -float("inf").
+        Otherwise, they are replaced with the exact values specified by nan, posinf, and neginf.
+
+    Args:
+        a (Tensor): input tensor
+        nan (Number): value to replace NaNs with. Default is zero
+        posinf (Number): value to replace positive infinity. If None, positive infinity values are replaced with the greatest finite value represented by a's type
+        neginf (Number): value to replace negative infinity. If None, negative infinity values are replaced with the lowest finite value represented by a's type
+        out (Tensor): output tensor which is not supported yet
+
+    Returns:
+        result (Tensor): tensor with replaced values
+
+    Examples:
+        >>> a = torch.tensor((float("nan"), float("inf"), -float("inf"))) # a.dtype is torch.float32
+        >>> nan = torch.finfo(torch.float64).max
+        >>> result = torch.nan_to_num(a, nan=nan, posinf=1, neginf=0)
+        >>> result
+        tensor([inf, 1., 0.])
+    """
 
     utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
 
@@ -1611,31 +1633,32 @@ def nan_to_num(
 
     a_dtype_max = torch.finfo(to_torch_dtype(a.dtype)).max
     a_dtype_min = torch.finfo(to_torch_dtype(a.dtype)).min
+    inf = float("inf")
 
     if nan is None:
         nan = 0.0
     elif nan > a_dtype_max:
-        nan = float("inf")
+        nan = inf
     elif nan < a_dtype_min:
-        nan = -float("inf")
+        nan = -inf
 
     if posinf is None:
-        posinf = torch.finfo(to_torch_dtype(a.dtype)).max
+        posinf = a_dtype_max
     elif posinf > a_dtype_max:
-        posinf = float("inf")
+        posinf = inf
     elif posinf < a_dtype_min:
-        posinf = -float("inf")
+        posinf = -inf
 
     if neginf is None:
-        neginf = torch.finfo(to_torch_dtype(a.dtype)).min
+        neginf = a_dtype_min
     elif neginf > a_dtype_max:
-        neginf = float("inf")
+        neginf = inf
     elif neginf < a_dtype_min:
-        neginf = -float("inf")
+        neginf = -inf
 
-    result = where(a != a, float("inf"), a)
-    result = where(a == -float("inf"), neginf, result)
-    result = where(a == float("inf"), posinf, result)
+    result = where(a != a, nan, a)
+    result = where(a == -inf, neginf, result)
+    result = where(a == inf, posinf, result)
     return result
 
 
