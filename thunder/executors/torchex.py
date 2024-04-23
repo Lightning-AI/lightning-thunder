@@ -1105,6 +1105,7 @@ _register_implementation(ltorch.topk, topk, checker=_always_executable, executio
 # Scatter and gather operations
 #
 
+gather = _register_torch_operation("gather")
 index_add = _register_torch_operation("index_add")
 index_put = _register_torch_operation("index_put")
 scatter_add = _register_torch_operation("scatter_add")
@@ -1121,6 +1122,16 @@ def _index_put_prim_transform(
     a: TensorLike, /, indices: Sequence[TensorLike], values: TensorLike, accumulate: bool = False
 ) -> TensorLike:
     return index_put(a, indices, values, accumulate)
+
+
+@langctx(Languages.TORCH)
+def _gather_prim_transform(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
+    return gather(a, dim, index)
+
+
+@langctx(Languages.TORCH)
+def _gather_transform(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
+    return gather(a, dim, index)
 
 
 # NOTE torch.compile has a compilation issue with scatter add in bfloat16,
@@ -1158,6 +1169,7 @@ def _take_along_axis_prim_transform(a: TensorProxy, /, index: TensorProxy, dim: 
     return take_along_dim(a, index, dim)
 
 
+_register_implementation(prims.gather, checker=_always_executable, execution_transform=_gather_prim_transform)
 _register_implementation(prims.index_add, checker=_always_executable, execution_transform=_index_add_prim_transform)
 _register_implementation(prims.index_put, checker=_always_executable, execution_transform=_index_put_prim_transform)
 _register_implementation(prims.scatter_add, checker=_always_executable, execution_transform=_scatter_add_prim_transform)
@@ -1166,6 +1178,7 @@ _register_implementation(
     prims.take_along_axis, checker=_always_executable, execution_transform=_take_along_axis_prim_transform
 )
 
+_register_implementation(ltorch.gather, checker=_always_executable, execution_transform=_gather_transform)
 _register_implementation(ltorch.index_add, index_add, checker=_always_executable)
 _register_implementation(ltorch.index_put, index_put, checker=_always_executable)
 _register_implementation(ltorch.index_select, index_select, checker=_always_executable)
