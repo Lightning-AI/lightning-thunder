@@ -629,7 +629,7 @@ def test_nanogpt():
 )
 @pytest.mark.parametrize(
     "device",
-    ("cpu", "cuda"),
+    ("cpu", "cuda", "meta"),
 )
 def test_litgpt_variants(name, device):
     if device == "cuda" and not torch.cuda.is_available():
