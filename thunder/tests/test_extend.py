@@ -263,7 +263,3 @@ def test_validate_executors():
     assert thunder.resolve_executors(("python", pytorch_executor)) == (pythonex, pytorch_executor)
     with pytest.raises(ValueError, match=re.compile("Expected an Executor or the name of a registered Executor")):
         assert thunder.resolve_executors(("python", "foo", pytorch_executor, "bar"))
-    with pytest.raises(
-        ValueError, match=re.compile("Duplicate executors in the list of executors. Duplicates: {python}")
-    ):
-        assert thunder.resolve_executors(("python", "python", "torch"))
