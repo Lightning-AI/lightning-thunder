@@ -419,7 +419,10 @@ def add_transform(cfn: Callable, transform: Callable) -> Callable:
             **cd.compile_options,
         )
 
-    cs = CompileStats()
+    cs = getattr(cfn, "_lc_cs", None)
+    if cs is None:
+        cs = CompileStats()
+
     transforms = cfn._lc_transforms + [transform]
     potransforms = cfn._lc_post_optimization_transforms
     using_grad_transform = cfn._using_grad_transform
@@ -549,7 +552,7 @@ def populate_grads(grads: list[TensorProxy], tom: None | torch.nn.Module = None,
     idx: int = 0
     from thunder import ThunderModule, compile_data
 
-    if isinstance(tom, ThunderModule) or thunder.compile_data(tom).using_jit:
+    if isinstance(tom, ThunderModule) or compile_data(tom).using_jit:
         assert args is not None, "populate grad needs args (and possibly kwargs) to work with ThunderModules"
         if kwargs is None:
             kwargs = {}
@@ -1148,7 +1151,11 @@ def _var_mean_prim_grad(a: TensorProxy, /, dims: Sequence[int], *, correction: N
     # Computes var bwd
     normalization_scalar = n_elem_reduced - correction
     restored_gv = restore_reduced_dims(gv, dims, a.shape)
-    restored_mean = restore_reduced_dims(m, dims, a.shape)
+    # Inserting a conversion to the same dtype to disable nvFuser executors's
+    # bookend optimization (nv_enable_bookend), which can cause the backward
+    # pass to generate two kernels
+    mean_mdtype = prims.convert_element_type(m, m.dtype)
+    restored_mean = restore_reduced_dims(mean_mdtype, dims, a.shape)
     var_grad = (2 * restored_gv * (a - restored_mean)) / normalization_scalar
 
     put_grad(a, mean_grad + var_grad)
@@ -2467,6 +2474,7 @@ augmented_forward_impls = {
     prims.PrimIDs.LOG2: lambda x: (prims.log2(x), (x,)),
     prims.PrimIDs.ZETA: lambda x, y: (prims.zeta(x, y), (x, y)),
     prims.PrimIDs.FMOD: lambda x, y: (prims.fmod(x, y), (x, y)),
+    prims.PrimIDs.COPY_: lambda x, y: (prims.copy_(x, y), tuple()),
 }
 
 
@@ -2497,6 +2505,8 @@ backward_impls = {
     prims.PrimIDs.LOG1P: lambda x, g: g / (x + 1),
     prims.PrimIDs.LOG2: lambda x, g: g / (x * 0.6931471805599453),
     prims.PrimIDs.FMOD: lambda x, y, g: (g, -g * prims.trunc(x / y)),
+    # The copy should not be differentiable. We return None to enable the generation of the backward graph through them.
+    prims.PrimIDs.COPY_: lambda g: (None, None),
 }
 
 
@@ -3079,43 +3089,6 @@ def embedding_backward(a, num_weights, padding_idx, scale_grad_by_freq, sparse, 
     return gweight
 
 
-@register_augmented_forward(prims.PrimIDs.BATCH_NORM)
-def batch_norm_aug_fwd(
-    a: TensorProxy,
-    weight: None | TensorProxy,
-    bias: None | TensorProxy,
-    running_mean: None | TensorProxy,
-    running_var: None | TensorProxy,
-    training: bool,
-    momentum: Number,
-    eps: Number,
-) -> VJPDual:
-    primal = prims.batch_norm(
-        a,
-        weight,
-        bias,
-        running_mean,
-        running_var,
-        training,
-        momentum,
-        eps,
-    )
-    output_mask = [x is not None for x in (a, weight, bias)]
-    output, save_mean, save_invstd = primal
-    residuals = (a, weight, running_mean, running_var, save_mean, save_invstd, training, eps, output_mask)
-    return VJPDual(primal, residuals)
-
-
-@register_backward(prims.PrimIDs.BATCH_NORM)
-def batch_norm_backward(a, weight, running_mean, running_var, save_mean, save_invstd, train, eps, output_mask, *grads):
-    from thunder.torch import batch_norm_backward
-
-    result = batch_norm_backward(
-        grads[0], a, weight, running_mean, running_var, save_mean, save_invstd, train, eps, output_mask
-    )
-    return *result, None, None
-
-
 @register_augmented_forward("torch.cumsum")
 def cumsum_aug_fwd(a: Proxy, dim: int, *, dtype: None | dtypes.dtype = None) -> VJPDual:
     from thunder.torch import cumsum
@@ -3163,6 +3136,8 @@ def iter_bound_symbols(bound_symbols):
     """
     for symbol in bound_symbols:
         if symbol.sym.id in transform_skip_list:
+            continue
+        elif symbol.output is None:
             continue
         else:
             yield symbol
@@ -3515,9 +3490,7 @@ def backward_pass(forward_env, trace, init_cotangents):
         init_cotangents = init_cotangents[0]
     safe_map_flat(put_grad, trace.output, init_cotangents)
 
-    for symbol in reversed(trace.bound_symbols):
-        if symbol.sym.id in transform_skip_list:
-            continue
+    for symbol in reversed(list(iter_bound_symbols(trace.bound_symbols))):
         symbol_output = sequencify(symbol.output)
 
         cotangents = tree_map(get_grad, symbol_output)

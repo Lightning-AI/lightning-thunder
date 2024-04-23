@@ -566,7 +566,7 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
     specified_slices = 0
     ellipsis_idx = None
 
-    if isinstance(key, (Number, slice, EllipsisType)):
+    if key is None or isinstance(key, (Number, slice, EllipsisType)):
         key = (key,)
 
     for idx, x in enumerate(key):
@@ -1114,6 +1114,11 @@ def unsqueeze(a, /, dims: int | Sequence[int]) -> TensorProxy:
             a_idx += 1
 
     return prims.broadcast_in_dim(a, shape, broadcast_dims)
+
+
+@clangop()
+def unfold(a: TensorProxy, /, dim: int, size: int, step: int) -> TensorProxy:
+    return prims.unfold(a, dim, size, step)
 
 
 @clangop()

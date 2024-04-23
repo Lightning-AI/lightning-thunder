@@ -67,6 +67,7 @@ from thunder.core.proxies import (
 )
 from thunder.core.trace import set_tracectx, reset_tracectx, tracectx, from_trace
 from thunder.core.interpreter import (
+    InterpreterLogItem,
     interpret,
     _interpret_call,
     CapsuleType,
@@ -98,7 +99,7 @@ from thunder.core.symbol import Symbol, BoundSymbol, is_traceable
 
 from thunder.extend import Executor
 from thunder.common import CompileData, CompileStats
-from thunder.core.trace import TraceCtx
+from thunder.core.trace import TraceCtx, TraceResults
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.clang import _clang_fn_set
 from thunder.core.pytree import tree_map
@@ -439,9 +440,9 @@ _minimal_callbacks = default_callbacks | _minimal_callbacks
 
 
 # TODO RC1 Add debug_log
-def minimal_thunder_jit(fn: Callable, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> Callable:
+def minimal_thunder_jit(fn: Callable, /, *, record_history: bool = False, sharp_edges: SHARP_EDGES_OPTIONS) -> Callable:
     ctx: MinimalCtx = MinimalCtx(sharp_edges=sharp_edges)
-    jfn = interpret(fn, fn_lookaside=_minimal_lookaside, callbacks=_minimal_callbacks)
+    jfn = interpret(fn, fn_lookaside=_minimal_lookaside, callbacks=_minimal_callbacks, record_history=record_history)
 
     def fn_(*args, **kwargs):
         try:
@@ -1395,8 +1396,14 @@ def _get_process_group_from(*fn_and_args) -> Optional["ProcessGroup"]:
 
 
 def thunder_general_jit(
-    fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS
-) -> tuple[TraceCtx, TraceCtx]:
+    fn: Callable,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    /,
+    *,
+    record_history: bool = False,
+    sharp_edges: SHARP_EDGES_OPTIONS,
+) -> TraceResults:
     # TODO: move into wrap_callback or so
     if isinstance(fn, torch.nn.parallel.DistributedDataParallel):
         raise NotImplementedError(
@@ -1409,7 +1416,7 @@ def thunder_general_jit(
 
     prologue_trace: TraceCtx = TraceCtx(fn)
     computation_trace: TraceCtx = TraceCtx()
-    epilogue_trace: TraceCtx = TraceCtx()
+    epilogue_trace: TraceCtx | None = TraceCtx()
 
     si = SigInfo("prologue")
     si.varargs = ("args", None)
@@ -1433,6 +1440,7 @@ def thunder_general_jit(
         callbacks=general_jit_callbacks,
         with_provenance_tracking=True,
         uncacheable_classes=(torch.Tensor, int, float, str, NoneType),
+        record_history=record_history,
     )
 
     with general_jit_ctx(ctx):
@@ -1440,6 +1448,8 @@ def thunder_general_jit(
             result = jfn(*args, **kwargs)
             prims.python_return(result)
             process_recorded_modifications(ctx, epilogue_trace)
+
+            last_interpreter_log = jfn._last_interpreter_log
 
     pro_to_comp, computation_intermediates = get_computation_inputs_and_intermediates(computation_trace)
 
@@ -1499,4 +1509,4 @@ def thunder_general_jit(
             epilogue_trace, restrict_proxy_swapmap(pro_to_epi_proxies + comp_to_epi_proxies), "epilogue"
         )
 
-    return prologue_trace, computation_trace, epilogue_trace
+    return TraceResults(prologue_trace, computation_trace, epilogue_trace, last_interpreter_log)

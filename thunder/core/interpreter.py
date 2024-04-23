@@ -451,44 +451,38 @@ def interpretercompilectx(_interpretercompilectx: InterpreterCompileCtx):
         reset_interpretercompilectx(tok)
 
 
-class LineHistoryItem(TypedDict):
+class LineLogItem(TypedDict):
     kind: Literal["Line"]
-    fn: Callable | CodeType
+    fn: str
     filename: str
     position: Positions | None
 
 
-class OpaqueHistoryItem(TypedDict):
+class OpaqueLogItem(TypedDict):
     kind: Literal["Opaque"]
-    fn: Callable
+    fn: str
 
 
-class LookasideHistoryItem(TypedDict):
+class LookasideLogItem(TypedDict):
     kind: Literal["Lookaside"]
-    fn: Callable
+    fn: str
 
 
-class CallHistoryItem(TypedDict):
+class CallLogItem(TypedDict):
     kind: Literal["InterpreterCall"]
-    fn: Callable
+    fn: str
     prev_frame: str
 
 
-class ReturnHistoryItem(TypedDict):
+class ReturnLogItem(TypedDict):
     kind: Literal["InterpreterReturn"]
-    fn: Callable
+    fn: str
     is_signal: bool
     rval: type | INTERPRETER_SIGNALS
 
 
-InterpreterHistoryItem = (
-    dis.Instruction
-    | str
-    | LineHistoryItem
-    | OpaqueHistoryItem
-    | LookasideHistoryItem
-    | CallHistoryItem
-    | ReturnHistoryItem
+InterpreterLogItem = (
+    dis.Instruction | str | LineLogItem | OpaqueLogItem | LookasideLogItem | CallLogItem | ReturnLogItem
 )
 
 
@@ -518,10 +512,10 @@ InterpreterHistoryItem = (
 
 # The interpreter's runtime context, which tracks stack changes in Python mode
 class InterpreterRuntimeCtx:
-    def __init__(self, *, debug_log: None | StringIO = None):
+    def __init__(self, record_history: bool, debug_log: None | StringIO):
         self.frame_stack: list[InterpreterFrame] = []
         self._globals_dict: dict[str, Any] | None = None
-        self._history: list[InterpreterHistoryItem] = []
+        self._interpreter_log: list[InterpreterLogItem] = []
         self._interpreted_instructions: list[dis.Instruction] = []
         self._curexc: BaseException | None = None
         # The exception_stack mirrors the exc_info/exc_state from PyThreadState
@@ -539,6 +533,7 @@ class InterpreterRuntimeCtx:
         self._prev_position: Positions | None = None
         self._known_wrappers = {}
         self._proxied_values = set()
+        self._record_history = record_history
 
     def register_proxied_value(self, v):
         self._proxied_values.add(v)
@@ -574,14 +569,17 @@ class InterpreterRuntimeCtx:
 
     # The operations and opaque calls encountered while interpreting
     @property
-    def history(self) -> list[InterpreterHistoryItem]:
-        return self._history
+    def interp_log(self) -> list[InterpreterLogItem]:
+        return self._interpreter_log
 
-    def record(self, val: InterpreterHistoryItem, /) -> None:
-        self._history.append(val)
+    def record(self, val: InterpreterLogItem, /) -> None:
+        if not self._record_history:
+            return
+
+        self._interpreter_log.append(val)
 
         if self.debug_log is not None:
-            self.debug_log.write(f"Appended to history: {val}" + os.linesep)
+            self.debug_log.write(f"Appended to log: {val}" + os.linesep)
 
     def peek_interpreter_stack(self) -> InterpreterStack:
         return self.frame_stack[-1].interpreter_stack
@@ -607,54 +605,76 @@ class InterpreterRuntimeCtx:
             pf = self._pop_frame_stack()
             assert pf is frame, "Frame stack inconsistency"
 
-    # TODO Instead of appending to both history and and interpreted_instructions we could
-    #   consider just appending to history and then filtering to only instructions when
+    # TODO Instead of appending to both the log and and interpreted_instructions we could
+    #   consider just appending to the log and then filtering to only instructions when
     #   interpreted_instructions is accessed
     def record_interpreted_instruction(self, inst: dis.Instruction, /) -> InterpreterRuntimeCtx:
+        if not self._record_history:
+            return self
+
         self._interpreted_instructions.append(inst)
         self.record(inst)
         return self
 
     def record_interpreter_call(self, fn: Callable) -> InterpreterRuntimeCtx:
+        if not self._record_history:
+            return self
+
         frame: InterpreterFrame | None = self.peek_frame_stack()
 
         # If frame is None, that means that this is the first call to _interpret_call, in _run_frame.
         # In that case we should also print out what line we're starting on, since
         # no line number changes have happened yet.
         if frame is not None:
-            self.record({"kind": "InterpreterCall", "fn": fn, "prev_frame": frame.qualname})
+            self.record(
+                {"kind": "InterpreterCall", "fn": extract_callable_name(unwrap(fn)), "prev_frame": frame.qualname}
+            )
         else:
             if hasattr(self._original_callsite, "positions"):
                 pos = self._original_callsite.positions
             else:
                 pos = Positions(self._original_callsite.lineno, self._original_callsite.lineno, 0, 999)
-            # self.record_position(fn, self._original_callsite.filename, pos)
+            self.record_position(fn, self._original_callsite.filename, pos)
             self.record(
                 {
                     "kind": "InterpreterCall",
-                    "fn": fn,
+                    "fn": extract_callable_name(unwrap(fn)),
                     "prev_frame": self._original_callsite.function,
                 }
             )
         return self
 
     def record_interpreter_return(self, fn: Callable, rval: Any | INTERPRETER_SIGNALS, /) -> InterpreterRuntimeCtx:
+        if not self._record_history:
+            return self
+
         is_signal: bool = isinstance(rval, INTERPRETER_SIGNALS)
-        rv: type | INTERPRETER_SIGNALS = rval if is_signal else type(rval)
-        self.record(ReturnHistoryItem(kind="InterpreterReturn", fn=fn, is_signal=is_signal, rval=rv))
+        rv: type | INTERPRETER_SIGNALS = rval if is_signal else type(unwrap(rval))
+        self.record(
+            ReturnLogItem(kind="InterpreterReturn", fn=extract_callable_name(unwrap(fn)), is_signal=is_signal, rval=rv)
+        )
         return self
 
     def record_opaque_call(self, fn: Callable) -> InterpreterRuntimeCtx:
-        self.record(OpaqueHistoryItem(kind="Opaque", fn=fn))
+        if not self._record_history:
+            return self
+
+        self.record(OpaqueLogItem(kind="Opaque", fn=extract_callable_name(unwrap(fn))))
         return self
 
     def record_lookaside(self, fn: Callable) -> InterpreterRuntimeCtx:
-        self.record(LookasideHistoryItem(kind="Lookaside", fn=fn))
+        if not self._record_history:
+            return self
+
+        self.record(LookasideLogItem(kind="Lookaside", fn=extract_callable_name(unwrap(fn))))
         return self
 
     def record_position(
         self, fn: Callable | CodeType, filename: str, position: Positions | None, /
     ) -> InterpreterRuntimeCtx:
+        if not self._record_history:
+            return self
+
         # Only record a change in the Python line
         if filename == self._prev_filename and _positions_equal(position, self._prev_position):
             return self
@@ -664,7 +684,7 @@ class InterpreterRuntimeCtx:
 
         self._prev_position = position
         self._prev_filename = filename
-        line = LineHistoryItem(kind="Line", fn=fn, filename=filename, position=position)
+        line = LineLogItem(kind="Line", fn=extract_callable_name(unwrap(fn)), filename=filename, position=position)
         self.record(line)
         return self
 
@@ -672,14 +692,14 @@ class InterpreterRuntimeCtx:
         return os.linesep.join(f.format_with_source() for f in self.frame_stack)
 
 
-def print_to_history(*objects, sep=" ", end=os.linesep):
+def print_to_log(*objects, sep=" ", end=os.linesep):
     if sep is None:
         sep = " "
     if end is None:
         end = os.linesep
 
     ctx: InterpreterRuntimeCtx = get_interpreterruntimectx()
-    ctx._history.append(str(sep).join(str(o) for o in objects) + str(end))
+    ctx._interpreter_log.append(str(sep).join(str(o) for o in objects) + str(end))
 
 
 _interpreterruntimectx = contextvars.ContextVar("interpreterruntimectx")
@@ -5980,12 +6000,12 @@ def _interpret_call_with_unwrapping(fn: Callable, /, *args, **kwargs) -> Any | I
     return unwrap(res)
 
 
-def _interpret_call(fn: Callable | WrappedValue, /, *args, **kwargs) -> Any | INTERPRETER_SIGNALS:
+def _interpret_call(fn: Callable, /, *args, **kwargs) -> Any | INTERPRETER_SIGNALS:
     compilectx: InterpreterCompileCtx = get_interpretercompilectx()
     runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
 
     # TODO: Implement generics and fix WrappedValue[T] everywhere.
-    runtimectx.record_interpreter_call(fn)  # type: ignore
+    runtimectx.record_interpreter_call(fn)
     rval = _call_dispatch(compilectx, runtimectx, fn, *args, **kwargs)  # type: ignore
     if compilectx._with_provenance_tracking:
         assert isinstance(rval, (INTERPRETER_SIGNALS, WrappedValue)), f"return {rval} unexpected calling {unwrap(fn)}"
@@ -6166,10 +6186,11 @@ def _call_dispatch(
 
     # (4) Handles opaque functions
     if is_opaque(fn):
-        runtimectx.record_opaque_call(fn)
-        args_ = [unwrap(a) for a in args]
+        # TODO: Deeper unwrapping?
+        args_ = tuple(unwrap(a) for a in args)
         kwargs_ = {unwrap(k): unwrap(v) for k, v in kwargs.items()}
         try:
+            runtimectx.record_opaque_call(fn)
             opaque_result: Any = fn(*args_, **kwargs_)
         except Exception as e:
             runtimectx.curexc = e
@@ -6607,6 +6628,7 @@ def interpret(
     debug_log: None | StringIO = None,
     with_provenance_tracking: bool = False,
     uncacheable_classes: list[type] | None = None,
+    record_history: bool = False,
 ) -> Callable:
     compilectx: InterpreterCompileCtx = InterpreterCompileCtx(
         opcode_interpreter=opcode_interpreter,
@@ -6620,7 +6642,7 @@ def interpret(
 
     @functools.wraps(fn)
     def fn_(*args, **kwargs) -> Any:
-        runtimectx: InterpreterRuntimeCtx = InterpreterRuntimeCtx(debug_log=debug_log)
+        runtimectx: InterpreterRuntimeCtx = InterpreterRuntimeCtx(debug_log=debug_log, record_history=record_history)
 
         with interpreter_ctx(compilectx, runtimectx):
             try:
@@ -6660,7 +6682,7 @@ def interpret(
 
                 interpretation_result: Any = _interpret_call(wrapped_fn_2, args, kwargs)
                 interpretation_result = unwrap(interpretation_result)
-            except Exception as e:
+            except BaseException as e:
                 # TODO Highlight the portion of the line that originated the opcode on Python versions that include
                 #      the line offset information in the instruction
                 traceback_str = os.linesep.join(f.format_with_source() for f in runtimectx.frame_stack)
@@ -6668,14 +6690,9 @@ def interpret(
                     f"Encountered exception {type(e).__name__}: {e} while tracing {fn}:{os.linesep}" f"{traceback_str}"
                 )
                 raise InterpreterError(msg) from e
-            finally:
-                # NOTE: Wrapped functions are valid to assign new attributes to.
-                fn_._last_interpreted_instructions = runtimectx.interpreted_instructions  # type: ignore
-                fn_._last_interpreted_history = runtimectx.history  # type: ignore
 
-            # # NOTE: Wrapped functions are valid to assign new attributes to.
-            # fn_._last_interpreted_instructions = runtimectx.interpreted_instructions  # type: ignore
-            # fn_._last_interpreted_history = runtimectx.history  # type: ignore
+            # NOTE: Wrapped functions are valid to assign new attributes to.
+            fn_._last_interpreter_log = runtimectx.interp_log  # type: ignore
 
             if interpretation_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                 e = runtimectx.curexc
@@ -6689,19 +6706,19 @@ def interpret(
     return fn_
 
 
-def last_interpreted_instructions(fn: Callable) -> None | list[dis.Instruction]:
-    return getattr(fn, "_last_interpreted_instructions", None)
+def last_interpreted_instructions(fn: Callable) -> list[dis.Instruction]:
+    return [i for i in getattr(fn, "_last_interpreter_log", ()) if isinstance(i, dis.Instruction)]
 
 
-def last_interpreted_history(fn: Callable) -> None | list[InterpreterHistoryItem]:
-    return getattr(fn, "_last_interpreted_history", None)
+def last_interpreter_log(fn: Callable) -> list[InterpreterLogItem]:
+    return getattr(fn, "_last_interpreter_log", [])
 
 
-def print_history(
-    history: list[InterpreterHistoryItem],
+def print_interpreter_log(
+    interpreter_log: list[InterpreterLogItem],
     /,
     print_fn: Callable = print,
-    use_colors: bool = True,
+    use_colors: bool | None = None,
     indent: bool = True,
     max_depth: int | None = None,
     color_internals: bool = False,
@@ -6712,36 +6729,35 @@ def print_history(
 
     c_indent = -1
     inside_inner_interpreter = False
-    for item in history:
+    for item in interpreter_log:
         linecolor = ""
         nl = ""
         deindent = False
         source_line = None
 
-        # Match each kind of history item. The history items are instructions, strings,
+        # Match each kind of log item. The log items are instructions, strings,
         # or typed dicts, with "kind" describing what kind of entry it is.
         match item:
             case dis.Instruction():
                 if color_internals or not inside_inner_interpreter:
                     linecolor = colors["MAGENTA"]
-                history_line = f"Instruction('{item.opname}', arg={item.arg}, argrepr={repr(item.argrepr)})"
+                log_line = f"Instruction('{item.opname}', arg={item.arg}, argrepr={repr(item.argrepr)})"
 
             case str():
                 # Print the string as-is, indented, without colors.
                 linecolor = colors["RESET"]
-                history_line = item
+                log_line = item
 
-            case {"kind": "Line", "fn": _fn, "filename": filename, "position": position}:
-                # LineHistoryItem
+            case {"kind": "Line", "fn": fn, "filename": filename, "position": position}:
+                # LineLogItem
                 inside_inner_interpreter = interpreter_path in filename
                 if color_internals or not inside_inner_interpreter:
                     linecolor = colors["YELLOW"]
                 nl = os.linesep
-                fnname = extract_callable_name(_fn)
                 if position:
-                    history_line = f"# Line {filename}:{position.lineno} in {fnname}()"
+                    log_line = f"# Line {filename}:{position.lineno} in {fn}()"
                 else:
-                    history_line = f"# {filename} in {fnname}()"
+                    log_line = f"# {filename} in {fn}()"
 
                 if not print_source_code or not position:
                     continue
@@ -6754,65 +6770,45 @@ def print_history(
                 source_line = linestr
 
             case {"kind": "InterpreterCall", "fn": fn, "prev_frame": prev_frame}:
-                # CallHistoryItem
+                # CallLogItem
                 if color_internals or not inside_inner_interpreter:
                     linecolor = colors["GREEN"]
                 c_indent += 1
-                history_line = f"Interpreting call to {extract_callable_name(fn)}() from {prev_frame}{'()' if not prev_frame.endswith('>') else ''}"
+                log_line = (
+                    f"Interpreting call to {fn}() from {prev_frame}{'()' if not prev_frame.endswith('>') else ''}"
+                )
 
-            case {"kind": "InterpreterReturn", "fn": fn, "is_signal": is_signal, "rval": rval}:
-                # ReturnHistoryItem
+            case {"kind": "InterpreterReturn", "fn": fn, "rval": rval}:
+                # ReturnLogItem
+                rval = unwrap(rval)
                 if color_internals or not inside_inner_interpreter:
                     linecolor = colors["RED"]
                 deindent = True
+                is_signal = isinstance(rval, INTERPRETER_SIGNALS)
                 meaning = "signal" if is_signal else "value of type"
                 val = rval if is_signal else rval.__qualname__
-                history_line = f"Returning from call to {extract_callable_name(fn)}() with {meaning} {val}"
+                log_line = f"Returning from call to {fn}() with {meaning} {val}"
 
             case {"kind": "Lookaside", "fn": fn}:
-                # LookasideHistoryItem
+                # LookasideLogItem
                 if color_internals or not inside_inner_interpreter:
                     linecolor = colors["BLUE"]
-                history_line = f"Lookaside to {extract_callable_name(fn)}()"
+                log_line = f"Lookaside to {fn}()"
 
             case {"kind": "Opaque", "fn": fn}:
-                # OpaqueHistoryItem
+                # OpaqueLogItem
                 if color_internals or not inside_inner_interpreter:
                     linecolor = colors["CYAN"]
-                history_line = f"Opaque call to {fn} with name {extract_callable_name(fn)}"
+                log_line = f"Opaque call to {fn}()"
 
             case _:
-                raise NotImplementedError(f"Unexpected history item {item}")
+                raise NotImplementedError(f"Unexpected log item {item}")
 
         if max_depth is None or c_indent <= max_depth:
-            print_fn(f"{nl}{' ' * c_indent if indent else ''}{linecolor}{history_line}{colors['RESET']}")
+            print_fn(f"{nl}{' ' * c_indent if indent else ''}{linecolor}{log_line}{colors['RESET']}")
 
             if source_line:
                 print_fn(f"{' ' * c_indent if indent else ''}{linecolor}{source_line}{colors['RESET']}")
 
         if deindent:
             c_indent -= 1
-
-
-def print_last_interpreted_history(
-    fn: Callable,
-    /,
-    print_fn: Callable = print,
-    use_colors: bool = True,
-    indent: bool = True,
-    max_depth: int | None = None,
-    color_internals: bool = False,
-    print_source_code: bool = True,
-) -> None:
-    if (history := last_interpreted_history(fn)) is None:
-        print("No history could be found.")
-        return
-    print_history(
-        history,
-        print_fn=print_fn,
-        use_colors=use_colors,
-        indent=indent,
-        max_depth=max_depth,
-        color_internals=color_internals,
-        print_source_code=print_source_code,
-    )

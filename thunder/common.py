@@ -1,4 +1,6 @@
+import dis
 from typing import Any, Optional
+from collections.abc import Generator
 from collections.abc import Callable
 from enum import Enum, auto
 from collections import deque, defaultdict
@@ -34,9 +36,8 @@ from thunder.core.proxies import is_proxyable, proxy, Proxy, CollectionProxy, Te
 import thunder.core.prims as prims
 import thunder.distributed as dist
 import thunder.torch as ltorch
-from thunder.extend import Executor, get_default_executors, get_always_executors, OperatorExecutor
+from thunder.extend import Executor, get_default_executors, get_always_executors, OperatorExecutor, add_executor_lists
 import thunder.executors as executors
-from thunder.executors.torch_autograd import thunder_backward
 from thunder.core.transforms import autocast
 from thunder.core.dtypes import to_dtype
 
@@ -58,8 +59,8 @@ class CompileStats:
         self.last_traces = None
         self.last_prologue = None
         self.last_prologue_traces = None
-        self.last_interpreted_instructions = None
-        self.last_interpreted_history = None
+        self.last_interpreted_instructions: Generator[dis.Instruction, None, None] | None = None
+        self.last_interpreter_log: list[InterpreterLogItem] | None = None
 
         # torch.autograd.Function specific data
         self.last_backward_traces = None
@@ -181,15 +182,10 @@ class CompileData:
         if executors_list is None:
             self.executors_list = get_default_executors() + always_executors
         else:
-            # Validates executors list
-            for ex in executors_list:
-                if not isinstance(ex, Executor):
-                    raise ValueError(f"{ex} was not an executor")
-
             self.executors_list = tuple(executors_list)
             # Adds always executors (if not present)
             if self.executors_list[-len(always_executors) :] != always_executors:
-                self.executors_list = self.executors_list + always_executors
+                self.executors_list = add_executor_lists(self.executors_list, always_executors)
 
         # Validates executors list
         for ex in self.executors_list:
@@ -466,7 +462,7 @@ def cache_get(
 # TODO Consider modeling additional calls to trace()
 # TODO RC1 Change the way this is called to be trace(langctx, inline_trace, rename_proxies...)(fn, *args, **kwargs)
 #   to separate the traced function's args and kwargs from this function's kwargs
-from thunder.core.interpreter import make_opaque
+from thunder.core.interpreter import InterpreterLogItem, make_opaque
 
 
 def trace(
@@ -737,26 +733,10 @@ def _create_callable(
                 tensor_cls = (torch.Tensor, TensorProxy)
                 requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in flat_args)
                 if not cd.disable_torch_autograd_support and requires_grad:
-                    # thunder_backward may recursively call compile and wraps the result in a
-                    # torch.autograd.Function to support embedding of Thunder-compiled
-                    # functions in torch's Autograd
-                    cs.last_trace_host_execution_start = time.time_ns()
-                    c = thunder_backward(compile_data=cd, compile_stats=cs)(processed_function)
-                    result = c(*args, **kwargs)
-                    cs.last_trace_host_execution_stop = time.time_ns()
-                    cs.last_executed = c
-                    if cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES:
-                        cache_put(
-                            cs.cache,
-                            c,
-                            None,
-                            args[cd.num_constant_args :],
-                            kwargs,
-                            autocast_key=None,
-                            distributed_key=distributed_key,
-                        )
-                    cs.last_trace_host_stop = time.time_ns()
-                    return result
+                    raise NotImplementedError(
+                        "torch.autograd.Function integration is not supported in thunder.compile(). "
+                        "Please use thunder.jit() to compile functions that require torch.autograd.Function."
+                    )
 
             # TODO Revisit jit() behavior when hit in a trace ctx
             #   This will inline the invocation of compile into the current

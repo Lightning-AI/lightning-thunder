@@ -1,8 +1,10 @@
+import operator
 import time
 from collections.abc import Callable, Hashable
 from typing import Any
 
 import torch
+from lightning_utilities import compare_version
 
 from thunder.core import prims, utils
 from thunder.core.proxies import Proxy, unvariableify, Variable
@@ -13,6 +15,8 @@ from thunder.core.transform_common import dce
 from thunder.executors.passes import update_fusion_call_ctx
 from thunder.executors.utils import Region
 from thunder.extend import FusionExecutor, register_executor
+
+_TORCH_GREATER_EQUAL_2_3 = compare_version("torch", operator.ge, "2.3.0", use_base_version=True)
 
 
 def to_torch_translator(bsym: BoundSymbol) -> Callable:
@@ -48,6 +52,7 @@ def make_compiled(
 ) -> Callable:
     from thunder import trace
     from thunder.core.transforms import eval_trace
+    from thunder.executors.torchex import no_autocast
 
     # Here we construct a trace that will be used to compile the function
     region_trace = TraceCtx(None)
@@ -77,23 +82,25 @@ def make_compiled(
     # TODO: issue "Try using _transform_for_operator_executor_execution for
     # torch.compile executor"
     torch_trace = trace(inline_trace=False)(torch_interpreted_func, *sorted_unique_inputs)
-    compiled_func = torch.compile(torch_trace.python_callable(), fullgraph=True)
+    trace_callable = torch_trace.python_callable(include_decorators=False)
+    compiled_func = torch.compile(trace_callable, fullgraph=True)
+    # For each of `@torch.no_grad(), and `torch.autocast(device_type="cpu"|"cuda")` torch.compile
+    # create caches with a guard for the wrapped function. Since the torch.compile caches are per code object, not
+    # frame, all the dynamic copies of these context managers share the same code cache.
+    # Since Thunder generates many traces, all of them annotated with these context managers, we must put these context
+    # managers outside the `torch.compile` region
+    compiled_func = no_autocast(compiled_func)
+    compiled_func = torch.no_grad()(compiled_func)
 
     def compiled_func_wrapper(*args):
-        # PyTorch 2.1 doesn't have this attribute
-        if getattr(torch._dynamo.eval_frame, "guarded_backend_cache", None) is None:
+        if _TORCH_GREATER_EQUAL_2_3:
             return compiled_func(*args)
 
         orig = getattr(torch._dynamo.eval_frame.guarded_backend_cache, "skip_backend_check_for_run_only_mode", None)
         try:
-            # TODO: Remove this hack
-            # Dynamo doesn't recreate a guard for the compiled function called
-            # from the backward thread. This is a problem because the guard is
-            # created with the forward thread ID, and the guard is not valid
-            # for the backward thread.
-            # Issue filed: https://github.com/pytorch/pytorch/issues/114674
-            # We should be able to remove this hack once we're sure that the
-            # above fix has propagated to all supported PyTorch releases.
+            # Dynamo doesn't recreate a guard for the compiled function called from the backward thread. This is a
+            # problem because the guard is created with the forward thread ID, and the guard is not valid
+            # for the backward thread. Issue filed: https://github.com/pytorch/pytorch/issues/114674
             torch._dynamo.eval_frame.guarded_backend_cache.skip_backend_check_for_run_only_mode = True
             return compiled_func(*args)
         finally:

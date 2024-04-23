@@ -542,6 +542,28 @@ def _elementwise_unary_torch(op):
     return _fn
 
 
+#
+# Tensor Property OpInfos
+#
+tensor_properties: list[OpInfo] = []
+
+
+def _is_cuda_torch(x: torch.Tensor) -> bool:
+    return x.is_cuda
+
+
+is_cuda_opinfo = OpInfo(
+    _is_cuda_torch,
+    sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
+    torch_reference=_is_cuda_torch,
+    dtypes=(datatypes.all_dtypes),
+)
+
+tensor_properties.append(is_cuda_opinfo)
+
+opinfos.extend(tensor_properties)
+
+
 # NOTE: slightly different from generic _elementwise_unary_torch helper
 #   because this returns the input when given an unsigned type
 @wraps(torch.abs)
@@ -2484,10 +2506,26 @@ def where_sample_generator(op, device, dtype, requires_grad, **kwargs):
         yield SampleInput(pred, a, b)
 
 
+def where_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+    err_msg = r"torch.where\(\) does not support only specifying a condition"
+    yield (
+        SampleInput(
+            make(
+                5,
+            )
+        ),
+        NotImplementedError,
+        err_msg,
+    )
+    yield (SampleInput(make(2, 1, 2)), NotImplementedError, err_msg)
+
+
 where_opinfo = OpInfo(
-    clang.where,
+    ltorch.where,
     supports_grad=True,
     sample_input_generator=where_sample_generator,
+    error_input_generator=where_error_generator,
     torch_reference=torch.where,
 )
 conditional_and_mask_ops.append(where_opinfo)
@@ -2666,6 +2704,45 @@ to_opinfo = OpInfo(
     torch_reference=torch.Tensor.to,
 )
 data_movement_ops.append(to_opinfo)
+
+
+def cuda_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # None
+    # cpu -> cuda
+    # default cuda -> default cuda (no-op)
+    yield SampleInput(make(4, 4))
+
+    # Explictly pass device
+    # default cuda -> default cuda
+    if torch.device(device).type == "cuda":
+        yield SampleInput(make(4, 4), device)
+
+
+def cuda_error_generator(op, device, **kwargs):
+    make = partial(make_tensor, device="cpu", dtype=torch.float, requires_grad=False)
+
+    err_msg = "`non_blocking==True` is currently not supported."
+    yield SampleInput(make(3, 3), non_blocking=True), RuntimeError, err_msg
+
+    err_msg = "Invalid device cpu, must be cuda device"
+    yield SampleInput(make(3, 3), device="cpu"), RuntimeError, err_msg
+
+
+cuda_opinfo = OpInfo(
+    ltorch.cuda,
+    sample_input_generator=cuda_sample_generator,
+    error_input_generator=cuda_error_generator,
+    torch_reference=torch.Tensor.cuda,
+    test_directives=(
+        DecorateInfo(
+            pytest.mark.skip,
+            active_if=not torch.cuda.is_available(),
+        ),
+    ),
+)
+data_movement_ops.append(cuda_opinfo)
 
 
 def type_as_sample_generator(op, device, dtype, requires_grad, **kwargs):
@@ -2994,6 +3071,46 @@ unbind_opinfo = OpInfo(
 shape_ops.append(unbind_opinfo)
 
 
+def unfold_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    cases = (
+        ((), 0, 1, 3),
+        ((), -1, 0, 5),
+        ((0,), 0, 0, 1),
+        ((8,), 0, 2, 1),
+        ((6, 2), 0, 2, 2),
+    )
+
+    for shape, dim, size, step in cases:
+        yield SampleInput(make(shape), dim, size, step)
+
+
+def unfold_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+
+    cases = (
+        ((), 0, 2, 1, RuntimeError, "Maximum size for tensor at dimension 0 is 1 but size is 2"),
+        ((0,), 0, 0, -1, RuntimeError, "Step is -1 but must be > 0"),
+        ((8,), 1, 2, 1, IndexError, r"Dimension out of range \(expected to be in range of \[-1, 0\], but got 1\)"),
+        ((8,), 0, -5, 1, RuntimeError, "Size is -5 but must be >= 0"),
+        ((8,), 0, 10, 1, RuntimeError, "Maximum size for tensor at dimension 0 is 8 but size is 10"),
+    )
+
+    for shape, dim, size, step, err_type, err_msg in cases:
+        yield SampleInput(make(shape), dim, size, step), err_type, err_msg
+
+
+unfold_opinfo = OpInfo(
+    clang.unfold,
+    sample_input_generator=unfold_sample_generator,
+    error_input_generator=unfold_error_generator,
+    torch_reference=torch.Tensor.unfold,
+)
+
+shape_ops.append(unfold_opinfo)
+
+
 def flip_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype)
 
@@ -3088,6 +3205,7 @@ def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
         # NOTE: nvfuser cannot handle more than 8 dims.
         ((1, 5, 3), (None, 0, None, 2, ..., None, None)),
         ((1, 5, 3), (None, None, 0, None, 2, ..., None, None)),
+        ((1, 5, 3), None),
         # Addtl. cases
         # NOTE: nvfuser cannot handle more than 8 dims.
         ((7, 9, 5), (slice(2, 6, 2), None, ..., slice(3, 7), None, 2, None)),
@@ -6150,6 +6268,33 @@ max_pool3d_opinfo = OpInfo(
     ),
 )
 nn_ops.append(max_pool3d_opinfo)
+
+
+def one_hot_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    test_shapes = [
+        (0, 512),
+        (10,),
+        (5, 10),
+        (3, 5, 10),
+    ]
+
+    max_value = 9
+    for shape in test_shapes:
+        for num_classes in range(1, max_value + 1):
+            a = make(shape, low=0, high=num_classes - 1)  # use non-negative integers
+
+            yield SampleInput(a, num_classes=num_classes)
+
+
+one_hot_opinfo = OpInfo(
+    ltorch.one_hot,
+    sample_input_generator=one_hot_sample_generator,
+    torch_reference=torch.nn.functional.one_hot,
+    dtypes=(datatypes.int64,),  # akin to torch.long. F.one_hot expects input LongTensor
+)
+nn_ops.append(one_hot_opinfo)
 
 
 def group_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):

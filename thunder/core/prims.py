@@ -152,6 +152,7 @@ class PrimIDs(Enum):
     SLICE = auto()
     SQUEEZE = auto()
     TRANSPOSE = auto()
+    UNFOLD = auto()
     VIEW = auto()
     # Memory layout prims (Experimental)
     STRIDE_ORDER = auto()
@@ -249,6 +250,7 @@ class PrimIDs(Enum):
     BATCH_NORM = auto()
     # Memory access methods
     ITEM = auto()
+    COPY_ = auto()
 
 
 class OpTags(Enum):
@@ -266,6 +268,7 @@ class OpTags(Enum):
 
 
 # TODO RC1 Document this function and describe the parts of a primitive
+# NOTE: See extend.single_op_executor
 def make_prim(
     id,
     name,
@@ -283,7 +286,7 @@ def make_prim(
         meta=langctx(Languages.PRIMS)(meta),
         id=id,
         is_prim=True,
-        tags=tags,
+        tags=None if tags is None else list(tags),
         python_printer=python_printer,
         python_impl=python_impl,
         _bind_postprocess=_bind_postprocess,
@@ -527,7 +530,7 @@ check_literal_like = make_prim(
 
 def _check_type_meta(x: Any, typ: type, /) -> None:
     # Validates types
-    baseutils.check(typ, type, lambda: f"Expected a type for check_type, but found {typ}")
+    baseutils.check(isinstance(typ, type), lambda: f"Expected a type for check_type, but found {typ}")
     baseutils.check(pytype(x) is typ, lambda: f"Different types for {pytype(x)} and {typ}")
 
 
@@ -973,7 +976,7 @@ def pack_setitem_printer(
 
 
 def pack_setitem_impl(o: Any, key: Any, v: Any) -> None:
-    o[key] = value
+    o[key] = v
     return None
 
 
@@ -3077,6 +3080,26 @@ transpose = make_prim(PrimIDs.TRANSPOSE, "transpose", meta=transpose_meta, tags=
 
 view = make_prim(PrimIDs.VIEW, "view", meta=reshape_meta, tags=(OpTags.SHAPE_OP,))
 
+
+def unfold_meta(a: TensorProxy, /, dim: int, size: int, step: int) -> TensorProxy:
+    dim = utils.canonicalize_dim(a.ndim, dim)
+    max_size = 1 if a.ndim == 0 else a.shape[dim]
+
+    utils.check(
+        size <= max_size, lambda: f"Maximum size for tensor at dimension {dim} is {max_size} but size is {size}"
+    )
+    utils.check(size >= 0, lambda: f"Size is {size} but must be >= 0")
+    utils.check(step > 0, lambda: f"Step is {step} but must be > 0")
+
+    shape = list(a.shape)
+    shape.append(size)
+    shape[dim] = (shape[dim] - size) // step + 1
+
+    return TensorProxy(like=a, shape=shape)
+
+
+unfold = make_prim(PrimIDs.UNFOLD, "unfold", meta=unfold_meta, tags=(OpTags.SHAPE_OP,))
+
 #
 # Memory format prims (Experimental)
 #
@@ -3535,54 +3558,16 @@ def embedding_backward_meta(grad, indices, num_weights, padding_idx, scale_grad_
 embedding_backward = make_prim(PrimIDs.EMBEDDING_BACKWARD, "embedding_backward", meta=embedding_backward_meta)
 
 
-def batch_norm_meta(
-    a: TensorProxy,
-    /,
-    weight: None | TensorProxy,
-    bias: None | TensorProxy,
-    running_mean: None | TensorProxy,
-    running_var: None | TensorProxy,
-    training: bool,
-    momentum: Number,
-    eps: Number,
-) -> tuple[TensorProxy, None | TensorProxy, None | TensorProxy]:
-    # Checks types
-    utils.check_type(a, TensorProxy)
-    utils.check_type(momentum, Number)
-    utils.check_type(eps, Number)
-
-    utils.check(a.ndim >= 2, lambda: f"Input tensor must have at least batch and channel dimensions!")
-    if not training:
-        utils.check(
-            running_mean is not None and running_var is not None,
-            lambda: f"running_mean and running_var must be defined in evaluation mode",
-        )
-
-    num_features = a.shape[1]
-
-    def check_type_device_shape(param, param_name):
-        utils.check_type(param, TensorProxy)
-        utils.check_same_device(a, param)
-        utils.check(
-            param.shape == (num_features,),
-            lambda: f"Expected {param_name}.shape={param.shape} to be {(num_features,)}!",
-        )
-
-    if weight is not None:
-        check_type_device_shape(weight, "weight")
-        utils.check_same_dtype(a, weight)
-    if bias is not None:
-        check_type_device_shape(bias, "bias")
-        utils.check_same_dtype(a, bias)
-    if running_mean is not None:
-        check_type_device_shape(running_mean, "running_mean")
-    if running_var is not None:
-        check_type_device_shape(running_var, "running_var")
-    return (
-        TensorProxy(like=a),
-        (TensorProxy(like=a, shape=(num_features,)) if running_mean is None else TensorProxy(like=running_mean)),
-        (TensorProxy(like=a, shape=(num_features,)) if running_var is None else TensorProxy(like=running_var)),
-    )
+def copy__meta(
+    copy_from: TensorProxy,
+    copy_to: TensorProxy,
+):
+    utils.check_type(copy_from, TensorProxy)
+    utils.check_type(copy_to, TensorProxy)
+    utils.check_same_device(copy_from, copy_to)
+    utils.check_same_shape(copy_from, copy_to)
+    utils.check_same_dtype(copy_from, copy_to)
+    return TensorProxy(like=copy_to)
 
 
-batch_norm = make_prim(PrimIDs.BATCH_NORM, "batch_norm", meta=batch_norm_meta, tags=(OpTags.REDUCTION_OP,))
+copy_ = make_prim(PrimIDs.COPY_, "copy_", meta=copy__meta, tags=(OpTags.DONT_DCE,))

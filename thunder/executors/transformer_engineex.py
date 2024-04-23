@@ -21,7 +21,9 @@ from thunder.core.proxies import TensorProxy, CollectionProxy
 from thunder.core.symbol import Symbol
 from thunder.core.vjp_utils import disable_caching_split_forward_and_backward
 from thunder.extend import OperatorExecutor, register_executor
+from thunder.core.compile_data import get_compile_option
 from thunder.core.langctxs import langctx, Languages
+
 
 __all__ = [
     "transformer_engine_ex",
@@ -39,6 +41,8 @@ TE_VERSION_1_3_PLUS: bool = False
 te: None | Any = None
 if TE_AVAILABLE:
     try:
+        import transformer_engine.pytorch as te
+        from transformer_engine.common import recipe
         from transformer_engine.pytorch.module.linear import _Linear
         from transformer_engine.pytorch.module.base import TransformerEngineBaseModule
         from transformer_engine.pytorch.fp8 import FP8GlobalStateManager
@@ -76,7 +80,8 @@ if not TE_AVAILABLE:
 # Traced Program:
 #
 # @torch.no_grad()
-# @no_autocast()
+# @no_autocast
+# @transformer_engine.fp8_autocast(fp8_recipe=te_fp8_recipe)
 # def func(a, b, d):
 #   # a: "cuda:0 bf16[16, 32]"
 #   # b: "cuda:0 bf16[64, 32]"
@@ -332,6 +337,12 @@ te_functional_linear_backward = transformer_engine_ex.register_operator(
 
 LINEAR_CALLS_COUNTER = 0
 
+if TE_AVAILABLE:
+    _DEFAULT_RECIPE = recipe.DelayedScaling()
+
+IMPORT_CTX_TE_KEY = "transformer_engine"
+FP8_RECIPE_KEY = "te_fp8_recipe"
+
 
 # Creates a new stateful operator for each invocation of `linear`.
 def _create_fp8_linear_bound_symbol(
@@ -341,10 +352,16 @@ def _create_fp8_linear_bound_symbol(
     global LINEAR_CALLS_COUNTER
     name = f"te_linear_{LINEAR_CALLS_COUNTER}"
 
+    desc = "transformer_engine_ex: Optional fp8_recipe for `fp8_autocast` context manager."
+    if (fp8_recipe := get_compile_option(FP8_RECIPE_KEY, desc)) is None:
+        fp8_recipe = _DEFAULT_RECIPE
+
     def bind_postprocess(bsym: BoundSymbol) -> None:
         # This dict is then used by trace.python_ctx() to resolve the
         # BoundSymbol to the actual function.
         bsym._call_ctx: dict[str, Callable] = {name: linear_fn}
+        bsym._import_ctx: dict[str, Any] = {IMPORT_CTX_TE_KEY: te}
+        bsym._object_ctx: dict[str, Any] = {FP8_RECIPE_KEY: fp8_recipe}
 
     meta_fn = make_te_linear_meta(is_grad_enabled=is_grad_enabled)
     sym = Symbol(
@@ -432,3 +449,105 @@ transformer_engine_ex.register_implementation(
     execution_transform=_linear_transform,
     grad_transform=_linear_grad,
 )
+
+
+def _is_te_linear_enabled(import_ctx, object_ctx):
+    # These keys are present in `import_ctx` and `object_ctx` only if
+    # we actually replaced a linear call with a new TE operator.
+    is_te_exec_enabled = IMPORT_CTX_TE_KEY in import_ctx and FP8_RECIPE_KEY in object_ctx
+    return is_te_exec_enabled
+
+
+TE_CTX_STR = f"@{IMPORT_CTX_TE_KEY}.fp8_autocast(fp8_recipe={FP8_RECIPE_KEY})"
+
+
+def _get_te_wrapper_string():
+    return TE_CTX_STR
+
+
+def _rearrange_transformer_engine_linear(fw_extrace, bw_extrace):
+    """
+    Rearrange the TransformerEngine linear symbols `te_linear_*` in forward trace
+    so that we match the constraint that first FP8 module being called
+    in forward is the last FP8 module whose gradient is computed in backward pass.
+
+    Implementation:
+    From the backward trace, we find the `ctx_name` of the last `te_functional_linear_backward`.
+    Then we iterate the forward trace and find the `te_linear` which produces the `ctx_name`
+    found above. We move this `te_linear` above the first `te_linear` currently in the fwd_trace.
+
+    ..note::
+        We could have also done it such that we find the `ctx_name` for first `te_linear` in forward
+        and re-order the backward pass.
+        However, on a real model llama2.c example, I noticed that FusionExecutor can create pseudo dependency.
+        See the example below.
+
+    Details:
+    TransformerEngine takes care of syncing FP8 meta-data
+    in distributed setting (if world_size > 1). The way this is handled
+    is by marking the first FP8 module in forward pass. In the backward pass
+    of that module (last in FP8 module in backward), it collects all the FP8 state,
+    this state is concatenated, then synced acorss the processes and then split back
+    into individual state again.
+    Implementation of the above is in `prepare_forward` and `_prepare_backward` in
+    `transformer_engine/pytorch/module/base.py`
+    This means that in thunder, we can't reorder the first `te_linear` or the last backward.
+    However, FusionExecutors may reorder them.
+    This function takes care of rearranging such that adhere to this requirement.
+    Implementation of `prepare_forward`: https://github.com/NVIDIA/TransformerEngine/blob/2d0ab27f/transformer_engine/pytorch/module/base.py#L501
+    Implementation of `_prepare_backward : https://github.com/NVIDIA/TransformerEngine/blob/2d0ab27f/transformer_engine/pytorch/module/base.py#L67
+
+    Example:
+
+    Forward Trace Snippet:
+    [t22, t26] = nvFusion0(t16, t25)
+    (t77, ctx_te_2) = te_linear_2(t26, layers_0_attention_wv_weight, None)
+    (t53, ctx_te_1) = te_linear_1(t26, layers_0_attention_wk_weight, None)
+    (t29, ctx_te_0) = te_linear_0(t26, layers_0_attention_wq_weight, None)
+
+    Backward Trace Snippet (without the `del` for brevity):
+    NOTE: t6822 is part of nvFusion35 which also produces input for te_functional_linear_backward below it.
+    (t6821, t6822, _) = te_functional_linear_backward(t6819, (i443, i444, i445), (i446, i447), None, ctx_te_2)
+    NOTE: `nvFusion35` just does `true_divide(t6822, 2)` and returns it for synchronization.
+          but it also picks up a few operations which process the input for other `te_functional_linear_backward` below.
+    [t6823, t6857, t6900] = nvFusion35(f468, f476, i293, i294, i295, i296, i297, i432, i433, i434, i435, i436, t36, t38, t6810, t6812, t6822)
+    t6901 = torch.reshape(t6900, (i186, i187, i188, i189))  # t6901: "cuda:0 f32[128, 256, 6, 48]"
+    t6902 = torch.reshape(t6901, (i178, i179, i180))  # t6902: "cuda:0 f32[128, 256, 288]"
+    t6858 = torch.reshape(t6857, (i325, i326, i327, i328))  # t6858: "cuda:0 f32[128, 256, 6, 48]"
+    t6859 = torch.reshape(t6858, (i317, i318, i319))  # t6859: "cuda:0 f32[128, 256, 288]"
+    (t6904, t6905, _) = te_functional_linear_backward(t6902, (i165, i166, i167), (i168, i169), None, ctx_te_0)
+    (t6861, t6862, _) = te_functional_linear_backward(t6859, (i304, i305, i306), (i307, i308), None, ctx_te_1)
+    """
+    # Get the ctx name for the last `te_functional_linear_backward`.
+    bwd_bsym_ctx = None
+    for _, bsym in enumerate(reversed(bw_extrace.bound_symbols)):
+        if bsym.sym.id == te_functional_linear_backward.id:
+            bwd_bsym_ctx = bsym.args[-1].name
+            break
+
+    first_sym_idx = None
+    detected_first_sym_idx = None
+    # Find the first `te_linear` in forward trace
+    # and the position of `te_linear` which has the last `ctx_name`
+    # in backward.
+    for idx, bsym in enumerate(fw_extrace.bound_symbols):
+        # Forward symbols are generated on the fly so we don't
+        # have access here.
+        # Instead we check for the executor field.
+        if bsym.sym.executor == transformer_engine_ex:
+            # Sanity check.
+            assert "te_linear" in bsym.sym.name
+            if first_sym_idx is None:
+                first_sym_idx = idx
+            if bsym.output[-1].name == bwd_bsym_ctx:
+                detected_first_sym_idx = idx
+                break
+
+    # If the first `te_linear` is not same as that one that should be
+    # we move it to be the first one.
+    if detected_first_sym_idx != first_sym_idx:
+        # Move the symbol to be the first `te_linear`.
+        fwd_bsyms = fw_extrace.bound_symbols
+        sym_to_swap = fwd_bsyms[detected_first_sym_idx]
+        del fwd_bsyms[detected_first_sym_idx]
+        fwd_bsyms.insert(first_sym_idx, sym_to_swap)
