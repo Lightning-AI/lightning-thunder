@@ -1605,16 +1605,31 @@ def nan_to_num(
         # NOTE PyTorch returns a.clone()
         return a
 
+    a_dtype_max = torch.finfo(to_torch_dtype(a.dtype)).max
+    a_dtype_min = torch.finfo(to_torch_dtype(a.dtype)).min
+
     if nan is None:
         nan = 0.0
-
+    elif nan > a_dtype_max:
+        nan = float("inf")
+    elif nan < a_dtype_min:
+        nan = -float("inf")
+    
     if posinf is None:
         posinf = torch.finfo(to_torch_dtype(a.dtype)).max
+    elif posinf > a_dtype_max:
+        posinf = float("inf")
+    elif posinf < a_dtype_min:
+        posinf = -float("inf")
 
     if neginf is None:
         neginf = torch.finfo(to_torch_dtype(a.dtype)).min
+    elif neginf > a_dtype_max:
+        neginf = float("inf")
+    elif neginf < a_dtype_min:
+        neginf = -float("inf")
 
-    result = where(a != a, nan, a)
+    result = where(a != a, float("inf"), a)
     result = where(a == -float("inf"), neginf, result)
     result = where(a == float("inf"), posinf, result)
     return result
