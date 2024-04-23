@@ -13,7 +13,7 @@ from collections.abc import Callable
 import opt_einsum
 
 # Initializes the language context
-from thunder.torch.langctx import register_method, register_property
+from thunder.torch.langctx import register_method, register_property, torchctx
 
 import thunder.clang as clang
 import thunder.core.devices as devices
