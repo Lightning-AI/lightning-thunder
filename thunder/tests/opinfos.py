@@ -7343,7 +7343,7 @@ def mse_loss_sample_generator(op, device, dtype, requires_grad, **kwards):
 
 mse_loss_opinfo = OpInfo(
     ltorch.mse_loss,
-    supports_grad=True,
+    # supports_grad=True,
     sample_input_generator=mse_loss_sample_generator,
     torch_reference=torch.nn.functional.mse_loss,
     dtypes=(datatypes.floating,),

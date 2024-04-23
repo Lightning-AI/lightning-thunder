@@ -3955,29 +3955,29 @@ def mse_loss(
         raise ValueError(f"Reduction argument {reduction} to mse_loss is not supported")
 
 
-@torchsymbol("mse_loss_backward", id="mse_loss_backward", is_prim=True)
-def mse_loss_backward(g, a, /, target, reduction):
-    return TensorProxy(like=g, shape=a.shape)
+# @torchsymbol("mse_loss_backward", id="mse_loss_backward", is_prim=True)
+# def mse_loss_backward(g, a, /, target, reduction):
+#     return TensorProxy(like=g, shape=a.shape)
 
 
-def _mse_loss_grad(
-    a: TensorLike,
-    /,
-    target: TensorLike,
-    size_average: None | Any = None,
-    reduce: None | Any = None,
-    reduction: str = "mean",
-) -> TensorLike:
-    fwd: TensorLike = mse_loss(a, target, size_average, reduce, reduction)
+# def _mse_loss_grad(
+#     a: TensorLike,
+#     /,
+#     target: TensorLike,
+#     size_average: None | Any = None,
+#     reduce: None | Any = None,
+#     reduction: str = "mean",
+# ) -> TensorLike:
+#     fwd: TensorLike = mse_loss(a, target, size_average, reduce, reduction)
 
-    g: TensorLike = get_grad(fwd)
-    a_grad: TensorLike = mse_loss_backward(g, a, target, reduction)
-    put_grad(a, a_grad)
+#     g: TensorLike = get_grad(fwd)
+#     a_grad: TensorLike = mse_loss_backward(g, a, target, reduction)
+#     put_grad(a, a_grad)
 
-    return fwd
+#     return fwd
 
 
-register_grad(mse_loss, _mse_loss_grad)
+# register_grad(mse_loss, _mse_loss_grad)
 
 
 # TODO Add annotations
