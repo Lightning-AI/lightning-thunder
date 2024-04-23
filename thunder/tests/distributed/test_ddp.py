@@ -505,7 +505,7 @@ class CompileDDPTest(DataParallelTestCase):
         #       in the original trace and are inputs to all_gather, the unshard are the outputs fo the corresponding wait
         #       If you fix this to be dynamically discerned, you'll be my hero.
         sharded_param_names = ("t_net1_weight", "t_net2_weight")
-        # t5 and t16 are all-gather'ed t_net1_weight and t_net2_weight, respectively.
+        # t3 and t16 are all-gather'ed t_net1_weight and t_net2_weight, respectively.
         unshard_param_names = ("t3", "t16")
         result_saved_for_bwd = [x.name for x in fwd_trc.bound_symbols[-1].args[1][0]]
         self.assertTrue(all(t not in sharded_param_names for t in result_saved_for_bwd))
