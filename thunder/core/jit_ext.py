@@ -1477,6 +1477,7 @@ def thunder_general_jit(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDG
     else:
         epilogue_trace = None
 
+    # NOTE(jiej): prologue trace is produced here vvv
     pro_to_comp_proxies, pro_to_epi_proxies = unpack_inputs(
         ctx, prologue_trace, pro_to_comp, pro_to_epi, args, kwargs, has_epilogue=epilogue_trace is not None
     )
