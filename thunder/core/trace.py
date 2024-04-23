@@ -51,7 +51,7 @@ class TraceCtx:
         self._is_prologue: bool = is_prologue
 
         self.args = None
-        self.kwargs = None
+        self.kwargs = {}
 
         self.bound_symbols: list[BoundSymbolInterface] = []
         self.scopes = [self.bound_symbols]
