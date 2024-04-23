@@ -44,7 +44,7 @@ This prints::
   from thunder.executors.torchex import no_autocast
 
   @torch.no_grad()
-  @no_autocast()
+  @no_autocast
   def computation(logits, labels, weight):
     # logits: "cuda:0 f32[2048, 50257]"
     # labels: "cuda:0 i64[2048]"
@@ -88,7 +88,7 @@ This prints::
   from thunder.executors.torchex import no_autocast
 
   @torch.no_grad()
-  @no_autocast()
+  @no_autocast
   def computation(logits, labels):
     # logits: "cuda:0 f32[2048, 50257]"
     # labels: "cuda:0 i64[2048]"

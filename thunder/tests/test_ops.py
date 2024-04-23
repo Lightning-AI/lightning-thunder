@@ -84,6 +84,10 @@ def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executo
             lambda a, b: comp(a, b, equal_nan=True),
         )
 
+        # See [NOTE] dynamo reset
+        if any("torchcompile" in ex.name for ex in executor.executors_list()):
+            torch._dynamo.reset()
+
         if result is not None:
             return result
 
