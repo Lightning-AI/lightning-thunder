@@ -975,9 +975,8 @@ def view(a: TensorLike, /, *shape) -> TensorLike:
 
 
 @torchsymbol(torch.broadcast_tensors, is_method=True)
+# now, I am wondering, do I even need this?
 def broadcast_tensors(*inputs):
-    if len(inputs) == 1 and not isinstance(inputs[0], TensorProxy):
-        inputs = inputs[0]
     return list(clang.maybe_broadcast(*inputs, preserve_cpu_scalar_tensors=False))
 
 
@@ -3939,7 +3938,7 @@ def mse_loss(
             "This will likely lead to incorrect results due to broadcasting."
             "Please ensure they have the same size."
         )
-        a, target = broadcast_tensors(a, target)
+        a, target = broadcast_tensors(a, target) # do I need this?
     out = (a - target) ** 2
 
     # maybe add _apply_loss_reduction
