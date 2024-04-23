@@ -1304,8 +1304,7 @@ def _test_ddp_transformer_engine(input_data):
     optim = torch.optim.SGD(thunder_model.parameters())
 
     for _ in range(n_iter):
-        with fp8_autocast():
-            o = jit_model(x).sum()
+        o = jit_model(x).sum()
         o.backward()
         optim.step()
         optim.zero_grad()
@@ -1425,8 +1424,7 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
     sanity_exceptions = []
     try:
         for _ in range(5):
-            with fp8_autocast():
-                out = jit_model(x, y).sum()
+            out = jit_model(x, y).sum()
             out.backward()
 
         fwd_exec_trace = thunder.last_traces(jit_model)[-1]
