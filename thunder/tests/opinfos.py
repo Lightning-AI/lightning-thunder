@@ -7246,6 +7246,8 @@ def mse_loss_sample_generator(op, device, dtype, requires_grad, **kwards):
         ((2, 16), (2, 16)),
         ((7, 18), (7, 18)),
         ((3, 4, 2, 3), (3, 4, 2, 3)),
+        ((3,), (3, 1, 1)),
+        ((3, 1, 2), (2, 2))
     )
 
     reduction_options = ("none", "mean", "sum")
@@ -7268,13 +7270,16 @@ mse_loss_opinfo = OpInfo(
     torch_reference=torch.nn.functional.mse_loss,
     dtypes=(datatypes.floating,),
     test_directives=(
-        # NOTE Torch does not support bf16 mse_loss
+        # NOTE: PyTorch does not support bf16 mse_loss
         DecorateInfo(
             pytest.mark.skip,
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.bfloat16,),
             devicetypes=(devices.DeviceType.CPU,),
         ),
+        # NOTE: currently, mse_loss is encountering the following errors
+        # RuntimeError: "mse_cpu" not implemented for 'BFloat16'
+        # RuntimeError: "mse_backward_cpu_out" not implemented for 'Half'
         DecorateInfo(
             pytest.mark.skip,
             "test_phantom_grad_vs_torch_consistency",
