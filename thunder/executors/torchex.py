@@ -145,16 +145,10 @@ _register_implementation(ltorch.to, checker=_always_executable, execution_transf
 #
 
 
-class no_autocast(ContextDecorator):
-    def __enter__(self, *args, **kwargs):
-        self.was_cuda_enabled = torch.is_autocast_enabled()
-        self.was_cpu_enabled = torch.is_autocast_cpu_enabled()
-        torch.set_autocast_enabled(False)
-        torch.set_autocast_cpu_enabled(False)
-
-    def __exit__(self, exc_type, exc_value, exc_traceback):
-        torch.set_autocast_enabled(self.was_cuda_enabled)
-        torch.set_autocast_cpu_enabled(self.was_cpu_enabled)
+def no_autocast(fn):
+    fn = torch.autocast(device_type="cpu", enabled=False, cache_enabled=False)(fn)
+    fn = torch.autocast(device_type="cuda", enabled=False, cache_enabled=False)(fn)
+    return fn
 
 
 #
