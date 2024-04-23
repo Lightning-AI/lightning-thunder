@@ -2535,7 +2535,7 @@ def nan_to_num_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
     a = make((4, 4), dtype=dtype, requires_grad=requires_grad)
-    if dtype == torch.FloatType or torch.IntType:
+    if dtype == torch.FloatType:
         a = torch.tensor((0, float("nan"), float("inf"), -float("inf")))
     elif dtype == torch.ComplexType:
         a = torch.tensor((complex(0, 0), complex(float("nan"), float("nan")), complex(float("inf"), -float("inf"))))
