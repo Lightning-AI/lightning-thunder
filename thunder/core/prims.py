@@ -976,7 +976,7 @@ def pack_setitem_printer(
 
 
 def pack_setitem_impl(o: Any, key: Any, v: Any) -> None:
-    o[key] = value
+    o[key] = v
     return None
 
 
