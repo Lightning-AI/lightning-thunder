@@ -4421,6 +4421,42 @@ take_along_axis_opinfo = OpInfo(
 shape_ops.append(take_along_axis_opinfo)
 
 
+def gather_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    # torch.gather expects index to be long but not int
+    # Index is not differentiable! Marking requires_grad as False
+    make_index = partial(make_tensor, device=device, dtype=torch.long, requires_grad=False)
+
+    for shape_a, dim, shape_b in take_along_axis_cases:
+        canonicalized_dim = dim if dim >= 0 else dim + len(shape_a)
+        a = make(shape_a)
+        b = make_index(shape_b, low=0, high=shape_a[dim])
+        yield SampleInput(a, index=b, dim=dim)
+
+    # Note that gather doesn't have the broadcast requirement, it only requires
+    # 1. a.shape[i]      >= index.shape[i] for i != dim
+    #
+    # a.shape, dim, index.shape
+    scatter_add_cases = (
+        ((4, 5, 3), 0, (3, 2, 3)),
+        ((4, 5, 3), 1, (3, 5, 2)),
+        ((4, 5, 3), 2, (3, 2, 8)),
+    )
+    for shape_a, dim, shape_b in scatter_add_cases:
+        a = make(shape_a)
+        b = make_index(shape_b, low=0, high=shape_a[dim])
+        yield SampleInput(a, index=b, dim=dim)
+
+
+gather_opinfo = OpInfo(
+    ltorch.gather,
+    supports_grad=True,
+    sample_input_generator=gather_sample_generator,
+    torch_reference=torch.gather,
+)
+shape_ops.append(gather_opinfo)
+
+
 def scatter_add_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
     # torch.scatter_add expects index to be long but not int
