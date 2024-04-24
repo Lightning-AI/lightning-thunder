@@ -219,24 +219,34 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     # backward trace and increases the peak allocated memory
     if getattr(compile_data.fn, "use_fsdp", False):
         assert hasattr(compile_data.fn, "sharding_strategy")
+        assert hasattr(compile_data.fn, "apply_rate_limiting")
+        apply_rate_limiting = compile_data.fn.apply_rate_limiting
         if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO3:
             from thunder.distributed import FSDPBucketingStrategy
             from thunder.distributed.utils import limit_in_flight_allgathers
 
             fw_extrace = sort_waits_for_zero3(fw_extrace)
-            fw_extrace = limit_in_flight_allgathers(
-                fw_extrace,
-                3,
-                compile_data.fn.bucketing_strategy != FSDPBucketingStrategy.NONE,
-            )
+            if apply_rate_limiting:
+                fw_extrace = limit_in_flight_allgathers(
+                    fw_extrace,
+                    3,
+                    compile_data.fn.bucketing_strategy != FSDPBucketingStrategy.NONE,
+                )
             bw_extrace = sort_waits_for_zero3(bw_extrace)
-            bw_extrace = limit_in_flight_allgathers(
-                bw_extrace,
-                3,
-                compile_data.fn.bucketing_strategy != FSDPBucketingStrategy.NONE,
-            )
+            if apply_rate_limiting:
+                bw_extrace = limit_in_flight_allgathers(
+                    bw_extrace,
+                    3,
+                    compile_data.fn.bucketing_strategy != FSDPBucketingStrategy.NONE,
+                )
         if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO2:
             fw_extrace = sort_waits(fw_extrace)
+            if apply_rate_limiting:
+                fw_extrace = limit_in_flight_allgathers(
+                    fw_extrace,
+                    3,
+                    compile_data.fn.bucketing_strategy != FSDPBucketingStrategy.NONE,
+                )
             bw_extrace = sort_waits(bw_extrace)
     if getattr(compile_data.fn, "use_ddp", False):
         bw_extrace = sort_waits(bw_extrace)

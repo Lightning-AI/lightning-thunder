@@ -532,6 +532,7 @@ def fsdp(
     broadcast_from: int | None = None,
     sharding_strategy: FSDPType = FSDPType.ZERO2,
     bucketing_strategy: FSDPBucketingStrategy = FSDPBucketingStrategy.NONE,
+    apply_rate_limiting: bool | None = None,
 ) -> torch.nn.Module:
     """Convert ``model`` into Fully Sharded Data Parallel.
 
@@ -559,6 +560,9 @@ def fsdp(
             from a checkpoint in a single rank.
         sharding_strategy:
         bucketing_strategy:
+        apply_rate_limiting: If :obj:`True`, apply rate limiting to AllGather calls in order to avoid computations
+            waiting for all parameter unsharding. Default is :obj:`None`, meaning rate limiting is applied if ``sharding_strategy`` is
+            FSDPType.ZERO3, but not if FSDPType.ZERO2.
 
      Returns:
         :class:`torch.nn.Module`
@@ -587,6 +591,12 @@ def fsdp(
     model.process_group_for_ddp = process_group
     model.sharding_strategy = sharding_strategy
     model.bucketing_strategy = bucketing_strategy
+    if apply_rate_limiting is None:
+        if sharding_strategy is FSDPType.ZERO3:
+            apply_rate_limiting = True
+        else:
+            apply_rate_limiting = False
+    model.apply_rate_limiting = apply_rate_limiting
 
     # Shard the parameters
     _shard_params(model, process_group, device, broadcast_from)
