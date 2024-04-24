@@ -7366,6 +7366,8 @@ mse_loss_opinfo = OpInfo(
             ),
             devicetypes=(devices.DeviceType.CPU,),
         ),
+        # Sets more permissive atol and rtol precisions for float16 than assert_close's defaults
+        #   (which are 1e-3 and 1e-5)
         DecorateInfo(
             custom_comparator(partial(assert_close, atol=1e-3, rtol=1e-2)),
             executors=("nvfuser",),
