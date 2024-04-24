@@ -80,7 +80,7 @@ if not TE_AVAILABLE:
 # Traced Program:
 #
 # @torch.no_grad()
-# @no_autocast()
+# @no_autocast
 # @transformer_engine.fp8_autocast(fp8_recipe=te_fp8_recipe)
 # def func(a, b, d):
 #   # a: "cuda:0 bf16[16, 32]"

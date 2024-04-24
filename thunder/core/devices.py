@@ -14,6 +14,7 @@ import thunder.core.baseutils as baseutils
 class DeviceType(Enum):
     CPU = auto()
     CUDA = auto()
+    META = auto()
 
 
 all_devicetypes = (DeviceType.CPU, DeviceType.CUDA)
@@ -21,6 +22,7 @@ all_devicetypes = (DeviceType.CPU, DeviceType.CUDA)
 _devicetype_prettyprint_map = {
     DeviceType.CPU: "cpu",
     DeviceType.CUDA: "cuda",
+    DeviceType.META: "meta",
 }
 _inverse_devicetype_prettyprint_map = {v: k for k, v in _devicetype_prettyprint_map.items()}
 
@@ -52,7 +54,7 @@ def _parse_device_info(
         if _index is None:
             _index = 0
     else:
-        # _devicetype is DeviceType.CPU
+        # _devicetype is DeviceType.CPU, .META
         # NOTE That it's not an error to request cpu:1, but we ignore the index
         #   This is distinct from PyTorch, where `cpu:3` will have index 3, even though
         #   all cpu devices refer to the same physical device
@@ -115,11 +117,10 @@ class Device(metaclass=DeviceMeta):
     # NOTE This representation is a valid PyTorch device string, which is currently relied upon when
     #   converting Thunder devices to PyTorch devices
     def __repr__(self) -> str:
-        if self.devicetype == DeviceType.CPU:
-            return devicetype_string(self.devicetype)
-
-        # NOTE self.devicetype == DeviceType.CUDA
-        return f"{devicetype_string(self.devicetype)}:{self.index}"
+        if self.devicetype == DeviceType.CUDA:
+            return f"{devicetype_string(self.devicetype)}:{self.index}"
+        # note: self.devicetype == DeviceType.CPU, .META
+        return devicetype_string(self.devicetype)
 
     # NOTE Because devices are singleton object, this has the luxury of using "is"
     def __eq__(self, other: Device) -> bool:
@@ -151,6 +152,9 @@ def _device_from_string_helper(devicestr: str) -> tuple[DeviceType, None | int]:
     if devicestr == "cuda":
         return DeviceType.CUDA, None
 
+    if devicestr == "meta":
+        return DeviceType.META, None
+
     devicetype, idx_str = devicestr.split(":")
     idx = int(idx_str)
 
@@ -161,8 +165,8 @@ def _device_from_string_helper(devicestr: str) -> tuple[DeviceType, None | int]:
 def device_from_string(devicestr: str) -> Device:
     devicetype, deviceno = _device_from_string_helper(devicestr)
 
-    if devicetype is DeviceType.CPU:
-        return cpu
+    if devicetype is not DeviceType.CUDA:
+        deviceno = None
 
     return Device(devicetype, deviceno)
 

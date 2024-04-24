@@ -1454,7 +1454,7 @@ def test_match_statement(jit):
             case _:
                 assert False
 
-    jfoo = jit(foo)
+    jfoo = jit(foo, record_history=True)
     assert foo() == 3
     assert jfoo() == 3
     assert any(i.opname == "MATCH_KEYS" for i in last_interpreted_instructions(jfoo))
@@ -1472,7 +1472,7 @@ def test_match_statement(jit):
             case _:
                 assert False
 
-    jbar = jit(bar)
+    jbar = jit(bar, record_history=True)
     assert bar() == 3
     assert jbar() == 3
     assert any(i.opname == "MATCH_SEQUENCE" for i in last_interpreted_instructions(jbar))
@@ -1498,7 +1498,7 @@ def test_class_match_statement(jit):
             case _:
                 assert False
 
-    jfoo = jit(foo)
+    jfoo = jit(foo, record_history=True)
     assert foo() == 3
     assert jfoo() == 3
     assert any(i.opname == "MATCH_CLASS" for i in last_interpreted_instructions(jfoo))
@@ -2734,7 +2734,7 @@ def foo():
     print('Reset.')
 """
         )
-        smt("jfoo = interpret(foo)")
+        smt("jfoo = interpret(foo, record_history=True)")
         smt("jfoo()")
         smt("assert any(i.opname == 'PRINT_EXPR' for i in last_interpreted_instructions(jfoo))")
 
@@ -2750,7 +2750,7 @@ def test_load_build_class(jit):
 
         return C, C().bar
 
-    jfoo = jit(foo)
+    jfoo = jit(foo, record_history=True)
 
     cp, cb = foo()
     jp, jb = jfoo()
@@ -2949,7 +2949,7 @@ def test_print_log_types(jit):
     def foo():
         return 5
 
-    jfoo = jit(foo)
+    jfoo = jit(foo, record_history=True)
     jfoo()
 
     log = last_interpreter_log(jfoo)
@@ -3039,7 +3039,7 @@ def test_module_hooks(jit):
 
         x = torch.randn(3, 4)
 
-        jm = jit(m)
+        jm = jit(m, record_history=True)
         y = jm(x)
         y.sum().backward()
 
@@ -3049,7 +3049,7 @@ def test_module_hooks(jit):
             if (not isinstance(item, dict)) or (item["kind"] != "Opaque"):
                 continue
             _fn = item["fn"]
-            if _fn == torch._C._FunctionBase.register_hook:  # type: ignore
+            if _fn == torch._C._FunctionBase.register_hook.__qualname__:  # type: ignore
                 found = True
                 break
 
@@ -3060,7 +3060,7 @@ def test_module_hooks(jit):
         with redirect_stdout(buf):
             print_interpreter_log(last_interpreter_log(jm), use_colors=False, indent=False)
 
-        match_against = "Opaque call to <method 'register_hook' of 'torch._C._FunctionBase' objects> with name _FunctionBase.register_hook"
+        match_against = "Opaque call to _FunctionBase.register_hook()"
         assert match_against in buf.getvalue()
         buf.close()
 
