@@ -119,6 +119,8 @@ class PrimIDs(Enum):
     UNPACK_TUPLE = auto()
     UNPACK_LIST = auto()
     UNPACK_DICT_KEY = auto()
+    UNPACK_PARAMETER = auto()
+    UNPACK_BUFFER = auto()
     CONSTRUCT_TUPLE = auto()
     PACK_SETITEM = auto()
     # TODO: UNPACK_SET
@@ -948,6 +950,88 @@ unpack_attr = make_prim(
 )
 
 
+# NOTE UNPACK_PARAMETER is intended only to be bound to directly, and not called
+def unpack_parameter_meta(o: Any, key: str) -> Any:
+    raise NotImplementedError
+
+
+def unpack_parameter_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(arg_printables) == 2,
+        lambda: f"Expected two arguments for unpack_attr but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for unpack_attr but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    # Converts printables to strings
+    origin, key = arg_printables
+    origin_str = codeutils.prettyprint(origin)
+    keystr = codeutils.prettyprint(key)
+    outstr = codeutils.prettyprint(out_printables, with_type=True, literals_as_underscores=True)
+
+    return f"{outstr} = {origin_str}.get_parameter({keystr})"
+
+
+def unpack_parameter_impl(o: Any, key: str) -> Any:
+    return o.get_parameter(key)
+
+
+unpack_parameter = make_prim(
+    PrimIDs.UNPACK_PARAMETER,
+    "unpack_parameter",
+    meta=unpack_parameter_meta,
+    python_printer=unpack_parameter_printer,
+    python_impl=unpack_parameter_impl,
+)
+
+
+# NOTE UNPACK_BUFFER is intended only to be bound to directly, and not called
+def unpack_buffer_meta(o: Any, key: str) -> Any:
+    raise NotImplementedError
+
+
+def unpack_buffer_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(arg_printables) == 2,
+        lambda: f"Expected two arguments for unpack_attr but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for unpack_attr but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    # Converts printables to strings
+    origin, key = arg_printables
+    origin_str = codeutils.prettyprint(origin)
+    keystr = codeutils.prettyprint(key)
+    outstr = codeutils.prettyprint(out_printables, with_type=True, literals_as_underscores=True)
+
+    return f"{outstr} = {origin_str}.get_buffer({keystr})"
+
+
+def unpack_buffer_impl(o: Any, key: str) -> Any:
+    return o.get_buffer(key)
+
+
+unpack_buffer = make_prim(
+    PrimIDs.UNPACK_BUFFER,
+    "unpack_buffer",
+    meta=unpack_buffer_meta,
+    python_printer=unpack_buffer_printer,
+    python_impl=unpack_buffer_impl,
+)
+
+
 # NOTE PACK_SETITEM is intended only to be bound to directly, and not called
 def pack_setitem_meta(o: Any, key: Any, value: Any) -> Any:
     raise NotImplementedError
@@ -976,7 +1060,7 @@ def pack_setitem_printer(
 
 
 def pack_setitem_impl(o: Any, key: Any, v: Any) -> None:
-    o[key] = value
+    o[key] = v
     return None
 
 
