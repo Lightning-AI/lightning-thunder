@@ -820,7 +820,7 @@ def _gather_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> TensorPro
     fwd = prims.gather(a, index, dim)
 
     g = get_grad(fwd)
-    # NOTE Intentionally not calling zeros_like to avoid preserving a
+    # NOTE Intentionally not calling zeros_like to avoid preserving TensorProxy a.
     # TODO Update to call ltorch.zeros
     zeros = prims.full(a.shape, fill_value=0, device=a.device, dtype=a.dtype)
     a_grad = prims.scatter_add(zeros, index, g, dim)
@@ -837,7 +837,7 @@ def _take_along_axis_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> 
     fwd = prims.take_along_axis(a, index, dim)
 
     g = get_grad(fwd)
-    # NOTE Intentionally not calling zeros_like to avoid preserving a
+    # NOTE Intentionally not calling zeros_like to avoid preserving TensorProxy a.
     # TODO Update to call ltorch.zeros
     zeros = prims.full(a.shape, fill_value=0, device=a.device, dtype=a.dtype)
     a_grad = prims.scatter_add(zeros, index, g, dim)
