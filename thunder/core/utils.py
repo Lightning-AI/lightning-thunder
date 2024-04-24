@@ -635,10 +635,6 @@ def check_no_duplicates(dims: Sequence):
 #
 
 
-def is_cpu_scalar_tensor(a: TensorProxy) -> bool:
-    return a.ndim == 0 and a.device.devicetype == devices.DeviceType.CPU
-
-
 # TODO: improve device handling by canonicalizing devices and expressing them per langctx
 # TODO: should the comparison between devices be ==?
 def check_same_device(*args):

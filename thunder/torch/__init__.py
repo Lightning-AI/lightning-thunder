@@ -4021,11 +4021,6 @@ def mse_loss(
         raise ValueError(f"Reduction argument {reduction} to mse_loss is not supported")
 
 
-# @torchsymbol("mse_loss_backward", id="mse_loss_backward", is_prim=True)
-# def mse_loss_backward(g, a, /, target, reduction):
-#     return TensorProxy(like=g, shape=a.shape)
-
-
 # TODO Add annotations
 # NOTE The scale parameter is kwarg-only in PyTorch
 @torchsymbol(torch.nn.functional.scaled_dot_product_attention)
