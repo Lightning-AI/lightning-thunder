@@ -886,7 +886,7 @@ class CompileDDPTest(DataParallelTestCase):
         product(
             tuple(executors_map.keys()),
             (FSDPBucketingStrategy.NONE, FSDPBucketingStrategy.LAYER, FSDPBucketingStrategy.BLOCK),
-            (FSDPType.ZERO3,),
+            (FSDPType.ZERO3, FSDPType.ZERO2),
         ),
         name_fn=lambda executor, bucketing_strategy, fsdptype: (
             f"executor_{executor}_bucketing_{str(bucketing_strategy).split('.')[1].lower()}_{(str(fsdptype).lower().split('.')[1])}"
@@ -921,7 +921,14 @@ class CompileDDPTest(DataParallelTestCase):
         config = GPTConfig(dropout=0)
         m = Block(config).to(device=device)
         cm = thunder.jit(
-            fsdp(m, device=device, broadcast_from=0, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype),
+            fsdp(
+                m,
+                device=device,
+                broadcast_from=0,
+                bucketing_strategy=bucketing_strategy,
+                sharding_strategy=fsdptype,
+                apply_rate_limiting=True,
+            ),
             executors=executors_map[executor].executors_list(),
         )
         x = torch.ones((2, config.block_size, config.n_embd), device=device)
@@ -938,9 +945,10 @@ class CompileDDPTest(DataParallelTestCase):
         for i in range(1, 12):
             aft_trc = limit_in_flight_allgathers(fwd_trc, i, is_bucketing)
             check_inflight_allgather_number(aft_trc, i, is_bucketing)
-        for i in range(1, 6):
-            aft_trc = limit_in_flight_allgathers(bwd_trc, i, is_bucketing)
-            check_inflight_allgather_number(aft_trc, i, is_bucketing)
+        if fsdptype is FSDPType.ZERO3:
+            for i in range(1, 6):
+                aft_trc = limit_in_flight_allgathers(bwd_trc, i, is_bucketing)
+                check_inflight_allgather_number(aft_trc, i, is_bucketing)
 
     def test_ddp_model_as_argument(self):
         # Sanity test to make sure passing model as argument to
