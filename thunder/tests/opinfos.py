@@ -2531,6 +2531,82 @@ where_opinfo = OpInfo(
 conditional_and_mask_ops.append(where_opinfo)
 
 
+def nan_to_num_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    a = make((4, 4), dtype=dtype, requires_grad=requires_grad)
+    double_max = torch.finfo(torch.float64).max
+    double_min = torch.finfo(torch.float64).min
+    nan = float("nan")
+    inf = float("inf")
+    if dtype.is_floating_point:
+        a = torch.tensor((0, nan, inf, -inf))
+    elif dtype.is_complex:
+        a = torch.tensor(
+            (
+                complex(0, 0),
+                complex(nan, nan),
+                complex(inf, -inf),
+                complex(nan, 0),
+                complex(nan, inf),
+                complex(inf, 0),
+                complex(0, inf),
+                complex(-inf, 0),
+                complex(nan, 5),
+                complex(inf, 3),
+            )
+        )
+    # input tensor, nan, posinf, neginf
+    cases = (
+        (a, None, None, None),
+        (a, None, 1.0, None),
+        (a, None, None, 1.0),
+        (a, None, 1.0, 0.0),
+        (a, 1, None, None),
+        (a, 1, 1.0, None),
+        (a, 1, None, 0.0),
+        (a, 1, 1.0, 0.0),
+        (a, None, double_max, 0.0),
+        (a, 1, double_min, 0.0),
+        (a, None, 1.0, double_min),
+        (a, 1, 1.0, double_max),
+        (a, double_max, None, double_max),
+        (a, double_min, double_max, None),
+    )
+
+    for a, nan, posinf, neginf in cases:
+        yield SampleInput(a, nan, posinf, neginf)
+
+
+def nan_to_num_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+    err_msg = "out is not None which is currently unsupported"
+    yield (
+        SampleInput(
+            make(
+                5,
+            ),
+            None,
+            None,
+            None,
+            make(
+                5,
+            ),
+        ),
+        NotImplementedError,
+        err_msg,
+    )
+
+
+nan_to_num_opinfo = OpInfo(
+    ltorch.nan_to_num,
+    sample_input_generator=nan_to_num_sample_generator,
+    error_input_generator=nan_to_num_error_generator,
+    torch_reference=torch.nan_to_num,
+)
+conditional_and_mask_ops.append(nan_to_num_opinfo)
+
+
 def clamp_sample_generator(op, device, dtype, requires_grad, **kwargs):
     cases = (
         ((5,), (5,), (5,)),
