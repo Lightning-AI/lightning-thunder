@@ -649,3 +649,52 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
     new_fw_trace = update_fusion_call_ctx(new_fw_trace)
     new_bw_trace = update_fusion_call_ctx(new_bw_trace)
     return new_fw_trace, new_bw_trace
+
+
+def replace_uniform(trace: TraceCtx) -> TraceCtx:
+    """For better rematerialization, replace the uniform operator with the stateless uniform_philox operator and manually update the RNG state."""
+    start_time_ns = time.time_ns()
+    from thunder.core.trace import VariableInterface
+    from thunder.core.proxies import Proxy
+    from thunder.core.devices import Device
+    from thunder.core.transforms import VISIT_TYPE, visitor_transform
+
+    swapmap: dict[VariableInterface, Proxy] = {}
+    prev_state: dict[Device, Proxy] = {}
+
+    def visit_(bsym: BoundSymbolInterface) -> VISIT_TYPE:
+        if bsym.sym.id == prims.PrimIDs.UNIFORM:
+            dev = bsym.kwargs["device"]
+            if dev not in prev_state:
+                rng_state = prims.get_rng_state(None, dev)
+                prev_state[dev] = rng_state
+            else:
+                rng_state = prims.get_rng_state(prev_state[dev], dev)
+            seed, offset = prims.unpack_rng_state(rng_state)
+            out = prims.uniform_philox(*bsym.args, **bsym.kwargs, seed=seed, offset=offset)
+            advance_offset = 4
+            new_offset = prims.add(offset, advance_offset)
+            new_state = prims.pack_rng_state(seed, new_offset)
+            new_state_1 = prims.set_rng_state(new_state, dev)
+            new_vo = variableify(out)
+            swapmap[new_vo] = bsym.output
+            prev_state[dev] = new_state_1
+            return VISIT_TYPE.REPLACE
+        return VISIT_TYPE.NO_OP
+
+    new_trace = visitor_transform(trace, visit_)
+
+    bound_symbols: list[BoundSymbolInterface] = []
+    for bsym in new_trace.bound_symbols:
+        nbsym: BoundSymbolInterface = bsym.from_bsym_swap_proxies(swapmap)
+        bound_symbols.append(nbsym)
+
+    new_trace.bound_symbols = bound_symbols
+
+    end_time_ns = time.time_ns()
+    elapsed_time_ns = end_time_ns - start_time_ns
+    elapsed_time_millis = elapsed_time_ns // 1000000
+    new_trace.set_provenance(
+        TraceProvenance(f"Transform for replace uniform (took {elapsed_time_millis} milliseconds)")
+    )
+    return new_trace
