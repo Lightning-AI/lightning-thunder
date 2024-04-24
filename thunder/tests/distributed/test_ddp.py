@@ -1519,8 +1519,7 @@ def _test_fsdp_transformer_engine(input_data):
         optim = torch.optim.SGD(thunder_model.parameters())
 
         for _ in range(n_iter):
-            with fp8_autocast():
-                o = jit_model(x).sum()
+            o = jit_model(x).sum()
             o.backward()
             optim.step()
             optim.zero_grad()
@@ -1696,8 +1695,10 @@ def test_ddp_transformer_engine_llama_sanity(executor, devices, dtype):
         ),
         pytest.mark.skipif(not TE_AVAILABLE, reason="TransformerEngine is not installed."),
         pytest.mark.skipif(not is_fp8_supported, reason=fp8_support_reason),
-        # NOTE: Setting `NVTE_TORCH_COMPILE`
-        unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}, clear=True),
+        # See NOTE: Setting `NVTE_TORCH_COMPILE`
+        # NOTE: We don't pass `clear=True` to `unittest.mock.patch.dict` as that may clear paths
+        # from environment leading to picking up of incorrect dependencies in the spawned process.
+        unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}),
     ),
 )
 @ddp_wrapper("test_fsdp_transformer_engine", _test_fsdp_transformer_engine)
