@@ -121,3 +121,40 @@ def test_batch_norm_running_stats(executor, device, dtype):
     assert_close(net.state_dict()["dense1_bn.running_mean"], torch_net.state_dict()["dense1_bn.running_mean"])
     assert_close(net.state_dict()["dense1_bn.running_var"], torch_net.state_dict()["dense1_bn.running_var"])
     assert_close(x.grad, x1.grad)
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_inplace_copy_sanity_check(executor, device, dtype):
+    def func1(x, y):
+        z = x * y
+        x = thunder.core.prims.copy_(z, x)
+        return x + y
+
+    def func2(x, y):
+        z = x * y
+        thunder.core.prims.copy_(z, x)
+        thunder.core.prims.copy_(y, x)
+        return x
+
+    def func3(x, y):
+        z = x * y
+        thunder.core.prims.copy_(z, x)
+        thunder.core.prims.copy_(x, y)
+        return y
+
+    def func4(x, y):
+        z = x * y
+        o = thunder.core.prims.copy_(z, x)
+        thunder.core.prims.copy_(o, y)
+        return y
+
+
+    import pytest
+    for foo in (func1, func2, func3, func4):
+        traced_foo = executor.make_callable(foo)
+
+        tdtype = ttorch.to_torch_dtype(dtype)
+        a = make_tensor((4, 4), device=device, dtype=tdtype)
+        b = make_tensor((4, 4), device=device, dtype=tdtype)
+        with pytest.raises(NotImplementedError, match=r"\(the 'copy_to' argument of 'prims.copy_'\) as input, which is not supported$"):
+            traced_foo(a, b)

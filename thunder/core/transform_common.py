@@ -33,6 +33,37 @@ def _remove_noop_subsymbols(bsym: BoundSymbol) -> None:
     bsym.subsymbols = nsbsyms
 
 
+def _inplace_copy_sanity_check(extrace: Trace):
+    """Make sure that the copy_to argument of prims.copy_ is not used as input for any of its subsequent operators, except for the Return and Del operators."""
+    from thunder.core.trace import VariableInterface
+    inplace_copy_symbol_id = ("copy_", prims.PrimIDs.COPY_)
+    symbol_id_skip_list = (prims.PrimIDs.RETURN, prims.PrimIDs.DEL)
+    inplace_copy_to_arg: set[VariableInterface] = set()
+
+    def check_symbol(bsym):
+        if bsym.sym.id in symbol_id_skip_list:
+            return
+        elif bsym.sym.is_fusion:
+            for subbsym in bsym.subsymbols:
+                check_symbol(subbsym)
+        else:
+            for input in bsym.flat_proxy_args:
+                vinput = variableify(input)
+                if vinput in inplace_copy_to_arg:
+                    raise NotImplementedError(f"{bsym} trying to use {input} (the 'copy_to' argument of 'prims.copy_') as input, which is not supported")
+            if bsym.sym.id in inplace_copy_symbol_id:
+                copy_to_arg = bsym.flat_proxy_args[1]
+                vcopy_to_arg = variableify(copy_to_arg)
+                out = bsym.flat_proxy_outs
+                if out:
+                    vcopy_to_arg_ = variableify(out[0])
+                    inplace_copy_to_arg.add(vcopy_to_arg_)
+                inplace_copy_to_arg.add(vcopy_to_arg)
+
+    for bsym in extrace.bound_symbols:
+        check_symbol(bsym)
+
+
 # TODO This calls variableify(), but we could directly construct Variable objects instead, which might slightly
 #   improve performance
 # Runs a Dead Code Elimination (DCE) pass

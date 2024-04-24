@@ -626,6 +626,7 @@ def jit(
                 computation_trc = extraces[-1]
                 cs.last_computation_transformation_stop = time.time_ns()
 
+            thunder.core.transform_common._inplace_copy_sanity_check(computation_trc)
             comp = computation_trc.python_callable()
 
             if backward_trc is not None:
