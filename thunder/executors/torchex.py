@@ -421,12 +421,78 @@ def _tensor_from_sequence_prims_transform(
     return tensor_from_sequence(seq_or_number, device=torch_device, dtype=torch_dtype)
 
 
+def _set_rng_state_prim_impl(new_state: torch.Tensor, device: torch.device | None) -> torch.Tensor:
+    if device is None:
+        device = torch.cuda.current_device()
+    torch.cuda.set_rng_state(new_state, device)
+    return new_state
+
+
+set_rng_state_prim_impl = ex.register_operator(
+    "set_rng_state_prim_impl",
+    meta=prims.set_rng_state.meta,
+    fn=_set_rng_state_prim_impl,
+    tags=(prims.OpTags.RANDOM_OP, prims.OpTags.DONT_DCE),
+)
+
+
+def _get_rng_state_prim_impl(state: torch.Tensor | None, device: torch.device | None) -> torch.Tensor:
+    if state is not None:
+        return state
+    if device is None:
+        device = torch.cuda.current_device()
+    state = torch.cuda.get_rng_state(device)
+    return state
+
+
+get_rng_state_prim_impl = ex.register_operator(
+    "get_rng_state_prim_impl",
+    meta=prims.get_rng_state.meta,
+    fn=_get_rng_state_prim_impl,
+    tags=(prims.OpTags.RANDOM_OP,),
+)
+
+
+def _unpack_rng_state_prim_impl(s: torch.Tensor) -> tuple[int, int]:
+    seed, offset = torch.chunk(s, 2)
+    return seed.view(torch.int64).item(), offset.view(torch.int64).item()
+
+
+unpack_rng_state_prim_impl = ex.register_operator(
+    "unpack_rng_state_prim_impl",
+    meta=prims.unpack_rng_state.meta,
+    fn=_unpack_rng_state_prim_impl,
+    tags=(prims.OpTags.RANDOM_OP,),
+)
+
+
+def _pack_rng_state_prim_impl(seed: int, offset: int) -> torch.Tensor:
+    seed = torch.tensor(seed)
+    offset = torch.tensor(offset)
+    seed_portion = seed.reshape([1]).view(torch.uint8)
+    offset_portion = offset.reshape([1]).view(torch.uint8)
+    new_state = torch.cat([seed_portion, offset_portion])
+    return new_state
+
+
+pack_rng_state_prim_impl = ex.register_operator(
+    "pack_rng_state_prim_impl",
+    meta=prims.pack_rng_state.meta,
+    fn=_pack_rng_state_prim_impl,
+    tags=(prims.OpTags.RANDOM_OP,),
+)
+
+
 _register_implementation(prims.full, checker=_always_executable, execution_transform=_full_transform)
 _register_implementation(prims.iota, checker=_always_executable, execution_transform=_iota_transform)
 _register_implementation(prims.uniform, checker=_always_executable, execution_transform=_uniform_transform)
 _register_implementation(
     prims.uniform_philox, checker=_uniform_philox_prim_checker, execution_transform=_uniform_philox_prim_transform
 )
+_register_implementation(prims.set_rng_state, set_rng_state_prim_impl, checker=_always_executable)
+_register_implementation(prims.get_rng_state, get_rng_state_prim_impl, checker=_always_executable)
+_register_implementation(prims.unpack_rng_state, unpack_rng_state_prim_impl, checker=_always_executable)
+_register_implementation(prims.pack_rng_state, pack_rng_state_prim_impl, checker=_always_executable)
 _register_implementation(prims.randn, checker=_always_executable, execution_transform=_randn_prims_transform)
 _register_implementation(
     prims.tensor_from_sequence, checker=_always_executable, execution_transform=_tensor_from_sequence_prims_transform
