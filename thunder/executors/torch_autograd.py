@@ -218,12 +218,14 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     # communication ops as possible. But it causes the all_gather_prim_impl nodes gathered at the start of
     # backward trace and increases the peak allocated memory
     if getattr(compile_data.fn, "use_fsdp", False):
+        from thunder.distributed import FSDPBucketingStrategy
+        from thunder.distributed.utils import limit_in_flight_allgathers
+
         assert hasattr(compile_data.fn, "sharding_strategy")
         assert hasattr(compile_data.fn, "apply_rate_limiting")
         apply_rate_limiting = compile_data.fn.apply_rate_limiting
+        utils.check_type(apply_rate_limiting, bool)
         if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO3:
-            from thunder.distributed import FSDPBucketingStrategy
-            from thunder.distributed.utils import limit_in_flight_allgathers
 
             fw_extrace = sort_waits_for_zero3(fw_extrace)
             if apply_rate_limiting:
