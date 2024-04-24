@@ -505,8 +505,8 @@ class CompileDDPTest(DataParallelTestCase):
         #       in the original trace and are inputs to all_gather, the unshard are the outputs fo the corresponding wait
         #       If you fix this to be dynamically discerned, you'll be my hero.
         sharded_param_names = ("t_net1_weight", "t_net2_weight")
-        # t5 and t16 are all-gather'ed t_net1_weight and t_net2_weight, respectively.
-        unshard_param_names = ("t5", "t16")
+        # t3 and t16 are all-gather'ed t_net1_weight and t_net2_weight, respectively.
+        unshard_param_names = ("t3", "t16")
         result_saved_for_bwd = [x.name for x in fwd_trc.bound_symbols[-1].args[1][0]]
         self.assertTrue(all(t not in sharded_param_names for t in result_saved_for_bwd))
         self.assertTrue(all(t in result_saved_for_bwd for t in unshard_param_names))
@@ -1502,7 +1502,9 @@ def test_native_fsdp(executor, devices, dtype, bucket_size_in_mb):
         # when running the tests.
         # With the setting below, we use `torch.jit` for this test suite
         # See: https://github.com/NVIDIA/TransformerEngine/blob/a38b291b0d1b04847e8ab1df8550df642a03a27d/transformer_engine/pytorch/jit.py#L11-L19
-        unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}, clear=True),
+        # NOTE: We don't pass `clear=True` to `unittest.mock.patch.dict` as that may clear paths
+        # from environment leading to picking up of incorrect dependencies in the spawned process.
+        unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}),
     ),
 )
 @ddp_wrapper("test_ddp_transformer_engine", _test_ddp_transformer_engine)
@@ -1519,7 +1521,9 @@ def test_ddp_transformer_engine(executor, devices, dtype):
         pytest.mark.skipif(not TE_AVAILABLE, reason="TransformerEngine is not installed."),
         pytest.mark.skipif(not is_fp8_supported, reason=fp8_support_reason),
         # See NOTE: Setting `NVTE_TORCH_COMPILE`
-        unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}, clear=True),
+        # NOTE: We don't pass `clear=True` to `unittest.mock.patch.dict` as that may clear paths
+        # from environment leading to picking up of incorrect dependencies in the spawned process.
+        unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}),
     ),
 )
 @ddp_wrapper("test_ddp_transformer_engine_llama_sanity", _test_ddp_transformer_engine_llama_sanity)

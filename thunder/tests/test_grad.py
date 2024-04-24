@@ -1252,6 +1252,11 @@ def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype,
             lambda a, b, **kwargs: comp(a, b, equal_nan=True, **kwargs),
             op.singularity_fn,
         )
+
+        # See [NOTE] dynamo reset
+        if any("torchcompile" in ex.name for ex in executor.executors_list()):
+            torch._dynamo.reset()
+
         if result is not None:
             return result
 
@@ -1464,3 +1469,41 @@ def test_too_few_results_from_backward():
         fw_out = cfunc(a, b)
 
     thunder.extend.deregister_executor(myex)
+
+
+def test_make_forward_backward_symbol_caching_with_executor():
+    # See issue : https://github.com/Lightning-AI/lightning-thunder/issues/230
+    ex_1 = thunder.extend.OperatorExecutor("ex_1")
+
+    def sin_meta(a):
+        return thunder.TensorProxy(like=a)
+
+    call_cnt = 0
+
+    def sin_impl(a):
+        nonlocal call_cnt
+        call_cnt += 1
+        if call_cnt > 1:
+            raise RuntimeError("This symbol shouldn't have been called more than once.")
+        return torch.sin(a)
+
+    ex_1_sin = ex_1.register_operator("ex_1_sin", meta=sin_meta, fn=sin_impl)
+
+    def ex_1_sin_grad(a):
+        c = ex_1_sin(a)
+        g = get_grad(c)
+        put_grad(a, g * thunder.torch.cos(a))
+        return c
+
+    ex_1.register_implementation(thunder.prims.sin, ex_1_sin, grad_transform=ex_1_sin_grad)
+
+    def foo(a):
+        return thunder.prims.sin(a)
+
+    a = torch.randn(3, 3, requires_grad=True)
+
+    # This should call the implementation from ex_1
+    thunder.jit(foo, executors=[ex_1])(a)
+
+    # This should call the core implementation.
+    thunder.jit(foo)(a)
