@@ -91,3 +91,105 @@ def test_uniform_philox_with_rng_state_prims(executor, device: str, dtype: dtype
         assert_close(state1, state2)
         assert_close(uniform_o1, uniform_philox_o1)
         assert_close(uniform_o2, uniform_philox_o2)
+
+
+@instantiate(
+    dtypes=(dtypes.float32, dtypes.float16, dtypes.float64),
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(nvFuserExecutor,),
+)
+def test_rng_state_uniform_philox_reproducibility(executor, device: str, dtype: dtypes.dtype):
+    import torch
+
+    def func(a):
+        b = ltorch.uniform_like(a, device=a.device, dtype=a.dtype)
+        d = torch.nn.functional.dropout(a, p=0.5)
+        c = ltorch.uniform_like(a, device=a.device, dtype=a.dtype)
+        return c * b * a * d
+
+    dev = devices.to_torch_device(device)
+    cuda_generator = torch.cuda.default_generators[dev.index]
+    a = torch.randn(2, 2, device=dev, dtype=dtypes.to_torch_dtype(dtype), requires_grad=True)
+    a1 = a.detach().clone()
+    a1.requires_grad_()
+
+    jfunc = thunder.jit(func, executors_list=executor.executors_list())
+
+    with torch.random.fork_rng(devices=(dev,)):
+        torch.cuda.manual_seed(20)
+        expects = []
+        for _ in range(4):
+            out = jfunc(a)
+            out.sum().backward()
+            expects.append(out)
+            expects.append(a.grad)
+
+        results = []
+        torch.cuda.manual_seed(20)
+        for _ in range(4):
+            out = jfunc(a1)
+            out.sum().backward()
+            results.append(out)
+            results.append(a1.grad)
+
+    for expected, result in zip(expects, results):
+        assert_close(expected, result)
+
+
+@instantiate(
+    dtypes=(dtypes.float32, dtypes.float16, dtypes.float64),
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(TorchExecutor,),
+)
+def test_uniform_philox_vs_uniform(executor, device: str, dtype: dtypes.dtype):
+    import torch
+
+    dev = devices.to_torch_device(device)
+    cuda_generator = torch.cuda.default_generators[dev.index]
+
+    def func(a):
+        b = thunder.torch.uniform_like(a, device=a.device, dtype=a.dtype)
+        e = a * b
+        c = thunder.torch.uniform_like(a, device=a.device, dtype=a.dtype)
+        f = e + c
+        d = thunder.torch.uniform_like(a, device=a.device, dtype=a.dtype)
+        return f * d
+
+    a = torch.randn(2, 2, device=dev, dtype=dtypes.to_torch_dtype(dtype), requires_grad=True)
+    a1 = a.detach().clone().requires_grad_()
+
+    jfunc = thunder.jit(func, executors_list=executor.executors_list())
+
+    with torch.random.fork_rng(devices=(dev,)):
+        cuda_generator.manual_seed(20)
+        expects = []
+        # get the results of uniform_philox with RNG state updates
+        for _ in range(4):
+            out = jfunc(a)
+            expects.append(out)
+        assert cuda_generator.get_offset() == 12 * 4
+        fwd_trc = [
+            t for t in thunder.last_traces(jfunc) if getattr(t.get_provenance(), "pss", "") == "Augmented forward pass"
+        ][0]
+        from thunder.core.prims import PrimIDs
+
+        uniform_philox_sym = [PrimIDs.UNIFORM_PHILOX, "torch.uniform_philox"]
+        uniform_sym = [PrimIDs.UNIFORM, "torch.uniform"]
+        assert all(t.sym.id not in uniform_philox_sym for t in fwd_trc.bound_symbols)
+        assert all(t not in uniform_sym for t in thunder.last_traces(jfunc)[-1].bound_symbols)
+
+        # get the results of uniform
+        results = []
+        cuda_generator.manual_seed(20)
+        from unittest.mock import patch
+
+        with patch("thunder.core.rematerialization.replace_uniform") as replace_uniform_mock:
+            replace_uniform_mock.return_value = fwd_trc
+            jfunc = thunder.jit(func, executors_list=executor.executors_list())
+            for _ in range(4):
+                out = jfunc(a1)
+                results.append(out)
+            assert cuda_generator.get_offset() == 12 * 4
+
+    for expected, result in zip(expects, results):
+        assert_close(expected, result)
