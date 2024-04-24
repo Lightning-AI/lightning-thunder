@@ -566,7 +566,7 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
     specified_slices = 0
     ellipsis_idx = None
 
-    if isinstance(key, (Number, slice, EllipsisType)):
+    if key is None or isinstance(key, (Number, slice, EllipsisType)):
         key = (key,)
 
     for idx, x in enumerate(key):
@@ -1045,6 +1045,12 @@ def take_along_axis(a: TensorProxy, /, indices: TensorProxy, dim: int) -> Tensor
     dim = utils.canonicalize_dim(a.ndim, dim)
     indices = _maybe_expand_exclude_dim(indices, a, dim)
     return prims.take_along_axis(a, indices, dim)
+
+
+@clangop()
+def gather(a: TensorProxy, /, indices: TensorProxy, dim: int) -> TensorProxy:
+    dim = utils.canonicalize_dim(a.ndim, dim)
+    return prims.gather(a, indices, dim)
 
 
 @clangop()

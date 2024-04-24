@@ -113,6 +113,7 @@ from thunder.core.compile_data import compile_data_and_stats
 EXT_FLAG_IS_PROXY_DERIVED = 1
 EXT_FLAG_IS_TENSOR_PROXY = 2
 EXT_FLAG_IS_MODULE_MEMBER_DICT = 4
+EXT_FLAG_IS_MODULE = 8
 MODULE_MEMBER_DICT_ATTRS = {
     "_parameters",
     "_modules",
@@ -440,9 +441,9 @@ _minimal_callbacks = default_callbacks | _minimal_callbacks
 
 
 # TODO RC1 Add debug_log
-def minimal_thunder_jit(fn: Callable, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> Callable:
+def minimal_thunder_jit(fn: Callable, /, *, record_history: bool = False, sharp_edges: SHARP_EDGES_OPTIONS) -> Callable:
     ctx: MinimalCtx = MinimalCtx(sharp_edges=sharp_edges)
-    jfn = interpret(fn, fn_lookaside=_minimal_lookaside, callbacks=_minimal_callbacks)
+    jfn = interpret(fn, fn_lookaside=_minimal_lookaside, callbacks=_minimal_callbacks, record_history=record_history)
 
     def fn_(*args, **kwargs):
         try:
@@ -1051,7 +1052,9 @@ def _general_jit_wrap_callback(value):
     ctx: GeneralJitCtx = get_general_jit_ctx()
 
     uvalue = value.value
-    if isinstance(uvalue, torch.Tensor):
+    if isinstance(uvalue, torch.nn.Module):
+        value.provenance.ext_flag |= EXT_FLAG_IS_MODULE
+    elif isinstance(uvalue, torch.Tensor):
         # we always want to proxy torch.Tensor, even const
         p = ctx.proxify(value)
     elif value.provenance.inst is PseudoInst.CONSTANT:
@@ -1156,17 +1159,20 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
         def from_input(provenance, *, new_output=False):
             assert new_output
             if provenance.inst == PseudoInst.INPUT_ARGS:
-                param_ordering[id(p)][1].insert(0, 0)
+                param_ordering[id(pro_args_proxy)] = (pro_args_proxy, [0])
                 return pro_args_proxy
             elif provenance.inst == PseudoInst.INPUT_KWARGS:
-                param_ordering[id(p)][1].insert(0, 1)
+                param_ordering[id(pro_kwargs_proxy)] = (pro_kwargs_proxy, [1])
                 is_pure = False
                 return pro_kwargs_proxy
             elif provenance.inst == PseudoInst.INPUT_FN:
-                param_ordering[id(p)][1].insert(0, 3)
                 is_pure = False
-                name = "fn"
+                if provenance.ext_flag & EXT_FLAG_IS_MODULE:
+                    name = "module"
+                else:
+                    name = "fn"
                 output = Proxy(name=name)
+                param_ordering[id(output)] = (output, [3])
                 provenance.proxy = output
                 bsym = prims.unpack_function_obj.bind(output, output=output)
                 prologue_trace.bound_symbols.append(bsym)
@@ -1180,7 +1186,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 output = Proxy("obj")
             else:
                 output = p
-            param_ordering[id(p)][1][:0] = [math.inf, "." + str(inputs[1])]
+            param_ordering[id(output)] = (output, param_ordering[id(inputs[0])][1] + [math.inf, "." + str(inputs[1])])
             bsym = prims.unpack_attr.bind(inputs[0], inputs[1], output=output)
             prologue_trace.bound_symbols.append(bsym)
             return output
@@ -1191,7 +1197,64 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             else:
                 raise NotImplementedError(f"constant of type {type(provenance.value)} {provenance.value}")
 
+        def unpack_parameter_or_buffer(provenance, *, new_output=False):
+            assert provenance.inputs[0].inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE
+            typ = provenance.inputs[0].inputs[1].value
+            name = [provenance.inputs[1].value]
+            mprovenance = provenance.inputs[0].inputs[0].inputs[0]
+
+            while (
+                mprovenance.inst is PseudoInst.BINARY_SUBSCR
+                and mprovenance.inputs[1].inst is PseudoInst.CONSTANT
+                and mprovenance.inputs[0].inst is PseudoInst.LOAD_ATTR
+                and mprovenance.inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE
+            ):
+                assert (
+                    mprovenance.inputs[0].inputs[1].inst is PseudoInst.CONSTANT
+                    and mprovenance.inputs[0].inputs[1].value == "_modules"
+                )
+
+                name_component = mprovenance.inputs[1].value
+                name.insert(0, name_component)
+                mprovenance = mprovenance.inputs[0].inputs[0]
+
+            root_module = from_provenance(mprovenance, new_output=True)
+            if new_output:
+                output = Proxy("")  # name? collectify?
+            else:
+                output = p
+
+            param_ordering[id(output)] = (
+                output,
+                param_ordering[id(root_module)][1]
+                + [
+                    i
+                    for name_component in name
+                    for i in (
+                        [int(name_component)] if name_component.isnumeric() else [math.inf, ("." + name_component)]
+                    )
+                ],
+            )
+
+            name = ".".join(name)
+            if typ == "_parameters":
+                bsym = prims.unpack_parameter.bind(root_module, name, output=output)
+            else:
+                bsym = prims.unpack_buffer.bind(root_module, name, output=output)
+            prologue_trace.bound_symbols.append(bsym)
+
         def from_binary_subscr(provenance, *, new_output=False):
+            # special case tensors, todo: do this via pattern matching after unpacking?
+            if (
+                provenance.inst is PseudoInst.BINARY_SUBSCR
+                and provenance.inputs[0].inst is PseudoInst.BINARY_SUBSCR
+                and provenance.inputs[1].inst is PseudoInst.CONSTANT
+                and provenance.inputs[0].inputs[1].inst is PseudoInst.CONSTANT
+                and provenance.inputs[0].inputs[1].value in {"_parameters", "_buffers"}
+                and provenance.inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE_MEMBER_DICT
+            ):
+                return unpack_parameter_or_buffer(provenance, new_output=new_output)
+
             inputs = [from_provenance(i, new_output=True) for i in provenance.inputs]
             obj, idx = inputs
             if new_output:
@@ -1203,7 +1266,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                     idx = int(idx)
                 elif isinstance(idx, str):
                     idx = str(idx)
-                param_ordering[id(p)][1][:0] = [math.inf, "[" + str(idx) + "]"]
+                param_ordering[id(output)] = (output, param_ordering[id(obj)][1] + [math.inf, "[" + str(idx) + "]"])
                 bsym = prims.unpack_getitem.bind(obj, idx, output=output)
                 prologue_trace.bound_symbols.append(bsym)
             else:
@@ -1266,7 +1329,6 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             return res
 
         assert isinstance(p.history, ProvenanceRecord), p.history
-        param_ordering[id(p)] = (p, [])
         with tracectx(prologue_trace):
             try:
                 from_provenance(p.history)
@@ -1395,7 +1457,15 @@ def _get_process_group_from(*fn_and_args) -> Optional["ProcessGroup"]:
     return found_pg
 
 
-def thunder_general_jit(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> TraceResults:
+def thunder_general_jit(
+    fn: Callable,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    /,
+    *,
+    record_history: bool = False,
+    sharp_edges: SHARP_EDGES_OPTIONS,
+) -> TraceResults:
     # TODO: move into wrap_callback or so
     if isinstance(fn, torch.nn.parallel.DistributedDataParallel):
         raise NotImplementedError(
@@ -1432,6 +1502,7 @@ def thunder_general_jit(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDG
         callbacks=general_jit_callbacks,
         with_provenance_tracking=True,
         uncacheable_classes=(torch.Tensor, int, float, str, NoneType),
+        record_history=record_history,
     )
 
     with general_jit_ctx(ctx):
@@ -1439,7 +1510,6 @@ def thunder_general_jit(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDG
             result = jfn(*args, **kwargs)
             prims.python_return(result)
             process_recorded_modifications(ctx, epilogue_trace)
-
             last_interpreter_log = jfn._last_interpreter_log
 
     pro_to_comp, computation_intermediates = get_computation_inputs_and_intermediates(computation_trace)

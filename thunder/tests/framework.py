@@ -134,7 +134,14 @@ class TestExecutor:
     @singledispatchmethod
     def make_callable_legacy(self, fn, **kwargs):
         assert kwargs.pop("disable_preprocessing", True)
-        return thunder.compile(fn, executors_list=self.executors_list(), disable_preprocessing=True, **kwargs)
+        assert kwargs.pop("disable_torch_autograd_support", True)
+        return thunder.compile(
+            fn,
+            executors_list=self.executors_list(),
+            disable_preprocessing=True,
+            disable_torch_autograd_support=True,
+            **kwargs,
+        )
 
     @singledispatchmethod
     def make_callable(self, fn, **kwargs):
@@ -376,6 +383,13 @@ class ops:
                     )
                     # Adds the instantiated test to the requested scope
                     self.scope[test.__name__] = test
+
+                    # [NOTE] dynamo reset
+                    # dynamo caches are per code object, not frame. All the dynamic copies of these context
+                    # managers share the same code cache in the process. This is a problem in a single pytest process
+                    # that runs many traces
+                    if any("torchcompile" in ex.name for ex in executor.executors_list()):
+                        torch._dynamo.reset()
 
 
 # TODO Allow executing the test suite on different devices (not just always cuda:0)

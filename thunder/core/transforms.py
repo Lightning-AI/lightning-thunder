@@ -552,7 +552,7 @@ def populate_grads(grads: list[TensorProxy], tom: None | torch.nn.Module = None,
     idx: int = 0
     from thunder import ThunderModule, compile_data
 
-    if isinstance(tom, ThunderModule) or thunder.compile_data(tom).using_jit:
+    if isinstance(tom, ThunderModule) or compile_data(tom).using_jit:
         assert args is not None, "populate grad needs args (and possibly kwargs) to work with ThunderModules"
         if kwargs is None:
             kwargs = {}
@@ -816,11 +816,28 @@ register_grad(pids.TAKE, _take_prim_grad)
 
 
 @torchctx
+def _gather_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy:
+    fwd = prims.gather(a, index, dim)
+
+    g = get_grad(fwd)
+    # NOTE Intentionally not calling zeros_like to avoid preserving TensorProxy a.
+    # TODO Update to call ltorch.zeros
+    zeros = prims.full(a.shape, fill_value=0, device=a.device, dtype=a.dtype)
+    a_grad = prims.scatter_add(zeros, index, g, dim)
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.GATHER, _gather_prim_grad)
+
+
+@torchctx
 def _take_along_axis_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy:
     fwd = prims.take_along_axis(a, index, dim)
 
     g = get_grad(fwd)
-    # NOTE Intentionally not calling zeros_like to avoid preserving a
+    # NOTE Intentionally not calling zeros_like to avoid preserving TensorProxy a.
     # TODO Update to call ltorch.zeros
     zeros = prims.full(a.shape, fill_value=0, device=a.device, dtype=a.dtype)
     a_grad = prims.scatter_add(zeros, index, g, dim)
@@ -1151,7 +1168,11 @@ def _var_mean_prim_grad(a: TensorProxy, /, dims: Sequence[int], *, correction: N
     # Computes var bwd
     normalization_scalar = n_elem_reduced - correction
     restored_gv = restore_reduced_dims(gv, dims, a.shape)
-    restored_mean = restore_reduced_dims(m, dims, a.shape)
+    # Inserting a conversion to the same dtype to disable nvFuser executors's
+    # bookend optimization (nv_enable_bookend), which can cause the backward
+    # pass to generate two kernels
+    mean_mdtype = prims.convert_element_type(m, m.dtype)
+    restored_mean = restore_reduced_dims(mean_mdtype, dims, a.shape)
     var_grad = (2 * restored_gv * (a - restored_mean)) / normalization_scalar
 
     put_grad(a, mean_grad + var_grad)
@@ -1260,7 +1281,9 @@ register_grad(pids.EMBEDDING, _embedding_prim_grad)
 #
 
 
-def _get_gradfn(bsym: BoundSymbol, *, executors_list: Sequence[Any] = tuple()) -> None | Callable:
+def _get_gradfn_and_executor(
+    bsym: BoundSymbol, *, executors_list: Sequence[Any] = tuple()
+) -> tuple[Callable | None, Executor | None]:
     cd = get_compile_data()
     executors_list = cd.executors_list if cd is not None else executors_list
     # Checks if the executor which has priority for this operation has a specific grad transform for it
@@ -1268,12 +1291,12 @@ def _get_gradfn(bsym: BoundSymbol, *, executors_list: Sequence[Any] = tuple()) -
         if ex.can_execute_or_fuse(bsym):
             ex_grad_transform: None | Callable = ex.get_grad_transform(bsym.sym)
             if ex_grad_transform is not None:
-                return ex_grad_transform
+                return ex_grad_transform, ex
             break
 
     # If the executor doesn't define its own grad transform, this just returns the default grad transform for the bsym
     gradfn = _grad_fn_map.get(bsym.sym.id, None)
-    return gradfn
+    return gradfn, None
 
 
 # The default grad specifier for the grad transform
@@ -1328,7 +1351,8 @@ def grad(
             if bsym.sym.id in never_flatten:
                 return False
 
-            gradfn: None | Callable = _get_gradfn(bsym, executors_list=executors_list)
+            gradfn: None | Callable
+            gradfn, _ = _get_gradfn_and_executor(bsym, executors_list=executors_list)
             return gradfn is None
 
         # TODO RC1: maybe move to produce these always on creation
@@ -1347,7 +1371,8 @@ def grad(
         # Defines the visitor pattern for the first pass of the grad transform,
         #   which swaps BoundSymbols with their grad functions
         def visit_(bsym: BoundSymbol) -> Callable:
-            gradfn: None | Callable = _get_gradfn(bsym, executors_list=executors_list)
+            gradfn: None | Callable
+            gradfn, _ = _get_gradfn_and_executor(bsym, executors_list=executors_list)
             check(
                 gradfn is not None,
                 lambda: f"Failed to find a gradfn for {bsym=} after flattening",
@@ -3085,43 +3110,6 @@ def embedding_backward(a, num_weights, padding_idx, scale_grad_by_freq, sparse, 
     return gweight
 
 
-@register_augmented_forward(prims.PrimIDs.BATCH_NORM)
-def batch_norm_aug_fwd(
-    a: TensorProxy,
-    weight: None | TensorProxy,
-    bias: None | TensorProxy,
-    running_mean: None | TensorProxy,
-    running_var: None | TensorProxy,
-    training: bool,
-    momentum: Number,
-    eps: Number,
-) -> VJPDual:
-    primal = prims.batch_norm(
-        a,
-        weight,
-        bias,
-        running_mean,
-        running_var,
-        training,
-        momentum,
-        eps,
-    )
-    output_mask = [x is not None for x in (a, weight, bias)]
-    output, save_mean, save_invstd = primal
-    residuals = (a, weight, running_mean, running_var, save_mean, save_invstd, training, eps, output_mask)
-    return VJPDual(primal, residuals)
-
-
-@register_backward(prims.PrimIDs.BATCH_NORM)
-def batch_norm_backward(a, weight, running_mean, running_var, save_mean, save_invstd, train, eps, output_mask, *grads):
-    from thunder.torch import batch_norm_backward
-
-    result = batch_norm_backward(
-        grads[0], a, weight, running_mean, running_var, save_mean, save_invstd, train, eps, output_mask
-    )
-    return *result, None, None
-
-
 @register_augmented_forward("torch.cumsum")
 def cumsum_aug_fwd(a: Proxy, dim: int, *, dtype: None | dtypes.dtype = None) -> VJPDual:
     from thunder.torch import cumsum
@@ -3381,7 +3369,7 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
     # Normal case, we have a proxy tangent
     vjp_impl = augmented_forward_impls.get(symbol.sym.id)
 
-    if _get_gradfn(symbol) is not None:
+    if _get_gradfn_and_executor(symbol)[0] is not None:
         vjp_impl, backward_fn = make_aug_forward_and_backward(symbol)
 
     if vjp_impl is None:
@@ -3550,7 +3538,7 @@ def backward_pass(forward_env, trace, init_cotangents):
         backward = backward_impls.get(symbol.sym.id)
         aug_forward = augmented_forward_impls.get(symbol.sym.id)
 
-        if _get_gradfn(symbol) is not None:
+        if _get_gradfn_and_executor(symbol)[0] is not None:
             aug_forward, backward = make_aug_forward_and_backward(symbol)
 
         if backward is None:

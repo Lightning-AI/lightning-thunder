@@ -542,6 +542,28 @@ def _elementwise_unary_torch(op):
     return _fn
 
 
+#
+# Tensor Property OpInfos
+#
+tensor_properties: list[OpInfo] = []
+
+
+def _is_cuda_torch(x: torch.Tensor) -> bool:
+    return x.is_cuda
+
+
+is_cuda_opinfo = OpInfo(
+    _is_cuda_torch,
+    sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
+    torch_reference=_is_cuda_torch,
+    dtypes=(datatypes.all_dtypes),
+)
+
+tensor_properties.append(is_cuda_opinfo)
+
+opinfos.extend(tensor_properties)
+
+
 # NOTE: slightly different from generic _elementwise_unary_torch helper
 #   because this returns the input when given an unsigned type
 @wraps(torch.abs)
@@ -2484,13 +2506,105 @@ def where_sample_generator(op, device, dtype, requires_grad, **kwargs):
         yield SampleInput(pred, a, b)
 
 
+def where_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+    err_msg = r"torch.where\(\) does not support only specifying a condition"
+    yield (
+        SampleInput(
+            make(
+                5,
+            )
+        ),
+        NotImplementedError,
+        err_msg,
+    )
+    yield (SampleInput(make(2, 1, 2)), NotImplementedError, err_msg)
+
+
 where_opinfo = OpInfo(
-    clang.where,
+    ltorch.where,
     supports_grad=True,
     sample_input_generator=where_sample_generator,
+    error_input_generator=where_error_generator,
     torch_reference=torch.where,
 )
 conditional_and_mask_ops.append(where_opinfo)
+
+
+def nan_to_num_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    a = make((4, 4), dtype=dtype, requires_grad=requires_grad)
+    double_max = torch.finfo(torch.float64).max
+    double_min = torch.finfo(torch.float64).min
+    nan = float("nan")
+    inf = float("inf")
+    if dtype.is_floating_point:
+        a = torch.tensor((0, nan, inf, -inf))
+    elif dtype.is_complex:
+        a = torch.tensor(
+            (
+                complex(0, 0),
+                complex(nan, nan),
+                complex(inf, -inf),
+                complex(nan, 0),
+                complex(nan, inf),
+                complex(inf, 0),
+                complex(0, inf),
+                complex(-inf, 0),
+                complex(nan, 5),
+                complex(inf, 3),
+            )
+        )
+    # input tensor, nan, posinf, neginf
+    cases = (
+        (a, None, None, None),
+        (a, None, 1.0, None),
+        (a, None, None, 1.0),
+        (a, None, 1.0, 0.0),
+        (a, 1, None, None),
+        (a, 1, 1.0, None),
+        (a, 1, None, 0.0),
+        (a, 1, 1.0, 0.0),
+        (a, None, double_max, 0.0),
+        (a, 1, double_min, 0.0),
+        (a, None, 1.0, double_min),
+        (a, 1, 1.0, double_max),
+        (a, double_max, None, double_max),
+        (a, double_min, double_max, None),
+    )
+
+    for a, nan, posinf, neginf in cases:
+        yield SampleInput(a, nan, posinf, neginf)
+
+
+def nan_to_num_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+    err_msg = "out is not None which is currently unsupported"
+    yield (
+        SampleInput(
+            make(
+                5,
+            ),
+            None,
+            None,
+            None,
+            make(
+                5,
+            ),
+        ),
+        NotImplementedError,
+        err_msg,
+    )
+
+
+nan_to_num_opinfo = OpInfo(
+    ltorch.nan_to_num,
+    sample_input_generator=nan_to_num_sample_generator,
+    error_input_generator=nan_to_num_error_generator,
+    torch_reference=torch.nan_to_num,
+)
+conditional_and_mask_ops.append(nan_to_num_opinfo)
 
 
 def clamp_sample_generator(op, device, dtype, requires_grad, **kwargs):
@@ -2666,6 +2780,45 @@ to_opinfo = OpInfo(
     torch_reference=torch.Tensor.to,
 )
 data_movement_ops.append(to_opinfo)
+
+
+def cuda_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # None
+    # cpu -> cuda
+    # default cuda -> default cuda (no-op)
+    yield SampleInput(make(4, 4))
+
+    # Explictly pass device
+    # default cuda -> default cuda
+    if torch.device(device).type == "cuda":
+        yield SampleInput(make(4, 4), device)
+
+
+def cuda_error_generator(op, device, **kwargs):
+    make = partial(make_tensor, device="cpu", dtype=torch.float, requires_grad=False)
+
+    err_msg = "`non_blocking==True` is currently not supported."
+    yield SampleInput(make(3, 3), non_blocking=True), RuntimeError, err_msg
+
+    err_msg = "Invalid device cpu, must be cuda device"
+    yield SampleInput(make(3, 3), device="cpu"), RuntimeError, err_msg
+
+
+cuda_opinfo = OpInfo(
+    ltorch.cuda,
+    sample_input_generator=cuda_sample_generator,
+    error_input_generator=cuda_error_generator,
+    torch_reference=torch.Tensor.cuda,
+    test_directives=(
+        DecorateInfo(
+            pytest.mark.skip,
+            active_if=not torch.cuda.is_available(),
+        ),
+    ),
+)
+data_movement_ops.append(cuda_opinfo)
 
 
 def type_as_sample_generator(op, device, dtype, requires_grad, **kwargs):
@@ -3128,6 +3281,7 @@ def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
         # NOTE: nvfuser cannot handle more than 8 dims.
         ((1, 5, 3), (None, 0, None, 2, ..., None, None)),
         ((1, 5, 3), (None, None, 0, None, 2, ..., None, None)),
+        ((1, 5, 3), None),
         # Addtl. cases
         # NOTE: nvfuser cannot handle more than 8 dims.
         ((7, 9, 5), (slice(2, 6, 2), None, ..., slice(3, 7), None, 2, None)),
@@ -4265,6 +4419,42 @@ take_along_axis_opinfo = OpInfo(
     ),
 )
 shape_ops.append(take_along_axis_opinfo)
+
+
+def gather_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    # torch.gather expects index to be long but not int
+    # Index is not differentiable! Marking requires_grad as False
+    make_index = partial(make_tensor, device=device, dtype=torch.long, requires_grad=False)
+
+    for shape_a, dim, shape_b in take_along_axis_cases:
+        canonicalized_dim = dim if dim >= 0 else dim + len(shape_a)
+        a = make(shape_a)
+        b = make_index(shape_b, low=0, high=shape_a[dim])
+        yield SampleInput(a, index=b, dim=dim)
+
+    # Note that gather doesn't have the broadcast requirement, it only requires
+    # 1. a.shape[i]      >= index.shape[i] for i != dim
+    #
+    # a.shape, dim, index.shape
+    scatter_add_cases = (
+        ((4, 5, 3), 0, (3, 2, 3)),
+        ((4, 5, 3), 1, (3, 5, 2)),
+        ((4, 5, 3), 2, (3, 2, 8)),
+    )
+    for shape_a, dim, shape_b in scatter_add_cases:
+        a = make(shape_a)
+        b = make_index(shape_b, low=0, high=shape_a[dim])
+        yield SampleInput(a, index=b, dim=dim)
+
+
+gather_opinfo = OpInfo(
+    ltorch.gather,
+    supports_grad=True,
+    sample_input_generator=gather_sample_generator,
+    torch_reference=torch.gather,
+)
+shape_ops.append(gather_opinfo)
 
 
 def scatter_add_sample_generator(op, device, dtype, requires_grad, **kwargs):
