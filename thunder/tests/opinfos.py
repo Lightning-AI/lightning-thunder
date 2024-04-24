@@ -2536,7 +2536,7 @@ def nan_to_num_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     a = make((4, 4), dtype=dtype, requires_grad=requires_grad)
     double_max = torch.finfo(torch.float64).max
-    double_min = torch.finfo(torch.float64).max
+    double_min = torch.finfo(torch.float64).min
     nan = float("nan")
     inf = float("inf")
     if dtype.is_floating_point:
