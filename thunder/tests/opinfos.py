@@ -4357,7 +4357,6 @@ def gather_sample_generator(op, device, dtype, requires_grad, **kwargs):
         b = make_index(shape_b, low=0, high=shape_a[dim])
         yield SampleInput(a, index=b, dim=dim)
 
-    # Questionable use case. Do we want to support these?!
     # Note that gather doesn't have the broadcast requirement, it only requires
     # 1. a.shape[i]      >= index.shape[i] for i != dim
     #
@@ -4378,20 +4377,6 @@ gather_opinfo = OpInfo(
     supports_grad=True,
     sample_input_generator=gather_sample_generator,
     torch_reference=torch.gather,
-    test_directives=(
-        # Torch doesn't support complex half on gather
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.complex32,),
-        ),
-        DecorateInfo(
-            custom_comparator(partial(assert_close, atol=1e-1, rtol=1e-1)),
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.bfloat16, datatypes.float16),
-            devicetypes=(devices.DeviceType.CUDA,),
-        ),
-    ),
 )
 shape_ops.append(gather_opinfo)
 
