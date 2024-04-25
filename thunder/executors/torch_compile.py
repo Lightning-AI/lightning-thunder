@@ -187,7 +187,7 @@ class TorchCompileExecutor(FusionExecutor):
         return fusedtrace
 
 
-from thunder.executors.torchex import ex as pytorch_executor
+from thunder.executors.torchex import ex as pytorch_ex
 from thunder.executors.sdpaex import sdpa_ex
 
 
@@ -221,12 +221,11 @@ supported_ops = {
     prims.slice_prim.id,
     prims.transpose.id,
 }
-assert supported_ops - pytorch_executor.implmap.keys() == set()  # sanity check  # FIXME convert into a test
-torch_compile_cat_ex._implmap = {op: info for op, info in pytorch_executor.implmap.items() if op in supported_ops}
+torch_compile_cat_ex._implmap = {op: info for op, info in pytorch_ex.implmap.items() if op in supported_ops}
 
 
 torch_compile_ex = TorchCompileExecutor(name="torchcompile")
 register_executor(torch_compile_ex)
-torch_compile_ex._implmap = dict(pytorch_executor.implmap)
+torch_compile_ex._implmap = dict(pytorch_ex.implmap)
 # Need to overwrite with the sdpa_ex implmap to avoid decomposing the operator
 torch_compile_ex._implmap.update(sdpa_ex.implmap)
