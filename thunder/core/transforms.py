@@ -833,6 +833,21 @@ register_grad(pids.GATHER, _gather_prim_grad)
 
 
 @torchctx
+def _scatter_add_prim_grad(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
+    fwd = prims.scatter_add(a, index, value, dim)
+
+    g = get_grad(fwd)
+    # NOTE The value gradient is only valid when src.shape == index.shape.
+    value_grad = prims.gather(g, index, dim)
+    put_grads((a, value), (g, value_grad))
+
+    return fwd
+
+
+register_grad(pids.SCATTER_ADD, _scatter_add_prim_grad)
+
+
+@torchctx
 def _take_along_axis_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy:
     fwd = prims.take_along_axis(a, index, dim)
 

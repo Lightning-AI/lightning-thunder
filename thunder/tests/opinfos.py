@@ -4462,13 +4462,17 @@ def scatter_add_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # torch.scatter_add expects index to be long but not int
     # Index is not differentiable! Marking requires_grad as False
     make_index = partial(make_tensor, device=device, dtype=torch.long, requires_grad=False)
-    # Not sure if we need to consider higher order gradient, marking requires_grad as False
-    make_source = partial(make_tensor, device=device, dtype=dtype, requires_grad=False)
+    make_source = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
+    # NOTE The value gradient is only valid when src.shape == index.shape.
+    # For gradient testing, we use the index shape for the source tensor.
     for shape_a, dim, shape_b in take_along_axis_cases:
         canonicalized_dim = dim if dim >= 0 else dim + len(shape_a)
-        shape_source = list(shape_a)
-        shape_source[canonicalized_dim] = shape_b[canonicalized_dim]
+        if requires_grad:
+            shape_source = shape_b
+        else:
+            shape_source = list(shape_a)
+            shape_source[canonicalized_dim] = shape_b[canonicalized_dim]
         a = make(shape_a)
         b = make_index(shape_b, low=0, high=shape_a[dim])
         c = make_source(shape_source)
@@ -4488,12 +4492,13 @@ def scatter_add_sample_generator(op, device, dtype, requires_grad, **kwargs):
     for shape_a, dim, shape_b, shape_source in scatter_add_cases:
         a = make(shape_a)
         b = make_index(shape_b, low=0, high=shape_a[dim])
-        c = make_source(shape_source)
+        c = make_source(shape_b if requires_grad else shape_source)
         yield SampleInput(a, index=b, src=c, dim=dim)
 
 
 scatter_add_opinfo = OpInfo(
     ltorch.scatter_add,
+    supports_grad=True,
     sample_input_generator=scatter_add_sample_generator,
     torch_reference=torch.scatter_add,
     test_directives=(
