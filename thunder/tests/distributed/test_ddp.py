@@ -1083,7 +1083,7 @@ class ddp_wrapper:
 # TODO Test training, this test just currently tests forward
 def _test_native_ddp_helper(input_data):
     init_method, world_size, rank, executor, device, dtype, kwargs = input_data
-    bucket_size_in_mb = kwargs["bucket_size_in_mb"]
+    bucket_size_in_mb = kwargs.get("bucket_size_in_mb", 0)
 
     num_samples = 2
     tensor_shape = (2, 2)
@@ -1495,16 +1495,17 @@ def _test_fsdp_transformer_engine(input_data):
                 return self.fc2(torch.nn.functional.relu(self.fc1(x)))
 
         # Weights
-        fc1_weight = torch.randn(dim, dim, requires_grad=True).cuda()
-        fc2_weight = torch.randn(dim, dim, requires_grad=True).cuda()
+        fc1_weight = torch.randn(dim, dim, requires_grad=True, device="cuda")
+        fc2_weight = torch.randn(dim, dim, requires_grad=True, device="cuda")
 
         # Inputs (different input on different rank).
         if rank == 0:
-            x = torch.arange(dim * dim, dtype=torch.float).view(dim, dim).cuda()
+            x = torch.arange(dim * dim, dtype=torch.float, device="cuda").view(dim, dim)
         if rank == 1:
-            x = torch.randn(dim, dim).cuda() * 100
+            x = torch.randn(dim, dim, device="cuda") * 100
 
-        thunder_model = ThunderModel().cuda()
+        with torch.device("cuda"):
+            thunder_model = ThunderModel()
         thunder_model.fc1.weight.data = fc1_weight.clone()
         thunder_model.fc2.weight.data = fc2_weight.clone()
 
@@ -1533,7 +1534,8 @@ def _test_fsdp_transformer_engine(input_data):
             def forward(self, x):
                 return self.fc2(torch.nn.functional.relu(self.fc1(x)))
 
-        te_model = TEModel().cuda()
+        with torch.device("cuda"):
+            te_model = TEModel()
         te_model.fc1.weight.data = fc1_weight.clone()
         te_model.fc2.weight.data = fc2_weight.clone()
 
