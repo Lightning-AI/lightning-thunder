@@ -1478,7 +1478,7 @@ def _test_fsdp_transformer_engine(input_data):
     devicetype = devices.device_from_string(device).devicetype
 
     # Setting LOCAL_RANK is necessary for thunder.distributed.fsdp
-    with unittest.mock.patch.dict(os.environ, {"LOCAL_RANK": str(rank)}, clear=True):
+    with unittest.mock.patch.dict(os.environ, {"LOCAL_RANK": str(rank)}):
         init_per_process_distributed(init_method, devicetype, world_size, rank)
         torch.cuda.set_device(rank)
 
