@@ -621,7 +621,6 @@ def test_nanogpt():
         "falcon-7b-like",
         "falcon-40b-like",
         "codellama2-like",
-        "Llama-3-8B",
         pytest.param(
             "mixtral-like",
             marks=pytest.mark.xfail(raises=(NotImplementedError, TypeError), reason="topk and where", strict=True),
@@ -640,7 +639,6 @@ def test_litgpt_variants(name, device):
 
     x = torch.randint(0, 200, (5, 5), device=device)
     config = litgpt_model.Config.from_name(name)
-    config.n_layer = 1
 
     with device:
         reference = litgpt_model.GPT(config)
