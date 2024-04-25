@@ -207,6 +207,7 @@ def type(a: TensorLike, dtype: None | str | dtypeLike = None, non_blocking: bool
         torch.long: "torch.LongTensor",
         torch.bool: "torch.BoolTensor",
     }
+
     if dtype is None:
         # returns the type of the input tensor in string
         torch_dtype = to_torch_dtype(a.dtype)

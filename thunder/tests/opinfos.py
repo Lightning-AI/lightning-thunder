@@ -2749,6 +2749,64 @@ data_movement_ops = []
 # data_movement_ops.append(convert_element_type_opinfo)
 
 
+def type_sample_generator_tensor(op, device, dtype, requires_grad, **kwargs):
+    # dtype is not None
+    # expected to return tensor
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    DTYPE_STR = {
+        torch.float32: "torch.FloatTensor",
+        torch.float64: "torch.DoubleTensor",
+        torch.float16: "torch.HalfTensor",
+        torch.bfloat16: "torch.BFloat16Tensor",
+        torch.uint8: "torch.ByteTensor",
+        torch.int8: "torch.CharTensor",
+        torch.int16: "torch.ShortTensor",
+        torch.int32: "torch.IntTensor",
+        torch.long: "torch.LongTensor",
+        torch.bool: "torch.BoolTensor",
+    }
+
+    yield SampleInput(make(4, 4), dtype)
+    yield SampleInput(make(4, 4), DTYPE_STR[dtype])
+
+
+type_opinfo_tensor = OpInfo(
+    ltorch.type,
+    sample_input_generator=type_sample_generator_tensor,
+    torch_reference=torch.Tensor.type,
+)
+
+data_movement_ops.append(type_opinfo_tensor)
+
+
+def type_sample_generator_str(op, device, dtype, requires_grad, **kwargs):
+    # dtype is None
+    # expected to return string
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    yield SampleInput(make(4, 4))
+
+
+# comparing strings (NOTE: assert_close does not support string comparison)
+def string_compare(actual, expected, **kwargs):
+    assert actual == expected
+
+
+type_opinfo_str = OpInfo(
+    ltorch.type,
+    sample_input_generator=type_sample_generator_str,
+    torch_reference=torch.Tensor.type,
+    test_directives=(
+        DecorateInfo(
+            custom_comparator(string_compare),
+            "test_core_vs_torch_consistency",
+        ),
+    ),
+)
+
+data_movement_ops.append(type_opinfo_str)
+
+
 def to_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
