@@ -499,13 +499,7 @@ def _infer_name_postfix_from_provenance(pr: ProvenanceRecord) -> str:
             if rhs.inst == PseudoInst.CONSTANT:
                 rhs_postfix = str(rhs.value)
 
-                if pr.inst == PseudoInst.BINARY_SUBSCR:
-                    maybe_module_pr = lhs
-                else:
-                    # LOAD_ATTR
-                    maybe_module_pr = pr
-
-                if maybe_module_pr.ext_flag & EXT_FLAG_IS_MODULE_MEMBER_DICT:
+                if lhs.ext_flag & EXT_FLAG_IS_MODULE:
                     if rhs_postfix not in MODULE_MEMBER_DICT_ATTRS:
                         postfix.append(rhs_postfix)
                 else:
@@ -1207,18 +1201,11 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 raise NotImplementedError(f"constant of type {type(provenance.value)} {provenance.value}")
 
         def unpack_parameter_or_buffer_or_submodule(provenance, *, new_output=False):
-            if provenance.inputs[0].inst is PseudoInst.BINARY_SUBSCR:
-                assert provenance.inputs[0].inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE
-                typ = provenance.inputs[0].inputs[1].value
-                name = [provenance.inputs[1].value]
-                mprovenance = provenance.inputs[0].inputs[0].inputs[0]
-                X
-            else:
-                assert provenance.inputs[0].inst is PseudoInst.LOAD_ATTR
-                assert provenance.inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE
-                typ = provenance.inputs[0].inputs[1].value
-                name = [provenance.inputs[1].value]
-                mprovenance = provenance.inputs[0].inputs[0]
+            assert provenance.inputs[0].inst is PseudoInst.LOAD_ATTR
+            assert provenance.inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE
+            typ = provenance.inputs[0].inputs[1].value
+            name = [provenance.inputs[1].value]
+            mprovenance = provenance.inputs[0].inputs[0]
 
             while (
                 mprovenance.inst is PseudoInst.BINARY_SUBSCR
