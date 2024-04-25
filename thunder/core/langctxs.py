@@ -64,9 +64,13 @@ def reset_langctx(token: Any, /) -> None:
 
 # A helper for acquiring a method
 def resolve_method(id: Any, *args, **kwargs) -> Callable:
-    ctx: LanguageContext = get_langctx()
-    method: Callable = ctx.get_method(id, *args, **kwargs)
-    return method
+    try:
+        ctx: LanguageContext = get_langctx()
+    except:
+        return None
+    finally:
+        method: Callable = ctx.get_method(id, *args, **kwargs)
+        return method
 
 
 _langctx_registry: dict[Any, LanguageContext] = {}

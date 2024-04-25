@@ -179,6 +179,18 @@ def size(a):
     return fn_
 
 
+@torchsymbol(torch.Tensor.numel, is_method=True, id="torch.numel")
+def numel(a: TensorProxy, /):
+    size = a.size()
+    out = 1
+    for num in size:
+        out *= num
+    return out
+
+
+register_method("numel", numel)
+
+
 @torchsymbol(torch.Tensor.is_cuda, is_property=True, id="torch.is_cuda")
 def is_cuda(a: TensorLike, /) -> bool:
     return a.device.devicetype is devices.DeviceType.CUDA
