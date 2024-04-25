@@ -837,8 +837,6 @@ class get_default_thunder_ddp_dynamic_strides_executor:
 
     def __call__(self, _) -> Callable:
         from thunder.distributed import ddp
-        from thunder.executors.torch_compile import torch_compile_cat_ex
-        from thunder.executors.sdpaex import sdpa_ex
 
         def func(fn: Callable) -> Callable:
             torch.backends.cuda.matmul.allow_tf32 = True
@@ -864,8 +862,6 @@ class get_default_thunder_fsdp_dynamic_strides_executor:
 
     def __call__(self, _) -> Callable:
         from thunder.distributed import fsdp
-        from thunder.executors.torch_compile import torch_compile_cat_ex
-        from thunder.executors.sdpaex import sdpa_ex
 
         def func(fn: Callable) -> Callable:
             torch.backends.cuda.matmul.allow_tf32 = True
