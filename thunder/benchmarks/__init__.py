@@ -737,6 +737,7 @@ from thunder.executors.cudnn_layernormex import cudnn_layernorm_ex
 
 thunder_cudnn_executor: None | Callable = None
 thunder_cudnn_nvfuser_executor: None | Callable = None
+thunder_cudnn_sdpa_torch_compile_nvfuser_executor: None | Callable = None
 thunder_cudnn_layer_norm_executor: None | Callable = None
 thunder_cudnn_layer_norm_nvfuser_executor: None | Callable = None
 if cudnn_available():
@@ -748,6 +749,10 @@ if cudnn_available():
     def thunder_cudnn_nvfuser_executor(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
         return thunder.jit(fn, executors=[cudnn_ex, thunder.nvfuser_executor])
+
+    def thunder_cudnn_sdpa_torch_compile_nvfuser_executor(fn: Callable) -> Callable:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        return thunder.jit(fn, executors=[cudnn_ex, sdpa_ex, torch_compile_ex, thunder.nvfuser_executor])
 
     def thunder_cudnn_layer_norm_executor(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
