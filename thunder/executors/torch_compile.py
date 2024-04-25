@@ -111,7 +111,7 @@ def make_compiled(
 
 
 class TorchCompileExecutor(FusionExecutor):
-    def __init__(self, name: Hashable = "torchcompile", required_ops: set | None = None):
+    def __init__(self, name: Hashable, required_ops: set | None = None):
         super().__init__(name, version=torch.__version__)
         self.required_ops = required_ops
 
@@ -188,9 +188,10 @@ class TorchCompileExecutor(FusionExecutor):
 
 
 from thunder.executors.torchex import ex as pytorch_executor
+from thunder.executors.sdpaex import sdpa_ex
 
 
-# NOTE: [torch_compile_executor vs torch_compile_complete_executor]
+# NOTE: [torch_compile_cat_ex vs torch_compile_ex]
 # The former only relies on `torch.compile` for the operators where it shines the most and is meant to be used
 # together with the nvfuser executor. Its current goal is only to fuse RoPE but the set of ops fused will change as each
 # of the fusion backends evolve.
@@ -203,8 +204,8 @@ required_ops = {
     prims.pad.id,
     prims.slice_prim.id,
 }
-torch_compile_executor = TorchCompileExecutor(required_ops=required_ops)
-register_executor(torch_compile_executor)
+torch_compile_cat_ex = TorchCompileExecutor(name="torchcompile_cat", required_ops=required_ops)
+register_executor(torch_compile_cat_ex)
 # TODO: Carefully enable more ops checking that they do improve performance
 supported_ops = {
     "torch.split",
@@ -221,9 +222,10 @@ supported_ops = {
     prims.transpose.id,
 }
 assert supported_ops - pytorch_executor.implmap.keys() == set()  # sanity check  # FIXME convert into a test
-torch_compile_executor._implmap = {op: info for op, info in pytorch_executor.implmap.items() if op in supported_ops}
+torch_compile_cat_ex._implmap = {op: info for op, info in pytorch_executor.implmap.items() if op in supported_ops}
 
 
-torch_compile_complete_executor = TorchCompileExecutor(name="torchcompile_complete")
-register_executor(torch_compile_complete_executor)
-torch_compile_complete_executor._implmap = dict(pytorch_executor.implmap)
+torch_compile_ex = TorchCompileExecutor(name="torchcompile")
+register_executor(torch_compile_ex)
+torch_compile_ex._implmap = dict(pytorch_executor.implmap)
+torch_compile_ex._implmap.update(sdpa_ex.implmap)

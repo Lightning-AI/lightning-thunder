@@ -197,15 +197,15 @@ class TorchTestExecutor(TestExecutor):
         return torch.__version__
 
 
-class TorchCompileTestExecutor(TestExecutor):
-    name = "torchcompile"
+class TorchCompileCatTestExecutor(TestExecutor):
+    name = "torchcompile_cat"
     supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
     supported_dtypes = (datatypes.dtype,)
 
     def executors_list(self) -> list[extend.Executor]:
-        from thunder.executors.torch_compile import torch_compile_executor
+        from thunder.executors.torch_compile import torch_compile_cat_ex
 
-        return [torch_compile_executor]
+        return [torch_compile_cat_ex]
 
     def version(self):
         return torch.__version__
@@ -213,7 +213,7 @@ class TorchCompileTestExecutor(TestExecutor):
 
 # TODO Refactor these executors into the actual executor (sub)modules
 TorchExecutor: TorchTestExecutor = TorchTestExecutor()
-TorchCompileExecutor: TorchCompileTestExecutor = TorchCompileTestExecutor()
+TorchCompileExecutor: TorchCompileCatTestExecutor = TorchCompileCatTestExecutor()
 nvFuserExecutor: None | nvFuserTestExecutor = None
 
 if NVFUSER_AVAILABLE:

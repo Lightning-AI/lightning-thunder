@@ -149,7 +149,6 @@ class CompileData:
         only_execute_prims: bool = False,
         disable_preprocessing: bool = False,
         use_cudagraphs: bool = False,
-        use_torch_compile: bool = False,
         disable_torch_autograd_support: bool = False,
         use_rematerialization: bool = False,
         debug_log: None | StringIO = None,
@@ -208,7 +207,6 @@ class CompileData:
         self.disable_preprocessing = disable_preprocessing
         self.use_rematerialization = use_rematerialization
         self.use_cudagraphs = use_cudagraphs
-        self.use_torch_compile = use_torch_compile
         self.disable_torch_autograd_support = disable_torch_autograd_support
         self.debug_log = debug_log
 
@@ -619,10 +617,6 @@ def _execute_trace(
 
     # Constructs the Python callable
     c = extrace.python_callable()
-
-    # TODO RC1 Remove this option (by using the torch.compile executor)
-    if compile_data.use_torch_compile:
-        c = torch.compile(c)
 
     # TODO RC1 Mark this option as experimental
     if compile_data.use_cudagraphs:

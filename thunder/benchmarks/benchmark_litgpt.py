@@ -267,7 +267,7 @@ class Benchmark_litGPT:
         elif "thunder" in self.compile:
             executors = [thunder.nvfuser_executor, thunder.pytorch_executor]
             if "inductor" in self.compile:
-                from thunder.executors.torch_compile import torch_compile_executor as torch_compile_ex
+                from thunder.executors.torch_compile import torch_compile_cat_ex as torch_compile_ex
 
                 executors.insert(0, torch_compile_ex)
             if "cudnn" in self.compile:
