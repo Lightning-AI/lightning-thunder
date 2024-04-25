@@ -195,7 +195,7 @@ def type(a: TensorLike, dtype: None | dtypeLike = None, non_blocking: bool = Fal
         exception_type=NotImplementedError,
     )
     if dtype is None:
-        return a.dtype
+        return to_torch_dtype(a.dtype)
     return clang.maybe_convert_to_dtype(a, to_dtype(dtype))
 
 
