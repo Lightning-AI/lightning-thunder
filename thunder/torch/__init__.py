@@ -187,6 +187,19 @@ def is_cuda(a: TensorLike, /) -> bool:
 register_method("size", size)
 
 
+@torchsymbol(torch.Tensor.type, is_method=True)
+def type(a: TensorLike, dtype: None | dtypeLike, non_blocking: bool = False, /) -> TensorLike:
+    utils.check(
+        not non_blocking,
+        lambda: f"type(): `non_blocking==True` is currently not supported.",
+        exception_type=NotImplementedError,
+    )
+    if dtype is None:
+        return a.dtype
+    return clang.maybe_convert_to_dtype(a, to_dtype(dtype))
+
+
+register_method("type", type)
 #
 # Data movement and transformation operations
 #
