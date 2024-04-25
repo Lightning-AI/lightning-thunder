@@ -139,9 +139,11 @@ def test_compile_autocast(executor, device, dtype):
 
 def test_torch_compile_autocast():
     """Checks if our autocast decorator plays well with ``torch.compile``"""
+
     @no_autocast
     def fn(x, y):
         return x + y
+
     a = torch.randn(2, 2)
     b = torch.randn(2, 2)
     cfn = torch.compile(fn, fullgraph=True)

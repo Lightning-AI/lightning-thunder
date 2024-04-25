@@ -4,6 +4,7 @@ from thunder.executors.torch_compile import supported_ops, torch_compile_ex
 from thunder.tests.litgpt_model import GPT
 import thunder
 
+
 def test_supported_ops_are_in_pytorch_executor():
     """If this fails, the list of supported ops should be updated (or something went wrong)."""
     assert supported_ops - pytorch_ex.implmap.keys() == set()
@@ -20,4 +21,3 @@ def test_torch_compile_litgpt():
     assert "TorchCompile0" in forward_trace
     assert "sdpaex_grad_forward_scaled_dot_product_efficient_attention" in forward_trace
     assert "TorchCompile1" in forward_trace
-
