@@ -43,7 +43,7 @@ from thunder.common import (
 )
 import thunder.extend as extend
 from thunder.extend import Executor, add_default_executor
-from thunder.core.compile_data import compile_data_and_stats
+from thunder.core.compile_data import compile_data_and_stats, get_compile_data
 from thunder.core.langctxs import LanguageContext
 import thunder.core.langctxs as langctxs
 from thunder.core.baseutils import run_once, check
@@ -205,6 +205,15 @@ class ThunderModule(pytorch.nn.Module):
 
         self._forward_fn = compiled_model_call
 
+    def get_buffer(self, name):
+        return self._model.get_buffer(name)
+
+    def get_parameter(self, name):
+        return self._model.get_parameter(name)
+
+    def get_submodule(self, name):
+        return self._model.get_submodule(name)
+
     def forward(self, *args, **kwargs):
         res = self._forward_fn(*args, **kwargs)
         return res
@@ -284,6 +293,19 @@ def _with_cache_info_ctx(fn):
 
 def _get_cache_info():
     return _cache_info_ctx.get()
+
+
+def _get_thunder_module(model):
+    cd = get_compile_data()
+    tm = cd._thunder_module_map.get(id(model))
+    if tm and tm._model is not model:
+        tm = None
+    if tm is None:
+        # TODO: we would like to raise an error here, but this would require
+        #       us wrapping models that are passed in closures etc.
+        # raise RuntimeError("could not find ThunderModule")
+        return model
+    return tm
 
 
 def add_executor_lists(
@@ -448,43 +470,44 @@ def jit(
         cs.last_trace_cache_start = time.time_ns()
         if (cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES) or (cd.cache_option is CACHE_OPTIONS.SYMBOLIC_VALUES):
             for cache_entry in reversed(cs.interpreter_cache):
-                (
-                    pro,
-                    pro_traces,
-                    comp,
-                    comp_traces,
-                    epilogue,
-                    epilogue_traces,
-                    backward_fn,
-                    backward_traces,
-                ) = cache_entry
-                try:
-                    cs.last_prologue_execution_start = time.time_ns()
-                    if epilogue:
-                        inps, pro_to_epi = pro(*args, **kwargs)
-                    else:
-                        inps = pro(*args, **kwargs)
-                        pro_to_epi = None
-                    cs.last_prologue_execution_stop = time.time_ns()
-                except Exception as _:
-                    continue
+                with compile_data_and_stats(cd, cs):
+                    (
+                        pro,
+                        pro_traces,
+                        comp,
+                        comp_traces,
+                        epilogue,
+                        epilogue_traces,
+                        backward_fn,
+                        backward_traces,
+                    ) = cache_entry
+                    try:
+                        cs.last_prologue_execution_start = time.time_ns()
+                        if epilogue:
+                            inps, pro_to_epi = pro(*args, **kwargs)
+                        else:
+                            inps = pro(*args, **kwargs)
+                            pro_to_epi = None
+                        cs.last_prologue_execution_stop = time.time_ns()
+                    except Exception as _:
+                        continue
 
-                cs.last_trace_host_tracing_start = time.time_ns()
-                cs.last_trace_host_tracing_stop = time.time_ns()
+                    cs.last_trace_host_tracing_start = time.time_ns()
+                    cs.last_trace_host_tracing_stop = time.time_ns()
 
-                # Updates cache statistics
-                cs.cache_hits += 1
-                cs.last_traces = comp_traces
-                cs.last_interpreted_instructions = None
-                cs.last_interpreter_log = None
-                cs.last_prologue_traces = pro_traces
-                cs.last_prologue = pro
-                cs.last_prologue_transformation_start = 0
-                cs.last_prologue_transformation_stop = 0
-                cs.last_computation_transformation_start = 0
-                cs.last_computation_transformation_stop = 0
+                    # Updates cache statistics
+                    cs.cache_hits += 1
+                    cs.last_traces = comp_traces
+                    cs.last_interpreted_instructions = None
+                    cs.last_interpreter_log = None
+                    cs.last_prologue_traces = pro_traces
+                    cs.last_prologue = pro
+                    cs.last_prologue_transformation_start = 0
+                    cs.last_prologue_transformation_stop = 0
+                    cs.last_computation_transformation_start = 0
+                    cs.last_computation_transformation_stop = 0
 
-                return cache_entry, inps, pro_to_epi
+                    return cache_entry, inps, pro_to_epi
 
         if cd.cache_option is CACHE_OPTIONS.SAME_INPUT:
             if len(cs.interpreter_cache):
@@ -692,6 +715,7 @@ def jit(
 
     if isinstance(fn, pytorch.nn.Module):
         fn_ = ThunderModule(fn, fn_)
+        cd._thunder_module_map[id(fn)] = fn_
 
     # Sets compile options and statistics attributes
     fn_._lc_cd = cd

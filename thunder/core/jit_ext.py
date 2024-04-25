@@ -379,9 +379,7 @@ class ThunderSharpEdgeError(RuntimeError):
 def _sharp_edge(desc: str, value: Any, /) -> Any | INTERPRETER_SIGNALS:
     sharp_edges: SHARP_EDGES_OPTIONS = get_minimal_ctx().sharp_edges
 
-    s: str = (
-        f"{desc} is a sharp edge that cannot be translated to a thunder program unless using interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON."
-    )
+    s: str = f"{desc} is a sharp edge that cannot be translated to a thunder program unless using interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON."
 
     if sharp_edges is SHARP_EDGES_OPTIONS.ERROR:
         return do_raise(ThunderSharpEdgeError(s))
@@ -473,9 +471,7 @@ class JITSharpEdgeError(RuntimeError):
 def _general_jit_sharp_edge(desc: str, value: Any, /) -> Any | INTERPRETER_SIGNALS:
     sharp_edges: SHARP_EDGES_OPTIONS = get_minimal_ctx().sharp_edges
 
-    s: str = (
-        f"{desc} This is currently considered a sharp edge even with interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON. For cases in which we are overly strict, please file an issue. Thank you!"
-    )
+    s: str = f"{desc} This is currently considered a sharp edge even with interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON. For cases in which we are overly strict, please file an issue. Thank you!"
 
     if sharp_edges is SHARP_EDGES_OPTIONS.ERROR:
         return do_raise(JITSharpEdgeError(s))
@@ -1052,6 +1048,19 @@ def _general_jit_wrap_callback(value):
     ctx: GeneralJitCtx = get_general_jit_ctx()
 
     uvalue = value.value
+    # for modules, rewrite m.__dict__["key"] to m.key
+    if (
+        value.provenance.inst is PseudoInst.BINARY_SUBSCR
+        and value.provenance.inputs[0].inst is PseudoInst.LOAD_ATTR
+        and value.provenance.inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE
+        and value.provenance.inputs[0].inputs[1].inst is PseudoInst.CONSTANT
+        and value.provenance.inputs[0].inputs[1].value == "__dict__"
+    ):
+        value.provenance = ProvenanceRecord(
+            PseudoInst.LOAD_ATTR,
+            inputs=[value.provenance.inputs[0].inputs[0], value.provenance.inputs[1]],
+            ext_flag=value.provenance.ext_flag,
+        )
     if isinstance(uvalue, torch.nn.Module):
         value.provenance.ext_flag |= EXT_FLAG_IS_MODULE
     elif isinstance(uvalue, torch.Tensor):
@@ -1197,11 +1206,19 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             else:
                 raise NotImplementedError(f"constant of type {type(provenance.value)} {provenance.value}")
 
-        def unpack_parameter_or_buffer(provenance, *, new_output=False):
-            assert provenance.inputs[0].inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE
-            typ = provenance.inputs[0].inputs[1].value
-            name = [provenance.inputs[1].value]
-            mprovenance = provenance.inputs[0].inputs[0].inputs[0]
+        def unpack_parameter_or_buffer_or_submodule(provenance, *, new_output=False):
+            if provenance.inputs[0].inst is PseudoInst.BINARY_SUBSCR:
+                assert provenance.inputs[0].inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE
+                typ = provenance.inputs[0].inputs[1].value
+                name = [provenance.inputs[1].value]
+                mprovenance = provenance.inputs[0].inputs[0].inputs[0]
+                X
+            else:
+                assert provenance.inputs[0].inst is PseudoInst.LOAD_ATTR
+                assert provenance.inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE
+                typ = provenance.inputs[0].inputs[1].value
+                name = [provenance.inputs[1].value]
+                mprovenance = provenance.inputs[0].inputs[0]
 
             while (
                 mprovenance.inst is PseudoInst.BINARY_SUBSCR
@@ -1220,7 +1237,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
 
             root_module = from_provenance(mprovenance, new_output=True)
             if new_output:
-                output = Proxy("")  # name? collectify?
+                output = Proxy("m")  # name? collectify?
             else:
                 output = p
 
@@ -1239,21 +1256,25 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             name = ".".join(name)
             if typ == "_parameters":
                 bsym = prims.unpack_parameter.bind(root_module, name, output=output)
-            else:
+            elif typ == "_buffers":
                 bsym = prims.unpack_buffer.bind(root_module, name, output=output)
+            elif typ == "_modules":
+                bsym = prims.unpack_submodule.bind(root_module, name, output=output)
+            else:
+                assert False
             prologue_trace.bound_symbols.append(bsym)
+            return output
 
         def from_binary_subscr(provenance, *, new_output=False):
             # special case tensors, todo: do this via pattern matching after unpacking?
             if (
                 provenance.inst is PseudoInst.BINARY_SUBSCR
-                and provenance.inputs[0].inst is PseudoInst.BINARY_SUBSCR
-                and provenance.inputs[1].inst is PseudoInst.CONSTANT
+                and provenance.inputs[0].inst is PseudoInst.LOAD_ATTR
                 and provenance.inputs[0].inputs[1].inst is PseudoInst.CONSTANT
-                and provenance.inputs[0].inputs[1].value in {"_parameters", "_buffers"}
-                and provenance.inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE_MEMBER_DICT
+                and provenance.inputs[0].inputs[1].value in {"_parameters", "_buffers", "_modules"}
+                and provenance.inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE
             ):
-                return unpack_parameter_or_buffer(provenance, new_output=new_output)
+                return unpack_parameter_or_buffer_or_submodule(provenance, new_output=new_output)
 
             inputs = [from_provenance(i, new_output=True) for i in provenance.inputs]
             obj, idx = inputs
@@ -1325,6 +1346,15 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             if unpack_fn is None:
                 raise NotImplementedError(f"Unpacking from {inst} {provenance}")
             res = unpack_fn(provenance, new_output=new_output)
+
+            if provenance.ext_flag & EXT_FLAG_IS_MODULE:
+                assert prologue_trace.bound_symbols[-1].output is res
+                if prologue_trace.bound_symbols[-1].sym != prims.unpack_submodule:
+                    orig_module = Proxy("module")
+                    prologue_trace.bound_symbols[-1].output = orig_module
+                    bsym = prims.unpack_thunder_module.bind(orig_module, output=res)
+                    prologue_trace.bound_symbols.append(bsym)
+
             provenance.proxy = res
             return res
 

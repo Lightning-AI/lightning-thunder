@@ -121,6 +121,8 @@ class PrimIDs(Enum):
     UNPACK_DICT_KEY = auto()
     UNPACK_PARAMETER = auto()
     UNPACK_BUFFER = auto()
+    UNPACK_SUBMODULE = auto()
+    UNPACK_THUNDER_MODULE = auto()
     CONSTRUCT_TUPLE = auto()
     PACK_SETITEM = auto()
     # TODO: UNPACK_SET
@@ -689,6 +691,43 @@ unpack_function_obj = make_prim(
 )
 
 
+def unpack_thunder_module_impl(x: Any, /) -> Any:
+    return x
+
+
+def unpack_thunder_module_meta(x: Any, /) -> Any:
+    return x
+
+
+def unpack_thunder_module_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+) -> str:
+    utils.check(
+        len(arg_printables) == 1,
+        lambda: f"Expected one argument for unpack_thunder_module but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for unpack_thunder_module but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    result_str = "_" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)}"
+    arg_str = codeutils.prettyprint(arg_printables[0])
+    s = f"{result_str} = thunder._get_thunder_module({arg_str})"
+    return s
+
+
+unpack_thunder_module = make_prim(
+    PrimIDs.UNPACK_THUNDER_MODULE,
+    "unpack_thunder_module",
+    meta=unpack_thunder_module_meta,
+    python_printer=unpack_thunder_module_printer,
+    python_impl=unpack_thunder_module_impl,
+)
+
+
 def unpack_cache_info_impl(x: Any, /, *, name: str | None = None) -> Any:
     return x
 
@@ -952,7 +991,7 @@ unpack_attr = make_prim(
 
 
 # NOTE UNPACK_PARAMETER is intended only to be bound to directly, and not called
-def unpack_parameter_meta(o: Any, key: str) -> Any:
+def unpack_parameter_meta(o: Any, key: str, /) -> Any:
     raise NotImplementedError
 
 
@@ -961,12 +1000,12 @@ def unpack_parameter_printer(
 ):
     utils.check(
         len(arg_printables) == 2,
-        lambda: f"Expected two arguments for unpack_attr but got {arg_printables}",
+        lambda: f"Expected two arguments for unpack_parameter but got {arg_printables}",
         exception_type=AssertionError,
     )
     utils.check(
         len(kwarg_printables) == 0,
-        lambda: f"Expected no kwargs for unpack_attr but got {kwarg_printables}",
+        lambda: f"Expected no kwargs for unpack_parameter but got {kwarg_printables}",
         exception_type=AssertionError,
     )
 
@@ -979,7 +1018,7 @@ def unpack_parameter_printer(
     return f"{outstr} = {origin_str}.get_parameter({keystr})"
 
 
-def unpack_parameter_impl(o: Any, key: str) -> Any:
+def unpack_parameter_impl(o: Any, key: str, /) -> Any:
     return o.get_parameter(key)
 
 
@@ -992,8 +1031,49 @@ unpack_parameter = make_prim(
 )
 
 
+# NOTE UNPACK_SUBMODULE is intended only to be bound to directly, and not called
+def unpack_submodule_meta(o: Any, key: str, /) -> Any:
+    raise NotImplementedError
+
+
+def unpack_submodule_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(arg_printables) == 2,
+        lambda: f"Expected two arguments for unpack_submodule but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for unpack_submodule but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    # Converts printables to strings
+    origin, key = arg_printables
+    origin_str = codeutils.prettyprint(origin)
+    keystr = codeutils.prettyprint(key)
+    outstr = codeutils.prettyprint(out_printables, with_type=True, literals_as_underscores=True)
+
+    return f"{outstr} = {origin_str}.get_submodule({keystr})"
+
+
+def unpack_submodule_impl(o: Any, key: str, /) -> Any:
+    return o.get_submodule(key)
+
+
+unpack_submodule = make_prim(
+    PrimIDs.UNPACK_SUBMODULE,
+    "unpack_submodule",
+    meta=unpack_submodule_meta,
+    python_printer=unpack_submodule_printer,
+    python_impl=unpack_submodule_impl,
+)
+
+
 # NOTE UNPACK_BUFFER is intended only to be bound to directly, and not called
-def unpack_buffer_meta(o: Any, key: str) -> Any:
+def unpack_buffer_meta(o: Any, key: str, /) -> Any:
     raise NotImplementedError
 
 
@@ -1002,12 +1082,12 @@ def unpack_buffer_printer(
 ):
     utils.check(
         len(arg_printables) == 2,
-        lambda: f"Expected two arguments for unpack_attr but got {arg_printables}",
+        lambda: f"Expected two arguments for unpack_buffer but got {arg_printables}",
         exception_type=AssertionError,
     )
     utils.check(
         len(kwarg_printables) == 0,
-        lambda: f"Expected no kwargs for unpack_attr but got {kwarg_printables}",
+        lambda: f"Expected no kwargs for unpack_buffer but got {kwarg_printables}",
         exception_type=AssertionError,
     )
 
@@ -1020,7 +1100,7 @@ def unpack_buffer_printer(
     return f"{outstr} = {origin_str}.get_buffer({keystr})"
 
 
-def unpack_buffer_impl(o: Any, key: str) -> Any:
+def unpack_buffer_impl(o: Any, key: str, /) -> Any:
     return o.get_buffer(key)
 
 
