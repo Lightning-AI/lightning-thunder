@@ -610,7 +610,7 @@ sdpa_executors_ids = (
 )
 
 # Sample command to run this benchmark:
-# pytest thunder/benchmarks/targets.py -k "test_litgpt_sdpa_grad" --benchmark-group-by='param:config' --benchmark-columns='min,max,mean,stddev,median'
+# pytest thunder/benchmarks/targets.py -k "test_litgpt_sdpa_grad" --benchmark-group-by='param:config,param:bs' --benchmark-columns='min,max,mean,stddev,median'
 @pytest.mark.parametrize(
     "executor,",
     sdpa_executors,
