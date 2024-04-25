@@ -33,7 +33,6 @@ from thunder.benchmarks import (
     thunder_apex_nvfuser_executor,
     thunder_cudnn_executor,
     thunder_cudnn_nvfuser_executor,
-    thunder_cudnn_sdpa_torch_compile_nvfuser_executor,
     thunder_cudnn_layer_norm_executor,
     thunder_cudnn_layer_norm_nvfuser_executor,
     thunder_sdpa_executor,
@@ -597,15 +596,9 @@ sdpa_executors = (
     torch_executor,
     torch_compile_executor,
     thunder_executor,
-    thunder_sdpa_torch_compile_nvfuser_executor,
     *(
         (thunder_cudnn_nvfuser_executor,)
         if thunder_cudnn_nvfuser_executor is not None
-        else ()
-    ),
-    *(
-        (thunder_cudnn_sdpa_torch_compile_nvfuser_executor,)
-        if thunder_cudnn_sdpa_torch_compile_nvfuser_executor is not None
         else ()
     ),
 )
@@ -613,9 +606,7 @@ sdpa_executors_ids = (
     "torch",
     "torch.compile",
     "thunder",
-    "thunder+inductor_concat",
     *(("thunder+cudnn",) if thunder_cudnn_nvfuser_executor is not None else ()),
-    *(("thunder+cudnn+inductor_concat",) if thunder_cudnn_sdpa_torch_compile_nvfuser_executor is not None else ()),
 )
 
 # Sample command to run this benchmark:
