@@ -188,7 +188,7 @@ register_method("size", size)
 
 
 @torchsymbol(torch.Tensor.type, is_method=True)
-def type(a: TensorLike, dtype: None | dtypeLike, non_blocking: bool = False, /) -> TensorLike:
+def type(a: TensorLike, dtype: None | dtypeLike = None, non_blocking: bool = False, /) -> TensorLike:
     utils.check(
         not non_blocking,
         lambda: f"type(): `non_blocking==True` is currently not supported.",
