@@ -4496,10 +4496,32 @@ def scatter_add_sample_generator(op, device, dtype, requires_grad, **kwargs):
         yield SampleInput(a, index=b, src=c, dim=dim)
 
 
+def scatter_add_error_generator(op, device, dtype=torch.float32, requires_grad=True, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    # torch.scatter_add expects index to be long but not int
+    # Index is not differentiable! Marking requires_grad as False
+    make_index = partial(make_tensor, device=device, dtype=torch.long, requires_grad=False)
+    make_source = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # Gradient definition for src tensor is valid only if src.shape == index.shape
+    shape_a = (4, 5, 3)
+    dim = 0
+    shape_b = (3, 2, 3)
+    shape_source = (4, 3, 9)
+
+    a = make(shape_a)
+    b = make_index(shape_b, low=0, high=shape_a[dim])
+    c = make_source(shape_source)
+    yield (SampleInput(a, index=b, src=c, dim=dim),
+            RuntimeError,
+            "The gradient for the src Tensor is implemented only when src.shape == index.shape. src shape is (.*?) while index shape is (.*?).")
+
+
 scatter_add_opinfo = OpInfo(
     ltorch.scatter_add,
     supports_grad=True,
     sample_input_generator=scatter_add_sample_generator,
+    error_input_generator=scatter_add_error_generator,
     torch_reference=torch.scatter_add,
     test_directives=(
         # Torch doesn't support complex half on scatter_add

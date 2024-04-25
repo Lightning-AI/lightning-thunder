@@ -1973,6 +1973,11 @@ def gather(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
 # NOTE PyTorch's scatter_add has a parameter named 'src', not 'source'
 @torchsymbol(torch.scatter_add)
 def scatter_add(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike) -> TensorLike:
+    utils.check(
+        not src._requires_grad or src.shape == index.shape,
+        lambda: f"The gradient for the src Tensor is implemented only when src.shape == index.shape. "
+        "src shape is {src.shape} while index shape is {index.shape}"
+    )
     return clang.scatter_add(a, indices=index, value=src, dim=dim)
 
 
