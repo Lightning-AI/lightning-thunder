@@ -617,6 +617,11 @@ sdpa_executors_ids = (
     ids=sdpa_executors_ids,
 )
 @pytest.mark.parametrize(
+    "bs,",
+    (1, 2,),
+    ids=("bs1", "bs2"),
+)
+@pytest.mark.parametrize(
     "config,",
     (
         "Llama-2-7b-hf",
@@ -626,9 +631,13 @@ sdpa_executors_ids = (
         "Llama-3-70B",
     ),
 )
-def test_litgpt_sdpa_grad(benchmark, executor: Callable, config):
+def test_litgpt_sdpa_grad(benchmark, executor: Callable, bs, config):
     bench: Benchmark = LitGPTSDPABenchmark(
-        config=config, device="cuda:0", dtype=thunder.bfloat16, requires_grad=True
+        config=config,
+        batchdims=(bs,),
+        device="cuda:0",
+        dtype=thunder.bfloat16,
+        requires_grad=True,
     )
 
     setup = make_setup(bench)
