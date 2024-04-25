@@ -228,4 +228,5 @@ torch_compile_cat_ex._implmap = {op: info for op, info in pytorch_executor.implm
 torch_compile_ex = TorchCompileExecutor(name="torchcompile")
 register_executor(torch_compile_ex)
 torch_compile_ex._implmap = dict(pytorch_executor.implmap)
+# Need to overwrite with the sdpa_ex implmap to avoid decomposing the operator
 torch_compile_ex._implmap.update(sdpa_ex.implmap)
