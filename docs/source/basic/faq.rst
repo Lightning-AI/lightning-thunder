@@ -51,6 +51,7 @@ of the fusion backends evolve::
     executors = [torch_compile_cat_ex, *thunder.get_always_executors()]
     jmodel = thunder.jit(model, executors=executors)
 
+
 ====================================================================================
 3. I have a CUDA, Triton, CUDNN, or other gpu kernel. How can I use it with thunder?
 ====================================================================================
