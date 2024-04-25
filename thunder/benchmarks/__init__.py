@@ -719,6 +719,7 @@ def thunder_torch_compile_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
     return thunder.jit(fn, executors=[torch_compile_ex])
 
+
 thunder_apex_executor: None | Callable = None
 thunder_apex_nvfuser_executor: None | Callable = None
 if apex_available():
@@ -730,6 +731,7 @@ if apex_available():
     def thunder_apex_nvfuser_executor(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
         return thunder.jit(fn, executors=[apex_ex, thunder.nvfuser_executor])
+
 
 thunder_cudnn_executor: None | Callable = None
 thunder_cudnn_nvfuser_executor: None | Callable = None
