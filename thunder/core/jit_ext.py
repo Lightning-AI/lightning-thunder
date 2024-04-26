@@ -114,6 +114,7 @@ EXT_FLAG_IS_PROXY_DERIVED = 1
 EXT_FLAG_IS_TENSOR_PROXY = 2
 EXT_FLAG_IS_MODULE_MEMBER_DICT = 4
 EXT_FLAG_IS_MODULE = 8
+EXT_FLAG_IS_CALLABLE = 16
 MODULE_MEMBER_DICT_ATTRS = {
     "_parameters",
     "_modules",
@@ -1063,7 +1064,7 @@ def _general_jit_wrap_callback(value):
     elif value.provenance.inst is PseudoInst.CONSTANT:
         value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
     elif callable(uvalue):
-        pass  # we only care if it is called
+        value.provenance.ext_flag |= EXT_FLAG_IS_CALLABLE
     elif type(uvalue) in (tuple, list, dict, CellType, ModuleType, set):
         pass  # basic containers are OK, too, subclasses?
     elif isinstance(uvalue, Proxy):
@@ -1137,7 +1138,7 @@ def get_computation_inputs_and_intermediates(computation_trace):
 
 def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, kwargs, *, has_epilogue: bool):
     already_unpacked: dict[int, Proxy] = {}
-    is_pure = True
+    orig_modules: dict[int, Proxy] = {}
 
     # param_ordering[id(proxy] is a list that contains either finite numbers or (strings preceded by math.inf)
     param_ordering: dict[int, list] = {}
@@ -1166,10 +1167,8 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 return pro_args_proxy
             elif provenance.inst == PseudoInst.INPUT_KWARGS:
                 param_ordering[id(pro_kwargs_proxy)] = (pro_kwargs_proxy, [1])
-                is_pure = False
                 return pro_kwargs_proxy
             elif provenance.inst == PseudoInst.INPUT_FN:
-                is_pure = False
                 if provenance.ext_flag & EXT_FLAG_IS_MODULE:
                     name = "module"
                 else:
@@ -1183,14 +1182,17 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             assert False
 
         def from_load_attr(provenance, *, new_output=False):
-            is_pure = False
-            inputs = [from_provenance(i, new_output=True) for i in provenance.inputs]
+            obj, name = [from_provenance(i, new_output=True) for i in provenance.inputs]
+            orig_obj = obj
+            if provenance.inputs[0].ext_flag & EXT_FLAG_IS_MODULE and provenance.ext_flag & EXT_FLAG_IS_CALLABLE:
+                obj = orig_modules.get(id(obj), obj)
+
             if new_output:
                 output = Proxy("obj")
             else:
                 output = p
-            param_ordering[id(output)] = (output, param_ordering[id(inputs[0])][1] + [math.inf, "." + str(inputs[1])])
-            bsym = prims.unpack_attr.bind(inputs[0], inputs[1], output=output)
+            param_ordering[id(output)] = (output, param_ordering[id(orig_obj)][1] + [math.inf, "." + str(name)])
+            bsym = prims.unpack_attr.bind(obj, name, output=output)
             prologue_trace.bound_symbols.append(bsym)
             return output
 
@@ -1340,6 +1342,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                     orig_module = Proxy("module")
                     prologue_trace.bound_symbols[-1].output = orig_module
                     bsym = prims.unpack_thunder_module.bind(orig_module, output=res)
+                    orig_modules[id(res)] = orig_module
                     prologue_trace.bound_symbols.append(bsym)
 
             provenance.proxy = res
