@@ -128,7 +128,8 @@ def check_types(xs: Sequence[Any], types: type | Sequence[type]):
 def check_valid_length(length: int):
     """Validates that an object represents a valid dimension length."""
 
-    check_type(length, int)
+    # maybe we should skip the check for IntegerProxy in general
+    check_type(length, (int, IntegerProxy))
     check(length >= 0, lambda: f"Found invalid length {length}!")
 
 
