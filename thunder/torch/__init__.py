@@ -179,14 +179,13 @@ def size(a):
     return fn_
 
 
-@torchsymbol(torch.Tensor.numel, is_method=True, id="torch.numel")
-def numel(a: TensorProxy, /):
+@torchsymbol(torch.Tensor.numel, is_method=True)
+def numel(a: TensorLike, /) -> Number:
     size = a.size()
     out = 1
     for num in size:
         out *= num
     return out
-
 
 register_method("numel", numel)
 
@@ -356,6 +355,15 @@ def type_as(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
 #
 # Tensor creation operations
 #
+
+
+# @torchsymbol(torch.numel, is_method=True)
+# def numel(a: TensorProxy, /) -> Number:
+#     size = a.size()
+#     out = 1
+#     for num in size:
+#         out *= num
+#     return out
 
 
 @torchsymbol(torch.arange)

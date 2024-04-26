@@ -53,7 +53,10 @@ def set_langctx(ctx: LanguageContext, /) -> Any:
 
 def get_langctx() -> LanguageContext:
     """Gets the current language context"""
-    t = _langctx.get()
+    try:
+        t = _langctx.get()
+    except LookupError:
+        return None
     return t
 
 
@@ -64,13 +67,14 @@ def reset_langctx(token: Any, /) -> None:
 
 # A helper for acquiring a method
 def resolve_method(id: Any, *args, **kwargs) -> Callable:
+    ctx: LanguageContext = get_langctx()
+    # is ctx ever None?
+    # it falls to Prim context
     try:
-        ctx: LanguageContext = get_langctx()
-    except:
-        return None
-    finally:
         method: Callable = ctx.get_method(id, *args, **kwargs)
-        return method
+    except (AttributeError, ValueError) as e:
+        return None
+    return method
 
 
 _langctx_registry: dict[Any, LanguageContext] = {}
