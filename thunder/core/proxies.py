@@ -894,7 +894,7 @@ def pyval(x: Number | str | AnyProxy) -> Number | str | any:
     if isinstance(x, AnyProxy):
         return x._o
 
-    if isinstance(x, (Number, StringProxy)):
+    if isinstance(x, (NumberProxy, StringProxy)):
         return x.value
 
     return x
@@ -904,15 +904,15 @@ def pytype(x: Proxy) -> type | None:
     if isinstance(x, AnyProxy):
         return type(x._o)
 
-    if isinstance(x, complex):
+    if isinstance(x, (complex, ComplexProxy)):
         return complex
-    if isinstance(x, float):
+    if isinstance(x, (float, FloatProxy)):
         return float
     if isinstance(x, bool):
         return bool
     if isinstance(x, IntegerProxy) and x.python_type is bool:
         return bool
-    if isinstance(x, int):
+    if isinstance(x, (int, IntegerProxy)):
         return int
     if isinstance(x, str):
         return str
