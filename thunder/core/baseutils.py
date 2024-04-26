@@ -129,7 +129,7 @@ def check_valid_length(length: int):
     """Validates that an object represents a valid dimension length."""
 
     # maybe we should skip the check for IntegerProxy in general
-    check_type(length, (int, IntegerProxy))
+    check_type(length, (int, NumberProxyInterface))
     check(length >= 0, lambda: f"Found invalid length {length}!")
 
 
