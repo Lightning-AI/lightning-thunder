@@ -38,7 +38,7 @@ fp8_support_reason: str = ""
 if TE_AVAILABLE:
     from transformer_engine.pytorch import fp8_autocast
     from transformer_engine.pytorch import Linear as TELinear
-    from transformer_engine.pytorch.fp8 import check_fp8_support
+    from transformer_engine.pytorch.fp8 import check_fp8_support, FP8GlobalStateManager
 
     is_fp8_supported, fp8_support_reason = check_fp8_support()
 
@@ -1313,6 +1313,9 @@ def _test_ddp_transformer_engine(input_data):
         optim.step()
         optim.zero_grad()
 
+    # See https://github.com/NVIDIA/TransformerEngine/issues/814
+    FP8GlobalStateManager.reset()
+
     class TEModel(torch.nn.Module):
         def __init__(self) -> None:
             super().__init__()
@@ -1524,6 +1527,9 @@ def _test_fsdp_transformer_engine(input_data):
             o.backward()
             optim.step()
             optim.zero_grad()
+
+        # See https://github.com/NVIDIA/TransformerEngine/issues/814
+        FP8GlobalStateManager.reset()
 
         class TEModel(torch.nn.Module):
             def __init__(self) -> None:
