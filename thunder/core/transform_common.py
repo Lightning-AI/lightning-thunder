@@ -36,6 +36,7 @@ def _remove_noop_subsymbols(bsym: BoundSymbol) -> None:
 def _inplace_copy_sanity_check(extrace: Trace):
     """Make sure that the copy_to argument of prims.copy_ is not used as input for any of its subsequent operators, except for the Return and Del operators."""
     from thunder.core.trace import VariableInterface
+
     inplace_copy_symbol_id = ("copy_", prims.PrimIDs.COPY_)
     symbol_id_skip_list = (prims.PrimIDs.RETURN, prims.PrimIDs.DEL)
     inplace_copy_to_arg: set[VariableInterface] = set()
@@ -50,7 +51,9 @@ def _inplace_copy_sanity_check(extrace: Trace):
             for input in bsym.flat_proxy_args:
                 vinput = variableify(input)
                 if vinput in inplace_copy_to_arg:
-                    raise NotImplementedError(f"{bsym} trying to use {input} (the 'copy_to' argument of 'prims.copy_') as input, which is not supported")
+                    raise NotImplementedError(
+                        f"{bsym} trying to use {input} (the 'copy_to' argument of 'prims.copy_') as input, which is not supported"
+                    )
             if bsym.sym.id in inplace_copy_symbol_id:
                 copy_to_arg = bsym.flat_proxy_args[1]
                 vcopy_to_arg = variableify(copy_to_arg)
