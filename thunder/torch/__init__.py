@@ -4095,7 +4095,14 @@ def sigmoid(a: TensorLike, /) -> TensorLike:
 
 # CompositeImplicitAutograd - don't register decomp
 @torchsymbol(torch.softmax, torch.nn.functional.softmax, is_method=True)
-def softmax(a: TensorLike, /, dim: int, *, dtype: None | dtypeLike = None) -> TensorLike:
+def softmax(
+    a: TensorLike,
+    /,
+    dim: int,
+    *,
+    dtype: None | dtypeLike = None,
+    _stacklevel: int = 3,
+) -> TensorLike:
     result_dtype: dtypeLike = dtype or a.dtype
     result_dtype: dtypes.dtype = to_dtype(result_dtype)
     computation_dtype = utils.get_computation_dtype(result_dtype)
