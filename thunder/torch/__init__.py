@@ -358,13 +358,13 @@ def type_as(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
 #
 
 
-# @torchsymbol(torch.numel, is_method=True)
-# def numel(a: TensorProxy, /) -> Number:
-#     size = a.size()
-#     out = 1
-#     for num in size:
-#         out *= num
-#     return out
+@torchsymbol(torch.numel, is_method=True)
+def numel(a: TensorProxy, /) -> Number:
+    size = a.size()
+    out = 1
+    for num in size:
+        out *= num
+    return out
 
 
 @torchsymbol(torch.arange)
