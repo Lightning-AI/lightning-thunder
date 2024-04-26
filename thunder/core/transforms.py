@@ -816,11 +816,28 @@ register_grad(pids.TAKE, _take_prim_grad)
 
 
 @torchctx
+def _gather_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy:
+    fwd = prims.gather(a, index, dim)
+
+    g = get_grad(fwd)
+    # NOTE Intentionally not calling zeros_like to avoid preserving TensorProxy a.
+    # TODO Update to call ltorch.zeros
+    zeros = prims.full(a.shape, fill_value=0, device=a.device, dtype=a.dtype)
+    a_grad = prims.scatter_add(zeros, index, g, dim)
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.GATHER, _gather_prim_grad)
+
+
+@torchctx
 def _take_along_axis_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy:
     fwd = prims.take_along_axis(a, index, dim)
 
     g = get_grad(fwd)
-    # NOTE Intentionally not calling zeros_like to avoid preserving a
+    # NOTE Intentionally not calling zeros_like to avoid preserving TensorProxy a.
     # TODO Update to call ltorch.zeros
     zeros = prims.full(a.shape, fill_value=0, device=a.device, dtype=a.dtype)
     a_grad = prims.scatter_add(zeros, index, g, dim)
@@ -1264,7 +1281,9 @@ register_grad(pids.EMBEDDING, _embedding_prim_grad)
 #
 
 
-def _get_gradfn(bsym: BoundSymbol, *, executors_list: Sequence[Any] = tuple()) -> None | Callable:
+def _get_gradfn_and_executor(
+    bsym: BoundSymbol, *, executors_list: Sequence[Any] = tuple()
+) -> tuple[Callable | None, Executor | None]:
     cd = get_compile_data()
     executors_list = cd.executors_list if cd is not None else executors_list
     # Checks if the executor which has priority for this operation has a specific grad transform for it
@@ -1272,12 +1291,12 @@ def _get_gradfn(bsym: BoundSymbol, *, executors_list: Sequence[Any] = tuple()) -
         if ex.can_execute_or_fuse(bsym):
             ex_grad_transform: None | Callable = ex.get_grad_transform(bsym.sym)
             if ex_grad_transform is not None:
-                return ex_grad_transform
+                return ex_grad_transform, ex
             break
 
     # If the executor doesn't define its own grad transform, this just returns the default grad transform for the bsym
     gradfn = _grad_fn_map.get(bsym.sym.id, None)
-    return gradfn
+    return gradfn, None
 
 
 # The default grad specifier for the grad transform
@@ -1332,7 +1351,8 @@ def grad(
             if bsym.sym.id in never_flatten:
                 return False
 
-            gradfn: None | Callable = _get_gradfn(bsym, executors_list=executors_list)
+            gradfn: None | Callable
+            gradfn, _ = _get_gradfn_and_executor(bsym, executors_list=executors_list)
             return gradfn is None
 
         # TODO RC1: maybe move to produce these always on creation
@@ -1351,7 +1371,8 @@ def grad(
         # Defines the visitor pattern for the first pass of the grad transform,
         #   which swaps BoundSymbols with their grad functions
         def visit_(bsym: BoundSymbol) -> Callable:
-            gradfn: None | Callable = _get_gradfn(bsym, executors_list=executors_list)
+            gradfn: None | Callable
+            gradfn, _ = _get_gradfn_and_executor(bsym, executors_list=executors_list)
             check(
                 gradfn is not None,
                 lambda: f"Failed to find a gradfn for {bsym=} after flattening",
@@ -3348,7 +3369,7 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
     # Normal case, we have a proxy tangent
     vjp_impl = augmented_forward_impls.get(symbol.sym.id)
 
-    if _get_gradfn(symbol) is not None:
+    if _get_gradfn_and_executor(symbol)[0] is not None:
         vjp_impl, backward_fn = make_aug_forward_and_backward(symbol)
 
     if vjp_impl is None:
@@ -3517,7 +3538,7 @@ def backward_pass(forward_env, trace, init_cotangents):
         backward = backward_impls.get(symbol.sym.id)
         aug_forward = augmented_forward_impls.get(symbol.sym.id)
 
-        if _get_gradfn(symbol) is not None:
+        if _get_gradfn_and_executor(symbol)[0] is not None:
             aug_forward, backward = make_aug_forward_and_backward(symbol)
 
         if backward is None:
