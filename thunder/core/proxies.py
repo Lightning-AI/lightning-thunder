@@ -972,6 +972,9 @@ class IntegerProxy(NumberProxy):
             return f"[IntegerProxy (bool type) name={self.name}, value={self.value}]"
         return f"[IntegerProxy name={self.name}, value={self.value}]"
 
+    def __index__(self):
+        return self.value
+
 
 # TODO Review dtype conversions
 class FloatProxy(NumberProxy):

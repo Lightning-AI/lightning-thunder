@@ -207,7 +207,7 @@ def check_same_dtype(*args):
     numbertype = None
     dtype = None
     for a in args:
-        if isinstance(a, Number):
+        if isinstance(a, (Number, NumberProxy)):
             typ = to_dtype(a)
             if numbertype is None:
                 numbertype = typ

@@ -1582,7 +1582,7 @@ def where(
     pred: TensorLike, a: None | Number | TensorLike = None, b: None | Number | TensorLike = None, /
 ) -> TensorLike:
     utils.check(
-        isinstance(a, (Number, TensorProxy)) and isinstance(b, (Number, TensorProxy)),
+        isinstance(a, (Number, NumberProxy, TensorProxy)) and isinstance(b, (Number, NumberProxy, TensorProxy)),
         lambda: f"torch.where() does not support only specifying a condition",
         exception_type=NotImplementedError,
     )

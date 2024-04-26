@@ -266,7 +266,7 @@ def full_like(
     device: DeviceLike | None = None,
     dtype: dtypes.dtype | None = None,
 ) -> TensorLike:
-    if isinstance(a, Number):
+    if isinstance(a, (Number, NumberProxy)):
         dtype = pytype(fill_value) if dtype is None else dtypes.dtype_to_numbertype(dtype)
         utils.check(
             device is None or devices.to_device(device).devicetype is devices.DeviceType.CPU,
@@ -653,7 +653,7 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
             start_indices.append(start)
             end_indices.append(stop)
             strides.append(step)
-        elif isinstance(x, Number):
+        elif isinstance(x, (Number, NumberProxy)):
             # NOTE Numbers must be valid indices after canonicalization, unlike start and stop
             x = utils.canonicalize_dim(l, x)
             start_indices.append(x)
@@ -822,7 +822,7 @@ def getitem(a: TensorLike, /, key) -> TensorLike:
         if key_idx is not None:
             key_idx = key_idx if key_idx >= 0 else len(key) + key_idx
             index = key[key_idx]
-            if isinstance(index, Sequence) and len(index) == 1 and isinstance(index[0], Number):
+            if isinstance(index, Sequence) and len(index) == 1 and isinstance(index[0], (Number, NumberProxy)):
                 start = index[0]
                 # Hande -1 to avoid empty slices
                 if start == -1:
@@ -1091,7 +1091,7 @@ def index_put(
 # NOTE: the dimensions do not have to be specified in any order
 @clangop()
 def unsqueeze(a, /, dims: int | Sequence[int]) -> TensorProxy:
-    if isinstance(dims, Number):
+    if isinstance(dims, (Number, NumberProxy)):
         dims = (dims,)
 
     # Short-circuits if dims is empty
