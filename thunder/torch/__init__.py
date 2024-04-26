@@ -24,7 +24,7 @@ import thunder.core.prims as prims
 import thunder.core.utils as utils
 import thunder.distributed.prims as dist_prims
 from thunder.core.langctxs import langctx, Languages
-from thunder.core.proxies import TensorProxy, FutureTensorProxy
+from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
 from thunder.core.transforms import register_grad, put_grads
@@ -1692,7 +1692,7 @@ def _reduction_dtypes(
 
 
 def _reduction_dims(shape, dims: Sequence | None) -> tuple[int, ...]:
-    if isinstance(dims, int):
+    if isinstance(dims, (int, NumberProxy)):
         dims = (dims,)
     if dims is None or len(dims) == 0:
         return tuple(range(len(shape)))

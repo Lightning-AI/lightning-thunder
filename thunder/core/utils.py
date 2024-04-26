@@ -452,7 +452,7 @@ def elementwise_type_promotion(*args, type_promotion_kind: ELEMENTWISE_TYPE_PROM
     # Type checks inputs
     check(len(args) > 0, lambda: f"Execpted one or more arguments for type promotion, but got {args=}")
     for a in args:
-        check_type(a, (TensorProxy, Number))
+        check_type(a, (TensorProxy, Number, NumberProxy))
 
     # Computes the promotion type
     extracted = tuple(to_dtype(x, true_dtype=True) for x in args)
@@ -613,7 +613,7 @@ def validate_idx(rank: int, idx: int):
     """
 
     check(
-        isinstance(idx, int) and idx >= 0 and (idx < rank or idx == 0),
+        isinstance(idx, (int, NumberProxy)) and idx >= 0 and (idx < rank or idx == 0),
         lambda: f"Found invalid index {idx} for rank {rank}!",
     )
 

@@ -1568,12 +1568,12 @@ put_grad = make_prim(
 
 # TODO Require the datatype of the conversion be constant
 def _convert_element_type_meta(a: Number | TensorProxy, /, dtype: type | dtypes.dtype) -> Number | TensorProxy:
-    utils.check_type(a, (Number, TensorProxy))
+    utils.check_type(a, (Number, NumberProxy, TensorProxy))
     utils.check_type(dtype, (type, dtypes.dtype))
 
     # NOTE Python numbers are constants, and this will return another Python number when given one because
     #   The conversion is constant
-    if isinstance(a, Number):
+    if isinstance(a, (Number, NumberProxy)):
         utils.check(utils.is_numbertype(dtype), lambda: f"Trying to convert a number to non-numbertype object {dtype}")
 
         if isinstance(a, NumberProxy):
@@ -2073,8 +2073,8 @@ def _elementwise_binary_meta_factory(
         /,
     ) -> Number | TensorProxy:
         # Checks that inputs have an expected type
-        utils.check_type(a, (TensorProxy, Number))
-        utils.check_type(b, (TensorProxy, Number))
+        utils.check_type(a, (TensorProxy, Number, NumberProxy))
+        utils.check_type(b, (TensorProxy, Number, NumberProxy))
 
         # Checks same dtype
         numbertype, dtype = utils.check_same_dtype(a, b)
@@ -2086,7 +2086,7 @@ def _elementwise_binary_meta_factory(
         utils.check(dtype is None or dtype in supported_input_dtypes, lambda: f"Unsupported input dtype {dtype}")
 
         # Special-cases number x number inputs
-        if isinstance(a, Number) and isinstance(b, Number):
+        if isinstance(a, (Number, NumberProxy)) and isinstance(b, (Number, NumberProxy)):
             aval, bval = utils.get_numberlike_value(a), utils.get_numberlike_value(b)
 
             # Handles the case where a number has an indeterminate value, or the operation has

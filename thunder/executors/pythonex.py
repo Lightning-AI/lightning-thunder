@@ -14,7 +14,7 @@ import torch
 
 import thunder.core.prims as prims
 from thunder.core.prims import PrimIDs
-from thunder.core.proxies import TensorProxy, CollectionProxy
+from thunder.core.proxies import NumberProxy, TensorProxy, CollectionProxy
 from thunder.core.symbol import Symbol, BoundSymbol
 from thunder.core import baseutils
 import thunder.core.dtypes as dtypes
@@ -293,7 +293,7 @@ ex.register_implementation(prims.signbit, signbit, checker=_elementwise_unary_ch
 
 
 def _elementwise_binary_checker(a: Number | TensorProxy, b: Number | TensorProxy) -> bool:
-    return isinstance(a, Number) and isinstance(b, Number)
+    return isinstance(a, (Number, NumberProxy)) and isinstance(b, (Number, NumberProxy))
 
 
 add = ex.register_operator("add", like=prims.add, module=operator)

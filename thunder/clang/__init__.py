@@ -19,7 +19,7 @@ from thunder.core.langctxs import langctx, Languages
 import thunder.core.dtypes as dtypes
 from thunder.core import utils
 import thunder.core.prims as prims
-from thunder.core.proxies import TensorProxy, pyval, pytype, proxy, AnyProxy, Proxy
+from thunder.core.proxies import NumberProxy, TensorProxy, pyval, pytype, proxy, AnyProxy, Proxy
 import thunder.core.devices as devices
 
 # This file defines the operations in thunder.jit's "core" language.
@@ -140,7 +140,7 @@ def maybe_convert_to_dtype(a, dtype, *, enforce_safe_casting=False):
         # Translates numbertypes to dtypes
         if dtypes.is_numbertype(dtype):
             dtype = dtypes.numbertype_to_dtype(dtype)
-    elif isinstance(a, Number):
+    elif isinstance(a, (Number, NumberProxy)):
         # NOTE This allows conversions like (5, float32) -> 5., which is a little odd
         dtype = utils.dtype_to_numbertype(dtype)
     else:

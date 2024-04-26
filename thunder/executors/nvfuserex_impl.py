@@ -157,7 +157,7 @@ def is_supported_tensor(a: TensorProxy, *, allow_low_precision_floats: bool = Tr
 
 
 def is_supported_tensor_or_number(a: TensorProxy | Number) -> bool:
-    if isinstance(a, Number):
+    if isinstance(a, (Number, NumberProxy)):
         return True
 
     return is_supported_tensor(a)
@@ -1875,7 +1875,7 @@ register_supported(PrimIDs.WHERE, where, _where_check)
 
 # TODO Checks that the dtype is supported by nvFuser
 def _reduction_check(a: TensorProxy, dims: Sequence[int]) -> bool:
-    return is_supported_tensor(a, allow_low_precision_floats=False)
+    return is_supported_tensor(a, allow_low_precision_floats=False) and not any((isinstance(dim, NumberProxy) for dim in dims))
 
 
 # TODO Review if this accepts empty dim sequences
@@ -1936,6 +1936,7 @@ def sum(
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:
+    print("execute red dims: ", dims)
     nva = getnv(a, fd, lc_to_nv_map)
     nvdims = dims
 
