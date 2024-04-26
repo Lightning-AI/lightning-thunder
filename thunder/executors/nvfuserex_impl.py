@@ -1875,7 +1875,9 @@ register_supported(PrimIDs.WHERE, where, _where_check)
 
 # TODO Checks that the dtype is supported by nvFuser
 def _reduction_check(a: TensorProxy, dims: Sequence[int]) -> bool:
-    return is_supported_tensor(a, allow_low_precision_floats=False) and not any((isinstance(dim, NumberProxy) for dim in dims))
+    return is_supported_tensor(a, allow_low_precision_floats=False) and not any(
+        isinstance(dim, NumberProxy) for dim in dims
+    )
 
 
 # TODO Review if this accepts empty dim sequences

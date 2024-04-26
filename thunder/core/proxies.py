@@ -926,7 +926,7 @@ def pytype(x: Proxy) -> type | None:
 
 # TODO RC1 Update Proxy number inits to be value, /, *, name, history
 class ComplexProxy(NumberProxy):
-    #def __new__(cls, *, name=None, value, history: None | tuple = None):
+    # def __new__(cls, *, name=None, value, history: None | tuple = None):
     #    if value is None:
     #        value = complex(float("nan"), float("nan"))
 
@@ -947,7 +947,7 @@ class ComplexProxy(NumberProxy):
 # TODO Review dtype conversions
 # TODO Review -9999 as the marker value for unknown values
 class IntegerProxy(NumberProxy):
-    #def __new__(cls, *, name: str | None = None, value: Number, history: None | tuple = None):
+    # def __new__(cls, *, name: str | None = None, value: Number, history: None | tuple = None):
     #    if value is None:
     #        value = -9999
 
@@ -975,7 +975,7 @@ class IntegerProxy(NumberProxy):
 
 # TODO Review dtype conversions
 class FloatProxy(NumberProxy):
-    #def __new__(cls, *, name=None, value, history: None | tuple = None):
+    # def __new__(cls, *, name=None, value, history: None | tuple = None):
     #    if value is None:
     #        value = float("nan")
 
