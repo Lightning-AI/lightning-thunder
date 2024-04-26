@@ -1186,7 +1186,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             assert False
 
         def from_load_attr(provenance, *, new_output=False):
-            obj, name = [from_provenance(i, new_output=True) for i in provenance.inputs]
+            obj, name = (from_provenance(i, new_output=True) for i in provenance.inputs)
             orig_obj = obj
             if provenance.inputs[0].ext_flag & EXT_FLAG_IS_MODULE and provenance.ext_flag & EXT_FLAG_IS_CALLABLE:
                 obj = orig_modules.get(id(obj), obj)
