@@ -1225,8 +1225,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
     def type_string(self):
         return f"{self.device} {self.dtype.shortname()}{list(self.shape)}"
 
-
-
     # NOTE __getattr__ is overridden to support language-specific methods
     def __getattr__(self, attr: str, /):
         method_or_value: None | Callable | Any = resolve_method(attr, self)
@@ -1246,6 +1244,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         if attr == "numel":
             return self._numel
         return None
+
     #
     # Datatype conversion shorthands
     #

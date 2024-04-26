@@ -646,14 +646,14 @@ def test_int_to_float_type_promotion(executor, device, _):
 #
 # Caching tests
 #
-@instantiate(dtypes=(thunder.float32, ))
+@instantiate(dtypes=(thunder.float32,))
 def test_fallback_method(executor, device: str, dtype: dtypes.dtype):
     from thunder.core.trace import detached_trace
-    from thunder.core.proxies import TensorProxy    
+    from thunder.core.proxies import TensorProxy
 
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    
+
     with detached_trace():
         b = TensorProxy(
             name="__b",
@@ -661,12 +661,11 @@ def test_fallback_method(executor, device: str, dtype: dtypes.dtype):
             device=thunder.core.devices.cpu,
             dtype=thunder.core.dtypes.float32,
             requires_grad=False,
-        )    
-    
+        )
+
     # torch.numel(a) and a.numel() will run on PyTorch contenxt
     # b.numel will fall back to the default implementation
     assert torch.numel(a) == a.numel() == b.numel
-
 
 
 @instantiate(dtypes=(thunder.float32,))

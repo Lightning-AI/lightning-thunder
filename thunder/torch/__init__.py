@@ -187,6 +187,7 @@ def numel(a: TensorLike, /) -> Number:
         out *= num
     return out
 
+
 register_method("numel", numel)
 
 
