@@ -13,7 +13,7 @@ from collections.abc import Callable
 import opt_einsum
 
 # Initializes the language context
-from thunder.torch.langctx import register_method
+from thunder.torch.langctx import register_method, register_property
 
 import thunder.clang as clang
 import thunder.core.devices as devices
@@ -76,6 +76,7 @@ class torchsymbol:
         *torchfns,
         is_method: bool = False,
         method_name: None | str = None,
+        is_property: bool = False,
         id: str | None = None,
         is_prim: bool = False,
         tags: None | list[Any] = None,
@@ -83,6 +84,7 @@ class torchsymbol:
         self.torchfns = torchfns
         self.is_method = is_method or (method_name is not None)
         self.method_name: None | str = method_name
+        self.is_property = is_property
         self.id = id
         # When is_prim is True, the function is treated as a primitive, so that
         # executors must execute it directly without decomposition.
@@ -127,6 +129,12 @@ class torchsymbol:
             torch_method: None | Callable = getattr(torch.Tensor, method_name, None)
             if torch_method is not None:
                 _torch_to_thunder_function_map[torch_method] = sym
+        elif self.is_property:
+            method_name: str = self.method_name if self.method_name is not None else fn.__name__
+            register_property(method_name, sym)
+            torch_property = getattr(torch.Tensor, method_name, None)
+            if torch_property is not None:
+                _torch_to_thunder_function_map[torch_property] = sym
 
         if self.torchfns is not None:
             for torchfn in self.torchfns:
@@ -169,6 +177,11 @@ def size(a):
         return a.shape[idx]
 
     return fn_
+
+
+@torchsymbol(torch.Tensor.is_cuda, is_property=True, id="torch.is_cuda")
+def is_cuda(a: TensorLike, /) -> bool:
+    return a.device.devicetype is devices.DeviceType.CUDA
 
 
 register_method("size", size)
@@ -1576,6 +1589,71 @@ def where(
     return clang.where(pred, a, b)
 
 
+@torchsymbol(torch.nan_to_num, is_method=True)
+def nan_to_num(
+    a: TensorLike,
+    nan: None | Number = 0.0,
+    posinf: None | Number = None,
+    neginf: None | Number = None,
+    /,
+    out: None | TensorLike = None,
+) -> TensorLike:
+    """Replaces NaN, positive infinity, and negative infinity values in input tensor with values specified by nan, posinf, and neginf.
+        When nan, posinf, and neginf values are greater than the a.dtype's max value, it is replaced with float("inf").
+        If they are smaller than the a.dtype's min value, it is replaced with -float("inf").
+        Otherwise, they are replaced with the exact values specified by nan, posinf, and neginf.
+
+    Args:
+        a (Tensor): input tensor
+        nan (Number): value to replace NaNs with. Default is zero
+        posinf (Number): value to replace positive infinity. If None, positive infinity values are replaced with the greatest finite value represented by a's type
+        neginf (Number): value to replace negative infinity. If None, negative infinity values are replaced with the lowest finite value represented by a's type
+        out (Tensor): output tensor which is not supported yet
+
+    Returns:
+        result (Tensor): tensor with replaced values
+
+    Examples:
+        >>> a = torch.tensor((float("nan"), float("inf"), -float("inf"))) # a.dtype is torch.float32
+        >>> nan = torch.finfo(torch.float64).max
+        >>> result = torch.nan_to_num(a, nan=nan, posinf=1, neginf=0)
+        >>> result
+        tensor([inf, 1., 0.])
+    """
+
+    utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
+
+    if dtypes.is_boolean_dtype(a.dtype):
+        # NOTE PyTorch returns a.clone()
+        return a | a
+
+    if dtypes.is_integer_dtype(a.dtype):
+        # NOTE PyTorch returns a.clone()
+        return a - 0
+
+    a_dtype_max = torch.finfo(to_torch_dtype(a.dtype)).max
+    a_dtype_min = torch.finfo(to_torch_dtype(a.dtype)).min
+    inf = float("inf")
+
+    def convert(x, if_none):
+        if x is None:
+            return if_none
+        if x > a_dtype_max:
+            return inf
+        if x < a_dtype_min:
+            return -inf
+        return x
+
+    nan = convert(nan, 0)
+    posinf = convert(posinf, a_dtype_max)
+    neginf = convert(neginf, a_dtype_min)
+
+    result = where(a != a, nan, a)
+    result = where(a == -inf, neginf, result)
+    result = where(a == inf, posinf, result)
+    return result
+
+
 #
 # Reduction operations
 #
@@ -1885,6 +1963,11 @@ def index_add(a: TensorLike, /, dim: int, index: TensorLike, source: TensorLike)
 @torchsymbol(torch.index_select, is_method=True)
 def index_select(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
     return clang.take(a, index, dim)
+
+
+@torchsymbol(torch.gather)
+def gather(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
+    return clang.gather(a, indices=index, dim=dim)
 
 
 # NOTE PyTorch's scatter_add has a parameter named 'src', not 'source'
@@ -3892,6 +3975,47 @@ def nll_loss_backward(
     total_weight: TensorLike,
 ) -> TensorLike:
     return TensorProxy(like=g, shape=a.shape)
+
+
+@torchsymbol(torch.nn.functional.mse_loss)
+def mse_loss(
+    a: TensorLike,
+    /,
+    target: TensorLike,
+    size_average: None | Any = None,
+    reduce: None | Any = None,
+    reduction: str = "mean",
+) -> TensorLike:
+    utils.check(
+        size_average is None and reduce is None,
+        lambda: f"Deprecated size_average={size_average} and reduce={reduce} is not supported!",
+    )
+    utils.check(
+        reduction in ("none", "sum", "mean"),
+        lambda: f'Expected reduction string to be "none", "sum", or "mean", but it is {reduction}.',
+        exception_type=ValueError,
+    )
+
+    # warn broadcasting
+    if a.size() != target.size():
+        warnings.warn(
+            f"Using a target size {target.size()} that is different to the input size {a.size()}"
+            "This will likely lead to incorrect results due to broadcasting."
+            "Please ensure they have the same size."
+        )
+    out = (a - target) ** 2
+
+    # maybe add _apply_loss_reduction
+    # (like https://github.com/pytorch/pytorch/blob/df5829d0babaefc6e271897d6fffd40073d8b723/torch/_refs/nn/functional/__init__.py#L490)
+    # not sure if this would be useful
+    if reduction == "none":
+        return out
+    elif reduction == "sum":
+        return sum(out)
+    elif reduction == "mean":
+        return mean(out)
+    else:
+        raise ValueError(f"Reduction argument {reduction} to mse_loss is not supported")
 
 
 # TODO Add annotations

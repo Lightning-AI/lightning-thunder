@@ -119,6 +119,8 @@ class PrimIDs(Enum):
     UNPACK_TUPLE = auto()
     UNPACK_LIST = auto()
     UNPACK_DICT_KEY = auto()
+    UNPACK_PARAMETER = auto()
+    UNPACK_BUFFER = auto()
     CONSTRUCT_TUPLE = auto()
     PACK_SETITEM = auto()
     # TODO: UNPACK_SET
@@ -234,6 +236,7 @@ class PrimIDs(Enum):
     ARGMIN = auto()
     TOPK = auto()
     # Scatter and gather prims (Experimental!)
+    GATHER = auto()
     INDEX_ADD = auto()
     INDEX_PUT = auto()
     SCATTER_ADD = auto()
@@ -948,6 +951,88 @@ unpack_attr = make_prim(
 )
 
 
+# NOTE UNPACK_PARAMETER is intended only to be bound to directly, and not called
+def unpack_parameter_meta(o: Any, key: str) -> Any:
+    raise NotImplementedError
+
+
+def unpack_parameter_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(arg_printables) == 2,
+        lambda: f"Expected two arguments for unpack_attr but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for unpack_attr but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    # Converts printables to strings
+    origin, key = arg_printables
+    origin_str = codeutils.prettyprint(origin)
+    keystr = codeutils.prettyprint(key)
+    outstr = codeutils.prettyprint(out_printables, with_type=True, literals_as_underscores=True)
+
+    return f"{outstr} = {origin_str}.get_parameter({keystr})"
+
+
+def unpack_parameter_impl(o: Any, key: str) -> Any:
+    return o.get_parameter(key)
+
+
+unpack_parameter = make_prim(
+    PrimIDs.UNPACK_PARAMETER,
+    "unpack_parameter",
+    meta=unpack_parameter_meta,
+    python_printer=unpack_parameter_printer,
+    python_impl=unpack_parameter_impl,
+)
+
+
+# NOTE UNPACK_BUFFER is intended only to be bound to directly, and not called
+def unpack_buffer_meta(o: Any, key: str) -> Any:
+    raise NotImplementedError
+
+
+def unpack_buffer_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(arg_printables) == 2,
+        lambda: f"Expected two arguments for unpack_attr but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for unpack_attr but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    # Converts printables to strings
+    origin, key = arg_printables
+    origin_str = codeutils.prettyprint(origin)
+    keystr = codeutils.prettyprint(key)
+    outstr = codeutils.prettyprint(out_printables, with_type=True, literals_as_underscores=True)
+
+    return f"{outstr} = {origin_str}.get_buffer({keystr})"
+
+
+def unpack_buffer_impl(o: Any, key: str) -> Any:
+    return o.get_buffer(key)
+
+
+unpack_buffer = make_prim(
+    PrimIDs.UNPACK_BUFFER,
+    "unpack_buffer",
+    meta=unpack_buffer_meta,
+    python_printer=unpack_buffer_printer,
+    python_impl=unpack_buffer_impl,
+)
+
+
 # NOTE PACK_SETITEM is intended only to be bound to directly, and not called
 def pack_setitem_meta(o: Any, key: Any, value: Any) -> Any:
     raise NotImplementedError
@@ -976,7 +1061,7 @@ def pack_setitem_printer(
 
 
 def pack_setitem_impl(o: Any, key: Any, v: Any) -> None:
-    o[key] = value
+    o[key] = v
     return None
 
 
@@ -2996,6 +3081,29 @@ def take_along_axis_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> Ten
 
 
 take_along_axis = make_prim(PrimIDs.TAKE_ALONG_AXIS, "take_along_axis", meta=take_along_axis_meta)
+
+
+def gather_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
+    utils.check_type(a, TensorProxy)
+    utils.check_type(index, TensorProxy)
+    utils.check_type(dim, int)
+    utils.check_same_device(a, index)
+    utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={index.dtype} was not an integer dtype")
+    utils.check(
+        index.ndim == a.ndim, lambda: f"Expected index (rank={index.ndim}) to have the same rank as a (rank={a.ndim})"
+    )
+    utils.validate_idx(a.ndim, dim)
+
+    for idx, l in enumerate(index.shape):
+        if idx != dim:
+            utils.check(
+                index.shape[idx] <= a.shape[idx],
+                lambda: f"Expected 'index' size on all dimensions to be <= 'a', except `dim`. Found dim {idx}, where 'index' has {index.shape[idx]} and 'a' has {a.shape[idx]}",
+            )
+    return TensorProxy(like=a, shape=index.shape)
+
+
+gather = make_prim(PrimIDs.GATHER, "gather", meta=gather_meta)
 
 
 def scatter_add_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:

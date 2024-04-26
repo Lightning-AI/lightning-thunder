@@ -331,15 +331,6 @@ class Benchmark_litGPT:
             # Setup throughput Collection
             self.throughput = Throughput(window_size=self.max_iters - self.warmup_iter, world_size=world_size)
 
-        if "transformerengine" in self.compile:
-            import transformer_engine.pytorch as te
-
-            te_ctx = te.fp8_autocast
-        else:
-            from contextlib import nullcontext
-
-            te_ctx = nullcontext
-
         for i in range(self.max_iters):
             iter_t0 = time.perf_counter()
             if i == self.warmup_iter:  # warmup
@@ -354,8 +345,7 @@ class Benchmark_litGPT:
                     print("=====Start NSYS Profiling======")
                     torch.cuda.cudart().cudaProfilerStart()
 
-                with te_ctx():
-                    logits = self.model(input_ids)
+                logits = self.model(input_ids)
 
                 logits = logits.reshape(-1, logits.size(-1))
                 targets = targets.reshape(-1)
