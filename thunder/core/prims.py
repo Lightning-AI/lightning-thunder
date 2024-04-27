@@ -1655,7 +1655,7 @@ def _elementwise_unary_meta_factory(
 ):
     def meta(a: Number | TensorProxy, /) -> Number | TensorProxy:
         # Checks that inputs have an expected type
-        utils.check_type(a, (TensorProxy, Number))
+        utils.check_type(a, (TensorProxy, Number, NumberProxy))
 
         if isinstance(a, (Number, NumberProxy)):
             # Checks that the numbertype is supported
