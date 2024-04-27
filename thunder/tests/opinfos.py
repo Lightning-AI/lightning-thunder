@@ -2862,6 +2862,7 @@ def broadcast_in_dim_sample_generator(op, device, dtype, requires_grad, **kwargs
 
     # inshape, outshape, dims
     cases = (
+        ([5], [5], [0]),
         ([2], [2, 2], [0]),
         ([2], [2, 2], [1]),
         ([2], [2, 3], [0]),
