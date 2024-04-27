@@ -2383,7 +2383,11 @@ def _where_meta(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number |
     utils.check_type(a, (TensorProxy, NumberProxy, Number))
     utils.check_type(b, (TensorProxy, NumberProxy, Number))
 
-    if isinstance(pred, (NumberProxy, Number)) and isinstance(a, (NumberProxy, Number)) and isinstance(b, (NumberProxy, Number)):
+    if (
+        isinstance(pred, (NumberProxy, Number))
+        and isinstance(a, (NumberProxy, Number))
+        and isinstance(b, (NumberProxy, Number))
+    ):
         raise NotImplementedError
 
     # Checks pred dtype (bool or bool tensor)
