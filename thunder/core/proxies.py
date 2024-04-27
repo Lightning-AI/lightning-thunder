@@ -20,8 +20,9 @@ import thunder.core.baseutils as baseutils
 from thunder.core.langctxs import resolve_method, get_langctx, LanguageContext
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
+
 # circular import
-#from thunder.core.utils import elementwise_type_promotion
+# from thunder.core.utils import elementwise_type_promotion
 
 ShapeLike = Sequence[int]
 
@@ -691,10 +692,10 @@ class NumberProxy(Proxy, NumberProxyInterface):
         except Exception as e:
             return fn(vala, valb)
         return method(a, b)
-        #computation_dtype, result_dtype = elementwise_type_promotion(a, b, type_promotion_kind=type_promotion_kind)
-        #a, b = maybe_convert_to_dtype(a, computation_dtype), maybe_convert_to_dtype(b, computation_dtype)
-        #result = method(a, b)
-        #return maybe_convert_to_dtype(result, result_dtype)
+        # computation_dtype, result_dtype = elementwise_type_promotion(a, b, type_promotion_kind=type_promotion_kind)
+        # a, b = maybe_convert_to_dtype(a, computation_dtype), maybe_convert_to_dtype(b, computation_dtype)
+        # result = method(a, b)
+        # return maybe_convert_to_dtype(result, result_dtype)
 
     def __add__(self, other):
         return self._elementwise_binary_helper(self, other, "add", operator.add)
