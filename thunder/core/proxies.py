@@ -663,7 +663,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
     #
 
     @staticmethod
-    def _elementwise_binary_helper(a, b, name, fn, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT):
+    def _elementwise_binary_helper(a, b, name, fn, type_promotion_kind="utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT"):
         baseutils.check_type(b, (Number, NumberProxy, TensorProxy))
 
         vala = pyval(a)
