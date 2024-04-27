@@ -20,7 +20,8 @@ import thunder.core.baseutils as baseutils
 from thunder.core.langctxs import resolve_method, get_langctx, LanguageContext
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
-from thunder.core.utils import elementwise_type_promotion
+# circular import
+#from thunder.core.utils import elementwise_type_promotion
 
 ShapeLike = Sequence[int]
 
