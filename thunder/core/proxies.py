@@ -20,6 +20,7 @@ import thunder.core.baseutils as baseutils
 from thunder.core.langctxs import resolve_method, get_langctx, LanguageContext
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
+from thunder.core.utils import elementwise_type_promotion
 
 ShapeLike = Sequence[int]
 
@@ -661,7 +662,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
     #
 
     @staticmethod
-    def _elementwise_binary_helper(a, b, name, fn):
+    def _elementwise_binary_helper(a, b, name, fn, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT):
         baseutils.check_type(b, (Number, NumberProxy, TensorProxy))
 
         vala = pyval(a)
@@ -687,8 +688,12 @@ class NumberProxy(Proxy, NumberProxyInterface):
         try:
             method = resolve_method(name, a, b)
         except Exception as e:
-            return fn(a, b)
+            return fn(vala, valb)
         return method(a, b)
+        #computation_dtype, result_dtype = elementwise_type_promotion(a, b, type_promotion_kind=type_promotion_kind)
+        #a, b = maybe_convert_to_dtype(a, computation_dtype), maybe_convert_to_dtype(b, computation_dtype)
+        #result = method(a, b)
+        #return maybe_convert_to_dtype(result, result_dtype)
 
     def __add__(self, other):
         return self._elementwise_binary_helper(self, other, "add", operator.add)

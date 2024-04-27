@@ -1958,7 +1958,7 @@ def vmap_symbol_mapper(symbol: prims.Symbol, *, axis_size: int):
     def wrap_arg(x):
         if isinstance(x, BatchedValue):
             return x
-        elif isinstance(x, Number):
+        elif isinstance(x, (Number, NumberProxy)):
             return BatchedValue(x, not_mapped)
         else:
             raise ValueError(f"vmap wrap_arg got an unsupported type {type(x)}")
@@ -2029,7 +2029,7 @@ def _vmap_call_metafunc(detached: bool, args, in_dims, out_dims, axis_size, func
     if axis_size is None:
         (axis_size,) = {x.shape[ax] for x, ax in zip(args, in_dims) if ax is not not_mapped}
     in_dims = in_dims if isinstance(in_dims, Sequence) else (in_dims,)
-    in_dims = tuple(not_mapped if isinstance(a, Number) else d for a, d in safe_zip(args, in_dims))
+    in_dims = tuple(not_mapped if isinstance(a, (Number, NumberProxy)) else d for a, d in safe_zip(args, in_dims))
     out_dims = out_dims if isinstance(out_dims, Sequence) else (out_dims,)
 
     ctx = detached_trace() if detached else nullcontext()
@@ -2049,11 +2049,11 @@ def _vmap_call_metafunc(detached: bool, args, in_dims, out_dims, axis_size, func
                 out_dims = out_dims * len(outs)
             outs = safe_map(partial(move_batch_dim, axis_size), bdims, out_dims, outs)
             return tree_unflatten(outs, spec)
-        if isinstance(result, Number) and axis_size is not None:
+        if isinstance(result, (Number, NumberProxy)) and axis_size is not None:
             # TODO: fetch the default device from the context
             result = full(shape=(), fill_value=result, device=common_device)
             result = BatchedValue(result, not_mapped)
-        elif isinstance(result, BatchedValue) and isinstance(result.value, Number) and axis_size is not None:
+        elif isinstance(result, BatchedValue) and isinstance(result.value, (Number, NumberProxy)) and axis_size is not None:
             result = BatchedValue(full(shape=(), fill_value=result.value, device=common_device), result.batch_dim)
         assert isinstance(result, BatchedValue)
         out = move_batch_dim(axis_size, result.batch_dim, out_dims[0], result.value)

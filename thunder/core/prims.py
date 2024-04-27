@@ -1657,7 +1657,7 @@ def _elementwise_unary_meta_factory(
         # Checks that inputs have an expected type
         utils.check_type(a, (TensorProxy, Number))
 
-        if isinstance(a, Number):
+        if isinstance(a, (Number, NumberProxy)):
             # Checks that the numbertype is supported
             typ = utils.get_numberlike_type(a)
             val = utils.get_numberlike_value(a)
@@ -2383,11 +2383,11 @@ def _where_meta(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number |
     utils.check_type(a, (TensorProxy, NumberProxy, Number))
     utils.check_type(b, (TensorProxy, NumberProxy, Number))
 
-    if isinstance(pred, Number) and isinstance(a, Number) and isinstance(b, Number):
+    if isinstance(pred, (NumberProxy, Number)) and isinstance(a, (NumberProxy, Number)) and isinstance(b, (NumberProxy, Number)):
         raise NotImplementedError
 
     # Checks pred dtype (bool or bool tensor)
-    if isinstance(pred, Number):
+    if isinstance(pred, (NumberProxy, Number)):
         utils.check(
             pytype(pred) is bool,
             lambda: f"Expected pred to be a boolean number, but found a number of type {pytype(pred)}",
@@ -2471,7 +2471,7 @@ exogenous_like = make_prim(
 #   in the future
 def _full_meta(shape: Sequence[int], fill_value: Number, *, device: devices.Device, dtype: dtypes.dtype) -> TensorProxy:
     # Checks inputs
-    utils.check_type(fill_value, Number)
+    utils.check_type(fill_value, (Number, NumberProxy))
 
     # Ensures the requested fill_value can be safely cast to the dtype
     fill_value_dtype = dtypes.to_dtype(fill_value)
