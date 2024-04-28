@@ -625,7 +625,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
             method = resolve_method(name, a)
         except Exception as e:
             return fn(vala)
-        #return method(a)
+        # return method(a)
 
         from thunder.core.utils import elementwise_type_promotion, dtype_to_numbertype, are_same_dtypes
         from thunder.core import prims
@@ -640,7 +640,6 @@ class NumberProxy(Proxy, NumberProxyInterface):
         a = maybe_convert_to_dtype(a, computation_dtype)
         result = method(a)
         return maybe_convert_to_dtype(result, result_dtype)
-
 
     def __abs__(self):
         return self._elementwise_unary_helper(self, "abs", builtins.abs)
@@ -703,7 +702,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
         except Exception as e:
             return fn(vala, valb)
 
-        #return method(a, b)
+        # return method(a, b)
 
         # circular import
         from thunder.core.utils import elementwise_type_promotion, dtype_to_numbertype, are_same_dtypes
