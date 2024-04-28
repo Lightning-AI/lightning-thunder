@@ -11,7 +11,7 @@ expecttest ==0.2.1  # for test_ddp.py
 hypothesis ==6.100.0  # for test_ddp.py
 numpy  # for test_ops.py
 einops  # for test_einops.py
-litgpt @ git+https://github.com/Lightning-AI/lit-gpt@54628ecbdf72b2ceb42bb0ef5f74f1a89ec13d2f
+litgpt==0.3.0  # for the model definition in tests and benchmarks
 absl-py # thunder/benchmarks/test_benchmark_litgpt.py
 pandas # thunder/benchmarks/test_benchmark_litgpt.py
 xlsxwriter # thunder/benchmarks/test_benchmark_litgpt.py
