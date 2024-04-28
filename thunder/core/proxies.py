@@ -21,9 +21,6 @@ from thunder.core.langctxs import resolve_method, get_langctx, LanguageContext
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
 
-# circular import
-# from thunder.core.utils import elementwise_type_promotion
-
 ShapeLike = Sequence[int]
 
 
@@ -594,7 +591,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
     # name is the name of the operation in the number language context to perform
     # fn is the function to call if executing outside a language context
     @staticmethod
-    def _elementwise_unary_helper(a, name, fn):
+    def _elementwise_unary_helper(a, name, fn, type_promotion_kind="utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT"):
         trace: None | TraceCtx = get_tracectx()
 
         langctx: None | LanguageContext
@@ -628,8 +625,22 @@ class NumberProxy(Proxy, NumberProxyInterface):
             method = resolve_method(name, a)
         except Exception as e:
             return fn(vala)
+        #return method(a)
 
-        return method(a)
+        from thunder.core.utils import elementwise_type_promotion, dtype_to_numbertype, are_same_dtypes
+        from thunder.core import prims
+
+        def maybe_convert_to_dtype(a, dtype):
+            dtype = dtype_to_numbertype(dtype)
+            if not are_same_dtypes(a, dtype):
+                return prims.convert_element_type(a, dtype)
+            return a
+
+        computation_dtype, result_dtype = elementwise_type_promotion(a, type_promotion_kind=type_promotion_kind)
+        a = maybe_convert_to_dtype(a, computation_dtype)
+        result = method(a)
+        return maybe_convert_to_dtype(result, result_dtype)
+
 
     def __abs__(self):
         return self._elementwise_unary_helper(self, "abs", builtins.abs)
@@ -691,11 +702,23 @@ class NumberProxy(Proxy, NumberProxyInterface):
             method = resolve_method(name, a, b)
         except Exception as e:
             return fn(vala, valb)
-        return method(a, b)
-        # computation_dtype, result_dtype = elementwise_type_promotion(a, b, type_promotion_kind=type_promotion_kind)
-        # a, b = maybe_convert_to_dtype(a, computation_dtype), maybe_convert_to_dtype(b, computation_dtype)
-        # result = method(a, b)
-        # return maybe_convert_to_dtype(result, result_dtype)
+
+        #return method(a, b)
+
+        # circular import
+        from thunder.core.utils import elementwise_type_promotion, dtype_to_numbertype, are_same_dtypes
+        from thunder.core import prims
+
+        def maybe_convert_to_dtype(a, dtype):
+            dtype = dtype_to_numbertype(dtype)
+            if not are_same_dtypes(a, dtype):
+                return prims.convert_element_type(a, dtype)
+            return a
+
+        computation_dtype, result_dtype = elementwise_type_promotion(a, b, type_promotion_kind=type_promotion_kind)
+        a, b = maybe_convert_to_dtype(a, computation_dtype), maybe_convert_to_dtype(b, computation_dtype)
+        result = method(a, b)
+        return maybe_convert_to_dtype(result, result_dtype)
 
     def __add__(self, other):
         return self._elementwise_binary_helper(self, other, "add", operator.add)

@@ -1516,7 +1516,7 @@ python_return = make_prim(
 
 # TODO Review number grad handling with dynamic constraints
 def _get_grad_meta(a: Number | TensorProxy, /) -> Number | TensorProxy:
-    utils.check_type(a, (Number, TensorProxy))
+    utils.check_type(a, (Number, NumberProxy, TensorProxy))
 
     if isinstance(a, TensorProxy):
         return TensorProxy(like=a)
@@ -1688,7 +1688,8 @@ def _elementwise_unary_meta_factory(
                 )
                 return numberproxy(output_type, None)
 
-            value = number_fn(val)
+            # need to cast val to python_type in order to properly check output dtype.
+            value = number_fn(typ(val))
             utils.check(
                 type(value) is output_type,
                 lambda: f"Unexpected number output type {type(value)}, expected {output_type}, for input type {typ} (value={val})",
@@ -2525,8 +2526,8 @@ def _uniform_meta(
     shape: Sequence[int], minval: Number, maxval: Number, *, device: devices.Device, dtype: dtypes.dtype
 ) -> TensorProxy:
     # Checks inputs
-    utils.check_type(minval, Number)
-    utils.check_type(maxval, Number)
+    utils.check_type(minval, (Number, NumberProxy))
+    utils.check_type(maxval, (Number, NumberProxy))
     utils.check_type(device, devices.Device)
     utils.check_type(dtype, dtypes.dtype)
 
