@@ -4561,6 +4561,28 @@ opinfos.extend(shape_ops)
 reduction_ops = []
 
 
+def numel_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    cases = (
+        (0,),
+        (4, 2, 0),
+        (2, 2),
+    )
+
+    for shape in cases:
+        yield SampleInput(make(shape))
+
+
+numel_opinfo = OpInfo(
+    ltorch.numel,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=numel_sample_generator,
+    torch_reference=torch.numel,
+)
+reduction_ops.append(numel_opinfo)
+
+
 # TODO: increase reduction samples and refacort amax and sum generators
 def amax_amin_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # For grad test stability it's better to use wider range of values
