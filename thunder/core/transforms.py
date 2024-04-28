@@ -1159,7 +1159,7 @@ def _var_mean_prim_grad(a: TensorProxy, /, dims: Sequence[int], *, correction: N
     gv = get_grad(v)
     gm = get_grad(m)
 
-    n_elem_reduced = a.numel // m.numel if a.numel != 0 else 1
+    n_elem_reduced = a.numel() // m.numel() if a.numel() != 0 else 1
 
     # Computes mean bwd
     mean_scale = 1.0 / n_elem_reduced
@@ -2636,7 +2636,7 @@ def var_aug_fwd(a, dim, *, correction):
 # TODO: fix grad when correction > n_elem_reduced.
 @register_backward(prims.PrimIDs.VAR)
 def var_backward(a, dim, correction, v, g):
-    n_elem_reduced = a.numel // v.numel if a.numel != 0 else 1
+    n_elem_reduced = a.numel() // v.numel() if a.numel() != 0 else 1
     normalization_scalar = n_elem_reduced - correction
     g = restore_reduced_dims(g, dim, a.shape)
     if a.dtype != v.dtype:
@@ -3125,7 +3125,7 @@ def cumsum_aug_fwd(a: Proxy, dim: int, *, dtype: None | dtypes.dtype = None) -> 
 @register_backward("torch.cumsum")
 def cumsum_backward(a_dtype, dim, g):
     g = g.to(a_dtype)
-    if g.numel <= 1 or g.shape[dim] == 1:
+    if g.numel() <= 1 or g.shape[dim] == 1:
         return g
     return g.flip(dim).cumsum(dim).flip(dim)
 

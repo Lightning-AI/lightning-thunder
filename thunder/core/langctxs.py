@@ -53,10 +53,7 @@ def set_langctx(ctx: LanguageContext, /) -> Any:
 
 def get_langctx() -> LanguageContext:
     """Gets the current language context"""
-    try:
-        t = _langctx.get()
-    except LookupError:
-        return None
+    t = _langctx.get()
     return t
 
 
@@ -67,10 +64,14 @@ def reset_langctx(token: Any, /) -> None:
 
 # A helper for acquiring a method
 def resolve_method(id: Any, *args, **kwargs) -> Callable:
-    ctx: LanguageContext = get_langctx()
-    # is ctx ever None?
-    # it falls to Prim context
+    # I could combine the try/except statements but intentionally separated them for clarity
     try:
+        ctx: None | LanguageContext = get_langctx()
+    except LookupError:
+        return None
+    try:
+        # AttributeError occurs when there is language context is None or when that context does not have the attribute
+        # ValueError occurs when it access prims context
         method: Callable = ctx.get_method(id, *args, **kwargs)
     except (AttributeError, ValueError) as e:
         return None
