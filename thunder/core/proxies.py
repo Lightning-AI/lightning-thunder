@@ -786,23 +786,38 @@ class NumberProxy(Proxy, NumberProxyInterface):
             return False
 
         from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
-        return self._elementwise_binary_helper(self, other, "eq", operator.eq, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL)
+
+        return self._elementwise_binary_helper(
+            self, other, "eq", operator.eq, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+        )
 
     def __ge__(self, other):
         from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
-        return self._elementwise_binary_helper(self, other, "ge", operator.ge, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL)
+
+        return self._elementwise_binary_helper(
+            self, other, "ge", operator.ge, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+        )
 
     def __gt__(self, other):
         from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
-        return self._elementwise_binary_helper(self, other, "gt", operator.gt, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL)
+
+        return self._elementwise_binary_helper(
+            self, other, "gt", operator.gt, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+        )
 
     def __le__(self, other):
         from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
-        return self._elementwise_binary_helper(self, other, "le", operator.le, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL)
+
+        return self._elementwise_binary_helper(
+            self, other, "le", operator.le, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+        )
 
     def __lt__(self, other):
         from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
-        return self._elementwise_binary_helper(self, other, "lt", operator.lt, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL)
+
+        return self._elementwise_binary_helper(
+            self, other, "lt", operator.lt, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+        )
 
     def __ne__(self, other):
         # NOTE This short-circuit allows queries like a != (), which is a valid comparison
@@ -811,7 +826,10 @@ class NumberProxy(Proxy, NumberProxyInterface):
             return True
 
         from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
-        return self._elementwise_binary_helper(self, other, "ne", operator.ne, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL)
+
+        return self._elementwise_binary_helper(
+            self, other, "ne", operator.ne, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+        )
 
     # NOTE This is a bitwise or triggered by the | operator
     # See https://docs.python.org/3/reference/datamodel.html#object.__or__

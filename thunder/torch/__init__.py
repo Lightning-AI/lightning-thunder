@@ -682,9 +682,11 @@ def flip(a: TensorLike, /, *dims: int) -> TensorLike:
     # PyTorch supports 0-dim inputs with len(dims) <= 1
     if a.ndim == 0 and isinstance(dims, Sequence) and len(dims) > 0:
         utils.check(
-            len(dims) == 1 and 
-            ((isinstance(dims[0], (int, IntegerProxy)) and dims[0] in (0, -1))
-            or (isinstance(dims[0], NumberProxy) and pyval(dims[0]) in (0, -1))),
+            len(dims) == 1
+            and (
+                (isinstance(dims[0], (int, IntegerProxy)) and dims[0] in (0, -1))
+                or (isinstance(dims[0], NumberProxy) and pyval(dims[0]) in (0, -1))
+            ),
             lambda: f"Expected {dims=} to be a sequence of integers in range [-1, 0], and of length 1",
         )
         return clang.flip(a, ())
@@ -1419,9 +1421,11 @@ def nextafter(a, b, /):
 # TODO Extend to tensor x tensor
 @torchsymbol(torch.polygamma, torch.special.polygamma, is_method=True)
 def polygamma(n: int, a: TensorLike, /) -> TensorLike:
-    #utils.check(isinstance(n, (int, IntegerProxy)), lambda: f"polygamma(n, a) expects the first argument to be an integer.")
+    # utils.check(isinstance(n, (int, IntegerProxy)), lambda: f"polygamma(n, a) expects the first argument to be an integer.")
     # I don't think we should do this... if it's expected to be a different thing we should baked it in and figure out why it's not baked in here.
-    utils.check(isinstance(n, (int, NumberProxy)), lambda: f"polygamma(n, a) expects the first argument to be an integer.")
+    utils.check(
+        isinstance(n, (int, NumberProxy)), lambda: f"polygamma(n, a) expects the first argument to be an integer."
+    )
     utils.check(n >= 0, lambda: f"polygamma(n, a) does not support negative {n=}.")
 
     # NOTE Use digamma for n == 0 case; otherwise zeta(1, a) returns math.inf
@@ -2857,7 +2861,8 @@ def apply_padding_for_pool_ops(dim, a, padding, kernel_size, pad_value):
     padding = maybe_to_rank_len_sequence(padding, dim)
     kernel_size = maybe_to_rank_len_sequence(kernel_size, dim)
     utils.check(
-        len(padding) == dim and all(isinstance(p, (int, IntegerProxy)) and 0 <= p <= k // 2 for p, k in zip(padding, kernel_size)),
+        len(padding) == dim
+        and all(isinstance(p, (int, IntegerProxy)) and 0 <= p <= k // 2 for p, k in zip(padding, kernel_size)),
         lambda: f"Implied {padding=} (with dimensionality {dim}) should contain integers "
         f"between 0 and `kernel_size / 2` (with the implied {kernel_size=})",
     )
@@ -3732,7 +3737,11 @@ def _interpolate_size_helper(
         size = (size,) * dim
     else:
         utils.check(
-            (isinstance(size, Sequence) and len(size) == dim and all(isinstance(s, (int, IntegerProxy)) and s > 0 for s in size)),
+            (
+                isinstance(size, Sequence)
+                and len(size) == dim
+                and all(isinstance(s, (int, IntegerProxy)) and s > 0 for s in size)
+            ),
             lambda: f"{size=} is expected to be a greater than zero integer "
             f"or a sequence of strictly positive integers of length {dim}",
         )

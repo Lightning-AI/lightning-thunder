@@ -2835,8 +2835,15 @@ def flip_meta(a: TensorProxy, /, dims: Sequence[int]) -> TensorProxy:
     utils.check_type(a, TensorProxy)
     utils.check_type(dims, Sequence)
     utils.check(
-        #all(0 <= d < a.ndim if isinstance(d, (int, IntegerProxy)) else 0 <= pyval(d) < a.ndim for d in dims),
-        all(0 <= d < a.ndim if isinstance(d, (int, IntegerProxy)) else isinstance(d, IntegerProxy) and 0 <= pyval(d) < a.ndim for d in dims),
+        # all(0 <= d < a.ndim if isinstance(d, (int, IntegerProxy)) else 0 <= pyval(d) < a.ndim for d in dims),
+        all(
+            (
+                0 <= d < a.ndim
+                if isinstance(d, (int, IntegerProxy))
+                else isinstance(d, IntegerProxy) and 0 <= pyval(d) < a.ndim
+            )
+            for d in dims
+        ),
         lambda: f"Expected {dims=} to be a sequence of integers in [0, {a.ndim} - 1]",
     )
 
