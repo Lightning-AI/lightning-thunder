@@ -19,7 +19,7 @@ from thunder.core.langctxs import langctx, Languages
 import thunder.core.dtypes as dtypes
 from thunder.core import utils
 import thunder.core.prims as prims
-from thunder.core.proxies import NumberProxy, TensorProxy, pyval, pytype, proxy, AnyProxy, Proxy
+from thunder.core.proxies import IntegerProxy, NumberProxy, TensorProxy, pyval, pytype, proxy, AnyProxy, Proxy
 import thunder.core.devices as devices
 
 # This file defines the operations in thunder.jit's "core" language.
@@ -189,11 +189,13 @@ def arange(*, start: Number, step: Number, stop: Number, device: DeviceLike, dty
     utils.check(not isinstance(step, complex), lambda: f"step={step} was complex")
     utils.check(not isinstance(stop, complex), lambda: f"stop={stop} was complex")
 
-    # Checks that step makes progress
-    utils.check(
-        (start == stop) or (step < 0 and stop < start) or (step > 0 and stop > start),
-        lambda: f"step={step} must make progress from start={start} to stop={stop}",
-    )
+    # Do we make static checks when inputs are dynamic?
+    if all(isinstance(arg, Number) for arg in [start, stop, step]):
+        # Checks that step makes progress
+        utils.check(
+            (start == stop) or (step < 0 and stop < start) or (step > 0 and stop > start),
+            lambda: f"step={step} must make progress from start={start} to stop={stop}",
+        )
 
     # Canonicalizes device
     if isinstance(device, str):
@@ -202,7 +204,8 @@ def arange(*, start: Number, step: Number, stop: Number, device: DeviceLike, dty
     # (Optionally) infers dtype
     # TODO Replace with default datatypes for integer and float
     if dtype is None:
-        if all(tuple(isinstance(x, int) for x in (start, step, stop))):
+        # TODO: maybe something like a isIntegerType?
+        if all(tuple(isinstance(x, (int, IntegerProxy)) for x in (start, step, stop))):
             dtype = dtypes.int64
         else:
             dtype = dtypes.float32
@@ -539,7 +542,7 @@ def _get_indexing_signature(key: Any) -> IndexingSignature:
         elif k is None:
             sig.unsqueeze.append(i)
         else:
-            if isinstance(k, (Number, slice)):
+            if isinstance(k, (Number, slice, NumberProxy)):
                 sig.basic.append((a_dim, i))
             elif isinstance(k, (TensorLike, Sequence)):
                 sig.advanced.append((a_dim, i))
@@ -573,7 +576,7 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
         if x is Ellipsis:
             utils.check(ellipsis_idx is None, lambda: f"Found two (or more) ellipses in key={key}")
             ellipsis_idx = idx
-        elif isinstance(x, (Number, slice)):
+        elif isinstance(x, (NumberProxy, Number, slice)):
             specified_slices += 1
         elif x is None:
             if ellipsis_idx is None:

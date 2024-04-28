@@ -591,7 +591,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
     # name is the name of the operation in the number language context to perform
     # fn is the function to call if executing outside a language context
     @staticmethod
-    def _elementwise_unary_helper(a, name, fn, type_promotion_kind="utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT"):
+    def _elementwise_unary_helper(a, name, fn, type_promotion_kind=None):
         trace: None | TraceCtx = get_tracectx()
 
         langctx: None | LanguageContext
@@ -674,7 +674,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
     #
 
     @staticmethod
-    def _elementwise_binary_helper(a, b, name, fn, type_promotion_kind="utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT"):
+    def _elementwise_binary_helper(a, b, name, fn, type_promotion_kind=None):
         baseutils.check_type(b, (Number, NumberProxy, TensorProxy))
 
         vala = pyval(a)
@@ -785,19 +785,24 @@ class NumberProxy(Proxy, NumberProxyInterface):
         if not isinstance(other, Number):
             return False
 
-        return self._elementwise_binary_helper(self, other, "eq", operator.eq)
+        from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
+        return self._elementwise_binary_helper(self, other, "eq", operator.eq, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL)
 
     def __ge__(self, other):
-        return self._elementwise_binary_helper(self, other, "ge", operator.ge)
+        from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
+        return self._elementwise_binary_helper(self, other, "ge", operator.ge, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL)
 
     def __gt__(self, other):
-        return self._elementwise_binary_helper(self, other, "gt", operator.gt)
+        from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
+        return self._elementwise_binary_helper(self, other, "gt", operator.gt, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL)
 
     def __le__(self, other):
-        return self._elementwise_binary_helper(self, other, "le", operator.le)
+        from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
+        return self._elementwise_binary_helper(self, other, "le", operator.le, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL)
 
     def __lt__(self, other):
-        return self._elementwise_binary_helper(self, other, "lt", operator.lt)
+        from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
+        return self._elementwise_binary_helper(self, other, "lt", operator.lt, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL)
 
     def __ne__(self, other):
         # NOTE This short-circuit allows queries like a != (), which is a valid comparison
@@ -805,7 +810,8 @@ class NumberProxy(Proxy, NumberProxyInterface):
         if not isinstance(other, Number):
             return True
 
-        return self._elementwise_binary_helper(self, other, "ne", operator.ne)
+        from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
+        return self._elementwise_binary_helper(self, other, "ne", operator.ne, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL)
 
     # NOTE This is a bitwise or triggered by the | operator
     # See https://docs.python.org/3/reference/datamodel.html#object.__or__
