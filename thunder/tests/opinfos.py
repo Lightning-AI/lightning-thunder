@@ -5257,6 +5257,48 @@ randn_like_opinfo = OpInfo(
 tensor_creation_ops.append(randn_like_opinfo)
 
 
+def bernoulli_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make_ones = partial(torch.ones, device=device, dtype=dtype, requires_grad=requires_grad)
+    make_zeros = partial(torch.zeros, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    shapes = ((), (2, 2), (2, 0, 1), (1, 2, 3))
+
+    for shape in shapes:
+        # Output will always be ones
+        yield SampleInput(make_ones(shape))
+        # Output will always be zeros
+        yield SampleInput(make_zeros(shape))
+
+
+def bernoulli_error_generator(op, device, **kwargs):
+    err_msg = "bernoulli only supports floating point dtypes, got int64"
+    yield (SampleInput(torch.ones(3, 3, device=device, dtype=torch.long)), RuntimeError, err_msg)
+
+    err_msg = "generator is not None which is currently unsupported"
+    yield (
+        SampleInput(torch.ones(3, 3, device=device), generator=torch.Generator(device=device)),
+        RuntimeError,
+        err_msg,
+    )
+
+    err_msg = "bernoulli: out is not None which is currently unsupported"
+    yield (SampleInput(torch.ones(3, 3, device=device), out=torch.ones(3, 3, device=device)), RuntimeError, err_msg)
+
+
+# NOTE: This OpInfo ends up checking only `shape`, `device` and `dtype` consistency
+# similar to `randn`
+# See the note on `randn` OpInfo for more details.
+bernoulli_opinfo = OpInfo(
+    ltorch.bernoulli,
+    sample_input_generator=bernoulli_sample_generator,
+    error_input_generator=bernoulli_error_generator,
+    torch_reference=torch.bernoulli,
+    supports_grad=False,
+    dtypes=(datatypes.floating,),
+)
+opinfos.append(bernoulli_opinfo)
+
+
 def tensor_constructor_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # Used to generate sequence.
     make_t = partial(make_tensor, device="cpu", dtype=dtype, requires_grad=False)

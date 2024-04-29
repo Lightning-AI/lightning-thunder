@@ -478,12 +478,6 @@ def multinomial(
         generator is None, lambda: f"multinomial does not yet support specifying a generator", NotImplementedError
     )
 
-    utils.check(
-        generator is None,
-        lambda: "Non-None generator is not supported",
-        NotImplementedError,
-    )
-
     seed = None
     samples = prims.multinomial(a, num_samples, replacement, seed)
     return samples
@@ -570,6 +564,19 @@ def randn_like(
     if device is None:
         device = a.device
     return randn(a.shape, dtype=dtype, device=device)
+
+
+@torchsymbol(torch.bernoulli, is_method=True)
+def bernoulli(a: TensorLike, *, generator=None, out=None):
+    # NOTE: Currently, we don't model randomness
+    utils.check(
+        generator is None,
+        lambda: "bernoulli: generator is not None which is currently unsupported",
+        NotImplementedError,
+    )
+    utils.check(out is None, lambda: "bernoulli: out is not None which is currently unsupported", NotImplementedError)
+    utils.check(dtypes.is_float_dtype(a.dtype), lambda: f"bernoulli only supports floating point dtypes, got {a.dtype}")
+    return (uniform(a.shape, device=a.device, dtype=a.dtype) < a).to(a.dtype)
 
 
 # NOTE zeros, like ones, and unlike full, can accept an integer shape
