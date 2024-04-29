@@ -113,7 +113,7 @@ def test_no_autocast(executor, device, dtype):
 
 @instantiate(
     dtypes=dtypes.float_dtypes - {float},
-    decorators=(pytest.mark.xfail(sys.platform == "win32", reason="unicode error in torch.compile", raises=SyntaxError, strict=True),),
+    decorators=(pytest.mark.xfail(sys.platform == "win32", reason="unicode error in torch.compile", strict=True),),
 )
 def test_compile_autocast(executor, device, dtype):
     del executor

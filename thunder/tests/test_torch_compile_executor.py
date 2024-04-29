@@ -14,7 +14,7 @@ def test_supported_ops_are_in_pytorch_executor():
     assert supported_ops - pytorch_ex.implmap.keys() == set()
 
 
-@pytest.mark.xfail(sys.platform == "win32", reason="unicode error in torch.compile", raises=SyntaxError, strict=True)
+@pytest.mark.xfail(sys.platform == "win32", reason="unicode error in torch.compile", strict=True)
 def test_torch_compile_litgpt():
     model = GPT.from_name("llama1-like", n_layer=1)
     x = torch.randint(model.max_seq_length, (2, 5))
