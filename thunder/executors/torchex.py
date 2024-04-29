@@ -25,7 +25,7 @@ from thunder.core.devices import to_torch_device, to_device
 import thunder.core.prims as prims
 from thunder.core.prims import PrimIDs
 from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, from_trace
-from thunder.core.proxies import TensorProxy, FutureTensorProxy, variableify, pytype
+from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy, variableify, pytype
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import Symbol, BoundSymbol
 from thunder.distributed.prims import DistributedReduceOps
@@ -974,7 +974,7 @@ def _masked_fill_checker(a: TensorLike, /, mask: TensorLike, value: Number | Ten
         return False
 
     value_dtype: type | dtypes.dtype
-    if isinstance(value, Number):
+    if isinstance(value, (Number, NumberProxy)):
         value_dtype = pytype(value)
     else:
         if len(value.shape) != 0:

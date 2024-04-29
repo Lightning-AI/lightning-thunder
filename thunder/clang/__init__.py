@@ -483,7 +483,7 @@ def _get_indexing_signature(key: Any) -> IndexingSignature:
         return sig
 
     # Numbers and slices are examples of basic indexing.
-    if isinstance(key, (Number, slice)):
+    if isinstance(key, (Number, NumberProxy, slice)):
         sig.basic.append((None, None))
         return sig
 
@@ -569,7 +569,7 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
     specified_slices = 0
     ellipsis_idx = None
 
-    if key is None or isinstance(key, (Number, slice, EllipsisType)):
+    if key is None or isinstance(key, (Number, NumberProxy, slice, EllipsisType)):
         key = (key,)
 
     for idx, x in enumerate(key):
