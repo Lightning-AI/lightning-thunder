@@ -180,12 +180,8 @@ def size(a):
 
 
 @torchsymbol(torch.numel, torch.Tensor.numel, is_method=True)
-def numel(a: TensorLike, /) -> Number:
-    size = a.size()
-    out = 1
-    for num in size:
-        out *= num
-    return out
+def numel(a: TensorLike, /) -> int:
+    return a._numel
 
 
 register_method("numel", numel)
