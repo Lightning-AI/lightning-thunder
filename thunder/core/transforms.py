@@ -525,7 +525,7 @@ def flatten_for_transform(should_flatten: Callable, bsyms: list[BoundSymbol]) ->
         if should_flatten(bsym):
             check(
                 len(bsym.subsymbols) > 0,
-                lambda: f"Trying to flatten {bsym} to create a grad formula, but it has no subsymbols",
+                lambda: f"No grad rule found for {bsym} and no subsymbols inside it to create a grad formula",
             )
             for sbsym in bsym.subsymbols:
                 _flatten(sbsym)
