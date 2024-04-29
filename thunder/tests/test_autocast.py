@@ -113,7 +113,7 @@ def test_no_autocast(executor, device, dtype):
 
 @instantiate(
     dtypes=dtypes.float_dtypes - {float},
-    decorators=(pytest.mark.xfail(not is_inductor_supported(), reason="inductor unsupported", strict=True),),
+    decorators=(pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported"),),
 )
 def test_compile_autocast(executor, device, dtype):
     del executor
@@ -139,7 +139,7 @@ def test_compile_autocast(executor, device, dtype):
     assert output.dtype == (torch.float16 if torch_device.type == "cuda" else torch.bfloat16)
 
 
-@pytest.mark.xfail(not is_inductor_supported(), reason="inductor unsupported", strict=True)
+@pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported")
 def test_torch_compile_autocast():
     """Checks if our autocast decorator plays well with ``torch.compile``"""
 
