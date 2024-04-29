@@ -331,9 +331,7 @@ class ops:
         self.opinfos = opinfos
 
         self.supported_executors = (
-            set(supported_executors)
-            if supported_executors is not None
-            else set(_all_test_executors())
+            set(supported_executors) if supported_executors is not None else set(_all_test_executors())
         )
         for ex in self.supported_executors:
             assert isinstance(ex, TestExecutor)
