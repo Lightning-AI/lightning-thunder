@@ -1,8 +1,8 @@
 import itertools
-import sys
 
 import pytest
 import torch
+from torch._dynamo.eval_frame import is_inductor_supported
 
 import thunder
 import thunder.tests.bf16
@@ -113,7 +113,7 @@ def test_no_autocast(executor, device, dtype):
 
 @instantiate(
     dtypes=dtypes.float_dtypes - {float},
-    decorators=(pytest.mark.xfail(sys.platform == "win32", reason="unicode error in torch.compile", strict=True),),
+    decorators=(pytest.mark.xfail(not is_inductor_supported(), reason="inductor unsupported", strict=True),),
 )
 def test_compile_autocast(executor, device, dtype):
     del executor
@@ -139,6 +139,7 @@ def test_compile_autocast(executor, device, dtype):
     assert output.dtype == (torch.float16 if torch_device.type == "cuda" else torch.bfloat16)
 
 
+@pytest.mark.xfail(not is_inductor_supported(), reason="inductor unsupported", strict=True)
 def test_torch_compile_autocast():
     """Checks if our autocast decorator plays well with ``torch.compile``"""
 
