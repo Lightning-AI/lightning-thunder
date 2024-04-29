@@ -238,7 +238,7 @@ if NVFUSER_AVAILABLE:
 
 def _all_test_executors():
     """Constructs a list of all Thunder executors to be used when generating tests."""
-    # TODO: add TorchCompileCatExecutor and TorchCompileExecutor and work through the CI errors
+    # TODO: include the torch compile executors: https://github.com/Lightning-AI/lightning-thunder/issues/299
     executors = [TorchExecutor]
 
     if NVFUSER_AVAILABLE:
