@@ -1183,9 +1183,26 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp, singul
 
     args, kwargs = sample.args, sample.kwargs
 
+    def is_output_differentiable(x):
+        # These are the differentiable dtypes in PyTorch.
+        return x.dtype.is_floating_point or x.dtype.is_complex
+
+    def filter_differentiable_outputs(outputs):
+        if isinstance(outputs, torch.Tensor):
+            # Otherwise `filter` below will
+            # iterate over the Tensor data.
+            outputs = [outputs]
+
+        return list(filter(is_output_differentiable, outputs))
+
     # Computes PyTorch (competition) result
     torch_flats, spec = tree_flatten((args, kwargs))
     torch_result = torch_op(*args, **kwargs)
+    torch_result = filter_differentiable_outputs(torch_result)
+    if torch_result == []:
+        raise RuntimeError(
+            f"phantom_grad: Expected atleast 1 differentiable output. If {op.name} non-differentiable, set op.supports_grad=False."
+        )
 
     grads = []
     assert isinstance(torch_result, torch.Tensor) or isinstance(
@@ -1196,9 +1213,11 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp, singul
             assert isinstance(
                 x, torch.Tensor
             ), "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
-            grads.append(torch.ones_like(x))
+            if is_output_differentiable(x):
+                grads.append(torch.ones_like(x))
     else:
-        grads = [torch.ones_like(torch_result)]
+        if is_output_differentiable(torch_result):
+            grads = [torch.ones_like(torch_result)]
 
     torch_tensors_requiring_grad = tuple(f for f in torch_flats if isinstance(f, torch.Tensor) and f.requires_grad)
     torch_grad_result = torch.autograd.grad(torch_result, torch_tensors_requiring_grad, grads)
@@ -1218,6 +1237,7 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp, singul
         f for f in reference_flats if isinstance(f, torch.Tensor) and f.requires_grad
     )
     reference_result = torch_op(*reference_args, **reference_kwargs)
+    reference_result = filter_differentiable_outputs(reference_result)
     reference_grad_result = torch.autograd.grad(reference_result, reference_tensors_requiring_grad, grads)
 
     # Computes thunder result

@@ -4991,23 +4991,8 @@ def topk_error_generator(op, device, **kwargs):
     yield (SampleInput(make(3, 3), 1, -3), IndexError, err_msg)
 
 
-# Phantom grad tests do not handle tensor outputs
-# that do not require grad and/or do not have grad_fn.
-# Therefore we explicitly filter outputs.
-# See https://github.com/Lightning-AI/lightning-thunder/issues/119 {
-def topk_thunder_ref(*args, **kwargs):
-    return clang.topk(*args, **kwargs)[0]
-
-
-def topk_torch_ref(*args, **kwargs):
-    return torch.topk(*args, **kwargs)[0]
-
-
-# }
-
-
 topk_opinfo = OpInfo(
-    topk_thunder_ref,
+    clang.topk,
     name="topk",
     supports_grad=True,
     # Without the fixed seed this generator does not guarantee
@@ -5017,7 +5002,7 @@ topk_opinfo = OpInfo(
     # fix the issue.
     sample_input_generator=topk_sample_generator,
     error_input_generator=topk_error_generator,
-    torch_reference=topk_torch_ref,
+    torch_reference=torch.topk,
     dtypes=(datatypes.signedinteger, datatypes.unsignedinteger, datatypes.floating),
     test_directives=(
         DecorateInfo(
