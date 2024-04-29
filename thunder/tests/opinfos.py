@@ -2773,11 +2773,11 @@ def type_sample_generator_tensor(op, device, dtype, requires_grad, **kwargs):
     yield SampleInput(make(4, 4, device=device), dtype)
     yield SampleInput(make(4, 4, device=device), dtype=to_dtype)
     # below can be deleted if we don't support strings
-    yield SampleInput(make(4, 4, device=device), f"torch.{_torch_dtype_to_old_torch_typestring_map[dtype]}")
+    yield SampleInput(make(4, 4, device=device), f"torch.{_torch_dtype_to_old_torch_typestring_map[to_dtype]}")
 
     # Explictly pass device
     if torch.device(device).type == "cuda":
-        yield SampleInput(make(4, 4, device=device), f"torch.cuda.{_torch_dtype_to_old_torch_typestring_map[dtype]}")
+        yield SampleInput(make(4, 4, device=device), f"torch.cuda.{_torch_dtype_to_old_torch_typestring_map[to_dtype]}")
 
 
 # kind of redundant?

@@ -202,7 +202,7 @@ _torch_dtype_to_old_torch_typestring_map = {
 _old_torch_typestring_to_torch_dtype_map = {v: k for k, v in _torch_dtype_to_old_torch_typestring_map.items()}
 
 
-def _device_and_dtype_to_old_torch_typestring(device: DeviceLike, dtype: dtypeLike):
+def _device_and_dtype_to_old_torch_typestring(device: DeviceLike, dtype: dtypeLike) -> str:
     torch_dtype = to_torch_dtype(dtype)
     dtype_str = _torch_dtype_to_old_torch_typestring_map.get(torch_dtype)
     devicetype_str: str = ""
@@ -230,7 +230,7 @@ def _old_torch_typestring_to_devicetype_and_dtype(typestring: str) -> tuple[Devi
     # Assertion error -- expected the string to split into one or two elements
     utils.check(
         False,
-        lambda: f"type(): dtype format does not match torch.Tensor dtype nor old torch typestring format",
+        lambda: f"type(): unrecognized torch typestring {typestring}",
         exception_type=ValueError,
     )
 
@@ -252,20 +252,19 @@ def type(
     if isinstance(dtype, str):
         devtype, dtype = _old_torch_typestring_to_devicetype_and_dtype(dtype)
 
-        # below if-statement handles the following case that you have mentioned:
-        # Follow-up question: what if the old string says "CUDA" but the tensor is on CUDA device 1, will a tensor
-        # on CUDA device 0 be created?
-
         if devtype == a.device.type:
+            # This handles two cases:
+            # 1. When a tensor is already on a CUDA device, and the device type string is CUDA. In this case the tensor remains on its current device.
+            # 2. When a tensor is on a CPU device and the device type string is omitted, the tensor remains on the CPU device.
             dev = a.device
         elif devtype == "cpu":
             dev = devices.DeviceType.CPU
-        else:
+        elif devtype == "cuda":
             dev = devices.DeviceType.CUDA
+        else:
+            raise ValueError(f"type(): unrecognized torch typestring {dtype}")
     else:
-        # Question here -- if a device is not specified and the tensor is a CUDA tensor, will this create a tensor
-        # on a CPU device, or leave the tensor on a CUDA device? This would change how dev is set here
-        # PyTorch leaves the tensor on a CUDA device
+        # dtype is assumed to be torch.dtype (e.g. torch.int32)
         dev = a.device
 
     return to(a, dev, dtype)
