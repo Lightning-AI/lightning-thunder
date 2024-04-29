@@ -1042,6 +1042,7 @@ def _div_prim_grad(a: Number | TensorProxy, b: Number | TensorProxy, /) -> Numbe
 
 register_grad(pids.DIV, _div_prim_grad)
 
+
 # NOTE not differentiable, but it would trigger a flatten failure without a grad function
 # NOTE that's probably a bad error message that we should fix.
 @torchctx
