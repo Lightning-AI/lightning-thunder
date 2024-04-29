@@ -1211,6 +1211,7 @@ convolution = _register_torch_operation("convolution")
 conv1d = _register_torch_operation("conv1d", module=torch.nn.functional)
 conv2d = _register_torch_operation("conv2d", module=torch.nn.functional)
 conv3d = _register_torch_operation("conv3d", module=torch.nn.functional)
+mse_loss = _register_torch_operation("mse_loss", module=torch.nn.functional)
 cross_entropy = _register_torch_operation("cross_entropy", module=torch.nn.functional)
 dropout = _register_torch_operation("dropout", module=torch.nn.functional)
 embedding = _register_torch_operation("embedding", module=torch.nn.functional)
@@ -1547,6 +1548,7 @@ _register_implementation(ltorch.convolution, checker=_always_executable, executi
 _register_implementation(ltorch.conv1d, conv1d, checker=_always_executable)
 _register_implementation(ltorch.conv2d, conv2d, checker=_always_executable)
 _register_implementation(ltorch.conv3d, conv3d, checker=_always_executable)
+_register_implementation(ltorch.mse_loss, mse_loss, checker=_always_executable)
 _register_implementation(ltorch.cross_entropy, cross_entropy, checker=_always_executable)
 cross_entropy_backward = ex.register_operator(
     "torch_cross_entropy_backward_impl", meta=ltorch.cross_entropy_backward, fn=_cross_entropy_backward_impl
