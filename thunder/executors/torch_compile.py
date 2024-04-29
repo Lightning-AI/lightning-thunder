@@ -188,7 +188,6 @@ class TorchCompileExecutor(FusionExecutor):
 
 
 from thunder.executors.torchex import ex as pytorch_ex
-from thunder.executors.sdpaex import sdpa_ex
 
 
 # NOTE: [torch_compile_cat_ex vs torch_compile_ex]
@@ -227,5 +226,3 @@ torch_compile_cat_ex._implmap = {op: ImplInfo() for op in pytorch_ex.implmap if 
 torch_compile_ex = TorchCompileExecutor(name="torchcompile")
 register_executor(torch_compile_ex)
 torch_compile_ex._implmap = {op: ImplInfo() for op in pytorch_ex.implmap}
-# Need to overwrite with the sdpa_ex implmap to avoid decomposing the operator
-torch_compile_ex._implmap.update(sdpa_ex.implmap)

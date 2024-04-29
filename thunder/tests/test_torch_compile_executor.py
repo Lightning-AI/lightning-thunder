@@ -11,13 +11,10 @@ def test_supported_ops_are_in_pytorch_executor():
 
 
 def test_torch_compile_litgpt():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    with device:
-        model = GPT.from_name("llama1-like", n_layer=1)
-        x = torch.randint(model.max_seq_length, (2, 5))
+    model = GPT.from_name("llama1-like", n_layer=1)
+    x = torch.randint(model.max_seq_length, (2, 5))
     cmodel = thunder.jit(model, executors=[torch_compile_ex])
-    y = cmodel(x)
+    _ = cmodel(x)
     forward_trace = thunder.last_traces(cmodel)[-1].python()
     assert "TorchCompile0" in forward_trace
-    assert "sdpaex_grad_forward_scaled_dot_product_efficient_attention" in forward_trace
-    assert "TorchCompile1" in forward_trace
+    assert "TorchCompile1" not in forward_trace
