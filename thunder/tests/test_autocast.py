@@ -1,14 +1,15 @@
 import itertools
+import sys
 
 import pytest
 import torch
 
 import thunder
+import thunder.tests.bf16
 import thunder.torch as ltorch
 from thunder.core import dtypes
 from thunder.executors.torchex import no_autocast
 from thunder.tests.framework import instantiate, TorchExecutor
-import thunder.tests.bf16
 
 
 # TODO This test currently ignores the "should_autocast" argument enumerated in it
@@ -112,6 +113,7 @@ def test_no_autocast(executor, device, dtype):
 
 @instantiate(
     dtypes=dtypes.float_dtypes - {float},
+    decorators=(pytest.mark.xfail(sys.platform == "win32", reason="unicode error in torch.compile", raises=SyntaxError, strict=True),),
 )
 def test_compile_autocast(executor, device, dtype):
     del executor
