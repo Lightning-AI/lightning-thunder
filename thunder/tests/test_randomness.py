@@ -27,17 +27,6 @@ def test_uniform_philox(executor, device: str, dtype: dtypes.dtype):
         assert_close(o, outputs[0])
 
 
-from contextlib import contextmanager
-
-
-@contextmanager
-def reset_seed(cuda_generator):
-    try:
-        yield
-    finally:
-        cuda_generator.seed()
-
-
 @instantiate(
     dtypes=NOTHING,
     devicetypes=(devices.DeviceType.CUDA,),
@@ -63,7 +52,8 @@ def test_rng_state_prims(executor, device: str, _):
 
     cuda_generator = torch.cuda.default_generators[dev.index]
     jfunc = thunder.jit(func, executors_list=executor.executors_list())
-    with reset_seed(cuda_generator):
+    torch_device = thunder.core.devices.to_torch_device(dev)
+    with torch.random.fork_rng(devices=(torch_device,)):
         cuda_generator.manual_seed(2)
         ori_state, ori_state_1, ori_seed, updated_offset, state1, s1_seed, s1_offset = jfunc()
 
