@@ -1058,6 +1058,8 @@ register_grad(pids.PY_FLOORDIV, _py_floordiv_prim_grad)
 register_grad(pids.EQ, prims.eq)
 register_grad(pids.GE, prims.ge)
 register_grad(pids.GT, prims.gt)
+register_grad(pids.NE, prims.ne)
+register_grad(pids.LE, prims.le)
 register_grad(pids.LT, prims.lt)
 
 
@@ -2504,9 +2506,6 @@ augmented_forward_impls = {
     prims.PrimIDs.NDTRI: lambda x: (prims.ndtri(x), (prims.ndtri(x),)),
     prims.PrimIDs.SINH: lambda x: (prims.sinh(x), (x,)),
     prims.PrimIDs.SQRT: lambda x: (prims.sqrt(x), (prims.sqrt(x),)),
-    prims.PrimIDs.NE: lambda x, y: (prims.ne(x, y), (x, y)),
-    prims.PrimIDs.GT: lambda x, y: (prims.gt(x, y), (x, y)),
-    prims.PrimIDs.LE: lambda x, y: (prims.le(x, y), (x, y)),
     prims.PrimIDs.LOG10: lambda x: (prims.log10(x), (x,)),
     prims.PrimIDs.LOG1P: lambda x: (prims.log1p(x), (x,)),
     prims.PrimIDs.LOG2: lambda x: (prims.log2(x), (x,)),
@@ -2536,9 +2535,6 @@ backward_impls = {
     prims.PrimIDs.NDTRI: lambda result, g: g * prims.exp(0.5 * result**2) * math.sqrt(2.0 * math.pi),
     prims.PrimIDs.SINH: lambda x, g: prims.mul(g, prims.cosh(x)),
     prims.PrimIDs.SQRT: lambda result, g: g / (2.0 * result),
-    prims.PrimIDs.NE: ZeroBackward(num_args=2),
-    prims.PrimIDs.GT: ZeroBackward(num_args=2),
-    prims.PrimIDs.LE: ZeroBackward(num_args=2),
     prims.PrimIDs.LOG10: lambda x, g: g / (x * 2.302585092994046),
     prims.PrimIDs.LOG1P: lambda x, g: g / (x + 1),
     prims.PrimIDs.LOG2: lambda x, g: g / (x * 0.6931471805599453),
