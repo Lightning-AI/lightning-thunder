@@ -17,7 +17,7 @@ from thunder.torch.langctx import register_method, register_property
 
 import thunder.clang as clang
 import thunder.core.devices as devices
-from thunder.core.devices import to_device
+from thunder.core.devices import to_device, device_from_string
 import thunder.core.dtypes as dtypes
 from thunder.core.dtypes import to_torch_dtype, to_dtype, _thunder_to_torch_dtype_map, _torch_to_thunder_dtype_map
 import thunder.core.prims as prims
@@ -257,10 +257,8 @@ def type(
             # 1. When a tensor is already on a CUDA device, and the device type string is CUDA. In this case the tensor remains on its current device.
             # 2. When a tensor is on a CPU device and the device type string is omitted, the tensor remains on the CPU device.
             dev = a.device
-        elif devtype == "cpu":
-            dev = devices.DeviceType.CPU
-        elif devtype == "cuda":
-            dev = devices.DeviceType.CUDA
+        elif devtype == "cpu" or devtype == "cuda":
+            dev = device_from_string(devtype)
         else:
             raise ValueError(f"type(): unrecognized torch typestring {dtype}")
     else:
