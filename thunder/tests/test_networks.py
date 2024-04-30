@@ -198,3 +198,53 @@ def test_hf_bart_self_attn():
     tom = thunder.jit(model)
     thunder_result = tom(inp, None)
     assert_close(torch_result, thunder_result)
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_llama_moe(executor, device, dtype):
+    # This test is a modified version of the LLaMAMoE from LitGPT:
+    # https://github.com/Lightning-AI/litgpt/blob/96836008be96fa2fe5e6909a3fd7a112cc57716e/litgpt/model.py#L325-L349
+    class Test(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.n_expert = 8
+            self.n_expert_per_token = 2
+            self.C = 2
+            self.gate = nn.Linear(self.C, self.n_expert, bias=False)
+            self.experts = nn.ModuleList(nn.Linear(2, 2, bias=False) for _ in range(self.n_expert))
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            B, T, C = x.size()  # batch size, sequence length, embedding dimensionality (n_embd)
+            x = x.view(-1, C)  # (B*T, C)
+            router = self.gate(x)  # (B*T, n_expert)
+            probs, indices = torch.topk(router, self.n_expert_per_token)  # (B*T, n_expert_per_token)
+            probs = probs.softmax(dim=1, dtype=torch.float).to(dtype=x.dtype)
+            masks = indices.unsqueeze(-1) == torch.arange(self.n_expert, device=x.device)
+            masks = masks.permute(2, 0, 1)  # (n_expert, B*T, n_expert_per_token)
+            y = torch.zeros_like(x)  # (B*T, C)
+            for i in range(self.n_expert):
+            # NOTE: zip is not working
+            # See https://github.com/Lightning-AI/lightning-thunder/issues/284
+            # for (mask, expert) in zip(masks, self.experts):
+                mask = masks[i]
+                expert = self.experts[i]
+                token_idx, expert_idx = torch.where(mask)
+                # NOTE: probs[token_idx, expert_idx, None] is not working
+                pprobs = probs[token_idx, expert_idx]
+                pprobs = pprobs.unsqueeze(-1)
+                eexpert = expert(x[token_idx])
+                # NOTE: The following line uses += instead of torch.index_add in the original code
+                y = torch.index_add(y, 0, token_idx, pprobs * eexpert)
+            return y.view(B, T, C)
+
+    model = Test().to(device=device, dtype=ttorch.to_torch_dtype(dtype))
+    model = thunder.jit(model, executors=executor.executors_list())
+
+    x = torch.randn(2, 3, 2, device=device, dtype=ttorch.to_torch_dtype(dtype))
+    y = model(x)
+    assert y.shape == (2, 3, 2)
+
+    y.backward(torch.randn_like(y))
+    assert all(p.grad is not None for p in model.parameters())
+    print(thunder.last_backward_traces(model)[-1])
+    print(thunder.last_traces(model)[-1])
