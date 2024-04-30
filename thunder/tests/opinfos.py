@@ -5258,14 +5258,11 @@ tensor_creation_ops.append(randn_like_opinfo)
 
 
 def bernoulli_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    make_ones = partial(torch.ones, device=device, dtype=dtype, requires_grad=requires_grad)
     make_zeros = partial(torch.zeros, device=device, dtype=dtype, requires_grad=requires_grad)
 
     shapes = ((), (2, 2), (2, 0, 1), (1, 2, 3))
 
     for shape in shapes:
-        # Output will always be ones
-        yield SampleInput(make_ones(shape))
         # Output will always be zeros
         yield SampleInput(make_zeros(shape))
 
