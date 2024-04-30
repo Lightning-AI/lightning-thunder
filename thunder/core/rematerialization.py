@@ -674,9 +674,7 @@ def replace_uniform(trace: TraceCtx) -> TraceCtx:
                 rng_state = prims.get_rng_state(prev_state[dev], dev)
             seed, offset = prims.unpack_rng_state(rng_state)
             out = prims.uniform_philox(*bsym.args, **bsym.kwargs, seed=seed, offset=offset)
-            advance_offset = 4
-            new_offset = prims.add(offset, advance_offset)
-            new_state = prims.pack_rng_state(seed, new_offset)
+            new_state = prims.update_rng_state(seed, offset)
             new_state_1 = prims.set_rng_state(new_state, dev)
             new_vo = variableify(out)
             swapmap[new_vo] = bsym.output
