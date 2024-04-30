@@ -2620,7 +2620,7 @@ unpack_rng_state = make_prim(
 )
 
 
-def _pack_rng_state_meta(seed: Number, offset: Number) -> TensorProxy:
+def _update_rng_state_meta(seed: Number, offset: Number) -> TensorProxy:
     utils.check_type(seed, Number)
     utils.check_type(offset, Number)
     utils.check_same_dtype(seed, offset)
@@ -2629,10 +2629,10 @@ def _pack_rng_state_meta(seed: Number, offset: Number) -> TensorProxy:
     return TensorProxy(shape=(state_shape,), dtype=dtypes.uint8, device=devices.cpu)
 
 
-pack_rng_state = make_prim(
+update_rng_state = make_prim(
     PrimIDs.PACK_RNG_STATE,
     "pack_rng_state",
-    meta=_pack_rng_state_meta,
+    meta=_update_rng_state_meta,
     tags=(OpTags.RANDOM_OP,),
 )
 
