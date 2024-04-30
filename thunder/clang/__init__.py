@@ -390,7 +390,7 @@ def expand(a: TensorLike, *shape: int) -> TensorLike:
         offset_idx = idx + offset
         requested_length = shape[offset_idx]
         utils.check(
-            requested_length == x or x == 1 or requested_length == -1,
+            requested_length == x or x == 1 or requested_length == -1 or x == -1,
             lambda: f"expand: attempting to expand a dimension of length {x}!",
         )
 
@@ -1166,7 +1166,7 @@ def compute_broadcast_shape(*_shapes):
                 common_shape[idx] = shape[idx]
 
             utils.check(
-                (shape[idx] == 1) or (common_shape[idx] == shape[idx]),
+                (shape[idx] == 1) or (common_shape[idx] == shape[idx]) or (common_shape[idx] == -1),
                 lambda: f"Attempting to broadcast a dimension of length {shape[idx]}!",
             )
 
