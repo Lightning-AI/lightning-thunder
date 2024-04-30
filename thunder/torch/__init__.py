@@ -183,6 +183,11 @@ def size(a):
 def is_cuda(a: TensorLike, /) -> bool:
     return a.device.devicetype is devices.DeviceType.CUDA
 
+# is nested always returns False for now:
+# https://github.com/Lightning-AI/lightning-thunder/issues/93#issuecomment-2030416883
+@torchsymbol(torch.Tensor.is_nested, is_property=True, id="torch.is_nested")
+def is_nested(a: TensorLike, /) -> bool:
+    return False  
 
 register_method("size", size)
 
