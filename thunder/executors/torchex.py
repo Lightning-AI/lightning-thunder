@@ -957,6 +957,7 @@ _register_implementation(ltorch.addcmul, checker=_addcmul_checker, execution_tra
 
 clamp = _register_torch_operation("clamp")
 where = _register_torch_operation("where")
+nonzero = _register_torch_operation("nonzero")
 masked_fill = _register_torch_operation("masked_fill", module=torch.Tensor)
 tril = _register_torch_operation("tril")
 
@@ -994,6 +995,11 @@ def _tril_transform(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | N
 
 
 _register_implementation(prims.where, where, checker=_where_prim_checker)
+
+def _nonzero_tuple_exec_transform(a: torch.Tensor) -> Tuple[torch.Tensor, ...]:
+    return nonzero(a, as_tuple=True)
+
+_register_implementation(prims.nonzero_tuple, nonzero, checker=_always_executable, execution_transform=_nonzero_tuple_exec_transform)
 
 _register_implementation(ltorch.clamp, clamp, checker=_always_executable)
 _register_implementation(ltorch.masked_fill, masked_fill, checker=_masked_fill_checker)
