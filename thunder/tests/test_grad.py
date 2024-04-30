@@ -1184,8 +1184,25 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp, singul
     args, kwargs = sample.args, sample.kwargs
 
     def is_output_differentiable(x):
-        # These are the differentiable dtypes in PyTorch.
-        return x.dtype.is_floating_point or x.dtype.is_complex
+        # grad_fn is set only if one of the input `requires_grad=True`
+        # and the op is differentiable.
+        # Example:
+        # >>> x = torch.ones(3, requires_grad=True)
+        # >>> y = torch.ones(3, requires_grad=False)
+        # >>> (x + x).grad_fn  # <AddBackward0 object at 0x7f0502edcf40>
+        # >>> (y + y).grad_fn  # None
+        # >>> (y + x).grad_fn  # <AddBackward0 object at 0x7f0502e21060>
+        # >>> (x < 1).grad_fn  # None (non-differentiable op)
+        # Op with differentiable and non-differentiable outputs.
+        # >>> torch.topk(x, k=2)
+        # torch.return_types.topk(
+        # values=tensor([1., 1.], grad_fn=<TopkBackward0>),
+        # indices=tensor([0, 1]))
+        # >>> torch.topk(torch.ones(3, requires_grad=False), k=2)
+        # torch.return_types.topk(
+        # values=tensor([1., 1.]),
+        # indices=tensor([0, 1]))
+        return x.grad_fn is not None
 
     def filter_differentiable_outputs(outputs):
         if isinstance(outputs, torch.Tensor):
@@ -1201,7 +1218,7 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp, singul
     torch_result = filter_differentiable_outputs(torch_result)
     if torch_result == []:
         raise RuntimeError(
-            f"phantom_grad: Expected atleast 1 differentiable output. If {op.name} non-differentiable, set op.supports_grad=False."
+            f"phantom_grad: Expected atleast 1 differentiable output. If {op.name} is non-differentiable, set op.supports_grad=False."
         )
 
     grads = []
