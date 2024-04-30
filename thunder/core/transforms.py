@@ -823,7 +823,7 @@ def _index_add_prim_grad(a: TensorProxy, /, index: TensorProxy, value: TensorPro
 
     if value.ndim > 0:
         g = clang.take(g, index, dim)
-        g = clang.expand(g, a.shape)
+        g = clang.expand(g, value.shape)
     else:
         g = clang.take(g, clang.squeeze(index, 0), dim)
 
