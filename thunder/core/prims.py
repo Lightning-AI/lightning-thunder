@@ -2754,7 +2754,7 @@ def broadcast_in_dim_meta(a: TensorProxy, /, shape: Sequence[int], broadcast_dim
             lambda: f"One of the broadcast_dimensions={broadcast_dimensions} was {idx}, which is out-of-bounds for a tensor with {len(shape)} dimensions",
         )
         utils.check(
-            original_length == 1 or shape[idx] == original_length,
+            original_length == 1 or shape[idx] == original_length or original_length == -1,
             lambda: f"A dimension of length {original_length} cannot be broadcast to a dimension of length {shape[idx]}",
         )
 
