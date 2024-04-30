@@ -223,9 +223,9 @@ def test_llama_moe(executor, device, dtype):
             masks = masks.permute(2, 0, 1)  # (n_expert, B*T, n_expert_per_token)
             y = torch.zeros_like(x)  # (B*T, C)
             for i in range(self.n_expert):
-            # NOTE: zip is not working
-            # See https://github.com/Lightning-AI/lightning-thunder/issues/284
-            # for (mask, expert) in zip(masks, self.experts):
+                # NOTE: zip is not working
+                # See https://github.com/Lightning-AI/lightning-thunder/issues/284
+                # for (mask, expert) in zip(masks, self.experts):
                 mask = masks[i]
                 expert = self.experts[i]
                 token_idx, expert_idx = torch.where(mask)

@@ -1120,6 +1120,7 @@ register_grad(pids.WHERE, _where_prim_grad)
 def _nonzero_tuple_prim_grad(a: TensorProxy) -> tuple[TensorProxy, ...]:
     return prims.nonzero_tuple(a)
 
+
 register_grad(pids.NONZERO_TUPLE, _nonzero_tuple_prim_grad)
 
 #

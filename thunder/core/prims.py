@@ -3482,7 +3482,7 @@ matmul = make_prim(PrimIDs.MATMUL, "matmul", meta=matmul_meta)
 def nonzero_tuple_meta(
     a: TensorProxy,
     /,
-) -> Tuple[TensorProxy, ...]:
+) -> tuple[TensorProxy, ...]:
     # Checks types
     utils.check_type(a, TensorProxy)
 
@@ -3490,10 +3490,7 @@ def nonzero_tuple_meta(
     output_shape = (-1,)
 
     # Returns the output tensor
-    return tuple(
-        TensorProxy(like=a, shape=output_shape, dtype=dtypes.int64)
-        for _ in range(a.ndim)
-    )
+    return tuple(TensorProxy(like=a, shape=output_shape, dtype=dtypes.int64) for _ in range(a.ndim))
 
 
 nonzero_tuple = make_prim(PrimIDs.NONZERO_TUPLE, "nonzero_tuple", meta=nonzero_tuple_meta)
