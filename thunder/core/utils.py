@@ -530,6 +530,11 @@ def is_numbertensor(t):
 # TODO: maybe generalize to *args like check_same_dtype
 # TODO: change to check_same_shape or add check_same_shape variant and make check_same_dtype use the same pattern
 def same_shape(a: Sequence[int], b: Sequence[int], /) -> bool:
+    # Allow for -1 in the shape to represent an unknown dimension
+    if -1 in a:
+        a = tuple(x if x != -1 else b[i] for i, x in enumerate(a))
+    if -1 in b:
+        b = tuple(x if x != -1 else a[i] for i, x in enumerate(b))
     return tuple(a) == tuple(b)
 
 
