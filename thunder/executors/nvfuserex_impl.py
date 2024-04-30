@@ -2033,13 +2033,20 @@ def copy_(
 register_supported(PrimIDs.COPY_, copy_, _copy__check)
 
 
-from thunder.executors.torchex import unpack_rng_state_prim_nvfuser_impl, update_rng_state_prim_nvfuser_impl, _always_executable
+from thunder.executors.torchex import (
+    unpack_rng_state_prim_nvfuser_impl,
+    update_rng_state_prim_nvfuser_impl,
+    _always_executable,
+)
+
 
 def _unpack_rng_state_transform(s: torch.Tensor) -> tuple[int, int]:
     return unpack_rng_state_prim_nvfuser_impl(s)
 
 
-ex.register_supported(prims.unpack_rng_state, checker=_always_executable, execution_transform=_unpack_rng_state_transform)
+ex.register_supported(
+    prims.unpack_rng_state, checker=_always_executable, execution_transform=_unpack_rng_state_transform
+)
 
 
 def _update_rng_state_transform(seed: int, offset: int):
