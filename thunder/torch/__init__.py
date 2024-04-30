@@ -782,6 +782,17 @@ def reshape(a: TensorLike, /, *shape: int) -> TensorLike:
     return clang.reshape(a, shape)
 
 
+@torchsymbol(torch.unflatten, is_method=True)
+def unflatten(a: TensorLike, /, dim: int, sizes=tuple[int, ...]) -> TensorLike:
+    utils.check(
+        len(sizes) > 0,
+        lambda: f"unflatten() sizes must be non-empty",
+        RuntimeError,
+    )
+    dim = utils.canonicalize_dim(a.ndim, dim)
+    return a.view(tuple(a.shape[:dim]) + tuple(sizes) + tuple(a.shape[dim + 1 :]))
+
+
 @torchsymbol(torch.select, is_method=True)
 def select(a: TensorLike, /, dim: int, index: int):
     # dim check

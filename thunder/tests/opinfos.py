@@ -3609,6 +3609,47 @@ reshape_opinfo = OpInfo(
 shape_ops.append(reshape_opinfo)
 
 
+def unflatten_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    cases = (
+        ((4,), 0, (4,)),  # no-op
+        ((2, 2), -1, (2,)),  # no-op
+        ((1, 2, 1), 1, (2,)),  # no-op
+        ((4, 2), 0, (2, 2)),
+        ((125, 3), 0, (25, 5)),
+        ((25, 25), -1, (1, 5, 5)),
+        ((16, 32), -1, (2, 4, 1, 4)),
+        ((4, 5, 6), -1, (6, 1, 1, 1)),
+    )
+
+    for tensor_shape, dim, shape in cases:
+        yield SampleInput(make(tensor_shape), dim, shape)
+
+
+def unflatten_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, dtype=dtype, device=device)
+    input_tensor = make(4, 4)
+    dim = 3
+    yield (SampleInput(input_tensor, 0, ()), RuntimeError, r"unflatten\(\) sizes must be non-empty")
+    # should check for dim?
+    yield (
+        SampleInput(input_tensor, dim, (2, 2)),
+        IndexError,
+        rf"Dimension out of range \(expected to be in range of \[{-len(input_tensor.shape)}, {len(input_tensor.shape)-1}\], but got {dim}\)",
+    )
+
+
+unflatten_opinfo = OpInfo(
+    ltorch.unflatten,
+    sample_input_generator=unflatten_sample_generator,
+    error_input_generator=unflatten_error_generator,
+    torch_reference=torch.unflatten,
+)
+
+shape_ops.append(unflatten_opinfo)
+
+
 def repeat_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
