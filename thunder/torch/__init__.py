@@ -1581,6 +1581,8 @@ def tril(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = Non
 def where(
     pred: TensorLike, a: None | Number | TensorLike = None, b: None | Number | TensorLike = None, /
 ) -> TensorLike:
+    if a is None and b is None:
+        return prims.nonzero_tuple(pred)
     utils.check(
         isinstance(a, (Number, TensorProxy)) and isinstance(b, (Number, TensorProxy)),
         lambda: f"torch.where() does not support only specifying a condition",
@@ -1652,6 +1654,13 @@ def nan_to_num(
     result = where(a == -inf, neginf, result)
     result = where(a == inf, posinf, result)
     return result
+
+
+@torchsymbol(torch.nonzero, is_method=True)
+def nonzero(a: TensorLike, /, as_tuple: bool = False) -> TensorLike | tuple[TensorLike, ...]:
+    if as_tuple:
+        return prims.nonzero_tuple(a)
+    raise NotImplementedError("torch.nonzero() only supports as_tuple=True")
 
 
 #
