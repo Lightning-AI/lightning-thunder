@@ -815,6 +815,26 @@ def _take_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy
 register_grad(pids.TAKE, _take_prim_grad)
 
 
+def _index_add_prim_grad(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
+    fwd = prims.index_add(a, index, value, dim)
+
+    g = get_grad(fwd)
+    put_grad(a, g)
+
+    if value.ndim > 0:
+        g = clang.take(g, index, dim)
+        g = clang.expand(g, a.shape)
+    else:
+        g = clang.take(g, clang.squeeze(index, 0), dim)
+
+    put_grad(value, g)
+
+    return fwd
+
+
+register_grad(pids.INDEX_ADD, _index_add_prim_grad)
+
+
 @torchctx
 def _gather_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy:
     fwd = prims.gather(a, index, dim)
@@ -1095,6 +1115,12 @@ def _where_prim_grad(pred: Number | TensorProxy, a: Number | TensorProxy, b: Num
 
 
 register_grad(pids.WHERE, _where_prim_grad)
+
+
+def _nonzero_tuple_prim_grad(a: TensorProxy) -> tuple[TensorProxy, ...]:
+    return prims.nonzero_tuple(a)
+
+register_grad(pids.NONZERO_TUPLE, _nonzero_tuple_prim_grad)
 
 #
 # Reduction operator grads
