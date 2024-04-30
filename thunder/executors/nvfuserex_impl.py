@@ -2195,11 +2195,8 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     rrctrace.set_provenance(TraceProvenance(f"Remove redundant casts (took {elapsed_time_millis} milliseconds)"))
     return rrctrace
 
-def _linear_check(
-    a: TensorProxy,
-    b: TensorProxy,
-    bias: TensorProxy | None
-) -> bool:
+
+def _linear_check(a: TensorProxy, b: TensorProxy, bias: TensorProxy | None) -> bool:
     if nv_version < LooseVersion("0.2.3"):
         return False
 
@@ -2211,7 +2208,7 @@ def _linear_check(
         return False
     if bias is not None and not is_supported_tensor(bias):
         return False
-    
+
     # nvFuser only supports 2D inputs in v0.2.3.
     if not (a.ndim == b.ndim and a.ndim == 2):
         return False

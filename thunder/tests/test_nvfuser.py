@@ -851,11 +851,12 @@ def test_optimization_fuel(executor, device, _):
 
     nvfuserex.set_fuel(thunder.extend.FUEL_LEVEL.UNLIMITED)
 
+
 @instantiate(
     dtypes=(thunder.float16, thunder.bfloat16), devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,)
 )
 def test_linear(executor, device: str, dtype: dtypes.dtype):
-    
+
     def fn(a, b, bias=None):
         return torch.nn.functional.linear(a, b, bias)
 
@@ -866,16 +867,12 @@ def test_linear(executor, device: str, dtype: dtypes.dtype):
 
     for has_bias in [True, False]:
         bias = None
-        
+
         if has_bias:
             bias = torch.randn(n, dtype=torch_dtype, device=device)
 
-        compiled_func = thunder.jit(
-            fn,
-            executors_list=executor.executors_list(),
-            nv_enable_linear=True
-        )
-        
+        compiled_func = thunder.jit(fn, executors_list=executor.executors_list(), nv_enable_linear=True)
+
         out = compiled_func(a, b, bias)
         traces = thunder.last_traces(compiled_func)
         fusions = examine.get_fusions(traces[-1])
