@@ -6,7 +6,7 @@ import torch
 import thunder
 import thunder.examine as examine
 from thunder.examine import get_fusions
-from thunder.executors.nvfuserex import nvfuserex
+from thunder.executors.nvfuserex import nvfuser_version, nvfuserex
 import thunder.torch as ltorch
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
@@ -850,3 +850,38 @@ def test_optimization_fuel(executor, device, _):
     assert get_num_fusions(cfn_without_fusion) == 0
 
     nvfuserex.set_fuel(thunder.extend.FUEL_LEVEL.UNLIMITED)
+
+@instantiate(
+    dtypes=(thunder.float16, thunder.bfloat16), devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,)
+)
+def test_linear(executor, device: str, dtype: dtypes.dtype):
+    
+    def fn(a, b, bias=None):
+        return torch.nn.functional.linear(a, b, bias)
+
+    m, n, k = 128, 64, 32
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    a = torch.randn((m, k), dtype=torch_dtype, device=device)
+    b = torch.randn((n, k), dtype=torch_dtype, device=device)
+
+    for has_bias in [True, False]:
+        bias = None
+        
+        if has_bias:
+            bias = torch.randn(n, dtype=torch_dtype, device=device)
+
+        compiled_func = thunder.jit(
+            fn,
+            executors_list=executor.executors_list(),
+            nv_enable_linear=True
+        )
+        
+        out = compiled_func(a, b, bias)
+        traces = thunder.last_traces(compiled_func)
+        fusions = examine.get_fusions(traces[-1])
+        nv_version = nvfuser_version()
+
+        expected_fusions = 1 if nv_version >= "0.2.3" else 0
+
+        assert len(fusions) == expected_fusions
+        assert torch.allclose(out, torch.nn.functional.linear(a, b, bias))
