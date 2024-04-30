@@ -4118,6 +4118,9 @@ def _softmax(
     return converted
 
 
+register_method("softmax", _softmax)
+
+
 # A wrapper to support `torch.nn.Softmax` whose `forward` passes the kwarg of `_stacklevel=5` to `torch.nn.functional.softmax`.
 # ref: https://github.com/pytorch/pytorch/blob/8d12ba9acfa20ed7df438a8892c9bf8e6bef5775/torch/nn/modules/activation.py#L1545
 def softmax(a: TensorLike, dim: int, dtype: None | dtypeLike = None, _stacklevel: int = 3) -> TensorLike:
