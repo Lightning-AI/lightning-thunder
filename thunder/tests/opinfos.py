@@ -4512,9 +4512,11 @@ def scatter_add_error_generator(op, device, dtype=torch.float32, requires_grad=T
     a = make(shape_a)
     b = make_index(shape_b, low=0, high=shape_a[dim])
     c = make_source(shape_source)
-    yield (SampleInput(a, index=b, src=c, dim=dim),
-            RuntimeError,
-            "The gradient for the src Tensor is implemented only when src.shape == index.shape. src shape is (.*?) while index shape is (.*?).")
+    yield (
+        SampleInput(a, index=b, src=c, dim=dim),
+        RuntimeError,
+        "The gradient for the src Tensor is implemented only when src.shape == index.shape. src shape is (.*?) while index shape is (.*?).",
+    )
 
 
 scatter_add_opinfo = OpInfo(
