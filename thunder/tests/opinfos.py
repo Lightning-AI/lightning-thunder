@@ -5286,10 +5286,11 @@ def bernoulli_error_generator(op, device, **kwargs):
 # similar to `randn`
 # See the note on `randn` OpInfo for more details.
 bernoulli_opinfo = OpInfo(
-    ltorch.bernoulli,
+    name="bernoulli",
+    op=lambda *args, **kwargs: ltorch.full_like(ltorch.bernoulli(*args, **kwargs), 0),
     sample_input_generator=bernoulli_sample_generator,
     error_input_generator=bernoulli_error_generator,
-    torch_reference=torch.bernoulli,
+    torch_reference=lambda *args, **kwargs: torch.bernoulli(*args, **kwargs).fill_(0),
     supports_grad=False,
     dtypes=(datatypes.floating,),
 )
