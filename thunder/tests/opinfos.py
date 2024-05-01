@@ -561,6 +561,7 @@ is_cuda_opinfo = OpInfo(
 
 tensor_properties.append(is_cuda_opinfo)
 
+
 def _is_nested_torch(x: torch.Tensor) -> bool:
     return x.is_nested
 
