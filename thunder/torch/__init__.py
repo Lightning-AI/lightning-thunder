@@ -576,7 +576,7 @@ def bernoulli(a: TensorLike, *, generator=None, out=None):
     )
     utils.check(out is None, lambda: "bernoulli: out is not None which is currently unsupported", NotImplementedError)
     utils.check(dtypes.is_float_dtype(a.dtype), lambda: f"bernoulli only supports floating point dtypes, got {a.dtype}")
-    return (uniform(a.shape, device=a.device, dtype=a.dtype) < a).to(a.dtype)
+    return (uniform_like(a) < a).to(a.dtype)
 
 
 # NOTE zeros, like ones, and unlike full, can accept an integer shape
