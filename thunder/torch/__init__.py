@@ -218,27 +218,32 @@ def _old_torch_typestring_to_devicetype_and_dtype(typestring: str) -> tuple[Devi
     #    - torch.device.DtypeTensor
 
     _, *dev_and_dtype = typestring.split(".")
+    devicetype_str = "cpu"
+    dtype_str = ""
 
     if len(dev_and_dtype) == 1:
+        # when devicetype_str is omitted, device type is CPU
         (dtype_str,) = dev_and_dtype
-        return "cpu", _old_torch_typestring_to_torch_dtype_map[dtype_str]
+        dtype_str = _old_torch_typestring_to_torch_dtype_map[dtype_str]
 
     if len(dev_and_dtype) == 2:
-        dtype_str, devicetype_str = dev_and_dtype
-        return dtype_str, _old_torch_typestring_to_torch_dtype_map[devicetype_str]
+        devicetype_str, dtype_str = dev_and_dtype
+        dtype_str = _old_torch_typestring_to_torch_dtype_map[dtype_str]
 
-    # Assertion error -- expected the string to split into one or two elements
+    # Value error
+    # expected the string to split into one or two elements
+    # and devicetype_str should be either "cpu" or "cuda"
     utils.check(
-        False,
+        devicetype_str in ("cpu", "cuda") and 1 <= len(dev_and_dtype) <= 2,
         lambda: f"type(): unrecognized torch typestring {typestring}",
         exception_type=ValueError,
     )
 
+    return devicetype_str, dtype_str
+
 
 @torchsymbol(torch.Tensor.type, is_method=True)
-def type(
-    a: TensorLike, /, dtype: None | str | dtypeLike = None, non_blocking: bool = False, **kwargs
-) -> str | TensorLike:
+def type(a: TensorLike, /, dtype: None | str | dtypeLike = None, non_blocking: bool = False) -> str | TensorLike:
     utils.check(
         not non_blocking,
         lambda: f"type(): `non_blocking==True` is currently not supported.",
@@ -257,10 +262,8 @@ def type(
             # 1. When a tensor is already on a CUDA device, and the device type string is CUDA. In this case the tensor remains on its current device.
             # 2. When a tensor is on a CPU device and the device type string is omitted, the tensor remains on the CPU device.
             dev = a.device
-        elif devtype == "cpu" or devtype == "cuda":
-            dev = device_from_string(devtype)
         else:
-            raise ValueError(f"type(): unrecognized torch typestring {dtype}")
+            dev = device_from_string(devtype)
     else:
         # dtype is assumed to be torch.dtype (e.g. torch.int32)
         dev = a.device
