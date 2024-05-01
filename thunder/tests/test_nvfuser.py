@@ -881,4 +881,4 @@ def test_linear(executor, device: str, dtype: dtypes.dtype):
         expected_fusions = 1 if nv_version >= "0.2.3" else 0
 
         assert len(fusions) == expected_fusions
-        assert torch.allclose(out, torch.nn.functional.linear(a, b, bias))
+        torch.testing.assert_close(out, torch.nn.functional.linear(a, b, bias))
