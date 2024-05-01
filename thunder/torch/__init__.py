@@ -783,7 +783,7 @@ def reshape(a: TensorLike, /, *shape: int) -> TensorLike:
 
 
 @torchsymbol(torch.unflatten, is_method=True)
-def unflatten(a: TensorLike, /, dim: int, sizes=tuple[int, ...]) -> TensorLike:
+def unflatten(a: TensorLike, /, dim: int, sizes=Sequence[int]) -> TensorLike:
     utils.check(
         len(sizes) > 0,
         lambda: f"unflatten() sizes must be non-empty",
