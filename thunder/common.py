@@ -56,6 +56,12 @@ import numpy as np
 class CompileStats:
     """A class holding statistics and caches for a compiled function.
 
+    .. note::
+        It is highly recommended that some attributes such as :attr:`CompileStats.last_traces` and
+        :attr:`CompileStats.last_backward_traces` via :func:`thunder.last_traces` and
+        :func:`thunder.last_backward_traces`, respectively.
+        See :mod:`thunder` for more of such utility functions.
+
     Attributes:
         last_executed:
         last_traces (Sequence[TraceCtx]):
@@ -174,13 +180,7 @@ class CompileStats:
 class CompileData:
     """A class holding data about the compiled object.
 
-    Data include statistics about how it's been called such as ``additional_param_names``.
-
-    Attributes:
-        additional_param_names:
-        additional_param_values:
-        additional_return_names:
-        num_constant_args:
+    Data include statistics about how it's been called.
     """
 
     def __init__(
