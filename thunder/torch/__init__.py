@@ -1031,6 +1031,11 @@ def view(a: TensorLike, /, *shape) -> TensorLike:
     return reshape(a, shape)
 
 
+@torchsymbol(torch.Tensor.view_as, is_method=True)
+def view_as(a: TensorLike, /, b: TensorLike) -> TensorLike:
+    return view(a, b.size())
+
+
 #
 # Elementwise unary operaitons
 #
