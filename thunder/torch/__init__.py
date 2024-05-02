@@ -790,7 +790,7 @@ def unflatten(a: TensorLike, /, dim: int, sizes=Sequence[int]) -> TensorLike:
         RuntimeError,
     )
     dim = utils.canonicalize_dim(a.ndim, dim)
-    return a.view(tuple(a.shape[:dim]) + tuple(sizes) + tuple(a.shape[dim + 1 :]))
+    return a.view(a.shape[:dim] + tuple(sizes) + a.shape[dim + 1 :])
 
 
 @torchsymbol(torch.select, is_method=True)
