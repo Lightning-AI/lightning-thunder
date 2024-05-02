@@ -35,7 +35,7 @@ from thunder.tests.framework import (
 )
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops, get_opinfo
-
+from looseversion import LooseVersion
 
 @instantiate(
     dtypes=NOTHING,
@@ -878,7 +878,7 @@ def test_linear(executor, device: str, dtype: dtypes.dtype):
         fusions = examine.get_fusions(traces[-1])
         nv_version = nvfuser_version()
 
-        expected_fusions = 1 if nv_version >= "0.2.3" else 0
+        expected_fusions = 1 if nv_version >= LooseVersion("0.2.3") else 0
 
         assert len(fusions) == expected_fusions
         torch.testing.assert_close(out, torch.nn.functional.linear(a, b, bias))

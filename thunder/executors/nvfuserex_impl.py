@@ -2210,7 +2210,7 @@ def _linear_check(a: TensorProxy, b: TensorProxy, bias: TensorProxy | None) -> b
         return False
 
     # nvFuser only supports 2D inputs in v0.2.3.
-    if not (a.ndim == b.ndim and a.ndim == 2):
+    if not a.ndim == 2:
         return False
     return True
 
@@ -2225,9 +2225,7 @@ def linear(
 ) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
-    nvbias = None
-    if bias is not None:
-        nvbias = getnv(bias, fd, lc_to_nv_map)
+    nvbias = None if bias is None else getnv(bias, fd, lc_to_nv_map)
     return fd.ops.linear(nva, nvb, nvbias)
 
 
