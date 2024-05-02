@@ -884,3 +884,32 @@ def test_linear(executor, device: str, dtype: dtypes.dtype):
 
         assert len(fusions) == expected_fusions
         torch.testing.assert_close(out, torch.nn.functional.linear(a, b, bias))
+
+
+@instantiate(
+    dtypes=(thunder.float16, thunder.bfloat16), devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,)
+)
+def test_matmul(executor, device: str, dtype: dtypes.dtype):
+    m, n, k = 128, 64, 32
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    a = torch.randn((m, k), dtype=torch_dtype, device=device)
+    b = torch.randn((k, n), dtype=torch_dtype, device=device)
+
+    def fn(a, b):
+        return a.matmul(b)
+
+    compiled_func = thunder.jit(
+        fn,
+        executors_list=executor.executors_list(),
+        nv_enable_matmul=True,
+    )
+
+    out = compiled_func(a, b)
+    traces = thunder.last_traces(compiled_func)
+    fusions = examine.get_fusions(traces[-1])
+    nv_version = nvfuser_version()
+
+    expected_fusions = 1 if nv_version >= "0.2.2" else 0
+
+    assert len(fusions) == expected_fusions
+    assert torch.allclose(out, torch.matmul(a, b))
