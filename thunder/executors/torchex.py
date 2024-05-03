@@ -1633,7 +1633,7 @@ def adaptive_avg_pool2d_bwd_wrapper(
     a: TensorProxy,
     /,
     output_size: int | Sequence[int],
-) -> tuple[TensorProxy, TensorProxy] | TensorProxy:
+) -> TensorProxy:
     primals = adaptive_avg_pool2d(a, output_size)
 
     grad = get_grad(primals)

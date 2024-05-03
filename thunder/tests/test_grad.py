@@ -63,6 +63,7 @@ vjp_op_force = {
     "stack",
     "cumsum",
     "mse_loss",
+    "adaptive_avg_pool2d"
 }
 
 

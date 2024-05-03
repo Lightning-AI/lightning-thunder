@@ -6312,6 +6312,63 @@ avg_pool3d_opinfo = OpInfo(
 nn_ops.append(avg_pool3d_opinfo)
 
 
+def adaptive_avg_pool2d_error_generator(op, device, **kwargs):
+    make = partial(make_tensor, device=device, dtype=torch.float32)
+
+    cases_runtime_error = (
+        ((3,), (1, 1), "adaptive_avg_pool2d: Expected 3D or 4D tensor, but got"),
+        ((3, 4, 5), (3,), "adaptive_avg_pool2d: output_size must be 2"),
+        ((3, 4, 5), (3, -2), "adaptive_avg_pool2d: elements of output_size must be greater than or equal to 0 but received"),
+        ((3, 4, 0), (3, 2), "adaptive_avg_pool2d: Expected input to have non-zero size for non-batch dimensions, but input has sizes "),
+        ((1, 3, 0, 4), (3, 2), "adaptive_avg_pool2d: Expected input to have non-zero size for non-batch dimensions, but input has sizes "),
+    )
+    cases_value_error = (
+        ((3, 4, 5), (3., 3.), r"Element (.*?) \((.*?)\) had an unexpected type"),
+        ((3, 4, 5), 4., r"(.*?) had an unexpected type"),
+    )
+    for input_args, err_type in zip((cases_value_error, cases_runtime_error), (ValueError, RuntimeError)):
+        for op_shapes, output_sizes, err_msg in input_args:
+            yield (
+                SampleInput(
+                    make(op_shapes),
+                    output_sizes,
+                ),
+                err_type,
+                err_msg,
+            )
+
+
+def adaptive_avg_pool2d_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    cases = (
+        ((3, 3, 3), 5),
+        ((3, 4, 4), (3, 3)),
+        ((1, 3, 5, 2), 3),
+        ((3, 2, 3, 4), (2, 4)),
+    )
+
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    for input_shape, output_shape in cases:
+        a = make(input_shape)
+        yield SampleInput(a, output_shape)
+
+
+adaptive_avg_pool2d_opinfo = OpInfo(
+    ltorch.adaptive_avg_pool2d,
+    sample_input_generator=adaptive_avg_pool2d_sample_generator,
+    error_input_generator=adaptive_avg_pool2d_error_generator,
+    torch_reference=torch.nn.functional.adaptive_avg_pool2d,
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # nvfuser does not support adaptive_avg_pool2d for now
+        DecorateInfo(
+            pytest.mark.skip,
+            executors=("nvfuser",),
+        ),
+    ),
+)
+nn_ops.append(adaptive_avg_pool2d_opinfo)
+
+
 max_pool1d_opinfo = OpInfo(
     ltorch.max_pool1d,
     sample_input_generator=generic_max_pool_sample_generator(conv1d_sample_generator),

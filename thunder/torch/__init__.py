@@ -3133,13 +3133,14 @@ def adaptive_avg_pool2d(
     utils.check_type(output_size, (int, Sequence))
     if isinstance(output_size, Sequence):
         utils.check(len(output_size) == 2, lambda:f"adaptive_avg_pool2d: output_size must be 2")
+        utils.check_types(output_size, int)
     else:
         output_size = (output_size, output_size)
     return prims.adaptive_avg_pool2d(a, output_size)
 
 
 @torchsymbol("adaptive_avg_pool2d_backward", id="adaptive_avg_pool2d_backward")
-def adaptive_avg_pool2d_backward(g: TensorProxy, a: TensorProxy):
+def adaptive_avg_pool2d_backward(g: TensorProxy, a: TensorProxy) -> TensorProxy:
     return prims.adaptive_avg_pool2d_backward(g, a)
 
 
