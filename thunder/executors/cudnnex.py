@@ -163,17 +163,10 @@ def _make_cudnn_sdpa_forward_graph(query, key, value, attn_mask, dropout_p, is_c
 
     softmax_stats.set_output(True).set_data_type(torch_to_cudnn_dtype(torch.float32))
 
-    # Validate the graph before querying the cache key
-    # Validation makes sure all missing properties are inferred and filled, as they affect cache key.
-    graph.validate()
     cache_key = graph.key()
-
     # If a built graph does not exist in cache already, make one and place it in
     if cache_key not in _cudnnex_cache:
-        graph.build_operation_graph()
-        graph.create_execution_plans([cudnn.heur_mode.A])
-        graph.check_support()
-        graph.build_plans(cudnn.build_plan_policy.HEURISTICS_CHOICE)
+        graph.build([cudnn.heur_mode.A])
 
         _cudnnex_cache[cache_key] = (
             Q,
@@ -464,17 +457,10 @@ def _make_cudnn_sdpa_backward_graph(
         torch_to_cudnn_dtype(value.dtype)
     )
 
-    # Validate the graph before querying the cache key
-    # Validation makes sure all missing properties are inferred and filled, as they affect cache key.
-    graph.validate()
     cache_key = graph.key()
-
     # If a built graph does not exist in cache already, make one and place it in
     if cache_key not in _cudnnex_cache:
-        graph.build_operation_graph()
-        graph.create_execution_plans([cudnn.heur_mode.A])
-        graph.check_support()
-        graph.build_plans(cudnn.build_plan_policy.HEURISTICS_CHOICE)
+        graph.build([cudnn.heur_mode.A])
 
         _cudnnex_cache[cache_key] = (
             Q,
