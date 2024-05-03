@@ -854,7 +854,12 @@ def test_optimization_fuel(executor, device, _):
 
 
 @instantiate(
-    dtypes=(thunder.float16, thunder.bfloat16), devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,)
+    dtypes=(thunder.float16, thunder.bfloat16),
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(nvFuserExecutor,),
+    decorators=(
+        pytest.mark.skipif(nvfuser_version() < LooseVersion("0.2.3"), reason="Requires nvFuser version 0.2.3 or later"),
+    ),
 )
 def test_linear(executor, device: str, dtype: dtypes.dtype):
 
@@ -877,9 +882,8 @@ def test_linear(executor, device: str, dtype: dtypes.dtype):
         out = compiled_func(a, b, bias)
         traces = thunder.last_traces(compiled_func)
         fusions = examine.get_fusions(traces[-1])
-        nv_version = nvfuser_version()
 
-        expected_fusions = 1 if nv_version >= LooseVersion("0.2.3") else 0
+        expected_fusions = 1
 
         assert len(fusions) == expected_fusions
         torch.testing.assert_close(out, torch.nn.functional.linear(a, b, bias))
