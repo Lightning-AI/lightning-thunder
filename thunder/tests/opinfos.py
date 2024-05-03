@@ -1984,12 +1984,6 @@ ge_opinfo = OpInfo(
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.ge,
     test_directives=(
-        # This test is flaky in CI (which seems odd)
-        # AssertionError: Scalars are not close!
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_vjp_correctness",
-        ),
     ),
 )
 elementwise_binary_ops.append(ge_opinfo)
