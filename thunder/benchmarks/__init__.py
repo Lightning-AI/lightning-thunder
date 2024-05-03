@@ -505,7 +505,7 @@ def _run_benchmark(
             _grad_specifier_default(grad_tensor)
 
         benchmark_callable = constructor(benchmark_fn)
-        benchmark_callable = grad(benchmark_callable, grad_specifier=grad_specifier)
+        benchmark_callable = grad(benchmark_callable)
     elif compile_backward:
 
         def _fn(*args, **kwargs):
