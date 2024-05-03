@@ -8,11 +8,13 @@ from lightning_utilities import compare_version
 
 from thunder.core import prims, utils
 from thunder.core.proxies import Proxy, unvariableify, Variable
+from thunder.core.rematerialization import rematerialize
 from thunder.core.symbol import BoundSymbol, Symbol
 from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
-
+from thunder.core.transform_common import dce
+from thunder.executors.passes import update_fusion_call_ctx
 from thunder.executors.utils import Region
-from thunder.extend import FusionExecutor, register_executor
+from thunder.extend import FusionExecutor, register_executor, ImplInfo
 
 _TORCH_GREATER_EQUAL_2_3 = compare_version("torch", operator.ge, "2.3.0", use_base_version=True)
 
@@ -109,8 +111,9 @@ def make_compiled(
 
 
 class TorchCompileExecutor(FusionExecutor):
-    def __init__(self):
-        super().__init__("torchcompile", version=torch.__version__)
+    def __init__(self, name: Hashable, required_ops: set | None = None):
+        super().__init__(name, version=torch.__version__)
+        self.required_ops = required_ops
 
     def fuse(self, region: Region, fusion_counter: int) -> BoundSymbol:
         def keyfn(x: Variable) -> str:
@@ -140,16 +143,6 @@ class TorchCompileExecutor(FusionExecutor):
         producers, consumers = utils.producers_and_consumers(trace)
         from thunder.executors.data_dependent_partition import fuse_bound_symbols, Node
 
-        fused_bsyms = []
-
-        # NOTE: Currently the goal is to fuse rotary positional embeddings
-        required_ops = {
-            "torch.cat",
-            prims.cat.id,
-            prims.pad.id,
-            prims.slice_prim.id,
-        }
-
         def _should_fuse(a: Node, b: Node):
             def _can_fuse_node(n: Node):
                 if len(n.group_bsyms) > 1:
@@ -161,6 +154,7 @@ class TorchCompileExecutor(FusionExecutor):
 
         bound_symbol_groups = fuse_bound_symbols(trace, _should_fuse)
 
+        fused_bsyms = []
         # Counts how many fusions (per executor) have been constructed
         fusion_counter: int = 0
         for bsyms in bound_symbol_groups:
@@ -170,8 +164,8 @@ class TorchCompileExecutor(FusionExecutor):
                     fused_bsyms.append(bsym)
                     continue
 
-            include_required_ops = any(bsym.sym.id in required_ops for bsym in bsyms)
-            if include_required_ops:
+            # TODO: this could use `get_fuel()` like nvfuserex does
+            if self.required_ops is None or any(bsym.sym.id in self.required_ops for bsym in bsyms):
                 region = Region(producers, consumers, bsyms)
                 fusion_bsym: BoundSymbol = self.fuse(region, fusion_counter)
                 fusion_counter += 1
@@ -181,6 +175,10 @@ class TorchCompileExecutor(FusionExecutor):
 
         fusedtrace.bound_symbols = fused_bsyms
 
+        fusedtrace = rematerialize(fusedtrace)
+        fusedtrace = dce(fusedtrace)
+        fusedtrace = update_fusion_call_ctx(fusedtrace)
+
         end_time_ns: int = time.time_ns()
         elapsed_time_ns: int = end_time_ns - start_time_ns
         elapsed_time_millis: int = elapsed_time_ns // 1000000
@@ -189,30 +187,42 @@ class TorchCompileExecutor(FusionExecutor):
         return fusedtrace
 
 
-torch_compile_executor = TorchCompileExecutor()
-register_executor(torch_compile_executor)
+from thunder.executors.torchex import ex as pytorch_ex
 
 
-def register_supported(_id: Hashable):
-    torch_compile_executor.register_supported(_id, checker=None)
-
-
-# This is an initial list to support rotary positional embeddings
+# NOTE: [torch_compile_cat_ex vs torch_compile_ex]
+# The former only relies on `torch.compile` for the operators where it shines the most and is meant to be used
+# together with the nvfuser executor. Its current goal is only to fuse RoPE but the set of ops fused will change as each
+# of the fusion backends evolve.
+# The latter will try to `torch.compile` all the torch operators and is meant to be used without the nvfuser_executor
+# since they would be competing over fusion opportunities. The advantage over simply doing `torch.compile` is that you
+# still get all of Thunder's advantages, like enabling custom executors (e.g. with custom triton kernels) before it.
+required_ops = {
+    "torch.cat",
+    prims.cat.id,
+    prims.pad.id,
+    prims.slice_prim.id,
+}
+torch_compile_cat_ex = TorchCompileExecutor(name="torchcompile_cat", required_ops=required_ops)
+register_executor(torch_compile_cat_ex)
 # TODO: Carefully enable more ops checking that they do improve performance
 supported_ops = {
     "torch.split",
-    prims.add,
-    prims.broadcast_in_dim,
-    prims.cat,
-    prims.convert_element_type,
-    prims.full,
-    prims.mul,
-    prims.neg,
-    prims.pad,
-    prims.reshape,
-    prims.slice_prim,
-    prims.transpose,
+    prims.add.id,
+    prims.broadcast_in_dim.id,
+    prims.cat.id,
+    prims.convert_element_type.id,
+    prims.full.id,
+    prims.mul.id,
+    prims.neg.id,
+    prims.pad.id,
+    prims.reshape.id,
+    prims.slice_prim.id,
+    prims.transpose.id,
 }
+torch_compile_cat_ex._implmap = {op: ImplInfo() for op in pytorch_ex.implmap if op in supported_ops}
 
-for op in supported_ops:
-    register_supported(op)
+
+torch_compile_ex = TorchCompileExecutor(name="torchcompile")
+register_executor(torch_compile_ex)
+torch_compile_ex._implmap = {op: ImplInfo() for op in pytorch_ex.implmap}
