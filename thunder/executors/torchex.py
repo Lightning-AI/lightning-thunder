@@ -469,6 +469,7 @@ unbind = _register_torch_operation("unbind")
 unfold = _register_torch_operation("unfold", module=torch.Tensor)
 unsqueeze = _register_torch_operation("unsqueeze")
 view = _register_torch_operation("view", module=torch.Tensor)
+view_as = _register_torch_operation("view_as", module=torch.Tensor)
 
 
 def _broadcast_in_dim_prim_transform(
@@ -539,6 +540,7 @@ _register_implementation(prims.squeeze, checker=_always_executable, execution_tr
 _register_implementation(prims.transpose, checker=_always_executable, execution_transform=_transpose_prim_transform)
 _register_implementation(prims.unfold, unfold, checker=_always_executable)
 _register_implementation(prims.view, view, checker=_always_executable)
+_register_implementation(prims.view_as, view_as, checker=_always_executable)
 
 _register_implementation(ltorch.cat, cat, checker=_always_executable)
 _register_implementation(ltorch.chunk, chunk, checker=_always_executable)
@@ -561,6 +563,7 @@ _register_implementation(ltorch.unbind, unbind, checker=_always_executable)
 _register_implementation(ltorch.unfold, unfold, checker=_always_executable)
 _register_implementation(ltorch.unsqueeze, unsqueeze, checker=_always_executable)
 _register_implementation(ltorch.view, view, checker=_always_executable)
+_register_implementation(ltorch.view_as, view_as, checker=_always_executable)
 
 #
 # Memory format operations
