@@ -1643,6 +1643,7 @@ def grad(
     def grad(func):
         def grad_func(*args, **kwargs):
             _, grads = value_and_grad(func)(*args, **kwargs)
+            grads = tree_flatten(grads)[0]
             grads = [g for g in grads if g is not None]
             return grads
 
