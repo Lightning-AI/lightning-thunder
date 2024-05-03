@@ -1990,12 +1990,6 @@ ge_opinfo = OpInfo(
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.ge,
     test_directives=(
-        # TODO: enable this; there was a now-fixed nvFuser bug causing issues.
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-            executors=("nvfuser",),
-        ),
         # This test is flaky in CI (which seems odd)
         # AssertionError: Scalars are not close!
         DecorateInfo(
