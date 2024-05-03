@@ -407,11 +407,7 @@ def jit(
     )
     # TODO: rewrite the code below once options are finalized
     # NOTE: the following options might be absorbed by `compile_options`
-    absorbed_options = {
-        "use_cudagraphs",
-        "use_torch_compile",
-        "use_rematerialization"
-    }
+    absorbed_options = {"use_cudagraphs", "use_torch_compile", "use_rematerialization"}
     assert len(compile_data_params.keys() & absorbed_options) == len(absorbed_options)
     compile_data_params |= {opt_name: opt for opt_name, opt in compile_options.items() if opt_name in absorbed_options}
 
