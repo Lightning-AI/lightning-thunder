@@ -2,12 +2,14 @@ import itertools
 
 import pytest
 import torch
+from torch._dynamo.eval_frame import is_inductor_supported
 
 import thunder
+import thunder.tests.bf16
 import thunder.torch as ltorch
 from thunder.core import dtypes
+from thunder.executors.torchex import no_autocast
 from thunder.tests.framework import instantiate, TorchExecutor
-import thunder.tests.bf16
 
 
 # TODO This test currently ignores the "should_autocast" argument enumerated in it
@@ -111,6 +113,7 @@ def test_no_autocast(executor, device, dtype):
 
 @instantiate(
     dtypes=dtypes.float_dtypes - {float},
+    decorators=(pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported"),),
 )
 def test_compile_autocast(executor, device, dtype):
     del executor
@@ -134,3 +137,19 @@ def test_compile_autocast(executor, device, dtype):
     with torch.autocast(device_type=devicetype, dtype=test_dtype):
         output = cfunc(a, b)
     assert output.dtype == (torch.float16 if torch_device.type == "cuda" else torch.bfloat16)
+
+
+@pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported")
+def test_torch_compile_autocast():
+    """Checks if our autocast decorator plays well with ``torch.compile``"""
+
+    @no_autocast
+    def fn(x, y):
+        return x + y
+
+    a = torch.randn(2, 2)
+    b = torch.randn(2, 2)
+    cfn = torch.compile(fn, fullgraph=True)
+    actual = cfn(a, b)
+    expected = a + b
+    torch.testing.assert_close(actual, expected)

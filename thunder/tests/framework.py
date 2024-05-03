@@ -9,6 +9,7 @@ from collections.abc import Callable, Sequence, Iterable
 
 import pytest
 import torch
+from torch._dynamo import is_inductor_supported
 from torch.testing import assert_close
 
 from looseversion import LooseVersion
@@ -199,15 +200,29 @@ class TorchTestExecutor(TestExecutor):
         return torch.__version__
 
 
+class TorchCompileCatTestExecutor(TestExecutor):
+    name = "torchcompile_cat"
+    supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
+    supported_dtypes = (datatypes.dtype,)
+
+    def executors_list(self) -> list[extend.Executor]:
+        from thunder.executors.torch_compile import torch_compile_cat_ex
+
+        return [torch_compile_cat_ex]
+
+    def version(self):
+        return torch.__version__
+
+
 class TorchCompileTestExecutor(TestExecutor):
     name = "torchcompile"
     supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
     supported_dtypes = (datatypes.dtype,)
 
     def executors_list(self) -> list[extend.Executor]:
-        from thunder.executors.torch_compile import torch_compile_executor
+        from thunder.executors.torch_compile import torch_compile_ex
 
-        return [torch_compile_executor]
+        return [torch_compile_ex]
 
     def version(self):
         return torch.__version__
@@ -215,6 +230,7 @@ class TorchCompileTestExecutor(TestExecutor):
 
 # TODO Refactor these executors into the actual executor (sub)modules
 TorchExecutor: TorchTestExecutor = TorchTestExecutor()
+TorchCompileCatExecutor: TorchCompileCatTestExecutor = TorchCompileCatTestExecutor()
 TorchCompileExecutor: TorchCompileTestExecutor = TorchCompileTestExecutor()
 nvFuserExecutor: None | nvFuserTestExecutor = None
 
@@ -224,6 +240,7 @@ if NVFUSER_AVAILABLE:
 
 def _all_test_executors():
     """Constructs a list of all Thunder executors to be used when generating tests."""
+    # TODO: include the torch compile executors: https://github.com/Lightning-AI/lightning-thunder/issues/299
     executors = [TorchExecutor]
 
     if NVFUSER_AVAILABLE:
@@ -319,7 +336,7 @@ class ops:
         self.supported_executors = (
             set(supported_executors)
             if supported_executors is not None
-            else set(_all_test_executors() + [TorchCompileExecutor])
+            else set(_all_test_executors() + [TorchCompileCatExecutor])
         )
         for ex in self.supported_executors:
             assert isinstance(ex, TestExecutor)
@@ -359,8 +376,8 @@ class ops:
                 if not executor.supports_devicetype(devicetype):
                     continue
 
-                if executor == TorchCompileExecutor and (
-                    not opinfo.test_torch_compile_executor or sys.platform == "win32"
+                if any("torchcompile" in ex.name for ex in executor.executors_list()) and (
+                    not opinfo.test_torch_compile_executor or not is_inductor_supported()
                 ):
                     continue
 
