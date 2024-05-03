@@ -1,6 +1,7 @@
 import inspect
 import os
 import sys
+import platform
 from functools import wraps, singledispatchmethod, partial
 from itertools import product
 from typing import List, Optional
@@ -55,6 +56,7 @@ env_var_DISABLE_CUDA_TEST_INSTANTIATION: str = os.getenv("DISABLE_CUDA_TEST_INST
 DISABLE_CUDA_TEST_INSTANTIATION: bool = (
     env_var_DISABLE_CUDA_TEST_INSTANTIATION == "true" or env_var_DISABLE_CUDA_TEST_INSTANTIATION == "1"
 )
+IS_WINDOWS = platform.system() == "Windows"
 
 
 # Filters the CPU devicetype when in CI, CUDA is available, and the environment variable
