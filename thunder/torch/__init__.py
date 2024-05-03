@@ -1659,17 +1659,19 @@ def nan_to_num(
     return result
 
 
-@torchsymbol(torch.all, is_method=True)
-def all(
+@torchsymbol(torch.all, is_method=True, id="torch.all")
+def all_tensor(
     a: TensorLike, /, dim: None | int | Sequence[int] = None, keepdim: bool = False, *, out: None | TensorLike = None
-) -> TensorLike:
+) -> TensorLike | None:
+    result = logical_not(a)
     if isinstance(dim, Sequence) and len(dim) == 0:
-        # PyTorch returns a.clone()
-        result = a | a
+        # PyTorch returns result.clone()
+        result = result | result
     else:
-        not_result = logical_not(a)
-        sum_result = sum(not_result, dim=dim, keepdim=keepdim)
+        sum_result = sum(result, dim=dim, keepdim=keepdim)
         result = ne(sum_result, False)
+        if a.dtype is dtypes.uint8:
+            result = prims.convert_element_type(result, dtype=dtypes.uint8)
         result = logical_not(result)
 
     if a.dtype is dtypes.uint8:
