@@ -1641,6 +1641,8 @@ def grad(
     cfn,
 ) -> Callable:
     def grad(func):
+
+        @wraps(func)
         def grad_func(*args, **kwargs):
             _, grads = value_and_grad(func)(*args, **kwargs)
             grads = tree_flatten(grads)[0]
