@@ -6318,13 +6318,25 @@ def adaptive_avg_pool2d_error_generator(op, device, **kwargs):
     cases_runtime_error = (
         ((3,), (1, 1), "adaptive_avg_pool2d: Expected 3D or 4D tensor, but got"),
         ((3, 4, 5), (3,), "adaptive_avg_pool2d: output_size must be 2"),
-        ((3, 4, 5), (3, -2), "adaptive_avg_pool2d: elements of output_size must be greater than or equal to 0 but received"),
-        ((3, 4, 0), (3, 2), "adaptive_avg_pool2d: Expected input to have non-zero size for non-batch dimensions, but input has sizes "),
-        ((1, 3, 0, 4), (3, 2), "adaptive_avg_pool2d: Expected input to have non-zero size for non-batch dimensions, but input has sizes "),
+        (
+            (3, 4, 5),
+            (3, -2),
+            "adaptive_avg_pool2d: elements of output_size must be greater than or equal to 0 but received",
+        ),
+        (
+            (3, 4, 0),
+            (3, 2),
+            "adaptive_avg_pool2d: Expected input to have non-zero size for non-batch dimensions, but input has sizes ",
+        ),
+        (
+            (1, 3, 0, 4),
+            (3, 2),
+            "adaptive_avg_pool2d: Expected input to have non-zero size for non-batch dimensions, but input has sizes ",
+        ),
     )
     cases_value_error = (
-        ((3, 4, 5), (3., 3.), r"Element (.*?) \((.*?)\) had an unexpected type"),
-        ((3, 4, 5), 4., r"(.*?) had an unexpected type"),
+        ((3, 4, 5), (3.0, 3.0), r"Element (.*?) \((.*?)\) had an unexpected type"),
+        ((3, 4, 5), 4.0, r"(.*?) had an unexpected type"),
     )
     for input_args, err_type in zip((cases_value_error, cases_runtime_error), (ValueError, RuntimeError)):
         for op_shapes, output_sizes, err_msg in input_args:

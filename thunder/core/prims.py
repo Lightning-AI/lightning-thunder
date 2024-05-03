@@ -3681,8 +3681,9 @@ def adaptive_avg_pool2d_meta(
     )
     utils.check(len(output_size) == 2, lambda: f"adaptive_avg_pool2d: output_size must be 2")
     utils.check(
-      (output_size[0] >= 0 and output_size[1] >= 0),
-      lambda: f"adaptive_avg_pool2d: elements of output_size must be greater than or equal to 0 but received {output_size}")
+        (output_size[0] >= 0 and output_size[1] >= 0),
+        lambda: f"adaptive_avg_pool2d: elements of output_size must be greater than or equal to 0 but received {output_size}",
+    )
     for i in (-2, -1):
         utils.check(
             a.shape[i] > 0,
@@ -3708,7 +3709,9 @@ def adaptive_avg_pool2d_backward_meta(grad: TensorProxy, a: TensorProxy) -> Tens
     return TensorProxy(like=a)
 
 
-adaptive_avg_pool2d_backward = make_prim(PrimIDs.ADAPTIVE_AVG_POOL2D_BACKWARD, "adaptive_avg_pool2d_backward", meta=adaptive_avg_pool2d_backward_meta)
+adaptive_avg_pool2d_backward = make_prim(
+    PrimIDs.ADAPTIVE_AVG_POOL2D_BACKWARD, "adaptive_avg_pool2d_backward", meta=adaptive_avg_pool2d_backward_meta
+)
 
 
 def copy__meta(

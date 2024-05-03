@@ -1629,6 +1629,7 @@ ex.register_implementation(
     ltorch.max_pool3d, max_pool3d, checker=_always_executable, grad_transform=max_pool3d_bwd_wrapper
 )
 
+
 def adaptive_avg_pool2d_bwd_wrapper(
     a: TensorProxy,
     /,
@@ -1641,9 +1642,21 @@ def adaptive_avg_pool2d_bwd_wrapper(
     put_grad(a, grad_a)
 
     return primals
-ex.register_implementation(ltorch.adaptive_avg_pool2d, adaptive_avg_pool2d, checker=_always_executable, grad_transform=adaptive_avg_pool2d_bwd_wrapper)
+
+
+ex.register_implementation(
+    ltorch.adaptive_avg_pool2d,
+    adaptive_avg_pool2d,
+    checker=_always_executable,
+    grad_transform=adaptive_avg_pool2d_bwd_wrapper,
+)
 _register_implementation(ltorch.adaptive_avg_pool2d_backward, adaptive_avg_pool2d_backward, checker=_always_executable)
-ex.register_implementation(prims.adaptive_avg_pool2d, adaptive_avg_pool2d, checker=_always_executable, grad_transform=adaptive_avg_pool2d_bwd_wrapper)
+ex.register_implementation(
+    prims.adaptive_avg_pool2d,
+    adaptive_avg_pool2d,
+    checker=_always_executable,
+    grad_transform=adaptive_avg_pool2d_bwd_wrapper,
+)
 _register_implementation(prims.adaptive_avg_pool2d_backward, adaptive_avg_pool2d_backward, checker=_always_executable)
 _register_implementation(ltorch.nll_loss, checker=_always_executable, execution_transform=_nll_loss_transform)
 nll_loss_backward = ex.register_operator(
