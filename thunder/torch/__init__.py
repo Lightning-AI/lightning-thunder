@@ -583,6 +583,30 @@ def zeros(*shape: int, device: None | DeviceLike = None, dtype: None | dtypeLike
 def zeros_like(a: TensorLike, /, *, device: DeviceLike | None = None, dtype: dtypeLike | None = None) -> TensorLike:
     return full_like(a, 0, device=device, dtype=dtype)
 
+@torchsymbol(torch.empty)
+def empty(*size: int, out: None | TensorLike = None, dtype: None | dtypeLike = None, layout: torch.layout = torch.strided, device: None | DeviceLike = None, requires_grad: bool = False, pin_memory: bool = False, memory_format: torch.memory_format = torch.contiguous_format) -> TensorLike:
+    size = utils.extract_shape_from_varargs(size)
+
+    utils.check(out is None, lambda: "empty(): out is not None which is currently unsupported", NotImplementedError)
+    utils.check(layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError)
+    utils.check(
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.compile", NotImplementedError
+    )
+    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.compile", NotImplementedError)
+
+    # For now we default to `float32`,
+    # however, we should add a default dtype or rely on `torch.get_default_dtype`.
+    if dtype is None:
+        dtype = torch.float
+    dtype = to_dtype(dtype)
+
+    # For now we default to "cpu",
+    # however, we should add a default device or rely on `torch.get_default_device`.
+    if device is None:
+        device = "cpu"
+    device = to_device(device)
+
+    # somehow allocate memory but don't initialize values
 
 #
 # Shape operations
