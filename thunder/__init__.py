@@ -317,6 +317,7 @@ CacheEntry = namedtuple(
         "epilogue_traces",
         "backward_fn",
         "backward_traces",
+        "return_none_instead_of_grads",
     ],
 )
 
@@ -397,7 +398,6 @@ def jit(
         sharp_edges=sharp_edges,
         using_jit=True,
         use_cudagraphs=False,
-        use_torch_compile=False,
         disable_torch_autograd_support=disable_torch_autograd,
         use_rematerialization=False,
         only_execute_prims=False,
@@ -440,14 +440,15 @@ def jit(
 
         cache_info["is_autocast_enabled"] = is_autocast_enabled
 
-        # TODO(crcrpar): support FSDP as well
         is_ddp_enabled = getattr(fn, "use_ddp", False)
+        is_fsdp_enabled = getattr(fn, "use_fsdp", False)
         no_grad_sync = False
-        if is_ddp_enabled:
+        if is_ddp_enabled or is_fsdp_enabled:
             from thunder.distributed import get_skip_data_parallel_grad_sync
 
             no_grad_sync = get_skip_data_parallel_grad_sync()
         cache_info["no_grad_sync"] = no_grad_sync
+        return_none_instead_of_grads = is_fsdp_enabled and no_grad_sync
 
         # TODO RC1 Add module and function checks to prologue (make it a compile option)
 
@@ -464,6 +465,7 @@ def jit(
                     epilogue_traces,
                     backward_fn,
                     backward_traces,
+                    _return_none_instead_of_grads,
                 ) = cache_entry
                 try:
                     cs.last_prologue_execution_start = time.time_ns()
@@ -642,7 +644,15 @@ def jit(
 
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(
-                pro, protraces, comp, extraces, epilogue, epilogue_traces, backward_fn, backward_traces
+                pro,
+                protraces,
+                comp,
+                extraces,
+                epilogue,
+                epilogue_traces,
+                backward_fn,
+                backward_traces,
+                return_none_instead_of_grads,
             )
             if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
                 cs.interpreter_cache.append(cache_entry)
@@ -676,6 +686,7 @@ def jit(
 
             # Connect produced tensors with PyTorch's autograd graph
             ThunderFunction.apply(
+                cache_entry.return_none_instead_of_grads,
                 cache_entry.backward_fn,
                 saved_tensors,
                 saved_other,
@@ -716,7 +727,6 @@ def compile(
     executors_list: None | Sequence[Executor] = None,
     cache_mode: None | str | CACHE_OPTIONS = None,
     use_cudagraphs: bool = False,
-    use_torch_compile: bool = False,
     disable_torch_autograd_support: bool = False,
     use_rematerialization: bool = False,
     only_execute_prims: bool = False,
@@ -729,7 +739,6 @@ def compile(
         executors_list=executors_list,
         cache_option=cache_mode,
         use_cudagraphs=use_cudagraphs,
-        use_torch_compile=use_torch_compile,
         disable_torch_autograd_support=disable_torch_autograd_support,
         use_rematerialization=use_rematerialization,
         only_execute_prims=only_execute_prims,
