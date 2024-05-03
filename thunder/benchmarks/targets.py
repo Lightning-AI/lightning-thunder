@@ -593,6 +593,61 @@ def test_llama2_7b_sdpa_grad(benchmark, executor: Callable):
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
 
 
+sdpa_executors = (
+    torch_executor,
+    torch_compile_executor,
+    thunder_executor,
+    *((thunder_cudnn_nvfuser_executor,) if thunder_cudnn_nvfuser_executor is not None else ()),
+)
+sdpa_executors_ids = (
+    "torch",
+    "torch.compile",
+    "thunder",
+    *(("thunder+cudnn",) if thunder_cudnn_nvfuser_executor is not None else ()),
+)
+
+
+# Sample command to run this benchmark:
+# pytest thunder/benchmarks/targets.py -k "test_litgpt_sdpa_grad" --benchmark-group-by='param:config,param:bs' --benchmark-columns='min,max,mean,stddev,median'
+@pytest.mark.parametrize(
+    "executor,",
+    sdpa_executors,
+    ids=sdpa_executors_ids,
+)
+@pytest.mark.parametrize(
+    "bs,",
+    (
+        1,
+        2,
+    ),
+    ids=("bs1", "bs2"),
+)
+@pytest.mark.parametrize(
+    "config,",
+    (
+        "Llama-2-7b-hf",
+        "Llama-2-13b-hf",
+        "Llama-2-70b-hf",
+        "Llama-3-8B",
+        "Llama-3-70B",
+    ),
+)
+def test_litgpt_sdpa_grad(benchmark, executor: Callable, bs, config):
+    bench: Benchmark = LitGPTSDPABenchmark(
+        config=config,
+        batchdims=(bs,),
+        device="cuda:0",
+        dtype=thunder.bfloat16,
+        requires_grad=True,
+    )
+
+    setup = make_setup(bench)
+    fn = thunder_fwd_bwd(bench, compile_fn=executor)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
+
+
 @pytest.mark.parametrize(
     "executor,",
     fwd_executors,
