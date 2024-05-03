@@ -1171,7 +1171,7 @@ def _test_native_ddp_helper(input_data):
     return None
 
 
-def _test_native_fsdp_helper(input_data):
+def _test_native_fsdp_helper(input_data, new_fsdp=True):
     init_method, world_size, rank, executor, device, dtype, bucketing_strategy = input_data
 
     num_samples = 2
@@ -1206,17 +1206,24 @@ def _test_native_fsdp_helper(input_data):
 
     original_weight_net1_shape = model.net1.weight.shape
 
-    fsdp_model = fsdp(model, bucketing_strategy=bucketing_strategy, device=device)
+    if new_fsdp:
+        cmodel0 = thunder.jit(
+            model,
+            executors=executor.executors_list(),
+        )
+        cmodel = fsdp(cmodel0, bucketing_strategy=bucketing_strategy, device=device)
+    else:
+        fsdp_model = fsdp(model, bucketing_strategy=bucketing_strategy, device=device)
 
-    # Check that the model is sharded
-    sharded_weight_net1 = fsdp_model.net1.weight
-    assert sharded_weight_net1.shape != original_weight_net1_shape
-    assert sharded_weight_net1.shape == (1, 2)
+        # Check that the model is sharded
+        sharded_weight_net1 = fsdp_model.net1.weight
+        assert sharded_weight_net1.shape != original_weight_net1_shape
+        assert sharded_weight_net1.shape == (1, 2)
 
-    cmodel = thunder.jit(
-        fsdp_model,
-        executors=executor.executors_list(),
-    )
+        cmodel = thunder.jit(
+            fsdp_model,
+            executors=executor.executors_list(),
+        )
 
     comparison_exceptions = []
     for _ in range(num_epochs):

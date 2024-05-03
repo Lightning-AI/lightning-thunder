@@ -205,11 +205,20 @@ class ThunderModule(pytorch.nn.Module):
 
         del self.training
         self._forward_fn = compiled_model_call
+        self._overrides = {}
 
     def get_buffer(self, name):
+        null = object()
+        p = self._overrides.get(name, null)
+        if p is not null:
+            return p
         return self._model.get_buffer(name)
 
     def get_parameter(self, name):
+        null = object()
+        p = self._overrides.get(name, null)
+        if p is not null:
+            return p
         return self._model.get_parameter(name)
 
     def get_submodule(self, name):
@@ -357,6 +366,7 @@ def jit(
     interpretation: None | INTERPRETATION_OPTIONS | str = None,
     cache: None | CACHE_OPTIONS | str = None,
     disable_torch_autograd: bool = False,  # TODO Revisit this UX for RC1
+    early_transforms: list | None = None,
     additional_transforms: list | None = None,
     record_history: bool = False,
     **compile_options,  # TODO RC1 Make this explicit -- dict of options
@@ -392,6 +402,9 @@ def jit(
         interpreter = functional._translate_functions_interpreter
     elif interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
         interpreter = _general_frontend
+
+    if early_transforms is None:
+        early_transforms = []
 
     if additional_transforms is None:
         additional_transforms = []
@@ -567,24 +580,41 @@ def jit(
                 epilogue_trc = jit_results.epilogue_trace
                 last_interpreter_log = jit_results.interpreter_log
 
+            prologue_traces = [prologue_trc]
+            computation_traces = [computation_trc]
+
             if epilogue_trc is not None:
                 epilogue_traces = [epilogue_trc]
-                epilogue = epilogue_trc.python_callable()
             else:
                 epilogue_traces = None
-                epilogue = None
 
             cs.last_trace_tracing_stop = time.time_ns()
 
             # Makes the prologue callable
             cs.last_prologue_transformation_start = time.time_ns()
-            protraces = transform_for_execution(
+
+            for transform in early_transforms:
+                prologue_trc, computation_trc, epilogue_trc = transform(
+                    prologue_trc, computation_trc, epilogue_trc, executors_list=cd.executors_list
+                )
+                print(prologue_trc, "\n----------\n", computation_trc)
+                prologue_traces.append(prologue_trc)
+                computation_traces.append(computation_trc)
+                if epilogue_trc is not None:
+                    epilogue_traces_traces.append(epilogue_trc)
+
+            prologue_traces += transform_for_execution(
                 prologue_trc,
                 executors_list=(pythonex,),
                 use_del_last_used=False,
             )
-            protrace = protraces[-1]
+            protrace = prologue_traces[-1]
             pro = protrace.python_callable()
+
+            if epilogue_trc is not None:
+                epilogue = epilogue_trc.python_callable()
+            else:
+                epilogue = None
 
             cs.last_prologue_transformation_stop = time.time_ns()
 
@@ -596,7 +626,6 @@ def jit(
                 pro_to_epi = None
             cs.last_prologue_execution_stop = time.time_ns()
 
-            computation_traces = [computation_trc]
             cs.last_traces = computation_traces
             backward_traces = []
             cs.last_backward_traces = backward_traces
@@ -605,6 +634,9 @@ def jit(
 
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
+            print("###########------------------")
+            for a in computation_traces:
+                print("####", a)
 
             if is_autocast_enabled:
                 from thunder.core.transforms import autocast
@@ -659,13 +691,13 @@ def jit(
 
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(
-                pro, protraces, comp, extraces, epilogue, epilogue_traces, backward_fn, backward_traces
+                pro, prologue_traces, comp, extraces, epilogue, epilogue_traces, backward_fn, backward_traces
             )
             if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
                 cs.interpreter_cache.append(cache_entry)
 
             cs.last_traces += extraces
-            cs.last_prologue_traces = [prologue_trc] + protraces
+            cs.last_prologue_traces = [prologue_trc] + prologue_traces
             cs.last_prologue = pro
 
         return cache_entry, inps, pro_to_epi
@@ -721,6 +753,7 @@ def jit(
     # Sets compile options and statistics attributes
     fn_._lc_cd = cd
     fn_._lc_cs = cs
+    fn_._lc_early_transforms = early_transforms[:]  ## transforms
     fn_._lc_transforms = additional_transforms[:]  ## transforms
     fn_._lc_post_optimization_transforms = []  ## post_optimization_transforms
 

@@ -64,6 +64,8 @@ def dce(trace: Trace) -> Trace:
             else:
                 some_unused = True
 
+        if not needed:
+            print("##dce###", bsym, needed)
         if needed:
             nbsym: BoundSymbol = bsym
 

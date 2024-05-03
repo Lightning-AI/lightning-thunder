@@ -1,5 +1,6 @@
 import os
 from itertools import chain
+import collections
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from enum import auto, Enum
@@ -318,6 +319,163 @@ def get_extract_bucket_name_from_tensor_proxy(granularity: FSDPBucketingStrategy
     return f
 
 
+def fsdp_transform_module(
+    thunder_model: "thunder.ThunderModule",
+    *,
+    device: torch.device | None = None,
+    broadcast_from: int | None = None,
+    sharding_strategy: FSDPType = FSDPType.ZERO2,
+    bucketing_strategy: FSDPBucketingStrategy = FSDPBucketingStrategy.NONE,
+) -> "thunder.ThunderModule":
+    import thunder
+
+    cd = thunder.compile_data(thunder_model)
+    cd.use_fsdp = True
+
+    process_group = tdist.distributed_c10d._get_default_group()
+    utils.check(process_group is not None, lambda: "The default process group is None")
+    global_rank = tdist.get_rank(group=process_group)
+    world_size = tdist.get_world_size(group=process_group)
+    if device is None:
+        local_rank = int(os.environ["LOCAL_RANK"])
+        device = torch.device("cuda", local_rank)
+
+    def prologue_and_compute_transform(prologue_trace, computation_trace, epilogue_trace, **kwargs):
+        import thunder
+
+        prologue_producers, prologue_consumers = thunder.core.utils.producers_and_consumers(prologue_trace)
+        computation_producers, computation_consumers = thunder.core.utils.producers_and_consumers(computation_trace)
+
+        modules_and_thunder_modules = [
+            (bsym.args[0], bsym.output)
+            for bsym in prologue_trace.bound_symbols
+            if bsym.sym is thunder.prims.unpack_thunder_module
+        ]
+
+        if (
+            len(modules_and_thunder_modules) != 1
+            or prologue_producers[modules_and_thunder_modules[0][0]].sym is not thunder.prims.unpack_function_obj
+        ):
+            raise NotImplementedError("cannot deal with modules other than the compile module")
+
+        ((orig_module_proxy, thunder_module_proxy),) = modules_and_thunder_modules
+
+        computation_trace.push_scope([])
+
+        synchronized_parameters = []
+        # todo: deal with epilogue output
+        for pro_out_p, comp_inp_p in zip(prologue_trace.output, computation_trace.args):
+            bsym = prologue_producers[pro_out_p]
+            if bsym.sym == thunder.prims.unpack_parameter:
+                param_thunder_module, param_name = bsym.args
+                assert param_thunder_module is thunder_module_proxy
+                if param_name in sharded_params:
+                    old_shape, new_shape, new_torch_device = sharded_params[param_name]
+                    thunder_device = thunder.core.devices.to_device(new_torch_device)
+                    thunder_device_str = str(thunder_device)
+
+                    pro_out_p._ddp_type = thunder.core.proxies.DDPType.FULLY_SHARDED
+                    pro_out_p._shape = tuple(new_shape)
+                    pro_out_p._device = thunder_device
+                    if comp_inp_p is not pro_out_p:
+                        comp_inp_p._ddp_type = thunder.core.proxies.DDPType.FULLY_SHARDED
+                        comp_inp_p._shape = tuple(new_shape)
+                        comp_inp_p._device = thunder_device
+                    with thunder.core.trace.tracectx(computation_trace):
+                        synchronized_parameters.append(thunder.distributed.prims.synchronize(comp_inp_p, process_group))
+
+                    for c in prologue_consumers[pro_out_p]:
+                        if c.sym is thunder.core.prims.check_tensor_shape_and_metadata:
+                            # TODO have a more principled way to update this?
+                            a0, _, _, *a2pp = c.args
+                            c.args = (a0, tuple(new_shape), thunder_device_str, *a2pp)
+
+        new_scope = computation_trace.pop_scope()
+
+        for bsym in prologue_trace.bound_symbols:
+            if bsym.sym is thunder.core.prims.check_tensor_shape_and_metadata and prologue_producers[
+                bsym.args[0]
+            ].sym in (thunder.core.prims.unpack_parameter, thunder.core.prims.unpack_buffer):
+                param_thunder_module, name = prologue_producers[bsym.args[0]].args
+                assert param_thunder_module is thunder_module_proxy
+                if name not in sharded_params and name in device_adjutments:
+                    a0, shape, _, *a2pp = bsym.args
+                    bsym.args = (a0, shape, thunder_device_str, *a2pp)
+
+        proxies_to_replace = {id(bsym.args[0]): bsym.output for bsym in new_scope}
+
+        new_computation_trace = thunder.core.trace.from_trace(computation_trace)
+        for idx, bsym in enumerate(computation_trace.bound_symbols):
+            if bsym.sym != thunder.core.prims.unpack_trivial:
+                break
+            new_computation_trace.bound_symbols.append(bsym.from_bsym())
+        new_computation_trace.bound_symbols += new_scope
+        for bsym in computation_trace.bound_symbols[idx:]:
+            new_args = tuple(proxies_to_replace.get(id(a), a) for a in bsym.args)
+            new_computation_trace.bound_symbols.append(bsym.from_bsym(args=new_args))
+
+        print("##cmptrc###", new_computation_trace, "\n####endcmptrc####")
+        new_computation_trace.set_provenance(thunder.core.trace.TraceProvenance("fsdp pass"))
+
+        return prologue_trace, new_computation_trace, epilogue_trace
+
+    # add prologue + compute transform
+    thunder_model = thunder.core.transforms.add_transform(thunder_model, early_transform=prologue_and_compute_transform)
+
+    # modidfy module
+    import copy
+
+    sharded_params = {}
+    device_adjustments = {}
+    for module_name, _ in thunder_model._model.named_modules():
+        submodule = thunder_model.get_submodule(module_name)
+        module_copy = copy.copy(submodule)
+
+        # Materialize meta-parameters on-device if necessary.
+        # This is done before sharding in case the materialization logic depends on the tensor shape.
+        # The tradeoff is that all of a module's direct parameters need to fit in device.
+        # Each module only initializes its own parameters and not those of its children (recurse=False)
+        if any(t.is_meta for t in chain(module_copy.parameters(recurse=False), module_copy.buffers(recurse=False))):
+            # TODO: we could also support calling a "param_init_fn" argument like PyTorch
+            # thunder.distributed._materialize(submodule, device)
+            # Materialize a module's direct children parameters by calling ``module.reset_parameters()``
+            module_copy.to_empty(device=device, recurse=False)
+            if not hasattr(module_copy, "reset_parameters"):
+                raise TypeError(
+                    f"Materialization requires that the `{type(module_copy).__name__}.reset_parameters` method is implemented."
+                    " This method is used to initialize any children parameters or buffers in this module."
+                )
+            module_copy.reset_parameters()
+            for n, p in module_copy.named_parameters(recurse=False, prefix=module_name):
+                thunder_model._overrides[n] = p
+                device_adjustments[n] = device
+            for n, b in module_copy.named_buffers(recurse=False, prefix=module_name):
+                thunder_model._overrides[n] = b
+                device_adjustments[n] = device
+        else:
+            # Move leftover params and buffers to device. This is at least required to broadcast.
+            # Cannot `submodule.to(device)` because we don't want it to recurse
+            for n, p in module_copy.named_parameters(recurse=False, prefix=module_name):
+                if p.device != device:
+                    thunder_model._overrides[n] = torch.nn.Parameter(p.to(device=device), requires_grad=p.requires_grad)
+                    device_adjustments[n] = device
+            for n, b in module_copy.named_buffers(recurse=False, prefix=module_name):
+                if p.device != device:
+                    thunder_model._overrides[n] = b.to(device=device)
+                    device_adjustments[n] = device
+
+        for pn, p in submodule.named_parameters(recurse=False, prefix=module_name):
+            if pn not in thunder_model._overrides:
+                thunder_model._overrides[pn] = copy.copy(p)
+            # we collect shapes and devices because we do not know if other transforms also change it...
+            old_shape = thunder_model._overrides[pn].shape
+            thunder.distributed._shard_param(thunder_model._overrides[pn], global_rank, world_size, pn)
+            new_shape = thunder_model._overrides[pn].shape
+            sharded_params[pn] = (old_shape, new_shape, thunder_model._overrides[pn].device)
+
+    return thunder_model
+
+
 def fsdp(
     model: torch.nn.Module,
     *,
@@ -357,11 +515,22 @@ def fsdp(
         :class:`torch.nn.Module`
 
     """
+    import thunder
+
     utils.check(isinstance(sharding_strategy, FSDPType), lambda: f"FSDPType.ZERO2 and FSDPType.ZERO3 are supported.")
     utils.check(
         tdist.is_available(),
         lambda: "fsdp requires torch distributed to be available (but it's not)",
     )
+
+    if isinstance(model, thunder.ThunderModule):
+        return fsdp_transform_module(
+            model,
+            device=device,
+            broadcast_from=broadcast_from,
+            sharding_strategy=sharding_strategy,
+            bucketing_strategy=bucketing_strategy,
+        )
 
     process_group = tdist.distributed_c10d._get_default_group()
     utils.check(process_group is not None, lambda: "The default process group is None")
