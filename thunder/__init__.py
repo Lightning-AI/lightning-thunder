@@ -203,7 +203,10 @@ class ThunderModule(pytorch.nn.Module):
         super().__init__()
         self._model = model
 
+        # We delete self.training in order for training to be used from
+        # the model itself through `__getattr__`.
         del self.training
+
         self._forward_fn = compiled_model_call
 
     def get_buffer(self, name):
