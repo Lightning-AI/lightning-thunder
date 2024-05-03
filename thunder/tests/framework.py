@@ -55,6 +55,7 @@ env_var_DISABLE_CUDA_TEST_INSTANTIATION: str = os.getenv("DISABLE_CUDA_TEST_INST
 DISABLE_CUDA_TEST_INSTANTIATION: bool = (
     env_var_DISABLE_CUDA_TEST_INSTANTIATION == "true" or env_var_DISABLE_CUDA_TEST_INSTANTIATION == "1"
 )
+IS_WINDOWS = os.name == "nt"
 
 
 # Filters the CPU devicetype when in CI, CUDA is available, and the environment variable
