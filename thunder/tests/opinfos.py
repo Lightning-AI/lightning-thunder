@@ -2102,12 +2102,6 @@ ne_opinfo = OpInfo(
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.ne,
     test_directives=(
-        # TODO: enable this; there was a now-fixed nvFuser bug causing issues.
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-            executors=("nvfuser",),
-        ),
     ),
 )
 elementwise_binary_ops.append(ne_opinfo)
