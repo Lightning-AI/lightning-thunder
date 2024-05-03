@@ -674,10 +674,10 @@ def _create_callable(
             )
             autocast_thunder_dtype = autocast_cpu_dtype if torch.is_autocast_cpu_enabled() else autocast_gpu_dtype
 
-        # TODO(crcrpar): support FSDP as well
         is_ddp_enabled = getattr(cd.fn, "use_ddp", False)
+        is_fsdp_enabled = getattr(cd.fn, "use_fsdp", False)
         no_grad_sync = False
-        if is_ddp_enabled:
+        if is_ddp_enabled or is_fsdp_enabled:
             from thunder.distributed import get_skip_data_parallel_grad_sync
 
             no_grad_sync = get_skip_data_parallel_grad_sync()
