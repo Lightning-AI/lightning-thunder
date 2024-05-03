@@ -583,8 +583,18 @@ def zeros(*shape: int, device: None | DeviceLike = None, dtype: None | dtypeLike
 def zeros_like(a: TensorLike, /, *, device: DeviceLike | None = None, dtype: dtypeLike | None = None) -> TensorLike:
     return full_like(a, 0, device=device, dtype=dtype)
 
+
 @torchsymbol(torch.empty)
-def empty(*size: int, out: None | TensorLike = None, dtype: None | dtypeLike = None, layout: torch.layout = torch.strided, device: None | DeviceLike = None, requires_grad: bool = False, pin_memory: bool = False, memory_format: torch.memory_format = torch.contiguous_format) -> TensorLike:
+def empty(
+    *size: int,
+    out: None | TensorLike = None,
+    dtype: None | dtypeLike = None,
+    layout: torch.layout = torch.strided,
+    device: None | DeviceLike = None,
+    requires_grad: bool = False,
+    pin_memory: bool = False,
+    memory_format: torch.memory_format = torch.contiguous_format,
+) -> TensorLike:
     size = utils.extract_shape_from_varargs(size)
 
     utils.check(out is None, lambda: "empty(): out is not None which is currently unsupported", NotImplementedError)
@@ -607,6 +617,7 @@ def empty(*size: int, out: None | TensorLike = None, dtype: None | dtypeLike = N
     device = to_device(device)
 
     # somehow allocate memory but don't initialize values
+
 
 #
 # Shape operations
