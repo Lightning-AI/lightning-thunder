@@ -1372,6 +1372,11 @@ def logical_and(a, b, /):
     return clang.logical_and(a, b)
 
 
+@torchsymbol(torch.logical_not, is_method=True)
+def logical_not(a, /):
+    return clang.logical_not(a)
+
+
 @torchsymbol(torch.le, is_method=True)
 def le(a, b, /):
     return clang.le(a, b)
@@ -1651,6 +1656,24 @@ def nan_to_num(
     result = where(a != a, nan, a)
     result = where(a == -inf, neginf, result)
     result = where(a == inf, posinf, result)
+    return result
+
+
+@torchsymbol(torch.all, is_method=True)
+def all(
+    a: TensorLike, /, dim: None | int | Sequence[int] = None, keepdim: bool = False, *, out: None | TensorLike = None
+) -> TensorLike:
+    if isinstance(dim, Sequence) and len(dim) == 0:
+        # PyTorch returns a.clone()
+        result = a | a
+    else:
+        not_result = logical_not(a)
+        sum_result = sum(not_result, dim=dim, keepdim=keepdim)
+        result = ne(sum_result, False)
+        result = logical_not(result)
+
+    if a.dtype is dtypes.uint8:
+        result = to(result, dtype=dtypes.uint8)
     return result
 
 
