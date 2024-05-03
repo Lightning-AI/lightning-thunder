@@ -2209,6 +2209,12 @@ def _linear_check(a: TensorProxy, b: TensorProxy, bias: TensorProxy | None) -> b
     if bias is not None and not is_supported_tensor(bias):
         return False
 
+    # nvFuser supports only fp16 and bf16 inputs. Only checking the first tensor
+    # dtype, as all tensors should have the same dtype which is checked by
+    # linear_meta.
+    if a.dtype not in (dtypes.float16, dtypes.bfloat16):
+        return False
+
     # nvFuser only supports 2D inputs in v0.2.3.
     if not a.ndim == 2:
         return False
