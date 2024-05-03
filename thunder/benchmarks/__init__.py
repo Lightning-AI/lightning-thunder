@@ -498,12 +498,6 @@ def _run_benchmark(
 
     assert not use_grad_transform or not compile_backward, "Can't set both use_grad_transform and compile_backward!"
     if use_grad_transform:
-        from thunder.core.transforms import _grad_specifier_default
-
-        def grad_specifier(outs) -> None:
-            grad_tensor = benchmark.postprocess_for_backward(outs)
-            _grad_specifier_default(grad_tensor)
-
         benchmark_callable = constructor(benchmark_fn)
         benchmark_callable = grad(benchmark_callable)
     elif compile_backward:
