@@ -390,7 +390,7 @@ def jit(
     assert type(record_history) is bool
 
     # TODO RC1 Refine the compile data option to remove unused options
-    compile_data_params = dict(
+    cd = CompileData(
         fn=fn,
         langctx=langctx,
         executors_list=executors,
@@ -402,16 +402,9 @@ def jit(
         use_rematerialization=False,
         only_execute_prims=False,
         disable_preprocessing=True,
-        executor_lookasides=executor_lookasides,
         compile_options=compile_options,
+        executor_lookasides=executor_lookasides,
     )
-    # TODO: rewrite the code below once options are finalized
-    # NOTE: the following options might be absorbed by `compile_options`
-    absorbed_options = {"use_cudagraphs", "use_torch_compile", "use_rematerialization"}
-    assert len(compile_data_params.keys() & absorbed_options) == len(absorbed_options)
-    compile_data_params |= {opt_name: opt for opt_name, opt in compile_options.items() if opt_name in absorbed_options}
-
-    cd = CompileData(**compile_data_params)
     cs = CompileStats()
 
     @_with_cache_info_ctx
