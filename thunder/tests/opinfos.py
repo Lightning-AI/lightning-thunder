@@ -561,15 +561,16 @@ is_cuda_opinfo = OpInfo(
 
 tensor_properties.append(is_cuda_opinfo)
 
+
 def logical_not_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
     cases = (
-        (4,4),
+        (4, 4),
         (5, 1, 3),
     )
     for input_shape in cases:
         yield SampleInput(make(input_shape))
-    
+
 
 logical_not_opinfo = OpInfo(
     clang.logical_not,
