@@ -34,7 +34,7 @@ from thunder.tests.framework import (
     TorchExecutor,
 )
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
-from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops, get_opinfo
+from thunder.tests.opinfos import linear_opinfo
 from looseversion import LooseVersion
 
 
@@ -866,24 +866,23 @@ def test_linear(executor, device: str, dtype: dtypes.dtype):
     def fn(a, b, bias=None):
         return torch.nn.functional.linear(a, b, bias)
 
-    m, n, k = 128, 64, 32
-    torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = torch.randn((m, k), dtype=torch_dtype, device=device)
-    b = torch.randn((n, k), dtype=torch_dtype, device=device)
+    at_least_one_tested = False
 
-    for has_bias in [True, False]:
-        bias = None
-
-        if has_bias:
-            bias = torch.randn(n, dtype=torch_dtype, device=device)
+    for sample in linear_opinfo.sample_inputs(device, dtype):
+        # nvFuser doesn't support batched input yet
+        if sample.args[0].ndim != 2:
+            continue
 
         compiled_func = thunder.jit(fn, executors_list=executor.executors_list(), nv_enable_linear=True)
 
-        out = compiled_func(a, b, bias)
+        out = compiled_func(*sample.args)
         traces = thunder.last_traces(compiled_func)
         fusions = examine.get_fusions(traces[-1])
 
         expected_fusions = 1
 
         assert len(fusions) == expected_fusions
-        torch.testing.assert_close(out, torch.nn.functional.linear(a, b, bias))
+        torch.testing.assert_close(out, torch.nn.functional.linear(*sample.args))
+        at_least_one_tested = True
+
+    assert at_least_one_tested
