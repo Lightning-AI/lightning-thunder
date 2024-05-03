@@ -6356,6 +6356,8 @@ def adaptive_avg_pool2d_sample_generator(op, device, dtype, requires_grad, **kwa
         ((3, 4, 4), (3, 3)),
         ((1, 3, 5, 2), 3),
         ((3, 2, 3, 4), (2, 4)),
+        ((3, 0, 3, 4), (0, 0)),
+        ((0, 0, 3, 4), (0, 2)),
     )
 
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
@@ -6375,6 +6377,13 @@ adaptive_avg_pool2d_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.skip,
             executors=("nvfuser",),
+        ),
+        # NOTE: Pytorch handles zero size non-batch dimension differently for adaptive_avg_pool2d_backward between CUDA and CPU
+        # RuntimeError: adaptive_avg_pool2d_backward(): Expected grad_output to have non-zero size for non-batch dimensions, but grad_output has sizes [3, 0, 0, 0] with dimension 1 being empty
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            devicetypes=(devices.DeviceType.CPU,),
         ),
     ),
 )

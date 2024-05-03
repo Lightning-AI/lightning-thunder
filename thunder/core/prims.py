@@ -3706,6 +3706,11 @@ def adaptive_avg_pool2d_backward_meta(grad: TensorProxy, a: TensorProxy) -> Tens
         grad_ndim == 3 or grad_ndim == 4,
         lambda: f"adaptive_avg_pool2d_backward: Expected 3D or 4D tensor, but got {grad.shape}",
     )
+    for i in range(1, grad_ndim):
+        utils.check(
+            grad.shape[i] > 0,
+            lambda: f"adaptive_avg_pool2d_backward: Expected grad to have non-zero size for non-batch dimensions, but grad has sizes {grad.shape} with dimension {i} being empty",
+        )
     return TensorProxy(like=a)
 
 
