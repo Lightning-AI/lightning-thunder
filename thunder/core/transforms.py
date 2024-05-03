@@ -1337,7 +1337,7 @@ def _grad_out_specifier_default(pytree: Any) -> list[TensorProxy]:
 # The algorithm for modifying the program has the following steps:
 #   1) Flattens the original trace for the grad transform -- ensuing that all top-level symbols have
 #       a grad function.
-def grad(
+def __grad(
     cfn, grad_specifier: Callable = _grad_specifier_default, grad_out_specifier: Callable = _grad_out_specifier_default
 ) -> Callable:
     # Creates a custom transform callable that binds the additional arguments to the grad transform
@@ -1637,7 +1637,7 @@ def grad(
     return add_transform(cfn, _grad_transform)
 
 
-def grad_v1(
+def grad(
     cfn,
 ) -> Callable:
     def grad(func):
