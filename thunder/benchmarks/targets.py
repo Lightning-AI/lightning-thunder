@@ -291,7 +291,7 @@ def thunder_fwd_bwd(b: Benchmark, compile_fn: Callable):
 
 
 # To compare with PyTorch and raw torch.compile (i.e. not through thunder). The
-# latter can help us isolate whether it's something we need to fix ourself or
+# latter can help us isolate whether it's something we need to fix ourselves or
 # report upstream.
 torch_fwd_bwd = partial(thunder_fwd_bwd, compile_fn=torch_executor)
 torchcompile_fwd_bwd = partial(thunder_fwd_bwd, compile_fn=torch_compile_executor)
@@ -308,7 +308,7 @@ thunder_grad = partial(thunder_grad_transform, compile_fn=thunder_executor)
 thunder_gradv1 = partial(thunder_grad_transform_v1, compile_fn=thunder_executor)
 thunder_value_and_grad = partial(thunder_value_and_grad_transform, compile_fn=thunder_executor)
 
-# Executing with torchcompile
+# Executing with torchcompile as a Thunder executor
 thunder_torchcompile_fwd = partial(thunder_fwd, compile_fn=thunder_torch_compile_executor)
 thunder_torchcompile_grad = partial(thunder_grad_transform, compile_fn=thunder_torch_compile_executor)
 thunder_torchcompile_gradv1 = partial(thunder_grad_transform_v1, compile_fn=thunder_torch_compile_executor)
