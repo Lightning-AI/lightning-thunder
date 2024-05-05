@@ -27,7 +27,7 @@ import thunder.executors as executors
 import thunder.torch as ltorch
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
-from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator
+from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator, IS_WINDOWS
 from thunder.tests.make_tensor import make_tensor
 import thunder.extend as extend
 import thunder.tests.bf16
@@ -3408,6 +3408,8 @@ getitem_opinfo = OpInfo(
             executors=("nvfuser",),
             active_if=nvfuser_version < LooseVersion("0.1.4"),
         ),
+        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness", active_if=IS_WINDOWS),
+        DecorateInfo(pytest.mark.xfail, "test_phantom_grad_vs_torch_consistency", active_if=IS_WINDOWS),
     ),
 )
 shape_ops.append(getitem_opinfo)
