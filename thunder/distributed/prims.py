@@ -10,6 +10,7 @@ from thunder.core.prims import make_prim
 
 from thunder.core.proxies import DDPType, FutureTensorProxy, pytype, TensorProxy
 from thunder.core.transforms import register_augmented_forward, register_backward
+from thunder.distributed import get_skip_data_parallel_grad_sync
 
 if TYPE_CHECKING:
     from thunder.common import CompileData
@@ -321,6 +322,8 @@ def synchronize_backward_rule(
     group: torch.distributed.ProcessGroup,
     grad: TensorProxy,
 ) -> tuple[TensorProxy, None]:
+    if get_skip_data_parallel_grad_sync() and ddp_type == DDPType.REPLICATED:
+        return grad, None
     preaverage_grad = grad / group.size()
     match ddp_type:
         case DDPType.REPLICATED:
