@@ -540,7 +540,6 @@ _register_implementation(prims.squeeze, checker=_always_executable, execution_tr
 _register_implementation(prims.transpose, checker=_always_executable, execution_transform=_transpose_prim_transform)
 _register_implementation(prims.unfold, unfold, checker=_always_executable)
 _register_implementation(prims.view, view, checker=_always_executable)
-_register_implementation(prims.view_as, view_as, checker=_always_executable)
 
 _register_implementation(ltorch.cat, cat, checker=_always_executable)
 _register_implementation(ltorch.chunk, chunk, checker=_always_executable)

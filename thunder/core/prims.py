@@ -3188,7 +3188,6 @@ transpose = make_prim(PrimIDs.TRANSPOSE, "transpose", meta=transpose_meta, tags=
 
 
 view = make_prim(PrimIDs.VIEW, "view", meta=reshape_meta, tags=(OpTags.SHAPE_OP,))
-view_as = make_prim(PrimIDs.VIEW_AS, "view_as", meta=reshape_meta, tags=(OpTags.SHAPE_OP,))
 
 
 def unfold_meta(a: TensorProxy, /, dim: int, size: int, step: int) -> TensorProxy:

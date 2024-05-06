@@ -1032,7 +1032,7 @@ def view(a: TensorLike, /, *shape) -> TensorLike:
 
 
 @torchsymbol(torch.Tensor.view_as, is_method=True)
-def view_as(a: TensorLike, /, b: TensorLike) -> TensorLike:
+def view_as(a: TensorLike, b: TensorLike, /) -> TensorLike:
     return view(a, b.size())
 
 
