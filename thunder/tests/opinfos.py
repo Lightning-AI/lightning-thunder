@@ -3642,7 +3642,7 @@ def view_as_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
 view_as_opinfo = OpInfo(
     ltorch.view_as,
-    ample_input_generator=view_as_sample_generator,
+    sample_input_generator=view_as_sample_generator,
     torch_reference=torch.Tensor.view_as,
 )
 shape_ops.append(view_as_opinfo)
