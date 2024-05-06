@@ -5281,6 +5281,51 @@ randn_like_opinfo = OpInfo(
 tensor_creation_ops.append(randn_like_opinfo)
 
 
+def bernoulli_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make_t = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad, low=0, high=1)
+
+    shapes = ((), (2, 2), (2, 0, 1), (1, 2, 3))
+
+    for shape in shapes:
+        yield SampleInput(make_t(shape))
+
+
+def bernoulli_error_generator(op, device, **kwargs):
+    err_msg = "bernoulli only supports floating point dtypes, got int64"
+    yield (SampleInput(torch.ones(3, 3, device=device, dtype=torch.long)), RuntimeError, err_msg)
+
+    err_msg = "generator is not None which is currently unsupported"
+    yield (
+        SampleInput(torch.ones(3, 3, device=device), generator=torch.Generator(device=device)),
+        RuntimeError,
+        err_msg,
+    )
+
+    err_msg = "bernoulli: out is not None which is currently unsupported"
+    yield (SampleInput(torch.ones(3, 3, device=device), out=torch.ones(3, 3, device=device)), RuntimeError, err_msg)
+
+
+# Helper function for `bernoulli` opinfo.
+# It always returns zero tensors, so that the consistency tests and grad tests pass.
+def torch_bernoulli_and_zero(*args, **kwargs):
+    return ltorch.full_like(ltorch.bernoulli(*args, **kwargs), 0)
+
+
+# NOTE: This OpInfo ends up checking only `shape`, `device` and `dtype` consistency
+# similar to `randn`
+# See the note on `randn` OpInfo for more details.
+bernoulli_opinfo = OpInfo(
+    name="bernoulli",
+    op=torch_bernoulli_and_zero,
+    sample_input_generator=bernoulli_sample_generator,
+    error_input_generator=bernoulli_error_generator,
+    torch_reference=lambda *args, **kwargs: torch.bernoulli(*args, **kwargs).fill_(0),
+    supports_grad=False,
+    dtypes=(datatypes.floating,),
+)
+opinfos.append(bernoulli_opinfo)
+
+
 def tensor_constructor_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # Used to generate sequence.
     make_t = partial(make_tensor, device="cpu", dtype=dtype, requires_grad=False)
