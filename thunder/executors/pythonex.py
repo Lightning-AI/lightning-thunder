@@ -226,7 +226,7 @@ def _clear_collection_meta(coll: CollectionProxy) -> None:
 
 
 def _clear_collection_prim_impl(a: Sequence) -> None:
-    if isinstance(a, list):
+    if isinstance(a, (list, dict)):
         a.clear()
 
 
