@@ -42,10 +42,8 @@ def run_fwd_bwd_one_microbatch(
     input_ids: torch.Tensor,
     targets: torch.Tensor,
     gradient_accumulation_steps: int,
-    te_ctx: Any,
 ) -> torch.Tensor:
-    with te_ctx():
-        logits = model(input_ids)
+    logits = model(input_ids)
     logits = logits.reshape(-1, logits.size(-1))
     targets = targets.reshape(-1)
     loss = torch.nn.functional.cross_entropy(logits, targets, ignore_index=-1) / gradient_accumulation_steps
@@ -352,13 +350,6 @@ class Benchmark_litGPT:
             # Setup throughput Collection
             self.throughput = Throughput(window_size=self.max_iters - self.warmup_iter, world_size=world_size)
 
-        if "transformerengine" in self.compile:
-            import transformer_engine.pytorch as te
-
-            te_ctx = te.fp8_autocast
-        else:
-            te_ctx = nullcontext
-
         if self.skip_data_sync:
             data_sync_ctx = self.model.no_sync
         else:
@@ -379,14 +370,12 @@ class Benchmark_litGPT:
                         print("=====Start NSYS Profiling======")
                         torch.cuda.cudart().cudaProfilerStart()
 
-                    loss = run_fwd_bwd_one_microbatch(
-                        self.model, input_ids, targets, self.gradient_accumulation_steps, te_ctx
-                    )
+                    loss = run_fwd_bwd_one_microbatch(self.model, input_ids, targets, self.gradient_accumulation_steps)
 
             input_ids, targets = next(self.train_data_iter)
             input_ids = input_ids.to(device=self.device)
             targets = targets.to(device=self.device)
-            loss = run_fwd_bwd_one_microbatch(self.model, input_ids, targets, self.gradient_accumulation_steps, te_ctx)
+            loss = run_fwd_bwd_one_microbatch(self.model, input_ids, targets, self.gradient_accumulation_steps)
 
             # Simple Gradient Accumulation Implementation
             self.optimizer.step()
