@@ -378,8 +378,8 @@ def find_cut(
         node_in, node_out = id_to_name[u], id_to_name[v]
         if node_out == "sink":
             continue
-        assert node_in.endswith("_in")
-        assert node_out.endswith("_out")
+        assert node_in.endswith("_in"), node_in
+        assert node_out.endswith("_out"), node_out
         assert node_in[:-3] == node_out[:-4]
         var_name = node_in[:-3]
         cut_nodes.add(var_name)
