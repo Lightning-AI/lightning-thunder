@@ -1,6 +1,7 @@
 import os
 import time
 from typing import Any
+from contextlib import nullcontext
 
 import torch
 import functools
@@ -356,8 +357,6 @@ class Benchmark_litGPT:
 
             te_ctx = te.fp8_autocast
         else:
-            from contextlib import nullcontext
-
             te_ctx = nullcontext
 
         if self.skip_data_sync:
