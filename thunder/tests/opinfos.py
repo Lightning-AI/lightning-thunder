@@ -27,7 +27,7 @@ import thunder.executors as executors
 import thunder.torch as ltorch
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
-from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator
+from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator, IS_WINDOWS
 from thunder.tests.make_tensor import make_tensor
 import thunder.extend as extend
 import thunder.tests.bf16
@@ -574,6 +574,29 @@ is_nested_opinfo = OpInfo(
 )
 
 tensor_properties.append(is_nested_opinfo)
+
+
+def numel_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    cases = (
+        (0,),
+        (4, 2, 0),
+        (2, 2),
+    )
+
+    for shape in cases:
+        yield SampleInput(make(shape))
+
+
+numel_opinfo = OpInfo(
+    ltorch.numel,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=numel_sample_generator,
+    torch_reference=torch.numel,
+)
+tensor_properties.append(numel_opinfo)
+
 
 opinfos.extend(tensor_properties)
 
@@ -3421,6 +3444,8 @@ getitem_opinfo = OpInfo(
             executors=("nvfuser",),
             active_if=nvfuser_version < LooseVersion("0.1.4"),
         ),
+        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness", active_if=IS_WINDOWS),
+        DecorateInfo(pytest.mark.xfail, "test_phantom_grad_vs_torch_consistency", active_if=IS_WINDOWS),
     ),
 )
 shape_ops.append(getitem_opinfo)
@@ -5269,6 +5294,51 @@ randn_like_opinfo = OpInfo(
     dtypes=(datatypes.floating, datatypes.complexfloating),
 )
 tensor_creation_ops.append(randn_like_opinfo)
+
+
+def bernoulli_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make_t = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad, low=0, high=1)
+
+    shapes = ((), (2, 2), (2, 0, 1), (1, 2, 3))
+
+    for shape in shapes:
+        yield SampleInput(make_t(shape))
+
+
+def bernoulli_error_generator(op, device, **kwargs):
+    err_msg = "bernoulli only supports floating point dtypes, got int64"
+    yield (SampleInput(torch.ones(3, 3, device=device, dtype=torch.long)), RuntimeError, err_msg)
+
+    err_msg = "generator is not None which is currently unsupported"
+    yield (
+        SampleInput(torch.ones(3, 3, device=device), generator=torch.Generator(device=device)),
+        RuntimeError,
+        err_msg,
+    )
+
+    err_msg = "bernoulli: out is not None which is currently unsupported"
+    yield (SampleInput(torch.ones(3, 3, device=device), out=torch.ones(3, 3, device=device)), RuntimeError, err_msg)
+
+
+# Helper function for `bernoulli` opinfo.
+# It always returns zero tensors, so that the consistency tests and grad tests pass.
+def torch_bernoulli_and_zero(*args, **kwargs):
+    return ltorch.full_like(ltorch.bernoulli(*args, **kwargs), 0)
+
+
+# NOTE: This OpInfo ends up checking only `shape`, `device` and `dtype` consistency
+# similar to `randn`
+# See the note on `randn` OpInfo for more details.
+bernoulli_opinfo = OpInfo(
+    name="bernoulli",
+    op=torch_bernoulli_and_zero,
+    sample_input_generator=bernoulli_sample_generator,
+    error_input_generator=bernoulli_error_generator,
+    torch_reference=lambda *args, **kwargs: torch.bernoulli(*args, **kwargs).fill_(0),
+    supports_grad=False,
+    dtypes=(datatypes.floating,),
+)
+opinfos.append(bernoulli_opinfo)
 
 
 def tensor_constructor_sample_generator(op, device, dtype, requires_grad, **kwargs):
