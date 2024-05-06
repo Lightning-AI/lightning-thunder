@@ -440,9 +440,8 @@ def _get_rng_state_prim_impl(state: torch.Tensor | None, device: torch.device | 
     if state is not None:
         return state
     if device is None:
-        device = torch.cuda.current_device()
-    state = torch.cuda.get_rng_state(device)
-    return state
+        return torch.cuda.get_rng_state()
+    return torch.cuda.get_rng_state(device)
 
 
 get_rng_state_prim_impl = ex.register_operator(
@@ -484,10 +483,8 @@ def _update_rng_state_prim_torch_impl(seed: int, offset: int) -> torch.Tensor:
     # https://github.com/pytorch/pytorch/blob/a8aed4ce3f67aa4236e80a11209a40dd0c4ebc87/aten/src/ATen/native/cuda/DistributionTemplates.h#L39-L63,
     # rather than increasing it by exactly 4 each time.
     new_offset = offset + 4
-    seed = torch.tensor(seed)
-    offset = torch.tensor(new_offset)
-    seed_portion = seed.reshape([1]).view(torch.uint8)
-    offset_portion = offset.reshape([1]).view(torch.uint8)
+    seed_portion = torch.tensor([seed]).view(torch.uint8)
+    offset_portion = torch.tensor([new_offset]).view(torch.uint8)
     new_state = torch.cat([seed_portion, offset_portion])
     return new_state
 

@@ -2564,10 +2564,10 @@ set_rng_state = make_prim(
 )
 
 
-# NOTE: the input state is used to force the dependency when using multiple get/set_rng_state calls,
+# NOTE: the input state is used to force relative ordering when using multiple get/set_rng_state calls,
 # The user should ensure that when the default cuda generator state is obtained for the device for the first time, the state must be passed as "None".
 def _get_rng_state_meta(state: TensorProxy | NoneType, device: devices.Device | None = None) -> TensorProxy:
-    # RNG state is the cancatenate of 64-bit seed and 64-bit offset. Its type is uint8. So state_shape = dtypes.int64.bytes//dtypes.uint8.bytes * 2
+    # RNG state is the concatenation of 64-bit seed and 64-bit offset reinterpreted as 16 elements with uint8 type. So state_shape = 2 * dtypes.int64.bytes // dtypes.uint8.bytes
     state_shape = 16
     utils.check(state is not None or device is not None, lambda: f"state and device cannot both be None")
     if state is not None:
