@@ -431,7 +431,7 @@ def add_transform(
             # cache, interpretation?
             early_transforms=early_transforms,
             additional_transforms=additional_transforms,
-            disable_torch_autograd_support=cd.disable_torch_autograd_support or disable_torch_autograd_support,
+            disable_torch_autograd=cd.disable_torch_autograd_support or disable_torch_autograd_support,
             **cd.compile_options,
         )
         from thunder import ThunderModule
