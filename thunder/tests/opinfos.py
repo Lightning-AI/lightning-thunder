@@ -3125,6 +3125,7 @@ def expand_as_error_generator(op, device, *, dtype=torch.float32, **kwargs):
     # Input shape, output shape, exception type, error message match or None for universal match
     cases = [
         ((0,), (1,), RuntimeError, "attempting to expand a dimension of length 0"),
+        ((1,), (), RuntimeError, "expand: the requested shape has too few dimensions!"),
         ((0,), (2,), RuntimeError, "attempting to expand a dimension of length 0"),
         ((2, 2), (2, 4), RuntimeError, "attempting to expand a dimension of length 2"),
     ]

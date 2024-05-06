@@ -671,7 +671,7 @@ def expand(a: TensorLike, /, *shape: int) -> TensorLike:
 
 
 @torchsymbol(torch.Tensor.expand_as, is_method=True)
-def expand_as(a: TensorLike, /, b: TensorLike) -> TensorLike:
+def expand_as(a: TensorLike, b: TensorLike, /) -> TensorLike:
     return expand(a, b.size())
 
 
