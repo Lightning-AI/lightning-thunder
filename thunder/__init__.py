@@ -3,7 +3,6 @@ from typing import Any
 from collections import defaultdict, namedtuple
 from collections.abc import Callable
 from collections.abc import Sequence
-from contextlib import contextmanager
 from contextvars import ContextVar
 import os
 import dis
@@ -12,6 +11,7 @@ import warnings
 
 from looseversion import LooseVersion
 
+from thunder.core.module import ThunderModule
 from thunder.core.interpreter import InterpreterLogItem
 from thunder.core.options import (
     INTERPRETATION_OPTIONS,
@@ -190,94 +190,6 @@ def _general_frontend(
     return thunder_general_jit(fn, args, kwargs, sharp_edges=sharp_edges, record_history=record_history)
 
 
-class ThunderModule(pytorch.nn.Module):
-    """A wrapper nn.Module subclass.
-
-    This wrapper is returned by ``thunder.jit``, you would typically not
-    instantiate it manually.
-
-    """
-
-    def __init__(self, model, compiled_model_call):
-        """"""
-        super().__init__()
-        self._model = model
-
-        # We delete self.training in order for training to be used from
-        # the model itself through `__getattr__`.
-        del self.training
-
-        self._forward_fn = compiled_model_call
-
-    def get_buffer(self, name):
-        return self._model.get_buffer(name)
-
-    def get_parameter(self, name):
-        return self._model.get_parameter(name)
-
-    def get_submodule(self, name):
-        return self._model.get_submodule(name)
-
-    def forward(self, *args, **kwargs):
-        res = self._forward_fn(*args, **kwargs)
-        return res
-
-    @contextmanager
-    def no_sync(self):
-        r"""Context manager to disable gradient synchronization in data parallel mode.
-
-        This context manager is intended to be used in conjunction with
-        :class:`torch.nn.parallel.DistributedDataParallel` to disable gradient
-        synchronization in the backward pass. It will not have any effect when
-        used with other modules.
-
-        .. note::
-
-            This could lead to different accumulated gradients with ``torch.nn.parallel.distributed.DistributedDataParallel.no_sync``.
-            PyTorch's gradient synchronization is implemented by applying all-reduce to gradient buckets of ``torch.nn.Parameter.grad``.
-            Thus the ``no_sync`` context leads to :math:`\text{AllReduce} \left( \sum_{i = 0}^{\rm{num_grad_accum_steps}} g_i \right)`.
-            In contrast, this synchronizes accumulated gradients when exiting, leading to
-            :math:`\text{AllReduce} \left( \sum_{i = 0}^{\rm{num_grad_accum_steps - 1}} g_i \right) + \text{AllReduce}(g_{\rm{num_grad_accum_steps}})`.
-
-        .. warning::
-
-            You must reuse this context manager in each group of gradient accumulation iterations since gradients will get synchronized
-            on context manager exit.
-
-            .. code-block:: python
-
-                with model.no_sync():
-                    for _ in range(len(gradient_accumulation_iters)):
-                        loss(model(x)).backward()  # uses no-sync-backward trace
-                loss(model(x)).backward()  # uses the regular backward trace
-                optimizer.step()
-
-        """
-        from thunder.distributed import (
-            set_skip_data_parallel_grad_sync,
-            reset_skip_data_parallel_grad_sync,
-            _sync_grads,
-        )
-
-        token = set_skip_data_parallel_grad_sync(True)
-        try:
-            yield
-        finally:
-            reset_skip_data_parallel_grad_sync(token)
-            _sync_grads(self)
-
-    def __getattr__(self, name: str) -> Any:
-        if name == "_model":
-            return self._modules["_model"]
-        return getattr(self._model, name)
-
-    def state_dict(self, *args: Any, **kwargs: Any) -> Any:
-        return self._model.state_dict(*args, **kwargs)
-
-    def load_state_dict(self, *args: Any, **kwargs: Any) -> Any:
-        return self._model.load_state_dict(*args, **kwargs)
-
-
 # this captures the information needed to decide whether a cached function
 # matches (e.g. ddp and autocast state)
 _cache_info_ctx = ContextVar("cache_info_ctx")
@@ -297,19 +209,6 @@ def _with_cache_info_ctx(fn):
 
 def _get_cache_info():
     return _cache_info_ctx.get()
-
-
-def _get_thunder_module(model):
-    cd = get_compile_data()
-    tm = cd._thunder_module_map.get(id(model))
-    if tm and tm._model is not model:
-        tm = None
-    if tm is None:
-        # TODO: we would like to raise an error here, but this would require
-        #       us wrapping models that are passed in closures etc.
-        # raise RuntimeError("could not find ThunderModule")
-        return model
-    return tm
 
 
 def add_executor_lists(
