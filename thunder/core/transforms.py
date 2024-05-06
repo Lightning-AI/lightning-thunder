@@ -398,7 +398,11 @@ def visitor_transform(trace_from: Trace, visit: Callable, *, provenance: None | 
 
 # Helper function to add a transform
 def add_transform(
-    cfn: Callable, *, transform: Callable | None = None, early_transform: Callable | None = None
+    cfn: Callable,
+    *,
+    transform: Callable | None = None,
+    early_transform: Callable | None = None,
+    disable_torch_autograd_support=False,
 ) -> Callable:
     from thunder.common import _create_callable, CompileData, CompileStats
 
@@ -427,7 +431,7 @@ def add_transform(
             # cache, interpretation?
             early_transforms=early_transforms,
             additional_transforms=additional_transforms,
-            disable_torch_autograd_support=cd.disable_torch_autograd_support,
+            disable_torch_autograd_support=cd.disable_torch_autograd_support or disable_torch_autograd_support,
             **cd.compile_options,
         )
         from thunder import ThunderModule
@@ -1651,7 +1655,7 @@ def grad(
     #   we're using our own autograd transform
     cfn._using_grad_transform = True
 
-    return add_transform(cfn, transform=_grad_transform)
+    return add_transform(cfn, transform=_grad_transform, disable_torch_autograd_support=True)
 
 
 def grad_v1(
@@ -1670,7 +1674,7 @@ def grad_v1(
         return gradtrc
 
     cfn._using_grad_transform = True
-    return add_transform(cfn, transform=_grad_transform)
+    return add_transform(cfn, transform=_grad_transform, disable_torch_autograd_support=True)
 
 
 class Transforms(Enum):

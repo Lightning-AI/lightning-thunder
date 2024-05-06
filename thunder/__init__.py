@@ -564,10 +564,10 @@ def jit(
                     # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
                     # by split_forward_backward
                     extraces = cs.last_traces
-                    check(
-                        not additional_transforms,
-                        lambda: "Specifying additional_transforms is not supported with PyTorch Autograd integration",
-                    )
+                    # check(
+                    #    not additional_transforms,
+                    #    lambda: "Specifying additional_transforms is not supported with PyTorch Autograd integration",
+                    # )
 
             if backward_trc is None:
                 cs.last_computation_transformation_start = time.time_ns()
