@@ -569,17 +569,7 @@ class GeneralJitCtx(MinimalCtx):
             # TensorProxy attributes should be considered derived quantities, so we flag TensorProxies here
             value.provenance.ext_flag |= EXT_FLAG_IS_TENSOR_PROXY
 
-            from thunder.core import utils
-            from thunder.distributed import get_skip_data_parallel_grad_sync
-
-            no_sync = get_skip_data_parallel_grad_sync()
-            compile_data = get_compile_data()
-            utils.check(
-                not (no_sync and getattr(compile_data, "use_fsdp", False)),
-                lambda: "`thunder.distributed.fsdp` does not support `no_sync`",
-            )
-
-            if not no_sync and isinstance(p, TensorProxy) and p.ddp_type in (DDPType.REPLICATED, DDPType.FULLY_SHARDED):
+            if isinstance(p, TensorProxy) and p.ddp_type in (DDPType.REPLICATED, DDPType.FULLY_SHARDED):
                 p_new = thunder.distributed.prims.synchronize(p, self._process_group_for_ddp)
                 p_orig = p
                 p = p_new
