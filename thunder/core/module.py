@@ -105,5 +105,3 @@ def get_thunder_module(model):
         # raise RuntimeError("could not find ThunderModule")
         return model
     return tm
-
-
