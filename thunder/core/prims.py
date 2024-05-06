@@ -149,7 +149,7 @@ class PrimIDs(Enum):
     SET_RNG_STATE = auto()
     GET_RNG_STATE = auto()
     UNPACK_RNG_STATE = auto()
-    PACK_RNG_STATE = auto()
+    UPDATE_RNG_STATE = auto()
     # Reshaping and permuting prims
     BROADCAST_IN_DIM = auto()
     CAT = auto()
@@ -2569,7 +2569,7 @@ set_rng_state = make_prim(
 def _get_rng_state_meta(state: TensorProxy | NoneType, device: devices.Device | None = None) -> TensorProxy:
     # RNG state is the concatenation of 64-bit seed and 64-bit offset reinterpreted as 16 elements with uint8 type. So state_shape = 2 * dtypes.int64.bytes // dtypes.uint8.bytes
     state_shape = (16,)
-    utils.check(state is not None or device is not None, lambda: f"state and device cannot both be None")
+    utils.check(state is not None or device is not None, lambda: f"state and device cannot both be None. state=None is only used the first time get_rng_state is used.")
     if state is not None:
         utils.check_type(state, TensorProxy)
         utils.check(
@@ -2626,17 +2626,17 @@ unpack_rng_state = make_prim(
 )
 
 
-def _update_rng_state_meta(seed: Number, offset: Number) -> TensorProxy:
-    utils.check_type(seed, Number)
-    utils.check_type(offset, Number)
+def _update_rng_state_meta(seed: int, offset: int) -> TensorProxy:
+    utils.check_type(seed, int)
+    utils.check_type(offset, int)
     utils.check_same_dtype(seed, offset)
     # state_shape is 2 * dtypes.int64.bytes // dtypes.uint8.bytes
     return TensorProxy(shape=(16,), dtype=dtypes.uint8, device=devices.cpu)
 
 
 update_rng_state = make_prim(
-    PrimIDs.PACK_RNG_STATE,
-    "pack_rng_state",
+    PrimIDs.UPDATE_RNG_STATE,
+    "update_rng_state",
     meta=_update_rng_state_meta,
 )
 

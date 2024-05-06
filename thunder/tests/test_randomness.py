@@ -4,8 +4,9 @@ from torch.testing import assert_close
 
 import thunder
 import thunder.torch as ltorch
+from thunder import compile as lc_compile
 from thunder.core import devices, dtypes
-from thunder.tests.framework import TorchExecutor, instantiate, NOTHING
+from thunder.tests.framework import TorchExecutor, nvFuserExecutor, instantiate, NOTHING
 
 
 @instantiate(
@@ -20,7 +21,7 @@ def test_uniform_philox(executor, device: str, dtype: dtypes.dtype):
     def func(shape, dtype, device, rng_seed, rng_offset):
         return ltorch.uniform_philox(shape, device=device, dtype=dtype, seed=rng_seed, offset=rng_offset)
 
-    cf = thunder.jit(func, executors_list=executor.executors_list())
+    cf = lc_compile(func, disable_preprocessing=True, executors_list=executor.executors_list())
 
     outputs = [cf(shape, dtype, device, rng_seed, rng_offset) for _ in range(3)]
     for o in outputs:
@@ -30,6 +31,7 @@ def test_uniform_philox(executor, device: str, dtype: dtypes.dtype):
 @instantiate(
     dtypes=NOTHING,
     devicetypes=(devices.DeviceType.CUDA,),
+    executors=(nvFuserExecutor,)
 )
 def test_rng_state_prims(executor, device: str, _):
     import thunder.core.prims as prims
@@ -62,9 +64,9 @@ def test_rng_state_prims(executor, device: str, _):
         assert_close(cuda_generator.get_state(), ori_state)
         assert_close(cuda_generator.get_state(), ori_state_1)
         assert_close(ori_seed, cuda_generator.initial_seed())
-        assert_close(cuda_generator.get_offset() // (1 if executor == TorchExecutor else 4), ori_offset)
+        assert_close(cuda_generator.get_offset() // 4, ori_offset)
 
         cuda_generator.set_offset(cuda_generator.get_offset() + 4)
         assert_close(cuda_generator.get_state(), state1)
         assert_close(cuda_generator.initial_seed(), s1_seed)
-        assert_close(cuda_generator.get_offset() // (1 if executor == TorchExecutor else 4), s1_offset)
+        assert_close(cuda_generator.get_offset() // 4, s1_offset)

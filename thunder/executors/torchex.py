@@ -451,35 +451,24 @@ get_rng_state_prim_impl = ex.register_operator(
 )
 
 
-def _unpack_rng_state_prim_torch_impl(s: torch.Tensor) -> tuple[int, int]:
+def _unpack_rng_state_prim_impl(s: torch.Tensor) -> tuple[int, int]:
     seed, offset = torch.chunk(s, 2)
-    return seed.view(torch.int64).item(), offset.view(torch.int64).item()
-
-
-unpack_rng_state_prim_torch_impl = ex.register_operator(
-    "unpack_rng_state_prim_torch_impl",
-    meta=prims.unpack_rng_state.meta,
-    fn=_unpack_rng_state_prim_torch_impl,
-)
-
-
-def _unpack_rng_state_prim_nvfuser_impl(s: torch.Tensor) -> tuple[int, int]:
-    seed, offset = torch.chunk(s, 2)
+    # We follow the nvFuser way here. The offset used by nvfuser = pytorch_offset // 4
+    # See Note [Divide offset by 4] https://github.com/NVIDIA/Fuser/blob/729f36c6fd0b86aa9d09a89ff3e406978cda13c7/csrc/rng.cpp#L54
     return seed.view(torch.int64).item(), offset.view(torch.int64).item() // 4
 
 
-unpack_rng_state_prim_nvfuser_impl = ex.register_operator(
-    "unpack_rng_state_prim_nvfuser_impl",
+unpack_rng_state_prim_impl = ex.register_operator(
+    "unpack_rng_state_prim_impl",
     meta=prims.unpack_rng_state.meta,
-    fn=_unpack_rng_state_prim_nvfuser_impl,
+    fn=_unpack_rng_state_prim_impl,
 )
 
 
-def _update_rng_state_prim_torch_impl(seed: int, offset: int) -> torch.Tensor:
-    # NOTE: Pytorch updates the offset based on the shape of the input,
-    # https://github.com/pytorch/pytorch/blob/a8aed4ce3f67aa4236e80a11209a40dd0c4ebc87/aten/src/ATen/native/cuda/DistributionTemplates.h#L39-L63,
-    # rather than increasing it by exactly 4 each time.
-    new_offset = offset + 4
+def _update_rng_state_prim_impl(seed: int, offset: int) -> torch.Tensor:
+    # We follow the nvFuser way here. pytorch_new_offset = (nvfuser_offset + 1) * 4
+    # See Note [Divide offset by 4] https://github.com/NVIDIA/Fuser/blob/729f36c6fd0b86aa9d09a89ff3e406978cda13c7/csrc/rng.cpp#L54
+    new_offset = (offset + 1) * 4
     seed_portion = torch.tensor([seed]).view(torch.uint8)
     offset_portion = torch.tensor([new_offset]).view(torch.uint8)
     new_state = torch.cat([seed_portion, offset_portion])
@@ -487,26 +476,9 @@ def _update_rng_state_prim_torch_impl(seed: int, offset: int) -> torch.Tensor:
 
 
 update_rng_state_prim_impl = ex.register_operator(
-    "pack_rng_state_prim_impl",
+    "update_rng_state_prim_impl",
     meta=prims.update_rng_state.meta,
-    fn=_update_rng_state_prim_torch_impl,
-)
-
-
-def _update_rng_state_prim_nvfuser_impl(seed: int, offset: int) -> torch.Tensor:
-    new_offset = (offset + 1) * 4
-    seed = torch.tensor(seed)
-    offset = torch.tensor(new_offset)
-    seed_portion = seed.reshape([1]).view(torch.uint8)
-    offset_portion = offset.reshape([1]).view(torch.uint8)
-    new_state = torch.cat([seed_portion, offset_portion])
-    return new_state
-
-
-update_rng_state_prim_nvfuser_impl = ex.register_operator(
-    "update_rng_state_prim_nvfuser_impl",
-    meta=prims.update_rng_state.meta,
-    fn=_update_rng_state_prim_nvfuser_impl,
+    fn=_update_rng_state_prim_impl,
 )
 
 
@@ -518,7 +490,7 @@ _register_implementation(
 )
 _register_implementation(prims.set_rng_state, set_rng_state_prim_impl, checker=_always_executable)
 _register_implementation(prims.get_rng_state, get_rng_state_prim_impl, checker=_always_executable)
-_register_implementation(prims.unpack_rng_state, unpack_rng_state_prim_torch_impl, checker=_always_executable)
+_register_implementation(prims.unpack_rng_state, unpack_rng_state_prim_impl, checker=_always_executable)
 _register_implementation(prims.update_rng_state, update_rng_state_prim_impl, checker=_always_executable)
 _register_implementation(prims.randn, checker=_always_executable, execution_transform=_randn_prims_transform)
 _register_implementation(
