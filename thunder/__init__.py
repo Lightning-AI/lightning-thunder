@@ -550,15 +550,6 @@ def jit(
                 )
                 computation_traces.append(computation_trc)
 
-            cs.last_computation_transformation_start = time.time_ns()
-
-            ## EPILOGUE and TRANSFORMS should not mix...
-            # applies transforms
-            for transform in additional_transforms:
-                computation_trc = transform(computation_trc, executors_list=cd.executors_list)
-                computation_traces.append(computation_trc)
-            cs.last_computation_transformation_stop = time.time_ns()
-
             backward_trc = None
             if not cd.disable_torch_autograd_support:
                 tensor_cls = (pytorch.Tensor, TensorProxy)
@@ -575,6 +566,14 @@ def jit(
                     extraces = cs.last_traces
 
             if backward_trc is None:
+                ## EPILOGUE and TRANSFORMS should not mix...
+                # applies transforms
+                cs.last_computation_transformation_start = time.time_ns()
+                for transform in additional_transforms:
+                    computation_trc = transform(computation_trc, executors_list=cd.executors_list)
+                    computation_traces.append(computation_trc)
+                cs.last_computation_transformation_stop = time.time_ns()
+
                 with langctxs.langctx(cd.langctx):
                     extraces = transform_for_execution(
                         computation_trc,
