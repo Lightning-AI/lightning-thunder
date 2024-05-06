@@ -25,14 +25,31 @@ Calling ``torch.compile()`` and then ``thunder.jit()`` is not what you want. It 
 
 Instead, register the executor like so::
 
-    import torch
     import thunder
+    from thunder.executors.torch_compile import torch_compile_ex
 
     def model(x, y):
         return x + y
 
-    exc_list = [thunder.extend.get_executor('torchcompile'), *thunder.get_always_executors()]
-    jmodel = thunder.jit(model, executors=exc_list)
+    jmodel = thunder.jit(model, executors=[torch_compile_ex])
+
+
+This will pass to ``torch.compile`` all the torch operators and is meant to be used without the nvfuser executor
+since they would be competing over fusion opportunities. The advantage over simply doing ``torch.compile`` is that you
+still get all of Thunder's advantages, like enabling custom executors (e.g. with custom triton kernels) before it.
+
+You can also use it for a smaller subset of operators where it shines the most. This variant is meant to be used
+together with the nvfuser executor. Its current goal is only to fuse RoPE but the set of ops fused will change as each
+of the fusion backends evolve::
+
+    import thunder
+    from thunder.executors.torch_compile import torch_compile_cat_ex
+
+    def model(x, y):
+        return x + y
+
+    executors = [torch_compile_cat_ex, *thunder.get_always_executors()]
+    jmodel = thunder.jit(model, executors=executors)
 
 
 ====================================================================================
