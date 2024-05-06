@@ -100,13 +100,13 @@ class Runner:
                 self.memory_used_GB_df.to_excel(writer, sheet_name="Memory allocated GB")
         elif self.output_format == "print":
             print("\nAVERAGE ITERATION TIME (ms)")
-            print(self.iter_time_df)
+            print(self.iter_time_df.to_string())
             print("\nTHROUGHPUT (tokens/s)")
-            print(self.tokens_per_sec_df)
+            print(self.tokens_per_sec_df.to_string())
             print("\nNORMALIZED THROUGHPUT (tokens/s/GPU)")
-            print(self.tokens_per_sec_per_gpu_df)
+            print(self.tokens_per_sec_per_gpu_df.to_string())
             print("\nMEMORY ALLOCATED (GB)")
-            print(self.memory_used_GB_df)
+            print(self.memory_used_GB_df.to_string())
 
     def run_benchmark(self, kwargs):
         command_list = []
