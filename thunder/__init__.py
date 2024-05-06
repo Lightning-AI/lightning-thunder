@@ -505,7 +505,6 @@ def jit(
                 prologue_trc, computation_trc, epilogue_trc = transform(
                     prologue_trc, computation_trc, epilogue_trc, executors_list=cd.executors_list
                 )
-                print(prologue_trc, "\n----------\n", computation_trc)
                 prologue_traces.append(prologue_trc)
                 computation_traces.append(computation_trc)
                 if epilogue_trc is not None:
@@ -542,9 +541,6 @@ def jit(
 
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
-            print("###########------------------")
-            for a in computation_traces:
-                print("####", a)
 
             if is_autocast_enabled:
                 from thunder.core.transforms import autocast
@@ -600,7 +596,7 @@ def jit(
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(
                 pro,
-                protraces,
+                prologue_traces,
                 comp,
                 extraces,
                 epilogue,

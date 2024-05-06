@@ -445,7 +445,6 @@ def fsdp_transform_module(
             new_args = tuple(proxies_to_replace.get(id(a), a) for a in bsym.args)
             new_computation_trace.bound_symbols.append(bsym.from_bsym(args=new_args))
 
-        print("##cmptrc###", new_computation_trace, "\n####endcmptrc####")
         new_computation_trace.set_provenance(thunder.core.trace.TraceProvenance("fsdp pass"))
 
         return prologue_trace, new_computation_trace, epilogue_trace
