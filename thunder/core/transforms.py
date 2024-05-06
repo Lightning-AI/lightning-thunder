@@ -422,7 +422,7 @@ def add_transform(
         if early_transform is not None:
             early_transforms.append(early_transform)
         if transform is not None:
-            additional_transforms.append(early_transform)
+            additional_transforms.append(transform)
         jfn = jit(
             cd.fn,
             langctx=cd.langctx,
