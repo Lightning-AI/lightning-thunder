@@ -715,7 +715,7 @@ def unpack_thunder_module_printer(
 
     result_str = "_" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)}"
     arg_str = codeutils.prettyprint(arg_printables[0])
-    s = f"{result_str} = thunder._get_thunder_module({arg_str})"
+    s = f"{result_str} = thunder.core.module.get_thunder_module({arg_str})"
     return s
 
 

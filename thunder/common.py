@@ -149,7 +149,6 @@ class CompileData:
         only_execute_prims: bool = False,
         disable_preprocessing: bool = False,
         use_cudagraphs: bool = False,
-        use_torch_compile: bool = False,
         disable_torch_autograd_support: bool = False,
         use_rematerialization: bool = False,
         debug_log: None | StringIO = None,
@@ -208,7 +207,6 @@ class CompileData:
         self.disable_preprocessing = disable_preprocessing
         self.use_rematerialization = use_rematerialization
         self.use_cudagraphs = use_cudagraphs
-        self.use_torch_compile = use_torch_compile
         self.disable_torch_autograd_support = disable_torch_autograd_support
         self.debug_log = debug_log
 
@@ -624,10 +622,6 @@ def _execute_trace(
     # Constructs the Python callable
     c = extrace.python_callable()
 
-    # TODO RC1 Remove this option (by using the torch.compile executor)
-    if compile_data.use_torch_compile:
-        c = torch.compile(c)
-
     # TODO RC1 Mark this option as experimental
     if compile_data.use_cudagraphs:
         c = CUDAGraphExecutor(c, num_constant_args=compile_data.num_constant_args)
@@ -678,10 +672,10 @@ def _create_callable(
             )
             autocast_thunder_dtype = autocast_cpu_dtype if torch.is_autocast_cpu_enabled() else autocast_gpu_dtype
 
-        # TODO(crcrpar): support FSDP as well
         is_ddp_enabled = getattr(cd.fn, "use_ddp", False)
+        is_fsdp_enabled = getattr(cd.fn, "use_fsdp", False)
         no_grad_sync = False
-        if is_ddp_enabled:
+        if is_ddp_enabled or is_fsdp_enabled:
             from thunder.distributed import get_skip_data_parallel_grad_sync
 
             no_grad_sync = get_skip_data_parallel_grad_sync()

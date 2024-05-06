@@ -27,7 +27,7 @@ import thunder.executors as executors
 import thunder.torch as ltorch
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
-from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator
+from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator, IS_WINDOWS
 from thunder.tests.make_tensor import make_tensor
 import thunder.extend as extend
 import thunder.tests.bf16
@@ -3407,6 +3407,8 @@ getitem_opinfo = OpInfo(
             executors=("nvfuser",),
             active_if=nvfuser_version < LooseVersion("0.1.4"),
         ),
+        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness", active_if=IS_WINDOWS),
+        DecorateInfo(pytest.mark.xfail, "test_phantom_grad_vs_torch_consistency", active_if=IS_WINDOWS),
     ),
 )
 shape_ops.append(getitem_opinfo)
@@ -7426,6 +7428,69 @@ nll_loss_opinfo = OpInfo(
     ),
 )
 nn_ops.append(nll_loss_opinfo)
+
+
+def mse_loss_sample_generator(op, device, dtype, requires_grad, **kwards):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # input_shape, target_shape
+    shapes = (
+        ((2, 16), (2, 16)),
+        ((7, 18), (7, 18)),
+        ((3, 4, 2, 3), (3, 4, 2, 3)),
+        ((3, 4, 2, 3), (4, 1, 3)),
+        ((2, 3, 1), (3, 1)),
+    )
+
+    reduction_options = ("none", "mean", "sum")
+
+    for shape, reduction_str in itertools.product(shapes, reduction_options):
+        input_shape, target_shape = shape
+
+        C = input_shape[1] if len(input_shape) >= 2 else input_shape[0]
+        yield SampleInput(
+            make(input_shape, low=0.0, high=1.0, dtype=dtype, requires_grad=True),
+            make(target_shape, low=0.0, high=1.0, dtype=dtype, requires_grad=True),
+            reduction=reduction_str,
+        )
+
+
+mse_loss_opinfo = OpInfo(
+    ltorch.mse_loss,
+    sample_input_generator=mse_loss_sample_generator,
+    torch_reference=torch.nn.functional.mse_loss,
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # NOTE: PyTorch does not support bf16 mse_loss
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16,),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        # NOTE: currently, mse_loss is encountering the following errors
+        # RuntimeError: "mse_cpu" not implemented for 'BFloat16'
+        # RuntimeError: "mse_backward_cpu_out" not implemented for 'Half'
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_phantom_grad_vs_torch_consistency",
+            dtypes=(
+                datatypes.bfloat16,
+                datatypes.float16,
+            ),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        # Sets more permissive atol and rtol precisions for float16 than assert_close's defaults
+        #   (which are 1e-3 and 1e-5)
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-3, rtol=1e-2)),
+            executors=("nvfuser",),
+            dtypes=(datatypes.float16,),
+        ),
+    ),
+)
+
+nn_ops.append(mse_loss_opinfo)
 
 
 def interpolate_sample_generator(op, device, dtype, requires_grad, **kwargs):

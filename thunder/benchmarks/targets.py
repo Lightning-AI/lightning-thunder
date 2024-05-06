@@ -291,7 +291,7 @@ def thunder_fwd_bwd(b: Benchmark, compile_fn: Callable):
 
 
 # To compare with PyTorch and raw torch.compile (i.e. not through thunder). The
-# latter can help us isolate whether it's something we need to fix ourself or
+# latter can help us isolate whether it's something we need to fix ourselves or
 # report upstream.
 torch_fwd_bwd = partial(thunder_fwd_bwd, compile_fn=torch_executor)
 torchcompile_fwd_bwd = partial(thunder_fwd_bwd, compile_fn=torch_compile_executor)
@@ -308,7 +308,7 @@ thunder_grad = partial(thunder_grad_transform, compile_fn=thunder_executor)
 thunder_gradv1 = partial(thunder_grad_transform_v1, compile_fn=thunder_executor)
 thunder_value_and_grad = partial(thunder_value_and_grad_transform, compile_fn=thunder_executor)
 
-# Executing with torchcompile
+# Executing with torchcompile as a Thunder executor
 thunder_torchcompile_fwd = partial(thunder_fwd, compile_fn=thunder_torch_compile_executor)
 thunder_torchcompile_grad = partial(thunder_grad_transform, compile_fn=thunder_torch_compile_executor)
 thunder_torchcompile_gradv1 = partial(thunder_grad_transform_v1, compile_fn=thunder_torch_compile_executor)
@@ -588,6 +588,61 @@ def test_llama2_7b_sdpa_grad(benchmark, executor: Callable):
 
     setup = make_setup(bench)
     fn = executor(bench)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
+
+
+sdpa_executors = (
+    torch_executor,
+    torch_compile_executor,
+    thunder_executor,
+    *((thunder_cudnn_nvfuser_executor,) if thunder_cudnn_nvfuser_executor is not None else ()),
+)
+sdpa_executors_ids = (
+    "torch",
+    "torch.compile",
+    "thunder",
+    *(("thunder+cudnn",) if thunder_cudnn_nvfuser_executor is not None else ()),
+)
+
+
+# Sample command to run this benchmark:
+# pytest thunder/benchmarks/targets.py -k "test_litgpt_sdpa_grad" --benchmark-group-by='param:config,param:bs' --benchmark-columns='min,max,mean,stddev,median'
+@pytest.mark.parametrize(
+    "executor,",
+    sdpa_executors,
+    ids=sdpa_executors_ids,
+)
+@pytest.mark.parametrize(
+    "bs,",
+    (
+        1,
+        2,
+    ),
+    ids=("bs1", "bs2"),
+)
+@pytest.mark.parametrize(
+    "config,",
+    (
+        "Llama-2-7b-hf",
+        "Llama-2-13b-hf",
+        "Llama-2-70b-hf",
+        "Llama-3-8B",
+        "Llama-3-70B",
+    ),
+)
+def test_litgpt_sdpa_grad(benchmark, executor: Callable, bs, config):
+    bench: Benchmark = LitGPTSDPABenchmark(
+        config=config,
+        batchdims=(bs,),
+        device="cuda:0",
+        dtype=thunder.bfloat16,
+        requires_grad=True,
+    )
+
+    setup = make_setup(bench)
+    fn = thunder_fwd_bwd(bench, compile_fn=executor)
     fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
