@@ -432,7 +432,7 @@ set_rng_state_prim_impl = ex.register_operator(
     "set_rng_state_prim_impl",
     meta=prims.set_rng_state.meta,
     fn=_set_rng_state_prim_impl,
-    tags=(prims.OpTags.RANDOM_OP, prims.OpTags.DONT_DCE),
+    tags=(prims.OpTags.DONT_DCE,),
 )
 
 
@@ -448,7 +448,6 @@ get_rng_state_prim_impl = ex.register_operator(
     "get_rng_state_prim_impl",
     meta=prims.get_rng_state.meta,
     fn=_get_rng_state_prim_impl,
-    tags=(prims.OpTags.RANDOM_OP,),
 )
 
 
@@ -461,7 +460,6 @@ unpack_rng_state_prim_torch_impl = ex.register_operator(
     "unpack_rng_state_prim_torch_impl",
     meta=prims.unpack_rng_state.meta,
     fn=_unpack_rng_state_prim_torch_impl,
-    tags=(prims.OpTags.RANDOM_OP,),
 )
 
 
@@ -474,7 +472,6 @@ unpack_rng_state_prim_nvfuser_impl = ex.register_operator(
     "unpack_rng_state_prim_nvfuser_impl",
     meta=prims.unpack_rng_state.meta,
     fn=_unpack_rng_state_prim_nvfuser_impl,
-    tags=(prims.OpTags.RANDOM_OP,),
 )
 
 
@@ -493,7 +490,6 @@ update_rng_state_prim_impl = ex.register_operator(
     "pack_rng_state_prim_impl",
     meta=prims.update_rng_state.meta,
     fn=_update_rng_state_prim_torch_impl,
-    tags=(prims.OpTags.RANDOM_OP,),
 )
 
 
@@ -511,7 +507,6 @@ update_rng_state_prim_nvfuser_impl = ex.register_operator(
     "update_rng_state_prim_nvfuser_impl",
     meta=prims.update_rng_state.meta,
     fn=_update_rng_state_prim_nvfuser_impl,
-    tags=(prims.OpTags.RANDOM_OP,),
 )
 
 

@@ -146,6 +146,10 @@ class PrimIDs(Enum):
     TENSOR_FROM_SEQUENCE = auto()
     # Probability distribution-related ops
     MULTINOMIAL = auto()
+    SET_RNG_STATE = auto()
+    GET_RNG_STATE = auto()
+    UNPACK_RNG_STATE = auto()
+    PACK_RNG_STATE = auto()
     # Reshaping and permuting prims
     BROADCAST_IN_DIM = auto()
     CAT = auto()
@@ -253,10 +257,6 @@ class PrimIDs(Enum):
     # Memory access methods
     ITEM = auto()
     COPY_ = auto()
-    SET_RNG_STATE = auto()
-    GET_RNG_STATE = auto()
-    UNPACK_RNG_STATE = auto()
-    PACK_RNG_STATE = auto()
 
 
 class OpTags(Enum):
@@ -2560,7 +2560,7 @@ set_rng_state = make_prim(
     PrimIDs.SET_RNG_STATE,
     "set_rng_state",
     meta=_set_rng_state_meta,
-    tags=(OpTags.RANDOM_OP, OpTags.DONT_DCE),
+    tags=(OpTags.DONT_DCE,),
 )
 
 
@@ -2568,16 +2568,16 @@ set_rng_state = make_prim(
 # The user should ensure that when the default cuda generator state is obtained for the device for the first time, the state must be passed as "None".
 def _get_rng_state_meta(state: TensorProxy | NoneType, device: devices.Device | None = None) -> TensorProxy:
     # RNG state is the concatenation of 64-bit seed and 64-bit offset reinterpreted as 16 elements with uint8 type. So state_shape = 2 * dtypes.int64.bytes // dtypes.uint8.bytes
-    state_shape = 16
+    state_shape = (16,)
     utils.check(state is not None or device is not None, lambda: f"state and device cannot both be None")
     if state is not None:
         utils.check_type(state, TensorProxy)
         utils.check(
-            isinstance(state.dtype, dtypes.unsignedinteger), lambda: f"state dtype={state.dtype} was not a uint8 dtype"
+            isinstance(state.dtype, dtypes.unsignedinteger), lambda: f"Expected unit8 dtype but got state dtype={state.dtype}"
         )
-        utils.check(state.device.devicetype is devices.DeviceType.CPU, lambda: f"RNG state must be CPU tensor")
+        utils.check(state.device.devicetype is devices.DeviceType.CPU, lambda: f"Expected a state on CPU but got {state.device.devicetype}")
         utils.check(
-            utils.same_shape(state.shape, (state_shape,)),
+            utils.same_shape(state.shape, state_shape),
             lambda: f"state shape must be ({state_shape},), but got {state.shape}",
         )
     if device is not None:
@@ -2586,23 +2586,22 @@ def _get_rng_state_meta(state: TensorProxy | NoneType, device: devices.Device | 
             lambda: f"get_rng_state is supported for CUDA only",
             exception_type=NotImplementedError,
         )
-    return TensorProxy(shape=(state_shape,), dtype=dtypes.uint8, device=devices.cpu)
+    return TensorProxy(shape=state_shape, dtype=dtypes.uint8, device=devices.cpu)
 
 
 get_rng_state = make_prim(
     PrimIDs.GET_RNG_STATE,
     "get_rng_state",
     meta=_get_rng_state_meta,
-    tags=(OpTags.RANDOM_OP,),
 )
 
 
 def _unpack_rng_state_meta(state: TensorProxy) -> tuple[NumberProxy, NumberProxy]:
     utils.check_type(state, TensorProxy)
     utils.check(
-        isinstance(state.dtype, dtypes.unsignedinteger), lambda: f"state dtype={state.dtype} was not a uint8 dtype"
+        isinstance(state.dtype, dtypes.unsignedinteger), lambda: f"Expected unit8 dtype but got state dtype={state.dtype}"
     )
-    utils.check(state.device.devicetype is devices.DeviceType.CPU, lambda: f"RNG state must be CPU tensor")
+    utils.check(state.device.devicetype is devices.DeviceType.CPU, lambda: f"Expected a state on CPU but got {state.device.devicetype}")
     # RNG state is the cancatenate of 64-bit seed and 64-bit offset. Its type is uint8. So state_shape = dtypes.int64.bytes//dtypes.uint8.bytes * 2
     state_shape = 16
     utils.check(
@@ -2616,7 +2615,6 @@ unpack_rng_state = make_prim(
     PrimIDs.UNPACK_RNG_STATE,
     "unpack_rng_state",
     meta=_unpack_rng_state_meta,
-    tags=(OpTags.RANDOM_OP,),
 )
 
 
@@ -2624,16 +2622,14 @@ def _update_rng_state_meta(seed: Number, offset: Number) -> TensorProxy:
     utils.check_type(seed, Number)
     utils.check_type(offset, Number)
     utils.check_same_dtype(seed, offset)
-    # state_shape is dtypes.int64.bytes//dtypes.uint8.bytes * 2
-    state_shape = 16
-    return TensorProxy(shape=(state_shape,), dtype=dtypes.uint8, device=devices.cpu)
+    # state_shape is 2 * dtypes.int64.bytes // dtypes.uint8.bytes
+    return TensorProxy(shape=(16,), dtype=dtypes.uint8, device=devices.cpu)
 
 
 update_rng_state = make_prim(
     PrimIDs.PACK_RNG_STATE,
     "pack_rng_state",
     meta=_update_rng_state_meta,
-    tags=(OpTags.RANDOM_OP,),
 )
 
 
