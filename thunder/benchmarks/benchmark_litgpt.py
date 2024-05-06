@@ -7,6 +7,13 @@ import functools
 from torch.utils.data import DataLoader, IterableDataset
 import torch.distributed as torch_dist
 from torch.distributed.device_mesh import init_device_mesh
+import warnings
+
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    apply_activation_checkpointing,
+    checkpoint_wrapper,
+    CheckpointWrapper,
+)
 
 import thunder
 from thunder.tests.litgpt_model import Config, GPT, Block
@@ -67,6 +74,7 @@ class Benchmark_litGPT:
         sharding_size: int | None = None,
         ddp_bucket_size: float = 256.0,
         fsdp_bucket_params: float | None = None,
+        checkpoint_activations: bool = False,
         n_layers: int | None = None,
         profiler_start: int = 15,
         profiler_stop: int = 15,
@@ -97,6 +105,7 @@ class Benchmark_litGPT:
         self.sharding_size = sharding_size
         self.ddp_bucket_size = ddp_bucket_size
         self.fsdp_bucket_params = fsdp_bucket_params
+        self.checkpoint_activations = checkpoint_activations
         self.micro_batch_size = micro_batch_size
 
         # Clarify benchmark assumptions
@@ -168,6 +177,10 @@ class Benchmark_litGPT:
 
         # Setup the distributed algorithm choices
         self.model = self.setup_distributed(self.model)
+
+        # Setup activations checkpointing
+        if self.checkpoint_activations:
+            self.setup_activation_checkpointing()
 
         # Initialize the optimizer after the model is sharded if using FSDP
         self.optimizer = configure_optimizers(
@@ -272,6 +285,17 @@ class Benchmark_litGPT:
                     device_mesh=mesh,
                 )
         return model
+
+    def setup_activation_checkpointing(self):
+        if any(isinstance(mod, CheckpointWrapper) for mod in self.model.modules()):
+            warnings.warn(
+                "FSDP checkpointing is configured, but the model already contains checkpointed layers."
+                " Checkpointing will be ignored."
+            )
+            return
+
+        check_fn = lambda submodule: isinstance(submodule, Block)
+        apply_activation_checkpointing(self.model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=check_fn)
 
     def setup_compile(self, model):
         if self.compile == "inductor":
