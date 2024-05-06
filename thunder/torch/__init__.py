@@ -170,12 +170,12 @@ def is_floating_point(a: TensorLike, /) -> bool:
 
 
 # Handles the size method
-@torchsymbol(torch.Tensor.size, is_method=True, id="torch.Tensor.size")
-def size(a: TensorLike, dim: None | int = None) -> int | TensorLike:
+def size(a: TensorLike, /, dim: None | int = None) -> int | Sequence[int]:
     if dim:
         return a.shape[dim]
     return a.shape
 
+register_method("size", size)
 
 @torchsymbol(torch.Tensor.is_cuda, is_property=True, id="torch.is_cuda")
 def is_cuda(a: TensorLike, /) -> bool:
