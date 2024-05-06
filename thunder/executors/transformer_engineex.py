@@ -120,68 +120,13 @@ class Context:
         self.saved_tensors = tensors
 
     def to_dict(self):
-        ctx_dict = {
-            "saved_tensors": self.saved_tensors,
-            "activation_dtype": self.activation_dtype,
-            "fp8": self.fp8,
-            "fp8_meta": self.fp8_meta,
-            "fuse_wgrad_accumulation": self.fuse_wgrad_accumulation,
-            "is_first_microbatch": self.is_first_microbatch,
-            "use_bias": self.use_bias,
-            "sequence_parallel": self.sequence_parallel,
-            "tensor_parallel": self.tensor_parallel,
-            "inp_shape": self.inp_shape,
-            "parallel_mode": self.parallel_mode,
-            "tp_group": self.tp_group,
-            "ub_name": self.ub_name,
-            "tp_size": self.tp_size,
-            "requires_dgrad": self.requires_dgrad,
-        }
-
-        if TE_VERSION_1_3_PLUS:
-            ctx_dict["cpu_offloading"] = self.cpu_offloading
-        if TE_VERSION_1_6_PLUS:
-            ctx_dict["primary_weights_in_fp8"] = self.primary_weights_in_fp8
-            ctx_dict["is_input_fp8"] = self.is_input_fp8
-            ctx_dict["reduce_and_update_bwd_fp8_tensors"] = self.reduce_and_update_bwd_fp8_tensors
-            ctx_dict["ub_overlap_ag"] = self.ub_overlap_ag
-        else:
-            ctx_dict.update(
-                {
-                    "ub_split_ag": self.ub_split_ag,
-                    "ub_atomic_gemm_ag": self.ub_atomic_gemm_ag,
-                }
-            )
-        return ctx_dict
+        return self.__dict__
 
     @staticmethod
     def from_dict(d):
         ctx = Context()
-        ctx.saved_tensors = d["saved_tensors"]
-        ctx.activation_dtype = d["activation_dtype"]
-        ctx.fp8 = d["fp8"]
-        ctx.fp8_meta = d["fp8_meta"]
-        ctx.fuse_wgrad_accumulation = d["fuse_wgrad_accumulation"]
-        ctx.is_first_microbatch = d["is_first_microbatch"]
-        ctx.use_bias = d["use_bias"]
-        ctx.sequence_parallel = d["sequence_parallel"]
-        ctx.tensor_parallel = d["tensor_parallel"]
-        ctx.inp_shape = d["inp_shape"]
-        ctx.parallel_mode = d["parallel_mode"]
-        ctx.tp_group = d["tp_group"]
-        ctx.ub_name = d["ub_name"]
-        ctx.tp_size = d["tp_size"]
-        ctx.requires_dgrad = d["requires_dgrad"]
-        if TE_VERSION_1_3_PLUS:
-            ctx.cpu_offloading = d["cpu_offloading"]
-        if TE_VERSION_1_6_PLUS:
-            ctx.primary_weights_in_fp8 = d["primary_weights_in_fp8"]
-            ctx.is_input_fp8 = d["is_input_fp8"]
-            ctx.reduce_and_update_bwd_fp8_tensors = d["reduce_and_update_bwd_fp8_tensors"]
-            ctx.ub_overlap_ag = d["ub_overlap_ag"]
-        else:
-            ctx.ub_split_ag = d["ub_split_ag"]
-            ctx.ub_atomic_gemm_ag = d["ub_atomic_gemm_ag"]
+        for key, value in d.items():
+            setattr(ctx, key, value)
         return ctx
 
 
