@@ -2573,9 +2573,13 @@ def _get_rng_state_meta(state: TensorProxy | NoneType, device: devices.Device | 
     if state is not None:
         utils.check_type(state, TensorProxy)
         utils.check(
-            isinstance(state.dtype, dtypes.unsignedinteger), lambda: f"Expected unit8 dtype but got state dtype={state.dtype}"
+            isinstance(state.dtype, dtypes.unsignedinteger),
+            lambda: f"Expected unit8 dtype but got state dtype={state.dtype}",
         )
-        utils.check(state.device.devicetype is devices.DeviceType.CPU, lambda: f"Expected a state on CPU but got {state.device.devicetype}")
+        utils.check(
+            state.device.devicetype is devices.DeviceType.CPU,
+            lambda: f"Expected a state on CPU but got {state.device.devicetype}",
+        )
         utils.check(
             utils.same_shape(state.shape, state_shape),
             lambda: f"state shape must be ({state_shape},), but got {state.shape}",
@@ -2599,9 +2603,13 @@ get_rng_state = make_prim(
 def _unpack_rng_state_meta(state: TensorProxy) -> tuple[NumberProxy, NumberProxy]:
     utils.check_type(state, TensorProxy)
     utils.check(
-        isinstance(state.dtype, dtypes.unsignedinteger), lambda: f"Expected unit8 dtype but got state dtype={state.dtype}"
+        isinstance(state.dtype, dtypes.unsignedinteger),
+        lambda: f"Expected unit8 dtype but got state dtype={state.dtype}",
     )
-    utils.check(state.device.devicetype is devices.DeviceType.CPU, lambda: f"Expected a state on CPU but got {state.device.devicetype}")
+    utils.check(
+        state.device.devicetype is devices.DeviceType.CPU,
+        lambda: f"Expected a state on CPU but got {state.device.devicetype}",
+    )
     # RNG state is the cancatenate of 64-bit seed and 64-bit offset. Its type is uint8. So state_shape = dtypes.int64.bytes//dtypes.uint8.bytes * 2
     state_shape = 16
     utils.check(
