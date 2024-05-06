@@ -100,7 +100,7 @@ class TestEinsumBenchmarks:
     @pytest.mark.parametrize(
         "executor,",
         [ge for ge in grad_executors if ge not in (thunder_gradv1, thunder_torchcompile_gradv1)],
-        ids=[gei for gei in grad_executors_ids if gei not in ("thunder-gradv1", "thunder+torchcompile-gradv1")],
+        ids=[gei for gei in grad_executors_ids if gei not in ("thunder-gradv1", "thunder+torchcompile_cat-gradv1")],
     )
     @pytest.mark.parametrize(
         "size,",
