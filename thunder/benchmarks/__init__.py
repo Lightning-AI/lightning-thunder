@@ -2612,7 +2612,7 @@ class LitGPTSDPABenchmark(NanoGPTSDPABenchmark):
 
     def make_batch(self) -> tuple[list, dict]:
         make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
-        shape = self.batchdims + (self.config.n_head, self.config.seq_len, self.config.head_size)
+        shape = self.batchdims + (self.config.n_head, self.config.block_size, self.config.head_size)
 
         q = make(shape)
         k = make(shape)
