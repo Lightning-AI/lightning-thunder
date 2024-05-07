@@ -596,7 +596,7 @@ def fsdp(
 
 @torch.no_grad()
 def _shard_params(
-    module: torch.nn.Module, process_group: "ProcessGroup", device: torch.device | None, broadcast_from: int | None
+    module: torch.nn.Module, process_group: ProcessGroup, device: torch.device | None, broadcast_from: int | None
 ) -> None:
     """Shards the parameters on the first dimension."""
     global_rank = tdist.get_rank(group=process_group)
@@ -646,7 +646,7 @@ def _shard_param(param: torch.Tensor, rank: int, world_size: int, name: str) -> 
 
 
 @torch.no_grad()
-def _unshard_params(module: torch.nn.Module, process_group: "ProcessGroup", cpu_offload: bool = False) -> None:
+def _unshard_params(module: torch.nn.Module, process_group: ProcessGroup, cpu_offload: bool = False) -> None:
     """Unshard a module's parameters.
 
     This supports CPU offloading of parameters.
