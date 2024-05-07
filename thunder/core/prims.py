@@ -2544,9 +2544,12 @@ def _set_rng_state_meta(new_state: TensorProxy, device: devices.Device | None = 
     utils.check_type(new_state, TensorProxy)
     utils.check(
         isinstance(new_state.dtype, dtypes.unsignedinteger),
-        lambda: f"new_state dtype={new_state.dtype} was not a uint8 dtype",
+        lambda: f"Expected uint8 new_state dtype, but got {new_state.dtype}",
     )
-    utils.check(new_state.device is devices.cpu, lambda: f"new_state should be CPU tensor")
+    utils.check(
+        new_state.device is devices.cpu,
+        lambda: f"Expected a new_state on CPU but got {new_state.device}",
+    )
     if device is not None:
         utils.check(
             device.devicetype is devices.DeviceType.CUDA,
