@@ -2569,7 +2569,10 @@ set_rng_state = make_prim(
 def _get_rng_state_meta(state: TensorProxy | NoneType, device: devices.Device | None = None) -> TensorProxy:
     # RNG state is the concatenation of 64-bit seed and 64-bit offset reinterpreted as 16 elements with uint8 type. So state_shape = 2 * dtypes.int64.bytes // dtypes.uint8.bytes
     state_shape = (16,)
-    utils.check(state is not None or device is not None, lambda: f"state and device cannot both be None. state=None is only used the first time get_rng_state is used.")
+    utils.check(
+        state is not None or device is not None,
+        lambda: f"state and device cannot both be None. state=None is only used the first time get_rng_state is used.",
+    )
     if state is not None:
         utils.check_type(state, TensorProxy)
         utils.check(

@@ -28,11 +28,7 @@ def test_uniform_philox(executor, device: str, dtype: dtypes.dtype):
         assert_close(o, outputs[0])
 
 
-@instantiate(
-    dtypes=NOTHING,
-    devicetypes=(devices.DeviceType.CUDA,),
-    executors=(nvFuserExecutor,)
-)
+@instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))
 def test_rng_state_prims(executor, device: str, _):
     import thunder.core.prims as prims
     import torch
