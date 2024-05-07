@@ -624,7 +624,6 @@ def empty(
     return clang.empty(size, device=device, dtype=dtype)
 
 
-
 #
 # Shape operations
 #
