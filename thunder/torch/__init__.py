@@ -603,6 +603,11 @@ def empty(
         not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.compile", NotImplementedError
     )
     utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.compile", NotImplementedError)
+    utils.check(
+        memory_format == torch.contiguous_format,
+        lambda: "Only torch.contiguous_format is supported",
+        NotImplementedError,
+    )
 
     # For now we default to `float32`,
     # however, we should add a default dtype or rely on `torch.get_default_dtype`.
@@ -616,7 +621,8 @@ def empty(
         device = "cpu"
     device = to_device(device)
 
-    # somehow allocate memory but don't initialize values
+    return clang.empty(size, device=device, dtype=dtype)
+
 
 
 #
