@@ -504,6 +504,15 @@ def fsdp_transform_module(
                     thunder_model._overrides[n] = b.to(device=device)
                     device_adjustments[n] = device
 
+        # Broadcast parameters if requested
+        if broadcast_from is not None:
+            for pn, _ in submodule.named_parameters(recurse=False, prefix=module_name):
+                tdist.broadcast(
+                    thunder_model.get_parameter(pn), src=broadcast_from, group=process_group, async_op=False
+                )
+            for pn, _ in submodule.named_buffers(recurse=False, prefix=module_name):
+                tdist.broadcast(thunder_model.get_buffer(pn), src=broadcast_from, group=process_group, async_op=False)
+
         for pn, p in submodule.named_parameters(recurse=False, prefix=module_name):
             if pn not in thunder_model._overrides:
                 thunder_model._overrides[pn] = copy.copy(p)
