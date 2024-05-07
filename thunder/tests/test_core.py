@@ -2313,6 +2313,29 @@ def test_preserve_weight_names(executor, device: str, dtype: dtypes.dtype):
     assert "t_fc2_weight" in sig.parameters
 
 
+@instantiate(dtypes=(thunder.float32,))
+def test_default_method(executor, device: str, dtype: dtypes.dtype):
+    # This test ensures that when no language context is given, it will fallback to the default implementation.
+    from thunder.core.trace import detached_trace
+    from thunder.core.proxies import TensorProxy
+
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+
+    with detached_trace():
+        b = TensorProxy(
+            name="__b",
+            shape=(2, 2),
+            device=thunder.core.devices.cpu,
+            dtype=thunder.core.dtypes.float32,
+            requires_grad=False,
+        )
+
+    # torch.numel(a) and a.numel() will run on PyTorch contenxt
+    # b.numel will fall back to the default implementation
+    assert torch.numel(a) == a.numel() == b.numel
+
+
 # @instantiate(
 #     dtypes=NOTHING,
 # )
