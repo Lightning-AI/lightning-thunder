@@ -685,6 +685,11 @@ def expand(a: TensorLike, /, *shape: int) -> TensorLike:
     return clang.expand(a, *shape)
 
 
+@torchsymbol(torch.Tensor.expand_as, is_method=True)
+def expand_as(a: TensorLike, b: TensorLike, /) -> TensorLike:
+    return expand(a, b.size())
+
+
 @torchsymbol(torch.flatten, is_method=True)
 def flatten(a: TensorLike, /, start_dim: int = 0, end_dim: int = -1) -> TensorLike:
     return clang.flatten(a, start_dim, end_dim)
