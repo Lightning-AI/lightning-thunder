@@ -5173,15 +5173,17 @@ def empty_error_generator(op, device, **kwargs):
     yield (SampleInput((1, 2), 1j, device=device, dtype=torch.float), RuntimeError, err_msg)
 
 
-def torch_empty(*args, **kwargs):
-    return ltorch.empty(*args, **kwargs)
+# Helper function for `empty` opinfo.
+# It always returns zero tensors, so that the consistency tests pass.
+def torch_empty_and_zero(*args, **kwargs):
+    return ltorch.full_like(ltorch.empty(*args, **kwargs), 0)
 
 
 empty_opinfo = OpInfo(
     name="empty",
-    op=torch_empty,
+    op=torch_empty_and_zero,
     sample_input_generator=empty_sample_generator,
-    torch_reference=torch.empty,
+    torch_reference=lambda *args, **kwargs: torch.empty(*args, **kwargs).fill_(0),
 )
 tensor_creation_ops.append(empty_opinfo)
 
