@@ -149,7 +149,6 @@ def test_inplace_copy_sanity_check(executor, device, dtype):
         thunder.core.prims.copy_(o, y)
         return y
 
-
     for foo in (func1, func2, func3, func4):
         traced_foo = executor.make_callable(foo)
 
