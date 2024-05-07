@@ -114,6 +114,8 @@ class torchsymbol:
                     exception_type=AssertionError,
                 )
         else:
+            if not self.id.startswith("torch"):
+                warnings.warn("Given {self.id=} does not start with the namespace of `torch`")
             id = self.id
 
         if self.is_prim:
