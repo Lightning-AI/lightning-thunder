@@ -34,7 +34,25 @@ def _remove_noop_subsymbols(bsym: BoundSymbol) -> None:
 
 
 def _inplace_copy_sanity_check(extrace: Trace):
-    """Make sure that the copy_to argument of prims.copy_ is not used as input for any of its subsequent operators, except for the Return and Del operators."""
+    """The sanity check is based on the sharp edge of nvfuser's `add_ouput(output, input)` interface,
+    it makes sure that the `copy_to` argument of `prims.copy_` is not used as input for any of its subsequent operators, except for the Return and Del operators
+
+    Anti-pattern:
+
+    .. code-block:: python
+
+        c = prims.copy_(a, b)
+        d = torch.add(b, b) # or d = torch.add(c, c)
+        return d
+
+    Do not use the `copy_to` variable `b` or `c` after it has been updated, use the `copy_from` variable `a` instead to reflect the dependency:
+
+    .. code-block:: python
+
+        c = prims.copy_(a, b)
+        d = torch.add(a, a)
+        return c
+    """
     from thunder.core.trace import VariableInterface
 
     inplace_copy_symbol_id = ("copy_", prims.PrimIDs.COPY_)

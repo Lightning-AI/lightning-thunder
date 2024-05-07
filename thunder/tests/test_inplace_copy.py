@@ -1,5 +1,6 @@
 from functools import partial
 
+import pytest
 import torch
 from torch.testing import assert_close, make_tensor
 
@@ -148,7 +149,6 @@ def test_inplace_copy_sanity_check(executor, device, dtype):
         thunder.core.prims.copy_(o, y)
         return y
 
-    import pytest
 
     for foo in (func1, func2, func3, func4):
         traced_foo = executor.make_callable(foo)
