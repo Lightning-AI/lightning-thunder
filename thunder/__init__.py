@@ -211,19 +211,6 @@ def _get_cache_info():
     return _cache_info_ctx.get()
 
 
-def _get_thunder_module(model):
-    cd = get_compile_data()
-    tm = cd._thunder_module_map.get(id(model))
-    if tm and tm._model is not model:
-        tm = None
-    if tm is None:
-        # TODO: we would like to raise an error here, but this would require
-        #       us wrapping models that are passed in closures etc.
-        # raise RuntimeError("could not find ThunderModule")
-        return model
-    return tm
-
-
 def add_executor_lists(
     exc_list: None | Sequence[Executor | str], other_exc_list: None | Sequence[Executor | str]
 ) -> Sequence[Executor]:
@@ -293,6 +280,9 @@ def jit(
                - ``"constant values"`` - require Tensors to be of the same shape, device, dtype etc., and integers and strings to match exactly,
                - ``"same input"`` - don't check, but just assume that a cached function works if it exists.
         interpretation: (deprecated: don't use this, use the thunder.functional.jit entry point to get the functional jit)
+
+        early_transforms: List of transforms to be applied to prologue, computation, and epilogue traces before executing the prologue. Default: ``None```
+        transforms: List of transforms to be applied to the computation trace. Default: ``None```
     """
 
     if "executors_list" in compile_options:
@@ -501,6 +491,7 @@ def jit(
             # Makes the prologue callable
             cs.last_prologue_transformation_start = time.time_ns()
 
+            transform: Callable
             for transform in early_transforms:
                 prologue_trc, computation_trc, epilogue_trc = transform(
                     prologue_trc, computation_trc, epilogue_trc, executors_list=cd.executors_list

@@ -1,8 +1,10 @@
-import os
+from __future__ import annotations
+
 from itertools import chain
 import collections
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
+import copy
 from enum import auto, Enum
 from typing import TYPE_CHECKING, Any
 from collections.abc import Generator
@@ -17,6 +19,8 @@ from thunder.core.proxies import DDPType
 
 if TYPE_CHECKING:
     from torch.distributed import ProcessGroup
+    import thunder
+
 
 __all__ = [
     "ddp",
@@ -350,17 +354,30 @@ def get_extract_bucket_name_from_tensor_proxy(granularity: FSDPBucketingStrategy
     return f
 
 
+# When the user calls fsdp(jitted_module), this function does the following
+# - It transforms the ThunderModule jitted_module, materializing and sharding the parameters as `overrides`
+#   in the ThunderModule.
+# - While doing that, it leaves the original user module alone.
+# - It then registers an early transform (callback that runs before prologue is executed) that transforms the
+#   prologue and compute trace.
+#
+# Note that for doing so, there are a few constraints / caveats:
+# - We do not have prologues/compute traces when we transform the module.
+# - We need to record the info from the module transformations because a later transform might modify the module further.
+
+
 def fsdp_transform_module(
-    thunder_model: "thunder.ThunderModule",
+    thunder_model: thunder.ThunderModule,
     *,
     device: torch.device | None = None,
     broadcast_from: int | None = None,
     sharding_strategy: FSDPType = FSDPType.ZERO2,
     bucketing_strategy: FSDPBucketingStrategy = FSDPBucketingStrategy.NONE,
-) -> "thunder.ThunderModule":
+) -> thunder.ThunderModule:
     import thunder
 
     cd = thunder.compile_data(thunder_model)
+    # TODO: promote use_fsdp and use_ddp to public members of CompileData
     cd.use_fsdp = True
 
     process_group = tdist.distributed_c10d._get_default_group()
@@ -383,13 +400,12 @@ def fsdp_transform_module(
             if bsym.sym is thunder.prims.unpack_thunder_module
         ]
 
-        if (
-            len(modules_and_thunder_modules) != 1
-            or prologue_producers[modules_and_thunder_modules[0][0]].sym is not thunder.prims.unpack_function_obj
-        ):
-            raise NotImplementedError("cannot deal with modules other than the compile module")
+        if len(modules_and_thunder_modules) != 1:
+            raise NotImplementedError("cannot deal with modules other than the compiled module")
 
         ((orig_module_proxy, thunder_module_proxy),) = modules_and_thunder_modules
+        if prologue_producers[orig_module_proxy].sym is not thunder.prims.unpack_function_obj:
+            raise NotImplementedError("original module does not match the compiled module")
 
         computation_trace.push_scope([])
 
@@ -452,14 +468,15 @@ def fsdp_transform_module(
     # add prologue + compute transform
     thunder_model = thunder.core.transforms.add_transform(thunder_model, early_transform=prologue_and_compute_transform)
 
-    # modidfy module
-    import copy
-
+    # modify module
     sharded_params = {}
     device_adjustments = {}
     for module_name, _ in thunder_model._model.named_modules():
         submodule = thunder_model.get_submodule(module_name)
+
+        # we use a copy to let the user's module alone (TODO: does this fully work?)
         module_copy = copy.copy(submodule)
+        # TODO: we should probably populate the module copy with parameters that consider overrides
 
         # Materialize meta-parameters on-device if necessary.
         # This is done before sharding in case the materialization logic depends on the tensor shape.
@@ -467,15 +484,7 @@ def fsdp_transform_module(
         # Each module only initializes its own parameters and not those of its children (recurse=False)
         if any(t.is_meta for t in chain(module_copy.parameters(recurse=False), module_copy.buffers(recurse=False))):
             # TODO: we could also support calling a "param_init_fn" argument like PyTorch
-            # thunder.distributed._materialize(submodule, device)
-            # Materialize a module's direct children parameters by calling ``module.reset_parameters()``
-            module_copy.to_empty(device=device, recurse=False)
-            if not hasattr(module_copy, "reset_parameters"):
-                raise TypeError(
-                    f"Materialization requires that the `{type(module_copy).__name__}.reset_parameters` method is implemented."
-                    " This method is used to initialize any children parameters or buffers in this module."
-                )
-            module_copy.reset_parameters()
+            thunder.distributed._materialize(module_copy, device)
             for n, p in module_copy.named_parameters(recurse=False, prefix=module_name):
                 thunder_model._overrides[n] = p
                 device_adjustments[n] = device

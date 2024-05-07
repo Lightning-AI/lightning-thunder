@@ -19,21 +19,26 @@ class ThunderModule(pytorch.nn.Module):
         super().__init__()
         self._model = model
 
+        # We delete self.training in order for training to be used from
+        # the model itself through `__getattr__`.
         del self.training
+
         self._forward_fn = compiled_model_call
+
+        # overrides for parameters and buffers (see get_buffer/get_parameter)
         self._overrides = {}
 
+        self._null = object()
+
     def get_buffer(self, name):
-        null = object()
-        p = self._overrides.get(name, null)
-        if p is not null:
+        p = self._overrides.get(name, self._null)
+        if p is not self._null:
             return p
         return self._model.get_buffer(name)
 
     def get_parameter(self, name):
-        null = object()
-        p = self._overrides.get(name, null)
-        if p is not null:
+        p = self._overrides.get(name, self._null)
+        if p is not self._null:
             return p
         return self._model.get_parameter(name)
 
@@ -102,9 +107,13 @@ class ThunderModule(pytorch.nn.Module):
 
 def get_thunder_module(model):
     cd = get_compile_data()
+
+    # to not hold a reference to model in the _thunder_module_map dict, we index by id.
+    # But this means that we need to check if it is actually the right model, which we do with the if below.
     tm = cd._thunder_module_map.get(id(model))
     if tm and tm._model is not model:
         tm = None
+
     if tm is None:
         # TODO: we would like to raise an error here, but this would require
         #       us wrapping models that are passed in closures etc.
