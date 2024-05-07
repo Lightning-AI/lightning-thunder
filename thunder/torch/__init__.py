@@ -3161,7 +3161,7 @@ def adaptive_avg_pool2d(
 
 @torchsymbol("adaptive_avg_pool2d_backward", id="adaptive_avg_pool2d_backward")
 def adaptive_avg_pool2d_backward(g: TensorProxy, a: TensorProxy) -> TensorProxy:
-    if a.numel == 0:
+    if a.numel() == 0:
         return zeros_like(a)
     return prims.adaptive_avg_pool2d_backward(g, a)
 
