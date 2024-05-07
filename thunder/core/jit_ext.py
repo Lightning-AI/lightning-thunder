@@ -114,6 +114,7 @@ EXT_FLAG_IS_PROXY_DERIVED = 1
 EXT_FLAG_IS_TENSOR_PROXY = 2
 EXT_FLAG_IS_MODULE_MEMBER_DICT = 4
 EXT_FLAG_IS_MODULE = 8
+EXT_FLAG_IS_CALLABLE = 16
 MODULE_MEMBER_DICT_ATTRS = {
     "_parameters",
     "_modules",
@@ -503,13 +504,7 @@ def _infer_name_postfix_from_provenance(pr: ProvenanceRecord) -> str:
             if rhs.inst == PseudoInst.CONSTANT:
                 rhs_postfix = str(rhs.value)
 
-                if pr.inst == PseudoInst.BINARY_SUBSCR:
-                    maybe_module_pr = lhs
-                else:
-                    # LOAD_ATTR
-                    maybe_module_pr = pr
-
-                if maybe_module_pr.ext_flag & EXT_FLAG_IS_MODULE_MEMBER_DICT:
+                if lhs.ext_flag & EXT_FLAG_IS_MODULE:
                     if rhs_postfix not in MODULE_MEMBER_DICT_ATTRS:
                         postfix.append(rhs_postfix)
                 else:
@@ -1042,6 +1037,19 @@ def _general_jit_wrap_callback(value):
     ctx: GeneralJitCtx = get_general_jit_ctx()
 
     uvalue = value.value
+    # for modules, rewrite m.__dict__["key"] to m.key
+    if (
+        value.provenance.inst is PseudoInst.BINARY_SUBSCR
+        and value.provenance.inputs[0].inst is PseudoInst.LOAD_ATTR
+        and value.provenance.inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE
+        and value.provenance.inputs[0].inputs[1].inst is PseudoInst.CONSTANT
+        and value.provenance.inputs[0].inputs[1].value == "__dict__"
+    ):
+        value.provenance = ProvenanceRecord(
+            PseudoInst.LOAD_ATTR,
+            inputs=[value.provenance.inputs[0].inputs[0], value.provenance.inputs[1]],
+            ext_flag=value.provenance.ext_flag,
+        )
     if isinstance(uvalue, torch.nn.Module):
         value.provenance.ext_flag |= EXT_FLAG_IS_MODULE
     elif isinstance(uvalue, torch.Tensor):
@@ -1050,7 +1058,7 @@ def _general_jit_wrap_callback(value):
     elif value.provenance.inst is PseudoInst.CONSTANT:
         value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
     elif callable(uvalue):
-        pass  # we only care if it is called
+        value.provenance.ext_flag |= EXT_FLAG_IS_CALLABLE
     elif type(uvalue) in (tuple, list, dict, CellType, ModuleType, set):
         pass  # basic containers are OK, too, subclasses?
     elif isinstance(uvalue, Proxy):
@@ -1124,7 +1132,7 @@ def get_computation_inputs_and_intermediates(computation_trace):
 
 def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, kwargs, *, has_epilogue: bool):
     already_unpacked: dict[int, Proxy] = {}
-    is_pure = True
+    orig_modules: dict[int, Proxy] = {}
 
     # param_ordering[id(proxy] is a list that contains either finite numbers or (strings preceded by math.inf)
     param_ordering: dict[int, list] = {}
@@ -1153,10 +1161,8 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 return pro_args_proxy
             elif provenance.inst == PseudoInst.INPUT_KWARGS:
                 param_ordering[id(pro_kwargs_proxy)] = (pro_kwargs_proxy, [1])
-                is_pure = False
                 return pro_kwargs_proxy
             elif provenance.inst == PseudoInst.INPUT_FN:
-                is_pure = False
                 if provenance.ext_flag & EXT_FLAG_IS_MODULE:
                     name = "module"
                 else:
@@ -1170,14 +1176,17 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             assert False
 
         def from_load_attr(provenance, *, new_output=False):
-            is_pure = False
-            inputs = [from_provenance(i, new_output=True) for i in provenance.inputs]
+            obj, name = (from_provenance(i, new_output=True) for i in provenance.inputs)
+            orig_obj = obj
+            if provenance.inputs[0].ext_flag & EXT_FLAG_IS_MODULE and provenance.ext_flag & EXT_FLAG_IS_CALLABLE:
+                obj = orig_modules.get(id(obj), obj)
+
             if new_output:
                 output = Proxy("obj")
             else:
                 output = p
-            param_ordering[id(output)] = (output, param_ordering[id(inputs[0])][1] + [math.inf, "." + str(inputs[1])])
-            bsym = prims.unpack_attr.bind(inputs[0], inputs[1], output=output)
+            param_ordering[id(output)] = (output, param_ordering[id(orig_obj)][1] + [math.inf, "." + str(name)])
+            bsym = prims.unpack_attr.bind(obj, name, output=output)
             prologue_trace.bound_symbols.append(bsym)
             return output
 
@@ -1187,11 +1196,12 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             else:
                 raise NotImplementedError(f"constant of type {type(provenance.value)} {provenance.value}")
 
-        def unpack_parameter_or_buffer(provenance, *, new_output=False):
-            assert provenance.inputs[0].inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE
+        def unpack_parameter_or_buffer_or_submodule(provenance, *, new_output=False):
+            assert provenance.inputs[0].inst is PseudoInst.LOAD_ATTR
+            assert provenance.inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE
             typ = provenance.inputs[0].inputs[1].value
             name = [provenance.inputs[1].value]
-            mprovenance = provenance.inputs[0].inputs[0].inputs[0]
+            mprovenance = provenance.inputs[0].inputs[0]
 
             while (
                 mprovenance.inst is PseudoInst.BINARY_SUBSCR
@@ -1210,7 +1220,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
 
             root_module = from_provenance(mprovenance, new_output=True)
             if new_output:
-                output = Proxy("")  # name? collectify?
+                output = Proxy("m")  # name? collectify?
             else:
                 output = p
 
@@ -1229,21 +1239,25 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             name = ".".join(name)
             if typ == "_parameters":
                 bsym = prims.unpack_parameter.bind(root_module, name, output=output)
-            else:
+            elif typ == "_buffers":
                 bsym = prims.unpack_buffer.bind(root_module, name, output=output)
+            elif typ == "_modules":
+                bsym = prims.unpack_submodule.bind(root_module, name, output=output)
+            else:
+                assert False
             prologue_trace.bound_symbols.append(bsym)
+            return output
 
         def from_binary_subscr(provenance, *, new_output=False):
             # special case tensors, todo: do this via pattern matching after unpacking?
             if (
                 provenance.inst is PseudoInst.BINARY_SUBSCR
-                and provenance.inputs[0].inst is PseudoInst.BINARY_SUBSCR
-                and provenance.inputs[1].inst is PseudoInst.CONSTANT
+                and provenance.inputs[0].inst is PseudoInst.LOAD_ATTR
                 and provenance.inputs[0].inputs[1].inst is PseudoInst.CONSTANT
-                and provenance.inputs[0].inputs[1].value in {"_parameters", "_buffers"}
-                and provenance.inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE_MEMBER_DICT
+                and provenance.inputs[0].inputs[1].value in {"_parameters", "_buffers", "_modules"}
+                and provenance.inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE
             ):
-                return unpack_parameter_or_buffer(provenance, new_output=new_output)
+                return unpack_parameter_or_buffer_or_submodule(provenance, new_output=new_output)
 
             inputs = [from_provenance(i, new_output=True) for i in provenance.inputs]
             obj, idx = inputs
@@ -1315,6 +1329,16 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             if unpack_fn is None:
                 raise NotImplementedError(f"Unpacking from {inst} {provenance}")
             res = unpack_fn(provenance, new_output=new_output)
+
+            if provenance.ext_flag & EXT_FLAG_IS_MODULE:
+                assert prologue_trace.bound_symbols[-1].output is res
+                if prologue_trace.bound_symbols[-1].sym != prims.unpack_submodule:
+                    orig_module = Proxy("module")
+                    prologue_trace.bound_symbols[-1].output = orig_module
+                    bsym = prims.unpack_thunder_module.bind(orig_module, output=res)
+                    orig_modules[id(res)] = orig_module
+                    prologue_trace.bound_symbols.append(bsym)
+
             provenance.proxy = res
             return res
 
