@@ -2579,7 +2579,7 @@ class LitGPTSDPABenchmark(NanoGPTSDPABenchmark):
     @classmethod
     @property
     def name(cls) -> str:
-        return "llama2-sdpa"
+        return "litgpt-sdpa"
 
     @classmethod
     @property
