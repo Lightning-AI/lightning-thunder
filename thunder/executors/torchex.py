@@ -1329,7 +1329,6 @@ max_pool3d_with_indices_backward = ex.register_operator(
 nll_loss = _register_torch_operation("nll_loss", module=torch.nn.functional)
 pad = _register_torch_operation("pad", module=torch.nn.functional)
 scaled_dot_product_attention = _register_torch_operation("scaled_dot_product_attention", module=torch.nn.functional)
-_softmax = _register_torch_operation("_softmax")
 softmax = _register_torch_operation("softmax", like=ltorch._softmax)
 
 
