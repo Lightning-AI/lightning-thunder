@@ -1,3 +1,4 @@
+from __future__ import annotations
 import operator
 import importlib
 from dataclasses import replace
@@ -6,7 +7,7 @@ from functools import wraps, partial
 from inspect import signature
 from itertools import groupby
 from numbers import Number
-from typing import Union, Any, Tuple, Optional
+from typing import TYPE_CHECKING
 from collections.abc import Callable
 from collections.abc import Hashable, Sequence
 from collections.abc import Sequence
@@ -41,6 +42,9 @@ from thunder.core.transforms import (
     get_grad,
     put_grad,
 )
+
+if TYPE_CHECKING:
+    from thunder.common import CompileData
 
 ex = OperatorExecutor("torch", version=torch.__version__)
 register_executor(ex)
@@ -1225,6 +1229,7 @@ convolution = _register_torch_operation("convolution")
 conv1d = _register_torch_operation("conv1d", module=torch.nn.functional)
 conv2d = _register_torch_operation("conv2d", module=torch.nn.functional)
 conv3d = _register_torch_operation("conv3d", module=torch.nn.functional)
+mse_loss = _register_torch_operation("mse_loss", module=torch.nn.functional)
 cross_entropy = _register_torch_operation("cross_entropy", module=torch.nn.functional)
 dropout = _register_torch_operation("dropout", module=torch.nn.functional)
 embedding = _register_torch_operation("embedding", module=torch.nn.functional)
@@ -1561,6 +1566,7 @@ _register_implementation(ltorch.convolution, checker=_always_executable, executi
 _register_implementation(ltorch.conv1d, conv1d, checker=_always_executable)
 _register_implementation(ltorch.conv2d, conv2d, checker=_always_executable)
 _register_implementation(ltorch.conv3d, conv3d, checker=_always_executable)
+_register_implementation(ltorch.mse_loss, mse_loss, checker=_always_executable)
 _register_implementation(ltorch.cross_entropy, cross_entropy, checker=_always_executable)
 cross_entropy_backward = ex.register_operator(
     "torch_cross_entropy_backward_impl", meta=ltorch.cross_entropy_backward, fn=_cross_entropy_backward_impl
@@ -1904,6 +1910,21 @@ if torch.distributed.is_available():
         views[index_of_dst_view].copy_(tensor)
         return tensor
 
+    # TODO(crcrpar): Update to return None instead
+    def _stash_grad_for_fsdp_prim_impl(
+        grad: torch.Tensor,
+        param_fqn: str,
+        compile_data: CompileData,
+    ) -> None:
+        grad_name = "_thunder_fsdp_unsharded_grad"
+        param = compile_data.fn.get_parameter(param_fqn)
+        if torch.is_tensor(unsharded_grad := getattr(param, grad_name, None)):
+            unsharded_grad += grad
+        else:
+            setattr(param, grad_name, grad)
+
+        return grad
+
     all_gather_prim_impl = ex.register_operator(
         "torch_all_gather_prim_impl", meta=dist_prims.all_gather.meta, fn=_all_gather_prim_impl
     )
@@ -1945,6 +1966,17 @@ if torch.distributed.is_available():
     _register_implementation(
         dist_prims.pack_for_fsdp,
         pack_for_fsdp_prim_impl,
+        checker=_always_executable,
+    )
+
+    stash_grad_for_fsdp_prim_impl = ex.register_operator(
+        "torch_stash_grad_for_fsdp_prim_impl",
+        meta=dist_prims.stash_grad_for_fsdp.meta,
+        fn=_stash_grad_for_fsdp_prim_impl,
+    )
+    _register_implementation(
+        dist_prims.stash_grad_for_fsdp,
+        stash_grad_for_fsdp_prim_impl,
         checker=_always_executable,
     )
 
