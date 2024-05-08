@@ -1372,11 +1372,6 @@ def logical_and(a, b, /):
     return clang.logical_and(a, b)
 
 
-@torchsymbol(torch.logical_not, is_method=True)
-def logical_not(a, /):
-    return clang.logical_not(a)
-
-
 @torchsymbol(torch.le, is_method=True)
 def le(a, b, /):
     return clang.le(a, b)
