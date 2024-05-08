@@ -112,7 +112,7 @@ def test_rng_state_uniform_philox_reproducibility(executor, device: str, dtype: 
     a1 = a.detach().clone()
     a1.requires_grad_()
 
-    jfunc = thunder.jit(func, executors_list=executor.executors_list())
+    jfunc = thunder.jit(func, executors=executor.executors_list())
 
     with torch.random.fork_rng(devices=(dev,)):
         torch.cuda.manual_seed(20)
@@ -157,7 +157,7 @@ def test_uniform_philox_vs_uniform(executor, device: str, dtype: dtypes.dtype):
     a = torch.randn(2, 2, device=dev, dtype=dtypes.to_torch_dtype(dtype), requires_grad=True)
     a1 = a.detach().clone().requires_grad_()
 
-    jfunc = thunder.jit(func, executors_list=executor.executors_list())
+    jfunc = thunder.jit(func, executors=executor.executors_list())
 
     # TODO: Check the backward results when #231 is fixed
     with torch.random.fork_rng(devices=(dev,)):
@@ -187,7 +187,7 @@ def test_uniform_philox_vs_uniform(executor, device: str, dtype: dtypes.dtype):
         replace_uniform_mock = MagicMock(side_effect=lambda trc: trc)
 
         with patch("thunder.core.rematerialization.replace_uniform", new=replace_uniform_mock):
-            jfunc = thunder.jit(func, executors_list=executor.executors_list())
+            jfunc = thunder.jit(func, executors=executor.executors_list())
             for _ in range(4):
                 out = jfunc(a1)
                 out.sum().backward()
