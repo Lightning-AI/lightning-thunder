@@ -47,7 +47,7 @@ def test_rng_state_prims(executor, device: str, _):
         return b, c, seed, offset, new_state1_1, state1_seed, state1_offset
 
     cuda_generator = torch.cuda.default_generators[dev.index]
-    jfunc = thunder.jit(func, executors_list=executor.executors_list())
+    jfunc = thunder.jit(func, executors=executor.executors_list())
     torch_device = thunder.core.devices.to_torch_device(dev)
     with torch.random.fork_rng(devices=(torch_device,)):
         cuda_generator.manual_seed(2)
