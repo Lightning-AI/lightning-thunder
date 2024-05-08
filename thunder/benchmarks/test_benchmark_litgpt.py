@@ -16,7 +16,6 @@ from absl.testing import absltest
 from collections import defaultdict
 import os
 import subprocess
-from subprocess import PIPE, Popen
 import json
 import pandas as pd
 from datetime import datetime
@@ -134,10 +133,7 @@ class Runner:
             subprocess_cmd.extend(command_list)
 
         print(f'Running {" ".join(subprocess_cmd)!r}')
-        # proc_output = subprocess.run(subprocess_cmd, capture_output=True, text=True)
-        with Popen(subprocess_cmd, stdout=PIPE, bufsize=1, universal_newlines=True) as proc_output:
-            for line in proc_output.stdout:
-                print(line, end="")  # process line here
+        proc_output = subprocess.run(subprocess_cmd, capture_output=True, text=True)
 
         self.perf_metrics_dict = {}
         if os.path.exists(self.json_file_path):
@@ -224,15 +220,17 @@ class Test(parameterized.TestCase):
 
     @parameterized.product(
         distributed_mode=("fsdp",),
-        shard_mode=("zero3",),
-        model_name=("pythia-14m",),
-        micro_batch_size=(1,),
+        shard_mode=("zero2",),
+        model_name=("Llama-2-7b-hf",),
+        micro_batch_size=(
+            1,
+            4,
+        ),
         compile=(
             "eager",
-            # "inductor",
+            "inductor",
             "thunder",
             "thunder_inductor",
-            "thunder_inductor_transformerengine",
         ),
     )
     def test(self, **kwargs):
