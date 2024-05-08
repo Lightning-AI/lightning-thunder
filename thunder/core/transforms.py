@@ -1652,7 +1652,14 @@ def grad(
         return grad_func
 
     def _grad_transform(trc: Trace, *, executors_list: Sequence[Any]) -> Trace:
-        gradtrc = construct_trace()(grad(trc.python_callable()), *trc.args, **trc.kwargs)
+        # Using trc.python_callable() makes it impossible to retrace the
+        # function because the python_callable uses python_ctx which replaces
+        # symbol occurrences with its symbol._call_ctx function
+        @wraps(trc.python_callable())
+        def python_callable(*args, **kwargs):
+            return eval_trace(trc, *args, **kwargs)
+
+        gradtrc = construct_trace()(grad(python_callable), *trc.args, **trc.kwargs)
         return gradtrc
 
     cfn._using_grad_transform = True
