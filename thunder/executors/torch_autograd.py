@@ -16,6 +16,26 @@ if TYPE_CHECKING:
 
 
 def rename_bwd_trace_outputs(bwd_trace: TraceCtx, fwd_trace: TraceCtx) -> TraceCtx:
+    """Have backward trace output tensor proxy names follow `grad_for_<param>` format.
+
+    Since ``i``-th tensor proxy of backward trace's outputs is grad of ``i``-th tensor proxy of forward trace's inputs,
+    this method looks up to forward trace's inputs to get the param name for each grad.
+
+    Args:
+        bwd_trace:
+        fwd_trace:
+
+    Returns:
+        :class:`thunder.core.trace.TraceCtx`
+    """
+
+    # [note: why setting trace ctx?]
+    # [`TensorProxy.replace_name`](https://github.com/Lightning-AI/lightning-thunder/blob/561b699/thunder/core/proxies.py#L1221-L1223) calls
+    # [`tensorproxy`](https://github.com/Lightning-AI/lightning-thunder/blob/561b699/thunder/core/proxies.py#L1506-L1520)
+    # which then calls `TensorProxy.__init__`. `TensorProxy.__init__` of course calls
+    # [` Proxy.__init__`](https://github.com/Lightning-AI/lightning-thunder/blob/561b699/thunder/core/proxies.py#L81-L86).
+    # `Proxy`'s dunder init calls [`make_proxy_name`](https://github.com/Lightning-AI/lightning-thunder/blob/561b699/thunder/core/proxies.py#L81-L86)
+    # which depends on a tracectx.
     trace_tok = set_tracectx(bwd_trace)
 
     swap_map: dict[VariableInterface, TensorProxy] = {}
