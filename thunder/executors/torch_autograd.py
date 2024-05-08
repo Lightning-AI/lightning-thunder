@@ -134,7 +134,6 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
 
     # autograd.Function.backward expects a flat tuple of gradients
     bw_trace.bound_symbols[-1] = replace(bw_trace.bound_symbols[-1], args=(filtered_grads,))
-    bw_trace = rename_bwd_trace_outputs(bw_trace, fw_trace)
 
     _fsdp_comm_bucketing: FSDPCommBucketing | None = None
     if getattr(compile_data.fn, "use_fsdp", False):
@@ -235,6 +234,8 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
 
     bw_extrace = del_last_used(bw_extrace, clear_collections=True)
     bw_traces.append(bw_extrace)
+
+    bw_trace = rename_bwd_trace_outputs(bw_extrace, fw_extrace)
 
     if compile_stats is not None:
         compile_stats.last_traces += fw_traces
