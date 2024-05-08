@@ -618,6 +618,13 @@ abs_opinfo = ElementwiseUnaryOpInfo(
     ),
 )
 
+logical_not_opinfo = OpInfo(
+    clang.logical_not,
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.logical_not),
+)
+elementwise_unary_ops.append(logical_not_opinfo)
+
 acos_opinfo = OpInfo(
     ltorch.acos,
     domain=(-1, 1),
