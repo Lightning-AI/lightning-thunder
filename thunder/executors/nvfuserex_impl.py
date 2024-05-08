@@ -441,7 +441,6 @@ class FusionDefinitionWrapper:
         return msg
 
 
-
 # Group bookend meta operations into separate regions
 # This function returns a List[Region] which changes the executor of meta regions to torchex
 #
