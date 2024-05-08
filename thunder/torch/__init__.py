@@ -602,10 +602,10 @@ def zeros_like(a: TensorLike, /, *, device: DeviceLike | None = None, dtype: dty
 @torchsymbol(torch.empty)
 def empty(
     *size: int,
-    out: None | TensorLike = None,
-    dtype: None | dtypeLike = None,
-    layout: torch.layout = torch.strided,
     device: None | DeviceLike = None,
+    dtype: None | dtypeLike = None,
+    out: None | TensorLike = None,
+    layout: torch.layout = torch.strided,
     requires_grad: bool = False,
     pin_memory: bool = False,
     memory_format: torch.memory_format = torch.contiguous_format,
