@@ -19,12 +19,12 @@ def rename_bwd_trace_outputs(bwd_trace: TraceCtx, fwd_trace: TraceCtx) -> TraceC
     trace_tok = set_tracectx(bwd_trace)
 
     swap_map: dict[VariableInterface, TensorProxy] = {}
-    bwd_outputs, _bwd_output_spec = tree_flatten(bwd_trace.output)
-    fwd_inputs, _fwd_input_spec = tree_flatten((fwd_trace.args, fwd_trace.kwargs))
+    bwd_outputs, _ = tree_flatten(bwd_trace.output)
+    fwd_inputs, _ = tree_flatten((fwd_trace.args, fwd_trace.kwargs))
 
     utils.check(len(bwd_outputs) == len(fwd_inputs), lambda: f"{len(bwd_outputs)=}, {len(fwd_inputs)=}")
 
-    for index, (fwd_arg, bwd_out) in enumerate(zip(fwd_inputs, bwd_outputs)):
+    for fwd_arg, bwd_out in zip(fwd_inputs, bwd_outputs):
         if isinstance(bwd_out, TensorProxy):
             swap_map[variableify(bwd_out)] = bwd_out.replace_name(f"grad_for_{fwd_arg.name}")
     reset_tracectx(trace_tok)
