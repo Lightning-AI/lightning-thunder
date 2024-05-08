@@ -3690,7 +3690,7 @@ def value_and_grad(func):
         elif isinstance(x, NumberProxy):
             return type(x.value)(1)
         else:
-            raise ValueError(f"ones_like inside value_and_grad got an unsupported type {type(x)}")
+            return None
 
     def _value_and_grad(*args, **kwargs):
         trace = construct_trace()(func, *args, **kwargs)
