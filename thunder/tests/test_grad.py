@@ -62,6 +62,7 @@ vjp_op_force = {
     "split",
     "stack",
     "cumsum",
+    "mse_loss",
 }
 
 
