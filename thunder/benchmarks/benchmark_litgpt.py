@@ -159,6 +159,9 @@ class Benchmark_litGPT:
             assert (
                 self.global_batch_size % self.micro_batch_size * world_size == 0
             ), f"Global Batch Size {self.global_batch_size} should be a multiple Micro Batch Size {self.micro_batch_size} * World Size {world_size}."
+
+        if self.checkpoint_activations:
+            assert "thunder" not in self.compile, "Activations checkpointing is not supported for Thunder."
         self.skip_data_sync = skip_data_sync
 
         # Profiling Args
