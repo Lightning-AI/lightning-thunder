@@ -1800,7 +1800,7 @@ def logical_and(a, b):
 
 
 @clangop()
-def logical_not(a: TensorLike, /):
+def logical_not(a: TensorLike, /) -> TensorLike:
     if not utils.is_boolean_dtype(dtypes.to_dtype(a)):
         return a == 0
     return ~a
