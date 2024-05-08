@@ -202,11 +202,11 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
         bw_extrace = sort_waits(bw_extrace)
 
     # Importing here to avoid cyclical dependencies in future.
-    from thunder.executors.transformer_engineex import _rearrange_transformer_engine_linear, transformer_engine_ex
+    from thunder.executors.transformer_engineex import _transformer_engine_bwd_fp8_meta_sync, transformer_engine_ex
 
     if transformer_engine_ex in compile_data.executors_list:
-        # NOTE: `_rearrange_transformer_engine_linear` mutates `fw_extrace`.
-        _rearrange_transformer_engine_linear(fw_extrace, bw_extrace)
+        # NOTE: `_transformer_engine_bwd_fp8_meta_sync` may mutate `fw_extrace` or `bw_extrace`.
+        _transformer_engine_bwd_fp8_meta_sync(fw_extrace, bw_extrace)
 
     fw_extrace = del_last_used(fw_extrace)
     fw_traces.append(fw_extrace)

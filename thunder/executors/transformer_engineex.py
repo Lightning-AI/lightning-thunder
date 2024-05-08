@@ -164,8 +164,17 @@ class TELinear(TransformerEngineBaseModule):
         # Required by `get_fp8_weights_scratchpad`
         self.fp8_weight_shapes.append(torch.Size((self.out_features, self.in_features)))
 
+        if TE_VERSION_1_6_PLUS:
+            # NOTE: Backward FP8 metadata sync
+            # TransformerEngine v1.6 onwards, we control the sync and update of FP8 metadata for FP8 tensors
+            # tied to backward pass (i.e. the gradient tensors)
+            # Also, note that the forward tensor metadata sync occurs at the exit of `fp8_autocast` context manager
+            # which is not controlled by us.
+            #
+            # We consume the `is_first_fp8_module` so that the automatic sync for FP8 metadata is disabled.
+            FP8GlobalStateManager.is_first_fp8_module()  # Consume first module token.
+
     def forward(self, inp, weight, bias, is_first_microbatch: bool | None = None, is_grad_enabled: bool = False):
-        FP8GlobalStateManager.is_first_fp8_module()  # Consume first module.
         tensor_inputs = tuple(filter(lambda t: isinstance(t, torch.Tensor), (inp, weight, bias)))
         # See [NOTE] Enable grad within context
         # TE backward depends on `requires_grad` to compute grads.
@@ -472,6 +481,23 @@ te_sync_fp8_meta_bwd = transformer_engine_ex.register_operator(
 )
 
 
+def _transformer_engine_bwd_fp8_meta_sync(fw_extrace, bw_extrace):
+    if TE_VERSION_1_6_PLUS:
+        # See doc of `_insert_bwd_fp8_meta_sync` for more details.
+        _insert_bwd_fp8_meta_sync(bw_extrace)
+    else:
+        # See doc of `_rearrange_transformer_engine_linear` for more details.
+        _rearrange_transformer_engine_linear(fw_extrace, bw_extrace)
+
+
+def _insert_bwd_fp8_meta_sync(bw_extrace):
+    # This functions insert the symbol `te_sync_fp8_meta_bwd` to the end of the backward
+    # trace which takes care of syncing and updating the FP8 metadata for backward tensors.
+    # See NOTE: Backward FP8 metadata sync
+    bwd_idx = len(bw_extrace.bound_symbols) - 1
+    bw_extrace.bound_symbols.insert(bwd_idx + 1, te_sync_fp8_meta_bwd.bind(output=None))
+
+
 def _rearrange_transformer_engine_linear(fw_extrace, bw_extrace):
     """
     Rearrange the TransformerEngine linear symbols `te_linear_*` in forward trace
@@ -526,12 +552,35 @@ def _rearrange_transformer_engine_linear(fw_extrace, bw_extrace):
     (t6861, t6862, _) = te_functional_linear_backward(t6859, (i304, i305, i306), (i307, i308), None, ctx_te_1)
     """
     # Get the ctx name for the last `te_functional_linear_backward`.
-    bwd_idx = None
-    len_bound_symbols = len(bw_extrace.bound_symbols)
-    for idx, bsym in enumerate(reversed(bw_extrace.bound_symbols), start=1):
+    bwd_bsym_ctx = None
+    for _, bsym in enumerate(reversed(bw_extrace.bound_symbols)):
         if bsym.sym.id == te_functional_linear_backward.id:
-            bwd_idx = len_bound_symbols - idx
+            bwd_bsym_ctx = bsym.args[-1].name
             break
 
-    if bwd_idx is not None:
-        bw_extrace.bound_symbols.insert(bwd_idx + 1, te_sync_fp8_meta_bwd.bind(output=None))
+    first_sym_idx = None
+    detected_first_sym_idx = None
+    # Find the first `te_linear` in forward trace
+    # and the position of `te_linear` which has the last `ctx_name`
+    # in backward.
+    for idx, bsym in enumerate(fw_extrace.bound_symbols):
+        # Forward symbols are generated on the fly so we don't
+        # have access here.
+        # Instead we check for the executor field.
+        if bsym.sym.executor == transformer_engine_ex:
+            # Sanity check.
+            assert "te_linear" in bsym.sym.name
+            if first_sym_idx is None:
+                first_sym_idx = idx
+            if bsym.output[-1].name == bwd_bsym_ctx:
+                detected_first_sym_idx = idx
+                break
+
+    # If the first `te_linear` is not same as that one that should be
+    # we move it to be the first one.
+    if detected_first_sym_idx != first_sym_idx:
+        # Move the symbol to be the first `te_linear`.
+        fwd_bsyms = fw_extrace.bound_symbols
+        sym_to_swap = fwd_bsyms[detected_first_sym_idx]
+        del fwd_bsyms[detected_first_sym_idx]
+        fwd_bsyms.insert(first_sym_idx, sym_to_swap)
