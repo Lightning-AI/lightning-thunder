@@ -525,7 +525,7 @@ def flatten_for_transform(should_flatten: Callable, bsyms: list[BoundSymbol]) ->
         if should_flatten(bsym):
             check(
                 len(bsym.subsymbols) > 0,
-                lambda: f"Trying to flatten {bsym} to create a grad formula, but it has no subsymbols",
+                lambda: f"No grad rule found for {bsym} and no subsymbols inside it to create a grad formula",
             )
             for sbsym in bsym.subsymbols:
                 _flatten(sbsym)
@@ -816,11 +816,28 @@ register_grad(pids.TAKE, _take_prim_grad)
 
 
 @torchctx
+def _gather_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy:
+    fwd = prims.gather(a, index, dim)
+
+    g = get_grad(fwd)
+    # NOTE Intentionally not calling zeros_like to avoid preserving TensorProxy a.
+    # TODO Update to call ltorch.zeros
+    zeros = prims.full(a.shape, fill_value=0, device=a.device, dtype=a.dtype)
+    a_grad = prims.scatter_add(zeros, index, g, dim)
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.GATHER, _gather_prim_grad)
+
+
+@torchctx
 def _take_along_axis_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy:
     fwd = prims.take_along_axis(a, index, dim)
 
     g = get_grad(fwd)
-    # NOTE Intentionally not calling zeros_like to avoid preserving a
+    # NOTE Intentionally not calling zeros_like to avoid preserving TensorProxy a.
     # TODO Update to call ltorch.zeros
     zeros = prims.full(a.shape, fill_value=0, device=a.device, dtype=a.dtype)
     a_grad = prims.scatter_add(zeros, index, g, dim)
@@ -1029,6 +1046,9 @@ register_grad(pids.DIV, _div_prim_grad)
 register_grad(pids.EQ, prims.eq)
 register_grad(pids.GE, prims.ge)
 register_grad(pids.LT, prims.lt)
+register_grad(pids.NE, prims.ne)
+register_grad(pids.GT, prims.gt)
+register_grad(pids.LE, prims.le)
 
 
 @torchctx
@@ -1142,7 +1162,7 @@ def _var_mean_prim_grad(a: TensorProxy, /, dims: Sequence[int], *, correction: N
     gv = get_grad(v)
     gm = get_grad(m)
 
-    n_elem_reduced = a.numel // m.numel if a.numel != 0 else 1
+    n_elem_reduced = a.numel() // m.numel() if a.numel() != 0 else 1
 
     # Computes mean bwd
     mean_scale = 1.0 / n_elem_reduced
@@ -1264,7 +1284,9 @@ register_grad(pids.EMBEDDING, _embedding_prim_grad)
 #
 
 
-def _get_gradfn(bsym: BoundSymbol, *, executors_list: Sequence[Any] = tuple()) -> None | Callable:
+def _get_gradfn_and_executor(
+    bsym: BoundSymbol, *, executors_list: Sequence[Any] = tuple()
+) -> tuple[Callable | None, Executor | None]:
     cd = get_compile_data()
     executors_list = cd.executors_list if cd is not None else executors_list
     # Checks if the executor which has priority for this operation has a specific grad transform for it
@@ -1272,12 +1294,12 @@ def _get_gradfn(bsym: BoundSymbol, *, executors_list: Sequence[Any] = tuple()) -
         if ex.can_execute_or_fuse(bsym):
             ex_grad_transform: None | Callable = ex.get_grad_transform(bsym.sym)
             if ex_grad_transform is not None:
-                return ex_grad_transform
+                return ex_grad_transform, ex
             break
 
     # If the executor doesn't define its own grad transform, this just returns the default grad transform for the bsym
     gradfn = _grad_fn_map.get(bsym.sym.id, None)
-    return gradfn
+    return gradfn, None
 
 
 # The default grad specifier for the grad transform
@@ -1332,7 +1354,8 @@ def grad(
             if bsym.sym.id in never_flatten:
                 return False
 
-            gradfn: None | Callable = _get_gradfn(bsym, executors_list=executors_list)
+            gradfn: None | Callable
+            gradfn, _ = _get_gradfn_and_executor(bsym, executors_list=executors_list)
             return gradfn is None
 
         # TODO RC1: maybe move to produce these always on creation
@@ -1351,7 +1374,8 @@ def grad(
         # Defines the visitor pattern for the first pass of the grad transform,
         #   which swaps BoundSymbols with their grad functions
         def visit_(bsym: BoundSymbol) -> Callable:
-            gradfn: None | Callable = _get_gradfn(bsym, executors_list=executors_list)
+            gradfn: None | Callable
+            gradfn, _ = _get_gradfn_and_executor(bsym, executors_list=executors_list)
             check(
                 gradfn is not None,
                 lambda: f"Failed to find a gradfn for {bsym=} after flattening",
@@ -2466,9 +2490,6 @@ augmented_forward_impls = {
     prims.PrimIDs.NDTRI: lambda x: (prims.ndtri(x), (prims.ndtri(x),)),
     prims.PrimIDs.SINH: lambda x: (prims.sinh(x), (x,)),
     prims.PrimIDs.SQRT: lambda x: (prims.sqrt(x), (prims.sqrt(x),)),
-    prims.PrimIDs.NE: lambda x, y: (prims.ne(x, y), (x, y)),
-    prims.PrimIDs.GT: lambda x, y: (prims.gt(x, y), (x, y)),
-    prims.PrimIDs.LE: lambda x, y: (prims.le(x, y), (x, y)),
     prims.PrimIDs.LOG10: lambda x: (prims.log10(x), (x,)),
     prims.PrimIDs.LOG1P: lambda x: (prims.log1p(x), (x,)),
     prims.PrimIDs.LOG2: lambda x: (prims.log2(x), (x,)),
@@ -2498,9 +2519,6 @@ backward_impls = {
     prims.PrimIDs.NDTRI: lambda result, g: g * prims.exp(0.5 * result**2) * math.sqrt(2.0 * math.pi),
     prims.PrimIDs.SINH: lambda x, g: prims.mul(g, prims.cosh(x)),
     prims.PrimIDs.SQRT: lambda result, g: g / (2.0 * result),
-    prims.PrimIDs.NE: ZeroBackward(num_args=2),
-    prims.PrimIDs.GT: ZeroBackward(num_args=2),
-    prims.PrimIDs.LE: ZeroBackward(num_args=2),
     prims.PrimIDs.LOG10: lambda x, g: g / (x * 2.302585092994046),
     prims.PrimIDs.LOG1P: lambda x, g: g / (x + 1),
     prims.PrimIDs.LOG2: lambda x, g: g / (x * 0.6931471805599453),
@@ -2615,7 +2633,7 @@ def var_aug_fwd(a, dim, *, correction):
 # TODO: fix grad when correction > n_elem_reduced.
 @register_backward(prims.PrimIDs.VAR)
 def var_backward(a, dim, correction, v, g):
-    n_elem_reduced = a.numel // v.numel if a.numel != 0 else 1
+    n_elem_reduced = a.numel() // v.numel() if a.numel() != 0 else 1
     normalization_scalar = n_elem_reduced - correction
     g = restore_reduced_dims(g, dim, a.shape)
     if a.dtype != v.dtype:
@@ -3104,7 +3122,7 @@ def cumsum_aug_fwd(a: Proxy, dim: int, *, dtype: None | dtypes.dtype = None) -> 
 @register_backward("torch.cumsum")
 def cumsum_backward(a_dtype, dim, g):
     g = g.to(a_dtype)
-    if g.numel <= 1 or g.shape[dim] == 1:
+    if g.numel() <= 1 or g.shape[dim] == 1:
         return g
     return g.flip(dim).cumsum(dim).flip(dim)
 
@@ -3348,7 +3366,7 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
     # Normal case, we have a proxy tangent
     vjp_impl = augmented_forward_impls.get(symbol.sym.id)
 
-    if _get_gradfn(symbol) is not None:
+    if _get_gradfn_and_executor(symbol)[0] is not None:
         vjp_impl, backward_fn = make_aug_forward_and_backward(symbol)
 
     if vjp_impl is None:
@@ -3517,7 +3535,7 @@ def backward_pass(forward_env, trace, init_cotangents):
         backward = backward_impls.get(symbol.sym.id)
         aug_forward = augmented_forward_impls.get(symbol.sym.id)
 
-        if _get_gradfn(symbol) is not None:
+        if _get_gradfn_and_executor(symbol)[0] is not None:
             aug_forward, backward = make_aug_forward_and_backward(symbol)
 
         if backward is None:

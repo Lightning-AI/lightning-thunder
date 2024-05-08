@@ -37,6 +37,7 @@ TE_AVAILABLE: bool = package_available("transformer_engine")
 # between version 1.2 and 1.3.
 # Hence, we have these guards based on version.
 TE_VERSION_1_3_PLUS: bool = False
+TE_VERSION_1_6_PLUS: bool = False
 
 te: None | Any = None
 if TE_AVAILABLE:
@@ -52,6 +53,7 @@ if TE_AVAILABLE:
         TE_AVAILABLE = False
 
     TE_VERSION_1_3_PLUS = LooseVersion(version("transformer_engine")) >= LooseVersion("1.3")
+    TE_VERSION_1_6_PLUS = LooseVersion(version("transformer_engine")) > LooseVersion("1.6")
 if not TE_AVAILABLE:
     TransformerEngineBaseModule = object
 
@@ -118,52 +120,13 @@ class Context:
         self.saved_tensors = tensors
 
     def to_dict(self):
-        ctx_dict = {
-            "saved_tensors": self.saved_tensors,
-            "activation_dtype": self.activation_dtype,
-            "fp8": self.fp8,
-            "fp8_meta": self.fp8_meta,
-            "fuse_wgrad_accumulation": self.fuse_wgrad_accumulation,
-            "is_first_microbatch": self.is_first_microbatch,
-            "use_bias": self.use_bias,
-            "sequence_parallel": self.sequence_parallel,
-            "tensor_parallel": self.tensor_parallel,
-            "inp_shape": self.inp_shape,
-            "parallel_mode": self.parallel_mode,
-            "tp_group": self.tp_group,
-            "ub_split_ag": self.ub_split_ag,
-            "ub_atomic_gemm_ag": self.ub_atomic_gemm_ag,
-            "ub_name": self.ub_name,
-            "tp_size": self.tp_size,
-            "requires_dgrad": self.requires_dgrad,
-        }
-
-        if TE_VERSION_1_3_PLUS:
-            ctx_dict["cpu_offloading"] = self.cpu_offloading
-        return ctx_dict
+        return self.__dict__
 
     @staticmethod
     def from_dict(d):
         ctx = Context()
-        ctx.saved_tensors = d["saved_tensors"]
-        ctx.activation_dtype = d["activation_dtype"]
-        ctx.fp8 = d["fp8"]
-        ctx.fp8_meta = d["fp8_meta"]
-        ctx.fuse_wgrad_accumulation = d["fuse_wgrad_accumulation"]
-        ctx.is_first_microbatch = d["is_first_microbatch"]
-        ctx.use_bias = d["use_bias"]
-        ctx.sequence_parallel = d["sequence_parallel"]
-        ctx.tensor_parallel = d["tensor_parallel"]
-        ctx.inp_shape = d["inp_shape"]
-        ctx.parallel_mode = d["parallel_mode"]
-        ctx.tp_group = d["tp_group"]
-        ctx.ub_split_ag = d["ub_split_ag"]
-        ctx.ub_atomic_gemm_ag = d["ub_atomic_gemm_ag"]
-        ctx.ub_name = d["ub_name"]
-        ctx.tp_size = d["tp_size"]
-        ctx.requires_dgrad = d["requires_dgrad"]
-        if TE_VERSION_1_3_PLUS:
-            ctx.cpu_offloading = d["cpu_offloading"]
+        for key, value in d.items():
+            setattr(ctx, key, value)
         return ctx
 
 
@@ -221,38 +184,68 @@ class TELinear(TransformerEngineBaseModule):
             if TE_VERSION_1_3_PLUS:
                 from transformer_engine.pytorch.cpu_offload import CPUOffloadEnabled
 
-            # Currently we support only non-distributed case.
-            # We hard-code the arguments related to distributed for now.
-            args = (
-                ctx,
-                weight,
-                weight1_fp8,
-                weight1_t_fp8,
-                inp,
-                torch.Tensor() if bias is None else bias,  # bias_tensor
-                bias is not None,
-                None,  # is_first_microbatch
-                self.fp8,
-                self.fp8_calibration,
-                self.fp8_meta,
-                *((CPUOffloadEnabled,) if TE_VERSION_1_3_PLUS else ()),
-                False,  # fuse_wgrad_accumulation
-                None,  # tp_group
-                1,  # tp_size
-                self.sequence_parallel,
-                False,  # tp_size > 1
-                inp.dtype,
-                None,  # parallel_mode
-                is_grad_enabled,
-                False,  # primary_weights_in_fp8
-                False,  # ub_split_rs
-                False,  # ub_split_ag
-                False,  # ub_atomic_gemm_rs
-                False,  # ub_atomic_gemm_ag
-                None,  # ub_name
-            )
+            import inspect
 
-            out = _Linear.forward(*args)
+            params = inspect.signature(_Linear.forward).parameters
+
+            # Currently we do not support `tp` meaning tensor model parallel case.
+            # We hard-code the arguments related to distributed for now.
+            use_bias = bias is not None
+            kwargs = {
+                "ctx": ctx,
+                "weight": weight,
+                "weight_fp8": weight1_fp8,
+                "weight_t_fp8": weight1_t_fp8,
+                "inp": inp,
+                "bias": torch.tensor([]) if not use_bias else bias,
+                "use_bias": bias is not None,
+                "is_first_microbatch": None,
+                "fp8": self.fp8,
+                "fp8_calibration": self.fp8_calibration,
+                "fp8_meta": self.fp8_meta,
+                "fuse_wgrad_accumulation": False,
+                "tp_group": None,
+                "tp_size": 1,
+                "sequence_parallel": self.sequence_parallel,
+                "tensor_parallel": False,
+                "activation_dtype": inp.dtype,
+                "parallel_mode": None,
+                "is_grad_enabled": is_grad_enabled,
+                "primary_weights_in_fp8": False,
+                "ub_name": None,
+            }
+            if TE_VERSION_1_3_PLUS:
+                kwargs["cpu_offloading"] = CPUOffloadEnabled
+            if TE_VERSION_1_6_PLUS:
+                kwargs.update(
+                    {
+                        # ref: https://github.com/NVIDIA/TransformerEngine/blame/7c1828f80edc1405d4ef1a7780c9e0046beab5c7/transformer_engine/pytorch/module/linear.py#L70
+                        "skip_fp8_weight_update": None,
+                        # ref: https://github.com/NVIDIA/TransformerEngine/blame/7c1828f80edc1405d4ef1a7780c9e0046beab5c7/transformer_engine/pytorch/module/linear.py#L84-L85
+                        "ub_overlap_rs": False,
+                        "ub_overlap_ag": False,
+                    }
+                )
+            else:
+                kwargs.update(
+                    {
+                        "ub_split_rs": False,
+                        "ub_split_ag": False,
+                        "ub_atomic_gemm_rs": False,
+                        "ub_atomic_gemm_ag": False,
+                    }
+                )
+
+            # Optimistic key value insertion for the sake of compatibility with main branch
+            for param_name in params:
+                if param_name not in kwargs:
+                    param = params[param_name]
+                    if param.default is not param.empty:
+                        kwargs[param_name] = param.default
+                    else:
+                        kwargs[param_name] = None
+
+            out = _Linear.forward(**kwargs)
             ctx_dict = ctx.to_dict() if is_grad_enabled else None
             return out, ctx_dict
 
