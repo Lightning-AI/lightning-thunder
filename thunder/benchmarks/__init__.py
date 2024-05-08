@@ -1,32 +1,35 @@
 import dataclasses
-from typing import Any
+import sys
+import tempfile
+import textwrap
+import time
 from collections.abc import Callable
 from collections.abc import Sequence
-import time
-from functools import partial
-import textwrap
-from numbers import Number
-import sys
 from dataclasses import dataclass
-import tempfile
-
-
-from lightning_utilities.core.imports import package_available
+from functools import partial
+from numbers import Number
+from typing import Any
 
 import torch
-import torch.nn as nn
-from torch.testing import make_tensor
 import torch.multiprocessing as mp
+import torch.nn as nn
+from lightning_utilities.core.imports import package_available
+from torch.testing import make_tensor
 
 import thunder
-import thunder.torch as ltorch
-import thunder.core.dtypes as dtypes
 import thunder.core.devices as Devices
-from thunder.core.transforms import grad, clear_grads, populate_grads
+import thunder.core.dtypes as dtypes
 import thunder.executors as executors
+import thunder.torch as ltorch
+from thunder.core.transforms import grad, clear_grads, populate_grads
+from thunder.executors.apex_entropyex import apex_ex, apex_available
+from thunder.executors.cudnn_layernormex import cudnn_layernorm_ex
+from thunder.executors.cudnnex import cudnn_ex, cudnn_available
+from thunder.executors.sdpaex import sdpa_ex
+from thunder.executors.torch_compile import torch_compile_cat_ex, torch_compile_ex
 from thunder.tests import nanogpt_model, hf_bart_self_attn, litgpt_model
-from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.litgpt_model import Config as LitGPTConfig
+from thunder.tests.make_tensor import make_tensor, make_tensor_like
 
 # List of all benchmarks
 benchmarks: list = []
@@ -708,10 +711,8 @@ def thunder_torch_executor(fn: Callable) -> Callable:
 
 def thunder_torch_compile_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.jit(fn, exec[thunder.pytorch_executor], use_torch_compile=True)
+    return thunder.jit(fn, executors=[torch_compile_ex])
 
-
-from thunder.executors.apex_entropyex import apex_ex, apex_available
 
 thunder_apex_executor: None | Callable = None
 thunder_apex_nvfuser_executor: None | Callable = None
@@ -725,9 +726,6 @@ if apex_available():
         torch.backends.cuda.matmul.allow_tf32 = True
         return thunder.jit(fn, executors=[apex_ex, thunder.nvfuser_executor])
 
-
-from thunder.executors.cudnnex import cudnn_ex, cudnn_available
-from thunder.executors.cudnn_layernormex import cudnn_layernorm_ex
 
 thunder_cudnn_executor: None | Callable = None
 thunder_cudnn_nvfuser_executor: None | Callable = None
@@ -752,20 +750,14 @@ if cudnn_available():
         return thunder.jit(fn, executors=[cudnn_layernorm_ex, thunder.nvfuser_executor])
 
 
-from thunder.executors.sdpaex import sdpa_ex
-
-
 def thunder_sdpa_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
     return thunder.jit(fn, executors=[sdpa_ex])
 
 
-from thunder.executors.torch_compile import torch_compile_executor as torch_compile_ex
-
-
 def thunder_sdpa_torch_compile_nvfuser_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.jit(fn, executors=[sdpa_ex, torch_compile_ex, thunder.nvfuser_executor])
+    return thunder.jit(fn, executors=[sdpa_ex, torch_compile_cat_ex, thunder.nvfuser_executor])
 
 
 def default_torch_ddp_executor(_) -> Callable:
@@ -839,8 +831,6 @@ class get_default_thunder_ddp_dynamic_strides_executor:
 
     def __call__(self, _) -> Callable:
         from thunder.distributed import ddp
-        from thunder.executors.torch_compile import torch_compile_executor
-        from thunder.executors.sdpaex import sdpa_ex
 
         def func(fn: Callable) -> Callable:
             torch.backends.cuda.matmul.allow_tf32 = True
@@ -848,7 +838,7 @@ class get_default_thunder_ddp_dynamic_strides_executor:
                 ddp(fn, bucket_size_in_mb=self.bucket_size_in_mb),
                 executors=[
                     sdpa_ex,
-                    torch_compile_executor,
+                    torch_compile_cat_ex,
                     thunder.nvfuser_executor,
                 ],
             )
@@ -866,8 +856,6 @@ class get_default_thunder_fsdp_dynamic_strides_executor:
 
     def __call__(self, _) -> Callable:
         from thunder.distributed import fsdp
-        from thunder.executors.torch_compile import torch_compile_executor
-        from thunder.executors.sdpaex import sdpa_ex
 
         def func(fn: Callable) -> Callable:
             torch.backends.cuda.matmul.allow_tf32 = True
@@ -879,7 +867,7 @@ class get_default_thunder_fsdp_dynamic_strides_executor:
                 ),
                 executors=[
                     sdpa_ex,
-                    torch_compile_executor,
+                    torch_compile_cat_ex,
                     thunder.nvfuser_executor,
                 ],
             )

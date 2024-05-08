@@ -20,8 +20,11 @@ from thunder.core.transform_common import replace_redundant_inputs
 
 class ThunderFunction(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, compiled_backward, saved_tensors, saved_other, flat_output, *flat_args):
+    def forward(
+        ctx, return_none_instead_of_grads, compiled_backward, saved_tensors, saved_other, flat_output, *flat_args
+    ):
         # Here we just propagate the tensors through the autograd graph
+        ctx.return_none_instead_of_grads = return_none_instead_of_grads
         ctx.saved_other = saved_other
         ctx.compiled_backward = compiled_backward
 
@@ -52,7 +55,11 @@ class ThunderFunction(torch.autograd.Function):
 
         # Inside the compiled backward we must clear the saved_tensors_list
         assert not saved_tensors_list, "saved_tensors_list must be empty after calling compiled_backward"
-        return (None, None, None, None, *grads)
+        # TODO(crcrpar): Remove if-else once `dist_prims.stash_grad_for_fsdp` starts to return `None`
+        # NOTE(crcrpar): In fsdp no-sync, unsharded gradients are attached and accumulated to their parameters as the attr of `_thunder_fsdp_unsharded_grad` in order to avoid shape mismatch of a param and its grad. When exiting the no_sync context, the accumulated, unsharded gradients are reduce-scattered into the attr of `grad` and `_thunder_fsdp_unsharded_grad` is removed.
+        if ctx.return_none_instead_of_grads:
+            return (None, None, None, None, None, *([None] * len(grads)))
+        return (None, None, None, None, None, *grads)
 
 
 def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stats, /, *flat_args):
@@ -109,7 +116,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
 
     _fsdp_comm_bucketing: FSDPCommBucketing | None = None
     if getattr(compile_data.fn, "use_fsdp", False):
-        _fsdp_comm_bucketing = FSDPCommBucketing(compile_data)
+        _fsdp_comm_bucketing = FSDPCommBucketing(compile_data, computation_trc)
         fw_trace = _fsdp_comm_bucketing.apply_bucketing_to_forward_trace(fw_trace, bw_trace.names)
         _fsdp_comm_bucketing.update_name_set(bw_trace)
 
