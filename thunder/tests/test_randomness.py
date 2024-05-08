@@ -4,7 +4,6 @@ from torch.testing import assert_close
 
 import thunder
 import thunder.torch as ltorch
-from thunder import compile as lc_compile
 from thunder.core import devices, dtypes
 from thunder.tests.framework import TorchExecutor, nvFuserExecutor, instantiate, NOTHING
 
@@ -21,7 +20,7 @@ def test_uniform_philox(executor, device: str, dtype: dtypes.dtype):
     def func(shape, dtype, device, rng_seed, rng_offset):
         return ltorch.uniform_philox(shape, device=device, dtype=dtype, seed=rng_seed, offset=rng_offset)
 
-    cf = lc_compile(func, disable_preprocessing=True, executors_list=executor.executors_list())
+    cf = thunder.jit(func, executors=executor.executors_list())
 
     outputs = [cf(shape, dtype, device, rng_seed, rng_offset) for _ in range(3)]
     for o in outputs:
