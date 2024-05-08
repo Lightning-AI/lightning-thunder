@@ -1,21 +1,42 @@
-from dataclasses import dataclass, replace
-from functools import partial, wraps
-from inspect import signature
-from typing import Any, TYPE_CHECKING
+from dataclasses import replace
+from typing import TYPE_CHECKING
 
 import torch
 
-import thunder
 import thunder.core.utils as utils
-import thunder.distributed.prims as dist_prims
-import thunder.torch as ltorch
 from thunder.core.prims import PrimIDs
-
-from thunder.core.proxies import FutureTensorProxy, TensorProxy, variableify
-from thunder.core.pytree import tree_flatten, tree_unflatten
-from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, Symbol
-from thunder.core.trace import TraceCtx
+from thunder.core.proxies import TensorProxy, variableify
+from thunder.core.pytree import tree_flatten
+from thunder.core.symbol import BoundSymbol
+from thunder.core.trace import TraceCtx, from_trace, set_tracectx, reset_tracectx
 from thunder.core.transform_common import replace_redundant_inputs
+
+if TYPE_CHECKING:
+    from thunder.core.trace import VariableInterface
+
+
+def rename_bwd_trace_outputs(bwd_trace: TraceCtx, fwd_trace: TraceCtx) -> TraceCtx:
+    trace_tok = set_tracectx(bwd_trace)
+
+    swap_map: dict[VariableInterface, TensorProxy] = {}
+    bwd_outputs, _bwd_output_spec = tree_flatten(bwd_trace.output)
+    fwd_inputs, _fwd_input_spec = tree_flatten((fwd_trace.args, fwd_trace.kwargs))
+
+    utils.check(len(bwd_outputs) == len(fwd_inputs), lambda: f"{len(bwd_outputs)=}, {len(fwd_inputs)=}")
+
+    for index, (fwd_arg, bwd_out) in enumerate(zip(fwd_inputs, bwd_outputs)):
+        if isinstance(bwd_out, TensorProxy):
+            swap_map[variableify(bwd_out)] = bwd_out.replace_name(f"grad_for_{fwd_arg.name}")
+    reset_tracectx(trace_tok)
+
+    renamed_bwd_trace = from_trace(bwd_trace)
+    renamed_bwd_trace.bound_symbols = []
+
+    bsym: BoundSymbol
+    for bsym in bwd_trace.bound_symbols:
+        renamed_bwd_trace.bound_symbols.append(bsym.from_bsym_swap_proxies(swap_map=swap_map))
+
+    return renamed_bwd_trace
 
 
 class ThunderFunction(torch.autograd.Function):
@@ -113,6 +134,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
 
     # autograd.Function.backward expects a flat tuple of gradients
     bw_trace.bound_symbols[-1] = replace(bw_trace.bound_symbols[-1], args=(filtered_grads,))
+    bw_trace = rename_bwd_trace_outputs(bw_trace, fw_trace)
 
     _fsdp_comm_bucketing: FSDPCommBucketing | None = None
     if getattr(compile_data.fn, "use_fsdp", False):
