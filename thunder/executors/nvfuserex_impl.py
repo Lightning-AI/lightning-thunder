@@ -383,10 +383,12 @@ class FusionDefinitionWrapper:
     cache_info: None | Callable = None
     cache_clear: None | Callable = None
     last_used: None | FusionDefinition = None
+    last_inputs_meta: None | Sequence[tuple] = None
 
     def __call__(self, *args):
         fd = self.get_fd(to_descriptors(args))
         self.last_used = fd
+        self.last_inputs_meta = [(i.size(), i.stride(), i.dtype, i.device) for i in args if isinstance(i, torch.Tensor)]
 
         # Set device if set in one of the "factory" methods like full, iota, or uniform
         kwargs = {"device": fd._selected_device} if hasattr(fd, "_selected_device") else {}
@@ -395,6 +397,32 @@ class FusionDefinitionWrapper:
 
     def __repr__(self):
         return f"FusionDefinitionWrapper({self.name})"
+
+    def last_inputs(self) -> str:
+        msg = "inputs = [\n"
+        for size, stride, dtype, device in self.last_inputs_meta:
+            # max linear index determines number of elements to generate
+            sz = 1
+            for szi, stri in zip(size, stride):
+                if szi == 0:
+                    sz = 0
+                    break
+                sz += (szi - 1) * stri
+            if dtype.is_floating_point:
+                msg += (
+                    f"    torch.randn(({sz},), dtype={dtype}, device='{device}')"
+                    f".as_strided({tuple(size)}, {tuple(stride)}),\n"
+                )
+            else:
+                upper_bound = 2 if dtype == torch.bool else 10
+                msg += (
+                    f"    torch.randint(0, {upper_bound}, ({sz},), dtype={dtype}, device='{device}')"
+                    f".as_strided({tuple(size())}, {tuple(stride())}),\n"
+                )
+        msg += "]"
+
+        return msg
+
 
 
 # Group bookend meta operations into separate regions
