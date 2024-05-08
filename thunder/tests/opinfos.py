@@ -27,7 +27,7 @@ import thunder.executors as executors
 import thunder.torch as ltorch
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
-from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator
+from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator, IS_WINDOWS
 from thunder.tests.make_tensor import make_tensor
 import thunder.extend as extend
 import thunder.tests.bf16
@@ -562,6 +562,30 @@ is_cuda_opinfo = OpInfo(
 tensor_properties.append(is_cuda_opinfo)
 
 
+def numel_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    cases = (
+        (0,),
+        (4, 2, 0),
+        (2, 2),
+    )
+
+    for shape in cases:
+        yield SampleInput(make(shape))
+
+
+numel_opinfo = OpInfo(
+    ltorch.numel,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=numel_sample_generator,
+    torch_reference=torch.numel,
+)
+tensor_properties.append(numel_opinfo)
+
+opinfos.extend(tensor_properties)
+
+
 # NOTE: slightly different from generic _elementwise_unary_torch helper
 #   because this returns the input when given an unsigned type
 @wraps(torch.abs)
@@ -593,6 +617,13 @@ abs_opinfo = ElementwiseUnaryOpInfo(
         ),
     ),
 )
+
+logical_not_opinfo = OpInfo(
+    clang.logical_not,
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.logical_not),
+)
+elementwise_unary_ops.append(logical_not_opinfo)
 
 acos_opinfo = OpInfo(
     ltorch.acos,
@@ -3145,6 +3176,55 @@ expand_opinfo = OpInfo(
 shape_ops.append(expand_opinfo)
 
 
+def expand_as_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # Input shape, output shape
+    cases = (
+        ((), ()),  # Scalar identity
+        ((), (3, 4, 5)),  # Broadcast scalar tensor, adding dims
+        ((0,), (0,)),  # Zero dim tensor identity
+        ((1, 0), (1, 0)),  # Nonleading zero dim
+        ((1, 0), (0, 0)),  # Empty input (one broadcast, one zero)
+        ((1, 1), (0, 0)),  # Non-empty fully broadcast input
+        ((1, 3), (1, 1, 3)),  # Add dim
+        ((1, 1), (1, 2)),  # Broadcast trailing dim
+        ((1, 1), (2, 1)),  # Broadcast leading dim
+    )
+
+    for ishape, oshape in cases:
+        yield SampleInput(make(ishape), make(oshape))
+
+
+def expand_as_error_generator(op, device, *, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+
+    # Input shape, output shape, exception type, error message match or None for universal match
+    cases = [
+        ((0,), (1,), RuntimeError, "attempting to expand a dimension of length 0"),
+        ((1,), (), RuntimeError, "expand: the requested shape has too few dimensions!"),
+        ((0,), (2,), RuntimeError, "attempting to expand a dimension of length 0"),
+        ((2, 2), (2, 4), RuntimeError, "attempting to expand a dimension of length 2"),
+    ]
+
+    for ishape, oshape, exc_type, err_msg_match in cases:
+        yield SampleInput(make(ishape), make(oshape)), exc_type, err_msg_match
+
+
+expand_as_opinfo = OpInfo(
+    ltorch.expand_as,
+    sample_input_generator=expand_as_sample_generator,
+    error_input_generator=expand_as_error_generator,
+    torch_reference=torch.Tensor.expand_as,
+    test_directives=(
+        # vjp and jvp not yet implemented
+        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
+        DecorateInfo(pytest.mark.xfail, "test_jvp_correctness"),
+    ),
+)
+shape_ops.append(expand_as_opinfo)
+
+
 def flatten_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype)
 
@@ -3453,6 +3533,8 @@ getitem_opinfo = OpInfo(
             executors=("nvfuser",),
             active_if=nvfuser_version < LooseVersion("0.1.4"),
         ),
+        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness", active_if=IS_WINDOWS),
+        DecorateInfo(pytest.mark.xfail, "test_phantom_grad_vs_torch_consistency", active_if=IS_WINDOWS),
     ),
 )
 shape_ops.append(getitem_opinfo)
@@ -5301,6 +5383,51 @@ randn_like_opinfo = OpInfo(
     dtypes=(datatypes.floating, datatypes.complexfloating),
 )
 tensor_creation_ops.append(randn_like_opinfo)
+
+
+def bernoulli_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make_t = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad, low=0, high=1)
+
+    shapes = ((), (2, 2), (2, 0, 1), (1, 2, 3))
+
+    for shape in shapes:
+        yield SampleInput(make_t(shape))
+
+
+def bernoulli_error_generator(op, device, **kwargs):
+    err_msg = "bernoulli only supports floating point dtypes, got int64"
+    yield (SampleInput(torch.ones(3, 3, device=device, dtype=torch.long)), RuntimeError, err_msg)
+
+    err_msg = "generator is not None which is currently unsupported"
+    yield (
+        SampleInput(torch.ones(3, 3, device=device), generator=torch.Generator(device=device)),
+        RuntimeError,
+        err_msg,
+    )
+
+    err_msg = "bernoulli: out is not None which is currently unsupported"
+    yield (SampleInput(torch.ones(3, 3, device=device), out=torch.ones(3, 3, device=device)), RuntimeError, err_msg)
+
+
+# Helper function for `bernoulli` opinfo.
+# It always returns zero tensors, so that the consistency tests and grad tests pass.
+def torch_bernoulli_and_zero(*args, **kwargs):
+    return ltorch.full_like(ltorch.bernoulli(*args, **kwargs), 0)
+
+
+# NOTE: This OpInfo ends up checking only `shape`, `device` and `dtype` consistency
+# similar to `randn`
+# See the note on `randn` OpInfo for more details.
+bernoulli_opinfo = OpInfo(
+    name="bernoulli",
+    op=torch_bernoulli_and_zero,
+    sample_input_generator=bernoulli_sample_generator,
+    error_input_generator=bernoulli_error_generator,
+    torch_reference=lambda *args, **kwargs: torch.bernoulli(*args, **kwargs).fill_(0),
+    supports_grad=False,
+    dtypes=(datatypes.floating,),
+)
+opinfos.append(bernoulli_opinfo)
 
 
 def tensor_constructor_sample_generator(op, device, dtype, requires_grad, **kwargs):

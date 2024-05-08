@@ -8,6 +8,7 @@ import weakref
 from collections.abc import Sequence
 from functools import partial, wraps
 from itertools import product
+from collections.abc import Callable
 
 import pytest
 import torch
@@ -38,7 +39,7 @@ fp8_support_reason: str = ""
 if TE_AVAILABLE:
     from transformer_engine.pytorch import fp8_autocast
     from transformer_engine.pytorch import Linear as TELinear
-    from transformer_engine.pytorch.fp8 import check_fp8_support
+    from transformer_engine.pytorch.fp8 import check_fp8_support, FP8GlobalStateManager
 
     is_fp8_supported, fp8_support_reason = check_fp8_support()
 
@@ -535,11 +536,81 @@ class CompileDDPTest(DataParallelTestCase):
         # the trace should have.
         # For numerical parity, we compare the accumulated gradients with and without `no_sync` and even against gradients without accumulation.
         # If they are different, it'd be impossible to keep replicas identical.
-        from collections import defaultdict
-        from contextlib import nullcontext
         from thunder.common import CACHE_OPTIONS
         from thunder.distributed import ddp
         from thunder.distributed import get_skip_data_parallel_grad_sync
+
+        def get_model_and_optimizer(device):
+            m = ToyModel().to(device)
+            ddp_m = ddp(m, bucket_size_in_mb=bucket_size_in_mb)
+            jitted_ddp_m = thunder.jit(
+                ddp_m,
+                cache_mode=CACHE_OPTIONS.CONSTANT_VALUES,
+                executors=executors_map[executor].executors_list(),
+            )
+            optimizer = torch.optim.SGD(jitted_ddp_m.parameters(), lr=1e-3)
+            return jitted_ddp_m, optimizer
+
+        def is_comm(k: str) -> bool:
+            return "allreduce_" in k or "all_reduce" in k
+
+        self._run_no_sync_grad_accumulation_test(get_model_and_optimizer, is_comm, dataset_size)
+
+    @common_utils.parametrize(
+        "executor,bucketing_strategy,fsdptype",
+        product(
+            tuple(executors_map.keys()),
+            (FSDPBucketingStrategy.BLOCK,),
+            (FSDPType.ZERO2, FSDPType.ZERO3),
+        ),
+        name_fn=lambda executor, bucketing_strategy, fsdptype: (
+            f"executor_{executor}_bucketing_{str(bucketing_strategy).split('.')[1].lower()}_{(str(fsdptype).lower().split('.')[1])}"
+        ),
+    )
+    def test_fsdp_with_no_sync_grad_accumulation(
+        self,
+        executor: str,
+        bucketing_strategy: FSDPBucketingStrategy,
+        fsdptype: FSDPType,
+    ):
+        from thunder.common import CACHE_OPTIONS
+        from thunder.distributed import fsdp
+
+        def get_model_and_optimizer(device):
+            m = ToyModel().to(device)
+            fsdp_m = fsdp(m, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype)
+            jitted_ddp_m = thunder.jit(
+                fsdp_m,
+                cache_mode=CACHE_OPTIONS.CONSTANT_VALUES,
+                executors=executors_map[executor].executors_list(),
+            )
+            optimizer = torch.optim.SGD(jitted_ddp_m.parameters(), lr=1e-3)
+            return jitted_ddp_m, optimizer
+
+        def is_comm(k: str) -> bool:
+            return "reducescatter" in k or "reduce_scatter" in k
+
+        self._run_no_sync_grad_accumulation_test(get_model_and_optimizer, is_comm, dataset_size=2)
+
+    def _run_no_sync_grad_accumulation_test(
+        self,
+        get_model_and_optimizer: Callable[[torch.device], tuple[torch.nn.Module, torch.optim.Optimizer]],
+        is_comm: Callable[[str], bool],
+        dataset_size,
+    ):
+        from collections import defaultdict
+        from contextlib import nullcontext
+        from thunder.distributed import get_skip_data_parallel_grad_sync
+
+        device = torch.device("cuda", self.rank)
+        batch_size = 128
+        num_micro_batch = 4
+        micro_batch_size = batch_size // num_micro_batch
+        with torch.no_grad():
+            dataloader = [
+                (torch.randn(batch_size, 12, device=device), torch.randn(batch_size, 8, device=device))
+                for _ in range(dataset_size)
+            ]
 
         # TODO(crcrpar): Use `last_traces` to check if allreduce was called, instead of `torch.profiler.profile`
         # See: https://github.com/Lightning-AI/lightning-thunder/pull/1881#issuecomment-1910455732
@@ -552,25 +623,14 @@ class CompileDDPTest(DataParallelTestCase):
                 loss.backward()
 
             keys = tuple([e.key for e in prof.key_averages()])
-            has_allreduce = any(("allreduce_" in k or "all_reduce" in k) for k in keys)
+            has_comms = any(is_comm(k) for k in keys)
             msg = f"{keys=}"
             if get_skip_data_parallel_grad_sync():
-                self.assertFalse(has_allreduce, msg=msg)
+                self.assertFalse(has_comms, msg=msg)
             else:
-                self.assertTrue(has_allreduce, msg=msg)
+                self.assertTrue(has_comms, msg=msg)
 
             return loss
-
-        def get_model_and_optimizer(device):
-            m = ToyModel().to(device)
-            ddp_m = ddp(m, bucket_size_in_mb=bucket_size_in_mb)
-            compiled_ddp_m = thunder.jit(
-                ddp_m,
-                cache_mode=CACHE_OPTIONS.CONSTANT_VALUES,
-                executors=executors_map[executor].executors_list(),
-            )
-            optimizer = torch.optim.SGD(compiled_ddp_m.parameters(), lr=1e-3)
-            return compiled_ddp_m, optimizer
 
         def get_ground_truth_loss_grads(device, dataloader):
             compiled_ddp_m, optimizer = get_model_and_optimizer(device)
@@ -587,43 +647,37 @@ class CompileDDPTest(DataParallelTestCase):
             return initial_state_dict, losses, grads
 
         device = torch.device("cuda", self.rank)
-
-        batch_size = 128
-        num_micro_batch = 4
-        micro_batch_size = batch_size // num_micro_batch
-        with torch.no_grad():
-            dataloader = [
-                (torch.randn(batch_size, 12, device=device), torch.randn(batch_size, 8, device=device))
-                for _ in range(dataset_size)
-            ]
-
         initial_state_dict, ground_truth_losses, ground_truth_grads = get_ground_truth_loss_grads(device, dataloader)
 
         gradients = defaultdict(list)
         for use_no_sync in (True, False):
-            compiled_ddp_m, optimizer = get_model_and_optimizer(device)
-            compiled_ddp_m.load_state_dict(initial_state_dict)
+            jitted_model, optimizer = get_model_and_optimizer(device)
+            jitted_model.load_state_dict(initial_state_dict)
 
             for iter_count, (x, y) in enumerate(dataloader):
                 loss = torch.zeros((), device=device)
-                with compiled_ddp_m.no_sync() if use_no_sync else nullcontext():
+                with jitted_model.no_sync() if use_no_sync else nullcontext():
                     for i in range(num_micro_batch - 1):
                         cur_loss = run_fwd_bwd(
                             iter_count,
-                            compiled_ddp_m,
+                            jitted_model,
                             x[i * micro_batch_size : (i + 1) * micro_batch_size, :],
                             y[i * micro_batch_size : (i + 1) * micro_batch_size, :],
                             num_micro_batch,
                         )
                         with torch.no_grad():
                             loss += cur_loss
+                        if use_no_sync and i == 0 and iter_count == 0:
+                            # make sure the backward trace under `no_sync` has actual math computations.
+                            no_sync_bwd_trc = thunder.last_backward_traces(jitted_model)[-1]
+                            self.assertGreater(len(no_sync_bwd_trc.bound_symbols), 1)
                 cur_loss = run_fwd_bwd(
-                    iter_count, compiled_ddp_m, x[-micro_batch_size:, :], y[-micro_batch_size:, :], num_micro_batch
+                    iter_count, jitted_model, x[-micro_batch_size:, :], y[-micro_batch_size:, :], num_micro_batch
                 )
                 with torch.no_grad():
                     loss += cur_loss
                 optimizer.step()
-                gradients[use_no_sync].append([p.grad for p in compiled_ddp_m.parameters() if p.grad is not None])
+                gradients[use_no_sync].append([p.grad for p in jitted_model.parameters() if p.grad is not None])
                 optimizer.zero_grad(set_to_none=True)
 
                 num_expected_caches: int
@@ -631,7 +685,7 @@ class CompileDDPTest(DataParallelTestCase):
                     num_expected_caches = 2
                 else:
                     num_expected_caches = 1
-                self.assertEqual(len(compiled_ddp_m._lc_cs.interpreter_cache), num_expected_caches)
+                self.assertEqual(len(jitted_model._lc_cs.interpreter_cache), num_expected_caches)
 
                 torch.testing.assert_close(loss, ground_truth_losses[iter_count], atol=1e-4, rtol=1e-4)
                 torch.testing.assert_close(
@@ -1313,6 +1367,9 @@ def _test_ddp_transformer_engine(input_data):
         optim.step()
         optim.zero_grad()
 
+    # See https://github.com/NVIDIA/TransformerEngine/issues/814
+    FP8GlobalStateManager.reset()
+
     class TEModel(torch.nn.Module):
         def __init__(self) -> None:
             super().__init__()
@@ -1524,6 +1581,9 @@ def _test_fsdp_transformer_engine(input_data):
             o.backward()
             optim.step()
             optim.zero_grad()
+
+        # See https://github.com/NVIDIA/TransformerEngine/issues/814
+        FP8GlobalStateManager.reset()
 
         class TEModel(torch.nn.Module):
             def __init__(self) -> None:
