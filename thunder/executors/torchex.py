@@ -458,7 +458,7 @@ get_rng_state_prim_impl = ex.register_operator(
 def _unpack_rng_state_prim_impl(s: torch.Tensor) -> tuple[int, int]:
     seed, offset = torch.chunk(s, 2)
     # We follow the nvFuser way here. The offset used by nvfuser = pytorch_offset // 4
-    # See Note [Divide offset by 4] https://github.com/NVIDIA/Fuser/blob/729f36c6fd0b86aa9d09a89ff3e406978cda13c7/csrc/rng.cpp#L54
+    # See Note [Divide offset by 4] https://github.com/NVIDIA/Fuser/blob/729f36c/csrc/rng.cpp#L54
     return seed.view(torch.int64).item(), offset.view(torch.int64).item() // 4
 
 
@@ -471,7 +471,7 @@ unpack_rng_state_prim_impl = ex.register_operator(
 
 def _update_rng_state_prim_impl(seed: int, offset: int) -> torch.Tensor:
     # We follow the nvFuser way here. pytorch_new_offset = (nvfuser_offset + 1) * 4
-    # See Note [Divide offset by 4] https://github.com/NVIDIA/Fuser/blob/729f36c6fd0b86aa9d09a89ff3e406978cda13c7/csrc/rng.cpp#L54
+    # See Note [Divide offset by 4] https://github.com/NVIDIA/Fuser/blob/729f36c/csrc/rng.cpp#L54
     new_offset = (offset + 1) * 4
     seed_portion = torch.tensor([seed]).view(torch.uint8)
     offset_portion = torch.tensor([new_offset]).view(torch.uint8)
