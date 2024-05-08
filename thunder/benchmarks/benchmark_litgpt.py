@@ -510,3 +510,7 @@ if __name__ == "__main__":
     from jsonargparse import CLI
 
     CLI(benchmark_main)
+
+    # ref: https://github.com/pytorch/pytorch/blob/3af12447/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp#L1110-L1116
+    if world_size > 1:
+        torch_dist.destroy_process_group()
