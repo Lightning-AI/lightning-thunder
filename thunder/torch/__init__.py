@@ -1102,6 +1102,11 @@ def ceil(a):
     return clang.ceil(a)
 
 
+@torchsymbol(torch.is_complex, is_method=True)
+def is_complex(a):
+    return dtypes.is_complex_dtype(a.dtype)
+
+
 @torchsymbol(torch.cos, is_method=True)
 def cos(a):
     return clang.cos(a)

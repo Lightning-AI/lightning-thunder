@@ -617,6 +617,7 @@ abs_opinfo = ElementwiseUnaryOpInfo(
         ),
     ),
 )
+elementwise_unary_ops.append(abs_opinfo)
 
 acos_opinfo = OpInfo(
     ltorch.acos,
@@ -1089,6 +1090,14 @@ floor_opinfo = OpInfo(
     ),
 )
 elementwise_unary_ops.append(floor_opinfo)
+
+is_complex_opinfo = OpInfo(
+    ltorch.is_complex,
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.is_complex),
+    dtypes=(datatypes.all_dtypes),
+)
+elementwise_unary_ops.append(is_complex_opinfo)
 
 isfinite_opinfo = OpInfo(
     clang.isfinite,
