@@ -562,26 +562,6 @@ is_cuda_opinfo = OpInfo(
 tensor_properties.append(is_cuda_opinfo)
 
 
-def logical_not_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
-    cases = (
-        (4, 4),
-        (5, 1, 3),
-    )
-    for input_shape in cases:
-        yield SampleInput(make(input_shape))
-
-
-logical_not_opinfo = OpInfo(
-    clang.logical_not,
-    sample_input_generator=logical_not_sample_generator,
-    torch_reference=torch.logical_not,
-)
-tensor_properties.append(logical_not_opinfo)
-
-opinfos.extend(tensor_properties)
-
-
 # NOTE: slightly different from generic _elementwise_unary_torch helper
 #   because this returns the input when given an unsigned type
 @wraps(torch.abs)
