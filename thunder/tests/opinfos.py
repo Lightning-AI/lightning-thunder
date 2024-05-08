@@ -5253,10 +5253,7 @@ def torch_empty_and_zero(*args, **kwargs):
 
 
 empty_opinfo = OpInfo(
-    name="empty",
-    op=torch_empty_and_zero,
-    sample_input_generator=empty_sample_generator,
-    torch_reference=lambda *args, **kwargs: torch.empty(*args, **kwargs).fill_(0),
+    name="empty", op=torch_empty_and_zero, sample_input_generator=empty_sample_generator, torch_reference=torch.zeros
 )
 tensor_creation_ops.append(empty_opinfo)
 

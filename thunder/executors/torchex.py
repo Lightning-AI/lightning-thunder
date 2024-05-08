@@ -544,6 +544,21 @@ def _squeeze_transform(a: TensorLike, /, dim: None | int | Sequence[int] = None)
     return squeeze(a, dim)
 
 
+def _empty_transform(
+    shape: tuple[int, ...],
+    device: None | DeviceLike = None,
+    dtype: None | dtypeLike = None,
+    out: None | TensorLike = None,
+    layout: torch.layout = torch.strided,
+    requires_grad: bool = False,
+    pin_memory: bool = False,
+    memory_format: torch.memory_format = torch.contiguous_format,
+):
+    torch_device: None | torch.device = to_torch_device(device)
+    torch_dtype: None | torch.dtype = to_torch_dtype(dtype)
+    return empty(shape, device=torch_device, dtype=torch_dtype)
+
+
 _register_implementation(
     prims.broadcast_in_dim, checker=_always_executable, execution_transform=_broadcast_in_dim_prim_transform
 )
@@ -578,7 +593,7 @@ _register_implementation(ltorch.unbind, unbind, checker=_always_executable)
 _register_implementation(ltorch.unfold, unfold, checker=_always_executable)
 _register_implementation(ltorch.unsqueeze, unsqueeze, checker=_always_executable)
 _register_implementation(ltorch.view, view, checker=_always_executable)
-_register_implementation(ltorch.empty, empty, checker=_always_executable)
+_register_implementation(ltorch.empty, empty, checker=_always_executable, execution_transform=_empty_transform)
 
 #
 # Memory format operations
