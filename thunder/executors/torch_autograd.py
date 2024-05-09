@@ -193,6 +193,9 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
         skip_subsymbols=False,
     )
     bw_trace.bound_symbols = new_bsyms
+
+    bw_trace = rename_bwd_trace_outputs(bw_trace, fw_extrace)
+
     if getattr(compile_data.fn, "use_ddp", False):
         from thunder.distributed.transforms import optimize_allreduce_in_ddp_backward
 
@@ -253,8 +256,6 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
 
     bw_extrace = del_last_used(bw_extrace, clear_collections=True)
     bw_traces.append(bw_extrace)
-
-    bw_trace = rename_bwd_trace_outputs(bw_extrace, fw_extrace)
 
     if compile_stats is not None:
         compile_stats.last_traces += fw_traces
