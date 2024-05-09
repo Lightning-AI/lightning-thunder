@@ -857,16 +857,23 @@ def test_optimization_fuel(executor, device, _):
     dtypes=(thunder.float16, thunder.bfloat16),
     devicetypes=(devices.DeviceType.CUDA,),
     executors=(nvFuserExecutor,),
-    decorators=(pytest.mark.parametrize("has_bias", [True, False], ids=["bias", "no_bias"]),),
+    decorators=(
+        pytest.mark.parametrize("has_bias", [True, False], ids=["bias", "no_bias"]),
+        pytest.mark.parametrize("a_rank", [2, 3]),
+    ),
 )
-def test_linear(executor, device: str, dtype: dtypes.dtype, has_bias: bool):
+def test_linear(executor, device: str, dtype: dtypes.dtype, has_bias: bool, a_rank: int):
 
     def fn(a, b, bias=None):
         return torch.nn.functional.linear(a, b, bias)
 
-    m, n, k = 128, 64, 32
+    batch, m, n, k = 8, 128, 64, 32
     torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = torch.randn((m, k), dtype=torch_dtype, device=device)
+    if a_rank == 2:
+        a = torch.randn((m, k), dtype=torch_dtype, device=device)
+    else:
+        assert a_rank == 3
+        a = torch.randn((batch, m, k), dtype=torch_dtype, device=device)
     b = torch.randn((n, k), dtype=torch_dtype, device=device)
 
     bias = None
