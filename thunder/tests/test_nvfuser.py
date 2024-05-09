@@ -857,7 +857,7 @@ def test_optimization_fuel(executor, device, _):
     dtypes=(thunder.float16, thunder.bfloat16),
     devicetypes=(devices.DeviceType.CUDA,),
     executors=(nvFuserExecutor,),
-    decorators=(pytest.mark.parametrize("has_bias", [True, False]),),
+    decorators=(pytest.mark.parametrize("has_bias", [True, False], ids=["bias", "no_bias"]),),
 )
 def test_linear(executor, device: str, dtype: dtypes.dtype, has_bias: bool):
 
