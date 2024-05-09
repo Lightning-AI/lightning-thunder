@@ -3689,6 +3689,59 @@ reshape_opinfo = OpInfo(
 shape_ops.append(reshape_opinfo)
 
 
+def unflatten_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # shape, dim, unflatten_shape
+    cases = (
+        ((4,), 0, (4,)),  # no-op
+        ((2, 2), -1, (2,)),  # no-op
+        ((1, 2, 1), 1, (2,)),  # no-op
+        ((4, 2), 0, (2, 2)),
+        ((125, 3), 0, (25, 5)),
+        ((25, 25), -1, (1, 5, 5)),
+        ((16, 32), -1, (2, 4, 1, 4)),
+        ((4, 5, 6), -1, (6, 1, 1, 1)),
+        ((5, 125, 5), 1, (5, 5, 5)),
+        ((4, 12, 6), 1, (2, 2, 3)),
+        ((12, 2), 0, (-1, 6)),
+        ((4, 12, 6), 1, (12, -1)),
+        ((4, 12, 6), 1, (6, -1)),
+    )
+
+    for tensor_shape, dim, shape in cases:
+        yield SampleInput(make(tensor_shape), dim, shape)
+
+
+def unflatten_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, dtype=dtype, device=device)
+    input_tensor = make(4, 4)
+    yield (SampleInput(input_tensor, 0, ()), RuntimeError, r"unflatten\(\) sizes must be non-empty")
+
+    err_msg = rf"Attempting to reshape a.shape=(.*?) to shape=(.*?), but a.numel=.* is different from the number of elements in shape, .*"
+    yield (SampleInput(input_tensor, 1, (2, 3)), RuntimeError, err_msg)
+
+    err_msg = rf"Trying to reshape, but can't infer how to reshape (.*?) to (.*?)"
+    yield (SampleInput(input_tensor, 0, (-1, 3)), RuntimeError, err_msg)
+
+    dim = 3
+    yield (
+        SampleInput(input_tensor, dim, (2, 2)),
+        IndexError,
+        rf"Dimension out of range \(expected to be in range of \[{-len(input_tensor.shape)}, {len(input_tensor.shape)-1}\], but got {dim}\)",
+    )
+
+
+unflatten_opinfo = OpInfo(
+    ltorch.unflatten,
+    sample_input_generator=unflatten_sample_generator,
+    error_input_generator=unflatten_error_generator,
+    torch_reference=torch.unflatten,
+)
+
+shape_ops.append(unflatten_opinfo)
+
+
 def view_as_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
