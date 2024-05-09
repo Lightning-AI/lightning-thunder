@@ -1679,26 +1679,6 @@ def nan_to_num(
     return result
 
 
-@torchsymbol(torch.all, is_method=True, id="torch.all")
-def all_tensor(
-    a: TensorLike, /, dim: None | int | Sequence[int] = None, keepdim: bool = False, *, out: None | TensorLike = None
-) -> TensorLike | None:
-    result = logical_not(a)
-    if isinstance(dim, Sequence) and len(dim) == 0:
-        # PyTorch returns result.clone()
-        result = result | result
-    else:
-        sum_result = sum(result, dim=dim, keepdim=keepdim)
-        result = ne(sum_result, False)
-        if a.dtype is dtypes.uint8:
-            result = prims.convert_element_type(result, dtype=dtypes.uint8)
-        result = logical_not(result)
-
-    if a.dtype is dtypes.uint8:
-        result = to(result, dtype=dtypes.uint8)
-    return result
-
-
 #
 # Reduction operations
 #
@@ -1801,6 +1781,32 @@ def _reduction(
     if result_dtype is not None:
         result = tree_map(lambda x: to(x, result_dtype), result)
 
+    return result
+
+
+@torchsymbol(torch.all, is_method=True, id="torch.all")
+def all_tensor(
+    a: TensorLike, /, dim: None | int | Sequence[int] = None, keepdim: bool = False, *, out: None | TensorLike = None
+) -> TensorLike | None:
+    utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
+    result = logical_not(a)
+    result = logical_not(any_tensor(logical_not(a), dim=dim, keepdim=keepdim))
+
+    if a.dtype is dtypes.uint8:
+        result = to(result, dtype=dtypes.uint8)
+    return result
+
+
+@torchsymbol(torch.any, is_method=True, id="torch.any")
+def any_tensor(a: TensorLike, /, dim: None | int | Sequence[int] = None, keepdim: bool = False):
+    a_ = clang.maybe_convert_to_dtype(a, dtypes.bool8)
+    if isinstance(dim, Sequence) and len(dim) == 0:
+        # PyTorch returns a_.clone()
+        result = a_ | a_
+    else:
+        result = ne(sum(a_, dim=dim, keepdim=keepdim), False)
+    if a.dtype is dtypes.uint8:
+        return prims.convert_element_type(result, dtypes.uint8)
     return result
 
 

@@ -2636,54 +2636,6 @@ nan_to_num_opinfo = OpInfo(
 conditional_and_mask_ops.append(nan_to_num_opinfo)
 
 
-def all_tensor_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
-
-    # when dim is None
-    cases = (
-        (4, 4),
-        (2, 3),
-        (0, 2),
-        (2, 3, 4),
-    )
-
-    for input_shape in cases:
-        yield SampleInput(make(input_shape))
-
-    # input shape, dim, keepdim
-    # dim_cases = (
-    #     ((4, 4), None, False),
-    #     ((4, 4), None, True),
-    #     ((2, 3), 0, True),
-    #     ((2, 3, 4), (1, 2), False),
-    #     ((2, 3, 4), (1, 2), True),
-    #     ((2, 3, 4), (-1, 1), False),
-    #     ((2, 3, 4), (-1, 1), True),
-    # )
-
-    # for input_shape, dim, keepdim in dim_cases:
-    #     yield SampleInput(make(input_shape), dim, keepdim)
-
-
-def all_tensor_error_generator(op, device, dtype=torch.float32, **kwargs):
-    make = partial(make_tensor, device=device, dtype=dtype)
-    err_msg = r"Dimension out of range \(expected to be in range of \[.*?\], but got .*\)"
-    yield (
-        SampleInput(make(5, 1, 2, 3), 4),
-        IndexError,
-        err_msg,
-    )
-
-
-all_tensor_opinfo = OpInfo(
-    ltorch.all_tensor,
-    sample_input_generator=all_tensor_sample_generator,
-    error_input_generator=all_tensor_error_generator,
-    torch_reference=torch.all,
-)
-conditional_and_mask_ops.append(all_tensor_opinfo)
-
-
 def clamp_sample_generator(op, device, dtype, requires_grad, **kwargs):
     cases = (
         ((5,), (5,), (5,)),
@@ -4687,6 +4639,69 @@ opinfos.extend(shape_ops)
 # Reduction OpInfos
 #
 reduction_ops = []
+
+
+def all_tensor_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # input shape, dim, keepdim
+    dim_cases = (
+        ((4, 4), None, False),
+        ((4, 4), None, True),
+        ((2, 3), 0, True),
+        ((2, 3, 4), (1, 2), False),
+        ((2, 3, 4), (1, 2), True),
+        ((2, 3, 4), (-1, 1), False),
+        ((2, 3, 4), (-1, 1), True),
+    )
+
+    for input_shape, dim, keepdim in dim_cases:
+        yield SampleInput(make(input_shape), dim, keepdim)
+
+
+def all_tensor_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+    err_msg = r"Dimension out of range \(expected to be in range of \[.*?\], but got .*\)"
+    yield (
+        SampleInput(make(5, 1, 2, 3), 4),
+        IndexError,
+        err_msg,
+    )
+
+
+all_tensor_opinfo = OpInfo(
+    ltorch.all_tensor,
+    sample_input_generator=all_tensor_sample_generator,
+    error_input_generator=all_tensor_error_generator,
+    torch_reference=torch.all,
+)
+
+reduction_ops.append(all_tensor_opinfo)
+
+
+def any_tensor_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # input shape, dim, keepdim
+    dim_cases = (
+        ((4, 4), None, False),
+        ((4, 4), None, True),
+        ((2, 3), 0, True),
+        ((2, 3, 4), (1, 2), False),
+        ((2, 3, 4), (1, 2), True),
+        ((2, 3, 4), (-1, 1), False),
+        ((2, 3, 4), (-1, 1), True),
+    )
+
+    for input_shape, dim, keepdim in dim_cases:
+        yield SampleInput(make(input_shape), dim, keepdim)
+
+
+any_tensor_opinfo = OpInfo(
+    ltorch.any_tensor,
+    sample_input_generator=any_tensor_sample_generator,
+    torch_reference=torch.any,
+)
 
 
 # TODO: increase reduction samples and refacort amax and sum generators
