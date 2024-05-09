@@ -556,7 +556,7 @@ def _empty_transform(
 ):
     torch_device: None | torch.device = to_torch_device(device)
     torch_dtype: None | torch.dtype = to_torch_dtype(dtype)
-    return empty(shape, device=torch_device, dtype=torch_dtype)
+    return empty(shape, device=torch_device, dtype=torch_dtype, out=out, layout=layout, requires_grad=requires_grad, pin_memory=pin_memory, memory_format=memory_format)
 
 
 _register_implementation(
