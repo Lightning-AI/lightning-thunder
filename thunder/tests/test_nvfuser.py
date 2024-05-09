@@ -854,9 +854,12 @@ def test_optimization_fuel(executor, device, _):
 
 
 @instantiate(
-    dtypes=(thunder.float16, thunder.bfloat16), devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,)
+    dtypes=(thunder.float16, thunder.bfloat16),
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(nvFuserExecutor,),
+    decorators=(pytest.mark.parametrize("has_bias", [True, False]),),
 )
-def test_linear(executor, device: str, dtype: dtypes.dtype):
+def test_linear(executor, device: str, dtype: dtypes.dtype, has_bias: bool):
 
     def fn(a, b, bias=None):
         return torch.nn.functional.linear(a, b, bias)
@@ -866,23 +869,21 @@ def test_linear(executor, device: str, dtype: dtypes.dtype):
     a = torch.randn((m, k), dtype=torch_dtype, device=device)
     b = torch.randn((n, k), dtype=torch_dtype, device=device)
 
-    for has_bias in [True, False]:
-        bias = None
+    bias = None
+    if has_bias:
+        bias = torch.randn(n, dtype=torch_dtype, device=device)
 
-        if has_bias:
-            bias = torch.randn(n, dtype=torch_dtype, device=device)
+    compiled_func = thunder.jit(fn, executors_list=executor.executors_list(), nv_enable_linear=True)
 
-        compiled_func = thunder.jit(fn, executors_list=executor.executors_list(), nv_enable_linear=True)
+    out = compiled_func(a, b, bias)
+    traces = thunder.last_traces(compiled_func)
+    fusions = examine.get_fusions(traces[-1])
+    nv_version = nvfuser_version()
 
-        out = compiled_func(a, b, bias)
-        traces = thunder.last_traces(compiled_func)
-        fusions = examine.get_fusions(traces[-1])
-        nv_version = nvfuser_version()
+    expected_fusions = 1 if nv_version >= LooseVersion("0.2.3") else 0
 
-        expected_fusions = 1 if nv_version >= LooseVersion("0.2.3") else 0
-
-        assert len(fusions) == expected_fusions
-        torch.testing.assert_close(out, torch.nn.functional.linear(a, b, bias))
+    assert len(fusions) == expected_fusions
+    torch.testing.assert_close(out, torch.nn.functional.linear(a, b, bias))
 
 
 @instantiate(
