@@ -1,7 +1,7 @@
 from typing import List, Any, Dict, Tuple, Union, Type
 from collections.abc import Callable
 from collections.abc import Hashable
-from collections.abc import Sequence
+from collections.abc import Sequence, Collection, MutableSet, MutableMapping, MutableSequence
 from numbers import Number
 import math
 import operator
@@ -225,8 +225,8 @@ def _clear_collection_meta(coll: CollectionProxy) -> None:
     return None
 
 
-def _clear_collection_prim_impl(a: Sequence) -> None:
-    if isinstance(a, list):
+def _clear_collection_prim_impl(a: Collection) -> None:
+    if isinstance(a, (MutableSequence, MutableMapping, MutableSet)):
         a.clear()
 
 

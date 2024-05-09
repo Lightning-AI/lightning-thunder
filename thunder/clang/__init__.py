@@ -1802,6 +1802,13 @@ def logical_and(a, b):
     return a & b
 
 
+@clangop()
+def logical_not(a: TensorLike, /) -> TensorLike:
+    if not utils.is_boolean_dtype(dtypes.to_dtype(a)):
+        return a == 0
+    return ~a
+
+
 @clangop(method_name="le")
 def le(a, b):
     return _elementwise_binary_wrapper(

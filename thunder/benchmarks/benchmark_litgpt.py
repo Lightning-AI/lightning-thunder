@@ -1,5 +1,7 @@
 import os
 import time
+from typing import Any
+from contextlib import nullcontext
 
 import torch
 import functools
@@ -35,6 +37,20 @@ def configure_optimizers(model, weight_decay, learning_rate, betas, device_type)
     return optimizer
 
 
+def run_fwd_bwd_one_microbatch(
+    model: torch.nn.Module,
+    input_ids: torch.Tensor,
+    targets: torch.Tensor,
+    gradient_accumulation_steps: int,
+) -> torch.Tensor:
+    logits = model(input_ids)
+    logits = logits.reshape(-1, logits.size(-1))
+    targets = targets.reshape(-1)
+    loss = torch.nn.functional.cross_entropy(logits, targets, ignore_index=-1) / gradient_accumulation_steps
+    loss.backward()
+    return loss
+
+
 class Benchmark_litGPT:
     def __init__(
         self,
@@ -53,6 +69,7 @@ class Benchmark_litGPT:
         n_layers: int | None = None,
         profiler_start: int = 15,
         profiler_stop: int = 15,
+        skip_data_sync: bool = False,
     ):
         seed = 1337
         torch.manual_seed(seed)
@@ -132,11 +149,7 @@ class Benchmark_litGPT:
             assert (
                 self.global_batch_size % self.micro_batch_size * world_size == 0
             ), f"Global Batch Size {self.global_batch_size} should be a multiple Micro Batch Size {self.micro_batch_size} * World Size {world_size}."
-            # TODO: Remove when gradient accumulation is ready for benchmarking.
-            if self.gradient_accumulation_steps > 1:
-                print(
-                    f"[WARNING] Gradient Accumulation is not fully supported yet. Benchmarking results may not be accurate. Gradient Accumulation Steps = {self.gradient_accumulation_steps}"
-                )
+        self.skip_data_sync = skip_data_sync
 
         # Profiling Args
         self.nsys_enabled = nsys_enabled
@@ -202,9 +215,11 @@ class Benchmark_litGPT:
                 from thunder.distributed import fsdp, FSDPType, FSDPBucketingStrategy
 
                 sharding_strategy = {"zero2": FSDPType.ZERO2, "zero3": FSDPType.ZERO3}[self.shard_mode]
-                bucketing_strategy = {"none": FSDPBucketingStrategy.NONE, "block": FSDPBucketingStrategy.BLOCK}[
-                    self.bucketing_mode
-                ]
+                bucketing_strategy = {
+                    "none": FSDPBucketingStrategy.NONE,
+                    "block": FSDPBucketingStrategy.BLOCK,
+                    "layer": FSDPBucketingStrategy.LAYER,
+                }[self.bucketing_mode]
                 model = fsdp(
                     model,
                     broadcast_from=None,
@@ -266,8 +281,12 @@ class Benchmark_litGPT:
             model = torch.compile(model)
         elif "thunder" in self.compile:
             executors = [thunder.nvfuser_executor, thunder.pytorch_executor]
-            if "inductor" in self.compile:
-                from thunder.executors.torch_compile import torch_compile_executor as torch_compile_ex
+            if "inductor_cat" in self.compile:
+                from thunder.executors.torch_compile import torch_compile_cat_ex as torch_compile_ex
+
+                executors.insert(0, torch_compile_ex)
+            elif "inductor" in self.compile:
+                from thunder.executors.torch_compile import torch_compile_ex
 
                 executors.insert(0, torch_compile_ex)
             if "cudnn" in self.compile:
@@ -331,45 +350,40 @@ class Benchmark_litGPT:
             # Setup throughput Collection
             self.throughput = Throughput(window_size=self.max_iters - self.warmup_iter, world_size=world_size)
 
+        if self.skip_data_sync:
+            data_sync_ctx = self.model.no_sync
+        else:
+            data_sync_ctx = nullcontext
+
         for i in range(self.max_iters):
             iter_t0 = time.perf_counter()
             if i == self.warmup_iter:  # warmup
                 t0 = iter_t0
 
-            for step_idx in range(self.gradient_accumulation_steps):
-                input_ids, targets = next(self.train_data_iter)
-                input_ids = input_ids.to(device=self.device)
-                targets = targets.to(device=self.device)
+            with data_sync_ctx():
+                for step_idx in range(self.gradient_accumulation_steps - 1):
+                    input_ids, targets = next(self.train_data_iter)
+                    input_ids = input_ids.to(device=self.device)
+                    targets = targets.to(device=self.device)
 
-                if self.nsys_enabled and i == self.profiler_start and global_rank in [0, None] and step_idx == 0:
-                    print("=====Start NSYS Profiling======")
-                    torch.cuda.cudart().cudaProfilerStart()
+                    if self.nsys_enabled and i == self.profiler_start and global_rank in [0, None] and step_idx == 0:
+                        print("=====Start NSYS Profiling======")
+                        torch.cuda.cudart().cudaProfilerStart()
 
-                logits = self.model(input_ids)
+                    loss = run_fwd_bwd_one_microbatch(self.model, input_ids, targets, self.gradient_accumulation_steps)
 
-                logits = logits.reshape(-1, logits.size(-1))
-                targets = targets.reshape(-1)
-                loss = (
-                    torch.nn.functional.cross_entropy(logits, targets, ignore_index=-1)
-                    / self.gradient_accumulation_steps
-                )
+            input_ids, targets = next(self.train_data_iter)
+            input_ids = input_ids.to(device=self.device)
+            targets = targets.to(device=self.device)
+            loss = run_fwd_bwd_one_microbatch(self.model, input_ids, targets, self.gradient_accumulation_steps)
 
-                loss.backward()
+            # Simple Gradient Accumulation Implementation
+            self.optimizer.step()
+            self.optimizer.zero_grad(set_to_none=True)
 
-                # Simple Gradient Accumulation Implementation
-                if (step_idx + 1) % self.gradient_accumulation_steps == 0:
-                    self.optimizer.step()
-                    self.optimizer.zero_grad(set_to_none=True)
-
-                # torch.cuda.synchronize()
-                if (
-                    self.nsys_enabled
-                    and i == self.profiler_stop
-                    and global_rank in [0, None]
-                    and ((step_idx + 1) % self.gradient_accumulation_steps == 0)
-                ):
-                    print("=====Stop NSYS Profiling======")
-                    torch.cuda.cudart().cudaProfilerStop()
+            if self.nsys_enabled and i == self.profiler_stop and global_rank in [0, None]:
+                print("=====Stop NSYS Profiling======")
+                torch.cuda.cudart().cudaProfilerStop()
 
             loss_item = loss.item()  # synchronization
             t1 = time.perf_counter()
@@ -496,3 +510,7 @@ if __name__ == "__main__":
     from jsonargparse import CLI
 
     CLI(benchmark_main)
+
+    # ref: https://github.com/pytorch/pytorch/blob/3af12447/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp#L1110-L1116
+    if world_size > 1:
+        torch_dist.destroy_process_group()

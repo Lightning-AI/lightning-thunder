@@ -1,3 +1,4 @@
+from __future__ import annotations
 import operator
 import importlib
 from dataclasses import replace
@@ -6,7 +7,7 @@ from functools import wraps, partial
 from inspect import signature
 from itertools import groupby
 from numbers import Number
-from typing import Union, Any, Tuple, Optional
+from typing import TYPE_CHECKING
 from collections.abc import Callable
 from collections.abc import Hashable, Sequence
 from collections.abc import Sequence
@@ -41,6 +42,9 @@ from thunder.core.transforms import (
     get_grad,
     put_grad,
 )
+
+if TYPE_CHECKING:
+    from thunder.common import CompileData
 
 ex = OperatorExecutor("torch", version=torch.__version__)
 register_executor(ex)
@@ -1325,7 +1329,7 @@ max_pool3d_with_indices_backward = ex.register_operator(
 nll_loss = _register_torch_operation("nll_loss", module=torch.nn.functional)
 pad = _register_torch_operation("pad", module=torch.nn.functional)
 scaled_dot_product_attention = _register_torch_operation("scaled_dot_product_attention", module=torch.nn.functional)
-softmax = _register_torch_operation("softmax")
+softmax = _register_torch_operation("softmax", like=ltorch._softmax)
 
 
 # NOTE This transform translates number proxies to boolean values
@@ -1628,7 +1632,7 @@ _register_implementation(ltorch.nll_loss_backward, nll_loss_backward, checker=_a
 _register_implementation(ltorch.pad, pad, checker=_always_executable)
 pad_prim_impl = ex.register_operator("torch_pad_prim_impl", meta=prims.pad.meta, fn=_pad_prim_impl)
 _register_implementation(prims.pad, pad_prim_impl, checker=_always_executable)
-_register_implementation(ltorch.softmax, checker=_always_executable, execution_transform=_softmax_transform)
+_register_implementation(ltorch._softmax, checker=_always_executable, execution_transform=_softmax_transform)
 _register_implementation(ltorch.scaled_dot_product_attention, scaled_dot_product_attention, checker=_always_executable)
 
 
@@ -1892,6 +1896,21 @@ if torch.distributed.is_available():
         views[index_of_dst_view].copy_(tensor)
         return tensor
 
+    # TODO(crcrpar): Update to return None instead
+    def _stash_grad_for_fsdp_prim_impl(
+        grad: torch.Tensor,
+        param_fqn: str,
+        compile_data: CompileData,
+    ) -> None:
+        grad_name = "_thunder_fsdp_unsharded_grad"
+        param = compile_data.fn.get_parameter(param_fqn)
+        if torch.is_tensor(unsharded_grad := getattr(param, grad_name, None)):
+            unsharded_grad += grad
+        else:
+            setattr(param, grad_name, grad)
+
+        return grad
+
     all_gather_prim_impl = ex.register_operator(
         "torch_all_gather_prim_impl", meta=dist_prims.all_gather.meta, fn=_all_gather_prim_impl
     )
@@ -1933,6 +1952,17 @@ if torch.distributed.is_available():
     _register_implementation(
         dist_prims.pack_for_fsdp,
         pack_for_fsdp_prim_impl,
+        checker=_always_executable,
+    )
+
+    stash_grad_for_fsdp_prim_impl = ex.register_operator(
+        "torch_stash_grad_for_fsdp_prim_impl",
+        meta=dist_prims.stash_grad_for_fsdp.meta,
+        fn=_stash_grad_for_fsdp_prim_impl,
+    )
+    _register_implementation(
+        dist_prims.stash_grad_for_fsdp,
+        stash_grad_for_fsdp_prim_impl,
         checker=_always_executable,
     )
 
