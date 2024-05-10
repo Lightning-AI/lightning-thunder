@@ -610,6 +610,24 @@ def test_nanogpt():
     assert_close(result, module(*args, **kwargs))
 
 
+class _DtypeContextManager:
+    """A context manager to change the default tensor type when tensors get created.
+
+    See: :func:`torch.set_default_dtype`
+
+    """
+
+    def __init__(self, dtype: torch.dtype) -> None:
+        self._previous_dtype: torch.dtype = torch.get_default_dtype()
+        self._new_dtype = dtype
+
+    def __enter__(self) -> None:
+        torch.set_default_dtype(self._new_dtype)
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        torch.set_default_dtype(self._previous_dtype)
+
+
 @skipif_not_pytorch_2_1
 @pytest.mark.parametrize(
     "name",
@@ -636,17 +654,18 @@ def test_litgpt_variants(name, device):
         pytest.skip("CUDA not available")
 
     device = torch.device(device)
+    dtype = torch.float32  # TODO: reduce this, but there are numerical differences
 
     x = torch.randint(0, 200, (5, 5), device=device)
     config = litgpt_model.Config.from_name(name)
 
-    with device:
+    with device, _DtypeContextManager(dtype):
         reference = litgpt_model.GPT(config)
     expected_logits = reference(x)
 
     expected_logits.sum().backward()
 
-    with device:
+    with device, _DtypeContextManager(dtype):
         model = litgpt_model.GPT(config)
     model.load_state_dict(reference.state_dict())
     tom = thunder.jit(model, executors=nvfuserex if device.type == "cuda" else torchex)
@@ -658,7 +677,7 @@ def test_litgpt_variants(name, device):
     for param1, param2 in zip(reference.parameters(), model.parameters()):
         assert param1 is not param2
         assert param1.grad is not None
-        torch.testing.assert_close(param1.grad, param2.grad, rtol=1e-2, atol=1e-2)
+        torch.testing.assert_close(param1.grad, param2.grad)
 
 
 @skipif_not_pytorch_2_1
@@ -690,10 +709,12 @@ def test_litgpt_variants_kvcache(name, device):
         pytest.skip("CUDA not available")
 
     device = torch.device(device)
+    dtype = torch.float32  # TODO: reduce this, but there are numerical differences
+
     x = torch.randint(0, 200, (1, 2), device=device)
     config = litgpt_model.Config.from_name(name)
 
-    with device:
+    with device, _DtypeContextManager(dtype):
         model = litgpt_model.GPT(config)
         model.max_seq_length = 3
 
@@ -711,9 +732,8 @@ def test_litgpt_variants_kvcache(name, device):
     token_1 = sample(logits_1)
     logits_2 = model(torch.cat((x, token_1), dim=-1))
 
-    with device:
-        model.set_kv_cache(batch_size=1)
-    tom = thunder.jit(model, executors=executors)  # , disable_torch_autograd_support=True
+    model.set_kv_cache(batch_size=1, device=device, dtype=dtype)
+    tom = thunder.jit(model, executors=executors, disable_torch_autograd=True)
 
     # kv cache prefill
     thunder_logits_1 = tom(x, torch.tensor([0, 1], device=device))
