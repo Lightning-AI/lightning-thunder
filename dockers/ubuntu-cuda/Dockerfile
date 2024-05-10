@@ -161,7 +161,7 @@ RUN \
     fi
 
 RUN \
-    pip install nvidia-cudnn-frontend=${CUDNN_FRONTEND_CHECKOUT}
+    pip install nvidia-cudnn-frontend==${CUDNN_FRONTEND_CHECKOUT}
 
 RUN \
     # Show what we have
