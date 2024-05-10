@@ -625,7 +625,9 @@ class NumberProxy(Proxy, NumberProxyInterface):
             method = resolve_method(name, a)
         except Exception as e:
             return fn(vala)
-        # return method(a)
+
+        if method is None:
+            return fn(vala)
 
         from thunder.core.utils import elementwise_type_promotion, dtype_to_numbertype, are_same_dtypes
         from thunder.core import prims
@@ -702,7 +704,8 @@ class NumberProxy(Proxy, NumberProxyInterface):
         except Exception as e:
             return fn(vala, valb)
 
-        # return method(a, b)
+        if method is None:
+            return fn(vala, valb)
 
         # circular import
         from thunder.core.utils import elementwise_type_promotion, dtype_to_numbertype, are_same_dtypes
