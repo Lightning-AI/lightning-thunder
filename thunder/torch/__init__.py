@@ -17,7 +17,7 @@ from thunder.torch.langctx import register_method, register_property
 
 import thunder.clang as clang
 import thunder.core.devices as devices
-from thunder.core.devices import to_device
+from thunder.core.devices import to_device, device_from_string
 import thunder.core.dtypes as dtypes
 from thunder.core.dtypes import to_torch_dtype, to_dtype, _thunder_to_torch_dtype_map, _torch_to_thunder_dtype_map
 import thunder.core.prims as prims
@@ -114,6 +114,8 @@ class torchsymbol:
                     exception_type=AssertionError,
                 )
         else:
+            if not self.id.startswith("torch"):
+                warnings.warn("Given {self.id=} does not start with the namespace of `torch`")
             id = self.id
 
         if self.is_prim:
@@ -170,13 +172,21 @@ def is_floating_point(a: TensorLike, /) -> bool:
 
 
 # Handles the size method
-def size(a):
-    def fn_(idx: int | None = None):
-        if idx is None:
-            return a.shape
-        return a.shape[idx]
+def size(a: TensorLike, /, dim: None | int = None) -> int | Sequence[int]:
+    if dim:
+        return a.shape[dim]
+    return a.shape
 
-    return fn_
+
+register_method("size", size)
+
+
+@torchsymbol(torch.numel, torch.Tensor.numel, is_method=True)
+def numel(a: TensorLike, /) -> int:
+    return a._numel
+
+
+register_method("numel", numel)
 
 
 @torchsymbol(torch.Tensor.is_cuda, is_property=True, id="torch.is_cuda")
@@ -184,8 +194,92 @@ def is_cuda(a: TensorLike, /) -> bool:
     return a.device.devicetype is devices.DeviceType.CUDA
 
 
-register_method("size", size)
+_torch_dtype_to_old_torch_typestring_map = {
+    torch.float32: "FloatTensor",
+    torch.float64: "DoubleTensor",
+    torch.float16: "HalfTensor",
+    torch.bfloat16: "BFloat16Tensor",
+    torch.uint8: "ByteTensor",
+    torch.int8: "CharTensor",
+    torch.int16: "ShortTensor",
+    torch.int32: "IntTensor",
+    torch.long: "LongTensor",
+    torch.bool: "BoolTensor",
+}
 
+_old_torch_typestring_to_torch_dtype_map = {v: k for k, v in _torch_dtype_to_old_torch_typestring_map.items()}
+
+
+def _device_and_dtype_to_old_torch_typestring(device: DeviceLike, dtype: dtypeLike) -> str:
+    torch_dtype = to_torch_dtype(dtype)
+    dtype_str = _torch_dtype_to_old_torch_typestring_map.get(torch_dtype)
+    devicetype_str: str = ""
+    if device.devicetype is not devices.DeviceType.CPU:
+        devicetype_str = f"{devices.devicetype_string(device.devicetype)}."
+    return f"torch.{devicetype_str}{dtype_str}"
+
+
+def _old_torch_typestring_to_devicetype_and_dtype(typestring: str) -> tuple[DeviceLike, dtypeLike]:
+
+    # Two cases:
+    #    - torch.DtypeTensor
+    #    - torch.device.DtypeTensor
+
+    _, *dev_and_dtype = typestring.split(".")
+    devicetype_str = "cpu"
+    dtype_str = ""
+
+    if len(dev_and_dtype) == 1:
+        # when devicetype_str is omitted, device type is CPU
+        (dtype_str,) = dev_and_dtype
+        dtype_str = _old_torch_typestring_to_torch_dtype_map[dtype_str]
+
+    if len(dev_and_dtype) == 2:
+        devicetype_str, dtype_str = dev_and_dtype
+        dtype_str = _old_torch_typestring_to_torch_dtype_map[dtype_str]
+
+    # Value error
+    # expected the string to split into one or two elements
+    # and devicetype_str should be either "cpu" or "cuda"
+    utils.check(
+        devicetype_str in ("cpu", "cuda") and 1 <= len(dev_and_dtype) <= 2,
+        lambda: f"type(): unrecognized torch typestring {typestring}",
+        exception_type=ValueError,
+    )
+
+    return devicetype_str, dtype_str
+
+
+@torchsymbol(torch.Tensor.type, is_method=True)
+def type(a: TensorLike, /, dtype: None | str | dtypeLike = None, non_blocking: bool = False) -> str | TensorLike:
+    utils.check(
+        not non_blocking,
+        lambda: f"type(): `non_blocking==True` is currently not supported.",
+        exception_type=NotImplementedError,
+    )
+
+    if dtype is None:
+        # returns the type of the input tensor in string
+        return _device_and_dtype_to_old_torch_typestring(a.device, a.dtype)
+
+    if isinstance(dtype, str):
+        devtype, dtype = _old_torch_typestring_to_devicetype_and_dtype(dtype)
+
+        if devtype == a.device.type:
+            # This handles two cases:
+            # 1. When a tensor is already on a CUDA device, and the device type string is CUDA. In this case the tensor remains on its current device.
+            # 2. When a tensor is on a CPU device and the device type string is omitted, the tensor remains on the CPU device.
+            dev = a.device
+        else:
+            dev = device_from_string(devtype)
+    else:
+        # dtype is assumed to be torch.dtype (e.g. torch.int32)
+        dev = a.device
+
+    return to(a, dev, dtype)
+
+
+register_method("type", type)
 
 #
 # Data movement and transformation operations
@@ -478,12 +572,6 @@ def multinomial(
         generator is None, lambda: f"multinomial does not yet support specifying a generator", NotImplementedError
     )
 
-    utils.check(
-        generator is None,
-        lambda: "Non-None generator is not supported",
-        NotImplementedError,
-    )
-
     seed = None
     samples = prims.multinomial(a, num_samples, replacement, seed)
     return samples
@@ -570,6 +658,19 @@ def randn_like(
     if device is None:
         device = a.device
     return randn(a.shape, dtype=dtype, device=device)
+
+
+@torchsymbol(torch.bernoulli, is_method=True)
+def bernoulli(a: TensorLike, *, generator=None, out=None):
+    # NOTE: Currently, we don't model randomness
+    utils.check(
+        generator is None,
+        lambda: "bernoulli: generator is not None which is currently unsupported",
+        NotImplementedError,
+    )
+    utils.check(out is None, lambda: "bernoulli: out is not None which is currently unsupported", NotImplementedError)
+    utils.check(dtypes.is_float_dtype(a.dtype), lambda: f"bernoulli only supports floating point dtypes, got {a.dtype}")
+    return (uniform_like(a) < a).to(a.dtype)
 
 
 # NOTE zeros, like ones, and unlike full, can accept an integer shape
@@ -668,6 +769,11 @@ def diagonal(a: TensorLike, /, offset: int = 0, dim1: int = 0, dim2: int = 1) ->
 @torchsymbol(torch.Tensor.expand, is_method=True)
 def expand(a: TensorLike, /, *shape: int) -> TensorLike:
     return clang.expand(a, *shape)
+
+
+@torchsymbol(torch.Tensor.expand_as, is_method=True)
+def expand_as(a: TensorLike, b: TensorLike, /) -> TensorLike:
+    return expand(a, b.size())
 
 
 @torchsymbol(torch.flatten, is_method=True)
@@ -780,6 +886,17 @@ def reshape(a: TensorLike, /, *shape: int) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
 
     return clang.reshape(a, shape)
+
+
+@torchsymbol(torch.unflatten, is_method=True)
+def unflatten(a: TensorLike, /, dim: int, sizes=Sequence[int]) -> TensorLike:
+    utils.check(
+        len(sizes) > 0,
+        lambda: f"unflatten() sizes must be non-empty",
+        RuntimeError,
+    )
+    dim = utils.canonicalize_dim(a.ndim, dim)
+    return a.view(a.shape[:dim] + tuple(sizes) + a.shape[dim + 1 :])
 
 
 @torchsymbol(torch.select, is_method=True)
@@ -1029,6 +1146,11 @@ def unsqueeze(a: TensorLike, /, dim: int) -> TensorLike:
 def view(a: TensorLike, /, *shape) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
     return reshape(a, shape)
+
+
+@torchsymbol(torch.Tensor.view_as, is_method=True)
+def view_as(a: TensorLike, b: TensorLike, /) -> TensorLike:
+    return view(a, b.size())
 
 
 #
@@ -1370,6 +1492,11 @@ def gt(a, b, /):
 @torchsymbol(torch.logical_and, is_method=True)
 def logical_and(a, b, /):
     return clang.logical_and(a, b)
+
+
+@torchsymbol(torch.logical_not, is_method=True)
+def logical_not(a: TensorLike, /) -> TensorLike:
+    return clang.logical_not(a)
 
 
 @torchsymbol(torch.le, is_method=True)
@@ -1974,13 +2101,13 @@ def index_select(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
     return clang.take(a, index, dim)
 
 
-@torchsymbol(torch.gather)
+@torchsymbol(torch.gather, is_method=True)
 def gather(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
     return clang.gather(a, indices=index, dim=dim)
 
 
 # NOTE PyTorch's scatter_add has a parameter named 'src', not 'source'
-@torchsymbol(torch.scatter_add)
+@torchsymbol(torch.scatter_add, is_method=True)
 def scatter_add(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike) -> TensorLike:
     return clang.scatter_add(a, indices=index, value=src, dim=dim)
 
@@ -2669,7 +2796,7 @@ def _native_batch_norm(
                 new_running_mean = to(new_running_mean, running_mean.dtype)
             prims.copy_(new_running_mean, running_mean)
         if running_var is not None:
-            n = a.numel / a.shape[1]
+            n = a.numel() / a.shape[1]
             unbiased_var = biased_var * (n / (n - 1))
             new_running_var = (1 - momentum) * running_var + momentum * unbiased_var
             if not utils.are_same_dtypes(new_running_var, running_var):
@@ -3276,10 +3403,10 @@ def cross_entropy(
     C_dim = 1 if a.ndim >= 2 else 0
     N = a.shape[0] if a.ndim >= 2 else 1
     C = a.shape[C_dim]
-    feature_size = int(a.numel / N / C)
+    feature_size = int(a.numel() / N / C)
 
     # Short-circuits if a is empty
-    if a.numel == 0:
+    if a.numel() == 0:
         if reduction == "none":
             output_shape = list(a.shape)
             output_shape.pop(C_dim)
@@ -3295,7 +3422,7 @@ def cross_entropy(
 
     if weight is not None:
         utils.check(
-            weight.ndim == 1 and weight.numel == C,
+            weight.ndim == 1 and weight.numel() == C,
             lambda: f"Expected {weight.shape=} to have one dimension and {C} elements",
         )
         bcast_weight = reshape(weight, [C] + [1 for i in range(2, a.ndim)])
@@ -3461,18 +3588,18 @@ def cross_entropy(
                     output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
                 )
                 # NOTE: does the call numel here work with dynamic shape?!
-                out = reduced_sum / (target.numel - mask_sum)
+                out = reduced_sum / (target.numel() - mask_sum)
                 if label_smoothing > 0:
-                    ret = ret / (target.numel - mask_sum)
+                    ret = ret / (target.numel() - mask_sum)
                 elif target.ndim == 0:
                     # NOTE: this is pytorch implementation details.
                     # overwrite output to 0 when target hits ignore_index AND label_smoothing is missing.
                     # https://github.com/pytorch/pytorch/pull/64572
                     out = where((target == ignore_index), 0, out)
             else:
-                out = reduced_sum / target.numel
+                out = reduced_sum / target.numel()
                 if label_smoothing > 0:
-                    ret = ret / target.numel
+                    ret = ret / target.numel()
         else:
             raise ValueError(f"Reduction argument: {reduction} to cross_entropy is not supported")
 
@@ -3563,7 +3690,7 @@ def embedding(
         return clang.take(weight, a, 0)
 
     output_shape = list(a.shape) + list(weight.shape[1:])
-    flatten_indices = reshape(a, [a.numel])
+    flatten_indices = reshape(a, [a.numel()])
     flatten_output = clang.take(weight, flatten_indices, 0)
     return reshape(flatten_output, output_shape)
 
@@ -3611,11 +3738,11 @@ def group_norm(
         num_channels % num_groups == 0, lambda: f"group_norm: {num_channels=} should be divisible by {num_groups=}"
     )
     utils.check(
-        weight is None or (weight.ndim == 1 and weight.numel == num_channels),
+        weight is None or (weight.ndim == 1 and weight.numel() == num_channels),
         lambda: f"group_norm: {weight.ndim=} should be equal to 1 and {weight.numel=} to {num_channels=}",
     )
     utils.check(
-        bias is None or (bias.ndim == 1 and bias.numel == num_channels),
+        bias is None or (bias.ndim == 1 and bias.numel() == num_channels),
         lambda: f"group_norm: {bias.ndim=} should be equal to 1 and {bias.numel=} to {num_channels=}",
     )
 
@@ -3763,7 +3890,7 @@ def interpolate(
     )
 
     utils.check(a.ndim >= 3, lambda: f"Expected {a.ndim=} >= 3")
-    utils.check(a.numel > 0, lambda: f"Expected {a.numel=} to be greater than 0")
+    utils.check(a.numel() > 0, lambda: f"Expected {a.numel=} to be greater than 0")
 
     utils.check(
         (size is not None) ^ (scale_factor is not None),
@@ -3846,7 +3973,7 @@ def _nll_loss_helper(
     #   reduction = 'sum'  --- tensor(0.)
     #   reduction = 'mean' --- tensor(nan)
     # Mean reduction on empty tensors produces NaN.
-    if a.numel == 0 and target.numel == 0:
+    if a.numel() == 0 and target.numel() == 0:
         if reduction == "none":
             # Keep target shape if it is non-trivial
             result_shape = target.shape if target.shape != (0,) else []
@@ -4078,8 +4205,14 @@ def sigmoid(a: TensorLike, /) -> TensorLike:
 
 
 # CompositeImplicitAutograd - don't register decomp
-@torchsymbol(torch.softmax, torch.nn.functional.softmax, is_method=True)
-def softmax(a: TensorLike, /, dim: int, *, dtype: None | dtypeLike = None) -> TensorLike:
+@torchsymbol(torch.softmax, torch.nn.functional.softmax, is_method=True, id="torch.softmax")
+def _softmax(
+    a: TensorLike,
+    /,
+    dim: int,
+    *,
+    dtype: None | dtypeLike = None,
+) -> TensorLike:
     result_dtype: dtypeLike = dtype or a.dtype
     result_dtype: dtypes.dtype = to_dtype(result_dtype)
     computation_dtype = utils.get_computation_dtype(result_dtype)
@@ -4094,6 +4227,15 @@ def softmax(a: TensorLike, /, dim: int, *, dtype: None | dtypeLike = None) -> Te
     result = a_exp / sum(a_exp, dim, keepdim=True)
     converted = result.to(result_dtype)
     return converted
+
+
+register_method("softmax", _softmax)
+
+
+# A wrapper to support `torch.nn.Softmax` whose `forward` passes the kwarg of `_stacklevel=5` to `torch.nn.functional.softmax`.
+# ref: https://github.com/pytorch/pytorch/blob/8d12ba9acfa20ed7df438a8892c9bf8e6bef5775/torch/nn/modules/activation.py#L1545
+def softmax(a: TensorLike, dim: int, dtype: None | dtypeLike = None, _stacklevel: int = 3) -> TensorLike:
+    return _softmax(a, dim=dim, dtype=dtype)
 
 
 #
