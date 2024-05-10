@@ -36,8 +36,9 @@ def test_prim_inplace_copy_fwd(executor, device, dtype):
     thunder_result = traced_nvfuser_foo(a, b)
     torch_result = torch_foo(a1, b1)
 
+    # see https://github.com/Lightning-AI/lightning-thunder/issues/295
     custom_comparator = (
-        partial(assert_close, atol=1e-2, rtol=1e-2)
+        partial(assert_close, atol=5e-2, rtol=5e-2)
         if dtype in (datatypes.bfloat16, datatypes.float16)
         else assert_close
     )
