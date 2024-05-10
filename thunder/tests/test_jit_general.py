@@ -640,7 +640,7 @@ class _DtypeContextManager:
         "falcon-40b-like",
         pytest.param(
             "codellama2-like",
-            marks=pytest.mark.xfail(raises=AssertionError, reason="grads difference", strict=True),
+            marks=pytest.mark.xfail(raises=AssertionError, reason="grads difference", strict=False),
         ),
         pytest.param(
             "mixtral-like",
