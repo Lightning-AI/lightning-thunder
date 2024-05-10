@@ -2778,6 +2778,92 @@ data_movement_ops = []
 # data_movement_ops.append(convert_element_type_opinfo)
 
 
+def type_sample_generator_tensor(op, device, dtype, requires_grad, **kwargs):
+    # dtype is not None
+    # expected to return tensor
+
+    _torch_dtype_to_old_torch_typestring_map = {
+        torch.float32: "FloatTensor",
+        torch.float64: "DoubleTensor",
+        torch.float16: "HalfTensor",
+        torch.bfloat16: "BFloat16Tensor",
+        torch.uint8: "ByteTensor",
+        torch.int8: "CharTensor",
+        torch.int16: "ShortTensor",
+        torch.int32: "IntTensor",
+        torch.long: "LongTensor",
+        torch.bool: "BoolTensor",
+    }
+
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    to_dtype = torch.complex128 if dtype.is_complex else torch.float64
+
+    yield SampleInput(make(4, 4, device=device), dtype)
+    yield SampleInput(make(4, 4, device=device), dtype=to_dtype)
+    # below can be deleted if we don't support strings
+    yield SampleInput(make(4, 4, device=device), f"torch.{_torch_dtype_to_old_torch_typestring_map[to_dtype]}")
+
+    # Explictly pass device
+    if torch.device(device).type == "cuda":
+        yield SampleInput(make(4, 4, device=device), f"torch.cuda.{_torch_dtype_to_old_torch_typestring_map[to_dtype]}")
+
+
+# kind of redundant?
+def type_error_generator_tensor(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=False)
+
+    err_msg = r"type\(\): `non_blocking==True` is currently not supported."
+    yield SampleInput(make(3, 3), dtype, non_blocking=True), RuntimeError, err_msg
+
+
+type_opinfo_tensor = OpInfo(
+    ltorch.type,
+    sample_input_generator=type_sample_generator_tensor,
+    error_input_generator=type_error_generator_tensor,
+    torch_reference=torch.Tensor.type,
+)
+
+data_movement_ops.append(type_opinfo_tensor)
+
+
+def type_sample_generator_str(op, device, dtype, requires_grad, **kwargs):
+    # dtype is None
+    # expected to return string
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    yield SampleInput(make(4, 4))
+
+
+# kind of redundant?
+def type_error_generator_str(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=False)
+
+    err_msg = r"type\(\): `non_blocking==True` is currently not supported."
+    yield SampleInput(make(3, 3), non_blocking=True), RuntimeError, err_msg
+
+
+# comparing strings (NOTE: assert_close does not support string comparison)
+def string_compare(actual, expected, **kwargs):
+    assert actual == expected
+
+
+type_opinfo_str = OpInfo(
+    ltorch.type,
+    sample_input_generator=type_sample_generator_str,
+    error_input_generator=type_error_generator_str,
+    torch_reference=torch.Tensor.type,
+    test_directives=(
+        DecorateInfo(
+            custom_comparator(string_compare),
+            "test_core_vs_torch_consistency",
+        ),
+    ),
+)
+
+data_movement_ops.append(type_opinfo_str)
+
+
 def to_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
