@@ -114,6 +114,8 @@ class torchsymbol:
                     exception_type=AssertionError,
                 )
         else:
+            if not self.id.startswith("torch"):
+                warnings.warn("Given {self.id=} does not start with the namespace of `torch`")
             id = self.id
 
         if self.is_prim:
@@ -170,13 +172,13 @@ def is_floating_point(a: TensorLike, /) -> bool:
 
 
 # Handles the size method
-def size(a):
-    def fn_(idx: int | None = None):
-        if idx is None:
-            return a.shape
-        return a.shape[idx]
+def size(a: TensorLike, /, dim: None | int = None) -> int | Sequence[int]:
+    if dim:
+        return a.shape[dim]
+    return a.shape
 
-    return fn_
+
+register_method("size", size)
 
 
 @torchsymbol(torch.numel, torch.Tensor.numel, is_method=True)
@@ -190,9 +192,6 @@ register_method("numel", numel)
 @torchsymbol(torch.Tensor.is_cuda, is_property=True, id="torch.is_cuda")
 def is_cuda(a: TensorLike, /) -> bool:
     return a.device.devicetype is devices.DeviceType.CUDA
-
-
-register_method("size", size)
 
 _torch_dtype_to_old_torch_typestring_map = {
     torch.float32: "FloatTensor",
@@ -888,6 +887,17 @@ def reshape(a: TensorLike, /, *shape: int) -> TensorLike:
     return clang.reshape(a, shape)
 
 
+@torchsymbol(torch.unflatten, is_method=True)
+def unflatten(a: TensorLike, /, dim: int, sizes=Sequence[int]) -> TensorLike:
+    utils.check(
+        len(sizes) > 0,
+        lambda: f"unflatten() sizes must be non-empty",
+        RuntimeError,
+    )
+    dim = utils.canonicalize_dim(a.ndim, dim)
+    return a.view(a.shape[:dim] + tuple(sizes) + a.shape[dim + 1 :])
+
+
 @torchsymbol(torch.select, is_method=True)
 def select(a: TensorLike, /, dim: int, index: int):
     # dim check
@@ -1135,6 +1145,11 @@ def unsqueeze(a: TensorLike, /, dim: int) -> TensorLike:
 def view(a: TensorLike, /, *shape) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
     return reshape(a, shape)
+
+
+@torchsymbol(torch.Tensor.view_as, is_method=True)
+def view_as(a: TensorLike, b: TensorLike, /) -> TensorLike:
+    return view(a, b.size())
 
 
 #
@@ -4180,8 +4195,14 @@ def sigmoid(a: TensorLike, /) -> TensorLike:
 
 
 # CompositeImplicitAutograd - don't register decomp
-@torchsymbol(torch.softmax, torch.nn.functional.softmax, is_method=True)
-def softmax(a: TensorLike, /, dim: int, *, dtype: None | dtypeLike = None) -> TensorLike:
+@torchsymbol(torch.softmax, torch.nn.functional.softmax, is_method=True, id="torch.softmax")
+def _softmax(
+    a: TensorLike,
+    /,
+    dim: int,
+    *,
+    dtype: None | dtypeLike = None,
+) -> TensorLike:
     result_dtype: dtypeLike = dtype or a.dtype
     result_dtype: dtypes.dtype = to_dtype(result_dtype)
     computation_dtype = utils.get_computation_dtype(result_dtype)
@@ -4196,6 +4217,15 @@ def softmax(a: TensorLike, /, dim: int, *, dtype: None | dtypeLike = None) -> Te
     result = a_exp / sum(a_exp, dim, keepdim=True)
     converted = result.to(result_dtype)
     return converted
+
+
+register_method("softmax", _softmax)
+
+
+# A wrapper to support `torch.nn.Softmax` whose `forward` passes the kwarg of `_stacklevel=5` to `torch.nn.functional.softmax`.
+# ref: https://github.com/pytorch/pytorch/blob/8d12ba9acfa20ed7df438a8892c9bf8e6bef5775/torch/nn/modules/activation.py#L1545
+def softmax(a: TensorLike, dim: int, dtype: None | dtypeLike = None, _stacklevel: int = 3) -> TensorLike:
+    return _softmax(a, dim=dim, dtype=dtype)
 
 
 #
