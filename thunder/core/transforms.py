@@ -397,7 +397,13 @@ def visitor_transform(trace_from: Trace, visit: Callable, *, provenance: None | 
 
 
 # Helper function to add a transform
-def add_transform(cfn: Callable, transform: Callable) -> Callable:
+def add_transform(
+    cfn: Callable,
+    *,
+    transform: Callable | None = None,
+    early_transform: Callable | None = None,
+    disable_torch_autograd_support=False,
+) -> Callable:
     from thunder.common import _create_callable, CompileData, CompileStats
 
     cd: None | Any = getattr(cfn, "_lc_cd", None)
@@ -405,19 +411,34 @@ def add_transform(cfn: Callable, transform: Callable) -> Callable:
     utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
     utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
 
+    assert cd.using_jit or early_transform is None
+    assert transform is not None or early_transform is not None
+
     if cd.using_jit:
         from thunder import jit
 
-        return jit(
+        early_transforms = cfn._lc_early_transforms[:]
+        additional_transforms = cfn._lc_transforms[:]
+        if early_transform is not None:
+            early_transforms.append(early_transform)
+        if transform is not None:
+            additional_transforms.append(transform)
+        jfn = jit(
             cd.fn,
             langctx=cd.langctx,
             executors=cd.executors_list,
             sharp_edges=cd.sharp_edges,
             # cache, interpretation?
-            additional_transforms=cfn._lc_transforms + [transform],
-            disable_torch_autograd=True,  # cd.disable_torch_autograd_support,
+            early_transforms=early_transforms,
+            additional_transforms=additional_transforms,
+            disable_torch_autograd=cd.disable_torch_autograd_support or disable_torch_autograd_support,
             **cd.compile_options,
         )
+        from thunder import ThunderModule
+
+        if isinstance(jfn, ThunderModule):
+            jfn._overrides = cfn._overrides
+        return jfn
 
     cs = getattr(cfn, "_lc_cs", None)
     if cs is None:
@@ -478,7 +499,7 @@ def _noop_transform(trace: Trace, **kwargs) -> Trace:
 
 
 def noop(cfn: Callable) -> Callable:
-    return add_transform(cfn, _noop_transform)
+    return add_transform(cfn, transform=_noop_transform)
 
 
 # The comment fusions transform. Just adds a comment before and after each fusion.
@@ -1165,7 +1186,7 @@ def _var_mean_prim_grad(a: TensorProxy, /, dims: Sequence[int], *, correction: N
     gv = get_grad(v)
     gm = get_grad(m)
 
-    n_elem_reduced = a.numel // m.numel if a.numel != 0 else 1
+    n_elem_reduced = a.numel() // m.numel() if a.numel() != 0 else 1
 
     # Computes mean bwd
     mean_scale = 1.0 / n_elem_reduced
@@ -1637,7 +1658,7 @@ def grad(
     #   we're using our own autograd transform
     cfn._using_grad_transform = True
 
-    return add_transform(cfn, _grad_transform)
+    return add_transform(cfn, transform=_grad_transform, disable_torch_autograd_support=True)
 
 
 def grad_v1(
@@ -1656,7 +1677,7 @@ def grad_v1(
         return gradtrc
 
     cfn._using_grad_transform = True
-    return add_transform(cfn, _grad_transform)
+    return add_transform(cfn, transform=_grad_transform, disable_torch_autograd_support=True)
 
 
 class Transforms(Enum):
@@ -2636,7 +2657,7 @@ def var_aug_fwd(a, dim, *, correction):
 # TODO: fix grad when correction > n_elem_reduced.
 @register_backward(prims.PrimIDs.VAR)
 def var_backward(a, dim, correction, v, g):
-    n_elem_reduced = a.numel // v.numel if a.numel != 0 else 1
+    n_elem_reduced = a.numel() // v.numel() if a.numel() != 0 else 1
     normalization_scalar = n_elem_reduced - correction
     g = restore_reduced_dims(g, dim, a.shape)
     if a.dtype != v.dtype:
@@ -3125,7 +3146,7 @@ def cumsum_aug_fwd(a: Proxy, dim: int, *, dtype: None | dtypes.dtype = None) -> 
 @register_backward("torch.cumsum")
 def cumsum_backward(a_dtype, dim, g):
     g = g.to(a_dtype)
-    if g.numel <= 1 or g.shape[dim] == 1:
+    if g.numel() <= 1 or g.shape[dim] == 1:
         return g
     return g.flip(dim).cumsum(dim).flip(dim)
 

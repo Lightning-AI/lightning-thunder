@@ -1128,11 +1128,6 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
     def type_string(self):
         return f"FUTURE {self.device} {self.dtype.shortname()}{list(self.shape)}"
 
-    @property
-    def size(self, /) -> Any:
-        fn = resolve_method("size", self)
-        return fn(self)
-
     def wait(self) -> TensorProxy:
         from thunder.distributed.prims import wait
 
@@ -1179,10 +1174,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return self._shape
 
     @property
-    def numel(self):
-        return self._numel
-
-    @property
     def ndim(self):
         return self._ndim
 
@@ -1206,11 +1197,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
     def ddp_type(self):
         return self._ddp_type
 
-    @property
-    def size(self, /) -> Any:
-        fn = resolve_method("size", self)
-        return fn(self)
-
     # We need to implement `__len__` as
     # > In addition to bypassing any instance attributes in the
     # > interest of correctness, implicit special method lookup
@@ -1232,12 +1218,22 @@ class TensorProxy(Proxy, TensorProxyInterface):
     # NOTE __getattr__ is overridden to support language-specific methods
     def __getattr__(self, attr: str, /):
         method_or_value: None | Callable | Any = resolve_method(attr, self)
+        if method_or_value is None:
+            method_or_value = self.get_default_attr(attr)
         baseutils.check(method_or_value is not None, lambda: f"Unknown attribute {attr}", exception_type=AttributeError)
 
         if callable(method_or_value):
             return partial(method_or_value, self)
 
         return method_or_value
+
+    #
+    # Default attribute
+    #
+    def get_default_attr(self, attr: str, /) -> None | Any:
+        if attr == "numel":
+            return self._numel
+        return None
 
     #
     # Datatype conversion shorthands
