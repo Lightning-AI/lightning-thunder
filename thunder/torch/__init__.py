@@ -2037,13 +2037,13 @@ def index_select(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
     return clang.take(a, index, dim)
 
 
-@torchsymbol(torch.gather)
+@torchsymbol(torch.gather, is_method=True)
 def gather(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
     return clang.gather(a, indices=index, dim=dim)
 
 
 # NOTE PyTorch's scatter_add has a parameter named 'src', not 'source'
-@torchsymbol(torch.scatter_add)
+@torchsymbol(torch.scatter_add, is_method=True)
 def scatter_add(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike) -> TensorLike:
     return clang.scatter_add(a, indices=index, value=src, dim=dim)
 
