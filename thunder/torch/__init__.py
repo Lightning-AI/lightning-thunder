@@ -193,6 +193,7 @@ register_method("numel", numel)
 def is_cuda(a: TensorLike, /) -> bool:
     return a.device.devicetype is devices.DeviceType.CUDA
 
+
 _torch_dtype_to_old_torch_typestring_map = {
     torch.float32: "FloatTensor",
     torch.float64: "DoubleTensor",
