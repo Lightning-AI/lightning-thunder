@@ -63,9 +63,17 @@ def reset_langctx(token: Any, /) -> None:
 
 
 # A helper for acquiring a method
-def resolve_method(id: Any, *args, **kwargs) -> Callable:
-    ctx: LanguageContext = get_langctx()
-    method: Callable = ctx.get_method(id, *args, **kwargs)
+def resolve_method(id: Any, *args, **kwargs) -> None | Callable:
+    try:
+        ctx: None | LanguageContext = get_langctx()
+    except LookupError:
+        return None
+    try:
+        # ctx.get_method throws an AttributeError when the context does not have the requested attribute, except
+        # for the prims language context, which always throws a ValueError
+        method: Callable = ctx.get_method(id, *args, **kwargs)
+    except (AttributeError, ValueError) as e:
+        return None
     return method
 
 
