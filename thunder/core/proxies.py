@@ -1128,11 +1128,6 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
     def type_string(self):
         return f"FUTURE {self.device} {self.dtype.shortname()}{list(self.shape)}"
 
-    @property
-    def size(self, /) -> Any:
-        fn = resolve_method("size", self)
-        return fn(self)
-
     def wait(self) -> TensorProxy:
         from thunder.distributed.prims import wait
 
@@ -1201,11 +1196,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
     @property
     def ddp_type(self):
         return self._ddp_type
-
-    @property
-    def size(self, /) -> Any:
-        fn = resolve_method("size", self)
-        return fn(self)
 
     # We need to implement `__len__` as
     # > In addition to bypassing any instance attributes in the
