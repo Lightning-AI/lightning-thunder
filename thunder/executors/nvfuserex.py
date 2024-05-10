@@ -3,7 +3,7 @@ from looseversion import LooseVersion
 
 from thunder.extend import FusionExecutor
 
-__all__ = ["nvfuser_version", "required_nvfuser_version", "nvfuser_available" "nvfuserex"]
+__all__ = ["nvfuser_version", "required_nvfuser_version", "nvfuser_available", "nvfuserex"]
 
 
 #
