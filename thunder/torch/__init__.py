@@ -1789,24 +1789,30 @@ def _reduction(
 @torchsymbol(torch.all, is_method=True, id="torch.all")
 def all_tensor(
     a: TensorLike, /, dim: None | int | Sequence[int] = None, keepdim: bool = False, *, out: None | TensorLike = None
-) -> TensorLike | None:
+) -> TensorLike:
+    # named as all_tensor to avoid confusion with python's built-in all function
     utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
-    result = logical_not(a)
     result = logical_not(any_tensor(logical_not(a), dim=dim, keepdim=keepdim))
 
+    # Pytorch's torch.all matches the behavior of NumPy in returning output of dtype bool for all supported dtypes except uint8.
+    # For uint8 the dtype of output is uint8 iteself (https://pytorch.org/docs/stable/generated/torch.all.html)
     if a.dtype is dtypes.uint8:
         result = to(result, dtype=dtypes.uint8)
     return result
 
 
 @torchsymbol(torch.any, is_method=True, id="torch.any")
-def any_tensor(a: TensorLike, /, dim: None | int | Sequence[int] = None, keepdim: bool = False):
+def any_tensor(a: TensorLike, /, dim: None | int | Sequence[int] = None, keepdim: bool = False) -> TensorLike:
+    # named as any_tensor to avoid confusion with python's built-in any function
     a_ = clang.maybe_convert_to_dtype(a, dtypes.bool8)
     if isinstance(dim, Sequence) and len(dim) == 0:
         # PyTorch returns a_.clone()
         result = a_ | a_
     else:
         result = ne(sum(a_, dim=dim, keepdim=keepdim), False)
+
+    # Pytorch's torch.any matches the behavior of NumPy in returning output of dtype bool for all supported dtypes except uint8.
+    # For uint8 the dtype of output is uint8 iteself (https://pytorch.org/docs/stable/generated/torch.any.html)
     if a.dtype is dtypes.uint8:
         return prims.convert_element_type(result, dtypes.uint8)
     return result
