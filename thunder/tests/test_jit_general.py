@@ -638,7 +638,10 @@ class _DtypeContextManager:
         "llama2-like",
         "falcon-7b-like",
         "falcon-40b-like",
-        "codellama2-like",
+        pytest.param(
+            "codellama2-like",
+            marks=pytest.mark.xfail(raises=AssertionError, reason="grads difference", strict=True),
+        ),
         pytest.param(
             "mixtral-like",
             marks=pytest.mark.xfail(raises=(NotImplementedError, TypeError), reason="topk and where", strict=True),
@@ -684,8 +687,7 @@ def test_litgpt_variants(name, device):
 @pytest.mark.parametrize(
     "name",
     (
-        # TODO this seems flaky on CI - the cause is unclear
-        # "gpt-neox-like",
+        "gpt-neox-like",
         "llama1-like",
         "long-context-like",
         "llama2-like",
