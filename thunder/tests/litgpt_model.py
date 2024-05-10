@@ -7,7 +7,9 @@ import torch.nn as nn
 configs = [
     # diverse sample of configs FOR TESTING that cover all major checkpoints variants architecturally but with reduced
     # size
-    dict(name="gpt-neox-like", block_size=128, padded_vocab_size=320, n_layer=2, n_embd=64, n_head=4, padding_multiple=8),
+    dict(
+        name="gpt-neox-like", block_size=128, padded_vocab_size=320, n_layer=2, n_embd=64, n_head=4, padding_multiple=8
+    ),
     dict(
         name="llama1-like",
         block_size=128,
