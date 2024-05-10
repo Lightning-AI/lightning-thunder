@@ -4679,27 +4679,9 @@ all_tensor_opinfo = OpInfo(
 reduction_ops.append(all_tensor_opinfo)
 
 
-def any_tensor_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
-
-    # input shape, dim, keepdim
-    dim_cases = (
-        ((4, 4), None, False),
-        ((4, 4), None, True),
-        ((2, 3), 0, True),
-        ((2, 3, 4), (1, 2), False),
-        ((2, 3, 4), (1, 2), True),
-        ((2, 3, 4), (-1, 1), False),
-        ((2, 3, 4), (-1, 1), True),
-    )
-
-    for input_shape, dim, keepdim in dim_cases:
-        yield SampleInput(make(input_shape), dim, keepdim)
-
-
 any_tensor_opinfo = OpInfo(
     ltorch.any_tensor,
-    sample_input_generator=any_tensor_sample_generator,
+    sample_input_generator=all_tensor_sample_generator,
     torch_reference=torch.any,
 )
 
