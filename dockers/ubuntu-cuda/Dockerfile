@@ -20,7 +20,7 @@ ARG IMAGE_TYPE="devel"
 FROM nvidia/cuda:${CUDA_VERSION}-${IMAGE_TYPE}-ubuntu${UBUNTU_VERSION}
 
 ARG CUDNN_VERSION="9.1.0.70"
-ARG CUDNN_FRONTEND_CHECKOUT="1.4.0"
+ARG CUDNN_FRONTEND_VERSION="1.4.0"
 ARG PYTHON_VERSION="3.10"
 ARG TORCH_VERSION="2.2.1"
 ARG TRITON_VERSION="2.2.0"
@@ -161,7 +161,7 @@ RUN \
     fi
 
 RUN \
-    pip install nvidia-cudnn-frontend==${CUDNN_FRONTEND_CHECKOUT}
+    pip install nvidia-cudnn-frontend==${CUDNN_FRONTEND_VERSION}
 
 RUN \
     # Show what we have
