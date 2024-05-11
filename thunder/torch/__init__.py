@@ -443,7 +443,7 @@ def type_as(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
 
 @torchsymbol(torch.arange)
 def arange(
-        start: NumberLike,
+    start: NumberLike,
     end: None | Number = None,
     step: NumberLike = 1,
     *,
@@ -464,7 +464,7 @@ def arange(
 
 @torchsymbol(torch.full)
 def full(
-        shape: Sequence[int], fill_value: NumberLike, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
+    shape: Sequence[int], fill_value: NumberLike, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
 ) -> TensorLike:
     if device is None:
         device = "cpu"
@@ -477,7 +477,7 @@ def full(
 
 @torchsymbol(torch.full_like)
 def full_like(
-        a: TensorLike, /, fill_value: NumberLike, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
+    a: TensorLike, /, fill_value: NumberLike, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
 ) -> TensorLike:
     device = to_device(device)
     dtype = to_dtype(dtype)
@@ -1433,7 +1433,7 @@ def silu(a, /):
 
 @torchsymbol(torch.add, is_method=True)
 def add(
-        a: NumberLike | TensorLike, b: NumberLike | TensorLike, /, *, alpha: None | Number | TensorLike = None
+    a: NumberLike | TensorLike, b: NumberLike | TensorLike, /, *, alpha: None | Number | TensorLike = None
 ) -> Number | TensorLike:
     if alpha is not None:
         b = b * alpha
