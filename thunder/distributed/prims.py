@@ -30,6 +30,10 @@ class PrimIDs(Enum):
     PACK_FOR_FSDP = auto()
     STASH_GRAD_FOR_FSDP = auto()
 
+    # Experimental
+    SYNCHRONIZE_INPUT_FOR_COLUMN_WISE_TENSOR_PARALLEL = auto()
+    SYNCHRONIZE_OUTPUT_FOR_COLUMN_WISE_TENSOR_PARALLEL = auto()
+
 
 # This enum describes what all_reduce (below) will actually do
 #   These operations are performed elementwise on all the "versions" of
@@ -270,6 +274,29 @@ def stash_grad_for_fsdp_meta(
     return TensorProxy(like=grad)
 
 
+# see [Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism](https://arxiv.org/abs/1909.08053)'s Code 1.
+def synchronize_input_for_column_wise_tensor_parallel_meta(
+    t: TensorProxy,
+    group: torch.distributed.ProcessGroup,
+) -> TensorProxy:
+    utils.check_type(t, TensorProxy)
+    utils.check_type(group, torch.distributed.ProcessGroup)
+
+    return TensorProxy(like=t)
+
+
+def synchronize_output_for_column_wise_tensor_parallel_meta(
+    t: TensorProxy,
+    group: torch.distributed.ProcessGroup,
+) -> TensorProxy:
+    utils.check_type(t, TensorProxy)
+    utils.check_type(group, torch.distributed.ProcessGroup)
+
+    gathered_shape = list(t.shape)
+    gathered_shape[-1] *= group.size()
+    return TensorProxy(shape=gathered_shape, like=t)
+
+
 all_gather = make_prim(PrimIDs.ALL_GATHER, "all_gather", meta=all_gather_meta)
 all_reduce = make_prim(PrimIDs.ALL_REDUCE, "all_reduce", meta=all_reduce_meta)
 broadcast = make_prim(PrimIDs.BROADCAST, "broadcast", meta=broadcast_meta)
@@ -285,6 +312,16 @@ stash_grad_for_fsdp = make_prim(
     PrimIDs.STASH_GRAD_FOR_FSDP,
     "stash_grad_for_fsdp",
     meta=stash_grad_for_fsdp_meta,
+)
+synchronize_input_for_column_wise_tensor_parallel = make_prim(
+    PrimIDs.SYNCHRONIZE_INPUT_FOR_COLUMN_WISE_TENSOR_PARALLEL,
+    "synchronize_input_for_column_wise_tensor_parallel",
+    meta=synchronize_input_for_column_wise_tensor_parallel_meta,
+)
+synchronize_output_for_column_wise_tensor_parallel = make_prim(
+    PrimIDs.SYNCHRONIZE_INPUT_FOR_COLUMN_WISE_TENSOR_PARALLEL,
+    "synchronize_output_for_column_wise_tensor_parallel",
+    meta=synchronize_output_for_column_wise_tensor_parallel_meta,
 )
 
 
@@ -330,3 +367,37 @@ def synchronize_backward_rule(
         case _:
             utils.check(False, lambda: f"synchronize with unexpected {ddp_type=}")
     return synced_grad, None
+
+
+@register_augmented_forward(PrimIDs.SYNCHRONIZE_INPUT_FOR_COLUMN_WISE_TENSOR_PARALLEL)
+def synchronize_input_for_column_wise_tensor_parallel_forward_rule(
+    t: TensorProxy,
+    group: torch.distributed.ProcessGroup,
+) -> tuple[TensorProxy, tuple[torch.distributed.ProcessGroup]]:
+    return t, (group,)
+
+
+@register_backward(PrimIDs.SYNCHRONIZE_INPUT_FOR_COLUMN_WISE_TENSOR_PARALLEL)
+def synchronize_input_for_column_wise_tensor_parallel_backward_rule(
+    group: torch.distributed.ProcessGroup,
+    grad: TensorProxy,
+) -> tuple[TensorProxy, tuple[torch.distributed.ProcessGroup]]:
+    return all_reduce(grad, DistributedReduceOps.SUM, group, do_async=True, skip_clone=True).wait(), None
+
+
+@register_augmented_forward(PrimIDs.SYNCHRONIZE_OUTPUT_FOR_COLUMN_WISE_TENSOR_PARALLEL)
+def synchronize_output_for_column_wise_tensor_parallel_forward_rule(
+    t: TensorProxy,
+    group: torch.distributed.ProcessGroup,
+) -> tuple[TensorProxy, tuple[torch.distributed.ProcessGroup]]:
+    # all-gather in the last dim
+    return t, (group,)
+
+
+@register_backward(PrimIDs.SYNCHRONIZE_OUTPUT_FOR_COLUMN_WISE_TENSOR_PARALLEL)
+def synchronize_output_for_column_wise_tensor_parallel_backward_rule(
+    group: torch.distributed.ProcessGroup,
+    grad: TensorProxy,
+) -> tuple[TensorProxy, tuple[torch.distributed.ProcessGroup]]:
+    # reduce-scatter in the last dim
+    return all_reduce(grad, DistributedReduceOps.SUM, group, do_async=True, skip_clone=True).wait(), None
