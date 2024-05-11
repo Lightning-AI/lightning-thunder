@@ -1769,7 +1769,7 @@ def _elementwise_unary_meta_factory(
                 )
                 return numberproxy(output_type, None)
 
-            # need to cast val to python_type in order to properly check output dtype.
+            # need to cast val to python_type in order to properly propagate output dtype.
             value = number_fn(typ(val))
             utils.check(
                 type(value) is output_type,

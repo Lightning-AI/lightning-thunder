@@ -42,6 +42,7 @@ import torch.distributed as tdist
 import warnings
 
 # Type annotation helpers
+NumberLike = Number | NumberProxy
 TensorLike = TensorProxy
 FutureTensorLike = FutureTensorProxy
 DeviceLike = str | devices.Device | torch.device
@@ -289,7 +290,7 @@ register_method("type", type)
 # NOTE This handles a.float()
 #   It avoids using the name "float" to not collide with the builtin
 #   "float"
-def to_float(a: Number | TensorLike) -> Number | TensorLike:
+def to_float(a: NumberLike | TensorLike) -> Number | TensorLike:
     return clang.maybe_convert_to_dtype(a, dtypes.float32)
 
 
@@ -442,9 +443,9 @@ def type_as(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
 
 @torchsymbol(torch.arange)
 def arange(
-    start: Number,
+        start: NumberLike,
     end: None | Number = None,
-    step: Number = 1,
+    step: NumberLike = 1,
     *,
     device: None | DeviceLike = None,
     dtype: None | dtypeLike = None,
@@ -463,7 +464,7 @@ def arange(
 
 @torchsymbol(torch.full)
 def full(
-    shape: Sequence[int], fill_value: Number, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
+        shape: Sequence[int], fill_value: NumberLike, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
 ) -> TensorLike:
     if device is None:
         device = "cpu"
@@ -476,7 +477,7 @@ def full(
 
 @torchsymbol(torch.full_like)
 def full_like(
-    a: TensorLike, /, fill_value: Number, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
+        a: TensorLike, /, fill_value: NumberLike, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
 ) -> TensorLike:
     device = to_device(device)
     dtype = to_dtype(dtype)
@@ -527,8 +528,8 @@ def tensor(
 @torchsymbol(is_method=False, id="torch.uniform")
 def uniform(
     shape: Sequence[int],
-    minval: Number = 0.0,
-    maxval: Number = 1.0,
+    minval: NumberLike = 0.0,
+    maxval: NumberLike = 1.0,
     *,
     device: DeviceLike,
     dtype: dtypeLike,
@@ -543,8 +544,8 @@ def uniform(
 def uniform_like(
     a: TensorLike,
     /,
-    minval: Number = 0.0,
-    maxval: Number = 1.0,
+    minval: NumberLike = 0.0,
+    maxval: NumberLike = 1.0,
     *,
     device: None | DeviceLike = None,
     dtype: None | dtypeLike = None,
@@ -582,8 +583,8 @@ def multinomial(
 @torchsymbol(is_method=False, id="torch.uniform_philox")
 def uniform_philox(
     shape: Sequence[int],
-    minval: Number = 0.0,
-    maxval: Number = 1.0,
+    minval: NumberLike = 0.0,
+    maxval: NumberLike = 1.0,
     *,
     device: DeviceLike,
     dtype: dtypeLike,
@@ -837,7 +838,7 @@ def movedim(a: TensorLike, /, source: int | Sequence[int], destination: int | Se
 
 
 @torchsymbol(torch.nn.functional.pad)
-def pad(a: TensorProxy, /, pad: tuple[int, ...], mode: str | None = "constant", value: Number | None = None):
+def pad(a: TensorProxy, /, pad: tuple[int, ...], mode: str | None = "constant", value: NumberLike | None = None):
     utils.check(mode == "constant", lambda: f"Mode arguments other than constant are not supported")
     utils.check(len(pad) % 2 == 0, lambda: f"Padding length must be divisible by 2")
     utils.check(
@@ -1164,12 +1165,12 @@ def view_as(a: TensorLike, b: TensorLike, /) -> TensorLike:
 
 
 @torchsymbol(torch.abs, is_method=True)
-def abs(a: Number | TensorLike, /) -> Number | TensorLike:
+def abs(a: NumberLike | TensorLike, /) -> Number | TensorLike:
     return clang.abs(a)
 
 
 @torchsymbol(torch.acos, is_method=True)
-def acos(a: Number | TensorLike, /) -> Number | TensorLike:
+def acos(a: NumberLike | TensorLike, /) -> Number | TensorLike:
     return clang.acos(a)
 
 
@@ -1432,7 +1433,7 @@ def silu(a, /):
 
 @torchsymbol(torch.add, is_method=True)
 def add(
-    a: Number | TensorLike, b: Number | TensorLike, /, *, alpha: None | Number | TensorLike = None
+        a: NumberLike | TensorLike, b: NumberLike | TensorLike, /, *, alpha: None | Number | TensorLike = None
 ) -> Number | TensorLike:
     if alpha is not None:
         b = b * alpha
@@ -1584,7 +1585,7 @@ def sub(a, b, /, *, alpha=None):
 
 
 @torchsymbol(torch.true_divide, is_method=True)
-def true_divide(a: Number | TensorLike, b: Number | TensorLike, /) -> Number | TensorLike:
+def true_divide(a: NumberLike | TensorLike, b: NumberLike | TensorLike, /) -> Number | TensorLike:
     return clang.true_divide(a, b)
 
 
@@ -1685,7 +1686,7 @@ def _mask_tensor(a, mask, fill_value):
 #   value can be safely cast to a (for numbers, it checks that the actual number value can safely be cast)
 # NOTE We have chosen not to emulate PyTorch's odd type promotion behavior for this operation
 @torchsymbol(torch.masked_fill, is_method=True)
-def masked_fill(a: TensorLike, /, mask: TensorLike, value: Number | TensorLike) -> TensorLike:
+def masked_fill(a: TensorLike, /, mask: TensorLike, value: NumberLike | TensorLike) -> TensorLike:
     result = where(mask, value, a)
     return result
 
@@ -2032,7 +2033,7 @@ def var(
     dim=None,
     *,
     keepdim: bool = False,
-    correction: Number = 1,
+    correction: NumberLike = 1,
 ) -> TensorProxy:
     result = _reduction(
         a,
@@ -2053,7 +2054,7 @@ def var_mean(
     dim=None,
     *,
     keepdim: bool = False,
-    correction: Number = 1,
+    correction: NumberLike = 1,
 ) -> tuple[TensorProxy, TensorProxy]:
     result = _reduction(
         a,
@@ -2752,7 +2753,7 @@ def layer_norm(
     normalized_shape: Sequence[int],
     weight: None | TensorLike = None,
     bias: None | TensorLike = None,
-    eps: Number = 1e-5,
+    eps: NumberLike = 1e-5,
 ) -> TensorLike:
     # Note [LayerNorm with parameter sharding]
     # Sharding messes up the normalized_shape argument, so we need to get the
@@ -2834,8 +2835,8 @@ def batch_norm(
     weight: None | TensorLike = None,
     bias: None | TensorLike = None,
     training: bool = False,
-    momentum: Number = 0.1,
-    eps: Number = 1e-5,
+    momentum: NumberLike = 0.1,
+    eps: NumberLike = 1e-5,
 ) -> TensorLike:
     # Validates inputs
     input_shape = tuple(a.shape)
@@ -3160,7 +3161,7 @@ def _avg_pool_helper(
     padding: int | Sequence[int] = 0,
     ceil_mode: bool = False,
     count_include_pad: bool = True,
-    divisor_override: Number | None = None,
+    divisor_override: NumberLike | None = None,
 ) -> TensorProxy:
     utils.check(
         not ceil_mode,
@@ -3227,7 +3228,7 @@ def avg_pool1d(
     padding: int | Sequence[int] = 0,
     ceil_mode: bool = False,
     count_include_pad: bool = True,
-    divisor_override: Number | None = None,
+    divisor_override: NumberLike | None = None,
 ) -> TensorProxy:
     return _avg_pool_helper(1, a, kernel_size, stride, padding, ceil_mode, count_include_pad, divisor_override)
 
@@ -3241,7 +3242,7 @@ def avg_pool2d(
     padding: int | Sequence[int] = 0,
     ceil_mode: bool = False,
     count_include_pad: bool = True,
-    divisor_override: Number | None = None,
+    divisor_override: NumberLike | None = None,
 ) -> TensorProxy:
     return _avg_pool_helper(2, a, kernel_size, stride, padding, ceil_mode, count_include_pad, divisor_override)
 
@@ -3255,7 +3256,7 @@ def avg_pool3d(
     padding: int | Sequence[int] = 0,
     ceil_mode: bool = False,
     count_include_pad: bool = True,
-    divisor_override: Number | None = None,
+    divisor_override: NumberLike | None = None,
 ) -> TensorProxy:
     return _avg_pool_helper(3, a, kernel_size, stride, padding, ceil_mode, count_include_pad, divisor_override)
 
@@ -3642,7 +3643,7 @@ register_grad(cross_entropy, _cross_entropy_grad)
 # NOTE The id must be explicitly specified so as not to resolve to torch.dropout
 #   (Using torch.nn.functional.dropout is just for readability as it's the documented operator)
 @torchsymbol(torch.nn.functional.dropout, id="torch.nn.functional.dropout")
-def dropout(a: TensorProxy, /, p: Number = 0.5, training: bool = True, inplace: bool = False) -> TensorProxy:
+def dropout(a: TensorProxy, /, p: NumberLike = 0.5, training: bool = True, inplace: bool = False) -> TensorProxy:
     if inplace:
         raise NotImplementedError("Only inplace=False is currently supported in dropout")
 

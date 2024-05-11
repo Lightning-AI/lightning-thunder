@@ -1525,8 +1525,6 @@ def thunder_general_jit(
             prims.python_return(result)
             process_recorded_modifications(ctx, epilogue_trace)
             last_interpreter_log = jfn._last_interpreter_log
-    print("--- compute trace: ")
-    print(computation_trace)
 
     pro_to_comp, computation_intermediates = get_computation_inputs_and_intermediates(computation_trace)
 

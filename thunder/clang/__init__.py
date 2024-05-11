@@ -189,13 +189,11 @@ def arange(*, start: Number, step: Number, stop: Number, device: DeviceLike, dty
     utils.check(not isinstance(step, complex), lambda: f"step={step} was complex")
     utils.check(not isinstance(stop, complex), lambda: f"stop={stop} was complex")
 
-    # Do we make static checks when inputs are dynamic?
-    if all(isinstance(arg, Number) for arg in [start, stop, step]):
-        # Checks that step makes progress
-        utils.check(
-            (start == stop) or (step < 0 and stop < start) or (step > 0 and stop > start),
-            lambda: f"step={step} must make progress from start={start} to stop={stop}",
-        )
+    # Checks that step makes progress
+    utils.check(
+        (start == stop) or (step < 0 and stop < start) or (step > 0 and stop > start),
+        lambda: f"step={step} must make progress from start={start} to stop={stop}",
+    )
 
     # Canonicalizes device
     if isinstance(device, str):
