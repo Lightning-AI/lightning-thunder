@@ -785,7 +785,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
     def __eq__(self, other):
         # NOTE This short-circuit allows queries like a == (), which is a valid comparison
         #   for a number in Python
-        if not isinstance(other, Number):
+        if not isinstance(other, (Number, NumberProxy)):
             return False
 
         from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
@@ -825,7 +825,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
     def __ne__(self, other):
         # NOTE This short-circuit allows queries like a != (), which is a valid comparison
         #   for a number in Python
-        if not isinstance(other, Number):
+        if not isinstance(other, (Number, NumberProxy)):
             return True
 
         from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
