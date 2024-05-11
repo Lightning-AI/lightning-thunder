@@ -1938,7 +1938,6 @@ def sum(
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:
-    print("execute red dims: ", dims)
     nva = getnv(a, fd, lc_to_nv_map)
     nvdims = dims
 

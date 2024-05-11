@@ -982,12 +982,6 @@ def pytype(x: Proxy) -> type | None:
 
 # TODO RC1 Update Proxy number inits to be value, /, *, name, history
 class ComplexProxy(NumberProxy):
-    # def __new__(cls, *, name=None, value, history: None | tuple = None):
-    #    if value is None:
-    #        value = complex(float("nan"), float("nan"))
-
-    #    return complex.__new__(cls, value)
-
     def __init__(self, name=None, value=None, history: None | tuple = None):
         NumberProxy.__init__(self, name=name, value=value, python_type=complex, history=history)
 
@@ -1003,12 +997,6 @@ class ComplexProxy(NumberProxy):
 # TODO Review dtype conversions
 # TODO Review -9999 as the marker value for unknown values
 class IntegerProxy(NumberProxy):
-    # def __new__(cls, *, name: str | None = None, value: Number, history: None | tuple = None):
-    #    if value is None:
-    #        value = -9999
-
-    #    return int.__new__(cls, value)
-
     def __init__(self, name: str | None = None, value=None, history: None | tuple = None):
         # NOTE bools are also integers in Python
         python_type = bool if isinstance(value, bool) else int
@@ -1034,12 +1022,6 @@ class IntegerProxy(NumberProxy):
 
 # TODO Review dtype conversions
 class FloatProxy(NumberProxy):
-    # def __new__(cls, *, name=None, value, history: None | tuple = None):
-    #    if value is None:
-    #        value = float("nan")
-
-    #    return float.__new__(cls, value)
-
     def __init__(self, name=None, value=None, history: None | tuple = None):
         NumberProxy.__init__(self, name=name, value=value, python_type=float, history=history)
 

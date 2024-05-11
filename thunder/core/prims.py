@@ -2461,19 +2461,19 @@ zeta = _make_elementwise_binary_prim(
 def _where_meta(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number | TensorProxy, /) -> TensorProxy:
     # Checks types
     # NOTE pred must be a bool tensor or bool (this is checked later)
-    utils.check_type(pred, (TensorProxy, NumberProxy, (Number, NumberProxy)))
-    utils.check_type(a, (TensorProxy, NumberProxy, (Number, NumberProxy)))
-    utils.check_type(b, (TensorProxy, NumberProxy, (Number, NumberProxy)))
+    utils.check_type(pred, (TensorProxy, Number, NumberProxy))
+    utils.check_type(a, (TensorProxy, Number, NumberProxy))
+    utils.check_type(b, (TensorProxy, Number, NumberProxy))
 
     if (
-        isinstance(pred, (NumberProxy, (Number, NumberProxy)))
-        and isinstance(a, (NumberProxy, (Number, NumberProxy)))
-        and isinstance(b, (NumberProxy, (Number, NumberProxy)))
+        isinstance(pred, (Number, NumberProxy))
+        and isinstance(a, (Number, NumberProxy))
+        and isinstance(b, (Number, NumberProxy))
     ):
         raise NotImplementedError
 
     # Checks pred dtype (bool or bool tensor)
-    if isinstance(pred, (NumberProxy, (Number, NumberProxy))):
+    if isinstance(pred, (Number, NumberProxy)):
         utils.check(
             pytype(pred) is bool,
             lambda: f"Expected pred to be a boolean number, but found a number of type {pytype(pred)}",
