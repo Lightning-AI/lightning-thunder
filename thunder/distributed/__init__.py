@@ -555,6 +555,7 @@ def _shard_params(
     device: torch.device | None,
     broadcast_from: int | None,
     allow_padding_for_fsdp: bool = False,
+    dim: int | None = None,
 ) -> None:
     """Shards the parameters on the first dimension."""
     global_rank = tdist.get_rank(group=process_group)
@@ -585,7 +586,7 @@ def _shard_params(
         # Note [FSDP Sharding]
         # All internal code will assume that the parameters are sharded on the first dimension
         for param_name, param in submodule.named_parameters(recurse=False, prefix=module_name):
-            _shard_param(param, global_rank, world_size, param_name, allow_padding_for_fsdp=allow_padding_for_fsdp)
+            _shard_param(param, global_rank, world_size, param_name, dim=dim, allow_padding_for_fsdp=allow_padding_for_fsdp)
 
 
 def _shard_param(
@@ -593,22 +594,29 @@ def _shard_param(
     rank: int,
     world_size: int,
     name: str,
+    *,
+    dim: int | None,
     allow_padding_for_fsdp: bool = False,
 ) -> None:
 
-    if not allow_padding_for_fsdp or (param.size(0) % world_size == 0):
+    dim_to_shard: int = 0 if dim is None else dim
+
+    if allow_padding_for_fsdp:
+        utils.check(dim_to_shard == 0, lambda: f"{dim=} expected to be `None` for FSDP")
+
+    if not allow_padding_for_fsdp or (param.size(dim_to_shard) % world_size == 0):
         if not allow_padding_for_fsdp:
             utils.check(
-                param.shape[0] % world_size == 0,
+                param.size(dim_to_shard) % world_size == 0,
                 lambda: (
-                    f"Current sharding requires the first dimension of the parameter {name!r} ({param.shape[0]})"
+                    f"Current sharding requires the first dimension of the parameter {name!r} ({param.shape[dim_to_shard]})"
                     f" to be divisible by the world size ({world_size})"
                 ),
             )
-        chunk_size = param.shape[0] // world_size
+        chunk_size = param.size(dim_to_shard) // world_size
         # NOTE This could be a ShardTensor to indicate other parts of the code
         # that it's sharded and should be treated differently
-        shard = param.data.narrow(0, chunk_size * rank, chunk_size).clone()
+        shard = param.data.narrow(dim_to_shard, chunk_size * rank, chunk_size).clone()
         param.data = shard
     else:
         padded_param_shape = list(param.shape)
@@ -623,7 +631,12 @@ def _shard_param(
 
 
 @torch.no_grad()
-def _unshard_params(module: torch.nn.Module, process_group: ProcessGroup, cpu_offload: bool = False) -> None:
+def _unshard_params(
+    module: torch.nn.Module,
+    process_group: ProcessGroup,
+    cpu_offload: bool = False,
+    dim: int | None = None,
+) -> None:
     """Unshard a module's parameters.
 
     This supports CPU offloading of parameters.
@@ -632,7 +645,7 @@ def _unshard_params(module: torch.nn.Module, process_group: ProcessGroup, cpu_of
 
     cpu = torch.device("cpu")
     for param in module.parameters():
-        out = _all_gather_prim_impl(param.data, group=process_group, do_async=0)
+        out = _all_gather_prim_impl(param.data, group=process_group, do_async=0, dim=dim)
         if cpu_offload:
             out = out.to(device=cpu)
         param.data = out
