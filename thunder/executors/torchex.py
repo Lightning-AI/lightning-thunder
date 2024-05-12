@@ -546,7 +546,7 @@ def _squeeze_transform(a: TensorLike, /, dim: None | int | Sequence[int] = None)
 
 
 def _empty_transform(
-    shape: tuple[int, ...],
+    shape: Sequence[int],
     device: None | DeviceLike = None,
     dtype: None | dtypeLike = None,
     out: None | TensorLike = None,

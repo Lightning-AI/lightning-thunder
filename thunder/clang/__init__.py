@@ -284,7 +284,7 @@ def full_like(
 def empty(shape: Sequence[int], *, device: DeviceLike, dtype: dtypes.dtype) -> TensorLike:
     device = devices.to_device(device)
 
-    return prims.empty(shape, device=device, dtype=dtype)
+    return prims.empty(tuple(shape), device=device, dtype=dtype)
 
 
 @clangop()
