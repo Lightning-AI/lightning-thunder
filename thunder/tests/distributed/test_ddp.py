@@ -287,8 +287,8 @@ class CompileDDPTest(DataParallelTestCase):
 
             self.assertEqual(actual, expected)
 
-    @common_utils.parametrize("executor", tuple(executors_map.keys()))
-    def test_all_gather(self, executor):
+    @common_utils.parametrize("executor,dim", product(tuple(executors_map.keys()), (None, 0, 1)))
+    def test_all_gather(self, executor, dim: int | None):
         _executor = executors_map[executor]
 
         # NOTE torch.distributed.all_gather is an inplace operation
@@ -297,9 +297,16 @@ class CompileDDPTest(DataParallelTestCase):
             b,
             process_group: torch.distributed.ProcessGroup,
             async_op: bool,
+            dim: int | None,
         ):
             c = a + b
-            d = torch.empty((c.shape[0] * process_group.size(), *c.shape[1:]), device=c.device, dtype=c.dtype)
+
+            result_shape = list(c.shape)
+            if dim is not None:
+                result_shape[dim] *= process_group.size()
+            else:
+                result_shape[0] *= process_group.size()
+            d = torch.empty(result_shape, device=c.device, dtype=c.dtype)
             handle = torch.distributed.all_gather_into_tensor(d, c, group=process_group, async_op=async_op)
 
             if async_op:
@@ -314,10 +321,11 @@ class CompileDDPTest(DataParallelTestCase):
             b,
             process_group: torch.distributed.ProcessGroup,
             async_op: bool,
+            dim: int | None,
         ):
             c = a + b
 
-            d = ltorch.all_gather(c, group=process_group, async_op=async_op)
+            d = ltorch.all_gather(c, group=process_group, async_op=async_op, dim=dim)
 
             if async_op:
                 d = prims.wait(d)
@@ -334,8 +342,8 @@ class CompileDDPTest(DataParallelTestCase):
         cfoo = thunder.jit(lc_foo, executors=_executor.executors_list())
 
         for async_op in (True, False):
-            expected = foo(a, b, process_group, async_op)
-            actual = cfoo(a, b, process_group, async_op)
+            expected = foo(a, b, process_group, async_op, dim)
+            actual = cfoo(a, b, process_group, async_op, dim)
 
             self.assertEqual(actual, expected)
 
@@ -397,8 +405,8 @@ class CompileDDPTest(DataParallelTestCase):
 
             self.assertEqual(actual, expected)
 
-    @common_utils.parametrize("executor", tuple(executors_map.keys()))
-    def test_reduce_scatter(self, executor):
+    @common_utils.parametrize("executor,dim", product(tuple(executors_map.keys()), (None, 0, 1)))
+    def test_reduce_scatter(self, executor, dim):
         _executor = executors_map[executor]
 
         # NOTE torch.distributed.all_gather is an inplace operation
@@ -408,9 +416,15 @@ class CompileDDPTest(DataParallelTestCase):
             op,
             process_group: torch.distributed.ProcessGroup,
             async_op: bool,
+            dim: int | None,
         ):
             c = a + b
-            d = torch.empty((c.shape[0] // process_group.size(), *c.shape[1:]), device=c.device, dtype=c.dtype)
+            result_shape = list(a.shape)
+            if dim is None:
+                result_shape[0] //= process_group.size()
+            else:
+                result_shape[dim] //= process_group.size()
+            d = torch.empty(result_shape, device=c.device, dtype=c.dtype)
             if op is not None:
                 handle = torch.distributed.reduce_scatter_tensor(d, c, op, group=process_group, async_op=async_op)
             else:
@@ -429,10 +443,11 @@ class CompileDDPTest(DataParallelTestCase):
             op,
             process_group: torch.distributed.ProcessGroup,
             async_op: bool,
+            dim: int | None,
         ):
             c = a + b
 
-            d = ltorch.reduce_scatter(c, op, group=process_group, async_op=async_op)
+            d = ltorch.reduce_scatter(c, op, group=process_group, async_op=async_op, dim=dim)
 
             if async_op:
                 d = prims.wait(d)
@@ -449,8 +464,8 @@ class CompileDDPTest(DataParallelTestCase):
         cfoo = thunder.jit(lc_foo, executors=_executor.executors_list())
 
         for op, async_op in product((None, torch.distributed.ReduceOp.SUM), (False, True)):
-            expected = foo(a, b, op, process_group, async_op)
-            actual = cfoo(a, b, op, process_group, async_op)
+            expected = foo(a, b, op, process_group, async_op, dim=dim)
+            actual = cfoo(a, b, op, process_group, async_op, dim=dim)
 
             self.assertEqual(actual, expected)
 

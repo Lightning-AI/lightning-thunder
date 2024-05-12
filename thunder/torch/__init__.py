@@ -4471,10 +4471,11 @@ if torch.distributed.is_available():
         a: TensorLike,
         group: torch.distributed.ProcessGroup | None = None,
         async_op: bool = False,
+        dim: int | None = None,
     ) -> TensorLike | FutureTensorLike:
         group = group if group is not None else torch.distributed.new_group()
 
-        return dist_prims.all_gather(a, group, async_op)
+        return dist_prims.all_gather(a, group, async_op, dim=dim)
 
     # NOTE torch.distributed.all_reduce is an inplace operation (although the underlying NCCL
     #   call does not need to be inplace). This, however, is modeled as an out-of-place functional
@@ -4522,11 +4523,12 @@ if torch.distributed.is_available():
         op: DistributedReduceOpLike | None = None,
         group: torch.distributed.ProcessGroup | None = None,
         async_op: bool = False,
+        dim: int | None = None,
     ) -> TensorLike | FutureTensorLike:
         op = to_thunder_distributed_reduce_op(op)
         group = group if group is not None else torch.distributed.new_group()
 
-        return dist_prims.reduce_scatter(a, op, group, async_op)
+        return dist_prims.reduce_scatter(a, op, group, async_op, dim=dim)
 
 else:
 

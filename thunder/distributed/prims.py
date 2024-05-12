@@ -62,15 +62,20 @@ def all_gather_meta(
     /,
     group: torch.distributed.ProcessGroup,
     do_async: Number,
+    dim: int | None = None,
 ) -> TensorProxy:
     check_if_distributed_available()
     utils.check_type(a, TensorProxy)
     utils.check_type(group, torch.distributed.ProcessGroup)
     utils.check(pytype(do_async) is bool, lambda: f"Expected {do_async=} to be a boolean value")
 
-    # PyTorch's all_gather_into_tensor supports also other modes of gathering
-    # but we only do concatenation on the first dimension for now
-    result_shape = a.shape[0] * group.size(), *a.shape[1:]
+    if dim is not None:
+        utils.check_type(dim, int)
+        utils.check(dim >= 0 and dim < a.ndim, lambda: f"dim must satisfy 0 <= {dim=} < {a.ndim=}")
+        result_shape = list(a.shape)
+        result_shape[dim] *= group.size()
+    else:
+        result_shape = a.shape[0] * group.size(), *a.shape[1:]
 
     if do_async:
         return FutureTensorProxy(shape=result_shape, like=a)
@@ -124,6 +129,7 @@ def reduce_scatter(
     op: DistributedReduceOps,
     group: torch.distributed.ProcessGroup,
     do_async: Number,
+    dim: int | None = None,
 ) -> TensorProxy:
     check_if_distributed_available()
     utils.check_type(a, TensorProxy)
@@ -131,11 +137,19 @@ def reduce_scatter(
     utils.check_type(group, torch.distributed.ProcessGroup)
     utils.check(pytype(do_async) is bool, lambda: f"Expected {do_async=} to be a boolean value")
 
-    utils.check(a.shape[0] % group.size() == 0, lambda: f"Expected {a.shape[0]=} to be divisible by {group.size()=}")
-
-    # PyTorch's reduce_scatter_tensor supports also other modes of scattering
-    # but we only do splitting on the first dimension for now
-    result_shape = a.shape[0] // group.size(), *a.shape[1:]
+    result_shape = list(a.shape)
+    if dim is not None:
+        utils.check_type(dim, int)
+        utils.check(dim >= 0 and dim < a.ndim, lambda: f"dim must satisfy 0 <= {dim=} < {a.ndim=}")
+        utils.check(
+            a.shape[dim] % group.size() == 0, lambda: f"Expected {a.shape[dim]=} to be divisible by {group.size()=}"
+        )
+        result_shape[dim] //= group.size()
+    else:
+        result_shape[0] //= group.size()
+        utils.check(
+            a.shape[0] % group.size() == 0, lambda: f"Expected {a.shape[0]=} to be divisible by {group.size()=}"
+        )
 
     if do_async:
         return FutureTensorProxy(shape=result_shape, like=a)
