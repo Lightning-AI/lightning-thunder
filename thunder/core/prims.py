@@ -65,6 +65,7 @@ from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
 from thunder.core.proxies import (
     CollectionProxy,
     TensorProxy,
+    IntegerProxy,
     NumberProxy,
     is_proxyable,
     proxy,
@@ -121,6 +122,8 @@ class PrimIDs(Enum):
     UNPACK_DICT_KEY = auto()
     UNPACK_PARAMETER = auto()
     UNPACK_BUFFER = auto()
+    UNPACK_SUBMODULE = auto()
+    UNPACK_THUNDER_MODULE = auto()
     CONSTRUCT_TUPLE = auto()
     PACK_SETITEM = auto()
     # TODO: UNPACK_SET
@@ -236,6 +239,7 @@ class PrimIDs(Enum):
     ARGMIN = auto()
     TOPK = auto()
     # Scatter and gather prims (Experimental!)
+    GATHER = auto()
     INDEX_ADD = auto()
     INDEX_PUT = auto()
     SCATTER_ADD = auto()
@@ -568,7 +572,7 @@ check_instance = make_prim(
 def _check_number_type_and_value_meta(n: NumberProxy, value: Number, /) -> None:
     # Validates types
     baseutils.check_type(n, NumberProxy)
-    baseutils.check_type(value, Number)
+    baseutils.check_type(value, (Number, NumberProxy))
     baseutils.check(pytype(n) == pytype(value), lambda: f"Different types for {n} and {value}")
 
 
@@ -688,6 +692,43 @@ unpack_function_obj = make_prim(
 )
 
 
+def unpack_thunder_module_impl(x: Any, /) -> Any:
+    return x
+
+
+def unpack_thunder_module_meta(x: Any, /) -> Any:
+    return x
+
+
+def unpack_thunder_module_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+) -> str:
+    utils.check(
+        len(arg_printables) == 1,
+        lambda: f"Expected one argument for unpack_thunder_module but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for unpack_thunder_module but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    result_str = "_" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)}"
+    arg_str = codeutils.prettyprint(arg_printables[0])
+    s = f"{result_str} = thunder.core.module.get_thunder_module({arg_str})"
+    return s
+
+
+unpack_thunder_module = make_prim(
+    PrimIDs.UNPACK_THUNDER_MODULE,
+    "unpack_thunder_module",
+    meta=unpack_thunder_module_meta,
+    python_printer=unpack_thunder_module_printer,
+    python_impl=unpack_thunder_module_impl,
+)
+
+
 def unpack_cache_info_impl(x: Any, /, *, name: str | None = None) -> Any:
     return x
 
@@ -731,7 +772,7 @@ def unpack_sequence_meta(x: Sequence | CollectionProxy, l: int, /) -> list:
         x = x.collection()
 
     utils.check_type(x, Sequence)
-    utils.check_type(l, int)
+    utils.check_type(l, (int, IntegerProxy))
     baseutils.check(len(x) == l, lambda x=x, l=l: f"Expected the length of {x=} to be {l=}")
 
     return list(_collectify(y) for y in x)
@@ -951,7 +992,7 @@ unpack_attr = make_prim(
 
 
 # NOTE UNPACK_PARAMETER is intended only to be bound to directly, and not called
-def unpack_parameter_meta(o: Any, key: str) -> Any:
+def unpack_parameter_meta(o: Any, key: str, /) -> Any:
     raise NotImplementedError
 
 
@@ -960,12 +1001,12 @@ def unpack_parameter_printer(
 ):
     utils.check(
         len(arg_printables) == 2,
-        lambda: f"Expected two arguments for unpack_attr but got {arg_printables}",
+        lambda: f"Expected two arguments for unpack_parameter but got {arg_printables}",
         exception_type=AssertionError,
     )
     utils.check(
         len(kwarg_printables) == 0,
-        lambda: f"Expected no kwargs for unpack_attr but got {kwarg_printables}",
+        lambda: f"Expected no kwargs for unpack_parameter but got {kwarg_printables}",
         exception_type=AssertionError,
     )
 
@@ -978,7 +1019,7 @@ def unpack_parameter_printer(
     return f"{outstr} = {origin_str}.get_parameter({keystr})"
 
 
-def unpack_parameter_impl(o: Any, key: str) -> Any:
+def unpack_parameter_impl(o: Any, key: str, /) -> Any:
     return o.get_parameter(key)
 
 
@@ -991,8 +1032,49 @@ unpack_parameter = make_prim(
 )
 
 
+# NOTE UNPACK_SUBMODULE is intended only to be bound to directly, and not called
+def unpack_submodule_meta(o: Any, key: str, /) -> Any:
+    raise NotImplementedError
+
+
+def unpack_submodule_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(arg_printables) == 2,
+        lambda: f"Expected two arguments for unpack_submodule but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for unpack_submodule but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    # Converts printables to strings
+    origin, key = arg_printables
+    origin_str = codeutils.prettyprint(origin)
+    keystr = codeutils.prettyprint(key)
+    outstr = codeutils.prettyprint(out_printables, with_type=True, literals_as_underscores=True)
+
+    return f"{outstr} = {origin_str}.get_submodule({keystr})"
+
+
+def unpack_submodule_impl(o: Any, key: str, /) -> Any:
+    return o.get_submodule(key)
+
+
+unpack_submodule = make_prim(
+    PrimIDs.UNPACK_SUBMODULE,
+    "unpack_submodule",
+    meta=unpack_submodule_meta,
+    python_printer=unpack_submodule_printer,
+    python_impl=unpack_submodule_impl,
+)
+
+
 # NOTE UNPACK_BUFFER is intended only to be bound to directly, and not called
-def unpack_buffer_meta(o: Any, key: str) -> Any:
+def unpack_buffer_meta(o: Any, key: str, /) -> Any:
     raise NotImplementedError
 
 
@@ -1001,12 +1083,12 @@ def unpack_buffer_printer(
 ):
     utils.check(
         len(arg_printables) == 2,
-        lambda: f"Expected two arguments for unpack_attr but got {arg_printables}",
+        lambda: f"Expected two arguments for unpack_buffer but got {arg_printables}",
         exception_type=AssertionError,
     )
     utils.check(
         len(kwarg_printables) == 0,
-        lambda: f"Expected no kwargs for unpack_attr but got {kwarg_printables}",
+        lambda: f"Expected no kwargs for unpack_buffer but got {kwarg_printables}",
         exception_type=AssertionError,
     )
 
@@ -1019,7 +1101,7 @@ def unpack_buffer_printer(
     return f"{outstr} = {origin_str}.get_buffer({keystr})"
 
 
-def unpack_buffer_impl(o: Any, key: str) -> Any:
+def unpack_buffer_impl(o: Any, key: str, /) -> Any:
     return o.get_buffer(key)
 
 
@@ -1515,7 +1597,7 @@ python_return = make_prim(
 
 # TODO Review number grad handling with dynamic constraints
 def _get_grad_meta(a: Number | TensorProxy, /) -> Number | TensorProxy:
-    utils.check_type(a, (Number, TensorProxy))
+    utils.check_type(a, (Number, NumberProxy, TensorProxy))
 
     if isinstance(a, TensorProxy):
         return TensorProxy(like=a)
@@ -1545,8 +1627,8 @@ def _put_grad_meta(grad_for: Number | TensorProxy, grad: Number | TensorProxy) -
         utils.check_same_device(grad_for, grad)
         utils.check_same_dtype(grad_for, grad)
     else:
-        # NOTE isinstance(grad, Number) == True in this branch
-        utils.check_type(grad_for, Number)
+        # NOTE isinstance(grad, (Number, NumberProxy)) == True in this branch
+        utils.check_type(grad_for, (Number, NumberProxy))
         # TODO Add number grad support
 
     return None
@@ -1567,12 +1649,12 @@ put_grad = make_prim(
 
 # TODO Require the datatype of the conversion be constant
 def _convert_element_type_meta(a: Number | TensorProxy, /, dtype: type | dtypes.dtype) -> Number | TensorProxy:
-    utils.check_type(a, (Number, TensorProxy))
+    utils.check_type(a, (Number, NumberProxy, TensorProxy))
     utils.check_type(dtype, (type, dtypes.dtype))
 
     # NOTE Python numbers are constants, and this will return another Python number when given one because
     #   The conversion is constant
-    if isinstance(a, Number):
+    if isinstance(a, (Number, NumberProxy)):
         utils.check(utils.is_numbertype(dtype), lambda: f"Trying to convert a number to non-numbertype object {dtype}")
 
         if isinstance(a, NumberProxy):
@@ -1654,9 +1736,9 @@ def _elementwise_unary_meta_factory(
 ):
     def meta(a: Number | TensorProxy, /) -> Number | TensorProxy:
         # Checks that inputs have an expected type
-        utils.check_type(a, (TensorProxy, Number))
+        utils.check_type(a, (TensorProxy, Number, NumberProxy))
 
-        if isinstance(a, Number):
+        if isinstance(a, (Number, NumberProxy)):
             # Checks that the numbertype is supported
             typ = utils.get_numberlike_type(a)
             val = utils.get_numberlike_value(a)
@@ -1687,7 +1769,8 @@ def _elementwise_unary_meta_factory(
                 )
                 return numberproxy(output_type, None)
 
-            value = number_fn(val)
+            # need to cast val to python_type in order to properly propagate output dtype.
+            value = number_fn(typ(val))
             utils.check(
                 type(value) is output_type,
                 lambda: f"Unexpected number output type {type(value)}, expected {output_type}, for input type {typ} (value={val})",
@@ -2072,8 +2155,8 @@ def _elementwise_binary_meta_factory(
         /,
     ) -> Number | TensorProxy:
         # Checks that inputs have an expected type
-        utils.check_type(a, (TensorProxy, Number))
-        utils.check_type(b, (TensorProxy, Number))
+        utils.check_type(a, (TensorProxy, Number, NumberProxy))
+        utils.check_type(b, (TensorProxy, Number, NumberProxy))
 
         # Checks same dtype
         numbertype, dtype = utils.check_same_dtype(a, b)
@@ -2085,7 +2168,7 @@ def _elementwise_binary_meta_factory(
         utils.check(dtype is None or dtype in supported_input_dtypes, lambda: f"Unsupported input dtype {dtype}")
 
         # Special-cases number x number inputs
-        if isinstance(a, Number) and isinstance(b, Number):
+        if isinstance(a, (Number, NumberProxy)) and isinstance(b, (Number, NumberProxy)):
             aval, bval = utils.get_numberlike_value(a), utils.get_numberlike_value(b)
 
             # Handles the case where a number has an indeterminate value, or the operation has
@@ -2378,15 +2461,19 @@ zeta = _make_elementwise_binary_prim(
 def _where_meta(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number | TensorProxy, /) -> TensorProxy:
     # Checks types
     # NOTE pred must be a bool tensor or bool (this is checked later)
-    utils.check_type(pred, (TensorProxy, Number))
-    utils.check_type(a, (TensorProxy, Number))
-    utils.check_type(b, (TensorProxy, Number))
+    utils.check_type(pred, (TensorProxy, Number, NumberProxy))
+    utils.check_type(a, (TensorProxy, Number, NumberProxy))
+    utils.check_type(b, (TensorProxy, Number, NumberProxy))
 
-    if isinstance(pred, Number) and isinstance(a, Number) and isinstance(b, Number):
+    if (
+        isinstance(pred, (Number, NumberProxy))
+        and isinstance(a, (Number, NumberProxy))
+        and isinstance(b, (Number, NumberProxy))
+    ):
         raise NotImplementedError
 
     # Checks pred dtype (bool or bool tensor)
-    if isinstance(pred, Number):
+    if isinstance(pred, (Number, NumberProxy)):
         utils.check(
             pytype(pred) is bool,
             lambda: f"Expected pred to be a boolean number, but found a number of type {pytype(pred)}",
@@ -2470,7 +2557,7 @@ exogenous_like = make_prim(
 #   in the future
 def _full_meta(shape: Sequence[int], fill_value: Number, *, device: devices.Device, dtype: dtypes.dtype) -> TensorProxy:
     # Checks inputs
-    utils.check_type(fill_value, Number)
+    utils.check_type(fill_value, (Number, NumberProxy))
 
     # Ensures the requested fill_value can be safely cast to the dtype
     fill_value_dtype = dtypes.to_dtype(fill_value)
@@ -2494,9 +2581,9 @@ def _iota_meta(
 ) -> TensorProxy:
     # Checks types
     # NOTE that device and dtype types will be checked by TensorProxy, below
-    utils.check_type(length, Number)
-    utils.check_type(start, Number)
-    utils.check_type(step, Number)
+    utils.check_type(length, (Number, NumberProxy))
+    utils.check_type(start, (Number, NumberProxy))
+    utils.check_type(step, (Number, NumberProxy))
 
     # Checks input properties
     utils.check(utils.is_exact_dtype(dtype), lambda: f"dtype={dtype} was not an exact dtype")
@@ -2520,8 +2607,8 @@ def _uniform_meta(
     shape: Sequence[int], minval: Number, maxval: Number, *, device: devices.Device, dtype: dtypes.dtype
 ) -> TensorProxy:
     # Checks inputs
-    utils.check_type(minval, Number)
-    utils.check_type(maxval, Number)
+    utils.check_type(minval, (Number, NumberProxy))
+    utils.check_type(maxval, (Number, NumberProxy))
     utils.check_type(device, devices.Device)
     utils.check_type(dtype, dtypes.dtype)
 
@@ -2554,11 +2641,11 @@ def _uniform_philox_meta(
     utils.check_type(seed, (int, TensorProxy))
     utils.check_type(offset, (int, TensorProxy))
     utils.check(
-        isinstance(seed, int) or seed.dtype is dtypes.int64,
+        isinstance(seed, (int, IntegerProxy)) or seed.dtype is dtypes.int64,
         lambda: f"Expected {seed=} to be an integer or an int64 tensor",
     )
     utils.check(
-        isinstance(offset, int) or seed.dtype is dtypes.int64,
+        isinstance(offset, (int, IntegerProxy)) or seed.dtype is dtypes.int64,
         lambda: f"Expected {offset=} to be an integer or an int64 tensor",
     )
     utils.check(minval < maxval, lambda: f"`minval` must be less than `maxval` but {minval=}, {maxval=}")
@@ -2676,7 +2763,7 @@ def _multinomial_meta(
     seed: int | None = None,
 ) -> TensorProxy:
     utils.check_type(input, TensorProxy)
-    utils.check_type(num_samples, int)
+    utils.check_type(num_samples, (int, IntegerProxy))
     utils.check(pytype(replacement) is bool, f"Expected boolean {replacement=}")
     utils.check_type(seed, (int, type(None)))
 
@@ -2828,7 +2915,15 @@ def flip_meta(a: TensorProxy, /, dims: Sequence[int]) -> TensorProxy:
     utils.check_type(a, TensorProxy)
     utils.check_type(dims, Sequence)
     utils.check(
-        all(isinstance(d, int) and 0 <= d < a.ndim for d in dims),
+        # all(0 <= d < a.ndim if isinstance(d, (int, IntegerProxy)) else 0 <= pyval(d) < a.ndim for d in dims),
+        all(
+            (
+                0 <= d < a.ndim
+                if isinstance(d, (int, IntegerProxy))
+                else isinstance(d, IntegerProxy) and 0 <= pyval(d) < a.ndim
+            )
+            for d in dims
+        ),
         lambda: f"Expected {dims=} to be a sequence of integers in [0, {a.ndim} - 1]",
     )
 
@@ -2843,7 +2938,7 @@ flip = make_prim(PrimIDs.FLIP, "flip", meta=flip_meta)
 def pad_meta(a: TensorProxy, /, padding_value: Number, padding_config: Sequence[tuple[int, int, int]]) -> TensorProxy:
     # Validates types
     utils.check_type(a, TensorProxy)
-    utils.check_type(padding_value, Number)
+    utils.check_type(padding_value, (Number, NumberProxy))
     utils.check_type(padding_config, Sequence)
 
     # Validates input properties
@@ -2977,7 +3072,7 @@ squeeze = make_prim(PrimIDs.SQUEEZE, "squeeze", meta=squeeze_meta, tags=(OpTags.
 def take_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
     utils.check_type(a, TensorProxy)
     utils.check_type(index, TensorProxy)
-    utils.check_type(dim, int)
+    utils.check_type(dim, (int, IntegerProxy))
     utils.check_same_device(a, index)
     utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={index.dtype} was not an integer dtype")
     utils.check(index.ndim <= 1, lambda: f"Expected index to a 1-D or 0-D tensor, but index.ndim={index.ndim}!")
@@ -3002,7 +3097,7 @@ def index_add_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, di
     utils.check_type(a, TensorProxy)
     utils.check_type(index, TensorProxy)
     utils.check_type(value, TensorProxy)
-    utils.check_type(dim, int)
+    utils.check_type(dim, (int, IntegerProxy))
     utils.check_same_device(a, index, value)
     utils.check_same_dtype(a, value)
     utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={index.dtype} was not an integer dtype")
@@ -3063,7 +3158,7 @@ index_put = make_prim(PrimIDs.INDEX_PUT, "index_put", meta=index_put_meta)
 def take_along_axis_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
     utils.check_type(a, TensorProxy)
     utils.check_type(index, TensorProxy)
-    utils.check_type(dim, int)
+    utils.check_type(dim, (int, IntegerProxy))
     utils.check_same_device(a, index)
     utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={dtype} was not an integer dtype")
     utils.check(
@@ -3082,11 +3177,34 @@ def take_along_axis_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> Ten
 take_along_axis = make_prim(PrimIDs.TAKE_ALONG_AXIS, "take_along_axis", meta=take_along_axis_meta)
 
 
+def gather_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
+    utils.check_type(a, TensorProxy)
+    utils.check_type(index, TensorProxy)
+    utils.check_type(dim, (int, IntegerProxy))
+    utils.check_same_device(a, index)
+    utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={index.dtype} was not an integer dtype")
+    utils.check(
+        index.ndim == a.ndim, lambda: f"Expected index (rank={index.ndim}) to have the same rank as a (rank={a.ndim})"
+    )
+    utils.validate_idx(a.ndim, dim)
+
+    for idx, l in enumerate(index.shape):
+        if idx != dim:
+            utils.check(
+                index.shape[idx] <= a.shape[idx],
+                lambda: f"Expected 'index' size on all dimensions to be <= 'a', except `dim`. Found dim {idx}, where 'index' has {index.shape[idx]} and 'a' has {a.shape[idx]}",
+            )
+    return TensorProxy(like=a, shape=index.shape)
+
+
+gather = make_prim(PrimIDs.GATHER, "gather", meta=gather_meta)
+
+
 def scatter_add_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     utils.check_type(a, TensorProxy)
     utils.check_type(index, TensorProxy)
     utils.check_type(value, TensorProxy)
-    utils.check_type(dim, int)
+    utils.check_type(dim, (int, IntegerProxy))
     utils.check_same_device(a, index, value)
     utils.check_same_dtype(a, value)
     utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={index.dtype} was not an integer dtype")
@@ -3125,8 +3243,8 @@ def topk_meta(
     )
 
     utils.check_type(a, TensorProxy)
-    utils.check_type(k, int)
-    utils.check_type(dim, int)
+    utils.check_type(k, (int, IntegerProxy))
+    utils.check_type(dim, (int, IntegerProxy))
     utils.check(pytype(largest) is bool, lambda: f"Expected {largest=} to be a boolean value")
     utils.check(pytype(sorted) is bool, lambda: f"Expected {sorted=} to be a boolean value")
 
@@ -3266,7 +3384,7 @@ def _argmin_argmax_meta(a: TensorProxy, /, dim: int | None) -> TensorProxy:
 
     # Validates types
     utils.check_type(a, TensorProxy)
-    utils.check_type(dim, (int, NoneType))
+    utils.check_type(dim, (int, IntegerProxy, NoneType))
 
     if a.numel == 0:
         utils.check(dim is not None, lambda: f"Expected reduction dim to be specified for a.numel() == 0.")
@@ -3294,7 +3412,7 @@ def _var_meta(a: TensorProxy, /, dims: Sequence[int], *, correction: Number) -> 
     # Checks input types
     utils.check_type(a, TensorProxy)
     utils.check_type(dims, Sequence)
-    utils.check_type(correction, Number)
+    utils.check_type(correction, (Number, NumberProxy))
 
     output_dtype = None
     if utils.is_complex_dtype(a.dtype):
@@ -3477,7 +3595,7 @@ def convolution_meta(
     utils.check_type(bias, (TensorProxy, type(None)))
     utils.check_same_dtype(a, weight, *([bias] if bias is not None else []))
     utils.check(pytype(transposed) is bool, lambda: f"Expected {transposed=} to be a boolean value")
-    utils.check_type(groups, int)
+    utils.check_type(groups, (int, IntegerProxy))
     # }
 
     # Validate device {
@@ -3539,7 +3657,7 @@ def convolution_meta(
         # Check all elements are >= min_val
         for i, e in enumerate(seq):
             utils.check(
-                isinstance(e, int) and e >= min_val,
+                isinstance(e, (int, IntegerProxy)) and e >= min_val,
                 lambda: f"all elements in {seq_str_name} should be integers at least {min_val}, "
                 f"but {seq_str_name}[{i}]={seq[i]} does not satisfy these requirements",
             )
@@ -3553,7 +3671,7 @@ def convolution_meta(
 
     # Expand sequences to features_rank len if needed.
     def maybe_expand_seq(seq, ndim):
-        if isinstance(seq, int):
+        if isinstance(seq, (int, IntegerProxy)):
             return (seq,) * ndim
         elif len(seq) == 1:
             return (seq[0],) * ndim

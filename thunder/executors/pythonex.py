@@ -1,7 +1,7 @@
 from typing import List, Any, Dict, Tuple, Union, Type
 from collections.abc import Callable
 from collections.abc import Hashable
-from collections.abc import Sequence
+from collections.abc import Sequence, Collection, MutableSet, MutableMapping, MutableSequence
 from numbers import Number
 import math
 import operator
@@ -14,7 +14,7 @@ import torch
 
 import thunder.core.prims as prims
 from thunder.core.prims import PrimIDs
-from thunder.core.proxies import TensorProxy, CollectionProxy
+from thunder.core.proxies import NumberProxy, TensorProxy, CollectionProxy
 from thunder.core.symbol import Symbol, BoundSymbol
 from thunder.core import baseutils
 import thunder.core.dtypes as dtypes
@@ -225,8 +225,8 @@ def _clear_collection_meta(coll: CollectionProxy) -> None:
     return None
 
 
-def _clear_collection_prim_impl(a: Sequence) -> None:
-    if isinstance(a, list):
+def _clear_collection_prim_impl(a: Collection) -> None:
+    if isinstance(a, (MutableSequence, MutableMapping, MutableSet)):
         a.clear()
 
 
@@ -293,7 +293,7 @@ ex.register_implementation(prims.signbit, signbit, checker=_elementwise_unary_ch
 
 
 def _elementwise_binary_checker(a: Number | TensorProxy, b: Number | TensorProxy) -> bool:
-    return isinstance(a, Number) and isinstance(b, Number)
+    return isinstance(a, (Number, NumberProxy)) and isinstance(b, (Number, NumberProxy))
 
 
 add = ex.register_operator("add", like=prims.add, module=operator)

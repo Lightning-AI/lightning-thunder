@@ -591,7 +591,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
     # name is the name of the operation in the number language context to perform
     # fn is the function to call if executing outside a language context
     @staticmethod
-    def _elementwise_unary_helper(a, name, fn):
+    def _elementwise_unary_helper(a, name, fn, type_promotion_kind=None):
         trace: None | TraceCtx = get_tracectx()
 
         langctx: None | LanguageContext
@@ -626,7 +626,22 @@ class NumberProxy(Proxy, NumberProxyInterface):
         except Exception as e:
             return fn(vala)
 
-        return method(a)
+        if method is None:
+            return fn(vala)
+
+        from thunder.core.utils import elementwise_type_promotion, dtype_to_numbertype, are_same_dtypes
+        from thunder.core import prims
+
+        def maybe_convert_to_dtype(a, dtype):
+            dtype = dtype_to_numbertype(dtype)
+            if not are_same_dtypes(a, dtype):
+                return prims.convert_element_type(a, dtype)
+            return a
+
+        computation_dtype, result_dtype = elementwise_type_promotion(a, type_promotion_kind=type_promotion_kind)
+        a = maybe_convert_to_dtype(a, computation_dtype)
+        result = method(a)
+        return maybe_convert_to_dtype(result, result_dtype)
 
     def __abs__(self):
         return self._elementwise_unary_helper(self, "abs", builtins.abs)
@@ -661,8 +676,8 @@ class NumberProxy(Proxy, NumberProxyInterface):
     #
 
     @staticmethod
-    def _elementwise_binary_helper(a, b, name, fn):
-        baseutils.check_type(b, (Number, TensorProxy))
+    def _elementwise_binary_helper(a, b, name, fn, type_promotion_kind=None):
+        baseutils.check_type(b, (Number, NumberProxy, TensorProxy))
 
         vala = pyval(a)
         valb = pyval(b) if isinstance(b, NumberProxy) else b
@@ -684,7 +699,28 @@ class NumberProxy(Proxy, NumberProxyInterface):
             tensor_fn = resolve_method(name, a, b)
             return tensor_fn(a, b)
 
-        return fn(vala, valb)
+        try:
+            method = resolve_method(name, a, b)
+        except Exception as e:
+            return fn(vala, valb)
+
+        if method is None:
+            return fn(vala, valb)
+
+        # circular import
+        from thunder.core.utils import elementwise_type_promotion, dtype_to_numbertype, are_same_dtypes
+        from thunder.core import prims
+
+        def maybe_convert_to_dtype(a, dtype):
+            dtype = dtype_to_numbertype(dtype)
+            if not are_same_dtypes(a, dtype):
+                return prims.convert_element_type(a, dtype)
+            return a
+
+        computation_dtype, result_dtype = elementwise_type_promotion(a, b, type_promotion_kind=type_promotion_kind)
+        a, b = maybe_convert_to_dtype(a, computation_dtype), maybe_convert_to_dtype(b, computation_dtype)
+        result = method(a, b)
+        return maybe_convert_to_dtype(result, result_dtype)
 
     def __add__(self, other):
         return self._elementwise_binary_helper(self, other, "add", operator.add)
@@ -749,30 +785,54 @@ class NumberProxy(Proxy, NumberProxyInterface):
     def __eq__(self, other):
         # NOTE This short-circuit allows queries like a == (), which is a valid comparison
         #   for a number in Python
-        if not isinstance(other, Number):
+        if not isinstance(other, (Number, NumberProxy)):
             return False
 
-        return self._elementwise_binary_helper(self, other, "eq", operator.eq)
+        from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
+
+        return self._elementwise_binary_helper(
+            self, other, "eq", operator.eq, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+        )
 
     def __ge__(self, other):
-        return self._elementwise_binary_helper(self, other, "ge", operator.ge)
+        from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
+
+        return self._elementwise_binary_helper(
+            self, other, "ge", operator.ge, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+        )
 
     def __gt__(self, other):
-        return self._elementwise_binary_helper(self, other, "gt", operator.gt)
+        from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
+
+        return self._elementwise_binary_helper(
+            self, other, "gt", operator.gt, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+        )
 
     def __le__(self, other):
-        return self._elementwise_binary_helper(self, other, "le", operator.le)
+        from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
+
+        return self._elementwise_binary_helper(
+            self, other, "le", operator.le, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+        )
 
     def __lt__(self, other):
-        return self._elementwise_binary_helper(self, other, "lt", operator.lt)
+        from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
+
+        return self._elementwise_binary_helper(
+            self, other, "lt", operator.lt, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+        )
 
     def __ne__(self, other):
         # NOTE This short-circuit allows queries like a != (), which is a valid comparison
         #   for a number in Python
-        if not isinstance(other, Number):
+        if not isinstance(other, (Number, NumberProxy)):
             return True
 
-        return self._elementwise_binary_helper(self, other, "ne", operator.ne)
+        from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
+
+        return self._elementwise_binary_helper(
+            self, other, "ne", operator.ne, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+        )
 
     # NOTE This is a bitwise or triggered by the | operator
     # See https://docs.python.org/3/reference/datamodel.html#object.__or__
@@ -885,7 +945,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
 
 
 def pyval(x: Number | str | AnyProxy) -> Number | str | any:
-    baseutils.check_type(x, (Number, str, AnyProxy))
+    baseutils.check_type(x, (NumberProxy, Number, str, AnyProxy))
 
     if isinstance(x, AnyProxy):
         return x._o
@@ -900,15 +960,15 @@ def pytype(x: Proxy) -> type | None:
     if isinstance(x, AnyProxy):
         return type(x._o)
 
-    if isinstance(x, complex):
+    if isinstance(x, (complex, ComplexProxy)):
         return complex
-    if isinstance(x, float):
+    if isinstance(x, (float, FloatProxy)):
         return float
     if isinstance(x, bool):
         return bool
     if isinstance(x, IntegerProxy) and x.python_type is bool:
         return bool
-    if isinstance(x, int):
+    if isinstance(x, (int, IntegerProxy)):
         return int
     if isinstance(x, str):
         return str
@@ -921,13 +981,7 @@ def pytype(x: Proxy) -> type | None:
 
 
 # TODO RC1 Update Proxy number inits to be value, /, *, name, history
-class ComplexProxy(NumberProxy, complex):
-    def __new__(cls, *, name=None, value, history: None | tuple = None):
-        if value is None:
-            value = complex(float("nan"), float("nan"))
-
-        return complex.__new__(cls, value)
-
+class ComplexProxy(NumberProxy):
     def __init__(self, name=None, value=None, history: None | tuple = None):
         NumberProxy.__init__(self, name=name, value=value, python_type=complex, history=history)
 
@@ -942,13 +996,7 @@ class ComplexProxy(NumberProxy, complex):
 
 # TODO Review dtype conversions
 # TODO Review -9999 as the marker value for unknown values
-class IntegerProxy(NumberProxy, int):
-    def __new__(cls, *, name: str | None = None, value: Number, history: None | tuple = None):
-        if value is None:
-            value = -9999
-
-        return int.__new__(cls, value)
-
+class IntegerProxy(NumberProxy):
     def __init__(self, name: str | None = None, value=None, history: None | tuple = None):
         # NOTE bools are also integers in Python
         python_type = bool if isinstance(value, bool) else int
@@ -968,15 +1016,12 @@ class IntegerProxy(NumberProxy, int):
             return f"[IntegerProxy (bool type) name={self.name}, value={self.value}]"
         return f"[IntegerProxy name={self.name}, value={self.value}]"
 
+    def __index__(self):
+        return self.value
+
 
 # TODO Review dtype conversions
-class FloatProxy(NumberProxy, float):
-    def __new__(cls, *, name=None, value, history: None | tuple = None):
-        if value is None:
-            value = float("nan")
-
-        return float.__new__(cls, value)
-
+class FloatProxy(NumberProxy):
     def __init__(self, name=None, value=None, history: None | tuple = None):
         NumberProxy.__init__(self, name=name, value=value, python_type=float, history=history)
 
@@ -1123,11 +1168,6 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
     def type_string(self):
         return f"FUTURE {self.device} {self.dtype.shortname()}{list(self.shape)}"
 
-    @property
-    def size(self, /) -> Any:
-        fn = resolve_method("size", self)
-        return fn(self)
-
     def wait(self) -> TensorProxy:
         from thunder.distributed.prims import wait
 
@@ -1174,10 +1214,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return self._shape
 
     @property
-    def numel(self):
-        return self._numel
-
-    @property
     def ndim(self):
         return self._ndim
 
@@ -1201,11 +1237,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
     def ddp_type(self):
         return self._ddp_type
 
-    @property
-    def size(self, /) -> Any:
-        fn = resolve_method("size", self)
-        return fn(self)
-
     # We need to implement `__len__` as
     # > In addition to bypassing any instance attributes in the
     # > interest of correctness, implicit special method lookup
@@ -1227,12 +1258,22 @@ class TensorProxy(Proxy, TensorProxyInterface):
     # NOTE __getattr__ is overridden to support language-specific methods
     def __getattr__(self, attr: str, /):
         method_or_value: None | Callable | Any = resolve_method(attr, self)
+        if method_or_value is None:
+            method_or_value = self.get_default_attr(attr)
         baseutils.check(method_or_value is not None, lambda: f"Unknown attribute {attr}", exception_type=AttributeError)
 
         if callable(method_or_value):
             return partial(method_or_value, self)
 
         return method_or_value
+
+    #
+    # Default attribute
+    #
+    def get_default_attr(self, attr: str, /) -> None | Any:
+        if attr == "numel":
+            return self._numel
+        return None
 
     #
     # Datatype conversion shorthands
