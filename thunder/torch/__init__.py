@@ -17,7 +17,7 @@ from thunder.torch.langctx import register_method, register_property
 
 import thunder.clang as clang
 import thunder.core.devices as devices
-from thunder.core.devices import to_device
+from thunder.core.devices import to_device, device_from_string
 import thunder.core.dtypes as dtypes
 from thunder.core.dtypes import to_torch_dtype, to_dtype, _thunder_to_torch_dtype_map, _torch_to_thunder_dtype_map
 import thunder.core.prims as prims
@@ -193,6 +193,93 @@ register_method("numel", numel)
 def is_cuda(a: TensorLike, /) -> bool:
     return a.device.devicetype is devices.DeviceType.CUDA
 
+
+_torch_dtype_to_old_torch_typestring_map = {
+    torch.float32: "FloatTensor",
+    torch.float64: "DoubleTensor",
+    torch.float16: "HalfTensor",
+    torch.bfloat16: "BFloat16Tensor",
+    torch.uint8: "ByteTensor",
+    torch.int8: "CharTensor",
+    torch.int16: "ShortTensor",
+    torch.int32: "IntTensor",
+    torch.long: "LongTensor",
+    torch.bool: "BoolTensor",
+}
+
+_old_torch_typestring_to_torch_dtype_map = {v: k for k, v in _torch_dtype_to_old_torch_typestring_map.items()}
+
+
+def _device_and_dtype_to_old_torch_typestring(device: DeviceLike, dtype: dtypeLike) -> str:
+    torch_dtype = to_torch_dtype(dtype)
+    dtype_str = _torch_dtype_to_old_torch_typestring_map.get(torch_dtype)
+    devicetype_str: str = ""
+    if device.devicetype is not devices.DeviceType.CPU:
+        devicetype_str = f"{devices.devicetype_string(device.devicetype)}."
+    return f"torch.{devicetype_str}{dtype_str}"
+
+
+def _old_torch_typestring_to_devicetype_and_dtype(typestring: str) -> tuple[DeviceLike, dtypeLike]:
+
+    # Two cases:
+    #    - torch.DtypeTensor
+    #    - torch.device.DtypeTensor
+
+    _, *dev_and_dtype = typestring.split(".")
+    devicetype_str = "cpu"
+    dtype_str = ""
+
+    if len(dev_and_dtype) == 1:
+        # when devicetype_str is omitted, device type is CPU
+        (dtype_str,) = dev_and_dtype
+        dtype_str = _old_torch_typestring_to_torch_dtype_map[dtype_str]
+
+    if len(dev_and_dtype) == 2:
+        devicetype_str, dtype_str = dev_and_dtype
+        dtype_str = _old_torch_typestring_to_torch_dtype_map[dtype_str]
+
+    # Value error
+    # expected the string to split into one or two elements
+    # and devicetype_str should be either "cpu" or "cuda"
+    utils.check(
+        devicetype_str in ("cpu", "cuda") and 1 <= len(dev_and_dtype) <= 2,
+        lambda: f"type(): unrecognized torch typestring {typestring}",
+        exception_type=ValueError,
+    )
+
+    return devicetype_str, dtype_str
+
+
+@torchsymbol(torch.Tensor.type, is_method=True)
+def type(a: TensorLike, /, dtype: None | str | dtypeLike = None, non_blocking: bool = False) -> str | TensorLike:
+    utils.check(
+        not non_blocking,
+        lambda: f"type(): `non_blocking==True` is currently not supported.",
+        exception_type=NotImplementedError,
+    )
+
+    if dtype is None:
+        # returns the type of the input tensor in string
+        return _device_and_dtype_to_old_torch_typestring(a.device, a.dtype)
+
+    if isinstance(dtype, str):
+        devtype, dtype = _old_torch_typestring_to_devicetype_and_dtype(dtype)
+
+        if devtype == a.device.type:
+            # This handles two cases:
+            # 1. When a tensor is already on a CUDA device, and the device type string is CUDA. In this case the tensor remains on its current device.
+            # 2. When a tensor is on a CPU device and the device type string is omitted, the tensor remains on the CPU device.
+            dev = a.device
+        else:
+            dev = device_from_string(devtype)
+    else:
+        # dtype is assumed to be torch.dtype (e.g. torch.int32)
+        dev = a.device
+
+    return to(a, dev, dtype)
+
+
+register_method("type", type)
 
 #
 # Data movement and transformation operations

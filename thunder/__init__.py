@@ -260,6 +260,7 @@ def jit(
     interpretation: None | INTERPRETATION_OPTIONS | str = None,
     cache: None | CACHE_OPTIONS | str = None,
     disable_torch_autograd: bool = False,  # TODO Revisit this UX for RC1
+    early_transforms: list | None = None,
     additional_transforms: list | None = None,
     record_history: bool = False,
     **compile_options,  # TODO RC1 Make this explicit -- dict of options
@@ -279,6 +280,9 @@ def jit(
                - ``"constant values"`` - require Tensors to be of the same shape, device, dtype etc., and integers and strings to match exactly,
                - ``"same input"`` - don't check, but just assume that a cached function works if it exists.
         interpretation: (deprecated: don't use this, use the thunder.functional.jit entry point to get the functional jit)
+
+        early_transforms: List of transforms to be applied to prologue, computation, and epilogue traces before executing the prologue. Default: ``None```
+        transforms: List of transforms to be applied to the computation trace. Default: ``None```
     """
 
     if "executors_list" in compile_options:
@@ -295,6 +299,9 @@ def jit(
         interpreter = functional._translate_functions_interpreter
     elif interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
         interpreter = _general_frontend
+
+    if early_transforms is None:
+        early_transforms = []
 
     if additional_transforms is None:
         additional_transforms = []
@@ -471,24 +478,41 @@ def jit(
                 epilogue_trc = jit_results.epilogue_trace
                 last_interpreter_log = jit_results.interpreter_log
 
+            prologue_traces = [prologue_trc]
+            computation_traces = [computation_trc]
+
             if epilogue_trc is not None:
                 epilogue_traces = [epilogue_trc]
-                epilogue = epilogue_trc.python_callable()
             else:
                 epilogue_traces = None
-                epilogue = None
 
             cs.last_trace_tracing_stop = time.time_ns()
 
             # Makes the prologue callable
             cs.last_prologue_transformation_start = time.time_ns()
-            protraces = transform_for_execution(
+
+            transform: Callable
+            for transform in early_transforms:
+                prologue_trc, computation_trc, epilogue_trc = transform(
+                    prologue_trc, computation_trc, epilogue_trc, executors_list=cd.executors_list
+                )
+                prologue_traces.append(prologue_trc)
+                computation_traces.append(computation_trc)
+                if epilogue_trc is not None:
+                    epilogue_traces_traces.append(epilogue_trc)
+
+            prologue_traces += transform_for_execution(
                 prologue_trc,
                 executors_list=(pythonex,),
                 use_del_last_used=False,
             )
-            protrace = protraces[-1]
+            protrace = prologue_traces[-1]
             pro = protrace.python_callable()
+
+            if epilogue_trc is not None:
+                epilogue = epilogue_trc.python_callable()
+            else:
+                epilogue = None
 
             cs.last_prologue_transformation_stop = time.time_ns()
 
@@ -500,7 +524,6 @@ def jit(
                 pro_to_epi = None
             cs.last_prologue_execution_stop = time.time_ns()
 
-            computation_traces = [computation_trc]
             cs.last_traces = computation_traces
             backward_traces = []
             cs.last_backward_traces = backward_traces
@@ -532,19 +555,15 @@ def jit(
                     # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
                     # by split_forward_backward
                     extraces = cs.last_traces
-                    check(
-                        not additional_transforms,
-                        lambda: "Specifying additional_transforms is not supported with PyTorch Autograd integration",
-                    )
 
             if backward_trc is None:
-                cs.last_computation_transformation_start = time.time_ns()
-
                 ## EPILOGUE and TRANSFORMS should not mix...
                 # applies transforms
+                cs.last_computation_transformation_start = time.time_ns()
                 for transform in additional_transforms:
                     computation_trc = transform(computation_trc, executors_list=cd.executors_list)
                     computation_traces.append(computation_trc)
+                cs.last_computation_transformation_stop = time.time_ns()
 
                 with langctxs.langctx(cd.langctx):
                     extraces = transform_for_execution(
@@ -552,7 +571,6 @@ def jit(
                         executors_list=cd.executors_list,
                     )
                 computation_trc = extraces[-1]
-                cs.last_computation_transformation_stop = time.time_ns()
 
             comp = computation_trc.python_callable()
 
@@ -564,7 +582,7 @@ def jit(
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(
                 pro,
-                protraces,
+                prologue_traces,
                 comp,
                 extraces,
                 epilogue,
@@ -577,7 +595,7 @@ def jit(
                 cs.interpreter_cache.append(cache_entry)
 
             cs.last_traces += extraces
-            cs.last_prologue_traces = [prologue_trc] + protraces
+            cs.last_prologue_traces = [prologue_trc] + prologue_traces
             cs.last_prologue = pro
 
         return cache_entry, inps, pro_to_epi
@@ -634,6 +652,7 @@ def jit(
     # Sets compile options and statistics attributes
     fn_._lc_cd = cd
     fn_._lc_cs = cs
+    fn_._lc_early_transforms = early_transforms[:]  ## transforms
     fn_._lc_transforms = additional_transforms[:]  ## transforms
     fn_._lc_post_optimization_transforms = []  ## post_optimization_transforms
 
