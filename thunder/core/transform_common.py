@@ -71,7 +71,8 @@ def _inplace_copy_sanity_check(extrace: Trace):
                     last_used_idx = consumer_dict[inp][-1]
                     if last_used_idx > idx:
                         raise NotImplementedError(
-                            f"{bsym.subsymbols[last_used_idx]} trying to use {inp} (the {log_str} of 'prims.copy_') as input, which is not supported"
+                            f"{bsym.subsymbols[last_used_idx]} trying to use {inp} (the {log_str} of 'prims.copy_') as input, which is not safe."
+                            f" There is a risk of accessing the wrong memory. If you are sure you don't want to use this check, it can be disabled by setting `disable_inplace_copy_check=True` in `thunder.jit`."
                         )
 
             check(copy_to_arg, "'copy_to' argument")
