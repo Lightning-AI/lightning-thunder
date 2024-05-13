@@ -406,30 +406,28 @@ class Benchmark_litGPT:
             if i == self.warmup_iter:  # warmup
                 t0 = iter_t0
 
-            with data_sync_ctx():
-                for step_idx in range(self.gradient_accumulation_steps - 1):
-                    input_ids, targets = next(self.train_data_iter)
-                    input_ids = input_ids.to(device=self.device)
-                    targets = targets.to(device=self.device)
+            for step_idx in range(self.gradient_accumulation_steps):
+                input_ids, targets = next(self.train_data_iter)
+                input_ids = input_ids.to(device=self.device)
+                targets = targets.to(device=self.device)
 
-                    if self.nsys_enabled and i == self.profiler_start and global_rank in [0, None] and step_idx == 0:
-                        print("=====Start NSYS Profiling======")
-                        torch.cuda.cudart().cudaProfilerStart()
+                if self.nsys_enabled and i == self.profiler_start and global_rank in [0, None] and step_idx == 0:
+                    print("=====Start NSYS Profiling======")
+                    torch.cuda.cudart().cudaProfilerStart()
 
+                if ((step_idx+1) % gradient_accumulation_steps != 0):
+                    with data_sync_ctx():
+                        loss = run_fwd_bwd_one_microbatch(self.model, input_ids, targets, self.gradient_accumulation_steps)
+                else:
                     loss = run_fwd_bwd_one_microbatch(self.model, input_ids, targets, self.gradient_accumulation_steps)
+                    
+                    # Simple Gradient Accumulation Implementation
+                    self.optimizer.step()
+                    self.optimizer.zero_grad(set_to_none=True)
 
-            input_ids, targets = next(self.train_data_iter)
-            input_ids = input_ids.to(device=self.device)
-            targets = targets.to(device=self.device)
-            loss = run_fwd_bwd_one_microbatch(self.model, input_ids, targets, self.gradient_accumulation_steps)
-
-            # Simple Gradient Accumulation Implementation
-            self.optimizer.step()
-            self.optimizer.zero_grad(set_to_none=True)
-
-            if self.nsys_enabled and i == self.profiler_stop and global_rank in [0, None]:
-                print("=====Stop NSYS Profiling======")
-                torch.cuda.cudart().cudaProfilerStop()
+                    if self.nsys_enabled and i == self.profiler_stop and global_rank in [0, None]:
+                        print("=====Stop NSYS Profiling======")
+                        torch.cuda.cudart().cudaProfilerStop()
 
             loss_item = loss.item()  # synchronization
             t1 = time.perf_counter()
