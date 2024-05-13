@@ -382,9 +382,13 @@ def synchronize_output_for_column_wise_tensor_parallel_forward_rule(
     t: TensorProxy,
     group: torch.distributed.ProcessGroup,
 ) -> tuple[TensorProxy, tuple[torch.distributed.ProcessGroup]]:
+    import thunder.torch as ltorch
+
     # all-gather in the last dim
-    future_of_gathered = all_gather(t, group, True, t.ndim - 1)
-    gathered = wait(future_of_gathered)
+    future_of_all_gathered = all_gather(t, group, True, 0)
+    all_gathered = wait(future_of_all_gathered)
+    chunked = ltorch.chunk(all_gathered, group.size(), 0)
+    gathered = ltorch.cat(chunked, dim=-1)
     return gathered, (group,)
 
 
