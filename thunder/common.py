@@ -659,18 +659,18 @@ def _create_callable(
         # autocast related operations
         is_autocast_enabled = False
         autocast_key = None
-        if torch.is_autocast_enabled() or torch.is_autocast_cpu_enabled():
-            if torch.is_autocast_enabled() and torch.is_autocast_cpu_enabled():
+        if torch.is_autocast_enabled() or torch.is_autocast_enabled("cpu"):
+            if torch.is_autocast_enabled() and torch.is_autocast_enabled("cpu"):
                 raise NotImplementedError(
-                    "thunder.autocast does not support torch.is_autocast_enabled() and torch.is_autocast_cpu_enabled() simultaneously at this moment."
+                    "thunder.autocast does not support torch.is_autocast_enabled() and torch.is_autocast_enabled('cpu') simultaneously at this moment."
                 )
             is_autocast_enabled = True
-            autocast_gpu_dtype = to_dtype(torch.get_autocast_gpu_dtype())
-            autocast_cpu_dtype = to_dtype(torch.get_autocast_cpu_dtype())
+            autocast_gpu_dtype = to_dtype(torch.get_autocast_dtype("gpu"))
+            autocast_cpu_dtype = to_dtype(torch.get_autocast_dtype("cpu"))
             autocast_key = _make_autocast_cache_key(
-                torch.is_autocast_enabled(), torch.is_autocast_cpu_enabled(), autocast_gpu_dtype, autocast_cpu_dtype
+                torch.is_autocast_enabled(), torch.is_autocast_enabled("cpu"), autocast_gpu_dtype, autocast_cpu_dtype
             )
-            autocast_thunder_dtype = autocast_cpu_dtype if torch.is_autocast_cpu_enabled() else autocast_gpu_dtype
+            autocast_thunder_dtype = autocast_cpu_dtype if torch.is_autocast_enabled("cpu") else autocast_gpu_dtype
 
         is_ddp_enabled = getattr(cd.fn, "use_ddp", False)
         is_fsdp_enabled = getattr(cd.fn, "use_fsdp", False)
