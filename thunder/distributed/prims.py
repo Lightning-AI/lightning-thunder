@@ -31,7 +31,6 @@ class PrimIDs(Enum):
     STASH_GRAD_FOR_FSDP = auto()
 
     # Experimental
-    SYNCHRONIZE_INPUT_FOR_COLUMN_WISE_TENSOR_PARALLEL = auto()
     SYNCHRONIZE_OUTPUT_FOR_COLUMN_WISE_TENSOR_PARALLEL = auto()
 
 
@@ -327,11 +326,6 @@ stash_grad_for_fsdp = make_prim(
     "stash_grad_for_fsdp",
     meta=stash_grad_for_fsdp_meta,
 )
-synchronize_input_for_column_wise_tensor_parallel = make_prim(
-    PrimIDs.SYNCHRONIZE_INPUT_FOR_COLUMN_WISE_TENSOR_PARALLEL,
-    "synchronize_input_for_column_wise_tensor_parallel",
-    meta=synchronize_input_for_column_wise_tensor_parallel_meta,
-)
 synchronize_output_for_column_wise_tensor_parallel = make_prim(
     PrimIDs.SYNCHRONIZE_OUTPUT_FOR_COLUMN_WISE_TENSOR_PARALLEL,
     "synchronize_output_for_column_wise_tensor_parallel",
@@ -381,22 +375,6 @@ def synchronize_backward_rule(
         case _:
             utils.check(False, lambda: f"synchronize with unexpected {ddp_type=}")
     return synced_grad, None
-
-
-@register_augmented_forward(PrimIDs.SYNCHRONIZE_INPUT_FOR_COLUMN_WISE_TENSOR_PARALLEL)
-def synchronize_input_for_column_wise_tensor_parallel_forward_rule(
-    t: TensorProxy,
-    group: torch.distributed.ProcessGroup,
-) -> tuple[TensorProxy, tuple[torch.distributed.ProcessGroup]]:
-    return t, (group,)
-
-
-@register_backward(PrimIDs.SYNCHRONIZE_INPUT_FOR_COLUMN_WISE_TENSOR_PARALLEL)
-def synchronize_input_for_column_wise_tensor_parallel_backward_rule(
-    group: torch.distributed.ProcessGroup,
-    grad: TensorProxy,
-) -> tuple[TensorProxy, tuple[torch.distributed.ProcessGroup]]:
-    return all_reduce(grad, DistributedReduceOps.SUM, group, do_async=True, skip_clone=True).wait(), None
 
 
 @register_augmented_forward(PrimIDs.SYNCHRONIZE_OUTPUT_FOR_COLUMN_WISE_TENSOR_PARALLEL)
