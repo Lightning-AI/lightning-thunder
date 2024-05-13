@@ -1920,14 +1920,7 @@ eq_opinfo = OpInfo(
     clang.eq,
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.eq,
-    test_directives=(
-        # TODO: enable this; there was a now-fixed nvFuser bug causing issues.
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-            executors=("nvfuser",),
-        ),
-    ),
+    test_directives=(),
 )
 elementwise_binary_ops.append(eq_opinfo)
 
@@ -2018,20 +2011,7 @@ ge_opinfo = OpInfo(
     dtypes=(datatypes.exact, datatypes.floating),
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.ge,
-    test_directives=(
-        # TODO: enable this; there was a now-fixed nvFuser bug causing issues.
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-            executors=("nvfuser",),
-        ),
-        # This test is flaky in CI (which seems odd)
-        # AssertionError: Scalars are not close!
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_vjp_correctness",
-        ),
-    ),
+    test_directives=(),
 )
 elementwise_binary_ops.append(ge_opinfo)
 
@@ -2060,14 +2040,7 @@ le_opinfo = OpInfo(
     dtypes=(datatypes.exact, datatypes.floating),
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.le,
-    test_directives=(
-        # TODO: enable this; there was a now-fixed nvFuser bug causing issues.
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-            executors=("nvfuser",),
-        ),
-    ),
+    test_directives=(),
 )
 elementwise_binary_ops.append(le_opinfo)
 
@@ -2077,14 +2050,7 @@ lt_opinfo = OpInfo(
     dtypes=(datatypes.exact, datatypes.floating),
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.lt,
-    test_directives=(
-        # TODO: enable this; there was a now-fixed nvFuser bug causing issues.
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-            executors=("nvfuser",),
-        ),
-    ),
+    test_directives=(),
 )
 elementwise_binary_ops.append(lt_opinfo)
 
@@ -2130,14 +2096,7 @@ ne_opinfo = OpInfo(
     dtypes=(datatypes.exact, datatypes.floating),
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.ne,
-    test_directives=(
-        # TODO: enable this; there was a now-fixed nvFuser bug causing issues.
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-            executors=("nvfuser",),
-        ),
-    ),
+    test_directives=(),
 )
 elementwise_binary_ops.append(ne_opinfo)
 
