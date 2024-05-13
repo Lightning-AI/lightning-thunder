@@ -405,7 +405,9 @@ def synchronize_output_for_column_wise_tensor_parallel_forward_rule(
     group: torch.distributed.ProcessGroup,
 ) -> tuple[TensorProxy, tuple[torch.distributed.ProcessGroup]]:
     # all-gather in the last dim
-    return t, (group,)
+    future_of_gathered = all_gather(t, group, True, t.ndim - 1)
+    gathered = wait(future_of_gathered)
+    return gathered, (group,)
 
 
 @register_backward(PrimIDs.SYNCHRONIZE_OUTPUT_FOR_COLUMN_WISE_TENSOR_PARALLEL)
@@ -414,4 +416,7 @@ def synchronize_output_for_column_wise_tensor_parallel_backward_rule(
     grad: TensorProxy,
 ) -> tuple[TensorProxy, tuple[torch.distributed.ProcessGroup]]:
     # reduce-scatter in the last dim
-    return all_reduce(grad, DistributedReduceOps.SUM, group, do_async=True, skip_clone=True).wait(), None
+    return (
+        reduce_scatter(grad / group.size(), DistributedReduceOps.SUM, group, do_async=True, dim=grad.ndim - 1).wait(),
+        None,
+    )
