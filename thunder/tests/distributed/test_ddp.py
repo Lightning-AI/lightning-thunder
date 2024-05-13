@@ -25,7 +25,7 @@ import thunder
 import thunder.torch as ltorch
 from thunder.core import devices
 from thunder.distributed import FSDPBucketingStrategy, FSDPType
-from thunder.distributed import ddp, fsdp
+from thunder.distributed import ddp, fsdp, convert_module_to_columnwise_parallel
 from thunder.distributed import prims
 from thunder.tests.framework import TorchExecutor, nvFuserExecutor
 from thunder.tests.framework import instantiate
@@ -1035,6 +1035,43 @@ class CompileDDPTest(DataParallelTestCase):
         # notice how we cannot do `model.no_sync()` because it's not a ThunderModule
         with thunder.ThunderModule.no_sync(model):
             fwd_loss(model, x)
+
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
+    def test_tensor_parallel_column_wise_linear(self):
+        device = torch.device("cuda", self.rank)
+
+        with device:
+            x = torch.randn(2, 12)
+
+        process_group = c10d._get_default_group()
+        model = ToyModel().to(device)
+        for p in model.parameters():
+            c10d.all_reduce(p, op=c10d.ReduceOp.AVG, group=process_group, async_op=False)
+
+        init_state = model.state_dict()
+        del model
+
+        colwise_model = ToyModel().to(device)
+        colwise_model.load_state_dict(init_state)
+        jitted_model = thunder.jit(colwise_model)
+        colwise_jitted_model = convert_module_to_columnwise_parallel(
+            jitted_model, target_modules=("net2",), process_group=process_group
+        )
+        y = colwise_jitted_model(x)
+        y.mean().backward()
+
+        fw_extrace = thunder.last_traces(colwise_jitted_model)[-1]
+        if self.rank == 0:
+            print(fw_extrace)
+
+        model = ToyModel().to(device)
+        model.load_state_dict(init_state)
+        with device:
+            x1 = torch.clone(x).detach()
+        y1 = model(x1)
+        y1.mean().backward()
+
+        torch.testing.assert_close(actual=y, expected=y1)
 
 
 common_utils.instantiate_parametrized_tests(CompileDDPTest)

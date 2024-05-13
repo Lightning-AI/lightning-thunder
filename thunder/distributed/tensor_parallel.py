@@ -6,16 +6,7 @@ import torch.nn as nn
 from torch.distributed import distributed_c10d
 
 from thunder.core import utils
-from thunder.core.module import ThunderModule
-from thunder.core import prims
-from thunder.core.transforms import VISIT_TYPE
-from thunder.core.transforms import visitor_transform
-from thunder.core.transforms import add_transform
-from thunder.core.symbol import VariableInterface
-from thunder.core.symbol import BoundSymbol
-from thunder.core.proxies import ProxyInterface
 from thunder.core.proxies import variableify
-from thunder.distributed import prims as dist_prims
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -23,6 +14,11 @@ if TYPE_CHECKING:
     from thunder.core.trace import TraceCtx
     from thunder.core.proxies import TensorProxy
     from thunder.common import CompileData
+    from thunder.core.symbol import VariableInterface
+    from thunder.core.proxies import ProxyInterface
+    from thunder.core.symbol import BoundSymbol
+    from thunder.core.module import ThunderModule
+    from thunder.core.transforms import VISIT_TYPE
 
 
 __all__ = [
@@ -39,6 +35,9 @@ class VisitorTransformForColumnWiseOutput:
         self.swap_map: dict[VariableInterface, ProxyInterface] = {}
 
     def __call__(self, bsym: BoundSymbol) -> VISIT_TYPE:
+        from thunder.core.transforms import VISIT_TYPE
+        from thunder.distributed import prims as dist_prims
+
         new_bsym = bsym.from_bsym_swap_proxies(self.swap_map)
         if new_bsym == bsym and (
             requires_gather := len(self.chunked_param_set & {variableify(p) for p in bsym.flat_args}) == 0
@@ -82,13 +81,15 @@ class TransformForColumnWiseParallel:
     process_group: ProcessGroup
 
     def __post_init__(self):
+        from thunder.common import CompileData
+
+        utils.check_type(self.compile_data, CompileData)
         if getattr(self.compile_data, "use_fsdp", False) or getattr(self.compile_data.fn, "use_fsdp", False):
             raise NotImplementedError("Currently thunder does not support the combination of fsdp and tensor parallel")
-        self.params_synced_before_math = self.is_fsdp
-        utils.check(not self.is_fsdp, lambda: "Currently thunder does not support FSDP and ")
 
         self.canonicalized_layer_names = {l_name.replace(".", "_") for l_name in self.chunked_layers}
         self.swap_map: dict[VariableInterface, ProxyInterface] = {}
+        print(f"#### {self.canonicalized_layer_names=}")
 
     def __call__(
         self,
@@ -97,8 +98,9 @@ class TransformForColumnWiseParallel:
         epilogue_trace: TraceCtx,
         **kwargs,
     ) -> tuple[TraceCtx, TraceCtx, TraceCtx]:
-        prologue_producers, prologue_consumers = utils.producers_and_consumers(prologue_trace)
-        computation_producers, computation_consumers = utils.producers_and_consumers(computation_trace)
+        from thunder.core import prims
+        from thunder.core.pytree import tree_flatten
+        from thunder.core.transforms import visitor_transform
 
         modules_and_thunder_modules = [
             (bsym.args[0], bsym.output)
@@ -127,6 +129,10 @@ class TransformForColumnWiseParallel:
             ),
             provenance="Insert comm for column wise tensor parallel",
         )
+
+        if distributed_c10d.get_rank() == 0:
+            print(f"#####\n{computation_trace}")
+            print(f"#####\n{new_computation_trace}")
 
         return prologue_trace, new_computation_trace, epilogue_trace
 
@@ -159,6 +165,8 @@ def convert_module_to_columnwise_parallel(
     """
     from thunder import compile_data as get_compile_data
     from thunder.distributed import _shard_param
+    from thunder.core.transforms import add_transform
+    from thunder.core.module import ThunderModule
 
     utils.check_type(thunder_module, ThunderModule)
 
@@ -180,6 +188,6 @@ def convert_module_to_columnwise_parallel(
         mod = thunder_module.get_submodule(target_mod_name)
         utils.check_type(mod, (nn.Linear,))
         for name, p in mod.named_parameters(recurse=False):
-            _shard_param(p, rank, world_size, dim=0)
+            _shard_param(p, rank, world_size, name, dim=0)
 
     return thunder_module
