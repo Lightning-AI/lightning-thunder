@@ -556,8 +556,11 @@ def _shard_params(
     process_group: ProcessGroup,
     device: torch.device | None,
     broadcast_from: int | None,
+<<<<<<< HEAD
     allow_padding_for_fsdp: bool = False,
     dim: int | None = None,
+=======
+>>>>>>> b3affecd (remove `dim` from `_shard_params`)
 ) -> None:
     """Shards the parameters on the first dimension."""
     global_rank = tdist.get_rank(group=process_group)
@@ -588,7 +591,11 @@ def _shard_params(
         # Note [FSDP Sharding]
         # All internal code will assume that the parameters are sharded on the first dimension
         for param_name, param in submodule.named_parameters(recurse=False, prefix=module_name):
+<<<<<<< HEAD
             _shard_param(param, global_rank, world_size, param_name, dim=dim, allow_padding_for_fsdp=allow_padding_for_fsdp)
+=======
+            _shard_param(param, global_rank, world_size, param_name, dim=0)
+>>>>>>> b3affecd (remove `dim` from `_shard_params`)
 
 
 def _shard_param(
