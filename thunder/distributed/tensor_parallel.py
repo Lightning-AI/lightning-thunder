@@ -7,12 +7,12 @@ from torch.distributed import distributed_c10d
 
 from thunder.core import utils
 from thunder.core.proxies import variableify
+from thunder.core.proxies import TensorProxy
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from torch.distributed import ProcessGroup
     from thunder.core.trace import TraceCtx
-    from thunder.core.proxies import TensorProxy
     from thunder.common import CompileData
     from thunder.core.symbol import VariableInterface
     from thunder.core.proxies import ProxyInterface
@@ -27,57 +27,11 @@ __all__ = [
 
 
 @dataclass
-class VisitorTransformForColumnWiseOutput:
-    chunked_parma_set: set[VariableInterface]
-    process_group: ProcessGroup
-
-    def __post_init__(self):
-        self.swap_map: dict[VariableInterface, ProxyInterface] = {}
-
-    def __call__(self, bsym: BoundSymbol) -> VISIT_TYPE:
-        from thunder.core.transforms import VISIT_TYPE
-        from thunder.distributed import prims as dist_prims
-
-        new_bsym = bsym.from_bsym_swap_proxies(self.swap_map)
-        if new_bsym == bsym and (
-            requires_gather := len(self.chunked_param_set & {variableify(p) for p in bsym.flat_args}) == 0
-        ):
-            return VISIT_TYPE.NO_OP
-        result = new_bsym()
-        flat_result, _ = filter(lambda p: isinstance(p, ProxyInterface), result)
-        utils.check(
-            len(flat_result) == len(bsym.flat_proxy_outs),
-            lambda: f"{len(flat_result)=} != {len(bsym.flat_proxy_outs)=}",
-        )
-
-        if requires_gather:
-            # we need to all-gather output.
-            for old_p, new_p in zip(bsym.flat_proxy_outs, flat_result):
-                self.swap_map[variableify(old_p)] = new_p
-            utils.check(
-                len(flat_result) == 1,
-                lambda: f"tensor parallel does not support bsym with multiple outputs. {len(bsym.flat_proxy_outs)=}",
-            )
-            out_to_gather = flat_result[0]
-            utils.check_type(out_to_gather, TensorProxy)
-            gathered = dist_prims.synchronize_output_for_column_wise_tensor_parallel(
-                out_to_gather,
-                group=self.process_group,
-            )
-            self.swap_map[variableify(out_to_gather)] = gathered
-            return VISIT_TYPE.INSERT_AFTER
-        else:
-            for old_p, new_p in zip(bsym.flat_proxy_outs, flat_result):
-                self.swap_map[variableify(old_p)] = new_p
-            return VISIT_TYPE.REPLACE
-
-
-@dataclass
 class TransformForColumnWiseParallel:
     rank: int
     world_size: int
     compile_data: CompileData
-    chunked_layers: Sequence[str]
+    chunked_param_names: set[str]
     process_group: ProcessGroup
 
     def __post_init__(self):
@@ -87,9 +41,7 @@ class TransformForColumnWiseParallel:
         if getattr(self.compile_data, "use_fsdp", False) or getattr(self.compile_data.fn, "use_fsdp", False):
             raise NotImplementedError("Currently thunder does not support the combination of fsdp and tensor parallel")
 
-        self.canonicalized_layer_names = {l_name.replace(".", "_") for l_name in self.chunked_layers}
         self.swap_map: dict[VariableInterface, ProxyInterface] = {}
-        print(f"#### {self.canonicalized_layer_names=}")
 
     def __call__(
         self,
@@ -100,7 +52,8 @@ class TransformForColumnWiseParallel:
     ) -> tuple[TraceCtx, TraceCtx, TraceCtx]:
         from thunder.core import prims
         from thunder.core.pytree import tree_flatten
-        from thunder.core.transforms import visitor_transform
+        from thunder.core.trace import from_trace, tracectx
+        from thunder.distributed import prims as dist_prims
 
         modules_and_thunder_modules = [
             (bsym.args[0], bsym.output)
@@ -111,28 +64,48 @@ class TransformForColumnWiseParallel:
         if len(modules_and_thunder_modules) != 1:
             raise NotImplementedError("cannot deal with modules other than the compiled module")
 
-        chunked_parma_proxy_set = utils.ProxyDict()
-        chunked_parma_proxies: list[TensorProxy] = []
+        consumers = utils.consumers(computation_trace)
         flat_args, _ = tree_flatten((computation_trace.args, computation_trace.kwargs))
+        bsyms_before_allgather: set[BoundSymbol] = set()
         for proxy in filter(lambda p: isinstance(p, TensorProxy), flat_args):
-            for layer_name in self.canonicalized_layer_names:
-                if layer_name in proxy.name:
-                    chunked_parma_proxy_set[proxy] = None
-                    chunked_parma_proxies.append(proxy)
-        chunked_param_set: set[VariableInterface] = {variableify(p) for p in chunked_parma_proxies}
+            for p_name in self.chunked_param_names:
+                if p_name == proxy.name:
+                    consumer_bsym = consumers[proxy][0]
+                    bsyms_before_allgather.add(consumer_bsym)
+        utils.check(bsyms_before_allgather, lambda: f"{bsyms_before_allgather} must not be empty")
 
-        new_computation_trace = visitor_transform(
-            computation_trace,
-            visit=VisitorTransformForColumnWiseOutput(
-                chunked_parma_set=chunked_param_set,
-                process_group=self.process_group,
-            ),
-            provenance="Insert comm for column wise tensor parallel",
+        swap_map: dict[VariableInterface, ProxyInterface] = {}
+        new_computation_trace = from_trace(computation_trace)
+        bound_symbols: list[BoundSymbol] = []
+        bsym: BoundSymbol
+
+        # with tracectx(new_computation_trace):
+        with tracectx(computation_trace):
+            for bsym in computation_trace.bound_symbols:
+                new_bsym = bsym.from_bsym_swap_proxies(
+                    swap_map=swap_map,
+                    skip_inputs=False,
+                    skip_output=True,
+                    skip_subsymbols=False,
+                )
+                bound_symbols.append(new_bsym)
+                if bsym in bsyms_before_allgather:
+                    gather_op_sym = dist_prims.synchronize_output_for_column_wise_tensor_parallel
+                    gathered: TensorProxy = gather_op_sym.meta(bsym.flat_proxy_outs[0], self.process_group)
+                    gather_bsym = gather_op_sym.bind(
+                        bsym.flat_proxy_outs[0],
+                        self.process_group,  # args
+                        output=gathered,  # output
+                    )
+                    bound_symbols.append(gather_bsym)
+                    swap_map[variableify(bsym.flat_proxy_outs[0])] = gathered
+
+        utils.check(
+            len(bound_symbols) > len(computation_trace.bound_symbols),
+            lambda: f"{len(bound_symbols)=} > {len(computation_trace.bound_symbols)=}",
         )
-
-        if distributed_c10d.get_rank() == 0:
-            print(f"#####\n{computation_trace}")
-            print(f"#####\n{new_computation_trace}")
+        new_computation_trace.bound_symbols = bound_symbols
+        new_computation_trace.set_provenance("gather column wise tensor parallel outputs")
 
         return prologue_trace, new_computation_trace, epilogue_trace
 
@@ -173,21 +146,28 @@ def convert_module_to_columnwise_parallel(
     rank = distributed_c10d.get_rank(process_group)
     world_size = distributed_c10d.get_world_size(process_group)
 
-    add_transform(
+    chunked_param_names: list[str] = []
+    for target_mod_name in target_modules:
+        mod = thunder_module.get_submodule(target_mod_name)
+        utils.check_type(mod, (nn.Linear,))
+        for name, p in mod.named_parameters(recurse=False):
+            chunked_param_names.append("t_" + f"{target_mod_name}.{name}".replace(".", "_"))
+
+    param_proxy_name_set = sorted({name for name in chunked_param_names})
+    colwise_thunder_module = add_transform(
         thunder_module,
         early_transform=TransformForColumnWiseParallel(
             rank=rank,
             world_size=world_size,
             compile_data=get_compile_data(thunder_module),
-            chunked_layers=target_modules,
+            chunked_param_names=param_proxy_name_set,
             process_group=process_group,
         ),
     )
 
     for target_mod_name in target_modules:
-        mod = thunder_module.get_submodule(target_mod_name)
-        utils.check_type(mod, (nn.Linear,))
+        mod = colwise_thunder_module.get_submodule(target_mod_name)
         for name, p in mod.named_parameters(recurse=False):
             _shard_param(p, rank, world_size, name, dim=0)
 
-    return thunder_module
+    return colwise_thunder_module

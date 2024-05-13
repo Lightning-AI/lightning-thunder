@@ -1057,12 +1057,9 @@ class CompileDDPTest(DataParallelTestCase):
         colwise_jitted_model = convert_module_to_columnwise_parallel(
             jitted_model, target_modules=("net2",), process_group=process_group
         )
-        y = colwise_jitted_model(x)
+        y: torch.Tensor = colwise_jitted_model(x)
         y.mean().backward()
-
-        fw_extrace = thunder.last_traces(colwise_jitted_model)[-1]
-        if self.rank == 0:
-            print(fw_extrace)
+        self.assertEqual(y.size(1), 8)
 
         model = ToyModel().to(device)
         model.load_state_dict(init_state)
