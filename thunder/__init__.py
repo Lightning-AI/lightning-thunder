@@ -499,7 +499,7 @@ def jit(
                 prologue_traces.append(prologue_trc)
                 computation_traces.append(computation_trc)
                 if epilogue_trc is not None:
-                    epilogue_traces_traces.append(epilogue_trc)
+                    epilogue_traces.append(epilogue_trc)
 
             prologue_traces += transform_for_execution(
                 prologue_trc,
