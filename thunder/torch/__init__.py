@@ -435,6 +435,11 @@ def type_as(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
     return to(a, b.true_dtype)
 
 
+@torchsymbol(torch.Tensor.long, is_method=True)
+def long(a: TensorLike, /, memory_format: torch.memory_format = torch.preserve_format) -> TensorLike:
+    return to(a, dtype=dtypes.int64, memory_format=memory_format)
+
+
 #
 # Tensor creation operations
 #
