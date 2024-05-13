@@ -1,50 +1,71 @@
-from dataclasses import dataclass, replace
-from functools import wraps, partial
-from inspect import signature
-from typing import Any, TYPE_CHECKING
+from dataclasses import replace
+from typing import TYPE_CHECKING
 
 import torch
 
-from thunder.core.proxies import TensorProxy, FutureTensorProxy, variableify
-from thunder.core.prims import PrimIDs
 import thunder.core.utils as utils
-from thunder.core.pytree import tree_flatten, tree_unflatten
+from thunder.core.prims import PrimIDs
+from thunder.core.proxies import TensorProxy, variableify
+from thunder.core.pytree import tree_flatten
+from thunder.core.symbol import BoundSymbol
+from thunder.core.trace import TraceCtx, from_trace, set_tracectx, reset_tracectx
 from thunder.core.transform_common import replace_redundant_inputs
-from thunder.core.trace import TraceCtx
-from thunder.core.symbol import Symbol, BoundSymbol, BoundSymbolRHS
-import thunder.distributed.prims as dist_prims
-import thunder.torch as ltorch
-import thunder
+
+if TYPE_CHECKING:
+    from thunder.core.trace import VariableInterface
+
+
+def rename_bwd_trace_outputs(bwd_trace: TraceCtx, fwd_trace: TraceCtx) -> TraceCtx:
+    """Have backward trace output tensor proxy names follow `grad_for_<param>` format.
+
+    Since ``i``-th tensor proxy of backward trace's outputs is grad of ``i``-th tensor proxy of forward trace's inputs,
+    this method looks up to forward trace's inputs to get the param name for each grad.
+
+    Args:
+        bwd_trace:
+        fwd_trace:
+
+    Returns:
+        :class:`thunder.core.trace.TraceCtx`
+    """
+
+    # [note: why setting trace ctx?]
+    # [`TensorProxy.replace_name`](https://github.com/Lightning-AI/lightning-thunder/blob/561b699/thunder/core/proxies.py#L1221-L1223) calls
+    # [`tensorproxy`](https://github.com/Lightning-AI/lightning-thunder/blob/561b699/thunder/core/proxies.py#L1506-L1520)
+    # which then calls `TensorProxy.__init__`. `TensorProxy.__init__` of course calls
+    # [` Proxy.__init__`](https://github.com/Lightning-AI/lightning-thunder/blob/561b699/thunder/core/proxies.py#L81-L86).
+    # `Proxy`'s dunder init calls [`make_proxy_name`](https://github.com/Lightning-AI/lightning-thunder/blob/561b699/thunder/core/proxies.py#L81-L86)
+    # which depends on a tracectx.
+    trace_tok = set_tracectx(bwd_trace)
+
+    swap_map: dict[VariableInterface, TensorProxy] = {}
+    bwd_outputs, _ = tree_flatten(bwd_trace.output)
+    fwd_inputs, _ = tree_flatten((fwd_trace.args, fwd_trace.kwargs))
+
+    utils.check(len(bwd_outputs) == len(fwd_inputs), lambda: f"{len(bwd_outputs)=}, {len(fwd_inputs)=}")
+
+    for fwd_arg, bwd_out in zip(fwd_inputs, bwd_outputs):
+        if isinstance(bwd_out, TensorProxy):
+            swap_map[variableify(bwd_out)] = bwd_out.replace_name(f"grad_for_{fwd_arg.name}")
+    reset_tracectx(trace_tok)
+
+    renamed_bwd_trace = from_trace(bwd_trace)
+    renamed_bwd_trace.bound_symbols = []
+
+    bsym: BoundSymbol
+    for bsym in bwd_trace.bound_symbols:
+        renamed_bwd_trace.bound_symbols.append(bsym.from_bsym_swap_proxies(swap_map=swap_map))
+
+    return renamed_bwd_trace
 
 
 class ThunderFunction(torch.autograd.Function):
     @staticmethod
-    def get_forward_backward_splitter(func, compile_data, compile_stats):
-        from thunder import trace
-        from thunder.executors.passes import transform_for_execution
-        from thunder.executors.passes import del_last_used
-        from thunder.core.rematerialization import rematerialize_forward_and_backward, rematerialize_all_gather
-        from thunder.core.transforms import forward_and_backward_from_trace
-        from thunder.cudagraphs import CUDAGraphExecutor
-        from thunder.distributed.utils import sort_waits, sort_data_parallel_syncs, sort_waits_for_zero3
-        from thunder.distributed.transforms import FSDPCommBucketing
-
-        utils.check(compile_data is not None, lambda: "`compile_data` is required")
-
-        def make_trace(func):
-            return partial(
-                trace(compile_data=compile_data, inline_trace=False, insert_ddp_syncs=not compile_data.using_jit), func
-            )
-
-        def split_forward_backward_compat(*args, **kwargs):
-            fw_extrace, bw_extrace = split_forward_backward(func, compile_data, compile_stats, *args, **kwargs)
-            return fw_extrace.python_callable(), bw_extrace.python_callable()
-
-        return split_forward_backward_compat
-
-    @staticmethod
-    def forward(ctx, compiled_backward, saved_tensors, saved_other, flat_output, *flat_args):
+    def forward(
+        ctx, return_none_instead_of_grads, compiled_backward, saved_tensors, saved_other, flat_output, *flat_args
+    ):
         # Here we just propagate the tensors through the autograd graph
+        ctx.return_none_instead_of_grads = return_none_instead_of_grads
         ctx.saved_other = saved_other
         ctx.compiled_backward = compiled_backward
 
@@ -75,134 +96,30 @@ class ThunderFunction(torch.autograd.Function):
 
         # Inside the compiled backward we must clear the saved_tensors_list
         assert not saved_tensors_list, "saved_tensors_list must be empty after calling compiled_backward"
-        return (None, None, None, None, *grads)
+        # TODO(crcrpar): Remove if-else once `dist_prims.stash_grad_for_fsdp` starts to return `None`
+        # NOTE(crcrpar): In fsdp no-sync, unsharded gradients are attached and accumulated to their parameters as the attr of `_thunder_fsdp_unsharded_grad` in order to avoid shape mismatch of a param and its grad. When exiting the no_sync context, the accumulated, unsharded gradients are reduce-scattered into the attr of `grad` and `_thunder_fsdp_unsharded_grad` is removed.
+        if ctx.return_none_instead_of_grads:
+            return (None, None, None, None, None, *([None] * len(grads)))
+        return (None, None, None, None, None, *grads)
 
 
-# TODO: RC1 Remove this
-def thunder_backward(*, compile_data, compile_stats=None):
-    """Decorator to wrap a Thunder function for use with PyTorch autograd.
-
-    Args:
-        thunder_func: A Thunder function.
-
-    Returns:
-        A wrapped function that can be used with PyTorch autograd.
-
-    Example:
-    >>> import torch
-    >>> import thunder.clang as clang
-    >>> from thunder.executors.torchex import thunder_backward
-    >>> @thunder_backward()
-    ... def func(a, b):
-    ...     c = a + b
-    ...     d = c * b
-    ...     e = clang.sin(d) + clang.cos(c)
-    ...     return e
-    >>> a = torch.randn(3, device="cuda", requires_grad=True)
-    >>> b = torch.randn(3, device="cuda", requires_grad=True)
-    >>> c = func(a, b)
-    >>> print(c)
-    >>> sum(c).sum().backward()
-    >>> print(f"a.grad: {a.grad}")
-    >>> print(f"b.grad: {b.grad}")
-    """
-
-    def decorator(thunder_func):
-        from thunder import compile
-
-        # Compile's caching only works for many calls to the same compiled function
-        # It does not work if the same function is compiled many times, so we must
-        # decorate the augmented forward pass once with compile once and reuse it
-        split_fw_bw = ThunderFunction.get_forward_backward_splitter(thunder_func, compile_data, compile_stats)
-        compile_config = {
-            "langctx": compile_data.langctx,
-            "executors_list": compile_data.executors_list,
-            "only_execute_prims": compile_data.only_execute_prims,
-            "cache_option": compile_data.cache_option,
-            "use_rematerialization": compile_data.use_rematerialization,
-            "use_cudagraphs": compile_data.use_cudagraphs,
-            **compile_data.compile_options,
-            "disable_preprocessing": True,
-            "disable_torch_autograd_support": True,
-        }
-
-        compiled_split_fw_bw = compile(
-            split_fw_bw,
-            **compile_config,
-        )
-        sig = signature(thunder_func)
-
-        @wraps(thunder_func)
-        def wrapper(*args, **kwargs):
-            # Fetch the compiled forward and backward functions using the
-            # compiled function cache
-            compiled_forward, compiled_backward = compiled_split_fw_bw(*args, **kwargs)
-
-            # Compiled forward function currently doesn't support positional
-            # arguments passed as kwargs, so we must bind them here
-            ba = sig.bind(*args, **kwargs)
-            args, kwargs = ba.args, ba.kwargs
-
-            # Run the compiled forward function
-            data_for_autograd, (saved_tensors, saved_other) = compiled_forward(*args, **kwargs)
-
-            # Connect produced tensors with PyTorch's autograd graph
-            ThunderFunction.apply(
-                compiled_backward,
-                saved_tensors,
-                saved_other,
-                data_for_autograd["flat_output"],
-                *data_for_autograd["flat_args"],
-            )
-            return data_for_autograd["output"]
-
-        return wrapper
-
-    return decorator
-
-
-def split_forward_backward(computation_trc, compile_data, compile_stats, /, *args, **kwargs):
-    from thunder import trace
-    from thunder.executors.passes import transform_for_execution
-    from thunder.executors.passes import del_last_used
-    from thunder.core.rematerialization import rematerialize_forward_and_backward, rematerialize_all_gather
+def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stats, /, *flat_args):
+    from thunder.core.rematerialization import rematerialize_all_gather, rematerialize_forward_and_backward
     from thunder.core.transforms import forward_and_backward_from_trace
-    from thunder.cudagraphs import CUDAGraphExecutor
-    from thunder.distributed.utils import sort_waits, sort_data_parallel_syncs, sort_waits_for_zero3
     from thunder.distributed.transforms import FSDPCommBucketing
-    from thunder.core.transforms import eval_trace
-
-    # TODO: the trace->func->trace could likely be simplified (and look nicer)
-    #       we cannot use python_callable() here, see the old repos 2458
-    if not isinstance(computation_trc, TraceCtx):
-        # for the legacy codepath
-        func = computation_trc
-    else:
-
-        def func(*args):
-            return eval_trace(computation_trc, *args)
+    from thunder.distributed.utils import sort_data_parallel_syncs, sort_waits, sort_waits_for_zero3
+    from thunder.executors.passes import del_last_used, transform_for_execution
 
     utils.check(compile_data is not None, lambda: "`compile_data` is required")
-
-    def make_trace(func):
-        return partial(
-            trace(compile_data=compile_data, inline_trace=False, insert_ddp_syncs=not compile_data.using_jit), func
-        )
-
-    computation_trc.kwargs = {}
     # NOTE: This function is rather slow, so it's intended to be used
     # behind a cache.
-    ba = signature(func).bind(*args, **kwargs)
-    ba.apply_defaults()
-    args, kwargs = ba.args, ba.kwargs
-    flat_args, _ = tree_flatten((args, kwargs))
     tensor_cls = (torch.Tensor, TensorProxy)
     requires_grad_mask = tuple(isinstance(arg, tensor_cls) and arg.requires_grad for arg in flat_args)
     # If none of the inputs require gradients, raise an error
     if not any(requires_grad_mask):
         raise RuntimeError("PyTorch's Autograd interface requires at least one tensor input with requires_grad=True")
 
-    primal_trace = make_trace(func)(*args, **kwargs) if not compile_data.using_jit else computation_trc
+    primal_trace = computation_trc
     primal_trace = sort_data_parallel_syncs(primal_trace)
 
     if compile_stats is not None:
@@ -240,9 +157,8 @@ def split_forward_backward(computation_trc, compile_data, compile_stats, /, *arg
 
     _fsdp_comm_bucketing: FSDPCommBucketing | None = None
     if getattr(compile_data.fn, "use_fsdp", False):
-        _fsdp_comm_bucketing = FSDPCommBucketing(compile_data)
+        _fsdp_comm_bucketing = FSDPCommBucketing(compile_data, computation_trc)
         fw_trace = _fsdp_comm_bucketing.apply_bucketing_to_forward_trace(fw_trace, bw_trace.names)
-        _fsdp_comm_bucketing.update_name_set(bw_trace)
 
     # Now we can run the optimization passes on the forward trace
     # TODO Restore request for no rematerialization
@@ -304,8 +220,8 @@ def split_forward_backward(computation_trc, compile_data, compile_stats, /, *arg
     if getattr(compile_data.fn, "use_fsdp", False):
         assert hasattr(compile_data.fn, "sharding_strategy")
         if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO3:
-            from thunder.distributed.utils import limit_in_flight_allgathers
             from thunder.distributed import FSDPBucketingStrategy
+            from thunder.distributed.utils import limit_in_flight_allgathers
 
             fw_extrace = sort_waits_for_zero3(fw_extrace)
             fw_extrace = limit_in_flight_allgathers(
@@ -326,11 +242,11 @@ def split_forward_backward(computation_trc, compile_data, compile_stats, /, *arg
         bw_extrace = sort_waits(bw_extrace)
 
     # Importing here to avoid cyclical dependencies in future.
-    from thunder.executors.transformer_engineex import transformer_engine_ex, _rearrange_transformer_engine_linear
+    from thunder.executors.transformer_engineex import _transformer_engine_bwd_fp8_meta_sync, transformer_engine_ex
 
     if transformer_engine_ex in compile_data.executors_list:
-        # NOTE: `_rearrange_transformer_engine_linear` mutates `fw_extrace`.
-        _rearrange_transformer_engine_linear(fw_extrace, bw_extrace)
+        # NOTE: `_transformer_engine_bwd_fp8_meta_sync` may mutate `fw_extrace` or `bw_extrace`.
+        _transformer_engine_bwd_fp8_meta_sync(fw_extrace, bw_extrace)
 
     fw_extrace = del_last_used(fw_extrace)
     fw_traces.append(fw_extrace)
@@ -338,8 +254,15 @@ def split_forward_backward(computation_trc, compile_data, compile_stats, /, *arg
     bw_extrace = del_last_used(bw_extrace, clear_collections=True)
     bw_traces.append(bw_extrace)
 
+    bw_trace = rename_bwd_trace_outputs(bw_extrace, fw_extrace)
+
     if compile_stats is not None:
         compile_stats.last_traces += fw_traces
         compile_stats.last_backward_traces += bw_traces
+
+    # Enable wrapping with `te.fp8_autocast`.
+    fw_extrace._include_te_fp8_autocast = True
+    # We only want the forward function to be called with `te.fp8_autocast` manager.
+    bw_extrace._include_te_fp8_autocast = False
 
     return fw_extrace, bw_extrace

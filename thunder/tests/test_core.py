@@ -14,6 +14,7 @@ from thunder import last_traces, cache_option, cache_hits, cache_misses
 import thunder.examine as examine
 import thunder.clang as clang
 import thunder.core.proxies as proxies
+import thunder.tests.bf16
 import thunder.torch as ltorch
 
 import thunder.core.codeutils as codeutils
@@ -554,8 +555,9 @@ def test_type_promotion_tensors(executor, device, _):
     assert result.dtype is torch.float32
 
     # float16 x bfloat16 type promotion -- float32 result dtype
-    result = traced_foo(f16, bf16)
-    assert result.dtype is torch.float32
+    if thunder.tests.bf16.device_supports_bf16(device):
+        result = traced_foo(f16, bf16)
+        assert result.dtype is torch.float32
 
     # int64 x float16 type promotion -- float16 result dtype
     result = traced_foo(f16, i64)
@@ -908,7 +910,7 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
     def foo(a, b):
         return a + b, a - b
 
-    cfoo = executor.make_callable_legacy(foo)
+    cfoo = executor.make_callable(foo)
     _, _ = cfoo(a, b)
     traces = thunder.last_traces(cfoo)
     trc = traces[0]
@@ -946,7 +948,7 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
 
     a = make((4, 3, 2, 3))
 
-    cbar = executor.make_callable_legacy(bar)
+    cbar = executor.make_callable(bar)
     expected = cbar(a, (12, -1))
     traces = thunder.last_traces(cbar)
     trc = traces[0]
@@ -955,8 +957,8 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
     top_down_bsyms = toposort_bsym_dag(roots, TOPOSORT_ORDER.TOP_DOWN)
     bottom_up_bsyms = toposort_bsym_dag(leaves, TOPOSORT_ORDER.BOTTOM_UP)
 
-    top_down_reshape_bsym = top_down_bsyms[5]
-    bottom_up_reshape_bsym = bottom_up_bsyms[4]
+    top_down_reshape_bsym = top_down_bsyms[3]
+    bottom_up_reshape_bsym = bottom_up_bsyms[2]
 
     assert top_down_reshape_bsym.sym.id == "torch.reshape"
     assert bottom_up_reshape_bsym.sym.id == "torch.reshape"
@@ -1953,6 +1955,24 @@ def test_traceback():
     assert "thunder.computation" in excinfo.traceback[-1].path
 
 
+@instantiate(
+    dtypes=NOTHING,
+    executors=(TorchExecutor,),
+)
+def test_torch_tensor_to_memory_format(executor: TestExecutor, device: str, _):
+    inp = torch.randn(2, 4, 5, 3, device=device, dtype=torch.float32)
+
+    def torch_to(a, memory_format):
+        return a.to(memory_format=memory_format)
+
+    cfn = executor.make_callable(torch_to, disable_preprocessing=False)
+
+    for m_format in [torch.contiguous_format, torch.channels_last, torch.preserve_format]:
+        thunder_result = cfn(inp, torch.contiguous_format)
+        torch_result = torch_to(inp, torch.contiguous_format)
+        assert_close(torch_result, thunder_result, check_stride=True)
+
+
 # TODO See issue "Add contiguous and clang.stride_order OpInfos that check stride
 # consistency with PyTorch"
 @instantiate(
@@ -2186,9 +2206,9 @@ def test_torch_scaled_dot_product_attention_non_decomposed(executor, device, _):
 
     compiled = thunder.jit(func, executors=executor.executors_list())
     out = compiled(qkv)
-    history = thunder.last_traces(compiled)
+    traces = thunder.last_traces(compiled)
     torch.testing.assert_close(out, func(qkv))
-    assert "scaled_dot_product_attention" in tuple(bsym.sym.id for bsym in history[-1].bound_symbols)
+    assert "scaled_dot_product_attention" in tuple(bsym.sym.id for bsym in traces[-1].bound_symbols)
 
 
 @instantiate(dtypes=NOTHING)
@@ -2203,14 +2223,14 @@ def test_no_passthrough_symbol(executor, device, _):
         return x.type_as(x)
 
     x = make_tensor((2, 2), device=device, dtype=torch.float32)
-    compiled = executor.make_callable_legacy(func)
+    compiled = executor.make_callable(func)
     out = compiled(x)
     assert out is x
-    initial_trace = thunder.last_traces(compiled)[0]
-    print(initial_trace)
-    assert len(initial_trace.bound_symbols) == 2
-    assert initial_trace.bound_symbols[0].sym.id == prims.PrimIDs.UNPACK_TRIVIAL
-    assert initial_trace.bound_symbols[1].sym.id == prims.PrimIDs.RETURN
+    initial_trace_with_dce = thunder.last_traces(compiled)[1]
+    assert "Constructed by Dead Code Elimination" in str(initial_trace_with_dce)
+    assert len(initial_trace_with_dce.bound_symbols) == 2
+    assert initial_trace_with_dce.bound_symbols[0].sym.id == prims.PrimIDs.UNPACK_TRIVIAL
+    assert initial_trace_with_dce.bound_symbols[1].sym.id == prims.PrimIDs.RETURN
 
 
 @instantiate(dtypes=NOTHING)
@@ -2291,6 +2311,29 @@ def test_preserve_weight_names(executor, device: str, dtype: dtypes.dtype):
     assert "t_fc1_weight" in sig.parameters
     assert "t_fc2_bias" in sig.parameters
     assert "t_fc2_weight" in sig.parameters
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_default_method(executor, device: str, dtype: dtypes.dtype):
+    # This test ensures that when no language context is given, it will fallback to the default implementation.
+    from thunder.core.trace import detached_trace
+    from thunder.core.proxies import TensorProxy
+
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+
+    with detached_trace():
+        b = TensorProxy(
+            name="__b",
+            shape=(2, 2),
+            device=thunder.core.devices.cpu,
+            dtype=thunder.core.dtypes.float32,
+            requires_grad=False,
+        )
+
+    # torch.numel(a) and a.numel() will run on PyTorch contenxt
+    # b.numel will fall back to the default implementation
+    assert torch.numel(a) == a.numel() == b.numel
 
 
 # @instantiate(

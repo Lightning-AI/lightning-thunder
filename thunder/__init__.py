@@ -3,7 +3,6 @@ from typing import Any
 from collections import defaultdict, namedtuple
 from collections.abc import Callable
 from collections.abc import Sequence
-from contextlib import contextmanager
 from contextvars import ContextVar
 import os
 import dis
@@ -12,6 +11,8 @@ import warnings
 
 from looseversion import LooseVersion
 
+from thunder.core.module import ThunderModule
+from thunder.core.interpreter import InterpreterLogItem
 from thunder.core.options import (
     INTERPRETATION_OPTIONS,
     resolve_interpretation_option,
@@ -20,6 +21,7 @@ from thunder.core.options import (
     SHARP_EDGES_OPTIONS,
 )
 from thunder.core.trace import (
+    TraceResults,
     TraceCtx,
     from_trace,
     set_tracectx,
@@ -41,7 +43,7 @@ from thunder.common import (
 )
 import thunder.extend as extend
 from thunder.extend import Executor, add_default_executor
-from thunder.core.compile_data import compile_data_and_stats
+from thunder.core.compile_data import compile_data_and_stats, get_compile_data
 from thunder.core.langctxs import LanguageContext
 import thunder.core.langctxs as langctxs
 from thunder.core.baseutils import run_once, check
@@ -58,6 +60,7 @@ from thunder.core.proxies import (
     DictProxy,
     AnyProxy,
 )
+from thunder.core.interpreter import print_interpreter_log, print_to_log
 from thunder.core.jit_ext import thunder_general_jit
 from thunder.executors.torch_autograd import split_forward_backward, ThunderFunction
 from thunder.cudagraphs import CUDAGraphExecutor
@@ -73,6 +76,7 @@ import thunder.executors.torchex
 import thunder.executors.nvfuserex
 
 pythonex = extend.get_executor("python")
+assert pythonex is not None
 
 
 _PACKAGE_ROOT = os.path.dirname(__file__)
@@ -144,6 +148,9 @@ from thunder.clang import *
 #
 
 # TODO Add more of these functions
+resolve_executors = extend.resolve_executors
+add_executor_lists = extend.add_executor_lists
+get_executor = extend.get_executor
 get_all_executors = extend.get_all_executors
 get_default_executors = extend.get_default_executors
 get_always_executors = extend.get_always_executors
@@ -171,83 +178,16 @@ set_execution_callback_file = _set_execution_file
 
 
 # Translates the Python function to a thunder program using the thunder interpreter
-def _general_frontend(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> tuple[TraceCtx, TraceCtx]:
-    return thunder_general_jit(fn, args, kwargs, sharp_edges=sharp_edges)
-
-
-class ThunderModule(pytorch.nn.Module):
-    """A wrapper nn.Module subclass.
-
-    This wrapper is returned by ``thunder.jit``, you would typically not
-    instantiate it manually.
-
-    """
-
-    def __init__(self, model, compiled_model_call):
-        """"""
-        super().__init__()
-        self._model = model
-
-        self._forward_fn = compiled_model_call
-
-    def forward(self, *args, **kwargs):
-        res = self._forward_fn(*args, **kwargs)
-        return res
-
-    @contextmanager
-    def no_sync(self):
-        r"""Context manager to disable gradient synchronization in data parallel mode.
-
-        This context manager is intended to be used in conjunction with
-        :class:`torch.nn.parallel.DistributedDataParallel` to disable gradient
-        synchronization in the backward pass. It will not have any effect when
-        used with other modules.
-
-        .. note::
-
-            This could lead to different accumulated gradients with ``torch.nn.parallel.distributed.DistributedDataParallel.no_sync``.
-            PyTorch's gradient synchronization is implemented by applying all-reduce to gradient buckets of ``torch.nn.Parameter.grad``.
-            Thus the ``no_sync`` context leads to :math:`\text{AllReduce} \left( \sum_{i = 0}^{\rm{num_grad_accum_steps}} g_i \right)`.
-            In contrast, this synchronizes accumulated gradients when exiting, leading to
-            :math:`\text{AllReduce} \left( \sum_{i = 0}^{\rm{num_grad_accum_steps - 1}} g_i \right) + \text{AllReduce}(g_{\rm{num_grad_accum_steps}})`.
-
-        .. warning::
-
-            You must reuse this context manager in each group of gradient accumulation iterations since gradients will get synchronized
-            on context manager exit.
-
-            .. code-block:: python
-
-                with model.no_sync():
-                    for _ in range(len(gradient_accumulation_iters)):
-                        loss(model(x)).backward()  # uses no-sync-backward trace
-                loss(model(x)).backward()  # uses the regular backward trace
-                optimizer.step()
-
-        """
-        from thunder.distributed import (
-            set_skip_data_parallel_grad_sync,
-            reset_skip_data_parallel_grad_sync,
-            _sync_grads,
-        )
-
-        token = set_skip_data_parallel_grad_sync(True)
-        try:
-            yield
-        finally:
-            reset_skip_data_parallel_grad_sync(token)
-            _sync_grads(self)
-
-    def __getattr__(self, name: str) -> Any:
-        if name == "_model":
-            return self._modules["_model"]
-        return getattr(self._model, name)
-
-    def state_dict(self, *args: Any, **kwargs: Any) -> Any:
-        return self._model.state_dict(*args, **kwargs)
-
-    def load_state_dict(self, *args: Any, **kwargs: Any) -> Any:
-        return self._model.load_state_dict(*args, **kwargs)
+def _general_frontend(
+    fn: Callable,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    /,
+    *,
+    record_history: bool,
+    sharp_edges: SHARP_EDGES_OPTIONS,
+) -> TraceResults:
+    return thunder_general_jit(fn, args, kwargs, sharp_edges=sharp_edges, record_history=record_history)
 
 
 # this captures the information needed to decide whether a cached function
@@ -271,6 +211,19 @@ def _get_cache_info():
     return _cache_info_ctx.get()
 
 
+def add_executor_lists(
+    exc_list: None | Sequence[Executor | str], other_exc_list: None | Sequence[Executor | str]
+) -> Sequence[Executor]:
+    new_exc_list = []
+    exc_list = resolve_executors(exc_list)
+    other_exc_list = resolve_executors(other_exc_list)
+    for exc in itertools.chain(exc_list, other_exc_list):
+        if not exc in new_exc_list:
+            new_exc_list.append(exc)
+
+    return new_exc_list
+
+
 @run_once
 def _recursive_jit_call_warning() -> None:
     warnings.warn(
@@ -289,6 +242,7 @@ CacheEntry = namedtuple(
         "epilogue_traces",
         "backward_fn",
         "backward_traces",
+        "return_none_instead_of_grads",
     ],
 )
 
@@ -301,12 +255,14 @@ def jit(
     /,
     *,
     langctx: None | str | Any | LanguageContext = None,
-    executors: None | Sequence[Executor] = None,
+    executors: None | Sequence[Executor | str] = None,
     sharp_edges: None | SHARP_EDGES_OPTIONS | str = None,
     interpretation: None | INTERPRETATION_OPTIONS | str = None,
     cache: None | CACHE_OPTIONS | str = None,
     disable_torch_autograd: bool = False,  # TODO Revisit this UX for RC1
+    early_transforms: list | None = None,
     additional_transforms: list | None = None,
+    record_history: bool = False,
     **compile_options,  # TODO RC1 Make this explicit -- dict of options
 ) -> Callable:
     """Just-in-time compile a callable (function or model).
@@ -315,8 +271,8 @@ def jit(
         fn: A :class:`~torch.nn.Module` or a function to compile.
     Keyword Args:
         langctx: the language context, which language / library to emulate. default: "torch" for PyTorch compatibility.
-        executors: list of executors to use. Defaults to the executors returned by `thunder.get_default_executors()` and always amened by `thunder.get_always_executors()`.
-                   You can get a list of all available executors with `thunder.get_all_executors()`.
+        executors: list of executors to use. Defaults to the executors returned by :func:`thunder.get_default_executors` and always amended by :func:`thunder.get_always_executors`.
+                   You can get a list of all available executors with :func:`thunder.get_all_executors`. You can also pass the name of an executor that's been registered, and it will be resolved with :func:`thunder.extend.get_executor`.
         sharp_edges: sharp edge detection action. What to do when thunder detects a construct that is likely to lead to errors. Can be ``"allow"``, ``"warn"``, ``"error"``. Defaults to ``"allow"``.
         cache: caching mode. default: ``"constant values"```
 
@@ -324,6 +280,9 @@ def jit(
                - ``"constant values"`` - require Tensors to be of the same shape, device, dtype etc., and integers and strings to match exactly,
                - ``"same input"`` - don't check, but just assume that a cached function works if it exists.
         interpretation: (deprecated: don't use this, use the thunder.functional.jit entry point to get the functional jit)
+
+        early_transforms: List of transforms to be applied to prologue, computation, and epilogue traces before executing the prologue. Default: ``None```
+        transforms: List of transforms to be applied to the computation trace. Default: ``None```
     """
 
     if "executors_list" in compile_options:
@@ -341,8 +300,14 @@ def jit(
     elif interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
         interpreter = _general_frontend
 
+    if early_transforms is None:
+        early_transforms = []
+
     if additional_transforms is None:
         additional_transforms = []
+
+    # Resolve names of executors
+    executors = resolve_executors(executors)
 
     # TODO: verify that tutorials don't have false positives and enable warning by default
     # # Make sharp_edges == warn default if not supplied and if in the general jit
@@ -350,9 +315,11 @@ def jit(
     #     sharp_edges = SHARP_EDGES_OPTIONS.WARN
 
     executor_lookasides = {}
-    for ex in executors or []:
+    for ex in executors:
         # TODO: sharp edge if lookasides are shadowed?
         executor_lookasides.update(ex._lookasides)
+
+    assert type(record_history) is bool
 
     # TODO RC1 Refine the compile data option to remove unused options
     cd = CompileData(
@@ -363,7 +330,6 @@ def jit(
         sharp_edges=sharp_edges,
         using_jit=True,
         use_cudagraphs=False,
-        use_torch_compile=False,
         disable_torch_autograd_support=disable_torch_autograd,
         use_rematerialization=False,
         only_execute_prims=False,
@@ -399,14 +365,15 @@ def jit(
 
         cache_info["is_autocast_enabled"] = is_autocast_enabled
 
-        # TODO(crcrpar): support FSDP as well
         is_ddp_enabled = getattr(fn, "use_ddp", False)
+        is_fsdp_enabled = getattr(fn, "use_fsdp", False)
         no_grad_sync = False
-        if is_ddp_enabled:
+        if is_ddp_enabled or is_fsdp_enabled:
             from thunder.distributed import get_skip_data_parallel_grad_sync
 
             no_grad_sync = get_skip_data_parallel_grad_sync()
         cache_info["no_grad_sync"] = no_grad_sync
+        return_none_instead_of_grads = is_fsdp_enabled and no_grad_sync
 
         # TODO RC1 Add module and function checks to prologue (make it a compile option)
 
@@ -414,43 +381,45 @@ def jit(
         cs.last_trace_cache_start = time.time_ns()
         if (cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES) or (cd.cache_option is CACHE_OPTIONS.SYMBOLIC_VALUES):
             for cache_entry in reversed(cs.interpreter_cache):
-                (
-                    pro,
-                    pro_traces,
-                    comp,
-                    comp_traces,
-                    epilogue,
-                    epilogue_traces,
-                    backward_fn,
-                    backward_traces,
-                ) = cache_entry
-                try:
-                    cs.last_prologue_execution_start = time.time_ns()
-                    if epilogue:
-                        inps, pro_to_epi = pro(*args, **kwargs)
-                    else:
-                        inps = pro(*args, **kwargs)
-                        pro_to_epi = None
-                    cs.last_prologue_execution_stop = time.time_ns()
-                except Exception as _:
-                    continue
+                with compile_data_and_stats(cd, cs):
+                    (
+                        pro,
+                        pro_traces,
+                        comp,
+                        comp_traces,
+                        epilogue,
+                        epilogue_traces,
+                        backward_fn,
+                        backward_traces,
+                        _return_none_instead_of_grads,
+                    ) = cache_entry
+                    try:
+                        cs.last_prologue_execution_start = time.time_ns()
+                        if epilogue:
+                            inps, pro_to_epi = pro(*args, **kwargs)
+                        else:
+                            inps = pro(*args, **kwargs)
+                            pro_to_epi = None
+                        cs.last_prologue_execution_stop = time.time_ns()
+                    except Exception as _:
+                        continue
 
-                cs.last_trace_host_tracing_start = time.time_ns()
-                cs.last_trace_host_tracing_stop = time.time_ns()
+                    cs.last_trace_host_tracing_start = time.time_ns()
+                    cs.last_trace_host_tracing_stop = time.time_ns()
 
-                # Updates cache statistics
-                cs.cache_hits += 1
-                cs.last_traces = comp_traces
-                cs.last_interpreted_instructions = None
-                cs.last_interpreted_history = None
-                cs.last_prologue_traces = pro_traces
-                cs.last_prologue = pro
-                cs.last_prologue_transformation_start = 0
-                cs.last_prologue_transformation_stop = 0
-                cs.last_computation_transformation_start = 0
-                cs.last_computation_transformation_stop = 0
+                    # Updates cache statistics
+                    cs.cache_hits += 1
+                    cs.last_traces = comp_traces
+                    cs.last_interpreted_instructions = None
+                    cs.last_interpreter_log = None
+                    cs.last_prologue_traces = pro_traces
+                    cs.last_prologue = pro
+                    cs.last_prologue_transformation_start = 0
+                    cs.last_prologue_transformation_stop = 0
+                    cs.last_computation_transformation_start = 0
+                    cs.last_computation_transformation_stop = 0
 
-                return cache_entry, inps, pro_to_epi
+                    return cache_entry, inps, pro_to_epi
 
         if cd.cache_option is CACHE_OPTIONS.SAME_INPUT:
             if len(cs.interpreter_cache):
@@ -481,7 +450,7 @@ def jit(
                 cs.cache_hits += 1
                 cs.last_traces = comp_traces
                 cs.last_interpreted_instructions = None
-                cs.last_interpreted_history = None
+                cs.last_interpreter_log = None
                 cs.last_prologue_traces = pro_traces
                 cs.last_prologue = pro
 
@@ -501,32 +470,49 @@ def jit(
             with langctxs.langctx(cd.langctx):
                 prologue_trc: TraceCtx
                 computation_trc: TraceCtx
-                prologue_trc, computation_trc, *maybe_epilogue = interpreter(
-                    fn, args, kwargs, sharp_edges=cd.sharp_edges
+                jit_results: TraceResults = interpreter(
+                    fn, args, kwargs, record_history=record_history, sharp_edges=cd.sharp_edges
                 )
+                prologue_trc = jit_results.prologue_trace
+                computation_trc = jit_results.computation_trace
+                epilogue_trc = jit_results.epilogue_trace
+                last_interpreter_log = jit_results.interpreter_log
 
-            if maybe_epilogue:
-                epilogue_traces = maybe_epilogue
-                if epilogue_traces[-1] is not None:
-                    epilogue = epilogue_traces[-1].python_callable()
-                else:
-                    epilogue_traces = None
-                    epilogue = None
+            prologue_traces = [prologue_trc]
+            computation_traces = [computation_trc]
+
+            if epilogue_trc is not None:
+                epilogue_traces = [epilogue_trc]
             else:
                 epilogue_traces = None
-                epilogue = None
 
             cs.last_trace_tracing_stop = time.time_ns()
 
             # Makes the prologue callable
             cs.last_prologue_transformation_start = time.time_ns()
-            protraces = transform_for_execution(
+
+            transform: Callable
+            for transform in early_transforms:
+                prologue_trc, computation_trc, epilogue_trc = transform(
+                    prologue_trc, computation_trc, epilogue_trc, executors_list=cd.executors_list
+                )
+                prologue_traces.append(prologue_trc)
+                computation_traces.append(computation_trc)
+                if epilogue_trc is not None:
+                    epilogue_traces.append(epilogue_trc)
+
+            prologue_traces += transform_for_execution(
                 prologue_trc,
                 executors_list=(pythonex,),
                 use_del_last_used=False,
             )
-            protrace = protraces[-1]
+            protrace = prologue_traces[-1]
             pro = protrace.python_callable()
+
+            if epilogue_trc is not None:
+                epilogue = epilogue_trc.python_callable()
+            else:
+                epilogue = None
 
             cs.last_prologue_transformation_stop = time.time_ns()
 
@@ -538,10 +524,11 @@ def jit(
                 pro_to_epi = None
             cs.last_prologue_execution_stop = time.time_ns()
 
-            computation_traces = [computation_trc]
             cs.last_traces = computation_traces
             backward_traces = []
             cs.last_backward_traces = backward_traces
+            cs.last_interpreter_log = last_interpreter_log
+            cs.last_interpreted_instructions = (i for i in last_interpreter_log if isinstance(i, dis.Instruction))
 
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
@@ -560,10 +547,6 @@ def jit(
                 requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in inps)
 
                 if requires_grad:
-                    # thunder_backward may recursively call compile and wraps the result in a
-                    # torch.autograd.Function to support embedding of Thunder-compiled
-                    # functions in torch's Autograd
-
                     # Currently split_forward_backward also includes
                     # transform_for_execution and various sorting of symbols,
                     # applying transform_for_execution after this would be
@@ -572,19 +555,15 @@ def jit(
                     # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
                     # by split_forward_backward
                     extraces = cs.last_traces
-                    check(
-                        not additional_transforms,
-                        lambda: "Specifying additional_transforms is not supported with PyTorch Autograd integration",
-                    )
 
             if backward_trc is None:
-                cs.last_computation_transformation_start = time.time_ns()
-
                 ## EPILOGUE and TRANSFORMS should not mix...
                 # applies transforms
+                cs.last_computation_transformation_start = time.time_ns()
                 for transform in additional_transforms:
                     computation_trc = transform(computation_trc, executors_list=cd.executors_list)
                     computation_traces.append(computation_trc)
+                cs.last_computation_transformation_stop = time.time_ns()
 
                 with langctxs.langctx(cd.langctx):
                     extraces = transform_for_execution(
@@ -592,7 +571,6 @@ def jit(
                         executors_list=cd.executors_list,
                     )
                 computation_trc = extraces[-1]
-                cs.last_computation_transformation_stop = time.time_ns()
 
             comp = computation_trc.python_callable()
 
@@ -603,13 +581,21 @@ def jit(
 
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(
-                pro, protraces, comp, extraces, epilogue, epilogue_traces, backward_fn, backward_traces
+                pro,
+                prologue_traces,
+                comp,
+                extraces,
+                epilogue,
+                epilogue_traces,
+                backward_fn,
+                backward_traces,
+                return_none_instead_of_grads,
             )
             if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
                 cs.interpreter_cache.append(cache_entry)
 
             cs.last_traces += extraces
-            cs.last_prologue_traces = [prologue_trc] + protraces
+            cs.last_prologue_traces = [prologue_trc] + prologue_traces
             cs.last_prologue = pro
 
         return cache_entry, inps, pro_to_epi
@@ -637,6 +623,7 @@ def jit(
 
             # Connect produced tensors with PyTorch's autograd graph
             ThunderFunction.apply(
+                cache_entry.return_none_instead_of_grads,
                 cache_entry.backward_fn,
                 saved_tensors,
                 saved_other,
@@ -660,10 +647,12 @@ def jit(
 
     if isinstance(fn, pytorch.nn.Module):
         fn_ = ThunderModule(fn, fn_)
+        cd._thunder_module_map[id(fn)] = fn_
 
     # Sets compile options and statistics attributes
     fn_._lc_cd = cd
     fn_._lc_cs = cs
+    fn_._lc_early_transforms = early_transforms[:]  ## transforms
     fn_._lc_transforms = additional_transforms[:]  ## transforms
     fn_._lc_post_optimization_transforms = []  ## post_optimization_transforms
 
@@ -677,7 +666,6 @@ def compile(
     executors_list: None | Sequence[Executor] = None,
     cache_mode: None | str | CACHE_OPTIONS = None,
     use_cudagraphs: bool = False,
-    use_torch_compile: bool = False,
     disable_torch_autograd_support: bool = False,
     use_rematerialization: bool = False,
     only_execute_prims: bool = False,
@@ -690,7 +678,6 @@ def compile(
         executors_list=executors_list,
         cache_option=cache_mode,
         use_cudagraphs=use_cudagraphs,
-        use_torch_compile=use_torch_compile,
         disable_torch_autograd_support=disable_torch_autograd_support,
         use_rematerialization=use_rematerialization,
         only_execute_prims=only_execute_prims,
@@ -787,6 +774,18 @@ def list_transforms(fn) -> list:
     return fn._lc_transforms
 
 
+def last_interpreter_log(fn: Callable) -> list[InterpreterLogItem]:
+    """Returns the list of instructions and other information the interpreter encountered while tracing through the
+    user program (on the last cache miss).
+    """
+    cs = compile_stats(fn)
+    if cs is None:
+        raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
+    if cs.last_interpreter_log is None:
+        raise TypeError(f"{fn} doesn't seem to have been called yet.")
+    return cs.last_interpreter_log
+
+
 def last_interpreted_instructions(fn: Callable) -> list[dis.Instruction]:
     """Returns the list of instructions the interpreter encountered while tracing through the
     user program (on the last cache miss).
@@ -796,19 +795,40 @@ def last_interpreted_instructions(fn: Callable) -> list[dis.Instruction]:
         raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
     if cs.last_interpreted_instructions is None:
         raise TypeError(f"{fn} doesn't seem to have been called yet.")
-    return cs.last_interpreted_instructions
+    return list(cs.last_interpreted_instructions)
 
 
-def last_interpreted_history(fn: Callable) -> list[dis.Instruction | str]:
-    """Returns the list of instructions and other information the interpreter encountered while tracing through the
-    user program (on the last cache miss).
+def print_last_interpreter_log(
+    fn: Callable,
+    /,
+    print_fn: Callable = print,
+    use_colors: bool = True,
+    indent: bool = True,
+    max_depth: int | None = None,
+    color_internals: bool = False,
+    print_source_code: bool = True,
+) -> None:
+    """Prints a log of the last run of the interpreter for the given function.
+
+    Args:
+        fn: The function returned by `thunder.jit()` to print the last interpreter run log for. The function must have been called at least once first.
+        print_fn: The function to use for printing. Defaults to builtin `print`.
+        use_colors: Whether to use colors in the output. Defaults to `None`, which attempts to autodetect if the terminal supports ANSI color.
+        indent: Whether to indent the output with function scope. Defaults to `True`.
+        max_depth: The maximum indentation depth of the output. Doesn't print log items nested deeper than the max depth. Defaults to `None`, which means no limit.
+        color_internals: Whether to color instructions implicitly interpreted by other instructions. Defaults to `False`, so that only the instructions in the user's code are highlighted in color.
+        print_source_code: Whether to print the source line below each LineLogItem in the log. Defaults to `True`.
     """
-    cs = compile_stats(fn)
-    if cs is None:
-        raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
-    if cs.last_interpreted_history is None:
-        raise TypeError(f"{fn} doesn't seem to have been called yet.")
-    return cs.last_interpreted_history
+    log = last_interpreter_log(fn)
+    print_interpreter_log(
+        log,
+        print_fn=print_fn,
+        use_colors=use_colors,
+        indent=indent,
+        max_depth=max_depth,
+        color_internals=color_internals,
+        print_source_code=print_source_code,
+    )
 
 
 def last_compile_options(fn: Callable, /) -> None:

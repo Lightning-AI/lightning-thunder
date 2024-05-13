@@ -511,9 +511,6 @@ def create_fusion_definition_wrapper(
         return create_fd(bsyms, input_descriptors, sorted_unique_inputs, sorted_unique_outputs)
 
     fdw = FusionDefinitionWrapper(get_fd, name, get_fd.cache_info, get_fd.cache_clear)
-    # Avoid hitting nvFuser error when there is no output
-    if not sorted_unique_outputs:
-        return lambda *args: tuple()
     return fdw
 
 
@@ -834,6 +831,19 @@ instantiated) this heuristic actually leads to worse code.
                 else:
                     fused_bsyms.extend(fusion.bound_symbols)
             fused_bsyms.extend(epilogue)
+
+        # Force return operator to be the last one in the fused_bsyms
+        if fused_bsyms[-1].sym.id != PrimIDs.RETURN:
+            return_idx: int = -1
+            for i, fused_bsym in enumerate(fused_bsyms):
+                if fused_bsym.sym.id == PrimIDs.RETURN:
+                    return_idx = i
+                    break
+            utils.check(
+                return_idx != -1,
+                lambda: f"Return operator does not exist in bound symbols",
+            )
+            fused_bsyms.append(fused_bsyms.pop(return_idx))
 
         fusedtrace.bound_symbols = fused_bsyms
 
@@ -2000,44 +2010,27 @@ def var_mean(
 register_supported(PrimIDs.VAR_MEAN, var_mean, _var_mean_check)
 
 
-def _batch_norm_check(
-    a: TensorProxy,
-    weight: None | TensorProxy,
-    bias: None | TensorProxy,
-    running_mean: None | TensorProxy,
-    running_var: None | TensorProxy,
-    training: bool,
-    momentum: Number,
-    eps: Number,
+def _copy__check(
+    copy_from: TensorProxy,
+    copy_to: TensorProxy,
 ) -> bool:
-    return are_supported_tensors(*(x for x in (a, weight, bias, running_mean, running_var) if x is not None))
+    return are_supported_tensors(copy_from, copy_to)
 
 
-def batch_norm(
-    a: TensorProxy,
-    weight: None | TensorProxy,
-    bias: None | TensorProxy,
-    running_mean: None | TensorProxy,
-    running_var: None | TensorProxy,
-    training: bool,
-    momentum: Number,
-    eps: Number,
+def copy_(
+    copy_from: TensorProxy,
+    copy_to: TensorProxy,
     *,
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:
-    nva = getnv(a, fd, lc_to_nv_map)
-    nvweight = None if weight is None else getnv(weight, fd, lc_to_nv_map)
-    nvbias = None if bias is None else getnv(bias, fd, lc_to_nv_map)
-    nvrunning_mean = None if running_mean is None else getnv(running_mean, fd, lc_to_nv_map)
-    nvrunning_var = None if running_var is None else getnv(running_var, fd, lc_to_nv_map)
-    nvmomentum = getnv(momentum, fd, lc_to_nv_map)
-    nveps = getnv(eps, fd, lc_to_nv_map)
-
-    return fd.ops.batch_norm(nva, nvweight, nvbias, nvrunning_mean, nvrunning_var, nvmomentum, nveps, training)
+    nvcopy_from = getnv(copy_from, fd, lc_to_nv_map)
+    nvcopy_to = getnv(copy_to, fd, lc_to_nv_map)
+    fd.add_output(nvcopy_from, alias_input=nvcopy_to)
+    return nvcopy_to
 
 
-register_supported(PrimIDs.BATCH_NORM, batch_norm, _batch_norm_check)
+register_supported(PrimIDs.COPY_, copy_, _copy__check)
 
 
 # Removes excessive float casts, like those that occur when autocasting
@@ -2201,3 +2194,71 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     elapsed_time_millis = elapsed_time_ns // 1000000
     rrctrace.set_provenance(TraceProvenance(f"Remove redundant casts (took {elapsed_time_millis} milliseconds)"))
     return rrctrace
+
+
+def _linear_check(a: TensorProxy, b: TensorProxy, bias: TensorProxy | None) -> bool:
+    if nv_version < LooseVersion("0.2.3"):
+        return False
+
+    enable_linear: None | bool = get_compile_option("nv_enable_linear", "Enable nvFuser matmul.")
+    if not enable_linear:
+        return False
+    # Verify linear inputs and bias (optional) are supported tensors.
+    if not are_supported_tensors(a, b):
+        return False
+    if bias is not None and not is_supported_tensor(bias):
+        return False
+
+    # nvFuser only supports 2D inputs in v0.2.3.
+    if not a.ndim == 2:
+        return False
+    return True
+
+
+def linear(
+    a: TensorProxy,
+    b: TensorProxy,
+    bias: TensorProxy | None,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvb = getnv(b, fd, lc_to_nv_map)
+    nvbias = None if bias is None else getnv(bias, fd, lc_to_nv_map)
+    return fd.ops.linear(nva, nvb, nvbias)
+
+
+register_supported(PrimIDs.LINEAR, linear, _linear_check)
+
+
+def _matmul_check(
+    a: TensorProxy,
+    b: TensorProxy,
+) -> bool:
+    if nv_version < LooseVersion("0.2.2"):
+        return False
+
+    enable_matmul: None | bool = get_compile_option("nv_enable_matmul", "Enable nvFuser matmul.")
+    if not enable_matmul:
+        return False
+    if not are_supported_tensors(a, b):
+        return False
+    if not (a.ndim == b.ndim and a.ndim == 2):
+        return False
+    return True
+
+
+def matmul(
+    a: TensorProxy,
+    b: TensorProxy,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvb = getnv(b, fd, lc_to_nv_map)
+    return fd.ops.matmul(nva, nvb)
+
+
+register_supported(PrimIDs.MATMUL, matmul, _matmul_check)

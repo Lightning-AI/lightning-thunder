@@ -281,6 +281,13 @@ def full_like(
 
 
 @clangop()
+def empty(shape: Sequence[int], *, device: DeviceLike, dtype: dtypes.dtype) -> TensorLike:
+    device = devices.to_device(device)
+
+    return prims.empty(tuple(shape), device=device, dtype=dtype)
+
+
+@clangop()
 def uniform(
     shape: Sequence[int],
     minval: Number = 0.0,
@@ -566,7 +573,7 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
     specified_slices = 0
     ellipsis_idx = None
 
-    if isinstance(key, (Number, slice, EllipsisType)):
+    if key is None or isinstance(key, (Number, slice, EllipsisType)):
         key = (key,)
 
     for idx, x in enumerate(key):
@@ -1048,6 +1055,12 @@ def take_along_axis(a: TensorProxy, /, indices: TensorProxy, dim: int) -> Tensor
 
 
 @clangop()
+def gather(a: TensorProxy, /, indices: TensorProxy, dim: int) -> TensorProxy:
+    dim = utils.canonicalize_dim(a.ndim, dim)
+    return prims.gather(a, indices, dim)
+
+
+@clangop()
 def scatter_add(a: TensorProxy, /, indices: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     dim = utils.canonicalize_dim(a.ndim, dim)
     return prims.scatter_add(a, indices, value, dim)
@@ -1114,6 +1127,11 @@ def unsqueeze(a, /, dims: int | Sequence[int]) -> TensorProxy:
             a_idx += 1
 
     return prims.broadcast_in_dim(a, shape, broadcast_dims)
+
+
+@clangop()
+def unfold(a: TensorProxy, /, dim: int, size: int, step: int) -> TensorProxy:
+    return prims.unfold(a, dim, size, step)
 
 
 @clangop()
@@ -1786,6 +1804,13 @@ def logical_and(a, b):
         b = b != 0
 
     return a & b
+
+
+@clangop()
+def logical_not(a: TensorLike, /) -> TensorLike:
+    if not utils.is_boolean_dtype(dtypes.to_dtype(a)):
+        return a == 0
+    return ~a
 
 
 @clangop(method_name="le")

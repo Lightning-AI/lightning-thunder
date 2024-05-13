@@ -1,3 +1,5 @@
-ipython[all] ==8.23.0
+ipython[all] ==8.24.0
+
+cuda-python
 
 litgpt @ git+https://github.com/Lightning-AI/lit-gpt@940ffc96f7214bca24aa77479bc7c33900aaef28

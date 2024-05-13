@@ -2,7 +2,9 @@ name: "Build (& deploy) Docs"
 on:
   push:
     branches: [main]
-  pull_request: {}
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, ready_for_review, synchronize]
   workflow_dispatch: {}
 
 concurrency:
@@ -31,15 +33,10 @@ jobs:
           python-version: "3.10"
 
       - name: Pull sphinx template
-        run: |
-          pip install -q "awscli >=1.30.0"
-          aws s3 sync --no-sign-request s3://sphinx-packages/ ${PYPI_LOCAL_DIR}
-          pip install lai-sphinx-theme -U -f ${PYPI_LOCAL_DIR}
+        run: make get-sphinx-theme
       - name: Install pandoc
         timeout-minutes: 5
-        run: |
-          sudo apt-get update --fix-missing
-          sudo apt-get install -y pandoc
+        run: sudo apt-get install -y pandoc
       - name: Install package & dependencies
         timeout-minutes: 20
         run: pip install . -U -r requirements/docs.txt

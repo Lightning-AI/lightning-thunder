@@ -1,32 +1,35 @@
 import dataclasses
-from typing import Any
+import sys
+import tempfile
+import textwrap
+import time
 from collections.abc import Callable
 from collections.abc import Sequence
-import time
-from functools import partial
-import textwrap
-from numbers import Number
-import sys
 from dataclasses import dataclass
-import tempfile
-
-
-from lightning_utilities.core.imports import package_available
+from functools import partial
+from numbers import Number
+from typing import Any
 
 import torch
-import torch.nn as nn
-from torch.testing import make_tensor
 import torch.multiprocessing as mp
+import torch.nn as nn
+from lightning_utilities.core.imports import package_available
+from torch.testing import make_tensor
 
 import thunder
-import thunder.torch as ltorch
-import thunder.core.dtypes as dtypes
 import thunder.core.devices as Devices
-from thunder.core.transforms import grad, clear_grads, populate_grads
+import thunder.core.dtypes as dtypes
 import thunder.executors as executors
+import thunder.torch as ltorch
+from thunder.core.transforms import grad, clear_grads, populate_grads
+from thunder.executors.apex_entropyex import apex_ex, apex_available
+from thunder.executors.cudnn_layernormex import cudnn_layernorm_ex
+from thunder.executors.cudnnex import cudnn_ex, cudnn_available
+from thunder.executors.sdpaex import sdpa_ex
+from thunder.executors.torch_compile import torch_compile_cat_ex, torch_compile_ex
 from thunder.tests import nanogpt_model, hf_bart_self_attn, litgpt_model
-from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.litgpt_model import Config as LitGPTConfig
+from thunder.tests.make_tensor import make_tensor, make_tensor_like
 
 # List of all benchmarks
 benchmarks: list = []
@@ -498,14 +501,8 @@ def _run_benchmark(
 
     assert not use_grad_transform or not compile_backward, "Can't set both use_grad_transform and compile_backward!"
     if use_grad_transform:
-        from thunder.core.transforms import _grad_specifier_default
-
-        def grad_specifier(outs) -> None:
-            grad_tensor = benchmark.postprocess_for_backward(outs)
-            _grad_specifier_default(grad_tensor)
-
         benchmark_callable = constructor(benchmark_fn)
-        benchmark_callable = grad(benchmark_callable, grad_specifier=grad_specifier)
+        benchmark_callable = grad(benchmark_callable)
     elif compile_backward:
 
         def _fn(*args, **kwargs):
@@ -714,10 +711,8 @@ def thunder_torch_executor(fn: Callable) -> Callable:
 
 def thunder_torch_compile_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.jit(fn, exec[thunder.pytorch_executor], use_torch_compile=True)
+    return thunder.jit(fn, executors=[torch_compile_ex])
 
-
-from thunder.executors.apex_entropyex import apex_ex, apex_available
 
 thunder_apex_executor: None | Callable = None
 thunder_apex_nvfuser_executor: None | Callable = None
@@ -731,9 +726,6 @@ if apex_available():
         torch.backends.cuda.matmul.allow_tf32 = True
         return thunder.jit(fn, executors=[apex_ex, thunder.nvfuser_executor])
 
-
-from thunder.executors.cudnnex import cudnn_ex, cudnn_available
-from thunder.executors.cudnn_layernormex import cudnn_layernorm_ex
 
 thunder_cudnn_executor: None | Callable = None
 thunder_cudnn_nvfuser_executor: None | Callable = None
@@ -758,20 +750,14 @@ if cudnn_available():
         return thunder.jit(fn, executors=[cudnn_layernorm_ex, thunder.nvfuser_executor])
 
 
-from thunder.executors.sdpaex import sdpa_ex
-
-
 def thunder_sdpa_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
     return thunder.jit(fn, executors=[sdpa_ex])
 
 
-from thunder.executors.torch_compile import torch_compile_executor as torch_compile_ex
-
-
 def thunder_sdpa_torch_compile_nvfuser_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
-    return thunder.jit(fn, executors=[sdpa_ex, torch_compile_ex, thunder.nvfuser_executor])
+    return thunder.jit(fn, executors=[sdpa_ex, torch_compile_cat_ex, thunder.nvfuser_executor])
 
 
 def default_torch_ddp_executor(_) -> Callable:
@@ -845,8 +831,6 @@ class get_default_thunder_ddp_dynamic_strides_executor:
 
     def __call__(self, _) -> Callable:
         from thunder.distributed import ddp
-        from thunder.executors.torch_compile import torch_compile_executor
-        from thunder.executors.sdpaex import sdpa_ex
 
         def func(fn: Callable) -> Callable:
             torch.backends.cuda.matmul.allow_tf32 = True
@@ -854,7 +838,7 @@ class get_default_thunder_ddp_dynamic_strides_executor:
                 ddp(fn, bucket_size_in_mb=self.bucket_size_in_mb),
                 executors=[
                     sdpa_ex,
-                    torch_compile_executor,
+                    torch_compile_cat_ex,
                     thunder.nvfuser_executor,
                 ],
             )
@@ -872,8 +856,6 @@ class get_default_thunder_fsdp_dynamic_strides_executor:
 
     def __call__(self, _) -> Callable:
         from thunder.distributed import fsdp
-        from thunder.executors.torch_compile import torch_compile_executor
-        from thunder.executors.sdpaex import sdpa_ex
 
         def func(fn: Callable) -> Callable:
             torch.backends.cuda.matmul.allow_tf32 = True
@@ -885,7 +867,7 @@ class get_default_thunder_fsdp_dynamic_strides_executor:
                 ),
                 executors=[
                     sdpa_ex,
-                    torch_compile_executor,
+                    torch_compile_cat_ex,
                     thunder.nvfuser_executor,
                 ],
             )
@@ -2578,23 +2560,20 @@ class NanoGPTSDPABenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (q, k, v), {"dropout": self.config.dropout}
 
     def fn(self) -> Callable:
-        class nanoGPTScaledDotProductAttention(torch.nn.Module):
-            def __init__(slf):
-                super().__init__()
-
+        class ScaledDotProductAttention(torch.nn.Module):
             def forward(slf, q, k, v, *, dropout):
                 return torch.nn.functional.scaled_dot_product_attention(
                     q, k, v, attn_mask=None, dropout_p=dropout, is_causal=True
                 )
 
-        return nanoGPTScaledDotProductAttention()
+        return ScaledDotProductAttention()
 
 
 class LitGPTSDPABenchmark(NanoGPTSDPABenchmark):
     @classmethod
     @property
     def name(cls) -> str:
-        return "llama2-sdpa"
+        return "litgpt-sdpa"
 
     @classmethod
     @property
@@ -2603,7 +2582,7 @@ class LitGPTSDPABenchmark(NanoGPTSDPABenchmark):
 
     def __init__(
         self,
-        config: str = "Llama-2-7b-hf",
+        config: str | LitGPTConfig = "Llama-2-7b-hf",
         batchdims: Sequence[int] = (16,),
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.bfloat16,
@@ -2611,13 +2590,29 @@ class LitGPTSDPABenchmark(NanoGPTSDPABenchmark):
     ) -> None:
         from thunder.tests.litgpt_model import Config
 
-        litgptconfig = Config.from_name(config) if not isinstance(config, Config) else config
-        nanogptconfig = NanoGPTConfig(
-            n_head=litgptconfig.n_head,
-            seq_len=litgptconfig.block_size,
-            n_embd=litgptconfig.n_embd,
-        )
-        super().__init__(nanogptconfig, batchdims, device, dtype, requires_grad)
+        # not calling super().__init__() on purpose to avoid the nanogpt config validation
+        self.config = Config.from_name(config) if not isinstance(config, Config) else config
+
+        self.batchdims = batchdims
+        self.device = device
+        self.dtype = dtype
+        self.requires_grad: bool = requires_grad
+
+        # Performs torch dtype conversions
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
+
+        # Sets required benchmark parameters
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+        shape = self.batchdims + (self.config.n_head, self.config.block_size, self.config.head_size)
+
+        q = make(shape)
+        k = make(shape)
+        v = make(shape)
+
+        return (q, k, v), {"dropout": 0.0}  # no litgpt model uses dropout
 
 
 # Taken from HuggingFace Bart-Large model config:
@@ -2808,6 +2803,57 @@ class GPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             litgpt_model.Block(self.config).to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
         )
         return model
+
+
+class BatchNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    def __init__(
+        self,
+        input_shape,
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = False,
+    ) -> None:
+        super().__init__()
+
+        self.shape: Sequence[int] = input_shape
+        self.device: str = device
+        self.dtype: dtypes.dtype = dtype
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+        self.requires_grad: bool = requires_grad
+
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        make_arg = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=False)
+        normalized_shape = (self.shape[1],)
+        a = make_arg(self.shape)
+        weight = make_arg(normalized_shape)
+        bias = make_arg(normalized_shape)
+        # 'batch_norm' is not differentiable with respect to argument 'running_mean' and 'running_var'
+        running_mean = make(normalized_shape)
+        running_var = make(normalized_shape)
+        return (
+            a,
+            running_mean,
+            running_var,
+            weight,
+            bias,
+            True,
+        ), {}
+
+    def fn(self) -> Callable:
+        def foo(a, m, v, w, b, training):
+            return torch.nn.functional.batch_norm(
+                a,
+                m,
+                v,
+                w,
+                b,
+                training=training,
+            )
+
+        return foo
 
 
 # TODO Add descriptions to the executors when listed, and list them alphabetically
