@@ -35,54 +35,46 @@ def _remove_noop_subsymbols(bsym: BoundSymbol) -> None:
 
 def _inplace_copy_sanity_check(extrace: Trace):
     """The sanity check is based on the sharp edge of nvfuser's `add_ouput(output, input)` interface,
-    it makes sure that the `copy_to` argument of `prims.copy_` is not used as input for any of its subsequent operators, except for the Return and Del operators
+    it makes sure that the `copy_to` argument of `prims.copy_` is not used as input for any of its subsequent operators in a nvFusion fused operator
 
     Anti-pattern:
 
     .. code-block:: python
 
-        c = prims.copy_(a, b)
-        d = torch.add(b, b) # or d = torch.add(c, c)
-        return d
+        [t2] = nvFusion0(x, y)
+            # result = prims.mul(x, y)
+            # a = prims.copy_(result, x)
+            # t2 = prims.add(a, y) or t2 = prims.add(x, y)
 
-    Do not use the `copy_to` variable `b` or `c` after it has been updated, use the `copy_from` variable `a` instead to reflect the dependency:
+    Do not use the `copy_to` variable `x` or `a` after it has been updated, use the `copy_from` variable `result` instead to reflect the dependency:
 
     .. code-block:: python
 
-        c = prims.copy_(a, b)
-        d = torch.add(a, a)
-        return c
+        [t2] = nvFusion0(x, y)
+            # result = prims.mul(x, y)
+            # a = prims.copy_(result, x)
+            # t2 = prims.add(result, y)
     """
-    from thunder.core.trace import VariableInterface
 
-    inplace_copy_symbol_id = ("copy_", prims.PrimIDs.COPY_)
-    symbol_id_skip_list = (prims.PrimIDs.RETURN, prims.PrimIDs.DEL)
-    inplace_copy_to_arg: set[VariableInterface] = set()
+    from thunder.core.utils import consumers
+    nvfuser_symbols = (bsym for bsym in extrace.bound_symbols if bsym.sym.name.startswith("nvFusion"))
+    for bsym in nvfuser_symbols:
+        consumer_dict = consumers(list(bsym.subsymbols), _map_to_numbers=True)
+        inplace_copy_idx = [(idx, sym) for idx, sym in enumerate(bsym.subsymbols) if sym.sym.id == prims.PrimIDs.COPY_]
+        for idx, subbsym in inplace_copy_idx:
+            copy_to_arg = subbsym.flat_args[1]
+            copy_to_out = subbsym.output
 
-    def check_symbol(bsym):
-        if bsym.sym.id in symbol_id_skip_list:
-            return
-        elif bsym.sym.is_fusion:
-            for subbsym in bsym.subsymbols:
-                check_symbol(subbsym)
-        else:
-            for input in bsym.flat_proxy_args:
-                vinput = variableify(input)
-                if vinput in inplace_copy_to_arg:
-                    raise NotImplementedError(
-                        f"{bsym} trying to use {input} (the 'copy_to' argument of 'prims.copy_') as input, which is not supported"
-                    )
-            if bsym.sym.id in inplace_copy_symbol_id:
-                copy_to_arg = bsym.flat_proxy_args[1]
-                vcopy_to_arg = variableify(copy_to_arg)
-                out = bsym.flat_proxy_outs
-                if out:
-                    vcopy_to_arg_ = variableify(out[0])
-                    inplace_copy_to_arg.add(vcopy_to_arg_)
-                inplace_copy_to_arg.add(vcopy_to_arg)
+            def check(inp, log_str):
+                if inp is not None and inp in consumer_dict:
+                    last_used_idx = consumer_dict[inp][-1]
+                    if last_used_idx > idx:
+                        raise NotImplementedError(
+                            f"{bsym.subsymbols[last_used_idx]} trying to use {inp} (the {log_str} of 'prims.copy_') as input, which is not supported"
+                        )
 
-    for bsym in extrace.bound_symbols:
-        check_symbol(bsym)
+            check(copy_to_arg, "'copy_to' argument")
+            check(copy_to_out, "output")
 
 
 # TODO This calls variableify(), but we could directly construct Variable objects instead, which might slightly
