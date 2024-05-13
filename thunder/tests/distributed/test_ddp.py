@@ -1038,9 +1038,6 @@ class CompileDDPTest(DataParallelTestCase):
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     def test_tensor_parallel_column_wise_linear(self):
-        from thunder.distributed import prims as dist_prims
-        from thunder.executors.torchex import all_gather_prim_impl
-
         device = torch.device("cuda", self.rank)
         x = torch.randn(2, 12).to(device)
         c10d.all_reduce(x)
@@ -1049,7 +1046,6 @@ class CompileDDPTest(DataParallelTestCase):
         ref_model = ToyModel().to(device)
         ref_state_dict = ref_model.state_dict()
         expected = ref_model(x)
-        expected.mean().backward()
 
         model = ToyModel().to(device)
         model.load_state_dict(ref_state_dict)
@@ -1059,9 +1055,16 @@ class CompileDDPTest(DataParallelTestCase):
             target_modules=("net2",),
             process_group=process_group,
         )
-        y: torch.Tensor = colwise_jitted_model(x)
+        y = colwise_jitted_model(x)
         torch.testing.assert_close(y, expected)
+
+        expected.mean().backward()
         y.mean().backward()
+
+        torch.testing.assert_close(
+            ref_model.net2.weight.grad.chunk(self.world_size, 0)[self.rank],
+            colwise_jitted_model.get_submodule("net2").weight.grad,
+        )
 
 
 common_utils.instantiate_parametrized_tests(CompileDDPTest)
