@@ -156,6 +156,7 @@ def test_inplace_copy_sanity_check(executor, device, dtype):
         a = make_tensor((4, 4), device=device, dtype=tdtype)
         b = make_tensor((4, 4), device=device, dtype=tdtype)
         with pytest.raises(
-            NotImplementedError, match=r"If you are sure you don't want to use this check, it can be disabled by setting `disable_inplace_copy_check=True` in `thunder.jit`.$"
+            NotImplementedError,
+            match=r"If you are sure you don't want to use this check, it can be disabled by setting `disable_inplace_copy_check=True` in `thunder.jit`.$",
         ):
             traced_foo(a, b)
