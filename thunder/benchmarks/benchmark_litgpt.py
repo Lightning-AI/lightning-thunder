@@ -286,7 +286,6 @@ class Benchmark_litGPT:
                     use_orig_params=True,
                     device_mesh=mesh,
                 )
-
         return model
 
     def setup_activation_checkpointing(self):
@@ -399,7 +398,7 @@ class Benchmark_litGPT:
                     targets = targets.to(device=self.device)
 
                     loss = run_fwd_bwd_one_microbatch(self.model, input_ids, targets, self.gradient_accumulation_steps)
-                
+
             input_ids, targets = next(self.train_data_iter)
             input_ids = input_ids.to(device=self.device)
             targets = targets.to(device=self.device)
