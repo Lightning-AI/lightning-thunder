@@ -27,6 +27,33 @@ __all__ = [
 
 
 @dataclass
+class TransformVisitor:
+    process_group: ProcessGroup
+    bsyms_before_allgather: set[BoundSymbol]
+
+    def __post_init__(self):
+        self.swap_map: dict[VariableInterface, ProxyInterface] = {}
+
+    def __call__(self, bsym: BoundSymbol) -> VISIT_TYPE:
+        from thunder.core.transforms import VISIT_TYPE
+        from thunder.core.trace import get_tracectx
+        from thunder.distributed import prims as dist_prims
+
+        new_bsym = bsym.from_bsym_swap_proxies(self.swap_map, skip_output=True)
+        trace = get_tracectx()
+        trace.scopes[-1].append(new_bsym)
+
+        if bsym in self.bsyms_before_allgather:
+            output_to_gather = bsym.flat_proxy_outs[0]
+            gathered_output = dist_prims.synchronize_output_for_column_wise_tensor_parallel(
+                output_to_gather, self.process_group
+            )
+            self.swap_map[variableify(output_to_gather)] = gathered_output
+
+        return VISIT_TYPE.REPLACE
+
+
+@dataclass
 class TransformForColumnWiseParallel:
     rank: int
     world_size: int
@@ -52,8 +79,7 @@ class TransformForColumnWiseParallel:
     ) -> tuple[TraceCtx, TraceCtx, TraceCtx]:
         from thunder.core import prims
         from thunder.core.pytree import tree_flatten
-        from thunder.core.trace import from_trace, tracectx
-        from thunder.distributed import prims as dist_prims
+        from thunder.core.transforms import visitor_transform
 
         modules_and_thunder_modules = [
             (bsym.args[0], bsym.output)
@@ -74,38 +100,14 @@ class TransformForColumnWiseParallel:
                     bsyms_before_allgather.add(consumer_bsym)
         utils.check(bsyms_before_allgather, lambda: f"{bsyms_before_allgather} must not be empty")
 
-        swap_map: dict[VariableInterface, ProxyInterface] = {}
-        new_computation_trace = from_trace(computation_trace)
-        bound_symbols: list[BoundSymbol] = []
-        bsym: BoundSymbol
-
-        # with tracectx(new_computation_trace):
-        with tracectx(computation_trace):
-            for bsym in computation_trace.bound_symbols:
-                new_bsym = bsym.from_bsym_swap_proxies(
-                    swap_map=swap_map,
-                    skip_inputs=False,
-                    skip_output=True,
-                    skip_subsymbols=False,
-                )
-                bound_symbols.append(new_bsym)
-                if bsym in bsyms_before_allgather:
-                    gather_op_sym = dist_prims.synchronize_output_for_column_wise_tensor_parallel
-                    gathered: TensorProxy = gather_op_sym.meta(bsym.flat_proxy_outs[0], self.process_group)
-                    gather_bsym = gather_op_sym.bind(
-                        bsym.flat_proxy_outs[0],
-                        self.process_group,  # args
-                        output=gathered,  # output
-                    )
-                    bound_symbols.append(gather_bsym)
-                    swap_map[variableify(bsym.flat_proxy_outs[0])] = gathered
-
-        utils.check(
-            len(bound_symbols) > len(computation_trace.bound_symbols),
-            lambda: f"{len(bound_symbols)=} > {len(computation_trace.bound_symbols)=}",
+        visit = TransformVisitor(self.process_group, bsyms_before_allgather)
+        new_computation_trace = visitor_transform(
+            computation_trace,
+            visit=visit,
+            provenance="gather ouptut of column-wise tensor parallel layer",
         )
-        new_computation_trace.bound_symbols = bound_symbols
-        new_computation_trace.set_provenance("gather column wise tensor parallel outputs")
+        if distributed_c10d.get_rank() == 0:
+            print(visit.swap_map)
 
         return prologue_trace, new_computation_trace, epilogue_trace
 
