@@ -530,6 +530,11 @@ def is_numbertensor(t):
 # TODO: maybe generalize to *args like check_same_dtype
 # TODO: change to check_same_shape or add check_same_shape variant and make check_same_dtype use the same pattern
 def same_shape(a: Sequence[int], b: Sequence[int], /) -> bool:
+    # Allow for -1 in the shape to represent an unknown dimension
+    if -1 in a:
+        a = tuple(x if x != -1 else b[i] for i, x in enumerate(a))
+    if -1 in b:
+        b = tuple(x if x != -1 else a[i] for i, x in enumerate(b))
     return tuple(a) == tuple(b)
 
 
@@ -1048,6 +1053,7 @@ def find_producer_symbols(trace: TraceCtx, proxies: Sequence[Proxy], stop_proxie
         (__b = ltorch.sub(x, y)
         # __b = prims.sub(x, y),)
     """
+    stop_proxies = filter(lambda x: isinstance(x, Proxy), stop_proxies)
     trace_producers = producers(trace)
     result = set()
     queue = list(proxies)
