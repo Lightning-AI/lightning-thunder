@@ -5394,6 +5394,36 @@ full_like_opinfo = OpInfo(
 tensor_creation_ops.append(full_like_opinfo)
 
 
+def empty_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    # shape, fill_value
+    cases = (
+        (()),
+        ((4, 4)),
+        ((8, 1, 6)),
+        ((8, 7, 5, 1)),
+    )
+
+    for shape in cases:
+        yield SampleInput(shape, device=device, dtype=dtype)
+
+
+def empty_error_generator(op, device, **kwargs):
+    err_msg = "Can't safely cast fill_value of numbertype <class 'complex'> to dtype float32"
+    yield (SampleInput((1, 2), 1j, device=device, dtype=torch.float), RuntimeError, err_msg)
+
+
+# Helper function for `empty` opinfo.
+# It always returns zero tensors, so that the consistency tests pass.
+def torch_empty_and_zero(*args, **kwargs):
+    return ltorch.full_like(ltorch.empty(*args, **kwargs), 0)
+
+
+empty_opinfo = OpInfo(
+    name="empty", op=torch_empty_and_zero, sample_input_generator=empty_sample_generator, torch_reference=torch.zeros
+)
+tensor_creation_ops.append(empty_opinfo)
+
+
 def fixed_value_tensor_creation_op_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # shape
     cases = (
