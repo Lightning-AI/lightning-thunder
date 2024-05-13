@@ -1510,13 +1510,10 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
         if TE_VERSION_1_6_PLUS:
             # Verify that the symbol to sync backward
             # fp8 metadata is present in backward trace.
-            found_bwd_sync_symbol = False
             for bsym in reversed(bwd_exec_trace.bound_symbols):
                 if bsym.sym.id == te_sync_fp8_meta_bwd.id:
-                    found_bwd_sync_symbol = True
                     break
-
-            if not found_bwd_sync_symbol:
+            else:
                 raise RuntimeError("Backward sync symbol not found.")
 
         else:
