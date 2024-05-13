@@ -538,6 +538,7 @@ unbind = _register_torch_operation("unbind")
 unfold = _register_torch_operation("unfold", module=torch.Tensor)
 unsqueeze = _register_torch_operation("unsqueeze")
 view = _register_torch_operation("view", module=torch.Tensor)
+view_as = _register_torch_operation("view_as", module=torch.Tensor)
 
 
 def _broadcast_in_dim_prim_transform(
@@ -630,6 +631,7 @@ _register_implementation(ltorch.unbind, unbind, checker=_always_executable)
 _register_implementation(ltorch.unfold, unfold, checker=_always_executable)
 _register_implementation(ltorch.unsqueeze, unsqueeze, checker=_always_executable)
 _register_implementation(ltorch.view, view, checker=_always_executable)
+_register_implementation(ltorch.view_as, view_as, checker=_always_executable)
 
 #
 # Memory format operations
@@ -1394,7 +1396,7 @@ max_pool3d_with_indices_backward = ex.register_operator(
 nll_loss = _register_torch_operation("nll_loss", module=torch.nn.functional)
 pad = _register_torch_operation("pad", module=torch.nn.functional)
 scaled_dot_product_attention = _register_torch_operation("scaled_dot_product_attention", module=torch.nn.functional)
-softmax = _register_torch_operation("softmax")
+softmax = _register_torch_operation("softmax", like=ltorch._softmax)
 
 
 # NOTE This transform translates number proxies to boolean values
@@ -1697,7 +1699,7 @@ _register_implementation(ltorch.nll_loss_backward, nll_loss_backward, checker=_a
 _register_implementation(ltorch.pad, pad, checker=_always_executable)
 pad_prim_impl = ex.register_operator("torch_pad_prim_impl", meta=prims.pad.meta, fn=_pad_prim_impl)
 _register_implementation(prims.pad, pad_prim_impl, checker=_always_executable)
-_register_implementation(ltorch.softmax, checker=_always_executable, execution_transform=_softmax_transform)
+_register_implementation(ltorch._softmax, checker=_always_executable, execution_transform=_softmax_transform)
 _register_implementation(ltorch.scaled_dot_product_attention, scaled_dot_product_attention, checker=_always_executable)
 
 
