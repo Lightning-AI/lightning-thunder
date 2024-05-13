@@ -2874,6 +2874,28 @@ type_as_sample = OpInfo(
 data_movement_ops.append(type_as_sample)
 
 
+def long_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # input shape
+    shapes = (
+        (),
+        (0,),
+        (2,),
+        (1, 2),
+        (1, 2, 3),
+    )
+
+    for shape in shapes:
+        yield SampleInput(make(shape))
+
+
+long_opinfo = OpInfo(
+    ltorch.long,
+    sample_input_generator=long_sample_generator,
+    torch_reference=torch.Tensor.long,
+)
+
 opinfos.extend(data_movement_ops)
 
 #
