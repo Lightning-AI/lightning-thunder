@@ -1036,22 +1036,32 @@ class CompileDDPTest(DataParallelTestCase):
         with thunder.ThunderModule.no_sync(model):
             fwd_loss(model, x)
 
-    # TODO(crcrpar): Add numerical comparison against no-TP linear.
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     def test_tensor_parallel_column_wise_linear(self):
-        device = torch.device("cuda", self.rank)
+        from thunder.distributed import prims as dist_prims
+        from thunder.executors.torchex import all_gather_prim_impl
 
-        with device:
-            x = torch.randn(2, 12)
+        device = torch.device("cuda", self.rank)
+        x = torch.randn(2, 12).to(device)
+        c10d.all_reduce(x)
 
         process_group = c10d._get_default_group()
+        ref_model = ToyModel().to(device)
+        ref_state_dict = ref_model.state_dict()
+        expected = ref_model(x)
+        expected.mean().backward()
+
         model = ToyModel().to(device)
+        model.load_state_dict(ref_state_dict)
         jitted_model = thunder.jit(model)
         colwise_jitted_model = convert_module_to_columnwise_parallel(
-            jitted_model, target_modules=("net2",), process_group=process_group
+            jitted_model,
+            target_modules=("net2",),
+            process_group=process_group,
         )
         y: torch.Tensor = colwise_jitted_model(x)
-        self.assertEqual(y.size(1), 8)
+        torch.testing.assert_close(y, expected)
+        y.mean().backward()
 
 
 common_utils.instantiate_parametrized_tests(CompileDDPTest)
