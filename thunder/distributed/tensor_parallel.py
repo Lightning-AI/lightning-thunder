@@ -127,20 +127,11 @@ def convert_module_to_columnwise_parallel(
     1. Chunks target modules' parameters in 0-th dimension.
     2. Inserts communications before and after of the target modules' computation.
 
-    .. note::
-
-        This is alpha. This does not support any other distributed parallelisms such as
-        :func:`~thunder.distributed.ddp` and :func:`~thunder.distributed.fsdp`.
-
-    .. seealso::
-
-        For details, refer `Shoeybi, Mohammad, et al. "Megatron-lm: Training multi-billion parameter language models using model parallelism." arXiv preprint arXiv:1909.08053 (2019). <https://arxiv.org/abs/1909.08053>`_
-
     Args:
         thunder_module:
 
     Keyword Args:
-        target_modules:
+        target_modules: Names of modules to convert into column-wise.
         process_group:
     """
     from thunder import compile_data as get_compile_data
