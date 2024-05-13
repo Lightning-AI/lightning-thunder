@@ -2566,23 +2566,20 @@ class NanoGPTSDPABenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (q, k, v), {"dropout": self.config.dropout}
 
     def fn(self) -> Callable:
-        class nanoGPTScaledDotProductAttention(torch.nn.Module):
-            def __init__(slf):
-                super().__init__()
-
+        class ScaledDotProductAttention(torch.nn.Module):
             def forward(slf, q, k, v, *, dropout):
                 return torch.nn.functional.scaled_dot_product_attention(
                     q, k, v, attn_mask=None, dropout_p=dropout, is_causal=True
                 )
 
-        return nanoGPTScaledDotProductAttention()
+        return ScaledDotProductAttention()
 
 
 class LitGPTSDPABenchmark(NanoGPTSDPABenchmark):
     @classmethod
     @property
     def name(cls) -> str:
-        return "llama2-sdpa"
+        return "litgpt-sdpa"
 
     @classmethod
     @property
@@ -2591,7 +2588,7 @@ class LitGPTSDPABenchmark(NanoGPTSDPABenchmark):
 
     def __init__(
         self,
-        config: str = "Llama-2-7b-hf",
+        config: str | LitGPTConfig = "Llama-2-7b-hf",
         batchdims: Sequence[int] = (16,),
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.bfloat16,
@@ -2599,13 +2596,29 @@ class LitGPTSDPABenchmark(NanoGPTSDPABenchmark):
     ) -> None:
         from thunder.tests.litgpt_model import Config
 
-        litgptconfig = Config.from_name(config) if not isinstance(config, Config) else config
-        nanogptconfig = NanoGPTConfig(
-            n_head=litgptconfig.n_head,
-            seq_len=litgptconfig.block_size,
-            n_embd=litgptconfig.n_embd,
-        )
-        super().__init__(nanogptconfig, batchdims, device, dtype, requires_grad)
+        # not calling super().__init__() on purpose to avoid the nanogpt config validation
+        self.config = Config.from_name(config) if not isinstance(config, Config) else config
+
+        self.batchdims = batchdims
+        self.device = device
+        self.dtype = dtype
+        self.requires_grad: bool = requires_grad
+
+        # Performs torch dtype conversions
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(self.dtype)
+
+        # Sets required benchmark parameters
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+        shape = self.batchdims + (self.config.n_head, self.config.block_size, self.config.head_size)
+
+        q = make(shape)
+        k = make(shape)
+        v = make(shape)
+
+        return (q, k, v), {"dropout": 0.0}  # no litgpt model uses dropout
 
 
 # Taken from HuggingFace Bart-Large model config:
