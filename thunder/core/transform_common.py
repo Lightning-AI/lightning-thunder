@@ -57,6 +57,7 @@ def _inplace_copy_sanity_check(extrace: Trace):
     """
 
     from thunder.core.utils import consumers
+
     nvfuser_symbols = (bsym for bsym in extrace.bound_symbols if bsym.sym.name.startswith("nvFusion"))
     for bsym in nvfuser_symbols:
         consumer_dict = consumers(list(bsym.subsymbols), _map_to_numbers=True)
