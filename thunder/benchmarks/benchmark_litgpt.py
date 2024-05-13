@@ -397,12 +397,14 @@ class Benchmark_litGPT:
                     print("=====Start NSYS Profiling======")
                     torch.cuda.cudart().cudaProfilerStart()
 
-                if ((step_idx+1) % gradient_accumulation_steps != 0):
+                if (step_idx + 1) % gradient_accumulation_steps != 0:
                     with data_sync_ctx():
-                        loss = run_fwd_bwd_one_microbatch(self.model, input_ids, targets, self.gradient_accumulation_steps)
+                        loss = run_fwd_bwd_one_microbatch(
+                            self.model, input_ids, targets, self.gradient_accumulation_steps
+                        )
                 else:
                     loss = run_fwd_bwd_one_microbatch(self.model, input_ids, targets, self.gradient_accumulation_steps)
-                    
+
                     # Simple Gradient Accumulation Implementation
                     self.optimizer.step()
                     self.optimizer.zero_grad(set_to_none=True)
