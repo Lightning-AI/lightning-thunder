@@ -46,7 +46,8 @@ class TransformVisitor:
         if bsym in self.bsyms_before_allgather:
             output_to_gather = bsym.flat_proxy_outs[0]
             gathered_output = dist_prims.synchronize_output_for_column_wise_tensor_parallel(
-                output_to_gather, self.process_group
+                output_to_gather,
+                self.process_group,
             )
             self.swap_map[variableify(output_to_gather)] = gathered_output
 
@@ -130,6 +131,10 @@ def convert_module_to_columnwise_parallel(
 
         This is alpha. This does not support any other distributed parallelisms such as
         :func:`~thunder.distributed.ddp` and :func:`~thunder.distributed.fsdp`.
+
+    .. seealso::
+
+        For details, refer `Shoeybi, Mohammad, et al. "Megatron-lm: Training multi-billion parameter language models using model parallelism." arXiv preprint arXiv:1909.08053 (2019). <https://arxiv.org/abs/1909.08053>`_
 
     Args:
         thunder_module:
