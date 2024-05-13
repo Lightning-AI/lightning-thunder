@@ -347,21 +347,21 @@ def jit(
 
         # autocast related operations
         is_autocast_enabled = False
-        if pytorch.is_autocast_enabled() or pytorch.is_autocast_cpu_enabled():
-            if pytorch.is_autocast_enabled() and pytorch.is_autocast_cpu_enabled():
+        if pytorch.is_autocast_enabled() or pytorch.is_autocast_enabled("cpu"):
+            if pytorch.is_autocast_enabled() and pytorch.is_autocast_enabled("cpu"):
                 raise NotImplementedError(
-                    "thunder.autocast does not support torch.is_autocast_enabled() and torch.is_autocast_cpu_enabled() simultaneously at this moment."
+                    "thunder.autocast does not support torch.is_autocast_enabled() and torch.is_autocast_enabled('cpu') simultaneously at this moment."
                 )
             is_autocast_enabled = True
-            autocast_gpu_dtype = dtypes.to_dtype(pytorch.get_autocast_gpu_dtype())
-            autocast_cpu_dtype = dtypes.to_dtype(pytorch.get_autocast_cpu_dtype())
+            autocast_gpu_dtype = dtypes.to_dtype(pytorch.get_autocast_dtype("gpu"))
+            autocast_cpu_dtype = dtypes.to_dtype(pytorch.get_autocast_dtype("cpu"))
             cache_info.update(
                 autocast_config_torch_enabled=pytorch.is_autocast_enabled(),
-                autocast_config_torch_cpu_enabled=pytorch.is_autocast_cpu_enabled(),
+                autocast_config_torch_cpu_enabled=pytorch.is_autocast_enabled("cpu"),
                 autocast_gpu_dtype=str(autocast_gpu_dtype),
                 autocast_cpu_dtype=str(autocast_cpu_dtype),
             )
-            autocast_thunder_dtype = autocast_cpu_dtype if pytorch.is_autocast_cpu_enabled() else autocast_gpu_dtype
+            autocast_thunder_dtype = autocast_cpu_dtype if pytorch.is_autocast_enabled("cpu") else autocast_gpu_dtype
 
         cache_info["is_autocast_enabled"] = is_autocast_enabled
 
