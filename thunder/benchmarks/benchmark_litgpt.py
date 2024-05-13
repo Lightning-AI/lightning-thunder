@@ -389,9 +389,9 @@ class Benchmark_litGPT:
                 t0 = iter_t0
 
             if self.nsys_enabled and i == self.profiler_start and global_rank in [0, None] and step_idx == 0:
-                    print("=====Start NSYS Profiling======")
-                    torch.cuda.cudart().cudaProfilerStart()
-            
+                print("=====Start NSYS Profiling======")
+                torch.cuda.cudart().cudaProfilerStart()
+
             with data_sync_ctx():
                 for step_idx in range(self.gradient_accumulation_steps - 1):
                     input_ids, targets = next(self.train_data_iter)
@@ -399,7 +399,7 @@ class Benchmark_litGPT:
                     targets = targets.to(device=self.device)
 
                     loss = run_fwd_bwd_one_microbatch(self.model, input_ids, targets, self.gradient_accumulation_steps)
-                
+
             input_ids, targets = next(self.train_data_iter)
             input_ids = input_ids.to(device=self.device)
             targets = targets.to(device=self.device)
