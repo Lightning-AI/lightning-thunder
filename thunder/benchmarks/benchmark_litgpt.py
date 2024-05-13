@@ -132,11 +132,6 @@ class Benchmark_litGPT:
             "thunder" in self.compile and self.bucketing_mode == "size"
         ), "'size' bucketing mode is not supported for Thunder. Please use 'none' or 'block'."
 
-        if self.activation_checkpoint:
-            assert not "thunder" in self.compile, "Thunder does not support Activation Checkpoint yet"
-            if self.distributed_mode == "fsdp":
-                assert self.bucketing_mode == "block", "FSDP with Activation Checkpointing requires Block Bucketing"
-
         if self.fsdp_bucket_params is not None:
             if self.distributed_mode != "fsdp":
                 print(
@@ -291,19 +286,6 @@ class Benchmark_litGPT:
                     use_orig_params=True,
                     device_mesh=mesh,
                 )
-
-                if self.activation_checkpoint:
-                    from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
-                        checkpoint_wrapper,
-                        CheckpointImpl,
-                        apply_activation_checkpointing,
-                        )
-
-                    check_fn = lambda submodule: isinstance(submodule, Block)
-
-                    apply_activation_checkpointing(
-                        model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=check_fn
-                    )
 
         return model
 
