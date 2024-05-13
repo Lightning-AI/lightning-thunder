@@ -4876,6 +4876,8 @@ any_tensor_opinfo = OpInfo(
     torch_reference=torch.any,
 )
 
+reduction_ops.append(any_tensor_opinfo)
+
 
 # TODO: increase reduction samples and refacort amax and sum generators
 def amax_amin_sample_generator(op, device, dtype, requires_grad, **kwargs):
