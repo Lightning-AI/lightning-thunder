@@ -1549,8 +1549,6 @@ def nextafter(a, b, /):
 # TODO Extend to tensor x tensor
 @torchsymbol(torch.polygamma, torch.special.polygamma, is_method=True)
 def polygamma(n: int, a: TensorLike, /) -> TensorLike:
-    # utils.check(isinstance(n, (int, IntegerProxy)), lambda: f"polygamma(n, a) expects the first argument to be an integer.")
-    # I don't think we should do this... if it's expected to be a different thing we should baked it in and figure out why it's not baked in here.
     utils.check(
         isinstance(n, (int, NumberProxy)), lambda: f"polygamma(n, a) expects the first argument to be an integer."
     )

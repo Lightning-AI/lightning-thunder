@@ -2915,7 +2915,6 @@ def flip_meta(a: TensorProxy, /, dims: Sequence[int]) -> TensorProxy:
     utils.check_type(a, TensorProxy)
     utils.check_type(dims, Sequence)
     utils.check(
-        # all(0 <= d < a.ndim if isinstance(d, (int, IntegerProxy)) else 0 <= pyval(d) < a.ndim for d in dims),
         all(
             (
                 0 <= d < a.ndim
