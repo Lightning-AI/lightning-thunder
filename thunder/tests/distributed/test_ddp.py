@@ -1270,17 +1270,16 @@ def _test_native_fsdp_helper(input_data):
 
     original_weight_net1_shape = model.net1.weight.shape
 
-    fsdp_model = fsdp(model, bucketing_strategy=bucketing_strategy, device=device)
-
-    # Check that the model is sharded
-    sharded_weight_net1 = fsdp_model.net1.weight
-    assert sharded_weight_net1.shape != original_weight_net1_shape
-    assert sharded_weight_net1.shape == (1, 2)
-
-    cmodel = thunder.jit(
-        fsdp_model,
+    cmodel0 = thunder.jit(
+        model,
         executors=executor.executors_list(),
     )
+    cmodel = fsdp(cmodel0, bucketing_strategy=bucketing_strategy, device=device)
+
+    # Check that the model is sharded
+    sharded_weight_net1 = cmodel.get_parameter("net1.weight")
+    assert sharded_weight_net1.shape != original_weight_net1_shape
+    assert sharded_weight_net1.shape == (1, 2)
 
     comparison_exceptions = []
     for _ in range(num_epochs):
