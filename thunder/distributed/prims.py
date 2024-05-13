@@ -333,7 +333,7 @@ synchronize_input_for_column_wise_tensor_parallel = make_prim(
     meta=synchronize_input_for_column_wise_tensor_parallel_meta,
 )
 synchronize_output_for_column_wise_tensor_parallel = make_prim(
-    PrimIDs.SYNCHRONIZE_INPUT_FOR_COLUMN_WISE_TENSOR_PARALLEL,
+    PrimIDs.SYNCHRONIZE_OUTPUT_FOR_COLUMN_WISE_TENSOR_PARALLEL,
     "synchronize_output_for_column_wise_tensor_parallel",
     meta=synchronize_output_for_column_wise_tensor_parallel_meta,
 )
