@@ -570,7 +570,9 @@ class GeneralJitCtx(MinimalCtx):
             value.provenance.ext_flag |= EXT_FLAG_IS_TENSOR_PROXY
 
             if isinstance(p, TensorProxy) and p.ddp_type in (DDPType.REPLICATED, DDPType.FULLY_SHARDED):
-                p_new = thunder.distributed.prims.synchronize(p, self._process_group_for_ddp)
+                p_new = thunder.distributed.prims.synchronize(
+                    p, self._process_group_for_ddp, getattr(p, "_thunder_fsdp_padding_size", None)
+                )
                 p_orig = p
                 p = p_new
             else:

@@ -148,17 +148,30 @@ def wait_meta(a: FutureTensorProxy, /) -> TensorProxy:
     return TensorProxy(like=a)
 
 
-def synchronize_meta(a: TensorProxy, /, group: torch.distributed.ProcessGroup) -> TensorProxy:
+def synchronize_meta(
+    a: TensorProxy, /, group: torch.distributed.ProcessGroup, padding_size: int | None = None
+) -> TensorProxy:
     utils.check_type(a, TensorProxy)
     utils.check_type(group, torch.distributed.ProcessGroup)
+    utils.check(
+        padding_size is None or isinstance(padding_size, int),
+        lambda: f"`{padding_size=}` must be either int or None",
+    )
 
     match a.ddp_type:
         case DDPType.REPLICATED:
+            utils.check_type(padding_size, None)
             return TensorProxy(like=a)
         case DDPType.FULLY_SHARDED:
             # Assuming that the sharding is done on the first dimension
             # See [FSDP Sharding] in distributed/__init__.py
             unsharded_shape = a.shape[0] * group.size(), *a.shape[1:]
+            if isinstance(padding_size, int):
+                utils.check(
+                    padding_size > 0,
+                    lambda: f"`pading_size` expected be `None` or positive but {padding_size=}",
+                )
+                unsharded_shape[0] -= padding_size
             return TensorProxy(shape=unsharded_shape, like=a, ddp_type=DDPType.REPLICATED)
         case _:
             utils.check(False, lambda: f"Proxy {a} has unexpected {a.ddp_type=}")
@@ -286,7 +299,9 @@ stash_grad_for_fsdp = make_prim(
 
 @register_augmented_forward(PrimIDs.SYNCHRONIZE)
 def synchronize_augmented_forward_rule(
-    a: TensorProxy, group: torch.distributed.ProcessGroup
+    a: TensorProxy,
+    group: torch.distributed.ProcessGroup,
+    padding_size: int | None = None,
 ) -> tuple[TensorProxy, tuple]:
     match a.ddp_type:
         case DDPType.REPLICATED:
@@ -295,16 +310,23 @@ def synchronize_augmented_forward_rule(
             return a, (
                 a.ddp_type,
                 group,
+                padding_size,
             )
         case DDPType.FULLY_SHARDED:
+            from thunder.clang import slice_in_dim
+
             # Assuming that the sharding is done on the first dimension.
             # We do the communication on the side CUDA stream and wait is
             # immediately called on the result with the hope that the execution
             # passes would reorder the wait operation to be closer to the actual
             # usage of the tensor.
-            return all_gather(a, group, do_async=True).wait(), (
+            unsharded_param: TensorProxy = all_gather(a, group, do_async=True).wait()
+            if isinstance(padding_size, int) and padding_size > 0:
+                unsharded_param = unsharded_param[:-padding_size, :]
+            return unsharded_param, (
                 a.ddp_type,
                 group,
+                padding_size,
             )
         case _:
             utils.check(False, lambda: f"Proxy {a} has unexpected {a.ddp_type=}")
@@ -312,14 +334,30 @@ def synchronize_augmented_forward_rule(
 
 @register_backward(PrimIDs.SYNCHRONIZE)
 def synchronize_backward_rule(
-    ddp_type: DDPType, group: torch.distributed.ProcessGroup, grad: TensorProxy
+    ddp_type: DDPType,
+    group: torch.distributed.ProcessGroup,
+    padding_size: int | None,
+    grad: TensorProxy,
 ) -> tuple[TensorProxy, None]:
     preaverage_grad = grad / group.size()
     match ddp_type:
         case DDPType.REPLICATED:
             synced_grad = all_reduce(preaverage_grad, DistributedReduceOps.SUM, group, do_async=True).wait()
         case DDPType.FULLY_SHARDED:
-            synced_grad = reduce_scatter(preaverage_grad, DistributedReduceOps.SUM, group, do_async=True).wait()
+            synced_grad: TensorProxy
+            if isinstance(padding_size, int):
+                from thunder.clang import empty
+                from thunder.core.prims import copy_
+
+                shape = list(grad.shape)
+                shape[0] += padding_size
+                preaverage_grad_with_pad = empty(shape, device=grad.device, dtype=grad.type)
+                copy_(preaverage_grad, preaverage_grad_with_pad[:-padding_size, :])
+                synced_grad = reduce_scatter(
+                    preaverage_grad_with_pad, DistributedReduceOps.SUM, group, do_async=True
+                ).wait()
+            else:
+                synced_grad = reduce_scatter(preaverage_grad, DistributedReduceOps.SUM, group, do_async=True).wait()
         case _:
             utils.check(False, lambda: f"synchronize with unexpected {ddp_type=}")
     return synced_grad, None
