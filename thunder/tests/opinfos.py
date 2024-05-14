@@ -583,6 +583,38 @@ numel_opinfo = OpInfo(
 )
 tensor_properties.append(numel_opinfo)
 
+
+def size_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make_t = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    shapes = (
+        (),
+        (1,),
+        (
+            2,
+            2,
+        ),
+        (0, 2, 1),
+        (2, 0, 1),
+    )
+
+    for shape in shapes:
+        t = make_t(shape)
+        yield SampleInput(t)
+
+        for d in range(len(shape)):
+            yield SampleInput(t, d)
+
+
+size_opinfo = OpInfo(
+    ltorch.size,
+    sample_input_generator=size_sample_generator,
+    torch_reference=torch.Tensor.size,
+)
+
+tensor_properties.append(size_opinfo)
+
+
 opinfos.extend(tensor_properties)
 
 
@@ -617,6 +649,13 @@ abs_opinfo = ElementwiseUnaryOpInfo(
         ),
     ),
 )
+
+logical_not_opinfo = OpInfo(
+    clang.logical_not,
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.logical_not),
+)
+elementwise_unary_ops.append(logical_not_opinfo)
 
 acos_opinfo = OpInfo(
     ltorch.acos,
@@ -1913,14 +1952,7 @@ eq_opinfo = OpInfo(
     clang.eq,
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.eq,
-    test_directives=(
-        # TODO: enable this; there was a now-fixed nvFuser bug causing issues.
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-            executors=("nvfuser",),
-        ),
-    ),
+    test_directives=(),
 )
 elementwise_binary_ops.append(eq_opinfo)
 
@@ -2011,20 +2043,7 @@ ge_opinfo = OpInfo(
     dtypes=(datatypes.exact, datatypes.floating),
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.ge,
-    test_directives=(
-        # TODO: enable this; there was a now-fixed nvFuser bug causing issues.
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-            executors=("nvfuser",),
-        ),
-        # This test is flaky in CI (which seems odd)
-        # AssertionError: Scalars are not close!
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_vjp_correctness",
-        ),
-    ),
+    test_directives=(),
 )
 elementwise_binary_ops.append(ge_opinfo)
 
@@ -2053,14 +2072,7 @@ le_opinfo = OpInfo(
     dtypes=(datatypes.exact, datatypes.floating),
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.le,
-    test_directives=(
-        # TODO: enable this; there was a now-fixed nvFuser bug causing issues.
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-            executors=("nvfuser",),
-        ),
-    ),
+    test_directives=(),
 )
 elementwise_binary_ops.append(le_opinfo)
 
@@ -2070,14 +2082,7 @@ lt_opinfo = OpInfo(
     dtypes=(datatypes.exact, datatypes.floating),
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.lt,
-    test_directives=(
-        # TODO: enable this; there was a now-fixed nvFuser bug causing issues.
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-            executors=("nvfuser",),
-        ),
-    ),
+    test_directives=(),
 )
 elementwise_binary_ops.append(lt_opinfo)
 
@@ -2123,14 +2128,7 @@ ne_opinfo = OpInfo(
     dtypes=(datatypes.exact, datatypes.floating),
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.ne,
-    test_directives=(
-        # TODO: enable this; there was a now-fixed nvFuser bug causing issues.
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-            executors=("nvfuser",),
-        ),
-    ),
+    test_directives=(),
 )
 elementwise_binary_ops.append(ne_opinfo)
 
@@ -2771,6 +2769,92 @@ data_movement_ops = []
 # data_movement_ops.append(convert_element_type_opinfo)
 
 
+def type_sample_generator_tensor(op, device, dtype, requires_grad, **kwargs):
+    # dtype is not None
+    # expected to return tensor
+
+    _torch_dtype_to_old_torch_typestring_map = {
+        torch.float32: "FloatTensor",
+        torch.float64: "DoubleTensor",
+        torch.float16: "HalfTensor",
+        torch.bfloat16: "BFloat16Tensor",
+        torch.uint8: "ByteTensor",
+        torch.int8: "CharTensor",
+        torch.int16: "ShortTensor",
+        torch.int32: "IntTensor",
+        torch.long: "LongTensor",
+        torch.bool: "BoolTensor",
+    }
+
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    to_dtype = torch.complex128 if dtype.is_complex else torch.float64
+
+    yield SampleInput(make(4, 4, device=device), dtype)
+    yield SampleInput(make(4, 4, device=device), dtype=to_dtype)
+    # below can be deleted if we don't support strings
+    yield SampleInput(make(4, 4, device=device), f"torch.{_torch_dtype_to_old_torch_typestring_map[to_dtype]}")
+
+    # Explictly pass device
+    if torch.device(device).type == "cuda":
+        yield SampleInput(make(4, 4, device=device), f"torch.cuda.{_torch_dtype_to_old_torch_typestring_map[to_dtype]}")
+
+
+# kind of redundant?
+def type_error_generator_tensor(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=False)
+
+    err_msg = r"type\(\): `non_blocking==True` is currently not supported."
+    yield SampleInput(make(3, 3), dtype, non_blocking=True), RuntimeError, err_msg
+
+
+type_opinfo_tensor = OpInfo(
+    ltorch.type,
+    sample_input_generator=type_sample_generator_tensor,
+    error_input_generator=type_error_generator_tensor,
+    torch_reference=torch.Tensor.type,
+)
+
+data_movement_ops.append(type_opinfo_tensor)
+
+
+def type_sample_generator_str(op, device, dtype, requires_grad, **kwargs):
+    # dtype is None
+    # expected to return string
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    yield SampleInput(make(4, 4))
+
+
+# kind of redundant?
+def type_error_generator_str(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=False)
+
+    err_msg = r"type\(\): `non_blocking==True` is currently not supported."
+    yield SampleInput(make(3, 3), non_blocking=True), RuntimeError, err_msg
+
+
+# comparing strings (NOTE: assert_close does not support string comparison)
+def string_compare(actual, expected, **kwargs):
+    assert actual == expected
+
+
+type_opinfo_str = OpInfo(
+    ltorch.type,
+    sample_input_generator=type_sample_generator_str,
+    error_input_generator=type_error_generator_str,
+    torch_reference=torch.Tensor.type,
+    test_directives=(
+        DecorateInfo(
+            custom_comparator(string_compare),
+            "test_core_vs_torch_consistency",
+        ),
+    ),
+)
+
+data_movement_ops.append(type_opinfo_str)
+
+
 def to_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
@@ -2866,6 +2950,28 @@ type_as_sample = OpInfo(
 )
 data_movement_ops.append(type_as_sample)
 
+
+def long_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # input shape
+    shapes = (
+        (),
+        (0,),
+        (2,),
+        (1, 2),
+        (1, 2, 3),
+    )
+
+    for shape in shapes:
+        yield SampleInput(make(shape))
+
+
+long_opinfo = OpInfo(
+    ltorch.long,
+    sample_input_generator=long_sample_generator,
+    torch_reference=torch.Tensor.long,
+)
 
 opinfos.extend(data_movement_ops)
 
@@ -3680,6 +3786,98 @@ reshape_opinfo = OpInfo(
     torch_reference=torch.reshape,
 )
 shape_ops.append(reshape_opinfo)
+
+
+def unflatten_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # shape, dim, unflatten_shape
+    cases = (
+        ((4,), 0, (4,)),  # no-op
+        ((2, 2), -1, (2,)),  # no-op
+        ((1, 2, 1), 1, (2,)),  # no-op
+        ((4, 2), 0, (2, 2)),
+        ((125, 3), 0, (25, 5)),
+        ((25, 25), -1, (1, 5, 5)),
+        ((16, 32), -1, (2, 4, 1, 4)),
+        ((4, 5, 6), -1, (6, 1, 1, 1)),
+        ((5, 125, 5), 1, (5, 5, 5)),
+        ((4, 12, 6), 1, (2, 2, 3)),
+        ((12, 2), 0, (-1, 6)),
+        ((4, 12, 6), 1, (12, -1)),
+        ((4, 12, 6), 1, (6, -1)),
+    )
+
+    for tensor_shape, dim, shape in cases:
+        yield SampleInput(make(tensor_shape), dim, shape)
+
+
+def unflatten_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, dtype=dtype, device=device)
+    input_tensor = make(4, 4)
+    yield (SampleInput(input_tensor, 0, ()), RuntimeError, r"unflatten\(\) sizes must be non-empty")
+
+    err_msg = rf"Attempting to reshape a.shape=(.*?) to shape=(.*?), but a.numel=.* is different from the number of elements in shape, .*"
+    yield (SampleInput(input_tensor, 1, (2, 3)), RuntimeError, err_msg)
+
+    err_msg = rf"Trying to reshape, but can't infer how to reshape (.*?) to (.*?)"
+    yield (SampleInput(input_tensor, 0, (-1, 3)), RuntimeError, err_msg)
+
+    dim = 3
+    yield (
+        SampleInput(input_tensor, dim, (2, 2)),
+        IndexError,
+        rf"Dimension out of range \(expected to be in range of \[{-len(input_tensor.shape)}, {len(input_tensor.shape)-1}\], but got {dim}\)",
+    )
+
+
+unflatten_opinfo = OpInfo(
+    ltorch.unflatten,
+    sample_input_generator=unflatten_sample_generator,
+    error_input_generator=unflatten_error_generator,
+    torch_reference=torch.unflatten,
+)
+
+shape_ops.append(unflatten_opinfo)
+
+
+def view_as_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # Input shape, output shape
+    cases = (
+        ((4,), (4,)),  # no-op
+        ((2, 2), (2, 2)),  # no-op
+        ((1, 2, 1), (1, 2, 1)),  # no-op
+        ((2, 2, 2), (4, 2)),
+        ((125,), (25, 5)),
+        ((25, 25), (1, 5, 5, 1, 5, 1, 5, 1)),
+        ((16, 32), (2, 4, 1, 4, 4, 1, 4)),
+        ((16, 12), (12, 16)),
+        ((1, 16, 12), (12, 16)),
+        ((1, 5, 1, 5), (25, 1)),
+        ((2, 4, 2), (4, 4)),
+        ((1, 4), (1, 1, 2, 1, 2)),
+        ((3, 5, 7), (7, 5, 3)),
+        ((1,), ()),  # empty
+        ((5, 0, 2, 3), (5, 0, 2, 3)),
+        ((2, 1, 0, 3, 1), (5, 0)),
+        ((1,), ()),  # empty
+        ((4, 5, 6), (4, 5, 6, 1, 1, 1)),
+        ((), (1, 1, 1, 1)),  # empty
+        ((), ()),
+    )
+
+    for ishape, oshape in cases:
+        yield SampleInput(make(ishape), make(oshape))
+
+
+view_as_opinfo = OpInfo(
+    ltorch.view_as,
+    sample_input_generator=view_as_sample_generator,
+    torch_reference=torch.Tensor.view_as,
+)
+shape_ops.append(view_as_opinfo)
 
 
 def repeat_sample_generator(op, device, dtype, requires_grad, **kwargs):
@@ -4634,6 +4832,53 @@ opinfos.extend(shape_ops)
 reduction_ops = []
 
 
+def all_tensor_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # input shape, dim, keepdim
+    dim_cases = (
+        ((4, 4), None, False),
+        ((4, 4), None, True),
+        ((2, 3), 0, True),
+        ((2, 3, 4), (1, 2), False),
+        ((2, 3, 4), (1, 2), True),
+        ((2, 3, 4), (-1, 1), False),
+        ((2, 3, 4), (-1, 1), True),
+    )
+
+    for input_shape, dim, keepdim in dim_cases:
+        yield SampleInput(make(input_shape), dim, keepdim)
+
+
+def all_tensor_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+    err_msg = r"Dimension out of range \(expected to be in range of \[.*?\], but got .*\)"
+    yield (
+        SampleInput(make(5, 1, 2, 3), 4),
+        IndexError,
+        err_msg,
+    )
+
+
+all_tensor_opinfo = OpInfo(
+    ltorch.all_tensor,
+    sample_input_generator=all_tensor_sample_generator,
+    error_input_generator=all_tensor_error_generator,
+    torch_reference=torch.all,
+)
+
+reduction_ops.append(all_tensor_opinfo)
+
+
+any_tensor_opinfo = OpInfo(
+    ltorch.any_tensor,
+    sample_input_generator=all_tensor_sample_generator,
+    torch_reference=torch.any,
+)
+
+reduction_ops.append(any_tensor_opinfo)
+
+
 # TODO: increase reduction samples and refacort amax and sum generators
 def amax_amin_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # For grad test stability it's better to use wider range of values
@@ -5226,6 +5471,36 @@ full_like_opinfo = OpInfo(
     torch_reference=torch.full_like,
 )
 tensor_creation_ops.append(full_like_opinfo)
+
+
+def empty_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    # shape, fill_value
+    cases = (
+        (()),
+        ((4, 4)),
+        ((8, 1, 6)),
+        ((8, 7, 5, 1)),
+    )
+
+    for shape in cases:
+        yield SampleInput(shape, device=device, dtype=dtype)
+
+
+def empty_error_generator(op, device, **kwargs):
+    err_msg = "Can't safely cast fill_value of numbertype <class 'complex'> to dtype float32"
+    yield (SampleInput((1, 2), 1j, device=device, dtype=torch.float), RuntimeError, err_msg)
+
+
+# Helper function for `empty` opinfo.
+# It always returns zero tensors, so that the consistency tests pass.
+def torch_empty_and_zero(*args, **kwargs):
+    return ltorch.full_like(ltorch.empty(*args, **kwargs), 0)
+
+
+empty_opinfo = OpInfo(
+    name="empty", op=torch_empty_and_zero, sample_input_generator=empty_sample_generator, torch_reference=torch.zeros
+)
+tensor_creation_ops.append(empty_opinfo)
 
 
 def fixed_value_tensor_creation_op_sample_generator(op, device, dtype, requires_grad, **kwargs):

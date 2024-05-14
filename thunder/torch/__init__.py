@@ -17,7 +17,7 @@ from thunder.torch.langctx import register_method, register_property
 
 import thunder.clang as clang
 import thunder.core.devices as devices
-from thunder.core.devices import to_device
+from thunder.core.devices import to_device, device_from_string
 import thunder.core.dtypes as dtypes
 from thunder.core.dtypes import to_torch_dtype, to_dtype, _thunder_to_torch_dtype_map, _torch_to_thunder_dtype_map
 import thunder.core.prims as prims
@@ -114,6 +114,8 @@ class torchsymbol:
                     exception_type=AssertionError,
                 )
         else:
+            if not self.id.startswith("torch"):
+                warnings.warn(f"{self.id=} does not start with the namespace of `torch`")
             id = self.id
 
         if self.is_prim:
@@ -170,13 +172,13 @@ def is_floating_point(a: TensorLike, /) -> bool:
 
 
 # Handles the size method
-def size(a):
-    def fn_(idx: int | None = None):
-        if idx is None:
-            return a.shape
-        return a.shape[idx]
+def size(a: TensorLike, /, dim: None | int = None) -> int | Sequence[int]:
+    if dim is not None:
+        return a.shape[dim]
+    return a.shape
 
-    return fn_
+
+register_method("size", size)
 
 
 @torchsymbol(torch.numel, torch.Tensor.numel, is_method=True)
@@ -192,8 +194,92 @@ def is_cuda(a: TensorLike, /) -> bool:
     return a.device.devicetype is devices.DeviceType.CUDA
 
 
-register_method("size", size)
+_torch_dtype_to_old_torch_typestring_map = {
+    torch.float32: "FloatTensor",
+    torch.float64: "DoubleTensor",
+    torch.float16: "HalfTensor",
+    torch.bfloat16: "BFloat16Tensor",
+    torch.uint8: "ByteTensor",
+    torch.int8: "CharTensor",
+    torch.int16: "ShortTensor",
+    torch.int32: "IntTensor",
+    torch.long: "LongTensor",
+    torch.bool: "BoolTensor",
+}
 
+_old_torch_typestring_to_torch_dtype_map = {v: k for k, v in _torch_dtype_to_old_torch_typestring_map.items()}
+
+
+def _device_and_dtype_to_old_torch_typestring(device: DeviceLike, dtype: dtypeLike) -> str:
+    torch_dtype = to_torch_dtype(dtype)
+    dtype_str = _torch_dtype_to_old_torch_typestring_map.get(torch_dtype)
+    devicetype_str: str = ""
+    if device.devicetype is not devices.DeviceType.CPU:
+        devicetype_str = f"{devices.devicetype_string(device.devicetype)}."
+    return f"torch.{devicetype_str}{dtype_str}"
+
+
+def _old_torch_typestring_to_devicetype_and_dtype(typestring: str) -> tuple[DeviceLike, dtypeLike]:
+
+    # Two cases:
+    #    - torch.DtypeTensor
+    #    - torch.device.DtypeTensor
+
+    _, *dev_and_dtype = typestring.split(".")
+    devicetype_str = "cpu"
+    dtype_str = ""
+
+    if len(dev_and_dtype) == 1:
+        # when devicetype_str is omitted, device type is CPU
+        (dtype_str,) = dev_and_dtype
+        dtype_str = _old_torch_typestring_to_torch_dtype_map[dtype_str]
+
+    if len(dev_and_dtype) == 2:
+        devicetype_str, dtype_str = dev_and_dtype
+        dtype_str = _old_torch_typestring_to_torch_dtype_map[dtype_str]
+
+    # Value error
+    # expected the string to split into one or two elements
+    # and devicetype_str should be either "cpu" or "cuda"
+    utils.check(
+        devicetype_str in ("cpu", "cuda") and 1 <= len(dev_and_dtype) <= 2,
+        lambda: f"type(): unrecognized torch typestring {typestring}",
+        exception_type=ValueError,
+    )
+
+    return devicetype_str, dtype_str
+
+
+@torchsymbol(torch.Tensor.type, is_method=True)
+def type(a: TensorLike, /, dtype: None | str | dtypeLike = None, non_blocking: bool = False) -> str | TensorLike:
+    utils.check(
+        not non_blocking,
+        lambda: f"type(): `non_blocking==True` is currently not supported.",
+        exception_type=NotImplementedError,
+    )
+
+    if dtype is None:
+        # returns the type of the input tensor in string
+        return _device_and_dtype_to_old_torch_typestring(a.device, a.dtype)
+
+    if isinstance(dtype, str):
+        devtype, dtype = _old_torch_typestring_to_devicetype_and_dtype(dtype)
+
+        if devtype == a.device.type:
+            # This handles two cases:
+            # 1. When a tensor is already on a CUDA device, and the device type string is CUDA. In this case the tensor remains on its current device.
+            # 2. When a tensor is on a CPU device and the device type string is omitted, the tensor remains on the CPU device.
+            dev = a.device
+        else:
+            dev = device_from_string(devtype)
+    else:
+        # dtype is assumed to be torch.dtype (e.g. torch.int32)
+        dev = a.device
+
+    return to(a, dev, dtype)
+
+
+register_method("type", type)
 
 #
 # Data movement and transformation operations
@@ -347,6 +433,11 @@ def type_as(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
     utils.check_type(b, TensorProxy)
 
     return to(a, b.true_dtype)
+
+
+@torchsymbol(torch.Tensor.long, is_method=True)
+def long(a: TensorLike, /, memory_format: torch.memory_format = torch.preserve_format) -> TensorLike:
+    return to(a, dtype=dtypes.int64, memory_format=memory_format)
 
 
 #
@@ -599,6 +690,46 @@ def zeros_like(a: TensorLike, /, *, device: DeviceLike | None = None, dtype: dty
     return full_like(a, 0, device=device, dtype=dtype)
 
 
+@torchsymbol(torch.empty)
+def empty(
+    *size: int,
+    device: None | DeviceLike = None,
+    dtype: None | dtypeLike = None,
+    out: None | TensorLike = None,
+    layout: torch.layout = torch.strided,
+    requires_grad: bool = False,
+    pin_memory: bool = False,
+    memory_format: torch.memory_format = torch.contiguous_format,
+) -> TensorLike:
+    size = utils.extract_shape_from_varargs(size)
+
+    utils.check(out is None, lambda: "empty(): out is not None which is currently unsupported", NotImplementedError)
+    utils.check(layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError)
+    utils.check(
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.compile", NotImplementedError
+    )
+    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.compile", NotImplementedError)
+    utils.check(
+        memory_format == torch.contiguous_format,
+        lambda: "Only torch.contiguous_format is supported",
+        NotImplementedError,
+    )
+
+    # For now we default to `float32`,
+    # however, we should add a default dtype or rely on `torch.get_default_dtype`.
+    if dtype is None:
+        dtype = torch.float
+    dtype = to_dtype(dtype)
+
+    # For now we default to "cpu",
+    # however, we should add a default device or rely on `torch.get_default_device`.
+    if device is None:
+        device = "cpu"
+    device = to_device(device)
+
+    return clang.empty(size, device=device, dtype=dtype)
+
+
 #
 # Shape operations
 #
@@ -800,6 +931,17 @@ def reshape(a: TensorLike, /, *shape: int) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
 
     return clang.reshape(a, shape)
+
+
+@torchsymbol(torch.unflatten, is_method=True)
+def unflatten(a: TensorLike, /, dim: int, sizes=Sequence[int]) -> TensorLike:
+    utils.check(
+        len(sizes) > 0,
+        lambda: f"unflatten() sizes must be non-empty",
+        RuntimeError,
+    )
+    dim = utils.canonicalize_dim(a.ndim, dim)
+    return a.view(a.shape[:dim] + tuple(sizes) + a.shape[dim + 1 :])
 
 
 @torchsymbol(torch.select, is_method=True)
@@ -1049,6 +1191,11 @@ def unsqueeze(a: TensorLike, /, dim: int) -> TensorLike:
 def view(a: TensorLike, /, *shape) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
     return reshape(a, shape)
+
+
+@torchsymbol(torch.Tensor.view_as, is_method=True)
+def view_as(a: TensorLike, b: TensorLike, /) -> TensorLike:
+    return view(a, b.size())
 
 
 #
@@ -1390,6 +1537,11 @@ def gt(a, b, /):
 @torchsymbol(torch.logical_and, is_method=True)
 def logical_and(a, b, /):
     return clang.logical_and(a, b)
+
+
+@torchsymbol(torch.logical_not, is_method=True)
+def logical_not(a: TensorLike, /) -> TensorLike:
+    return clang.logical_not(a)
 
 
 @torchsymbol(torch.le, is_method=True)
@@ -1779,6 +1931,38 @@ def _reduction(
     return result
 
 
+@torchsymbol(torch.all, is_method=True, id="torch.all")
+def all_tensor(
+    a: TensorLike, /, dim: None | int | Sequence[int] = None, keepdim: bool = False, *, out: None | TensorLike = None
+) -> TensorLike:
+    # named as all_tensor to avoid confusion with python's built-in all function
+    utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
+    result = logical_not(any_tensor(logical_not(a), dim=dim, keepdim=keepdim))
+
+    # Pytorch's torch.all matches the behavior of NumPy in returning output of dtype bool for all supported dtypes except uint8.
+    # For uint8 the dtype of output is uint8 iteself (https://pytorch.org/docs/stable/generated/torch.all.html)
+    if a.dtype is dtypes.uint8:
+        result = to(result, dtype=dtypes.uint8)
+    return result
+
+
+@torchsymbol(torch.any, is_method=True, id="torch.any")
+def any_tensor(a: TensorLike, /, dim: None | int | Sequence[int] = None, keepdim: bool = False) -> TensorLike:
+    # named as any_tensor to avoid confusion with python's built-in any function
+    a_ = clang.maybe_convert_to_dtype(a, dtypes.bool8)
+    if isinstance(dim, Sequence) and len(dim) == 0:
+        # PyTorch returns a_.clone()
+        result = a_ | a_
+    else:
+        result = ne(sum(a_, dim=dim, keepdim=keepdim), False)
+
+    # Pytorch's torch.any matches the behavior of NumPy in returning output of dtype bool for all supported dtypes except uint8.
+    # For uint8 the dtype of output is uint8 iteself (https://pytorch.org/docs/stable/generated/torch.any.html)
+    if a.dtype is dtypes.uint8:
+        return prims.convert_element_type(result, dtypes.uint8)
+    return result
+
+
 @torchsymbol(torch.amax, is_method=True)
 def amax(a, /, dim=None, keepdim: bool = False):
     return _reduction(
@@ -1985,13 +2169,13 @@ def index_select(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
     return clang.take(a, index, dim)
 
 
-@torchsymbol(torch.gather)
+@torchsymbol(torch.gather, is_method=True)
 def gather(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
     return clang.gather(a, indices=index, dim=dim)
 
 
 # NOTE PyTorch's scatter_add has a parameter named 'src', not 'source'
-@torchsymbol(torch.scatter_add)
+@torchsymbol(torch.scatter_add, is_method=True)
 def scatter_add(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike) -> TensorLike:
     return clang.scatter_add(a, indices=index, value=src, dim=dim)
 
@@ -4111,8 +4295,14 @@ def sigmoid(a: TensorLike, /) -> TensorLike:
 
 
 # CompositeImplicitAutograd - don't register decomp
-@torchsymbol(torch.softmax, torch.nn.functional.softmax, is_method=True)
-def softmax(a: TensorLike, /, dim: int, *, dtype: None | dtypeLike = None) -> TensorLike:
+@torchsymbol(torch.softmax, torch.nn.functional.softmax, is_method=True, id="torch.softmax")
+def _softmax(
+    a: TensorLike,
+    /,
+    dim: int,
+    *,
+    dtype: None | dtypeLike = None,
+) -> TensorLike:
     result_dtype: dtypeLike = dtype or a.dtype
     result_dtype: dtypes.dtype = to_dtype(result_dtype)
     computation_dtype = utils.get_computation_dtype(result_dtype)
@@ -4127,6 +4317,15 @@ def softmax(a: TensorLike, /, dim: int, *, dtype: None | dtypeLike = None) -> Te
     result = a_exp / sum(a_exp, dim, keepdim=True)
     converted = result.to(result_dtype)
     return converted
+
+
+register_method("softmax", _softmax)
+
+
+# A wrapper to support `torch.nn.Softmax` whose `forward` passes the kwarg of `_stacklevel=5` to `torch.nn.functional.softmax`.
+# ref: https://github.com/pytorch/pytorch/blob/8d12ba9acfa20ed7df438a8892c9bf8e6bef5775/torch/nn/modules/activation.py#L1545
+def softmax(a: TensorLike, dim: int, dtype: None | dtypeLike = None, _stacklevel: int = 3) -> TensorLike:
+    return _softmax(a, dim=dim, dtype=dtype)
 
 
 #

@@ -145,6 +145,7 @@ class PrimIDs(Enum):
     UNIFORM = auto()
     UNIFORM_PHILOX = auto()
     RANDN = auto()
+    EMPTY = auto()
     TENSOR_FROM_SEQUENCE = auto()
     # Probability distribution-related ops
     MULTINOMIAL = auto()
@@ -2673,6 +2674,22 @@ def _randn_meta(
 
 
 randn = make_prim(PrimIDs.RANDN, "randn", meta=_randn_meta)
+
+
+def _empty_meta(
+    shape: tuple[int, ...],
+    *,
+    device: devices.Device,
+    dtype: dtypes.dtype,
+):
+    utils.check_type(device, devices.Device)
+    utils.check_type(dtype, dtypes.dtype)
+    utils.check_type(shape, tuple)
+    utils.check_valid_shape(shape)
+    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
+
+
+empty = make_prim(PrimIDs.EMPTY, "empty", meta=_empty_meta)
 
 
 # Prim to construct a Tensor from sequence/nested sequence of Numbers.

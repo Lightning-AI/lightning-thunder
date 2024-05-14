@@ -30,7 +30,13 @@ from thunder.distributed import prims
 from thunder.tests.framework import TorchExecutor, nvFuserExecutor
 from thunder.tests.framework import instantiate
 
-from thunder.executors.transformer_engineex import transformer_engine_ex, TE_AVAILABLE
+from thunder.executors.transformer_engineex import (
+    transformer_engine_ex,
+    TE_AVAILABLE,
+    TE_VERSION_1_6_PLUS,
+    te_sync_fp8_meta_bwd,
+)
+
 
 is_fp8_supported: bool = False
 # This will be correctly updated below when TE Engine is installed
@@ -1264,17 +1270,16 @@ def _test_native_fsdp_helper(input_data):
 
     original_weight_net1_shape = model.net1.weight.shape
 
-    fsdp_model = fsdp(model, bucketing_strategy=bucketing_strategy, device=device)
-
-    # Check that the model is sharded
-    sharded_weight_net1 = fsdp_model.net1.weight
-    assert sharded_weight_net1.shape != original_weight_net1_shape
-    assert sharded_weight_net1.shape == (1, 2)
-
-    cmodel = thunder.jit(
-        fsdp_model,
+    cmodel0 = thunder.jit(
+        model,
         executors=executor.executors_list(),
     )
+    cmodel = fsdp(cmodel0, bucketing_strategy=bucketing_strategy, device=device)
+
+    # Check that the model is sharded
+    sharded_weight_net1 = cmodel.get_parameter("net1.weight")
+    assert sharded_weight_net1.shape != original_weight_net1_shape
+    assert sharded_weight_net1.shape == (1, 2)
 
     comparison_exceptions = []
     for _ in range(num_epochs):
@@ -1502,21 +1507,31 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
         fwd_exec_trace = thunder.last_traces(jit_model)[-1]
         bwd_exec_trace = thunder.last_backward_traces(jit_model)[-1]
 
-        # Verify that the first te_linear in fwd_exec_trace is the
-        # last one in bwd_exec_tarce.
-        # We verify that by managing the `ctx` (CollectionProxy) output by `te_linear` which is
-        # passed to backward.
-        # As CollectionProxy don't implement __eq__, we verify them by name.
-        first_ctx_name = None
-        for bsym in fwd_exec_trace.bound_symbols:
-            if bsym.sym.name.startswith("te_linear"):
-                first_ctx_name = bsym.output[1].name
-                break
+        if TE_VERSION_1_6_PLUS:
+            # Verify that the symbol to sync backward
+            # fp8 metadata is present in backward trace.
+            for bsym in reversed(bwd_exec_trace.bound_symbols):
+                if bsym.sym.id == te_sync_fp8_meta_bwd.id:
+                    break
+            else:
+                raise RuntimeError("Backward sync symbol not found.")
 
-        for bsym in reversed(bwd_exec_trace.bound_symbols):
-            if bsym.sym.name.startswith("te_functional"):
-                assert first_ctx_name == bsym.args[-1].name, (first_ctx_name, bsym.args[-1].name)
-                break
+        else:
+            # Verify that the first te_linear in fwd_exec_trace is the
+            # last one in bwd_exec_tarce.
+            # We verify that by managing the `ctx` (CollectionProxy) output by `te_linear` which is
+            # passed to backward.
+            # As CollectionProxy don't implement __eq__, we verify them by name.
+            first_ctx_name = None
+            for bsym in fwd_exec_trace.bound_symbols:
+                if bsym.sym.name.startswith("te_linear"):
+                    first_ctx_name = bsym.output[1].name
+                    break
+
+            for bsym in reversed(bwd_exec_trace.bound_symbols):
+                if bsym.sym.name.startswith("te_functional"):
+                    assert first_ctx_name == bsym.args[-1].name, (first_ctx_name, bsym.args[-1].name)
+                    break
     except Exception as e:
         sanity_exceptions.append(e)
 

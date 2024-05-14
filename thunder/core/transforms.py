@@ -397,7 +397,13 @@ def visitor_transform(trace_from: Trace, visit: Callable, *, provenance: None | 
 
 
 # Helper function to add a transform
-def add_transform(cfn: Callable, transform: Callable) -> Callable:
+def add_transform(
+    cfn: Callable,
+    *,
+    transform: Callable | None = None,
+    early_transform: Callable | None = None,
+    disable_torch_autograd_support=False,
+) -> Callable:
     from thunder.common import _create_callable, CompileData, CompileStats
 
     cd: None | Any = getattr(cfn, "_lc_cd", None)
@@ -405,19 +411,34 @@ def add_transform(cfn: Callable, transform: Callable) -> Callable:
     utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
     utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
 
+    assert cd.using_jit or early_transform is None
+    assert transform is not None or early_transform is not None
+
     if cd.using_jit:
         from thunder import jit
 
-        return jit(
+        early_transforms = cfn._lc_early_transforms[:]
+        additional_transforms = cfn._lc_transforms[:]
+        if early_transform is not None:
+            early_transforms.append(early_transform)
+        if transform is not None:
+            additional_transforms.append(transform)
+        jfn = jit(
             cd.fn,
             langctx=cd.langctx,
             executors=cd.executors_list,
             sharp_edges=cd.sharp_edges,
             # cache, interpretation?
-            additional_transforms=cfn._lc_transforms + [transform],
-            disable_torch_autograd=True,  # cd.disable_torch_autograd_support,
+            early_transforms=early_transforms,
+            additional_transforms=additional_transforms,
+            disable_torch_autograd=cd.disable_torch_autograd_support or disable_torch_autograd_support,
             **cd.compile_options,
         )
+        from thunder import ThunderModule
+
+        if isinstance(jfn, ThunderModule):
+            jfn._overrides = cfn._overrides
+        return jfn
 
     cs = getattr(cfn, "_lc_cs", None)
     if cs is None:
@@ -478,7 +499,7 @@ def _noop_transform(trace: Trace, **kwargs) -> Trace:
 
 
 def noop(cfn: Callable) -> Callable:
-    return add_transform(cfn, _noop_transform)
+    return add_transform(cfn, transform=_noop_transform)
 
 
 # The comment fusions transform. Just adds a comment before and after each fusion.
@@ -1337,7 +1358,7 @@ def _grad_out_specifier_default(pytree: Any) -> list[TensorProxy]:
 # The algorithm for modifying the program has the following steps:
 #   1) Flattens the original trace for the grad transform -- ensuing that all top-level symbols have
 #       a grad function.
-def grad(
+def __grad(
     cfn, grad_specifier: Callable = _grad_specifier_default, grad_out_specifier: Callable = _grad_out_specifier_default
 ) -> Callable:
     # Creates a custom transform callable that binds the additional arguments to the grad transform
@@ -1634,26 +1655,36 @@ def grad(
     #   we're using our own autograd transform
     cfn._using_grad_transform = True
 
-    return add_transform(cfn, _grad_transform)
+    return add_transform(cfn, transform=_grad_transform, disable_torch_autograd_support=True)
 
 
-def grad_v1(
+def grad(
     cfn,
 ) -> Callable:
     def grad(func):
+
+        @wraps(func)
         def grad_func(*args, **kwargs):
             _, grads = value_and_grad(func)(*args, **kwargs)
+            grads = tree_flatten(grads)[0]
             grads = [g for g in grads if g is not None]
             return grads
 
         return grad_func
 
     def _grad_transform(trc: Trace, *, executors_list: Sequence[Any]) -> Trace:
-        gradtrc = construct_trace()(grad(trc.python_callable()), *trc.args, **trc.kwargs)
+        # Using trc.python_callable() makes it impossible to retrace the
+        # function because the python_callable uses python_ctx which replaces
+        # symbol occurrences with its symbol._call_ctx function
+        @wraps(trc.python_callable())
+        def python_callable(*args, **kwargs):
+            return eval_trace(trc, *args, **kwargs)
+
+        gradtrc = construct_trace()(grad(python_callable), *trc.args, **trc.kwargs)
         return gradtrc
 
     cfn._using_grad_transform = True
-    return add_transform(cfn, _grad_transform)
+    return add_transform(cfn, transform=_grad_transform, disable_torch_autograd_support=True)
 
 
 class Transforms(Enum):
@@ -3680,7 +3711,7 @@ def value_and_grad(func):
         elif isinstance(x, NumberProxy):
             return type(x.value)(1)
         else:
-            raise ValueError(f"ones_like inside value_and_grad got an unsupported type {type(x)}")
+            return None
 
     def _value_and_grad(*args, **kwargs):
         trace = construct_trace()(func, *args, **kwargs)

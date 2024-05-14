@@ -33,15 +33,10 @@ Thunder can use NVIDIA's Apex to accelerate some PyTorch operations. To install 
 Install cuDNN
 -------------
 
-Thunder can use NVIDIA's cuDNN Python frontend bindings to accelerate some PyTorch operations. cuDNN's Python frontend currently requires being built from source. See the Git repository for instructions. Below is a template for CUDA 12.x that requires setting the ``CUDAToolkit_ROOT`` environment variable::
+Thunder can use NVIDIA's cuDNN Python frontend bindings to accelerate some PyTorch operations. cuDNN backend is a pure-lib python package which needs to downloaded separately.
 
   pip install nvidia-cudnn-cu12
-  export CUDNN_PATH=/usr/local/lib/python3.10/dist-packages/nvidia/cudnn/
-  for file in $CUDNN_PATH/lib/*.so.[0-9]; do filename_without_version="${file%??}"; ln -s $file $filename_without_version; done
-
-  git clone -b v1.3.0 https://github.com/NVIDIA/cudnn-frontend.git
-  export CUDAToolkit_ROOT=/path/to/cuda
-  CMAKE_BUILD_PARALLEL_LEVEL=16 pip install cudnn_frontend/ -v
+  pip install nvidia-cudnn-frontend
 
 You're all set, now follow `Install Thunder`_.
 
