@@ -591,7 +591,7 @@ def _shard_param(
     allow_padding_for_fsdp: bool = False,
 ) -> None:
 
-    if not allow_padding_for_fsdp or not (requires_padding := param.size(0) % world_size == 0):
+    if not allow_padding_for_fsdp or (param.size(0) % world_size == 0):
         if not allow_padding_for_fsdp:
             utils.check(
                 param.shape[0] % world_size == 0,

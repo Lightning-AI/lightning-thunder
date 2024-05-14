@@ -814,6 +814,7 @@ class CompileDDPTest(DataParallelTestCase):
         model = torch.nn.Linear(3, 5, bias=False, device="meta")
         with pytest.raises(RuntimeError, match=r"parameter 'weight' \(5\) to be divisible by the world size \(2\)"):
             _shard_params(model, pg, device, None)
+        _shard_params(model, pg, device, None, allow_padding_for_fsdp=True)
 
         model = torch.nn.Linear(3, 4, bias=False, device="meta")
         weight = torch.arange(3 * 4, device="cpu", dtype=torch.float).view(4, 3)
