@@ -1,3 +1,4 @@
+from __future__ import annotations
 import operator
 import importlib
 from dataclasses import replace
@@ -6,7 +7,7 @@ from functools import wraps, partial
 from inspect import signature
 from itertools import groupby
 from numbers import Number
-from typing import Union, Any, Tuple, Optional
+from typing import TYPE_CHECKING
 from collections.abc import Callable
 from collections.abc import Hashable, Sequence
 from collections.abc import Sequence
@@ -41,6 +42,9 @@ from thunder.core.transforms import (
     get_grad,
     put_grad,
 )
+
+if TYPE_CHECKING:
+    from thunder.common import CompileData
 
 ex = OperatorExecutor("torch", version=torch.__version__)
 register_executor(ex)
@@ -163,6 +167,7 @@ tensor_from_sequence = _register_torch_operation("tensor")
 zeros = _register_torch_operation("zeros")
 zeros_like = _register_torch_operation("zeros_like")
 randn = _register_torch_operation("randn")
+empty = _register_torch_operation("empty")
 einsum = _register_torch_operation("einsum")
 
 
@@ -413,6 +418,17 @@ def _randn_prims_transform(
     return randn(shape, device=torch_device, dtype=torch_dtype)
 
 
+def _empty_prims_transform(
+    shape: tuple[int, ...],
+    *,
+    device: devices.Device,
+    dtype: dtypes.dtype,
+) -> TensorLike:
+    torch_device: torch.device = to_torch_device(device)
+    torch_dtype: torch.dtype = to_torch_dtype(dtype)
+    return empty(shape, device=torch_device, dtype=torch_dtype)
+
+
 def _tensor_from_sequence_prims_transform(
     seq_or_number, *, device: devices.Device, dtype: None | dtypes.dtype
 ) -> TensorLike:
@@ -428,6 +444,7 @@ _register_implementation(
     prims.uniform_philox, checker=_uniform_philox_prim_checker, execution_transform=_uniform_philox_prim_transform
 )
 _register_implementation(prims.randn, checker=_always_executable, execution_transform=_randn_prims_transform)
+_register_implementation(prims.empty, checker=_always_executable, execution_transform=_empty_prims_transform)
 _register_implementation(
     prims.tensor_from_sequence, checker=_always_executable, execution_transform=_tensor_from_sequence_prims_transform
 )
@@ -469,6 +486,9 @@ unbind = _register_torch_operation("unbind")
 unfold = _register_torch_operation("unfold", module=torch.Tensor)
 unsqueeze = _register_torch_operation("unsqueeze")
 view = _register_torch_operation("view", module=torch.Tensor)
+view_as = _register_torch_operation("view_as", module=torch.Tensor)
+all_tensor = _register_torch_operation("all", like=ltorch.all_tensor)
+any_tensor = _register_torch_operation("any", like=ltorch.any_tensor)
 
 
 def _broadcast_in_dim_prim_transform(
@@ -527,6 +547,30 @@ def _squeeze_transform(a: TensorLike, /, dim: None | int | Sequence[int] = None)
     return squeeze(a, dim)
 
 
+def _empty_transform(
+    shape: Sequence[int],
+    device: None | DeviceLike = None,
+    dtype: None | dtypeLike = None,
+    out: None | TensorLike = None,
+    layout: torch.layout = torch.strided,
+    requires_grad: bool = False,
+    pin_memory: bool = False,
+    memory_format: torch.memory_format = torch.contiguous_format,
+):
+    torch_device: None | torch.device = to_torch_device(device)
+    torch_dtype: None | torch.dtype = to_torch_dtype(dtype)
+    return empty(
+        shape,
+        device=torch_device,
+        dtype=torch_dtype,
+        out=out,
+        layout=layout,
+        requires_grad=requires_grad,
+        pin_memory=pin_memory,
+        memory_format=memory_format,
+    )
+
+
 _register_implementation(
     prims.broadcast_in_dim, checker=_always_executable, execution_transform=_broadcast_in_dim_prim_transform
 )
@@ -561,6 +605,10 @@ _register_implementation(ltorch.unbind, unbind, checker=_always_executable)
 _register_implementation(ltorch.unfold, unfold, checker=_always_executable)
 _register_implementation(ltorch.unsqueeze, unsqueeze, checker=_always_executable)
 _register_implementation(ltorch.view, view, checker=_always_executable)
+_register_implementation(ltorch.view_as, view_as, checker=_always_executable)
+_register_implementation(ltorch.empty, empty, checker=_always_executable, execution_transform=_empty_transform)
+_register_implementation(ltorch.all_tensor, all_tensor, checker=_always_executable)
+_register_implementation(ltorch.any_tensor, any_tensor, checker=_always_executable)
 
 #
 # Memory format operations
@@ -1325,7 +1373,7 @@ max_pool3d_with_indices_backward = ex.register_operator(
 nll_loss = _register_torch_operation("nll_loss", module=torch.nn.functional)
 pad = _register_torch_operation("pad", module=torch.nn.functional)
 scaled_dot_product_attention = _register_torch_operation("scaled_dot_product_attention", module=torch.nn.functional)
-softmax = _register_torch_operation("softmax")
+softmax = _register_torch_operation("softmax", like=ltorch._softmax)
 
 
 # NOTE This transform translates number proxies to boolean values
@@ -1632,7 +1680,7 @@ _register_implementation(ltorch.nll_loss_backward, nll_loss_backward, checker=_a
 _register_implementation(ltorch.pad, pad, checker=_always_executable)
 pad_prim_impl = ex.register_operator("torch_pad_prim_impl", meta=prims.pad.meta, fn=_pad_prim_impl)
 _register_implementation(prims.pad, pad_prim_impl, checker=_always_executable)
-_register_implementation(ltorch.softmax, checker=_always_executable, execution_transform=_softmax_transform)
+_register_implementation(ltorch._softmax, checker=_always_executable, execution_transform=_softmax_transform)
 _register_implementation(ltorch.scaled_dot_product_attention, scaled_dot_product_attention, checker=_always_executable)
 
 
@@ -1896,6 +1944,21 @@ if torch.distributed.is_available():
         views[index_of_dst_view].copy_(tensor)
         return tensor
 
+    # TODO(crcrpar): Update to return None instead
+    def _stash_grad_for_fsdp_prim_impl(
+        grad: torch.Tensor,
+        param_fqn: str,
+        compile_data: CompileData,
+    ) -> None:
+        grad_name = "_thunder_fsdp_unsharded_grad"
+        param = compile_data.fn.get_parameter(param_fqn)
+        if torch.is_tensor(unsharded_grad := getattr(param, grad_name, None)):
+            unsharded_grad += grad
+        else:
+            setattr(param, grad_name, grad)
+
+        return grad
+
     all_gather_prim_impl = ex.register_operator(
         "torch_all_gather_prim_impl", meta=dist_prims.all_gather.meta, fn=_all_gather_prim_impl
     )
@@ -1937,6 +2000,17 @@ if torch.distributed.is_available():
     _register_implementation(
         dist_prims.pack_for_fsdp,
         pack_for_fsdp_prim_impl,
+        checker=_always_executable,
+    )
+
+    stash_grad_for_fsdp_prim_impl = ex.register_operator(
+        "torch_stash_grad_for_fsdp_prim_impl",
+        meta=dist_prims.stash_grad_for_fsdp.meta,
+        fn=_stash_grad_for_fsdp_prim_impl,
+    )
+    _register_implementation(
+        dist_prims.stash_grad_for_fsdp,
+        stash_grad_for_fsdp_prim_impl,
         checker=_always_executable,
     )
 

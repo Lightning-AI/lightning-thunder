@@ -2194,3 +2194,71 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
     elapsed_time_millis = elapsed_time_ns // 1000000
     rrctrace.set_provenance(TraceProvenance(f"Remove redundant casts (took {elapsed_time_millis} milliseconds)"))
     return rrctrace
+
+
+def _linear_check(a: TensorProxy, b: TensorProxy, bias: TensorProxy | None) -> bool:
+    if nv_version < LooseVersion("0.2.3"):
+        return False
+
+    enable_linear: None | bool = get_compile_option("nv_enable_linear", "Enable nvFuser matmul.")
+    if not enable_linear:
+        return False
+    # Verify linear inputs and bias (optional) are supported tensors.
+    if not are_supported_tensors(a, b):
+        return False
+    if bias is not None and not is_supported_tensor(bias):
+        return False
+
+    # nvFuser only supports 2D inputs in v0.2.3.
+    if not a.ndim == 2:
+        return False
+    return True
+
+
+def linear(
+    a: TensorProxy,
+    b: TensorProxy,
+    bias: TensorProxy | None,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvb = getnv(b, fd, lc_to_nv_map)
+    nvbias = None if bias is None else getnv(bias, fd, lc_to_nv_map)
+    return fd.ops.linear(nva, nvb, nvbias)
+
+
+register_supported(PrimIDs.LINEAR, linear, _linear_check)
+
+
+def _matmul_check(
+    a: TensorProxy,
+    b: TensorProxy,
+) -> bool:
+    if nv_version < LooseVersion("0.2.2"):
+        return False
+
+    enable_matmul: None | bool = get_compile_option("nv_enable_matmul", "Enable nvFuser matmul.")
+    if not enable_matmul:
+        return False
+    if not are_supported_tensors(a, b):
+        return False
+    if not (a.ndim == b.ndim and a.ndim == 2):
+        return False
+    return True
+
+
+def matmul(
+    a: TensorProxy,
+    b: TensorProxy,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvb = getnv(b, fd, lc_to_nv_map)
+    return fd.ops.matmul(nva, nvb)
+
+
+register_supported(PrimIDs.MATMUL, matmul, _matmul_check)
