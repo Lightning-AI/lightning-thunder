@@ -1793,7 +1793,10 @@ def _elementwise_unary_meta_factory(
         # Checks that dtype is supported
         utils.check(a.dtype in supported_input_dtypes, lambda: f"Unsupported input dtype {a.dtype}")
 
-        if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME or output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.INT_FOR_NUMBER:
+        if (
+            output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME
+            or output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.INT_FOR_NUMBER
+        ):
             return TensorProxy(like=a)
         if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL:
             return TensorProxy(like=a, dtype=dtypes.bool8)
