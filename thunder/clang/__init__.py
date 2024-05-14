@@ -1332,7 +1332,7 @@ def ceil(a: TensorLike | Number) -> TensorLike | Number:
     return _elementwise_unary_wrapper(
         a,
         prim=prims.ceil,
-        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
+        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.NUMBER_TO_INT,
     )
 
 
@@ -1415,7 +1415,7 @@ def floor(a: TensorLike | Number) -> TensorLike | Number:
     return _elementwise_unary_wrapper(
         a,
         prim=prims.floor,
-        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT,
+        type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.NUMBER_TO_INT,
     )
 
 

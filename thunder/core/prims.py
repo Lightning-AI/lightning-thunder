@@ -1719,6 +1719,7 @@ class ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND(Enum):
 math_dtypes = dtypes.all_dtypes_and_numbertypes - dtypes.low_precision_dtypes
 fp_math_dtypes = math_dtypes - dtypes.exact_dtypes
 comparison_dtypes = dtypes.all_dtypes_and_numbertypes - dtypes.complex_dtypes
+ceil_floor_math_dtypes = dtypes.float_dtypes | dtypes.all_numbertypes - {complex}
 
 #
 # Elementwise unary prims
@@ -1912,7 +1913,7 @@ ceil = _make_elementwise_unary_prim(
     PrimIDs.CEIL,
     "ceil",
     number_fn=math.ceil,
-    supported_input_dtypes=dtypes.float_dtypes,
+    supported_input_dtypes=ceil_floor_math_dtypes,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.INT_FOR_NUMBER,
 )
 
@@ -1978,7 +1979,7 @@ floor = _make_elementwise_unary_prim(
     PrimIDs.FLOOR,
     "floor",
     number_fn=math.floor,
-    supported_input_dtypes=dtypes.float_dtypes,
+    supported_input_dtypes=ceil_floor_math_dtypes,
     output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.INT_FOR_NUMBER,
 )
 
