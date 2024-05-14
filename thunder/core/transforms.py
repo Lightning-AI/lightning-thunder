@@ -1070,7 +1070,9 @@ register_grad(pids.DIV, _div_prim_grad)
 def _py_floordiv_prim_grad(a: Number, b: Number, /) -> Number | TensorProxy:
     fwd = prims.py_floordiv(a, b)
 
-    utils.check(not isinstance(a, TensorProxy) and not isinstance(b, TensorProxy), "floordiv shouldn't be called on TensorProxy")
+    utils.check(
+        not isinstance(a, TensorProxy) and not isinstance(b, TensorProxy), "floordiv shouldn't be called on TensorProxy"
+    )
 
     return fwd
 
