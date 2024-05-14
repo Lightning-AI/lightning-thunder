@@ -160,7 +160,7 @@ def synchronize_meta(
 
     match a.ddp_type:
         case DDPType.REPLICATED:
-            utils.check_type(padding_size, None)
+            utils.check(padding_size is None, lambda: f"{padding_size=} must be None for {a.ddp_type}")
             return TensorProxy(like=a)
         case DDPType.FULLY_SHARDED:
             # Assuming that the sharding is done on the first dimension
