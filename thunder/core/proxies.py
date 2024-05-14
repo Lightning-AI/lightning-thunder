@@ -629,19 +629,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
         if method is None:
             return fn(vala)
 
-        from thunder.core.utils import elementwise_type_promotion, dtype_to_numbertype, are_same_dtypes
-        from thunder.core import prims
-
-        def maybe_convert_to_dtype(a, dtype):
-            dtype = dtype_to_numbertype(dtype)
-            if not are_same_dtypes(a, dtype):
-                return prims.convert_element_type(a, dtype)
-            return a
-
-        computation_dtype, result_dtype = elementwise_type_promotion(a, type_promotion_kind=type_promotion_kind)
-        a = maybe_convert_to_dtype(a, computation_dtype)
-        result = method(a)
-        return maybe_convert_to_dtype(result, result_dtype)
+        return method(a)
 
     def __abs__(self):
         return self._elementwise_unary_helper(self, "abs", builtins.abs)
@@ -707,20 +695,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
         if method is None:
             return fn(vala, valb)
 
-        # circular import
-        from thunder.core.utils import elementwise_type_promotion, dtype_to_numbertype, are_same_dtypes
-        from thunder.core import prims
-
-        def maybe_convert_to_dtype(a, dtype):
-            dtype = dtype_to_numbertype(dtype)
-            if not are_same_dtypes(a, dtype):
-                return prims.convert_element_type(a, dtype)
-            return a
-
-        computation_dtype, result_dtype = elementwise_type_promotion(a, b, type_promotion_kind=type_promotion_kind)
-        a, b = maybe_convert_to_dtype(a, computation_dtype), maybe_convert_to_dtype(b, computation_dtype)
-        result = method(a, b)
-        return maybe_convert_to_dtype(result, result_dtype)
+        return method(a, b)
 
     def __add__(self, other):
         return self._elementwise_binary_helper(self, other, "add", operator.add)
