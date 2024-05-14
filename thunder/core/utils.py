@@ -396,7 +396,7 @@ class ELEMENTWISE_TYPE_PROMOTION_KIND(Enum):
     ALWAYS_BOOL = (3,)
     COMPLEX_TO_FLOAT = (4,)
     BOOL_TO_LONG = (5,)
-    NUMBER_TO_INT= (6,)
+    NUMBER_TO_INT = (6,)
 
 
 # TODO: allow dtypes as arguments, too
@@ -481,7 +481,11 @@ def elementwise_type_promotion(*args, type_promotion_kind: ELEMENTWISE_TYPE_PROM
     if type_promotion_kind is ELEMENTWISE_TYPE_PROMOTION_KIND.BOOL_TO_LONG and is_boolean_dtype(promotiontype):
         return int, int
 
-    if type_promotion_kind is ELEMENTWISE_TYPE_PROMOTION_KIND.NUMBER_TO_INT and is_float_dtype(promotiontype) and all_number_type:
+    if (
+        type_promotion_kind is ELEMENTWISE_TYPE_PROMOTION_KIND.NUMBER_TO_INT
+        and is_float_dtype(promotiontype)
+        and all_number_type
+    ):
         return int, int
 
     # Falls through to DEFAULT
