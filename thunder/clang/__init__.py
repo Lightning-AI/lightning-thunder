@@ -282,6 +282,13 @@ def full_like(
 
 
 @clangop()
+def empty(shape: Sequence[int], *, device: DeviceLike, dtype: dtypes.dtype) -> TensorLike:
+    device = devices.to_device(device)
+
+    return prims.empty(tuple(shape), device=device, dtype=dtype)
+
+
+@clangop()
 def uniform(
     shape: Sequence[int],
     minval: Number = 0.0,

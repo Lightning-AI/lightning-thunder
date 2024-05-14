@@ -167,6 +167,7 @@ tensor_from_sequence = _register_torch_operation("tensor")
 zeros = _register_torch_operation("zeros")
 zeros_like = _register_torch_operation("zeros_like")
 randn = _register_torch_operation("randn")
+empty = _register_torch_operation("empty")
 einsum = _register_torch_operation("einsum")
 
 
@@ -417,6 +418,17 @@ def _randn_prims_transform(
     return randn(shape, device=torch_device, dtype=torch_dtype)
 
 
+def _empty_prims_transform(
+    shape: tuple[int, ...],
+    *,
+    device: devices.Device,
+    dtype: dtypes.dtype,
+) -> TensorLike:
+    torch_device: torch.device = to_torch_device(device)
+    torch_dtype: torch.dtype = to_torch_dtype(dtype)
+    return empty(shape, device=torch_device, dtype=torch_dtype)
+
+
 def _tensor_from_sequence_prims_transform(
     seq_or_number, *, device: devices.Device, dtype: None | dtypes.dtype
 ) -> TensorLike:
@@ -432,6 +444,7 @@ _register_implementation(
     prims.uniform_philox, checker=_uniform_philox_prim_checker, execution_transform=_uniform_philox_prim_transform
 )
 _register_implementation(prims.randn, checker=_always_executable, execution_transform=_randn_prims_transform)
+_register_implementation(prims.empty, checker=_always_executable, execution_transform=_empty_prims_transform)
 _register_implementation(
     prims.tensor_from_sequence, checker=_always_executable, execution_transform=_tensor_from_sequence_prims_transform
 )
@@ -474,6 +487,8 @@ unfold = _register_torch_operation("unfold", module=torch.Tensor)
 unsqueeze = _register_torch_operation("unsqueeze")
 view = _register_torch_operation("view", module=torch.Tensor)
 view_as = _register_torch_operation("view_as", module=torch.Tensor)
+all_tensor = _register_torch_operation("all", like=ltorch.all_tensor)
+any_tensor = _register_torch_operation("any", like=ltorch.any_tensor)
 
 
 def _broadcast_in_dim_prim_transform(
@@ -532,6 +547,30 @@ def _squeeze_transform(a: TensorLike, /, dim: None | int | Sequence[int] = None)
     return squeeze(a, dim)
 
 
+def _empty_transform(
+    shape: Sequence[int],
+    device: None | DeviceLike = None,
+    dtype: None | dtypeLike = None,
+    out: None | TensorLike = None,
+    layout: torch.layout = torch.strided,
+    requires_grad: bool = False,
+    pin_memory: bool = False,
+    memory_format: torch.memory_format = torch.contiguous_format,
+):
+    torch_device: None | torch.device = to_torch_device(device)
+    torch_dtype: None | torch.dtype = to_torch_dtype(dtype)
+    return empty(
+        shape,
+        device=torch_device,
+        dtype=torch_dtype,
+        out=out,
+        layout=layout,
+        requires_grad=requires_grad,
+        pin_memory=pin_memory,
+        memory_format=memory_format,
+    )
+
+
 _register_implementation(
     prims.broadcast_in_dim, checker=_always_executable, execution_transform=_broadcast_in_dim_prim_transform
 )
@@ -567,6 +606,9 @@ _register_implementation(ltorch.unfold, unfold, checker=_always_executable)
 _register_implementation(ltorch.unsqueeze, unsqueeze, checker=_always_executable)
 _register_implementation(ltorch.view, view, checker=_always_executable)
 _register_implementation(ltorch.view_as, view_as, checker=_always_executable)
+_register_implementation(ltorch.empty, empty, checker=_always_executable, execution_transform=_empty_transform)
+_register_implementation(ltorch.all_tensor, all_tensor, checker=_always_executable)
+_register_implementation(ltorch.any_tensor, any_tensor, checker=_always_executable)
 
 #
 # Memory format operations

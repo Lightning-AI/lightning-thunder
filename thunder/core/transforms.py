@@ -1374,7 +1374,7 @@ def _grad_out_specifier_default(pytree: Any) -> list[TensorProxy]:
 # The algorithm for modifying the program has the following steps:
 #   1) Flattens the original trace for the grad transform -- ensuing that all top-level symbols have
 #       a grad function.
-def grad(
+def __grad(
     cfn, grad_specifier: Callable = _grad_specifier_default, grad_out_specifier: Callable = _grad_out_specifier_default
 ) -> Callable:
     # Creates a custom transform callable that binds the additional arguments to the grad transform
@@ -1674,19 +1674,29 @@ def grad(
     return add_transform(cfn, transform=_grad_transform, disable_torch_autograd_support=True)
 
 
-def grad_v1(
+def grad(
     cfn,
 ) -> Callable:
     def grad(func):
+
+        @wraps(func)
         def grad_func(*args, **kwargs):
             _, grads = value_and_grad(func)(*args, **kwargs)
+            grads = tree_flatten(grads)[0]
             grads = [g for g in grads if g is not None]
             return grads
 
         return grad_func
 
     def _grad_transform(trc: Trace, *, executors_list: Sequence[Any]) -> Trace:
-        gradtrc = construct_trace()(grad(trc.python_callable()), *trc.args, **trc.kwargs)
+        # Using trc.python_callable() makes it impossible to retrace the
+        # function because the python_callable uses python_ctx which replaces
+        # symbol occurrences with its symbol._call_ctx function
+        @wraps(trc.python_callable())
+        def python_callable(*args, **kwargs):
+            return eval_trace(trc, *args, **kwargs)
+
+        gradtrc = construct_trace()(grad(python_callable), *trc.args, **trc.kwargs)
         return gradtrc
 
     cfn._using_grad_transform = True
@@ -3721,7 +3731,7 @@ def value_and_grad(func):
         elif isinstance(x, NumberProxy):
             return type(x.value)(1)
         else:
-            raise ValueError(f"ones_like inside value_and_grad got an unsupported type {type(x)}")
+            return None
 
     def _value_and_grad(*args, **kwargs):
         trace = construct_trace()(func, *args, **kwargs)

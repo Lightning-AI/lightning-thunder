@@ -1060,6 +1060,7 @@ def find_producer_symbols(trace: TraceCtx, proxies: Sequence[Proxy], stop_proxie
         (__b = ltorch.sub(x, y)
         # __b = prims.sub(x, y),)
     """
+    stop_proxies = tuple(filter(lambda x: isinstance(x, Proxy), stop_proxies))
     trace_producers = producers(trace)
     result = set()
     queue = list(proxies)
