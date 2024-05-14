@@ -309,6 +309,11 @@ def test_find_cut_dropout(executor, device, _):
     consumer = nvfuser_symbols[2]
     ext_producer_outputs = find_external_producer_outputs(utils.consumers(trace), (), producer, consumer)
     cut = find_cut(ext_producer_outputs, producer, consumer)
+    print("--- trace: \n", trace)
+    print("--- producer: \n", producer)
+    print("--- consumer: \n", producer)
+    print("--- ext_producer_outputs: \n", ext_producer_outputs)
+    print("--- cut: \n", cut)
     # Note t5 is the boolean mask for dropout. It should be chosen over the t6
     # that is the float32 mask. See this issue: "The Recomputation Algorithm on
     # Dropout choses a float32 mask to save"
