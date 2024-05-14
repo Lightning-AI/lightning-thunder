@@ -177,7 +177,9 @@ def device_put(a, device):
 
 # TODO Add type annotations
 @clangop()
-def arange(*, start: NumberLike, step: NumberLike, stop: NumberLike, device: DeviceLike, dtype: dtypes.dtype | None = None):
+def arange(
+    *, start: NumberLike, step: NumberLike, stop: NumberLike, device: DeviceLike, dtype: dtypes.dtype | None = None
+):
     # Validates inputs
     # Checks that start, step, and stop are finite
     # TODO Semantically an infinite step seems fine?
