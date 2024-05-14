@@ -171,6 +171,7 @@ def synchronize_meta(
                     padding_size > 0,
                     lambda: f"`pading_size` expected be `None` or positive but {padding_size=}",
                 )
+                unsharded_shape = list(unsharded_shape)
                 unsharded_shape[0] -= padding_size
             return TensorProxy(shape=unsharded_shape, like=a, ddp_type=DDPType.REPLICATED)
         case _:
@@ -313,16 +314,14 @@ def synchronize_augmented_forward_rule(
                 padding_size,
             )
         case DDPType.FULLY_SHARDED:
-            from thunder.clang import slice_in_dim
-
             # Assuming that the sharding is done on the first dimension.
             # We do the communication on the side CUDA stream and wait is
             # immediately called on the result with the hope that the execution
             # passes would reorder the wait operation to be closer to the actual
             # usage of the tensor.
-            unsharded_param: TensorProxy = all_gather(a, group, do_async=True).wait()
+            unsharded_param = all_gather(a, group, True).wait()
             if isinstance(padding_size, int) and padding_size > 0:
-                unsharded_param = unsharded_param[:-padding_size, :]
+                unsharded_param = unsharded_param[: (unsharded_param.shape[0] - padding_size)]
             return unsharded_param, (
                 a.ddp_type,
                 group,
@@ -351,8 +350,8 @@ def synchronize_backward_rule(
 
                 shape = list(grad.shape)
                 shape[0] += padding_size
-                preaverage_grad_with_pad = empty(shape, device=grad.device, dtype=grad.type)
-                copy_(preaverage_grad, preaverage_grad_with_pad[:-padding_size, :])
+                preaverage_grad_with_pad = empty(shape, device=grad.device, dtype=grad.dtype)
+                copy_(preaverage_grad, preaverage_grad_with_pad[: grad.shape[0]])
                 synced_grad = reduce_scatter(
                     preaverage_grad_with_pad, DistributedReduceOps.SUM, group, do_async=True
                 ).wait()

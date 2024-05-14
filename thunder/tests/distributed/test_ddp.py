@@ -805,6 +805,26 @@ class CompileDDPTest(DataParallelTestCase):
                         self.assertTrue(has_pack_multiple_tensors, msg=f"{[bsym.args[0] for bsym in pack_bsyms]=}")
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
+    def test_fsdp_with_padding(self):
+
+        class M(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.l1 = nn.Linear(4, 13)
+                self.l2 = nn.Linear(13, 1)
+
+            def forward(self, x):
+                return self.l2(new_gelu(self.l1(x)))
+
+        device = torch.device(f"cuda:{self.rank}")
+        m = M().to(device)
+        jitted = thunder.jit(fsdp(m))
+
+        x = torch.randn(4, 4, device=device)
+        y = jitted(x)
+        y.mean().backward()
+
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
     def test_fsdp_shard_unshard(self):
         from thunder.distributed import _shard_params, _unshard_params
 

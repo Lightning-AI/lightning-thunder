@@ -13,6 +13,7 @@ from functools import partial
 
 import torch
 import torch.distributed as tdist
+import torch.distributed
 
 import thunder.core.utils as utils
 from thunder.core.proxies import DDPType
