@@ -387,7 +387,7 @@ class Benchmark_litGPT:
             if i == self.warmup_iter:  # warmup
                 t0 = iter_t0
 
-            if self.nsys_enabled and i == self.profiler_start and global_rank in [0, None] and step_idx == 0:
+            if self.nsys_enabled and i == self.profiler_start and global_rank in [0, None]:
                 print("=====Start NSYS Profiling======")
                 torch.cuda.cudart().cudaProfilerStart()
 
