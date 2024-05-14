@@ -2236,17 +2236,11 @@ def _matmul_check(
     a: TensorProxy,
     b: TensorProxy,
 ) -> bool:
-    if nv_version < LooseVersion("0.2.2"):
+    if nv_version < LooseVersion("0.2.4"):
         return False
 
     enable_matmul: None | bool = get_compile_option("nv_enable_matmul", "Enable nvFuser matmul.")
-    if not enable_matmul:
-        return False
-    if not are_supported_tensors(a, b):
-        return False
-    if not (a.ndim == b.ndim and a.ndim == 2):
-        return False
-    return True
+    return enable_matmul and are_supported_tensors(a, b)
 
 
 def matmul(

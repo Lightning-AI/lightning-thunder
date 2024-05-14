@@ -34,7 +34,7 @@ from thunder.tests.framework import (
     TorchExecutor,
 )
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
-from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops, get_opinfo
+from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops, get_opinfo, matmul_opinfo
 from looseversion import LooseVersion
 
 
@@ -887,29 +887,24 @@ def test_linear(executor, device: str, dtype: dtypes.dtype, has_bias: bool):
 
 
 @instantiate(
-    dtypes=(thunder.float16, thunder.bfloat16), devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,)
+    dtypes=(thunder.float16, thunder.bfloat16),
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(nvFuserExecutor,),
+    decorators=(
+        pytest.mark.skipif(nvfuser_version() < LooseVersion("0.2.4"), reason="Requires nvFuser version 0.2.4 or later"),
+    ),
 )
 def test_matmul(executor, device: str, dtype: dtypes.dtype):
-    m, n, k = 128, 64, 32
-    torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = torch.randn((m, k), dtype=torch_dtype, device=device)
-    b = torch.randn((k, n), dtype=torch_dtype, device=device)
 
     def fn(a, b):
-        return a.matmul(b)
+        return torch.matmul(a, b)
 
-    compiled_func = thunder.jit(
-        fn,
-        executors_list=executor.executors_list(),
-        nv_enable_matmul=True,
-    )
+    for sample in matmul_opinfo.sample_inputs(device, dtype):
+        compiled_func = thunder.jit(fn, executors_list=executor.executors_list(), nv_enable_matmul=True)
 
-    out = compiled_func(a, b)
-    traces = thunder.last_traces(compiled_func)
-    fusions = examine.get_fusions(traces[-1])
-    nv_version = nvfuser_version()
+        out = compiled_func(*sample.args)
+        traces = thunder.last_traces(compiled_func)
+        fusions = examine.get_fusions(traces[-1])
 
-    expected_fusions = 1 if nv_version >= "0.2.2" else 0
-
-    assert len(fusions) == expected_fusions
-    assert torch.allclose(out, torch.matmul(a, b))
+        assert len(fusions) == 1
+        torch.testing.assert_close(out, torch.matmul(*sample.args))
