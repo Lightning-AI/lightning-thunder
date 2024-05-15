@@ -598,7 +598,6 @@ numel_opinfo = OpInfo(
 tensor_properties.append(numel_opinfo)
 
 
-
 def size_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make_t = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
@@ -628,7 +627,6 @@ size_opinfo = OpInfo(
 )
 
 tensor_properties.append(size_opinfo)
-
 
 
 opinfos.extend(tensor_properties)
