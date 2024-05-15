@@ -2,7 +2,9 @@ name: "Build (& deploy) Docs"
 on:
   push:
     branches: [main]
-  pull_request: {}
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, ready_for_review, synchronize]
   workflow_dispatch: {}
 
 concurrency:
