@@ -824,6 +824,10 @@ class CompileDDPTest(DataParallelTestCase):
         fsdptype: FSDPType,
     ):
 
+        from thunder.core.prims import PrimIDs
+        from thunder.executors.torchex import pad_prim_impl
+        from thunder.executors.torchex import slice_prim_impl
+
         class M(nn.Module):
             def __init__(self):
                 super().__init__()
@@ -840,6 +844,14 @@ class CompileDDPTest(DataParallelTestCase):
         x = torch.randn(4, 4, device=device)
         y = jitted(x)
         y.mean().backward()
+
+        fw_extrace = thunder.last_traces(jitted)[-1]
+        fw_symids = [bsym.sym.id for bsym in fw_extrace.bound_symbols]
+        self.assertTrue(any(sym_id in {PrimIDs.SLICE, slice_prim_impl.id} for sym_id in fw_symids))
+
+        bw_trace = thunder.last_backward_traces(jitted)[0]
+        bw_symids = [bsym.sym.id for bsym in bw_trace.bound_symbols]
+        self.assertTrue(any(sym_id in {PrimIDs.PAD, pad_prim_impl.id} for sym_id in bw_symids))
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
     def test_fsdp_shard_unshard(self):
