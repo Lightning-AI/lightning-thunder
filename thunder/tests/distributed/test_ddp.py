@@ -805,7 +805,24 @@ class CompileDDPTest(DataParallelTestCase):
                         self.assertTrue(has_pack_multiple_tensors, msg=f"{[bsym.args[0] for bsym in pack_bsyms]=}")
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
-    def test_fsdp_with_padding(self):
+    @common_utils.parametrize(
+        "bucketing_strategy,fsdptype",
+        product(
+            (
+                FSDPBucketingStrategy.NONE,
+                FSDPBucketingStrategy.BLOCK,
+            ),
+            (FSDPType.ZERO2, FSDPType.ZERO3),
+        ),
+        name_fn=lambda bucketing_strategy, fsdptype: (
+            f"bucketing_{str(bucketing_strategy).split('.')[1].lower()}_{(str(fsdptype).lower().split('.')[1])}"
+        ),
+    )
+    def test_fsdp_with_padding(
+        self,
+        bucketing_strategy: FSDPBucketingStrategy,
+        fsdptype: FSDPType,
+    ):
 
         class M(nn.Module):
             def __init__(self):
@@ -818,7 +835,7 @@ class CompileDDPTest(DataParallelTestCase):
 
         device = torch.device(f"cuda:{self.rank}")
         m = M().to(device)
-        jitted = thunder.jit(fsdp(m))
+        jitted = thunder.jit(fsdp(m, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype))
 
         x = torch.randn(4, 4, device=device)
         y = jitted(x)
