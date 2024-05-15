@@ -1,27 +1,71 @@
-from dataclasses import dataclass, replace
-from functools import partial, wraps
-from inspect import signature
-from typing import Any, TYPE_CHECKING
+from dataclasses import replace
+from typing import TYPE_CHECKING
 
 import torch
 
-import thunder
 import thunder.core.utils as utils
-import thunder.distributed.prims as dist_prims
-import thunder.torch as ltorch
 from thunder.core.prims import PrimIDs
-
-from thunder.core.proxies import FutureTensorProxy, TensorProxy, variableify
-from thunder.core.pytree import tree_flatten, tree_unflatten
-from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, Symbol
-from thunder.core.trace import TraceCtx
+from thunder.core.proxies import TensorProxy, variableify
+from thunder.core.pytree import tree_flatten
+from thunder.core.symbol import BoundSymbol
+from thunder.core.trace import TraceCtx, from_trace, set_tracectx, reset_tracectx
 from thunder.core.transform_common import replace_redundant_inputs
+
+if TYPE_CHECKING:
+    from thunder.core.trace import VariableInterface
+
+
+def rename_bwd_trace_outputs(bwd_trace: TraceCtx, fwd_trace: TraceCtx) -> TraceCtx:
+    """Have backward trace output tensor proxy names follow `grad_for_<param>` format.
+
+    Since ``i``-th tensor proxy of backward trace's outputs is grad of ``i``-th tensor proxy of forward trace's inputs,
+    this method looks up to forward trace's inputs to get the param name for each grad.
+
+    Args:
+        bwd_trace:
+        fwd_trace:
+
+    Returns:
+        :class:`thunder.core.trace.TraceCtx`
+    """
+
+    # [note: why setting trace ctx?]
+    # [`TensorProxy.replace_name`](https://github.com/Lightning-AI/lightning-thunder/blob/561b699/thunder/core/proxies.py#L1221-L1223) calls
+    # [`tensorproxy`](https://github.com/Lightning-AI/lightning-thunder/blob/561b699/thunder/core/proxies.py#L1506-L1520)
+    # which then calls `TensorProxy.__init__`. `TensorProxy.__init__` of course calls
+    # [` Proxy.__init__`](https://github.com/Lightning-AI/lightning-thunder/blob/561b699/thunder/core/proxies.py#L81-L86).
+    # `Proxy`'s dunder init calls [`make_proxy_name`](https://github.com/Lightning-AI/lightning-thunder/blob/561b699/thunder/core/proxies.py#L81-L86)
+    # which depends on a tracectx.
+    trace_tok = set_tracectx(bwd_trace)
+
+    swap_map: dict[VariableInterface, TensorProxy] = {}
+    bwd_outputs, _ = tree_flatten(bwd_trace.output)
+    fwd_inputs, _ = tree_flatten((fwd_trace.args, fwd_trace.kwargs))
+
+    utils.check(len(bwd_outputs) == len(fwd_inputs), lambda: f"{len(bwd_outputs)=}, {len(fwd_inputs)=}")
+
+    for fwd_arg, bwd_out in zip(fwd_inputs, bwd_outputs):
+        if isinstance(bwd_out, TensorProxy):
+            swap_map[variableify(bwd_out)] = bwd_out.replace_name(f"grad_for_{fwd_arg.name}")
+    reset_tracectx(trace_tok)
+
+    renamed_bwd_trace = from_trace(bwd_trace)
+    renamed_bwd_trace.bound_symbols = []
+
+    bsym: BoundSymbol
+    for bsym in bwd_trace.bound_symbols:
+        renamed_bwd_trace.bound_symbols.append(bsym.from_bsym_swap_proxies(swap_map=swap_map))
+
+    return renamed_bwd_trace
 
 
 class ThunderFunction(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, compiled_backward, saved_tensors, saved_other, flat_output, *flat_args):
+    def forward(
+        ctx, return_none_instead_of_grads, compiled_backward, saved_tensors, saved_other, flat_output, *flat_args
+    ):
         # Here we just propagate the tensors through the autograd graph
+        ctx.return_none_instead_of_grads = return_none_instead_of_grads
         ctx.saved_other = saved_other
         ctx.compiled_backward = compiled_backward
 
@@ -52,7 +96,11 @@ class ThunderFunction(torch.autograd.Function):
 
         # Inside the compiled backward we must clear the saved_tensors_list
         assert not saved_tensors_list, "saved_tensors_list must be empty after calling compiled_backward"
-        return (None, None, None, None, *grads)
+        # TODO(crcrpar): Remove if-else once `dist_prims.stash_grad_for_fsdp` starts to return `None`
+        # NOTE(crcrpar): In fsdp no-sync, unsharded gradients are attached and accumulated to their parameters as the attr of `_thunder_fsdp_unsharded_grad` in order to avoid shape mismatch of a param and its grad. When exiting the no_sync context, the accumulated, unsharded gradients are reduce-scattered into the attr of `grad` and `_thunder_fsdp_unsharded_grad` is removed.
+        if ctx.return_none_instead_of_grads:
+            return (None, None, None, None, None, *([None] * len(grads)))
+        return (None, None, None, None, None, *grads)
 
 
 def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stats, /, *flat_args):
@@ -109,9 +157,8 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
 
     _fsdp_comm_bucketing: FSDPCommBucketing | None = None
     if getattr(compile_data.fn, "use_fsdp", False):
-        _fsdp_comm_bucketing = FSDPCommBucketing(compile_data)
+        _fsdp_comm_bucketing = FSDPCommBucketing(compile_data, computation_trc)
         fw_trace = _fsdp_comm_bucketing.apply_bucketing_to_forward_trace(fw_trace, bw_trace.names)
-        _fsdp_comm_bucketing.update_name_set(bw_trace)
 
     # Now we can run the optimization passes on the forward trace
     # TODO Restore request for no rematerialization
@@ -195,17 +242,19 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
         bw_extrace = sort_waits(bw_extrace)
 
     # Importing here to avoid cyclical dependencies in future.
-    from thunder.executors.transformer_engineex import _rearrange_transformer_engine_linear, transformer_engine_ex
+    from thunder.executors.transformer_engineex import _transformer_engine_bwd_fp8_meta_sync, transformer_engine_ex
 
     if transformer_engine_ex in compile_data.executors_list:
-        # NOTE: `_rearrange_transformer_engine_linear` mutates `fw_extrace`.
-        _rearrange_transformer_engine_linear(fw_extrace, bw_extrace)
+        # NOTE: `_transformer_engine_bwd_fp8_meta_sync` may mutate `fw_extrace` or `bw_extrace`.
+        _transformer_engine_bwd_fp8_meta_sync(fw_extrace, bw_extrace)
 
     fw_extrace = del_last_used(fw_extrace)
     fw_traces.append(fw_extrace)
 
     bw_extrace = del_last_used(bw_extrace, clear_collections=True)
     bw_traces.append(bw_extrace)
+
+    bw_trace = rename_bwd_trace_outputs(bw_extrace, fw_extrace)
 
     if compile_stats is not None:
         compile_stats.last_traces += fw_traces

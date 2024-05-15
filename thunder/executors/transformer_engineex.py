@@ -120,68 +120,13 @@ class Context:
         self.saved_tensors = tensors
 
     def to_dict(self):
-        ctx_dict = {
-            "saved_tensors": self.saved_tensors,
-            "activation_dtype": self.activation_dtype,
-            "fp8": self.fp8,
-            "fp8_meta": self.fp8_meta,
-            "fuse_wgrad_accumulation": self.fuse_wgrad_accumulation,
-            "is_first_microbatch": self.is_first_microbatch,
-            "use_bias": self.use_bias,
-            "sequence_parallel": self.sequence_parallel,
-            "tensor_parallel": self.tensor_parallel,
-            "inp_shape": self.inp_shape,
-            "parallel_mode": self.parallel_mode,
-            "tp_group": self.tp_group,
-            "ub_name": self.ub_name,
-            "tp_size": self.tp_size,
-            "requires_dgrad": self.requires_dgrad,
-        }
-
-        if TE_VERSION_1_3_PLUS:
-            ctx_dict["cpu_offloading"] = self.cpu_offloading
-        if TE_VERSION_1_6_PLUS:
-            ctx_dict["primary_weights_in_fp8"] = self.primary_weights_in_fp8
-            ctx_dict["is_input_fp8"] = self.is_input_fp8
-            ctx_dict["reduce_and_update_bwd_fp8_tensors"] = self.reduce_and_update_bwd_fp8_tensors
-            ctx_dict["ub_overlap_ag"] = self.ub_overlap_ag
-        else:
-            ctx_dict.update(
-                {
-                    "ub_split_ag": self.ub_split_ag,
-                    "ub_atomic_gemm_ag": self.ub_atomic_gemm_ag,
-                }
-            )
-        return ctx_dict
+        return self.__dict__
 
     @staticmethod
     def from_dict(d):
         ctx = Context()
-        ctx.saved_tensors = d["saved_tensors"]
-        ctx.activation_dtype = d["activation_dtype"]
-        ctx.fp8 = d["fp8"]
-        ctx.fp8_meta = d["fp8_meta"]
-        ctx.fuse_wgrad_accumulation = d["fuse_wgrad_accumulation"]
-        ctx.is_first_microbatch = d["is_first_microbatch"]
-        ctx.use_bias = d["use_bias"]
-        ctx.sequence_parallel = d["sequence_parallel"]
-        ctx.tensor_parallel = d["tensor_parallel"]
-        ctx.inp_shape = d["inp_shape"]
-        ctx.parallel_mode = d["parallel_mode"]
-        ctx.tp_group = d["tp_group"]
-        ctx.ub_name = d["ub_name"]
-        ctx.tp_size = d["tp_size"]
-        ctx.requires_dgrad = d["requires_dgrad"]
-        if TE_VERSION_1_3_PLUS:
-            ctx.cpu_offloading = d["cpu_offloading"]
-        if TE_VERSION_1_6_PLUS:
-            ctx.primary_weights_in_fp8 = d["primary_weights_in_fp8"]
-            ctx.is_input_fp8 = d["is_input_fp8"]
-            ctx.reduce_and_update_bwd_fp8_tensors = d["reduce_and_update_bwd_fp8_tensors"]
-            ctx.ub_overlap_ag = d["ub_overlap_ag"]
-        else:
-            ctx.ub_split_ag = d["ub_split_ag"]
-            ctx.ub_atomic_gemm_ag = d["ub_atomic_gemm_ag"]
+        for key, value in d.items():
+            setattr(ctx, key, value)
         return ctx
 
 
@@ -218,6 +163,16 @@ class TELinear(TransformerEngineBaseModule):
 
         # Required by `get_fp8_weights_scratchpad`
         self.fp8_weight_shapes.append(torch.Size((self.out_features, self.in_features)))
+
+        if TE_VERSION_1_6_PLUS:
+            # NOTE: Backward FP8 metadata sync
+            # TransformerEngine v1.6 onwards, we control the sync and update of FP8 metadata for FP8 tensors
+            # tied to backward pass (i.e. the gradient tensors)
+            # Also, note that the forward tensor metadata sync occurs at the exit of `fp8_autocast` context manager
+            # which is not controlled by us.
+            #
+            # We consume the `is_first_fp8_module` so that the automatic sync for FP8 metadata is disabled.
+            FP8GlobalStateManager.is_first_fp8_module()  # Consume first module token.
 
     def forward(self, inp, weight, bias, is_first_microbatch: bool | None = None, is_grad_enabled: bool = False):
         tensor_inputs = tuple(filter(lambda t: isinstance(t, torch.Tensor), (inp, weight, bias)))
@@ -511,6 +466,36 @@ TE_CTX_STR = f"@{IMPORT_CTX_TE_KEY}.fp8_autocast(fp8_recipe={FP8_RECIPE_KEY})"
 
 def _get_te_wrapper_string():
     return TE_CTX_STR
+
+
+def te_sync_fp8_meta_bwd_meta():
+    pass
+
+
+def te_sync_fp8_meta_bwd_impl():
+    FP8GlobalStateManager.reduce_and_update_fp8_tensors(forward=False)
+
+
+te_sync_fp8_meta_bwd = transformer_engine_ex.register_operator(
+    "te_sync_fp8_meta_bwd", meta=te_sync_fp8_meta_bwd_meta, fn=te_sync_fp8_meta_bwd_impl
+)
+
+
+def _transformer_engine_bwd_fp8_meta_sync(fw_extrace, bw_extrace):
+    if TE_VERSION_1_6_PLUS:
+        # See doc of `_insert_bwd_fp8_meta_sync` for more details.
+        _insert_bwd_fp8_meta_sync(bw_extrace)
+    else:
+        # See doc of `_rearrange_transformer_engine_linear` for more details.
+        _rearrange_transformer_engine_linear(fw_extrace, bw_extrace)
+
+
+def _insert_bwd_fp8_meta_sync(bw_extrace):
+    # This functions insert the symbol `te_sync_fp8_meta_bwd` to the end of the backward
+    # trace which takes care of syncing and updating the FP8 metadata for backward tensors.
+    # See NOTE: Backward FP8 metadata sync
+    bwd_idx = len(bw_extrace.bound_symbols) - 1
+    bw_extrace.bound_symbols.insert(bwd_idx + 1, te_sync_fp8_meta_bwd.bind(output=None))
 
 
 def _rearrange_transformer_engine_linear(fw_extrace, bw_extrace):
