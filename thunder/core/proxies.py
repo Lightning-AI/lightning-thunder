@@ -1061,6 +1061,10 @@ def _infer_tensor_properties(
             _ddp_type == DDPType.FULLY_SHARDED,
             lambda: f"{_ddp_type = } and {_thunder_fsdp_padding_size = } do not work",
         )
+        baseutils.check(
+            _thunder_fsdp_padding_size > 0,
+            lambda: f"{_thunder_fsdp_padding_size=} expected to be > 0 or `None`",
+        )
 
     # NOTE for simplicity functions that want to reason about weak dtypes should explicitly request
     #   the true_dtype property

@@ -573,8 +573,9 @@ class GeneralJitCtx(MinimalCtx):
                 p_new = thunder.distributed.prims.synchronize(
                     p,
                     self._process_group_for_ddp,
-                    p.thunder_fsdp_padding_size,
                 )
+                if isinstance(p.thunder_fsdp_padding_size, int):
+                    p_new = p_new[: (p_new.shape[0] - p.thunder_fsdp_padding_size)]
                 p_orig = p
                 p = p_new
             else:
