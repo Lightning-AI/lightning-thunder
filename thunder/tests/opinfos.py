@@ -6726,7 +6726,7 @@ def adaptive_avg_pool2d_error_generator(op, device, **kwargs):
         (
             (3, 4, 5),
             (3, -2),
-            "adaptive_avg_pool2d: elements of output_size must be greater than or equal to 0 but received",
+            "Found invalid length",
         ),
         (
             (3, 4, 0),

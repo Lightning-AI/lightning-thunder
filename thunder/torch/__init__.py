@@ -3347,11 +3347,13 @@ def adaptive_avg_pool2d(
         utils.check_types(output_size, int)
     else:
         output_size = (output_size, output_size)
-    return prims.adaptive_avg_pool2d(a, output_size)
+    return prims.adaptive_avg_pool2d(a, tuple(output_size))
 
 
 @torchsymbol("adaptive_avg_pool2d_backward", id="adaptive_avg_pool2d_backward")
-def adaptive_avg_pool2d_backward(g: TensorProxy, a: TensorProxy) -> TensorProxy:
+def adaptive_avg_pool2d_backward(g: TensorProxy, a: TensorProxy, /) -> TensorProxy:
+    # Followed the cuda implementation in Pytorch for adaptive_avg_pool2d_backward here
+    # short cut for empty tensor
     if a.numel() == 0:
         return zeros_like(a)
     return prims.adaptive_avg_pool2d_backward(g, a)
