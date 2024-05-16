@@ -43,6 +43,9 @@ class ThunderModule(pytorch.nn.Module):
             return p
         return self._model.get_buffer(name)
 
+    def set_buffer(self, name, value):
+        p = self._overrides[name] = value
+
     def get_parameter(self, name):
         p = self._overrides.get(name, self._null)
         if p is not self._null:
