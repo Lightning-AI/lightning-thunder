@@ -3,7 +3,7 @@ from collections.abc import Callable, Sequence
 
 from thunder.core.langctxs import LanguageContext, register_langctx, Languages, resolve_language
 from thunder.core.pytree import tree_flatten
-from thunder.core.proxies import TensorProxy
+from thunder.core.proxies import TensorProxy, NumberProxy
 
 #
 # Creates and registers the torch language context
@@ -30,19 +30,19 @@ class ClangCtx(LanguageContext):
         #       not exist.
         inps, _ = tree_flatten((args, kwargs))
 
-        has_tensor_input: bool = False
+        has_proxy_input: bool = False
         for x in inps:
-            if isinstance(x, TensorProxy):
-                has_tensor_input = True
+            if isinstance(x, TensorProxy) or isinstance(x, NumberProxy):
+                has_proxy_input = True
                 break
 
-        if has_tensor_input:
+        if has_proxy_input:
             method: None | Callable = _method_name_to_fn_map.get(id, None)
             if method is None:
                 raise AttributeError(f"The {self.name} language context has no method {id}")
             return method
 
-        # has_tensor_input is False
+        # has_proxy_input is False
         # Defers to the primitive language context when there are no tensor inputs=
         #   (the primitive language context handles operations on numbers)
         primsctx: LanguageContext = resolve_language(Languages.PRIMS)
