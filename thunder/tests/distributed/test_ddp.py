@@ -805,6 +805,55 @@ class CompileDDPTest(DataParallelTestCase):
                         self.assertTrue(has_pack_multiple_tensors, msg=f"{[bsym.args[0] for bsym in pack_bsyms]=}")
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
+    @common_utils.parametrize(
+        "bucketing_strategy,fsdptype",
+        product(
+            (
+                FSDPBucketingStrategy.NONE,
+                FSDPBucketingStrategy.BLOCK,
+            ),
+            (FSDPType.ZERO2, FSDPType.ZERO3),
+        ),
+        name_fn=lambda bucketing_strategy, fsdptype: (
+            f"bucketing_{str(bucketing_strategy).split('.')[1].lower()}_{(str(fsdptype).lower().split('.')[1])}"
+        ),
+    )
+    def test_fsdp_with_padding(
+        self,
+        bucketing_strategy: FSDPBucketingStrategy,
+        fsdptype: FSDPType,
+    ):
+
+        from thunder.core.prims import PrimIDs
+        from thunder.executors.torchex import pad_prim_impl
+        from thunder.executors.torchex import slice_prim_impl
+
+        class M(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.l1 = nn.Linear(4, 13)
+                self.l2 = nn.Linear(13, 1)
+
+            def forward(self, x):
+                return self.l2(new_gelu(self.l1(x)))
+
+        device = torch.device(f"cuda:{self.rank}")
+        m = M().to(device)
+        jitted = thunder.jit(fsdp(m, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype))
+
+        x = torch.randn(4, 4, device=device)
+        y = jitted(x)
+        y.mean().backward()
+
+        fw_extrace = thunder.last_traces(jitted)[-1]
+        fw_symids = [bsym.sym.id for bsym in fw_extrace.bound_symbols]
+        self.assertTrue(any(sym_id in {PrimIDs.SLICE, slice_prim_impl.id} for sym_id in fw_symids))
+
+        bw_trace = thunder.last_backward_traces(jitted)[0]
+        bw_symids = [bsym.sym.id for bsym in bw_trace.bound_symbols]
+        self.assertTrue(any(sym_id in {PrimIDs.PAD, pad_prim_impl.id} for sym_id in bw_symids))
+
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
     def test_fsdp_shard_unshard(self):
         from thunder.distributed import _shard_params, _unshard_params
 
@@ -814,6 +863,7 @@ class CompileDDPTest(DataParallelTestCase):
         model = torch.nn.Linear(3, 5, bias=False, device="meta")
         with pytest.raises(RuntimeError, match=r"parameter 'weight' \(5\) to be divisible by the world size \(2\)"):
             _shard_params(model, pg, device, None)
+        _shard_params(model, pg, device, None, allow_padding_for_fsdp=True)
 
         model = torch.nn.Linear(3, 4, bias=False, device="meta")
         weight = torch.arange(3 * 4, device="cpu", dtype=torch.float).view(4, 3)

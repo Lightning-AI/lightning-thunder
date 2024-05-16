@@ -449,7 +449,7 @@ def fsdp_transform_module(
                 thunder_model._overrides[pn] = copy.copy(p)
             # we collect shapes and devices because we do not know if other transforms also change it...
             old_shape = thunder_model._overrides[pn].shape
-            _shard_param(thunder_model._overrides[pn], global_rank, world_size, pn)
+            _shard_param(thunder_model._overrides[pn], global_rank, world_size, pn, allow_padding_for_fsdp=True)
             new_shape = thunder_model._overrides[pn].shape
             sharded_params[pn] = (old_shape, new_shape, thunder_model._overrides[pn].device)
 
@@ -529,7 +529,7 @@ def fsdp(
     model.bucketing_strategy = bucketing_strategy
 
     # Shard the parameters
-    _shard_params(model, process_group, device, broadcast_from)
+    _shard_params(model, process_group, device, broadcast_from, allow_padding_for_fsdp=True)
 
     # See Note [DistributedDataParallel and ddp_type]
     # If model was wrapped with thunder.distributed.fsdp it would have a
@@ -545,7 +545,11 @@ def fsdp(
 
 @torch.no_grad()
 def _shard_params(
-    module: torch.nn.Module, process_group: ProcessGroup, device: torch.device | None, broadcast_from: int | None
+    module: torch.nn.Module,
+    process_group: ProcessGroup,
+    device: torch.device | None,
+    broadcast_from: int | None,
+    allow_padding_for_fsdp: bool = False,
 ) -> None:
     """Shards the parameters on the first dimension."""
     global_rank = tdist.get_rank(group=process_group)
@@ -576,22 +580,41 @@ def _shard_params(
         # Note [FSDP Sharding]
         # All internal code will assume that the parameters are sharded on the first dimension
         for param_name, param in submodule.named_parameters(recurse=False, prefix=module_name):
-            _shard_param(param, global_rank, world_size, param_name)
+            _shard_param(param, global_rank, world_size, param_name, allow_padding_for_fsdp=allow_padding_for_fsdp)
 
 
-def _shard_param(param: torch.Tensor, rank: int, world_size: int, name: str) -> None:
-    utils.check(
-        param.shape[0] % world_size == 0,
-        lambda: (
-            f"Current sharding requires the first dimension of the parameter {name!r} ({param.shape[0]})"
-            f" to be divisible by the world size ({world_size})"
-        ),
-    )
-    chunk_size = param.shape[0] // world_size
-    # NOTE This could be a ShardTensor to indicate other parts of the code
-    # that it's sharded and should be treated differently
-    shard = param.data.narrow(0, chunk_size * rank, chunk_size).clone()
-    param.data = shard
+def _shard_param(
+    param: torch.Tensor,
+    rank: int,
+    world_size: int,
+    name: str,
+    allow_padding_for_fsdp: bool = False,
+) -> None:
+
+    if not allow_padding_for_fsdp or (param.size(0) % world_size == 0):
+        if not allow_padding_for_fsdp:
+            utils.check(
+                param.shape[0] % world_size == 0,
+                lambda: (
+                    f"Current sharding requires the first dimension of the parameter {name!r} ({param.shape[0]})"
+                    f" to be divisible by the world size ({world_size})"
+                ),
+            )
+        chunk_size = param.shape[0] // world_size
+        # NOTE This could be a ShardTensor to indicate other parts of the code
+        # that it's sharded and should be treated differently
+        shard = param.data.narrow(0, chunk_size * rank, chunk_size).clone()
+        param.data = shard
+    else:
+        padded_param_shape = list(param.shape)
+        orig_0dim_size = param.size(0)
+        chunk_size = (padded_param_shape[0] + world_size - 1) // world_size
+        padded_param_shape[0] = chunk_size * world_size
+        _thunder_fsdp_padding_size = padded_param_shape[0] - param.size(0)
+        padded_param = torch.empty(padded_param_shape, device=param.device, dtype=param.dtype)
+        padded_param[:orig_0dim_size].copy_(param)
+        param.data = padded_param.data.narrow(0, chunk_size * rank, chunk_size).clone()
+        param._thunder_fsdp_padding_size = _thunder_fsdp_padding_size
 
 
 @torch.no_grad()
