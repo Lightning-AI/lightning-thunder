@@ -4722,6 +4722,7 @@ def scatter_add_error_generator(op, device, dtype=torch.float32, requires_grad=T
     make_source = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
     # Gradient definition for src tensor is valid only if src.shape == index.shape
+    # NOTE The scatter_add prim renames src variable to value.
     shape_a = (4, 5, 3)
     dim = 0
     shape_b = (3, 2, 3)
@@ -4733,7 +4734,7 @@ def scatter_add_error_generator(op, device, dtype=torch.float32, requires_grad=T
     yield (
         SampleInput(a, index=b, src=c, dim=dim),
         RuntimeError,
-        "The gradient for the src Tensor is implemented only when src.shape == index.shape. src shape is (.*?) while index shape is (.*?).",
+        "The gradient for the value Tensor is implemented only when value.shape == index.shape. value shape is (.*?) while index shape is (.*?).",
     )
 
 

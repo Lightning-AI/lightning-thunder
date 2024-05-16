@@ -855,6 +855,12 @@ register_grad(pids.GATHER, _gather_prim_grad)
 
 @torchctx
 def _scatter_add_prim_grad(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
+    utils.check(
+        not value._requires_grad or value.shape == index.shape,
+        lambda: f"The gradient for the value Tensor is implemented only when value.shape == index.shape. "
+        "value shape is {value.shape} while index shape is {index.shape}",
+    )
+
     fwd = prims.scatter_add(a, index, value, dim)
 
     g = get_grad(fwd)
