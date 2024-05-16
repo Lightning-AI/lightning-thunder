@@ -263,7 +263,6 @@ def jit(
     early_transforms: list | None = None,
     additional_transforms: list | None = None,
     record_history: bool = False,
-    disable_inplace_copy_check: bool = False,
     **compile_options,  # TODO RC1 Make this explicit -- dict of options
 ) -> Callable:
     """Just-in-time compile a callable (function or model).
@@ -573,7 +572,7 @@ def jit(
                     )
                 computation_trc = extraces[-1]
 
-            if not disable_inplace_copy_check:
+            if not compile_options.get("disable_inplace_copy_check", False):
                 thunder.core.transform_common._inplace_copy_sanity_check(computation_trc)
             comp = computation_trc.python_callable()
 

@@ -117,30 +117,30 @@ def test_batch_norm_running_stats(executor, device, dtype):
 
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_inplace_copy_sanity_check(executor, device, dtype):
-    def func1(x, y):
+    def func0(x, y):
         z = x * y
         x = thunder.core.prims.copy_(z, x)
         return x + y
 
-    def func2(x, y):
+    def func1(x, y):
         z = x * y
         thunder.core.prims.copy_(z, x)
         thunder.core.prims.copy_(y, x)
         return x
 
-    def func3(x, y):
+    def func2(x, y):
         z = x * y
         thunder.core.prims.copy_(z, x)
         thunder.core.prims.copy_(x, y)
         return y
 
-    def func4(x, y):
+    def func3(x, y):
         z = x * y
         o = thunder.core.prims.copy_(z, x)
         thunder.core.prims.copy_(o, y)
         return y
 
-    for foo in (func1, func2, func3, func4):
+    for foo in (func0, func1, func2, func3):
         traced_foo = executor.make_callable(foo)
 
         tdtype = ttorch.to_torch_dtype(dtype)

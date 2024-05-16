@@ -61,14 +61,14 @@ def _inplace_copy_sanity_check(extrace: Trace):
     nvfuser_symbols = (bsym for bsym in extrace.bound_symbols if bsym.sym.name.startswith("nvFusion"))
     for bsym in nvfuser_symbols:
         consumer_dict = consumers(list(bsym.subsymbols), _map_to_numbers=True)
-        inplace_copy_idx = [(idx, sym) for idx, sym in enumerate(bsym.subsymbols) if sym.sym.id == prims.PrimIDs.COPY_]
+        inplace_copy_idx = ((idx, sym) for idx, sym in enumerate(bsym.subsymbols) if sym.sym.id == prims.PrimIDs.COPY_)
         for idx, subbsym in inplace_copy_idx:
             copy_to_arg = subbsym.flat_args[1]
             copy_to_out = subbsym.output
 
             def check(inp, log_str):
                 if inp is not None and inp in consumer_dict:
-                    last_used_idx = consumer_dict[inp][-1]
+                    last_used_idx = max(consumer_dict[inp])
                     if last_used_idx > idx:
                         raise NotImplementedError(
                             f"{bsym.subsymbols[last_used_idx]} trying to use {inp} (the {log_str} of 'prims.copy_') as input, which is not safe."
