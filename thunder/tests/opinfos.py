@@ -562,6 +562,20 @@ is_cuda_opinfo = OpInfo(
 tensor_properties.append(is_cuda_opinfo)
 
 
+def _is_nested_torch(x: torch.Tensor) -> bool:
+    return x.is_nested
+
+
+is_nested_opinfo = OpInfo(
+    _is_nested_torch,
+    sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
+    torch_reference=_is_nested_torch,
+    dtypes=(datatypes.all_dtypes),
+)
+
+tensor_properties.append(is_nested_opinfo)
+
+
 def numel_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
