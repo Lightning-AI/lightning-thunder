@@ -572,6 +572,8 @@ def jit(
                     )
                 computation_trc = extraces[-1]
 
+            if not compile_options.get("disable_inplace_copy_check", False):
+                thunder.core.transform_common._inplace_copy_sanity_check(computation_trc)
             comp = computation_trc.python_callable()
 
             if backward_trc is not None:
