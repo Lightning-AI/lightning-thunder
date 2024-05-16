@@ -765,12 +765,13 @@ class CompileDDPTest(DataParallelTestCase):
                     executors=executors_map[executor].executors_list(),
                 )
             else:
-                cm = fsdp(
-                    thunder.jit(m.to(device), executors=executors_map[executor].executors_list()),
-                    device=device,
-                    bucketing_strategy=bucketing_strategy,
-                    sharding_strategy=fsdptype,
-                )
+                with self.assertWarns(UserWarning):
+                    cm = fsdp(
+                        thunder.jit(m.to(device), executors=executors_map[executor].executors_list()),
+                        device=device,
+                        bucketing_strategy=bucketing_strategy,
+                        sharding_strategy=fsdptype,
+                    )
             x = torch.ones((2, 12), device=device)
             loss = cm(x).mean()
             loss.backward()
@@ -1249,6 +1250,8 @@ def _test_native_ddp_helper(input_data):
 
 
 def _test_native_fsdp_helper(input_data):
+    from contextlib import nullcontext
+
     init_method, world_size, rank, executor, device, dtype, kwargs = input_data
     bucketing_strategy = kwargs["fsdp_bucketing_strategy"]
 
@@ -1288,7 +1291,9 @@ def _test_native_fsdp_helper(input_data):
         model,
         executors=executor.executors_list(),
     )
-    cmodel = fsdp(cmodel0, bucketing_strategy=bucketing_strategy, device=device)
+    ctx = nullcontext() if bucketing_strategy == FSDPBucketingStrategy.NONE else pytest.warns(UserWarning)
+    with ctx:
+        cmodel = fsdp(cmodel0, bucketing_strategy=bucketing_strategy, device=device)
 
     # Check that the model is sharded
     sharded_weight_net1 = cmodel.get_parameter("net1.weight")
