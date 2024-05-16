@@ -2,6 +2,7 @@ import dis
 from typing import Any, Optional
 from collections.abc import Generator
 from collections.abc import Callable
+from collections.abc import Sequence
 from enum import Enum, auto
 from collections import deque, defaultdict
 from contextlib import contextmanager
@@ -53,6 +54,46 @@ import numpy as np
 # TODO RC1 Update last_executed to last_computation
 # TODO RC1 Review how autograd traces are presented
 class CompileStats:
+    """A class holding statistics and caches for a compiled function.
+
+    .. note::
+        It is highly recommended that some attributes such as :attr:`CompileStats.last_traces` and
+        :attr:`CompileStats.last_backward_traces` via :func:`thunder.last_traces` and
+        :func:`thunder.last_backward_traces`, respectively.
+        See :mod:`thunder` for more of such utility functions.
+
+    Attributes:
+        last_executed:
+        last_traces (Sequence[TraceCtx]):
+        last_prologue (TraceCtx):
+        last_prologue_traces (Sequence[TraceCtx]):
+        last_interpreted_instructions (Generator[dist.Instruction, None, None] | None):
+        last_interpreter_log (list[InterpreterLogItem] | None):
+        last_backward_traces (Sequence[TraceCtx]):
+        last_trace_host_start (int):
+        last_trace_host_stop (int):
+        last_trace_cache_start (int):
+        last_trace_cache_stop (int):
+        last_trace_tracing_start (int):
+        last_trace_tracing_stop (int):
+        last_trace_host_execution_start (int):
+        last_trace_host_execution_stop (int):
+        last_prologue_transformation_start (int):
+        last_prologue_transformation_stop (int):
+        last_prologue_execution_start (int):
+        last_prologue_execution_stop (int):
+        last_computation_transformation_start (int):
+        last_computation_transformation_stop (int):
+        last_computation_execution_start (int):
+        last_computation_execution_stop (int):
+        cache (dict):
+        interpreter_cashe (list):
+        calls (int):
+        cache_hits (int):
+        cache_misses (int):
+        last_compile_reasons (dict):
+    """
+
     def __init__(self):
         # Callables and traces
         self.last_executed = None
@@ -137,6 +178,11 @@ class CompileStats:
 #   like additional_param_names
 # TODO RC1 Rename this to CompileOptions
 class CompileData:
+    """A class holding data about the compiled object.
+
+    Data include statistics about how it's been called.
+    """
+
     def __init__(
         self,
         *,

@@ -115,8 +115,6 @@ class torchsymbol:
                     exception_type=AssertionError,
                 )
         else:
-            if not self.id.startswith("torch"):
-                warnings.warn(f"{self.id=} does not start with the namespace of `torch`")
             id = self.id
 
         if self.is_prim:
@@ -193,6 +191,13 @@ register_method("numel", numel)
 @torchsymbol(torch.Tensor.is_cuda, is_property=True, id="torch.is_cuda")
 def is_cuda(a: TensorLike, /) -> bool:
     return a.device.devicetype is devices.DeviceType.CUDA
+
+
+# is nested always returns False for now:
+# https://github.com/Lightning-AI/lightning-thunder/issues/93#issuecomment-2030416883
+@torchsymbol(torch.Tensor.is_nested, is_property=True, id="torch.is_nested")
+def is_nested(a: TensorLike, /) -> bool:
+    return False
 
 
 _torch_dtype_to_old_torch_typestring_map = {

@@ -730,7 +730,7 @@ class CompileDDPTest(DataParallelTestCase):
 
     # TODO(crcrpar): Add torch compile to executors_list
     @common_utils.parametrize(
-        "executor,bucketing_strategy,fsdptype",
+        "executor,bucketing_strategy,fsdptype,apply_fsdp_first",
         product(
             tuple(executors_map.keys()),
             (
@@ -738,9 +738,10 @@ class CompileDDPTest(DataParallelTestCase):
                 FSDPBucketingStrategy.BLOCK,
             ),
             (FSDPType.ZERO2, FSDPType.ZERO3),
+            (True, False),
         ),
-        name_fn=lambda executor, bucketing_strategy, fsdptype: (
-            f"executor_{executor}_bucketing_{str(bucketing_strategy).split('.')[1].lower()}_{(str(fsdptype).lower().split('.')[1])}"
+        name_fn=lambda executor, bucketing_strategy, fsdptype, apply_fsdp_first: (
+            f"executor_{executor}_bucketing_{str(bucketing_strategy).split('.')[1].lower()}_{(str(fsdptype).lower().split('.')[1])}_{'jit_fsdp' if apply_fsdp_first else 'fsdp_jit'}"
         ),
     )
     def test_fsdp_grad_parity_with_without_bucketing(
@@ -748,6 +749,7 @@ class CompileDDPTest(DataParallelTestCase):
         executor,
         bucketing_strategy: FSDPBucketingStrategy,
         fsdptype: FSDPType,
+        apply_fsdp_first: bool,
     ):
         from thunder.distributed import fsdp
 
@@ -757,10 +759,18 @@ class CompileDDPTest(DataParallelTestCase):
         for strategy in (FSDPBucketingStrategy.NONE, bucketing_strategy):
             m = ToyModel()
             m.load_state_dict(initial_model_state)
-            cm = thunder.jit(
-                fsdp(m, device=device, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype),
-                executors=executors_map[executor].executors_list(),
-            )
+            if apply_fsdp_first:
+                cm = thunder.jit(
+                    fsdp(m, device=device, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype),
+                    executors=executors_map[executor].executors_list(),
+                )
+            else:
+                cm = fsdp(
+                    thunder.jit(m.to(device), executors=executors_map[executor].executors_list()),
+                    device=device,
+                    bucketing_strategy=bucketing_strategy,
+                    sharding_strategy=fsdptype,
+                )
             x = torch.ones((2, 12), device=device)
             loss = cm(x).mean()
             loss.backward()
@@ -783,6 +793,7 @@ class CompileDDPTest(DataParallelTestCase):
                             ex_trace.bound_symbols,
                         )
                     )
+                    self.assertGreater(len(pack_bsyms), 0)
                     has_pack_multiple_tensors = False
                     for bsym in pack_bsyms:
                         first_arg = bsym.args[0]
