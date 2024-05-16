@@ -5,17 +5,33 @@ import numpy as np
 import random
 
 from lightning_utilities.core.imports import package_available
+from looseversion import LooseVersion
 
+#
+# Functions for detecting cudnn and its version
+#
+def cudnn_version() -> LooseVersion | None:
+    try:
+        import cudnn
+
+        if hasattr(cudnn, "__version__"):
+            return LooseVersion(cudnn.__version__)
+
+        # NOTE: This import of cudnn may or may not have version info
+        return LooseVersion("0.0.0")
+    except ImportError:
+        pass
+
+    # NOTE This occurs when cudnn couldn't be imported
+    return None
+
+def required_cudnn_version() -> LooseVersion:
+    # Using 1.3.0 majorly because it works better with other libraries (e.g. torch) that also build on top of cudnn backend
+    return LooseVersion("1.3.0")
 
 def cudnn_available() -> bool:
-    return package_available("cudnn")
-
-
-def cudnn_version() -> int:
-    if cudnn_available():
-        return cudnn.backend_version()
-    return 0
-
+    v = cudnn_version()
+    return v is not None and v >= required_cudnn_version()
 
 cudnn: None | Any = None
 cudnn_backend_version: None | Any = None
@@ -366,6 +382,17 @@ def _cudnn_sdpa_checker(
     for d in [d_q, d_kv]:
         if d % 8 != 0 or d > 128:
             return False
+
+    try:
+        _make_cudnn_sdpa_forward_graph(query, key, value, attn_mask, dropout_p, is_causal)
+    # If cudnn can't support the graph, return false
+    # Please turn on cudnn API logging for helpful messages that mention why the graph is not supported.
+    except cudnn.cudnnGraphNotSupportedError as ex:
+        return False
+    # Otherwise just raise the error.
+    # These errors can be due to internal cudnn bugs, or user error.
+    except Exception as e:
+        raise
 
     return True
 
