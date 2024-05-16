@@ -158,7 +158,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     _fsdp_comm_bucketing: FSDPCommBucketing | None = None
     if getattr(compile_data.fn, "use_fsdp", False):
         _fsdp_comm_bucketing = FSDPCommBucketing(compile_data, computation_trc)
-        fw_trace = _fsdp_comm_bucketing.apply_bucketing_to_forward_trace(fw_trace, bw_trace.names)
+        fw_trace = _fsdp_comm_bucketing.apply_bucketing_to_forward_trace(fw_trace)
 
     # Now we can run the optimization passes on the forward trace
     # TODO Restore request for no rematerialization
