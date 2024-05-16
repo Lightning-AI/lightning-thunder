@@ -7,6 +7,7 @@ import random
 from lightning_utilities.core.imports import package_available
 from looseversion import LooseVersion
 
+
 #
 # Functions for detecting cudnn and its version
 #
@@ -25,13 +26,16 @@ def cudnn_version() -> LooseVersion | None:
     # NOTE This occurs when cudnn couldn't be imported
     return None
 
+
 def required_cudnn_version() -> LooseVersion:
     # Using 1.3.0 majorly because it works better with other libraries (e.g. torch) that also build on top of cudnn backend
     return LooseVersion("1.3.0")
 
+
 def cudnn_available() -> bool:
     v = cudnn_version()
     return v is not None and v >= required_cudnn_version()
+
 
 cudnn: None | Any = None
 cudnn_backend_version: None | Any = None
@@ -384,11 +388,21 @@ def _cudnn_sdpa_checker(
             return False
 
     try:
-    # Build both forward and backward graphs
+        # Build both forward and backward graphs
         query_4d, key_4d, value_4d, attn_mask_4d = _transform_sdpa_inputs(query, key, value, attn_mask)
         _make_cudnn_sdpa_forward_graph(query_4d, key_4d, value_4d, attn_mask_4d, dropout_p, is_causal)
-        _make_cudnn_sdpa_backward_graph(query_4d, key_4d, value_4d, attn_mask_4d, dropout_p, is_causal, query_4d.stride, key_4d.stride, value_4d.stride)
-    
+        _make_cudnn_sdpa_backward_graph(
+            query_4d,
+            key_4d,
+            value_4d,
+            attn_mask_4d,
+            dropout_p,
+            is_causal,
+            query_4d.stride,
+            key_4d.stride,
+            value_4d.stride,
+        )
+
     # If cudnn can't support the graph, return false
     # Please turn on cudnn API logging for helpful messages that mention why the graph is not supported.
     except cudnn.cudnnGraphNotSupportedError as ex:
