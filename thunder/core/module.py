@@ -62,9 +62,9 @@ class ThunderModule(pytorch.nn.Module):
 
             This could lead to different accumulated gradients with ``torch.nn.parallel.distributed.DistributedDataParallel.no_sync``.
             PyTorch's gradient synchronization is implemented by applying all-reduce to gradient buckets of ``torch.nn.Parameter.grad``.
-            Thus the ``no_sync`` context leads to :math:`\text{AllReduce} \left( \sum_{i = 0}^{\rm{num_grad_accum_steps}} g_i \right)`.
+            Thus the ``no_sync`` context leads to :math:`\text{AllReduce} \left( \sum_{i = 0}^{\text{ga_steps}} g_i \right)` where :math:`\text{ga_steps}` means the number of gradient accumulation steps.
             In contrast, this synchronizes accumulated gradients when exiting, leading to
-            :math:`\text{AllReduce} \left( \sum_{i = 0}^{\rm{num_grad_accum_steps - 1}} g_i \right) + \text{AllReduce}(g_{\rm{num_grad_accum_steps}})`.
+            :math:`\text{AllReduce} \left( \sum_{i = 0}^{\text{ga_steps - 1}} g_i \right) + \text{AllReduce}(g_{\text{ga_steps}})`.
 
         .. warning::
 
