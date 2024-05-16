@@ -374,6 +374,7 @@ def linkcode_resolve(domain, info):
 
 
 autosummary_generate = True
+autodoc_typehints = "description"
 
 autodoc_member_order = "groupwise"
 autoclass_content = "both"

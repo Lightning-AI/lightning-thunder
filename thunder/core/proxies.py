@@ -1005,12 +1005,14 @@ def _infer_tensor_properties(
     dtype: dtypes.dtype | None = None,
     requires_grad: bool | None = None,
     ddp_type: DDPType | None = None,
+    thunder_fsdp_padding_size: int | None = None,
 ):
     _shape = None
     _device = None
     _dtype = None
     _requires_grad: None | bool = None
     _ddp_type = DDPType.NONE
+    _thunder_fsdp_padding_size = None
 
     if like is not None:
         baseutils.check_type(like, (TensorProxy, FutureTensorProxy))
@@ -1030,6 +1032,9 @@ def _infer_tensor_properties(
     _requires_grad = requires_grad if requires_grad is not None else _requires_grad
     _requires_grad = False if not dtypes.is_inexact_dtype(_dtype) else _requires_grad
     _ddp_type = ddp_type if ddp_type is not None else _ddp_type
+    _thunder_fsdp_padding_size = (
+        thunder_fsdp_padding_size if thunder_fsdp_padding_size is not None else _thunder_fsdp_padding_size
+    )
 
     # Extracts actual values for shape
     # TODO RC1 Enable this
@@ -1051,13 +1056,22 @@ def _infer_tensor_properties(
     baseutils.check_type(_dtype, dtypes.dtype)
     baseutils.check_type(_requires_grad, bool)
     baseutils.check_type(_ddp_type, DDPType)
+    if isinstance(_thunder_fsdp_padding_size, int):
+        baseutils.check(
+            _ddp_type == DDPType.FULLY_SHARDED,
+            lambda: f"{_ddp_type = } and {_thunder_fsdp_padding_size = } do not work",
+        )
+        baseutils.check(
+            _thunder_fsdp_padding_size > 0,
+            lambda: f"{_thunder_fsdp_padding_size=} expected to be > 0 or `None`",
+        )
 
     # NOTE for simplicity functions that want to reason about weak dtypes should explicitly request
     #   the true_dtype property
     _true_dtype = _dtype
     _dtype = dtypes.to_strong_dtype(_dtype)
 
-    return _shape, _device, _dtype, _true_dtype, _numel, _ndim, _requires_grad, _ddp_type
+    return _shape, _device, _dtype, _true_dtype, _numel, _ndim, _requires_grad, _ddp_type, _thunder_fsdp_padding_size
 
 
 # NOTE A FutureTensorProxy is intentionally NOT a subclass of TensorProxy
@@ -1084,7 +1098,8 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
             self._numel,
             self._ndim,
             self._requires_grad,
-            _,
+            _,  # ddp_type
+            _,  # thunder_fsdp_padding_size
         ) = _infer_tensor_properties(
             like,
             shape,
@@ -1152,6 +1167,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         prefix: None | str = None,
         ddp_type: DDPType | None = None,
         history: None | tuple = None,
+        thunder_fsdp_padding_size: int | None = None,
     ):
         super().__init__(name, prefix=prefix, history=history)
 
@@ -1164,7 +1180,8 @@ class TensorProxy(Proxy, TensorProxyInterface):
             self._ndim,
             self._requires_grad,
             self._ddp_type,
-        ) = _infer_tensor_properties(like, shape, device, dtype, requires_grad, ddp_type)
+            self._thunder_fsdp_padding_size,
+        ) = _infer_tensor_properties(like, shape, device, dtype, requires_grad, ddp_type, thunder_fsdp_padding_size)
 
     # NOTE The following properties DO NOT depend on the language context or record
     #   themselves into the trace, so they can be used when working with tensor proxies
@@ -1196,6 +1213,10 @@ class TensorProxy(Proxy, TensorProxyInterface):
     @property
     def ddp_type(self):
         return self._ddp_type
+
+    @property
+    def thunder_fsdp_padding_size(self):
+        return self._thunder_fsdp_padding_size
 
     # We need to implement `__len__` as
     # > In addition to bypassing any instance attributes in the
@@ -1498,6 +1519,7 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
     dtype = dtypes.to_dtype(t.dtype)
     # See Note [DistributedDataParallel and ddp_type]
     ddp_type = getattr(t, "ddp_type", None)
+    _thunder_fsdp_padding_size = getattr(t, "_thunder_fsdp_padding_size", None)
     # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
     return TensorProxy(
         name,
@@ -1507,6 +1529,7 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
         requires_grad=t.requires_grad,
         ddp_type=ddp_type,
         history=history,
+        thunder_fsdp_padding_size=_thunder_fsdp_padding_size,
     )
 
 
