@@ -4681,8 +4681,9 @@ def scatter_add_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make_index = partial(make_tensor, device=device, dtype=torch.long, requires_grad=False)
     make_source = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
-    # NOTE The value gradient is only valid when src.shape == index.shape.
+    # NOTE The value gradient is only correct when src.shape == index.shape.
     # For gradient testing, we use the index shape for the source tensor.
+    # See https://github.com/pytorch/pytorch/issues/27614#issuecomment-564648819
     for shape_a, dim, shape_b in take_along_axis_cases:
         canonicalized_dim = dim if dim >= 0 else dim + len(shape_a)
         if requires_grad:
