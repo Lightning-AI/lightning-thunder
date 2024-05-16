@@ -377,10 +377,11 @@ def fsdp_transform_module(
 ) -> thunder.ThunderModule:
     import thunder
 
-    utils.check(
-        sharding_strategy == FSDPType.ZERO2 and bucketing_strategy == FSDPBucketingStrategy.NONE,
-        lambda: f"For `fsdp(jit(model), ...)`, {sharding_strategy=} and {bucketing_strategy=} expected to be {FSDPType.ZERO2} and {FSDPBucketingStrategy.NONE}",
-    )
+    if not (sharding_strategy == FSDPType.ZERO2 and bucketing_strategy == FSDPBucketingStrategy.NONE):
+        import warnings
+
+        msg = "For `fsdp(jit(model), ...)`, {sharding_strategy=} and {bucketing_strategy=} expected to be {FSDPType.ZERO2} and {FSDPBucketingStrategy.NONE}"
+        warnings.warn(msg)
 
     cd = thunder.compile_data(thunder_model)
     # TODO: promote use_fsdp and use_ddp to public members of CompileData
