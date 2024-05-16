@@ -384,7 +384,11 @@ def _cudnn_sdpa_checker(
             return False
 
     try:
-        _make_cudnn_sdpa_forward_graph(query, key, value, attn_mask, dropout_p, is_causal)
+    # Build both forward and backward graphs
+        query_4d, key_4d, value_4d, attn_mask_4d = _transform_sdpa_inputs(query, key, value, attn_mask)
+        _make_cudnn_sdpa_forward_graph(query_4d, key_4d, value_4d, attn_mask_4d, dropout_p, is_causal)
+        _make_cudnn_sdpa_backward_graph(query_4d, key_4d, value_4d, attn_mask_4d, dropout_p, is_causal, query_4d.stride, key_4d.stride, value_4d.stride)
+    
     # If cudnn can't support the graph, return false
     # Please turn on cudnn API logging for helpful messages that mention why the graph is not supported.
     except cudnn.cudnnGraphNotSupportedError as ex:
@@ -409,9 +413,6 @@ def _make_cudnn_sdpa_backward_graph(
 ):
     b, h, s_q, _ = query.size
     _, _, _, d_v = value.size
-
-    # cuDNN < 9.0.0 might produce nan gradients for sequence length < 64
-    assert s_q >= 64, "CUDNN SDPA requires sequence length to be at least 64 for backward pass"
 
     graph = cudnn.pygraph(
         io_data_type=torch_to_cudnn_dtype(query.dtype),
