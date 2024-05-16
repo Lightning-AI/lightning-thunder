@@ -173,7 +173,7 @@ def is_floating_point(a: TensorLike, /) -> bool:
 
 # Handles the size method
 def size(a: TensorLike, /, dim: None | int = None) -> int | Sequence[int]:
-    if dim:
+    if dim is not None:
         return a.shape[dim]
     return a.shape
 
@@ -192,6 +192,13 @@ register_method("numel", numel)
 @torchsymbol(torch.Tensor.is_cuda, is_property=True, id="torch.is_cuda")
 def is_cuda(a: TensorLike, /) -> bool:
     return a.device.devicetype is devices.DeviceType.CUDA
+
+
+# is nested always returns False for now:
+# https://github.com/Lightning-AI/lightning-thunder/issues/93#issuecomment-2030416883
+@torchsymbol(torch.Tensor.is_nested, is_property=True, id="torch.is_nested")
+def is_nested(a: TensorLike, /) -> bool:
+    return False
 
 
 _torch_dtype_to_old_torch_typestring_map = {
@@ -433,6 +440,11 @@ def type_as(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
     utils.check_type(b, TensorProxy)
 
     return to(a, b.true_dtype)
+
+
+@torchsymbol(torch.Tensor.long, is_method=True)
+def long(a: TensorLike, /, memory_format: torch.memory_format = torch.preserve_format) -> TensorLike:
+    return to(a, dtype=dtypes.int64, memory_format=memory_format)
 
 
 #
@@ -683,6 +695,46 @@ def zeros(*shape: int, device: None | DeviceLike = None, dtype: None | dtypeLike
 @torchsymbol(torch.zeros_like)
 def zeros_like(a: TensorLike, /, *, device: DeviceLike | None = None, dtype: dtypeLike | None = None) -> TensorLike:
     return full_like(a, 0, device=device, dtype=dtype)
+
+
+@torchsymbol(torch.empty)
+def empty(
+    *size: int,
+    device: None | DeviceLike = None,
+    dtype: None | dtypeLike = None,
+    out: None | TensorLike = None,
+    layout: torch.layout = torch.strided,
+    requires_grad: bool = False,
+    pin_memory: bool = False,
+    memory_format: torch.memory_format = torch.contiguous_format,
+) -> TensorLike:
+    size = utils.extract_shape_from_varargs(size)
+
+    utils.check(out is None, lambda: "empty(): out is not None which is currently unsupported", NotImplementedError)
+    utils.check(layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError)
+    utils.check(
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.compile", NotImplementedError
+    )
+    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.compile", NotImplementedError)
+    utils.check(
+        memory_format == torch.contiguous_format,
+        lambda: "Only torch.contiguous_format is supported",
+        NotImplementedError,
+    )
+
+    # For now we default to `float32`,
+    # however, we should add a default dtype or rely on `torch.get_default_dtype`.
+    if dtype is None:
+        dtype = torch.float
+    dtype = to_dtype(dtype)
+
+    # For now we default to "cpu",
+    # however, we should add a default device or rely on `torch.get_default_device`.
+    if device is None:
+        device = "cpu"
+    device = to_device(device)
+
+    return clang.empty(size, device=device, dtype=dtype)
 
 
 #
@@ -1883,6 +1935,38 @@ def _reduction(
     if result_dtype is not None:
         result = tree_map(lambda x: to(x, result_dtype), result)
 
+    return result
+
+
+@torchsymbol(torch.all, is_method=True, id="torch.all")
+def all_tensor(
+    a: TensorLike, /, dim: None | int | Sequence[int] = None, keepdim: bool = False, *, out: None | TensorLike = None
+) -> TensorLike:
+    # named as all_tensor to avoid confusion with python's built-in all function
+    utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
+    result = logical_not(any_tensor(logical_not(a), dim=dim, keepdim=keepdim))
+
+    # Pytorch's torch.all matches the behavior of NumPy in returning output of dtype bool for all supported dtypes except uint8.
+    # For uint8 the dtype of output is uint8 iteself (https://pytorch.org/docs/stable/generated/torch.all.html)
+    if a.dtype is dtypes.uint8:
+        result = to(result, dtype=dtypes.uint8)
+    return result
+
+
+@torchsymbol(torch.any, is_method=True, id="torch.any")
+def any_tensor(a: TensorLike, /, dim: None | int | Sequence[int] = None, keepdim: bool = False) -> TensorLike:
+    # named as any_tensor to avoid confusion with python's built-in any function
+    a_ = clang.maybe_convert_to_dtype(a, dtypes.bool8)
+    if isinstance(dim, Sequence) and len(dim) == 0:
+        # PyTorch returns a_.clone()
+        result = a_ | a_
+    else:
+        result = ne(sum(a_, dim=dim, keepdim=keepdim), False)
+
+    # Pytorch's torch.any matches the behavior of NumPy in returning output of dtype bool for all supported dtypes except uint8.
+    # For uint8 the dtype of output is uint8 iteself (https://pytorch.org/docs/stable/generated/torch.any.html)
+    if a.dtype is dtypes.uint8:
+        return prims.convert_element_type(result, dtypes.uint8)
     return result
 
 

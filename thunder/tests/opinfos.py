@@ -562,6 +562,20 @@ is_cuda_opinfo = OpInfo(
 tensor_properties.append(is_cuda_opinfo)
 
 
+def _is_nested_torch(x: torch.Tensor) -> bool:
+    return x.is_nested
+
+
+is_nested_opinfo = OpInfo(
+    _is_nested_torch,
+    sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
+    torch_reference=_is_nested_torch,
+    dtypes=(datatypes.all_dtypes),
+)
+
+tensor_properties.append(is_nested_opinfo)
+
+
 def numel_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
@@ -582,6 +596,38 @@ numel_opinfo = OpInfo(
     torch_reference=torch.numel,
 )
 tensor_properties.append(numel_opinfo)
+
+
+def size_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make_t = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    shapes = (
+        (),
+        (1,),
+        (
+            2,
+            2,
+        ),
+        (0, 2, 1),
+        (2, 0, 1),
+    )
+
+    for shape in shapes:
+        t = make_t(shape)
+        yield SampleInput(t)
+
+        for d in range(len(shape)):
+            yield SampleInput(t, d)
+
+
+size_opinfo = OpInfo(
+    ltorch.size,
+    sample_input_generator=size_sample_generator,
+    torch_reference=torch.Tensor.size,
+)
+
+tensor_properties.append(size_opinfo)
+
 
 opinfos.extend(tensor_properties)
 
@@ -2919,6 +2965,28 @@ type_as_sample = OpInfo(
 data_movement_ops.append(type_as_sample)
 
 
+def long_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # input shape
+    shapes = (
+        (),
+        (0,),
+        (2,),
+        (1, 2),
+        (1, 2, 3),
+    )
+
+    for shape in shapes:
+        yield SampleInput(make(shape))
+
+
+long_opinfo = OpInfo(
+    ltorch.long,
+    sample_input_generator=long_sample_generator,
+    torch_reference=torch.Tensor.long,
+)
+
 opinfos.extend(data_movement_ops)
 
 #
@@ -4778,6 +4846,53 @@ opinfos.extend(shape_ops)
 reduction_ops = []
 
 
+def all_tensor_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # input shape, dim, keepdim
+    dim_cases = (
+        ((4, 4), None, False),
+        ((4, 4), None, True),
+        ((2, 3), 0, True),
+        ((2, 3, 4), (1, 2), False),
+        ((2, 3, 4), (1, 2), True),
+        ((2, 3, 4), (-1, 1), False),
+        ((2, 3, 4), (-1, 1), True),
+    )
+
+    for input_shape, dim, keepdim in dim_cases:
+        yield SampleInput(make(input_shape), dim, keepdim)
+
+
+def all_tensor_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+    err_msg = r"Dimension out of range \(expected to be in range of \[.*?\], but got .*\)"
+    yield (
+        SampleInput(make(5, 1, 2, 3), 4),
+        IndexError,
+        err_msg,
+    )
+
+
+all_tensor_opinfo = OpInfo(
+    ltorch.all_tensor,
+    sample_input_generator=all_tensor_sample_generator,
+    error_input_generator=all_tensor_error_generator,
+    torch_reference=torch.all,
+)
+
+reduction_ops.append(all_tensor_opinfo)
+
+
+any_tensor_opinfo = OpInfo(
+    ltorch.any_tensor,
+    sample_input_generator=all_tensor_sample_generator,
+    torch_reference=torch.any,
+)
+
+reduction_ops.append(any_tensor_opinfo)
+
+
 # TODO: increase reduction samples and refacort amax and sum generators
 def amax_amin_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # For grad test stability it's better to use wider range of values
@@ -5370,6 +5485,36 @@ full_like_opinfo = OpInfo(
     torch_reference=torch.full_like,
 )
 tensor_creation_ops.append(full_like_opinfo)
+
+
+def empty_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    # shape, fill_value
+    cases = (
+        (()),
+        ((4, 4)),
+        ((8, 1, 6)),
+        ((8, 7, 5, 1)),
+    )
+
+    for shape in cases:
+        yield SampleInput(shape, device=device, dtype=dtype)
+
+
+def empty_error_generator(op, device, **kwargs):
+    err_msg = "Can't safely cast fill_value of numbertype <class 'complex'> to dtype float32"
+    yield (SampleInput((1, 2), 1j, device=device, dtype=torch.float), RuntimeError, err_msg)
+
+
+# Helper function for `empty` opinfo.
+# It always returns zero tensors, so that the consistency tests pass.
+def torch_empty_and_zero(*args, **kwargs):
+    return ltorch.full_like(ltorch.empty(*args, **kwargs), 0)
+
+
+empty_opinfo = OpInfo(
+    name="empty", op=torch_empty_and_zero, sample_input_generator=empty_sample_generator, torch_reference=torch.zeros
+)
+tensor_creation_ops.append(empty_opinfo)
 
 
 def fixed_value_tensor_creation_op_sample_generator(op, device, dtype, requires_grad, **kwargs):

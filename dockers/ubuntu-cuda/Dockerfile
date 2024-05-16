@@ -20,7 +20,7 @@ ARG IMAGE_TYPE="devel"
 FROM nvidia/cuda:${CUDA_VERSION}-${IMAGE_TYPE}-ubuntu${UBUNTU_VERSION}
 
 ARG CUDNN_VERSION="9.1.0.70"
-ARG CUDNN_FRONTEND_CHECKOUT="v1.4.0"
+ARG CUDNN_FRONTEND_VERSION="1.4.0"
 ARG PYTHON_VERSION="3.10"
 ARG TORCH_VERSION="2.2.1"
 ARG TRITON_VERSION="2.2.0"
@@ -74,7 +74,9 @@ RUN \
     rm -rf /root/.cache && \
     rm -rf /var/lib/apt/lists/*;
 
-# cuda TK is only needed for building from source, otherwise PyTorch wheels include it
+# cuDNN package is used by both torch and cuDNN frontend python package.
+# When using torch wheels, cuDNN pure-lib python package is fetched as a dependency.
+# But when building torch from source, cuDNN needs to be manually installed first.
 RUN if [ "${TORCH_INSTALL}" == "source" ]; then \
         echo "CUDA_VERSION=$CUDA_VERSION ; CUDNN_VERSION=$CUDNN_VERSION" && \
         CUDNN_BASE_VER=${CUDNN_VERSION%%.*} && \
@@ -159,10 +161,7 @@ RUN \
     fi
 
 RUN \
-    # building cudnn-frontend from source
-    git clone --branch ${CUDNN_FRONTEND_CHECKOUT} https://github.com/NVIDIA/cudnn-frontend.git && \
-    CMAKE_BUILD_PARALLEL_LEVEL=16 pip install cudnn-frontend/ -v && \
-    rm -rf cudnn-frontend
+    pip install nvidia-cudnn-frontend==${CUDNN_FRONTEND_VERSION}
 
 RUN \
     # Show what we have
