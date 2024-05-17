@@ -1,29 +1,25 @@
-from functools import partial
-from itertools import chain
-from typing import Any
+import warnings
+from collections import deque
 from collections.abc import Callable
 from contextlib import contextmanager, nullcontext
-from collections import deque
+from functools import partial
 from importlib.metadata import version
-from looseversion import LooseVersion
-import warnings
+from itertools import chain
+from typing import Any
 
 import torch
-
 from lightning_utilities.core.imports import package_available
+from looseversion import LooseVersion
 
-from thunder.core.proxies import TensorProxy
-from thunder.core.trace import get_tracectx
-from thunder.core.symbol import Symbol, BoundSymbol
 import thunder.core.devices as devices
 import thunder.core.prims as prims
-from thunder.core.proxies import TensorProxy, CollectionProxy
-from thunder.core.symbol import Symbol
+from thunder.core.compile_data import get_compile_option
+from thunder.core.langctxs import Languages, langctx
+from thunder.core.proxies import CollectionProxy, TensorProxy
+from thunder.core.symbol import BoundSymbol, Symbol
+from thunder.core.trace import get_tracectx
 from thunder.core.vjp_utils import disable_caching_split_forward_and_backward
 from thunder.extend import OperatorExecutor, register_executor
-from thunder.core.compile_data import get_compile_option
-from thunder.core.langctxs import langctx, Languages
-
 
 __all__ = [
     "transformer_engine_ex",
@@ -44,9 +40,9 @@ if TE_AVAILABLE:
     try:
         import transformer_engine.pytorch as te
         from transformer_engine.common import recipe
-        from transformer_engine.pytorch.module.linear import _Linear
-        from transformer_engine.pytorch.module.base import TransformerEngineBaseModule
         from transformer_engine.pytorch.fp8 import FP8GlobalStateManager
+        from transformer_engine.pytorch.module.base import TransformerEngineBaseModule
+        from transformer_engine.pytorch.module.linear import _Linear
         from transformer_engine.pytorch.utils import check_dim_for_fp8_exec
     except Exception as ex:
         warnings.warn(f"transformer_engine failed to import with exception {ex}")

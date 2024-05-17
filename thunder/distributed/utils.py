@@ -1,8 +1,9 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 from thunder.core.trace import from_trace
-from thunder.core.transforms import bsym_list_to_dag, Node, toposort_bsym_dag, TOPOSORT_ORDER
+from thunder.core.transforms import TOPOSORT_ORDER, Node, bsym_list_to_dag, toposort_bsym_dag
 from thunder.core.utils import check
 from thunder.distributed.prims import PrimIDs
 
@@ -67,11 +68,11 @@ def sort_waits_for_zero3(execution_trace):
         TraceCtx: The sorted execution trace.
     """
     from thunder.executors.torchex import (
-        wait_prim_impl,
-        reduce_scatter_prim_impl,
-        all_reduce_prim_impl,
         all_gather_prim_impl,
+        all_reduce_prim_impl,
+        reduce_scatter_prim_impl,
         unpack_for_fsdp_prim_impl,
+        wait_prim_impl,
     )
 
     if not any(bsym.sym.id == wait_prim_impl.id for bsym in execution_trace.bound_symbols):
@@ -125,10 +126,10 @@ def sort_waits(execution_trace):
         TraceCtx: The sorted execution trace.
     """
     from thunder.executors.torchex import (
-        wait_prim_impl,
-        reduce_scatter_prim_impl,
-        all_reduce_prim_impl,
         all_gather_prim_impl,
+        all_reduce_prim_impl,
+        reduce_scatter_prim_impl,
+        wait_prim_impl,
     )
 
     if not any(bsym.sym.id == wait_prim_impl.id for bsym in execution_trace.bound_symbols):

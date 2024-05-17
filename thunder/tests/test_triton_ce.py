@@ -1,20 +1,15 @@
-from typing import Any
 from numbers import Number
+from typing import Any
 
 import pytest
-
 import torch
+from lightning_utilities.core.imports import package_available
 from torch.testing import assert_close
 
 import thunder
-
-
-from thunder.tests.opinfos import get_opinfo
-from thunder.tests.framework import instantiate, requiresCUDA, requiresTriton, run_snippet, IN_CI
 from thunder.executors import triton_utils
-
-
-from lightning_utilities.core.imports import package_available
+from thunder.tests.framework import IN_CI, instantiate, requiresCUDA, requiresTriton, run_snippet
+from thunder.tests.opinfos import get_opinfo
 
 TRITON_AVAILABLE = package_available("triton")
 

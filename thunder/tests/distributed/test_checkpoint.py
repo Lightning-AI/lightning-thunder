@@ -12,13 +12,13 @@ from torch.testing._internal import common_utils
 import thunder
 from thunder.distributed import _unshard_params
 from thunder.distributed.checkpoint import (
+    _TORCH_GREATER_EQUAL_2_3,
+    StateDictOptions,
     _split_state_dict,
+    get_model_state_dict,
     has_fsdp_modules,
     load_model_state_dict,
-    StateDictOptions,
     save,
-    get_model_state_dict,
-    _TORCH_GREATER_EQUAL_2_3,
 )
 from thunder.tests.distributed.test_ddp import DataParallelTestCase
 
@@ -60,8 +60,8 @@ def test_split_state_dict():
 
 def distributed_ckpt_to_regular(path):
     """From ``torch.distributed.checkpoint.format_utils.dcp_to_torch_save``."""
-    from torch.distributed.checkpoint.state_dict_loader import _load_state_dict
     from torch.distributed.checkpoint import FileSystemReader
+    from torch.distributed.checkpoint.state_dict_loader import _load_state_dict
 
     if _TORCH_GREATER_EQUAL_2_3:
         from torch.distributed.checkpoint.format_utils import _EmptyStateDictLoadPlanner

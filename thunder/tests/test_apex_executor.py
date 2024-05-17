@@ -1,14 +1,14 @@
-from typing import Any
 from functools import partial
+from typing import Any
 
 import pytest
 import torch
 from torch.testing import assert_close
 
 import thunder
-from thunder.tests.framework import requiresCUDA, run_snippet, IN_CI, assert_closer
-from thunder.tests.opinfos import get_opinfo
 from thunder.core.transforms import grad
+from thunder.tests.framework import IN_CI, assert_closer, requiresCUDA, run_snippet
+from thunder.tests.opinfos import get_opinfo
 
 xentropy_cuda = pytest.importorskip("xentropy_cuda")
 from thunder.executors.apex_entropyex import apex_ex

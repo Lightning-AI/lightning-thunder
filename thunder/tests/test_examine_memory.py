@@ -2,7 +2,6 @@ from contextlib import contextmanager
 from functools import partial
 
 import pytest
-
 import torch
 
 import thunder
@@ -11,8 +10,7 @@ import thunder.core.dtypes as dtypes
 import thunder.torch as ltorch
 from thunder.core.proxies import TensorProxy
 from thunder.examine.memory_caculation import get_alloc_memory
-
-from thunder.tests.framework import instantiate, nvFuserTestExecutor, TorchTestExecutor
+from thunder.tests.framework import TorchTestExecutor, instantiate, nvFuserTestExecutor
 from thunder.tests.make_tensor import make_tensor
 
 

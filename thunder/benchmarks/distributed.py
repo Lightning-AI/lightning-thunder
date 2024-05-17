@@ -1,23 +1,21 @@
 import argparse
-from dataclasses import dataclass
 import json
 import os
+from dataclasses import dataclass
 
 import torch
 
 from thunder.benchmarks import (
-    run_multiprocess_benchmark,
     BenchmarkRunStatistics,
-    _nanogpt_configs,
-    NanoGPTConfig,
-    NanoGPTBenchmark,
     LitGPTBenchmark,
     LitGPTConfig,
+    NanoGPTBenchmark,
+    NanoGPTConfig,
+    _nanogpt_configs,
+    run_multiprocess_benchmark,
 )
+from thunder.distributed import FSDPBucketingStrategy, FSDPType
 from thunder.tests.litgpt_model import name_to_config
-from thunder.distributed import FSDPBucketingStrategy
-from thunder.distributed import FSDPType
-
 
 _nanogpt_model_names: tuple[str, ...] = tuple(_nanogpt_configs.keys())
 _llama_model_names: tuple[str, ...] = tuple(name_to_config.keys())
@@ -295,11 +293,13 @@ if __name__ == "__main__":
                     )
             else:
                 import functools
+
                 from torch.distributed.fsdp import ShardingStrategy
                 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+
                 from thunder.benchmarks import get_default_torch_fsdp_executor
-                from thunder.tests.nanogpt_model import Block as NanoGPTBlock
                 from thunder.tests.litgpt_model import Block as GPTBlock
+                from thunder.tests.nanogpt_model import Block as NanoGPTBlock
 
                 sharding_strategy = ShardingStrategy.SHARD_GRAD_OP
                 auto_wrap_policies = (
@@ -397,6 +397,7 @@ if __name__ == "__main__":
                 )
         else:
             from itertools import product
+
             from thunder.benchmarks import get_default_thunder_fsdp_dynamic_strides_executor
 
             bucketing_strategies = [fsdp_bucketing_strategies[s] for s in args.bucketing_strategies]

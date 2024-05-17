@@ -1,9 +1,9 @@
-from typing import Any
 from collections.abc import Iterable
 from numbers import Number
+from typing import Any
 
-import torch
 import numpy as np
+import torch
 
 import thunder.core.baseutils as baseutils
 from thunder.core.baseutils import NumberProxyInterface, TensorProxyInterface

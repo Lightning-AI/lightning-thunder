@@ -1,27 +1,24 @@
 import math
-from looseversion import LooseVersion
+from enum import Enum, auto
+from typing import Tuple
 
 import torch
+from looseversion import LooseVersion
 from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
 
-import thunder.core.dtypes as dtypes
-from thunder.core.proxies import Proxy, TensorProxy
-import thunder.core.utils as utils
 import thunder.core.devices as devices
-from thunder.core.compile_data import get_compile_option
-
+import thunder.core.dtypes as dtypes
+import thunder.core.utils as utils
 import thunder.torch as ltorch
-from thunder.torch import TensorLike
-
+from thunder.core.compile_data import get_compile_option
+from thunder.core.proxies import Proxy, TensorProxy
 from thunder.core.transforms import (
     get_grad,
     put_grad,
     put_grads,
 )
 from thunder.extend import OperatorExecutor, register_executor
-
-from typing import Tuple
-from enum import auto, Enum
+from thunder.torch import TensorLike
 
 sdpa_ex: OperatorExecutor = OperatorExecutor("sdpa", version="0.1")
 register_executor(sdpa_ex)

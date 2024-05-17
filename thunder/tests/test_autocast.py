@@ -9,7 +9,7 @@ import thunder.tests.bf16
 import thunder.torch as ltorch
 from thunder.core import dtypes
 from thunder.executors.torchex import no_autocast
-from thunder.tests.framework import instantiate, TorchExecutor
+from thunder.tests.framework import TorchExecutor, instantiate
 
 
 # TODO This test currently ignores the "should_autocast" argument enumerated in it
@@ -68,8 +68,8 @@ def test_thunder_autocast_transform(executor, device, dtype):
     dtypes=dtypes.float_dtypes - {float},
 )
 def test_no_autocast(executor, device, dtype):
-    from thunder.core.symbol import Symbol
     from thunder.core.proxies import NumberProxy
+    from thunder.core.symbol import Symbol
 
     del executor
 

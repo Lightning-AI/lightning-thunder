@@ -1,26 +1,23 @@
-from typing import Dict, Any, List, Tuple, Optional
-from collections.abc import Callable
-from collections.abc import Sequence
-from collections import deque
-from dataclasses import dataclass, replace
-from itertools import chain
-from functools import partial
 import time
+from collections import deque
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, replace
+from functools import partial
+from itertools import chain
+from typing import Any, Dict, List, Optional, Tuple
 
-from thunder.core.trace import TraceCtx, from_trace, TraceProvenance, VariableInterface
 import thunder.core.dtypes as dtypes
-import thunder.core.utils as cutils
-from thunder.core.utils import ProxyDict, check, safe_map_flat
-from thunder.core.symbol import BoundSymbol
-from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 import thunder.core.prims as prims
-from thunder.core.proxies import Proxy, variableify, unvariableify, Variable, CollectionProxy
 import thunder.core.transforms as transforms
+import thunder.core.utils as cutils
+from thunder.core.proxies import CollectionProxy, Proxy, Variable, unvariableify, variableify
+from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
+from thunder.core.symbol import BoundSymbol
+from thunder.core.trace import TraceCtx, TraceProvenance, VariableInterface, from_trace, get_tracectx
 from thunder.core.transform_common import dce
-from thunder.core.trace import get_tracectx
+from thunder.core.utils import ProxyDict, check, safe_map_flat
 from thunder.executors.pythonex import clear_mutable_collection
-
-from thunder.extend import Executor, get_always_executors, OperatorExecutor, FusionExecutor
+from thunder.extend import Executor, FusionExecutor, OperatorExecutor, get_always_executors
 
 comment_symbols = {prims.PrimIDs.COMMENT, prims.PrimIDs.UNPACK_TRIVIAL}
 

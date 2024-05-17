@@ -4,10 +4,11 @@
 #   This import (like all __future__ imports) must be at the beginning of the file.
 from __future__ import annotations
 
-from enum import Enum, auto
 from collections.abc import Sequence
+from enum import Enum, auto
 
 import torch
+
 import thunder.core.baseutils as baseutils
 
 

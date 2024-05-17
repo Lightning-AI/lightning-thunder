@@ -1,16 +1,16 @@
-from functools import partial
 import builtins
 import math
 import operator
+from functools import partial
 
 import torch
 from torch.testing import assert_close, make_tensor
 
 import thunder
 import thunder.clang as tlang
-import thunder.torch as ttorch
 import thunder.core.devices as devices
-from thunder.tests.framework import instantiate, NOTHING, ops, run_snippet
+import thunder.torch as ttorch
+from thunder.tests.framework import NOTHING, instantiate, ops, run_snippet
 from thunder.tests.opinfos import elementwise_binary_ops
 
 

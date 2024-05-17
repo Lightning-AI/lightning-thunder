@@ -1,20 +1,19 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from enum import Enum, auto
-from typing import List, Set, Dict, Optional
-from collections.abc import Callable
 from itertools import chain
-from collections.abc import Sequence
+from typing import Dict, List, Optional, Set
 
 import torch
 from looseversion import LooseVersion
 
 import thunder.core.utils as utils
-from thunder.core.symbol import BoundSymbol
-from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
-from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
-from thunder.core.proxies import Variable, variableify, Proxy, unvariableify
 from thunder.core.prims import PrimIDs
+from thunder.core.proxies import Proxy, Variable, unvariableify, variableify
+from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
+from thunder.core.symbol import BoundSymbol
+from thunder.core.trace import TraceCtx, TraceProvenance, from_trace
 
 # TODO Make these tags
 comment_symbols = {

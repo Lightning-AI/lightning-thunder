@@ -1,15 +1,14 @@
 from __future__ import annotations
-import os
 
-from itertools import chain
+import copy
+import os
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
-import copy
-from enum import auto, Enum
-from typing import TYPE_CHECKING, Any
-from collections.abc import Generator
+from enum import Enum, auto
 from functools import partial
-
+from itertools import chain
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.distributed as tdist
@@ -19,6 +18,7 @@ from thunder.core.proxies import DDPType
 
 if TYPE_CHECKING:
     from torch.distributed import ProcessGroup
+
     from thunder.core.module import ThunderModule
 
 
@@ -375,8 +375,8 @@ def fsdp_transform_module(
     bucketing_strategy: FSDPBucketingStrategy = FSDPBucketingStrategy.NONE,
 ) -> ThunderModule:
     from thunder import compile_data as get_compile_data
-    from thunder.core.transforms import add_transform
     from thunder.core.module import ThunderModule
+    from thunder.core.transforms import add_transform
     from thunder.distributed.transforms.fsdp_v2 import FSDPTraceTransform
 
     process_group = tdist.distributed_c10d._get_default_group()
@@ -590,7 +590,6 @@ def _shard_param(
     name: str,
     allow_padding_for_fsdp: bool = False,
 ) -> None:
-
     if not allow_padding_for_fsdp or (param.size(0) % world_size == 0):
         if not allow_padding_for_fsdp:
             utils.check(

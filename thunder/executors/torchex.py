@@ -1,47 +1,43 @@
 from __future__ import annotations
-import operator
+
 import importlib
-from dataclasses import replace
+import math
+import operator
+from collections.abc import Callable, Hashable, Sequence
 from contextlib import ContextDecorator
-from functools import wraps, partial
+from dataclasses import replace
+from enum import Enum, auto
+from functools import partial, wraps
 from inspect import signature
 from itertools import groupby
 from numbers import Number
-from typing import TYPE_CHECKING
-from collections.abc import Callable
-from collections.abc import Hashable, Sequence
-from collections.abc import Sequence
 from types import ModuleType
-from enum import Enum, auto
+from typing import TYPE_CHECKING
 
 import torch
-import math
 from looseversion import LooseVersion
 
-from thunder.core.langctxs import langctx, Languages
-import thunder.core.dtypes as dtypes
-from thunder.core.dtypes import to_torch_dtype, to_dtype
 import thunder.core.devices as devices
-from thunder.core.devices import to_torch_device, to_device
+import thunder.core.dtypes as dtypes
 import thunder.core.prims as prims
-from thunder.core.prims import PrimIDs
-from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, from_trace
-from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy, variableify, pytype
-from thunder.core.pytree import tree_flatten, tree_unflatten
-from thunder.core.symbol import Symbol, BoundSymbol
-from thunder.distributed.prims import DistributedReduceOps
-import thunder.distributed.prims as dist_prims
 import thunder.core.utils as utils
-
+import thunder.distributed.prims as dist_prims
 import thunder.torch as ltorch
-from thunder.torch import DeviceLike, dtypeLike, TensorLike
-
-from thunder.extend import OperatorExecutor, register_executor, add_always_executor
-
+from thunder.core.devices import to_device, to_torch_device
+from thunder.core.dtypes import to_dtype, to_torch_dtype
+from thunder.core.langctxs import Languages, langctx
+from thunder.core.prims import PrimIDs
+from thunder.core.proxies import FutureTensorProxy, NumberProxy, TensorProxy, pytype, variableify
+from thunder.core.pytree import tree_flatten, tree_unflatten
+from thunder.core.symbol import BoundSymbol, Symbol
+from thunder.core.trace import TraceCtx, from_trace, reset_tracectx, set_tracectx
 from thunder.core.transforms import (
     get_grad,
     put_grad,
 )
+from thunder.distributed.prims import DistributedReduceOps
+from thunder.extend import OperatorExecutor, add_always_executor, register_executor
+from thunder.torch import DeviceLike, TensorLike, dtypeLike
 
 if TYPE_CHECKING:
     from thunder.common import CompileData

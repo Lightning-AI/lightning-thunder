@@ -5,10 +5,9 @@ import sys
 import tempfile
 import unittest
 import weakref
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import partial, wraps
 from itertools import product
-from collections.abc import Callable
 
 import pytest
 import torch
@@ -16,42 +15,37 @@ import torch.distributed as tdist
 import torch.nn as nn
 import torch.utils.data as tudata
 from torch.distributed import distributed_c10d as c10d
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed.fsdp import FullyShardedDataParallel
 from torch.distributed.fsdp.wrap import always_wrap_policy
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.testing import assert_close, make_tensor
 
 import thunder
 import thunder.torch as ltorch
 from thunder.core import devices
-from thunder.distributed import FSDPBucketingStrategy, FSDPType
-from thunder.distributed import ddp, fsdp
-from thunder.distributed import prims
-from thunder.tests.framework import TorchExecutor, nvFuserExecutor
-from thunder.tests.framework import instantiate
-
+from thunder.distributed import FSDPBucketingStrategy, FSDPType, ddp, fsdp, prims
 from thunder.executors.transformer_engineex import (
-    transformer_engine_ex,
     TE_AVAILABLE,
     TE_VERSION_1_6_PLUS,
     te_sync_fp8_meta_bwd,
+    transformer_engine_ex,
 )
-
+from thunder.tests.framework import TorchExecutor, instantiate, nvFuserExecutor
 
 is_fp8_supported: bool = False
 # This will be correctly updated below when TE Engine is installed
 # and if the current environment doesn't support FP8.
 fp8_support_reason: str = ""
 if TE_AVAILABLE:
-    from transformer_engine.pytorch import fp8_autocast
     from transformer_engine.pytorch import Linear as TELinear
-    from transformer_engine.pytorch.fp8 import check_fp8_support, FP8GlobalStateManager
+    from transformer_engine.pytorch import fp8_autocast
+    from transformer_engine.pytorch.fp8 import FP8GlobalStateManager, check_fp8_support
 
     is_fp8_supported, fp8_support_reason = check_fp8_support()
 
 try:
-    import expecttest  # noqa: F401
-    import hypothesis  # noqa: F401
+    import expecttest
+    import hypothesis
 except ImportError:
     raise ImportError(
         "Required packages of `expecttest` and/or `hypothesis` are missing. "
@@ -458,10 +452,10 @@ class CompileDDPTest(DataParallelTestCase):
     def test_ddp_grad_bucketing(self, executor, bucket_size_in_mb: int):
         from thunder.distributed import ddp
         from thunder.executors.torchex import (
+            all_reduce_prim_impl,
             pack_prim_impl,
             unpack_prim_impl,
             update_bucket_view_prim_impl,
-            all_reduce_prim_impl,
         )
 
         device = torch.device("cuda", self.rank)
@@ -543,8 +537,7 @@ class CompileDDPTest(DataParallelTestCase):
         # For numerical parity, we compare the accumulated gradients with and without `no_sync` and even against gradients without accumulation.
         # If they are different, it'd be impossible to keep replicas identical.
         from thunder.common import CACHE_OPTIONS
-        from thunder.distributed import ddp
-        from thunder.distributed import get_skip_data_parallel_grad_sync
+        from thunder.distributed import ddp, get_skip_data_parallel_grad_sync
 
         def get_model_and_optimizer(device):
             m = ToyModel().to(device)
@@ -606,6 +599,7 @@ class CompileDDPTest(DataParallelTestCase):
     ):
         from collections import defaultdict
         from contextlib import nullcontext
+
         from thunder.distributed import get_skip_data_parallel_grad_sync
 
         device = torch.device("cuda", self.rank)
@@ -783,8 +777,8 @@ class CompileDDPTest(DataParallelTestCase):
                 self.assertEqual(tuple(p.grad for p in cm.parameters() if p.grad is not None), gradients)
 
                 # Make sure that at least one of "pack" takes multiple tensors.
-                from thunder.executors.torchex import pack_for_fsdp_prim_impl
                 from thunder.distributed.prims import PrimIDs as DistPrimIDs
+                from thunder.executors.torchex import pack_for_fsdp_prim_impl
 
                 for ex_trace in (thunder.last_traces(cm)[-1], thunder.last_backward_traces(cm)[-1]):
                     pack_bsyms = list(
@@ -823,10 +817,8 @@ class CompileDDPTest(DataParallelTestCase):
         bucketing_strategy: FSDPBucketingStrategy,
         fsdptype: FSDPType,
     ):
-
         from thunder.core.prims import PrimIDs
-        from thunder.executors.torchex import pad_prim_impl
-        from thunder.executors.torchex import slice_prim_impl
+        from thunder.executors.torchex import pad_prim_impl, slice_prim_impl
 
         class M(nn.Module):
             def __init__(self):
@@ -1527,7 +1519,7 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
     # due to reordering of forward and backward operators.
     # (This test will fail without `_rearrange_transformer_engine_linear` in `torch_autograd.py`)
     # For more details, see docstring for `_rearrange_transformer_engine_linear` in transformer_engine_ex.py.
-    from thunder.tests.llama2_model import Transformer, ModelArgs
+    from thunder.tests.llama2_model import ModelArgs, Transformer
 
     init_method, world_size, rank, executor, device, dtype, _unused_kwargs = input_data
     devicetype = devices.device_from_string(device).devicetype

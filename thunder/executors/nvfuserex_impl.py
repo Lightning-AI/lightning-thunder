@@ -1,53 +1,50 @@
-from dataclasses import dataclass, replace
-from functools import partial, lru_cache
-from numbers import Number
-from typing import Union, List, Any, Optional, Dict, Set, Tuple, Type
-from types import NoneType
-from collections.abc import Callable, Mapping, Hashable, Sequence
 import os
 import time
+from collections.abc import Callable, Hashable, Mapping, Sequence
 from copy import copy
+from dataclasses import dataclass, replace
+from functools import lru_cache, partial
 from itertools import chain, filterfalse
-from functools import partial
-
-from looseversion import LooseVersion
-import torch
-
-import thunder.core.dtypes as dtypes
-import thunder.torch as ltorch
-from thunder.core import prims, utils
-from thunder.core.baseutils import BoundSymbolInterface
-from thunder.core.prims import PrimIDs
-from thunder.core.proxies import (
-    NumberProxy,
-    Proxy,
-    TupleProxy,
-    TensorProxy,
-    variableify,
-    unvariableify,
-    Variable,
-    pyval,
-)
-from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
-from thunder.core.rematerialization import rematerialize
-from thunder.core.utils import OrderedSet, check, check_same_dtype
-from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
-from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, Symbol, has_tags
-from thunder.core.devices import Device, DeviceType
-import thunder.core.codeutils as codeutils
-from thunder.core.codeutils import Printable
-from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs, NON_FUNCTIONAL_OPS
-from thunder.core.profile import add_markers
-from thunder.core.compile_data import get_compile_option
-
-from thunder.executors.utils import Region
-from thunder.executors.passes import update_fusion_call_ctx
-from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor, add_default_executor
+from numbers import Number
+from types import NoneType
+from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
 
 # NOTE This impl file is here because nvFuser may not be available, so it's imported conditionally
 #   by nvfuserex.py when nvFuser is available.
 import nvfuser
+import torch
+from looseversion import LooseVersion
 from nvfuser import DataType, FusionDefinition
+
+import thunder.core.codeutils as codeutils
+import thunder.core.dtypes as dtypes
+import thunder.torch as ltorch
+from thunder.core import prims, utils
+from thunder.core.baseutils import BoundSymbolInterface
+from thunder.core.codeutils import Printable
+from thunder.core.compile_data import get_compile_option
+from thunder.core.devices import Device, DeviceType
+from thunder.core.prims import PrimIDs
+from thunder.core.profile import add_markers
+from thunder.core.proxies import (
+    NumberProxy,
+    Proxy,
+    TensorProxy,
+    TupleProxy,
+    Variable,
+    pyval,
+    unvariableify,
+    variableify,
+)
+from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
+from thunder.core.rematerialization import rematerialize
+from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, Symbol, has_tags
+from thunder.core.trace import TraceCtx, TraceProvenance, from_trace
+from thunder.core.transform_common import NON_FUNCTIONAL_OPS, cse_single_bsym, dce, replace_redundant_inputs
+from thunder.core.utils import OrderedSet, check, check_same_dtype
+from thunder.executors.passes import update_fusion_call_ctx
+from thunder.executors.utils import Region
+from thunder.extend import FUEL_LEVEL, FusionExecutor, add_default_executor, register_executor
 
 nvTensor = nvfuser._C.Tensor
 nvNumber = nvfuser._C.Scalar
@@ -298,9 +295,9 @@ def compute_symbolic_shape(shape: torch.Size | Sequence[int]) -> tuple[int, ...]
     return tuple(1 if l == 1 else -1 for l in shape)
 
 
-def compute_contiguity(
-    shape: torch.Size | Sequence[int], stride: Sequence[int]
-) -> tuple([tuple[bool, ...], tuple[int, ...]]):
+def compute_contiguity(shape: torch.Size | Sequence[int], stride: Sequence[int]) -> tuple(
+    [tuple[bool, ...], tuple[int, ...]]
+):
     """
     Computes the contiguity and stride_order of a tensor using nvFuser's notion.
 
@@ -560,7 +557,7 @@ class nvFuserExecutor(FusionExecutor):
          separate fusion cache is saved for each device.
         """
         if nv_version >= LooseVersion("0.1.4"):
-            from nvfuser import enable_automatic_serialization, disable_automatic_serialization
+            from nvfuser import disable_automatic_serialization, enable_automatic_serialization
 
             if save_cache:
                 enable_automatic_serialization()

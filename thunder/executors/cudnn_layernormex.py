@@ -1,8 +1,7 @@
 from typing import Any
 
-import torch
 import numpy as np
-
+import torch
 from lightning_utilities.core.imports import package_available
 
 cudnn: None | Any = None
@@ -16,11 +15,10 @@ if package_available("cudnn"):
 # WARNING: cudnn layernorm executor is experimental. Tests that use cudnn might fail.
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Union, Dict
+from typing import Dict, Union
 
 import thunder.core.dtypes as dtypes
 from thunder.core.proxies import TensorProxy
-
 from thunder.executors.cudnnex import CudnnTensorAttributes, torch_to_cudnn_dtype
 
 

@@ -1,22 +1,21 @@
-import os
-from contextvars import ContextVar
-from contextlib import contextmanager
-from typing import Optional, Any, Tuple, Type, Dict, List, Union
-from collections.abc import Callable
-from collections.abc import Sequence, Hashable
-import string
-from numbers import Number
-import inspect
 import functools
+import inspect
+import os
+import string
+from collections.abc import Callable, Hashable, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
+from numbers import Number
 from types import ModuleType
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import thunder
-import thunder.core.codeutils as codeutils
 import thunder.core.baseutils as baseutils
-from thunder.core.baseutils import ProxyInterface, BoundSymbolInterface
+import thunder.core.codeutils as codeutils
 import thunder.core.devices as devices
-from thunder.core.pytree import tree_flatten, tree_unflatten
+from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
 from thunder.core.codeutils import ContextObject
+from thunder.core.pytree import tree_flatten, tree_unflatten
 
 
 # TODO see issue "Improve TraceProvenance"
@@ -377,7 +376,7 @@ class TraceCtx:
                 # NOTE: For TE v1.6 onwards, `fp8_autocast` checks if `torch.is_grad_enabled` for updating
                 # the FP8 scales/inverses. So this decorator should be applied before `torch.no_grad` (so that
                 # it is in grad enabled part).
-                from thunder.executors.transformer_engineex import _is_te_linear_enabled, _get_te_wrapper_string
+                from thunder.executors.transformer_engineex import _get_te_wrapper_string, _is_te_linear_enabled
 
                 if self._include_te_fp8_autocast and _is_te_linear_enabled(import_ctx, object_ctx):
                     program.append(_get_te_wrapper_string())

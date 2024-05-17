@@ -1,5 +1,5 @@
-from contextlib import contextmanager
 import itertools
+from contextlib import contextmanager
 from typing import Any
 
 import torch as pytorch
@@ -94,9 +94,9 @@ class ThunderModule(pytorch.nn.Module):
 
         """
         from thunder.distributed import (
-            set_skip_data_parallel_grad_sync,
-            reset_skip_data_parallel_grad_sync,
             _sync_grads,
+            reset_skip_data_parallel_grad_sync,
+            set_skip_data_parallel_grad_sync,
         )
 
         token = set_skip_data_parallel_grad_sync(True)

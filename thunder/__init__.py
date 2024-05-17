@@ -1,39 +1,29 @@
-from functools import wraps
-from typing import Any
-from collections import defaultdict, namedtuple
-from collections.abc import Callable
-from collections.abc import Sequence
-from contextvars import ContextVar
-import os
 import dis
+import os
 import time
 import warnings
+from collections import defaultdict, namedtuple
+from collections.abc import Callable, Sequence
+from contextvars import ContextVar
+from functools import wraps
+from typing import Any
 
+# NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
+import torch as pytorch
 from looseversion import LooseVersion
 
-from thunder.core.module import ThunderModule
-from thunder.core.interpreter import InterpreterLogItem
-from thunder.core.options import (
-    INTERPRETATION_OPTIONS,
-    resolve_interpretation_option,
-    resolve_sharp_edges_option,
-    CACHE_OPTIONS,
-    SHARP_EDGES_OPTIONS,
-)
-from thunder.core.trace import (
-    TraceResults,
-    TraceCtx,
-    from_trace,
-    set_tracectx,
-    reset_tracectx,
-    is_tracing,
-)
-
-from thunder import functional as functional
-import thunder.core.prims as prims
-import thunder.core.dtypes as dtypes
+import thunder.clang as clang
 import thunder.core.devices as devices
-from thunder.core.transform_common import dce
+import thunder.core.dtypes as dtypes
+import thunder.core.langctxs as langctxs
+import thunder.core.prims as prims
+import thunder.executors.nvfuserex
+
+# Imports executors (to populate default executors and make them accessible)
+import thunder.executors.pythonex
+import thunder.executors.torchex
+import thunder.extend as extend
+from thunder import functional as functional
 from thunder.common import (
     CompileData,
     CompileStats,
@@ -41,39 +31,44 @@ from thunder.common import (
     trace,
     transform_for_execution,
 )
-import thunder.extend as extend
-from thunder.extend import Executor, add_default_executor
+from thunder.core.baseutils import check, run_once
 from thunder.core.compile_data import compile_data_and_stats, get_compile_data
-from thunder.core.langctxs import LanguageContext
-import thunder.core.langctxs as langctxs
-from thunder.core.baseutils import run_once, check
-from thunder.core.proxies import (
-    Proxy,
-    TensorProxy,
-    NumberProxy,
-    StringProxy,
-    IntegerProxy,
-    FloatProxy,
-    ComplexProxy,
-    TupleProxy,
-    ListProxy,
-    DictProxy,
-    AnyProxy,
-)
-from thunder.core.interpreter import print_interpreter_log, print_to_log
+from thunder.core.interpreter import InterpreterLogItem, print_interpreter_log, print_to_log
 from thunder.core.jit_ext import thunder_general_jit
-from thunder.executors.torch_autograd import split_forward_backward, ThunderFunction
+from thunder.core.langctxs import LanguageContext
+from thunder.core.module import ThunderModule
+from thunder.core.options import (
+    CACHE_OPTIONS,
+    INTERPRETATION_OPTIONS,
+    SHARP_EDGES_OPTIONS,
+    resolve_interpretation_option,
+    resolve_sharp_edges_option,
+)
+from thunder.core.proxies import (
+    AnyProxy,
+    ComplexProxy,
+    DictProxy,
+    FloatProxy,
+    IntegerProxy,
+    ListProxy,
+    NumberProxy,
+    Proxy,
+    StringProxy,
+    TensorProxy,
+    TupleProxy,
+)
+from thunder.core.trace import (
+    TraceCtx,
+    TraceResults,
+    from_trace,
+    is_tracing,
+    reset_tracectx,
+    set_tracectx,
+)
+from thunder.core.transform_common import dce
 from thunder.cudagraphs import CUDAGraphExecutor
-
-# NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
-import torch as pytorch
-
-import thunder.clang as clang
-
-# Imports executors (to populate default executors and make them accessible)
-import thunder.executors.pythonex
-import thunder.executors.torchex
-import thunder.executors.nvfuserex
+from thunder.executors.torch_autograd import ThunderFunction, split_forward_backward
+from thunder.extend import Executor, add_default_executor
 
 pythonex = extend.get_executor("python")
 assert pythonex is not None

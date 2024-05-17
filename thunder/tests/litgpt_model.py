@@ -3,7 +3,6 @@
 import torch
 import torch.nn as nn
 
-
 configs = [
     # diverse sample of configs FOR TESTING that cover all major checkpoints variants architecturally but with reduced
     # size

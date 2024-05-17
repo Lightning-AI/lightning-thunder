@@ -10,15 +10,15 @@ BENCHMARK_OUT_FORMAT - use this env variable to control the format in which the 
                     Uses 'xlsx' by default. Supported: 'none', 'print', 'xlsx'.
 """
 
-import torch
-from absl.testing import parameterized
-from absl.testing import absltest
-from collections import defaultdict
+import json
 import os
 import subprocess
-import json
-import pandas as pd
+from collections import defaultdict
 from datetime import datetime
+
+import pandas as pd
+import torch
+from absl.testing import absltest, parameterized
 
 
 class Runner:

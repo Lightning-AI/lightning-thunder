@@ -1,14 +1,12 @@
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any, Optional, Tuple, Union
-from collections.abc import Callable
-from collections.abc import Sequence
 
 import torch
 from torch.cuda.graphs import CUDAGraph
 
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
-
 from thunder.core.utils import check, default_dataclass_params, flatten_func, safe_zip
 
 

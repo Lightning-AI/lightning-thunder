@@ -1,17 +1,16 @@
-from enum import auto, Enum
-from numbers import Number
-from functools import reduce, wraps
-import operator
 import builtins
 import math
-from types import NoneType
-from typing import Union, Type, Any, List, Dict, Tuple, Optional
-from collections.abc import Callable
+import operator
 from collections.abc import Callable, Hashable, Sequence
+from enum import Enum, auto
+from functools import reduce, wraps
+from numbers import Number
+from types import NoneType
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import torch
 
-from thunder.core.langctxs import LanguageContext, register_langctx, Languages, langctx
+from thunder.core.langctxs import LanguageContext, Languages, langctx, register_langctx
 
 #
 # Creates and registers the torch language context
@@ -61,31 +60,31 @@ def register_method(method_name: str, method: Callable, /) -> None:
     _method_name_to_fn_map[method_name] = method
 
 
-from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
-from thunder.core.proxies import (
-    CollectionProxy,
-    TensorProxy,
-    IntegerProxy,
-    NumberProxy,
-    is_proxyable,
-    proxy,
-    numberproxy,
-    pytype,
-    pyval,
-    Proxy,
-    StringProxy,
-    TupleProxy,
-    AnyProxy,
-)
-import thunder.core.codeutils as codeutils
-from thunder.core.codeutils import Printable
-import thunder.core.utils as utils
 import thunder.core.baseutils as baseutils
+import thunder.core.codeutils as codeutils
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
-from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
+import thunder.core.utils as utils
+from thunder.core.codeutils import Printable
+from thunder.core.langctxs import LanguageContext, Languages, langctx, register_langctx
+from thunder.core.proxies import (
+    AnyProxy,
+    CollectionProxy,
+    IntegerProxy,
+    NumberProxy,
+    Proxy,
+    StringProxy,
+    TensorProxy,
+    TupleProxy,
+    is_proxyable,
+    numberproxy,
+    proxy,
+    pytype,
+    pyval,
+)
+from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
+from thunder.core.symbol import BoundSymbol, Symbol, default_python_printer
 from thunder.core.trace import get_tracectx
-from thunder.core.langctxs import langctx, LanguageContext, register_langctx, Languages
 
 #
 # Primitives and helpers for defining them

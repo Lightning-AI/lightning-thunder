@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import builtins
+import collections
 import contextlib
 import contextvars
 import dataclasses
@@ -8,43 +9,39 @@ import datetime
 import dis
 import enum
 import functools
-import linecache
 import inspect
+import linecache
+import operator
 import os
 import re
 import sys
 import traceback
 import weakref
-import torch
-from typing import Any, Literal, NamedTuple, TypedDict
 from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, Set, Sized
-import collections
-import operator
-
 from io import StringIO
-
 from types import (
+    BuiltinFunctionType,
+    BuiltinMethodType,
     CellType,
     ClassMethodDescriptorType,
     CodeType,
     CoroutineType,
     FrameType,
-    GetSetDescriptorType,
     FunctionType,
-    MethodType,
+    GetSetDescriptorType,
     MethodDescriptorType,
+    MethodType,
+    MethodWrapperType,
     ModuleType,
     NoneType,
-    BuiltinFunctionType,
-    BuiltinMethodType,
-    MethodDescriptorType,
-    MethodWrapperType,
-    WrapperDescriptorType,
     TracebackType,
+    WrapperDescriptorType,
 )
+from typing import Any, Literal, NamedTuple, TypedDict
 
-from thunder.core.baseutils import Singleton, init_colors, extract_callable_name
+import torch
 
+from thunder.core.baseutils import Singleton, extract_callable_name, init_colors
 
 #
 # interpreter.py implements a Python interpreter in Python.

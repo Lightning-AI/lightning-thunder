@@ -11,9 +11,9 @@ import thunder.core.devices as devices
 from thunder import dtypes
 from thunder.core.transforms import vjp
 from thunder.core.utils import flatten_func
-from thunder.tests.framework import instantiate, NOTHING, ops, requiresCUDA, run_snippet, TorchExecutor
+from thunder.tests.framework import NOTHING, TorchExecutor, instantiate, ops, requiresCUDA, run_snippet
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
-from thunder.tests.opinfos import get_opinfo, OpInfo
+from thunder.tests.opinfos import OpInfo, get_opinfo
 from thunder.tests.test_grad import _make_differentiable_wrapper
 
 cudnn = pytest.importorskip("cudnn")

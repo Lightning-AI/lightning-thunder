@@ -2,27 +2,26 @@ import operator
 import traceback
 from functools import partial, reduce
 from itertools import product
+from types import FunctionType
 
 import pytest
 import torch
 from looseversion import LooseVersion
 from torch.testing import assert_close, make_tensor
-from types import FunctionType
 
 import thunder
-from thunder import last_traces, cache_option, cache_hits, cache_misses
-import thunder.examine as examine
 import thunder.clang as clang
-import thunder.core.proxies as proxies
-import thunder.tests.bf16
-import thunder.torch as ltorch
-
 import thunder.core.codeutils as codeutils
-from thunder.tests.framework import instantiate, NOTHING, TorchExecutor, nvFuserExecutor, requiresCUDA, TestExecutor
 import thunder.core.dtypes as dtypes
 import thunder.core.prims as prims
-from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, tracectx
+import thunder.core.proxies as proxies
+import thunder.examine as examine
+import thunder.tests.bf16
+import thunder.torch as ltorch
+from thunder import cache_hits, cache_misses, cache_option, last_traces
 from thunder.core.symbol import BoundSymbol
+from thunder.core.trace import TraceCtx, reset_tracectx, set_tracectx, tracectx
+from thunder.tests.framework import NOTHING, TestExecutor, TorchExecutor, instantiate, nvFuserExecutor, requiresCUDA
 
 #
 # Tests related to the test framework itself
@@ -165,7 +164,7 @@ def test_crazy_collections_in_and_out(executor, device, dtype):
         g = e + f
         h = f + ka + kb
         # NOTE The following line is intentionally not returned
-        i = ka + ka  # noqa
+        i = ka + ka
         j = kc[0] + kc[1]
 
         d["j"] = j
@@ -292,7 +291,7 @@ def test_varargs_and_kwargs(executor, device, dtype):
 @instantiate(dtypes=(thunder.float32,))
 def test_no_return(executor, device, dtype):
     def foo(a, b):
-        c = a + b  # noqa
+        c = a + b
         pass
 
     traced_foo = executor.make_callable(foo)
@@ -915,7 +914,7 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
     traces = thunder.last_traces(cfoo)
     trc = traces[0]
 
-    from thunder.core.transforms import bsym_list_to_dag, TOPOSORT_ORDER, toposort_bsym_dag, Node
+    from thunder.core.transforms import TOPOSORT_ORDER, Node, bsym_list_to_dag, toposort_bsym_dag
 
     roots, leaves = bsym_list_to_dag(trc.bound_symbols)
     top_down_bsyms = toposort_bsym_dag(roots, TOPOSORT_ORDER.TOP_DOWN)
@@ -994,7 +993,7 @@ def test_visitor_transform():
 
     trc = thunder.trace()(foo, a, b)
 
-    from thunder.core.transforms import visitor_transform, VISIT_TYPE
+    from thunder.core.transforms import VISIT_TYPE, visitor_transform
 
     # Adds a comment before each bound symbols
     def add_comments(bsym) -> VISIT_TYPE:
@@ -1108,7 +1107,7 @@ def test_detached_trace(executor, device: str, _):
     # This test ensures that the detached_trace context manager works as expected.
     #   It should be possible to enter a detached trace, and then exit it, and
     #   the trace should be restored to its original state.
-    from thunder.core.trace import set_tracectx, get_tracectx, TraceCtx, reset_tracectx, detached_trace
+    from thunder.core.trace import TraceCtx, detached_trace, get_tracectx, reset_tracectx, set_tracectx
 
     try:
         new_trace = TraceCtx(None)
@@ -1457,8 +1456,8 @@ def test_nested_trace_no_name_collision(executor, device, _):
 
 @instantiate(dtypes=NOTHING)
 def test_trace_args_no_name_collision(executor, device, _):
-    from thunder.core.trace import detached_trace
     from thunder.core.proxies import TensorProxy
+    from thunder.core.trace import detached_trace
 
     with detached_trace():
         a = TensorProxy(
@@ -1483,9 +1482,9 @@ def test_eval_trace(executor, device, _):
     # This test ensures that eval_trace() can be called from within a trace
     #   and that all the symbols in the trace are properly evaluated.
 
-    from thunder.core.transforms import eval_trace
-    from thunder.core.trace import TraceCtx, reset_tracectx, set_tracectx, maybe_start_trace
     from thunder.core.proxies import TensorProxy
+    from thunder.core.trace import TraceCtx, maybe_start_trace, reset_tracectx, set_tracectx
+    from thunder.core.transforms import eval_trace
 
     def foo(a, b, *, c=5):
         return clang.mul(clang.add(a, b), c)
@@ -1593,7 +1592,7 @@ def test_transforms_identity(executor, device, _):
     # function without leaking the trace context.
     # Also tests that identity() can be nested.
     # Also tests that identity() can be used with "torch" executor.
-    from thunder.core.transforms import identity, Transforms
+    from thunder.core.transforms import Transforms, identity
 
     # from thunder import _get_executor
 
@@ -1892,7 +1891,7 @@ def test_transforms_vjp_2_1(executor, device, _):
 )
 def test_transforms_inline_jvp_inline_vmap(executor, device, _):
     pytest.xfail("AttributeError: 'NoneType' object has no attribute 'mul'")
-    from thunder.core.transforms import vmap, jvp, inline
+    from thunder.core.transforms import inline, jvp, vmap
 
     if executor == nvFuserExecutor:
         # Couldn't find metadata for 1.0 of type <class 'float'>
@@ -1921,7 +1920,7 @@ def test_transforms_inline_jvp_inline_vmap(executor, device, _):
     dtypes=NOTHING,
 )
 def test_transforms_inline_vmap_inline_jvp(executor, device, _):
-    from thunder.core.transforms import vmap, jvp
+    from thunder.core.transforms import jvp, vmap
 
     def func(a, b):
         assert isinstance(a, proxies.TensorProxy)
@@ -2275,7 +2274,7 @@ def test_cse(executor, device, _):
 
 
 def test_symbol_flat_args():
-    from thunder.core.symbol import Symbol, BoundSymbol
+    from thunder.core.symbol import BoundSymbol, Symbol
 
     def func(x, y, *, z):
         return x * y + z
@@ -2316,8 +2315,8 @@ def test_preserve_weight_names(executor, device: str, dtype: dtypes.dtype):
 @instantiate(dtypes=(thunder.float32,))
 def test_default_method(executor, device: str, dtype: dtypes.dtype):
     # This test ensures that when no language context is given, it will fallback to the default implementation.
-    from thunder.core.trace import detached_trace
     from thunder.core.proxies import TensorProxy
+    from thunder.core.trace import detached_trace
 
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device, dtype=torch_dtype)

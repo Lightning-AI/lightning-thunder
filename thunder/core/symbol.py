@@ -3,30 +3,27 @@ from __future__ import annotations
 import functools
 import inspect
 import sys
-from contextvars import ContextVar
+from collections.abc import Callable, Iterable, Sequence
 from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from itertools import chain
 from types import ModuleType
-
-from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, List, Type, Tuple, TYPE_CHECKING
-from collections.abc import Callable, Iterable
-from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Type
 
 import thunder.core.baseutils as baseutils
 import thunder.core.codeutils as codeutils
-from thunder.core.codeutils import Printable
-from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
-from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
-import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
-from thunder.core.proxies import Proxy, NumberProxy, variableify, CollectionProxy
-
+import thunder.core.dtypes as dtypes
+from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
+from thunder.core.codeutils import Printable
+from thunder.core.proxies import CollectionProxy, NumberProxy, Proxy, variableify
+from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.trace import (
+    VariableInterface,
     get_tracectx,
     maybe_reset_trace,
     maybe_start_trace,
-    VariableInterface,
     wrap_in_trace_variable,
 )
 

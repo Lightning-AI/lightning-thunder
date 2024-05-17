@@ -1,72 +1,77 @@
-from collections import namedtuple
-from contextlib import nullcontext
-from dataclasses import dataclass, replace
-from enum import auto, Enum
-from itertools import chain, compress
-from functools import lru_cache, partial, wraps
-import math
-from numbers import Number
-from typing import Any, Dict, Union, Optional
-from collections.abc import Callable
-from collections.abc import Hashable
-from collections.abc import Sequence
 import copy
 import inspect
-import time
-from collections import deque
+import math
 import os
+import time
+from collections import deque, namedtuple
+from collections.abc import Callable, Hashable, Sequence
+from contextlib import nullcontext
+from dataclasses import dataclass, replace
+from enum import Enum, auto
+from functools import cache, lru_cache, partial, wraps
+from itertools import chain, compress
+from numbers import Number
+from typing import Any, Dict, Optional, Union
 
-import thunder.core.utils as utils
-from thunder.core import dtypes, prims
+import numpy as np
+import torch
+from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
+
+import thunder.clang as clang
 import thunder.core.devices as devices
-from thunder.core.devices import cpu, Device
+import thunder.core.utils as utils
+import thunder.torch as ltorch
+from thunder.clang import (
+    convolution,
+    full,
+    full_like,
+    maybe_convert_to_dtype,
+    reciprocal,
+    slice_in_dim,
+    squeeze,
+    unsqueeze,
+)
+from thunder.core import dtypes, prims
+from thunder.core.baseutils import default_dataclass_params
+from thunder.core.compile_data import get_compile_data
+from thunder.core.devices import Device, cpu
 from thunder.core.proxies import (
+    CollectionProxy,
+    FloatProxy,
+    FutureTensorProxy,
     NumberProxy,
     Proxy,
     TensorProxy,
-    FloatProxy,
-    variableify,
     unvariableify,
-    CollectionProxy,
-    FutureTensorProxy,
+    variableify,
 )
-from thunder.core.baseutils import default_dataclass_params
-from thunder.core.compile_data import get_compile_data
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol
-from thunder.core.trace import TraceCtx as Trace, tracectx
+from thunder.core.trace import TraceCtx as Trace
+from thunder.core.trace import (
+    TraceProvenance,
+    detached_trace,
+    from_trace,
+    get_tracectx,
+    reset_tracectx,
+    set_tracectx,
+    tracectx,
+)
 from thunder.core.trace import VariableInterface as Variable
-from thunder.core.trace import detached_trace, get_tracectx, set_tracectx, reset_tracectx, from_trace, TraceProvenance
+from thunder.core.transform_common import dce
 from thunder.core.utils import (
+    ProxyDict,
     check,
+    const_as,
     flatten_func,
     safe_map,
     safe_map_flat,
     safe_zip,
-    unzip2,
-    const_as,
     sequencify,
-    ProxyDict,
+    unzip2,
 )
-import thunder.clang as clang
-from thunder.clang import (
-    full,
-    full_like,
-    unsqueeze,
-    squeeze,
-    maybe_convert_to_dtype,
-    slice_in_dim,
-    reciprocal,
-    convolution,
-)
-from thunder.core.transform_common import dce
 from thunder.core.vjp_utils import make_aug_forward_and_backward
 from thunder.extend import Executor
-import thunder.torch as ltorch
-
-import torch
-from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
-import numpy as np
 
 
 # TODO This should be a partial of thunder.trace, but that would cause a circular import
@@ -404,7 +409,7 @@ def add_transform(
     early_transform: Callable | None = None,
     disable_torch_autograd_support=False,
 ) -> Callable:
-    from thunder.common import _create_callable, CompileData, CompileStats
+    from thunder.common import CompileData, CompileStats, _create_callable
 
     cd: None | Any = getattr(cfn, "_lc_cd", None)
 
@@ -461,7 +466,7 @@ def add_transform(
 # TODO Consider refactoring this with the above
 # Helper function to add a post-optimization transform
 def add_post_optimization_transform(cfn: Callable, transform: Callable) -> Callable:
-    from thunder.common import _create_callable, CompileData, CompileStats
+    from thunder.common import CompileData, CompileStats, _create_callable
 
     cd: None | Any = getattr(cfn, "_lc_cd", None)
 
@@ -619,7 +624,7 @@ def clear_grads(module: torch.nn.Module) -> None:
 
 
 from thunder.core.interpreter import make_opaque
-from thunder.core.langctxs import langctx, Languages
+from thunder.core.langctxs import Languages, langctx
 
 
 # TODO RC1 Replace with langctx
@@ -639,7 +644,8 @@ def register_grad(sym_or_id: Symbol | Any, gradfn: Callable) -> None:
 
 
 # Grad functions for prims
-from thunder.core.prims import PrimIDs as pids, get_grad, put_grad
+from thunder.core.prims import PrimIDs as pids
+from thunder.core.prims import get_grad, put_grad
 
 
 # A generalization of prims.put_grad to pytrees
@@ -1662,7 +1668,6 @@ def grad(
     cfn,
 ) -> Callable:
     def grad(func):
-
         @wraps(func)
         def grad_func(*args, **kwargs):
             _, grads = value_and_grad(func)(*args, **kwargs)
@@ -1694,7 +1699,7 @@ class Transforms(Enum):
     VjpOp = auto()
 
 
-@lru_cache(maxsize=None)
+@cache
 def symbol_to_eval(bound_symbol):
     """Map a BoundSymbol to a function that evaluates it.
 

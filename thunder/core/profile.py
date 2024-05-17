@@ -3,7 +3,6 @@ import os
 
 import torch
 
-
 _ENABLED = os.getenv("THUNDER_ANNOTATE_TRACES") in ("1", "y", "Y")
 
 

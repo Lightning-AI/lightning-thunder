@@ -32,8 +32,8 @@ https://github.com/huggingface/transformers/blob/main/src/transformers/models/gp
 
 import inspect
 import math
-from dataclasses import dataclass
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import torch
 import torch.nn as nn

@@ -3,8 +3,7 @@ import sys
 import tempfile
 import textwrap
 import time
-from collections.abc import Callable
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import partial
 from numbers import Number
@@ -21,13 +20,13 @@ import thunder.core.devices as Devices
 import thunder.core.dtypes as dtypes
 import thunder.executors as executors
 import thunder.torch as ltorch
-from thunder.core.transforms import grad, clear_grads, populate_grads
-from thunder.executors.apex_entropyex import apex_ex, apex_available
+from thunder.core.transforms import clear_grads, grad, populate_grads
+from thunder.executors.apex_entropyex import apex_available, apex_ex
 from thunder.executors.cudnn_layernormex import cudnn_layernorm_ex
-from thunder.executors.cudnnex import cudnn_ex, cudnn_available
+from thunder.executors.cudnnex import cudnn_available, cudnn_ex
 from thunder.executors.sdpaex import sdpa_ex
 from thunder.executors.torch_compile import torch_compile_cat_ex, torch_compile_ex
-from thunder.tests import nanogpt_model, hf_bart_self_attn, litgpt_model
+from thunder.tests import hf_bart_self_attn, litgpt_model, nanogpt_model
 from thunder.tests.litgpt_model import Config as LitGPTConfig
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 
@@ -312,7 +311,7 @@ def wait_for_cuda_computation() -> None:
 
 # Prints nanoseconds as microseconds, rounded
 def ns_to_us(ns: Number) -> str:
-    us = "\u03BCs"
+    us = "\u03bcs"
     return f"{round(ns / 1000):.2e}{us}"
 
 
@@ -848,8 +847,7 @@ class get_default_thunder_ddp_dynamic_strides_executor:
 
 @dataclass(frozen=True)
 class get_default_thunder_fsdp_dynamic_strides_executor:
-    from thunder.distributed import FSDPBucketingStrategy
-    from thunder.distributed import FSDPType
+    from thunder.distributed import FSDPBucketingStrategy, FSDPType
 
     bucketing_strategy: FSDPBucketingStrategy
     sharding_strategy: FSDPType

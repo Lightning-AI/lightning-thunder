@@ -1,5 +1,5 @@
-from collections.abc import Sequence
 import itertools
+from collections.abc import Sequence
 from functools import partial
 from typing import Any
 
@@ -11,18 +11,18 @@ import pytest
 import torch
 
 import thunder
-import thunder.core.dtypes as dtypes
-import thunder.core.devices as devices
 import thunder.clang as clang
-
+import thunder.core.devices as devices
+import thunder.core.dtypes as dtypes
 from thunder import torch as ltorch
-from thunder.core.dtypes import is_exact_dtype, to_dtype as thunder_dtype
-from thunder.core.pytree import tree_map, tree_flatten
-from thunder.core.transforms import jvp, vjp, grad, check_bsym_for_vjp
+from thunder.core.dtypes import is_exact_dtype
+from thunder.core.dtypes import to_dtype as thunder_dtype
+from thunder.core.pytree import tree_flatten, tree_map
+from thunder.core.transforms import check_bsym_for_vjp, grad, jvp, vjp
 from thunder.core.utils import flatten_func
-from thunder.tests.framework import instantiate, NOTHING, ops, run_snippet, assert_closer, IN_CI, requiresCUDA
+from thunder.tests.framework import IN_CI, NOTHING, assert_closer, instantiate, ops, requiresCUDA, run_snippet
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
-from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops, get_opinfo
+from thunder.tests.opinfos import get_opinfo, opinfos, push_away_from_singularities, tensor_creation_ops
 
 # TODO: Move this to thunder.tests.opinfos
 op_skip = {
@@ -106,8 +106,7 @@ def _generate_supported_op_list(checker):
 
 
 def _jvp_symbol_checker(symbol):
-    from thunder.core.transforms import jvp_impls
-    from thunder.core.transforms import transform_skip_list
+    from thunder.core.transforms import jvp_impls, transform_skip_list
 
     return symbol.sym.id in jvp_impls or symbol.sym.id in transform_skip_list
 
@@ -763,10 +762,10 @@ def test_torch_autograd_saved_tensors_memory_release():
     # This test checks that the saved tensors are released during compiled
     # backward function execution. It's a regression test for the memory leak.
 
-    from thunder.core.prims import make_prim
-    from thunder.core.transforms import register_augmented_forward, register_backward
-    from thunder.core.proxies import TensorProxy
     from thunder.core import codeutils
+    from thunder.core.prims import make_prim
+    from thunder.core.proxies import TensorProxy
+    from thunder.core.transforms import register_augmented_forward, register_backward
 
     def noop_meta(x):
         return TensorProxy(like=x)
@@ -836,8 +835,8 @@ def test_torch_autograd_saved_tensors_memory_release():
     dtypes=NOTHING,
 )
 def test_make_aug_forward_and_backward(executor, device, _):
-    from thunder.core.vjp_utils import make_aug_forward_and_backward
     from thunder.core.prims import mul
+    from thunder.core.vjp_utils import make_aug_forward_and_backward
 
     def fun(a, b):
         return mul(a, b)
@@ -878,8 +877,8 @@ def test_make_aug_forward_and_backward_var_mean(executor, device, _):
     # var_mean correctly puts the forward part into the augmented forward
     # function and the backward part into the backward function without
     # overlapping symbols.
-    from thunder.core.vjp_utils import make_aug_forward_and_backward
     from thunder.core.prims import var_mean
+    from thunder.core.vjp_utils import make_aug_forward_and_backward
 
     def fun(a):
         return var_mean(a, (0,), correction=1)
@@ -900,7 +899,7 @@ def test_make_aug_forward_and_backward_var_mean(executor, device, _):
 
 
 def test_no_duplicate_backward_registered():
-    from thunder.core.transforms import backward_impls, _grad_fn_map
+    from thunder.core.transforms import _grad_fn_map, backward_impls
 
     same_keys = set(_grad_fn_map.keys()).intersection(set(backward_impls.keys()))
     assert not same_keys, f"Duplicate keys: {same_keys}"
@@ -910,8 +909,8 @@ def test_no_duplicate_backward_registered():
     dtypes=NOTHING,
 )
 def test_torch_autograd_function(executor, device, _):
-    from thunder.clang import cos, sin
     import thunder.torch as ltorch
+    from thunder.clang import cos, sin
 
     def func(a, b, *, c):
         d = a + b + c
@@ -961,7 +960,7 @@ def test_torch_autograd_crazy_collections_in_and_out(executor, device, dtype):
         g = e + f
         h = f + ka + kb
         # NOTE The following computation is intentionally unused
-        i = ka + ka  # noqa
+        i = ka + ka
         j = kc[0] + kc[1]
 
         d["j"] = j
@@ -1030,8 +1029,8 @@ def test_torch_autograd_module(executor, device, _):
     dtypes=NOTHING,
 )
 def test_torch_autograd_module_get_compile_stats(executor, device, _):
-    from thunder.core.trace import TraceCtx
     from thunder import compile_stats
+    from thunder.core.trace import TraceCtx
 
     l = torch.nn.Linear(3, 4, bias=False, device=device)
     a = make_tensor((2, 3), device=device, dtype=torch.float32, requires_grad=True)
@@ -1081,9 +1080,9 @@ def test_torch_autograd_function_with_kwargs_static_caching(executor, device, _)
     dtypes=NOTHING,
 )
 def test_forward_and_backward_from_trace(executor, device, _):
+    import thunder.torch as ltorch
     from thunder import trace
     from thunder.clang import cos, sin
-    import thunder.torch as ltorch
     from thunder.core.transforms import forward_and_backward_from_trace, value_and_grad
 
     def func(a, b, *, c):
@@ -1116,8 +1115,8 @@ def test_torch_autograd_redundant_casts(executor, device, _):
     # There was a bug where we would eliminate the redundant casts in forward
     # but backward wasn't updated with the new proxies. This test ensures that
     # we don't regress.
-    from thunder.core.prims import convert_element_type
     import thunder.torch as ltorch
+    from thunder.core.prims import convert_element_type
 
     def func(a, b, c):
         d = a + b + c
@@ -1263,7 +1262,8 @@ def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype,
 
 
 from torch.testing import assert_close
-from thunder.core.transforms import populate_grads, clear_grads, extract_grads, put_grad, put_grads, get_grad
+
+from thunder.core.transforms import clear_grads, extract_grads, get_grad, populate_grads, put_grad, put_grads
 
 
 @instantiate(dtypes=(thunder.float32,))
@@ -1305,7 +1305,7 @@ def test_phantom_grad_multiple_outputs(executor, device: str, dtype: dtypes.dtyp
 
 @instantiate(dtypes=(thunder.float32,))
 def test_populate_grads_mlp(executor, device, dtype):
-    from thunder.benchmarks import NanoGPTMLPBenchmark, NanoGPTConfig
+    from thunder.benchmarks import NanoGPTConfig, NanoGPTMLPBenchmark
 
     # NOTE Currently setting dropout to zero for reproducibility, other settings taken from gpt2 config
     config = NanoGPTConfig(dropout=0, n_layer=12, n_head=12, n_embd=768)
@@ -1332,7 +1332,7 @@ def test_populate_grads_mlp(executor, device, dtype):
 
 @instantiate(dtypes=(thunder.float32,))
 def test_populate_grads_csa(executor, device, dtype):
-    from thunder.benchmarks import NanoGPTCSABenchmark, NanoGPTConfig
+    from thunder.benchmarks import NanoGPTConfig, NanoGPTCSABenchmark
 
     # NOTE Currently setting dropout to zero for reproducibility, other settings taken from gpt2 config
     config = NanoGPTConfig(dropout=0, n_layer=12, n_head=12, n_embd=768)
@@ -1426,10 +1426,10 @@ def test_too_few_results_from_backward():
     # opaque error
 
     global myadd
-    from thunder.core.prims import make_prim
-    from thunder.core.transforms import register_augmented_forward, register_backward
-    from thunder.core.proxies import TensorProxy
     from thunder.core import codeutils
+    from thunder.core.prims import make_prim
+    from thunder.core.proxies import TensorProxy
+    from thunder.core.transforms import register_augmented_forward, register_backward
 
     def myadd_meta(a, b):
         return TensorProxy(like=a)

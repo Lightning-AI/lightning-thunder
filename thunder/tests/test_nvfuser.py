@@ -1,16 +1,16 @@
-import pytest
 from functools import partial
 
+import pytest
 import torch
+from looseversion import LooseVersion
 
 import thunder
-import thunder.examine as examine
-from thunder.examine import get_fusions
-from thunder.executors.nvfuserex import nvfuser_version, nvfuserex
-import thunder.torch as ltorch
-import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
+import thunder.core.dtypes as dtypes
 import thunder.core.prims as prims
+import thunder.examine as examine
+import thunder.torch as ltorch
+from thunder.core import utils
 from thunder.core.pytree import tree_map
 from thunder.core.rematerialization import (
     apply_rematerialization_for_consumer,
@@ -20,34 +20,33 @@ from thunder.core.rematerialization import (
     find_filtered_producer_consumer_pairs,
     find_nvfuser_producer_consumer_pairs,
 )
-from thunder.core import utils
 from thunder.core.transforms import value_and_grad
-
+from thunder.examine import get_fusions
+from thunder.executors.nvfuserex import nvfuser_version, nvfuserex
 from thunder.tests.framework import (
-    instantiate,
-    TestExecutor,
     NOTHING,
+    TestExecutor,
+    TorchExecutor,
+    assert_closer,
+    instantiate,
+    nvFuserExecutor,
     ops,
     run_snippet,
-    assert_closer,
-    nvFuserExecutor,
-    TorchExecutor,
 )
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
-from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops, get_opinfo
-from looseversion import LooseVersion
+from thunder.tests.opinfos import get_opinfo, opinfos, push_away_from_singularities, tensor_creation_ops
 
 
 @instantiate(
     dtypes=NOTHING,
 )
 def test_rematerialization_with_forward_and_backward_from_trace(executor: TestExecutor, device: str, _) -> None:
+    import thunder.torch as ltorch
     from thunder import trace
     from thunder.clang import cos, sin
-    import thunder.torch as ltorch
-    from thunder.core.transforms import forward_and_backward_from_trace, value_and_grad
     from thunder.common import transform_for_execution
     from thunder.core.rematerialization import rematerialize_forward_and_backward
+    from thunder.core.transforms import forward_and_backward_from_trace, value_and_grad
 
     def func(a, b, *, c):
         d = a + b + c
@@ -317,8 +316,8 @@ def test_cse_subsymbol_redundant_args(executor, device, _):
 @instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))
 def test_cse_rematerialization(executor, device, _):
     # Unit test for "llama2.c example failed with bookend disabled."
-    from thunder.tests.llama2_model import Transformer, ModelArgs
     from thunder.core.pytree import tree_flatten
+    from thunder.tests.llama2_model import ModelArgs, Transformer
 
     batch_size = 2
     max_seq_len = 32
@@ -860,7 +859,6 @@ def test_optimization_fuel(executor, device, _):
     decorators=(pytest.mark.parametrize("has_bias", [True, False], ids=["bias", "no_bias"]),),
 )
 def test_linear(executor, device: str, dtype: dtypes.dtype, has_bias: bool):
-
     def fn(a, b, bias=None):
         return torch.nn.functional.linear(a, b, bias)
 

@@ -1,45 +1,44 @@
+import collections
 import itertools
 import math
 import operator
-import collections
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from enum import Enum
 from functools import partial, reduce, wraps
 from numbers import Number
-from typing import Any, Union, Optional, Tuple
-from collections.abc import Callable
+from typing import Any, Optional, Tuple, Union
 
 import opt_einsum
 
-# Initializes the language context
-from thunder.torch.langctx import register_method, register_property
-
 import thunder.clang as clang
 import thunder.core.devices as devices
-from thunder.core.devices import to_device, device_from_string
 import thunder.core.dtypes as dtypes
-from thunder.core.dtypes import to_torch_dtype, to_dtype, _thunder_to_torch_dtype_map, _torch_to_thunder_dtype_map
 import thunder.core.prims as prims
 import thunder.core.utils as utils
 import thunder.distributed.prims as dist_prims
-from thunder.core.langctxs import langctx, Languages
-from thunder.core.proxies import FloatProxy, IntegerProxy, NumberProxy, TensorProxy, FutureTensorProxy, pyval
+from thunder.core.baseutils import run_once
+from thunder.core.devices import device_from_string, to_device
+from thunder.core.dtypes import _thunder_to_torch_dtype_map, _torch_to_thunder_dtype_map, to_dtype, to_torch_dtype
+from thunder.core.langctxs import Languages, langctx
+from thunder.core.prims import get_grad, put_grad
+from thunder.core.proxies import FloatProxy, FutureTensorProxy, IntegerProxy, NumberProxy, TensorProxy, pyval
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
-from thunder.core.transforms import register_grad, put_grads
-from thunder.core.prims import get_grad, put_grad
-from thunder.core.baseutils import run_once
+from thunder.core.transforms import put_grads, register_grad
+
+# Initializes the language context
+from thunder.torch.langctx import register_method, register_property
 
 __all__ = [
     "is_available",
 ]
 
 # NOTE torch is a requirement
+import warnings
+
 import torch
 import torch.distributed as tdist
-
-import warnings
 
 # Type annotation helpers
 NumberLike = Number | NumberProxy
@@ -226,7 +225,6 @@ def _device_and_dtype_to_old_torch_typestring(device: DeviceLike, dtype: dtypeLi
 
 
 def _old_torch_typestring_to_devicetype_and_dtype(typestring: str) -> tuple[DeviceLike, dtypeLike]:
-
     # Two cases:
     #    - torch.DtypeTensor
     #    - torch.device.DtypeTensor
@@ -3155,7 +3153,15 @@ def _conv_helper(
     # }
 
     res = clang.convolution(
-        a, weight, bias, stride, padding, dilation, False, (0,) * dim, groups  # transposed  # output_padding
+        a,
+        weight,
+        bias,
+        stride,
+        padding,
+        dilation,
+        False,
+        (0,) * dim,
+        groups,  # transposed  # output_padding
     )
     return res
 

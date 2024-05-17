@@ -8,7 +8,7 @@ from thunder.core.prims import PrimIDs
 from thunder.core.proxies import TensorProxy, variableify
 from thunder.core.pytree import tree_flatten
 from thunder.core.symbol import BoundSymbol
-from thunder.core.trace import TraceCtx, from_trace, set_tracectx, reset_tracectx
+from thunder.core.trace import TraceCtx, from_trace, reset_tracectx, set_tracectx
 from thunder.core.transform_common import replace_redundant_inputs
 
 if TYPE_CHECKING:

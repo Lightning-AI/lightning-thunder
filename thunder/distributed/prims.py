@@ -1,5 +1,6 @@
 from __future__ import annotations
-from enum import auto, Enum
+
+from enum import Enum, auto
 from numbers import Number
 from typing import TYPE_CHECKING
 
@@ -7,8 +8,7 @@ import torch.distributed
 
 import thunder.core.utils as utils
 from thunder.core.prims import make_prim
-
-from thunder.core.proxies import DDPType, FutureTensorProxy, pytype, TensorProxy
+from thunder.core.proxies import DDPType, FutureTensorProxy, TensorProxy, pytype
 from thunder.core.transforms import register_augmented_forward, register_backward
 
 if TYPE_CHECKING:

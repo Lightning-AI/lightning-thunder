@@ -1,25 +1,24 @@
 from __future__ import annotations
 
-from enum import auto, Enum
-from numbers import Number
-from typing import Type, Optional, Any, Tuple, List, Union
-from collections.abc import Callable
-from collections.abc import Sequence
-from functools import reduce, partial
-import operator
 import builtins
 import math
+import operator
+from collections.abc import Callable, Sequence
+from enum import Enum, auto
+from functools import partial, reduce
+from numbers import Number
+from typing import Any, List, Optional, Tuple, Type, Union
 
 import torch
 
-from thunder.core.compile_data import using_symbolic_values, using_jit
-from thunder.core.interpreter import is_jitting
-from thunder.core.trace import VariableInterface, get_tracectx, TraceCtx
-from thunder.core.baseutils import ProxyInterface, NumberProxyInterface, TensorProxyInterface
 import thunder.core.baseutils as baseutils
-from thunder.core.langctxs import resolve_method, get_langctx, LanguageContext
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
+from thunder.core.baseutils import NumberProxyInterface, ProxyInterface, TensorProxyInterface
+from thunder.core.compile_data import using_jit, using_symbolic_values
+from thunder.core.interpreter import is_jitting
+from thunder.core.langctxs import LanguageContext, get_langctx, resolve_method
+from thunder.core.trace import TraceCtx, VariableInterface, get_tracectx
 
 ShapeLike = Sequence[int]
 

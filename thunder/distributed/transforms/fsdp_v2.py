@@ -1,19 +1,17 @@
 """Early transform for `fsdp(jit(model))` to convert a trace into fsdp."""
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from thunder.core import devices
-from thunder.core import prims
-from thunder.core import utils
+from thunder.core import devices, prims, utils
 from thunder.core.proxies import DDPType
-from thunder.core.trace import from_trace
-from thunder.core.trace import tracectx
-from thunder.core.trace import TraceProvenance
+from thunder.core.trace import TraceProvenance, from_trace, tracectx
 
 if TYPE_CHECKING:
     from typing import Any
+
     from torch.distributed import ProcessGroup
 
 

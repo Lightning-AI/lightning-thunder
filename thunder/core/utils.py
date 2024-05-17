@@ -1,23 +1,22 @@
-import sys
+import itertools
 import os
+import sys
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from enum import Enum
 from functools import reduce, wraps
-import itertools
 from itertools import chain
 from numbers import Number
-from typing import overload, Generic, Optional, TypeVar, TYPE_CHECKING
-from collections.abc import Callable
-from collections.abc import Iterable, Iterator, Sequence
+from typing import TYPE_CHECKING, Generic, Optional, TypeVar, overload
 
 from typing_extensions import Self
 
 import thunder.core.dtypes as dtypes
-from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
-from thunder.core.proxies import Proxy, NumberProxy, TensorProxy, variableify
+import thunder.core.prims as prims
 from thunder.core.baseutils import *
 from thunder.core.codeutils import *
+from thunder.core.proxies import NumberProxy, Proxy, TensorProxy, variableify
+from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.trace import TraceCtx
-import thunder.core.prims as prims
 
 # This file defines utilities that can be used when defining primitive operations.
 

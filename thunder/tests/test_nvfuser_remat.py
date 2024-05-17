@@ -1,11 +1,10 @@
-import pytest
 from functools import partial, wraps
 
+import pytest
 import torch
 
 import thunder
 from thunder import torch as ttorch
-
 from thunder.core import utils
 from thunder.core.rematerialization import (
     apply_rematerialization_for_consumer,
@@ -17,7 +16,7 @@ from thunder.core.rematerialization import (
 )
 from thunder.core.transforms import value_and_grad
 from thunder.examine import get_fusions
-from thunder.tests.framework import instantiate, NOTHING, nvFuserExecutor, TorchExecutor
+from thunder.tests.framework import NOTHING, TorchExecutor, instantiate, nvFuserExecutor
 from thunder.tests.make_tensor import make_tensor
 
 

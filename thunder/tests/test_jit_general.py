@@ -1,30 +1,25 @@
-from collections.abc import Iterable, Iterator, Sequence
+import dis
+import operator
+import sys
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from functools import partial, wraps
 from itertools import product
 
-import operator
-import sys
-import dis
-from collections.abc import Callable
-
 import pytest
 import torch
+from lightning_utilities import compare_version
 from torch.testing import assert_close
 
-from lightning_utilities import compare_version
-
 import thunder
-from thunder.core.interpreter import is_jitting, InterpreterError
-
-from thunder.tests import litgpt_model
 import thunder.clang as clang
-from thunder.core.options import INTERPRETATION_OPTIONS, CACHE_OPTIONS
-import thunder.torch as ltorch
 import thunder.core.prims as prims
-from thunder import pytorch_executor, nvfuser_executor
-from thunder.executors.sdpaex import sdpa_ex
+import thunder.torch as ltorch
+from thunder import nvfuser_executor, pytorch_executor
+from thunder.core.interpreter import InterpreterError, is_jitting
 from thunder.core.jit_ext import JITSharpEdgeError
-
+from thunder.core.options import CACHE_OPTIONS, INTERPRETATION_OPTIONS
+from thunder.executors.sdpaex import sdpa_ex
+from thunder.tests import litgpt_model
 
 #
 # Test suite for the general jit

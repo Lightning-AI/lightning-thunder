@@ -1,11 +1,10 @@
+import time
+from collections import defaultdict
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
 from itertools import chain, product, takewhile
 from typing import Optional, Tuple, Union
-from collections.abc import Callable
-from collections.abc import Sequence
-from collections import defaultdict
-import time
 
 from igraph import Graph
 
@@ -15,7 +14,7 @@ from thunder.core.prims import PrimIDs
 from thunder.core.proxies import TensorProxy, variableify
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import has_tags
-from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
+from thunder.core.trace import TraceCtx, TraceProvenance, from_trace
 from thunder.core.transform_common import dce
 from thunder.executors.passes import update_fusion_call_ctx
 

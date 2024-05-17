@@ -1,9 +1,9 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
-from thunder.core import devices
-from thunder.core import dtypes
-from thunder.core import utils
-from thunder.core.proxies import TensorProxy, FutureTensorProxy
+
+from thunder.core import devices, dtypes, utils
+from thunder.core.proxies import FutureTensorProxy, TensorProxy
 from thunder.distributed import prims as dist_prims
 
 if TYPE_CHECKING:

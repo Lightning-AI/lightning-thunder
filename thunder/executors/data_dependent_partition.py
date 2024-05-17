@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from typing import List, Set
 from collections.abc import Callable
 from copy import copy
 from itertools import chain
+from typing import List, Set
 
 import thunder.core.utils as utils
-from thunder.core.trace import TraceCtx
-from thunder.core.symbol import BoundSymbol
-from thunder.core.proxies import variableify, Proxy
 from thunder.core.prims import PrimIDs
+from thunder.core.proxies import Proxy, variableify
+from thunder.core.symbol import BoundSymbol
+from thunder.core.trace import TraceCtx
 
 
 # Represents a region and its parents (regions it consumes the output of) and

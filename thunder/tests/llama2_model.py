@@ -1,6 +1,6 @@
+import inspect
 import math
 import struct
-import inspect
 from dataclasses import dataclass
 from typing import Any, Optional, Tuple
 

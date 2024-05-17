@@ -1,21 +1,19 @@
-from collections.abc import Iterable, Iterator, Sequence
+import dis
+import math
+import random
+import sys
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from functools import partial, wraps
 from itertools import product
-import random
-import math
-
-import sys
-import dis
-from collections.abc import Callable
 
 import pytest
 import torch
 from torch.testing import assert_close
 
 import thunder
-from thunder.core.jit_ext import minimal_thunder_jit, ThunderSharpEdgeError
 import thunder.clang as clang
 import thunder.core.prims as prims
+from thunder.core.jit_ext import ThunderSharpEdgeError, minimal_thunder_jit
 
 #
 # Test suite for the thunder.jit entrypoint

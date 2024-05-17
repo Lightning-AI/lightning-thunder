@@ -1,17 +1,17 @@
 import time
-from typing import Any, Dict
 from collections.abc import Sequence
-from itertools import filterfalse
 from functools import partial
+from itertools import filterfalse
+from typing import Any, Dict
 
 import thunder.core.prims as prims
 from thunder.core.baseutils import BoundSymbolInterface
-from thunder.core.proxies import Proxy, variableify, Variable
+from thunder.core.proxies import Proxy, Variable, variableify
 from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, has_tags
-from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace
-from thunder.core.utils import ProxyDict, producers, check
-
+from thunder.core.trace import TraceCtx as Trace
+from thunder.core.trace import TraceProvenance, from_trace
+from thunder.core.utils import ProxyDict, check, producers
 
 #
 # Common optimization and transform passes

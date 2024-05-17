@@ -9,9 +9,8 @@ from thunder.core.prims import PrimIDs
 from thunder.core.proxies import Proxy, variableify
 from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.symbol import BoundSymbol
-from thunder.core.trace import from_trace, TraceCtx
+from thunder.core.trace import TraceCtx, from_trace
 from thunder.core.transform_common import dce
-
 
 _cache = {}
 

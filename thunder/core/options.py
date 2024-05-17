@@ -1,7 +1,7 @@
-from typing import Any
+import warnings
 from collections.abc import Sequence
 from enum import Enum, auto
-import warnings
+from typing import Any
 
 #
 # Options that can be accessed by all parts of the system

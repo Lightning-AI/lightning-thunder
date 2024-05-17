@@ -1,27 +1,24 @@
+import functools
 import os
 import time
-from typing import Any
+import warnings
 from contextlib import nullcontext
+from typing import Any
 
 import torch
-import functools
-from torch.utils.data import DataLoader, IterableDataset
 import torch.distributed as torch_dist
-from torch.distributed.device_mesh import init_device_mesh
-import warnings
-
+from lightning.fabric.utilities import Throughput
+from lightning.fabric.utilities.throughput import measure_flops
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    CheckpointWrapper,
     apply_activation_checkpointing,
     checkpoint_wrapper,
-    CheckpointWrapper,
 )
+from torch.distributed.device_mesh import init_device_mesh
+from torch.utils.data import DataLoader, IterableDataset
 
 import thunder
-from thunder.tests.litgpt_model import Config, GPT, Block
-
-from lightning.fabric.utilities.throughput import measure_flops
-from lightning.fabric.utilities import Throughput
-
+from thunder.tests.litgpt_model import GPT, Block, Config
 
 world_size = int(os.environ.get("WORLD_SIZE", 1))
 local_rank = int(os.environ.get("LOCAL_RANK", 0))
@@ -228,7 +225,7 @@ class Benchmark_litGPT:
                     bucket_size_in_mb=self.ddp_bucket_size,
                 )
             elif self.distributed_mode == "fsdp":
-                from thunder.distributed import fsdp, FSDPType, FSDPBucketingStrategy
+                from thunder.distributed import FSDPBucketingStrategy, FSDPType, fsdp
 
                 sharding_strategy = {"zero2": FSDPType.ZERO2, "zero3": FSDPType.ZERO3}[self.shard_mode]
                 bucketing_strategy = {
@@ -250,8 +247,9 @@ class Benchmark_litGPT:
                     bucket_cap_mb=self.ddp_bucket_size,
                 )
             elif self.distributed_mode == "fsdp":
-                from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStrategy
-                from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy, size_based_auto_wrap_policy
+                from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+                from torch.distributed.fsdp import ShardingStrategy
+                from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy, transformer_auto_wrap_policy
 
                 mesh = None
                 if self.sharding_size is not None:

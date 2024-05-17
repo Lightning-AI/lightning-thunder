@@ -2,24 +2,22 @@
 #   This feature is available in Python 3.7 and later.
 #   This import (like all __future__ imports) must be at the beginning of the file.
 from __future__ import annotations
-from enum import Enum
-import functools
-import os
-import dis
 
-import sys
 import collections.abc
-from numbers import Number
-from typing import Any, Type, Union, Optional, Tuple, List
-from collections.abc import Callable
-from collections.abc import Sequence
-from types import MappingProxyType, ModuleType, CodeType, EllipsisType, FunctionType, MethodType
-import re
+import dis
+import functools
 import inspect
+import os
+import re
+import sys
+from collections.abc import Callable, Sequence
+from enum import Enum
+from numbers import Number
+from types import CodeType, EllipsisType, FunctionType, MappingProxyType, MethodType, ModuleType
+from typing import Any, List, Optional, Tuple, Type, Union
 
-import torch
 import numpy as np
-
+import torch
 
 #
 # Common utilities importable by any other file

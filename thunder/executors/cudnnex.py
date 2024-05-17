@@ -1,9 +1,8 @@
+import random
 from typing import Any
 
-import torch
 import numpy as np
-import random
-
+import torch
 from lightning_utilities.core.imports import package_available
 
 
@@ -49,22 +48,20 @@ def _get_cudnn_handle(query_device):
 
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Union, Dict
+from typing import Dict, Union
 
-from thunder.core.langctxs import langctx
 import thunder.core.dtypes as dtypes
-from thunder.torch import TensorLike
+import thunder.torch as ltorch
 from thunder.core.compile_data import get_compile_option
+from thunder.core.langctxs import langctx
 from thunder.core.proxies import Proxy, TensorProxy
-
-
 from thunder.core.transforms import (
     get_grad,
     put_grad,
     put_grads,
 )
 from thunder.extend import OperatorExecutor, register_executor
-import thunder.torch as ltorch
+from thunder.torch import TensorLike
 
 cudnn_ex: OperatorExecutor = OperatorExecutor("cudnn", version=cudnn_backend_version)
 register_executor(cudnn_ex)

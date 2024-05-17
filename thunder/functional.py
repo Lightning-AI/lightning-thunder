@@ -1,51 +1,48 @@
+from collections.abc import Callable, Sequence
 from functools import partial
-from typing import Any
-from types import EllipsisType, NoneType
-from collections.abc import Callable
-from collections.abc import Sequence
 from numbers import Number
+from types import EllipsisType, NoneType
+from typing import Any
+
 import optree
-
-from thunder.core.options import (
-    INTERPRETATION_OPTIONS,
-    CACHE_OPTIONS,
-    SHARP_EDGES_OPTIONS,
-)
-from thunder.core.trace import (
-    TraceCtx,
-    tracectx,
-    TraceResults,
-)
-
-import thunder.core.prims as prims
-
-from thunder.extend import Executor
-from thunder.core.compile_data import get_cache_option
-from thunder.core.langctxs import LanguageContext
-from thunder.core.baseutils import is_base_printable
-from thunder.core.codeutils import get_siginfo, SigInfo, is_simple_printable_collection
-from thunder.core.proxies import (
-    proxy,
-    Proxy,
-    TensorProxy,
-    pyval,
-    pytype,
-    NumberProxy,
-    StringProxy,
-    IntegerProxy,
-    FloatProxy,
-    ComplexProxy,
-    TupleProxy,
-    ListProxy,
-    DictProxy,
-    AnyProxy,
-)
-
-import thunder.clang as clang
-import thunder
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
+
+import thunder
+import thunder.clang as clang
+import thunder.core.prims as prims
+from thunder.core.baseutils import is_base_printable
+from thunder.core.codeutils import SigInfo, get_siginfo, is_simple_printable_collection
+from thunder.core.compile_data import get_cache_option
+from thunder.core.langctxs import LanguageContext
+from thunder.core.options import (
+    CACHE_OPTIONS,
+    INTERPRETATION_OPTIONS,
+    SHARP_EDGES_OPTIONS,
+)
+from thunder.core.proxies import (
+    AnyProxy,
+    ComplexProxy,
+    DictProxy,
+    FloatProxy,
+    IntegerProxy,
+    ListProxy,
+    NumberProxy,
+    Proxy,
+    StringProxy,
+    TensorProxy,
+    TupleProxy,
+    proxy,
+    pytype,
+    pyval,
+)
+from thunder.core.trace import (
+    TraceCtx,
+    TraceResults,
+    tracectx,
+)
+from thunder.extend import Executor
 
 
 def _eager_validate_tensor(p: TensorProxy, /, *, co: CACHE_OPTIONS) -> tuple[list, list]:

@@ -9,10 +9,10 @@ import torch.nn.functional as F
 from torch.testing import assert_close, make_tensor
 
 import thunder
+import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
+import thunder.tests.nanogpt_model as nanogpt_model
 import thunder.torch as ttorch
 from thunder.tests.framework import instantiate, requiresCUDA
-import thunder.tests.nanogpt_model as nanogpt_model
-import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
 
 #
 # nanoGPT tests

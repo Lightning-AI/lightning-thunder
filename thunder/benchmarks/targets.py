@@ -1,47 +1,43 @@
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from functools import partial, wraps
-from collections.abc import Sequence
-
-from lightning_utilities.core.imports import package_available
 
 import pytest
 import torch
-import thunder
-from thunder.core.transforms import grad, clear_grads, populate_grads, get_grad, put_grad, put_grads
-from thunder.core.interpreter import interpret
+from lightning_utilities.core.imports import package_available
 
+import thunder
 from thunder.benchmarks import (
+    BatchNormBenchmark,
     Benchmark,
-    NanoGPTGeLUBenchmark,
-    NanoGPTCrossEntropyBenchmark,
-    NanoGPTLayerNormBenchmark,
-    NanoGPTSDPABenchmark,
-    LitGPTSDPABenchmark,
-    NanoGPTMLPBenchmark,
-    NanoGPTCSABenchmark,
-    NanoGPTBlockBenchmark,
-    NanoGPTBenchmark,
     LitGPTBenchmark,
     LitGPTCausalSelfAttentionBenchmark,
+    LitGPTSDPABenchmark,
     LlamaMLPBenchmark,
-    torch_executor,
-    torch_compile_executor,
-    thunder_executor,
-    thunder_torch_executor,
-    thunder_torch_compile_executor,
+    NanoGPTBenchmark,
+    NanoGPTBlockBenchmark,
+    NanoGPTCrossEntropyBenchmark,
+    NanoGPTCSABenchmark,
+    NanoGPTGeLUBenchmark,
+    NanoGPTLayerNormBenchmark,
+    NanoGPTMLPBenchmark,
+    NanoGPTSDPABenchmark,
     thunder_apex_executor,
     thunder_apex_nvfuser_executor,
     thunder_cudnn_executor,
-    thunder_cudnn_nvfuser_executor,
     thunder_cudnn_layer_norm_executor,
     thunder_cudnn_layer_norm_nvfuser_executor,
+    thunder_cudnn_nvfuser_executor,
+    thunder_executor,
     thunder_sdpa_executor,
     thunder_sdpa_torch_compile_nvfuser_executor,
-    BatchNormBenchmark,
+    thunder_torch_compile_executor,
+    thunder_torch_executor,
+    torch_compile_executor,
+    torch_executor,
 )
-
+from thunder.core.interpreter import interpret
+from thunder.core.transforms import clear_grads, get_grad, grad, populate_grads, put_grad, put_grads
 from thunder.tests.litgpt_model import Config as LitGPTConfig
-
 
 APEX_FUSED_ROPE_AVAILABLE: bool = package_available("fused_rotary_positional_embedding")
 

@@ -1,34 +1,27 @@
 from __future__ import annotations
+
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from thunder.core import dtypes
-from thunder.core import devices
-from thunder.core import prims
+from thunder.core import devices, dtypes, prims, utils
 from thunder.core.prims import PrimIDs
-from thunder.core.proxies import FutureTensorProxy
-from thunder.core.proxies import TensorProxy
-from thunder.core.proxies import variableify
-from thunder.core.pytree import tree_flatten
-from thunder.core.pytree import tree_unflatten
-from thunder.core.trace import from_trace
-from thunder.core.trace import TraceProvenance
-from thunder.core.transforms import visitor_transform
-from thunder.core.transforms import VISIT_TYPE
-from thunder.core import utils
+from thunder.core.proxies import FutureTensorProxy, TensorProxy, variableify
+from thunder.core.pytree import tree_flatten, tree_unflatten
+from thunder.core.trace import TraceProvenance, from_trace
+from thunder.core.transforms import VISIT_TYPE, visitor_transform
 from thunder.distributed import get_skip_data_parallel_grad_sync
-from thunder.distributed.bucketing import GradBuckets
 from thunder.distributed import prims as dist_prims
+from thunder.distributed.bucketing import GradBuckets
 
 if TYPE_CHECKING:
     from typing import Any
+
     from torch.distributed import ProcessGroup
-    from thunder.core.symbol import Symbol
-    from thunder.core.symbol import BoundSymbol
-    from thunder.core.trace import TraceCtx
-    from thunder.core.trace import VariableInterface
+
     from thunder.common import CompileData
+    from thunder.core.symbol import BoundSymbol, Symbol
+    from thunder.core.trace import TraceCtx, VariableInterface
 
 
 __all__ = [
@@ -94,6 +87,7 @@ class MakeAllReduceInplace:
 
     def __call__(self, bsym: BoundSymbol) -> VISIT_TYPE:
         from dataclasses import replace
+
         from thunder.core.trace import get_tracectx
 
         if bsym in self.allreduce_bsyms:

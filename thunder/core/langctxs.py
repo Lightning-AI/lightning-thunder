@@ -1,9 +1,9 @@
-from contextvars import ContextVar
-from typing import Optional, Any
 from collections.abc import Callable
-from functools import wraps
 from contextlib import contextmanager
+from contextvars import ContextVar
 from enum import Enum, auto
+from functools import wraps
+from typing import Any, Optional
 
 #
 # Context variables, context managers, and helpers related to setting the language context.

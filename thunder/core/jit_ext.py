@@ -1,109 +1,96 @@
-import thunder
-import math
-from typing import Any, Optional, Dict, Tuple, Literal
 import builtins
 import collections
-from collections.abc import ValuesView, Iterable, Iterator
-from collections.abc import Callable, Sequence
-import weakref
-import random
-from functools import partial, wraps, reduce
-import operator
-import copy
 import contextvars
-from contextlib import contextmanager
+import copy
 import dis
-import warnings
-from enum import Enum, auto
-from io import StringIO
 import inspect
+import math
+import operator
+import random
 import time
-
-from thunder.core.compile_data import compile_data_and_stats, get_cache_option, using_symbolic_values, get_compile_data
-import thunder.clang as clang
-import thunder.core.transforms
-
+import warnings
+import weakref
+from collections.abc import Callable, Iterable, Iterator, Sequence, ValuesView
+from contextlib import contextmanager
+from enum import Enum, auto
+from functools import partial, reduce, wraps
+from io import StringIO
 from types import (
+    BuiltinFunctionType,
+    BuiltinMethodType,
     CellType,
     ClassMethodDescriptorType,
     CodeType,
     CoroutineType,
     FrameType,
     FunctionType,
-    MethodType,
+    GetSetDescriptorType,
     MethodDescriptorType,
+    MethodType,
+    MethodWrapperType,
     ModuleType,
     NoneType,
-    BuiltinFunctionType,
-    BuiltinMethodType,
-    MethodDescriptorType,
-    MethodWrapperType,
-    WrapperDescriptorType,
     TracebackType,
-    CellType,
-    ModuleType,
-    CodeType,
-    BuiltinFunctionType,
-    FunctionType,
-    MethodType,
-    GetSetDescriptorType,
     UnionType,
+    WrapperDescriptorType,
 )
+from typing import Any, Dict, Literal, Optional, Tuple
 
 import torch
-from thunder.core.proxies import (
-    DDPType,
-    proxy,
-    Proxy,
-    NumberProxy,
-    StringProxy,
-    TensorProxy,
-    FutureTensorProxy,
-    make_proxy_name,
-    Variable,
-    variableify,
-    unvariableify,
-    is_proxy_name_available,
-)
-from thunder.core.trace import set_tracectx, reset_tracectx, tracectx, from_trace
+
+import thunder
+import thunder.clang as clang
+import thunder.core.prims as prims
+import thunder.core.transforms
+from thunder.clang import _clang_fn_set
+from thunder.common import CompileData, CompileStats, transform_for_execution
+from thunder.core.baseutils import extract_callable_name
+from thunder.core.codeutils import SigInfo, get_siginfo
+from thunder.core.compile_data import compile_data_and_stats, get_cache_option, get_compile_data, using_symbolic_values
 from thunder.core.interpreter import (
-    InterpreterLogItem,
-    interpret,
-    _interpret_call,
-    CapsuleType,
-    default_callbacks,
     INTERPRETER_CALLBACKS,
     INTERPRETER_SIGNALS,
-    default_opcode_interpreter,
-    _default_lookaside_map,
-    default_lookaside,
-    do_raise,
-    is_opaque,
+    CapsuleType,
+    InterpreterLogItem,
+    ProvenanceRecord,
+    PseudoInst,
     Py_NULL,
-    member_descriptor,
     WrappedValue,
+    _default_lookaside_map,
+    _interpret_call,
+    default_callbacks,
+    default_lookaside,
+    default_opcode_interpreter,
+    do_raise,
+    interpret,
+    interpreter_needs_wrap,
+    is_opaque,
+    member_descriptor,
     unwrap,
     wrap,
     wrap_const,
-    PseudoInst,
-    ProvenanceRecord,
-    interpreter_needs_wrap,
 )
-from thunder.core.langctxs import set_langctx, reset_langctx, Languages, resolve_language
-from thunder.core.baseutils import extract_callable_name
-from thunder.core.codeutils import get_siginfo, SigInfo
-import thunder.core.prims as prims
-from thunder.common import transform_for_execution
+from thunder.core.langctxs import Languages, reset_langctx, resolve_language, set_langctx
 from thunder.core.options import CACHE_OPTIONS, SHARP_EDGES_OPTIONS
-from thunder.core.symbol import Symbol, BoundSymbol, is_traceable
-
-from thunder.extend import Executor
-from thunder.common import CompileData, CompileStats
-from thunder.core.trace import TraceCtx, TraceResults
-from thunder.torch import _torch_to_thunder_function_map
-from thunder.clang import _clang_fn_set
+from thunder.core.proxies import (
+    DDPType,
+    FutureTensorProxy,
+    NumberProxy,
+    Proxy,
+    StringProxy,
+    TensorProxy,
+    Variable,
+    is_proxy_name_available,
+    make_proxy_name,
+    proxy,
+    unvariableify,
+    variableify,
+)
 from thunder.core.pytree import tree_map
-from thunder.core.compile_data import compile_data_and_stats
+from thunder.core.symbol import BoundSymbol, Symbol, is_traceable
+from thunder.core.trace import TraceCtx, TraceResults, from_trace, reset_tracectx, set_tracectx, tracectx
+from thunder.extend import Executor
+from thunder.torch import _torch_to_thunder_function_map
 
 #
 # jit_ext.py implements extensions of thunder's interpreter
@@ -380,9 +367,7 @@ class ThunderSharpEdgeError(RuntimeError):
 def _sharp_edge(desc: str, value: Any, /) -> Any | INTERPRETER_SIGNALS:
     sharp_edges: SHARP_EDGES_OPTIONS = get_minimal_ctx().sharp_edges
 
-    s: str = (
-        f"{desc} is a sharp edge that cannot be translated to a thunder program unless using interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON."
-    )
+    s: str = f"{desc} is a sharp edge that cannot be translated to a thunder program unless using interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON."
 
     if sharp_edges is SHARP_EDGES_OPTIONS.ERROR:
         return do_raise(ThunderSharpEdgeError(s))
@@ -474,9 +459,7 @@ class JITSharpEdgeError(RuntimeError):
 def _general_jit_sharp_edge(desc: str, value: Any, /) -> Any | INTERPRETER_SIGNALS:
     sharp_edges: SHARP_EDGES_OPTIONS = get_minimal_ctx().sharp_edges
 
-    s: str = (
-        f"{desc} This is currently considered a sharp edge even with interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON. For cases in which we are overly strict, please file an issue. Thank you!"
-    )
+    s: str = f"{desc} This is currently considered a sharp edge even with interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON. For cases in which we are overly strict, please file an issue. Thank you!"
 
     if sharp_edges is SHARP_EDGES_OPTIONS.ERROR:
         return do_raise(JITSharpEdgeError(s))
@@ -1529,7 +1512,7 @@ def thunder_general_jit(
     compile_data = get_compile_data()
     executor_lookasides = {k: interpreter_needs_wrap(v) for k, v in compile_data.executor_lookasides.items()}
 
-    process_group_for_ddp: Optional["ProcessGroup"] = _get_process_group_from(fn, *args, *kwargs.values())
+    process_group_for_ddp: "ProcessGroup" | None = _get_process_group_from(fn, *args, *kwargs.values())
     ctx: GeneralJitCtx = GeneralJitCtx(
         prologue_trace,
         computation_trace,

@@ -7,14 +7,14 @@ import torch
 from lightning_utilities import compare_version
 
 from thunder.core import prims, utils
-from thunder.core.proxies import Proxy, unvariableify, Variable
+from thunder.core.proxies import Proxy, Variable, unvariableify
 from thunder.core.rematerialization import rematerialize
 from thunder.core.symbol import BoundSymbol, Symbol
-from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
+from thunder.core.trace import TraceCtx, TraceProvenance, from_trace
 from thunder.core.transform_common import dce
 from thunder.executors.passes import update_fusion_call_ctx
 from thunder.executors.utils import Region
-from thunder.extend import FusionExecutor, register_executor, ImplInfo
+from thunder.extend import FusionExecutor, ImplInfo, register_executor
 
 _TORCH_GREATER_EQUAL_2_3 = compare_version("torch", operator.ge, "2.3.0", use_base_version=True)
 
@@ -141,7 +141,7 @@ class TorchCompileExecutor(FusionExecutor):
         fusedtrace: TraceCtx = from_trace(trace)
 
         producers, consumers = utils.producers_and_consumers(trace)
-        from thunder.executors.data_dependent_partition import fuse_bound_symbols, Node
+        from thunder.executors.data_dependent_partition import Node, fuse_bound_symbols
 
         def _should_fuse(a: Node, b: Node):
             def _can_fuse_node(n: Node):
@@ -188,7 +188,6 @@ class TorchCompileExecutor(FusionExecutor):
 
 
 from thunder.executors.torchex import ex as pytorch_ex
-
 
 # NOTE: [torch_compile_cat_ex vs torch_compile_ex]
 # The former only relies on `torch.compile` for the operators where it shines the most and is meant to be used

@@ -1,16 +1,17 @@
-from typing import Any
-from collections.abc import Callable
 import collections
 import traceback
+from collections.abc import Callable
+from typing import Any
+from warnings import warn
+
+import torch
 
 import thunder
-from thunder.core.trace import TraceCtx
+from thunder.core.langctxs import LanguageContext, Languages, resolve_language
 from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import BoundSymbol
+from thunder.core.trace import TraceCtx
 from thunder.torch import _torch_to_thunder_function_map
-from thunder.core.langctxs import resolve_language, LanguageContext, Languages
-import torch
-from warnings import warn
 
 
 # TODO Maybe make collect_into a set?

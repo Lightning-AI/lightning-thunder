@@ -4,7 +4,7 @@ from thunder.core.prims import PrimIDs
 from thunder.core.proxies import FutureTensorProxy, Proxy, TensorProxy
 from thunder.core.symbol import BoundSymbol, Symbol
 from thunder.core.trace import TraceCtx
-from thunder.core.utils import check_type, ProxyDict
+from thunder.core.utils import ProxyDict, check_type
 
 memory_calculate_skip_list = (PrimIDs.RETURN, "clear_collection")
 

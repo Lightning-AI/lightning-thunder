@@ -1,23 +1,23 @@
-from types import CodeType, FunctionType, MethodType, EllipsisType
-from typing import List, Dict, Tuple, Set, Deque, Any
-from numbers import Number
-from collections import deque
-from collections.abc import Mapping, Sequence, Iterable
-import inspect
-from inspect import Parameter
-import string
-import functools
-from functools import partial
 import dis
+import functools
+import inspect
+import string
+from collections import deque
+from collections.abc import Iterable, Mapping, Sequence
+from functools import partial
+from inspect import Parameter
+from numbers import Number
+from types import CodeType, EllipsisType, FunctionType, MethodType
+from typing import Any, Deque, Dict, List, Set, Tuple
 
 import torch
 
 import thunder.core.baseutils as baseutils
-from thunder.core.baseutils import ProxyInterface, check
-import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
-from thunder.core.pytree import tree_flatten, tree_unflatten
+import thunder.core.dtypes as dtypes
 from thunder.core.baseutils import *
+from thunder.core.baseutils import ProxyInterface, check
+from thunder.core.pytree import tree_flatten, tree_unflatten
 
 #
 # Functions related to analyzing and printing functions and arguments

@@ -1,16 +1,15 @@
 import re
-from typing import Any
 from functools import partial, wraps
+from typing import Any
 
 import pytest
 import torch
 from torch.testing import assert_close
 
 import thunder
-from thunder.tests.opinfos import get_opinfo
-from thunder.tests.make_tensor import make_tensor
 from thunder.core.transforms import grad
-
+from thunder.tests.make_tensor import make_tensor
+from thunder.tests.opinfos import get_opinfo
 
 einops = pytest.importorskip("einops")
 

@@ -1,10 +1,10 @@
-from typing import Any
 from collections.abc import Callable
 from functools import partial
+from typing import Any
 
-from thunder.core.trace import TraceCtx
-from thunder.core.symbol import BoundSymbol
 from thunder.core.codeutils import get_siginfo
+from thunder.core.symbol import BoundSymbol
+from thunder.core.trace import TraceCtx
 from thunder.core.utils import ProxyDict, producers
 
 #

@@ -6,10 +6,10 @@ import torch
 
 import thunder
 import thunder.core.dtypes as dtypes
-from thunder.core.pytree import tree_map
-from thunder.tests.framework import ops, run_snippet, requiresJAX
-from thunder.tests.opinfos import OpInfo, SampleInput, opinfos
 import thunder.tests.bf16
+from thunder.core.pytree import tree_map
+from thunder.tests.framework import ops, requiresJAX, run_snippet
+from thunder.tests.opinfos import OpInfo, SampleInput, opinfos
 
 #
 # Generic test templates for all operators
