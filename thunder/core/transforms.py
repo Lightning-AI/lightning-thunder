@@ -1380,7 +1380,7 @@ def _grad_out_specifier_default(pytree: Any) -> list[TensorProxy]:
 # The algorithm for modifying the program has the following steps:
 #   1) Flattens the original trace for the grad transform -- ensuing that all top-level symbols have
 #       a grad function.
-def grad(
+def __grad(
     cfn, grad_specifier: Callable = _grad_specifier_default, grad_out_specifier: Callable = _grad_out_specifier_default
 ) -> Callable:
     # Creates a custom transform callable that binds the additional arguments to the grad transform
@@ -1680,19 +1680,29 @@ def grad(
     return add_transform(cfn, transform=_grad_transform, disable_torch_autograd_support=True)
 
 
-def grad_v1(
+def grad(
     cfn,
 ) -> Callable:
     def grad(func):
+
+        @wraps(func)
         def grad_func(*args, **kwargs):
             _, grads = value_and_grad(func)(*args, **kwargs)
+            grads = tree_flatten(grads)[0]
             grads = [g for g in grads if g is not None]
             return grads
 
         return grad_func
 
     def _grad_transform(trc: Trace, *, executors_list: Sequence[Any]) -> Trace:
-        gradtrc = construct_trace()(grad(trc.python_callable()), *trc.args, **trc.kwargs)
+        # Using trc.python_callable() makes it impossible to retrace the
+        # function because the python_callable uses python_ctx which replaces
+        # symbol occurrences with its symbol._call_ctx function
+        @wraps(trc.python_callable())
+        def python_callable(*args, **kwargs):
+            return eval_trace(trc, *args, **kwargs)
+
+        gradtrc = construct_trace()(grad(python_callable), *trc.args, **trc.kwargs)
         return gradtrc
 
     cfn._using_grad_transform = True
@@ -2004,7 +2014,7 @@ def vmap_symbol_mapper(symbol: prims.Symbol, *, axis_size: int):
     def wrap_arg(x):
         if isinstance(x, BatchedValue):
             return x
-        elif isinstance(x, Number):
+        elif isinstance(x, (Number, NumberProxy)):
             return BatchedValue(x, not_mapped)
         else:
             raise ValueError(f"vmap wrap_arg got an unsupported type {type(x)}")
@@ -2075,7 +2085,7 @@ def _vmap_call_metafunc(detached: bool, args, in_dims, out_dims, axis_size, func
     if axis_size is None:
         (axis_size,) = {x.shape[ax] for x, ax in zip(args, in_dims) if ax is not not_mapped}
     in_dims = in_dims if isinstance(in_dims, Sequence) else (in_dims,)
-    in_dims = tuple(not_mapped if isinstance(a, Number) else d for a, d in safe_zip(args, in_dims))
+    in_dims = tuple(not_mapped if isinstance(a, (Number, NumberProxy)) else d for a, d in safe_zip(args, in_dims))
     out_dims = out_dims if isinstance(out_dims, Sequence) else (out_dims,)
 
     ctx = detached_trace() if detached else nullcontext()
@@ -2095,11 +2105,15 @@ def _vmap_call_metafunc(detached: bool, args, in_dims, out_dims, axis_size, func
                 out_dims = out_dims * len(outs)
             outs = safe_map(partial(move_batch_dim, axis_size), bdims, out_dims, outs)
             return tree_unflatten(outs, spec)
-        if isinstance(result, Number) and axis_size is not None:
+        if isinstance(result, (Number, NumberProxy)) and axis_size is not None:
             # TODO: fetch the default device from the context
             result = full(shape=(), fill_value=result, device=common_device)
             result = BatchedValue(result, not_mapped)
-        elif isinstance(result, BatchedValue) and isinstance(result.value, Number) and axis_size is not None:
+        elif (
+            isinstance(result, BatchedValue)
+            and isinstance(result.value, (Number, NumberProxy))
+            and axis_size is not None
+        ):
             result = BatchedValue(full(shape=(), fill_value=result.value, device=common_device), result.batch_dim)
         assert isinstance(result, BatchedValue)
         out = move_batch_dim(axis_size, result.batch_dim, out_dims[0], result.value)
@@ -3723,7 +3737,7 @@ def value_and_grad(func):
         elif isinstance(x, NumberProxy):
             return type(x.value)(1)
         else:
-            raise ValueError(f"ones_like inside value_and_grad got an unsupported type {type(x)}")
+            return None
 
     def _value_and_grad(*args, **kwargs):
         trace = construct_trace()(func, *args, **kwargs)

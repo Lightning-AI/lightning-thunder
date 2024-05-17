@@ -158,7 +158,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     _fsdp_comm_bucketing: FSDPCommBucketing | None = None
     if getattr(compile_data.fn, "use_fsdp", False):
         _fsdp_comm_bucketing = FSDPCommBucketing(compile_data, computation_trc)
-        fw_trace = _fsdp_comm_bucketing.apply_bucketing_to_forward_trace(fw_trace, bw_trace.names)
+        fw_trace = _fsdp_comm_bucketing.apply_bucketing_to_forward_trace(fw_trace)
 
     # Now we can run the optimization passes on the forward trace
     # TODO Restore request for no rematerialization
@@ -242,16 +242,16 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
         bw_extrace = sort_waits(bw_extrace)
 
     # Importing here to avoid cyclical dependencies in future.
-    from thunder.executors.transformer_engineex import _rearrange_transformer_engine_linear, transformer_engine_ex
+    from thunder.executors.transformer_engineex import _transformer_engine_bwd_fp8_meta_sync, transformer_engine_ex
 
     if transformer_engine_ex in compile_data.executors_list:
-        # NOTE: `_rearrange_transformer_engine_linear` mutates `fw_extrace`.
-        _rearrange_transformer_engine_linear(fw_extrace, bw_extrace)
+        # NOTE: `_transformer_engine_bwd_fp8_meta_sync` may mutate `fw_extrace` or `bw_extrace`.
+        _transformer_engine_bwd_fp8_meta_sync(fw_extrace, bw_extrace)
 
     fw_extrace = del_last_used(fw_extrace)
     fw_traces.append(fw_extrace)
 
-    bw_extrace = del_last_used(bw_extrace, clear_collections=True)
+    bw_extrace = del_last_used(bw_extrace, clear_mutable_collections=True)
     bw_traces.append(bw_extrace)
 
     bw_trace = rename_bwd_trace_outputs(bw_extrace, fw_extrace)
