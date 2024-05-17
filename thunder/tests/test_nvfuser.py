@@ -857,17 +857,19 @@ def test_optimization_fuel(executor, device, _):
     dtypes=(thunder.float16, thunder.bfloat16),
     devicetypes=(devices.DeviceType.CUDA,),
     executors=(nvFuserExecutor,),
-    decorators=(pytest.mark.skipif(
+    decorators=(
+        pytest.mark.skipif(
             nvfuser_version() is None or nvfuser_version() < LooseVersion("0.2.3"),
             reason="Requires nvFuser version 0.2.3 or later",
         ),
-        pytest.mark.parametrize("has_bias", [True, False], ids=["bias", "no_bias"])),
+        pytest.mark.parametrize("has_bias", [True, False], ids=["bias", "no_bias"]),
+    ),
 )
 def test_linear(executor, device: str, dtype: dtypes.dtype, has_bias: bool):
 
     def fn(a, b, bias=None):
         return torch.nn.functional.linear(a, b, bias)
-    
+
     for sample in linear_opinfo.sample_inputs(device, dtype):
         if nvfuser_version() < LooseVersion("0.2.5") and sample.args[0].ndim != 2:
             # Only 2D inputs are supported for version < 0.2.5.
