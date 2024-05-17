@@ -54,7 +54,7 @@ class TransformVisitor:
         return VISIT_TYPE.REPLACE
 
 
-@dataclass
+@dataclass(frozen=True)
 class TransformForColumnWiseParallel:
     rank: int
     world_size: int
@@ -68,8 +68,6 @@ class TransformForColumnWiseParallel:
         utils.check_type(self.compile_data, CompileData)
         if getattr(self.compile_data, "use_fsdp", False) or getattr(self.compile_data.fn, "use_fsdp", False):
             raise NotImplementedError("Currently thunder does not support the combination of fsdp and tensor parallel")
-
-        self.swap_map: dict[VariableInterface, ProxyInterface] = {}
 
     def __call__(
         self,
