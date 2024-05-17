@@ -2201,7 +2201,7 @@ def _linear_check(a: TensorProxy, b: TensorProxy, bias: TensorProxy | None) -> b
     if nv_version < LooseVersion("0.2.3"):
         return False
 
-    enable_linear: None | bool = get_compile_option("nv_enable_linear", "Enable nvFuser matmul.")
+    enable_linear: None | bool = get_compile_option("nv_enable_linear", "Enable nvFuser linear.")
     if not enable_linear:
         return False
     # Verify linear inputs and bias (optional) are supported tensors.
