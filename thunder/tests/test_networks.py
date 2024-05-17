@@ -87,8 +87,6 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
 @instantiate(dtypes=(thunder.float32,), devicetypes=(thunder.devices.DeviceType.CUDA,))
 @requiresCUDA
 def test_nanogpt_complete_cuda_graphs_autograd(executor, device, dtype):
-    pytest.skip("https://github.com/Lightning-AI/lightning-thunder/issues/1403")
-
     tdtype = ttorch.to_torch_dtype(dtype)
 
     # Creates a nanoGPT model with a smaller size than any of the default options for testing
