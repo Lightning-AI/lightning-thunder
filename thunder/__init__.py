@@ -324,7 +324,7 @@ def jit(
     # TODO RC1 Refine the compile data option to remove unused options
     # TODO: refine options
     # NOTE(fixme): use_cudagraphs is being absorbed into compile_options
-    use_cudagraphs = compile_options.get('use_cudagraphs', False)
+    use_cudagraphs = compile_options.get("use_cudagraphs", False)
     cd = CompileData(
         fn=fn,
         langctx=langctx,
