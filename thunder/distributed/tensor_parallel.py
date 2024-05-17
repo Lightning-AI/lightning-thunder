@@ -117,15 +117,14 @@ class TransformForColumnWiseParallel:
 # TODO(crcrpar): Add an option to turn off output all-gather.
 def convert_module_to_columnwise_parallel(
     thunder_module: ThunderModule,
-    *,
     target_modules: Sequence[str],
-    process_group: ProcessGroup,
+    process_group: ProcessGroup | None = None,
 ) -> ThunderModule:
     """Convert specified modules into column-wise parallel ones.
 
     This method has two effects:
-    1. Chunks target modules' parameters in 0-th dimension.
-    2. Inserts communications before and after of the target modules' computation.
+        1. Chunks target modules' parameters in 0-th dimension.
+        2. Inserts all-gather in the last dimension after the target modules' computation.
 
     Args:
         thunder_module:
@@ -133,6 +132,46 @@ def convert_module_to_columnwise_parallel(
     Keyword Args:
         target_modules: Names of modules to convert into column-wise.
         process_group:
+
+
+    Example:
+        .. code-block:: python
+
+            import os
+
+            import torch
+            import torch.nn
+            import torch.nn.functional as F
+            from torch.distributed import distributed_c10d
+
+            import thunder
+            from thunder.distributed import convert_module_to_columnwise_parallel
+
+
+            class Model(nn.Module):
+                def __init__(self, n_in: int, n_hidden: int, n_out: int) -> None:
+                    super().__init__()
+                    self.l1 = nn.Linear(n_in, n_hidden)
+                    self.l2 = nn.Linear(n_hidden, n_out)
+
+                def forward(self, x: torch.Tensor) -> torch.Tensor:
+                    h = F.gelu(self.l1(x), approximate='tanh')
+                    return self.l2(h)
+
+            world_size = int(os.environ["WORLD_SIZE"])
+            local_rank = int(os.environ["LOCAL_RANK"])
+            device = torch.device(f"cuda:{local_rank}")
+            distributed_c10d.init_process_group()
+            model = Model().to(device)
+            jitted_model = thunder.jit(model)
+            # `l2`'s output size (= n_out) needs to be divisible by `world_size`
+            tp_model = convert_module_to_columnwise_parallel(
+                jitted_model,
+                target_modules=("l2",),
+            )
+
+            x = torch.randn(4, n_in, device=device)
+            out = tp_model(x)  # shape: [4, n_out]
     """
     from thunder import compile_data as get_compile_data
     from thunder.distributed import _shard_param
@@ -141,6 +180,8 @@ def convert_module_to_columnwise_parallel(
 
     utils.check_type(thunder_module, ThunderModule)
 
+    if process_group is None:
+        process_group = distributed_c10d._get_default_group()
     rank = distributed_c10d.get_rank(process_group)
     world_size = distributed_c10d.get_world_size(process_group)
 

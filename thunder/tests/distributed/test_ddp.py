@@ -1042,7 +1042,7 @@ class CompileDDPTest(DataParallelTestCase):
         x = torch.randn(2, 12).to(device)
         c10d.all_reduce(x)
 
-        process_group = c10d._get_default_group()
+        process_group = None
         ref_model = ToyModel().to(device)
         ref_state_dict = ref_model.state_dict()
         expected = ref_model(x)
