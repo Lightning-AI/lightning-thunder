@@ -3341,13 +3341,16 @@ def avg_pool3d(
     return _avg_pool_helper(3, a, kernel_size, stride, padding, ceil_mode, count_include_pad, divisor_override)
 
 
-@torchsymbol(torch.nn.functional.adaptive_avg_pool2d, id="torch.nn.functional.adaptive_avg_pool2d", is_method=False, is_prim=True)
+@torchsymbol(
+    torch.nn.functional.adaptive_avg_pool2d, id="torch.nn.functional.adaptive_avg_pool2d", is_method=False, is_prim=True
+)
 def adaptive_avg_pool2d(
     a: TensorProxy,
     /,
     output_size: int | Sequence[int],
 ) -> TensorProxy:
     from thunder.core.baseutils import check_valid_shape, check_valid_length
+
     utils.check_type(output_size, (int, IntegerProxy, Sequence))
     if isinstance(output_size, Sequence):
         utils.check(len(output_size) == 2, lambda: f"adaptive_avg_pool2d: output_size must be 2")
