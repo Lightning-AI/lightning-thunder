@@ -24,8 +24,9 @@ _INSTALLED_NEW_THEME = package_available("lai_sphinx_theme")
 if _INSTALLED_NEW_THEME:
     import lai_sphinx_theme
 else:
-    import pt_lightning_sphinx_theme
     import warnings
+
+    import pt_lightning_sphinx_theme
 
     warnings.warn(
         "You are using the old theme, please install the new theme 'lai_sphinx_theme';"
@@ -415,4 +416,4 @@ import torch
 """
 coverage_skip_undoc_in_source = True
 
-import thunder  # noqa: E402 # making the docs build happy
+import thunder  # making the docs build happy

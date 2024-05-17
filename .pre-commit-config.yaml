@@ -29,13 +29,6 @@ repos:
         additional_dependencies: [tomli]
         #args: ["--write-changes"] # uncomment if you want to get automatic fixing
 
-  - repo: https://github.com/psf/black
-    rev: 24.4.2
-    hooks:
-      - id: black
-        name: Black code
-        exclude: "examples"
-
   - repo: https://github.com/executablebooks/mdformat
     rev: 0.7.17
     hooks:
@@ -51,18 +44,14 @@ repos:
     hooks:
       - id: sphinx-lint
 
-  - repo: https://github.com/asottile/yesqa
-    rev: v1.5.0
-    hooks:
-      - id: yesqa
-
-  - repo: https://github.com/charliermarsh/ruff-pre-commit
+  - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.4.4
     hooks:
       - id: ruff
         args: ["--fix"]
         exclude: "examples"
-
+      - id: ruff-format
+        exclude: "examples"
 
   - repo: https://github.com/pre-commit/mirrors-prettier
     rev: v3.1.0

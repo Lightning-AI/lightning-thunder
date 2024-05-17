@@ -8,7 +8,6 @@ from pathlib import Path
 from pkg_resources import parse_requirements
 from setuptools import find_packages, setup
 
-
 _PATH_ROOT = os.path.dirname(__file__)
 _PATH_REQUIRES = os.path.join(_PATH_ROOT, "requirements")
 # check if os env. variable is set to convert version to nightly

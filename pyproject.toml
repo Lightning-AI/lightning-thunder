@@ -87,7 +87,9 @@ target-version = "py310"
 [tool.ruff.lint]
 # TODO: Enable Pyflakes `E` and `F` codes by default.
 select = [
+    "I",  # isort
     "UP", # see: https://docs.astral.sh/ruff/rules/#pyupgrade-up
+    "RUF100", # yesqa
 #    "E", "W",  # see: https://pypi.org/project/pycodestyle
 #    "F",  # see: https://pypi.org/project/pyflakes
 #    "D",  # see: https://pypi.org/project/pydocstyle
