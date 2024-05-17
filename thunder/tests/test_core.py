@@ -2332,19 +2332,20 @@ def test_clone():
                 assert b.shape == torch.Size(shp)
 
 
-@pytest.mark.xfail(reason="randn() call fails, before getting to thunder")
+@pytest.mark.xfail(reason="missing torch support for repeat'ing sparse tensors")
 def test_clone_sparse_coo():
     def foo(a):
         return a.clone()
 
     jfoo = thunder.jit(foo)
     shp = (3, 5)
-    dev = "cpu"
-    lout = torch.sparse_coo
+    dev = torch.device("cpu")
     dt = torch.float32
-    b = jfoo(torch.randn(shp, device=dev, layout=lout, dtype=dt))
+    # randn(layout=torch.sparse_coo, ...) will fail, so we use to_sparse()
+    # from a dense tensor to get a sparse one.
+    b = jfoo(torch.randn(shp, device=dev, dtype=dt).to_sparse())
     assert b.dtype == dt
-    assert b.layout == lout
+    assert b.layout == torch.sparse_coo
     assert b.device == dev
     assert b.shape == torch.Size(shp)
 

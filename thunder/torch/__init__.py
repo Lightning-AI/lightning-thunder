@@ -2001,9 +2001,14 @@ def amin(a, /, dim=None, keepdim: bool = False):
     )
 
 
-@torchsymbol(torch.clone, is_method=True)
+# Clone is unique in that it's not registered as a symbol; as such we add it to
+# the appropriate maps manually, instead of through the @torchsymbol decorator.
 def clone(a: TensorProxy, *, memory_format=torch.preserve_format) -> TensorProxy:
-    return a
+    b = repeat(a, [1]*len(a.shape))
+    return b
+_torch_to_thunder_function_map[torch.clone] = clone
+_torch_to_thunder_function_map[torch.Tensor.clone] = clone
+register_method("clone", clone)
 
 
 @torchsymbol(torch.mean, is_method=True)
