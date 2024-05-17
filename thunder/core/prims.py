@@ -146,6 +146,7 @@ class PrimIDs(Enum):
     UNIFORM = auto()
     UNIFORM_PHILOX = auto()
     RANDN = auto()
+    EMPTY = auto()
     TENSOR_FROM_SEQUENCE = auto()
     # Probability distribution-related ops
     MULTINOMIAL = auto()
@@ -1596,7 +1597,7 @@ python_return = make_prim(
 
 
 # TODO Review number grad handling with dynamic constraints
-def _get_grad_meta(a: Number | TensorProxy, /) -> Number | TensorProxy:
+def _get_grad_meta(a: Number | NumberProxy | TensorProxy, /) -> Number | TensorProxy:
     utils.check_type(a, (Number, NumberProxy, TensorProxy))
 
     if isinstance(a, TensorProxy):
@@ -1613,9 +1614,9 @@ get_grad = make_prim(
 )
 
 
-def _put_grad_meta(grad_for: Number | TensorProxy, grad: Number | TensorProxy) -> None:
-    utils.check_type(grad_for, (Number, TensorProxy))
-    utils.check_type(grad, (Number, TensorProxy))
+def _put_grad_meta(grad_for: Number | NumberProxy | TensorProxy, grad: Number | NumberProxy | TensorProxy) -> None:
+    utils.check_type(grad_for, (Number, NumberProxy, TensorProxy))
+    utils.check_type(grad, (Number, NumberProxy, TensorProxy))
 
     # Attempts to put a grad for a number or tensor with an exact dtype are ignored
     if dtypes.is_exact_dtype(dtypes.to_dtype(grad_for)):
@@ -1705,19 +1706,21 @@ numpy_array_to_torch_tensor = make_prim(
 #   usually produce an output with that same datatype (SAME).
 #   Sometimes, however, elementwise operations can produce an output with a different
 #   datatype than the inputs. For example, comparison operations like eq and lt always
-#   produce boolean results (ALWAYS_BOOL), and other operations, like abs, map
+#   produce boolean results (ALWAYS_BOOL), math.ceil/math.floor produces integer outputs for number inputs while preserves datatype for tensor inputs, and other operations, like abs, map
 #   complex numbers to floats (COMPLEX_TO_FLOAT).
 #   The ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND enum describes these three behaviors so that
 #   elementwise operations can rely on helper functions to implement this behavior.
 class ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND(Enum):
     SAME = auto()
     ALWAYS_BOOL = auto()
+    INT_FOR_NUMBER = auto()
     COMPLEX_TO_FLOAT = auto()
 
 
 math_dtypes = dtypes.all_dtypes_and_numbertypes - dtypes.low_precision_dtypes
 fp_math_dtypes = math_dtypes - dtypes.exact_dtypes
 comparison_dtypes = dtypes.all_dtypes_and_numbertypes - dtypes.complex_dtypes
+ceil_floor_math_dtypes = dtypes.float_dtypes | dtypes.all_numbertypes - {complex}
 
 #
 # Elementwise unary prims
@@ -1754,6 +1757,8 @@ def _elementwise_unary_meta_factory(
                 output_type = typ
             elif output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL:
                 output_type = bool
+            elif output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.INT_FOR_NUMBER:
+                output_type = int
             elif output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.COMPLEX_TO_FLOAT:
                 if dtypes.is_complex_dtype(typ):
                     output_type = float
@@ -1790,7 +1795,10 @@ def _elementwise_unary_meta_factory(
         # Checks that dtype is supported
         utils.check(a.dtype in supported_input_dtypes, lambda: f"Unsupported input dtype {a.dtype}")
 
-        if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME:
+        if (
+            output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME
+            or output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.INT_FOR_NUMBER
+        ):
             return TensorProxy(like=a)
         if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL:
             return TensorProxy(like=a, dtype=dtypes.bool8)
@@ -1906,7 +1914,8 @@ ceil = _make_elementwise_unary_prim(
     PrimIDs.CEIL,
     "ceil",
     number_fn=math.ceil,
-    supported_input_dtypes=dtypes.float_dtypes,
+    supported_input_dtypes=ceil_floor_math_dtypes,
+    output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.INT_FOR_NUMBER,
 )
 
 cos = _make_elementwise_unary_prim(
@@ -1971,7 +1980,8 @@ floor = _make_elementwise_unary_prim(
     PrimIDs.FLOOR,
     "floor",
     number_fn=math.floor,
-    supported_input_dtypes=dtypes.float_dtypes,
+    supported_input_dtypes=ceil_floor_math_dtypes,
+    output_dtype_kind=ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.INT_FOR_NUMBER,
 )
 
 isfinite = _make_elementwise_unary_prim(
@@ -2680,6 +2690,22 @@ def _randn_meta(
 randn = make_prim(PrimIDs.RANDN, "randn", meta=_randn_meta)
 
 
+def _empty_meta(
+    shape: tuple[int, ...],
+    *,
+    device: devices.Device,
+    dtype: dtypes.dtype,
+):
+    utils.check_type(device, devices.Device)
+    utils.check_type(dtype, dtypes.dtype)
+    utils.check_type(shape, tuple)
+    utils.check_valid_shape(shape)
+    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
+
+
+empty = make_prim(PrimIDs.EMPTY, "empty", meta=_empty_meta)
+
+
 # Prim to construct a Tensor from sequence/nested sequence of Numbers.
 def _tensor_from_sequence_meta(
     seq: Sequence[Number | Sequence], *, dtype: None | dtypes.dtype, device: devices.Device
@@ -2915,7 +2941,6 @@ def flip_meta(a: TensorProxy, /, dims: Sequence[int]) -> TensorProxy:
     utils.check_type(a, TensorProxy)
     utils.check_type(dims, Sequence)
     utils.check(
-        # all(0 <= d < a.ndim if isinstance(d, (int, IntegerProxy)) else 0 <= pyval(d) < a.ndim for d in dims),
         all(
             (
                 0 <= d < a.ndim

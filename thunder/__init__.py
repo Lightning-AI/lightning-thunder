@@ -260,6 +260,7 @@ def jit(
     interpretation: None | INTERPRETATION_OPTIONS | str = None,
     cache: None | CACHE_OPTIONS | str = None,
     disable_torch_autograd: bool = False,  # TODO Revisit this UX for RC1
+    early_transforms: list | None = None,
     additional_transforms: list | None = None,
     record_history: bool = False,
     **compile_options,  # TODO RC1 Make this explicit -- dict of options
@@ -270,7 +271,7 @@ def jit(
         fn: A :class:`~torch.nn.Module` or a function to compile.
     Keyword Args:
         langctx: the language context, which language / library to emulate. default: "torch" for PyTorch compatibility.
-        executors: list of executors to use. Defaults to the executors returned by :func:`thunder.get_default_executors` and always amended by :func:`thunder.get_always_executors`.
+        executors: list of executors to use. Defaults to the executors returned by :func:`thunder.extend.get_default_executors` and always amended by :func:`thunder.extend.get_always_executors`.
                    You can get a list of all available executors with :func:`thunder.get_all_executors`. You can also pass the name of an executor that's been registered, and it will be resolved with :func:`thunder.extend.get_executor`.
         sharp_edges: sharp edge detection action. What to do when thunder detects a construct that is likely to lead to errors. Can be ``"allow"``, ``"warn"``, ``"error"``. Defaults to ``"allow"``.
         cache: caching mode. default: ``"constant values"```
@@ -279,6 +280,9 @@ def jit(
                - ``"constant values"`` - require Tensors to be of the same shape, device, dtype etc., and integers and strings to match exactly,
                - ``"same input"`` - don't check, but just assume that a cached function works if it exists.
         interpretation: (deprecated: don't use this, use the thunder.functional.jit entry point to get the functional jit)
+
+        early_transforms: List of transforms to be applied to prologue, computation, and epilogue traces before executing the prologue. Default: ``None```
+        transforms: List of transforms to be applied to the computation trace. Default: ``None```
     """
 
     if "executors_list" in compile_options:
@@ -295,6 +299,9 @@ def jit(
         interpreter = functional._translate_functions_interpreter
     elif interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
         interpreter = _general_frontend
+
+    if early_transforms is None:
+        early_transforms = []
 
     if additional_transforms is None:
         additional_transforms = []
@@ -471,24 +478,41 @@ def jit(
                 epilogue_trc = jit_results.epilogue_trace
                 last_interpreter_log = jit_results.interpreter_log
 
+            prologue_traces = [prologue_trc]
+            computation_traces = [computation_trc]
+
             if epilogue_trc is not None:
                 epilogue_traces = [epilogue_trc]
-                epilogue = epilogue_trc.python_callable()
             else:
                 epilogue_traces = None
-                epilogue = None
 
             cs.last_trace_tracing_stop = time.time_ns()
 
             # Makes the prologue callable
             cs.last_prologue_transformation_start = time.time_ns()
-            protraces = transform_for_execution(
+
+            transform: Callable
+            for transform in early_transforms:
+                prologue_trc, computation_trc, epilogue_trc = transform(
+                    prologue_trc, computation_trc, epilogue_trc, executors_list=cd.executors_list
+                )
+                prologue_traces.append(prologue_trc)
+                computation_traces.append(computation_trc)
+                if epilogue_trc is not None:
+                    epilogue_traces.append(epilogue_trc)
+
+            prologue_traces += transform_for_execution(
                 prologue_trc,
                 executors_list=(pythonex,),
                 use_del_last_used=False,
             )
-            protrace = protraces[-1]
+            protrace = prologue_traces[-1]
             pro = protrace.python_callable()
+
+            if epilogue_trc is not None:
+                epilogue = epilogue_trc.python_callable()
+            else:
+                epilogue = None
 
             cs.last_prologue_transformation_stop = time.time_ns()
 
@@ -500,7 +524,6 @@ def jit(
                 pro_to_epi = None
             cs.last_prologue_execution_stop = time.time_ns()
 
-            computation_traces = [computation_trc]
             cs.last_traces = computation_traces
             backward_traces = []
             cs.last_backward_traces = backward_traces
@@ -532,19 +555,15 @@ def jit(
                     # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
                     # by split_forward_backward
                     extraces = cs.last_traces
-                    check(
-                        not additional_transforms,
-                        lambda: "Specifying additional_transforms is not supported with PyTorch Autograd integration",
-                    )
 
             if backward_trc is None:
-                cs.last_computation_transformation_start = time.time_ns()
-
                 ## EPILOGUE and TRANSFORMS should not mix...
                 # applies transforms
+                cs.last_computation_transformation_start = time.time_ns()
                 for transform in additional_transforms:
                     computation_trc = transform(computation_trc, executors_list=cd.executors_list)
                     computation_traces.append(computation_trc)
+                cs.last_computation_transformation_stop = time.time_ns()
 
                 with langctxs.langctx(cd.langctx):
                     extraces = transform_for_execution(
@@ -552,8 +571,9 @@ def jit(
                         executors_list=cd.executors_list,
                     )
                 computation_trc = extraces[-1]
-                cs.last_computation_transformation_stop = time.time_ns()
 
+            if not compile_options.get("disable_inplace_copy_check", False):
+                thunder.core.transform_common._inplace_copy_sanity_check(computation_trc)
             comp = computation_trc.python_callable()
 
             if backward_trc is not None:
@@ -564,7 +584,7 @@ def jit(
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(
                 pro,
-                protraces,
+                prologue_traces,
                 comp,
                 extraces,
                 epilogue,
@@ -577,7 +597,7 @@ def jit(
                 cs.interpreter_cache.append(cache_entry)
 
             cs.last_traces += extraces
-            cs.last_prologue_traces = [prologue_trc] + protraces
+            cs.last_prologue_traces = [prologue_trc] + prologue_traces
             cs.last_prologue = pro
 
         return cache_entry, inps, pro_to_epi
@@ -634,6 +654,7 @@ def jit(
     # Sets compile options and statistics attributes
     fn_._lc_cd = cd
     fn_._lc_cs = cs
+    fn_._lc_early_transforms = early_transforms[:]  ## transforms
     fn_._lc_transforms = additional_transforms[:]  ## transforms
     fn_._lc_post_optimization_transforms = []  ## post_optimization_transforms
 
@@ -674,7 +695,7 @@ def compile(
 def compile_data(fn) -> CompileData | None:
     """Obtains the compilation data from a JITed function.
 
-    The compile data (:class:`CompileData`) contains information about how the JIT has been configured
+    The compile data (:class:`thunder.common.CompileData`) contains information about how the JIT has been configured
     for compilation (including referencing the function or module that is being compiled).
     """
     return getattr(fn, "_lc_cd", None)
@@ -683,7 +704,7 @@ def compile_data(fn) -> CompileData | None:
 def compile_stats(fn) -> CompileStats | None:
     """Obtains the compilation statistics from a JITed function.
 
-    The compilation statistics (:class:`CompileStats`) contain information about each compilation run -
+    The compilation statistics (:class:`thunder.common.CompileStats`) contain information about each compilation run -
     collected when a JITed function is called for the first time or with previously unseen state.
     This includes the cache of traces (pologues, computation, possibly backward and epilogue) and
     how they have been transformed and information about cache hits and misses and timings.
@@ -792,13 +813,13 @@ def print_last_interpreter_log(
     """Prints a log of the last run of the interpreter for the given function.
 
     Args:
-        fn: The function returned by `thunder.jit()` to print the last interpreter run log for. The function must have been called at least once first.
+        fn: The function returned by :func:`thunder.jit` to print the last interpreter run log for. The function must have been called at least once first.
         print_fn: The function to use for printing. Defaults to builtin `print`.
         use_colors: Whether to use colors in the output. Defaults to `None`, which attempts to autodetect if the terminal supports ANSI color.
-        indent: Whether to indent the output with function scope. Defaults to `True`.
-        max_depth: The maximum indentation depth of the output. Doesn't print log items nested deeper than the max depth. Defaults to `None`, which means no limit.
-        color_internals: Whether to color instructions implicitly interpreted by other instructions. Defaults to `False`, so that only the instructions in the user's code are highlighted in color.
-        print_source_code: Whether to print the source line below each LineLogItem in the log. Defaults to `True`.
+        indent: Whether to indent the output with function scope. Defaults to :obj:`True`.
+        max_depth: The maximum indentation depth of the output. Doesn't print log items nested deeper than the max depth. Defaults to :obj:`None`, which means no limit.
+        color_internals: Whether to color instructions implicitly interpreted by other instructions. Defaults to :obj:`False`, so that only the instructions in the user's code are highlighted in color.
+        print_source_code: Whether to print the source line below each LineLogItem in the log. Defaults to :obj:`True`.
     """
     log = last_interpreter_log(fn)
     print_interpreter_log(

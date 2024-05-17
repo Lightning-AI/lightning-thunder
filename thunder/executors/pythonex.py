@@ -219,13 +219,13 @@ def _signbit_prim_impl(a: Number) -> bool:
     return a < 0
 
 
-def _clear_collection_meta(coll: CollectionProxy) -> None:
+def _clear_mutable_collection_meta(coll: CollectionProxy) -> None:
     baseutils.check_type(coll, CollectionProxy)
     baseutils.check_type(coll.coll, Sequence)
     return None
 
 
-def _clear_collection_prim_impl(a: Collection) -> None:
+def _clear_mutable_collection_prim_impl(a: Collection) -> None:
     if isinstance(a, (MutableSequence, MutableMapping, MutableSet)):
         a.clear()
 
@@ -241,7 +241,9 @@ tensor_abs = ex.register_operator("tensor_abs", like=prims.abs, fn=_tensor_abs_p
 neg = ex.register_operator("neg", like=prims.neg, module=operator)
 real = ex.register_operator("real", like=prims.real, fn=_real_prim_impl)
 signbit = ex.register_operator("signbit", like=prims.signbit, fn=_signbit_prim_impl)
-clear_collection = ex.register_operator("clear_collection", meta=_clear_collection_meta, fn=_clear_collection_prim_impl)
+clear_mutable_collection = ex.register_operator(
+    "clear_mutable_collection", meta=_clear_mutable_collection_meta, fn=_clear_mutable_collection_prim_impl
+)
 
 ex.register_implementation(prims.acos, acos, checker=_elementwise_unary_checker)
 ex.register_implementation(prims.acosh, acosh, checker=_elementwise_unary_checker)

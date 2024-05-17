@@ -30,7 +30,13 @@ from thunder.distributed import prims
 from thunder.tests.framework import TorchExecutor, nvFuserExecutor
 from thunder.tests.framework import instantiate
 
-from thunder.executors.transformer_engineex import transformer_engine_ex, TE_AVAILABLE
+from thunder.executors.transformer_engineex import (
+    transformer_engine_ex,
+    TE_AVAILABLE,
+    TE_VERSION_1_6_PLUS,
+    te_sync_fp8_meta_bwd,
+)
+
 
 is_fp8_supported: bool = False
 # This will be correctly updated below when TE Engine is installed
@@ -724,7 +730,7 @@ class CompileDDPTest(DataParallelTestCase):
 
     # TODO(crcrpar): Add torch compile to executors_list
     @common_utils.parametrize(
-        "executor,bucketing_strategy,fsdptype",
+        "executor,bucketing_strategy,fsdptype,apply_fsdp_first",
         product(
             tuple(executors_map.keys()),
             (
@@ -732,9 +738,10 @@ class CompileDDPTest(DataParallelTestCase):
                 FSDPBucketingStrategy.BLOCK,
             ),
             (FSDPType.ZERO2, FSDPType.ZERO3),
+            (True, False),
         ),
-        name_fn=lambda executor, bucketing_strategy, fsdptype: (
-            f"executor_{executor}_bucketing_{str(bucketing_strategy).split('.')[1].lower()}_{(str(fsdptype).lower().split('.')[1])}"
+        name_fn=lambda executor, bucketing_strategy, fsdptype, apply_fsdp_first: (
+            f"executor_{executor}_bucketing_{str(bucketing_strategy).split('.')[1].lower()}_{(str(fsdptype).lower().split('.')[1])}_{'jit_fsdp' if apply_fsdp_first else 'fsdp_jit'}"
         ),
     )
     def test_fsdp_grad_parity_with_without_bucketing(
@@ -742,6 +749,7 @@ class CompileDDPTest(DataParallelTestCase):
         executor,
         bucketing_strategy: FSDPBucketingStrategy,
         fsdptype: FSDPType,
+        apply_fsdp_first: bool,
     ):
         from thunder.distributed import fsdp
 
@@ -751,10 +759,18 @@ class CompileDDPTest(DataParallelTestCase):
         for strategy in (FSDPBucketingStrategy.NONE, bucketing_strategy):
             m = ToyModel()
             m.load_state_dict(initial_model_state)
-            cm = thunder.jit(
-                fsdp(m, device=device, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype),
-                executors=executors_map[executor].executors_list(),
-            )
+            if apply_fsdp_first:
+                cm = thunder.jit(
+                    fsdp(m, device=device, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype),
+                    executors=executors_map[executor].executors_list(),
+                )
+            else:
+                cm = fsdp(
+                    thunder.jit(m.to(device), executors=executors_map[executor].executors_list()),
+                    device=device,
+                    bucketing_strategy=bucketing_strategy,
+                    sharding_strategy=fsdptype,
+                )
             x = torch.ones((2, 12), device=device)
             loss = cm(x).mean()
             loss.backward()
@@ -777,6 +793,7 @@ class CompileDDPTest(DataParallelTestCase):
                             ex_trace.bound_symbols,
                         )
                     )
+                    self.assertGreater(len(pack_bsyms), 0)
                     has_pack_multiple_tensors = False
                     for bsym in pack_bsyms:
                         first_arg = bsym.args[0]
@@ -788,6 +805,55 @@ class CompileDDPTest(DataParallelTestCase):
                         self.assertTrue(has_pack_multiple_tensors, msg=f"{[bsym.args[0] for bsym in pack_bsyms]=}")
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
+    @common_utils.parametrize(
+        "bucketing_strategy,fsdptype",
+        product(
+            (
+                FSDPBucketingStrategy.NONE,
+                FSDPBucketingStrategy.BLOCK,
+            ),
+            (FSDPType.ZERO2, FSDPType.ZERO3),
+        ),
+        name_fn=lambda bucketing_strategy, fsdptype: (
+            f"bucketing_{str(bucketing_strategy).split('.')[1].lower()}_{(str(fsdptype).lower().split('.')[1])}"
+        ),
+    )
+    def test_fsdp_with_padding(
+        self,
+        bucketing_strategy: FSDPBucketingStrategy,
+        fsdptype: FSDPType,
+    ):
+
+        from thunder.core.prims import PrimIDs
+        from thunder.executors.torchex import pad_prim_impl
+        from thunder.executors.torchex import slice_prim_impl
+
+        class M(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.l1 = nn.Linear(4, 13)
+                self.l2 = nn.Linear(13, 1)
+
+            def forward(self, x):
+                return self.l2(new_gelu(self.l1(x)))
+
+        device = torch.device(f"cuda:{self.rank}")
+        m = M().to(device)
+        jitted = thunder.jit(fsdp(m, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype))
+
+        x = torch.randn(4, 4, device=device)
+        y = jitted(x)
+        y.mean().backward()
+
+        fw_extrace = thunder.last_traces(jitted)[-1]
+        fw_symids = [bsym.sym.id for bsym in fw_extrace.bound_symbols]
+        self.assertTrue(any(sym_id in {PrimIDs.SLICE, slice_prim_impl.id} for sym_id in fw_symids))
+
+        bw_trace = thunder.last_backward_traces(jitted)[0]
+        bw_symids = [bsym.sym.id for bsym in bw_trace.bound_symbols]
+        self.assertTrue(any(sym_id in {PrimIDs.PAD, pad_prim_impl.id} for sym_id in bw_symids))
+
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
     def test_fsdp_shard_unshard(self):
         from thunder.distributed import _shard_params, _unshard_params
 
@@ -797,6 +863,7 @@ class CompileDDPTest(DataParallelTestCase):
         model = torch.nn.Linear(3, 5, bias=False, device="meta")
         with pytest.raises(RuntimeError, match=r"parameter 'weight' \(5\) to be divisible by the world size \(2\)"):
             _shard_params(model, pg, device, None)
+        _shard_params(model, pg, device, None, allow_padding_for_fsdp=True)
 
         model = torch.nn.Linear(3, 4, bias=False, device="meta")
         weight = torch.arange(3 * 4, device="cpu", dtype=torch.float).view(4, 3)
@@ -1264,17 +1331,16 @@ def _test_native_fsdp_helper(input_data):
 
     original_weight_net1_shape = model.net1.weight.shape
 
-    fsdp_model = fsdp(model, bucketing_strategy=bucketing_strategy, device=device)
-
-    # Check that the model is sharded
-    sharded_weight_net1 = fsdp_model.net1.weight
-    assert sharded_weight_net1.shape != original_weight_net1_shape
-    assert sharded_weight_net1.shape == (1, 2)
-
-    cmodel = thunder.jit(
-        fsdp_model,
+    cmodel0 = thunder.jit(
+        model,
         executors=executor.executors_list(),
     )
+    cmodel = fsdp(cmodel0, bucketing_strategy=bucketing_strategy, device=device)
+
+    # Check that the model is sharded
+    sharded_weight_net1 = cmodel.get_parameter("net1.weight")
+    assert sharded_weight_net1.shape != original_weight_net1_shape
+    assert sharded_weight_net1.shape == (1, 2)
 
     comparison_exceptions = []
     for _ in range(num_epochs):
@@ -1502,21 +1568,31 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
         fwd_exec_trace = thunder.last_traces(jit_model)[-1]
         bwd_exec_trace = thunder.last_backward_traces(jit_model)[-1]
 
-        # Verify that the first te_linear in fwd_exec_trace is the
-        # last one in bwd_exec_tarce.
-        # We verify that by managing the `ctx` (CollectionProxy) output by `te_linear` which is
-        # passed to backward.
-        # As CollectionProxy don't implement __eq__, we verify them by name.
-        first_ctx_name = None
-        for bsym in fwd_exec_trace.bound_symbols:
-            if bsym.sym.name.startswith("te_linear"):
-                first_ctx_name = bsym.output[1].name
-                break
+        if TE_VERSION_1_6_PLUS:
+            # Verify that the symbol to sync backward
+            # fp8 metadata is present in backward trace.
+            for bsym in reversed(bwd_exec_trace.bound_symbols):
+                if bsym.sym.id == te_sync_fp8_meta_bwd.id:
+                    break
+            else:
+                raise RuntimeError("Backward sync symbol not found.")
 
-        for bsym in reversed(bwd_exec_trace.bound_symbols):
-            if bsym.sym.name.startswith("te_functional"):
-                assert first_ctx_name == bsym.args[-1].name, (first_ctx_name, bsym.args[-1].name)
-                break
+        else:
+            # Verify that the first te_linear in fwd_exec_trace is the
+            # last one in bwd_exec_tarce.
+            # We verify that by managing the `ctx` (CollectionProxy) output by `te_linear` which is
+            # passed to backward.
+            # As CollectionProxy don't implement __eq__, we verify them by name.
+            first_ctx_name = None
+            for bsym in fwd_exec_trace.bound_symbols:
+                if bsym.sym.name.startswith("te_linear"):
+                    first_ctx_name = bsym.output[1].name
+                    break
+
+            for bsym in reversed(bwd_exec_trace.bound_symbols):
+                if bsym.sym.name.startswith("te_functional"):
+                    assert first_ctx_name == bsym.args[-1].name, (first_ctx_name, bsym.args[-1].name)
+                    break
     except Exception as e:
         sanity_exceptions.append(e)
 
