@@ -504,7 +504,7 @@ class FSDPCommBucketing:
         fwd_trace_flat_args, _ = tree_flatten((fwd_trace.args, fwd_trace.kwargs))
         return fwd_trace_flat_args
 
-    def apply_bucketing_to_forward_trace(self, fwd_trace: TraceCtx, bwd_trace_names: set[str]) -> TraceCtx:
+    def apply_bucketing_to_forward_trace(self, fwd_trace: TraceCtx) -> TraceCtx:
         """Optimize collective comms in fsdp with bucketing.
 
         This function is no-op if you pass :obj:`BucketingStrategy.NONE` as kwarg of ``sharding_strategy`` to :func:`thunder.distributed.fsdp`.
