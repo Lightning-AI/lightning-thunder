@@ -2313,6 +2313,42 @@ def test_preserve_weight_names(executor, device: str, dtype: dtypes.dtype):
     assert "t_fc2_weight" in sig.parameters
 
 
+@requiresCUDA
+def test_clone():
+    def foo(a):
+        return a.clone()
+
+    jfoo = thunder.jit(foo)
+    for shp in ((3, 5), [7], (8, 6, 4)):
+        for dev in (torch.device("cpu"), torch.device("cuda:0")):
+            for dt in (torch.float32, torch.float16, torch.bfloat16):
+                # there are issues with layouts other than strided; see
+                # test_clone_sparse_coo.
+                lout = torch.strided
+                b = jfoo(torch.randn(shp, device=dev, layout=lout, dtype=dt))
+                assert b.dtype == dt
+                assert b.layout == lout
+                assert b.device == dev
+                assert b.shape == torch.Size(shp)
+
+
+@pytest.mark.xfail(reason="randn() call fails, before getting to thunder")
+def test_clone_sparse_coo():
+    def foo(a):
+        return a.clone()
+
+    jfoo = thunder.jit(foo)
+    shp = (3, 5)
+    dev = "cpu"
+    lout = torch.sparse_coo
+    dt = torch.float32
+    b = jfoo(torch.randn(shp, device=dev, layout=lout, dtype=dt))
+    assert b.dtype == dt
+    assert b.layout == lout
+    assert b.device == dev
+    assert b.shape == torch.Size(shp)
+
+
 @instantiate(dtypes=(thunder.float32,))
 def test_default_method(executor, device: str, dtype: dtypes.dtype):
     # This test ensures that when no language context is given, it will fallback to the default implementation.

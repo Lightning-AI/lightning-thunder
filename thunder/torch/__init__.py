@@ -2001,6 +2001,11 @@ def amin(a, /, dim=None, keepdim: bool = False):
     )
 
 
+@torchsymbol(torch.clone, is_method=True)
+def clone(a: TensorProxy, *, memory_format=torch.preserve_format) -> TensorProxy:
+    return a
+
+
 @torchsymbol(torch.mean, is_method=True)
 def mean(a: TensorProxy, /, dim=None, keepdim: bool = False, *, dtype=None):
     dtype = dtype if dtype is not None else a.dtype
