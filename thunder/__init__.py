@@ -586,6 +586,7 @@ def jit(
 
             # TODO: using vanilla CUDAGraphExecutor is not safe unless the graph is always static!
             # (fixme): inspect torch.cuda.make_graph_callables and/or use it instead!
+            # See https://github.com/Lightning-AI/lightning-thunder/issues/433
             if cd.use_cudagraphs:
                 comp = CUDAGraphExecutor(comp)
 
