@@ -87,6 +87,7 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
     assert tom._lc_cd.use_cudagraphs == True
 
     from thunder.cudagraphs import CUDAGraphExecutor
+
     assert type(tom._lc_cs.last_executed) == CUDAGraphExecutor
     # }
 
