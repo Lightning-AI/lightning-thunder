@@ -584,6 +584,8 @@ def jit(
             else:
                 backward_fn = None
 
+            # TODO: using vanilla CUDAGraphExecutor is not safe unless the graph is always static!
+            # (fixme): inspect torch.cuda.make_graph_callables and/or use it instead!
             if cd.use_cudagraphs:
                 comp = CUDAGraphExecutor(comp)
 
