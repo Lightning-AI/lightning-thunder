@@ -402,7 +402,6 @@ def _cudnn_sdpa_checker(
             key_4d.stride,
             value_4d.stride,
         )
-
     # If cudnn can't support the graph, return false
     # Please turn on cudnn API logging for helpful messages that mention why the graph is not supported.
     # For cudnn backend logging, refer https://docs.nvidia.com/deeplearning/cudnn/latest/reference/troubleshooting.html
