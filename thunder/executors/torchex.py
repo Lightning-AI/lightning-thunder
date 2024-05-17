@@ -1695,13 +1695,6 @@ ex.register_implementation(
     grad_transform=adaptive_avg_pool2d_bwd_wrapper,
 )
 _register_implementation(ltorch.adaptive_avg_pool2d_backward, adaptive_avg_pool2d_backward, checker=_always_executable)
-ex.register_implementation(
-    prims.adaptive_avg_pool2d,
-    adaptive_avg_pool2d,
-    checker=_always_executable,
-    grad_transform=adaptive_avg_pool2d_bwd_wrapper,
-)
-_register_implementation(prims.adaptive_avg_pool2d_backward, adaptive_avg_pool2d_backward, checker=_always_executable)
 _register_implementation(ltorch.nll_loss, checker=_always_executable, execution_transform=_nll_loss_transform)
 nll_loss_backward = ex.register_operator(
     "torch_nll_loss_backward_impl", meta=ltorch.nll_loss_backward, fn=_nll_loss_backward_impl

@@ -254,8 +254,6 @@ class PrimIDs(Enum):
     EMBEDDING_BACKWARD = auto()
     LINEAR = auto()
     PAD = auto()
-    ADAPTIVE_AVG_POOL2D = auto()
-    ADAPTIVE_AVG_POOL2D_BACKWARD = auto()
     # Memory access methods
     ITEM = auto()
     COPY_ = auto()
@@ -3784,56 +3782,6 @@ def embedding_backward_meta(grad, indices, num_weights, padding_idx, scale_grad_
 
 
 embedding_backward = make_prim(PrimIDs.EMBEDDING_BACKWARD, "embedding_backward", meta=embedding_backward_meta)
-
-
-def adaptive_avg_pool2d_meta(
-    a: TensorProxy,
-    /,
-    output_shape: tuple[int, int],
-) -> TensorProxy:
-    utils.check_type(a, TensorProxy)
-    utils.check_type(output_shape, tuple)
-    baseutils.check_valid_shape(output_shape)
-
-    a_ndim = a.ndim
-    utils.check(
-        a_ndim == 3 or a_ndim == 4,
-        lambda: f"adaptive_avg_pool2d: Expected 3D or 4D tensor, but got {a.shape}",
-    )
-    utils.check(len(output_shape) == 2, lambda: f"adaptive_avg_pool2d: output_size must be 2")
-    for i in (-2, -1):
-        utils.check(
-            a.shape[i] > 0,
-            lambda: f"adaptive_avg_pool2d: Expected input to have non-zero size for non-batch dimensions, but input has sizes {a.shape} with dimension {i + a_ndim} being empty",
-        )
-    output_shape_ = a.shape[:-2] + tuple(output_shape)
-    return TensorProxy(like=a, shape=output_shape_)
-
-
-adaptive_avg_pool2d = make_prim(PrimIDs.ADAPTIVE_AVG_POOL2D, "adaptive_avg_pool2d", meta=adaptive_avg_pool2d_meta)
-
-
-def adaptive_avg_pool2d_backward_meta(grad: TensorProxy, a: TensorProxy, /) -> TensorProxy:
-    utils.check_type(grad, TensorProxy)
-    utils.check_type(a, TensorProxy)
-    utils.check_same_device(grad, a)
-    utils.check_same_dtype(grad, a)
-    grad_ndim = grad.ndim
-    utils.check(
-        grad_ndim == 3 or grad_ndim == 4,
-        lambda: f"adaptive_avg_pool2d_backward: Expected 3D or 4D tensor, but got {grad.shape}",
-    )
-    for i in range(1, grad_ndim):
-        utils.check(
-            grad.shape[i] > 0,
-            lambda: f"adaptive_avg_pool2d_backward: Expected grad to have non-zero size for non-batch dimensions, but grad has sizes {grad.shape} with dimension {i} being empty",
-        )
-    return TensorProxy(like=a)
-
-
-adaptive_avg_pool2d_backward = make_prim(
-    PrimIDs.ADAPTIVE_AVG_POOL2D_BACKWARD, "adaptive_avg_pool2d_backward", meta=adaptive_avg_pool2d_backward_meta
-)
 
 
 def copy__meta(
