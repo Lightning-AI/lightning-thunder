@@ -261,7 +261,7 @@ class GPT(nn.Module):
         assert all(k == "dropout" for k in override_args)
         from transformers import GPT2LMHeadModel
 
-        print("loading weights from pretrained gpt: %s" % model_type)
+        print(f"loading weights from pretrained gpt: {model_type}")
 
         # n_layer, n_head and n_embd are determined from model_type
         config_args = {

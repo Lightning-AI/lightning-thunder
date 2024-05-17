@@ -223,7 +223,7 @@ def _clear_mutable_collection_meta(coll: CollectionProxy) -> None:
 
 
 def _clear_mutable_collection_prim_impl(a: Collection) -> None:
-    if isinstance(a, (MutableSequence, MutableMapping, MutableSet)):
+    if isinstance(a, MutableSequence | MutableMapping | MutableSet):
         a.clear()
 
 
@@ -292,7 +292,7 @@ ex.register_implementation(prims.signbit, signbit, checker=_elementwise_unary_ch
 
 
 def _elementwise_binary_checker(a: Number | TensorProxy, b: Number | TensorProxy) -> bool:
-    return isinstance(a, (Number, NumberProxy)) and isinstance(b, (Number, NumberProxy))
+    return isinstance(a, Number | NumberProxy) and isinstance(b, Number | NumberProxy)
 
 
 add = ex.register_operator("add", like=prims.add, module=operator)

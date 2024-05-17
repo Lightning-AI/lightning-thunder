@@ -316,7 +316,7 @@ def _parse_to_device_and_dtype(
     dtype: None | dtypeLike = None,
 ) -> tuple[devices.Device, dtypes.dtype]:
     # Case 3 and 5 -- device first
-    if isinstance(tensor_dtype_or_device, (torch.device, devices.Device, str)):
+    if isinstance(tensor_dtype_or_device, torch.device | devices.Device | str):
         utils.check(device is None, lambda: f"to received both a positional and keyword device argument")
         device = to_device(tensor_dtype_or_device)
 
@@ -326,7 +326,7 @@ def _parse_to_device_and_dtype(
         else:
             dtype = to_dtype(dtype)
     # Case 2 -- dtype first
-    elif isinstance(tensor_dtype_or_device, (torch.dtype, dtypes.dtype)):
+    elif isinstance(tensor_dtype_or_device, torch.dtype | dtypes.dtype):
         utils.check(dtype is None, lambda: f"to received both a positional and keyword dtype argument")
         device = to_device(device) if device is not None else None
         dtype = to_dtype(tensor_dtype_or_device)
@@ -515,7 +515,7 @@ def tensor(
 ) -> TensorLike:
     # TODO: Support torch.Tensor/np.ndarray as input similar to `torch.tensor`
     utils.check(
-        isinstance(seq_or_number, (Number, Sequence)),
+        isinstance(seq_or_number, Number | Sequence),
         lambda: f"Currently only directly constructing tensors with a single number or a Sequence of numbers is supported, but received {n}",
         exception_type=NotImplementedError,
     )
@@ -524,7 +524,7 @@ def tensor(
     )
     utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.compile", NotImplementedError)
 
-    if isinstance(seq_or_number, (Number, NumberProxy)):
+    if isinstance(seq_or_number, Number | NumberProxy):
         return full((), seq_or_number, dtype=dtype, device=device)
 
     return clang.tensor_from_sequence(seq_or_number, dtype=dtype, device=device)
@@ -839,7 +839,7 @@ def flip(a: TensorLike, /, *dims: int) -> TensorLike:
         utils.check(
             len(dims) == 1
             and (
-                (isinstance(dims[0], (int, IntegerProxy)) and dims[0] in (0, -1))
+                (isinstance(dims[0], int | IntegerProxy) and dims[0] in (0, -1))
                 or (isinstance(dims[0], NumberProxy) and pyval(dims[0]) in (0, -1))
             ),
             lambda: f"Expected {dims=} to be a sequence of integers in range [-1, 0], and of length 1",
@@ -1039,7 +1039,7 @@ def split(a: TensorProxy, size_or_sections: int | Sequence[int], /, dim=0) -> Te
     )
 
     # TODO: consider revising this to just call _split_indices
-    if isinstance(size_or_sections, (int, IntegerProxy)):
+    if isinstance(size_or_sections, int | IntegerProxy):
         target_length = size_or_sections
 
         # Short-circuits special-case of zero
@@ -1100,7 +1100,7 @@ def squeeze(a: TensorLike, /, dim: None | int | Sequence[int] = None) -> TensorL
         for idx, l in enumerate(a.shape):
             if l == 1:
                 dims.append(idx)
-    elif isinstance(dim, (int, NumberProxy)):
+    elif isinstance(dim, int | NumberProxy):
         dims = (dim,)
 
     # a.shape is being indexed below.
@@ -1157,7 +1157,7 @@ def tensor_split(a: TensorLike, /, indices_or_sections, dim=0):
     )
 
     # TODO: maybe revise _split_n to a call to _split_indices
-    if isinstance(indices_or_sections, (Number, NumberProxy)):
+    if isinstance(indices_or_sections, Number | NumberProxy):
         return _split_n(a, indices_or_sections, dim)
 
     # NOTE: isinstance(indices_or_sections, Sequence)
@@ -1598,7 +1598,7 @@ def nextafter(a, b, /):
 @torchsymbol(torch.polygamma, torch.special.polygamma, is_method=True)
 def polygamma(n: int, a: TensorLike, /) -> TensorLike:
     utils.check(
-        isinstance(n, (int, NumberProxy)), lambda: f"polygamma(n, a) expects the first argument to be an integer."
+        isinstance(n, int | NumberProxy), lambda: f"polygamma(n, a) expects the first argument to be an integer."
     )
     utils.check(n >= 0, lambda: f"polygamma(n, a) does not support negative {n=}.")
 
@@ -1764,7 +1764,7 @@ def where(
     pred: TensorLike, a: None | Number | TensorLike = None, b: None | Number | TensorLike = None, /
 ) -> TensorLike:
     utils.check(
-        isinstance(a, (Number, NumberProxy, TensorProxy)) and isinstance(b, (Number, NumberProxy, TensorProxy)),
+        isinstance(a, Number | NumberProxy | TensorProxy) and isinstance(b, Number | NumberProxy | TensorProxy),
         lambda: f"torch.where() does not support only specifying a condition",
         exception_type=NotImplementedError,
     )
@@ -1874,7 +1874,7 @@ def _reduction_dtypes(
 
 
 def _reduction_dims(shape, dims: Sequence | None) -> tuple[int, ...]:
-    if isinstance(dims, (int, NumberProxy)):
+    if isinstance(dims, int | NumberProxy):
         dims = (dims,)
     if dims is None or len(dims) == 0:
         return tuple(range(len(shape)))
@@ -1902,7 +1902,7 @@ def _reduction(
     # reduces over all dimensions if dim=() is passed
     if dims == () or dims == []:
         dims = None
-    if isinstance(dims, (int, IntegerProxy)):
+    if isinstance(dims, int | IntegerProxy):
         dims = (dims,)
 
     utils.check(
@@ -1911,9 +1911,9 @@ def _reduction(
     )
 
     if not accepts_dim_tuple:
-        assert dims is None or isinstance(dims, (int, IntegerProxy))
+        assert dims is None or isinstance(dims, int | IntegerProxy)
 
-    if isinstance(dims, (int, IntegerProxy)):
+    if isinstance(dims, int | IntegerProxy):
         dims = (dims,)
 
     dims = _reduction_dims(a.shape, dims)
@@ -3041,7 +3041,7 @@ def handle_nn_op_batch_dim(f):
 # A helper function to converts an interger to 1-len tuple.
 # It is used to handle arguments like stride/dilation/padding and similar.
 def int_to_seq(param):
-    if isinstance(param, (int, NumberProxy)):
+    if isinstance(param, int | NumberProxy):
         return (param,)
     else:
         return param
@@ -3068,7 +3068,7 @@ def apply_padding_for_pool_ops(dim, a, padding, kernel_size, pad_value):
     kernel_size = maybe_to_rank_len_sequence(kernel_size, dim)
     utils.check(
         len(padding) == dim
-        and all(isinstance(p, (int, IntegerProxy)) and 0 <= p <= k // 2 for p, k in zip(padding, kernel_size)),
+        and all(isinstance(p, int | IntegerProxy) and 0 <= p <= k // 2 for p, k in zip(padding, kernel_size)),
         lambda: f"Implied {padding=} (with dimensionality {dim}) should contain integers "
         f"between 0 and `kernel_size / 2` (with the implied {kernel_size=})",
     )
@@ -3114,7 +3114,7 @@ def _conv_helper(
                     len(dilation) == 1 or len(dilation) == dim, lambda: f"{len(dilation)=} has to be either 1 or {dim}"
                 )
                 utils.check(
-                    all(isinstance(d, (int, IntegerProxy)) and d >= 1 for d in dilation),
+                    all(isinstance(d, int | IntegerProxy) and d >= 1 for d in dilation),
                     lambda: f"{dilation=} has to be a Sequences of integers >= 1",
                 )
 
@@ -3194,7 +3194,7 @@ def _max_pool_helper(
 
     kernel_size = maybe_to_rank_len_sequence(kernel_size, dim)
     utils.check(
-        len(kernel_size) == dim and all(isinstance(k, (int, IntegerProxy)) and k > 0 for k in kernel_size),
+        len(kernel_size) == dim and all(isinstance(k, int | IntegerProxy) and k > 0 for k in kernel_size),
         lambda: f"Implied {kernel_size=} (with dimensionality {dim}) should either be a non-negative integer "
         f"or a sequence of non-negative integers of length {dim}",
     )
@@ -3266,7 +3266,7 @@ def _avg_pool_helper(
 
     kernel_size = maybe_to_rank_len_sequence(kernel_size, dim)
     utils.check(
-        len(kernel_size) == dim and all(isinstance(k, (int, IntegerProxy)) and k > 0 for k in kernel_size),
+        len(kernel_size) == dim and all(isinstance(k, int | IntegerProxy) and k > 0 for k in kernel_size),
         lambda: f"Implied {kernel_size=} (with dimensionality {dim}) should either be a non-negative integer "
         f"or a sequence of non-negative integers of length {dim}",
     )
@@ -3292,7 +3292,7 @@ def _avg_pool_helper(
         divisor_override = kernel_numel
 
     utils.check(
-        isinstance(divisor_override, (Number, NumberProxy)) and divisor_override > 0,
+        isinstance(divisor_override, Number | NumberProxy) and divisor_override > 0,
         lambda: f"{divisor_override=} should be a greater than 0 scalar",
     )
 
@@ -3872,7 +3872,7 @@ def _interpolate_scale_factor_helper(
     batch, channels, *spatial_dims = a.shape
     dim = len(spatial_dims)
 
-    if isinstance(scale_factor, (float, FloatProxy)):
+    if isinstance(scale_factor, float | FloatProxy):
         utils.check(scale_factor > 0, lambda: f"{scale_factor=} is expected to be strictly positive")
         scale_factor = (scale_factor,) * dim
     else:
@@ -3880,7 +3880,7 @@ def _interpolate_scale_factor_helper(
             (
                 isinstance(scale_factor, Sequence)
                 and len(scale_factor) == dim
-                and all(isinstance(s, (float, FloatProxy)) and s > 0 for s in scale_factor)
+                and all(isinstance(s, float | FloatProxy) and s > 0 for s in scale_factor)
             ),
             lambda: f"{scale_factor=} is expected to be a strictly positive floating point number or "
             f"a sequence of strictly positive floating point numbers of length {dim}",
@@ -3946,7 +3946,7 @@ def _interpolate_size_helper(
     batch, channels, *spatial_dims = a.shape
     dim = len(spatial_dims)
 
-    if isinstance(size, (int, IntegerProxy)):
+    if isinstance(size, int | IntegerProxy):
         utils.check(size > 0, lambda: f"{size=} is expected to be greater than zero")
         size = (size,) * dim
     else:
@@ -3954,7 +3954,7 @@ def _interpolate_size_helper(
             (
                 isinstance(size, Sequence)
                 and len(size) == dim
-                and all(isinstance(s, (int, IntegerProxy)) and s > 0 for s in size)
+                and all(isinstance(s, int | IntegerProxy) and s > 0 for s in size)
             ),
             lambda: f"{size=} is expected to be a greater than zero integer "
             f"or a sequence of strictly positive integers of length {dim}",

@@ -206,7 +206,7 @@ def check_same_dtype(*args):
     numbertype = None
     dtype = None
     for a in args:
-        if isinstance(a, (Number, NumberProxy)):
+        if isinstance(a, Number | NumberProxy):
             typ = to_dtype(a)
             if numbertype is None:
                 numbertype = typ
@@ -455,7 +455,7 @@ def elementwise_type_promotion(*args, type_promotion_kind: ELEMENTWISE_TYPE_PROM
     all_number_type = True
     for a in args:
         check_type(a, (TensorProxy, Number, NumberProxy))
-        if not isinstance(a, (Number, NumberProxy)):
+        if not isinstance(a, Number | NumberProxy):
             all_number_type = False
 
     # Computes the promotion type
@@ -624,7 +624,7 @@ def validate_idx(rank: int, idx: int):
     """
 
     check(
-        isinstance(idx, (int, NumberProxy)) and idx >= 0 and (idx < rank or idx == 0),
+        isinstance(idx, int | NumberProxy) and idx >= 0 and (idx < rank or idx == 0),
         lambda: f"Found invalid index {idx} for rank {rank}!",
     )
 

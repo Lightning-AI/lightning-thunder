@@ -78,7 +78,7 @@ def default_alloc_memory(
     """
     # Skip CollectionProxy(output of input unpacking operators, such as unpack_sequence)
     # and other negligible scalar types
-    tensor_outs = [x for x in bsym.flat_proxy_outs if isinstance(x, (TensorProxy, FutureTensorProxy))]
+    tensor_outs = [x for x in bsym.flat_proxy_outs if isinstance(x, TensorProxy | FutureTensorProxy)]
     result = sum(t.numel * t.dtype.bytes for t in tensor_outs)
     for x in tensor_outs:
         # skip when the function returns its own input
@@ -104,7 +104,7 @@ def track_alias_op_memory(
 
 @register_memory_calculate_function(PrimIDs.DEL)
 def del_op_memory(bsym: BoundSymbol, tensor_to_memory_data: ProxyDict, name_to_alloc_memory: dict[str, int]) -> int:
-    tensor_args = (x for x in bsym.flat_proxy_args if isinstance(x, (TensorProxy, FutureTensorProxy)))
+    tensor_args = (x for x in bsym.flat_proxy_args if isinstance(x, TensorProxy | FutureTensorProxy))
     memory_size = 0
     for a in tensor_args:
         assert a in tensor_to_memory_data

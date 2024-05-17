@@ -159,10 +159,10 @@ def snippet_numpy_consistency(op: OpInfo, np_op, sample: SampleInput, comp: Call
     # Converts NumPy results to PyTorch.
     # NOTE This assumes PyTorch will return tensors where NumPy is aggressive about returning `np.number` objects.
     def convert_to_torch(x):
-        if not isinstance(x, (np.ndarray, np.number, np.bool_)):
+        if not isinstance(x, np.ndarray | np.number | np.bool_):
             return x
 
-        if isinstance(x, (np.number, np.bool_)):
+        if isinstance(x, np.number | np.bool_):
             return torch.tensor(x, device=thunder_result.device)
         elif x.shape == ():
             return torch.tensor(x.item(), device=thunder_result.device)

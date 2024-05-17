@@ -573,7 +573,7 @@ class GeneralJitCtx(MinimalCtx):
                 raise NotImplementedError(f"Unsupported cache option {co}")
             return p
 
-        elif isinstance(uvalue, (float, int, complex, str)):
+        elif isinstance(uvalue, float | int | complex | str):
             assert should_register_for_prologue(value.provenance)
             value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
             # we follow the caching mechanisms of the eager_unpack_interpreter
@@ -781,7 +781,7 @@ def prop_lookaside_wrap(attr_getter):
 def get_methods_properties(typ):
     for meth_name in dir(typ):
         meth = getattr(typ, meth_name)
-        if isinstance(meth, (MethodType, BuiltinMethodType, MethodDescriptorType, WrapperDescriptorType)) and (
+        if isinstance(meth, MethodType | BuiltinMethodType | MethodDescriptorType | WrapperDescriptorType) and (
             getattr(meth, "__objclass__", None) == typ or (getattr(meth, "__self__", None) == typ)
         ):
             yield meth, meth
@@ -837,7 +837,7 @@ def recursively_proxy(*args, **kwargs):
     def proxy_recursion(v):
         if isinstance(v.value, str):
             need_proxy = False
-        elif isinstance(v.value, (Sequence, dict)):
+        elif isinstance(v.value, Sequence | dict):
             v.track_items()
             need_proxy = any(proxy_recursion(i) for i in v.item_wrappers)
         else:
@@ -1051,7 +1051,7 @@ def _general_jit_wrap_callback(value):
         pass  # basic containers are OK, too, subclasses?
     elif isinstance(uvalue, Proxy):
         value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
-    elif isinstance(uvalue, (float, int, complex, str)) and not isinstance(uvalue, Proxy):
+    elif isinstance(uvalue, float | int | complex | str) and not isinstance(uvalue, Proxy):
         if value.provenance.ext_flag & EXT_FLAG_IS_PROXY_DERIVED:  # we already have seen this
             pass
         elif should_register_for_prologue(value.provenance):
@@ -1207,7 +1207,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             return output
 
         def from_constant(provenance, *, new_output=False):
-            if isinstance(provenance.value, (int, str)):
+            if isinstance(provenance.value, int | str):
                 return provenance.value
             else:
                 raise NotImplementedError(f"constant of type {type(provenance.value)} {provenance.value}")
@@ -1261,7 +1261,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 output = Proxy("subscr")  # name? collectify?
             else:
                 output = p
-            if isinstance(idx, (int, str)):
+            if isinstance(idx, int | str):
                 if isinstance(idx, int):
                     idx = int(idx)
                 elif isinstance(idx, str):
@@ -1392,7 +1392,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
 
                 if isinstance(v, str):
                     clang.check_string_value(p, v)
-                elif isinstance(v, (int, bool, float)):
+                elif isinstance(v, int | bool | float):
                     clang.check_number_type_and_value(p, v)
                 else:
                     raise NotImplementedError(f"cache info of type {type(v).__name__}")

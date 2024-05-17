@@ -1018,7 +1018,7 @@ def _masked_fill_checker(a: TensorLike, /, mask: TensorLike, value: Number | Ten
         return False
 
     value_dtype: type | dtypes.dtype
-    if isinstance(value, (Number, NumberProxy)):
+    if isinstance(value, Number | NumberProxy):
         value_dtype = pytype(value)
     else:
         if len(value.shape) != 0:

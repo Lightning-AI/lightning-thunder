@@ -99,7 +99,7 @@ def _define_constant(fd: FusionDefinition, constant: Any) -> Any:
             return fd.define_scalar(constant, nvdtype)
         else:
             return fd.define_constant(constant, nvdtype)
-    if isinstance(constant, (dtypes.dtype, type)):
+    if isinstance(constant, dtypes.dtype | type):
         return lcdtype_to_nvdtype(constant)
     if isinstance(constant, Device):
         return None
@@ -110,7 +110,7 @@ def _define_constant(fd: FusionDefinition, constant: Any) -> Any:
 def getnv(x: Any, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     if isinstance(x, Proxy):
         return lc_to_nv_map[x]
-    if isinstance(x, (Number, dtypes.dtype, type, Device)):
+    if isinstance(x, Number | dtypes.dtype | type | Device):
         return _define_constant(fd, x)
 
     utils.check(False, lambda: f"Cannot translate {x} of type {type(x)} to an nvFuser object")
@@ -154,7 +154,7 @@ def is_supported_tensor(a: TensorProxy, *, allow_low_precision_floats: bool = Tr
 
 
 def is_supported_tensor_or_number(a: TensorProxy | Number) -> bool:
-    if isinstance(a, (Number, NumberProxy)):
+    if isinstance(a, Number | NumberProxy):
         return True
 
     return is_supported_tensor(a)

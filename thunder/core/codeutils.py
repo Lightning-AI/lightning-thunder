@@ -80,7 +80,7 @@ def is_printable(x: Any) -> tuple[bool, None | tuple[str, Any]]:
 
 
 def is_literal(x: Any) -> bool:
-    if isinstance(x, (ContextObject, ProxyInterface)):
+    if isinstance(x, ContextObject | ProxyInterface):
         return False
 
     if is_collection(x):

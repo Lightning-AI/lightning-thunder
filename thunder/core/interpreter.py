@@ -141,7 +141,7 @@ class WrappedValue:
 
         self.value = value
 
-        if isinstance(value, (list, tuple)):
+        if isinstance(value, list | tuple):
             self.item_wrappers = len(value) * [None]
         elif isinstance(value, Sequence):
             self.item_wrappers = None
@@ -396,7 +396,7 @@ class InterpreterCompileCtx:
         self._callbacks: dict[INTERPRETER_CALLBACKS, Callable] = callbacks
         self._with_provenance_tracking = with_provenance_tracking
         if with_provenance_tracking:
-            assert isinstance(uncacheable_classes, (list, tuple))
+            assert isinstance(uncacheable_classes, list | tuple)
             uncacheable_classes = tuple(set(uncacheable_classes) | {NoneType, int, str, float, bool})
 
         self._uncacheable_classes = uncacheable_classes
@@ -746,7 +746,7 @@ def interpreter_ctx(_interpretercompilectx: InterpreterCompileCtx, _interpreterr
 
 def is_opaque(fn: Callable) -> bool:
     if isinstance(
-        fn, (BuiltinFunctionType, BuiltinMethodType, MethodDescriptorType, MethodWrapperType, WrapperDescriptorType)
+        fn, BuiltinFunctionType | BuiltinMethodType | MethodDescriptorType | MethodWrapperType | WrapperDescriptorType
     ):
         return True
 
@@ -784,7 +784,7 @@ def is_pycapsule(x: Any) -> bool:
 
 
 def is_generalized_method(fn):
-    return inspect.ismethod(fn) or isinstance(fn, (BuiltinMethodType, MethodWrapperType))
+    return inspect.ismethod(fn) or isinstance(fn, BuiltinMethodType | MethodWrapperType)
 
 
 # Our own exception class for reporting compilation problems
@@ -939,7 +939,7 @@ class ProvenanceRecord:
     ext_flag: int = 0  # for use by extensions
 
     def __post_init__(self):
-        assert isinstance(self.inst, (dis.Instruction, PseudoInst)), f"{self.inst} is not Instruction or PseudoInst"
+        assert isinstance(self.inst, dis.Instruction | PseudoInst), f"{self.inst} is not Instruction or PseudoInst"
         assert isinstance(self.inputs, list)
         assert all(isinstance(i, ProvenanceRecord) for i in self.inputs)
         self.inputs = self.inputs.copy()
@@ -960,7 +960,7 @@ class ProvenanceRecord:
             if self in known:
                 return known[self]
             if self.inst == PseudoInst.CONSTANT:
-                if isinstance(self.value, (int, str, bool, NoneType)):
+                if isinstance(self.value, int | str | bool | NoneType):
                     return repr(self.value)
                 elif isinstance(self.value, type):
                     return self.value.__name__
@@ -998,7 +998,7 @@ class InterpreterStack:
     @contextlib.contextmanager
     def set_cur_instruction(self, inst: dis.Instruction | PseudoInst):
         assert self.provenance_inst is None and self.provenance_inputs is None
-        assert isinstance(inst, (dis.Instruction, PseudoInst))
+        assert isinstance(inst, dis.Instruction | PseudoInst)
         self.provenance_inst = inst
         self.provenance_inputs = []
         self.output_idx = 0
@@ -1009,7 +1009,7 @@ class InterpreterStack:
             self.provenance_inputs = None
 
     def get_provenance_record(self, value, key: int | slice | None = None):
-        if not isinstance(key, (int, NoneType)):
+        if not isinstance(key, int | NoneType):
             raise NotImplementedError("sorry, todo")
         # key=None means append, other key means setitem
         pr = ProvenanceRecord(
@@ -1047,7 +1047,7 @@ class InterpreterStack:
             idxes = list(range(start, stop, step))
             assert len(idxes) == len(wrapped_value)
             return [self.unpack_provenance_record(wv_i, key=i) for i, wv_i in zip(idxes, wrapped_value)]
-        if not isinstance(key, (int, NoneType)):
+        if not isinstance(key, int | NoneType):
             raise NotImplementedError("sorry, todo")
 
         assert key is None or key < 0
@@ -1510,7 +1510,7 @@ def _object_getattribute_lookaside(obj: Any, name: str):
     # TODO: classes and super have a slightly different resolution behavior
     #   https://docs.python.org/3/howto/descriptor.html#invocation-from-a-class
     #   https://docs.python.org/3/howto/descriptor.html#invocation-from-super
-    if isinstance(uobj, (type, super)):
+    if isinstance(uobj, type | super):
         result = getattr(uobj, name, null)
         if result is null:
             return do_raise(AttributeError(name))
@@ -1522,7 +1522,7 @@ def _object_getattribute_lookaside(obj: Any, name: str):
     #   1)  Some builtin C types have `__get__` methods but act like simple namespaces.
     #   2)  If `obj` has a metaclass, the dunder methods might be dynamic.
     # So for now we just fall back to the builtin `getattr` for these bedrock lookups.
-    if DUNDER_PATTERN.match(name) or isinstance(uobj, (type, super)):
+    if DUNDER_PATTERN.match(name) or isinstance(uobj, type | super):
         return (
             do_raise(AttributeError(f"'{type(uobj).__name__}' object has no attribute '{name}'"))
             if (result := getattr(uobj, name, null)) is null
@@ -2205,7 +2205,7 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
         self.track_items()
         assert self.item_wrappers is not None
 
-        if not isinstance(iterable.value, (tuple, list)):
+        if not isinstance(iterable.value, tuple | list):
 
             def impl(l, iterable):
                 for i in iterable:
@@ -2712,7 +2712,7 @@ def _tuple_new_provenance_tracking_lookaside(cls, iterable=(), /):
     if iterable == ():
         iterable = wrap_const(())
 
-    if isinstance(iterable.value, (list, tuple)):
+    if isinstance(iterable.value, list | tuple):
         # special case to avoid infinite recursion
         iterable.track_items()
         item_wrappers = []
@@ -2807,7 +2807,7 @@ _default_provenance_tracking_lookaside_map = {
 def _register_provenance_tracking_lookasides(typ, wrapper):
     for meth_name in dir(typ):
         meth = getattr(typ, meth_name)
-        if isinstance(meth, (BuiltinMethodType, MethodDescriptorType, WrapperDescriptorType)) and (
+        if isinstance(meth, BuiltinMethodType | MethodDescriptorType | WrapperDescriptorType) and (
             getattr(meth, "__objclass__", None) == typ or (getattr(meth, "__self__", None) == typ)
         ):
             if meth in _default_provenance_tracking_lookaside_map:
@@ -2966,7 +2966,7 @@ def freevar_callback(name: str, cell: CellType, /, *, fn: Callable, idx: int) ->
         return new_contents
 
     assert not isinstance(
-        new_contents, (WrappedValue, CellType)
+        new_contents, WrappedValue | CellType
     ), "freevar_callback should return a plain value, not a WrappedValue or a CellType"
 
     if new_contents is not old_contents:
@@ -3588,7 +3588,7 @@ def _call_handler(
     res = _interpret_call(func, *args, **kwargs)
     ctx: InterpreterCompileCtx = get_interpretercompilectx()
     if ctx._with_provenance_tracking:
-        assert isinstance(res, (WrappedValue, INTERPRETER_SIGNALS)), f"{res} unexpected"
+        assert isinstance(res, WrappedValue | INTERPRETER_SIGNALS), f"{res} unexpected"
 
     return check_and_append(stack, res)
 
@@ -3667,7 +3667,7 @@ def _call_method_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
     res = _interpret_call(meth, *args)
     ctx: InterpreterCompileCtx = get_interpretercompilectx()
     if ctx._with_provenance_tracking:
-        assert isinstance(res, (WrappedValue, INTERPRETER_SIGNALS)), f"{res} unexpected"
+        assert isinstance(res, WrappedValue | INTERPRETER_SIGNALS), f"{res} unexpected"
     return check_and_append(stack, res)
 
 
@@ -4884,7 +4884,7 @@ def _match_mapping_handler(inst: dis.Instruction, /, stack: InterpreterStack, **
 def _match_sequence_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
     # NOTE: We cannot check tp_flags but this is, according to the docs, close enough.
     # See the comment on MATCH_MAPPING.
-    supported_sequence: bool = isinstance(stack[-1], Sequence) and not isinstance(stack[-1], (str, bytes, bytearray))
+    supported_sequence: bool = isinstance(stack[-1], Sequence) and not isinstance(stack[-1], str | bytes | bytearray)
     stack.push(supported_sequence)
 
 
@@ -6005,7 +6005,7 @@ def _interpret_call(fn: Callable, /, *args, **kwargs) -> Any | INTERPRETER_SIGNA
     runtimectx.record_interpreter_call(fn)
     rval = _call_dispatch(compilectx, runtimectx, fn, *args, **kwargs)  # type: ignore
     if compilectx._with_provenance_tracking:
-        assert isinstance(rval, (INTERPRETER_SIGNALS, WrappedValue)), f"return {rval} unexpected calling {unwrap(fn)}"
+        assert isinstance(rval, INTERPRETER_SIGNALS | WrappedValue), f"return {rval} unexpected calling {unwrap(fn)}"
     runtimectx.record_interpreter_return(fn, rval)  # type: ignore
 
     return rval
@@ -6109,11 +6109,11 @@ def _call_dispatch(
     #   Ex.
     # NOTE Builtin Methods
     #   Builtin methods are not considered methods by inspect.ismethod
-    if isinstance(fn, (BuiltinMethodType, MethodWrapperType)):
+    if isinstance(fn, BuiltinMethodType | MethodWrapperType):
         assert is_opaque(fn)
         slf = fn.__self__
 
-        if slf is not None and not isinstance(slf, (type, ModuleType)) and not is_pycapsule(slf):
+        if slf is not None and not isinstance(slf, type | ModuleType) and not is_pycapsule(slf):
             # NOTE: we need to walk the mro because we need to deal with super().foo
             #       using the qualname is not good here because Python qualnames come with no
             #       guarantees (e.g. random._random.Random.seed and random.Random.seed are distinct
@@ -6131,7 +6131,7 @@ def _call_dispatch(
                 unbound_fn_candidate = getattr(t, fn.__name__, None)
                 if (
                     unbound_fn_candidate is not None
-                    and isinstance(unbound_fn_candidate, (WrapperDescriptorType, MethodDescriptorType))
+                    and isinstance(unbound_fn_candidate, WrapperDescriptorType | MethodDescriptorType)
                     and unbound_fn_candidate.__get__(slf) == fn
                 ):
                     unbound_fn = unbound_fn_candidate
@@ -6220,7 +6220,7 @@ def _call_dispatch(
         return obj
 
     # (6) Handles callable objects (with a dunder call method)
-    if not isinstance(fn, (FunctionType, MethodType)):
+    if not isinstance(fn, FunctionType | MethodType):
         if not hasattr(fn, "__call__"):
             raise NotImplementedError(
                 f"Don't know how to interpret a callable with type {type(fn)} without a __call__ method"

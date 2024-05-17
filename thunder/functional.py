@@ -221,7 +221,7 @@ def _eager_unpack_dict(d: dict, /, name: None | str, *, co: CACHE_OPTIONS) -> tu
     unpack = partial(_eager_unpack, name=None, co=co)
     proxied = {}
     for k, v in d.items():
-        if not isinstance(k, (int, str)):
+        if not isinstance(k, int | str):
             raise ValueError(f"Unsupported input dict key type {type(k)}. Supported types are int and str.")
 
         vp, a = unpack(v)

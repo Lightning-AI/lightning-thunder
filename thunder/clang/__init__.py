@@ -139,7 +139,7 @@ def maybe_convert_to_dtype(a, dtype, *, enforce_safe_casting=False):
         # Translates numbertypes to dtypes
         if dtypes.is_numbertype(dtype):
             dtype = dtypes.numbertype_to_dtype(dtype)
-    elif isinstance(a, (Number, NumberProxy)):
+    elif isinstance(a, Number | NumberProxy):
         # NOTE This allows conversions like (5, float32) -> 5., which is a little odd
         dtype = utils.dtype_to_numbertype(dtype)
     else:
@@ -204,7 +204,7 @@ def arange(
     # TODO Replace with default datatypes for integer and float
     if dtype is None:
         # TODO: maybe something like a isIntegerType?
-        if all(tuple(isinstance(x, (int, IntegerProxy)) for x in (start, step, stop))):
+        if all(tuple(isinstance(x, int | IntegerProxy) for x in (start, step, stop))):
             dtype = dtypes.int64
         else:
             dtype = dtypes.float32
@@ -268,7 +268,7 @@ def full_like(
     device: DeviceLike | None = None,
     dtype: dtypes.dtype | None = None,
 ) -> TensorLike:
-    if isinstance(a, (Number, NumberProxy)):
+    if isinstance(a, Number | NumberProxy):
         dtype = pytype(fill_value) if dtype is None else dtypes.dtype_to_numbertype(dtype)
         utils.check(
             device is None or devices.to_device(device).devicetype is devices.DeviceType.CPU,
@@ -485,11 +485,11 @@ def _get_indexing_signature(key: Any) -> IndexingSignature:
 
     # key is None or Ellipsis -> indexing is a no-op,
     # and we just return an empty signature.
-    if isinstance(key, (type(None), EllipsisType)):
+    if isinstance(key, type(None) | EllipsisType):
         return sig
 
     # Numbers and slices are examples of basic indexing.
-    if isinstance(key, (Number, NumberProxy, slice)):
+    if isinstance(key, Number | NumberProxy | slice):
         sig.basic.append((None, None))
         return sig
 
@@ -548,9 +548,9 @@ def _get_indexing_signature(key: Any) -> IndexingSignature:
         elif k is None:
             sig.unsqueeze.append(i)
         else:
-            if isinstance(k, (Number, slice, NumberProxy)):
+            if isinstance(k, Number | slice | NumberProxy):
                 sig.basic.append((a_dim, i))
-            elif isinstance(k, (TensorLike, Sequence)):
+            elif isinstance(k, TensorLike | Sequence):
                 sig.advanced.append((a_dim, i))
             else:
                 raise ValueError(f"{key[i]=} has unexpected {type(key[i])=}")
@@ -575,14 +575,14 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
     specified_slices = 0
     ellipsis_idx = None
 
-    if key is None or isinstance(key, (Number, NumberProxy, slice, EllipsisType)):
+    if key is None or isinstance(key, Number | NumberProxy | slice | EllipsisType):
         key = (key,)
 
     for idx, x in enumerate(key):
         if x is Ellipsis:
             utils.check(ellipsis_idx is None, lambda: f"Found two (or more) ellipses in key={key}")
             ellipsis_idx = idx
-        elif isinstance(x, (NumberProxy, Number, slice)):
+        elif isinstance(x, NumberProxy | Number | slice):
             specified_slices += 1
         elif x is None:
             if ellipsis_idx is None:
@@ -662,7 +662,7 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
             start_indices.append(start)
             end_indices.append(stop)
             strides.append(step)
-        elif isinstance(x, (Number, NumberProxy)):
+        elif isinstance(x, Number | NumberProxy):
             # NOTE Numbers must be valid indices after canonicalization, unlike start and stop
             x = utils.canonicalize_dim(l, x)
             start_indices.append(x)
@@ -691,7 +691,7 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
     #   - a series of one or more 0D or 1D integer tensors containing at most one ellipsis as the first sequence element and at least one sequence element
 
     utils.check(
-        isinstance(key, (TensorLike, Sequence)),
+        isinstance(key, TensorLike | Sequence),
         lambda: f"Advanced indexing currently only supports keys that are ellipses, integer tensors or sequences, but got {key=}",
     )
 
@@ -706,7 +706,7 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
         if x is Ellipsis:
             num_ellipses += 1
         utils.check(
-            isinstance(x, (EllipsisType, TensorLike)),
+            isinstance(x, EllipsisType | TensorLike),
             lambda: f"Advanced indexing currently only supports tensors as sequence elements (possibly with a starting ellipsis), but found an object of type {type(x)}",
         )
         if isinstance(x, TensorLike):
@@ -831,7 +831,7 @@ def getitem(a: TensorLike, /, key) -> TensorLike:
         if key_idx is not None:
             key_idx = key_idx if key_idx >= 0 else len(key) + key_idx
             index = key[key_idx]
-            if isinstance(index, Sequence) and len(index) == 1 and isinstance(index[0], (Number, NumberProxy)):
+            if isinstance(index, Sequence) and len(index) == 1 and isinstance(index[0], Number | NumberProxy):
                 start = index[0]
                 # Hande -1 to avoid empty slices
                 if start == -1:
@@ -1100,7 +1100,7 @@ def index_put(
 # NOTE: the dimensions do not have to be specified in any order
 @clangop()
 def unsqueeze(a, /, dims: int | Sequence[int]) -> TensorProxy:
-    if isinstance(dims, (Number, NumberProxy)):
+    if isinstance(dims, Number | NumberProxy):
         dims = (dims,)
 
     # Short-circuits if dims is empty

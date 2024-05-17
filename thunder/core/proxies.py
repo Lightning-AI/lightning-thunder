@@ -759,7 +759,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
     def __eq__(self, other):
         # NOTE This short-circuit allows queries like a == (), which is a valid comparison
         #   for a number in Python
-        if not isinstance(other, (Number, NumberProxy)):
+        if not isinstance(other, Number | NumberProxy):
             return False
 
         from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
@@ -799,7 +799,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
     def __ne__(self, other):
         # NOTE This short-circuit allows queries like a != (), which is a valid comparison
         #   for a number in Python
-        if not isinstance(other, (Number, NumberProxy)):
+        if not isinstance(other, Number | NumberProxy):
             return True
 
         from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
@@ -924,7 +924,7 @@ def pyval(x: Number | str | AnyProxy) -> Number | str | any:
     if isinstance(x, AnyProxy):
         return x._o
 
-    if isinstance(x, (NumberProxy, StringProxy)):
+    if isinstance(x, NumberProxy | StringProxy):
         return x.value
 
     return x
@@ -934,15 +934,15 @@ def pytype(x: Proxy) -> type | None:
     if isinstance(x, AnyProxy):
         return type(x._o)
 
-    if isinstance(x, (complex, ComplexProxy)):
+    if isinstance(x, complex | ComplexProxy):
         return complex
-    if isinstance(x, (float, FloatProxy)):
+    if isinstance(x, float | FloatProxy):
         return float
     if isinstance(x, bool):
         return bool
     if isinstance(x, IntegerProxy) and x.python_type is bool:
         return bool
-    if isinstance(x, (int, IntegerProxy)):
+    if isinstance(x, int | IntegerProxy):
         return int
     if isinstance(x, str):
         return str
@@ -1577,7 +1577,7 @@ def is_proxyable(x: Any, /) -> bool:
     if isinstance(x, Proxy):
         return False
 
-    return isinstance(x, (Number, torch.Tensor))
+    return isinstance(x, Number | torch.Tensor)
 
 
 def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> Any | Proxy:

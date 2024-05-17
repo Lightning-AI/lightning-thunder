@@ -1698,7 +1698,7 @@ def _convert_element_type_meta(a: Number | TensorProxy, /, dtype: type | dtypes.
 
     # NOTE Python numbers are constants, and this will return another Python number when given one because
     #   The conversion is constant
-    if isinstance(a, (Number, NumberProxy)):
+    if isinstance(a, Number | NumberProxy):
         utils.check(utils.is_numbertype(dtype), lambda: f"Trying to convert a number to non-numbertype object {dtype}")
 
         if isinstance(a, NumberProxy):
@@ -1784,7 +1784,7 @@ def _elementwise_unary_meta_factory(
         # Checks that inputs have an expected type
         utils.check_type(a, (TensorProxy, Number, NumberProxy))
 
-        if isinstance(a, (Number, NumberProxy)):
+        if isinstance(a, Number | NumberProxy):
             # Checks that the numbertype is supported
             typ = utils.get_numberlike_type(a)
             val = utils.get_numberlike_value(a)
@@ -2221,7 +2221,7 @@ def _elementwise_binary_meta_factory(
         utils.check(dtype is None or dtype in supported_input_dtypes, lambda: f"Unsupported input dtype {dtype}")
 
         # Special-cases number x number inputs
-        if isinstance(a, (Number, NumberProxy)) and isinstance(b, (Number, NumberProxy)):
+        if isinstance(a, Number | NumberProxy) and isinstance(b, Number | NumberProxy):
             aval, bval = utils.get_numberlike_value(a), utils.get_numberlike_value(b)
 
             # Handles the case where a number has an indeterminate value, or the operation has
@@ -2519,14 +2519,14 @@ def _where_meta(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number |
     utils.check_type(b, (TensorProxy, Number, NumberProxy))
 
     if (
-        isinstance(pred, (Number, NumberProxy))
-        and isinstance(a, (Number, NumberProxy))
-        and isinstance(b, (Number, NumberProxy))
+        isinstance(pred, Number | NumberProxy)
+        and isinstance(a, Number | NumberProxy)
+        and isinstance(b, Number | NumberProxy)
     ):
         raise NotImplementedError
 
     # Checks pred dtype (bool or bool tensor)
-    if isinstance(pred, (Number, NumberProxy)):
+    if isinstance(pred, Number | NumberProxy):
         utils.check(
             pytype(pred) is bool,
             lambda: f"Expected pred to be a boolean number, but found a number of type {pytype(pred)}",
@@ -2694,11 +2694,11 @@ def _uniform_philox_meta(
     utils.check_type(seed, (int, TensorProxy))
     utils.check_type(offset, (int, TensorProxy))
     utils.check(
-        isinstance(seed, (int, IntegerProxy)) or seed.dtype is dtypes.int64,
+        isinstance(seed, int | IntegerProxy) or seed.dtype is dtypes.int64,
         lambda: f"Expected {seed=} to be an integer or an int64 tensor",
     )
     utils.check(
-        isinstance(offset, (int, IntegerProxy)) or seed.dtype is dtypes.int64,
+        isinstance(offset, int | IntegerProxy) or seed.dtype is dtypes.int64,
         lambda: f"Expected {offset=} to be an integer or an int64 tensor",
     )
     utils.check(minval < maxval, lambda: f"`minval` must be less than `maxval` but {minval=}, {maxval=}")
@@ -2781,7 +2781,7 @@ def _tensor_from_sequence_meta(
     types = set()
     for element in sequences:
         utils.check(
-            isinstance(element, (bool, int, float, complex)),
+            isinstance(element, bool | int | float | complex),
             lambda: f"Expected sequences of numbers, but found type {type(element)} when constructing a tensor from a sequence",
             ValueError,
         )
@@ -2987,7 +2987,7 @@ def flip_meta(a: TensorProxy, /, dims: Sequence[int]) -> TensorProxy:
         all(
             (
                 0 <= d < a.ndim
-                if isinstance(d, (int, IntegerProxy))
+                if isinstance(d, int | IntegerProxy)
                 else isinstance(d, IntegerProxy) and 0 <= pyval(d) < a.ndim
             )
             for d in dims
@@ -3725,7 +3725,7 @@ def convolution_meta(
         # Check all elements are >= min_val
         for i, e in enumerate(seq):
             utils.check(
-                isinstance(e, (int, IntegerProxy)) and e >= min_val,
+                isinstance(e, int | IntegerProxy) and e >= min_val,
                 lambda: f"all elements in {seq_str_name} should be integers at least {min_val}, "
                 f"but {seq_str_name}[{i}]={seq[i]} does not satisfy these requirements",
             )
@@ -3739,7 +3739,7 @@ def convolution_meta(
 
     # Expand sequences to features_rank len if needed.
     def maybe_expand_seq(seq, ndim):
-        if isinstance(seq, (int, IntegerProxy)):
+        if isinstance(seq, int | IntegerProxy):
             return (seq,) * ndim
         elif len(seq) == 1:
             return (seq[0],) * ndim
