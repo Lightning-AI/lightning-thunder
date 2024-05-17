@@ -903,7 +903,7 @@ def test_matmul(executor, device: str, dtype: dtypes.dtype):
         return torch.matmul(a, b)
 
     for sample in matmul_opinfo.sample_inputs(device, dtype):
-        if nvfuser_version() < LooseVersion("0.2.4") and (sample.args[0].ndim() != 2 or sample.args[1].ndim() != 2):
+        if nvfuser_version() < LooseVersion("0.2.4") and (sample.args[0].ndim != 2 or sample.args[1].ndim != 2):
             # Only 2D inputs are supported for version < 0.2.4.
             continue
 
