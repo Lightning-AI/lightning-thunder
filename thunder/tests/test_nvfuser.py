@@ -891,7 +891,7 @@ def test_linear(executor, device: str, dtype: dtypes.dtype, has_bias: bool):
     devicetypes=(devices.DeviceType.CUDA,),
     executors=(nvFuserExecutor,),
     decorators=(
-        pytest.mark.skipif(nvfuser_version() < LooseVersion("0.2.4"), reason="Requires nvFuser version 0.2.4 or later"),
+        pytest.mark.skipif(nvfuser_version() is None or nvfuser_version() < LooseVersion("0.2.2"), reason="Requires nvFuser version 0.2.2 or later"),
     ),
 )
 def test_matmul(executor, device: str, dtype: dtypes.dtype):
@@ -900,6 +900,10 @@ def test_matmul(executor, device: str, dtype: dtypes.dtype):
         return torch.matmul(a, b)
 
     for sample in matmul_opinfo.sample_inputs(device, dtype):
+        if nvfuser_version() < LooseVersion("0.2.4") and (sample.args[0].ndim() != 2 or sample.args[1].ndim() != 2):
+            # Only 2D inputs are supported for version < 0.2.4.
+            continue
+    
         compiled_func = thunder.jit(fn, executors_list=executor.executors_list(), nv_enable_matmul=True)
 
         out = compiled_func(*sample.args)
