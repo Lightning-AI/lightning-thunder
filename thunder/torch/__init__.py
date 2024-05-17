@@ -3347,10 +3347,10 @@ def adaptive_avg_pool2d(
     /,
     output_size: int | Sequence[int],
 ) -> TensorProxy:
-    utils.check_type(output_size, (int, Sequence))
+    utils.check_type(output_size, (int, IntegerProxy, Sequence))
     if isinstance(output_size, Sequence):
         utils.check(len(output_size) == 2, lambda: f"adaptive_avg_pool2d: output_size must be 2")
-        utils.check_types(output_size, int)
+        utils.check_types(output_size, (int, IntegerProxy))
     else:
         output_size = (output_size, output_size)
     return prims.adaptive_avg_pool2d(a, tuple(output_size))
