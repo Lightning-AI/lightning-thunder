@@ -629,7 +629,6 @@ class NumberProxy(Proxy, NumberProxyInterface):
         if method is None:
             return fn(vala)
 
-
         return method(a)
 
     def __abs__(self):
