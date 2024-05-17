@@ -205,6 +205,6 @@ def convert_module_to_columnwise_parallel(
     for target_mod_name in target_modules:
         mod = colwise_thunder_module.get_submodule(target_mod_name)
         for name, p in mod.named_parameters(recurse=False):
-            _shard_param(p, rank, world_size, name, dim=0)
+            _shard_param(p, rank, world_size, name, allow_padding_for_fsdp=False)
 
     return colwise_thunder_module
