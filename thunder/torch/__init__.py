@@ -2004,8 +2004,10 @@ def amin(a, /, dim=None, keepdim: bool = False):
 # Clone is unique in that it's not registered as a symbol; as such we add it to
 # the appropriate maps manually, instead of through the @torchsymbol decorator.
 def clone(a: TensorProxy, *, memory_format=torch.preserve_format) -> TensorProxy:
-    b = repeat(a, [1]*len(a.shape))
+    b = repeat(a, [1] * len(a.shape))
     return b
+
+
 _torch_to_thunder_function_map[torch.clone] = clone
 _torch_to_thunder_function_map[torch.Tensor.clone] = clone
 register_method("clone", clone)
