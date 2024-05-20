@@ -221,7 +221,6 @@ class TransformForColumnWiseParallel:
         return prologue_trace, new_computation_trace, epilogue_trace
 
 
-# TODO(crcrpar): Support `nn.Embedding`
 # TODO(crcrpar): Add an option to turn off output all-gather.
 def convert_module_to_columnwise_parallel(
     thunder_module: ThunderModule,
