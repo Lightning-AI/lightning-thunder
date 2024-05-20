@@ -32,20 +32,20 @@ __all__ = [
 
 class PrePostProcessInterface(ABC):
     @abstractmethod
-    def preprocess(self, x: TensorProxy) -> TensorProxy:
-        return x
+    def preprocess(self, x: TensorProxy) -> tuple[TensorProxy, tuple[Any, ...]]:
+        return x, None
 
     @abstractmethod
-    def postprocess(self, y: TensorProxy) -> TensorProxy:
+    def postprocess(self, y: TensorProxy, _: Any) -> TensorProxy:
         return y
 
 
 @dataclass(frozen=True)
 class NoOp(PrePostProcessInterface):
-    def preprocess(self, x: TensorProxy) -> TensorProxy:
-        return super().preprocess(x)
+    def preprocess(self, x: TensorProxy) -> tuple[TensorProxy, tuple[Any, ...]]:
+        return super().preprocess(x), None
 
-    def postprocess(self, y: TensorProxy) -> TensorProxy:
+    def postprocess(self, y: TensorProxy, _: Any) -> TensorProxy:
         return super().postprocess(y)
 
 
@@ -54,10 +54,10 @@ class LinearPrePostProcess(PrePostProcessInterface):
     process_group: ProcessGroup
     layer_type: str = field(default="linear", kw_only=True)
 
-    def preprocess(self, x: TensorProxy) -> TensorProxy:
-        return super().preprocess(x)
+    def preprocess(self, x: TensorProxy) -> tuple[TensorProxy, tuple[Any, ...]]:
+        return super().preprocess(x), None
 
-    def postprocess(self, y: TensorProxy) -> TensorProxy:
+    def postprocess(self, y: TensorProxy, _: Any) -> TensorProxy:
         from thunder.distributed import prims as dist_prims
 
         return dist_prims.synchronize_output_for_column_wise_tensor_parallel(
@@ -82,15 +82,33 @@ class EmbeddingPrePostProcess(PrePostProcessInterface):
         self.vocab_start_index: int = rank * self.num_local_embeddings
         self.vocab_end_index: int = (rank + 1) * self.num_local_embeddings - 1
 
-    def preprocess(self, x: TensorProxy) -> TensorProxy:
+    def preprocess(self, x: TensorProxy) -> tuple[TensorProxy, tuple[TensorProxy, TensorProxy]]:
         import thunder.torch as ltorch
 
-        masked_x = ltorch.where(x, x < self.vocab_start_index or x > self.vocab_end_index, -1)
-        return masked_x
+        x = ltorch.sub(x, self.vocab_start_index)
+        mask1 = ltorch.ge(x, self.num_local_embeddings)
+        masked1 = ltorch.masked_fill(x, mask1, 0)
+        mask2 = ltorch.le(x, -1)
+        masked2 = ltorch.masked_fill(masked1, mask2, 0)
+        return masked2, (mask1, mask2)
 
-    def postprocess(self, y: TensorProxy) -> TensorProxy:
+    def postprocess(self, y: TensorProxy, masks: Any) -> TensorProxy:
         from thunder.distributed import prims as dist_prims
+        import thunder.torch as ltorch
 
+        utils.check(len(masks) == 2, lambda: f"Expected 2 masks but {len(masks)=}")
+        for mask in masks:
+            utils.check(
+                mask.shape == y.shape[: mask.ndim],
+                lambda: f"{mask.shape = }, {y.shape = }",
+            )
+            mask = ltorch.unsqueeze(mask, mask.ndim)
+            unflattened_mask = ltorch.repeat(mask, (1, 1, y.shape[-1]))
+            utils.check(
+                unflattened_mask.shape == y.shape,
+                lambda: f"{unflattened_mask.shape = }, {y.shape = }",
+            )
+            y = ltorch.masked_fill(y, unflattened_mask, 0.0)
         return dist_prims.synchronize_output_for_column_wise_tensor_parallel(
             y,
             self.process_group,
@@ -115,7 +133,8 @@ class TransformVisitor:
         if bsym in self.bsyms_before_allgather:
             pre_post_process = self.bsyms_before_allgather[bsym]
             orig_arg = bsym.flat_proxy_args[0]
-            if (new_arg := pre_post_process.preprocess(orig_arg)).name != orig_arg.name:
+            new_arg, preprocess_artifacts = pre_post_process.preprocess(orig_arg)
+            if new_arg.name != orig_arg.name:
                 self.swap_map[variableify(orig_arg)] = new_arg
 
         new_bsym = bsym.from_bsym_swap_proxies(self.swap_map, skip_output=True)
@@ -124,7 +143,7 @@ class TransformVisitor:
 
         if bsym in self.bsyms_before_allgather:
             y = bsym.flat_proxy_outs[0]
-            gathered_output = pre_post_process.postprocess(y)
+            gathered_output = pre_post_process.postprocess(y, preprocess_artifacts)
             self.swap_map[variableify(y)] = gathered_output
 
         return VISIT_TYPE.REPLACE

@@ -22,6 +22,7 @@ from torch.distributed.fsdp.wrap import always_wrap_policy
 from torch.testing import assert_close, make_tensor
 
 import thunder
+import thunder.executors
 import thunder.torch as ltorch
 from thunder.core import devices
 from thunder.distributed import FSDPBucketingStrategy, FSDPType
@@ -1064,6 +1065,47 @@ class CompileDDPTest(DataParallelTestCase):
         torch.testing.assert_close(
             ref_model.net2.weight.grad.chunk(self.world_size, 0)[self.rank],
             colwise_jitted_model.get_submodule("net2").weight.grad,
+        )
+
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
+    def test_tensor_parallel_column_wise_embedding(self):
+        num_embeddings = 128
+        embedding_dim = 32
+
+        class Model(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.embed = nn.Embedding(num_embeddings, embedding_dim)
+
+            def forward(self, x):
+                return self.embed(x)
+
+        device = torch.device("cuda", self.rank)
+        x = torch.randint(0, num_embeddings - 1, (16, 16), device=device)
+
+        process_group = None
+        ref_model = Model().to(device)
+        ref_state_dict = ref_model.state_dict()
+        expected = ref_model(x)
+
+        model = Model().to(device)
+        model.load_state_dict(ref_state_dict)
+        jitted_model = thunder.jit(model)
+        colwise_jitted_model = convert_module_to_columnwise_parallel(
+            jitted_model,
+            target_modules=("embed",),
+            process_group=process_group,
+        )
+        y = colwise_jitted_model(x)
+        torch.testing.assert_close(len(colwise_jitted_model.embed.weight), num_embeddings // self.world_size)
+        torch.testing.assert_close(y, expected)
+
+        expected.mean().backward()
+        y.mean().backward()
+
+        torch.testing.assert_close(
+            ref_model.embed.weight.grad.chunk(self.world_size, 0)[self.rank],
+            colwise_jitted_model.get_submodule("embed").weight.grad,
         )
 
 
