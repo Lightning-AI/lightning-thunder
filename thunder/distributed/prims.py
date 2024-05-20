@@ -100,6 +100,7 @@ def all_reduce_meta(
     utils.check_type(op, DistributedReduceOps)
     utils.check_type(group, torch.distributed.ProcessGroup)
     utils.check(pytype(do_async) is bool, lambda: f"Expected {do_async=} to be a boolean value")
+    utils.check_type(skip_clone, bool)
 
     if do_async:
         return FutureTensorProxy(like=a)
@@ -301,9 +302,14 @@ def synchronize_input_for_column_wise_tensor_parallel_meta(
 def synchronize_output_for_column_wise_tensor_parallel_meta(
     t: TensorProxy,
     group: torch.distributed.ProcessGroup,
+    layer_type: str,
 ) -> TensorProxy:
     utils.check_type(t, TensorProxy)
     utils.check_type(group, torch.distributed.ProcessGroup)
+    supported_layer_types: set[str] = {"linear", "embedding"}
+    utils.check(
+        layer_type in supported_layer_types, lambda: f"invalid {layer_type=}, expected one of {supported_layer_types}"
+    )
 
     gathered_shape = list(t.shape)
     gathered_shape[-1] *= group.size()
@@ -381,24 +387,44 @@ def synchronize_backward_rule(
 def synchronize_output_for_column_wise_tensor_parallel_forward_rule(
     t: TensorProxy,
     group: torch.distributed.ProcessGroup,
+    layer_type: str,
 ) -> tuple[TensorProxy, tuple[torch.distributed.ProcessGroup]]:
     import thunder.torch as ltorch
 
-    # all-gather in the last dim
-    future_of_all_gathered = all_gather(t, group, True, 0)
-    all_gathered = wait(future_of_all_gathered)
-    chunked = ltorch.chunk(all_gathered, group.size(), 0)
-    gathered = ltorch.cat(chunked, dim=-1)
-    return gathered, (group,)
+    match layer_type:
+        case "linear":
+            # all-gather in the last dim
+            future_of_all_gathered = all_gather(t, group, True, 0)
+            all_gathered = wait(future_of_all_gathered)
+            chunked = ltorch.chunk(all_gathered, group.size(), 0)
+            gathered = ltorch.cat(chunked, dim=-1)
+            return gathered, (group, layer_type)
+        case "embedding":
+            return all_reduce(t, DistributedReduceOps.SUM, group, do_async=True, skip_clone=True).wait(), (
+                group,
+                layer_type,
+            )
+        case _:
+            raise ValueError(f"Invlaid {layer_type=}")
 
 
 @register_backward(PrimIDs.SYNCHRONIZE_OUTPUT_FOR_COLUMN_WISE_TENSOR_PARALLEL)
 def synchronize_output_for_column_wise_tensor_parallel_backward_rule(
     group: torch.distributed.ProcessGroup,
+    layer_type: str,
     grad: TensorProxy,
 ) -> tuple[TensorProxy, tuple[torch.distributed.ProcessGroup]]:
-    # reduce-scatter in the last dim
-    return (
-        reduce_scatter(grad / group.size(), DistributedReduceOps.SUM, group, do_async=True, dim=grad.ndim - 1).wait(),
-        None,
-    )
+    match layer_type:
+        case "linear":
+            # reduce-scatter in the last dim
+            return (
+                reduce_scatter(
+                    grad / group.size(), DistributedReduceOps.SUM, group, do_async=True, dim=grad.ndim - 1
+                ).wait(),
+                None,
+                None,
+            )
+        case "embedding":
+            return grad, None, None
+        case _:
+            raise ValueError(f"Invlaid {layer_type=}")

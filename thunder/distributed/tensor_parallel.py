@@ -1,5 +1,8 @@
 from __future__ import annotations
+from abc import ABC
+from abc import abstractmethod
 from dataclasses import dataclass
+from dataclasses import field
 from typing import TYPE_CHECKING
 
 import torch.nn as nn
@@ -10,6 +13,7 @@ from thunder.core.proxies import variableify
 from thunder.core.proxies import TensorProxy
 
 if TYPE_CHECKING:
+    from typing import Any
     from collections.abc import Sequence
     from torch.distributed import ProcessGroup
     from thunder.core.trace import TraceCtx
@@ -26,10 +30,78 @@ __all__ = [
 ]
 
 
+class PrePostProcessInterface(ABC):
+    @abstractmethod
+    def preprocess(self, x: TensorProxy) -> TensorProxy:
+        return x
+
+    @abstractmethod
+    def postprocess(self, y: TensorProxy) -> TensorProxy:
+        return y
+
+
+@dataclass(frozen=True)
+class NoOp(PrePostProcessInterface):
+    def preprocess(self, x: TensorProxy) -> TensorProxy:
+        return super().preprocess(x)
+
+    def postprocess(self, y: TensorProxy) -> TensorProxy:
+        return super().postprocess(y)
+
+
+@dataclass(frozen=True)
+class LinearPrePostProcess(PrePostProcessInterface):
+    process_group: ProcessGroup
+    layer_type: str = field(default="linear", kw_only=True)
+
+    def preprocess(self, x: TensorProxy) -> TensorProxy:
+        return super().preprocess(x)
+
+    def postprocess(self, y: TensorProxy) -> TensorProxy:
+        from thunder.distributed import prims as dist_prims
+
+        return dist_prims.synchronize_output_for_column_wise_tensor_parallel(
+            y,
+            self.process_group,
+            self.layer_type,
+        )
+
+
+@dataclass
+class EmbeddingPrePostProcess(PrePostProcessInterface):
+    num_local_embeddings: int
+    process_group: ProcessGroup
+
+    layer_type: str = field(default="embedding", kw_only=True)
+
+    def __post_init__(self) -> None:
+        from torch.distributed import distributed_c10d
+
+        rank = distributed_c10d.get_rank(self.process_group)
+
+        self.vocab_start_index: int = rank * self.num_local_embeddings
+        self.vocab_end_index: int = (rank + 1) * self.num_local_embeddings - 1
+
+    def preprocess(self, x: TensorProxy) -> TensorProxy:
+        import thunder.torch as ltorch
+
+        masked_x = ltorch.where(x, x < self.vocab_start_index or x > self.vocab_end_index, -1)
+        return masked_x
+
+    def postprocess(self, y: TensorProxy) -> TensorProxy:
+        from thunder.distributed import prims as dist_prims
+
+        return dist_prims.synchronize_output_for_column_wise_tensor_parallel(
+            y,
+            self.process_group,
+            self.layer_type,
+        )
+
+
 @dataclass
 class TransformVisitor:
     process_group: ProcessGroup
-    bsyms_before_allgather: set[BoundSymbol]
+    bsyms_before_allgather: dict[BoundSymbol, PrePostProcessInterface]
 
     def __post_init__(self):
         self.swap_map: dict[VariableInterface, ProxyInterface] = {}
@@ -39,17 +111,21 @@ class TransformVisitor:
         from thunder.core.trace import get_tracectx
         from thunder.distributed import prims as dist_prims
 
+        pre_post_process: PrePostProcessInterface | None = None
+        if bsym in self.bsyms_before_allgather:
+            pre_post_process = self.bsyms_before_allgather[bsym]
+            orig_arg = bsym.flat_proxy_args[0]
+            if (new_arg := pre_post_process.preprocess(orig_arg)).name != orig_arg.name:
+                self.swap_map[variableify(orig_arg)] = new_arg
+
         new_bsym = bsym.from_bsym_swap_proxies(self.swap_map, skip_output=True)
         trace = get_tracectx()
         trace.scopes[-1].append(new_bsym)
 
         if bsym in self.bsyms_before_allgather:
-            output_to_gather = bsym.flat_proxy_outs[0]
-            gathered_output = dist_prims.synchronize_output_for_column_wise_tensor_parallel(
-                output_to_gather,
-                self.process_group,
-            )
-            self.swap_map[variableify(output_to_gather)] = gathered_output
+            y = bsym.flat_proxy_outs[0]
+            gathered_output = pre_post_process.postprocess(y)
+            self.swap_map[variableify(y)] = gathered_output
 
         return VISIT_TYPE.REPLACE
 
@@ -59,7 +135,7 @@ class TransformForColumnWiseParallel:
     rank: int
     world_size: int
     compile_data: CompileData
-    chunked_param_names: set[str]
+    chunked_param_name2layer_type: set[str]
     process_group: ProcessGroup
 
     def __post_init__(self):
@@ -91,12 +167,26 @@ class TransformForColumnWiseParallel:
 
         consumers = utils.consumers(computation_trace)
         flat_args, _ = tree_flatten((computation_trace.args, computation_trace.kwargs))
-        bsyms_before_allgather: set[BoundSymbol] = set()
+        bsyms_before_allgather: dict[BoundSymbol, PrePostProcessInterface] = {}
         for proxy in filter(lambda p: isinstance(p, TensorProxy), flat_args):
-            for p_name in self.chunked_param_names:
+            for p_name in self.chunked_param_name2layer_type:
                 if p_name == proxy.name:
                     consumer_bsym = consumers[proxy][0]
-                    bsyms_before_allgather.add(consumer_bsym)
+                    if consumer_bsym not in bsyms_before_allgather:
+                        match self.chunked_param_name2layer_type[p_name]:
+                            case nn.Linear:
+                                bsyms_before_allgather[consumer_bsym] = LinearPrePostProcess(
+                                    process_group=self.process_group
+                                )
+                            case nn.Embedding:
+                                bsyms_before_allgather[consumer_bsym] = EmbeddingPrePostProcess(
+                                    num_local_embeddings=proxy.shape[0], process_group=self.process_group
+                                )
+                            case _:
+                                utils.check(
+                                    False,
+                                    lambda: f"{self.chunked_param_name2layer_type[p_name]=} is not supported",
+                                )
         utils.check(bsyms_before_allgather, lambda: f"{bsyms_before_allgather} must not be empty")
 
         visit = TransformVisitor(self.process_group, bsyms_before_allgather)
@@ -147,13 +237,21 @@ def convert_module_to_columnwise_parallel(
 
 
             class Model(nn.Module):
-                def __init__(self, n_in: int, n_hidden: int, n_out: int) -> None:
+                def __init__(
+                    self,
+                    num_embeddings: int,
+                    embedding_dim: int,
+                    n_hidden: int,
+                    n_out: int,
+                ) -> None:
                     super().__init__()
-                    self.l1 = nn.Linear(n_in, n_hidden)
+                    self.embed = nn.Embedding(num_embeddings, embedding_dim)
+                    self.l1 = nn.Linear(embedding_dim, n_hidden)
                     self.l2 = nn.Linear(n_hidden, n_out)
 
-                def forward(self, x: torch.Tensor) -> torch.Tensor:
-                    h = F.gelu(self.l1(x), approximate='tanh')
+                def forward(self, tokens: torch.Tensor) -> torch.Tensor:
+                    feature = self.embed(tokens)
+                    h = F.gelu(self.l1(feature), approximate='tanh')
                     return self.l2(h)
 
             world_size = int(os.environ["WORLD_SIZE"])
@@ -165,7 +263,7 @@ def convert_module_to_columnwise_parallel(
             # `l2`'s output size (= n_out) needs to be divisible by `world_size`
             tp_model = convert_module_to_columnwise_parallel(
                 jitted_model,
-                target_modules=("l2",),
+                target_modules=("embed", "l2",),
             )
 
             x = torch.randn(4, n_in, device=device)
@@ -183,21 +281,26 @@ def convert_module_to_columnwise_parallel(
     rank = distributed_c10d.get_rank(process_group)
     world_size = distributed_c10d.get_world_size(process_group)
 
-    chunked_param_names: list[str] = []
+    chunked_param_name2layer_type: dict[str, Any] = {}
     for target_mod_name in target_modules:
         mod = thunder_module.get_submodule(target_mod_name)
-        utils.check_type(mod, (nn.Linear,))
+        utils.check_type(
+            mod,
+            (
+                nn.Linear,
+                nn.Embedding,
+            ),
+        )
         for name, p in mod.named_parameters(recurse=False):
-            chunked_param_names.append("t_" + f"{target_mod_name}.{name}".replace(".", "_"))
+            chunked_param_name2layer_type["t_" + f"{target_mod_name}.{name}".replace(".", "_")] = type(mod)
 
-    param_proxy_name_set = sorted({name for name in chunked_param_names})
     colwise_thunder_module = add_transform(
         thunder_module,
         early_transform=TransformForColumnWiseParallel(
             rank=rank,
             world_size=world_size,
             compile_data=get_compile_data(thunder_module),
-            chunked_param_names=param_proxy_name_set,
+            chunked_param_name2layer_type=chunked_param_name2layer_type,
             process_group=process_group,
         ),
     )
