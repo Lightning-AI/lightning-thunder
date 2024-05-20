@@ -4,6 +4,7 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from dataclasses import field
 from typing import TYPE_CHECKING
+from typing import ClassVar
 
 import torch.nn as nn
 from torch.distributed import distributed_c10d
@@ -52,7 +53,7 @@ class NoOp(PrePostProcessInterface):
 @dataclass(frozen=True)
 class LinearPrePostProcess(PrePostProcessInterface):
     process_group: ProcessGroup
-    layer_type: str = field(default="linear", kw_only=True)
+    layer_type: ClassVar[str] = "linear"
 
     def preprocess(self, x: TensorProxy) -> tuple[TensorProxy, tuple[Any, ...]]:
         return super().preprocess(x), None
@@ -63,7 +64,7 @@ class LinearPrePostProcess(PrePostProcessInterface):
         return dist_prims.synchronize_output_for_column_wise_tensor_parallel(
             y,
             self.process_group,
-            self.layer_type,
+            LinearPrePostProcess.layer_type,
         )
 
 
@@ -72,7 +73,7 @@ class EmbeddingPrePostProcess(PrePostProcessInterface):
     num_local_embeddings: int
     process_group: ProcessGroup
 
-    layer_type: str = field(default="embedding", kw_only=True)
+    layer_type: ClassVar[str] = "embedding"
 
     def __post_init__(self) -> None:
         from torch.distributed import distributed_c10d
@@ -112,7 +113,7 @@ class EmbeddingPrePostProcess(PrePostProcessInterface):
         return dist_prims.synchronize_output_for_column_wise_tensor_parallel(
             y,
             self.process_group,
-            self.layer_type,
+            EmbeddingPrePostProcess.layer_type,
         )
 
 
