@@ -2023,6 +2023,8 @@ def clone(a: TensorProxy, *, memory_format=torch.preserve_format) -> TensorProxy
     # SSA pass, but for now we do not expect that aliasing the tensor will
     # introduce many problems.
     return a
+
+
 # Because we do not use @torchsymbol, we need to manually register the
 # implementation.
 _torch_to_thunder_function_map[torch.clone] = clone
