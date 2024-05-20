@@ -34,7 +34,7 @@ __all__ = [
 class PrePostProcessInterface(ABC):
     @abstractmethod
     def preprocess(self, x: TensorProxy) -> tuple[TensorProxy, tuple[Any, ...]]:
-        return x, None
+        return x, (None,)
 
     @abstractmethod
     def postprocess(self, y: TensorProxy, _: Any) -> TensorProxy:
@@ -44,7 +44,7 @@ class PrePostProcessInterface(ABC):
 @dataclass(frozen=True)
 class NoOp(PrePostProcessInterface):
     def preprocess(self, x: TensorProxy) -> tuple[TensorProxy, tuple[Any, ...]]:
-        return super().preprocess(x), None
+        return super().preprocess(x)
 
     def postprocess(self, y: TensorProxy, _: Any) -> TensorProxy:
         return super().postprocess(y)
@@ -56,7 +56,7 @@ class LinearPrePostProcess(PrePostProcessInterface):
     layer_type: ClassVar[str] = "linear"
 
     def preprocess(self, x: TensorProxy) -> tuple[TensorProxy, tuple[Any, ...]]:
-        return super().preprocess(x), None
+        return super().preprocess(x)
 
     def postprocess(self, y: TensorProxy, _: Any) -> TensorProxy:
         from thunder.distributed import prims as dist_prims
