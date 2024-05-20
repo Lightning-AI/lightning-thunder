@@ -2003,11 +2003,28 @@ def amin(a, /, dim=None, keepdim: bool = False):
 
 # Clone is unique in that it's not registered as a symbol; as such we add it to
 # the appropriate maps manually, instead of through the @torchsymbol decorator.
+# This means that clone will not appear in the trace; instead, this basically
+# just gets inlined into the code.
 def clone(a: TensorProxy, *, memory_format=torch.preserve_format) -> TensorProxy:
-    b = repeat(a, [1] * len(a.shape))
-    return b
+    """
+    Produce a copy of a tensor as a distinct new tensor.
 
-
+    Note: the implementation currently creates an alias instead of a copy.
+    """
+    # Our implementation currently does not introduce a copy, and so nothing
+    # except preserve_format is feasible to support.
+    # If you're hitting this you could try commenting this check out; if your
+    # model does not actually rely on specified memory formats then it should
+    # be fine.
+    if memory_format is not torch.preserve_format:
+        raise NotImplementedError("only preserve_format is currently supported")
+    # This implementation just creates an alias instead of a copy. This may
+    # introduce problems; such problems would be fixable when we get to adding an
+    # SSA pass, but for now we do not expect that aliasing the tensor will
+    # introduce many problems.
+    return a
+# Because we do not use @torchsymbol, we need to manually register the
+# implementation.
 _torch_to_thunder_function_map[torch.clone] = clone
 _torch_to_thunder_function_map[torch.Tensor.clone] = clone
 register_method("clone", clone)
