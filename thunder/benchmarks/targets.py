@@ -23,6 +23,7 @@ from thunder.benchmarks import (
     NanoGPTCrossEntropyBenchmark,
     LitGPTGeluBenchmark,
     NanoGPTLayerNormBenchmark,
+    ResNet50Benchmark,
     thunder_apex_executor,
     thunder_apex_nvfuser_executor,
     thunder_cudnn_executor,
@@ -723,3 +724,42 @@ def test_interpreter_nanogpt_gpt2_fwd(benchmark, executor: Callable):
     fn = executor(bench.fn())
 
     benchmark(fn, *args, **kwargs)
+
+
+#
+# vision benchmarks
+#
+
+
+@pytest.mark.parametrize(
+    "executor,",
+    fwd_executors,
+    ids=fwd_executor_ids,
+)
+def test_resnet50_fwd(benchmark, executor: Callable):
+    b = ResNet50Benchmark((64, 3, 224, 224), device="cuda:0", dtype=torch.bfloat16, requires_grad=False)
+
+    setup = make_setup(b)
+    fn = executor(b)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=1)
+
+
+@pytest.mark.parametrize(
+    "executor,",
+    (
+        torch_fwd_bwd,
+        torchcompile_fwd_bwd,
+        thunder_fwd_bwd,
+    ),
+    ids=fwd_executor_ids,
+)
+def test_resnet50_grad(benchmark, executor: Callable):
+    b = ResNet50Benchmark((64, 3, 224, 224), device="cuda:0", dtype=torch.bfloat16, requires_grad=True)
+
+    setup = make_setup(b)
+    fn = executor(b)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=1)

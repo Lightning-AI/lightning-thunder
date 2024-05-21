@@ -2825,6 +2825,47 @@ class BatchNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return foo
 
 
+class ResNet50Benchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    def __init__(
+        self,
+        input_shape,
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = False,
+    ) -> None:
+        super().__init__()
+
+        self.shape: Sequence[int] = input_shape
+        self.device: str = device
+        self.dtype: dtypes.dtype = dtype
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+        self.requires_grad: bool = requires_grad
+
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+        a = make(self.shape)
+        return (a,), {}
+
+    def fn(self) -> Callable:
+        from thunder.tests.resnet import resnet50
+
+        # Thunder does not support inplace
+        def avoid_add_(m):
+            if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
+                m.num_batches_tracked = None
+        def avoid_relu_inplace(m):
+            if isinstance(m, torch.nn.modules.activation.ReLU):
+                m.inplace=False
+
+        model = resnet50()
+        model.apply(avoid_add_)
+        model.apply(avoid_relu_inplace)
+        model = model.to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
+        return model
+
+
 # TODO Add descriptions to the executors when listed, and list them alphabetically
 # TODO Allow querying benchmark for details
 # TODO Allow specifying benchmark arguments
