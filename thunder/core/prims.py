@@ -254,7 +254,6 @@ class PrimIDs(Enum):
     EMBEDDING_BACKWARD = auto()
     LINEAR = auto()
     PAD = auto()
-    BATCH_NORM = auto()
     # Memory access methods
     ITEM = auto()
     COPY_ = auto()
