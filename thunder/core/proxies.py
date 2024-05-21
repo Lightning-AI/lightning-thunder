@@ -22,6 +22,7 @@ import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
 
 ShapeLike = Sequence[int]
+NumberLike = Number | NumberProxy
 
 
 # TODO Document this class

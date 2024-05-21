@@ -19,7 +19,7 @@ from thunder.core.langctxs import langctx, Languages
 import thunder.core.dtypes as dtypes
 from thunder.core import utils
 import thunder.core.prims as prims
-from thunder.core.proxies import IntegerProxy, NumberProxy, TensorProxy, pyval, pytype, proxy, AnyProxy, Proxy
+from thunder.core.proxies import NumberLike, IntegerProxy, NumberProxy, TensorProxy, pyval, pytype, proxy, AnyProxy, Proxy
 import thunder.core.devices as devices
 
 # This file defines the operations in thunder.jit's "core" language.
@@ -29,7 +29,6 @@ import thunder.core.devices as devices
 
 __all__ = []
 
-NumberLike = Number | NumberProxy
 TensorLike = TensorProxy
 DeviceLike = Union[str, devices.Device]
 

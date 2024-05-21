@@ -14,7 +14,7 @@ import torch
 
 import thunder.core.prims as prims
 from thunder.core.prims import PrimIDs
-from thunder.core.proxies import NumberProxy, TensorProxy, CollectionProxy
+from thunder.core.proxies import NumberProxy, NumberLike, TensorProxy, CollectionProxy
 from thunder.core.symbol import Symbol, BoundSymbol
 from thunder.core import baseutils
 import thunder.core.dtypes as dtypes
@@ -174,8 +174,8 @@ ex.register_implementation(prims.construct_tuple, construct_tuple, checker=_alwa
 #
 
 
-def _convert_element_type_prim_checker(a: Number | TensorProxy, /, dtype: type | dtypes.dtype) -> bool:
-    return isinstance(a, Number) and dtype in (bool, int, float, complex)
+def _convert_element_type_prim_checker(a: NumberLike | TensorProxy, /, dtype: type | dtypes.dtype) -> bool:
+    return isinstance(a, (Number, NumberProxy)) and dtype in (bool, int, float, complex)
 
 
 def _convert_element_type_prim_impl(a: Number, dtype: type) -> Number:
@@ -199,7 +199,7 @@ ex.register_implementation(prims.convert_element_type, convert_element_type, che
 
 
 def _elementwise_unary_checker(x: Number | TensorProxy) -> bool:
-    return isinstance(x, Number)
+    return isinstance(x, (Number, NumberProxy))
 
 
 # NOTE Tensor abs is distinct from Python's builtin abs because it preserves the dtype of booleans
@@ -294,7 +294,7 @@ ex.register_implementation(prims.signbit, signbit, checker=_elementwise_unary_ch
 #
 
 
-def _elementwise_binary_checker(a: Number | TensorProxy, b: Number | TensorProxy) -> bool:
+def _elementwise_binary_checker(a: NumberLike | TensorProxy, b: NumberLike | TensorProxy) -> bool:
     return isinstance(a, (Number, NumberProxy)) and isinstance(b, (Number, NumberProxy))
 
 
