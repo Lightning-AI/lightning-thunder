@@ -22,7 +22,6 @@ import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
 
 ShapeLike = Sequence[int]
-NumberLike = Number | NumberProxy
 
 
 # TODO Document this class
@@ -919,8 +918,9 @@ class NumberProxy(Proxy, NumberProxyInterface):
     def __ixor__(self, other):
         return NotImplemented
 
+NumberLike = Number | NumberProxy
 
-def pyval(x: Number | str | AnyProxy) -> Number | str | any:
+def pyval(x: NumberLike | str | AnyProxy) -> Number | str | any:
     baseutils.check_type(x, (NumberProxy, Number, str, AnyProxy))
 
     if isinstance(x, AnyProxy):
