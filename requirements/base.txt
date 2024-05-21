@@ -6,4 +6,3 @@ igraph >=0.10.4
 optree >=0.9.2
 opt_einsum >= 3.3.0
 mpmath <1.4.0  # todo: teporarl pin for `NameError: name '_C' is not defined`
-nvidia-cudnn-frontend # All versions should work
