@@ -918,7 +918,9 @@ class NumberProxy(Proxy, NumberProxyInterface):
     def __ixor__(self, other):
         return NotImplemented
 
+
 NumberLike = Number | NumberProxy
+
 
 def pyval(x: NumberLike | str | AnyProxy) -> Number | str | any:
     baseutils.check_type(x, (NumberProxy, Number, str, AnyProxy))
