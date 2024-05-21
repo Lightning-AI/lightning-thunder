@@ -3341,6 +3341,63 @@ def avg_pool3d(
     return _avg_pool_helper(3, a, kernel_size, stride, padding, ceil_mode, count_include_pad, divisor_override)
 
 
+@torchsymbol(
+    torch.nn.functional.adaptive_avg_pool2d, id="torch.nn.functional.adaptive_avg_pool2d", is_method=False, is_prim=True
+)
+def adaptive_avg_pool2d(
+    a: TensorProxy,
+    /,
+    output_size: int | Sequence[int],
+) -> TensorProxy:
+    from thunder.core.baseutils import check_valid_shape, check_valid_length
+
+    utils.check_type(output_size, (int, IntegerProxy, Sequence))
+    if isinstance(output_size, Sequence):
+        utils.check(len(output_size) == 2, lambda: f"adaptive_avg_pool2d: output_size must be 2")
+        utils.check_types(output_size, (int, IntegerProxy))
+        check_valid_shape(output_size)
+    else:
+        check_valid_length(output_size)
+        output_size = (output_size, output_size)
+
+    utils.check_type(a, TensorProxy)
+    a_ndim = a.ndim
+    utils.check(
+        a_ndim == 3 or a_ndim == 4,
+        lambda: f"adaptive_avg_pool2d: Expected 3D or 4D tensor, but got {a.shape}",
+    )
+    for i in (-2, -1):
+        utils.check(
+            a.shape[i] > 0,
+            lambda: f"adaptive_avg_pool2d: Expected input to have non-zero size for non-batch dimensions, but input has sizes {a.shape} with dimension {i + a_ndim} being empty",
+        )
+    output_shape_ = a.shape[:-2] + tuple(output_size)
+    return TensorProxy(like=a, shape=output_shape_)
+
+
+@torchsymbol("adaptive_avg_pool2d_backward", id="adaptive_avg_pool2d_backward", is_prim=True)
+def adaptive_avg_pool2d_backward(g: TensorProxy, a: TensorProxy, /) -> TensorProxy:
+    # Followed the cuda implementation in Pytorch for adaptive_avg_pool2d_backward here
+    # short cut for empty tensor
+    if 0 in a.shape:
+        return TensorProxy(like=a)
+    utils.check_type(g, TensorProxy)
+    utils.check_type(a, TensorProxy)
+    utils.check_same_device(g, a)
+    utils.check_same_dtype(g, a)
+    grad_ndim = g.ndim
+    utils.check(
+        grad_ndim == 3 or grad_ndim == 4,
+        lambda: f"adaptive_avg_pool2d_backward: Expected 3D or 4D tensor, but got {g.shape}",
+    )
+    for i in range(1, grad_ndim):
+        utils.check(
+            g.shape[i] > 0,
+            lambda: f"adaptive_avg_pool2d_backward: Expected grad to have non-zero size for non-batch dimensions, but grad has sizes {g.shape} with dimension {i} being empty",
+        )
+    return TensorProxy(like=a)
+
+
 @torchsymbol(torch.max_pool1d, torch.nn.functional.max_pool1d, id="torch.nn.functional.max_pool1d", is_method=False)
 def max_pool1d(
     a: TensorProxy,
