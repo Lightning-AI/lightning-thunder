@@ -846,8 +846,7 @@ def flip(a: TensorLike, /, *dims: int) -> TensorLike:
     # PyTorch supports 0-dim inputs with len(dims) <= 1
     if a.ndim == 0 and isinstance(dims, Sequence) and len(dims) > 0:
         utils.check(
-            len(dims) == 1
-            and (isinstance(dims[0], (int, IntegerProxy)) and dims[0] in (0, -1)),
+            len(dims) == 1 and (isinstance(dims[0], (int, IntegerProxy)) and dims[0] in (0, -1)),
             lambda: f"Expected {dims=} to be a sequence of integers in range [-1, 0], and of length 1",
         )
         return clang.flip(a, ())
