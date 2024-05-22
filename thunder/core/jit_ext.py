@@ -1135,30 +1135,6 @@ def get_computation_inputs_and_intermediates(computation_trace):
     return inputs_list, intermediates_set
 
 
-def get_parameter_or_buffer_or_submodule_name_and_root(provenance):
-    assert provenance.inputs[0].inst is PseudoInst.LOAD_ATTR
-    assert provenance.inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE
-    typ = provenance.inputs[0].inputs[1].value
-    name = [provenance.inputs[1].value]
-    mprovenance = provenance.inputs[0].inputs[0]
-
-    while (
-        mprovenance.inst is PseudoInst.BINARY_SUBSCR
-        and mprovenance.inputs[1].inst is PseudoInst.CONSTANT
-        and mprovenance.inputs[0].inst is PseudoInst.LOAD_ATTR
-        and mprovenance.inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE
-    ):
-        assert (
-            mprovenance.inputs[0].inputs[1].inst is PseudoInst.CONSTANT
-            and mprovenance.inputs[0].inputs[1].value == "_modules"
-        )
-
-        name_component = mprovenance.inputs[1].value
-        name.insert(0, name_component)
-        mprovenance = mprovenance.inputs[0].inputs[0]
-    return typ, name, mprovenance
-
-
 def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, kwargs, *, has_epilogue: bool):
     already_unpacked: dict[int, Proxy] = {}
     orig_modules: dict[int, Proxy] = {}
@@ -1184,12 +1160,11 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             prologue_trace.add_name(p.name)
 
         def from_input(provenance, *, new_output=False):
+            assert new_output
             if provenance.inst == PseudoInst.INPUT_ARGS:
-                assert new_output
                 param_ordering[id(pro_args_proxy)] = (pro_args_proxy, [0])
                 return pro_args_proxy
             elif provenance.inst == PseudoInst.INPUT_KWARGS:
-                assert new_output
                 param_ordering[id(pro_kwargs_proxy)] = (pro_kwargs_proxy, [1])
                 return pro_kwargs_proxy
             elif provenance.inst == PseudoInst.INPUT_FN:
@@ -1197,10 +1172,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                     name = "module"
                 else:
                     name = "fn"
-                if new_output:
-                    output = Proxy(name=name)
-                else:
-                    output = p
+                output = Proxy(name=name)
                 param_ordering[id(output)] = (output, [3])
                 provenance.proxy = output
                 bsym = prims.unpack_function_obj.bind(output, output=output)
@@ -1230,8 +1202,28 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 raise NotImplementedError(f"constant of type {type(provenance.value)} {provenance.value}")
 
         def unpack_parameter_or_buffer_or_submodule(provenance, *, new_output=False):
-            typ, name, root_module_provenance = get_parameter_or_buffer_or_submodule_name_and_root(provenance)
-            root_module = from_provenance(root_module_provenance, new_output=True)
+            assert provenance.inputs[0].inst is PseudoInst.LOAD_ATTR
+            assert provenance.inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE
+            typ = provenance.inputs[0].inputs[1].value
+            name = [provenance.inputs[1].value]
+            mprovenance = provenance.inputs[0].inputs[0]
+
+            while (
+                mprovenance.inst is PseudoInst.BINARY_SUBSCR
+                and mprovenance.inputs[1].inst is PseudoInst.CONSTANT
+                and mprovenance.inputs[0].inst is PseudoInst.LOAD_ATTR
+                and mprovenance.inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE
+            ):
+                assert (
+                    mprovenance.inputs[0].inputs[1].inst is PseudoInst.CONSTANT
+                    and mprovenance.inputs[0].inputs[1].value == "_modules"
+                )
+
+                name_component = mprovenance.inputs[1].value
+                name.insert(0, name_component)
+                mprovenance = mprovenance.inputs[0].inputs[0]
+
+            root_module = from_provenance(mprovenance, new_output=True)
             if new_output:
                 output = Proxy("m")  # name? collectify?
             else:
@@ -1423,9 +1415,11 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
 
 
 def process_recorded_modifications(ctx, epilogue_trace):
-    root_for_provenances = {}
     for modified_object, modifications in ctx._additional_outputs.items():
         umodified_object = modified_object.value
+        ## we want this to created in the compute trace context for namespace...
+        modified_object_proxy = Proxy(history=modified_object.provenance)
+        epilogue_trace.add_name(modified_object_proxy.name)
 
         if isinstance(umodified_object, dict):
             last_modification = {}
@@ -1441,24 +1435,8 @@ def process_recorded_modifications(ctx, epilogue_trace):
                     (value,) = args
                     assert isinstance(value.value, Proxy)
 
-                    assert modified_object.provenance.inst is PseudoInst.LOAD_ATTR
-                    assert modified_object.provenance.inputs[1].inst is PseudoInst.CONSTANT
-                    assert modified_object.provenance.inputs[1].value == "_buffers"
-
-                    typ, name, root_module_provenance = get_parameter_or_buffer_or_submodule_name_and_root(
-                        modified_object.provenance.inputs[0]
-                    )
-                    assert typ == "_modules"
-                    root_module_proxy = root_for_provenances.get(root_module_provenance)
-                    if root_module_proxy is None:
-                        ## we want this to created in the compute trace context for namespace...
-                        root_module_proxy = Proxy(history=root_module_provenance)
-                        epilogue_trace.add_name(root_module_proxy.name)
-                        root_for_provenances[root_module_provenance] = root_module_proxy
-
-                    name = ".".join(name + [k])
                     with tracectx(epilogue_trace):
-                        bsym = prims.pack_buffer.bind(root_module_proxy, name, value.value, output=None)
+                        bsym = prims.pack_setitem.bind(modified_object_proxy, k, value.value, output=None)
                         epilogue_trace.bound_symbols.append(bsym)
                 else:
                     raise NotImplementedError(f"Modifications {inst} on dicts are not supported")
