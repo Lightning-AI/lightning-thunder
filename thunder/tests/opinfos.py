@@ -2406,6 +2406,7 @@ def div_sample_generator(op, device, dtype, requires_grad, **kwargs):
     shapes = [((4, 2, 3), (4, 2, 3)), ((4, 2, 3), (2, 3)), ((4, 2, 3), (2, 1))]
     for shape_a, shape_b in shapes:
         for rounding_mode in (None, "trunc", "floor"):
+            # numerator, denominator, rounding_mode
             yield SampleInput(make(shape_a), make(shape_b), rounding_mode=rounding_mode)
             yield SampleInput(make(shape_a), number(), rounding_mode=rounding_mode)
 

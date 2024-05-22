@@ -1377,13 +1377,13 @@ def copysign(a, b, /):
 # TODO Implement div
 @torchsymbol(torch.div, is_method=True)
 def div(
-    a: TensorLike | Number,
-    b: TensorLike | Number,
+    a: Number | TensorLike,
+    b: Number | TensorLike,
     /,
     *,
     rounding_mode: None | str = None,
     out: None | TensorLike = None,
-) -> TensorLike:
+) -> Number | TensorLike:
     utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
 
     if rounding_mode is None:
