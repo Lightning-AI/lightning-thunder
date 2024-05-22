@@ -23,7 +23,9 @@ def snippet_errors(op, sample, ex_type, err_msg_match=None):
 
 
 @ops(tuple(op for op in opinfos if op.error_input_generator is not None))
-def test_errors(op, device, _, executor, comp):
+def test_errors(op, device, dtype, executor, comp):
+    if dtype in dtypes.float_8bit_dtypes:
+        pytest.skip("Skipping float8 due to broad lack of operator support in torch")
     for sample, ex_type, err_msg in op.error_inputs(device):
         result = run_snippet(snippet_errors, op, device, None, executor.make_callable(op.op), sample, ex_type, err_msg)
         if result is not None:
