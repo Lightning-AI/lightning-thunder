@@ -87,6 +87,7 @@ from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 from thunder.core.trace import get_tracectx
 from thunder.core.langctxs import langctx, LanguageContext, register_langctx, Languages
 
+
 def unwrap_number_proxy(func):
     @wraps(func)
     def with_pyval(*args, **kwargs):
@@ -95,7 +96,9 @@ def unwrap_number_proxy(func):
             if isinstance(v, NumberProxy):
                 kwargs[k] = pyval(v)
         return func(*args, **kwargs)
+
     return with_pyval
+
 
 #
 # Primitives and helpers for defining them
