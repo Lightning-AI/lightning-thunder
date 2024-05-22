@@ -115,7 +115,7 @@ def _string_to_cache_option(s: str, /) -> None | CACHE_OPTIONS:
 def resolve_cache_option(x: Any, /) -> CACHE_OPTIONS:
     co: None | CACHE_OPTIONS
     if x is None:
-        #co = CACHE_OPTIONS.CONSTANT_VALUES
+        # co = CACHE_OPTIONS.CONSTANT_VALUES
         # smoke test. DO NOT COMMIT!
         co = CACHE_OPTIONS.SYMBOLIC_VALUES
     elif isinstance(x, CACHE_OPTIONS):
