@@ -7,21 +7,21 @@ import torch.nn as nn
 from torch.distributed import distributed_c10d
 
 from thunder.core import utils
-from thunder.core.proxies import variableify
 from thunder.core.proxies import TensorProxy
 from thunder.distributed.tensor_parallel.common import PrePostProcessInterface
+from thunder.distributed.tensor_parallel.common import ComputationTraceTransformVisitorForTensorParallel
+from thunder.distributed.tensor_parallel.common import TransformForTensorParallel
 
 if TYPE_CHECKING:
     from typing import Any
+    from collections.abc import Callable
     from collections.abc import Sequence
     from torch.distributed import ProcessGroup
     from thunder.core.trace import TraceCtx
-    from thunder.common import CompileData
-    from thunder.core.symbol import VariableInterface
-    from thunder.core.proxies import ProxyInterface
+    from thunder.core.trace import TraceProvenance
+    from thunder.core.transforms import VISIT_TYPE
     from thunder.core.symbol import BoundSymbol
     from thunder.core.module import ThunderModule
-    from thunder.core.transforms import VISIT_TYPE
 
 
 __all__ = [
@@ -30,7 +30,7 @@ __all__ = [
 
 
 @dataclass(frozen=True)
-class LinearPrePostProcess(PrePostProcessInterface):
+class ColumnParallelLinearPrePostProcess(PrePostProcessInterface):
     process_group: ProcessGroup
     layer_type: ClassVar[str] = "linear"
 
@@ -43,12 +43,12 @@ class LinearPrePostProcess(PrePostProcessInterface):
         return dist_prims.synchronize_output_for_column_wise_tensor_parallel(
             y,
             self.process_group,
-            LinearPrePostProcess.layer_type,
+            ColumnParallelLinearPrePostProcess.layer_type,
         )
 
 
 @dataclass
-class EmbeddingPrePostProcess(PrePostProcessInterface):
+class ColumnParallelEmbeddingPrePostProcess(PrePostProcessInterface):
     num_local_embeddings: int
     process_group: ProcessGroup
 
@@ -92,67 +92,20 @@ class EmbeddingPrePostProcess(PrePostProcessInterface):
         return dist_prims.synchronize_output_for_column_wise_tensor_parallel(
             y,
             self.process_group,
-            EmbeddingPrePostProcess.layer_type,
+            ColumnParallelEmbeddingPrePostProcess.layer_type,
         )
 
 
-@dataclass
-class TransformVisitor:
-    process_group: ProcessGroup
-    bsyms_before_allgather: dict[BoundSymbol, PrePostProcessInterface]
-
-    def __post_init__(self):
-        self.swap_map: dict[VariableInterface, ProxyInterface] = {}
-
-    def __call__(self, bsym: BoundSymbol) -> VISIT_TYPE:
-        from thunder.core.transforms import VISIT_TYPE
-        from thunder.core.trace import get_tracectx
-
-        pre_post_process: PrePostProcessInterface | None = None
-        if bsym in self.bsyms_before_allgather:
-            pre_post_process = self.bsyms_before_allgather[bsym]
-            orig_arg = bsym.flat_proxy_args[0]
-            new_arg, preprocess_artifacts = pre_post_process.preprocess(orig_arg)
-            if new_arg.name != orig_arg.name:
-                self.swap_map[variableify(orig_arg)] = new_arg
-
-        new_bsym = bsym.from_bsym_swap_proxies(self.swap_map, skip_output=True)
-        trace = get_tracectx()
-        trace.scopes[-1].append(new_bsym)
-
-        if bsym in self.bsyms_before_allgather:
-            y = bsym.flat_proxy_outs[0]
-            gathered_output = pre_post_process.postprocess(y, preprocess_artifacts)
-            self.swap_map[variableify(y)] = gathered_output
-
-        return VISIT_TYPE.REPLACE
-
-
 @dataclass(frozen=True)
-class TransformForColumnWiseParallel:
-    rank: int
-    world_size: int
-    compile_data: CompileData
-    chunked_param_name2layer_type: set[str]
-    process_group: ProcessGroup
+class TransformForColumnWiseParallel(TransformForTensorParallel):
 
-    def __post_init__(self):
-        from thunder.common import CompileData
-
-        utils.check_type(self.compile_data, CompileData)
-        if getattr(self.compile_data, "use_fsdp", False) or getattr(self.compile_data.fn, "use_fsdp", False):
-            raise NotImplementedError("Currently thunder does not support the combination of fsdp and tensor parallel")
-
-    def __call__(
+    def get_visitor_of_computation_trc_and_provenance(
         self,
         prologue_trace: TraceCtx,
         computation_trace: TraceCtx,
-        epilogue_trace: TraceCtx,
-        **kwargs,
-    ) -> tuple[TraceCtx, TraceCtx, TraceCtx]:
+    ) -> tuple[Callable[[BoundSymbol], VISIT_TYPE], TraceProvenance | str]:
         from thunder.core import prims
         from thunder.core.pytree import tree_flatten
-        from thunder.core.transforms import visitor_transform
 
         modules_and_thunder_modules = [
             (bsym.args[0], bsym.output)
@@ -165,19 +118,19 @@ class TransformForColumnWiseParallel:
 
         consumers = utils.consumers(computation_trace)
         flat_args, _ = tree_flatten((computation_trace.args, computation_trace.kwargs))
-        bsyms_before_allgather: dict[BoundSymbol, PrePostProcessInterface] = {}
+        bsym2prepostprocess: dict[BoundSymbol, PrePostProcessInterface] = {}
         for proxy in filter(lambda p: isinstance(p, TensorProxy), flat_args):
             for p_name in self.chunked_param_name2layer_type:
                 if p_name == proxy.name:
                     consumer_bsym = consumers[proxy][0]
-                    if consumer_bsym not in bsyms_before_allgather:
+                    if consumer_bsym not in bsym2prepostprocess:
                         match self.chunked_param_name2layer_type[p_name]:
                             case nn.Linear:
-                                bsyms_before_allgather[consumer_bsym] = LinearPrePostProcess(
+                                bsym2prepostprocess[consumer_bsym] = ColumnParallelLinearPrePostProcess(
                                     process_group=self.process_group
                                 )
                             case nn.Embedding:
-                                bsyms_before_allgather[consumer_bsym] = EmbeddingPrePostProcess(
+                                bsym2prepostprocess[consumer_bsym] = ColumnParallelEmbeddingPrePostProcess(
                                     num_local_embeddings=proxy.shape[0], process_group=self.process_group
                                 )
                             case _:
@@ -185,18 +138,10 @@ class TransformForColumnWiseParallel:
                                     False,
                                     lambda: f"{self.chunked_param_name2layer_type[p_name]=} is not supported",
                                 )
-        utils.check(bsyms_before_allgather, lambda: f"{bsyms_before_allgather} must not be empty")
+        utils.check(bsym2prepostprocess, lambda: f"{bsym2prepostprocess} must not be empty")
 
-        visit = TransformVisitor(self.process_group, bsyms_before_allgather)
-        new_computation_trace = visitor_transform(
-            computation_trace,
-            visit=visit,
-            provenance="gather ouptut of column-wise tensor parallel layer",
-        )
-        if distributed_c10d.get_rank() == 0:
-            print(visit.swap_map)
-
-        return prologue_trace, new_computation_trace, epilogue_trace
+        visit = ComputationTraceTransformVisitorForTensorParallel(bsym2prepostprocess)
+        return visit, "transform into column-wise tensor parallel"
 
 
 # TODO(crcrpar): Add an option to turn off output all-gather.
@@ -209,7 +154,7 @@ def convert_module_to_columnwise_parallel(
 
     This method has two effects:
         1. Chunks target modules' parameters in 0-th dimension.
-        2. Inserts all-gather in the last dimension after the target modules' computation.
+        2. Insert preprocess and postprocess around modified module ops.
 
     Args:
         thunder_module:
