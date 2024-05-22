@@ -1006,14 +1006,6 @@ def _tanh_prim_grad(a: Number | TensorProxy, /) -> Number | TensorProxy:
 
 register_grad(pids.TANH, _tanh_prim_grad)
 
-# @torchctx
-# def _trunc_prim_grad(a: TensorProxy, /) -> TensorProxy:
-#     fwd = prims.trunc(a)
-#     g = get_grad(fwd)
-#     a_grad = ltorch.trunc(g)
-#     put_grad(a, a_grad)
-#     return fwd
-# register_grad(pids.TRUNC, _trunc_prim_grad)
 
 #
 # Elementwise binary operator grads
@@ -3329,7 +3321,12 @@ def uniform_backward(primal, minval, maxval, g):
     return None, sum(g * (1 - unscaled_primal)), sum(g * unscaled_primal)
 
 
-nondifferentiable_vjp_symbols = (prims.PrimIDs.BITWISE_AND, prims.PrimIDs.SIGNBIT, prims.PrimIDs.FULL)
+nondifferentiable_vjp_symbols = (
+    prims.PrimIDs.BITWISE_AND,
+    prims.PrimIDs.BITWISE_XOR,
+    prims.PrimIDs.SIGNBIT,
+    prims.PrimIDs.FULL,
+)
 
 
 def is_constant_for_vjp(symbol: prims.Symbol) -> bool:
