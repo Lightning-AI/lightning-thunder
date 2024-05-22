@@ -389,6 +389,10 @@ class StringProxy(Proxy, str):
     def __repr__(self) -> str:
         return f"<StringProxy '{self.value}'>"
 
+    def replace_name(self, name: str, /):
+        """Return a copy of this proxy with the given name."""
+        return StringProxy(self.value, name=name, history=self.history)
+
     def type_string(self) -> str:
         return "str"
 

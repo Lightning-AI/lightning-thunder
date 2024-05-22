@@ -87,6 +87,16 @@ from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 from thunder.core.trace import get_tracectx
 from thunder.core.langctxs import langctx, LanguageContext, register_langctx, Languages
 
+def unwrap_number_proxy(func):
+    @wraps(func)
+    def with_pyval(*args, **kwargs):
+        args = [pyval(arg) if isinstance(arg, NumberProxy) else arg for arg in args]
+        for k, v in kwargs.items():
+            if isinstance(v, NumberProxy):
+                kwargs[k] = pyval(v)
+        return func(*args, **kwargs)
+    return with_pyval
+
 #
 # Primitives and helpers for defining them
 #
@@ -3307,6 +3317,7 @@ transpose = make_prim(PrimIDs.TRANSPOSE, "transpose", meta=transpose_meta, tags=
 view = make_prim(PrimIDs.VIEW, "view", meta=reshape_meta, tags=(OpTags.SHAPE_OP,))
 
 
+@unwrap_number_proxy
 def unfold_meta(a: TensorProxy, /, dim: int, size: int, step: int) -> TensorProxy:
     dim = utils.canonicalize_dim(a.ndim, dim)
     max_size = 1 if a.ndim == 0 else a.shape[dim]
