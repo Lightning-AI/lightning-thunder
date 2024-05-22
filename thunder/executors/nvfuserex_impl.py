@@ -1187,11 +1187,12 @@ def _reshape_check(a: TensorProxy, shape: list[int]) -> bool:
 
 def reshape(a: TensorProxy, shape: list[int], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nv_a = getnv(a, fd, lc_to_nv_map)
+    nv_shape = [getnv(i, fd, lc_to_nv_map) for i in shape]
 
     if nv_version < LooseVersion("0.0.22"):
-        return fd.ops.reshape(nv_a, a.shape, shape)
+        return fd.ops.reshape(nv_a, a.shape, nv_shape)
     else:
-        return fd.ops.reshape(nv_a, shape)
+        return fd.ops.reshape(nv_a, nv_shape)
 
 
 register_supported(PrimIDs.RESHAPE, reshape, _reshape_check)
