@@ -953,10 +953,11 @@ def full(
 ) -> Any:
     nv_fill_value = getnv(fill_value, fd, lc_to_nv_map)
     nvdtype = lcdtype_to_nvdtype(dtype)
+    nv_shape = [getnv(i, fd, lc_to_nv_map) for i in shape]
 
     _select_device(fd, device)
 
-    return fd.ops.full(shape, nv_fill_value, nvdtype)
+    return fd.ops.full(nv_shape, nv_fill_value, nvdtype)
 
 
 register_supported(PrimIDs.FULL, full, _full_check)
@@ -1010,11 +1011,11 @@ def uniform(
     nv_minval = getnv(minval, fd, lc_to_nv_map)
     nv_maxval = getnv(maxval, fd, lc_to_nv_map)
 
-    nvshape = list(getnv(x, fd, lc_to_nv_map) for x in shape)
+    nv_shape = [getnv(i, fd, lc_to_nv_map) for i in shape]
 
     _select_device(fd, device)
 
-    return fd.ops.uniform(nv_minval, nv_maxval, nvshape, dtype=nvdtype)
+    return fd.ops.uniform(nv_minval, nv_maxval, nv_shape, dtype=nvdtype)
 
 
 register_supported(PrimIDs.UNIFORM, uniform, _uniform_check)
@@ -1052,7 +1053,7 @@ def uniform_philox(
     nv_minval = getnv(minval, fd, lc_to_nv_map)
     nv_maxval = getnv(maxval, fd, lc_to_nv_map)
 
-    nvshape = list(getnv(x, fd, lc_to_nv_map) for x in shape)
+    nv_shape = [getnv(i, fd, lc_to_nv_map) for i in shape]
 
     nv_rng_seed = getnv(seed, fd, lc_to_nv_map)
     nv_rng_offset = getnv(offset, fd, lc_to_nv_map)
@@ -1062,7 +1063,7 @@ def uniform_philox(
     return fd.ops.uniform(
         nv_minval,
         nv_maxval,
-        nvshape,
+        nv_shape,
         dtype=nvdtype,
         rng_seed=nv_rng_seed,
         rng_offset=nv_rng_offset,
@@ -1089,8 +1090,9 @@ def broadcast_in_dim(
     a: TensorProxy, shape: list[int], broadcast_dimensions: list[int], *, fd: FusionDefinition, lc_to_nv_map: dict
 ) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
+    nv_shape = [getnv(i, fd, lc_to_nv_map) for i in shape]
 
-    return fd.ops.broadcast_in_dim(nva, shape, broadcast_dimensions)
+    return fd.ops.broadcast_in_dim(nva, nv_shape, broadcast_dimensions)
 
 
 register_supported(PrimIDs.BROADCAST_IN_DIM, broadcast_in_dim, _broadcast_in_dim_check)
