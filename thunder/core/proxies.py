@@ -894,6 +894,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
 
 NumberLike = Number | NumberProxy
 
+
 def unwrap_number_proxy(func):
     @wraps(func)
     def with_pyval(*args, **kwargs):
@@ -902,6 +903,7 @@ def unwrap_number_proxy(func):
             if isinstance(v, NumberProxy):
                 kwargs[k] = pyval(v)
         return func(*args, **kwargs)
+
     return with_pyval
 
 
