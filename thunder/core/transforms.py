@@ -1006,6 +1006,15 @@ def _tanh_prim_grad(a: Number | TensorProxy, /) -> Number | TensorProxy:
 
 register_grad(pids.TANH, _tanh_prim_grad)
 
+# @torchctx
+# def _trunc_prim_grad(a: TensorProxy, /) -> TensorProxy:
+#     fwd = prims.trunc(a)
+#     g = get_grad(fwd)
+#     a_grad = ltorch.trunc(g)
+#     put_grad(a, a_grad)
+#     return fwd
+# register_grad(pids.TRUNC, _trunc_prim_grad)
+
 #
 # Elementwise binary operator grads
 #

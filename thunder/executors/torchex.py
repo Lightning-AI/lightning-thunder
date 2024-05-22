@@ -801,11 +801,22 @@ remainder = _register_torch_operation("remainder")
 sub = _register_torch_operation("sub")
 true_divide = _register_torch_operation("true_divide")
 zeta = _register_torch_operation("zeta", module=torch.special)
+div = _register_torch_operation("div")
 
 
 # NOTE PyTorch elementwise operations require at least one input to be a tensor
 def _elementwise_binary_checker(a: Number | TensorProxy, b: Number | TensorProxy) -> bool:
     return isinstance(a, TensorLike) or isinstance(b, TensorLike)
+
+
+def _div_checker(
+    a: Number | TensorProxy,
+    b: Number | TensorProxy,
+    *,
+    rounding_mode: None | str = None,
+    out: None | TensorProxy = None,
+) -> TensorProxy:
+    return _elementwise_binary_checker(a, b) and (rounding_mode is None or isinstance(rounding_mode, str))
 
 
 # NOTE add and sub have special check and factory functions to support alpha
@@ -839,6 +850,19 @@ def _sub_transform(a: Number | TensorProxy, b: Number | TensorProxy, *, alpha: N
         return sub(a, b)
 
     return sub(a, b, alpha=alpha)
+
+
+def _div_transform(
+    a: Number | TensorProxy,
+    b: Number | TensorProxy,
+    *,
+    rounding_mode: None | str = None,
+    out: None | TensorProxy = None,
+) -> TensorProxy:
+    if rounding_mode is None:
+        return div(a, b)
+
+    return div(a, b, rounding_mode=rounding_mode)
 
 
 _register_elementwise_binary_implementation = partial(_register_implementation, checker=_elementwise_binary_checker)
@@ -891,6 +915,7 @@ _register_elementwise_binary_implementation(ltorch.remainder, remainder)
 _register_elementwise_binary_implementation(ltorch.sub, checker=_add_sub_checker, execution_transform=_sub_transform)
 _register_elementwise_binary_implementation(ltorch.true_divide, true_divide)
 _register_elementwise_binary_implementation(ltorch.zeta, zeta)
+_register_elementwise_binary_implementation(ltorch.div, checker=_div_checker, execution_transform=_div_transform)
 
 #
 # Elementwise ternary operations
