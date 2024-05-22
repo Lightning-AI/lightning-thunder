@@ -595,33 +595,39 @@ def _shard_param(
     rank: int,
     world_size: int,
     name: str,
+    *,
     allow_padding_for_fsdp: bool = False,
+    dim: int | None = None,
 ) -> None:
 
-    if not allow_padding_for_fsdp or (param.size(0) % world_size == 0):
-        if not allow_padding_for_fsdp:
-            utils.check(
-                param.shape[0] % world_size == 0,
-                lambda: (
-                    f"Current sharding requires the first dimension of the parameter {name!r} ({param.shape[0]})"
-                    f" to be divisible by the world size ({world_size})"
-                ),
-            )
-        chunk_size = param.shape[0] // world_size
-        # NOTE This could be a ShardTensor to indicate other parts of the code
-        # that it's sharded and should be treated differently
-        shard = param.data.narrow(0, chunk_size * rank, chunk_size).clone()
-        param.data = shard
-    else:
+    dim_to_shard = 0 if dim is None else dim
+    if allow_padding_for_fsdp:
+        utils.check(dim_to_shard == 0, lambda: f"Invalid {dim=} with {allow_padding_for_fsdp=}, Only 0 is supported")
         padded_param_shape = list(param.shape)
-        orig_0dim_size = param.size(0)
+        orig_0dim_size = param.size(dim_to_shard)
         chunk_size = (padded_param_shape[0] + world_size - 1) // world_size
         padded_param_shape[0] = chunk_size * world_size
         _thunder_fsdp_padding_size = padded_param_shape[0] - param.size(0)
-        padded_param = torch.empty(padded_param_shape, device=param.device, dtype=param.dtype)
-        padded_param[:orig_0dim_size].copy_(param)
-        param.data = padded_param.data.narrow(0, chunk_size * rank, chunk_size).clone()
+        if _thunder_fsdp_padding_size > 0:
+            padded_param = torch.empty(padded_param_shape, device=param.device, dtype=param.dtype)
+            padded_param[:orig_0dim_size].copy_(param)
+            param.data = padded_param.data.narrow(0, chunk_size * rank, chunk_size).clone()
+        else:
+            param.data = param.data.narrow(dim_to_shard, chunk_size * rank, chunk_size).clone()
         param._thunder_fsdp_padding_size = _thunder_fsdp_padding_size
+    else:
+        utils.check(
+            param.shape[dim_to_shard] % world_size == 0,
+            lambda: (
+                f"Current sharding requires the first dimension of the parameter {name!r} ({param.shape[0]})"
+                f" to be divisible by the world size ({world_size})"
+            ),
+        )
+        chunk_size = param.shape[dim_to_shard] // world_size
+        # NOTE This could be a ShardTensor to indicate other parts of the code
+        # that it's sharded and should be treated differently
+        shard = param.data.narrow(dim_to_shard, chunk_size * rank, chunk_size).clone()
+        param.data = shard
 
 
 @torch.no_grad()

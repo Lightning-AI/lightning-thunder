@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
-    "ComputationTraceTransformVisitor",
+    "ComputationTraceTransformVisitorForTensorParallel",
     "LayerType",
     "NoOp",
     "PrePostProcessInterface",
