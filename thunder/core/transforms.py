@@ -3323,7 +3323,6 @@ def uniform_backward(primal, minval, maxval, g):
 
 nondifferentiable_vjp_symbols = (
     prims.PrimIDs.BITWISE_AND,
-    prims.PrimIDs.BITWISE_XOR,
     prims.PrimIDs.SIGNBIT,
     prims.PrimIDs.FULL,
 )

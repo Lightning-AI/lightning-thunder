@@ -1765,8 +1765,7 @@ def floor_divide(a: TensorProxy | Number, b: TensorProxy | Number) -> TensorProx
     return _floor_divide_integer(a, b, computation_dtype=computation_dtype)
 
 
-# @clangop(method_name="trunc_divide")
-@clangop()
+@clangop(method_name="trunc_divide")
 def trunc_divide(a: TensorProxy | Number, b: TensorProxy | Number) -> TensorProxy | Number:
     return trunc(_c_div(a, b))
 
