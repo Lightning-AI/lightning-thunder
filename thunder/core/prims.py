@@ -2566,6 +2566,7 @@ exogenous_like = make_prim(
 #   Logically these tensors are constructed intermediate to a trace, so there's no mechanism for a user to
 #   extract their grad, but we could support compiling forward and backward and accessing grad attributes
 #   in the future
+@unwrap_number_proxy
 def _full_meta(shape: Sequence[int], fill_value: Number, *, device: devices.Device, dtype: dtypes.dtype) -> TensorProxy:
     # Checks inputs
     utils.check_type(fill_value, (Number, NumberProxy))
