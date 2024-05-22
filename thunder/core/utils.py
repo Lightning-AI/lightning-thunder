@@ -566,7 +566,7 @@ def canonicalize_dim(rank: int, idx: int, wrap_scalar: bool = True) -> int:
     if rank == 0:
         check(
             wrap_scalar,
-            lambda: f"Dimension specified as {idx} but tensor has no dimensions!",
+            lambda: f"Dimension specified as {pyval(idx)} but tensor has no dimensions!",
             exception_type=IndexError,
         )
         rank = 1
@@ -581,7 +581,7 @@ def canonicalize_dim(rank: int, idx: int, wrap_scalar: bool = True) -> int:
 
     check(
         _idx >= 0 and _idx < rank,
-        lambda: f"Dimension out of range (expected to be in range of [{-rank}, {rank - 1}], but got {idx})",
+        lambda: f"Dimension out of range (expected to be in range of [{-rank}, {rank - 1}], but got {pyval(idx)})",
         exception_type=IndexError,
     )
 
