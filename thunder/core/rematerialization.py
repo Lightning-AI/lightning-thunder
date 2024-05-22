@@ -333,7 +333,7 @@ def find_cut(
         if isinstance(var, TensorProxy):
             return WEIGHT * var.dtype.bytes
         elif isinstance(var, NumberProxy):
-            return WEIGHT * 0.1
+            return 0.0
         return WEIGHT
 
     def add_edges(var):
