@@ -1,8 +1,5 @@
 from __future__ import annotations
-from abc import ABC
-from abc import abstractmethod
 from dataclasses import dataclass
-from dataclasses import field
 from typing import TYPE_CHECKING
 from typing import ClassVar
 
@@ -12,6 +9,7 @@ from torch.distributed import distributed_c10d
 from thunder.core import utils
 from thunder.core.proxies import variableify
 from thunder.core.proxies import TensorProxy
+from thunder.distributed.tensor_parallel.common import PrePostProcessInterface
 
 if TYPE_CHECKING:
     from typing import Any
@@ -29,25 +27,6 @@ if TYPE_CHECKING:
 __all__ = [
     "convert_module_to_columnwise_parallel",
 ]
-
-
-class PrePostProcessInterface(ABC):
-    @abstractmethod
-    def preprocess(self, x: TensorProxy) -> tuple[TensorProxy, tuple[Any, ...]]:
-        return x, (None,)
-
-    @abstractmethod
-    def postprocess(self, y: TensorProxy, _: Any) -> TensorProxy:
-        return y
-
-
-@dataclass(frozen=True)
-class NoOp(PrePostProcessInterface):
-    def preprocess(self, x: TensorProxy) -> tuple[TensorProxy, tuple[Any, ...]]:
-        return super().preprocess(x)
-
-    def postprocess(self, y: TensorProxy, _: Any) -> TensorProxy:
-        return super().postprocess(y)
 
 
 @dataclass(frozen=True)
@@ -128,7 +107,6 @@ class TransformVisitor:
     def __call__(self, bsym: BoundSymbol) -> VISIT_TYPE:
         from thunder.core.transforms import VISIT_TYPE
         from thunder.core.trace import get_tracectx
-        from thunder.distributed import prims as dist_prims
 
         pre_post_process: PrePostProcessInterface | None = None
         if bsym in self.bsyms_before_allgather:
