@@ -1006,7 +1006,6 @@ def _tanh_prim_grad(a: Number | TensorProxy, /) -> Number | TensorProxy:
 
 register_grad(pids.TANH, _tanh_prim_grad)
 
-
 #
 # Elementwise binary operator grads
 #
