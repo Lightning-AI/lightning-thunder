@@ -60,6 +60,8 @@ def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executo
         and not thunder.tests.bf16.device_supports_bf16(device)
     ):
         pytest.skip("Your CUDA device does not support bfloat16")
+    if dtype in dtypes.float_8bit_dtypes:
+        pytest.skip("Skipping float8 due to broad lack of operator support in torch")
 
     for sample in op.sample_inputs(device, dtype):
         comp = sample.comp if sample.comp is not None else comp
@@ -130,6 +132,8 @@ def test_core_vs_jax_consistency(op, device: str, dtype: dtypes.dtype, executor,
         pytest.skip("jax doesn't support complex32!")
     if dtype is dtypes.bfloat16:
         pytest.skip("jax bfloat16 support is spotty (at least on CPU)")
+    if dtype in dtypes.float_8bit_dtypes:
+        pytest.skip("Torch to jax tensor conversion is based on NumPy which does not support float8")
 
     for sample in op.sample_inputs(device, dtype):
         comp = sample.comp if sample.comp is not None else comp
@@ -182,6 +186,8 @@ def test_core_vs_numpy_consistency(op: OpInfo, device: str, dtype: dtypes.dtype,
         pytest.skip("NumPy does not support complex32")
     if dtype == dtypes.bfloat16:
         pytest.skip("NumPy does not support bfloat16")
+    if dtype in dtypes.float_8bit_dtypes:
+        pytest.skip("NumPy does not support float8")
 
     for sample in op.sample_inputs(device, dtype):
         comp = sample.comp if sample.comp is not None else comp

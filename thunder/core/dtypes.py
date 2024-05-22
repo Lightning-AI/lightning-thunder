@@ -258,6 +258,8 @@ low_precision_dtypes = {
 
 float_dtypes = {d for d in all_dtypes if isinstance(d, floating)} | {float}
 
+float_8bit_dtypes = {d for d in all_dtypes if (isinstance(d, inexact) and d.bytes <= 1)}
+
 complex_dtypes = {d for d in all_dtypes if isinstance(d, complexfloating)} | {complex}
 
 inexact_dtypes = float_dtypes | complex_dtypes
