@@ -59,7 +59,7 @@ class dtype:
 
         return object.__new__(cls)
 
-    def __init__(self, *, python_type, name, shortname, bytes, is_weak, variant = None):
+    def __init__(self, *, python_type, name, shortname, bytes, is_weak, variant=None):
         self._python_type = python_type
         self._name = name
         self._variant = variant
@@ -85,7 +85,9 @@ class dtype:
 
     # TODO Fix name printing
     def __repr__(self):
-        return f"{self._name}{8 * self._bytes}{f'_{self._variant}' if self._variant else ''}{'_' if self._is_weak else ''}"
+        return (
+            f"{self._name}{8 * self._bytes}{f'_{self._variant}' if self._variant else ''}{'_' if self._is_weak else ''}"
+        )
 
     def __str__(self):
         return self.__repr__()
@@ -97,7 +99,12 @@ class dtype:
         if not isinstance(other, dtype):
             return False
 
-        return self._name == other._name and self._bytes == other._bytes and self._is_weak == other._is_weak and self._variant == other._variant
+        return (
+            self._name == other._name
+            and self._bytes == other._bytes
+            and self._is_weak == other._is_weak
+            and self._variant == other._variant
+        )
 
 
 class exact(dtype):
@@ -155,19 +162,22 @@ class inexact(dtype):
 class floating(inexact):
     """Base class for the floating dtypes: bfloat16, float16, float32, float64."""
 
-    def __init__(self, name, shortname, *, bytes, is_weak, variant = None):
-        super().__init__(python_type=float, name=name, shortname=shortname, bytes=bytes, is_weak=is_weak, variant=variant)
+    def __init__(self, name, shortname, *, bytes, is_weak, variant=None):
+        super().__init__(
+            python_type=float, name=name, shortname=shortname, bytes=bytes, is_weak=is_weak, variant=variant
+        )
+
 
 bfloat16 = floating("bfloat", "bf", bytes=2, is_weak=False)
 bfloat16_ = floating("bfloat", "bf", bytes=2, is_weak=True)
-float8_e5m2 = floating("float", "f", bytes=1, is_weak=False, variant='e5m2')
-float8_e5m2_ = floating("float", "f", bytes=1, is_weak=True, variant='e5m2')
-float8_e5m2fnuz = floating("float", "f", bytes=1, is_weak=False, variant='e5m2fnuz')
-float8_e5m2fnuz_ = floating("float", "f", bytes=1, is_weak=True, variant='e5m2fnuz')
-float8_e4m3fn = floating("float", "f", bytes=1, is_weak=False, variant='e4m3fn')
-float8_e4m3fn_ = floating("float", "f", bytes=1, is_weak=True, variant='e4m3fn')
-float8_e4m3fnuz = floating("float", "f", bytes=1, is_weak=False, variant='e4m3fnuz')
-float8_e4m3fnuz_ = floating("float", "f", bytes=1, is_weak=True, variant='e4m3fnuz')
+float8_e5m2 = floating("float", "f", bytes=1, is_weak=False, variant="e5m2")
+float8_e5m2_ = floating("float", "f", bytes=1, is_weak=True, variant="e5m2")
+float8_e5m2fnuz = floating("float", "f", bytes=1, is_weak=False, variant="e5m2fnuz")
+float8_e5m2fnuz_ = floating("float", "f", bytes=1, is_weak=True, variant="e5m2fnuz")
+float8_e4m3fn = floating("float", "f", bytes=1, is_weak=False, variant="e4m3fn")
+float8_e4m3fn_ = floating("float", "f", bytes=1, is_weak=True, variant="e4m3fn")
+float8_e4m3fnuz = floating("float", "f", bytes=1, is_weak=False, variant="e4m3fnuz")
+float8_e4m3fnuz_ = floating("float", "f", bytes=1, is_weak=True, variant="e4m3fnuz")
 float16 = floating("float", "f", bytes=2, is_weak=False)
 float16_ = floating("float", "f", bytes=2, is_weak=True)
 float32 = floating("float", "f", bytes=4, is_weak=False)
