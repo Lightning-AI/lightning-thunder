@@ -76,6 +76,7 @@ from thunder.core.proxies import (
     StringProxy,
     TupleProxy,
     AnyProxy,
+    unwrap_number_proxy,
 )
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
@@ -86,18 +87,6 @@ import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 from thunder.core.trace import get_tracectx
 from thunder.core.langctxs import langctx, LanguageContext, register_langctx, Languages
-
-
-def unwrap_number_proxy(func):
-    @wraps(func)
-    def with_pyval(*args, **kwargs):
-        args = [pyval(arg) if isinstance(arg, NumberProxy) else arg for arg in args]
-        for k, v in kwargs.items():
-            if isinstance(v, NumberProxy):
-                kwargs[k] = pyval(v)
-        return func(*args, **kwargs)
-
-    return with_pyval
 
 
 #
