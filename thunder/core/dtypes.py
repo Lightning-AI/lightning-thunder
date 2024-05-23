@@ -160,7 +160,7 @@ class inexact(dtype):
 
 
 class floating(inexact):
-    """Base class for the floating dtypes: bfloat16, float16, float32, float64."""
+    """Base class for the floating dtypes: float8, bfloat16, float16, float32, float64."""
 
     def __init__(self, name, shortname, *, bytes, is_weak, variant=None):
         super().__init__(

@@ -25,7 +25,7 @@ def snippet_errors(op, sample, ex_type, err_msg_match=None):
 @ops(tuple(op for op in opinfos if op.error_input_generator is not None))
 def test_errors(op, device, dtype, executor, comp):
     if dtype in dtypes.float_8bit_dtypes:
-        pytest.skip("Skipping float8 due to broad lack of operator support in torch")
+        pytest.skip("Skipping float8 operator tests for lack of support in torch")
     for sample, ex_type, err_msg in op.error_inputs(device):
         result = run_snippet(snippet_errors, op, device, None, executor.make_callable(op.op), sample, ex_type, err_msg)
         if result is not None:
@@ -63,7 +63,7 @@ def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executo
     ):
         pytest.skip("Your CUDA device does not support bfloat16")
     if dtype in dtypes.float_8bit_dtypes:
-        pytest.skip("Skipping float8 due to broad lack of operator support in torch")
+        pytest.skip("Skipping float8 operator tests for lack of support in torch")
 
     for sample in op.sample_inputs(device, dtype):
         comp = sample.comp if sample.comp is not None else comp

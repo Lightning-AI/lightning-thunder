@@ -26,6 +26,8 @@ def test_thunder_autocast_transform(executor, device, dtype):
         pytest.skip("float16 matmul is not supported on CPU.")
     if torch_device.type == "cuda" and dtype == dtypes.bfloat16 and not thunder.tests.bf16.device_supports_bf16(device):
         pytest.skip(f"bfloat16 is not supported on {torch.cuda.get_device_name()}")
+    if dtype in dtypes.float_8bit_dtypes:
+        pytest.skip("float8 matmul is only implemented as _scaled_mm")
 
     def f(a, b, c):
         return a @ (b + c)
@@ -129,6 +131,8 @@ def test_compile_autocast(executor, device, dtype):
         pytest.skip("float16 matmul is not supported on CPU.")
     if torch_device.type == "cuda" and dtype == dtypes.bfloat16 and not thunder.tests.bf16.device_supports_bf16(device):
         pytest.skip(f"bfloat16 is not supported on {torch.cuda.get_device_name()}")
+    if dtype in dtypes.float_8bit_dtypes:
+        pytest.skip("float8 matmul is only implemented as _scaled_mm")
     a = torch.randn(2, 2, device=device, dtype=torch_dtype)
     b = torch.randn(2, 2, device=device, dtype=torch_dtype)
     cfunc = thunder.jit(func)

@@ -12,6 +12,9 @@ from thunder.tests.framework import instantiate, nvFuserExecutor
 
 @instantiate()
 def test_prim_inplace_copy_fwd(executor, device, dtype):
+    if dtype in datatypes.float_8bit_dtypes:
+        pytest.skip("Skipping float8 tests for lack of support in torch")
+
     def torch_foo(x, y):
         z = x + y
         o = x.copy_(z)
@@ -39,6 +42,9 @@ def test_prim_inplace_copy_fwd(executor, device, dtype):
 
 @instantiate(dtypes=(datatypes.floating,))
 def test_prim_inplace_copy_bwd(executor, device, dtype):
+    if dtype in datatypes.float_8bit_dtypes:
+        pytest.skip("Skipping float8 tests for lack of support in torch")
+
     def torch_foo(x, y):
         z = x * y
         z = z * x
