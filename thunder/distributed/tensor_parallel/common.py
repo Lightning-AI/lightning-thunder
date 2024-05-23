@@ -36,6 +36,7 @@ class TensorParallelLayerType(Enum):
     ROW_PARALLEL_LINEAR = auto()
 
     COLUMN_PARALLEL_EMBED = auto()
+    ROW_PARALLEL_EMBED = auto()
 
 
 class PrePostProcessInterface(ABC):

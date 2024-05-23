@@ -27,8 +27,9 @@ __all__ = [
 
 
 @dataclass(frozen=True)
-class RowParallelLinearPreProcess(PrePostProcessInterface):
+class RowParallelLinearPrePostProcess(PrePostProcessInterface):
     process_group: ProcessGroup
+
     layer_type: ClassVar[TensorParallelLayerType] = TensorParallelLayerType.ROW_PARALLEL_LINEAR
 
     def preprocess(self, x: TensorProxy) -> tuple[TensorProxy, tuple[Any, ...]]:
@@ -46,7 +47,26 @@ class RowParallelLinearPreProcess(PrePostProcessInterface):
         return dist_prims.synchronize_tensor_parallel_output(
             y,
             self.process_group,
-            RowParallelLinearPreProcess.layer_type,
+            RowParallelLinearPrePostProcess.layer_type,
+        )
+
+
+@dataclass
+class RowParallelEmbeddingPreProcess(PrePostProcessInterface):
+    process_group: ProcessGroup
+
+    layer_type: ClassVar[TensorParallelLayerType] = TensorParallelLayerType.ROW_PARALLEL_EMBED
+
+    def preprocess(self, x: TensorProxy) -> tuple[TensorProxy, tuple[Any, ...]]:
+        return super().preprocess(x)
+
+    def postprocess(self, y: TensorProxy, _: Any) -> TensorProxy:
+        from thunder.distributed import prims as dist_prims
+
+        return dist_prims.synchronize_tensor_parallel_output(
+            y,
+            self.process_group,
+            RowParallelEmbeddingPreProcess.layer_type,
         )
 
 
@@ -116,7 +136,7 @@ def convert_module_to_rowwise_parallel(
         mod = thunder_module.get_submodule(target_mod_name)
         utils.check_type(
             mod,
-            (nn.Linear,),
+            (nn.Linear, nn.Embedding),
         )
         for name, p in mod.named_parameters(recurse=False):
             chunked_param_name2layer_type["t_" + f"{target_mod_name}.{name}".replace(".", "_")] = type(mod)

@@ -313,8 +313,9 @@ def synchronize_tensor_parallel_output_meta(
 
     supported_ops = (
         TensorParallelLayerType.COLUMN_PARALLEL_EMBED,
-        TensorParallelLayerType.COL_LINEAR,
-        TensorParallelLayerType.ROW_LINEAR,
+        TensorParallelLayerType.COLUMN_PARALLEL_LINEAR,
+        TensorParallelLayerType.ROW_PARALLEL_LINEAR,
+        TensorParallelLayerType.ROW_PARALLEL_EMBED,
     )
     utils.check(
         layer_type in supported_ops,
@@ -417,6 +418,13 @@ def synchronize_tensor_parallel_output_forward_rule(
                 group,
                 layer_type,
             )
+        case TensorParallelLayerType.ROW_PARALLEL_EMBED:
+            # all-gather in the last dim
+            future_of_all_gathered = all_gather(t, group, True, 0)
+            all_gathered = wait(future_of_all_gathered)
+            chunked = ltorch.chunk(all_gathered, group.size(), 0)
+            gathered = ltorch.cat(chunked, dim=-1)
+            return gathered, (group, layer_type)
         case _:
             utils.check(False, lambda: f"Invalid {layer_type=}")
 
@@ -442,5 +450,13 @@ def synchronize_tensor_parallel_output_backward_rule(
             return grad, None, None
         case TensorParallelLayerType.COLUMN_PARALLEL_EMBED:
             return grad, None, None
+        case TensorParallelLayerType.ROW_PARALLEL_EMBED:
+            return (
+                reduce_scatter(
+                    grad / group.size(), DistributedReduceOps.SUM, group, do_async=True, dim=grad.ndim - 1
+                ).wait(),
+                None,
+                None,
+            )
         case _:
             utils.check(False, lambda: f"Invalid {layer_type=}")
