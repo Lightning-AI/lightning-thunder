@@ -3118,16 +3118,17 @@ def _conv_helper(
                 py_dilation = tuple(pyval(s) for s in dilation)
 
                 utils.check(
-                    all(s == 1 for s in stride), lambda: f"padding='{pyval(padding)}' requires all `strides` to be 1, but got stride={py_stride}"
+                    all(s == 1 for s in stride),
+                    lambda: f"padding='{pyval(padding)}' requires all `strides` to be 1, but got stride={py_stride}",
                 )
                 utils.check(
-                    len(dilation) == 1 or len(dilation) == dim, lambda: f"{len(dilation)=} has to be either 1 or {pyval(dim)}"
+                    len(dilation) == 1 or len(dilation) == dim,
+                    lambda: f"{len(dilation)=} has to be either 1 or {pyval(dim)}",
                 )
                 utils.check(
                     all(isinstance(d, (int, IntegerProxy)) and d >= 1 for d in dilation),
                     lambda: f"dilation={py_dilation} has to be a Sequences of integers >= 1",
                 )
-
 
                 # Need to pad a because "low" padding might not be equal to "high" padding,
                 # and clang.convolution assumes this equality.
