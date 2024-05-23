@@ -431,7 +431,7 @@ def fsdp_transform_module(
                     thunder_model._overrides[n] = torch.nn.Parameter(p.to(device=device), requires_grad=p.requires_grad)
                     device_adjustments[n] = device
             for n, b in module_copy.named_buffers(recurse=False, prefix=module_name):
-                if p.device != device:
+                if b.device != device:
                     thunder_model._overrides[n] = b.to(device=device)
                     device_adjustments[n] = device
 
