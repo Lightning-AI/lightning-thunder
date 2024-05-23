@@ -500,20 +500,11 @@ class FSDPCommBucketing:
                         index_to_fqn[index] = rev_fqn_to_proxy_name[tmp_name]
             self.index_to_fqn = index_to_fqn
 
-    def update_name_set(self, backward_trace: TraceCtx) -> TraceCtx:
-        if not self.apply_bucketing:
-            return
-        utils.check(
-            hasattr(self, "fsdp_fwd_trace"),
-            lambda: "This method must be called after :func:`FSDPCommsOptimizer.apply_bucketing_to_forward_trace`",
-        )
-        backward_trace.names.update(self.fsdp_fwd_trace.names)
-
     def _collect_sharded_parameters(self, fwd_trace: TraceCtx) -> list[TensorProxy]:
         fwd_trace_flat_args, _ = tree_flatten((fwd_trace.args, fwd_trace.kwargs))
         return fwd_trace_flat_args
 
-    def apply_bucketing_to_forward_trace(self, fwd_trace: TraceCtx, bwd_trace_names: set[str]) -> TraceCtx:
+    def apply_bucketing_to_forward_trace(self, fwd_trace: TraceCtx) -> TraceCtx:
         """Optimize collective comms in fsdp with bucketing.
 
         This function is no-op if you pass :obj:`BucketingStrategy.NONE` as kwarg of ``sharding_strategy`` to :func:`thunder.distributed.fsdp`.
@@ -539,7 +530,6 @@ class FSDPCommBucketing:
             return fwd_trace
         fsdp_fwd_trace = from_trace(fwd_trace)
         fsdp_fwd_trace.bound_symbols = fwd_trace.bound_symbols
-        fsdp_fwd_trace.names.update(bwd_trace_names)
         trace_flat_args = self._collect_sharded_parameters(fsdp_fwd_trace)
         arg_to_index_in_flat_args = utils.ProxyDict()
         index_in_flat_args_to_param_and_bucket: dict[int, tuple[TensorProxy, Bucket]] = {}

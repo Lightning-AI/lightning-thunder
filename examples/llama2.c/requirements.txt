@@ -2,5 +2,5 @@ numpy
 Requests==2.31.0
 sentencepiece==0.1.99
 torch
-tqdm==4.64.1
+tqdm==4.66.3
 wandb==0.15.5

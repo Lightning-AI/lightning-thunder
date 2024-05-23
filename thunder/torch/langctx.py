@@ -46,9 +46,9 @@ class TorchCtx(LanguageContext):
                 return prop(inps[0])
 
         # has_tensor_input is False
-        # Defers to the primitive language context when there are no tensor inputs=
-        #   (the primitive language context handles operations on numbers)
-        primsctx: LanguageContext = resolve_language(Languages.PRIMS)
+        # Defers to the CLANG language context when there are no tensor inputs=
+        #   (the clang language context handles operations on NumberProxies and Numbers)
+        primsctx: LanguageContext = resolve_language(Languages.CLANG)
         if not primsctx.has_method(id):
             raise AttributeError(
                 f"Attempting to call method {id} in the torch language context, but it has no tensor inputs and the primitive language context (which handles numbers) doesn't have the method"

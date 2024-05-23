@@ -148,7 +148,11 @@ def wait_meta(a: FutureTensorProxy, /) -> TensorProxy:
     return TensorProxy(like=a)
 
 
-def synchronize_meta(a: TensorProxy, /, group: torch.distributed.ProcessGroup) -> TensorProxy:
+def synchronize_meta(
+    a: TensorProxy,
+    /,
+    group: torch.distributed.ProcessGroup,
+) -> TensorProxy:
     utils.check_type(a, TensorProxy)
     utils.check_type(group, torch.distributed.ProcessGroup)
 
@@ -286,7 +290,8 @@ stash_grad_for_fsdp = make_prim(
 
 @register_augmented_forward(PrimIDs.SYNCHRONIZE)
 def synchronize_augmented_forward_rule(
-    a: TensorProxy, group: torch.distributed.ProcessGroup
+    a: TensorProxy,
+    group: torch.distributed.ProcessGroup,
 ) -> tuple[TensorProxy, tuple]:
     match a.ddp_type:
         case DDPType.REPLICATED:
@@ -302,7 +307,7 @@ def synchronize_augmented_forward_rule(
             # immediately called on the result with the hope that the execution
             # passes would reorder the wait operation to be closer to the actual
             # usage of the tensor.
-            return all_gather(a, group, do_async=True).wait(), (
+            return all_gather(a, group, True).wait(), (
                 a.ddp_type,
                 group,
             )
@@ -312,7 +317,9 @@ def synchronize_augmented_forward_rule(
 
 @register_backward(PrimIDs.SYNCHRONIZE)
 def synchronize_backward_rule(
-    ddp_type: DDPType, group: torch.distributed.ProcessGroup, grad: TensorProxy
+    ddp_type: DDPType,
+    group: torch.distributed.ProcessGroup,
+    grad: TensorProxy,
 ) -> tuple[TensorProxy, None]:
     preaverage_grad = grad / group.size()
     match ddp_type:

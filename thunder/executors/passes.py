@@ -18,7 +18,7 @@ from thunder.core.proxies import Proxy, variableify, unvariableify, Variable, Co
 import thunder.core.transforms as transforms
 from thunder.core.transform_common import dce
 from thunder.core.trace import get_tracectx
-from thunder.executors.pythonex import clear_collection
+from thunder.executors.pythonex import clear_mutable_collection
 
 from thunder.extend import Executor, get_always_executors, OperatorExecutor, FusionExecutor
 
@@ -229,13 +229,13 @@ def update_fusion_call_ctx(trace: TraceCtx) -> TraceCtx:
 
 
 # TODO Review deleting non-proxies
-def del_last_used(trace: TraceCtx, *, clear_collections=False) -> TraceCtx:
+def del_last_used(trace: TraceCtx, *, clear_mutable_collections=False) -> TraceCtx:
     """Mark last used intermediates to be deleted. This lets the Python garbage collector free
         unused tensor memory.
 
     Args:
         trace: trace to be transformed
-        clear_collections: whether to clear collections
+        clear_mutable_collections: whether to clear collections
     Returns:
         list: transformed trace
     """
@@ -268,7 +268,7 @@ def del_last_used(trace: TraceCtx, *, clear_collections=False) -> TraceCtx:
             to_del.append(x)
 
         to_clear_collections = []
-        if clear_collections:
+        if clear_mutable_collections:
             for x in to_del:
                 if isinstance(x, CollectionProxy):
                     to_clear_collections.append(x)
@@ -279,7 +279,7 @@ def del_last_used(trace: TraceCtx, *, clear_collections=False) -> TraceCtx:
             bsyms.appendleft(del_sym)
 
             for x in to_clear_collections:
-                bsyms.appendleft(clear_collection.bind(x, output=None))
+                bsyms.appendleft(clear_mutable_collection.bind(x, output=None))
 
         bsyms.appendleft(bsym)
 
