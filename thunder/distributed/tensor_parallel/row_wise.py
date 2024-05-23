@@ -8,6 +8,7 @@ from torch.distributed import distributed_c10d
 
 from thunder.core import utils
 from thunder.distributed.tensor_parallel.common import PrePostProcessInterface
+from thunder.distributed.tensor_parallel.common import ComputationTraceTransformVisitorForTensorParallel
 from thunder.distributed.tensor_parallel.common import TransformForTensorParallel
 from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
 
@@ -207,6 +208,8 @@ def convert_module_to_rowwise_parallel(
             (nn.Linear, nn.Embedding),
         )
         for name, p in mod.named_parameters(recurse=False):
+            if p.ndim < 2:
+                continue
             chunked_param_name2layer_type["t_" + f"{target_mod_name}.{name}".replace(".", "_")] = type(mod)
 
     rowwise_thunder_module = add_transform(
@@ -223,6 +226,8 @@ def convert_module_to_rowwise_parallel(
     for target_mod_name in target_modules:
         mod = rowwise_thunder_module.get_submodule(target_mod_name)
         for name, p in mod.named_parameters(recurse=False):
+            if p.ndim < 2:
+                continue
             _shard_param(p, rank, world_size, name, dim=1, allow_padding_for_fsdp=False)
 
     return rowwise_thunder_module

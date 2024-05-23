@@ -148,30 +148,6 @@ class TransformForTensorParallel:
         if len(modules_and_thunder_modules) != 1:
             raise NotImplementedError("cannot deal with modules other than the compiled module")
 
-        consumers = utils.consumers(computation_trace)
-        flat_args, _ = tree_flatten((computation_trace.args, computation_trace.kwargs))
-        bsym2prepostprocess: dict[BoundSymbol, PrePostProcessInterface] = {}
-        for proxy in filter(lambda p: isinstance(p, TensorProxy), flat_args):
-            for p_name in self.chunked_param_name2layer_type:
-                if p_name == proxy.name:
-                    consumer_bsym = consumers[proxy][0]
-                    if consumer_bsym not in bsym2prepostprocess:
-                        match self.chunked_param_name2layer_type[p_name]:
-                            case nn.Linear:
-                                bsym2prepostprocess[consumer_bsym] = ColumnParallelLinearPrePostProcess(
-                                    process_group=self.process_group
-                                )
-                            case nn.Embedding:
-                                bsym2prepostprocess[consumer_bsym] = ColumnParallelEmbeddingPrePostProcess(
-                                    num_local_embeddings=proxy.shape[0], process_group=self.process_group
-                                )
-                            case _:
-                                utils.check(
-                                    False,
-                                    lambda: f"{self.chunked_param_name2layer_type[p_name]=} is not supported",
-                                )
-        utils.check(bsym2prepostprocess, lambda: f"{bsym2prepostprocess} must not be empty")
-
         visit, provenance = self.get_visitor_of_computation_trc_and_provenance(
             prologue_trace=prologue_trace,
             computation_trace=computation_trace,
