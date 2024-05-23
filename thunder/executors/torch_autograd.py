@@ -236,7 +236,9 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
                 compile_data.fn.bucketing_strategy != FSDPBucketingStrategy.NONE,
             )
         if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO2:
-            fw_extrace = sort_waits(fw_extrace)
+            from thunder.distributed.utils import reorder_allgather
+
+            fw_extrace = reorder_allgather(fw_extrace)
             bw_extrace = sort_waits(bw_extrace)
     if getattr(compile_data.fn, "use_ddp", False):
         bw_extrace = sort_waits(bw_extrace)
