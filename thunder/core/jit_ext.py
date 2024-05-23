@@ -620,6 +620,7 @@ class GeneralJitCtx(MinimalCtx):
                         raise NotImplementedError(
                             f"proxify {type(uvalue).__name__} with attribute {an} of type {type(av.value).__name__}"
                         )
+            return proxy_d
         elif isinstance(uvalue, Sequence):
             value.track_items()
             proxy_s = type(uvalue)(i.value for i in value.item_wrappers)
@@ -634,6 +635,7 @@ class GeneralJitCtx(MinimalCtx):
                         raise NotImplementedError(
                             f"proxify {type(uvalue).__name__} with attribute {an} of type {type(av.value).__name__}"
                         )
+            return proxy_s
         else:
             raise ValueError("cannot proxify value of {type(uvalue).__type} objects")
 
