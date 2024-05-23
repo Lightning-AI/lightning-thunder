@@ -2642,16 +2642,16 @@ def _uniform_philox_meta(
     *,
     device: devices.Device,
     dtype: dtypes.dtype,
-    seed: int | TensorProxy,
-    offset: int | TensorProxy,
+    seed: int | IntegerProxy | TensorProxy,
+    offset: int | IntegerProxy | TensorProxy,
 ) -> TensorProxy:
     # Checks inputs
     utils.check_type(minval, float)
     utils.check_type(maxval, float)
     utils.check_type(device, devices.Device)
     utils.check_type(dtype, dtypes.dtype)
-    utils.check_type(seed, (int, TensorProxy))
-    utils.check_type(offset, (int, TensorProxy))
+    utils.check_type(seed, (int, IntegerProxy, TensorProxy))
+    utils.check_type(offset, (int, IntegerProxy, TensorProxy))
     utils.check(
         isinstance(seed, (int, IntegerProxy)) or seed.dtype is dtypes.int64,
         lambda: f"Expected {seed=} to be an integer or an int64 tensor",
