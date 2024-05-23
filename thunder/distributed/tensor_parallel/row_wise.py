@@ -14,11 +14,14 @@ from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
 if TYPE_CHECKING:
     from typing import Any
     from collections.abc import Sequence
+    from collections.abc import Callable
     from torch.distributed import ProcessGroup
     from thunder.core.module import ThunderModule
     from thunder.core.proxies import TensorProxy
+    from thunder.core.symbol import BoundSymbol
     from thunder.core.trace import TraceCtx
     from thunder.core.trace import TraceProvenance
+    from thunder.core.transforms import VISIT_TYPE
 
 
 __all__ = [
@@ -100,7 +103,11 @@ class TransformForRowWiseParallel(TransformForTensorParallel):
                     if consumer_bsym not in bsym2prepostprocess:
                         match self.chunked_param_name2layer_type[p_name]:
                             case nn.Linear:
-                                bsym2prepostprocess[consumer_bsym] = ColumnParallelLinearPrePostProcess(
+                                bsym2prepostprocess[consumer_bsym] = RowParallelLinearPrePostProcess(
+                                    process_group=self.process_group
+                                )
+                            case nn.Embedding:
+                                bsym2prepostprocess[consumer_bsym] = RowParallelEmbeddingPreProcess(
                                     process_group=self.process_group
                                 )
                             case _:
@@ -111,7 +118,7 @@ class TransformForRowWiseParallel(TransformForTensorParallel):
         utils.check(bsym2prepostprocess, lambda: f"{bsym2prepostprocess} must not be empty")
 
         visit = ComputationTraceTransformVisitorForTensorParallel(bsym2prepostprocess)
-        return visit, "transform into column-wise tensor parallel"
+        return visit, "transform into row-wise tensor parallel"
 
 
 def convert_module_to_rowwise_parallel(
@@ -119,6 +126,67 @@ def convert_module_to_rowwise_parallel(
     target_modules: Sequence[str],
     process_group: ProcessGroup | None = None,
 ) -> ThunderModule:
+    """Convert specified modules into row-wise parallel ones.
+
+    This method has two effects:
+        1. Chunks target modules' parameters in 1st dimension.
+        2. Insert preprocess and postprocess around modified module ops.
+
+    Args:
+        thunder_module:
+
+    Keyword Args:
+        target_modules: Names of modules to convert into row-wise.
+        process_group:
+
+
+    Example:
+        .. code-block:: python
+
+            import os
+
+            import torch
+            import torch.nn
+            import torch.nn.functional as F
+            from torch.distributed import distributed_c10d
+
+            import thunder
+            from thunder.distributed import convert_module_to_rowwise_parallel
+
+
+            class Model(nn.Module):
+                def __init__(
+                    self,
+                    num_embeddings: int,
+                    embedding_dim: int,
+                    n_hidden: int,
+                    n_out: int,
+                ) -> None:
+                    super().__init__()
+                    self.embed = nn.Embedding(num_embeddings, embedding_dim)
+                    self.l1 = nn.Linear(embedding_dim, n_hidden)
+                    self.l2 = nn.Linear(n_hidden, n_out)
+
+                def forward(self, tokens: torch.Tensor) -> torch.Tensor:
+                    feature = self.embed(tokens)
+                    h = F.gelu(self.l1(feature), approximate='tanh')
+                    return self.l2(h)
+
+            world_size = int(os.environ["WORLD_SIZE"])
+            local_rank = int(os.environ["LOCAL_RANK"])
+            device = torch.device(f"cuda:{local_rank}")
+            distributed_c10d.init_process_group()
+            model = Model().to(device)
+            jitted_model = thunder.jit(model)
+            # ``embedding_dim`` and `l2`'s input size (= n_hidden) need to be divisible by `world_size`
+            tp_model = convert_module_to_columnwise_parallel(
+                jitted_model,
+                target_modules=("embed", "l2",),
+            )
+
+            x = torch.randn(4, n_in, device=device)
+            out = tp_model(x)  # shape: [4, n_out]
+    """
     from thunder import compile_data as get_compile_data
     from thunder.distributed import _shard_param
     from thunder.core.transforms import add_transform
