@@ -118,7 +118,10 @@ def reorder_allgather(execution_trace):
     from thunder.core import utils
 
     consumers = utils.consumers(execution_trace, _map_to_numbers=True)
-    all_gathers = filter(lambda x: execution_trace.bound_symbols[x].sym.id in {distPrimIDs.ALL_GATHER, all_gather_prim_impl.id},(i for i, x in enumerate(execution_trace.bound_symbols)))
+    all_gathers = filter(
+        lambda x: execution_trace.bound_symbols[x].sym.id in {distPrimIDs.ALL_GATHER, all_gather_prim_impl.id},
+        (i for i, x in enumerate(execution_trace.bound_symbols)),
+    )
     consumer2allgather = {}
     consumer2wait = {}
     for allgather in all_gathers:
@@ -128,7 +131,7 @@ def reorder_allgather(execution_trace):
         list(map(lambda x: consumer2allgather.setdefault(x, []).append(allgather), consumers[wait_out]))
 
     visited = set()
-    reordered_allgather_bsyms=[]
+    reordered_allgather_bsyms = []
     # get the allgathers sorted as consumer order
     consumer2allgather = {key: consumer2allgather[key] for key in sorted(consumer2allgather.keys())}
     for _, allgathers in consumer2allgather.items():
@@ -138,7 +141,7 @@ def reorder_allgather(execution_trace):
                 visited.add(allgather)
 
     visited = set()
-    bsyms=[]
+    bsyms = []
     consumer2wait = {key: consumer2wait[key] for key in sorted(consumer2wait.keys())}
     fst_allgather = True
     for idx, bsym in enumerate(execution_trace.bound_symbols):
@@ -160,7 +163,7 @@ def reorder_allgather(execution_trace):
             bsyms.append(bsym)
 
     new_execution_trace = from_trace(execution_trace)
-    new_execution_trace.bound_symbols=bsyms
+    new_execution_trace.bound_symbols = bsyms
     return new_execution_trace
 
 
