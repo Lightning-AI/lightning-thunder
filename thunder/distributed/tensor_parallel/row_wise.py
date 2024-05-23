@@ -73,7 +73,7 @@ class RowParallelEmbeddingPreProcess(PrePostProcessInterface):
         )
 
 
-@dataclass(frozen=True)
+@dataclass
 class TransformForRowWiseParallel(TransformForTensorParallel):
 
     def get_visitor_of_computation_trc_and_provenance(

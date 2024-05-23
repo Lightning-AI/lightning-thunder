@@ -98,7 +98,7 @@ class ColumnParallelEmbeddingPrePostProcess(PrePostProcessInterface):
         )
 
 
-@dataclass(frozen=True)
+@dataclass
 class TransformForColumnWiseParallel(TransformForTensorParallel):
 
     def get_visitor_of_computation_trc_and_provenance(
