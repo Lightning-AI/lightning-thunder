@@ -7,6 +7,7 @@ import torch.nn as nn
 from torch.distributed import distributed_c10d
 
 from thunder.core import utils
+from thunder.core.proxies import TensorProxy
 from thunder.distributed.tensor_parallel.common import PrePostProcessInterface
 from thunder.distributed.tensor_parallel.common import ComputationTraceTransformVisitorForTensorParallel
 from thunder.distributed.tensor_parallel.common import TransformForTensorParallel
@@ -18,7 +19,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from torch.distributed import ProcessGroup
     from thunder.core.module import ThunderModule
-    from thunder.core.proxies import TensorProxy
     from thunder.core.symbol import BoundSymbol
     from thunder.core.trace import TraceCtx
     from thunder.core.trace import TraceProvenance

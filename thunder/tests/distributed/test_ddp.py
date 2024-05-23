@@ -1075,7 +1075,7 @@ class CompileDDPTest(DataParallelTestCase):
                 )
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
-    def test_tensor_parallel_column_wise_embedding(self):
+    def test_tensor_parallel_embedding(self):
         num_embeddings = 128
         embedding_dim = 32
 
