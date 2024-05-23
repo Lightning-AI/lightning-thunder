@@ -1040,7 +1040,10 @@ def _uniform_philox_check(
     offset: int | TensorProxy,
 ) -> bool:
     return (
-        is_supported_device(device) and is_supported_dtype(dtype) and isinstance(seed, (int, IntegerProxy)) and isinstance(offset, (int, IntegerProxy))
+        is_supported_device(device)
+        and is_supported_dtype(dtype)
+        and isinstance(seed, (int, IntegerProxy))
+        and isinstance(offset, (int, IntegerProxy))
     )
 
 
