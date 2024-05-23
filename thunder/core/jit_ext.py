@@ -618,7 +618,7 @@ class GeneralJitCtx(MinimalCtx):
             proxy_d = type(uvalue)((k, i.value) for k, i in value.item_wrappers.items())
             # proxy_d is not an instance of Proxy
             # avoid double registration of proxy_d on value
-            if proxy_s != uvalue:
+            if proxy_d != uvalue:
                 value.register_proxy(proxy_d)
                 for an, av in value.attribute_wrappers.items():
                     if callable(av.value):
