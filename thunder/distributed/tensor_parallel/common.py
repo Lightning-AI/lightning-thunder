@@ -122,10 +122,12 @@ class TransformForTensorParallel:
 
     def get_visitor_of_computation_trc_and_provenance(
         self,
-        prologue_trace: TraceCtx,
         computation_trace: TraceCtx,
     ) -> tuple[Callable[[BoundSymbol], VISIT_TYPE], TraceProvenance | str]:
         raise NotImplementedError("Inherit this class and implement `get_visitor_of_computation_trc`")
+
+    def _calc_new_shape(self, orig_shape) -> tuple[int, ...]:
+        raise NotImplementedError()
 
     def __call__(
         self,
@@ -144,6 +146,40 @@ class TransformForTensorParallel:
             for bsym in prologue_trace.bound_symbols
             if bsym.sym is prims.unpack_thunder_module
         ]
+        ((orig_module_proxy, thunder_module_proxy),) = modules_and_thunder_modules
+
+        prologue_producers, prologue_consumers = utils.producers_and_consumers(prologue_trace)
+        for pro_out_p, comp_inp_p in zip(prologue_trace.output, computation_trace.args):
+            bsym = prologue_producers[pro_out_p]
+            if bsym.sym == prims.unpack_parameter:
+                param_thunder_module, param_name = bsym.args
+                assert param_thunder_module is thunder_module_proxy
+                if param_name in self.chunked_param_name2layer_type:
+
+                    orig_shape = list(pro_out_p._shape)
+                    new_shape = self._cala_new_shape(orig_shape)
+                    pro_out_p._shape = new_shape
+                    if comp_inp_p is not pro_out_p:
+                        comp_inp_p._shape = new_shape
+
+                    for c in prologue_consumers[pro_out_p]:
+                        if c.sym is prims.check_tensor_shape_and_metadata:
+                            # TODO have a more principled way to update this?
+                            a0, _, _, *a2pp = c.args
+                            c.args = (a0, tuple(new_shape), str(a0.device), *a2pp)
+
+                    assert False
+
+        for bsym in prologue_trace.bound_symbols:
+            if bsym.sym is prims.check_tensor_shape_and_metadata and prologue_producers[bsym.args[0]].sym in (
+                prims.unpack_parameter,
+                prims.unpack_buffer,
+            ):
+                param_thunder_module, name = prologue_producers[bsym.args[0]].args
+                assert param_thunder_module is thunder_module_proxy
+                if name not in self.chunked_param_name2layer_type:
+                    a0, shape, _, *a2pp = bsym.args
+                    bsym.args = (a0, shape, str(a0.device), *a2pp)
 
         if len(modules_and_thunder_modules) != 1:
             raise NotImplementedError("cannot deal with modules other than the compiled module")

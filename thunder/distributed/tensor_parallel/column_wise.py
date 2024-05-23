@@ -101,22 +101,17 @@ class ColumnParallelEmbeddingPrePostProcess(PrePostProcessInterface):
 @dataclass
 class TransformForColumnWiseParallel(TransformForTensorParallel):
 
+    def _calc_new_shape(self, orig_shape: list[int]) -> tuple[int, ...]:
+        new_shape = orig_shape[:]
+        new_shape[0] //= self.process_group.size()
+        return tuple(new_shape)
+
     def get_visitor_of_computation_trc_and_provenance(
         self,
-        prologue_trace: TraceCtx,
         computation_trace: TraceCtx,
     ) -> tuple[Callable[[BoundSymbol], VISIT_TYPE], TraceProvenance | str]:
         from thunder.core import prims
         from thunder.core.pytree import tree_flatten
-
-        modules_and_thunder_modules = [
-            (bsym.args[0], bsym.output)
-            for bsym in prologue_trace.bound_symbols
-            if bsym.sym is prims.unpack_thunder_module
-        ]
-
-        if len(modules_and_thunder_modules) != 1:
-            raise NotImplementedError("cannot deal with modules other than the compiled module")
 
         consumers = utils.consumers(computation_trace)
         flat_args, _ = tree_flatten((computation_trace.args, computation_trace.kwargs))
@@ -238,6 +233,22 @@ def convert_module_to_columnwise_parallel(
         for name, p in mod.named_parameters(recurse=False):
             chunked_param_name2layer_type["t_" + f"{target_mod_name}.{name}".replace(".", "_")] = type(mod)
 
+    import copy
+
+    # Modify module
+    for module_name, _ in thunder_module._model.named_modules():
+        if module_name not in target_modules:
+            continue
+        submodule = thunder_module.get_submodule(module_name)
+
+        # we use a copy to let the user's module alone (TODO: does this fully work?)
+        module_copy = copy.copy(submodule)
+        for pn, p in submodule.named_parameters(recurse=False, prefix=module_name):
+            # if we don't have an override or it is just the original, do create a copy
+            if thunder_module._overrides.get(pn, p) is p:
+                thunder_module._overrides[pn] = copy.copy(p)
+            _shard_param(thunder_module._overrides[pn], rank, world_size, pn, allow_padding_for_fsdp=True)
+
     colwise_thunder_module = add_transform(
         thunder_module,
         early_transform=TransformForColumnWiseParallel(
@@ -248,10 +259,5 @@ def convert_module_to_columnwise_parallel(
             process_group=process_group,
         ),
     )
-
-    for target_mod_name in target_modules:
-        mod = colwise_thunder_module.get_submodule(target_mod_name)
-        for name, p in mod.named_parameters(recurse=False):
-            _shard_param(p, rank, world_size, name, allow_padding_for_fsdp=False)
 
     return colwise_thunder_module
