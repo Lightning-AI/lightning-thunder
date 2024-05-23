@@ -1048,12 +1048,11 @@ class CompileDDPTest(DataParallelTestCase):
         ref_state_dict = ref_model.state_dict()
         expected = ref_model(x)
 
-        model = ToyModel().to(device)
-
         for name, converter in (
             ("colwise", convert_module_to_columnwise_parallel),
             ("rowwise", convert_module_to_rowwise_parallel),
         ):
+            model = ToyModel().to(device)
             model.load_state_dict(ref_state_dict)
             jitted_model = thunder.jit(model)
             with self.subTest(converter=name):
@@ -1095,11 +1094,11 @@ class CompileDDPTest(DataParallelTestCase):
         ref_state_dict = ref_model.state_dict()
         expected = ref_model(x)
 
-        model = Model().to(device)
         for name, converter in (
             ("colwise", convert_module_to_columnwise_parallel),
             ("rowwise", convert_module_to_rowwise_parallel),
         ):
+            model = Model().to(device)
             model.load_state_dict(ref_state_dict)
             jitted_model = thunder.jit(model)
             with self.subTest(converter=name):
