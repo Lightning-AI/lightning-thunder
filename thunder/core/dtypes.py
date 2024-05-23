@@ -591,7 +591,7 @@ def to_torch_dtype(x: None | torch.dtype | dtype) -> None | torch.dtype:
 
 # Converts NumPy dtypes to and from thunder dtypes
 
-# NOTE NumPy does not support the bfloat16 or complexhalf (complex32) or float8 datatypes
+# NOTE NumPy does not support the bfloat16, complexhalf (complex32) or float8 datatypes
 _thunder_to_numpy_dtype_map = {
     bool: np.bool_,
     int: np.int_,
