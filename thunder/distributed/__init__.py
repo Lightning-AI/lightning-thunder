@@ -17,6 +17,7 @@ import torch.distributed as tdist
 import thunder.core.utils as utils
 from thunder.core.proxies import DDPType
 from thunder.distributed.tensor_parallel import convert_module_to_columnwise_parallel
+from thunder.distributed.tensor_parallel import convert_module_to_rowwise_parallel
 
 if TYPE_CHECKING:
     from torch.distributed import ProcessGroup
@@ -29,6 +30,7 @@ __all__ = [
     "FSDPBucketingStrategy",
     "FSDPType",
     "convert_module_to_columnwise_parallel",
+    "convert_module_to_rowwise_parallel",
 ]
 
 

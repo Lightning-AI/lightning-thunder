@@ -24,18 +24,18 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ComputationTraceTransformVisitorForTensorParallel",
-    "LayerType",
+    "TensorParallelLayerType",
     "NoOp",
     "PrePostProcessInterface",
     "TransformForTensorParallel",
 ]
 
 
-class LayerType(Enum):
-    COL_LINEAR = auto()
-    ROW_LINEAR = auto()
+class TensorParallelLayerType(Enum):
+    COLUMN_PARALLEL_LINEAR = auto()
+    ROW_PARALLEL_LINEAR = auto()
 
-    COL_EMBED = auto()
+    COLUMN_PARALLEL_EMBED = auto()
 
 
 class PrePostProcessInterface(ABC):

@@ -9,6 +9,7 @@ from torch.distributed import distributed_c10d
 from thunder.core import utils
 from thunder.distributed.tensor_parallel.common import PrePostProcessInterface
 from thunder.distributed.tensor_parallel.common import TransformForTensorParallel
+from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
 
 if TYPE_CHECKING:
     from typing import Any
@@ -28,7 +29,7 @@ __all__ = [
 @dataclass(frozen=True)
 class RowParallelLinearPreProcess(PrePostProcessInterface):
     process_group: ProcessGroup
-    layer_type: ClassVar[str] = "linear"
+    layer_type: ClassVar[TensorParallelLayerType] = TensorParallelLayerType.ROW_PARALLEL_LINEAR
 
     def preprocess(self, x: TensorProxy) -> tuple[TensorProxy, tuple[Any, ...]]:
         # split `x` in the last dim.
@@ -42,7 +43,7 @@ class RowParallelLinearPreProcess(PrePostProcessInterface):
         # gather `y` along the last dimension
         from thunder.distributed import prims as dist_prims
 
-        return dist_prims.synchronize_output_for_row_wise_tensor_parallel(
+        return dist_prims.synchronize_tensor_parallel_output(
             y,
             self.process_group,
             RowParallelLinearPreProcess.layer_type,

@@ -13,6 +13,7 @@ from thunder.core.transforms import register_augmented_forward, register_backwar
 
 if TYPE_CHECKING:
     from thunder.common import CompileData
+    from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
 
 
 class PrimIDs(Enum):
@@ -31,8 +32,7 @@ class PrimIDs(Enum):
     STASH_GRAD_FOR_FSDP = auto()
 
     # Experimental
-    SYNCHRONIZE_OUTPUT_FOR_COLUMN_WISE_TENSOR_PARALLEL = auto()
-    SYNCHRONIZE_OUTPUT_FOR_ROW_WISE_TENSOR_PARALLEL = auto()
+    SYNCHRONIZE_TENSOR_PARALLEL_OUTPUT = auto()
 
 
 # This enum describes what all_reduce (below) will actually do
@@ -300,35 +300,26 @@ def synchronize_input_for_column_wise_tensor_parallel_meta(
     return TensorProxy(like=t)
 
 
-def synchronize_output_for_column_wise_tensor_parallel_meta(
+def synchronize_tensor_parallel_output_meta(
     t: TensorProxy,
     group: torch.distributed.ProcessGroup,
-    layer_type: str,
+    layer_type: TensorParallelLayerType,
 ) -> TensorProxy:
+    from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
+
     utils.check_type(t, TensorProxy)
     utils.check_type(group, torch.distributed.ProcessGroup)
-    supported_layer_types: set[str] = {"linear", "embedding"}
-    utils.check(
-        layer_type in supported_layer_types, lambda: f"invalid {layer_type=}, expected one of {supported_layer_types}"
+    utils.check_type(layer_type, TensorParallelLayerType)
+
+    supported_ops = (
+        TensorParallelLayerType.COLUMN_PARALLEL_EMBED,
+        TensorParallelLayerType.COL_LINEAR,
+        TensorParallelLayerType.ROW_LINEAR,
     )
-
-    gathered_shape = list(t.shape)
-    gathered_shape[-1] *= group.size()
-    return TensorProxy(shape=gathered_shape, like=t)
-
-
-def synchronize_output_for_row_wise_tensor_parallel_meta(
-    t: TensorProxy,
-    group: torch.distributed.ProcessGroup,
-    layer_type: str,
-) -> TensorProxy:
-    utils.check_type(t, TensorProxy)
-    utils.check_type(group, torch.distributed.ProcessGroup)
-    supported_layer_types: set[str] = {"linear"}
     utils.check(
-        layer_type in supported_layer_types, lambda: f"invalid {layer_type=}, expected one of {supported_layer_types}"
+        layer_type in supported_ops,
+        lambda: f"Unsupported {layer_type=}, supported ones are {supported_ops=}",
     )
-
     return TensorProxy(like=t)
 
 
@@ -348,15 +339,10 @@ stash_grad_for_fsdp = make_prim(
     "stash_grad_for_fsdp",
     meta=stash_grad_for_fsdp_meta,
 )
-synchronize_output_for_column_wise_tensor_parallel = make_prim(
-    PrimIDs.SYNCHRONIZE_OUTPUT_FOR_COLUMN_WISE_TENSOR_PARALLEL,
-    "synchronize_output_for_column_wise_tensor_parallel",
-    meta=synchronize_output_for_column_wise_tensor_parallel_meta,
-)
-synchronize_output_for_row_wise_tensor_parallel = make_prim(
-    PrimIDs.SYNCHRONIZE_OUTPUT_FOR_ROW_WISE_TENSOR_PARALLEL,
-    "synchronize_output_for_row_wise_tensor_parallel",
-    meta=synchronize_output_for_row_wise_tensor_parallel_meta,
+synchronize_tensor_parallel_output = make_prim(
+    PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_OUTPUT,
+    "synchronize_tensor_parallel_output",
+    meta=synchronize_tensor_parallel_output_meta,
 )
 
 
@@ -404,41 +390,47 @@ def synchronize_backward_rule(
     return synced_grad, None
 
 
-# TODO(crcrpar): Use the enum of `thunder.distributed.tensor_parallel.common.LayerType`
-@register_augmented_forward(PrimIDs.SYNCHRONIZE_OUTPUT_FOR_COLUMN_WISE_TENSOR_PARALLEL)
-def synchronize_output_for_column_wise_tensor_parallel_forward_rule(
+@register_augmented_forward(PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_OUTPUT)
+def synchronize_tensor_parallel_output_forward_rule(
     t: TensorProxy,
     group: torch.distributed.ProcessGroup,
-    layer_type: str,
-) -> tuple[TensorProxy, tuple[torch.distributed.ProcessGroup]]:
+    layer_type: TensorParallelLayerType,
+) -> tuple[TensorProxy, tuple[torch.distributed.ProcessGroup, TensorParallelLayerType]]:
+    from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
     import thunder.torch as ltorch
 
     match layer_type:
-        case "linear":
+        case TensorParallelLayerType.COLUMN_PARALLEL_LINEAR:
             # all-gather in the last dim
             future_of_all_gathered = all_gather(t, group, True, 0)
             all_gathered = wait(future_of_all_gathered)
             chunked = ltorch.chunk(all_gathered, group.size(), 0)
             gathered = ltorch.cat(chunked, dim=-1)
             return gathered, (group, layer_type)
-        case "embedding":
+        case TensorParallelLayerType.ROW_PARALLEL_LINEAR:
+            return all_reduce(t, DistributedReduceOps.SUM, group, do_async=True, skip_clone=True).wait(), (
+                group,
+                layer_type,
+            )
+        case TensorParallelLayerType.COLUMN_PARALLEL_EMBED:
             return all_reduce(t, DistributedReduceOps.SUM, group, do_async=True, skip_clone=True).wait(), (
                 group,
                 layer_type,
             )
         case _:
-            raise ValueError(f"Invlaid {layer_type=}")
+            utils.check(False, lambda: f"Invalid {layer_type=}")
 
 
-@register_backward(PrimIDs.SYNCHRONIZE_OUTPUT_FOR_COLUMN_WISE_TENSOR_PARALLEL)
-def synchronize_output_for_column_wise_tensor_parallel_backward_rule(
+@register_backward(PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_OUTPUT)
+def synchronize_tensor_parallel_output_backward_rule(
     group: torch.distributed.ProcessGroup,
-    layer_type: str,
+    layer_type: TensorParallelLayerType,
     grad: TensorProxy,
-) -> tuple[TensorProxy, tuple[torch.distributed.ProcessGroup]]:
+) -> tuple[TensorProxy, None, None]:
+    from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
+
     match layer_type:
-        case "linear":
-            # reduce-scatter in the last dim
+        case TensorParallelLayerType.COLUMN_PARALLEL_LINEAR:
             return (
                 reduce_scatter(
                     grad / group.size(), DistributedReduceOps.SUM, group, do_async=True, dim=grad.ndim - 1
@@ -446,37 +438,9 @@ def synchronize_output_for_column_wise_tensor_parallel_backward_rule(
                 None,
                 None,
             )
-        case "embedding":
+        case TensorParallelLayerType.ROW_PARALLEL_LINEAR:
+            return grad, None, None
+        case TensorParallelLayerType.COLUMN_PARALLEL_EMBED:
             return grad, None, None
         case _:
-            raise ValueError(f"Invlaid {layer_type=}")
-
-
-@register_augmented_forward(PrimIDs.SYNCHRONIZE_OUTPUT_FOR_ROW_WISE_TENSOR_PARALLEL)
-def synchronize_output_for_row_wise_tensor_parallel_forward_rule(
-    t: TensorProxy,
-    group: torch.distributed.ProcessGroup,
-    layer_type: str,
-) -> tuple[TensorProxy, tuple[torch.distributed.ProcessGroup]]:
-
-    match layer_type:
-        case "linear":
-            return all_reduce(t, DistributedReduceOps.SUM, group, do_async=True, skip_clone=True).wait(), (
-                group,
-                layer_type,
-            )
-        case _:
-            raise ValueError(f"Invlaid {layer_type=}")
-
-
-@register_backward(PrimIDs.SYNCHRONIZE_OUTPUT_FOR_ROW_WISE_TENSOR_PARALLEL)
-def synchronize_output_for_row_wise_tensor_parallel_backward_rule(
-    group: torch.distributed.ProcessGroup,
-    layer_type: str,
-    grad: TensorProxy,
-) -> tuple[TensorProxy, tuple[torch.distributed.ProcessGroup]]:
-    match layer_type:
-        case "linear":
-            return grad, None, None
-        case _:
-            raise ValueError(f"Invlaid {layer_type=}")
+            utils.check(False, lambda: f"Invalid {layer_type=}")

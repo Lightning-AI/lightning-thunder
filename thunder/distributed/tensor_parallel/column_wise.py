@@ -11,6 +11,7 @@ from thunder.core.proxies import TensorProxy
 from thunder.distributed.tensor_parallel.common import PrePostProcessInterface
 from thunder.distributed.tensor_parallel.common import ComputationTraceTransformVisitorForTensorParallel
 from thunder.distributed.tensor_parallel.common import TransformForTensorParallel
+from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
 
 if TYPE_CHECKING:
     from typing import Any
@@ -32,7 +33,8 @@ __all__ = [
 @dataclass(frozen=True)
 class ColumnParallelLinearPrePostProcess(PrePostProcessInterface):
     process_group: ProcessGroup
-    layer_type: ClassVar[str] = "linear"
+
+    layer_type: ClassVar[TensorParallelLayerType] = TensorParallelLayerType.COLUMN_PARALLEL_LINEAR
 
     def preprocess(self, x: TensorProxy) -> tuple[TensorProxy, tuple[Any, ...]]:
         return super().preprocess(x)
@@ -40,7 +42,7 @@ class ColumnParallelLinearPrePostProcess(PrePostProcessInterface):
     def postprocess(self, y: TensorProxy, _: Any) -> TensorProxy:
         from thunder.distributed import prims as dist_prims
 
-        return dist_prims.synchronize_output_for_column_wise_tensor_parallel(
+        return dist_prims.synchronize_tensor_parallel_output(
             y,
             self.process_group,
             ColumnParallelLinearPrePostProcess.layer_type,
@@ -52,7 +54,7 @@ class ColumnParallelEmbeddingPrePostProcess(PrePostProcessInterface):
     num_local_embeddings: int
     process_group: ProcessGroup
 
-    layer_type: ClassVar[str] = "embedding"
+    layer_type: ClassVar[TensorParallelLayerType] = TensorParallelLayerType.COLUMN_PARALLEL_EMBED
 
     def __post_init__(self) -> None:
         from torch.distributed import distributed_c10d
@@ -89,7 +91,7 @@ class ColumnParallelEmbeddingPrePostProcess(PrePostProcessInterface):
                 lambda: f"{unflattened_mask.shape = }, {y.shape = }",
             )
             y = ltorch.masked_fill(y, unflattened_mask, 0.0)
-        return dist_prims.synchronize_output_for_column_wise_tensor_parallel(
+        return dist_prims.synchronize_tensor_parallel_output(
             y,
             self.process_group,
             ColumnParallelEmbeddingPrePostProcess.layer_type,
