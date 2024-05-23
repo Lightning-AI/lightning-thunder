@@ -445,7 +445,8 @@ def fsdp_transform_module(
                 tdist.broadcast(thunder_model.get_buffer(pn), src=broadcast_from, group=process_group, async_op=False)
 
         for pn, p in submodule.named_parameters(recurse=False, prefix=module_name):
-            if pn not in thunder_model._overrides:
+            # if we don't have an override or it is just the original, do create a copy
+            if thunder_model._overrides.get(pn, p) is p:
                 thunder_model._overrides[pn] = copy.copy(p)
             # we collect shapes and devices because we do not know if other transforms also change it...
             old_shape = thunder_model._overrides[pn].shape
