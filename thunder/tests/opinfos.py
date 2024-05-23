@@ -4747,13 +4747,18 @@ def scatter_add_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # torch.scatter_add expects index to be long but not int
     # Index is not differentiable! Marking requires_grad as False
     make_index = partial(make_tensor, device=device, dtype=torch.long, requires_grad=False)
-    # Not sure if we need to consider higher order gradient, marking requires_grad as False
-    make_source = partial(make_tensor, device=device, dtype=dtype, requires_grad=False)
+    make_source = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
+    # NOTE The value gradient is only correct when src.shape == index.shape.
+    # For gradient testing, we use the index shape for the source tensor.
+    # See https://github.com/pytorch/pytorch/issues/27614#issuecomment-564648819
     for shape_a, dim, shape_b in take_along_axis_cases:
         canonicalized_dim = dim if dim >= 0 else dim + len(shape_a)
-        shape_source = list(shape_a)
-        shape_source[canonicalized_dim] = shape_b[canonicalized_dim]
+        if requires_grad:
+            shape_source = shape_b
+        else:
+            shape_source = list(shape_a)
+            shape_source[canonicalized_dim] = shape_b[canonicalized_dim]
         a = make(shape_a)
         b = make_index(shape_b, low=0, high=shape_a[dim])
         c = make_source(shape_source)
@@ -4773,13 +4778,39 @@ def scatter_add_sample_generator(op, device, dtype, requires_grad, **kwargs):
     for shape_a, dim, shape_b, shape_source in scatter_add_cases:
         a = make(shape_a)
         b = make_index(shape_b, low=0, high=shape_a[dim])
-        c = make_source(shape_source)
+        c = make_source(shape_b if requires_grad else shape_source)
         yield SampleInput(a, index=b, src=c, dim=dim)
+
+
+def scatter_add_error_generator(op, device, dtype=torch.float32, requires_grad=True, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    # torch.scatter_add expects index to be long but not int
+    # Index is not differentiable! Marking requires_grad as False
+    make_index = partial(make_tensor, device=device, dtype=torch.long, requires_grad=False)
+    make_source = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # Gradient definition for src tensor is valid only if src.shape == index.shape
+    # NOTE The scatter_add prim renames src variable to value.
+    shape_a = (4, 5, 3)
+    dim = 0
+    shape_b = (3, 2, 3)
+    shape_source = (4, 3, 9)
+
+    a = make(shape_a)
+    b = make_index(shape_b, low=0, high=shape_a[dim])
+    c = make_source(shape_source)
+    yield (
+        SampleInput(a, index=b, src=c, dim=dim),
+        RuntimeError,
+        "The gradient for the value Tensor is implemented only when value.shape == index.shape. value shape is (.*?) while index shape is (.*?).",
+    )
 
 
 scatter_add_opinfo = OpInfo(
     ltorch.scatter_add,
+    supports_grad=True,
     sample_input_generator=scatter_add_sample_generator,
+    error_input_generator=scatter_add_error_generator,
     torch_reference=torch.scatter_add,
     test_directives=(
         # Torch doesn't support complex half on scatter_add

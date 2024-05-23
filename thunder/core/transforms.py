@@ -854,6 +854,28 @@ register_grad(pids.GATHER, _gather_prim_grad)
 
 
 @torchctx
+def _scatter_add_prim_grad(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
+    utils.check(
+        not value._requires_grad or value.shape == index.shape,
+        lambda: f"The gradient for the value Tensor is implemented only when value.shape == index.shape. "
+        "value shape is {value.shape} while index shape is {index.shape}",
+    )
+
+    fwd = prims.scatter_add(a, index, value, dim)
+
+    g = get_grad(fwd)
+    # NOTE The value gradient is only correct when src.shape == index.shape.
+    # See https://github.com/pytorch/pytorch/issues/27614#issuecomment-564648819
+    value_grad = prims.gather(g, index, dim)
+    put_grads((a, value), (g, value_grad))
+
+    return fwd
+
+
+register_grad(pids.SCATTER_ADD, _scatter_add_prim_grad)
+
+
+@torchctx
 def _take_along_axis_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy:
     fwd = prims.take_along_axis(a, index, dim)
 
