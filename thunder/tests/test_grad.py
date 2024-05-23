@@ -63,6 +63,7 @@ vjp_op_force = {
     "stack",
     "cumsum",
     "mse_loss",
+    "adaptive_avg_pool2d",
 }
 
 
@@ -1405,18 +1406,14 @@ def test_populate_grads_nanogpt(executor, device, dtype):
     (x, targets), kwargs = bench.make_batch()
 
     logits, loss = model(x, targets)
-    loss.backward()
+    torch.autograd.backward((logits, loss), (torch.ones_like(logits), torch.ones_like(loss)))
     torch_grads = extract_grads(model)
 
     clear_grads(model)
 
     tom = executor.make_callable(model)
 
-    def grad_specifier(out) -> None:
-        logits, loss = out
-        put_grad(loss, ltorch.ones_like(loss))
-
-    tom_grad = grad(tom, grad_specifier=grad_specifier)
+    tom_grad = grad(tom)
     thunder_grads = tom_grad(x, targets)
 
     populate_grads(thunder_grads, tom, args=[x, targets])

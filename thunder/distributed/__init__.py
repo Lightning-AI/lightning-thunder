@@ -2,7 +2,6 @@ from __future__ import annotations
 import os
 
 from itertools import chain
-import collections
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 import copy
@@ -20,7 +19,7 @@ from thunder.core.proxies import DDPType
 
 if TYPE_CHECKING:
     from torch.distributed import ProcessGroup
-    import thunder
+    from thunder.core.module import ThunderModule
 
 
 __all__ = [
@@ -368,18 +367,17 @@ def get_extract_bucket_name_from_tensor_proxy(granularity: FSDPBucketingStrategy
 
 
 def fsdp_transform_module(
-    thunder_model: thunder.ThunderModule,
+    thunder_model: ThunderModule,
     *,
     device: torch.device | None = None,
     broadcast_from: int | None = None,
     sharding_strategy: FSDPType = FSDPType.ZERO2,
     bucketing_strategy: FSDPBucketingStrategy = FSDPBucketingStrategy.NONE,
-) -> thunder.ThunderModule:
-    import thunder
-
-    cd = thunder.compile_data(thunder_model)
-    # TODO: promote use_fsdp and use_ddp to public members of CompileData
-    cd.use_fsdp = True
+) -> ThunderModule:
+    from thunder import compile_data as get_compile_data
+    from thunder.core.transforms import add_transform
+    from thunder.core.module import ThunderModule
+    from thunder.distributed.transforms.fsdp_v2 import FSDPTraceTransform
 
     process_group = tdist.distributed_c10d._get_default_group()
     utils.check(process_group is not None, lambda: "The default process group is None")
@@ -389,85 +387,18 @@ def fsdp_transform_module(
         local_rank = int(os.environ["LOCAL_RANK"])
         device = torch.device("cuda", local_rank)
 
-    def prologue_and_compute_transform(prologue_trace, computation_trace, epilogue_trace, **kwargs):
-        import thunder
-
-        prologue_producers, prologue_consumers = thunder.core.utils.producers_and_consumers(prologue_trace)
-        computation_producers, computation_consumers = thunder.core.utils.producers_and_consumers(computation_trace)
-
-        modules_and_thunder_modules = [
-            (bsym.args[0], bsym.output)
-            for bsym in prologue_trace.bound_symbols
-            if bsym.sym is thunder.prims.unpack_thunder_module
-        ]
-
-        if len(modules_and_thunder_modules) != 1:
-            raise NotImplementedError("cannot deal with modules other than the compiled module")
-
-        ((orig_module_proxy, thunder_module_proxy),) = modules_and_thunder_modules
-        if prologue_producers[orig_module_proxy].sym is not thunder.prims.unpack_function_obj:
-            raise NotImplementedError("original module does not match the compiled module")
-
-        computation_trace.push_scope([])
-
-        synchronized_parameters = []
-        # todo: deal with epilogue output
-        for pro_out_p, comp_inp_p in zip(prologue_trace.output, computation_trace.args):
-            bsym = prologue_producers[pro_out_p]
-            if bsym.sym == thunder.prims.unpack_parameter:
-                param_thunder_module, param_name = bsym.args
-                assert param_thunder_module is thunder_module_proxy
-                if param_name in sharded_params:
-                    old_shape, new_shape, new_torch_device = sharded_params[param_name]
-                    thunder_device = thunder.core.devices.to_device(new_torch_device)
-                    thunder_device_str = str(thunder_device)
-
-                    pro_out_p._ddp_type = thunder.core.proxies.DDPType.FULLY_SHARDED
-                    pro_out_p._shape = tuple(new_shape)
-                    pro_out_p._device = thunder_device
-                    if comp_inp_p is not pro_out_p:
-                        comp_inp_p._ddp_type = thunder.core.proxies.DDPType.FULLY_SHARDED
-                        comp_inp_p._shape = tuple(new_shape)
-                        comp_inp_p._device = thunder_device
-                    with thunder.core.trace.tracectx(computation_trace):
-                        synchronized_parameters.append(thunder.distributed.prims.synchronize(comp_inp_p, process_group))
-
-                    for c in prologue_consumers[pro_out_p]:
-                        if c.sym is thunder.core.prims.check_tensor_shape_and_metadata:
-                            # TODO have a more principled way to update this?
-                            a0, _, _, *a2pp = c.args
-                            c.args = (a0, tuple(new_shape), thunder_device_str, *a2pp)
-
-        new_scope = computation_trace.pop_scope()
-
-        for bsym in prologue_trace.bound_symbols:
-            if bsym.sym is thunder.core.prims.check_tensor_shape_and_metadata and prologue_producers[
-                bsym.args[0]
-            ].sym in (thunder.core.prims.unpack_parameter, thunder.core.prims.unpack_buffer):
-                param_thunder_module, name = prologue_producers[bsym.args[0]].args
-                assert param_thunder_module is thunder_module_proxy
-                if name not in sharded_params and name in device_adjutments:
-                    a0, shape, _, *a2pp = bsym.args
-                    bsym.args = (a0, shape, thunder_device_str, *a2pp)
-
-        proxies_to_replace = {id(bsym.args[0]): bsym.output for bsym in new_scope}
-
-        new_computation_trace = thunder.core.trace.from_trace(computation_trace)
-        for idx, bsym in enumerate(computation_trace.bound_symbols):
-            if bsym.sym != thunder.core.prims.unpack_trivial:
-                break
-            new_computation_trace.bound_symbols.append(bsym.from_bsym())
-        new_computation_trace.bound_symbols += new_scope
-        for bsym in computation_trace.bound_symbols[idx:]:
-            new_args = tuple(proxies_to_replace.get(id(a), a) for a in bsym.args)
-            new_computation_trace.bound_symbols.append(bsym.from_bsym(args=new_args))
-
-        new_computation_trace.set_provenance(thunder.core.trace.TraceProvenance("fsdp pass"))
-
-        return prologue_trace, new_computation_trace, epilogue_trace
-
-    # add prologue + compute transform
-    thunder_model = thunder.core.transforms.add_transform(thunder_model, early_transform=prologue_and_compute_transform)
+    cd = get_compile_data(thunder_model)
+    # TODO: promote use_fsdp and use_ddp to public members of CompileData
+    cd.use_fsdp = True
+    orig_module: torch.nn.Module = cd.fn
+    utils.check(
+        isinstance(orig_module, torch.nn.Module) and not isinstance(orig_module, ThunderModule),
+        lambda: f"CompileData.fn expected to be `nn.Module` but {type(orig_module)}",
+    )
+    orig_module.use_fsdp = True
+    orig_module.process_group_for_ddp = process_group
+    orig_module.bucketing_strategy = bucketing_strategy
+    orig_module.sharding_strategy = sharding_strategy
 
     # modify module
     sharded_params = {}
@@ -485,7 +416,7 @@ def fsdp_transform_module(
         # Each module only initializes its own parameters and not those of its children (recurse=False)
         if any(t.is_meta for t in chain(module_copy.parameters(recurse=False), module_copy.buffers(recurse=False))):
             # TODO: we could also support calling a "param_init_fn" argument like PyTorch
-            thunder.distributed._materialize(module_copy, device)
+            _materialize(module_copy, device)
             for n, p in module_copy.named_parameters(recurse=False, prefix=module_name):
                 thunder_model._overrides[n] = p
                 device_adjustments[n] = device
@@ -518,9 +449,16 @@ def fsdp_transform_module(
                 thunder_model._overrides[pn] = copy.copy(p)
             # we collect shapes and devices because we do not know if other transforms also change it...
             old_shape = thunder_model._overrides[pn].shape
-            thunder.distributed._shard_param(thunder_model._overrides[pn], global_rank, world_size, pn)
+            _shard_param(thunder_model._overrides[pn], global_rank, world_size, pn, allow_padding_for_fsdp=True)
             new_shape = thunder_model._overrides[pn].shape
             sharded_params[pn] = (old_shape, new_shape, thunder_model._overrides[pn].device)
+
+    early_transform_from_trace_to_fsdp_trace = FSDPTraceTransform(
+        sharded_params=sharded_params,
+        process_group=process_group,
+    )
+    # add prologue + compute transform
+    thunder_model = add_transform(thunder_model, early_transform=early_transform_from_trace_to_fsdp_trace)
 
     return thunder_model
 
@@ -549,7 +487,9 @@ def fsdp(
     ReduceScatter to shard gradients, for one Transformer block. The former users one per layer such as
     :class:`torch.nn.Linear` and :class:`torch.nn.LayerNorm`.
 
-     Args:
+    See :doc:`/notebooks/dev_tutorials/fsdp_tutorial` to see how parameters are sharded across devices and how communications calls are inserted.
+
+    Args:
         model: The model to convert.
 
     Keyword Args:
@@ -589,7 +529,7 @@ def fsdp(
     model.bucketing_strategy = bucketing_strategy
 
     # Shard the parameters
-    _shard_params(model, process_group, device, broadcast_from)
+    _shard_params(model, process_group, device, broadcast_from, allow_padding_for_fsdp=True)
 
     # See Note [DistributedDataParallel and ddp_type]
     # If model was wrapped with thunder.distributed.fsdp it would have a
@@ -605,7 +545,11 @@ def fsdp(
 
 @torch.no_grad()
 def _shard_params(
-    module: torch.nn.Module, process_group: ProcessGroup, device: torch.device | None, broadcast_from: int | None
+    module: torch.nn.Module,
+    process_group: ProcessGroup,
+    device: torch.device | None,
+    broadcast_from: int | None,
+    allow_padding_for_fsdp: bool = False,
 ) -> None:
     """Shards the parameters on the first dimension."""
     global_rank = tdist.get_rank(group=process_group)
@@ -636,22 +580,41 @@ def _shard_params(
         # Note [FSDP Sharding]
         # All internal code will assume that the parameters are sharded on the first dimension
         for param_name, param in submodule.named_parameters(recurse=False, prefix=module_name):
-            _shard_param(param, global_rank, world_size, param_name)
+            _shard_param(param, global_rank, world_size, param_name, allow_padding_for_fsdp=allow_padding_for_fsdp)
 
 
-def _shard_param(param: torch.Tensor, rank: int, world_size: int, name: str) -> None:
-    utils.check(
-        param.shape[0] % world_size == 0,
-        lambda: (
-            f"Current sharding requires the first dimension of the parameter {name!r} ({param.shape[0]})"
-            f" to be divisible by the world size ({world_size})"
-        ),
-    )
-    chunk_size = param.shape[0] // world_size
-    # NOTE This could be a ShardTensor to indicate other parts of the code
-    # that it's sharded and should be treated differently
-    shard = param.data.narrow(0, chunk_size * rank, chunk_size).clone()
-    param.data = shard
+def _shard_param(
+    param: torch.Tensor,
+    rank: int,
+    world_size: int,
+    name: str,
+    allow_padding_for_fsdp: bool = False,
+) -> None:
+
+    if not allow_padding_for_fsdp or (param.size(0) % world_size == 0):
+        if not allow_padding_for_fsdp:
+            utils.check(
+                param.shape[0] % world_size == 0,
+                lambda: (
+                    f"Current sharding requires the first dimension of the parameter {name!r} ({param.shape[0]})"
+                    f" to be divisible by the world size ({world_size})"
+                ),
+            )
+        chunk_size = param.shape[0] // world_size
+        # NOTE This could be a ShardTensor to indicate other parts of the code
+        # that it's sharded and should be treated differently
+        shard = param.data.narrow(0, chunk_size * rank, chunk_size).clone()
+        param.data = shard
+    else:
+        padded_param_shape = list(param.shape)
+        orig_0dim_size = param.size(0)
+        chunk_size = (padded_param_shape[0] + world_size - 1) // world_size
+        padded_param_shape[0] = chunk_size * world_size
+        _thunder_fsdp_padding_size = padded_param_shape[0] - param.size(0)
+        padded_param = torch.empty(padded_param_shape, device=param.device, dtype=param.dtype)
+        padded_param[:orig_0dim_size].copy_(param)
+        param.data = padded_param.data.narrow(0, chunk_size * rank, chunk_size).clone()
+        param._thunder_fsdp_padding_size = _thunder_fsdp_padding_size
 
 
 @torch.no_grad()
