@@ -554,7 +554,7 @@ class GeneralJitCtx(MinimalCtx):
         assert isinstance(value, WrappedValue)
         uvalue = value.value
         if isinstance(uvalue, Proxy):
-            return p
+            return uvalue
         elif isinstance(uvalue, torch.Tensor):
             # we always want to proxy torch.Tensor, even const
 
@@ -616,25 +616,31 @@ class GeneralJitCtx(MinimalCtx):
         elif isinstance(uvalue, dict):
             value.track_items()
             proxy_d = type(uvalue)((k, i.value) for k, i in value.item_wrappers.items())
-            value.register_proxy(proxy_d)
-            for an, av in value.attribute_wrappers.items():
-                if callable(av.value):
-                    av.register_proxy(getattr(proxy_d, an))
-                else:
-                    raise NotImplementedError(
-                        f"proxify {type(uvalue).__name__} with attribute {an} of type {type(av.value).__name__}"
-                    )
+            # proxy_d is not an instance of Proxy
+            # avoid double registration of proxy_d on value
+            if proxy_s != uvalue:
+                value.register_proxy(proxy_d)
+                for an, av in value.attribute_wrappers.items():
+                    if callable(av.value):
+                        av.register_proxy(getattr(proxy_d, an))
+                    else:
+                        raise NotImplementedError(
+                            f"proxify {type(uvalue).__name__} with attribute {an} of type {type(av.value).__name__}"
+                        )
         elif isinstance(uvalue, Sequence):
             value.track_items()
             proxy_s = type(uvalue)(i.value for i in value.item_wrappers)
-            value.register_proxy(proxy_s)
-            for an, av in value.attribute_wrappers.items():
-                if callable(av.value):
-                    av.register_proxy(getattr(proxy_s, an))
-                else:
-                    raise NotImplementedError(
-                        f"proxify {type(uvalue).__name__} with attribute {an} of type {type(av.value).__name__}"
-                    )
+            # proxy_s is not an instance of Proxy
+            # avoid double registration of proxy_s on value
+            if proxy_s != uvalue:
+                value.register_proxy(proxy_s)
+                for an, av in value.attribute_wrappers.items():
+                    if callable(av.value):
+                        av.register_proxy(getattr(proxy_s, an))
+                    else:
+                        raise NotImplementedError(
+                            f"proxify {type(uvalue).__name__} with attribute {an} of type {type(av.value).__name__}"
+                        )
         else:
             raise ValueError("cannot proxify value of {type(uvalue).__type} objects")
 
