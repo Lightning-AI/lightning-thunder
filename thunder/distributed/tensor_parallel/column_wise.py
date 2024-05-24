@@ -154,8 +154,6 @@ def convert_module_to_columnwise_parallel(
 
     Args:
         thunder_module:
-
-    Keyword Args:
         target_modules: Names of modules to convert into column-wise.
         process_group:
 

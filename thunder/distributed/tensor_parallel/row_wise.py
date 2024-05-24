@@ -162,11 +162,8 @@ def convert_module_to_rowwise_parallel(
 
     Args:
         thunder_module:
-
-    Keyword Args:
         target_modules: Names of modules to convert into row-wise.
         process_group:
-
 
     Example:
         .. code-block:: python
