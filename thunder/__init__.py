@@ -514,7 +514,6 @@ def jit(
                 prologue_trc, computation_trc, epilogue_trc = transform(
                     prologue_trc, computation_trc, epilogue_trc, executors_list=cd.executors_list
                 )
-                print(prologue_trc)
                 prologue_traces.append(prologue_trc)
                 computation_traces.append(computation_trc)
                 if epilogue_trc is not None:
