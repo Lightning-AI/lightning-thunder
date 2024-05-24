@@ -2201,18 +2201,17 @@ def _linear_check(a: TensorProxy, b: TensorProxy, bias: TensorProxy | None) -> b
     if nv_version < LooseVersion("0.2.3"):
         return False
 
-    enable_linear: None | bool = get_compile_option("nv_enable_linear", "Enable nvFuser matmul.")
+    enable_linear: None | bool = get_compile_option("nv_enable_linear", "Enable nvFuser linear.")
     if not enable_linear:
         return False
     # Verify linear inputs and bias (optional) are supported tensors.
-    if not are_supported_tensors(a, b):
+    if not are_supported_tensors(a, b) or (bias is not None and not is_supported_tensor(bias)):
         return False
-    if bias is not None and not is_supported_tensor(bias):
-        return False
-
-    # nvFuser only supports 2D inputs in v0.2.3.
-    if not a.ndim == 2:
-        return False
+    if nv_version < LooseVersion("0.2.5"):
+        warnings.warn("nvFuser v0.2.3 has limited support for linear. Consider using v0.2.5 or above")
+        # nvFuser only supports 2D inputs in v0.2.3.
+        if not a.ndim == 2:
+            return False
     return True
 
 

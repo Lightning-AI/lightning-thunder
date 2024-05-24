@@ -34,7 +34,14 @@ from thunder.tests.framework import (
     TorchExecutor,
 )
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
-from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops, get_opinfo, matmul_opinfo
+from thunder.tests.opinfos import (
+    opinfos,
+    push_away_from_singularities,
+    tensor_creation_ops,
+    get_opinfo,
+    linear_opinfo,
+    matmul_opinfo,
+)
 from looseversion import LooseVersion
 
 
@@ -857,33 +864,32 @@ def test_optimization_fuel(executor, device, _):
     dtypes=(thunder.float16, thunder.bfloat16),
     devicetypes=(devices.DeviceType.CUDA,),
     executors=(nvFuserExecutor,),
-    decorators=(pytest.mark.parametrize("has_bias", [True, False], ids=["bias", "no_bias"]),),
+    decorators=(
+        pytest.mark.skipif(
+            nvfuser_version() is None or nvfuser_version() < LooseVersion("0.2.3"),
+            reason="Requires nvFuser version 0.2.3 or later",
+        ),
+        pytest.mark.parametrize("has_bias", [True, False], ids=["bias", "no_bias"]),
+    ),
 )
 def test_linear(executor, device: str, dtype: dtypes.dtype, has_bias: bool):
 
     def fn(a, b, bias=None):
         return torch.nn.functional.linear(a, b, bias)
 
-    m, n, k = 128, 64, 32
-    torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = torch.randn((m, k), dtype=torch_dtype, device=device)
-    b = torch.randn((n, k), dtype=torch_dtype, device=device)
-
-    bias = None
-    if has_bias:
-        bias = torch.randn(n, dtype=torch_dtype, device=device)
+    for sample in linear_opinfo.sample_inputs(device, dtype):
+        if nvfuser_version() < LooseVersion("0.2.5") and sample.args[0].ndim != 2:
+            # Only 2D inputs are supported for version < 0.2.5.
+            continue
 
     compiled_func = thunder.jit(fn, executors_list=executor.executors_list(), nv_enable_linear=True)
 
-    out = compiled_func(a, b, bias)
+    out = compiled_func(*sample.args)
     traces = thunder.last_traces(compiled_func)
     fusions = examine.get_fusions(traces[-1])
-    nv_version = nvfuser_version()
 
-    expected_fusions = 1 if nv_version >= LooseVersion("0.2.3") else 0
-
-    assert len(fusions) == expected_fusions
-    torch.testing.assert_close(out, torch.nn.functional.linear(a, b, bias))
+    assert len(fusions) == 1
+    torch.testing.assert_close(out, torch.nn.functional.linear(*sample.args))
 
 
 @instantiate(
