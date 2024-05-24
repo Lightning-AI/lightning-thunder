@@ -15,3 +15,4 @@ thunder.distributed
     get_skip_data_parallel_grad_sync
     skip_data_parallel_grad_sync
     convert_module_to_columnwise_parallel
+    convert_module_to_rownwise_parallel
