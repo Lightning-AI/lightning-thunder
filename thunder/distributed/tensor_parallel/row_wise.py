@@ -63,6 +63,14 @@ class RowParallelLinearPrePostProcess(PrePostProcessInterface):
             return all_reduced
 
     def maybe_modify_args_and_kwargs(self, bsym: BoundSymbol) -> BoundSymbol:
+        """Replace `bias` of `bsym` with `None` if it's Tensor to avoid redundant accumulation.
+
+        The removed `bias` is added by `postprocess` after all-reduce.
+        The local row-wise parallel linear operation with bias could be
+            y_<rank> = linear(x_<rank>, weight_<rank>, bias)
+        which leads to a wrong result after all_reduce as `bias` is added <world_size> times.
+            y = all_reduce(y_<rank>)
+        """
         if self.bias_or_none is not None:
             return bsym.from_bsym_swap_proxies({variableify(self.bias_or_none): None}, skip_output=True)
         else:
