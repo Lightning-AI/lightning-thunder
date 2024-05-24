@@ -292,10 +292,7 @@ _elementwise_exact_promotion_table = [
 ]
 
 
-f8_e4m3fn_, f8_e4m3fn = dtypes.float8_e4m3fn_, dtypes.float8_e4m3fn
-f8_e4m3fnuz_, f8_e4m3fnuz = dtypes.float8_e4m3fnuz_, dtypes.float8_e4m3fnuz
-f8_e5m2_, f8_e5m2 = dtypes.float8_e5m2_, dtypes.float8_e5m2
-f8_e5m2fnuz_, f8_e5m2fnuz = dtypes.float8_e5m2fnuz_, dtypes.float8_e5m2fnuz
+
 bf_,     bf =  dtypes.bfloat16_,   dtypes.bfloat16
 f16_,   f16 =  dtypes.float16_,    dtypes.float16
 f32_,   f32 =  dtypes.float32_,    dtypes.float32
@@ -305,30 +302,22 @@ c64_,   c64 =  dtypes.complex64_,  dtypes.complex64
 c128_, c128 =  dtypes.complex128_, dtypes.complex128
 
 _inexact_dtype_to_number_map = {
-    float        : 0,
-    f8_e4m3fn_   : 1,
-    f8_e4m3fnuz_ : 2,
-    f8_e5m2_     : 3,
-    f8_e5m2fnuz_ : 4,
-    bf_          : 5,
-    f16_         : 6,
-    f32_         : 7,
-    f64_         : 8,
-    f8_e4m3fn    : 9,
-    f8_e4m3fnuz  : 10,
-    f8_e5m2      : 11,
-    f8_e5m2fnuz  : 12,
-    bf           : 13,
-    f16          : 14,
-    f32          : 15,
-    f64          : 16,
-    complex      : 17,
-    c32_         : 18,
-    c64_         : 19,
-    c128_        : 20,
-    c32          : 21,
-    c64          : 22,
-    c128         : 23,
+    float   : 0,
+    bf_     : 1,
+    f16_    : 2,
+    f32_    : 3,
+    f64_    : 4,
+    bf      : 5,
+    f16     : 6,
+    f32     : 7,
+    f64     : 8,
+    complex : 9,
+    c32_    : 10,
+    c64_    : 11,
+    c128_   : 12,
+    c32     : 13,
+    c64     : 14,
+    c128    : 15,
 }
 
 # Inexact type lattice
@@ -338,31 +327,23 @@ _inexact_dtype_to_number_map = {
 # f -> fp16* -> fp32* -> fp64* -> bfloat16 --^
 #  `-> bfloat16* -^
 _elementwise_inexact_promotion_table = [
-    #           f   f8_e4m3fn_  f8_e4m3fnuz_     f8_e5m2_  f8_e5m2fnuz_          bf_         f16_         f32_          f64_   f8_e4m3fn  f8_e4m3fnuz      f8_e5m2   f8_e5m2fnuz     bf   f16   f32   f64  complex   c32_   c64_  c128_   c32   c64  c128
-    [       float,  f8_e4m3fn_, f8_e4m3fnuz_,    f8_e5m2_, f8_e5m2fnuz_,         bf_,        f16_,        f32_,        f64_,   f8_e4m3fn, f8_e4m3fnuz,     f8_e5m2, f8_e5m2fnuz,    bf,  f16,  f32,  f64, complex,  c32_,  c64_, c128_,  c32,  c64, c128], # f
-    [       float,  f8_e4m3fn_, f8_e4m3fnuz_,    f8_e5m2_, f8_e5m2fnuz_,         bf_,        f16_,        f32_,        f64_,   f8_e4m3fn, f8_e4m3fnuz,     f8_e5m2, f8_e5m2fnuz,    bf,  f16,  f32,  f64, complex,  c32_,  c64_, c128_,  c32,  c64, c128], # f8_e4m3fn_
-    [       float,  f8_e4m3fn_, f8_e4m3fnuz_,    f8_e5m2_, f8_e5m2fnuz_,         bf_,        f16_,        f32_,        f64_,   f8_e4m3fn, f8_e4m3fnuz,     f8_e5m2, f8_e5m2fnuz,    bf,  f16,  f32,  f64, complex,  c32_,  c64_, c128_,  c32,  c64, c128], # f8_e4m3fnuz_
-    [       float,  f8_e4m3fn_, f8_e4m3fnuz_,    f8_e5m2_, f8_e5m2fnuz_,         bf_,        f16_,        f32_,        f64_,   f8_e4m3fn, f8_e4m3fnuz,     f8_e5m2, f8_e5m2fnuz,    bf,  f16,  f32,  f64, complex,  c32_,  c64_, c128_,  c32,  c64, c128], # f8_e5m2_
-    [       float,  f8_e4m3fn_, f8_e4m3fnuz_,    f8_e5m2_, f8_e5m2fnuz_,         bf_,        f16_,        f32_,        f64_,   f8_e4m3fn, f8_e4m3fnuz,     f8_e5m2, f8_e5m2fnuz,    bf,  f16,  f32,  f64, complex,  c32_,  c64_, c128_,  c32,  c64, c128], # f8_e5m2fnuz_
-    [         bf_,         bf_,          bf_,         bf_,          bf_,         bf_,        f32_,        f32_,        f64_,   f8_e4m3fn, f8_e4m3fnuz,     f8_e5m2, f8_e5m2fnuz,    bf,  f16,  f32,  f64,    c64_,  c32_,  c64_, c128_,  c32,  c64, c128], # bf_
-    [        f16_,        f16_,         f16_,        f16_,         f16_,        f32_,        f16_,        f32_,        f64_,   f8_e4m3fn, f8_e4m3fnuz,     f8_e5m2, f8_e5m2fnuz,    bf,  f16,  f32,  f64,    c32_,  c32_,  c64_, c128_,  c32,  c64, c128], # f16_
-    [        f32_,        f32_,         f32_,        f32_,         f32_,        f32_,        f32_,        f32_,        f64_,   f8_e4m3fn, f8_e4m3fnuz,     f8_e5m2, f8_e5m2fnuz,    bf,  f16,  f32,  f64,    c64_,  c32_,  c64_, c128_,  c32,  c64, c128], # f32_
-    [        f64_,        f64_,         f64_,        f64_,         f64_,        f64_,        f64_,        f64_,        f64_,   f8_e4m3fn, f8_e4m3fnuz,     f8_e5m2, f8_e5m2fnuz,    bf,  f16,  f32,  f64,   c128_,  c32_,  c64_, c128_,  c32,  c64, c128], # f64_
-    [   f8_e4m3fn,   f8_e4m3fn,    f8_e4m3fn,   f8_e4m3fn,    f8_e4m3fn,   f8_e4m3fn,   f8_e4m3fn,   f8_e4m3fn,   f8_e4m3fn,   f8_e4m3fn, f8_e4m3fnuz,     f8_e5m2, f8_e5m2fnuz,    bf,  f32,  f32,  f64,     c64,   c64,   c64,   c64,  c64,  c64, c128], # f8_e4m3fn
-    [ f8_e4m3fnuz, f8_e4m3fnuz,  f8_e4m3fnuz, f8_e4m3fnuz,  f8_e4m3fnuz, f8_e4m3fnuz, f8_e4m3fnuz, f8_e4m3fnuz, f8_e4m3fnuz, f8_e4m3fnuz, f8_e4m3fnuz,     f8_e5m2, f8_e5m2fnuz,    bf,  f32,  f32,  f64,     c64,   c64,   c64,   c64,  c64,  c64, c128], # f8_e4m3fnuz
-    [     f8_e5m2,     f8_e5m2,      f8_e5m2,     f8_e5m2,      f8_e5m2,     f8_e5m2,     f8_e5m2,     f8_e5m2,     f8_e5m2,     f8_e5m2,     f8_e5m2,     f8_e5m2, f8_e5m2fnuz,    bf,  f32,  f32,  f64,     c64,   c64,   c64,   c64,  c64,  c64, c128], # f8_e5m2
-    [ f8_e5m2fnuz, f8_e5m2fnuz,  f8_e5m2fnuz, f8_e5m2fnuz,  f8_e5m2fnuz, f8_e5m2fnuz, f8_e5m2fnuz, f8_e5m2fnuz, f8_e5m2fnuz, f8_e5m2fnuz, f8_e5m2fnuz, f8_e5m2fnuz, f8_e5m2fnuz,    bf,  f32,  f32,  f64,     c64,   c64,   c64,   c64,  c64,  c64, c128], # f8_e5m2fnuz
-    [          bf,          bf,           bf,          bf,           bf,          bf,          bf,          bf,          bf,          bf,          bf,          bf,          bf,    bf,  f32,  f32,  f64,     c64,   c64,   c64,   c64,  c64,  c64, c128], # bf
-    [         f16,         f16,          f16,         f16,          f16,         f16,         f16,         f16,         f16,         f16,         f16,         f16,         f16,   f32,  f16,  f32,  f64,     c32,   c32,   c32,   c32,  c32,  c64, c128], # f16
-    [         f32,         f32,          f32,         f32,          f32,         f32,         f32,         f32,         f32,         f32,         f32,         f32,         f32,   f32,  f32,  f32,  f64,     c64,   c64,   c64,   c64,  c64,  c64, c128], # f32
-    [         f64,         f64,          f64,         f64,          f64,         f64,         f64,         f64,         f64,         f64,         f64,         f64,         f64,   f64,  f64,  f64,  f64,    c128,  c128,  c128,  c128, c128, c128, c128], # f64
-    [         c32,         c32,          c32,         c32,          c32,         c32,         c32,         c32,         c32,         c32,         c32,         c32,         c32,   c64,  c32,  c64, c128, complex,  c32_,  c64_, c128_,  c32,  c64, c128], # complex
-    [         c32,         c32,          c32,         c32,          c32,         c32,         c32,         c32,         c32,         c32,         c32,         c32,         c32,   c64,  c32,  c64, c128,    c32_,  c32_,  c64_, c128_,  c32,  c64, c128], # c32_
-    [         c32,         c32,          c32,         c32,          c32,         c32,         c32,         c32,         c32,         c32,         c32,         c32,         c32,   c64,  c32,  c64, c128,    c64_,  c64_,  c64_, c128_,  c32,  c64, c128], # c64_
-    [         c32,         c32,          c32,         c32,          c32,         c32,         c32,         c32,         c32,         c32,         c32,         c32,         c32,   c64,  c32,  c64, c128,   c128_, c128_, c128_, c128_,  c32,  c64, c128], # c128_
-    [         c32,         c32,          c32,         c32,          c32,         c32,         c32,         c32,         c32,         c32,         c32,         c32,         c32,   c64,  c32,  c64, c128,     c32,   c32,   c32,   c32,  c32,  c64, c128], # c32
-    [         c64,         c64,          c64,         c64,          c64,         c64,         c64,         c64,         c64,         c64,         c64,         c64,         c64,   c64,  c64,  c64, c128,     c64,   c64,   c64,   c64,  c64,  c64, c128], # c64
-    [        c128,        c128,         c128,        c128,         c128,        c128,        c128,        c128,        c128,        c128,        c128,        c128,        c128,  c128, c128, c128, c128,    c128,  c128,  c128,  c128, c128, c128, c128], # c128
+    #       f    bf_   f16_   f32_    f64_   bf   f16   f32   f64  complex   c32_   c64_  c128_   c32   c64  c128
+    [   float,   bf_,  f16_,  f32_,  f64_,   bf,  f16,  f32,  f64, complex,  c32_,  c64_, c128_,  c32,  c64, c128], # f
+    [     bf_,   bf_,  f32_,  f32_,  f64_,   bf,  f16,  f32,  f64,    c64_,  c32_,  c64_, c128_,  c32,  c64, c128], # bf_
+    [    f16_,  f32_,  f16_,  f32_,  f64_,   bf,  f16,  f32,  f64,    c32_,  c32_,  c64_, c128_,  c32,  c64, c128], # f16_
+    [    f32_,  f32_,  f32_,  f32_,  f64_,   bf,  f16,  f32,  f64,    c64_,  c32_,  c64_, c128_,  c32,  c64, c128], # f32_
+    [    f64_,  f64_,  f64_,  f64_,  f64_,   bf,  f16,  f32,  f64,   c128_,  c32_,  c64_, c128_,  c32,  c64, c128], # f64_
+    [      bf,    bf,    bf,    bf,    bf,   bf,  f32,  f32,  f64,     c64,   c64,   c64,   c64,  c64,  c64, c128], # bf
+    [     f16,   f16,   f16,   f16,   f16,  f32,  f16,  f32,  f64,     c32,   c32,   c32,   c32,  c32,  c64, c128], # f16
+    [     f32,   f32,   f32,   f32,   f32,  f32,  f32,  f32,  f64,     c64,   c64,   c64,   c64,  c64,  c64, c128], # f32
+    [     f64,   f64,   f64,   f64,   f64,  f64,  f64,  f64,  f64,    c128,  c128,  c128,  c128, c128, c128, c128], # f64
+    [ complex,  c64_,  c32_,  c64_, c128_,  c64,  c32,  c64, c128, complex,  c32_,  c64_, c128_,  c32,  c64, c128], # complex
+    [    c32_,  c64_,  c32_,  c64_, c128_,  c64,  c32,  c64, c128,    c32_,  c32_,  c64_, c128_,  c32,  c64, c128], # c32_
+    [    c64_,  c64_,  c64_,  c64_, c128_,  c64,  c32,  c64, c128,    c64_,  c64_,  c64_, c128_,  c32,  c64, c128], # c64_
+    [   c128_, c128_, c128_, c128_, c128_,  c64,  c32,  c64, c128,   c128_, c128_, c128_, c128_,  c32,  c64, c128], # c128_
+    [     c32,   c32,   c32,   c32,   c32,  c64,  c32,  c64, c128,     c32,   c32,   c32,   c32,  c32,  c64, c128], # c32
+    [     c64,   c64,   c64,   c64,   c64,  c64,  c64,  c64, c128,     c64,   c64,   c64,   c64,  c64,  c64, c128], # c64
+    [    c128,  c128,  c128,  c128,  c128, c128, c128, c128, c128,    c128,  c128,  c128,  c128, c128, c128, c128], # c128
 ]
 
 
