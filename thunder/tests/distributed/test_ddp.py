@@ -1040,7 +1040,7 @@ class CompileDDPTest(DataParallelTestCase):
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     def test_tensor_parallel_linear(self):
         device = torch.device("cuda", self.rank)
-        x = torch.randn(2, 12).to(device)
+        x = torch.randn(2, 12).to(device).requires_grad_()
         c10d.all_reduce(x)
 
         process_group = None
@@ -1068,10 +1068,16 @@ class CompileDDPTest(DataParallelTestCase):
                 y.mean().backward()
 
                 dim = 0 if name == "colwise" else 1
-                torch.testing.assert_close(
-                    ref_model.net2.weight.grad.chunk(self.world_size, dim)[self.rank],
-                    tp_jitted_model.get_submodule("net2").weight.grad,
-                )
+
+                backward_traces = thunder.last_backward_traces(tp_jitted_model)
+                if self.rank == 0:
+                    print(backward_traces[-1])
+
+                expected_grad = ref_model.net2.weight.grad.chunk(self.world_size, dim)[self.rank]
+                actual_grad = tp_jitted_model.net2.weight.grad
+                self.assertIsNotNone(expected_grad)
+                self.assertIsNotNone(actual_grad)
+                torch.testing.assert_close(expected=expected_grad, actual=actual_grad)
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     def test_tensor_parallel_embedding(self):

@@ -109,7 +109,7 @@ class TransformForTensorParallel:
     rank: int
     world_size: int
     compile_data: CompileData
-    chunked_param_name2layer_type: set[str]
+    chunked_param_name2layer_type: dict[str, Any]
     process_group: ProcessGroup
 
     def __post_init__(self):
@@ -138,7 +138,6 @@ class TransformForTensorParallel:
     ) -> tuple[TraceCtx, TraceCtx, TraceCtx]:
         from thunder.core import prims
         from thunder.core import utils
-        from thunder.core.pytree import tree_flatten
         from thunder.core.transforms import visitor_transform
 
         modules_and_thunder_modules = [
@@ -146,18 +145,23 @@ class TransformForTensorParallel:
             for bsym in prologue_trace.bound_symbols
             if bsym.sym is prims.unpack_thunder_module
         ]
-        ((orig_module_proxy, thunder_module_proxy),) = modules_and_thunder_modules
+        ((_, thunder_module_proxy),) = modules_and_thunder_modules
 
         prologue_producers, prologue_consumers = utils.producers_and_consumers(prologue_trace)
         for pro_out_p, comp_inp_p in zip(prologue_trace.output, computation_trace.args):
+            if pro_out_p.name not in self.chunked_param_name2layer_type:
+                continue
             bsym = prologue_producers[pro_out_p]
-            if bsym.sym == prims.unpack_parameter:
+            if bsym.sym.id == prims.PrimIDs.UNPACK_PARAMETER:
                 param_thunder_module, param_name = bsym.args
                 assert param_thunder_module is thunder_module_proxy
-                if param_name in self.chunked_param_name2layer_type:
+
+                if (
+                    proxy_like_param_name := f"""t_{param_name.replace(".", "_")}"""
+                ) in self.chunked_param_name2layer_type:
 
                     orig_shape = list(pro_out_p._shape)
-                    new_shape = self._cala_new_shape(orig_shape)
+                    new_shape = self._calc_new_shape(orig_shape)
                     pro_out_p._shape = new_shape
                     if comp_inp_p is not pro_out_p:
                         comp_inp_p._shape = new_shape
@@ -167,8 +171,6 @@ class TransformForTensorParallel:
                             # TODO have a more principled way to update this?
                             a0, _, _, *a2pp = c.args
                             c.args = (a0, tuple(new_shape), str(a0.device), *a2pp)
-
-                    assert False
 
         for bsym in prologue_trace.bound_symbols:
             if bsym.sym is prims.check_tensor_shape_and_metadata and prologue_producers[bsym.args[0]].sym in (

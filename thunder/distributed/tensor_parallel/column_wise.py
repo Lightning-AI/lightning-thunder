@@ -110,7 +110,6 @@ class TransformForColumnWiseParallel(TransformForTensorParallel):
         self,
         computation_trace: TraceCtx,
     ) -> tuple[Callable[[BoundSymbol], VISIT_TYPE], TraceProvenance | str]:
-        from thunder.core import prims
         from thunder.core.pytree import tree_flatten
 
         consumers = utils.consumers(computation_trace)
