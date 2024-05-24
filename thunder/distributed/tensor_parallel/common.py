@@ -120,14 +120,14 @@ class TransformForTensorParallel:
         if getattr(self.compile_data, "use_fsdp", False) or getattr(self.compile_data.fn, "use_fsdp", False):
             raise NotImplementedError("Currently thunder does not support the combination of fsdp and tensor parallel")
 
+    @abstractmethod
     def get_visitor_of_computation_trc_and_provenance(
         self,
         computation_trace: TraceCtx,
-    ) -> tuple[Callable[[BoundSymbol], VISIT_TYPE], TraceProvenance | str]:
-        raise NotImplementedError("Inherit this class and implement `get_visitor_of_computation_trc`")
+    ) -> tuple[Callable[[BoundSymbol], VISIT_TYPE], TraceProvenance | str]: ...
 
-    def _calc_new_shape(self, orig_shape) -> tuple[int, ...]:
-        raise NotImplementedError()
+    @abstractmethod
+    def _calc_new_shape(self, orig_shape) -> tuple[int, ...]: ...
 
     def __call__(
         self,
@@ -185,7 +185,6 @@ class TransformForTensorParallel:
             raise NotImplementedError("cannot deal with modules other than the compiled module")
 
         visit, provenance = self.get_visitor_of_computation_trc_and_provenance(
-            prologue_trace=prologue_trace,
             computation_trace=computation_trace,
         )
         new_computation_trace = visitor_transform(
