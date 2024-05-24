@@ -2845,9 +2845,10 @@ class ResNet50Benchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         def avoid_add_(m):
             if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
                 m.num_batches_tracked = None
+
         def avoid_relu_inplace(m):
             if isinstance(m, torch.nn.modules.activation.ReLU):
-                m.inplace=False
+                m.inplace = False
 
         model = resnet50()
         model.apply(avoid_add_)
