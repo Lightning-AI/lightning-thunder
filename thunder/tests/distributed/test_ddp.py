@@ -1038,7 +1038,8 @@ class CompileDDPTest(DataParallelTestCase):
             fwd_loss(model, x)
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
-    def test_tensor_parallel_linear(self):
+    @common_utils.parametrize("name", ("column", "row"))
+    def test_tensor_parallel_linear(self, name):
         device = torch.device("cuda", self.rank)
         x = torch.randn(2, 12).to(device).requires_grad_()
 
@@ -1053,29 +1054,35 @@ class CompileDDPTest(DataParallelTestCase):
         ref_state_dict = ref_model.state_dict()
         expected = ref_model(x)
 
-        for name, converter in (
-            ("colwise", convert_module_to_columnwise_parallel),
-            ("rowwise", convert_module_to_rowwise_parallel),
-        ):
-            model = ToyModel().to(device)
-            model.load_state_dict(ref_state_dict)
-            jitted_model = thunder.jit(model)
-            tp_jitted_model = converter(
-                jitted_model,
-                target_modules=("net2",),
-                process_group=process_group,
-            )
-            y = tp_jitted_model(x)
-            torch.testing.assert_close(y, expected, msg=f"\n# y:\n{y = }\nexpected:\n{expected}")
+        converter = {
+            "column": convert_module_to_columnwise_parallel,
+            "row": convert_module_to_rowwise_parallel,
+        }[name]
+        model = ToyModel().to(device)
+        model.load_state_dict(ref_state_dict)
+        jitted_model = thunder.jit(model)
+        tp_jitted_model = converter(
+            jitted_model,
+            target_modules=("net2",),
+            process_group=process_group,
+        )
+        y = tp_jitted_model(x)
+        torch.testing.assert_close(expected=expected, actual=y)
 
-            expected.mean().backward()
-            y.mean().backward()
-            torch.testing.assert_close(
-                expected=[p.grad for p in ref_model.parameters()], actual=[p.grad for p in tp_jitted_model.parameters()]
-            )
+        expected.mean().backward()
+        y.mean().backward()
+
+        dim = 1 if name == "row" else 0
+        expected_full_grad: torch.Tensor = ref_model.net2.weight.grad
+        expected = torch.chunk(expected_full_grad, self.world_size, dim)[self.rank]
+        torch.testing.assert_close(
+            expected=expected,
+            actual=tp_jitted_model.get_parameter("net2.weight").grad,
+        )
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
-    def test_tensor_parallel_embedding(self):
+    @common_utils.parametrize("name", ("column", "row"))
+    def test_tensor_parallel_embedding(self, name):
         num_embeddings = 128
         embedding_dim = 32
 
@@ -1092,42 +1099,48 @@ class CompileDDPTest(DataParallelTestCase):
 
         process_group = None
         ref_model = Model().to(device)
+        with c10d._coalescing_manager(async_ops=True) as cm:
+            c10d.all_gather(x)
+            for p in ref_model.parameters():
+                c10d.all_reduce(p)
+        cm.wait()
+
         ref_state_dict = ref_model.state_dict()
         expected = ref_model(x)
 
-        for name, converter in (
-            ("colwise", convert_module_to_columnwise_parallel),
-            ("rowwise", convert_module_to_rowwise_parallel),
-        ):
-            model = Model().to(device)
-            model.load_state_dict(ref_state_dict)
-            jitted_model = thunder.jit(model)
-            with self.subTest(converter=name):
-                tp_jitted_model = converter(
-                    jitted_model,
-                    target_modules=("embed",),
-                    process_group=process_group,
-                )
-                y = tp_jitted_model(x)
+        converter = {
+            "column": convert_module_to_columnwise_parallel,
+            "row": convert_module_to_rowwise_parallel,
+        }[name]
+        model = Model().to(device)
+        model.load_state_dict(ref_state_dict)
+        jitted_model = thunder.jit(model)
+        with self.subTest(converter=name):
+            tp_jitted_model = converter(
+                jitted_model,
+                target_modules=("embed",),
+                process_group=process_group,
+            )
+            y = tp_jitted_model(x)
 
-                dim: int
-                orig_size: int
-                if name == "colwise":
-                    dim = 0
-                    orig_size = num_embeddings
-                else:
-                    dim = 1
-                    orig_size = embedding_dim
-                torch.testing.assert_close(tp_jitted_model.embed.weight.size(dim), orig_size // self.world_size)
-                torch.testing.assert_close(y, expected)
+            dim: int
+            orig_size: int
+            if name == "column":
+                dim = 0
+                orig_size = num_embeddings
+            else:
+                dim = 1
+                orig_size = embedding_dim
+            torch.testing.assert_close(tp_jitted_model.embed.weight.size(dim), orig_size // self.world_size)
+            torch.testing.assert_close(y, expected)
 
-                expected.mean().backward()
-                y.mean().backward()
+            expected.mean().backward()
+            y.mean().backward()
 
-                torch.testing.assert_close(
-                    ref_model.embed.weight.grad.chunk(self.world_size, dim)[self.rank],
-                    tp_jitted_model.get_submodule("embed").weight.grad,
-                )
+            torch.testing.assert_close(
+                ref_model.embed.weight.grad.chunk(self.world_size, dim)[self.rank],
+                tp_jitted_model.get_submodule("embed").weight.grad,
+            )
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     def test_tensor_parallel_both_column_and_row(self):
