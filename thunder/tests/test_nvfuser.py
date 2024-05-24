@@ -34,7 +34,14 @@ from thunder.tests.framework import (
     TorchExecutor,
 )
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
-from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops, get_opinfo, linear_opinfo, matmul_opinfo
+from thunder.tests.opinfos import (
+    opinfos,
+    push_away_from_singularities,
+    tensor_creation_ops,
+    get_opinfo,
+    linear_opinfo,
+    matmul_opinfo,
+)
 from looseversion import LooseVersion
 
 
