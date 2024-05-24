@@ -1094,13 +1094,12 @@ class CompileDDPTest(DataParallelTestCase):
             def forward(self, x):
                 return self.embed(x)
 
-        device = torch.device("cuda", self.rank)
+        device = torch.device(f"cuda:{self.rank}")
         x = torch.randint(0, num_embeddings - 1, (16, 16), device=device)
 
         process_group = None
         ref_model = Model().to(device)
         with c10d._coalescing_manager(async_ops=True) as cm:
-            c10d.all_gather(x)
             for p in ref_model.parameters():
                 c10d.all_reduce(p)
         cm.wait()
@@ -1115,32 +1114,33 @@ class CompileDDPTest(DataParallelTestCase):
         model = Model().to(device)
         model.load_state_dict(ref_state_dict)
         jitted_model = thunder.jit(model)
-        with self.subTest(converter=name):
-            tp_jitted_model = converter(
-                jitted_model,
-                target_modules=("embed",),
-                process_group=process_group,
-            )
-            y = tp_jitted_model(x)
+        tp_jitted_model = converter(
+            jitted_model,
+            target_modules=("embed",),
+            process_group=process_group,
+        )
+        y = tp_jitted_model(x)
 
-            dim: int
-            orig_size: int
-            if name == "column":
-                dim = 0
-                orig_size = num_embeddings
-            else:
-                dim = 1
-                orig_size = embedding_dim
-            torch.testing.assert_close(tp_jitted_model.embed.weight.size(dim), orig_size // self.world_size)
-            torch.testing.assert_close(y, expected)
+        dim: int
+        orig_size: int
+        if name == "column":
+            dim = 0
+            orig_size = num_embeddings
+        else:
+            dim = 1
+            orig_size = embedding_dim
+        torch.testing.assert_close(
+            tp_jitted_model.get_parameter("embed.weight").size(dim), orig_size // self.world_size
+        )
+        torch.testing.assert_close(expected=expected, actual=y)
 
-            expected.mean().backward()
-            y.mean().backward()
+        expected.mean().backward()
+        y.mean().backward()
 
-            torch.testing.assert_close(
-                ref_model.embed.weight.grad.chunk(self.world_size, dim)[self.rank],
-                tp_jitted_model.get_submodule("embed").weight.grad,
-            )
+        torch.testing.assert_close(
+            expected=ref_model.embed.weight.grad.chunk(self.world_size, dim)[self.rank],
+            actual=tp_jitted_model.get_parameter("embed.weight").grad,
+        )
 
     # TODO(crcrpar): Activate numerical check
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
