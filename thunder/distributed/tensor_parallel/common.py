@@ -55,6 +55,10 @@ class PrePostProcessInterface(ABC):
         """Apply postprocessing to tensor parallel op's outputs."""
         return y
 
+    def maybe_modify_args_and_kwargs(self, bsym: BoundSymbol) -> BoundSymbol:
+        """No-op. Mainly for row-wise parallel linear."""
+        return bsym
+
 
 @dataclass(frozen=True)
 class NoOp(PrePostProcessInterface):
@@ -93,10 +97,12 @@ class ComputationTraceTransformVisitorForTensorParallel:
                 self.swap_map[variableify(orig_arg)] = new_arg
 
         new_bsym = bsym.from_bsym_swap_proxies(self.swap_map, skip_output=True)
+        if pre_post_process is not None:
+            new_bsym = pre_post_process.maybe_modify_args_and_kwargs(new_bsym)
         trace = get_tracectx()
         trace.scopes[-1].append(new_bsym)
 
-        if bsym in self.bsym2prepostprocess:
+        if pre_post_process is not None:
             y = bsym.flat_proxy_outs[0]
             processed_y = pre_post_process.postprocess(y, preprocess_artifacts)
             self.swap_map[variableify(y)] = processed_y

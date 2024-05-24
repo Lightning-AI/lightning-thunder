@@ -8,6 +8,7 @@ from torch.distributed import distributed_c10d
 
 from thunder.core import utils
 from thunder.core.proxies import TensorProxy
+from thunder.core.proxies import variableify
 from thunder.distributed.tensor_parallel.common import PrePostProcessInterface
 from thunder.distributed.tensor_parallel.common import ComputationTraceTransformVisitorForTensorParallel
 from thunder.distributed.tensor_parallel.common import TransformForTensorParallel
@@ -33,6 +34,7 @@ __all__ = [
 @dataclass(frozen=True)
 class RowParallelLinearPrePostProcess(PrePostProcessInterface):
     process_group: ProcessGroup
+    bias_or_none: TensorProxy | None
 
     layer_type: ClassVar[TensorParallelLayerType] = TensorParallelLayerType.ROW_PARALLEL_LINEAR
 
@@ -47,13 +49,24 @@ class RowParallelLinearPrePostProcess(PrePostProcessInterface):
 
     def postprocess(self, y: TensorProxy, _: Any) -> TensorProxy:
         # gather `y` along the last dimension
+        import thunder.torch as ltorch
         from thunder.distributed import prims as dist_prims
 
-        return dist_prims.synchronize_tensor_parallel_output(
+        all_reduced = dist_prims.synchronize_tensor_parallel_output(
             y,
             self.process_group,
             RowParallelLinearPrePostProcess.layer_type,
         )
+        if (bias := self.bias_or_none) is not None:
+            return ltorch.add(all_reduced, bias)
+        else:
+            return all_reduced
+
+    def maybe_modify_args_and_kwargs(self, bsym: BoundSymbol) -> BoundSymbol:
+        if self.bias_or_none is not None:
+            return bsym.from_bsym_swap_proxies({variableify(self.bias_or_none): None}, skip_output=True)
+        else:
+            return super().maybe_modify_args_and_kwargs(bsym)
 
 
 @dataclass
@@ -99,8 +112,19 @@ class TransformForRowWiseParallel(TransformForTensorParallel):
                     if consumer_bsym not in bsym2prepostprocess:
                         match self.chunked_param_name2layer_type[p_name]:
                             case nn.Linear:
+                                orig_args = consumer_bsym.args
+                                utils.check(
+                                    len(orig_args) == 3,
+                                    lambda: f"{consumer_bsym.sym.id} expected to have 3 args but {orig_args}",
+                                )
+                                bias_or_none = orig_args[2]
+                                utils.check(
+                                    isinstance(bias_or_none, TensorProxy) or bias_or_none is None,
+                                    lambda: f"{orig_args[-1]} expected to be either `None` or `TensorProxy`",
+                                )
                                 bsym2prepostprocess[consumer_bsym] = RowParallelLinearPrePostProcess(
-                                    process_group=self.process_group
+                                    process_group=self.process_group,
+                                    bias_or_none=bias_or_none,
                                 )
                             case nn.Embedding:
                                 bsym2prepostprocess[consumer_bsym] = RowParallelEmbeddingPreProcess(
@@ -215,8 +239,6 @@ def convert_module_to_rowwise_parallel(
             continue
         submodule = thunder_module.get_submodule(module_name)
 
-        # we use a copy to let the user's module alone (TODO: does this fully work?)
-        module_copy = copy.copy(submodule)
         for pn, p in submodule.named_parameters(recurse=False, prefix=module_name):
             # if we don't have an override or it is just the original, do create a copy
             if thunder_module._overrides.get(pn, p) is p:

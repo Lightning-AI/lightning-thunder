@@ -240,8 +240,6 @@ def convert_module_to_columnwise_parallel(
             continue
         submodule = thunder_module.get_submodule(module_name)
 
-        # we use a copy to let the user's module alone (TODO: does this fully work?)
-        module_copy = copy.copy(submodule)
         for pn, p in submodule.named_parameters(recurse=False, prefix=module_name):
             # if we don't have an override or it is just the original, do create a copy
             if thunder_module._overrides.get(pn, p) is p:

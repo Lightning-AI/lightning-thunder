@@ -1041,10 +1041,15 @@ class CompileDDPTest(DataParallelTestCase):
     def test_tensor_parallel_linear(self):
         device = torch.device("cuda", self.rank)
         x = torch.randn(2, 12).to(device).requires_grad_()
-        c10d.all_reduce(x)
 
         process_group = None
         ref_model = ToyModel().to(device)
+        with c10d._coalescing_manager(async_ops=True) as cm:
+            c10d.all_reduce(x)
+            for p in ref_model.parameters():
+                c10d.all_reduce(p)
+        cm.wait()
+
         ref_state_dict = ref_model.state_dict()
         expected = ref_model(x)
 
@@ -1055,29 +1060,19 @@ class CompileDDPTest(DataParallelTestCase):
             model = ToyModel().to(device)
             model.load_state_dict(ref_state_dict)
             jitted_model = thunder.jit(model)
-            with self.subTest(converter=name):
-                tp_jitted_model = converter(
-                    jitted_model,
-                    target_modules=("net2",),
-                    process_group=process_group,
-                )
-                y = tp_jitted_model(x)
-                torch.testing.assert_close(y, expected)
+            tp_jitted_model = converter(
+                jitted_model,
+                target_modules=("net2",),
+                process_group=process_group,
+            )
+            y = tp_jitted_model(x)
+            torch.testing.assert_close(y, expected, msg=f"\n# y:\n{y = }\nexpected:\n{expected}")
 
-                expected.mean().backward()
-                y.mean().backward()
-
-                dim = 0 if name == "colwise" else 1
-
-                backward_traces = thunder.last_backward_traces(tp_jitted_model)
-                if self.rank == 0:
-                    print(backward_traces[-1])
-
-                expected_grad = ref_model.net2.weight.grad.chunk(self.world_size, dim)[self.rank]
-                actual_grad = tp_jitted_model.net2.weight.grad
-                self.assertIsNotNone(expected_grad)
-                self.assertIsNotNone(actual_grad)
-                torch.testing.assert_close(expected=expected_grad, actual=actual_grad)
+            expected.mean().backward()
+            y.mean().backward()
+            torch.testing.assert_close(
+                expected=[p.grad for p in ref_model.parameters()], actual=[p.grad for p in tp_jitted_model.parameters()]
+            )
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     def test_tensor_parallel_embedding(self):
