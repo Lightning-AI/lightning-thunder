@@ -17,7 +17,7 @@ from thunder.core.interpreter import is_jitting
 from thunder.core.trace import VariableInterface, get_tracectx, TraceCtx
 from thunder.core.baseutils import ProxyInterface, NumberProxyInterface, TensorProxyInterface
 import thunder.core.baseutils as baseutils
-from thunder.core.langctxs import resolve_method
+from thunder.core.langctxs import resolve_method, get_langctx
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
 
@@ -593,10 +593,15 @@ class NumberProxy(Proxy, NumberProxyInterface):
     @staticmethod
     def _elementwise_unary_helper(a, name, fn, type_promotion_kind=None):
         trace: None | TraceCtx = get_tracectx()
+        lang: None | LangCtx = None
+        try:
+            lang = get_langctx()
+        except LookupError:
+            pass
 
         vala = pyval(a)
 
-        if trace is None:
+        if trace is None or lang is None:
             # Outside of a trace context, operations on NumberProxies are executed by the
             #   Python interpreter
             baseutils.check(
@@ -649,7 +654,12 @@ class NumberProxy(Proxy, NumberProxyInterface):
         valb = pyval(b) if isinstance(b, NumberProxy) else b
 
         trace: None | TraceCtx = get_tracectx()
-        if trace is None:
+        lang: None | LangCtx = None
+        try:
+            lang = get_langctx()
+        except LookupError:
+            pass
+        if trace is None or lang is None:
             # Outside of a trace or language context, binary operations on NumberProxies are
             #   executed by the Python interpreter
             baseutils.check(
