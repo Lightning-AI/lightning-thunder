@@ -614,9 +614,10 @@ def _shard_param(
             padded_param = torch.empty(padded_param_shape, device=param.device, dtype=param.dtype)
             padded_param[:orig_0dim_size].copy_(param)
             param.data = padded_param.data.narrow(0, chunk_size * rank, chunk_size).clone()
+            param._thunder_fsdp_padding_size = _thunder_fsdp_padding_size
         else:
             param.data = param.data.narrow(dim_to_shard, chunk_size * rank, chunk_size).clone()
-        param._thunder_fsdp_padding_size = _thunder_fsdp_padding_size
+            param._thunder_fsdp_padding_size = None
     else:
         utils.check(
             param.shape[dim_to_shard] % world_size == 0,
