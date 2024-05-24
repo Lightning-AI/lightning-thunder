@@ -2240,12 +2240,13 @@ def _matmul_check(
         return False
 
     enable_matmul: None | bool = get_compile_option("nv_enable_matmul", "Enable nvFuser matmul.")
-    if not enable_matmul:
+
+    if not enable_matmul or not are_supported_tensors(a, b):
         return False
-    if not are_supported_tensors(a, b):
-        return False
-    if not (a.ndim == b.ndim and a.ndim == 2):
-        return False
+    if nv_version < LooseVersion("0.2.4"):
+        warnings.warn("nvFuser v0.2.2 has limited support for matmuls. Consider using v0.2.4 or above")
+        if not (a.ndim == b.ndim and a.ndim == 2):
+            return False
     return True
 
 
