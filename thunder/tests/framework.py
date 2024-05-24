@@ -347,7 +347,9 @@ class ops:
         self.supported_devicetypes = set(filter_ci_devicetypes(self.supported_devicetypes))
 
         self.supported_dtypes = (
-            datatypes.resolve_dtypes(supported_dtypes) if supported_dtypes is not None else datatypes.all_dtypes - datatypes.float_8bit_dtypes
+            datatypes.resolve_dtypes(supported_dtypes)
+            if supported_dtypes is not None
+            else datatypes.all_dtypes - datatypes.float_8bit_dtypes
         )
 
         if supported_dtypes == NOTHING:
