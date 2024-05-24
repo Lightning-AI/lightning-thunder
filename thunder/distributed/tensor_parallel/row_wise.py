@@ -38,11 +38,12 @@ class RowParallelLinearPrePostProcess(PrePostProcessInterface):
 
     def preprocess(self, x: TensorProxy) -> tuple[TensorProxy, tuple[Any, ...]]:
         # split `x` in the last dim.
-        import thunder.torch as ltorch
+        from torch.distributed import distributed_c10d as c10d
+        from thunder import clang
 
-        chunked = ltorch.chunk(x, chunks=self.process_group.size(), dim=x.ndim - 1)
-        local_chunk = chunked[distributed_c10d.get_rank(self.process_group)]
-        return local_chunk, None
+        chunk_size = x.shape[x.ndim - 1] // self.process_group.size()
+        start_idx = chunk_size * c10d.get_rank(self.process_group)
+        return clang.slice_in_dim(x, start_idx, start_idx + chunk_size, dim=x.ndim - 1), None
 
     def postprocess(self, y: TensorProxy, _: Any) -> TensorProxy:
         # gather `y` along the last dimension
