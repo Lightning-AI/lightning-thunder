@@ -93,7 +93,7 @@ class dtype:
         return self.__repr__()
 
     def __hash__(self) -> int:
-        return hash((self._name, self._bytes, self._is_weak, f"{self._variant if self._variant else ''}"))
+        return hash((self._name, self._bytes, self._is_weak, self._variant))
 
     def __eq__(self, other) -> bool:
         if not isinstance(other, dtype):
@@ -268,7 +268,9 @@ low_precision_dtypes = {
 
 float_dtypes = {d for d in all_dtypes if isinstance(d, floating)} | {float}
 
-float_8bit_dtypes = {d for d in all_dtypes if (isinstance(d, inexact) and d.bytes <= 1)}
+float_math_dtypes = {d for d in all_dtypes if isinstance(d, floating) and d.bytes >= 2}
+
+float_8bit_dtypes = {d for d in all_dtypes if (isinstance(d, floating) and d.bytes == 1)}
 
 complex_dtypes = {d for d in all_dtypes if isinstance(d, complexfloating)} | {complex}
 
