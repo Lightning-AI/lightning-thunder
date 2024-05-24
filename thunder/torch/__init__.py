@@ -905,8 +905,10 @@ def pad(a: TensorProxy, /, pad: tuple[int, ...], mode: str | None = "constant", 
 
     if value is None:
         value = 0
+    a_typ = to_dtype(a, true_dtype=True)
+    v2 = clang.maybe_convert_to_dtype(value, a_typ)
 
-    return clang.pad(a, value, pad_config)
+    return clang.pad(a, v2, pad_config)
 
 
 @torchsymbol(torch.permute, is_method=True)
