@@ -553,8 +553,10 @@ class GeneralJitCtx(MinimalCtx):
     def proxify(self, value: WrappedValue) -> Any:
         assert isinstance(value, WrappedValue)
         uvalue = value.value
-        if isinstance(uvalue, Proxy):
-            return p
+        # Sequence / dict is not registered as Proxy
+        # avoid double registration by skipping if value has a registered proxy.
+        if isinstance(uvalue, Proxy) or value.original_value is not value.nothing:
+            return uvalue
         elif isinstance(uvalue, torch.Tensor):
             # we always want to proxy torch.Tensor, even const
 
@@ -617,6 +619,7 @@ class GeneralJitCtx(MinimalCtx):
                     raise NotImplementedError(
                         f"proxify {type(uvalue).__name__} with attribute {an} of type {type(av.value).__name__}"
                     )
+            return proxy_d
         elif isinstance(uvalue, Sequence):
             value.track_items()
             proxy_s = type(uvalue)(i.value for i in value.item_wrappers)
@@ -628,6 +631,7 @@ class GeneralJitCtx(MinimalCtx):
                     raise NotImplementedError(
                         f"proxify {type(uvalue).__name__} with attribute {an} of type {type(av.value).__name__}"
                     )
+            return proxy_s
         else:
             raise ValueError("cannot proxify value of {type(uvalue).__type} objects")
 
