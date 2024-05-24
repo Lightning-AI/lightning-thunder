@@ -14,7 +14,7 @@ from thunder.tests.framework import instantiate, TorchExecutor
 
 # TODO This test currently ignores the "should_autocast" argument enumerated in it
 @instantiate(
-    dtypes=dtypes.float_dtypes - {float},
+    dtypes=dtypes.float_math_dtypes,
 )
 def test_thunder_autocast_transform(executor, device, dtype):
     from thunder.core.transforms import autocast
@@ -26,8 +26,6 @@ def test_thunder_autocast_transform(executor, device, dtype):
         pytest.skip("float16 matmul is not supported on CPU.")
     if torch_device.type == "cuda" and dtype == dtypes.bfloat16 and not thunder.tests.bf16.device_supports_bf16(device):
         pytest.skip(f"bfloat16 is not supported on {torch.cuda.get_device_name()}")
-    if dtype in dtypes.float_8bit_dtypes:
-        pytest.skip("float8 matmul is only implemented as _scaled_mm")
 
     def f(a, b, c):
         return a @ (b + c)
@@ -67,7 +65,7 @@ def test_thunder_autocast_transform(executor, device, dtype):
 
 @instantiate(
     executors=[TorchExecutor],
-    dtypes=dtypes.float_dtypes - {float},
+    dtypes=dtypes.float_math_dtypes,
 )
 def test_no_autocast(executor, device, dtype):
     from thunder.core.symbol import Symbol
@@ -114,7 +112,7 @@ def test_no_autocast(executor, device, dtype):
 
 
 @instantiate(
-    dtypes=dtypes.float_dtypes - {float},
+    dtypes=dtypes.float_math_dtypes,
     decorators=(pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported"),),
 )
 def test_compile_autocast(executor, device, dtype):
@@ -131,8 +129,6 @@ def test_compile_autocast(executor, device, dtype):
         pytest.skip("float16 matmul is not supported on CPU.")
     if torch_device.type == "cuda" and dtype == dtypes.bfloat16 and not thunder.tests.bf16.device_supports_bf16(device):
         pytest.skip(f"bfloat16 is not supported on {torch.cuda.get_device_name()}")
-    if dtype in dtypes.float_8bit_dtypes:
-        pytest.skip("float8 matmul is only implemented as _scaled_mm")
     a = torch.randn(2, 2, device=device, dtype=torch_dtype)
     b = torch.randn(2, 2, device=device, dtype=torch_dtype)
     cfunc = thunder.jit(func)
