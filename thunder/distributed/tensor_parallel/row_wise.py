@@ -86,7 +86,6 @@ class TransformForRowWiseParallel(TransformForTensorParallel):
         self,
         computation_trace: TraceCtx,
     ) -> tuple[Callable[[BoundSymbol], VISIT_TYPE], TraceProvenance | str]:
-        from thunder.core import prims
         from thunder.core.pytree import tree_flatten
 
         consumers = utils.consumers(computation_trace)
@@ -223,7 +222,7 @@ def convert_module_to_rowwise_parallel(
                 thunder_module._overrides[pn] = copy.copy(p)
             if p.ndim < 2:
                 continue
-            _shard_param(thunder_module._overrides[pn], rank, world_size, pn, dim=1, allow_padding_for_fsdp=True)
+            _shard_param(thunder_module._overrides[pn], rank, world_size, pn, dim=1, allow_padding_for_fsdp=False)
 
     rowwise_thunder_module = add_transform(
         thunder_module,

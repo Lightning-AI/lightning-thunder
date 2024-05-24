@@ -246,7 +246,7 @@ def convert_module_to_columnwise_parallel(
             # if we don't have an override or it is just the original, do create a copy
             if thunder_module._overrides.get(pn, p) is p:
                 thunder_module._overrides[pn] = copy.copy(p)
-            _shard_param(thunder_module._overrides[pn], rank, world_size, pn, allow_padding_for_fsdp=True)
+            _shard_param(thunder_module._overrides[pn], rank, world_size, pn, allow_padding_for_fsdp=False)
 
     colwise_thunder_module = add_transform(
         thunder_module,
