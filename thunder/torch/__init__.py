@@ -24,7 +24,7 @@ import thunder.core.prims as prims
 import thunder.core.utils as utils
 import thunder.distributed.prims as dist_prims
 from thunder.core.langctxs import langctx, Languages
-from thunder.core.proxies import TensorProxy, FutureTensorProxy
+from thunder.core.proxies import FloatProxy, IntegerProxy, NumberProxy, TensorProxy, FutureTensorProxy, pyval
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
 from thunder.core.transforms import register_grad, put_grads
@@ -42,6 +42,7 @@ import torch.distributed as tdist
 import warnings
 
 # Type annotation helpers
+NumberLike = Number | NumberProxy
 TensorLike = TensorProxy
 FutureTensorLike = FutureTensorProxy
 DeviceLike = str | devices.Device | torch.device
@@ -114,8 +115,6 @@ class torchsymbol:
                     exception_type=AssertionError,
                 )
         else:
-            if not self.id.startswith("torch"):
-                warnings.warn(f"{self.id=} does not start with the namespace of `torch`")
             id = self.id
 
         if self.is_prim:
@@ -192,6 +191,13 @@ register_method("numel", numel)
 @torchsymbol(torch.Tensor.is_cuda, is_property=True, id="torch.is_cuda")
 def is_cuda(a: TensorLike, /) -> bool:
     return a.device.devicetype is devices.DeviceType.CUDA
+
+
+# is nested always returns False for now:
+# https://github.com/Lightning-AI/lightning-thunder/issues/93#issuecomment-2030416883
+@torchsymbol(torch.Tensor.is_nested, is_property=True, id="torch.is_nested")
+def is_nested(a: TensorLike, /) -> bool:
+    return False
 
 
 _torch_dtype_to_old_torch_typestring_map = {
@@ -289,7 +295,7 @@ register_method("type", type)
 # NOTE This handles a.float()
 #   It avoids using the name "float" to not collide with the builtin
 #   "float"
-def to_float(a: Number | TensorLike) -> Number | TensorLike:
+def to_float(a: NumberLike | TensorLike) -> Number | TensorLike:
     return clang.maybe_convert_to_dtype(a, dtypes.float32)
 
 
@@ -447,9 +453,9 @@ def long(a: TensorLike, /, memory_format: torch.memory_format = torch.preserve_f
 
 @torchsymbol(torch.arange)
 def arange(
-    start: Number,
+    start: NumberLike,
     end: None | Number = None,
-    step: Number = 1,
+    step: NumberLike = 1,
     *,
     device: None | DeviceLike = None,
     dtype: None | dtypeLike = None,
@@ -468,7 +474,7 @@ def arange(
 
 @torchsymbol(torch.full)
 def full(
-    shape: Sequence[int], fill_value: Number, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
+    shape: Sequence[int], fill_value: NumberLike, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
 ) -> TensorLike:
     if device is None:
         device = "cpu"
@@ -481,7 +487,7 @@ def full(
 
 @torchsymbol(torch.full_like)
 def full_like(
-    a: TensorLike, /, fill_value: Number, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
+    a: TensorLike, /, fill_value: NumberLike, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
 ) -> TensorLike:
     device = to_device(device)
     dtype = to_dtype(dtype)
@@ -520,7 +526,7 @@ def tensor(
     )
     utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.compile", NotImplementedError)
 
-    if isinstance(seq_or_number, Number):
+    if isinstance(seq_or_number, (Number, NumberProxy)):
         return full((), seq_or_number, dtype=dtype, device=device)
 
     return clang.tensor_from_sequence(seq_or_number, dtype=dtype, device=device)
@@ -532,8 +538,8 @@ def tensor(
 @torchsymbol(is_method=False, id="torch.uniform")
 def uniform(
     shape: Sequence[int],
-    minval: Number = 0.0,
-    maxval: Number = 1.0,
+    minval: NumberLike = 0.0,
+    maxval: NumberLike = 1.0,
     *,
     device: DeviceLike,
     dtype: dtypeLike,
@@ -548,8 +554,8 @@ def uniform(
 def uniform_like(
     a: TensorLike,
     /,
-    minval: Number = 0.0,
-    maxval: Number = 1.0,
+    minval: NumberLike = 0.0,
+    maxval: NumberLike = 1.0,
     *,
     device: None | DeviceLike = None,
     dtype: None | dtypeLike = None,
@@ -587,8 +593,8 @@ def multinomial(
 @torchsymbol(is_method=False, id="torch.uniform_philox")
 def uniform_philox(
     shape: Sequence[int],
-    minval: Number = 0.0,
-    maxval: Number = 1.0,
+    minval: NumberLike = 0.0,
+    maxval: NumberLike = 1.0,
     *,
     device: DeviceLike,
     dtype: dtypeLike,
@@ -833,7 +839,11 @@ def flip(a: TensorLike, /, *dims: int) -> TensorLike:
     # PyTorch supports 0-dim inputs with len(dims) <= 1
     if a.ndim == 0 and isinstance(dims, Sequence) and len(dims) > 0:
         utils.check(
-            len(dims) == 1 and isinstance(dims[0], int) and dims[0] in (0, -1),
+            len(dims) == 1
+            and (
+                (isinstance(dims[0], (int, IntegerProxy)) and dims[0] in (0, -1))
+                or (isinstance(dims[0], NumberProxy) and pyval(dims[0]) in (0, -1))
+            ),
             lambda: f"Expected {dims=} to be a sequence of integers in range [-1, 0], and of length 1",
         )
         return clang.flip(a, ())
@@ -878,7 +888,7 @@ def movedim(a: TensorLike, /, source: int | Sequence[int], destination: int | Se
 
 
 @torchsymbol(torch.nn.functional.pad)
-def pad(a: TensorProxy, /, pad: tuple[int, ...], mode: str | None = "constant", value: Number | None = None):
+def pad(a: TensorProxy, /, pad: tuple[int, ...], mode: str | None = "constant", value: NumberLike | None = None):
     utils.check(mode == "constant", lambda: f"Mode arguments other than constant are not supported")
     utils.check(len(pad) % 2 == 0, lambda: f"Padding length must be divisible by 2")
     utils.check(
@@ -1027,11 +1037,11 @@ def split(a: TensorProxy, size_or_sections: int | Sequence[int], /, dim=0) -> Te
 
     utils.check_type(
         size_or_sections,
-        (int, Sequence),
+        (int, IntegerProxy, Sequence),
     )
 
     # TODO: consider revising this to just call _split_indices
-    if isinstance(size_or_sections, int):
+    if isinstance(size_or_sections, (int, IntegerProxy)):
         target_length = size_or_sections
 
         # Short-circuits special-case of zero
@@ -1092,7 +1102,7 @@ def squeeze(a: TensorLike, /, dim: None | int | Sequence[int] = None) -> TensorL
         for idx, l in enumerate(a.shape):
             if l == 1:
                 dims.append(idx)
-    elif isinstance(dim, int):
+    elif isinstance(dim, (int, NumberProxy)):
         dims = (dim,)
 
     # a.shape is being indexed below.
@@ -1149,7 +1159,7 @@ def tensor_split(a: TensorLike, /, indices_or_sections, dim=0):
     )
 
     # TODO: maybe revise _split_n to a call to _split_indices
-    if isinstance(indices_or_sections, Number):
+    if isinstance(indices_or_sections, (Number, NumberProxy)):
         return _split_n(a, indices_or_sections, dim)
 
     # NOTE: isinstance(indices_or_sections, Sequence)
@@ -1205,12 +1215,12 @@ def view_as(a: TensorLike, b: TensorLike, /) -> TensorLike:
 
 
 @torchsymbol(torch.abs, is_method=True)
-def abs(a: Number | TensorLike, /) -> Number | TensorLike:
+def abs(a: NumberLike | TensorLike, /) -> Number | TensorLike:
     return clang.abs(a)
 
 
 @torchsymbol(torch.acos, is_method=True)
-def acos(a: Number | TensorLike, /) -> Number | TensorLike:
+def acos(a: NumberLike | TensorLike, /) -> Number | TensorLike:
     return clang.acos(a)
 
 
@@ -1473,7 +1483,7 @@ def silu(a, /):
 
 @torchsymbol(torch.add, is_method=True)
 def add(
-    a: Number | TensorLike, b: Number | TensorLike, /, *, alpha: None | Number | TensorLike = None
+    a: NumberLike | TensorLike, b: NumberLike | TensorLike, /, *, alpha: None | Number | TensorLike = None
 ) -> Number | TensorLike:
     if alpha is not None:
         b = b * alpha
@@ -1589,7 +1599,9 @@ def nextafter(a, b, /):
 # TODO Extend to tensor x tensor
 @torchsymbol(torch.polygamma, torch.special.polygamma, is_method=True)
 def polygamma(n: int, a: TensorLike, /) -> TensorLike:
-    utils.check(isinstance(n, int), lambda: f"polygamma(n, a) expects the first argument to be an integer.")
+    utils.check(
+        isinstance(n, (int, NumberProxy)), lambda: f"polygamma(n, a) expects the first argument to be an integer."
+    )
     utils.check(n >= 0, lambda: f"polygamma(n, a) does not support negative {n=}.")
 
     # NOTE Use digamma for n == 0 case; otherwise zeta(1, a) returns math.inf
@@ -1621,7 +1633,7 @@ def sub(a, b, /, *, alpha=None):
 
 
 @torchsymbol(torch.true_divide, is_method=True)
-def true_divide(a: Number | TensorLike, b: Number | TensorLike, /) -> Number | TensorLike:
+def true_divide(a: NumberLike | TensorLike, b: NumberLike | TensorLike, /) -> Number | TensorLike:
     return clang.true_divide(a, b)
 
 
@@ -1722,7 +1734,7 @@ def _mask_tensor(a, mask, fill_value):
 #   value can be safely cast to a (for numbers, it checks that the actual number value can safely be cast)
 # NOTE We have chosen not to emulate PyTorch's odd type promotion behavior for this operation
 @torchsymbol(torch.masked_fill, is_method=True)
-def masked_fill(a: TensorLike, /, mask: TensorLike, value: Number | TensorLike) -> TensorLike:
+def masked_fill(a: TensorLike, /, mask: TensorLike, value: NumberLike | TensorLike) -> TensorLike:
     result = where(mask, value, a)
     return result
 
@@ -1754,7 +1766,7 @@ def where(
     pred: TensorLike, a: None | Number | TensorLike = None, b: None | Number | TensorLike = None, /
 ) -> TensorLike:
     utils.check(
-        isinstance(a, (Number, TensorProxy)) and isinstance(b, (Number, TensorProxy)),
+        isinstance(a, (Number, NumberProxy, TensorProxy)) and isinstance(b, (Number, NumberProxy, TensorProxy)),
         lambda: f"torch.where() does not support only specifying a condition",
         exception_type=NotImplementedError,
     )
@@ -1864,7 +1876,7 @@ def _reduction_dtypes(
 
 
 def _reduction_dims(shape, dims: Sequence | None) -> tuple[int, ...]:
-    if isinstance(dims, int):
+    if isinstance(dims, (int, NumberProxy)):
         dims = (dims,)
     if dims is None or len(dims) == 0:
         return tuple(range(len(shape)))
@@ -1892,7 +1904,7 @@ def _reduction(
     # reduces over all dimensions if dim=() is passed
     if dims == () or dims == []:
         dims = None
-    if isinstance(dims, int):
+    if isinstance(dims, (int, IntegerProxy)):
         dims = (dims,)
 
     utils.check(
@@ -1901,9 +1913,9 @@ def _reduction(
     )
 
     if not accepts_dim_tuple:
-        assert dims is None or isinstance(dims, int)
+        assert dims is None or isinstance(dims, (int, IntegerProxy))
 
-    if isinstance(dims, int):
+    if isinstance(dims, (int, IntegerProxy)):
         dims = (dims,)
 
     dims = _reduction_dims(a.shape, dims)
@@ -2101,7 +2113,7 @@ def var(
     dim=None,
     *,
     keepdim: bool = False,
-    correction: Number = 1,
+    correction: NumberLike = 1,
 ) -> TensorProxy:
     result = _reduction(
         a,
@@ -2122,7 +2134,7 @@ def var_mean(
     dim=None,
     *,
     keepdim: bool = False,
-    correction: Number = 1,
+    correction: NumberLike = 1,
 ) -> tuple[TensorProxy, TensorProxy]:
     result = _reduction(
         a,
@@ -2821,7 +2833,7 @@ def layer_norm(
     normalized_shape: Sequence[int],
     weight: None | TensorLike = None,
     bias: None | TensorLike = None,
-    eps: Number = 1e-5,
+    eps: NumberLike = 1e-5,
 ) -> TensorLike:
     # Note [LayerNorm with parameter sharding]
     # Sharding messes up the normalized_shape argument, so we need to get the
@@ -2903,8 +2915,8 @@ def batch_norm(
     weight: None | TensorLike = None,
     bias: None | TensorLike = None,
     training: bool = False,
-    momentum: Number = 0.1,
-    eps: Number = 1e-5,
+    momentum: NumberLike = 0.1,
+    eps: NumberLike = 1e-5,
 ) -> TensorLike:
     # Validates inputs
     input_shape = tuple(a.shape)
@@ -3031,7 +3043,7 @@ def handle_nn_op_batch_dim(f):
 # A helper function to converts an interger to 1-len tuple.
 # It is used to handle arguments like stride/dilation/padding and similar.
 def int_to_seq(param):
-    if isinstance(param, int):
+    if isinstance(param, (int, NumberProxy)):
         return (param,)
     else:
         return param
@@ -3057,7 +3069,8 @@ def apply_padding_for_pool_ops(dim, a, padding, kernel_size, pad_value):
     padding = maybe_to_rank_len_sequence(padding, dim)
     kernel_size = maybe_to_rank_len_sequence(kernel_size, dim)
     utils.check(
-        len(padding) == dim and all(isinstance(p, int) and 0 <= p <= k // 2 for p, k in zip(padding, kernel_size)),
+        len(padding) == dim
+        and all(isinstance(p, (int, IntegerProxy)) and 0 <= p <= k // 2 for p, k in zip(padding, kernel_size)),
         lambda: f"Implied {padding=} (with dimensionality {dim}) should contain integers "
         f"between 0 and `kernel_size / 2` (with the implied {kernel_size=})",
     )
@@ -3103,7 +3116,7 @@ def _conv_helper(
                     len(dilation) == 1 or len(dilation) == dim, lambda: f"{len(dilation)=} has to be either 1 or {dim}"
                 )
                 utils.check(
-                    all(isinstance(d, int) and d >= 1 for d in dilation),
+                    all(isinstance(d, (int, IntegerProxy)) and d >= 1 for d in dilation),
                     lambda: f"{dilation=} has to be a Sequences of integers >= 1",
                 )
 
@@ -3175,7 +3188,7 @@ def _max_pool_helper(
 
     kernel_size = maybe_to_rank_len_sequence(kernel_size, dim)
     utils.check(
-        len(kernel_size) == dim and all(isinstance(k, int) and k > 0 for k in kernel_size),
+        len(kernel_size) == dim and all(isinstance(k, (int, IntegerProxy)) and k > 0 for k in kernel_size),
         lambda: f"Implied {kernel_size=} (with dimensionality {dim}) should either be a non-negative integer "
         f"or a sequence of non-negative integers of length {dim}",
     )
@@ -3228,7 +3241,7 @@ def _avg_pool_helper(
     padding: int | Sequence[int] = 0,
     ceil_mode: bool = False,
     count_include_pad: bool = True,
-    divisor_override: Number | None = None,
+    divisor_override: NumberLike | None = None,
 ) -> TensorProxy:
     utils.check(
         not ceil_mode,
@@ -3247,7 +3260,7 @@ def _avg_pool_helper(
 
     kernel_size = maybe_to_rank_len_sequence(kernel_size, dim)
     utils.check(
-        len(kernel_size) == dim and all(isinstance(k, int) and k > 0 for k in kernel_size),
+        len(kernel_size) == dim and all(isinstance(k, (int, IntegerProxy)) and k > 0 for k in kernel_size),
         lambda: f"Implied {kernel_size=} (with dimensionality {dim}) should either be a non-negative integer "
         f"or a sequence of non-negative integers of length {dim}",
     )
@@ -3273,7 +3286,7 @@ def _avg_pool_helper(
         divisor_override = kernel_numel
 
     utils.check(
-        isinstance(divisor_override, Number) and divisor_override > 0,
+        isinstance(divisor_override, (Number, NumberProxy)) and divisor_override > 0,
         lambda: f"{divisor_override=} should be a greater than 0 scalar",
     )
 
@@ -3295,7 +3308,7 @@ def avg_pool1d(
     padding: int | Sequence[int] = 0,
     ceil_mode: bool = False,
     count_include_pad: bool = True,
-    divisor_override: Number | None = None,
+    divisor_override: NumberLike | None = None,
 ) -> TensorProxy:
     return _avg_pool_helper(1, a, kernel_size, stride, padding, ceil_mode, count_include_pad, divisor_override)
 
@@ -3309,7 +3322,7 @@ def avg_pool2d(
     padding: int | Sequence[int] = 0,
     ceil_mode: bool = False,
     count_include_pad: bool = True,
-    divisor_override: Number | None = None,
+    divisor_override: NumberLike | None = None,
 ) -> TensorProxy:
     return _avg_pool_helper(2, a, kernel_size, stride, padding, ceil_mode, count_include_pad, divisor_override)
 
@@ -3323,9 +3336,66 @@ def avg_pool3d(
     padding: int | Sequence[int] = 0,
     ceil_mode: bool = False,
     count_include_pad: bool = True,
-    divisor_override: Number | None = None,
+    divisor_override: NumberLike | None = None,
 ) -> TensorProxy:
     return _avg_pool_helper(3, a, kernel_size, stride, padding, ceil_mode, count_include_pad, divisor_override)
+
+
+@torchsymbol(
+    torch.nn.functional.adaptive_avg_pool2d, id="torch.nn.functional.adaptive_avg_pool2d", is_method=False, is_prim=True
+)
+def adaptive_avg_pool2d(
+    a: TensorProxy,
+    /,
+    output_size: int | Sequence[int],
+) -> TensorProxy:
+    from thunder.core.baseutils import check_valid_shape, check_valid_length
+
+    utils.check_type(output_size, (int, IntegerProxy, Sequence))
+    if isinstance(output_size, Sequence):
+        utils.check(len(output_size) == 2, lambda: f"adaptive_avg_pool2d: output_size must be 2")
+        utils.check_types(output_size, (int, IntegerProxy))
+        check_valid_shape(output_size)
+    else:
+        check_valid_length(output_size)
+        output_size = (output_size, output_size)
+
+    utils.check_type(a, TensorProxy)
+    a_ndim = a.ndim
+    utils.check(
+        a_ndim == 3 or a_ndim == 4,
+        lambda: f"adaptive_avg_pool2d: Expected 3D or 4D tensor, but got {a.shape}",
+    )
+    for i in (-2, -1):
+        utils.check(
+            a.shape[i] > 0,
+            lambda: f"adaptive_avg_pool2d: Expected input to have non-zero size for non-batch dimensions, but input has sizes {a.shape} with dimension {i + a_ndim} being empty",
+        )
+    output_shape_ = a.shape[:-2] + tuple(output_size)
+    return TensorProxy(like=a, shape=output_shape_)
+
+
+@torchsymbol("adaptive_avg_pool2d_backward", id="adaptive_avg_pool2d_backward", is_prim=True)
+def adaptive_avg_pool2d_backward(g: TensorProxy, a: TensorProxy, /) -> TensorProxy:
+    # Followed the cuda implementation in Pytorch for adaptive_avg_pool2d_backward here
+    # short cut for empty tensor
+    if 0 in a.shape:
+        return TensorProxy(like=a)
+    utils.check_type(g, TensorProxy)
+    utils.check_type(a, TensorProxy)
+    utils.check_same_device(g, a)
+    utils.check_same_dtype(g, a)
+    grad_ndim = g.ndim
+    utils.check(
+        grad_ndim == 3 or grad_ndim == 4,
+        lambda: f"adaptive_avg_pool2d_backward: Expected 3D or 4D tensor, but got {g.shape}",
+    )
+    for i in range(1, grad_ndim):
+        utils.check(
+            g.shape[i] > 0,
+            lambda: f"adaptive_avg_pool2d_backward: Expected grad to have non-zero size for non-batch dimensions, but grad has sizes {g.shape} with dimension {i} being empty",
+        )
+    return TensorProxy(like=a)
 
 
 @torchsymbol(torch.max_pool1d, torch.nn.functional.max_pool1d, id="torch.nn.functional.max_pool1d", is_method=False)
@@ -3710,7 +3780,7 @@ register_grad(cross_entropy, _cross_entropy_grad)
 # NOTE The id must be explicitly specified so as not to resolve to torch.dropout
 #   (Using torch.nn.functional.dropout is just for readability as it's the documented operator)
 @torchsymbol(torch.nn.functional.dropout, id="torch.nn.functional.dropout")
-def dropout(a: TensorProxy, /, p: Number = 0.5, training: bool = True, inplace: bool = False) -> TensorProxy:
+def dropout(a: TensorProxy, /, p: NumberLike = 0.5, training: bool = True, inplace: bool = False) -> TensorProxy:
     if inplace:
         raise NotImplementedError("Only inplace=False is currently supported in dropout")
 
@@ -3853,7 +3923,7 @@ def _interpolate_scale_factor_helper(
     batch, channels, *spatial_dims = a.shape
     dim = len(spatial_dims)
 
-    if isinstance(scale_factor, float):
+    if isinstance(scale_factor, (float, FloatProxy)):
         utils.check(scale_factor > 0, lambda: f"{scale_factor=} is expected to be strictly positive")
         scale_factor = (scale_factor,) * dim
     else:
@@ -3861,7 +3931,7 @@ def _interpolate_scale_factor_helper(
             (
                 isinstance(scale_factor, Sequence)
                 and len(scale_factor) == dim
-                and all(isinstance(s, float) and s > 0 for s in scale_factor)
+                and all(isinstance(s, (float, FloatProxy)) and s > 0 for s in scale_factor)
             ),
             lambda: f"{scale_factor=} is expected to be a strictly positive floating point number or "
             f"a sequence of strictly positive floating point numbers of length {dim}",
@@ -3927,12 +3997,16 @@ def _interpolate_size_helper(
     batch, channels, *spatial_dims = a.shape
     dim = len(spatial_dims)
 
-    if isinstance(size, int):
+    if isinstance(size, (int, IntegerProxy)):
         utils.check(size > 0, lambda: f"{size=} is expected to be greater than zero")
         size = (size,) * dim
     else:
         utils.check(
-            (isinstance(size, Sequence) and len(size) == dim and all(isinstance(s, int) and s > 0 for s in size)),
+            (
+                isinstance(size, Sequence)
+                and len(size) == dim
+                and all(isinstance(s, (int, IntegerProxy)) and s > 0 for s in size)
+            ),
             lambda: f"{size=} is expected to be a greater than zero integer "
             f"or a sequence of strictly positive integers of length {dim}",
         )

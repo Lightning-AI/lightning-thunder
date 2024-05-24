@@ -158,7 +158,7 @@ def is_supported_tensor(a: TensorProxy, *, allow_low_precision_floats: bool = Tr
 
 
 def is_supported_tensor_or_number(a: TensorProxy | Number) -> bool:
-    if isinstance(a, Number):
+    if isinstance(a, (Number, NumberProxy)):
         return True
 
     return is_supported_tensor(a)

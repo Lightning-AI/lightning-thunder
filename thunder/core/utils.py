@@ -207,7 +207,7 @@ def check_same_dtype(*args):
     numbertype = None
     dtype = None
     for a in args:
-        if isinstance(a, Number):
+        if isinstance(a, (Number, NumberProxy)):
             typ = to_dtype(a)
             if numbertype is None:
                 numbertype = typ
@@ -396,6 +396,7 @@ class ELEMENTWISE_TYPE_PROMOTION_KIND(Enum):
     ALWAYS_BOOL = (3,)
     COMPLEX_TO_FLOAT = (4,)
     BOOL_TO_LONG = (5,)
+    NUMBER_TO_INT = (6,)
 
 
 # TODO: allow dtypes as arguments, too
@@ -447,12 +448,16 @@ def elementwise_type_promotion(*args, type_promotion_kind: ELEMENTWISE_TYPE_PROM
       COMPLEX_TO_FLOAT        : abs
       BOOL_TO_LONG            : pow
       ALWAYS_BOOL             : eq
+      NUMBER_TO_INT           : ceil, floor
     """
 
     # Type checks inputs
     check(len(args) > 0, lambda: f"Execpted one or more arguments for type promotion, but got {args=}")
+    all_number_type = True
     for a in args:
-        check_type(a, (TensorProxy, Number))
+        check_type(a, (TensorProxy, Number, NumberProxy))
+        if not isinstance(a, (Number, NumberProxy)):
+            all_number_type = False
 
     # Computes the promotion type
     extracted = tuple(to_dtype(x, true_dtype=True) for x in args)
@@ -474,6 +479,13 @@ def elementwise_type_promotion(*args, type_promotion_kind: ELEMENTWISE_TYPE_PROM
         return promotiontype, dtypes.corresponding_real_dtype(promotiontype)
 
     if type_promotion_kind is ELEMENTWISE_TYPE_PROMOTION_KIND.BOOL_TO_LONG and is_boolean_dtype(promotiontype):
+        return int, int
+
+    if (
+        type_promotion_kind is ELEMENTWISE_TYPE_PROMOTION_KIND.NUMBER_TO_INT
+        and is_float_dtype(promotiontype)
+        and all_number_type
+    ):
         return int, int
 
     # Falls through to DEFAULT
@@ -613,7 +625,7 @@ def validate_idx(rank: int, idx: int):
     """
 
     check(
-        isinstance(idx, int) and idx >= 0 and (idx < rank or idx == 0),
+        isinstance(idx, (int, NumberProxy)) and idx >= 0 and (idx < rank or idx == 0),
         lambda: f"Found invalid index {idx} for rank {rank}!",
     )
 
