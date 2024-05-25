@@ -596,18 +596,18 @@ class NumberProxy(Proxy, NumberProxyInterface):
     # fn is the function to call if executing outside a language context
     @staticmethod
     def _elementwise_unary_helper(a, name, fn, type_promotion_kind=None):
+
+        vala = pyval(a)
+
         trace: None | TraceCtx = get_tracectx()
         lang: None | LangCtx = None
         try:
             lang = get_langctx()
         except LookupError:
             pass
-
-        vala = pyval(a)
-
         if trace is None or lang is None:
-            # Outside of a trace context, operations on NumberProxies are executed by the
-            #   Python interpreter
+            # Outside of a trace or language context, operations on NumberProxies are
+            #   executed by the Python interpreter
             baseutils.check(
                 vala is not None,
                 lambda: f"Trying to {name} a number with an unknown value",
