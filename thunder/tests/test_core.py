@@ -2332,7 +2332,7 @@ def test_clone():
                 assert b.shape == torch.Size(shp)
 
 
-@pytest.mark.xfail(reason="missing torch support for repeat'ing sparse tensors")
+# Separate out the sparse test because creating a sparse tensor is tricky.
 def test_clone_sparse_coo():
     def foo(a):
         return a.clone()
@@ -2341,13 +2341,25 @@ def test_clone_sparse_coo():
     shp = (3, 5)
     dev = torch.device("cpu")
     dt = torch.float32
-    # randn(layout=torch.sparse_coo, ...) will fail, so we use to_sparse()
-    # from a dense tensor to get a sparse one.
+    # randn(layout=torch.sparse_coo, ...) will throw an exception deep in
+    # PyTorch, so we use to_sparse() from a dense tensor to get a sparse one.
     b = jfoo(torch.randn(shp, device=dev, dtype=dt).to_sparse())
     assert b.dtype == dt
     assert b.layout == torch.sparse_coo
     assert b.device == dev
     assert b.shape == torch.Size(shp)
+
+
+@pytest.mark.xfail(reason="we improperly use an alias")
+def test_clone_alias():
+  def foo(a):
+    b = a.clone()
+    b[0] = 42
+
+  jfoo = thunder.jit(foo)
+  arg = torch.tensor([7, 19])
+  jfoo(arg)
+  assert arg[0] == 7
 
 
 @instantiate(dtypes=(thunder.float32,))
