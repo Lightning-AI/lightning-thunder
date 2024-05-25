@@ -2352,14 +2352,14 @@ def test_clone_sparse_coo():
 
 @pytest.mark.xfail(reason="we improperly use an alias")
 def test_clone_alias():
-  def foo(a):
-    b = a.clone()
-    b[0] = 42
+    def foo(a):
+        b = a.clone()
+        b[0] = 42
 
-  jfoo = thunder.jit(foo)
-  arg = torch.tensor([7, 19])
-  jfoo(arg)
-  assert arg[0] == 7
+    jfoo = thunder.jit(foo)
+    arg = torch.tensor([7, 19])
+    jfoo(arg)
+    assert arg[0] == 7
 
 
 @instantiate(dtypes=(thunder.float32,))
