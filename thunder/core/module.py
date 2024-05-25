@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+import itertools
 from typing import Any
 
 import torch as pytorch
@@ -25,13 +26,36 @@ class ThunderModule(pytorch.nn.Module):
 
         self._forward_fn = compiled_model_call
 
+        # overrides for parameters and buffers (see get_buffer/get_parameter)
+        # we populate these here for performance reasons (sam as module cache),
+        # a single dict lookup is cheaper than traversin the module
+        # hierarchy, see https://github.com/Lightning-AI/lightning-thunder/issues/396#issuecomment-2113231498
+        self._overrides = {
+            k: v for k, v in itertools.chain(self._model.named_parameters(), self._model.named_buffers())
+        }
+        self._module_cache = {k: v for k, v in self._model.named_modules()}
+
+        self._null = object()
+
     def get_buffer(self, name):
+        p = self._overrides.get(name, self._null)
+        if p is not self._null:
+            return p
         return self._model.get_buffer(name)
 
+    def set_buffer(self, name, value):
+        p = self._overrides[name] = value
+
     def get_parameter(self, name):
+        p = self._overrides.get(name, self._null)
+        if p is not self._null:
+            return p
         return self._model.get_parameter(name)
 
     def get_submodule(self, name):
+        p = self._module_cache.get(name, self._null)
+        if p is not self._null:
+            return p
         return self._model.get_submodule(name)
 
     def forward(self, *args, **kwargs):
@@ -51,9 +75,9 @@ class ThunderModule(pytorch.nn.Module):
 
             This could lead to different accumulated gradients with ``torch.nn.parallel.distributed.DistributedDataParallel.no_sync``.
             PyTorch's gradient synchronization is implemented by applying all-reduce to gradient buckets of ``torch.nn.Parameter.grad``.
-            Thus the ``no_sync`` context leads to :math:`\text{AllReduce} \left( \sum_{i = 0}^{\rm{num_grad_accum_steps}} g_i \right)`.
+            Thus the ``no_sync`` context leads to :math:`\text{AllReduce} \left( \sum_{i = 0}^{\text{ga_steps}} g_i \right)` where :math:`\text{ga_steps}` means the number of gradient accumulation steps.
             In contrast, this synchronizes accumulated gradients when exiting, leading to
-            :math:`\text{AllReduce} \left( \sum_{i = 0}^{\rm{num_grad_accum_steps - 1}} g_i \right) + \text{AllReduce}(g_{\rm{num_grad_accum_steps}})`.
+            :math:`\text{AllReduce} \left( \sum_{i = 0}^{\text{ga_steps - 1}} g_i \right) + \text{AllReduce}(g_{\text{ga_steps}})`.
 
         .. warning::
 
@@ -96,9 +120,13 @@ class ThunderModule(pytorch.nn.Module):
 
 def get_thunder_module(model):
     cd = get_compile_data()
+
+    # to not hold a reference to model in the _thunder_module_map dict, we index by id.
+    # But this means that we need to check if it is actually the right model, which we do with the if below.
     tm = cd._thunder_module_map.get(id(model))
     if tm and tm._model is not model:
         tm = None
+
     if tm is None:
         # TODO: we would like to raise an error here, but this would require
         #       us wrapping models that are passed in closures etc.
