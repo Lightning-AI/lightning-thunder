@@ -1,12 +1,11 @@
 from __future__ import annotations
 from abc import ABC
 from abc import abstractmethod
+from abc import abstractproperty
 from enum import Enum
 from enum import auto
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
-
-import torch.nn as nn
 
 if TYPE_CHECKING:
     from typing import Any
@@ -15,6 +14,7 @@ if TYPE_CHECKING:
     from thunder.common import CompileData
     from thunder.core.proxies import ProxyInterface
     from thunder.core.proxies import TensorProxy
+    from thunder.core.proxies import DistParallelType
     from thunder.core.symbol import BoundSymbol
     from thunder.core.trace import TraceCtx
     from thunder.core.trace import TraceProvenance
@@ -135,6 +135,9 @@ class TransformForTensorParallel:
     @abstractmethod
     def _calc_new_shape(self, orig_shape) -> tuple[int, ...]: ...
 
+    @abstractproperty
+    def distparallel_type(self) -> DistParallelType: ...
+
     def __call__(
         self,
         prologue_trace: TraceCtx,
@@ -154,6 +157,8 @@ class TransformForTensorParallel:
         ((_, thunder_module_proxy),) = modules_and_thunder_modules
 
         prologue_producers, prologue_consumers = utils.producers_and_consumers(prologue_trace)
+        pro_out_p: TensorProxy
+        comp_inp_p: TensorProxy
         for pro_out_p, comp_inp_p in zip(prologue_trace.output, computation_trace.args):
             if pro_out_p.name not in self.chunked_param_name_to_layer_type:
                 continue
@@ -169,8 +174,10 @@ class TransformForTensorParallel:
                     orig_shape = list(pro_out_p._shape)
                     new_shape = self._calc_new_shape(orig_shape)
                     pro_out_p._shape = new_shape
+                    pro_out_p._distparallel_type = self.distparallel_type
                     if comp_inp_p is not pro_out_p:
                         comp_inp_p._shape = new_shape
+                        comp_inp_p._distparallel_type = self.distparallel_type
 
                     for c in prologue_consumers[pro_out_p]:
                         if c.sym is prims.check_tensor_shape_and_metadata:

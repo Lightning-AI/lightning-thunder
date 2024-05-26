@@ -7,6 +7,7 @@ import torch.nn as nn
 from torch.distributed import distributed_c10d
 
 from thunder.core import utils
+from thunder.core.proxies import DistParallelType
 from thunder.core.proxies import TensorProxy
 from thunder.core.proxies import variableify
 from thunder.distributed.tensor_parallel.common import PrePostProcessInterface
@@ -98,6 +99,10 @@ class RowParallelEmbeddingPreProcess(PrePostProcessInterface):
 
 @dataclass
 class TransformForRowWiseParallel(TransformForTensorParallel):
+
+    @property
+    def distparallel_type(self) -> DistParallelType:
+        return DistParallelType.ROW_WISE
 
     def _calc_new_shape(self, orig_shape: list[int]) -> tuple[int, ...]:
         new_shape = orig_shape[:]

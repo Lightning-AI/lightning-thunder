@@ -8,6 +8,7 @@ from torch.distributed import distributed_c10d
 
 from thunder.core import utils
 from thunder.core.proxies import TensorProxy
+from thunder.core.proxies import DistParallelType
 from thunder.distributed.tensor_parallel.common import PrePostProcessInterface
 from thunder.distributed.tensor_parallel.common import ComputationTraceTransformVisitorForTensorParallel
 from thunder.distributed.tensor_parallel.common import TransformForTensorParallel
@@ -100,6 +101,10 @@ class ColumnParallelEmbeddingPrePostProcess(PrePostProcessInterface):
 
 @dataclass
 class TransformForColumnWiseParallel(TransformForTensorParallel):
+
+    @property
+    def distparallel_type(self) -> DistParallelType:
+        return DistParallelType.COLUMN_WISE
 
     def _calc_new_shape(self, orig_shape: list[int]) -> tuple[int, ...]:
         new_shape = orig_shape[:]
