@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from thunder.core import devices
 from thunder.core import prims
 from thunder.core import utils
-from thunder.core.proxies import DDPType
+from thunder.core.proxies import DistParallelType
 from thunder.core.trace import from_trace
 from thunder.core.trace import tracectx
 from thunder.core.trace import TraceProvenance
@@ -59,11 +59,11 @@ class FSDPTraceTransform:
                     thunder_device = devices.to_device(new_torch_device)
                     thunder_device_str = str(thunder_device)
 
-                    pro_out_p._ddp_type = DDPType.FULLY_SHARDED
+                    pro_out_p._distparallel_type = DistParallelType.FULLY_SHARDED
                     pro_out_p._shape = tuple(new_shape)
                     pro_out_p._device = thunder_device
                     if comp_inp_p is not pro_out_p:
-                        comp_inp_p._ddp_type = DDPType.FULLY_SHARDED
+                        comp_inp_p._distparallel_type = DistParallelType.FULLY_SHARDED
                         comp_inp_p._shape = tuple(new_shape)
                         comp_inp_p._device = thunder_device
                     with tracectx(computation_trace):

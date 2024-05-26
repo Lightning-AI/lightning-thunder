@@ -54,7 +54,7 @@ from types import (
 
 import torch
 from thunder.core.proxies import (
-    DDPType,
+    DistParallelType,
     proxy,
     Proxy,
     NumberProxy,
@@ -575,7 +575,10 @@ class GeneralJitCtx(MinimalCtx):
             # TensorProxy attributes should be considered derived quantities, so we flag TensorProxies here
             value.provenance.ext_flag |= EXT_FLAG_IS_TENSOR_PROXY
 
-            if isinstance(p, TensorProxy) and p.ddp_type in (DDPType.REPLICATED, DDPType.FULLY_SHARDED):
+            if isinstance(p, TensorProxy) and p.distparallel_type in (
+                DistParallelType.REPLICATED,
+                DistParallelType.FULLY_SHARDED,
+            ):
                 p_new = thunder.distributed.prims.synchronize(
                     p,
                     self._process_group_for_ddp,
