@@ -1,11 +1,12 @@
 from __future__ import annotations
 from abc import ABC
 from abc import abstractmethod
-from abc import abstractproperty
 from enum import Enum
 from enum import auto
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from thunder.core.proxies import DistParallelType
 
 if TYPE_CHECKING:
     from typing import Any
@@ -14,7 +15,6 @@ if TYPE_CHECKING:
     from thunder.common import CompileData
     from thunder.core.proxies import ProxyInterface
     from thunder.core.proxies import TensorProxy
-    from thunder.core.proxies import DistParallelType
     from thunder.core.symbol import BoundSymbol
     from thunder.core.trace import TraceCtx
     from thunder.core.trace import TraceProvenance
@@ -135,7 +135,7 @@ class TransformForTensorParallel:
     @abstractmethod
     def _calc_new_shape(self, orig_shape) -> tuple[int, ...]: ...
 
-    @abstractproperty
+    @property
     def distparallel_type(self) -> DistParallelType: ...
 
     def __call__(
