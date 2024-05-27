@@ -170,10 +170,7 @@ def test_uniform_philox_vs_uniform(executor, device: str, dtype: dtypes.dtype):
             expects.append(out)
         assert cuda_generator.get_offset() == 12 * 4
         rng_syms = (
-            "unpack_rng_state_prim_impl",
-            "get_rng_state_prim_impl",
-            "update_rng_state_prim_impl",
-            "set_rng_state_prim_impl",
+            "get_and_update_rng_state_impl",
         )
         # check the transform has inserted the rng state operators
         assert any(t.sym.id in rng_syms for t in thunder.last_traces(jfunc)[-1].bound_symbols)

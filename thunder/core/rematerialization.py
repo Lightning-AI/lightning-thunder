@@ -666,17 +666,13 @@ def replace_uniform(trace: TraceCtx) -> TraceCtx:
         if bsym.sym.id == prims.PrimIDs.UNIFORM:
             dev = bsym.kwargs["device"]
             if dev not in prev_state:
-                rng_state = prims.get_rng_state(None, dev)
-                prev_state[dev] = rng_state
+                seed, offset = prims.get_and_update_rng_state(None, None, dev)
             else:
-                rng_state = prims.get_rng_state(prev_state[dev], dev)
-            seed, offset = prims.unpack_rng_state(rng_state)
+                seed, offset = prims.get_and_update_rng_state(*prev_state[dev], dev)
             out = prims.uniform_philox(*bsym.args, **bsym.kwargs, seed=seed, offset=offset)
-            new_state = prims.update_rng_state(seed, offset)
-            new_state_1 = prims.set_rng_state(new_state, dev)
             new_vo = variableify(out)
             swapmap[new_vo] = bsym.output
-            prev_state[dev] = new_state_1
+            prev_state[dev] = [seed, offset]
             return VISIT_TYPE.REPLACE
         return VISIT_TYPE.NO_OP
 
