@@ -2684,19 +2684,18 @@ def _get_and_update_rng_state_meta(
     seed_is_none = seed is None
     offset_is_none = offset is None
     utils.check(
-        not seed_is_none ^ offset_is_none,
+        not (seed_is_none ^ offset_is_none),
         lambda: f"seed and offset must be given in pair (they are both None only used on first use of get_and_update_rng_statebut), but got {seed}, {offset}",
     )
     if not seed_is_none:
         utils.check_type(seed, (IntegerProxy, int))
     if not offset_is_none:
         utils.check_type(offset, (IntegerProxy, int))
-    if device is not None:
-        utils.check(
-            device.devicetype is devices.DeviceType.CUDA,
-            lambda: f"get_and_update_rng_state is supported for CUDA only",
-            exception_type=NotImplementedError,
-        )
+    utils.check(
+        device.devicetype is devices.DeviceType.CUDA,
+        lambda: f"get_and_update_rng_state is supported for CUDA only",
+        exception_type=NotImplementedError,
+    )
     return numberproxy(int, 0), numberproxy(int, 0)
 
 
@@ -2714,16 +2713,16 @@ def _uniform_philox_meta(
     *,
     device: devices.Device,
     dtype: dtypes.dtype,
-    seed: int | TensorProxy,
-    offset: int | TensorProxy,
+    seed: int | IntegerProxy | TensorProxy,
+    offset: int | IntegerProxy | TensorProxy,
 ) -> TensorProxy:
     # Checks inputs
     utils.check_type(minval, float)
     utils.check_type(maxval, float)
     utils.check_type(device, devices.Device)
     utils.check_type(dtype, dtypes.dtype)
-    utils.check_type(seed, (int, TensorProxy))
-    utils.check_type(offset, (int, TensorProxy))
+    utils.check_type(seed, (int, TensorProxy, IntegerProxy))
+    utils.check_type(offset, (int, TensorProxy, IntegerProxy))
     utils.check(
         isinstance(seed, (int, IntegerProxy)) or seed.dtype is dtypes.int64,
         lambda: f"Expected {seed=} to be an integer or an int64 tensor",
