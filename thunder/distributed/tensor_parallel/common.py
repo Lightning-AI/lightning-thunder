@@ -174,6 +174,10 @@ class TransformForTensorParallel:
                     orig_shape = list(pro_out_p._shape)
                     new_shape = self._calc_new_shape(orig_shape)
                     pro_out_p._shape = new_shape
+                    utils.check(
+                        comp_inp_p.distparallel_type in (self.distparallel_type, DistParallelType.NONE),
+                        lambda: f"{comp_inp_p.distparallel_type = } is not compatible with {self.distparallel_type=}",
+                    )
                     pro_out_p._distparallel_type = self.distparallel_type
                     if comp_inp_p is not pro_out_p:
                         comp_inp_p._shape = new_shape
