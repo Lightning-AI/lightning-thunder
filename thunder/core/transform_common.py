@@ -33,6 +33,52 @@ def _remove_noop_subsymbols(bsym: BoundSymbol) -> None:
     bsym.subsymbols = nsbsyms
 
 
+def _inplace_copy_sanity_check(extrace: Trace):
+    """The sanity check is based on the sharp edge of nvfuser's `add_ouput(output, input)` interface,
+    it makes sure that the `copy_to` argument of `prims.copy_` is not used as input for any of its subsequent operators in a nvFusion fused operator
+
+    Anti-pattern:
+
+    .. code-block:: python
+
+        [t2] = nvFusion0(x, y)
+            # result = prims.mul(x, y)
+            # a = prims.copy_(result, x)
+            # t2 = prims.add(a, y) or t2 = prims.add(x, y)
+
+    Do not use the `copy_to` variable `x` or `a` after it has been updated, use the `copy_from` variable `result` instead to reflect the dependency:
+
+    .. code-block:: python
+
+        [t2] = nvFusion0(x, y)
+            # result = prims.mul(x, y)
+            # a = prims.copy_(result, x)
+            # t2 = prims.add(result, y)
+    """
+
+    from thunder.core.utils import consumers
+
+    nvfuser_symbols = (bsym for bsym in extrace.bound_symbols if bsym.sym.name.startswith("nvFusion"))
+    for bsym in nvfuser_symbols:
+        consumer_dict = consumers(list(bsym.subsymbols), _map_to_numbers=True)
+        inplace_copy_idx = ((idx, sym) for idx, sym in enumerate(bsym.subsymbols) if sym.sym.id == prims.PrimIDs.COPY_)
+        for idx, subbsym in inplace_copy_idx:
+            copy_to_arg = subbsym.flat_args[1]
+            copy_to_out = subbsym.output
+
+            def check(inp, log_str):
+                if inp is not None and inp in consumer_dict:
+                    last_used_idx = max(consumer_dict[inp])
+                    if last_used_idx > idx:
+                        raise NotImplementedError(
+                            f"{bsym.subsymbols[last_used_idx]} trying to use {inp} (the {log_str} of 'prims.copy_') as input, which is not safe."
+                            f" There is a risk of accessing the wrong memory. If you are sure you don't want to use this check, it can be disabled by setting `disable_inplace_copy_check=True` in `thunder.jit`."
+                        )
+
+            check(copy_to_arg, "'copy_to' argument")
+            check(copy_to_out, "output")
+
+
 # TODO This calls variableify(), but we could directly construct Variable objects instead, which might slightly
 #   improve performance
 # Runs a Dead Code Elimination (DCE) pass

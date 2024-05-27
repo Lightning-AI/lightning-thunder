@@ -164,6 +164,16 @@ class TELinear(TransformerEngineBaseModule):
         # Required by `get_fp8_weights_scratchpad`
         self.fp8_weight_shapes.append(torch.Size((self.out_features, self.in_features)))
 
+        if TE_VERSION_1_6_PLUS:
+            # NOTE: Backward FP8 metadata sync
+            # TransformerEngine v1.6 onwards, we control the sync and update of FP8 metadata for FP8 tensors
+            # tied to backward pass (i.e. the gradient tensors)
+            # Also, note that the forward tensor metadata sync occurs at the exit of `fp8_autocast` context manager
+            # which is not controlled by us.
+            #
+            # We consume the `is_first_fp8_module` so that the automatic sync for FP8 metadata is disabled.
+            FP8GlobalStateManager.is_first_fp8_module()  # Consume first module token.
+
     def forward(self, inp, weight, bias, is_first_microbatch: bool | None = None, is_grad_enabled: bool = False):
         tensor_inputs = tuple(filter(lambda t: isinstance(t, torch.Tensor), (inp, weight, bias)))
         # See [NOTE] Enable grad within context
@@ -456,6 +466,36 @@ TE_CTX_STR = f"@{IMPORT_CTX_TE_KEY}.fp8_autocast(fp8_recipe={FP8_RECIPE_KEY})"
 
 def _get_te_wrapper_string():
     return TE_CTX_STR
+
+
+def te_sync_fp8_meta_bwd_meta():
+    pass
+
+
+def te_sync_fp8_meta_bwd_impl():
+    FP8GlobalStateManager.reduce_and_update_fp8_tensors(forward=False)
+
+
+te_sync_fp8_meta_bwd = transformer_engine_ex.register_operator(
+    "te_sync_fp8_meta_bwd", meta=te_sync_fp8_meta_bwd_meta, fn=te_sync_fp8_meta_bwd_impl
+)
+
+
+def _transformer_engine_bwd_fp8_meta_sync(fw_extrace, bw_extrace):
+    if TE_VERSION_1_6_PLUS:
+        # See doc of `_insert_bwd_fp8_meta_sync` for more details.
+        _insert_bwd_fp8_meta_sync(bw_extrace)
+    else:
+        # See doc of `_rearrange_transformer_engine_linear` for more details.
+        _rearrange_transformer_engine_linear(fw_extrace, bw_extrace)
+
+
+def _insert_bwd_fp8_meta_sync(bw_extrace):
+    # This functions insert the symbol `te_sync_fp8_meta_bwd` to the end of the backward
+    # trace which takes care of syncing and updating the FP8 metadata for backward tensors.
+    # See NOTE: Backward FP8 metadata sync
+    bwd_idx = len(bw_extrace.bound_symbols) - 1
+    bw_extrace.bound_symbols.insert(bwd_idx + 1, te_sync_fp8_meta_bwd.bind(output=None))
 
 
 def _rearrange_transformer_engine_linear(fw_extrace, bw_extrace):
