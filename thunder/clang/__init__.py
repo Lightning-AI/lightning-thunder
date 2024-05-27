@@ -1948,7 +1948,7 @@ def argmin(a: TensorProxy, /, dim: int | None = None, keepdim: bool | None = Fal
 @clangop()
 def topk(
     a: TensorLike, /, k: int, dim: int | None = None, largest: bool = True, sorted: bool = True, *, out=None
-) -> (TensorProxy, TensorProxy):
+) -> tuple[TensorProxy, TensorProxy]:
     if dim is None:
         dim = a.ndim - 1 if a.ndim > 0 else 0
     dim = utils.canonicalize_dim(a.ndim, dim)

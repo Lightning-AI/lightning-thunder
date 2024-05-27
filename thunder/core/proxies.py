@@ -17,7 +17,7 @@ from thunder.core.interpreter import is_jitting
 from thunder.core.trace import VariableInterface, get_tracectx, TraceCtx
 from thunder.core.baseutils import ProxyInterface, NumberProxyInterface, TensorProxyInterface
 import thunder.core.baseutils as baseutils
-from thunder.core.langctxs import resolve_method, get_langctx, LanguageContext
+from thunder.core.langctxs import resolve_method, get_langctx
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
 
@@ -592,20 +592,18 @@ class NumberProxy(Proxy, NumberProxyInterface):
     # fn is the function to call if executing outside a language context
     @staticmethod
     def _elementwise_unary_helper(a, name, fn, type_promotion_kind=None):
-        trace: None | TraceCtx = get_tracectx()
-
-        langctx: None | LanguageContext
-        try:
-            langctx = get_langctx()
-        except LookupError as le:
-            langctx = None
 
         vala = pyval(a)
 
-        if trace is None:
-            # Outside of a trace context, operations on NumberProxies are executed by the
-            #   Python interpreter
-
+        trace: None | TraceCtx = get_tracectx()
+        lang: None | LangCtx = None
+        try:
+            lang = get_langctx()
+        except LookupError:
+            pass
+        if trace is None or lang is None:
+            # Outside of a trace or language context, operations on NumberProxies are
+            #   executed by the Python interpreter
             baseutils.check(
                 vala is not None,
                 lambda: f"Trying to {name} a number with an unknown value",
@@ -613,22 +611,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
             )
             return fn(vala)
 
-        if using_jit():
-            method: Callable = resolve_method(name, a)
-            return method(a)
-
-        # NOTE not using_jit
-        #   This is a legacy path to temporarily support developing older components, and will be removed
-        #   in the near future. It fallsback to executing the operation using the Python interpreter
-        #   if no method can be found.
-        try:
-            method = resolve_method(name, a)
-        except Exception as e:
-            return fn(vala)
-
-        if method is None:
-            return fn(vala)
-
+        method = resolve_method(name, a)
         return method(a)
 
     def __abs__(self):
@@ -671,30 +654,26 @@ class NumberProxy(Proxy, NumberProxyInterface):
         valb = pyval(b) if isinstance(b, NumberProxy) else b
 
         trace: None | TraceCtx = get_tracectx()
-        if trace is None:
+        lang: None | LangCtx = None
+        try:
+            lang = get_langctx()
+        except LookupError:
+            pass
+        if trace is None or lang is None:
             # Outside of a trace or language context, binary operations on NumberProxies are
             #   executed by the Python interpreter
+            baseutils.check(
+                vala is not None and valb is not None,
+                lambda: f"Trying to {name} numbers with unknown values",
+                exception_type=AssertionError,
+            )
             return fn(vala, valb)
 
         if is_jitting():
             fn: Callable = resolve_method(name, a, b)
             return fn(a, b)
 
-        # NOTE not using_jit
-        #   This is a legacy path to temporarily support developing older components, and will be removed
-        #   in the near future
-        if isinstance(b, TensorProxy):
-            tensor_fn = resolve_method(name, a, b)
-            return tensor_fn(a, b)
-
-        try:
-            method = resolve_method(name, a, b)
-        except Exception as e:
-            return fn(vala, valb)
-
-        if method is None:
-            return fn(vala, valb)
-
+        method = resolve_method(name, a, b)
         return method(a, b)
 
     def __add__(self, other):
