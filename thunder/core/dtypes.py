@@ -93,7 +93,7 @@ class dtype:
         return self.__repr__()
 
     def __hash__(self) -> int:
-        return hash((self._name, self._bytes, self._is_weak, self._variant))
+        return hash((self._name, self._bytes, self._is_weak, f"{self._variant if self._variant else ''}"))
 
     def __eq__(self, other) -> bool:
         if not isinstance(other, dtype):
