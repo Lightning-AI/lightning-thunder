@@ -92,6 +92,10 @@ __all__ = [
     "int32",
     "int64",
     "bfloat16",
+    "float8_e5m2",
+    "float8_e5m2fnuz",
+    "float8_e4m3fn",
+    "float8_e4m3fnuz",
     "float16",
     "float32",
     "float64",
@@ -129,6 +133,10 @@ int16 = dtypes.int16
 int32 = dtypes.int32
 int64 = dtypes.int64
 bfloat16 = dtypes.bfloat16
+float8_e5m2 = dtypes.float8_e5m2
+float8_e5m2fnuz = dtypes.float8_e5m2fnuz
+float8_e4m3fn = dtypes.float8_e4m3fn
+float8_e4m3fnuz = dtypes.float8_e4m3fnuz
 float16 = dtypes.float16
 float32 = dtypes.float32
 float64 = dtypes.float64

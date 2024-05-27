@@ -1269,7 +1269,7 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp, singul
 
 @ops(
     tuple(op for op in opinfos if op.supports_grad and op.torch_reference is not None),
-    supported_dtypes=(dtypes.floating,),
+    supported_dtypes=dtypes.float_math_dtypes,
 )
 def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executor, comp):
     if dtypes.is_complex_dtype(dtype):
