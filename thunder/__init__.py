@@ -322,6 +322,9 @@ def jit(
     assert type(record_history) is bool
 
     # TODO RC1 Refine the compile data option to remove unused options
+    # TODO: refine options
+    # NOTE(fixme): use_cudagraphs is being absorbed into compile_options
+    use_cudagraphs = compile_options.get("use_cudagraphs", False)
     cd = CompileData(
         fn=fn,
         langctx=langctx,
@@ -329,7 +332,7 @@ def jit(
         cache_option=cache,
         sharp_edges=sharp_edges,
         using_jit=True,
-        use_cudagraphs=False,
+        use_cudagraphs=use_cudagraphs,
         disable_torch_autograd_support=disable_torch_autograd,
         use_rematerialization=False,
         only_execute_prims=False,
@@ -580,6 +583,12 @@ def jit(
                 backward_fn = backward_trc.python_callable()
             else:
                 backward_fn = None
+
+            # TODO: using vanilla CUDAGraphExecutor is not safe unless the graph is always static!
+            # (fixme): inspect torch.cuda.make_graph_callables and/or use it instead!
+            # See https://github.com/Lightning-AI/lightning-thunder/issues/433
+            if cd.use_cudagraphs:
+                comp = CUDAGraphExecutor(comp)
 
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(
