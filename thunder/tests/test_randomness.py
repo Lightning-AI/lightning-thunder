@@ -46,8 +46,8 @@ def test_rng_state_prims(executor, device: str, _):
         s0, o0, s1, o1 = jfunc(dev)
         assert_close(s0, 2)
         assert_close(s1, 2)
-        assert_close(o0, 8//4)
-        assert_close(o1, 12//4)
+        assert_close(o0, 8 // 4)
+        assert_close(o1, 12 // 4)
 
 
 # @instantiate(

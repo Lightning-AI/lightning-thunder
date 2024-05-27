@@ -76,7 +76,7 @@ from thunder.core.proxies import (
     StringProxy,
     TupleProxy,
     AnyProxy,
-    IntegerProxy
+    IntegerProxy,
 )
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
@@ -2678,7 +2678,9 @@ uniform = make_prim(
 )
 
 
-def _get_and_update_rng_state_meta(seed: IntegerProxy | int | None, offset: IntegerProxy | int | None, device: devices.Device) -> tuple[IntegerProxy, IntegerProxy]:
+def _get_and_update_rng_state_meta(
+    seed: IntegerProxy | int | None, offset: IntegerProxy | int | None, device: devices.Device
+) -> tuple[IntegerProxy, IntegerProxy]:
     seed_is_none = seed is None
     offset_is_none = offset is None
     utils.check(
@@ -2696,6 +2698,7 @@ def _get_and_update_rng_state_meta(seed: IntegerProxy | int | None, offset: Inte
             exception_type=NotImplementedError,
         )
     return numberproxy(int, 0), numberproxy(int, 0)
+
 
 get_and_update_rng_state = make_prim(
     PrimIDs.GET_AND_UPDATE_RNG_STATE,
