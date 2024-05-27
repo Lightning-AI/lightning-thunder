@@ -76,6 +76,7 @@ from thunder.core.proxies import (
     StringProxy,
     TupleProxy,
     AnyProxy,
+    IntegerProxy
 )
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
@@ -151,10 +152,7 @@ class PrimIDs(Enum):
     TENSOR_FROM_SEQUENCE = auto()
     # Probability distribution-related ops
     MULTINOMIAL = auto()
-    SET_RNG_STATE = auto()
-    GET_RNG_STATE = auto()
-    UNPACK_RNG_STATE = auto()
-    UPDATE_RNG_STATE = auto()
+    GET_AND_UPDATE_RNG_STATE = auto()
     # Reshaping and permuting prims
     BROADCAST_IN_DIM = auto()
     CAT = auto()
@@ -2680,110 +2678,29 @@ uniform = make_prim(
 )
 
 
-def _set_rng_state_meta(new_state: TensorProxy, device: devices.Device | None = None) -> TensorProxy:
-    utils.check_type(new_state, TensorProxy)
+def _get_and_update_rng_state_meta(seed: IntegerProxy | int | None, offset: IntegerProxy | int | None, device: devices.Device) -> tuple[IntegerProxy, IntegerProxy]:
+    seed_is_none = seed is None
+    offset_is_none = offset is None
     utils.check(
-        isinstance(new_state.dtype, dtypes.unsignedinteger),
-        lambda: f"Expected uint8 new_state dtype, but got {new_state.dtype}",
+        not seed_is_none ^ offset_is_none,
+        lambda: f"seed and offset must be given in pair (they are both None only used on first use of get_and_update_rng_statebut), but got {seed}, {offset}",
     )
-    utils.check(
-        new_state.device is devices.cpu,
-        lambda: f"Expected a new_state on CPU but got {new_state.device}",
-    )
+    if not seed_is_none:
+        utils.check_type(seed, (IntegerProxy, int))
+    if not offset_is_none:
+        utils.check_type(offset, (IntegerProxy, int))
     if device is not None:
         utils.check(
             device.devicetype is devices.DeviceType.CUDA,
-            lambda: f"set_rng_state is supported for CUDA only",
+            lambda: f"get_and_update_rng_state is supported for CUDA only",
             exception_type=NotImplementedError,
         )
-    return TensorProxy(like=new_state)
-
-
-set_rng_state = make_prim(
-    PrimIDs.SET_RNG_STATE,
-    "set_rng_state",
-    meta=_set_rng_state_meta,
-    tags=(OpTags.DONT_DCE,),
-)
-
-
-# NOTE: the input state is used to force relative ordering when using multiple get/set_rng_state calls,
-# The user should ensure that when the default cuda generator state is obtained for the device for the first time, the state must be passed as "None".
-def _get_rng_state_meta(state: TensorProxy | NoneType, device: devices.Device | None = None) -> TensorProxy:
-    # RNG state is the concatenation of 64-bit seed and 64-bit offset reinterpreted as 16 elements with uint8 type. So state_shape = 2 * dtypes.int64.bytes // dtypes.uint8.bytes
-    state_shape = (16,)
-    utils.check(
-        state is not None or device is not None,
-        lambda: f"state and device cannot both be None. state=None is only used the first time get_rng_state is used.",
-    )
-    if state is not None:
-        utils.check_type(state, TensorProxy)
-        utils.check(
-            isinstance(state.dtype, dtypes.unsignedinteger),
-            lambda: f"Expected unit8 dtype but got state dtype={state.dtype}",
-        )
-        utils.check(
-            state.device.devicetype is devices.DeviceType.CPU,
-            lambda: f"Expected a state on CPU but got {state.device.devicetype}",
-        )
-        utils.check(
-            utils.same_shape(state.shape, state_shape),
-            lambda: f"state shape must be ({state_shape},), but got {state.shape}",
-        )
-    if device is not None:
-        utils.check(
-            device.devicetype is devices.DeviceType.CUDA,
-            lambda: f"get_rng_state is supported for CUDA only",
-            exception_type=NotImplementedError,
-        )
-    return TensorProxy(shape=state_shape, dtype=dtypes.uint8, device=devices.cpu)
-
-
-get_rng_state = make_prim(
-    PrimIDs.GET_RNG_STATE,
-    "get_rng_state",
-    meta=_get_rng_state_meta,
-)
-
-
-def _unpack_rng_state_meta(state: TensorProxy) -> tuple[NumberProxy, NumberProxy]:
-    utils.check_type(state, TensorProxy)
-    utils.check(
-        isinstance(state.dtype, dtypes.unsignedinteger),
-        lambda: f"Expected unit8 dtype but got state dtype={state.dtype}",
-    )
-    utils.check(
-        state.device.devicetype is devices.DeviceType.CPU,
-        lambda: f"Expected a state on CPU but got {state.device.devicetype}",
-    )
-    # RNG state is the cancatenate of 64-bit seed and 64-bit offset. Its type is uint8. So state_shape = dtypes.int64.bytes//dtypes.uint8.bytes * 2
-    state_shape = 16
-    utils.check(
-        utils.same_shape(state.shape, (state_shape,)),
-        lambda: f"state shape must be ({state_shape},), but got {state.shape}",
-    )
     return numberproxy(int, 0), numberproxy(int, 0)
 
-
-unpack_rng_state = make_prim(
-    PrimIDs.UNPACK_RNG_STATE,
-    "unpack_rng_state",
-    meta=_unpack_rng_state_meta,
-)
-
-
-def _update_rng_state_meta(seed: int, offset: int) -> TensorProxy:
-    utils.check_type(seed, int)
-    utils.check_type(offset, int)
-    utils.check_same_dtype(seed, offset)
-    # state_shape is 2 * dtypes.int64.bytes // dtypes.uint8.bytes
-    return TensorProxy(shape=(16,), dtype=dtypes.uint8, device=devices.cpu)
-
-
-update_rng_state = make_prim(
-    PrimIDs.UPDATE_RNG_STATE,
-    "update_rng_state",
-    meta=_update_rng_state_meta,
+get_and_update_rng_state = make_prim(
+    PrimIDs.GET_AND_UPDATE_RNG_STATE,
+    "get_and_update_rng_state",
+    meta=_get_and_update_rng_state_meta,
 )
 
 
