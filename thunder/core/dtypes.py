@@ -336,11 +336,12 @@ def has_subdtype(x, cls):
 
 
 # Translates a sequence of dtypes and dtype classes into a concrete set of corresponding (strong) dtypes
-def resolve_dtypes(args):
+def resolve_dtypes(args: Iterable) -> set[dtype]:
     dtypes = set()
     for arg in args:
         if isinstance(arg, dtype):
-            dtypes.add(arg)
+            if not arg.is_weak:
+                dtypes.add(arg)
             continue
 
         if isinstance(arg, Iterable):
@@ -350,7 +351,8 @@ def resolve_dtypes(args):
                     lambda: f"Iterables passed to resolve_dtypes must only contain dtypes, but found an Iterable with {a}",
                     exception_type=NotImplementedError,
                 )
-                dtypes.add(a)
+                if not a.is_weak:
+                    dtypes.add(a)
 
         baseutils.check(
             arg in (dtype, exact, signedinteger, unsignedinteger, bool_, inexact, floating, complexfloating),
