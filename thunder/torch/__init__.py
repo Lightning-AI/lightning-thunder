@@ -910,8 +910,7 @@ def pad(a: TensorProxy, /, pad: tuple[int, ...], mode: str | None = "constant", 
     # integer tensor and `value` is a float. It can also be more subtle, where
     # `a` is a lower-precision float than `value`.
     if a_typ is not to_dtype(value, true_dtype=True):
-      warnings.warn("`value` and Tensor input are of different types. This "
-                    "may create numeric issues.")
+        warnings.warn("`value` and Tensor input are of different types. This " "may create numeric issues.")
     v2 = clang.maybe_convert_to_dtype(value, a_typ)
 
     return clang.pad(a, v2, pad_config)
