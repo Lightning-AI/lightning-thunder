@@ -770,7 +770,7 @@ def test_tom_overrides_proxy(device):
     for k, v in grads_expected.items():
         torch.testing.assert_close(v, grads_actual[k], rtol=1e-2, atol=1e-2)
 
-    # deleten overrides, we expect the tom to have the same named params as the original model
+    # after deleting overrides, we expect the tom to have the same named params as the original model
     tom._overrides_parameters.clear()
 
     params_expected = {k: t.grad for k, t in model.named_parameters()}
