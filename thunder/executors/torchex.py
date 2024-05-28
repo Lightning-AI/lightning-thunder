@@ -897,6 +897,7 @@ def _sub_transform(a: Number | TensorProxy, b: Number | TensorProxy, *, alpha: N
 def _div_transform(
     a: Number | TensorProxy,
     b: Number | TensorProxy,
+    /,
     *,
     rounding_mode: None | str = None,
     out: None | TensorProxy = None,

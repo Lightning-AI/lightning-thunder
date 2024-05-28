@@ -2427,7 +2427,7 @@ div_opinfo = OpInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.bool8,),
-            devicetypes=(devices.DeviceType.CPU,),
+            devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
         ),
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
     ),
