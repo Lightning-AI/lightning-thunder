@@ -79,16 +79,22 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
     torch_result = gpt(idx)
 
     tom = executor.make_callable(gpt, use_cudagraphs=True, disable_torch_autograd=True)
-    thunder_result = tom(idx)
 
+    thunder_result = tom(idx)
     assert_close(torch_result, thunder_result)
+
+    # Check we really run CUDAGraphExecutor {
+    assert tom._lc_cd.use_cudagraphs == True
+
+    from thunder.cudagraphs import CUDAGraphExecutor
+
+    assert type(tom._lc_cs.last_executed) == CUDAGraphExecutor
+    # }
 
 
 @instantiate(dtypes=(thunder.float32,), devicetypes=(thunder.devices.DeviceType.CUDA,))
 @requiresCUDA
 def test_nanogpt_complete_cuda_graphs_autograd(executor, device, dtype):
-    pytest.skip("https://github.com/Lightning-AI/lightning-thunder/issues/1403")
-
     tdtype = ttorch.to_torch_dtype(dtype)
 
     # Creates a nanoGPT model with a smaller size than any of the default options for testing

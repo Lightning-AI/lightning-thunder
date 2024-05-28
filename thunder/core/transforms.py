@@ -437,7 +437,8 @@ def add_transform(
         from thunder import ThunderModule
 
         if isinstance(jfn, ThunderModule):
-            jfn._overrides = cfn._overrides
+            jfn._overrides_parameters = cfn._overrides_parameters
+            jfn._overrides_buffers = cfn._overrides_buffers
         return jfn
 
     cs = getattr(cfn, "_lc_cs", None)
@@ -722,7 +723,10 @@ def _broadcast_in_dim_prim_grad(
     bcast_dims = tuple(b for i, b in enumerate(broadcast_dimensions) if i not in unit_dims)
     reduce_dims = tuple(s for i, s in enumerate(range(len(shape))) if i not in bcast_dims)
 
-    g = ltorch.sum(g, reduce_dims)
+    # NOTE When the reduce_dims tuple is empty, pytorch reduces all dimensions.
+    # In this case, we do not want to reduce any dimensions, so skip this sum.
+    if len(reduce_dims) > 0:
+        g = ltorch.sum(g, reduce_dims)
 
     # NOTE This must be clang.unsqueeze because torch.unsqueeze, unlike clang.unsqueeze, only accepts an integer
     #   (put another way, torch only allows one unsqueeze at a time)
