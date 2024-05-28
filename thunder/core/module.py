@@ -70,7 +70,7 @@ class ThunderModule(pytorch.nn.Module):
                     continue
                 seen_ids.add(id_v)
 
-            mod, _, prefix = k.rpartition(k)
+            mod, _, prefix = k.rpartition(".")
             if recurse or not mod:
                 if k not in seen_names:
                     seen_names.add(k)
