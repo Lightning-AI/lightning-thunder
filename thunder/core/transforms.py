@@ -437,7 +437,8 @@ def add_transform(
         from thunder import ThunderModule
 
         if isinstance(jfn, ThunderModule):
-            jfn._overrides = cfn._overrides
+            jfn._overrides_parameters = cfn._overrides_parameters
+            jfn._overrides_buffers = cfn._overrides_buffers
         return jfn
 
     cs = getattr(cfn, "_lc_cs", None)
