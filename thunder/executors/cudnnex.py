@@ -373,10 +373,8 @@ def _cudnn_sdpa_checker(
     # TODO(#58): make the checker more conservative.
     if cudnn is None:
         return False
-    
-    if (query.device.type != 'cuda' or
-            key.device != query.device or
-            value.device != query.device):
+
+    if query.device.type != "cuda" or key.device != query.device or value.device != query.device:
         return False
 
     if len(query.size()) != 4:
