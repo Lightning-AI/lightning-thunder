@@ -62,6 +62,7 @@ vjp_op_force = {
     "stack",
     "cumsum",
     "mse_loss",
+    "adaptive_avg_pool2d",
 }
 
 
@@ -1204,9 +1205,43 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp, singul
 
     args, kwargs = sample.args, sample.kwargs
 
+    def is_output_differentiable(x):
+        # grad_fn is set only if one of the input `requires_grad=True`
+        # and the op is differentiable.
+        # Example:
+        # >>> x = torch.ones(3, requires_grad=True)
+        # >>> y = torch.ones(3, requires_grad=False)
+        # >>> (x + x).grad_fn  # <AddBackward0 object at 0x7f0502edcf40>
+        # >>> (y + y).grad_fn  # None
+        # >>> (y + x).grad_fn  # <AddBackward0 object at 0x7f0502e21060>
+        # >>> (x < 1).grad_fn  # None (non-differentiable op)
+        # Op with differentiable and non-differentiable outputs.
+        # >>> torch.topk(x, k=2)
+        # torch.return_types.topk(
+        # values=tensor([1., 1.], grad_fn=<TopkBackward0>),
+        # indices=tensor([0, 1]))
+        # >>> torch.topk(torch.ones(3, requires_grad=False), k=2)
+        # torch.return_types.topk(
+        # values=tensor([1., 1.]),
+        # indices=tensor([0, 1]))
+        return x.grad_fn is not None
+
+    def filter_differentiable_outputs(outputs):
+        if isinstance(outputs, torch.Tensor):
+            # Otherwise `filter` below will
+            # iterate over the Tensor data.
+            outputs = [outputs]
+
+        return list(filter(is_output_differentiable, outputs))
+
     # Computes PyTorch (competition) result
     torch_flats, spec = tree_flatten((args, kwargs))
     torch_result = torch_op(*args, **kwargs)
+    torch_result = filter_differentiable_outputs(torch_result)
+    if torch_result == []:
+        raise RuntimeError(
+            f"phantom_grad: Expected atleast 1 differentiable output. If {op.name} is non-differentiable, set op.supports_grad=False."
+        )
 
     grads = []
     assert isinstance(torch_result, torch.Tensor) or isinstance(
@@ -1217,9 +1252,11 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp, singul
             assert isinstance(
                 x, torch.Tensor
             ), "Expected a single torch tensor or a sequence of torch tensors when testing phantom grad torch consistency"
-            grads.append(torch.ones_like(x))
+            if is_output_differentiable(x):
+                grads.append(torch.ones_like(x))
     else:
-        grads = [torch.ones_like(torch_result)]
+        if is_output_differentiable(torch_result):
+            grads = [torch.ones_like(torch_result)]
 
     torch_tensors_requiring_grad = tuple(f for f in torch_flats if isinstance(f, torch.Tensor) and f.requires_grad)
     torch_grad_result = torch.autograd.grad(torch_result, torch_tensors_requiring_grad, grads)
@@ -1239,6 +1276,7 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp, singul
         f for f in reference_flats if isinstance(f, torch.Tensor) and f.requires_grad
     )
     reference_result = torch_op(*reference_args, **reference_kwargs)
+    reference_result = filter_differentiable_outputs(reference_result)
     reference_grad_result = torch.autograd.grad(reference_result, reference_tensors_requiring_grad, grads)
 
     # Computes thunder result
@@ -1252,7 +1290,7 @@ def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp, singul
 
 @ops(
     tuple(op for op in opinfos if op.supports_grad and op.torch_reference is not None),
-    supported_dtypes=(dtypes.floating,),
+    supported_dtypes=dtypes.float_math_dtypes,
 )
 def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executor, comp):
     if dtypes.is_complex_dtype(dtype):

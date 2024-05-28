@@ -92,6 +92,10 @@ __all__ = [
     "int32",
     "int64",
     "bfloat16",
+    "float8_e5m2",
+    "float8_e5m2fnuz",
+    "float8_e4m3fn",
+    "float8_e4m3fnuz",
     "float16",
     "float32",
     "float64",
@@ -129,6 +133,10 @@ int16 = dtypes.int16
 int32 = dtypes.int32
 int64 = dtypes.int64
 bfloat16 = dtypes.bfloat16
+float8_e5m2 = dtypes.float8_e5m2
+float8_e5m2fnuz = dtypes.float8_e5m2fnuz
+float8_e4m3fn = dtypes.float8_e4m3fn
+float8_e4m3fnuz = dtypes.float8_e4m3fnuz
 float16 = dtypes.float16
 float32 = dtypes.float32
 float64 = dtypes.float64
@@ -271,7 +279,7 @@ def jit(
         fn: A :class:`~torch.nn.Module` or a function to compile.
     Keyword Args:
         langctx: the language context, which language / library to emulate. default: "torch" for PyTorch compatibility.
-        executors: list of executors to use. Defaults to the executors returned by :func:`thunder.get_default_executors` and always amended by :func:`thunder.get_always_executors`.
+        executors: list of executors to use. Defaults to the executors returned by :func:`thunder.extend.get_default_executors` and always amended by :func:`thunder.extend.get_always_executors`.
                    You can get a list of all available executors with :func:`thunder.get_all_executors`. You can also pass the name of an executor that's been registered, and it will be resolved with :func:`thunder.extend.get_executor`.
         sharp_edges: sharp edge detection action. What to do when thunder detects a construct that is likely to lead to errors. Can be ``"allow"``, ``"warn"``, ``"error"``. Defaults to ``"allow"``.
         cache: caching mode. default: ``"constant values"```
@@ -322,6 +330,9 @@ def jit(
     assert type(record_history) is bool
 
     # TODO RC1 Refine the compile data option to remove unused options
+    # TODO: refine options
+    # NOTE(fixme): use_cudagraphs is being absorbed into compile_options
+    use_cudagraphs = compile_options.get("use_cudagraphs", False)
     cd = CompileData(
         fn=fn,
         langctx=langctx,
@@ -329,7 +340,7 @@ def jit(
         cache_option=cache,
         sharp_edges=sharp_edges,
         using_jit=True,
-        use_cudagraphs=False,
+        use_cudagraphs=use_cudagraphs,
         disable_torch_autograd_support=disable_torch_autograd,
         use_rematerialization=False,
         only_execute_prims=False,
@@ -572,12 +583,20 @@ def jit(
                     )
                 computation_trc = extraces[-1]
 
+            if not compile_options.get("disable_inplace_copy_check", False):
+                thunder.core.transform_common._inplace_copy_sanity_check(computation_trc)
             comp = computation_trc.python_callable()
 
             if backward_trc is not None:
                 backward_fn = backward_trc.python_callable()
             else:
                 backward_fn = None
+
+            # TODO: using vanilla CUDAGraphExecutor is not safe unless the graph is always static!
+            # (fixme): inspect torch.cuda.make_graph_callables and/or use it instead!
+            # See https://github.com/Lightning-AI/lightning-thunder/issues/433
+            if cd.use_cudagraphs:
+                comp = CUDAGraphExecutor(comp)
 
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(
@@ -693,7 +712,7 @@ def compile(
 def compile_data(fn) -> CompileData | None:
     """Obtains the compilation data from a JITed function.
 
-    The compile data (:class:`CompileData`) contains information about how the JIT has been configured
+    The compile data (:class:`thunder.common.CompileData`) contains information about how the JIT has been configured
     for compilation (including referencing the function or module that is being compiled).
     """
     return getattr(fn, "_lc_cd", None)
@@ -702,7 +721,7 @@ def compile_data(fn) -> CompileData | None:
 def compile_stats(fn) -> CompileStats | None:
     """Obtains the compilation statistics from a JITed function.
 
-    The compilation statistics (:class:`CompileStats`) contain information about each compilation run -
+    The compilation statistics (:class:`thunder.common.CompileStats`) contain information about each compilation run -
     collected when a JITed function is called for the first time or with previously unseen state.
     This includes the cache of traces (pologues, computation, possibly backward and epilogue) and
     how they have been transformed and information about cache hits and misses and timings.
@@ -811,13 +830,13 @@ def print_last_interpreter_log(
     """Prints a log of the last run of the interpreter for the given function.
 
     Args:
-        fn: The function returned by `thunder.jit()` to print the last interpreter run log for. The function must have been called at least once first.
+        fn: The function returned by :func:`thunder.jit` to print the last interpreter run log for. The function must have been called at least once first.
         print_fn: The function to use for printing. Defaults to builtin `print`.
         use_colors: Whether to use colors in the output. Defaults to `None`, which attempts to autodetect if the terminal supports ANSI color.
-        indent: Whether to indent the output with function scope. Defaults to `True`.
-        max_depth: The maximum indentation depth of the output. Doesn't print log items nested deeper than the max depth. Defaults to `None`, which means no limit.
-        color_internals: Whether to color instructions implicitly interpreted by other instructions. Defaults to `False`, so that only the instructions in the user's code are highlighted in color.
-        print_source_code: Whether to print the source line below each LineLogItem in the log. Defaults to `True`.
+        indent: Whether to indent the output with function scope. Defaults to :obj:`True`.
+        max_depth: The maximum indentation depth of the output. Doesn't print log items nested deeper than the max depth. Defaults to :obj:`None`, which means no limit.
+        color_internals: Whether to color instructions implicitly interpreted by other instructions. Defaults to :obj:`False`, so that only the instructions in the user's code are highlighted in color.
+        print_source_code: Whether to print the source line below each LineLogItem in the log. Defaults to :obj:`True`.
     """
     log = last_interpreter_log(fn)
     print_interpreter_log(

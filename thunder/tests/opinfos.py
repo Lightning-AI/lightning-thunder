@@ -562,6 +562,20 @@ is_cuda_opinfo = OpInfo(
 tensor_properties.append(is_cuda_opinfo)
 
 
+def _is_nested_torch(x: torch.Tensor) -> bool:
+    return x.is_nested
+
+
+is_nested_opinfo = OpInfo(
+    _is_nested_torch,
+    sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
+    torch_reference=_is_nested_torch,
+    dtypes=(datatypes.all_dtypes),
+)
+
+tensor_properties.append(is_nested_opinfo)
+
+
 def numel_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
@@ -4734,13 +4748,18 @@ def scatter_add_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # torch.scatter_add expects index to be long but not int
     # Index is not differentiable! Marking requires_grad as False
     make_index = partial(make_tensor, device=device, dtype=torch.long, requires_grad=False)
-    # Not sure if we need to consider higher order gradient, marking requires_grad as False
-    make_source = partial(make_tensor, device=device, dtype=dtype, requires_grad=False)
+    make_source = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
+    # NOTE The value gradient is only correct when src.shape == index.shape.
+    # For gradient testing, we use the index shape for the source tensor.
+    # See https://github.com/pytorch/pytorch/issues/27614#issuecomment-564648819
     for shape_a, dim, shape_b in take_along_axis_cases:
         canonicalized_dim = dim if dim >= 0 else dim + len(shape_a)
-        shape_source = list(shape_a)
-        shape_source[canonicalized_dim] = shape_b[canonicalized_dim]
+        if requires_grad:
+            shape_source = shape_b
+        else:
+            shape_source = list(shape_a)
+            shape_source[canonicalized_dim] = shape_b[canonicalized_dim]
         a = make(shape_a)
         b = make_index(shape_b, low=0, high=shape_a[dim])
         c = make_source(shape_source)
@@ -4760,13 +4779,39 @@ def scatter_add_sample_generator(op, device, dtype, requires_grad, **kwargs):
     for shape_a, dim, shape_b, shape_source in scatter_add_cases:
         a = make(shape_a)
         b = make_index(shape_b, low=0, high=shape_a[dim])
-        c = make_source(shape_source)
+        c = make_source(shape_b if requires_grad else shape_source)
         yield SampleInput(a, index=b, src=c, dim=dim)
+
+
+def scatter_add_error_generator(op, device, dtype=torch.float32, requires_grad=True, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    # torch.scatter_add expects index to be long but not int
+    # Index is not differentiable! Marking requires_grad as False
+    make_index = partial(make_tensor, device=device, dtype=torch.long, requires_grad=False)
+    make_source = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # Gradient definition for src tensor is valid only if src.shape == index.shape
+    # NOTE The scatter_add prim renames src variable to value.
+    shape_a = (4, 5, 3)
+    dim = 0
+    shape_b = (3, 2, 3)
+    shape_source = (4, 3, 9)
+
+    a = make(shape_a)
+    b = make_index(shape_b, low=0, high=shape_a[dim])
+    c = make_source(shape_source)
+    yield (
+        SampleInput(a, index=b, src=c, dim=dim),
+        RuntimeError,
+        "The gradient for the value Tensor is implemented only when value.shape == index.shape. value shape is (.*?) while index shape is (.*?).",
+    )
 
 
 scatter_add_opinfo = OpInfo(
     ltorch.scatter_add,
+    supports_grad=True,
     sample_input_generator=scatter_add_sample_generator,
+    error_input_generator=scatter_add_error_generator,
     torch_reference=torch.scatter_add,
     test_directives=(
         # Torch doesn't support complex half on scatter_add
@@ -5310,23 +5355,8 @@ def topk_error_generator(op, device, **kwargs):
     yield (SampleInput(make(3, 3), 1, -3), IndexError, err_msg)
 
 
-# Phantom grad tests do not handle tensor outputs
-# that do not require grad and/or do not have grad_fn.
-# Therefore we explicitly filter outputs.
-# See https://github.com/Lightning-AI/lightning-thunder/issues/119 {
-def topk_thunder_ref(*args, **kwargs):
-    return clang.topk(*args, **kwargs)[0]
-
-
-def topk_torch_ref(*args, **kwargs):
-    return torch.topk(*args, **kwargs)[0]
-
-
-# }
-
-
 topk_opinfo = OpInfo(
-    topk_thunder_ref,
+    clang.topk,
     name="topk",
     supports_grad=True,
     # Without the fixed seed this generator does not guarantee
@@ -5336,7 +5366,7 @@ topk_opinfo = OpInfo(
     # fix the issue.
     sample_input_generator=topk_sample_generator,
     error_input_generator=topk_error_generator,
-    torch_reference=topk_torch_ref,
+    torch_reference=torch.topk,
     dtypes=(datatypes.signedinteger, datatypes.unsignedinteger, datatypes.floating),
     test_directives=(
         DecorateInfo(
@@ -6702,6 +6732,84 @@ avg_pool3d_opinfo = OpInfo(
     ),
 )
 nn_ops.append(avg_pool3d_opinfo)
+
+
+def adaptive_avg_pool2d_error_generator(op, device, **kwargs):
+    make = partial(make_tensor, device=device, dtype=torch.float32)
+
+    cases_runtime_error = (
+        ((3,), (1, 1), "adaptive_avg_pool2d: Expected 3D or 4D tensor, but got"),
+        ((3, 4, 5), (3,), "adaptive_avg_pool2d: output_size must be 2"),
+        (
+            (3, 4, 5),
+            (3, -2),
+            "Found invalid length",
+        ),
+        (
+            (3, 4, 0),
+            (3, 2),
+            "adaptive_avg_pool2d: Expected input to have non-zero size for non-batch dimensions, but input has sizes ",
+        ),
+        (
+            (1, 3, 0, 4),
+            (3, 2),
+            "adaptive_avg_pool2d: Expected input to have non-zero size for non-batch dimensions, but input has sizes ",
+        ),
+    )
+    cases_value_error = (
+        ((3, 4, 5), (3.0, 3.0), r"Element (.*?) \((.*?)\) had an unexpected type"),
+        ((3, 4, 5), 4.0, r"(.*?) had an unexpected type"),
+    )
+    for input_args, err_type in zip((cases_value_error, cases_runtime_error), (ValueError, RuntimeError)):
+        for op_shapes, output_sizes, err_msg in input_args:
+            yield (
+                SampleInput(
+                    make(op_shapes),
+                    output_sizes,
+                ),
+                err_type,
+                err_msg,
+            )
+
+
+def adaptive_avg_pool2d_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    cases = (
+        ((3, 3, 3), 5),
+        ((3, 4, 4), (3, 3)),
+        ((1, 3, 5, 2), 3),
+        ((3, 2, 3, 4), (2, 4)),
+        ((3, 0, 3, 4), (0, 0)),
+        ((0, 0, 3, 4), (0, 2)),
+    )
+
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    for input_shape, output_shape in cases:
+        a = make(input_shape)
+        yield SampleInput(a, output_shape)
+
+
+adaptive_avg_pool2d_opinfo = OpInfo(
+    ltorch.adaptive_avg_pool2d,
+    sample_input_generator=adaptive_avg_pool2d_sample_generator,
+    error_input_generator=adaptive_avg_pool2d_error_generator,
+    torch_reference=torch.nn.functional.adaptive_avg_pool2d,
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # nvfuser does not support adaptive_avg_pool2d for now
+        DecorateInfo(
+            pytest.mark.skip,
+            executors=("nvfuser",),
+        ),
+        # NOTE: Pytorch handles zero size non-batch dimension differently for adaptive_avg_pool2d_backward between CUDA and CPU
+        # RuntimeError: adaptive_avg_pool2d_backward(): Expected grad_output to have non-zero size for non-batch dimensions, but grad_output has sizes [3, 0, 0, 0] with dimension 1 being empty
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+    ),
+)
+nn_ops.append(adaptive_avg_pool2d_opinfo)
 
 
 max_pool1d_opinfo = OpInfo(

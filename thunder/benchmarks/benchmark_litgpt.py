@@ -44,12 +44,17 @@ def configure_optimizers(model, weight_decay, learning_rate, betas, device_type)
     return optimizer
 
 
-def run_fwd_bwd_one_microbatch(
+# NOTE(crcrpar): Calling this method seems to bloat the memory consumption to some extent.
+# e.g. ref: https://github.com/Lightning-AI/lightning-thunder/issues/439
+def _run_fwd_bwd_one_microbatch(
     model: torch.nn.Module,
     input_ids: torch.Tensor,
     targets: torch.Tensor,
     gradient_accumulation_steps: int,
+    device: torch.device,
 ) -> torch.Tensor:
+    input_ids = input_ids.to(device)
+    targets = targets.to(device)
     logits = model(input_ids)
     logits = logits.reshape(-1, logits.size(-1))
     targets = targets.reshape(-1)
@@ -387,22 +392,34 @@ class Benchmark_litGPT:
             if i == self.warmup_iter:  # warmup
                 t0 = iter_t0
 
+            if self.nsys_enabled and i == self.profiler_start and global_rank in [0, None]:
+                print("=====Start NSYS Profiling======")
+                torch.cuda.cudart().cudaProfilerStart()
+
             with data_sync_ctx():
                 for step_idx in range(self.gradient_accumulation_steps - 1):
                     input_ids, targets = next(self.train_data_iter)
-                    input_ids = input_ids.to(device=self.device)
-                    targets = targets.to(device=self.device)
-
-                    if self.nsys_enabled and i == self.profiler_start and global_rank in [0, None] and step_idx == 0:
-                        print("=====Start NSYS Profiling======")
-                        torch.cuda.cudart().cudaProfilerStart()
-
-                    loss = run_fwd_bwd_one_microbatch(self.model, input_ids, targets, self.gradient_accumulation_steps)
+                    input_ids = input_ids.to(self.device)
+                    targets = targets.to(self.device)
+                    logits = self.model(input_ids)
+                    logits = logits.reshape(-1, logits.size(-1))
+                    targets = targets.reshape(-1)
+                    loss = (
+                        torch.nn.functional.cross_entropy(logits, targets, ignore_index=-1)
+                        / self.gradient_accumulation_steps
+                    )
+                    loss.backward()
 
             input_ids, targets = next(self.train_data_iter)
-            input_ids = input_ids.to(device=self.device)
-            targets = targets.to(device=self.device)
-            loss = run_fwd_bwd_one_microbatch(self.model, input_ids, targets, self.gradient_accumulation_steps)
+            input_ids = input_ids.to(self.device)
+            targets = targets.to(self.device)
+            logits = self.model(input_ids)
+            logits = logits.reshape(-1, logits.size(-1))
+            targets = targets.reshape(-1)
+            loss = (
+                torch.nn.functional.cross_entropy(logits, targets, ignore_index=-1) / self.gradient_accumulation_steps
+            )
+            loss.backward()
 
             # Simple Gradient Accumulation Implementation
             self.optimizer.step()
