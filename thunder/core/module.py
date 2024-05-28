@@ -30,24 +30,22 @@ class ThunderModule(pytorch.nn.Module):
         # we populate these here for performance reasons (sam as module cache),
         # a single dict lookup is cheaper than traversin the module
         # hierarchy, see https://github.com/Lightning-AI/lightning-thunder/issues/396#issuecomment-2113231498
-        self._overrides = {
-            k: v for k, v in itertools.chain(self._model.named_parameters(), self._model.named_buffers())
-        }
+        self._overrides_parameters = dict(self._model.named_parameters())
+        self._overrides_buffers = dict(self._model.named_buffers())
         self._module_cache = {k: v for k, v in self._model.named_modules()}
-
         self._null = object()
 
     def get_buffer(self, name):
-        p = self._overrides.get(name, self._null)
+        p = self._overrides_buffers.get(name, self._null)
         if p is not self._null:
             return p
         return self._model.get_buffer(name)
 
     def set_buffer(self, name, value):
-        p = self._overrides[name] = value
+        p = self._overrides_buffers[name] = value
 
     def get_parameter(self, name):
-        p = self._overrides.get(name, self._null)
+        p = self._overrides_parameters.get(name, self._null)
         if p is not self._null:
             return p
         return self._model.get_parameter(name)
@@ -61,6 +59,43 @@ class ThunderModule(pytorch.nn.Module):
     def forward(self, *args, **kwargs):
         res = self._forward_fn(*args, **kwargs)
         return res
+
+    def _named_parameters_or_buffers(self, overrides, orig_iter, prefix="", recurse=True, remove_duplicate=True):
+        seen_ids = set()
+        seen_names = set()
+        for k, v in itertools.chain(overrides.items(), orig_iter(remove_duplicate=remove_duplicate)):
+            if remove_duplicate:
+                id_v = id(v)
+                if id_v in seen_ids:
+                    continue
+                seen_ids.add(id_v)
+
+            mod, _, prefix = k.rpartition(k)
+            if recurse or not mod:
+                if k not in seen_names:
+                    seen_names.add(k)
+                    if prefix:
+                        yield (f"{prefix}.{k}", v)
+                    else:
+                        yield (k, v)
+
+    def named_parameters(self, prefix="", recurse=True, remove_duplicate=True):
+        yield from self._named_parameters_or_buffers(
+            self._overrides_parameters,
+            self._model.named_parameters,
+            prefix=prefix,
+            recurse=recurse,
+            remove_duplicate=remove_duplicate,
+        )
+
+    def named_buffers(self, prefix="", recurse=True, remove_duplicate=True):
+        yield from self._named_parameters_or_buffers(
+            self._overrides_buffers,
+            self._model.named_buffers,
+            prefix=prefix,
+            recurse=recurse,
+            remove_duplicate=remove_duplicate,
+        )
 
     @contextmanager
     def no_sync(self):
