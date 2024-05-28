@@ -2602,6 +2602,12 @@ def _normalize(a: TensorProxy, /, norm_dims, eps: Number) -> tuple[TensorLike, T
     return out, mean, rstd
 
 
+def normalize(
+    a: TensorProxy, /, p: float = 2, dim: int | Sequence[int] = 1, eps: float = 1e-12, out: None | TensorProxy = None
+) -> TensorProxy:
+    utils.check(out is None, lambda: "normalize: out is not None which is currently unsupported", NotImplementedError)
+
+
 # TODO: likely want to refactor these normalizations
 def _native_layer_norm(
     a: TensorProxy, /, normalized_shape, weight, bias, eps: Number
