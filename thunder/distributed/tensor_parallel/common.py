@@ -78,7 +78,7 @@ class ComputationTraceTransformVisitorForTensorParallel:
     based on :clss:`PrePostProcessInterface`.
     """
 
-    bsym2prepostprocess: dict[BoundSymbol, PrePostProcessInterface]
+    bsym_to_prepostprocess: dict[BoundSymbol, PrePostProcessInterface]
 
     def __post_init__(self):
         self.swap_map: dict[VariableInterface, ProxyInterface] = {}
@@ -89,8 +89,8 @@ class ComputationTraceTransformVisitorForTensorParallel:
         from thunder.core.proxies import variableify
 
         pre_post_process: PrePostProcessInterface | None = None
-        if bsym in self.bsym2prepostprocess:
-            pre_post_process = self.bsym2prepostprocess[bsym]
+        if bsym in self.bsym_to_prepostprocess:
+            pre_post_process = self.bsym_to_prepostprocess[bsym]
             orig_arg = bsym.flat_proxy_args[0]
             new_arg, preprocess_artifacts = pre_post_process.preprocess(orig_arg)
             if new_arg.name != orig_arg.name:
