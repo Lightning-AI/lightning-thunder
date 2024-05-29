@@ -251,11 +251,13 @@ def row_parallel(
 
         for pn, p in submodule.named_parameters(recurse=False, prefix=module_name):
             # if we don't have an override or it is just the original, do create a copy
-            if thunder_module._overrides.get(pn, p) is p:
-                thunder_module._overrides[pn] = copy.copy(p)
+            if thunder_module._overrides_parameters.get(pn, p) is p:
+                thunder_module._overrides_parameters[pn] = copy.copy(p)
             if p.ndim < 2:
                 continue
-            _shard_param(thunder_module._overrides[pn], rank, world_size, pn, dim=1, allow_padding_for_fsdp=False)
+            _shard_param(
+                thunder_module._overrides_parameters[pn], rank, world_size, pn, dim=1, allow_padding_for_fsdp=False
+            )
 
     rowwise_thunder_module = add_transform(
         thunder_module,
