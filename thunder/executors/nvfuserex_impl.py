@@ -1028,11 +1028,14 @@ def _uniform_philox_check(
     *,
     device: Device,
     dtype: dtypes.dtype,
-    seed: int | TensorProxy,
-    offset: int | TensorProxy,
+    seed: int | NumberProxy | TensorProxy,
+    offset: int | NumberProxy | TensorProxy,
 ) -> bool:
     return (
-        is_supported_device(device) and is_supported_dtype(dtype) and isinstance(seed, int) and isinstance(offset, int)
+        is_supported_device(device)
+        and is_supported_dtype(dtype)
+        and is_supported_tensor_or_number(seed)
+        and is_supported_tensor_or_number(offset)
     )
 
 

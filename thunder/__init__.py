@@ -47,6 +47,7 @@ from thunder.core.compile_data import compile_data_and_stats, get_compile_data
 from thunder.core.langctxs import LanguageContext
 import thunder.core.langctxs as langctxs
 from thunder.core.baseutils import run_once, check
+from thunder.core.codeutils import Positions
 from thunder.core.proxies import (
     Proxy,
     TensorProxy,
@@ -110,6 +111,7 @@ __all__ = [
     # TODO Extend this
     # TODO Add device aliases
     # TODO Add executor aliases
+    "cudnn_executor",
     "sdpa_executor",
     "nvfuser_executor",
     "pytorch_executor",
@@ -163,16 +165,21 @@ get_all_executors = extend.get_all_executors
 get_default_executors = extend.get_default_executors
 get_always_executors = extend.get_always_executors
 
+cudnn_executor: None | extend.Executor = extend.get_executor("cudnn")
 sdpa_executor: None | extend.Executor = extend.get_executor("sdpa")
 nvfuser_executor: None | extend.Executor = extend.get_executor("nvfuser")
 pytorch_executor: None | extend.Executor = extend.get_executor("torch")
 
-# Default executor list is [sdpa -> nvfuser -> torch -> python]
+# Default executor list is [cudnn -> sdpa -> nvfuser -> torch -> python]
+# Note that add_default_executor inserts executor at start of list, hence the reverse order below.
 if nvfuser_executor:
     add_default_executor(nvfuser_executor)
 
 if sdpa_executor:
     add_default_executor(sdpa_executor)
+
+if cudnn_executor:
+    add_default_executor(cudnn_executor)
 
 #
 # Promoted debugging functions
@@ -669,6 +676,7 @@ def jit(
         cd._thunder_module_map[id(fn)] = fn_
 
     # Sets compile options and statistics attributes
+    cd._get_computation_and_inputs = get_computation_and_inputs
     fn_._lc_cd = cd
     fn_._lc_cs = cs
     fn_._lc_early_transforms = early_transforms[:]  ## transforms

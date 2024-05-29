@@ -1,5 +1,5 @@
 numpy
-Requests==2.31.0
+Requests==2.32.2
 sentencepiece==0.1.99
 torch
 tqdm==4.66.3
