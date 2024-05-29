@@ -98,9 +98,12 @@ class ThunderFunction(torch.autograd.Function):
         assert not saved_tensors_list, "saved_tensors_list must be empty after calling compiled_backward"
         # TODO(crcrpar): Remove if-else once `dist_prims.stash_grad_for_fsdp` starts to return `None`
         # NOTE(crcrpar): In fsdp no-sync, unsharded gradients are attached and accumulated to their parameters as the attr of `_thunder_fsdp_unsharded_grad` in order to avoid shape mismatch of a param and its grad. When exiting the no_sync context, the accumulated, unsharded gradients are reduce-scattered into the attr of `grad` and `_thunder_fsdp_unsharded_grad` is removed.
-        if ctx.return_none_instead_of_grads:
-            return (None, None, None, None, None, *([None] * len(grads)))
-        return (None, None, None, None, None, *grads)
+        if not ctx.return_none_instead_of_grads:
+            return (None, None, None, None, None, *grads)
+        else:
+            n_grads = len(grads)
+            del grads
+            return (None, None, None, None, None, *([None] * n_grads))
 
 
 def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stats, /, *flat_args):

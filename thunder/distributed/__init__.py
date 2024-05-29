@@ -418,21 +418,23 @@ def fsdp_transform_module(
             # TODO: we could also support calling a "param_init_fn" argument like PyTorch
             _materialize(module_copy, device)
             for n, p in module_copy.named_parameters(recurse=False, prefix=module_name):
-                thunder_model._overrides[n] = p
+                thunder_model._overrides_parameters[n] = p
                 device_adjustments[n] = device
             for n, b in module_copy.named_buffers(recurse=False, prefix=module_name):
-                thunder_model._overrides[n] = b
+                thunder_model._overrides_buffers[n] = b
                 device_adjustments[n] = device
         else:
             # Move leftover params and buffers to device. This is at least required to broadcast.
             # Cannot `submodule.to(device)` because we don't want it to recurse
             for n, p in module_copy.named_parameters(recurse=False, prefix=module_name):
                 if p.device != device:
-                    thunder_model._overrides[n] = torch.nn.Parameter(p.to(device=device), requires_grad=p.requires_grad)
+                    thunder_model._overrides_parameters[n] = torch.nn.Parameter(
+                        p.to(device=device), requires_grad=p.requires_grad
+                    )
                     device_adjustments[n] = device
             for n, b in module_copy.named_buffers(recurse=False, prefix=module_name):
                 if b.device != device:
-                    thunder_model._overrides[n] = b.to(device=device)
+                    thunder_model._overrides_buffers[n] = b.to(device=device)
                     device_adjustments[n] = device
 
         # Broadcast parameters if requested
@@ -445,13 +447,16 @@ def fsdp_transform_module(
                 tdist.broadcast(thunder_model.get_buffer(pn), src=broadcast_from, group=process_group, async_op=False)
 
         for pn, p in submodule.named_parameters(recurse=False, prefix=module_name):
-            if pn not in thunder_model._overrides:
-                thunder_model._overrides[pn] = copy.copy(p)
+            # if we don't have an override or it is just the original, do create a copy
+            if thunder_model._overrides_parameters.get(pn, p) is p:
+                thunder_model._overrides_parameters[pn] = copy.copy(p)
             # we collect shapes and devices because we do not know if other transforms also change it...
-            old_shape = thunder_model._overrides[pn].shape
-            _shard_param(thunder_model._overrides[pn], global_rank, world_size, pn, allow_padding_for_fsdp=True)
-            new_shape = thunder_model._overrides[pn].shape
-            sharded_params[pn] = (old_shape, new_shape, thunder_model._overrides[pn].device)
+            old_shape = thunder_model._overrides_parameters[pn].shape
+            _shard_param(
+                thunder_model._overrides_parameters[pn], global_rank, world_size, pn, allow_padding_for_fsdp=True
+            )
+            new_shape = thunder_model._overrides_parameters[pn].shape
+            sharded_params[pn] = (old_shape, new_shape, thunder_model._overrides_parameters[pn].device)
 
     early_transform_from_trace_to_fsdp_trace = FSDPTraceTransform(
         sharded_params=sharded_params,

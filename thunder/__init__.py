@@ -92,6 +92,10 @@ __all__ = [
     "int32",
     "int64",
     "bfloat16",
+    "float8_e5m2",
+    "float8_e5m2fnuz",
+    "float8_e4m3fn",
+    "float8_e4m3fnuz",
     "float16",
     "float32",
     "float64",
@@ -106,6 +110,7 @@ __all__ = [
     # TODO Extend this
     # TODO Add device aliases
     # TODO Add executor aliases
+    "cudnn_executor",
     "sdpa_executor",
     "nvfuser_executor",
     "pytorch_executor",
@@ -129,6 +134,10 @@ int16 = dtypes.int16
 int32 = dtypes.int32
 int64 = dtypes.int64
 bfloat16 = dtypes.bfloat16
+float8_e5m2 = dtypes.float8_e5m2
+float8_e5m2fnuz = dtypes.float8_e5m2fnuz
+float8_e4m3fn = dtypes.float8_e4m3fn
+float8_e4m3fnuz = dtypes.float8_e4m3fnuz
 float16 = dtypes.float16
 float32 = dtypes.float32
 float64 = dtypes.float64
@@ -155,16 +164,21 @@ get_all_executors = extend.get_all_executors
 get_default_executors = extend.get_default_executors
 get_always_executors = extend.get_always_executors
 
+cudnn_executor: None | extend.Executor = extend.get_executor("cudnn")
 sdpa_executor: None | extend.Executor = extend.get_executor("sdpa")
 nvfuser_executor: None | extend.Executor = extend.get_executor("nvfuser")
 pytorch_executor: None | extend.Executor = extend.get_executor("torch")
 
-# Default executor list is [sdpa -> nvfuser -> torch -> python]
+# Default executor list is [cudnn -> sdpa -> nvfuser -> torch -> python]
+# Note that add_default_executor inserts executor at start of list, hence the reverse order below.
 if nvfuser_executor:
     add_default_executor(nvfuser_executor)
 
 if sdpa_executor:
     add_default_executor(sdpa_executor)
+
+if cudnn_executor:
+    add_default_executor(cudnn_executor)
 
 #
 # Promoted debugging functions
@@ -322,6 +336,9 @@ def jit(
     assert type(record_history) is bool
 
     # TODO RC1 Refine the compile data option to remove unused options
+    # TODO: refine options
+    # NOTE(fixme): use_cudagraphs is being absorbed into compile_options
+    use_cudagraphs = compile_options.get("use_cudagraphs", False)
     cd = CompileData(
         fn=fn,
         langctx=langctx,
@@ -329,7 +346,7 @@ def jit(
         cache_option=cache,
         sharp_edges=sharp_edges,
         using_jit=True,
-        use_cudagraphs=False,
+        use_cudagraphs=use_cudagraphs,
         disable_torch_autograd_support=disable_torch_autograd,
         use_rematerialization=False,
         only_execute_prims=False,
@@ -580,6 +597,12 @@ def jit(
                 backward_fn = backward_trc.python_callable()
             else:
                 backward_fn = None
+
+            # TODO: using vanilla CUDAGraphExecutor is not safe unless the graph is always static!
+            # (fixme): inspect torch.cuda.make_graph_callables and/or use it instead!
+            # See https://github.com/Lightning-AI/lightning-thunder/issues/433
+            if cd.use_cudagraphs:
+                comp = CUDAGraphExecutor(comp)
 
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(
