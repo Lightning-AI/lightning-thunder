@@ -1054,14 +1054,14 @@ class CompileDDPTest(DataParallelTestCase):
         ref_state_dict = ref_model.state_dict()
         expected = ref_model(x)
 
-        converter = {
+        transform = {
             "column": column_parallel,
             "row": row_parallel,
         }[name]
         model = ToyModel().to(device)
         model.load_state_dict(ref_state_dict)
         jitted_model = thunder.jit(model)
-        tp_jitted_model = converter(
+        tp_jitted_model = transform(
             jitted_model,
             target_modules=("net2",),
             process_group=process_group,
@@ -1107,14 +1107,14 @@ class CompileDDPTest(DataParallelTestCase):
         ref_state_dict = ref_model.state_dict()
         expected = ref_model(x)
 
-        converter = {
+        transform = {
             "column": column_parallel,
             "row": row_parallel,
         }[name]
         model = Model().to(device)
         model.load_state_dict(ref_state_dict)
         jitted_model = thunder.jit(model)
-        tp_jitted_model = converter(
+        tp_jitted_model = transform(
             jitted_model,
             target_modules=("embed",),
             process_group=process_group,
