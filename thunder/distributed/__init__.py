@@ -588,6 +588,7 @@ def _shard_params(
             if param in sharded_params:
                 continue
             _shard_param(param, global_rank, world_size, param_name, allow_padding_for_fsdp=allow_padding_for_fsdp)
+            # Mark the param as sharded so that we don't reshard it (in case model has shared parameters)
             sharded_params[param] = True
 
 

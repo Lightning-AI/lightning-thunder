@@ -1021,6 +1021,52 @@ class CompileDDPTest(DataParallelTestCase):
         with thunder.ThunderModule.no_sync(model):
             fwd_loss(model, x)
 
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
+    def test_fsdp_weight_sharing(self):
+        # This test is to verify that weight sharing works with fsdp.
+        # NOTE: Currently we end up creating 2 copies of shared weight during execution.
+        #       This should be fixed and we should update this test to check for that.
+        device = torch.device("cuda", self.rank)
+        torch.set_default_device(device)
+
+        class Model(torch.nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.fc1 = torch.nn.Linear(16, 16, bias=False)
+                self.fc2 = torch.nn.Linear(16, 16, bias=False)
+
+            def forward(self, x):
+                return self.fc1(x) + self.fc2(x)
+
+        # Check `jit(fsdp(model))` works
+        with device:
+            model = Model()
+
+        model.fc1.weight = model.fc2.weight
+
+        model = thunder.distributed.fsdp(model)
+        model = thunder.jit(model, executors=["torch"])
+
+        x = torch.randn(4, 16)
+        output = model(x)
+
+        expected_shape = (4, 16)
+        assert output.shape == expected_shape, f"{output.shape=} - {expected_shape=}"
+
+        # Check `fsdp(jit(model))` works
+        with device:
+            model = Model()
+
+        model.fc1.weight = model.fc2.weight
+
+        model = thunder.distributed.fsdp(thunder.jit(model, executors=["torch"]))
+
+        x = torch.randn(4, 16)
+        output = model(x)
+
+        expected_shape = (4, 16)
+        assert output.shape == expected_shape, f"{output.shape=} - {expected_shape=}"
+
 
 common_utils.instantiate_parametrized_tests(CompileDDPTest)
 
