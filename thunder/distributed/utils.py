@@ -51,10 +51,7 @@ def sort_data_parallel_syncs(primal_trace):
         return primal_trace
 
 
-# TODO: Currently prefer the most memory-efficient way for ZeRO3,
-# Need a strategy to balance the efficiency
-# and memory usage in the future
-def sort_waits_for_zero3(execution_trace):
+def sort_communication_ops(execution_trace):
     """
     Sorts the wait_prim_impl nodes in the execution trace to be as far from the
     communication ops as possible, except for the all_gather_prim_impl nodes, the all_gather_prim_impl nodes

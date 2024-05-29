@@ -110,7 +110,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     from thunder.core.rematerialization import rematerialize_all_gather, rematerialize_forward_and_backward
     from thunder.core.transforms import forward_and_backward_from_trace
     from thunder.distributed.transforms import FSDPCommBucketing
-    from thunder.distributed.utils import sort_data_parallel_syncs, sort_waits, sort_waits_for_zero3
+    from thunder.distributed.utils import sort_data_parallel_syncs, sort_waits, sort_communication_ops
     from thunder.executors.passes import del_last_used, transform_for_execution
 
     utils.check(compile_data is not None, lambda: "`compile_data` is required")
@@ -226,20 +226,31 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
             from thunder.distributed import FSDPBucketingStrategy
             from thunder.distributed.utils import limit_in_flight_allgathers
 
-            fw_extrace = sort_waits_for_zero3(fw_extrace)
+            fw_extrace = sort_communication_ops(fw_extrace)
             fw_extrace = limit_in_flight_allgathers(
                 fw_extrace,
                 3,
                 compile_data.fn.bucketing_strategy != FSDPBucketingStrategy.NONE,
             )
-            bw_extrace = sort_waits_for_zero3(bw_extrace)
+            bw_extrace = sort_communication_ops(bw_extrace)
             bw_extrace = limit_in_flight_allgathers(
                 bw_extrace,
                 3,
                 compile_data.fn.bucketing_strategy != FSDPBucketingStrategy.NONE,
             )
         if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO2:
-            fw_extrace = sort_waits(fw_extrace)
+            from thunder.distributed import FSDPBucketingStrategy
+            from thunder.distributed.utils import limit_in_flight_allgathers
+            from sys import maxsize as INT_MAX
+
+            # sort the allgather+wait as consumer order just before consumer
+            fw_extrace = sort_communication_ops(fw_extrace)
+            # unlimited number of allgathers, i.e. allgathers are listed at the beginning of the trace in consumer order and wait stays just before wait
+            fw_extrace = limit_in_flight_allgathers(
+                fw_extrace,
+                INT_MAX,
+                compile_data.fn.bucketing_strategy != FSDPBucketingStrategy.NONE,
+            )
             bw_extrace = sort_waits(bw_extrace)
     if getattr(compile_data.fn, "use_ddp", False):
         bw_extrace = sort_waits(bw_extrace)
