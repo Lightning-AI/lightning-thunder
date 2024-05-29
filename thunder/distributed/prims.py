@@ -31,7 +31,6 @@ class PrimIDs(Enum):
     PACK_FOR_FSDP = auto()
     STASH_GRAD_FOR_FSDP = auto()
 
-    # Experimental
     SYNCHRONIZE_TENSOR_PARALLEL_OUTPUT = auto()
 
 
