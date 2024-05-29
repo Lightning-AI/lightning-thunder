@@ -44,7 +44,7 @@ class PrePostProcessInterface(ABC):
 
     @abstractmethod
     def preprocess(self, x: TensorProxy) -> tuple[TensorProxy, tuple[Any, ...]]:
-        """Apply preprocessing to tensro parallel op's inputs.
+        """Apply preprocessing to tensor parallel op's inputs.
 
         The second return value could be consumed by :func:`PrePostProcessInterface.postprocess`.
         """
@@ -73,8 +73,8 @@ class NoOp(PrePostProcessInterface):
 class ComputationTraceTransformVisitorForTensorParallel:
     """Wrap tensor parallel ops with necessary preprocessing and postprocessing.
 
-    With the reference of ``bsyms_before_allgather``, this takes care of inputs and ouptuts of
-    tensor parallel ops by applying defined processings. Each pair of them is suppoed to be defined
+    With the reference of ``bsyms_before_allgather``, this takes care of inputs and outputs of
+    tensor parallel ops by applying defined processings. Each pair of them is supposed to be defined
     based on :clss:`PrePostProcessInterface`.
     """
 

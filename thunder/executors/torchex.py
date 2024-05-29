@@ -1760,7 +1760,7 @@ if torch.distributed.is_available():
         result_shape = list(a.shape)
         if dim is not None:
             utils.check_type(dim, int)
-            utils.check(dim >= 0 and dim < a.dim(), lambda: f"dim must satisfry 0 <= {dim=} < {a.dim()=}")
+            utils.check(dim >= 0 and dim < a.dim(), lambda: f"dim must satisfy 0 <= {dim=} < {a.dim()=}")
             result_shape[dim] *= group.size()
         else:
             result_shape[0] *= group.size()
