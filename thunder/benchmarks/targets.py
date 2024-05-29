@@ -908,26 +908,29 @@ def get_configs_for_qkv_split_rope():
     config_names = list(sorted(unique_config_names.values()))
     return config_names
 
+qkv_split_rope_executors = (
+    (torch_executor, False),
+    (torch_compile_executor, False),
+    (thunder_executor, False),
+    (thunder_sdpa_torch_compile_nvfuser_executor, False),
+    (torch_executor, True),
+    (torch_compile_executor, True),
+)
+qkv_split_rope_executors_ids = (
+    "torch",
+    "torch.compile",
+    "thunder",
+    "thunder+nvfuser+torch.compile",
+    "torch+apex",
+    "torch.compile+apex",
+)
+
 # Sample command to run this benchmark:
-# pytest thunder/benchmarks/targets.py -k "test_litgpt_qkv_split_rope_train" --benchmark-group-by='param:config,param:bs' --benchmark-columns='min,max,mean,stddev,median'
+# pytest thunder/benchmarks/targets.py -k "test_litgpt_qkv_split_rope_train_forward" --benchmark-group-by='param:config,param:bs' --benchmark-columns='min,max,mean,stddev,median'
 @pytest.mark.parametrize(
     "executor,use_apex,",
-    (
-        (torch_fwd_bwd, False),
-        (torchcompile_fwd_bwd, False),
-        (thunder_fwd_bwd, False),
-        (thunder_fwd_bwd_sdpa_torch_compile_nvfuser, False),
-        (torch_fwd_bwd, True),
-        (torchcompile_fwd_bwd, True),
-    ),
-    ids=(
-        "torch",
-        "torch.compile",
-        "thunder",
-        "thunder+nvfuser+torch.compile",
-        "torch+apex",
-        "torch.compile+apex",
-    ),
+    qkv_split_rope_executors,
+    ids=qkv_split_rope_executors_ids,
 )
 # bs = batch size
 # It's typically small for LLMs
@@ -940,7 +943,8 @@ def get_configs_for_qkv_split_rope():
     "config,",
     get_configs_for_qkv_split_rope(),
 )
-def test_litgpt_qkv_split_rope_train(
+@pytest.mark.benchmark(group="forward")
+def test_litgpt_qkv_split_rope_train_forward(
     benchmark,
     executor: Callable,
     use_apex: bool,
@@ -962,7 +966,7 @@ def test_litgpt_qkv_split_rope_train(
     )
 
     setup = make_setup(bench)
-    fn = executor(bench)
+    fn = executor(bench.fn())
     fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
