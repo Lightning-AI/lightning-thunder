@@ -119,35 +119,34 @@ class TransformForRowWiseParallel(TransformForTensorParallel):
         flat_args, _ = tree_flatten((computation_trace.args, computation_trace.kwargs))
         bsym_to_prepostprocess: dict[BoundSymbol, PrePostProcessInterface] = {}
         for proxy in filter(lambda p: isinstance(p, TensorProxy), flat_args):
-            for p_name in self.chunked_param_name_to_layer_type:
-                if p_name == proxy.name:
-                    consumer_bsym = consumers[proxy][0]
-                    if consumer_bsym not in bsym_to_prepostprocess:
-                        match self.chunked_param_name_to_layer_type[p_name]:
-                            case nn.Linear:
-                                orig_args = consumer_bsym.args
-                                utils.check(
-                                    len(orig_args) == 3,
-                                    lambda: f"{consumer_bsym.sym.id} expected to have 3 args but {orig_args}",
-                                )
-                                bias_or_none = orig_args[2]
-                                utils.check(
-                                    isinstance(bias_or_none, TensorProxy) or bias_or_none is None,
-                                    lambda: f"{orig_args[-1]} expected to be either `None` or `TensorProxy`",
-                                )
-                                bsym_to_prepostprocess[consumer_bsym] = RowParallelLinearPrePostProcess(
-                                    process_group=self.process_group,
-                                    bias_or_none=bias_or_none,
-                                )
-                            case nn.Embedding:
-                                bsym_to_prepostprocess[consumer_bsym] = RowParallelEmbeddingPreProcess(
-                                    process_group=self.process_group
-                                )
-                            case _:
-                                utils.check(
-                                    False,
-                                    lambda: f"{self.chunked_param_name_to_layer_type[p_name]=} is not supported",
-                                )
+            if (layer_type := self.chunked_param_name_to_layer_type.get(proxy.name, None)) is not None:
+                consumer_bsym = consumers[proxy][0]
+                if consumer_bsym not in bsym_to_prepostprocess:
+                    match layer_type:
+                        case nn.Linear:
+                            orig_args = consumer_bsym.args
+                            utils.check(
+                                len(orig_args) == 3,
+                                lambda: f"{consumer_bsym.sym.id} expected to have 3 args but {orig_args}",
+                            )
+                            bias_or_none = orig_args[2]
+                            utils.check(
+                                isinstance(bias_or_none, TensorProxy) or bias_or_none is None,
+                                lambda: f"{orig_args[-1]} expected to be either `None` or `TensorProxy`",
+                            )
+                            bsym_to_prepostprocess[consumer_bsym] = RowParallelLinearPrePostProcess(
+                                process_group=self.process_group,
+                                bias_or_none=bias_or_none,
+                            )
+                        case nn.Embedding:
+                            bsym_to_prepostprocess[consumer_bsym] = RowParallelEmbeddingPreProcess(
+                                process_group=self.process_group
+                            )
+                        case _:
+                            utils.check(
+                                False,
+                                lambda: f"{self.chunked_param_name_to_layer_type[proxy.name]=} is not supported",
+                            )
         utils.check(bsym_to_prepostprocess, lambda: f"{bsym_to_prepostprocess} must not be empty")
 
         visit = ComputationTraceTransformVisitorForTensorParallel(bsym_to_prepostprocess)
