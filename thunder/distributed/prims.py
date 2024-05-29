@@ -326,10 +326,8 @@ def synchronize_tensor_parallel_input_meta(
     utils.check_type(layer_type, TensorParallelLayerType)
 
     supported_ops = (
-        TensorParallelLayerType.COLUMN_PARALLEL_EMBED,
         TensorParallelLayerType.COLUMN_PARALLEL_LINEAR,
         TensorParallelLayerType.ROW_PARALLEL_LINEAR,
-        TensorParallelLayerType.ROW_PARALLEL_EMBED,
     )
     utils.check(
         layer_type in supported_ops,
@@ -494,22 +492,12 @@ def synchronize_tensor_parallel_input_forward_rule(
         case TensorParallelLayerType.COLUMN_PARALLEL_LINEAR:
             return t, (group, layer_type)
         case TensorParallelLayerType.ROW_PARALLEL_LINEAR:
-            return all_reduce(t, DistributedReduceOps.SUM, group, do_async=True, skip_clone=True).wait(), (
-                group,
-                layer_type,
-            )
-        case TensorParallelLayerType.COLUMN_PARALLEL_EMBED:
-            return all_reduce(t, DistributedReduceOps.SUM, group, do_async=True, skip_clone=True).wait(), (
-                group,
-                layer_type,
-            )
-        case TensorParallelLayerType.ROW_PARALLEL_EMBED:
-            # all-gather in the last dim
-            future_of_all_gathered = all_gather(t, group, True, 0)
-            all_gathered = wait(future_of_all_gathered)
-            chunked = ltorch.chunk(all_gathered, group.size(), 0)
-            gathered = ltorch.cat(chunked, dim=-1)
-            return gathered, (group, layer_type)
+            from torch.distributed import distributed_c10d as c10d
+            from thunder import clang
+
+            chunk_size = t.shape[t.ndim - 1] // group.size()
+            start_idx = chunk_size * c10d.get_rank(group)
+            return clang.slice_in_dim(t, start_idx, start_idx + chunk_size, dim=t.ndim - 1), (group, layer_type)
         case _:
             utils.check(False, lambda: f"Invalid {layer_type=}")
 
@@ -530,16 +518,11 @@ def synchronize_tensor_parallel_input_backward_rule(
                 None,
             )
         case TensorParallelLayerType.ROW_PARALLEL_LINEAR:
-            return grad, None, None
-        case TensorParallelLayerType.COLUMN_PARALLEL_EMBED:
-            return grad, None, None
-        case TensorParallelLayerType.ROW_PARALLEL_EMBED:
-            return (
-                reduce_scatter(
-                    grad / group.size(), DistributedReduceOps.SUM, group, do_async=True, dim=grad.ndim - 1
-                ).wait(),
-                None,
-                None,
-            )
+            import thunder.torch as ltorch
+
+            all_gathered = all_gather(grad, group, True, 0).wait()
+            chunked = ltorch.chunk(all_gathered, group.size(), 0)
+            gathered_grad = ltorch.cat(chunked, dim=-1)
+            return gathered_grad, None, None
         case _:
             utils.check(False, lambda: f"Invalid {layer_type=}")
