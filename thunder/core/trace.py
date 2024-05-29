@@ -343,7 +343,6 @@ class TraceCtx:
             import torch
 
             import_ctx["torch"] = torch
-            import_ctx["thunder.source_location"] = thunder.source_location
 
             # Prints imports, sorted by name
 
@@ -426,9 +425,7 @@ class TraceCtx:
                     if i > 0:
                         program.append("")
                     src_line = get_source_line(bsym.source_filename, bsym.source_positions.lineno)
-                    program.append(
-                        f"""  source_location("{bsym.source_filename}:{bsym.source_positions.lineno}", \t{repr(src_line)})"""
-                    )
+                    program.append(f"""  # {bsym.source_filename}:{bsym.source_positions.lineno}: \t{src_line}""")
                 filename = bsym.source_filename
                 lineno = bsym.source_positions and bsym.source_positions.lineno
 

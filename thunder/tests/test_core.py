@@ -2623,21 +2623,18 @@ def test_default_method(executor, device: str, dtype: dtypes.dtype):
 
 @instantiate(dtypes=(thunder.float32,), executors=(TorchExecutor,))
 def test_bound_symbol_source_location_context(executor, device: str, dtype: dtypes.dtype):
-    from thunder.core.symbol import bsym_header
-    from thunder.core.codeutils import Positions
-
-    from thunder import source_location
-
     def foo(x):
-        source_location(f"{__file__}:{lineno}", "")
         return clang.sin(x)
 
     a = make_tensor((2, 2), device=device, dtype=ltorch.to_torch_dtype(dtype))
 
-    lineno = foo.__code__.co_firstlineno + 2
-    trace = thunder.trace()(foo, a)
+    lineno = foo.__code__.co_firstlineno + 1
+    jfn = thunder.jit(foo)
+    jfn(a)
+
+    trace = thunder.last_traces(jfn)[0]
 
     assert len(trace.bound_symbols) == 3
     sin_symbol = trace.bound_symbols[1]
     assert str(trace).count("return clang.sin(x)") == 1
-    assert str(trace).count(f"{__file__}:{lineno}") == 1
+    assert str(trace).count(f"# {__file__}:{lineno}") == 1
