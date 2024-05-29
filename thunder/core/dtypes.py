@@ -59,9 +59,10 @@ class dtype:
 
         return object.__new__(cls)
 
-    def __init__(self, *, python_type, name, shortname, bytes, is_weak):
+    def __init__(self, *, python_type, name, shortname, bytes, is_weak, variant=None):
         self._python_type = python_type
         self._name = name
+        self._variant = variant
         self._shortname = shortname
         self._bytes = bytes
         self._is_weak = is_weak
@@ -80,23 +81,30 @@ class dtype:
         return self._is_weak
 
     def shortname(self):
-        return f"{self._shortname}{8 * self._bytes}"
+        return f"{self._shortname}{8 * self._bytes}{f'_{self._variant}' if self._variant else ''}"
 
     # TODO Fix name printing
     def __repr__(self):
-        return f"{self._name}{8 * self._bytes}{'_' if self._is_weak else ''}"
+        return (
+            f"{self._name}{8 * self._bytes}{f'_{self._variant}' if self._variant else ''}{'_' if self._is_weak else ''}"
+        )
 
     def __str__(self):
         return self.__repr__()
 
     def __hash__(self) -> int:
-        return hash((self._name, self._bytes, self._is_weak))
+        return hash((self._name, self._bytes, self._is_weak, f"{self._variant if self._variant else ''}"))
 
     def __eq__(self, other) -> bool:
         if not isinstance(other, dtype):
             return False
 
-        return self._name == other._name and self._bytes == other._bytes and self._is_weak == other._is_weak
+        return (
+            self._name == other._name
+            and self._bytes == other._bytes
+            and self._is_weak == other._is_weak
+            and self._variant == other._variant
+        )
 
 
 class exact(dtype):
@@ -152,14 +160,24 @@ class inexact(dtype):
 
 
 class floating(inexact):
-    """Base class for the floating dtypes: bfloat16, float16, float32, float64."""
+    """Base class for the floating dtypes: float8, bfloat16, float16, float32, float64."""
 
-    def __init__(self, name, shortname, *, bytes, is_weak):
-        super().__init__(python_type=float, name=name, shortname=shortname, bytes=bytes, is_weak=is_weak)
+    def __init__(self, name, shortname, *, bytes, is_weak, variant=None):
+        super().__init__(
+            python_type=float, name=name, shortname=shortname, bytes=bytes, is_weak=is_weak, variant=variant
+        )
 
 
 bfloat16 = floating("bfloat", "bf", bytes=2, is_weak=False)
 bfloat16_ = floating("bfloat", "bf", bytes=2, is_weak=True)
+float8_e5m2 = floating("float", "f", bytes=1, is_weak=False, variant="e5m2")
+float8_e5m2_ = floating("float", "f", bytes=1, is_weak=True, variant="e5m2")
+float8_e5m2fnuz = floating("float", "f", bytes=1, is_weak=False, variant="e5m2fnuz")
+float8_e5m2fnuz_ = floating("float", "f", bytes=1, is_weak=True, variant="e5m2fnuz")
+float8_e4m3fn = floating("float", "f", bytes=1, is_weak=False, variant="e4m3fn")
+float8_e4m3fn_ = floating("float", "f", bytes=1, is_weak=True, variant="e4m3fn")
+float8_e4m3fnuz = floating("float", "f", bytes=1, is_weak=False, variant="e4m3fnuz")
+float8_e4m3fnuz_ = floating("float", "f", bytes=1, is_weak=True, variant="e4m3fnuz")
 float16 = floating("float", "f", bytes=2, is_weak=False)
 float16_ = floating("float", "f", bytes=2, is_weak=True)
 float32 = floating("float", "f", bytes=4, is_weak=False)
@@ -200,6 +218,14 @@ all_dtypes = {
     int64_,
     bfloat16,
     bfloat16_,
+    float8_e5m2,
+    float8_e5m2_,
+    float8_e5m2fnuz,
+    float8_e5m2fnuz_,
+    float8_e4m3fn,
+    float8_e4m3fn_,
+    float8_e4m3fnuz,
+    float8_e4m3fnuz_,
     float16,
     float16_,
     float32,
@@ -241,6 +267,10 @@ low_precision_dtypes = {
 }
 
 float_dtypes = {d for d in all_dtypes if isinstance(d, floating)} | {float}
+
+float_math_dtypes = {d for d in all_dtypes if isinstance(d, floating) and d.bytes >= 2}
+
+float_8bit_dtypes = {d for d in all_dtypes if (isinstance(d, floating) and d.bytes == 1)}
 
 complex_dtypes = {d for d in all_dtypes if isinstance(d, complexfloating)} | {complex}
 
@@ -306,11 +336,12 @@ def has_subdtype(x, cls):
 
 
 # Translates a sequence of dtypes and dtype classes into a concrete set of corresponding (strong) dtypes
-def resolve_dtypes(args):
+def resolve_dtypes(args: Iterable) -> set[dtype]:
     dtypes = set()
     for arg in args:
         if isinstance(arg, dtype):
-            dtypes.add(arg)
+            if not arg.is_weak:
+                dtypes.add(arg)
             continue
 
         if isinstance(arg, Iterable):
@@ -320,7 +351,8 @@ def resolve_dtypes(args):
                     lambda: f"Iterables passed to resolve_dtypes must only contain dtypes, but found an Iterable with {a}",
                     exception_type=NotImplementedError,
                 )
-                dtypes.add(a)
+                if not a.is_weak:
+                    dtypes.add(a)
 
         baseutils.check(
             arg in (dtype, exact, signedinteger, unsignedinteger, bool_, inexact, floating, complexfloating),
@@ -373,6 +405,10 @@ _strong_dtype_to_weak_dtype_map = {
     int32: int32_,
     int64: int64_,
     bfloat16: bfloat16_,
+    float8_e5m2: float8_e5m2_,
+    float8_e5m2fnuz: float8_e5m2fnuz_,
+    float8_e4m3fn: float8_e4m3fn_,
+    float8_e4m3fnuz: float8_e4m3fnuz_,
     float16: float16_,
     float32: float32_,
     float64: float64_,
@@ -520,6 +556,14 @@ _thunder_to_torch_dtype_map = {
     int64: torch.int64,
     bfloat16_: torch.bfloat16,
     bfloat16: torch.bfloat16,
+    float8_e5m2: torch.float8_e5m2,
+    float8_e5m2_: torch.float8_e5m2,
+    float8_e5m2fnuz: torch.float8_e5m2fnuz,
+    float8_e5m2fnuz_: torch.float8_e5m2fnuz,
+    float8_e4m3fn: torch.float8_e4m3fn,
+    float8_e4m3fn_: torch.float8_e4m3fn,
+    float8_e4m3fnuz: torch.float8_e4m3fnuz,
+    float8_e4m3fnuz_: torch.float8_e4m3fnuz,
     float16_: torch.float16,
     float16: torch.float16,
     float32_: torch.float32,
@@ -551,7 +595,7 @@ def to_torch_dtype(x: None | torch.dtype | dtype) -> None | torch.dtype:
 
 # Converts NumPy dtypes to and from thunder dtypes
 
-# NOTE NumPy does not support the bfloat16 or complexhalf (complex32) datatypes
+# NOTE NumPy does not support the bfloat16, complexhalf (complex32) or float8 datatypes
 _thunder_to_numpy_dtype_map = {
     bool: np.bool_,
     int: np.int_,
