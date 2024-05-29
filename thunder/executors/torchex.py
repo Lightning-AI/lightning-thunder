@@ -437,12 +437,37 @@ def _tensor_from_sequence_prims_transform(
     return tensor_from_sequence(seq_or_number, device=torch_device, dtype=torch_dtype)
 
 
+def _get_and_update_rng_state_impl(seed, offset, device):
+    state = torch.cuda.get_rng_state(device)
+    seed, offset = torch.chunk(state, 2)
+    # We follow the nvFuser way here. The offset used by nvfuser = pytorch_offset // 4
+    # See Note [Divide offset by 4] https://github.com/NVIDIA/Fuser/blob/729f36c/csrc/rng.cpp#L54
+    seed = seed.view(torch.int64).item()
+    offset = offset.view(torch.int64).item() // 4
+    # We follow the nvFuser way here. pytorch_new_offset = (nvfuser_offset + 1) * 4
+    # See Note [Divide offset by 4] https://github.com/NVIDIA/Fuser/blob/729f36c/csrc/rng.cpp#L54
+    new_offset = (offset + 1) * 4
+    seed_portion = torch.tensor([seed]).view(torch.uint8)
+    offset_portion = torch.tensor([new_offset]).view(torch.uint8)
+    new_state = torch.cat([seed_portion, offset_portion])
+    torch.cuda.set_rng_state(new_state, device)
+    return seed, offset
+
+
+get_and_update_rng_state_impl = ex.register_operator(
+    "get_and_update_rng_state_impl",
+    meta=prims.get_and_update_rng_state.meta,
+    fn=_get_and_update_rng_state_impl,
+)
+
+
 _register_implementation(prims.full, checker=_always_executable, execution_transform=_full_transform)
 _register_implementation(prims.iota, checker=_always_executable, execution_transform=_iota_transform)
 _register_implementation(prims.uniform, checker=_always_executable, execution_transform=_uniform_transform)
 _register_implementation(
     prims.uniform_philox, checker=_uniform_philox_prim_checker, execution_transform=_uniform_philox_prim_transform
 )
+_register_implementation(prims.get_and_update_rng_state, get_and_update_rng_state_impl, checker=_always_executable)
 _register_implementation(prims.randn, checker=_always_executable, execution_transform=_randn_prims_transform)
 _register_implementation(prims.empty, checker=_always_executable, execution_transform=_empty_prims_transform)
 _register_implementation(
