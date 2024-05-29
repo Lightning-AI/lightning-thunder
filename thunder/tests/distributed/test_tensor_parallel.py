@@ -58,6 +58,20 @@ class TensorParallelTest(DataParallelTestCase):
             expected=expected,
             actual=tp_jitted_model.get_parameter("net2.weight").grad,
         )
+        expected_bias_grad: torch.Tensor = ref_model.net2.bias.grad
+        if name == _COL:
+            expected = torch.chunk(expected_bias_grad, self.world_size, 0)[self.rank]
+        else:
+            expected = expected_bias_grad
+        torch.testing.assert_close(
+            expected=expected,
+            actual=tp_jitted_model.get_parameter("net2.bias").grad,
+            msg=f"{expected.shape=}, {tp_jitted_model.get_parameter('net2.bias').grad}",
+        )
+        torch.testing.assert_close(
+            expected=(ref_model.net1.weight.grad, ref_model.net1.bias.grad),
+            actual=(tp_jitted_model.get_parameter("net1.weight").grad, tp_jitted_model.get_parameter("net1.bias").grad),
+        )
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     @common_utils.parametrize("name", tuple(_name_to_transform.keys()))

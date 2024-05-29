@@ -38,7 +38,14 @@ class ColumnParallelLinearPrePostProcess(PrePostProcessInterface):
     layer_type: ClassVar[TensorParallelLayerType] = TensorParallelLayerType.COLUMN_PARALLEL_LINEAR
 
     def preprocess(self, x: TensorProxy) -> tuple[TensorProxy, tuple[Any, ...]]:
-        return super().preprocess(x)
+        from thunder.distributed import prims as dist_prims
+
+        return (
+            dist_prims.synchronize_tensor_parallel_input(
+                x, self.process_group, ColumnParallelLinearPrePostProcess.layer_type
+            ),
+            None,
+        )
 
     def postprocess(self, y: TensorProxy, _: Any) -> TensorProxy:
         from thunder.distributed import prims as dist_prims

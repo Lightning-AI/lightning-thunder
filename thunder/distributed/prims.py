@@ -32,6 +32,7 @@ class PrimIDs(Enum):
     STASH_GRAD_FOR_FSDP = auto()
 
     SYNCHRONIZE_TENSOR_PARALLEL_OUTPUT = auto()
+    SYNCHRONIZE_TENSOR_PARALLEL_INPUT = auto()
 
 
 # This enum describes what all_reduce (below) will actually do
@@ -313,6 +314,30 @@ def synchronize_tensor_parallel_output_meta(
     return TensorProxy(like=t)
 
 
+def synchronize_tensor_parallel_input_meta(
+    t: TensorProxy,
+    group: torch.distributed.ProcessGroup,
+    layer_type: TensorParallelLayerType,
+) -> TensorProxy:
+    from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
+
+    utils.check_type(t, TensorProxy)
+    utils.check_type(group, torch.distributed.ProcessGroup)
+    utils.check_type(layer_type, TensorParallelLayerType)
+
+    supported_ops = (
+        TensorParallelLayerType.COLUMN_PARALLEL_EMBED,
+        TensorParallelLayerType.COLUMN_PARALLEL_LINEAR,
+        TensorParallelLayerType.ROW_PARALLEL_LINEAR,
+        TensorParallelLayerType.ROW_PARALLEL_EMBED,
+    )
+    utils.check(
+        layer_type in supported_ops,
+        lambda: f"Unsupported {layer_type=}, supported ones are {supported_ops=}",
+    )
+    return TensorProxy(like=t)
+
+
 all_gather = make_prim(PrimIDs.ALL_GATHER, "all_gather", meta=all_gather_meta)
 all_reduce = make_prim(PrimIDs.ALL_REDUCE, "all_reduce", meta=all_reduce_meta)
 broadcast = make_prim(PrimIDs.BROADCAST, "broadcast", meta=broadcast_meta)
@@ -333,6 +358,11 @@ synchronize_tensor_parallel_output = make_prim(
     PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_OUTPUT,
     "synchronize_tensor_parallel_output",
     meta=synchronize_tensor_parallel_output_meta,
+)
+synchronize_tensor_parallel_input = make_prim(
+    PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_INPUT,
+    "synchronize_tensor_parallel_input",
+    meta=synchronize_tensor_parallel_input_meta,
 )
 
 
@@ -432,6 +462,70 @@ def synchronize_tensor_parallel_output_backward_rule(
                 reduce_scatter(
                     grad / group.size(), DistributedReduceOps.SUM, group, do_async=True, dim=grad.ndim - 1
                 ).wait(),
+                None,
+                None,
+            )
+        case TensorParallelLayerType.ROW_PARALLEL_LINEAR:
+            return grad, None, None
+        case TensorParallelLayerType.COLUMN_PARALLEL_EMBED:
+            return grad, None, None
+        case TensorParallelLayerType.ROW_PARALLEL_EMBED:
+            return (
+                reduce_scatter(
+                    grad / group.size(), DistributedReduceOps.SUM, group, do_async=True, dim=grad.ndim - 1
+                ).wait(),
+                None,
+                None,
+            )
+        case _:
+            utils.check(False, lambda: f"Invalid {layer_type=}")
+
+
+@register_augmented_forward(PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_INPUT)
+def synchronize_tensor_parallel_input_forward_rule(
+    t: TensorProxy,
+    group: torch.distributed.ProcessGroup,
+    layer_type: TensorParallelLayerType,
+) -> tuple[TensorProxy, tuple[torch.distributed.ProcessGroup, TensorParallelLayerType]]:
+    from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
+    import thunder.torch as ltorch
+
+    match layer_type:
+        case TensorParallelLayerType.COLUMN_PARALLEL_LINEAR:
+            return t, (group, layer_type)
+        case TensorParallelLayerType.ROW_PARALLEL_LINEAR:
+            return all_reduce(t, DistributedReduceOps.SUM, group, do_async=True, skip_clone=True).wait(), (
+                group,
+                layer_type,
+            )
+        case TensorParallelLayerType.COLUMN_PARALLEL_EMBED:
+            return all_reduce(t, DistributedReduceOps.SUM, group, do_async=True, skip_clone=True).wait(), (
+                group,
+                layer_type,
+            )
+        case TensorParallelLayerType.ROW_PARALLEL_EMBED:
+            # all-gather in the last dim
+            future_of_all_gathered = all_gather(t, group, True, 0)
+            all_gathered = wait(future_of_all_gathered)
+            chunked = ltorch.chunk(all_gathered, group.size(), 0)
+            gathered = ltorch.cat(chunked, dim=-1)
+            return gathered, (group, layer_type)
+        case _:
+            utils.check(False, lambda: f"Invalid {layer_type=}")
+
+
+@register_backward(PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_INPUT)
+def synchronize_tensor_parallel_input_backward_rule(
+    group: torch.distributed.ProcessGroup,
+    layer_type: TensorParallelLayerType,
+    grad: TensorProxy,
+) -> tuple[TensorProxy, None, None]:
+    from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
+
+    match layer_type:
+        case TensorParallelLayerType.COLUMN_PARALLEL_LINEAR:
+            return (
+                all_reduce(grad, DistributedReduceOps.SUM, group, do_async=True, skip_clone=True).wait(),
                 None,
                 None,
             )
