@@ -2423,6 +2423,7 @@ div_opinfo = OpInfo(
     torch_reference=torch.div,
     test_directives=(
         # NOTE: PyTorch doesn't support boolean division
+        # TODO: fix dtype mismatch when using nvfuser executors
         DecorateInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
