@@ -1044,8 +1044,7 @@ class CompileDDPTest(DataParallelTestCase):
 
         model.fc1.weight = model.fc2.weight
 
-        model = thunder.distributed.fsdp(model)
-        model = thunder.jit(model, executors=["torch"])
+        model = thunder.jit(thunder.distributed.fsdp(model), executors=["torch"])
 
         x = torch.randn(4, 16)
         output = model(x)
