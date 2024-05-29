@@ -408,7 +408,7 @@ def _cudnn_sdpa_checker(
     # If cudnn can't support the graph, return false
     # Please turn on cudnn API logging for helpful messages that mention why the graph is not supported.
     # For cudnn backend logging, refer https://docs.nvidia.com/deeplearning/cudnn/latest/reference/troubleshooting.html
-    # For cudnn frontend logging, refer https://gitlab-master.nvidia.com/cudnn/cudnn_frontend#debugging
+    # For cudnn frontend logging, refer https://github.com/NVIDIA/cudnn-frontend?tab=readme-ov-file#debugging
     except cudnn.cudnnGraphNotSupportedError as ex:
         return False
     # Otherwise just raise the error.
