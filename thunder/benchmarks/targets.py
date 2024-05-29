@@ -42,6 +42,8 @@ from thunder.benchmarks import (
 
 from thunder.tests.litgpt_model import Config as LitGPTConfig
 
+from litgpt.config import configs
+
 
 APEX_FUSED_ROPE_AVAILABLE: bool = package_available("fused_rotary_positional_embedding")
 
@@ -876,6 +878,38 @@ def test_llama2_7b_rmsnorm_grad(benchmark, executor: Callable):
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
 
 
+# There are many configurations but only the following parameters affect the QKV split+RoPE benchmark:
+# - head_size
+# - n_head
+# - n_query_groups
+# - rope_n_elem
+# - block_size
+# Let's select only the configurations that differ in these parameters
+def get_configs_for_qkv_split_rope():
+    config_names = list(sorted(c["name"] for c in configs))
+    unique_config_names = {}
+    important_configs = ["Llama-2-7b-hf", "Llama-3-8B", "Llama-3-70B", "Mistral-7B-v0.1"]
+    for config_name in config_names:
+        config = LitGPTConfig.from_name(config_name)
+        key = tuple(
+            getattr(config, k)
+            for k in (
+                "head_size",
+                "n_head",
+                "n_query_groups",
+                "rope_n_elem",
+                "block_size",
+            )
+        )
+        if config_name in important_configs:
+            unique_config_names[key] = config_name
+        unique_config_names.setdefault(key, config_name)
+
+    config_names = list(sorted(unique_config_names.values()))
+    return config_names
+
+# Sample command to run this benchmark:
+# pytest thunder/benchmarks/targets.py -k "test_litgpt_qkv_split_rope_train" --benchmark-group-by='param:config,param:bs' --benchmark-columns='min,max,mean,stddev,median'
 @pytest.mark.parametrize(
     "executor,use_apex,",
     (
@@ -895,15 +929,32 @@ def test_llama2_7b_rmsnorm_grad(benchmark, executor: Callable):
         "torch.compile+apex",
     ),
 )
-def test_llama2_qkv_split_rope_7b_train(benchmark, executor: Callable, use_apex: bool):
+# bs = batch size
+# It's typically small for LLMs
+@pytest.mark.parametrize(
+    "bs,",
+    (2**i for i in range(0, 2)),
+    ids=(f"bs{2**i}" for i in range(0, 2)),
+)
+@pytest.mark.parametrize(
+    "config,",
+    get_configs_for_qkv_split_rope(),
+)
+def test_litgpt_qkv_split_rope_train(
+    benchmark,
+    executor: Callable,
+    use_apex: bool,
+    bs: int,
+    config: str
+):
     from thunder.benchmarks import LlamaQKVSplitRopeBenchmark
 
     if use_apex and not APEX_FUSED_ROPE_AVAILABLE:
         pytest.skip("Apex fused rotary positional embedding is unavailable")
 
     bench: Benchmark = LlamaQKVSplitRopeBenchmark(
-        config="Llama-2-7b-hf",
-        batchdims=(32,),
+        config=config,
+        batchdims=(bs,),
         device="cuda:0",
         dtype=thunder.bfloat16,
         requires_grad=True,
