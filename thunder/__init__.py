@@ -187,12 +187,6 @@ if nvfuser_executor:
 if torchcompile_cat_executor and pytorch._dynamo.is_inductor_supported():
     add_default_executor(torchcompile_cat_executor)
 
-if sdpa_executor:
-    add_default_executor(sdpa_executor)
-
-if cudnn_executor:
-    add_default_executor(cudnn_executor)
-
 if apex_executor:
     add_default_executor(apex_executor)
 
