@@ -2678,6 +2678,8 @@ uniform = make_prim(
 )
 
 
+# Follow the nvFuser way to get the seed/offset used in nvFuser's philox RNG from the Torch's RNG state and
+# update the Torch's RNG state
 def _get_and_update_rng_state_meta(
     seed: IntegerProxy | int | None, offset: IntegerProxy | int | None, device: devices.Device
 ) -> tuple[IntegerProxy, IntegerProxy]:
