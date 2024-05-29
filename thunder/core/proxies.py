@@ -898,6 +898,9 @@ class NumberProxy(Proxy, NumberProxyInterface):
         return NotImplemented
 
 
+NumberLike = Number | NumberProxy
+
+
 def pyval(x: Number | str | AnyProxy) -> Number | str | any:
     baseutils.check_type(x, (NumberProxy, Number, str, AnyProxy))
 
