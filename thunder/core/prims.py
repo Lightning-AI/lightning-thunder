@@ -2698,7 +2698,7 @@ def _get_and_update_rng_state_meta(
         lambda: f"get_and_update_rng_state is supported for CUDA only",
         exception_type=NotImplementedError,
     )
-    return numberproxy(int, 0), numberproxy(int, 0)
+    return numberproxy(int, None), numberproxy(int, None)
 
 
 get_and_update_rng_state = make_prim(
