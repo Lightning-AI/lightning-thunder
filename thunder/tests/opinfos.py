@@ -2429,7 +2429,10 @@ div_opinfo = OpInfo(
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.bool8,),
             devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
-            executors=("torch", "nvfuser",),
+            executors=(
+                "torch",
+                "nvfuser",
+            ),
         ),
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
     ),
