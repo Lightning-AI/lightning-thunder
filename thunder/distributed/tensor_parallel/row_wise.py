@@ -104,7 +104,7 @@ class TransformForRowWiseParallel(TransformForTensorParallel):
         new_shape[1] //= self.process_group.size()
         return tuple(new_shape)
 
-    def get_visitor_of_computation_trc_and_provenance(
+    def get_visitor_of_computation_trace_and_provenance(
         self,
         computation_trace: TraceCtx,
     ) -> tuple[Callable[[BoundSymbol], VISIT_TYPE], TraceProvenance | str]:
