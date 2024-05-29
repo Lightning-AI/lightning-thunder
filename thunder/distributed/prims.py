@@ -289,16 +289,6 @@ def stash_grad_for_fsdp_meta(
 
 
 # see [Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism](https://arxiv.org/abs/1909.08053)'s Code 1.
-def synchronize_input_for_column_wise_tensor_parallel_meta(
-    t: TensorProxy,
-    group: torch.distributed.ProcessGroup,
-) -> TensorProxy:
-    utils.check_type(t, TensorProxy)
-    utils.check_type(group, torch.distributed.ProcessGroup)
-
-    return TensorProxy(like=t)
-
-
 def synchronize_tensor_parallel_output_meta(
     t: TensorProxy,
     group: torch.distributed.ProcessGroup,
