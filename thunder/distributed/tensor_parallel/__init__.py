@@ -1,10 +1,10 @@
 from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
-from thunder.distributed.tensor_parallel.column_wise import convert_module_to_columnwise_parallel
-from thunder.distributed.tensor_parallel.row_wise import convert_module_to_rowwise_parallel
+from thunder.distributed.tensor_parallel.column_wise import column_parallel
+from thunder.distributed.tensor_parallel.row_wise import row_parallel
 
 
 __all__ = [
     "TensorParallelLayerType",
-    "convert_module_to_columnwise_parallel",
-    "convert_module_to_rowwise_parallel",
+    "column_parallel",
+    "row_parallel",
 ]

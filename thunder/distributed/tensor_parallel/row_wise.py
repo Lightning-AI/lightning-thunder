@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
-    "convert_module_to_rowwise_parallel",
+    "row_parallel",
 ]
 
 
@@ -149,7 +149,7 @@ class TransformForRowWiseParallel(TransformForTensorParallel):
         return visit, "transform into row-wise tensor parallel"
 
 
-def convert_module_to_rowwise_parallel(
+def row_parallel(
     thunder_module: ThunderModule,
     target_modules: Sequence[str],
     process_group: ProcessGroup | None = None,
@@ -176,7 +176,7 @@ def convert_module_to_rowwise_parallel(
             from torch.distributed import distributed_c10d
 
             import thunder
-            from thunder.distributed import convert_module_to_rowwise_parallel
+            from thunder.distributed import row_parallel
 
 
             class Model(nn.Module):
@@ -204,7 +204,7 @@ def convert_module_to_rowwise_parallel(
             model = Model().to(device)
             jitted_model = thunder.jit(model)
             # ``embedding_dim`` and `l2`'s input size (= n_hidden) need to be divisible by `world_size`
-            tp_model = convert_module_to_columnwise_parallel(
+            tp_model = column_parallel(
                 jitted_model,
                 target_modules=("embed", "l2",),
             )

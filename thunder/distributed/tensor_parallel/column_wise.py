@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
-    "convert_module_to_columnwise_parallel",
+    "column_parallel",
 ]
 
 
@@ -141,7 +141,7 @@ class TransformForColumnWiseParallel(TransformForTensorParallel):
 
 
 # TODO(crcrpar): Add an option to turn off output all-gather.
-def convert_module_to_columnwise_parallel(
+def column_parallel(
     thunder_module: ThunderModule,
     target_modules: Sequence[str],
     process_group: ProcessGroup | None = None,
@@ -169,7 +169,7 @@ def convert_module_to_columnwise_parallel(
             from torch.distributed import distributed_c10d
 
             import thunder
-            from thunder.distributed import convert_module_to_columnwise_parallel
+            from thunder.distributed import column_parallel
 
 
             class Model(nn.Module):
@@ -197,7 +197,7 @@ def convert_module_to_columnwise_parallel(
             model = Model().to(device)
             jitted_model = thunder.jit(model)
             # `l2`'s output size (= n_out) needs to be divisible by `world_size`
-            tp_model = convert_module_to_columnwise_parallel(
+            tp_model = column_parallel(
                 jitted_model,
                 target_modules=("embed", "l2",),
             )

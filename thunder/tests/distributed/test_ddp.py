@@ -26,7 +26,7 @@ import thunder.executors
 import thunder.torch as ltorch
 from thunder.core import devices
 from thunder.distributed import FSDPBucketingStrategy, FSDPType
-from thunder.distributed import ddp, fsdp, convert_module_to_columnwise_parallel, convert_module_to_rowwise_parallel
+from thunder.distributed import ddp, fsdp, column_parallel, row_parallel
 from thunder.distributed import prims
 from thunder.tests.framework import TorchExecutor, nvFuserExecutor
 from thunder.tests.framework import instantiate
@@ -1055,8 +1055,8 @@ class CompileDDPTest(DataParallelTestCase):
         expected = ref_model(x)
 
         converter = {
-            "column": convert_module_to_columnwise_parallel,
-            "row": convert_module_to_rowwise_parallel,
+            "column": column_parallel,
+            "row": row_parallel,
         }[name]
         model = ToyModel().to(device)
         model.load_state_dict(ref_state_dict)
@@ -1108,8 +1108,8 @@ class CompileDDPTest(DataParallelTestCase):
         expected = ref_model(x)
 
         converter = {
-            "column": convert_module_to_columnwise_parallel,
-            "row": convert_module_to_rowwise_parallel,
+            "column": column_parallel,
+            "row": row_parallel,
         }[name]
         model = Model().to(device)
         model.load_state_dict(ref_state_dict)
@@ -1181,8 +1181,8 @@ class CompileDDPTest(DataParallelTestCase):
 
         column_parallels = ["embed_1", "linear1_0", "linear2_1"]
         row_parallels = ["embed_2", "linear1_1", "linear2_0"]
-        tp_jitted_model = convert_module_to_rowwise_parallel(
-            convert_module_to_columnwise_parallel(
+        tp_jitted_model = row_parallel(
+            column_parallel(
                 jitted_model,
                 column_parallels,
                 process_group,
