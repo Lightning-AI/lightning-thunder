@@ -25,7 +25,7 @@ import thunder.executors
 import thunder.torch as ltorch
 from thunder.core import devices
 from thunder.distributed import FSDPBucketingStrategy, FSDPType
-from thunder.distributed import ddp, fsdp, column_parallel, row_parallel
+from thunder.distributed import ddp, fsdp
 from thunder.distributed import prims
 from thunder.tests.framework import TorchExecutor, nvFuserExecutor
 from thunder.tests.framework import instantiate
@@ -49,7 +49,7 @@ if TE_AVAILABLE:
 
     is_fp8_supported, fp8_support_reason = check_fp8_support()
 
-from thunder.tests.distributed.helper import ToyModel, DataParallelTestCase
+from thunder.tests.distributed.helper import ToyModel, DataParallelTestCase, new_gelu
 from torch.testing._internal import common_utils
 
 executors_map = {
