@@ -9,11 +9,18 @@ from thunder.tests.distributed.helper import ToyModel, DataParallelTestCase
 from torch.testing._internal import common_utils
 from torch.distributed import distributed_c10d as c10d
 
+_COL = "column"
+_ROW = "row"
+_name_to_transform = {
+    _COL: column_parallel,
+    _ROW: row_parallel,
+}
+
 
 class TensorParallelTest(DataParallelTestCase):
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
-    @common_utils.parametrize("name", ("column", "row"))
+    @common_utils.parametrize("name", tuple(_name_to_transform.keys()))
     def test_tensor_parallel_linear(self, name):
         device = torch.device("cuda", self.rank)
         x = torch.randn(2, 12).to(device).requires_grad_()
@@ -29,10 +36,7 @@ class TensorParallelTest(DataParallelTestCase):
         ref_state_dict = ref_model.state_dict()
         expected = ref_model(x)
 
-        transform = {
-            "column": column_parallel,
-            "row": row_parallel,
-        }[name]
+        transform = _name_to_transform[name]
         model = ToyModel().to(device)
         model.load_state_dict(ref_state_dict)
         jitted_model = thunder.jit(model)
@@ -56,7 +60,7 @@ class TensorParallelTest(DataParallelTestCase):
         )
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
-    @common_utils.parametrize("name", ("column", "row"))
+    @common_utils.parametrize("name", tuple(_name_to_transform.keys()))
     def test_tensor_parallel_embedding(self, name):
         num_embeddings = 128
         embedding_dim = 32
@@ -82,10 +86,7 @@ class TensorParallelTest(DataParallelTestCase):
         ref_state_dict = ref_model.state_dict()
         expected = ref_model(x)
 
-        transform = {
-            "column": column_parallel,
-            "row": row_parallel,
-        }[name]
+        transform = _name_to_transform[name]
         model = Model().to(device)
         model.load_state_dict(ref_state_dict)
         jitted_model = thunder.jit(model)
@@ -98,7 +99,7 @@ class TensorParallelTest(DataParallelTestCase):
 
         dim: int
         orig_size: int
-        if name == "column":
+        if name == _COL:
             dim = 0
             orig_size = num_embeddings
         else:
