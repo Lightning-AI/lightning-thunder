@@ -116,11 +116,11 @@ class TransformForColumnWiseParallel(TransformForTensorParallel):
         flat_args, _ = tree_flatten((computation_trace.args, computation_trace.kwargs))
         bsym_to_prepostprocess: dict[BoundSymbol, PrePostProcessInterface] = {}
         for proxy in filter(lambda p: isinstance(p, TensorProxy), flat_args):
-            for p_name in self.chunked_param_name2layer_type:
+            for p_name in self.chunked_param_name_to_layer_type:
                 if p_name == proxy.name:
                     consumer_bsym = consumers[proxy][0]
                     if consumer_bsym not in bsym_to_prepostprocess:
-                        match self.chunked_param_name2layer_type[p_name]:
+                        match self.chunked_param_name_to_layer_type[p_name]:
                             case nn.Linear:
                                 bsym_to_prepostprocess[consumer_bsym] = ColumnParallelLinearPrePostProcess(
                                     process_group=self.process_group
@@ -132,7 +132,7 @@ class TransformForColumnWiseParallel(TransformForTensorParallel):
                             case _:
                                 utils.check(
                                     False,
-                                    lambda: f"{self.chunked_param_name2layer_type[p_name]=} is not supported",
+                                    lambda: f"{self.chunked_param_name_to_layer_type[p_name]=} is not supported",
                                 )
         utils.check(bsym_to_prepostprocess, lambda: f"{bsym_to_prepostprocess} must not be empty")
 
@@ -217,7 +217,7 @@ def column_parallel(
     rank = distributed_c10d.get_rank(process_group)
     world_size = distributed_c10d.get_world_size(process_group)
 
-    chunked_param_name2layer_type: dict[str, Any] = {}
+    chunked_param_name_to_layer_type: dict[str, Any] = {}
     for target_mod_name in target_modules:
         mod = thunder_module.get_submodule(target_mod_name)
         utils.check_type(
@@ -228,7 +228,7 @@ def column_parallel(
             ),
         )
         for name, p in mod.named_parameters(recurse=False):
-            chunked_param_name2layer_type["t_" + f"{target_mod_name}.{name}".replace(".", "_")] = type(mod)
+            chunked_param_name_to_layer_type["t_" + f"{target_mod_name}.{name}".replace(".", "_")] = type(mod)
 
     import copy
 
@@ -250,7 +250,7 @@ def column_parallel(
             rank=rank,
             world_size=world_size,
             compile_data=get_compile_data(thunder_module),
-            chunked_param_name2layer_type=chunked_param_name2layer_type,
+            chunked_param_name_to_layer_type=chunked_param_name_to_layer_type,
             process_group=process_group,
         ),
     )

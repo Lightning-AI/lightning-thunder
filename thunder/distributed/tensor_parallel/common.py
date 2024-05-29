@@ -115,7 +115,7 @@ class TransformForTensorParallel:
     rank: int
     world_size: int
     compile_data: CompileData
-    chunked_param_name2layer_type: dict[str, Any]
+    chunked_param_name_to_layer_type: dict[str, Any]
     process_group: ProcessGroup
 
     def __post_init__(self):
@@ -155,7 +155,7 @@ class TransformForTensorParallel:
 
         prologue_producers, prologue_consumers = utils.producers_and_consumers(prologue_trace)
         for pro_out_p, comp_inp_p in zip(prologue_trace.output, computation_trace.args):
-            if pro_out_p.name not in self.chunked_param_name2layer_type:
+            if pro_out_p.name not in self.chunked_param_name_to_layer_type:
                 continue
             bsym = prologue_producers[pro_out_p]
             if bsym.sym.id == prims.PrimIDs.UNPACK_PARAMETER:
@@ -164,7 +164,7 @@ class TransformForTensorParallel:
 
                 if (
                     proxy_like_param_name := f"""t_{param_name.replace(".", "_")}"""
-                ) in self.chunked_param_name2layer_type:
+                ) in self.chunked_param_name_to_layer_type:
 
                     orig_shape = list(pro_out_p._shape)
                     new_shape = self._calc_new_shape(orig_shape)
@@ -185,7 +185,7 @@ class TransformForTensorParallel:
             ):
                 param_thunder_module, name = prologue_producers[bsym.args[0]].args
                 assert param_thunder_module is thunder_module_proxy
-                if name not in self.chunked_param_name2layer_type:
+                if name not in self.chunked_param_name_to_layer_type:
                     a0, shape, _, *a2pp = bsym.args
                     bsym.args = (a0, shape, str(a0.device), *a2pp)
 
