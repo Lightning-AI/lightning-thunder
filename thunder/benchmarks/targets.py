@@ -41,6 +41,7 @@ from thunder.benchmarks import (
 )
 
 from thunder.tests.litgpt_model import Config as LitGPTConfig
+from thunder.tests.make_tensor import make_tensor
 
 from litgpt.config import configs
 
@@ -971,6 +972,78 @@ def test_litgpt_qkv_split_rope_train_forward(
 
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
 
+
+def backward_only(fn: Callable, jit_fn: Callable, fw_setup_fn: Callable):
+    jfn = jit_fn(fn)
+    args, kwargs = fw_setup_fn()
+    result = jfn(*args, **kwargs)
+    result = thunder.core.utils.sequencify(result)
+
+    result_metadata = [
+        (r.dtype, r.device, r.shape)
+        for r in result
+    ]
+
+    def bw_setup():
+        args = []
+        for dtype, device, shape in result_metadata:
+            torch_dtype = thunder.torch.to_torch_dtype(dtype)
+            torch_device = thunder.core.devices.to_torch_device(device)
+            args.append(make_tensor(shape, dtype=torch_dtype, device=torch_device, requires_grad=False))
+        return args, {}
+
+    def backward_fn(*args, **kwargs):
+        for a in args:
+            a.grad = None
+
+        torch.autograd.backward(result, args, retain_graph=True)
+
+    return backward_fn, bw_setup
+
+
+# Sample command to run this benchmark:
+# pytest thunder/benchmarks/targets.py -k "test_litgpt_qkv_split_rope_train_backward" --benchmark-group-by='param:config,param:bs' --benchmark-columns='min,max,mean,stddev,median'
+@pytest.mark.parametrize(
+    "executor,use_apex,",
+    qkv_split_rope_executors,
+    ids=qkv_split_rope_executors_ids,
+)
+@pytest.mark.parametrize(
+    "bs,",
+    (2**i for i in range(0, 2)),
+    ids=(f"bs{2**i}" for i in range(0, 2)),
+)
+@pytest.mark.parametrize(
+    "config,",
+    get_configs_for_qkv_split_rope(),
+)
+@pytest.mark.benchmark(group="backward")
+def test_litgpt_qkv_split_rope_train_backward(
+    benchmark,
+    executor: Callable,
+    use_apex: bool,
+    bs: int,
+    config: str
+):
+    from thunder.benchmarks import LlamaQKVSplitRopeBenchmark
+
+    if use_apex and not APEX_FUSED_ROPE_AVAILABLE:
+        pytest.skip("Apex fused rotary positional embedding is unavailable")
+
+    bench: Benchmark = LlamaQKVSplitRopeBenchmark(
+        config=config,
+        batchdims=(bs,),
+        device="cuda:0",
+        dtype=thunder.bfloat16,
+        requires_grad=True,
+        use_apex=use_apex,
+    )
+
+    fw_setup = make_setup(bench)
+    fn, bw_setup = backward_only(bench.fn(), executor, fw_setup)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=bw_setup, rounds=40, warmup_rounds=1)
 
 #
 # interpreter benchmarks
