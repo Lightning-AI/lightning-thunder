@@ -1323,7 +1323,7 @@ def _max_pool_with_indices_helper(
             )
             return seq[i]
 
-    out_sizes = []
+    out_sizes = list(a.shape[:-ndim])
     for i in range(ndim):
         in_ = a.shape[i - ndim]  # i - ndim is the i-th spatial dimension
         kernel_ = get_maybe_ith_entry("kernel_size", kernel_size, i)
