@@ -909,6 +909,7 @@ def get_configs_for_qkv_split_rope():
     config_names = list(sorted(unique_config_names.values()))
     return config_names
 
+
 qkv_split_rope_executors = (
     (torch_executor, False),
     (torch_compile_executor, False),
@@ -925,6 +926,7 @@ qkv_split_rope_executors_ids = (
     "torch+apex",
     "torch.compile+apex",
 )
+
 
 # Sample command to run this benchmark:
 # pytest thunder/benchmarks/targets.py -k "test_litgpt_qkv_split_rope_train_forward" --benchmark-group-by='param:config,param:bs' --benchmark-columns='min,max,mean,stddev,median'
@@ -945,13 +947,7 @@ qkv_split_rope_executors_ids = (
     get_configs_for_qkv_split_rope(),
 )
 @pytest.mark.benchmark(group="forward")
-def test_litgpt_qkv_split_rope_train_forward(
-    benchmark,
-    executor: Callable,
-    use_apex: bool,
-    bs: int,
-    config: str
-):
+def test_litgpt_qkv_split_rope_train_forward(benchmark, executor: Callable, use_apex: bool, bs: int, config: str):
     from thunder.benchmarks import LlamaQKVSplitRopeBenchmark
 
     if use_apex and not APEX_FUSED_ROPE_AVAILABLE:
@@ -979,10 +975,7 @@ def backward_only(fn: Callable, jit_fn: Callable, fw_setup_fn: Callable):
     result = jfn(*args, **kwargs)
     result = thunder.core.utils.sequencify(result)
 
-    result_metadata = [
-        (r.dtype, r.device, r.shape)
-        for r in result
-    ]
+    result_metadata = [(r.dtype, r.device, r.shape) for r in result]
 
     def bw_setup():
         args = []
@@ -1018,13 +1011,7 @@ def backward_only(fn: Callable, jit_fn: Callable, fw_setup_fn: Callable):
     get_configs_for_qkv_split_rope(),
 )
 @pytest.mark.benchmark(group="backward")
-def test_litgpt_qkv_split_rope_train_backward(
-    benchmark,
-    executor: Callable,
-    use_apex: bool,
-    bs: int,
-    config: str
-):
+def test_litgpt_qkv_split_rope_train_backward(benchmark, executor: Callable, use_apex: bool, bs: int, config: str):
     from thunder.benchmarks import LlamaQKVSplitRopeBenchmark
 
     if use_apex and not APEX_FUSED_ROPE_AVAILABLE:
@@ -1044,6 +1031,7 @@ def test_litgpt_qkv_split_rope_train_backward(
     fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=bw_setup, rounds=40, warmup_rounds=1)
+
 
 #
 # interpreter benchmarks
