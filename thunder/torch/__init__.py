@@ -24,7 +24,15 @@ import thunder.core.prims as prims
 import thunder.core.utils as utils
 import thunder.distributed.prims as dist_prims
 from thunder.core.langctxs import langctx, Languages
-from thunder.core.proxies import FloatProxy, IntegerProxy, NumberProxy, NumberLike, TensorProxy, FutureTensorProxy, pyval
+from thunder.core.proxies import (
+    FloatProxy,
+    IntegerProxy,
+    NumberProxy,
+    NumberLike,
+    TensorProxy,
+    FutureTensorProxy,
+    pyval,
+)
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
 from thunder.core.transforms import register_grad, put_grads

@@ -19,7 +19,17 @@ from thunder.core.langctxs import langctx, Languages
 import thunder.core.dtypes as dtypes
 from thunder.core import utils
 import thunder.core.prims as prims
-from thunder.core.proxies import IntegerProxy, NumberProxy, NumberLike, TensorProxy, pyval, pytype, proxy, AnyProxy, Proxy
+from thunder.core.proxies import (
+    IntegerProxy,
+    NumberProxy,
+    NumberLike,
+    TensorProxy,
+    pyval,
+    pytype,
+    proxy,
+    AnyProxy,
+    Proxy,
+)
 import thunder.core.devices as devices
 
 # This file defines the operations in thunder.jit's "core" language.
