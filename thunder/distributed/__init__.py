@@ -616,13 +616,13 @@ def _shard_param(
             param.data = padded_param.data.narrow(0, chunk_size * rank, chunk_size).clone()
             param._thunder_fsdp_padding_size = _thunder_fsdp_padding_size
         else:
-            param.data = param.data.narrow(dim_to_shard, chunk_size * rank, chunk_size).clone()
+            param.data = param.data.narrow(0, chunk_size * rank, chunk_size).clone()
             param._thunder_fsdp_padding_size = None
     else:
         utils.check(
             param.shape[dim_to_shard] % world_size == 0,
             lambda: (
-                f"Current sharding requires the first dimension of the parameter {name!r} ({param.shape[0]})"
+                f"Current sharding requires the sharded dimension of the parameter {name!r} ({param.shape[dim_to_shard]})"
                 f" to be divisible by the world size ({world_size})"
             ),
         )
