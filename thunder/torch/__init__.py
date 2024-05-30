@@ -3698,7 +3698,7 @@ def cross_entropy(
     target: TensorProxy,
     weight: None | TensorProxy = None,
     size_average: None | Any = None,
-    ignore_index: int = None,
+    ignore_index: int = -100,
     reduce: None | Any = None,
     reduction: str = "mean",
     label_smoothing: float = 0.0,
@@ -3707,10 +3707,6 @@ def cross_entropy(
         size_average is None and reduce is None,
         lambda: f"Deprecated size_average={size_average} and reduce={reduce} is not supported!",
     )
-
-    # Resolve ignore_index if it is not specified by user.
-    if ignore_index is None:
-        ignore_index = -1
 
     _cross_entropy_input_checks(a, target, weight, ignore_index, reduction, label_smoothing)
 
