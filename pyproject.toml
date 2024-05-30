@@ -30,6 +30,7 @@ addopts = [
     "--doctest-modules",
     "--color=yes",
     "--disable-pytest-warnings",
+    "--benchmark-timer=torch.utils.benchmark.utils.timer.timer",
 ]
 markers = [
     "standalone: mark a test as standalone",
