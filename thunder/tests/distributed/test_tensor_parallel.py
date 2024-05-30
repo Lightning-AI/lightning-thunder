@@ -41,7 +41,7 @@ class TensorParallelTest(DataParallelTestCase):
         jitted_model = thunder.jit(model)
         tp_jitted_model = transform(
             jitted_model,
-            target_modules=("net2",),
+            target_modules=("net1", "net2"),
             process_group=process_group,
         )
         y = tp_jitted_model(x)
@@ -49,35 +49,39 @@ class TensorParallelTest(DataParallelTestCase):
 
         expected.mean().backward()
         y.mean().backward()
-        torch.testing.assert_close(expected=x_ref.grad, actual=x.grad)
 
-        dim = 1 if name == "row" else 0
-        expected_full_grad: torch.Tensor = ref_model.net2.weight.grad
-        expected = torch.chunk(expected_full_grad, self.world_size, dim)[self.rank]
-        torch.testing.assert_close(
-            expected=expected,
-            actual=tp_jitted_model.get_parameter("net2.weight").grad,
-        )
-        if bias:
-            expected_bias_grad: torch.Tensor = ref_model.net2.bias.grad
-            if name == _COL:
-                expected = torch.chunk(expected_bias_grad, self.world_size, 0)[self.rank]
-            else:
-                expected = expected_bias_grad
+        if self.rank == 0:
+            fwd_extrace = thunder.last_traces(tp_jitted_model)[-1]
+            bwd_extrace = thunder.last_backward_traces(tp_jitted_model)[-1]
+            for bsym in fwd_extrace.bound_symbols + bwd_extrace.bound_symbols:
+                bsym.subsymbols = []
+
+            with open("./fwd_extrace_1.py", "w") as f:
+                f.write(str(fwd_extrace))
+            with open("./bwd_extrace_1.py", "w") as f:
+                f.write(str(bwd_extrace))
+
+        dim = 1 if name == _ROW else 0
+        for layer_name in ("net1", "net2"):
+            param_name = f"{layer_name}.weight"
+            expected_full_grad: torch.Tensor = ref_model.get_parameter(param_name).grad
+            expected = torch.chunk(expected_full_grad, self.world_size, dim)[self.rank]
             torch.testing.assert_close(
                 expected=expected,
-                actual=tp_jitted_model.get_parameter("net2.bias").grad,
-                msg=f"{expected.shape=}, {tp_jitted_model.get_parameter('net2.bias').grad}",
+                actual=tp_jitted_model.get_parameter(param_name).grad,
             )
-        torch.testing.assert_close(
-            expected=(ref_model.net1.weight.grad,) + (ref_model.net1.bias.grad,) if bias else (),
-            actual=(
-                (tp_jitted_model.get_parameter("net1.weight").grad,)
-                + (tp_jitted_model.get_parameter("net1.bias").grad,)
-                if bias
-                else ()
-            ),
-        )
+            if bias:
+                param_name = f"{layer_name}.bias"
+                expected_bias_grad: torch.Tensor = ref_model.get_parameter(param_name).grad
+                if name == _COL:
+                    expected = torch.chunk(expected_bias_grad, self.world_size, 0)[self.rank]
+                else:
+                    expected = expected_bias_grad
+                torch.testing.assert_close(
+                    expected=expected,
+                    actual=tp_jitted_model.get_parameter(param_name).grad,
+                )
+        torch.testing.assert_close(expected=x_ref.grad, actual=x.grad)
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     @common_utils.parametrize("name", tuple(_name_to_transform.keys()))
