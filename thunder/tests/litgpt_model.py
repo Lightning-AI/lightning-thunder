@@ -135,7 +135,11 @@ class OverridenKVCache(nn.Module):
         self.k = self.k.to(k.dtype)
         self.v = self.v.to(v.dtype)
         # update the cache
-        if torch.compiler.is_compiling():
+        # NOTE: `torch._dynamo.is_compiling` is being deprecated, we should update this once all versions have `torch.compiler.is_compiling`.
+        is_compiling = (
+            torch.compiler.is_compiling if hasattr(torch.compiler, "is_compiling") else torch._dynamo.is_compiling
+        )
+        if is_compiling():
             # inductor doesn't support `index_add` with bfloat16
             k = self.k.index_copy_(2, input_pos, k)
             v = self.v.index_copy_(2, input_pos, v)
