@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from lightning_utilities.core.imports import package_available
 
 import pytest
+import os
 import torch
 import thunder
 from thunder.core.transforms import grad, clear_grads, populate_grads, get_grad, put_grad, put_grads
@@ -47,7 +48,16 @@ from litgpt.config import configs
 
 
 APEX_FUSED_ROPE_AVAILABLE: bool = package_available("fused_rotary_positional_embedding")
-
+IMPORTANT_CONFIGS = [
+    "Llama-2-13b-hf",
+    "Llama-2-70b-hf",
+    "Llama-2-7b-hf",
+    "Llama-3-70B",
+    "Llama-3-8B",
+    "Mistral-7B-v0.1",
+    "phi-2",
+]
+RUN_ALL_CONFIGS = os.environ.get("THUNDER_BENCH_RUN_ALL_CONFIGS", "0") == "1"
 
 def make_setup(b: Benchmark):
     def setup():
@@ -887,9 +897,8 @@ def test_llama2_7b_rmsnorm_grad(benchmark, executor: Callable):
 # - block_size
 # Let's select only the configurations that differ in these parameters
 def get_configs_for_qkv_split_rope():
-    config_names = list(sorted(c["name"] for c in configs))
+    config_names = list(sorted(c["name"] for c in configs)) if RUN_ALL_CONFIGS else IMPORTANT_CONFIGS
     unique_config_names = {}
-    important_configs = ["Llama-2-7b-hf", "Llama-3-8B", "Llama-3-70B", "Mistral-7B-v0.1"]
     for config_name in config_names:
         config = LitGPTConfig.from_name(config_name)
         key = tuple(
@@ -902,7 +911,7 @@ def get_configs_for_qkv_split_rope():
                 "block_size",
             )
         )
-        if config_name in important_configs:
+        if config_name in IMPORTANT_CONFIGS:
             unique_config_names[key] = config_name
         unique_config_names.setdefault(key, config_name)
 
