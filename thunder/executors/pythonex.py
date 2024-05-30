@@ -202,6 +202,13 @@ def _elementwise_unary_checker(x: NumberLike | TensorProxy) -> bool:
     return isinstance(x, (Number, NumberProxy))
 
 
+# Maps exact inputs to truncation division
+def _div_prim_impl(a: Number, b: Number) -> torch.Tensor:
+    if isinstance(a, (int, bool)) and isinstance(b, (int, bool)):
+        return a // b
+    return a / b
+
+
 # NOTE Tensor abs is distinct from Python's builtin abs because it preserves the dtype of booleans
 #   i.e. tensor_abs(True) -> True, while builtins.abs(True) -> 1
 def _tensor_abs_prim_impl(a: Number) -> Number:
@@ -315,6 +322,7 @@ ne = ex.register_operator("ne", like=prims.ne, module=operator)
 # NOTE pythonex_pow to avoid a name conflict with the builtin pow
 pythonex_pow = ex.register_operator("pow", like=prims.pow, module=operator)
 sub = ex.register_operator("sub", like=prims.sub, module=operator)
+div = ex.register_operator("div", like=prims.div, fn=_div_prim_impl)
 
 # TODO: Restore truediv once we find it...
 # truediv = ex.register_operator("truediv", like=prims.truediv, module=operator)
@@ -336,6 +344,7 @@ ex.register_implementation(prims.ne, ne, checker=_elementwise_binary_checker)
 # NOTE pythonex_pow to avoid a name conflict with the builtin pow
 ex.register_implementation(prims.pow, pythonex_pow, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.sub, sub, checker=_elementwise_binary_checker)
+ex.register_implementation(prims.div, div, checker=_elementwise_binary_checker)
 
 # TODO: Restore truediv once we find it...
 # ex.register_implementation(prims.truediv, truediv, checker=_elementwise_binary_checker)
