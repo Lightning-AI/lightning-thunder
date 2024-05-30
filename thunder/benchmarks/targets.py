@@ -5,9 +5,10 @@ from collections.abc import Sequence
 from lightning_utilities.core.imports import package_available
 
 import pytest
+import os
 import torch
 import thunder
-from thunder.core.transforms import grad, clear_grads, populate_grads, get_grad, put_grad, put_grads
+from thunder.core.transforms import grad, clear_grads, populate_grads
 from thunder.core.interpreter import interpret
 
 from thunder.benchmarks import (
@@ -27,7 +28,6 @@ from thunder.benchmarks import (
     torch_executor,
     torch_compile_executor,
     thunder_executor,
-    thunder_torch_executor,
     thunder_torch_compile_executor,
     thunder_apex_executor,
     thunder_apex_nvfuser_executor,
@@ -35,7 +35,6 @@ from thunder.benchmarks import (
     thunder_cudnn_nvfuser_executor,
     thunder_cudnn_layer_norm_executor,
     thunder_cudnn_layer_norm_nvfuser_executor,
-    thunder_sdpa_executor,
     thunder_sdpa_torch_compile_nvfuser_executor,
     BatchNormBenchmark,
 )
@@ -47,6 +46,16 @@ from litgpt.config import configs
 
 
 APEX_FUSED_ROPE_AVAILABLE: bool = package_available("fused_rotary_positional_embedding")
+IMPORTANT_CONFIGS = [
+    "Llama-2-13b-hf",
+    "Llama-2-70b-hf",
+    "Llama-2-7b-hf",
+    "Llama-3-70B",
+    "Llama-3-8B",
+    "Mistral-7B-v0.1",
+    "phi-2",
+]
+RUN_ALL_CONFIGS = os.environ.get("THUNDER_BENCH_RUN_ALL_CONFIGS", "0") == "1"
 
 
 def make_setup(b: Benchmark):
@@ -56,16 +65,6 @@ def make_setup(b: Benchmark):
         return args_and_kwargs
 
     return setup
-
-
-def wrap_for_benchmark(fn):
-    @wraps(fn)
-    def fn_(*args, **kwargs):
-        result = fn(*args, **kwargs)
-        torch.cuda.synchronize()
-        return result
-
-    return fn_
 
 
 def torch_fwd(b: Benchmark):
@@ -338,7 +337,6 @@ def test_nanogpt_gelu_fwd(benchmark, executor: Callable):
 
     setup = make_setup(gelu_bench)
     fn = executor(gelu_bench)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
 
@@ -355,7 +353,6 @@ def test_nanogpt_gelu_grad(benchmark, executor: Callable):
 
     setup = make_setup(gelu_bench)
     fn = executor(gelu_bench)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
 
@@ -372,7 +369,6 @@ def test_batch_norm_fwd(benchmark, executor: Callable):
 
     setup = make_setup(bn_bench)
     fn = executor(bn_bench)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
 
@@ -393,7 +389,6 @@ def test_batch_norm_grad(benchmark, executor: Callable):
 
     setup = make_setup(bn_bench)
     fn = executor(bn_bench)
-    fn = wrap_for_benchmark(fn)
     benchmark.pedantic(fn, setup=setup, rounds=200, warmup_rounds=20)
 
 
@@ -415,7 +410,6 @@ def test_nanogpt_cross_entropy_fwd(benchmark, executor: None | Callable):
 
     setup = make_setup(bench)
     fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=1)
 
@@ -438,7 +432,6 @@ def test_nanogpt_cross_entropy_grad(benchmark, executor: None | Callable):
 
     setup = make_setup(bench)
     fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=1)
 
@@ -461,7 +454,6 @@ def test_nanogpt_layer_norm_fwd(benchmark, executor: None | Callable):
 
     setup = make_setup(bench)
     fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=1)
 
@@ -479,7 +471,6 @@ def test_nanogpt_sdpa_fwd(benchmark, executor: None | Callable):
 
     setup = make_setup(bench)
     fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=1)
 
@@ -497,7 +488,6 @@ def test_nanogpt_sdpa_grad(benchmark, executor: Callable):
 
     setup = make_setup(bench)
     fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=1)
 
@@ -514,7 +504,6 @@ def test_llama2_7b_sdpa_grad(benchmark, executor: Callable):
 
     setup = make_setup(bench)
     fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
 
@@ -550,13 +539,7 @@ sdpa_executors_ids = (
 )
 @pytest.mark.parametrize(
     "config,",
-    (
-        "Llama-2-7b-hf",
-        "Llama-2-13b-hf",
-        "Llama-2-70b-hf",
-        "Llama-3-8B",
-        "Llama-3-70B",
-    ),
+    IMPORTANT_CONFIGS,
 )
 def test_litgpt_sdpa_grad(benchmark, executor: Callable, bs, config):
     bench: Benchmark = LitGPTSDPABenchmark(
@@ -569,7 +552,6 @@ def test_litgpt_sdpa_grad(benchmark, executor: Callable, bs, config):
 
     setup = make_setup(bench)
     fn = thunder_fwd_bwd(bench, compile_fn=executor)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
 
@@ -586,7 +568,6 @@ def test_nanogpt_mlp_fwd(benchmark, executor: Callable):
 
     setup = make_setup(bench)
     fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
 
@@ -603,7 +584,6 @@ def test_nanogpt_mlp_grad(benchmark, executor: Callable):
 
     setup = make_setup(bench)
     fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
 
@@ -624,7 +604,6 @@ def test_nanogpt_csa_fwd(benchmark, executor: Callable):
 
     setup = make_setup(bench)
     fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=1)
 
@@ -645,7 +624,6 @@ def test_nanogpt_csa_grad(benchmark, executor: Callable):
 
     setup = make_setup(bench)
     fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=1)
 
@@ -663,7 +641,6 @@ def test_nanogpt_block_fwd(benchmark, executor: Callable):
 
     setup = make_setup(bench)
     fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=1)
 
@@ -681,7 +658,6 @@ def test_nanogpt_block_grad(benchmark, executor: Callable):
 
     setup = make_setup(bench)
     fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=1)
 
@@ -703,7 +679,6 @@ def test_nanogpt_gpt2_fwd(benchmark, executor: Callable):
 
     setup = make_setup(bench)
     fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=1)
 
@@ -725,7 +700,6 @@ def test_nanogpt_gpt2_grad(benchmark, executor: Callable):
 
     setup = make_setup(bench)
     fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=1)
 
@@ -746,7 +720,6 @@ def test_nanogpt_gpt2xl_fwd(benchmark, executor: Callable):
 
     setup = make_setup(bench)
     fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=1)
 
@@ -768,7 +741,6 @@ def test_nanogpt_gpt2xl_grad(benchmark, executor: Callable):
 
     setup = make_setup(bench)
     fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=1)
 
@@ -787,7 +759,6 @@ def test_open_llama_7b_fwd(benchmark, executor: Callable):
 
     setup = make_setup(b)
     fn = executor(b)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=1)
 
@@ -801,7 +772,6 @@ def test_llama_2_7b_hf_fwd(benchmark, executor: Callable):
 
     setup = make_setup(b)
     fn = executor(b)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=1)
 
@@ -823,7 +793,6 @@ def test_llama_2_7b_grad(benchmark, executor: Callable):
 
     setup = make_setup(b)
     fn = executor(b)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=20, warmup_rounds=1)
 
@@ -840,7 +809,6 @@ def test_llama2_mlp_7b_grad(benchmark, executor: Callable):
 
     setup = make_setup(bench)
     fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
 
@@ -857,7 +825,6 @@ def test_llama2_causal_self_attention_7b_grad(benchmark, executor: Callable):
 
     setup = make_setup(bench)
     fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
 
@@ -874,7 +841,6 @@ def test_llama2_7b_rmsnorm_grad(benchmark, executor: Callable):
 
     setup = make_setup(bench)
     fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
 
@@ -887,9 +853,8 @@ def test_llama2_7b_rmsnorm_grad(benchmark, executor: Callable):
 # - block_size
 # Let's select only the configurations that differ in these parameters
 def get_configs_for_qkv_split_rope():
-    config_names = list(sorted(c["name"] for c in configs))
+    config_names = list(sorted(c["name"] for c in configs)) if RUN_ALL_CONFIGS else IMPORTANT_CONFIGS
     unique_config_names = {}
-    important_configs = ["Llama-2-7b-hf", "Llama-3-8B", "Llama-3-70B", "Mistral-7B-v0.1"]
     for config_name in config_names:
         config = LitGPTConfig.from_name(config_name)
         key = tuple(
@@ -902,7 +867,7 @@ def get_configs_for_qkv_split_rope():
                 "block_size",
             )
         )
-        if config_name in important_configs:
+        if config_name in IMPORTANT_CONFIGS:
             unique_config_names[key] = config_name
         unique_config_names.setdefault(key, config_name)
 
@@ -964,7 +929,6 @@ def test_litgpt_qkv_split_rope_train_forward(benchmark, executor: Callable, use_
 
     setup = make_setup(bench)
     fn = executor(bench.fn())
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
 
@@ -1028,7 +992,6 @@ def test_litgpt_qkv_split_rope_train_backward(benchmark, executor: Callable, use
 
     fw_setup = make_setup(bench)
     fn, bw_setup = backward_only(bench.fn(), executor, fw_setup)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=bw_setup, rounds=40, warmup_rounds=1)
 
@@ -1050,6 +1013,5 @@ def test_interpreter_nanogpt_gpt2_fwd(benchmark, executor: Callable):
 
     setup = make_setup(bench)
     fn = executor(bench)
-    fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=1)

@@ -79,7 +79,7 @@ def make_number(**kwargs):
     return v
 
 
-# Returns a noncontiguous (tensor with the same shape and values as t
+# Returns a noncontiguous tensor (with the same shape and values as t)
 # The noncontiguous tensor is constructed such that elements in the innermost
 #   dimension are separated by zeros or (whenever possible) nans
 # TODO: consider more complicated noncontiguity schemes
