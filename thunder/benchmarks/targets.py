@@ -57,6 +57,7 @@ IMPORTANT_CONFIGS = [
 ]
 RUN_ALL_CONFIGS = os.environ.get("THUNDER_BENCH_RUN_ALL_CONFIGS", "0") == "1"
 
+
 def make_setup(b: Benchmark):
     def setup():
         args_and_kwargs = b.make_batch()
