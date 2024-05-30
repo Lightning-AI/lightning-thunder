@@ -8,7 +8,7 @@ import pytest
 import os
 import torch
 import thunder
-from thunder.core.transforms import grad, clear_grads, populate_grads, get_grad, put_grad, put_grads
+from thunder.core.transforms import grad, clear_grads, populate_grads
 from thunder.core.interpreter import interpret
 
 from thunder.benchmarks import (
@@ -28,7 +28,6 @@ from thunder.benchmarks import (
     torch_executor,
     torch_compile_executor,
     thunder_executor,
-    thunder_torch_executor,
     thunder_torch_compile_executor,
     thunder_apex_executor,
     thunder_apex_nvfuser_executor,
@@ -36,7 +35,6 @@ from thunder.benchmarks import (
     thunder_cudnn_nvfuser_executor,
     thunder_cudnn_layer_norm_executor,
     thunder_cudnn_layer_norm_nvfuser_executor,
-    thunder_sdpa_executor,
     thunder_sdpa_torch_compile_nvfuser_executor,
     BatchNormBenchmark,
 )
