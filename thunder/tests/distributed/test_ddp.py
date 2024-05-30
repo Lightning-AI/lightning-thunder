@@ -1021,6 +1021,53 @@ class CompileDDPTest(DataParallelTestCase):
         with thunder.ThunderModule.no_sync(model):
             fwd_loss(model, x)
 
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
+    def test_fsdp_weight_sharing(self):
+        # This test is to verify that weight sharing works with fsdp.
+        # NOTE: Currently we end up creating 2 copies of shared weight during execution.
+        #       This should be fixed and we should update this test to check for that.
+        device = torch.device("cuda", self.rank)
+
+        class Model(torch.nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.fc1 = torch.nn.Linear(16, 16, bias=False)
+                self.fc2 = torch.nn.Linear(16, 16, bias=False)
+
+            def forward(self, x):
+                return self.fc1(x) + self.fc2(x)
+
+        # Check `jit(fsdp(model))` works
+        with device:
+            model = Model()
+            x = torch.ones(4, 16)
+
+        model.fc1.weight = model.fc2.weight
+
+        model = thunder.jit(thunder.distributed.fsdp(model), executors=["torch"])
+
+        output = model(x)
+        with device:
+            grad_output = torch.ones_like(output)
+        output.backward(grad_output)
+        expected_shape = (4, 16)
+
+        assert output.shape == expected_shape, f"{output.shape=} - {expected_shape=}"
+
+        # Verify that both params point to same grad tensor.
+        assert id(model.get_parameter("fc1.weight").grad) == id(model.get_parameter("fc2.weight").grad)
+
+        # Verify that we accumulate the gradients for the shared parameter.
+        gathered_grad_shape = (model.fc1.weight.shape[0] * self.world_size,) + model.fc1.weight.shape[1:]
+        with device:
+            actual_grad_gathered = torch.empty(gathered_grad_shape)
+
+        tdist.all_gather_into_tensor(actual_grad_gathered, model.get_parameter("fc1.weight").grad)
+
+        # Based on the forward, grad for both params is `(grad_output.T @ x)`. Multiplying by 2 as the grad will be accumulated.
+        expected_grad = 2 * (grad_output.T @ x)
+        torch.testing.assert_close(actual_grad_gathered, expected_grad)
+
 
 common_utils.instantiate_parametrized_tests(CompileDDPTest)
 

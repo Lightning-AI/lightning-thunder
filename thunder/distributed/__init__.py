@@ -13,6 +13,7 @@ from functools import partial
 
 import torch
 import torch.distributed as tdist
+from torch.utils.weak import WeakTensorKeyDictionary
 
 import thunder.core.utils as utils
 from thunder.core.proxies import DDPType
@@ -563,6 +564,9 @@ def _shard_params(
         local_rank = int(os.environ["LOCAL_RANK"])
         device = torch.device("cuda", local_rank)
 
+    # In case there is a weight sharing, we don't want to shard the same param
+    # multiple times. We use `sharded_params` to keep track of already sharded param.
+    sharded_params = WeakTensorKeyDictionary()
     # We will definitely change the sharding logic in the future
     for module_name, submodule in module.named_modules():
         # Materialize meta-parameters on-device if necessary.
@@ -585,7 +589,11 @@ def _shard_params(
         # Note [FSDP Sharding]
         # All internal code will assume that the parameters are sharded on the first dimension
         for param_name, param in submodule.named_parameters(recurse=False, prefix=module_name):
+            if param in sharded_params:
+                continue
             _shard_param(param, global_rank, world_size, param_name, allow_padding_for_fsdp=allow_padding_for_fsdp)
+            # Mark the param as sharded so that we don't reshard it (in case model has shared parameters)
+            sharded_params[param] = True
 
 
 def _shard_param(
