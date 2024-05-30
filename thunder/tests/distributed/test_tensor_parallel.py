@@ -135,9 +135,9 @@ class TensorParallelTest(DataParallelTestCase):
             actual=tp_jitted_model.get_parameter("embed.weight").grad,
         )
 
-    # TODO(crcrpar): Activate numerical check
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
-    def test_tensor_parallel_both_column_and_row(self):
+    @common_utils.parametrize("bias", (True, False))
+    def test_tensor_parallel_both_column_and_row(self, bias):
         num_embeddings = 128
         embedding_dim = 32
         n_hidden = 96
@@ -159,15 +159,16 @@ class TensorParallelTest(DataParallelTestCase):
 
         device = torch.device("cuda", self.rank)
         x = torch.randint(0, num_embeddings - 1, (16, 16), device=device)
+        x_ref = x.clone().detach()
 
         process_group = None
-        ref_model = Model(bias=False).to(device)
+        ref_model = Model(bias=bias).to(device)
         ref_state_dict = ref_model.state_dict()
-        expected = ref_model(x)
+        expected = ref_model(x_ref)
 
-        model = Model(bias=False).to(device)
+        model = Model(bias=bias).to(device)
         model.load_state_dict(ref_state_dict)
-        tp_model = thunder.jit(model)  # , executors=[thunder.executors.get_torch_executor()])
+        tp_model = thunder.jit(model)
 
         column_parallel_layers = ["embed_1", "linear1_0"]
         tp_model = column_parallel(tp_model, column_parallel_layers, process_group)
@@ -183,12 +184,8 @@ class TensorParallelTest(DataParallelTestCase):
             weight = tp_model.get_parameter(f"{row}.weight")
             self.assertEqual(weight.size(1), orig_size // self.world_size)
 
-        if self.rank == 0:
-            fw_extrace = thunder.last_traces(tp_model)[-1]
-            for bsym in fw_extrace.bound_symbols:
-                bsym.subsymbols = []
-            print(fw_extrace)
         torch.testing.assert_close(actual=actual, expected=expected)
+        torch.testing.assert_close(actual=x.grad, expected=x_ref.grad)
 
 
 common_utils.instantiate_parametrized_tests(TensorParallelTest)
