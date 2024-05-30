@@ -175,27 +175,22 @@ class TensorParallelTest(DataParallelTestCase):
 
         model = Model().to(device)
         model.load_state_dict(ref_state_dict)
-        jitted_model = thunder.jit(model)
+        tp_model = thunder.jit(model)
 
-        column_parallels = ["embed_1", "linear1_0", "linear2_1"]
-        row_parallels = ["embed_2", "linear1_1", "linear2_0"]
-        tp_jitted_model = row_parallel(
-            column_parallel(
-                jitted_model,
-                column_parallels,
-                process_group,
-            ),
-            row_parallels,
-            process_group,
-        )
-        actual = tp_jitted_model(x)
+        column_parallel_layers = ["embed_1", "linear1_0", "linear2_1"]
+        row_parallel_layers = ["embed_2", "linear1_1", "linear2_0"]
+        tp_model = column_parallel(tp_model, column_parallel_layers, process_group)
+        tp_model = row_parallel(tp_model, row_parallel_layers, process_group)
+        actual = tp_model(x)
         actual.mean().backward()
 
-        for col, orig_size in zip(column_parallels, [num_embeddings, n_hidden, n_out]):
-            weight = tp_jitted_model.get_parameter(f"{col}.weight")
+        fw_extrace = thunder.last_traces(tp_model)[-1]
+
+        for col, orig_size in zip(column_parallel_layers, [num_embeddings, n_hidden, n_out]):
+            weight = tp_model.get_parameter(f"{col}.weight")
             self.assertEqual(weight.size(0), orig_size // self.world_size)
-        for row, orig_size in zip(row_parallels, [embedding_dim, n_hidden, n_hidden]):
-            weight = tp_jitted_model.get_parameter(f"{row}.weight")
+        for row, orig_size in zip(row_parallel_layers, [embedding_dim, n_hidden, n_hidden]):
+            weight = tp_model.get_parameter(f"{row}.weight")
             self.assertEqual(weight.size(1), orig_size // self.world_size)
 
 
