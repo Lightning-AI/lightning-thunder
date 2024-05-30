@@ -1,7 +1,7 @@
 from typing import List, Any, Dict, Tuple, Union, Type
 from collections.abc import Callable
 from collections.abc import Hashable
-from collections.abc import Sequence
+from collections.abc import Sequence, Collection, MutableSet, MutableMapping, MutableSequence
 from numbers import Number
 import math
 import operator
@@ -14,7 +14,7 @@ import torch
 
 import thunder.core.prims as prims
 from thunder.core.prims import PrimIDs
-from thunder.core.proxies import TensorProxy, CollectionProxy
+from thunder.core.proxies import NumberProxy, NumberLike, TensorProxy, CollectionProxy
 from thunder.core.symbol import Symbol, BoundSymbol
 from thunder.core import baseutils
 import thunder.core.dtypes as dtypes
@@ -174,8 +174,8 @@ ex.register_implementation(prims.construct_tuple, construct_tuple, checker=_alwa
 #
 
 
-def _convert_element_type_prim_checker(a: Number | TensorProxy, /, dtype: type | dtypes.dtype) -> bool:
-    return isinstance(a, Number) and dtype in (bool, int, float, complex)
+def _convert_element_type_prim_checker(a: NumberLike | TensorProxy, /, dtype: type | dtypes.dtype) -> bool:
+    return isinstance(a, (Number, NumberProxy)) and dtype in (bool, int, float, complex)
 
 
 def _convert_element_type_prim_impl(a: Number, dtype: type) -> Number:
@@ -198,8 +198,8 @@ ex.register_implementation(prims.convert_element_type, convert_element_type, che
 # TODO Review differences in type promotion (for example round(2.3))
 
 
-def _elementwise_unary_checker(x: Number | TensorProxy) -> bool:
-    return isinstance(x, Number)
+def _elementwise_unary_checker(x: NumberLike | TensorProxy) -> bool:
+    return isinstance(x, (Number, NumberProxy))
 
 
 # NOTE Tensor abs is distinct from Python's builtin abs because it preserves the dtype of booleans
@@ -219,14 +219,14 @@ def _signbit_prim_impl(a: Number) -> bool:
     return a < 0
 
 
-def _clear_collection_meta(coll: CollectionProxy) -> None:
+def _clear_mutable_collection_meta(coll: CollectionProxy) -> None:
     baseutils.check_type(coll, CollectionProxy)
     baseutils.check_type(coll.coll, Sequence)
     return None
 
 
-def _clear_collection_prim_impl(a: Sequence) -> None:
-    if isinstance(a, list):
+def _clear_mutable_collection_prim_impl(a: Collection) -> None:
+    if isinstance(a, (MutableSequence, MutableMapping, MutableSet)):
         a.clear()
 
 
@@ -241,7 +241,9 @@ tensor_abs = ex.register_operator("tensor_abs", like=prims.abs, fn=_tensor_abs_p
 neg = ex.register_operator("neg", like=prims.neg, module=operator)
 real = ex.register_operator("real", like=prims.real, fn=_real_prim_impl)
 signbit = ex.register_operator("signbit", like=prims.signbit, fn=_signbit_prim_impl)
-clear_collection = ex.register_operator("clear_collection", meta=_clear_collection_meta, fn=_clear_collection_prim_impl)
+clear_mutable_collection = ex.register_operator(
+    "clear_mutable_collection", meta=_clear_mutable_collection_meta, fn=_clear_mutable_collection_prim_impl
+)
 
 ex.register_implementation(prims.acos, acos, checker=_elementwise_unary_checker)
 ex.register_implementation(prims.acosh, acosh, checker=_elementwise_unary_checker)
@@ -292,8 +294,8 @@ ex.register_implementation(prims.signbit, signbit, checker=_elementwise_unary_ch
 #
 
 
-def _elementwise_binary_checker(a: Number | TensorProxy, b: Number | TensorProxy) -> bool:
-    return isinstance(a, Number) and isinstance(b, Number)
+def _elementwise_binary_checker(a: NumberLike | TensorProxy, b: NumberLike | TensorProxy) -> bool:
+    return isinstance(a, (Number, NumberProxy)) and isinstance(b, (Number, NumberProxy))
 
 
 add = ex.register_operator("add", like=prims.add, module=operator)

@@ -2,6 +2,7 @@ import dis
 from typing import Any, Optional
 from collections.abc import Generator
 from collections.abc import Callable
+from collections.abc import Sequence
 from enum import Enum, auto
 from collections import deque, defaultdict
 from contextlib import contextmanager
@@ -38,7 +39,6 @@ import thunder.distributed as dist
 import thunder.torch as ltorch
 from thunder.extend import Executor, get_default_executors, get_always_executors, OperatorExecutor, add_executor_lists
 import thunder.executors as executors
-from thunder.executors.torch_autograd import thunder_backward
 from thunder.core.transforms import autocast
 from thunder.core.dtypes import to_dtype
 
@@ -54,6 +54,46 @@ import numpy as np
 # TODO RC1 Update last_executed to last_computation
 # TODO RC1 Review how autograd traces are presented
 class CompileStats:
+    """A class holding statistics and caches for a compiled function.
+
+    .. note::
+        It is highly recommended that some attributes such as :attr:`CompileStats.last_traces` and
+        :attr:`CompileStats.last_backward_traces` via :func:`thunder.last_traces` and
+        :func:`thunder.last_backward_traces`, respectively.
+        See :mod:`thunder` for more of such utility functions.
+
+    Attributes:
+        last_executed:
+        last_traces (Sequence[TraceCtx]):
+        last_prologue (TraceCtx):
+        last_prologue_traces (Sequence[TraceCtx]):
+        last_interpreted_instructions (Generator[dist.Instruction, None, None] | None):
+        last_interpreter_log (list[InterpreterLogItem] | None):
+        last_backward_traces (Sequence[TraceCtx]):
+        last_trace_host_start (int):
+        last_trace_host_stop (int):
+        last_trace_cache_start (int):
+        last_trace_cache_stop (int):
+        last_trace_tracing_start (int):
+        last_trace_tracing_stop (int):
+        last_trace_host_execution_start (int):
+        last_trace_host_execution_stop (int):
+        last_prologue_transformation_start (int):
+        last_prologue_transformation_stop (int):
+        last_prologue_execution_start (int):
+        last_prologue_execution_stop (int):
+        last_computation_transformation_start (int):
+        last_computation_transformation_stop (int):
+        last_computation_execution_start (int):
+        last_computation_execution_stop (int):
+        cache (dict):
+        interpreter_cashe (list):
+        calls (int):
+        cache_hits (int):
+        cache_misses (int):
+        last_compile_reasons (dict):
+    """
+
     def __init__(self):
         # Callables and traces
         self.last_executed = None
@@ -138,6 +178,11 @@ class CompileStats:
 #   like additional_param_names
 # TODO RC1 Rename this to CompileOptions
 class CompileData:
+    """A class holding data about the compiled object.
+
+    Data include statistics about how it's been called.
+    """
+
     def __init__(
         self,
         *,
@@ -150,7 +195,6 @@ class CompileData:
         only_execute_prims: bool = False,
         disable_preprocessing: bool = False,
         use_cudagraphs: bool = False,
-        use_torch_compile: bool = False,
         disable_torch_autograd_support: bool = False,
         use_rematerialization: bool = False,
         debug_log: None | StringIO = None,
@@ -209,7 +253,6 @@ class CompileData:
         self.disable_preprocessing = disable_preprocessing
         self.use_rematerialization = use_rematerialization
         self.use_cudagraphs = use_cudagraphs
-        self.use_torch_compile = use_torch_compile
         self.disable_torch_autograd_support = disable_torch_autograd_support
         self.debug_log = debug_log
 
@@ -217,6 +260,10 @@ class CompileData:
         self.compile_options = compile_options
 
         self.is_module = isinstance(self.fn, torch.nn.Module)
+
+        # to not introduce (more) ref cycles, make this int->ThunderModule with
+        # but the accessor has to check if tmm[id(module)]._module is module
+        self._thunder_module_map = {}
 
         # We set the process_group_for_ddp attribute on the module when
         # thunder.distributed.ddp(module) is called.
@@ -621,10 +668,6 @@ def _execute_trace(
     # Constructs the Python callable
     c = extrace.python_callable()
 
-    # TODO RC1 Remove this option (by using the torch.compile executor)
-    if compile_data.use_torch_compile:
-        c = torch.compile(c)
-
     # TODO RC1 Mark this option as experimental
     if compile_data.use_cudagraphs:
         c = CUDAGraphExecutor(c, num_constant_args=compile_data.num_constant_args)
@@ -675,10 +718,10 @@ def _create_callable(
             )
             autocast_thunder_dtype = autocast_cpu_dtype if torch.is_autocast_cpu_enabled() else autocast_gpu_dtype
 
-        # TODO(crcrpar): support FSDP as well
         is_ddp_enabled = getattr(cd.fn, "use_ddp", False)
+        is_fsdp_enabled = getattr(cd.fn, "use_fsdp", False)
         no_grad_sync = False
-        if is_ddp_enabled:
+        if is_ddp_enabled or is_fsdp_enabled:
             from thunder.distributed import get_skip_data_parallel_grad_sync
 
             no_grad_sync = get_skip_data_parallel_grad_sync()
@@ -734,26 +777,10 @@ def _create_callable(
                 tensor_cls = (torch.Tensor, TensorProxy)
                 requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in flat_args)
                 if not cd.disable_torch_autograd_support and requires_grad:
-                    # thunder_backward may recursively call compile and wraps the result in a
-                    # torch.autograd.Function to support embedding of Thunder-compiled
-                    # functions in torch's Autograd
-                    cs.last_trace_host_execution_start = time.time_ns()
-                    c = thunder_backward(compile_data=cd, compile_stats=cs)(processed_function)
-                    result = c(*args, **kwargs)
-                    cs.last_trace_host_execution_stop = time.time_ns()
-                    cs.last_executed = c
-                    if cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES:
-                        cache_put(
-                            cs.cache,
-                            c,
-                            None,
-                            args[cd.num_constant_args :],
-                            kwargs,
-                            autocast_key=None,
-                            distributed_key=distributed_key,
-                        )
-                    cs.last_trace_host_stop = time.time_ns()
-                    return result
+                    raise NotImplementedError(
+                        "torch.autograd.Function integration is not supported in thunder.compile(). "
+                        "Please use thunder.jit() to compile functions that require torch.autograd.Function."
+                    )
 
             # TODO Revisit jit() behavior when hit in a trace ctx
             #   This will inline the invocation of compile into the current

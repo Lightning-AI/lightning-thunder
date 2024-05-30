@@ -14,6 +14,7 @@ from thunder import last_traces, cache_option, cache_hits, cache_misses
 import thunder.examine as examine
 import thunder.clang as clang
 import thunder.core.proxies as proxies
+import thunder.tests.bf16
 import thunder.torch as ltorch
 
 import thunder.core.codeutils as codeutils
@@ -554,8 +555,9 @@ def test_type_promotion_tensors(executor, device, _):
     assert result.dtype is torch.float32
 
     # float16 x bfloat16 type promotion -- float32 result dtype
-    result = traced_foo(f16, bf16)
-    assert result.dtype is torch.float32
+    if thunder.tests.bf16.device_supports_bf16(device):
+        result = traced_foo(f16, bf16)
+        assert result.dtype is torch.float32
 
     # int64 x float16 type promotion -- float16 result dtype
     result = traced_foo(f16, i64)
@@ -908,7 +910,7 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
     def foo(a, b):
         return a + b, a - b
 
-    cfoo = executor.make_callable_legacy(foo)
+    cfoo = executor.make_callable(foo)
     _, _ = cfoo(a, b)
     traces = thunder.last_traces(cfoo)
     trc = traces[0]
@@ -946,7 +948,7 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
 
     a = make((4, 3, 2, 3))
 
-    cbar = executor.make_callable_legacy(bar)
+    cbar = executor.make_callable(bar)
     expected = cbar(a, (12, -1))
     traces = thunder.last_traces(cbar)
     trc = traces[0]
@@ -955,8 +957,8 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
     top_down_bsyms = toposort_bsym_dag(roots, TOPOSORT_ORDER.TOP_DOWN)
     bottom_up_bsyms = toposort_bsym_dag(leaves, TOPOSORT_ORDER.BOTTOM_UP)
 
-    top_down_reshape_bsym = top_down_bsyms[5]
-    bottom_up_reshape_bsym = bottom_up_bsyms[4]
+    top_down_reshape_bsym = top_down_bsyms[3]
+    bottom_up_reshape_bsym = bottom_up_bsyms[2]
 
     assert top_down_reshape_bsym.sym.id == "torch.reshape"
     assert bottom_up_reshape_bsym.sym.id == "torch.reshape"
@@ -2221,14 +2223,14 @@ def test_no_passthrough_symbol(executor, device, _):
         return x.type_as(x)
 
     x = make_tensor((2, 2), device=device, dtype=torch.float32)
-    compiled = executor.make_callable_legacy(func)
+    compiled = executor.make_callable(func)
     out = compiled(x)
     assert out is x
-    initial_trace = thunder.last_traces(compiled)[0]
-    print(initial_trace)
-    assert len(initial_trace.bound_symbols) == 2
-    assert initial_trace.bound_symbols[0].sym.id == prims.PrimIDs.UNPACK_TRIVIAL
-    assert initial_trace.bound_symbols[1].sym.id == prims.PrimIDs.RETURN
+    initial_trace_with_dce = thunder.last_traces(compiled)[1]
+    assert "Constructed by Dead Code Elimination" in str(initial_trace_with_dce)
+    assert len(initial_trace_with_dce.bound_symbols) == 2
+    assert initial_trace_with_dce.bound_symbols[0].sym.id == prims.PrimIDs.UNPACK_TRIVIAL
+    assert initial_trace_with_dce.bound_symbols[1].sym.id == prims.PrimIDs.RETURN
 
 
 @instantiate(dtypes=NOTHING)
@@ -2309,6 +2311,78 @@ def test_preserve_weight_names(executor, device: str, dtype: dtypes.dtype):
     assert "t_fc1_weight" in sig.parameters
     assert "t_fc2_bias" in sig.parameters
     assert "t_fc2_weight" in sig.parameters
+
+
+@requiresCUDA
+def test_clone():
+    def foo(a):
+        return a.clone()
+
+    jfoo = thunder.jit(foo)
+    for shp in ((3, 5), [7], (8, 6, 4)):
+        for dev in (torch.device("cpu"), torch.device("cuda:0")):
+            for dt in (torch.float32, torch.float16, torch.bfloat16):
+                # there are issues with layouts other than strided; see
+                # test_clone_sparse_coo.
+                lout = torch.strided
+                b = jfoo(torch.randn(shp, device=dev, layout=lout, dtype=dt))
+                assert b.dtype == dt
+                assert b.layout == lout
+                assert b.device == dev
+                assert b.shape == torch.Size(shp)
+
+
+# Separate out the sparse test because creating a sparse tensor is tricky.
+def test_clone_sparse_coo():
+    def foo(a):
+        return a.clone()
+
+    jfoo = thunder.jit(foo)
+    shp = (3, 5)
+    dev = torch.device("cpu")
+    dt = torch.float32
+    # randn(layout=torch.sparse_coo, ...) will throw an exception deep in
+    # PyTorch, so we use to_sparse() from a dense tensor to get a sparse one.
+    b = jfoo(torch.randn(shp, device=dev, dtype=dt).to_sparse())
+    assert b.dtype == dt
+    assert b.layout == torch.sparse_coo
+    assert b.device == dev
+    assert b.shape == torch.Size(shp)
+
+
+@pytest.mark.xfail(reason="we improperly use an alias")
+def test_clone_alias():
+    def foo(a):
+        b = a.clone()
+        b[0] = 42
+
+    jfoo = thunder.jit(foo)
+    arg = torch.tensor([7, 19])
+    jfoo(arg)
+    assert arg[0] == 7
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_default_method(executor, device: str, dtype: dtypes.dtype):
+    # This test ensures that when no language context is given, it will fallback to the default implementation.
+    from thunder.core.trace import detached_trace
+    from thunder.core.proxies import TensorProxy
+
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+
+    with detached_trace():
+        b = TensorProxy(
+            name="__b",
+            shape=(2, 2),
+            device=thunder.core.devices.cpu,
+            dtype=thunder.core.dtypes.float32,
+            requires_grad=False,
+        )
+
+    # torch.numel(a) and a.numel() will run on PyTorch contenxt
+    # b.numel will fall back to the default implementation
+    assert torch.numel(a) == a.numel() == b.numel
 
 
 # @instantiate(
@@ -2545,3 +2619,22 @@ def test_preserve_weight_names(executor, device: str, dtype: dtypes.dtype):
 #     # Same as above, but now the last del should be removed since the variable
 #     # is used in the output
 #     assert code_str.count("del") == 3
+
+
+@instantiate(dtypes=(thunder.float32,), executors=(TorchExecutor,))
+def test_bound_symbol_source_location_context(executor, device: str, dtype: dtypes.dtype):
+    def foo(x):
+        return clang.sin(x)
+
+    a = make_tensor((2, 2), device=device, dtype=ltorch.to_torch_dtype(dtype))
+
+    lineno = foo.__code__.co_firstlineno + 1
+    jfn = thunder.jit(foo)
+    jfn(a)
+
+    trace = thunder.last_traces(jfn)[0]
+
+    assert len(trace.bound_symbols) == 3
+    sin_symbol = trace.bound_symbols[1]
+    assert str(trace).count("return clang.sin(x)") == 1
+    assert str(trace).count(f"# {__file__}:{lineno}") == 1

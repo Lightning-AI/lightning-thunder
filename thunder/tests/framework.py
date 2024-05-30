@@ -1,6 +1,7 @@
 import inspect
 import os
 import sys
+import platform
 from functools import wraps, singledispatchmethod, partial
 from itertools import product
 from typing import List, Optional
@@ -8,6 +9,7 @@ from collections.abc import Callable, Sequence, Iterable
 
 import pytest
 import torch
+from torch._dynamo import is_inductor_supported
 from torch.testing import assert_close
 
 from looseversion import LooseVersion
@@ -55,6 +57,7 @@ env_var_DISABLE_CUDA_TEST_INSTANTIATION: str = os.getenv("DISABLE_CUDA_TEST_INST
 DISABLE_CUDA_TEST_INSTANTIATION: bool = (
     env_var_DISABLE_CUDA_TEST_INSTANTIATION == "true" or env_var_DISABLE_CUDA_TEST_INSTANTIATION == "1"
 )
+IS_WINDOWS = platform.system() == "Windows"
 
 
 # Filters the CPU devicetype when in CI, CUDA is available, and the environment variable
@@ -134,7 +137,14 @@ class TestExecutor:
     @singledispatchmethod
     def make_callable_legacy(self, fn, **kwargs):
         assert kwargs.pop("disable_preprocessing", True)
-        return thunder.compile(fn, executors_list=self.executors_list(), disable_preprocessing=True, **kwargs)
+        assert kwargs.pop("disable_torch_autograd_support", True)
+        return thunder.compile(
+            fn,
+            executors_list=self.executors_list(),
+            disable_preprocessing=True,
+            disable_torch_autograd_support=True,
+            **kwargs,
+        )
 
     @singledispatchmethod
     def make_callable(self, fn, **kwargs):
@@ -162,7 +172,7 @@ class nvFuserTestExecutor(TestExecutor):
     name = "nvfuser"
     supported_devicetypes = (devices.DeviceType.CUDA,)
     supported_dtypes = (
-        datatypes.floating,
+        *datatypes.float_math_dtypes,
         datatypes.bool8,
         datatypes.int32,
         datatypes.int64,
@@ -190,15 +200,29 @@ class TorchTestExecutor(TestExecutor):
         return torch.__version__
 
 
+class TorchCompileCatTestExecutor(TestExecutor):
+    name = "torchcompile_cat"
+    supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
+    supported_dtypes = (datatypes.dtype,)
+
+    def executors_list(self) -> list[extend.Executor]:
+        from thunder.executors.torch_compile import torch_compile_cat_ex
+
+        return [torch_compile_cat_ex]
+
+    def version(self):
+        return torch.__version__
+
+
 class TorchCompileTestExecutor(TestExecutor):
     name = "torchcompile"
     supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
     supported_dtypes = (datatypes.dtype,)
 
     def executors_list(self) -> list[extend.Executor]:
-        from thunder.executors.torch_compile import torch_compile_executor
+        from thunder.executors.torch_compile import torch_compile_ex
 
-        return [torch_compile_executor]
+        return [torch_compile_ex]
 
     def version(self):
         return torch.__version__
@@ -206,6 +230,7 @@ class TorchCompileTestExecutor(TestExecutor):
 
 # TODO Refactor these executors into the actual executor (sub)modules
 TorchExecutor: TorchTestExecutor = TorchTestExecutor()
+TorchCompileCatExecutor: TorchCompileCatTestExecutor = TorchCompileCatTestExecutor()
 TorchCompileExecutor: TorchCompileTestExecutor = TorchCompileTestExecutor()
 nvFuserExecutor: None | nvFuserTestExecutor = None
 
@@ -215,6 +240,7 @@ if NVFUSER_AVAILABLE:
 
 def _all_test_executors():
     """Constructs a list of all Thunder executors to be used when generating tests."""
+    # TODO: include the torch compile executors: https://github.com/Lightning-AI/lightning-thunder/issues/299
     executors = [TorchExecutor]
 
     if NVFUSER_AVAILABLE:
@@ -310,7 +336,7 @@ class ops:
         self.supported_executors = (
             set(supported_executors)
             if supported_executors is not None
-            else set(_all_test_executors() + [TorchCompileExecutor])
+            else set(_all_test_executors() + [TorchCompileCatExecutor])
         )
         for ex in self.supported_executors:
             assert isinstance(ex, TestExecutor)
@@ -321,7 +347,9 @@ class ops:
         self.supported_devicetypes = set(filter_ci_devicetypes(self.supported_devicetypes))
 
         self.supported_dtypes = (
-            datatypes.resolve_dtypes(supported_dtypes) if supported_dtypes is not None else datatypes.all_dtypes
+            datatypes.resolve_dtypes(supported_dtypes)
+            if supported_dtypes is not None
+            else datatypes.all_dtypes - datatypes.float_8bit_dtypes
         )
 
         if supported_dtypes == NOTHING:
@@ -350,8 +378,8 @@ class ops:
                 if not executor.supports_devicetype(devicetype):
                     continue
 
-                if executor == TorchCompileExecutor and (
-                    not opinfo.test_torch_compile_executor or sys.platform == "win32"
+                if any("torchcompile" in ex.name for ex in executor.executors_list()) and (
+                    not opinfo.test_torch_compile_executor or not is_inductor_supported()
                 ):
                     continue
 
@@ -376,6 +404,13 @@ class ops:
                     )
                     # Adds the instantiated test to the requested scope
                     self.scope[test.__name__] = test
+
+                    # [NOTE] dynamo reset
+                    # dynamo caches are per code object, not frame. All the dynamic copies of these context
+                    # managers share the same code cache in the process. This is a problem in a single pytest process
+                    # that runs many traces
+                    if any("torchcompile" in ex.name for ex in executor.executors_list()):
+                        torch._dynamo.reset()
 
 
 # TODO Allow executing the test suite on different devices (not just always cuda:0)

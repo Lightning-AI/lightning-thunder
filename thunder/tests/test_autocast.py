@@ -2,17 +2,19 @@ import itertools
 
 import pytest
 import torch
+from torch._dynamo.eval_frame import is_inductor_supported
 
 import thunder
-import thunder.torch as ltorch
-from thunder.core import devices, dtypes
-from thunder.tests.framework import instantiate, TorchExecutor
 import thunder.tests.bf16
+import thunder.torch as ltorch
+from thunder.core import dtypes
+from thunder.executors.torchex import no_autocast
+from thunder.tests.framework import instantiate, TorchExecutor
 
 
 # TODO This test currently ignores the "should_autocast" argument enumerated in it
 @instantiate(
-    dtypes=dtypes.float_dtypes - {float},
+    dtypes=dtypes.float_math_dtypes,
 )
 def test_thunder_autocast_transform(executor, device, dtype):
     from thunder.core.transforms import autocast
@@ -63,7 +65,7 @@ def test_thunder_autocast_transform(executor, device, dtype):
 
 @instantiate(
     executors=[TorchExecutor],
-    dtypes=dtypes.float_dtypes - {float},
+    dtypes=dtypes.float_math_dtypes,
 )
 def test_no_autocast(executor, device, dtype):
     from thunder.core.symbol import Symbol
@@ -80,13 +82,16 @@ def test_no_autocast(executor, device, dtype):
         return is_autocast_enabled(), is_autocast_cpu_enabled()
 
     trace = thunder.trace()(func)
-    no_autocast_cfunc = trace.python_callable()
-    cfunc = no_autocast_cfunc.__wrapped__.__wrapped__  # This function can be affected by the autocast context.
-    b1, b2 = no_autocast_cfunc()
+    python_callable = trace.python_callable()
+    # 3 unwraps for:
+    # @no_grad()
+    # @autocast(device_type="cpu", ...)
+    # @autocast(device_type="cuda", ...)
+    cfunc = python_callable.__wrapped__.__wrapped__.__wrapped__
+    b1, b2 = python_callable()
     assert b1 is False
     assert b2 is False
 
-    torch_dtype = ltorch.to_torch_dtype(dtype)
     torch_device = torch.device(device)
     if torch_device.type == "cpu" and dtype == dtypes.float16:
         pytest.skip("float16 matmul is not supported on CPU.")
@@ -98,7 +103,7 @@ def test_no_autocast(executor, device, dtype):
     if torch_device.type == "cpu":
         test_dtype = torch.bfloat16
     with torch.autocast(device_type=devicetype, dtype=test_dtype):
-        b1, b2 = no_autocast_cfunc()
+        b1, b2 = python_callable()
         b3, b4 = cfunc()
     assert b1 is False
     assert b2 is False
@@ -107,7 +112,8 @@ def test_no_autocast(executor, device, dtype):
 
 
 @instantiate(
-    dtypes=dtypes.float_dtypes - {float},
+    dtypes=dtypes.float_math_dtypes,
+    decorators=(pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported"),),
 )
 def test_compile_autocast(executor, device, dtype):
     del executor
@@ -131,3 +137,19 @@ def test_compile_autocast(executor, device, dtype):
     with torch.autocast(device_type=devicetype, dtype=test_dtype):
         output = cfunc(a, b)
     assert output.dtype == (torch.float16 if torch_device.type == "cuda" else torch.bfloat16)
+
+
+@pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported")
+def test_torch_compile_autocast():
+    """Checks if our autocast decorator plays well with ``torch.compile``"""
+
+    @no_autocast
+    def fn(x, y):
+        return x + y
+
+    a = torch.randn(2, 2)
+    b = torch.randn(2, 2)
+    cfn = torch.compile(fn, fullgraph=True)
+    actual = cfn(a, b)
+    expected = a + b
+    torch.testing.assert_close(actual, expected)

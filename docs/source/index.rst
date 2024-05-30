@@ -141,6 +141,7 @@ API reference
    reference/distributed/index
    reference/executors/index
    reference/torch/index
+   reference/extend/index
 
 
 Indices and tables

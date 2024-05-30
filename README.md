@@ -16,7 +16,7 @@ ______________________________________________________________________
   <a href="#hello-world">Examples</a> •
   <a href="#inside-thunder-a-brief-look-at-the-core-features">Inside Thunder</a> •
   <a href="#get-involved">Get involved!</a> •
-  <a href="#documentation">Documentation</a>
+  <a href="https://lightning-thunder.readthedocs.io/en/latest/">Documentation</a>
 </p>
 
 [![license](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/Lightning-AI/lightning-thunder/blob/main/LICENSE)
@@ -73,14 +73,23 @@ The easiest way to get started with Thunder, requiring no extra installations or
 
 ## Install Thunder
 
-To use Thunder on your local machine, first install [nvFuser](https://github.com/NVIDIA/Fuser) nightly and PyTorch nightly together as follows:
+To use Thunder on your local machine:
+
+- install [nvFuser](https://github.com/NVIDIA/Fuser) nightly and PyTorch nightly together as follows:
 
 ```bash
 # install nvFuser which installs the matching nightly PyTorch
 pip install --pre 'nvfuser-cu121[torch]' --extra-index-url https://pypi.nvidia.com
 ```
 
-Then, install Thunder as follows:
+- install [cudnn](https://gitlab-master.nvidia.com/cudnn/cudnn_frontend) as follows:
+
+```bash
+# install cudnn
+pip install nvidia-cudnn-frontend
+```
+
+- Finally, install Thunder as follows:
 
 ```
 # install thunder
@@ -219,7 +228,7 @@ Modules and functions compiled with Thunder fully interoperate with vanilla PyTo
 
 ## Documentation
 
-Docs are currently not hosted publicly. However you can build them locally really quickly:
+[Online documentation](https://lightning-thunder.readthedocs.io/en/latest/) is available. To build documentation locally you can use
 
 ```bash
 make docs
