@@ -30,10 +30,10 @@ def new_gelu(x):
 class ToyModel(nn.Module):
     """Linear(12, 12) -> gelu -> Linear(12, 8)."""
 
-    def __init__(self):
+    def __init__(self, bias: bool = True):
         super().__init__()
-        self.net1 = nn.Linear(12, 12)
-        self.net2 = nn.Linear(12, 8)
+        self.net1 = nn.Linear(12, 12, bias=bias)
+        self.net2 = nn.Linear(12, 8, bias=bias)
 
     def forward(self, x):
         return self.net2(new_gelu(self.net1(x)))

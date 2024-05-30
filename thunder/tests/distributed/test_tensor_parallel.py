@@ -1,3 +1,5 @@
+from itertools import product
+
 import pytest
 import torch
 import torch.nn as nn
@@ -20,13 +22,13 @@ _name_to_transform = {
 class TensorParallelTest(DataParallelTestCase):
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
-    @common_utils.parametrize("name", tuple(_name_to_transform.keys()))
-    def test_tensor_parallel_linear(self, name):
+    @common_utils.parametrize("name,bias", product(tuple(_name_to_transform.keys()), (True, False)))
+    def test_tensor_parallel_linear(self, name, bias):
         device = torch.device("cuda", self.rank)
         x = torch.randn(2, 12).to(device).requires_grad_()
 
         process_group = None
-        ref_model = ToyModel().to(device)
+        ref_model = ToyModel(bias).to(device)
         with c10d._coalescing_manager(async_ops=True) as cm:
             c10d.all_reduce(x)
             for p in ref_model.parameters():
@@ -37,7 +39,7 @@ class TensorParallelTest(DataParallelTestCase):
         expected = ref_model(x)
 
         transform = _name_to_transform[name]
-        model = ToyModel().to(device)
+        model = ToyModel(bias=bias).to(device)
         model.load_state_dict(ref_state_dict)
         jitted_model = thunder.jit(model)
         tp_jitted_model = transform(
@@ -58,19 +60,25 @@ class TensorParallelTest(DataParallelTestCase):
             expected=expected,
             actual=tp_jitted_model.get_parameter("net2.weight").grad,
         )
-        expected_bias_grad: torch.Tensor = ref_model.net2.bias.grad
-        if name == _COL:
-            expected = torch.chunk(expected_bias_grad, self.world_size, 0)[self.rank]
-        else:
-            expected = expected_bias_grad
+        if bias:
+            expected_bias_grad: torch.Tensor = ref_model.net2.bias.grad
+            if name == _COL:
+                expected = torch.chunk(expected_bias_grad, self.world_size, 0)[self.rank]
+            else:
+                expected = expected_bias_grad
+            torch.testing.assert_close(
+                expected=expected,
+                actual=tp_jitted_model.get_parameter("net2.bias").grad,
+                msg=f"{expected.shape=}, {tp_jitted_model.get_parameter('net2.bias').grad}",
+            )
         torch.testing.assert_close(
-            expected=expected,
-            actual=tp_jitted_model.get_parameter("net2.bias").grad,
-            msg=f"{expected.shape=}, {tp_jitted_model.get_parameter('net2.bias').grad}",
-        )
-        torch.testing.assert_close(
-            expected=(ref_model.net1.weight.grad, ref_model.net1.bias.grad),
-            actual=(tp_jitted_model.get_parameter("net1.weight").grad, tp_jitted_model.get_parameter("net1.bias").grad),
+            expected=(ref_model.net1.weight.grad,) + (ref_model.net1.bias.grad,) if bias else (),
+            actual=(
+                (tp_jitted_model.get_parameter("net1.weight").grad,)
+                + (tp_jitted_model.get_parameter("net1.bias").grad,)
+                if bias
+                else ()
+            ),
         )
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
