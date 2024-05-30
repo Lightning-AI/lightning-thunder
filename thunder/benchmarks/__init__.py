@@ -1248,7 +1248,7 @@ class NanoGPTGeLUBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def fn(self) -> Callable:
         def foo(a):
-            return torch.nn.functional.gelu(a, approximate="tanh")
+            return torch.nn.functional.gelu(a, approximate="tanh").sum()
 
         return foo
 
