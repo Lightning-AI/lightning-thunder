@@ -83,29 +83,28 @@ class ComputationTraceTransformVisitorForTensorParallel:
 
     Attributes:
         swap_map: A map from the original output of a tensor-parallel opt to the post-processed output.
-        input_swap_map:
     """
 
     bsym_to_prepostprocess: dict[BoundSymbol, PrePostProcessInterface]
     swap_map: dict[VariableInterface, ProxyInterface] = field(init=False, default_factory=dict)
-    input_swap_map: dict[VariableInterface, ProxyInterface] = field(init=False, default_factory=dict)
 
     def __call__(self, bsym: BoundSymbol) -> VISIT_TYPE:
         from thunder.core.transforms import VISIT_TYPE
         from thunder.core.trace import get_tracectx
         from thunder.core.proxies import variableify
 
+        input_swap_map: dict[VariableInterface, ProxyInterface] = {}
         pre_post_process: PrePostProcessInterface | None = None
         if bsym in self.bsym_to_prepostprocess:
             pre_post_process = self.bsym_to_prepostprocess[bsym]
             orig_arg = bsym.flat_proxy_args[0]
             new_arg, preprocess_artifacts = pre_post_process.preprocess(orig_arg)
             if new_arg.name != orig_arg.name:
-                self.input_swap_map[variableify(orig_arg)] = new_arg
+                input_swap_map[variableify(orig_arg)] = new_arg
 
         new_bsym = bsym.from_bsym_swap_proxies(self.swap_map, skip_output=True)
         if pre_post_process is not None:
-            new_bsym = new_bsym.from_bsym_swap_proxies(self.input_swap_map)
+            new_bsym = new_bsym.from_bsym_swap_proxies(input_swap_map)
             new_bsym = pre_post_process.maybe_modify_args_and_kwargs(new_bsym)
         trace = get_tracectx()
         trace.scopes[-1].append(new_bsym)
