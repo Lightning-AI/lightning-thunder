@@ -31,6 +31,7 @@ addopts = [
     "--color=yes",
     "--disable-pytest-warnings",
     "--benchmark-timer=torch.utils.benchmark.utils.timer.timer",
+    "--benchmark-warmup=on",
 ]
 markers = [
     "standalone: mark a test as standalone",
