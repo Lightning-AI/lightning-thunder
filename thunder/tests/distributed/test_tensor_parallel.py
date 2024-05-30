@@ -27,17 +27,13 @@ class TensorParallelTest(DataParallelTestCase):
     def test_tensor_parallel_linear(self, name, bias):
         device = torch.device("cuda", self.rank)
         x = torch.randn(2, 12).to(device).requires_grad_()
+        x_ref = x.clone().detach().requires_grad_()
 
         process_group = None
         ref_model = ToyModel(bias).to(device)
-        with c10d._coalescing_manager(async_ops=True) as cm:
-            c10d.all_reduce(x)
-            for p in ref_model.parameters():
-                c10d.all_reduce(p)
-        cm.wait()
 
         ref_state_dict = ref_model.state_dict()
-        expected = ref_model(x)
+        expected = ref_model(x_ref)
 
         transform = _name_to_transform[name]
         model = ToyModel(bias=bias).to(device)
@@ -53,6 +49,7 @@ class TensorParallelTest(DataParallelTestCase):
 
         expected.mean().backward()
         y.mean().backward()
+        torch.testing.assert_close(expected=x_ref.grad, actual=x.grad)
 
         dim = 1 if name == "row" else 0
         expected_full_grad: torch.Tensor = ref_model.net2.weight.grad
@@ -98,16 +95,13 @@ class TensorParallelTest(DataParallelTestCase):
 
         device = torch.device(f"cuda:{self.rank}")
         x = torch.randint(0, num_embeddings - 1, (16, 16), device=device)
+        x_ref = x.clone().detach()
 
         process_group = None
         ref_model = Model().to(device)
-        with c10d._coalescing_manager(async_ops=True) as cm:
-            for p in ref_model.parameters():
-                c10d.all_reduce(p)
-        cm.wait()
 
         ref_state_dict = ref_model.state_dict()
-        expected = ref_model(x)
+        expected = ref_model(x_ref)
 
         transform = _name_to_transform[name]
         model = Model().to(device)
