@@ -99,8 +99,11 @@ class DataParallelTestCase(common_distributed.MultiProcessTestCase):
         os.environ["LOCAL_RANK"] = str(local_rank)
 
         torch.distributed.barrier()
-        self.run_test(test_name, pipe)
-        torch.distributed.barrier()
-
-        torch.distributed.destroy_process_group()
+        try:
+            self.run_test(test_name, pipe)
+        except Exception:
+            raise
+        finally:
+            torch.distributed.barrier()
+            torch.distributed.destroy_process_group()
         sys.exit(0)
