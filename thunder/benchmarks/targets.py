@@ -560,13 +560,7 @@ sdpa_executors_ids = (
 )
 @pytest.mark.parametrize(
     "config,",
-    (
-        "Llama-2-7b-hf",
-        "Llama-2-13b-hf",
-        "Llama-2-70b-hf",
-        "Llama-3-8B",
-        "Llama-3-70B",
-    ),
+    IMPORTANT_CONFIGS,
 )
 def test_litgpt_sdpa_grad(benchmark, executor: Callable, bs, config):
     bench: Benchmark = LitGPTSDPABenchmark(
