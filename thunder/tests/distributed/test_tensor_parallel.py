@@ -6,6 +6,7 @@ import torch.nn as nn
 
 import thunder
 from thunder.distributed import column_parallel, row_parallel
+import thunder.executors
 from thunder.tests.distributed.helper import ToyModel, DataParallelTestCase
 
 from torch.testing._internal import common_utils
@@ -146,52 +147,54 @@ class TensorParallelTest(DataParallelTestCase):
         num_embeddings = 128
         embedding_dim = 32
         n_hidden = 96
-        n_out = 16
 
         class Model(nn.Module):
-            def __init__(self):
+            def __init__(self, bias: bool = True):
                 super().__init__()
                 self.embed_1 = nn.Embedding(num_embeddings, embedding_dim)
                 self.embed_2 = nn.Embedding(num_embeddings, embedding_dim)
-                self.linear1_0 = nn.Linear(embedding_dim, n_hidden)
-                self.linear1_1 = nn.Linear(n_hidden, n_hidden)
-                self.linear2_0 = nn.Linear(n_hidden, n_hidden)
-                self.linear2_1 = nn.Linear(n_hidden, n_out)
+                self.linear1_0 = nn.Linear(embedding_dim, n_hidden, bias=bias)
+                self.linear1_1 = nn.Linear(n_hidden, n_hidden, bias=bias)
 
             def forward(self, x):
                 feat_1 = self.embed_1(x)
                 feat_2 = self.embed_2(x)
                 sum_of_feat = feat_1 + feat_2
-                h = self.linear1_1(self.linear1_0(sum_of_feat))
-                return self.linear2_1(self.linear2_0(h))
+                h = self.linear1_1(torch.relu(self.linear1_0(sum_of_feat)))
+                return h
 
         device = torch.device("cuda", self.rank)
         x = torch.randint(0, num_embeddings - 1, (16, 16), device=device)
 
         process_group = None
-        ref_model = Model().to(device)
+        ref_model = Model(bias=False).to(device)
         ref_state_dict = ref_model.state_dict()
         expected = ref_model(x)
 
-        model = Model().to(device)
+        model = Model(bias=False).to(device)
         model.load_state_dict(ref_state_dict)
-        tp_model = thunder.jit(model)
+        tp_model = thunder.jit(model)  # , executors=[thunder.executors.get_torch_executor()])
 
-        column_parallel_layers = ["embed_1", "linear1_0", "linear2_1"]
-        row_parallel_layers = ["embed_2", "linear1_1", "linear2_0"]
+        column_parallel_layers = ["embed_1", "linear1_0"]
         tp_model = column_parallel(tp_model, column_parallel_layers, process_group)
+        row_parallel_layers = ["embed_2", "linear1_1"]
         tp_model = row_parallel(tp_model, row_parallel_layers, process_group)
         actual = tp_model(x)
         actual.mean().backward()
 
-        fw_extrace = thunder.last_traces(tp_model)[-1]
-
-        for col, orig_size in zip(column_parallel_layers, [num_embeddings, n_hidden, n_out]):
+        for col, orig_size in zip(column_parallel_layers, [num_embeddings, n_hidden]):
             weight = tp_model.get_parameter(f"{col}.weight")
             self.assertEqual(weight.size(0), orig_size // self.world_size)
-        for row, orig_size in zip(row_parallel_layers, [embedding_dim, n_hidden, n_hidden]):
+        for row, orig_size in zip(row_parallel_layers, [embedding_dim, n_hidden]):
             weight = tp_model.get_parameter(f"{row}.weight")
             self.assertEqual(weight.size(1), orig_size // self.world_size)
+
+        if self.rank == 0:
+            fw_extrace = thunder.last_traces(tp_model)[-1]
+            for bsym in fw_extrace.bound_symbols:
+                bsym.subsymbols = []
+            print(fw_extrace)
+        torch.testing.assert_close(actual=actual, expected=expected)
 
 
 common_utils.instantiate_parametrized_tests(TensorParallelTest)

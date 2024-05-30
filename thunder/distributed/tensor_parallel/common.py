@@ -4,6 +4,7 @@ from abc import abstractmethod
 from enum import Enum
 from enum import auto
 from dataclasses import dataclass
+from dataclasses import field
 from typing import TYPE_CHECKING
 
 from thunder.core.proxies import DistParallelType
@@ -76,12 +77,18 @@ class ComputationTraceTransformVisitorForTensorParallel:
     With the reference of ``bsyms_before_allgather``, this takes care of inputs and outputs of
     tensor parallel ops by applying defined processings. Each pair of them is supposed to be defined
     based on :clss:`PrePostProcessInterface`.
+
+    Args:
+        bsym_to_prepostprocess:
+
+    Attributes:
+        swap_map: A map from the original output of a tensor-parallel opt to the post-processed output.
+        input_swap_map:
     """
 
     bsym_to_prepostprocess: dict[BoundSymbol, PrePostProcessInterface]
-
-    def __post_init__(self):
-        self.swap_map: dict[VariableInterface, ProxyInterface] = {}
+    swap_map: dict[VariableInterface, ProxyInterface] = field(init=False, default_factory=dict)
+    input_swap_map: dict[VariableInterface, ProxyInterface] = field(init=False, default_factory=dict)
 
     def __call__(self, bsym: BoundSymbol) -> VISIT_TYPE:
         from thunder.core.transforms import VISIT_TYPE
@@ -94,10 +101,11 @@ class ComputationTraceTransformVisitorForTensorParallel:
             orig_arg = bsym.flat_proxy_args[0]
             new_arg, preprocess_artifacts = pre_post_process.preprocess(orig_arg)
             if new_arg.name != orig_arg.name:
-                self.swap_map[variableify(orig_arg)] = new_arg
+                self.input_swap_map[variableify(orig_arg)] = new_arg
 
         new_bsym = bsym.from_bsym_swap_proxies(self.swap_map, skip_output=True)
         if pre_post_process is not None:
+            new_bsym = new_bsym.from_bsym_swap_proxies(self.input_swap_map)
             new_bsym = pre_post_process.maybe_modify_args_and_kwargs(new_bsym)
         trace = get_tracectx()
         trace.scopes[-1].append(new_bsym)
