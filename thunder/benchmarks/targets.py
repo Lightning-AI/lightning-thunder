@@ -71,15 +71,6 @@ def torch_fwd(b: Benchmark):
     module = b.fn()
     fn_ = torch_executor(module)
 
-    if isinstance(module, torch.nn.Sequential):
-
-        @wraps(fn_)
-        def wrapper(*args):
-            result = fn_(args)
-            return result
-
-        return wrapper
-
     @wraps(fn_)
     def wrapper(*args, **kwargs):
         result = fn_(*args, **kwargs)
@@ -93,15 +84,6 @@ def interpreter_fwd(b: Benchmark):
     fn_ = torch_executor(module)
     fn_ = interpret(fn_)
 
-    if isinstance(module, torch.nn.Sequential):
-
-        @wraps(fn_)
-        def wrapper(*args):
-            result = fn_(args)
-            return result
-
-        return wrapper
-
     @wraps(fn_)
     def wrapper(*args, **kwargs):
         result = fn_(*args, **kwargs)
@@ -113,15 +95,6 @@ def interpreter_fwd(b: Benchmark):
 def torch_compile_fwd(b: Benchmark):
     module = b.fn()
     fn_ = torch_compile_executor(module)
-
-    if isinstance(module, torch.nn.Sequential):
-
-        @wraps(fn_)
-        def wrapper(*args):
-            result = fn_(args)
-            return result
-
-        return wrapper
 
     @wraps(fn_)
     def wrapper(*args, **kwargs):
@@ -142,15 +115,6 @@ def torch_compile_compiled_bwd(b: Benchmark):
 
     cfoo = torch_compile_executor(foo)
 
-    if isinstance(module, torch.nn.Sequential):
-
-        @wraps(cfoo)
-        def wrapper(*args):
-            clear_grads(module)
-            return cfoo(args)
-
-        return wrapper
-
     @wraps(cfoo)
     def wrapper(*args, **kwargs):
         clear_grads(module)
@@ -163,14 +127,6 @@ def torch_compile_compiled_bwd(b: Benchmark):
 def thunder_fwd(b: Benchmark, compile_fn: Callable):
     module: torch.nn.Module = b.fn()
     cfn = compile_fn(module)
-
-    if isinstance(module, torch.nn.Sequential):
-
-        @wraps(cfn)
-        def wrapper(*args):
-            return cfn(args)
-
-        return wrapper
 
     @wraps(cfn)
     def wrapper(*args, **kwargs):
@@ -185,16 +141,6 @@ def thunder_grad_transform(b: Benchmark, compile_fn: Callable):
     cfn = compile_fn(module)
     cfn_grad = grad(cfn)
 
-    if isinstance(module, torch.nn.Sequential):
-
-        @wraps(cfn_grad)
-        def wrapper(*args):
-            clear_grads(cfn)
-            grads = cfn_grad(args)
-            populate_grads(grads, cfn, args=args)
-
-        return wrapper
-
     @wraps(cfn_grad)
     def wrapper(*args, **kwargs):
         clear_grads(cfn)
@@ -207,17 +153,6 @@ def thunder_grad_transform(b: Benchmark, compile_fn: Callable):
 def thunder_fwd_bwd(b: Benchmark, compile_fn: Callable):
     module: torch.nn.Module = b.fn()
     cfn = compile_fn(module)
-
-    if isinstance(module, torch.nn.Sequential):
-
-        @wraps(cfn)
-        def wrapper(*args):
-            clear_grads(module)
-            result = cfn(args)
-            result.backward(torch.ones_like(result))
-            return result
-
-        return wrapper
 
     @wraps(cfn)
     def wrapper(*args, **kwargs):
