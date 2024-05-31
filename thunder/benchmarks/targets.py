@@ -126,11 +126,17 @@ if thunder_apex_nvfuser_executor is not None:
     thunder_apex_nvfuser_grad = partial(make_fwd_bwd, compile_fn=thunder_apex_nvfuser_executor)
 
 
-fwd_executors = (torch_executor, torch_compile_executor, thunder_executor)
+fwd_executors = (
+    torch_executor,
+    torch_compile_executor,
+    thunder_executor,
+    thunder_sdpa_torch_compile_nvfuser_executor,
+)
 fwd_executor_ids = (
     "torch",
     "torch.compile",
     "thunder",
+    "thunder+nvfuser+torch.compile",
 )
 
 thunder_fwd_bwd_sdpa_torch_compile_nvfuser = partial(
