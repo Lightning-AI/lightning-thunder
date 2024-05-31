@@ -190,10 +190,11 @@ class TensorParallelTest(DataParallelTestCase):
         for l_name, layer in reversed(list(ref_model.named_modules())):
             dim = int(l_name in row_parallel_layers)
             is_tensor_parallel = l_name in row_parallel_layers or l_name in column_parallel_layers
+            prefix = "row-parallel" if dim else "column-parallel"
             for p_name, p_ref in layer.named_parameters(recurse=False):
                 param_fqn = f"{l_name}.{p_name}"
                 ref_grad = p_ref.grad
-                msg = lambda err_msg: f"[{param_fqn}] {err_msg}"
+                msg = lambda err_msg: f"[{prefix} {param_fqn}] {err_msg}"
                 if is_tensor_parallel and (ref_grad.ndim > 1 or dim == 0):
                     ref_grad = ref_grad.chunk(self.world_size, dim)[self.rank]
                 grad = tp_model.get_parameter(param_fqn).grad
