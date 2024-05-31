@@ -314,23 +314,24 @@ sdpa_executors_ids = (
     ),
     ids=("bs1", "bs2"),
 )
+@parametrize_compute_type
 @pytest.mark.parametrize(
     "config,",
     IMPORTANT_CONFIGS,
 )
-def test_litgpt_sdpa_grad(benchmark, executor: Callable, bs, config):
+def test_litgpt_sdpa(benchmark, executor: Callable, bs, compute_type, config):
     bench: Benchmark = LitGPTSDPABenchmark(
         config=config,
         batchdims=(bs,),
         device="cuda:0",
         dtype=thunder.bfloat16,
-        requires_grad=True,
+        requires_grad=is_requires_grad(compute_type),
     )
 
     args, kwargs = bench.make_batch()
-    fn = make_fwd_bwd(bench, compile_fn=executor)
+    fn = executor(bench.fn())
 
-    benchmark(fn, *args, **kwargs)
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
 @pytest.mark.parametrize(
