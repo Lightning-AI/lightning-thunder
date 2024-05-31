@@ -28,13 +28,10 @@ from thunder.benchmarks import (
     torch_executor,
     torch_compile_executor,
     thunder_executor,
-    thunder_torch_compile_executor,
     thunder_apex_executor,
     thunder_apex_nvfuser_executor,
     thunder_cudnn_executor,
     thunder_cudnn_nvfuser_executor,
-    thunder_cudnn_layer_norm_executor,
-    thunder_cudnn_layer_norm_nvfuser_executor,
     thunder_sdpa_torch_compile_nvfuser_executor,
     BatchNormBenchmark,
 )
