@@ -8,6 +8,7 @@ import pytest
 import os
 import torch
 import thunder
+from enum import Enum, auto
 from thunder.core.transforms import clear_grads
 from thunder.core.interpreter import interpret
 
@@ -53,6 +54,12 @@ IMPORTANT_CONFIGS = [
     "phi-2",
 ]
 RUN_ALL_CONFIGS = os.environ.get("THUNDER_BENCH_RUN_ALL_CONFIGS", "0") == "1"
+
+
+class ComputeType(Enum):
+    INFERENCE = auto()
+    TRAINING_FORWARD = auto()
+    TRAINING_BACKWARD = auto()
 
 
 def interpreter_fwd(module: Callable):
@@ -710,7 +717,7 @@ qkv_split_rope_executors_ids = (
 
 
 # Sample command to run this benchmark:
-# pytest thunder/benchmarks/targets.py -k "test_litgpt_qkv_split_rope_train_forward" --benchmark-group-by='param:config,param:bs' --benchmark-columns='min,max,mean,stddev,median'
+# pytest thunder/benchmarks/targets.py -k "test_litgpt_qkv_split_rope" --benchmark-group-by='param:config,param:bs,param:compute_type'
 @pytest.mark.parametrize(
     "executor,use_apex,",
     qkv_split_rope_executors,
@@ -724,11 +731,15 @@ qkv_split_rope_executors_ids = (
     ids=(f"bs{2**i}" for i in range(0, 2)),
 )
 @pytest.mark.parametrize(
+    "compute_type,",
+    (ComputeType.INFERENCE, ComputeType.TRAINING_FORWARD, ComputeType.TRAINING_BACKWARD),
+    ids=("inference", "training_forward", "training_backward"),
+)
+@pytest.mark.parametrize(
     "config,",
     get_configs_for_qkv_split_rope(),
 )
-@pytest.mark.benchmark(group="forward")
-def test_litgpt_qkv_split_rope_train_forward(benchmark, executor: Callable, use_apex: bool, bs: int, config: str):
+def test_litgpt_qkv_split_rope(benchmark, executor: Callable, use_apex: bool, bs: int, compute_type: ComputeType, config: str):
     from thunder.benchmarks import LlamaQKVSplitRopeBenchmark
 
     if use_apex and not APEX_FUSED_ROPE_AVAILABLE:
@@ -739,14 +750,20 @@ def test_litgpt_qkv_split_rope_train_forward(benchmark, executor: Callable, use_
         batchdims=(bs,),
         device="cuda:0",
         dtype=thunder.bfloat16,
-        requires_grad=True,
+        requires_grad=(compute_type == ComputeType.TRAINING_FORWARD or compute_type == ComputeType.TRAINING_BACKWARD),
         use_apex=use_apex,
     )
 
-    args, kwargs = bench.make_batch()
-    fn = executor(bench.fn())
+    jfn = executor(bench.fn())
 
-    benchmark(fn, *args, **kwargs)
+    match compute_type:
+        case ComputeType.INFERENCE | ComputeType.TRAINING_FORWARD:
+            args, kwargs = bench.make_batch()
+            benchmark(jfn, *args, **kwargs)
+        case ComputeType.TRAINING_BACKWARD:
+            fn, bw_setup = backward_only(jfn, bench.make_batch)
+            args = bw_setup()
+            benchmark(fn, *args)
 
 
 def backward_only(fn: Callable, fw_setup_fn: Callable):
@@ -774,45 +791,6 @@ def backward_only(fn: Callable, fw_setup_fn: Callable):
         torch.autograd.backward(result, args, retain_graph=True)
 
     return backward_fn, backward_setup
-
-
-# Sample command to run this benchmark:
-# pytest thunder/benchmarks/targets.py -k "test_litgpt_qkv_split_rope_train_backward" --benchmark-group-by='param:config,param:bs' --benchmark-columns='min,max,mean,stddev,median'
-@pytest.mark.parametrize(
-    "executor,use_apex,",
-    qkv_split_rope_executors,
-    ids=qkv_split_rope_executors_ids,
-)
-@pytest.mark.parametrize(
-    "bs,",
-    (2**i for i in range(0, 2)),
-    ids=(f"bs{2**i}" for i in range(0, 2)),
-)
-@pytest.mark.parametrize(
-    "config,",
-    get_configs_for_qkv_split_rope(),
-)
-@pytest.mark.benchmark(group="backward")
-def test_litgpt_qkv_split_rope_train_backward(benchmark, executor: Callable, use_apex: bool, bs: int, config: str):
-    from thunder.benchmarks import LlamaQKVSplitRopeBenchmark
-
-    if use_apex and not APEX_FUSED_ROPE_AVAILABLE:
-        pytest.skip("Apex fused rotary positional embedding is unavailable")
-
-    bench: Benchmark = LlamaQKVSplitRopeBenchmark(
-        config=config,
-        batchdims=(bs,),
-        device="cuda:0",
-        dtype=thunder.bfloat16,
-        requires_grad=True,
-        use_apex=use_apex,
-    )
-
-    jfn = executor(bench.fn())
-    fn, bw_setup = backward_only(jfn, bench.make_batch)
-    args = bw_setup()
-
-    benchmark(fn, *args)
 
 
 #
