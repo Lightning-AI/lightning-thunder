@@ -749,10 +749,9 @@ def test_litgpt_qkv_split_rope_train_forward(benchmark, executor: Callable, use_
     benchmark(fn, *args, **kwargs)
 
 
-def backward_only(fn: Callable, jit_fn: Callable, fw_setup_fn: Callable):
-    jfn = jit_fn(fn)
+def backward_only(fn: Callable, fw_setup_fn: Callable):
     args, kwargs = fw_setup_fn()
-    result = jfn(*args, **kwargs)
+    result = fn(*args, **kwargs)
     result = thunder.core.utils.sequencify(result)
 
     result_metadata = [(r.dtype, r.device, r.shape) for r in result]
@@ -814,7 +813,8 @@ def test_litgpt_qkv_split_rope_train_backward(benchmark, executor: Callable, use
         return thunk
 
     fw_setup = make_setup(bench)
-    fn, bw_setup = backward_only(bench.fn(), executor, fw_setup)
+    jfn = executor(bench.fn())
+    fn, bw_setup = backward_only(jfn, fw_setup)
     args, kwargs = bw_setup()
 
     benchmark(fn, *args, **kwargs)
