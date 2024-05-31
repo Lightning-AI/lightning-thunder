@@ -755,29 +755,27 @@ def test_litgpt_qkv_split_rope(benchmark, executor: Callable, use_apex: bool, bs
     )
 
     jfn = executor(bench.fn())
+    args, kwargs = bench.make_batch()
 
     match compute_type:
         case ComputeType.INFERENCE | ComputeType.TRAINING_FORWARD:
-            args, kwargs = bench.make_batch()
             benchmark(jfn, *args, **kwargs)
         case ComputeType.TRAINING_BACKWARD:
-            fn, bw_setup = backward_only(jfn, bench.make_batch)
+            fn, bw_setup = backward_only(jfn, *args, **kwargs)
             args = bw_setup()
             benchmark(fn, *args)
 
 
-def backward_only(fn: Callable, fw_setup_fn: Callable):
-    args, kwargs = fw_setup_fn()
+def backward_only(fn: Callable, *args, **kwargs):
     result = fn(*args, **kwargs)
     result = thunder.core.utils.sequencify(result)
 
+    forward_inputs = thunder.core.pytree.tree_flatten((args, kwargs))[0]
+    forward_inputs = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, forward_inputs))
     backwardable_tensor_result = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, result))
 
     # Capture metadata for backward to avoid keeping the result in memory
     backwardable_result_metadata = [(r.dtype, r.device, r.shape) for r in backwardable_tensor_result]
-
-    forward_inputs = thunder.core.pytree.tree_flatten((args, kwargs))[0]
-    forward_inputs = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, forward_inputs))
 
     def backward_setup():
         output_grads = []
