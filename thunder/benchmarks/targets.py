@@ -674,7 +674,6 @@ def test_nanogpt_gpt2_fwd(benchmark, executor: Callable):
         device="cuda:0",
         dtype=thunder.bfloat16,
         requires_grad=False,
-        only_return_loss=False,
     )
 
     args, kwargs = bench.make_batch()
@@ -695,7 +694,6 @@ def test_nanogpt_gpt2_grad(benchmark, executor: Callable):
         device="cuda:0",
         dtype=thunder.bfloat16,
         requires_grad=True,
-        only_return_loss=True,
     )
 
     args, kwargs = bench.make_batch()
@@ -715,7 +713,6 @@ def test_nanogpt_gpt2xl_fwd(benchmark, executor: Callable):
         device="cuda:0",
         dtype=thunder.bfloat16,
         requires_grad=False,
-        only_return_loss=False,
     )
 
     args, kwargs = bench.make_batch()
@@ -736,7 +733,6 @@ def test_nanogpt_gpt2xl_grad(benchmark, executor: Callable):
         device="cuda:0",
         dtype=thunder.bfloat16,
         requires_grad=True,
-        only_return_loss=True,
     )
 
     args, kwargs = bench.make_batch()
@@ -1009,7 +1005,6 @@ def test_interpreter_nanogpt_gpt2_fwd(benchmark, executor: Callable):
         device="cuda:0",
         dtype=thunder.bfloat16,
         requires_grad=False,
-        only_return_loss=False,
     )
 
     args, kwargs = bench.make_batch()

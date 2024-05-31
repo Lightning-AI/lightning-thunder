@@ -1343,24 +1343,7 @@ class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             .requires_grad_(self.requires_grad)
         )
 
-        if not self.only_return_loss:
-            return gpt
-
-        # NOTE This module filters NanoGPT's (logits, loss) output to the tensor to call ".backward()" on
-        class FilterForBwd(torch.nn.Module):
-            def __init__(self):
-                super().__init__()
-
-            def forward(self, tup: tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
-                logits: torch.Tensor
-                loss: torch.Tensor
-                logits, loss = tup
-                return loss
-
-        ffb = FilterForBwd()
-        module: torch.nn.Module = torch.nn.Sequential(gpt, ffb)
-
-        return module
+        return gpt
 
     def postprocess_for_backward(self, output: tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor | None:
         if not self.requires_grad:
