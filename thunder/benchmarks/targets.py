@@ -453,35 +453,15 @@ def test_open_llama_7b(benchmark, executor: Callable, compute_type: ComputeType)
 @pytest.mark.parametrize(
     "executor,", (fwd_executors + cudnn_fwd_executors), ids=(fwd_executor_ids + cudnn_fwd_executors_ids)
 )
-def test_llama_2_7b_hf_fwd(benchmark, executor: Callable):
+@parametrize_compute_type
+def test_llama_2_7b_hf(benchmark, executor: Callable, compute_type: ComputeType):
     cfg: LitGPTConfig = LitGPTConfig.from_name("Llama-2-7b-hf")
-    b = LitGPTBenchmark(cfg, device="cuda:0", dtype=torch.bfloat16, requires_grad=False)
+    b = LitGPTBenchmark(cfg, batchdims=(2,), device="cuda:0", dtype=torch.bfloat16, requires_grad=is_requires_grad(compute_type))
 
     args, kwargs = b.make_batch()
     fn = executor(b.fn())
 
-    benchmark(fn, *args, **kwargs)
-
-
-@pytest.mark.parametrize(
-    "executor,",
-    grad_executors,
-    ids=grad_executors_ids,
-)
-def test_llama_2_7b_grad(benchmark, executor: Callable):
-    cfg: LitGPTConfig = LitGPTConfig.from_name("Llama-2-7b-hf")
-    b = LitGPTBenchmark(
-        cfg,
-        batchdims=(2,),
-        device="cuda",
-        dtype=torch.bfloat16,
-        requires_grad=True,
-    )
-
-    args, kwargs = b.make_batch()
-    fn = executor(b.fn())
-
-    benchmark(fn, *args, **kwargs)
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
 @pytest.mark.parametrize(
