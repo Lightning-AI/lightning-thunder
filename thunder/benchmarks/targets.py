@@ -61,13 +61,12 @@ def interpreter_fwd(module: Callable):
     return fn_
 
 
-def make_fwd_bwd(b: Benchmark, compile_fn: Callable):
-    module: torch.nn.Module = b.fn()
-    cfn = compile_fn(module)
+def make_fwd_bwd(fn: Callable, compile_fn: Callable):
+    cfn = compile_fn(fn)
 
     @wraps(cfn)
     def wrapper(*args, **kwargs):
-        clear_grads(module)
+        clear_grads(fn)
         result = cfn(*args, **kwargs)
         if isinstance(result, Sequence):
             torch.autograd.backward(result, [torch.ones_like(x) for x in result])
@@ -173,7 +172,7 @@ def test_nanogpt_gelu_grad(benchmark, executor: Callable):
     )
 
     args, kwargs = gelu_bench.make_batch()
-    fn = executor(gelu_bench)
+    fn = executor(gelu_bench.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -209,7 +208,7 @@ def test_batch_norm_grad(benchmark, executor: Callable):
     )
 
     args, kwargs = bn_bench.make_batch()
-    fn = executor(bn_bench)
+    fn = executor(bn_bench.fn())
     benchmark(fn, *args, **kwargs)
 
 
@@ -252,7 +251,7 @@ def test_nanogpt_cross_entropy_grad(benchmark, executor: None | Callable):
     )
 
     args, kwargs = bench.make_batch()
-    fn = executor(bench)
+    fn = executor(bench.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -308,7 +307,7 @@ def test_nanogpt_sdpa_grad(benchmark, executor: Callable):
     )
 
     args, kwargs = bench.make_batch()
-    fn = executor(bench)
+    fn = executor(bench.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -324,7 +323,7 @@ def test_llama2_7b_sdpa_grad(benchmark, executor: Callable):
     )
 
     args, kwargs = bench.make_batch()
-    fn = executor(bench)
+    fn = executor(bench.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -404,7 +403,7 @@ def test_nanogpt_mlp_grad(benchmark, executor: Callable):
     )
 
     args, kwargs = bench.make_batch()
-    fn = executor(bench)
+    fn = executor(bench.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -444,7 +443,7 @@ def test_nanogpt_csa_grad(benchmark, executor: Callable):
     )
 
     args, kwargs = bench.make_batch()
-    fn = executor(bench)
+    fn = executor(bench.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -478,7 +477,7 @@ def test_nanogpt_block_grad(benchmark, executor: Callable):
     )
 
     args, kwargs = bench.make_batch()
-    fn = executor(bench)
+    fn = executor(bench.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -518,7 +517,7 @@ def test_nanogpt_gpt2_grad(benchmark, executor: Callable):
     )
 
     args, kwargs = bench.make_batch()
-    fn = executor(bench)
+    fn = executor(bench.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -557,7 +556,7 @@ def test_nanogpt_gpt2xl_grad(benchmark, executor: Callable):
     )
 
     args, kwargs = bench.make_batch()
-    fn = executor(bench)
+    fn = executor(bench.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -609,7 +608,7 @@ def test_llama_2_7b_grad(benchmark, executor: Callable):
     )
 
     args, kwargs = b.make_batch()
-    fn = executor(b)
+    fn = executor(b.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -625,7 +624,7 @@ def test_llama2_mlp_7b_grad(benchmark, executor: Callable):
     )
 
     args, kwargs = bench.make_batch()
-    fn = executor(bench)
+    fn = executor(bench.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -641,7 +640,7 @@ def test_llama2_causal_self_attention_7b_grad(benchmark, executor: Callable):
     )
 
     args, kwargs = bench.make_batch()
-    fn = executor(bench)
+    fn = executor(bench.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -657,7 +656,7 @@ def test_llama2_7b_rmsnorm_grad(benchmark, executor: Callable):
     bench: Benchmark = LlamaRMSNormBenchmark(n_embd=4096, device="cuda:0", dtype=thunder.bfloat16, requires_grad=True)
 
     args, kwargs = bench.make_batch()
-    fn = executor(bench)
+    fn = executor(bench.fn())
 
     benchmark(fn, *args, **kwargs)
 
