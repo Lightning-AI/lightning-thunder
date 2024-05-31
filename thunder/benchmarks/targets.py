@@ -500,18 +500,19 @@ def test_llama2_causal_self_attention_7b(benchmark, executor: Callable, compute_
 
 @pytest.mark.parametrize(
     "executor,",
-    grad_executors,
-    ids=grad_executors_ids,
+    fwd_executors,
+    ids=fwd_executor_ids,
 )
-def test_llama2_7b_rmsnorm_grad(benchmark, executor: Callable):
+@parametrize_compute_type
+def test_llama2_7b_rmsnorm_grad(benchmark, executor: Callable, compute_type: ComputeType):
     from thunder.benchmarks import LlamaRMSNormBenchmark
 
-    bench: Benchmark = LlamaRMSNormBenchmark(n_embd=4096, device="cuda:0", dtype=thunder.bfloat16, requires_grad=True)
+    bench: Benchmark = LlamaRMSNormBenchmark(n_embd=4096, device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type))
 
     args, kwargs = bench.make_batch()
     fn = executor(bench.fn())
 
-    benchmark(fn, *args, **kwargs)
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
 # There are many configurations but only the following parameters affect the QKV split+RoPE benchmark:
