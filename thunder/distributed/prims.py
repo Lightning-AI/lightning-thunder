@@ -471,13 +471,12 @@ def synchronize_tensor_parallel_output_backward_rule(
         case TensorParallelLayerType.COLUMN_PARALLEL_EMBED:
             return grad, None, None
         case TensorParallelLayerType.ROW_PARALLEL_EMBED:
-            return (
-                reduce_scatter(
-                    grad / group.size(), DistributedReduceOps.SUM, group, do_async=True, dim=grad.ndim - 1
-                ).wait(),
-                None,
-                None,
-            )
+            from torch.distributed import distributed_c10d as c10d
+            import thunder.torch as ltorch
+
+            # split along last dim
+            local_grad = ltorch.chunk(grad, group.size(), dim=grad.ndim - 1)[c10d.get_rank(group)]
+            return (local_grad, None, None)
         case _:
             utils.check(False, lambda: f"Invalid {layer_type=}")
 
