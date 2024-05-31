@@ -409,7 +409,7 @@ def synchronize_backward_rule(
     return synced_grad, None
 
 
-class _FwdBwdInterface(ABC):
+class _TensorParallelOutputPostProcessFwdBwdInterface(ABC):
 
     @staticmethod
     @abstractmethod
@@ -420,7 +420,7 @@ class _FwdBwdInterface(ABC):
     def backward(grad: TensorProxy, group: torch.distributed.ProcessGroup) -> TensorProxy: ...
 
 
-class FwdGatherBwdSplitAlongLastDim(_FwdBwdInterface):
+class FwdGatherBwdSplitAlongLastDim(_TensorParallelOutputPostProcessFwdBwdInterface):
 
     @staticmethod
     def forward(t: TensorProxy, group: torch.distributed.ProcessGroup) -> TensorProxy:
@@ -442,7 +442,7 @@ class FwdGatherBwdSplitAlongLastDim(_FwdBwdInterface):
         return local_grad
 
 
-class FwdAllReduceBwdIdentity(_FwdBwdInterface):
+class FwdAllReduceBwdIdentity(_TensorParallelOutputPostProcessFwdBwdInterface):
 
     @staticmethod
     def forward(t: TensorProxy, group: torch.distributed.ProcessGroup) -> TensorProxy:
