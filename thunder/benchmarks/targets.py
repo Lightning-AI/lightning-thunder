@@ -61,26 +61,6 @@ def interpreter_fwd(module: Callable):
     return fn_
 
 
-# NOTE This is hitting torch.compile errors on at least some of the benchmarks
-def torch_compile_compiled_bwd(b: Benchmark):
-    module = b.fn()
-
-    def foo(*args, **kwargs):
-        result = module(*args, **kwargs)
-        result.backward(torch.ones_like(result))
-        return result
-
-    cfoo = torch_compile_executor(foo)
-
-    @wraps(cfoo)
-    def wrapper(*args, **kwargs):
-        clear_grads(module)
-        result = cfoo(*args, **kwargs)
-        return result
-
-    return wrapper
-
-
 def thunder_fwd_bwd(b: Benchmark, compile_fn: Callable):
     module: torch.nn.Module = b.fn()
     cfn = compile_fn(module)
