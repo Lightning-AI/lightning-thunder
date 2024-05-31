@@ -1,13 +1,13 @@
 import torch
 
 if torch.distributed.is_available():
-    from .ddp import optimize_allreduce_in_ddp_backward
+    from .ddp import apply_bucketing_to_grad_allreduce
     from .fsdp import FSDPCommBucketing
 else:
-    optimize_allreduce_in_ddp_backward = None
+    apply_bucketing_to_grad_allreduce = None
     FSDPCommBucketing = None
 
 __all__ = [
-    "optimize_allreduce_in_ddp_backward",
+    "apply_bucketing_to_grad_allreduce",
     "FSDPCommBucketing",
 ]
