@@ -776,19 +776,22 @@ def backward_only(fn: Callable, fw_setup_fn: Callable):
     # Capture metadata for backward to avoid keeping the result in memory
     backwardable_result_metadata = [(r.dtype, r.device, r.shape) for r in backwardable_tensor_result]
 
+    forward_inputs = thunder.core.pytree.tree_flatten((args, kwargs))[0]
+    forward_inputs = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, forward_inputs))
+
     def backward_setup():
-        args = []
+        output_grads = []
         for dtype, device, shape in backwardable_result_metadata:
             torch_dtype = thunder.torch.to_torch_dtype(dtype)
             torch_device = thunder.core.devices.to_torch_device(device)
-            args.append(make_tensor(shape, dtype=torch_dtype, device=torch_device, requires_grad=False))
-        return args
+            output_grads.append(make_tensor(shape, dtype=torch_dtype, device=torch_device, requires_grad=False))
+        return output_grads
 
-    def backward_fn(*args):
-        for a in args:
-            a.grad = None
+    def backward_fn(*output_grads):
+        for i in forward_inputs:
+            i.grad = None
 
-        torch.autograd.backward(result, args, retain_graph=True)
+        torch.autograd.backward(result, output_grads, retain_graph=True)
 
     return backward_fn, backward_setup
 
