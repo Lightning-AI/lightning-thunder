@@ -3561,15 +3561,16 @@ def _dropout_helper(a, p):
 
 @torchsymbol(torch.nn.functional.cross_entropy)
 def cross_entropy(
-    a: TensorProxy,
-    target: TensorProxy,
-    weight: None | TensorProxy = None,
+    a: TensorLike,
+    /,
+    target: TensorLike,
+    weight: None | TensorLike = None,
     size_average: None | Any = None,
     ignore_index: int = -100,
     reduce: None | Any = None,
     reduction: str = "mean",
     label_smoothing: float = 0.0,
-) -> TensorProxy:
+) -> TensorLike:
     utils.check(
         size_average is None and reduce is None,
         lambda: f"Deprecated size_average={size_average} and reduce={reduce} is not supported!",
@@ -3607,9 +3608,9 @@ def cross_entropy(
 
 
 def _cross_entropy_input_checks(
-    a: TensorProxy,
-    target: TensorProxy,
-    weight: None | TensorProxy,
+    a: TensorLike,
+    target: TensorLike,
+    weight: None | TensorLike,
     ignore_index: int,
     reduction: str,
     label_smoothing: float,
@@ -3675,13 +3676,13 @@ def _cross_entropy_input_checks(
 
 
 def _cross_entropy_loss_probability_target(
-    a: TensorProxy,
-    target: TensorProxy,
-    weight: TensorProxy | None,
+    a: TensorLike,
+    target: TensorLike,
+    weight: TensorLike | None,
     ignore_index: int,
     reduction: str,
     label_smoothing: float,
-):
+) -> TensorLike:
     # channels dimension is either the first one if no batch dim present (i.e. a.shape[0]),
     # or right next to it (i.e. a.shape[1]).
     channels_dim = 1 if a.ndim >= 2 else 0
@@ -3707,13 +3708,13 @@ def _cross_entropy_loss_probability_target(
 
 
 def _cross_entropy_loss_label_smoothing(
-    a: TensorProxy,
-    target: TensorProxy,
-    weight: None | TensorProxy,
+    a: TensorLike,
+    target: TensorLike,
+    weight: None | TensorLike,
     ignore_index: int,
     reduction: str,
     label_smoothing: int,
-) -> TensorProxy:
+) -> TensorLike:
     # channels dimension is either the first one if no batch dim present (i.e. a.shape[0]),
     # or right next to it (i.e. a.shape[1]).
     channels_dim = 1 if a.ndim >= 2 else 0
