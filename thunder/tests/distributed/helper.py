@@ -42,7 +42,7 @@ class ToyModel(nn.Module):
         self.net2 = nn.Linear(ToyModel.N_HIDDEN, ToyModel.N_OUT, bias=bias)
 
     def forward(self, x):
-        return self.net2(torch.relu(self.net1(x)))
+        return self.net2(new_gelu(self.net1(x)))
 
 
 # note(crcrpar): How to write a test with `DDP`
