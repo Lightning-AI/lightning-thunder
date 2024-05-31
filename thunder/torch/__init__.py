@@ -3546,6 +3546,19 @@ def conv3d(
     return _conv_helper(3, a, weight, bias, stride, padding, dilation, groups)  # means 3D convolution
 
 
+def _dropout_helper(a, p):
+    """Helper function for all dropout-type operators. During training, some of the elements of the input tensor are
+    randomly masked.
+
+    Returns the masked tensor of the boolean values.
+    """
+
+    r = uniform_like(a, 0.0, 1.0)
+    result = r < p
+
+    return result
+
+
 def _cross_entropy_input_checks(
     a: TensorProxy,
     target: TensorProxy,
@@ -3744,19 +3757,6 @@ def cross_entropy(
     else:
         log_softmax_input = log_softmax(a, dim=channels_dim)
         return nll_loss(log_softmax_input, target, weight, ignore_index, reduction)
-
-
-def _dropout_helper(a, p):
-    """Helper function for all dropout-type operators. During training, some of the elements of the input tensor are
-    randomly masked.
-
-    Returns the masked tensor of the boolean values.
-    """
-
-    r = uniform_like(a, 0.0, 1.0)
-    result = r < p
-
-    return result
 
 
 # TODO Is this a method?
