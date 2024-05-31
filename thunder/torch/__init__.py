@@ -24,7 +24,15 @@ import thunder.core.prims as prims
 import thunder.core.utils as utils
 import thunder.distributed.prims as dist_prims
 from thunder.core.langctxs import langctx, Languages
-from thunder.core.proxies import FloatProxy, IntegerProxy, NumberProxy, TensorProxy, FutureTensorProxy, pyval
+from thunder.core.proxies import (
+    FloatProxy,
+    IntegerProxy,
+    NumberProxy,
+    NumberLike,
+    TensorProxy,
+    FutureTensorProxy,
+    pyval,
+)
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
 from thunder.core.transforms import register_grad, put_grads
@@ -42,7 +50,6 @@ import torch.distributed as tdist
 import warnings
 
 # Type annotation helpers
-NumberLike = Number | NumberProxy
 TensorLike = TensorProxy
 FutureTensorLike = FutureTensorProxy
 DeviceLike = str | devices.Device | torch.device
@@ -1524,6 +1531,25 @@ def copysign(a, b, /):
 
 
 # TODO Implement div
+@torchsymbol(torch.div, is_method=True)
+def div(
+    a: Number | TensorLike,
+    b: Number | TensorLike,
+    /,
+    *,
+    rounding_mode: None | str = None,
+    out: None | TensorLike = None,
+) -> Number | TensorLike:
+    utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
+
+    if rounding_mode is None:
+        return true_divide(a, b)
+    elif rounding_mode == "trunc":
+        return clang.trunc_divide(a, b)
+    elif rounding_mode == "floor":
+        return floor_divide(a, b)
+    else:
+        raise ValueError(f"div does not support the rounding_mode={rounding_mode} argument")
 
 
 @torchsymbol(torch.eq, is_method=True)

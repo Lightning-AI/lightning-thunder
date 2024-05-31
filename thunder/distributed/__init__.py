@@ -13,6 +13,7 @@ from functools import partial
 
 import torch
 import torch.distributed as tdist
+from torch.utils.weak import WeakTensorKeyDictionary
 
 import thunder.core.utils as utils
 from thunder.core.proxies import DistParallelType
@@ -407,6 +408,10 @@ def fsdp_transform_module(
     # modify module
     sharded_params = {}
     device_adjustments = {}
+    # We use `shared_params` dictionary to track the shared parameters.
+    # Key to this dictionary is the original parameter from the user's Module.
+    # Values are the copied and sharded parameter for the thunder module and meta-data related to sharding.
+    shared_params = WeakTensorKeyDictionary()
     for module_name, _ in thunder_model._model.named_modules():
         submodule = thunder_model.get_submodule(module_name)
 
@@ -451,6 +456,14 @@ def fsdp_transform_module(
                 tdist.broadcast(thunder_model.get_buffer(pn), src=broadcast_from, group=process_group, async_op=False)
 
         for pn, p in submodule.named_parameters(recurse=False, prefix=module_name):
+            # If there are shared params in the original user Module, we reuse the sharded copy created from the original parameter below.
+            # This way we re-create parameter sharing in thunder's copy of the Module.
+            if p in shared_params:
+                # Re-use the previous copy of this parameter.
+                thunder_model._overrides_parameters[pn] = shared_params[p]["param_copy"]
+                sharded_params[pn] = shared_params[p]["param_shard_meta"]
+                continue
+
             # if we don't have an override or it is just the original, do create a copy
             if thunder_model._overrides_parameters.get(pn, p) is p:
                 thunder_model._overrides_parameters[pn] = copy.copy(p)
@@ -461,6 +474,12 @@ def fsdp_transform_module(
             )
             new_shape = thunder_model._overrides_parameters[pn].shape
             sharded_params[pn] = (old_shape, new_shape, thunder_model._overrides_parameters[pn].device)
+
+            # Track the original param and it's corresponding copied shard and metadata.
+            shared_params[p] = {
+                "param_copy": thunder_model._overrides_parameters[pn],
+                "param_shard_meta": sharded_params[pn],
+            }
 
     early_transform_from_trace_to_fsdp_trace = FSDPTraceTransform(
         sharded_params=sharded_params,
@@ -567,6 +586,9 @@ def _shard_params(
         local_rank = int(os.environ["LOCAL_RANK"])
         device = torch.device("cuda", local_rank)
 
+    # In case there is a weight sharing, we don't want to shard the same param
+    # multiple times. We use `sharded_params` to keep track of already sharded param.
+    sharded_params = WeakTensorKeyDictionary()
     # We will definitely change the sharding logic in the future
     for module_name, submodule in module.named_modules():
         # Materialize meta-parameters on-device if necessary.
@@ -589,7 +611,11 @@ def _shard_params(
         # Note [FSDP Sharding]
         # All internal code will assume that the parameters are sharded on the first dimension
         for param_name, param in submodule.named_parameters(recurse=False, prefix=module_name):
+            if param in sharded_params:
+                continue
             _shard_param(param, global_rank, world_size, param_name, allow_padding_for_fsdp=allow_padding_for_fsdp)
+            # Mark the param as sharded so that we don't reshard it (in case model has shared parameters)
+            sharded_params[param] = True
 
 
 def _shard_param(

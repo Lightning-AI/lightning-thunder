@@ -19,7 +19,17 @@ from thunder.core.langctxs import langctx, Languages
 import thunder.core.dtypes as dtypes
 from thunder.core import utils
 import thunder.core.prims as prims
-from thunder.core.proxies import IntegerProxy, NumberProxy, TensorProxy, pyval, pytype, proxy, AnyProxy, Proxy
+from thunder.core.proxies import (
+    IntegerProxy,
+    NumberProxy,
+    NumberLike,
+    TensorProxy,
+    pyval,
+    pytype,
+    proxy,
+    AnyProxy,
+    Proxy,
+)
 import thunder.core.devices as devices
 
 # This file defines the operations in thunder.jit's "core" language.
@@ -29,7 +39,6 @@ import thunder.core.devices as devices
 
 __all__ = []
 
-NumberLike = Number | NumberProxy
 TensorLike = TensorProxy
 DeviceLike = Union[str, devices.Device]
 
@@ -1774,6 +1783,11 @@ def floor_divide(a: TensorProxy | Number, b: TensorProxy | Number) -> TensorProx
 
     # NOTE At this point the datatypes are neither complex nor floating point, so they are exact types
     return _floor_divide_integer(a, b, computation_dtype=computation_dtype)
+
+
+@clangop(method_name="trunc_divide")
+def trunc_divide(a: TensorProxy | Number, b: TensorProxy | Number, /) -> TensorProxy | Number:
+    return trunc(_c_div(a, b))
 
 
 @clangop()
