@@ -9,7 +9,6 @@ import os
 import torch
 import thunder
 from enum import Enum, auto
-from thunder.core.transforms import clear_grads
 from thunder.core.interpreter import interpret
 
 from thunder.benchmarks import (
