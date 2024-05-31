@@ -156,8 +156,8 @@ grad_executors_ids = (
     "thunder+nvfuser+torch.compile",
 )
 
-apex_grad_executors = (thunder_apex_grad, thunder_apex_nvfuser_grad)
-apex_grad_executors_ids = ("thunder+apex-grad", "thunder+apex+nvfuser-grad")
+apex_executors = (thunder_apex_executor, thunder_apex_nvfuser_executor)
+apex_executors_ids = ("thunder+apex-grad", "thunder+apex+nvfuser-grad")
 
 cudnn_fwd_executors = (thunder_cudnn_executor, thunder_cudnn_nvfuser_executor)
 cudnn_fwd_executors_ids = ("thunder+cudnn", "thunder+cudnn+nvfuser")
@@ -212,48 +212,24 @@ def test_batch_norm(benchmark, executor: Callable, compute_type: ComputeType):
 #        is very slow"
 @pytest.mark.parametrize(
     "executor,",
-    fwd_executors,
-    ids=fwd_executor_ids,
+    (fwd_executors + apex_executors),
+    ids=(fwd_executor_ids + apex_executors),
 )
-def test_nanogpt_cross_entropy_fwd(benchmark, executor: None | Callable):
+@parametrize_compute_type
+def test_nanogpt_cross_entropy(benchmark, executor: None | Callable, compute_type: ComputeType):
     if executor is None:
         pytest.skip("Executor is unavailable")
 
     bench: Benchmark = NanoGPTCrossEntropyBenchmark(
-        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=False
+        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type)
     )
 
     args, kwargs = bench.make_batch()
     fn = executor(bench.fn())
 
-    benchmark(fn, *args, **kwargs)
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
-# TODO Improve cross entropy's fwd+bwd perf when using the PyTorch executor
-#   See "torch.cross_entropy implementation has incorrect dtype metadata + bwd
-#        is very slow"
-@pytest.mark.parametrize(
-    "executor,",
-    (grad_executors + apex_grad_executors),
-    ids=(grad_executors_ids + apex_grad_executors_ids),
-)
-def test_nanogpt_cross_entropy_grad(benchmark, executor: None | Callable):
-    if executor is None:
-        pytest.skip("Executor is unavailable")
-
-    bench: Benchmark = NanoGPTCrossEntropyBenchmark(
-        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=True
-    )
-
-    args, kwargs = bench.make_batch()
-    fn = executor(bench.fn())
-
-    benchmark(fn, *args, **kwargs)
-
-
-# TODO Improve cross entropy's fwd+bwd perf when using the PyTorch executor
-#   See "torch.cross_entropy implementation has incorrect dtype metadata + bwd
-#        is very slow"
 @pytest.mark.parametrize(
     "executor,",
     (fwd_executors + cudnn_layernorm_fwd_executors),
