@@ -762,9 +762,9 @@ def backward_only(fn: Callable, fw_setup_fn: Callable):
             torch_dtype = thunder.torch.to_torch_dtype(dtype)
             torch_device = thunder.core.devices.to_torch_device(device)
             args.append(make_tensor(shape, dtype=torch_dtype, device=torch_device, requires_grad=False))
-        return args, {}
+        return args
 
-    def backward_fn(*args, **kwargs):
+    def backward_fn(*args):
         for a in args:
             a.grad = None
 
@@ -815,9 +815,9 @@ def test_litgpt_qkv_split_rope_train_backward(benchmark, executor: Callable, use
     fw_setup = make_setup(bench)
     jfn = executor(bench.fn())
     fn, bw_setup = backward_only(jfn, fw_setup)
-    args, kwargs = bw_setup()
+    args = bw_setup()
 
-    benchmark(fn, *args, **kwargs)
+    benchmark(fn, *args)
 
 
 #
