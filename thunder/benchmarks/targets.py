@@ -62,6 +62,10 @@ class ComputeType(Enum):
     TRAINING_BACKWARD = auto()
 
 
+def is_requires_grad(type: ComputeType):
+    return type == ComputeType.TRAINING_FORWARD or type == ComputeType.TRAINING_BACKWARD
+
+
 def interpreter_fwd(module: Callable):
     fn_ = torch_executor(module)
     fn_ = interpret(fn_)
@@ -750,7 +754,7 @@ def test_litgpt_qkv_split_rope(benchmark, executor: Callable, use_apex: bool, bs
         batchdims=(bs,),
         device="cuda:0",
         dtype=thunder.bfloat16,
-        requires_grad=(compute_type == ComputeType.TRAINING_FORWARD or compute_type == ComputeType.TRAINING_BACKWARD),
+        requires_grad=is_requires_grad(compute_type),
         use_apex=use_apex,
     )
 
