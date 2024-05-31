@@ -73,6 +73,16 @@ parametrize_compute_type = pytest.mark.parametrize(
 )
 
 
+def benchmark_for_compute_type(compute_type: ComputeType, benchmark, fn: Callable, args, kwargs):
+    match compute_type:
+        case ComputeType.INFERENCE | ComputeType.TRAINING_FORWARD:
+            benchmark(fn, *args, **kwargs)
+        case ComputeType.TRAINING_BACKWARD:
+            backward_fn, backward_setup = backward_only(fn, *args, **kwargs)
+            backward_args = backward_setup()
+            benchmark(backward_fn, *backward_args)
+
+
 def interpreter_fwd(module: Callable):
     fn_ = torch_executor(module)
     fn_ = interpret(fn_)
@@ -177,12 +187,7 @@ def test_nanogpt_gelu(benchmark, executor: Callable, compute_type: ComputeType):
     args, kwargs = gelu_bench.make_batch()
     fn = executor(gelu_bench.fn())
 
-    match compute_type:
-        case ComputeType.INFERENCE | ComputeType.TRAINING_FORWARD:
-            benchmark(fn, *args, **kwargs)
-        case ComputeType.TRAINING_BACKWARD:
-            fn, bw_setup = backward_only(fn, *args, **kwargs)
-            benchmark(fn, *bw_setup())
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
 @pytest.mark.parametrize(
@@ -754,13 +759,7 @@ def test_litgpt_qkv_split_rope(benchmark, executor: Callable, use_apex: bool, bs
     jfn = executor(bench.fn())
     args, kwargs = bench.make_batch()
 
-    match compute_type:
-        case ComputeType.INFERENCE | ComputeType.TRAINING_FORWARD:
-            benchmark(jfn, *args, **kwargs)
-        case ComputeType.TRAINING_BACKWARD:
-            fn, bw_setup = backward_only(jfn, *args, **kwargs)
-            args = bw_setup()
-            benchmark(fn, *args)
+    benchmark_for_compute_type(compute_type, benchmark, jfn, args, kwargs)
 
 
 def backward_only(fn: Callable, *args, **kwargs):
