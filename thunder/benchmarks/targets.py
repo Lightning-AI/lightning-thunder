@@ -8,7 +8,7 @@ import pytest
 import os
 import torch
 import thunder
-from thunder.core.transforms import grad, clear_grads, populate_grads
+from thunder.core.transforms import clear_grads
 from thunder.core.interpreter import interpret
 
 from thunder.benchmarks import (
@@ -93,20 +93,6 @@ def torch_compile_compiled_bwd(b: Benchmark):
     return wrapper
 
 
-def thunder_grad_transform(b: Benchmark, compile_fn: Callable):
-    module: torch.nn.Module = b.fn()
-    cfn = compile_fn(module)
-    cfn_grad = grad(cfn)
-
-    @wraps(cfn_grad)
-    def wrapper(*args, **kwargs):
-        clear_grads(cfn)
-        grads = cfn_grad(*args, **kwargs)
-        populate_grads(grads, cfn, args=args, kwargs=kwargs)
-
-    return wrapper
-
-
 def thunder_fwd_bwd(b: Benchmark, compile_fn: Callable):
     module: torch.nn.Module = b.fn()
     cfn = compile_fn(module)
@@ -137,12 +123,12 @@ thunder_fwd_bwd = partial(thunder_fwd_bwd, compile_fn=thunder_executor)
 # NOTE apex may or may not be available
 thunder_apex_grad: None | Callable = None
 if thunder_apex_executor is not None:
-    thunder_apex_grad = partial(thunder_grad_transform, compile_fn=thunder_apex_executor)
+    thunder_apex_grad = partial(thunder_fwd_bwd, compile_fn=thunder_apex_executor)
 
 # Executing with the apex and nvfuser executors
 thunder_apex_nvfuser_grad: None | Callable = None
 if thunder_apex_nvfuser_executor is not None:
-    thunder_apex_nvfuser_grad = partial(thunder_grad_transform, compile_fn=thunder_apex_nvfuser_executor)
+    thunder_apex_nvfuser_grad = partial(thunder_fwd_bwd, compile_fn=thunder_apex_nvfuser_executor)
 
 
 fwd_executors = (torch_executor, torch_compile_executor, thunder_executor)
