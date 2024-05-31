@@ -1,43 +1,44 @@
+import os
 from collections.abc import Callable
+from enum import auto, Enum
+
+import pytest
+import torch
 
 from lightning_utilities.core.imports import package_available
 
-import pytest
-import os
-import torch
+from litgpt.config import configs
+
 import thunder
-from enum import Enum, auto
-from thunder.core.interpreter import interpret
 
 from thunder.benchmarks import (
+    BatchNormBenchmark,
     Benchmark,
-    NanoGPTGeLUBenchmark,
-    NanoGPTCrossEntropyBenchmark,
-    NanoGPTLayerNormBenchmark,
-    NanoGPTSDPABenchmark,
-    LitGPTSDPABenchmark,
-    NanoGPTMLPBenchmark,
-    NanoGPTCSABenchmark,
-    NanoGPTBlockBenchmark,
-    NanoGPTBenchmark,
     LitGPTBenchmark,
     LitGPTCausalSelfAttentionBenchmark,
+    LitGPTSDPABenchmark,
     LlamaMLPBenchmark,
-    torch_executor,
-    torch_compile_executor,
-    thunder_executor,
+    NanoGPTBenchmark,
+    NanoGPTBlockBenchmark,
+    NanoGPTCrossEntropyBenchmark,
+    NanoGPTCSABenchmark,
+    NanoGPTGeLUBenchmark,
+    NanoGPTLayerNormBenchmark,
+    NanoGPTMLPBenchmark,
+    NanoGPTSDPABenchmark,
     thunder_apex_executor,
     thunder_apex_nvfuser_executor,
     thunder_cudnn_executor,
     thunder_cudnn_nvfuser_executor,
+    thunder_executor,
     thunder_sdpa_torch_compile_nvfuser_executor,
-    BatchNormBenchmark,
+    torch_compile_executor,
+    torch_executor,
 )
+from thunder.core.interpreter import interpret
 
 from thunder.tests.litgpt_model import Config as LitGPTConfig
 from thunder.tests.make_tensor import make_tensor
-
-from litgpt.config import configs
 
 
 APEX_FUSED_ROPE_AVAILABLE: bool = package_available("fused_rotary_positional_embedding")
@@ -193,9 +194,7 @@ def test_nanogpt_layer_norm(benchmark, executor: None | Callable, compute_type: 
     benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
-@pytest.mark.parametrize(
-    "executor,", (executors + cudnn_executors), ids=(executors_ids + cudnn_executors_ids)
-)
+@pytest.mark.parametrize("executor,", (executors + cudnn_executors), ids=(executors_ids + cudnn_executors_ids))
 @parametrize_compute_type
 def test_nanogpt_sdpa(benchmark, executor: None | Callable, compute_type: ComputeType):
     if executor is None:
@@ -379,9 +378,7 @@ def test_nanogpt_gpt2xl(benchmark, executor: Callable, compute_type: ComputeType
 #
 
 
-@pytest.mark.parametrize(
-    "executor,", (executors + cudnn_executors), ids=(executors_ids + cudnn_executors_ids)
-)
+@pytest.mark.parametrize("executor,", (executors + cudnn_executors), ids=(executors_ids + cudnn_executors_ids))
 @parametrize_compute_type
 def test_open_llama_7b(benchmark, executor: Callable, compute_type: ComputeType):
     cfg: LitGPTConfig = LitGPTConfig.from_name("open_llama_7b")
@@ -393,13 +390,13 @@ def test_open_llama_7b(benchmark, executor: Callable, compute_type: ComputeType)
     benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
-@pytest.mark.parametrize(
-    "executor,", (executors + cudnn_executors), ids=(executors_ids + cudnn_executors_ids)
-)
+@pytest.mark.parametrize("executor,", (executors + cudnn_executors), ids=(executors_ids + cudnn_executors_ids))
 @parametrize_compute_type
 def test_llama_2_7b_hf(benchmark, executor: Callable, compute_type: ComputeType):
     cfg: LitGPTConfig = LitGPTConfig.from_name("Llama-2-7b-hf")
-    b = LitGPTBenchmark(cfg, batchdims=(2,), device="cuda:0", dtype=torch.bfloat16, requires_grad=is_requires_grad(compute_type))
+    b = LitGPTBenchmark(
+        cfg, batchdims=(2,), device="cuda:0", dtype=torch.bfloat16, requires_grad=is_requires_grad(compute_type)
+    )
 
     args, kwargs = b.make_batch()
     fn = executor(b.fn())
@@ -415,7 +412,11 @@ def test_llama_2_7b_hf(benchmark, executor: Callable, compute_type: ComputeType)
 @parametrize_compute_type
 def test_llama2_mlp_7b(benchmark, executor: Callable, compute_type: ComputeType):
     bench: Benchmark = LlamaMLPBenchmark(
-        config="Llama-2-7b-hf", batchdims=(16,), device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type)
+        config="Llama-2-7b-hf",
+        batchdims=(16,),
+        device="cuda:0",
+        dtype=thunder.bfloat16,
+        requires_grad=is_requires_grad(compute_type),
     )
 
     args, kwargs = bench.make_batch()
@@ -432,7 +433,11 @@ def test_llama2_mlp_7b(benchmark, executor: Callable, compute_type: ComputeType)
 @parametrize_compute_type
 def test_llama2_causal_self_attention_7b(benchmark, executor: Callable, compute_type: ComputeType):
     bench: Benchmark = LitGPTCausalSelfAttentionBenchmark(
-        config="Llama-2-7b-hf", batchdims=(16,), device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type)
+        config="Llama-2-7b-hf",
+        batchdims=(16,),
+        device="cuda:0",
+        dtype=thunder.bfloat16,
+        requires_grad=is_requires_grad(compute_type),
     )
 
     args, kwargs = bench.make_batch()
@@ -450,7 +455,9 @@ def test_llama2_causal_self_attention_7b(benchmark, executor: Callable, compute_
 def test_llama2_7b_rmsnorm_grad(benchmark, executor: Callable, compute_type: ComputeType):
     from thunder.benchmarks import LlamaRMSNormBenchmark
 
-    bench: Benchmark = LlamaRMSNormBenchmark(n_embd=4096, device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type))
+    bench: Benchmark = LlamaRMSNormBenchmark(
+        n_embd=4096, device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type)
+    )
 
     args, kwargs = bench.make_batch()
     fn = executor(bench.fn())
@@ -525,7 +532,9 @@ qkv_split_rope_executors_ids = (
     "config,",
     get_configs_for_qkv_split_rope(),
 )
-def test_litgpt_qkv_split_rope(benchmark, executor: Callable, use_apex: bool, bs: int, compute_type: ComputeType, config: str):
+def test_litgpt_qkv_split_rope(
+    benchmark, executor: Callable, use_apex: bool, bs: int, compute_type: ComputeType, config: str
+):
     from thunder.benchmarks import LlamaQKVSplitRopeBenchmark
 
     if use_apex and not APEX_FUSED_ROPE_AVAILABLE:
