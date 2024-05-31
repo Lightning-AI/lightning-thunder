@@ -767,6 +767,20 @@ def test_litgpt_qkv_split_rope(benchmark, executor: Callable, use_apex: bool, bs
 
 
 def backward_only(fn: Callable, *args, **kwargs):
+    """
+    Returns a function that runs the backward pass of the given function.
+
+    The returned function should be called with the output gradients.
+
+    Args:
+        fn: The forward function
+        *args: Arguments to the forward function
+        **kwargs: Keyword arguments to the forward function
+
+    Returns:
+        A tuple of the backward function and the setup function
+        that returns the arguments for the backward function.
+    """
     result = fn(*args, **kwargs)
     result = thunder.core.utils.sequencify(result)
 
