@@ -1,6 +1,4 @@
 from collections.abc import Callable
-from functools import partial, wraps
-from collections.abc import Sequence
 
 from lightning_utilities.core.imports import package_available
 
