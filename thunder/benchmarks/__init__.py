@@ -971,19 +971,6 @@ class BwdModule(torch.nn.Module):
         return bwd_tensor
 
 
-# This class can be chained with another module, using sequential, to produce
-#   an output suitable for calling .backward() on, simplifying its integration into other benchmarks
-class SumModule(torch.nn.Module):
-    def __init__(self, postprocess_for_backward: Callable):
-        super().__init__()
-
-        self.postprocess_for_backward = postprocess_for_backward
-
-    def forward(self, *args, **kwargs):
-        bwd_tensor: torch.Tensor = self.postprocess_for_backward(*args, **kwargs)
-        return bwd_tensor.sum()
-
-
 class StackedAddBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
