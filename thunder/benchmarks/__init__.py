@@ -960,17 +960,6 @@ def _print_benchmark_arguments(bmark: Benchmark) -> None:
         print(f"\t{arg.name}={getattr(bmark, arg.name)}")
 
 
-class BwdModule(torch.nn.Module):
-    def __init__(self, postprocess_for_backward: Callable):
-        super().__init__()
-
-        self.postprocess_for_backward = postprocess_for_backward
-
-    def forward(self, *args, **kwargs):
-        bwd_tensor: torch.Tensor = self.postprocess_for_backward(*args, **kwargs)
-        return bwd_tensor
-
-
 class StackedAddBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
