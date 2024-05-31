@@ -270,18 +270,19 @@ def test_nanogpt_sdpa(benchmark, executor: None | Callable, compute_type: Comput
 
 @pytest.mark.parametrize(
     "executor,",
-    grad_executors,
-    ids=grad_executors_ids,
+    fwd_executors,
+    ids=fwd_executor_ids,
 )
-def test_llama2_7b_sdpa_grad(benchmark, executor: Callable):
+@parametrize_compute_type
+def test_llama2_7b_sdpa(benchmark, executor: Callable, compute_type: ComputeType):
     bench: Benchmark = LitGPTSDPABenchmark(
-        config="Llama-2-7b-hf", device="cuda:0", dtype=thunder.bfloat16, requires_grad=True
+        config="Llama-2-7b-hf", device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type)
     )
 
     args, kwargs = bench.make_batch()
     fn = executor(bench.fn())
 
-    benchmark(fn, *args, **kwargs)
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
 sdpa_executors = (
