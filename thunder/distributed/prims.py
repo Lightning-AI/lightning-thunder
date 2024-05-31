@@ -464,21 +464,13 @@ def synchronize_tensor_parallel_output_forward_rule(
 
     match layer_type:
         case TensorParallelLayerType.COLUMN_PARALLEL_LINEAR:
-            gathered = FwdGatherBwdSplitAlongLastDim.forward(t, group)
-            return gathered, (group, layer_type)
+            return FwdGatherBwdSplitAlongLastDim.forward(t, group), (group, layer_type)
         case TensorParallelLayerType.ROW_PARALLEL_LINEAR:
-            return FwdAllReduceBwdIdentity.forward(t, group), (
-                group,
-                layer_type,
-            )
+            return FwdAllReduceBwdIdentity.forward(t, group), (group, layer_type)
         case TensorParallelLayerType.COLUMN_PARALLEL_EMBED:
-            return FwdAllReduceBwdIdentity.forward(t, group), (
-                group,
-                layer_type,
-            )
+            return FwdAllReduceBwdIdentity.forward(t, group), (group, layer_type)
         case TensorParallelLayerType.ROW_PARALLEL_EMBED:
-            gathered = FwdGatherBwdSplitAlongLastDim.forward(t, group)
-            return gathered, (group, layer_type)
+            return FwdGatherBwdSplitAlongLastDim.forward(t, group), (group, layer_type)
         case _:
             utils.check(False, lambda: f"Invalid {layer_type=}")
 
