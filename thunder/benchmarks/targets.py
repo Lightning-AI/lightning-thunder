@@ -67,41 +67,10 @@ def make_setup(b: Benchmark):
     return setup
 
 
-def torch_fwd(b: Benchmark):
-    module = b.fn()
-    fn_ = torch_executor(module)
-
-    @wraps(fn_)
-    def wrapper(*args, **kwargs):
-        result = fn_(*args, **kwargs)
-        return result
-
-    return wrapper
-
-
-def interpreter_fwd(b: Benchmark):
-    module = b.fn()
+def interpreter_fwd(module: Callable):
     fn_ = torch_executor(module)
     fn_ = interpret(fn_)
-
-    @wraps(fn_)
-    def wrapper(*args, **kwargs):
-        result = fn_(*args, **kwargs)
-        return result
-
-    return wrapper
-
-
-def torch_compile_fwd(b: Benchmark):
-    module = b.fn()
-    fn_ = torch_compile_executor(module)
-
-    @wraps(fn_)
-    def wrapper(*args, **kwargs):
-        result = fn_(*args, **kwargs)
-        return result
-
-    return wrapper
+    return fn_
 
 
 # NOTE This is hitting torch.compile errors on at least some of the benchmarks
@@ -119,18 +88,6 @@ def torch_compile_compiled_bwd(b: Benchmark):
     def wrapper(*args, **kwargs):
         clear_grads(module)
         result = cfoo(*args, **kwargs)
-        return result
-
-    return wrapper
-
-
-def thunder_fwd(b: Benchmark, compile_fn: Callable):
-    module: torch.nn.Module = b.fn()
-    cfn = compile_fn(module)
-
-    @wraps(cfn)
-    def wrapper(*args, **kwargs):
-        result = cfn(*args, **kwargs)
         return result
 
     return wrapper
@@ -174,11 +131,7 @@ torch_fwd_bwd = partial(thunder_fwd_bwd, compile_fn=torch_executor)
 torchcompile_fwd_bwd = partial(thunder_fwd_bwd, compile_fn=torch_compile_executor)
 
 # Default thunder configs
-thunder_fwd = partial(thunder_fwd, compile_fn=thunder_executor)
 thunder_fwd_bwd = partial(thunder_fwd_bwd, compile_fn=thunder_executor)
-
-# Executing with torchcompile as a Thunder executor
-thunder_torchcompile_fwd = partial(thunder_fwd, compile_fn=thunder_torch_compile_executor)
 
 # Executing with just the apex executor
 # NOTE apex may or may not be available
@@ -191,29 +144,8 @@ thunder_apex_nvfuser_grad: None | Callable = None
 if thunder_apex_nvfuser_executor is not None:
     thunder_apex_nvfuser_grad = partial(thunder_grad_transform, compile_fn=thunder_apex_nvfuser_executor)
 
-# Executing with just the cuDNN executor
-# NOTE cudnn may or may not be available
-thunder_cudnn_fwd: None | Callable = None
-if thunder_cudnn_executor is not None:
-    thunder_cudnn_fwd = partial(thunder_fwd, compile_fn=thunder_cudnn_executor)
 
-# Executing with cuDNN + nvFuser
-thunder_cudnn_nvfuser_fwd: None | Callable = None
-if thunder_cudnn_nvfuser_executor is not None:
-    thunder_cudnn_nvfuser_fwd = partial(thunder_fwd, compile_fn=thunder_cudnn_nvfuser_executor)
-
-# Executing with just the cuDNN layer norm executor
-thunder_cudnn_layer_norm_fwd: None | Callable = None
-if thunder_cudnn_layer_norm_executor is not None:
-    thunder_cudnn_layer_norm_fwd = partial(thunder_fwd, compile_fn=thunder_cudnn_layer_norm_executor)
-
-# Executing with the cuDNN layer norm executor and nvFuser
-thunder_cudnn_layer_norm_nvfuser_fwd: None | Callable = None
-if thunder_cudnn_layer_norm_nvfuser_executor is not None:
-    thunder_cudnn_layer_norm_nvfuser_fwd = partial(thunder_fwd, compile_fn=thunder_cudnn_layer_norm_nvfuser_executor)
-
-
-fwd_executors = (torch_fwd, torch_compile_fwd, thunder_fwd)
+fwd_executors = (torch_executor, torch_compile_executor, thunder_executor)
 fwd_executor_ids = (
     "torch",
     "torch.compile",
@@ -246,10 +178,10 @@ grad_executors_ids = (
 apex_grad_executors = (thunder_apex_grad, thunder_apex_nvfuser_grad)
 apex_grad_executors_ids = ("thunder+apex-grad", "thunder+apex+nvfuser-grad")
 
-cudnn_fwd_executors = (thunder_cudnn_fwd, thunder_cudnn_nvfuser_fwd)
+cudnn_fwd_executors = (thunder_cudnn_executor, thunder_cudnn_nvfuser_executor)
 cudnn_fwd_executors_ids = ("thunder+cudnn", "thunder+cudnn+nvfuser")
 
-cudnn_layernorm_fwd_executors = (thunder_cudnn_fwd, thunder_cudnn_nvfuser_fwd)
+cudnn_layernorm_fwd_executors = (thunder_cudnn_executor, thunder_cudnn_nvfuser_executor)
 cudnn_layernorm_fwd_executors_ids = (
     "thunder+cudnn_layernorm",
     "thunder+cudnn_layernorm+nvfuser",
@@ -271,7 +203,7 @@ def test_nanogpt_gelu_fwd(benchmark, executor: Callable):
     )
 
     args, kwargs = gelu_bench.make_batch()
-    fn = executor(gelu_bench)
+    fn = executor(gelu_bench.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -303,7 +235,7 @@ def test_batch_norm_fwd(benchmark, executor: Callable):
     )
 
     args, kwargs = bn_bench.make_batch()
-    fn = executor(bn_bench)
+    fn = executor(bn_bench.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -344,7 +276,7 @@ def test_nanogpt_cross_entropy_fwd(benchmark, executor: None | Callable):
     )
 
     args, kwargs = bench.make_batch()
-    fn = executor(bench)
+    fn = executor(bench.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -388,7 +320,7 @@ def test_nanogpt_layer_norm_fwd(benchmark, executor: None | Callable):
     )
 
     args, kwargs = bench.make_batch()
-    fn = executor(bench)
+    fn = executor(bench.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -405,7 +337,7 @@ def test_nanogpt_sdpa_fwd(benchmark, executor: None | Callable):
     )
 
     args, kwargs = bench.make_batch()
-    fn = executor(bench)
+    fn = executor(bench.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -502,7 +434,7 @@ def test_nanogpt_mlp_fwd(benchmark, executor: Callable):
     )
 
     args, kwargs = bench.make_batch()
-    fn = executor(bench)
+    fn = executor(bench.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -538,7 +470,7 @@ def test_nanogpt_csa_fwd(benchmark, executor: Callable):
     )
 
     args, kwargs = bench.make_batch()
-    fn = executor(bench)
+    fn = executor(bench.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -575,7 +507,7 @@ def test_nanogpt_block_fwd(benchmark, executor: Callable):
     )
 
     args, kwargs = bench.make_batch()
-    fn = executor(bench)
+    fn = executor(bench.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -612,7 +544,7 @@ def test_nanogpt_gpt2_fwd(benchmark, executor: Callable):
     )
 
     args, kwargs = bench.make_batch()
-    fn = executor(bench)
+    fn = executor(bench.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -651,7 +583,7 @@ def test_nanogpt_gpt2xl_fwd(benchmark, executor: Callable):
     )
 
     args, kwargs = bench.make_batch()
-    fn = executor(bench)
+    fn = executor(bench.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -689,7 +621,7 @@ def test_open_llama_7b_fwd(benchmark, executor: Callable):
     b = LitGPTBenchmark(cfg, device="cuda:0", dtype=torch.bfloat16, requires_grad=False)
 
     args, kwargs = b.make_batch()
-    fn = executor(b)
+    fn = executor(b.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -702,7 +634,7 @@ def test_llama_2_7b_hf_fwd(benchmark, executor: Callable):
     b = LitGPTBenchmark(cfg, device="cuda:0", dtype=torch.bfloat16, requires_grad=False)
 
     args, kwargs = b.make_batch()
-    fn = executor(b)
+    fn = executor(b.fn())
 
     benchmark(fn, *args, **kwargs)
 
@@ -933,7 +865,7 @@ def test_litgpt_qkv_split_rope_train_backward(benchmark, executor: Callable, use
 #
 
 
-@pytest.mark.parametrize("executor,", (torch_fwd, interpreter_fwd), ids=("python", "interpreter"))
+@pytest.mark.parametrize("executor,", (torch_executor, interpreter_fwd), ids=("python", "interpreter"))
 def test_interpreter_nanogpt_gpt2_fwd(benchmark, executor: Callable):
     bench: Benchmark = NanoGPTBenchmark(
         config="gpt2",
@@ -943,6 +875,6 @@ def test_interpreter_nanogpt_gpt2_fwd(benchmark, executor: Callable):
     )
 
     args, kwargs = bench.make_batch()
-    fn = executor(bench)
+    fn = executor(bench.fn())
 
     benchmark(fn, *args, **kwargs)
