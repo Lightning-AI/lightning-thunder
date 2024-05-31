@@ -416,38 +416,19 @@ def test_nanogpt_gpt2(benchmark, executor: Callable, compute_type: ComputeType):
     fwd_executors,
     ids=fwd_executor_ids,
 )
-def test_nanogpt_gpt2xl_fwd(benchmark, executor: Callable):
+@parametrize_compute_type
+def test_nanogpt_gpt2xl(benchmark, executor: Callable, compute_type: ComputeType):
     bench: Benchmark = NanoGPTBenchmark(
         config="gpt2-xl",
         device="cuda:0",
         dtype=thunder.bfloat16,
-        requires_grad=False,
+        requires_grad=is_requires_grad(compute_type),
     )
 
     args, kwargs = bench.make_batch()
     fn = executor(bench.fn())
 
-    benchmark(fn, *args, **kwargs)
-
-
-# TODO Fix torch.compiles bfloat16 atomic add issue with this benchmark and add thunder-grad+torch.compile executor back
-@pytest.mark.parametrize(
-    "executor,",
-    grad_executors,
-    ids=grad_executors_ids,
-)
-def test_nanogpt_gpt2xl_grad(benchmark, executor: Callable):
-    bench: Benchmark = NanoGPTBenchmark(
-        config="gpt2-xl",
-        device="cuda:0",
-        dtype=thunder.bfloat16,
-        requires_grad=True,
-    )
-
-    args, kwargs = bench.make_batch()
-    fn = executor(bench.fn())
-
-    benchmark(fn, *args, **kwargs)
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
 #
