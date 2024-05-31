@@ -143,25 +143,6 @@ thunder_fwd_bwd_sdpa_torch_compile_nvfuser = partial(
     make_fwd_bwd, compile_fn=thunder_sdpa_torch_compile_nvfuser_executor
 )
 
-grad_executors = (
-    *(
-        (partial(make_fwd_bwd, compile_fn=thunder_cudnn_nvfuser_executor),)
-        if thunder_cudnn_nvfuser_executor is not None
-        else ()
-    ),
-    torch_fwd_bwd,
-    torchcompile_fwd_bwd,
-    thunder_fwd_bwd,
-    thunder_fwd_bwd_sdpa_torch_compile_nvfuser,
-)
-grad_executors_ids = (
-    *(("thunder+cudnn",) if thunder_cudnn_nvfuser_executor is not None else ()),
-    "torch",
-    "torch.compile",
-    "thunder",
-    "thunder+nvfuser+torch.compile",
-)
-
 apex_executors = (thunder_apex_executor, thunder_apex_nvfuser_executor)
 apex_executors_ids = ("thunder+apex-grad", "thunder+apex+nvfuser-grad")
 
