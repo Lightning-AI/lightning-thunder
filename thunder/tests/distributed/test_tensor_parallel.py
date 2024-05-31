@@ -176,10 +176,8 @@ class TensorParallelTest(DataParallelTestCase):
 
         column_parallel_layers = ["embed_1", "linear1_0"]
         tp_model = column_parallel(tp_model, column_parallel_layers, process_group)
-        # column_parallel_layers = []
         row_parallel_layers = ["embed_2", "linear1_1"]
         tp_model = row_parallel(tp_model, row_parallel_layers, process_group)
-        # row_parallel_layers = []
         actual = tp_model(x)
         torch.testing.assert_close(actual=actual, expected=expected)
 
@@ -189,36 +187,17 @@ class TensorParallelTest(DataParallelTestCase):
         expected.backward(g_ref)
         actual.backward(g)
 
-        # for col, orig_size in zip(column_parallel_layers, [num_embeddings, n_hidden]):
-        #     weight = tp_model.get_parameter(f"{col}.weight")
-        #     self.assertEqual(weight.size(0), orig_size // self.world_size)
-        # for row, orig_size in zip(row_parallel_layers, [embedding_dim, n_hidden]):
-        #     weight = tp_model.get_parameter(f"{row}.weight")
-        #     self.assertEqual(weight.size(1), orig_size // self.world_size)
-
-        # if self.rank == 0:
-        #     fwd_extrace = thunder.last_traces(tp_model)[-1]
-        #     bwd_extrace = thunder.last_backward_traces(tp_model)[-1]
-        #     print(fwd_extrace)
-        #     with open("./fwd_extrace_nvfuser_linear_no_tp.py", "w") as f:
-        #         f.write(str(fwd_extrace))
-        #     with open("./bwd_extrace_nvfuser_linear_no_tp.py", "w") as f:
-        #         f.write(str(bwd_extrace))
-        #     print(bwd_extrace)
         for l_name, layer in reversed(list(ref_model.named_modules())):
             dim = int(l_name in row_parallel_layers)
             is_tensor_parallel = l_name in row_parallel_layers or l_name in column_parallel_layers
             for p_name, p_ref in layer.named_parameters(recurse=False):
                 param_fqn = f"{l_name}.{p_name}"
-                p = tp_model.get_parameter(param_fqn)
-                if self.rank == 0:
-                    print(f"# {param_fqn = }")
-                if p.ndim > 1 and is_tensor_parallel:
-                    torch.testing.assert_close(
-                        actual=p.grad, expected=p_ref.grad.chunk(self.world_size, dim)[self.rank]
-                    )
-                else:
-                    torch.testing.assert_close(actual=p.grad, expected=p_ref.grad)
+                ref_grad = p_ref.grad
+                msg = lambda err_msg: f"[{param_fqn}] {err_msg}"
+                if is_tensor_parallel and (ref_grad.ndim > 1 or dim == 0):
+                    ref_grad = ref_grad.chunk(self.world_size, dim)[self.rank]
+                grad = tp_model.get_parameter(param_fqn).grad
+                torch.testing.assert_close(actual=grad, expected=ref_grad, msg=msg)
 
 
 common_utils.instantiate_parametrized_tests(TensorParallelTest)
