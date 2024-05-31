@@ -24,7 +24,15 @@ import thunder.core.prims as prims
 import thunder.core.utils as utils
 import thunder.distributed.prims as dist_prims
 from thunder.core.langctxs import langctx, Languages
-from thunder.core.proxies import FloatProxy, IntegerProxy, NumberProxy, TensorProxy, FutureTensorProxy, pyval
+from thunder.core.proxies import (
+    FloatProxy,
+    IntegerProxy,
+    NumberProxy,
+    NumberLike,
+    TensorProxy,
+    FutureTensorProxy,
+    pyval,
+)
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
 from thunder.core.transforms import register_grad, put_grads
@@ -42,7 +50,6 @@ import torch.distributed as tdist
 import warnings
 
 # Type annotation helpers
-NumberLike = Number | NumberProxy
 TensorLike = TensorProxy
 FutureTensorLike = FutureTensorProxy
 DeviceLike = str | devices.Device | torch.device
@@ -4410,10 +4417,11 @@ if torch.distributed.is_available():
         a: TensorLike,
         group: torch.distributed.ProcessGroup | None = None,
         async_op: bool = False,
+        dim: int | None = None,
     ) -> TensorLike | FutureTensorLike:
         group = group if group is not None else torch.distributed.new_group()
 
-        return dist_prims.all_gather(a, group, async_op)
+        return dist_prims.all_gather(a, group, async_op, dim=dim)
 
     # NOTE torch.distributed.all_reduce is an inplace operation (although the underlying NCCL
     #   call does not need to be inplace). This, however, is modeled as an out-of-place functional
@@ -4461,11 +4469,12 @@ if torch.distributed.is_available():
         op: DistributedReduceOpLike | None = None,
         group: torch.distributed.ProcessGroup | None = None,
         async_op: bool = False,
+        dim: int | None = None,
     ) -> TensorLike | FutureTensorLike:
         op = to_thunder_distributed_reduce_op(op)
         group = group if group is not None else torch.distributed.new_group()
 
-        return dist_prims.reduce_scatter(a, op, group, async_op)
+        return dist_prims.reduce_scatter(a, op, group, async_op, dim=dim)
 
 else:
 

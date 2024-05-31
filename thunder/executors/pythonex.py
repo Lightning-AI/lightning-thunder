@@ -14,7 +14,7 @@ import torch
 
 import thunder.core.prims as prims
 from thunder.core.prims import PrimIDs
-from thunder.core.proxies import NumberProxy, TensorProxy, CollectionProxy
+from thunder.core.proxies import NumberProxy, NumberLike, TensorProxy, CollectionProxy
 from thunder.core.symbol import Symbol, BoundSymbol
 from thunder.core import baseutils
 import thunder.core.dtypes as dtypes
@@ -174,8 +174,8 @@ ex.register_implementation(prims.construct_tuple, construct_tuple, checker=_alwa
 #
 
 
-def _convert_element_type_prim_checker(a: Number | TensorProxy, /, dtype: type | dtypes.dtype) -> bool:
-    return isinstance(a, Number) and dtype in (bool, int, float, complex)
+def _convert_element_type_prim_checker(a: NumberLike | TensorProxy, /, dtype: type | dtypes.dtype) -> bool:
+    return isinstance(a, (Number, NumberProxy)) and dtype in (bool, int, float, complex)
 
 
 def _convert_element_type_prim_impl(a: Number, dtype: type) -> Number:
@@ -198,8 +198,23 @@ ex.register_implementation(prims.convert_element_type, convert_element_type, che
 # TODO Review differences in type promotion (for example round(2.3))
 
 
-def _elementwise_unary_checker(x: Number | TensorProxy) -> bool:
-    return isinstance(x, Number)
+def _elementwise_unary_checker(x: NumberLike | TensorProxy) -> bool:
+    return isinstance(x, (Number, NumberProxy))
+
+
+def _div_prim_impl(a: Number, b: Number) -> Number:
+    if dtypes.is_exact_dtype(type(a)) and dtypes.is_exact_dtype(type(b)):
+        if (a >= 0) != (b >= 0) and a % b:
+            # This implementation follows c-style integer division, which is
+            # truncation division. When the quotient is negative and not evenly
+            # divisible, special handling is necessary to round values to zero.
+            return a // b + 1
+        else:
+            # Python uses floor division for integers, which rounds values to
+            # negative infinity.
+            return a // b
+
+    return a / b
 
 
 # Maps exact inputs to truncation division
@@ -301,7 +316,7 @@ ex.register_implementation(prims.signbit, signbit, checker=_elementwise_unary_ch
 #
 
 
-def _elementwise_binary_checker(a: Number | TensorProxy, b: Number | TensorProxy) -> bool:
+def _elementwise_binary_checker(a: NumberLike | TensorProxy, b: NumberLike | TensorProxy) -> bool:
     return isinstance(a, (Number, NumberProxy)) and isinstance(b, (Number, NumberProxy))
 
 
