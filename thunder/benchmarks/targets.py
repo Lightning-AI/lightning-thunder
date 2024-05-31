@@ -66,6 +66,13 @@ def is_requires_grad(type: ComputeType):
     return type == ComputeType.TRAINING_FORWARD or type == ComputeType.TRAINING_BACKWARD
 
 
+parametrize_compute_type = pytest.mark.parametrize(
+    "compute_type,",
+    (ComputeType.INFERENCE, ComputeType.TRAINING_FORWARD, ComputeType.TRAINING_BACKWARD),
+    ids=("inference", "forward", "backward"),
+)
+
+
 def interpreter_fwd(module: Callable):
     fn_ = torch_executor(module)
     fn_ = interpret(fn_)
@@ -734,11 +741,7 @@ qkv_split_rope_executors_ids = (
     (2**i for i in range(0, 2)),
     ids=(f"bs{2**i}" for i in range(0, 2)),
 )
-@pytest.mark.parametrize(
-    "compute_type,",
-    (ComputeType.INFERENCE, ComputeType.TRAINING_FORWARD, ComputeType.TRAINING_BACKWARD),
-    ids=("inference", "training_forward", "training_backward"),
-)
+@parametrize_compute_type
 @pytest.mark.parametrize(
     "config,",
     get_configs_for_qkv_split_rope(),
