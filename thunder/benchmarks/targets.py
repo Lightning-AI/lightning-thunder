@@ -89,13 +89,13 @@ def interpreter_fwd(module: Callable):
     return fn_
 
 
-fwd_executors = (
+executors = (
     torch_executor,
     torch_compile_executor,
     thunder_executor,
     thunder_sdpa_torch_compile_nvfuser_executor,
 )
-fwd_executor_ids = (
+executors_ids = (
     "torch",
     "torch.compile",
     "thunder",
@@ -105,11 +105,11 @@ fwd_executor_ids = (
 apex_executors = (thunder_apex_executor, thunder_apex_nvfuser_executor)
 apex_executors_ids = ("thunder+apex-grad", "thunder+apex+nvfuser-grad")
 
-cudnn_fwd_executors = (thunder_cudnn_executor, thunder_cudnn_nvfuser_executor)
-cudnn_fwd_executors_ids = ("thunder+cudnn", "thunder+cudnn+nvfuser")
+cudnn_executors = (thunder_cudnn_executor, thunder_cudnn_nvfuser_executor)
+cudnn_executors_ids = ("thunder+cudnn", "thunder+cudnn+nvfuser")
 
-cudnn_layernorm_fwd_executors = (thunder_cudnn_executor, thunder_cudnn_nvfuser_executor)
-cudnn_layernorm_fwd_executors_ids = (
+cudnn_layernorm_executors = (thunder_cudnn_executor, thunder_cudnn_nvfuser_executor)
+cudnn_layernorm_executors_ids = (
     "thunder+cudnn_layernorm",
     "thunder+cudnn_layernorm+nvfuser",
 )
@@ -121,8 +121,8 @@ cudnn_layernorm_fwd_executors_ids = (
 
 @pytest.mark.parametrize(
     "executor,",
-    fwd_executors,
-    ids=fwd_executor_ids,
+    executors,
+    ids=executors_ids,
 )
 @parametrize_compute_type
 def test_nanogpt_gelu(benchmark, executor: Callable, compute_type: ComputeType):
@@ -138,8 +138,8 @@ def test_nanogpt_gelu(benchmark, executor: Callable, compute_type: ComputeType):
 
 @pytest.mark.parametrize(
     "executor,",
-    fwd_executors,
-    ids=fwd_executor_ids,
+    executors,
+    ids=executors_ids,
 )
 @parametrize_compute_type
 def test_batch_norm(benchmark, executor: Callable, compute_type: ComputeType):
@@ -158,8 +158,8 @@ def test_batch_norm(benchmark, executor: Callable, compute_type: ComputeType):
 #        is very slow"
 @pytest.mark.parametrize(
     "executor,",
-    (fwd_executors + apex_executors),
-    ids=(fwd_executor_ids + apex_executors),
+    (executors + apex_executors),
+    ids=(executors_ids + apex_executors),
 )
 @parametrize_compute_type
 def test_nanogpt_cross_entropy(benchmark, executor: None | Callable, compute_type: ComputeType):
@@ -178,8 +178,8 @@ def test_nanogpt_cross_entropy(benchmark, executor: None | Callable, compute_typ
 
 @pytest.mark.parametrize(
     "executor,",
-    (fwd_executors + cudnn_layernorm_fwd_executors),
-    ids=(fwd_executor_ids + cudnn_layernorm_fwd_executors_ids),
+    (executors + cudnn_layernorm_executors),
+    ids=(executors_ids + cudnn_layernorm_executors_ids),
 )
 @parametrize_compute_type
 def test_nanogpt_layer_norm(benchmark, executor: None | Callable, compute_type: ComputeType):
@@ -197,7 +197,7 @@ def test_nanogpt_layer_norm(benchmark, executor: None | Callable, compute_type: 
 
 
 @pytest.mark.parametrize(
-    "executor,", (fwd_executors + cudnn_fwd_executors), ids=(fwd_executor_ids + cudnn_fwd_executors_ids)
+    "executor,", (executors + cudnn_executors), ids=(executors_ids + cudnn_executors_ids)
 )
 @parametrize_compute_type
 def test_nanogpt_sdpa(benchmark, executor: None | Callable, compute_type: ComputeType):
@@ -216,8 +216,8 @@ def test_nanogpt_sdpa(benchmark, executor: None | Callable, compute_type: Comput
 
 @pytest.mark.parametrize(
     "executor,",
-    fwd_executors,
-    ids=fwd_executor_ids,
+    executors,
+    ids=executors_ids,
 )
 @parametrize_compute_type
 def test_llama2_7b_sdpa(benchmark, executor: Callable, compute_type: ComputeType):
@@ -282,8 +282,8 @@ def test_litgpt_sdpa(benchmark, executor: Callable, bs, compute_type, config):
 
 @pytest.mark.parametrize(
     "executor,",
-    fwd_executors,
-    ids=fwd_executor_ids,
+    executors,
+    ids=executors_ids,
 )
 @parametrize_compute_type
 def test_nanogpt_mlp(benchmark, executor: Callable, compute_type: ComputeType):
@@ -300,8 +300,8 @@ def test_nanogpt_mlp(benchmark, executor: Callable, compute_type: ComputeType):
 # NOTE The CSA module is linear -> sdpa -> dropout
 @pytest.mark.parametrize(
     "executor,",
-    fwd_executors,
-    ids=fwd_executor_ids,
+    executors,
+    ids=executors_ids,
 )
 @parametrize_compute_type
 def test_nanogpt_csa(benchmark, executor: Callable, compute_type: ComputeType):
@@ -321,8 +321,8 @@ def test_nanogpt_csa(benchmark, executor: Callable, compute_type: ComputeType):
 # NOTE NanoGPT's block module is layernorm -> csa -> layernorm -> mlp
 @pytest.mark.parametrize(
     "executor,",
-    fwd_executors,
-    ids=fwd_executor_ids,
+    executors,
+    ids=executors_ids,
 )
 @parametrize_compute_type
 def test_nanogpt_block(benchmark, executor: Callable, compute_type: ComputeType):
@@ -339,8 +339,8 @@ def test_nanogpt_block(benchmark, executor: Callable, compute_type: ComputeType)
 # TODO Fix torch.compiles bfloat16 atomic add issue with this benchmark -- why does thunder trigger it but regular torch.compile does not
 @pytest.mark.parametrize(
     "executor,",
-    fwd_executors,
-    ids=fwd_executor_ids,
+    executors,
+    ids=executors_ids,
 )
 @parametrize_compute_type
 def test_nanogpt_gpt2(benchmark, executor: Callable, compute_type: ComputeType):
@@ -359,8 +359,8 @@ def test_nanogpt_gpt2(benchmark, executor: Callable, compute_type: ComputeType):
 
 @pytest.mark.parametrize(
     "executor,",
-    fwd_executors,
-    ids=fwd_executor_ids,
+    executors,
+    ids=executors_ids,
 )
 @parametrize_compute_type
 def test_nanogpt_gpt2xl(benchmark, executor: Callable, compute_type: ComputeType):
@@ -383,7 +383,7 @@ def test_nanogpt_gpt2xl(benchmark, executor: Callable, compute_type: ComputeType
 
 
 @pytest.mark.parametrize(
-    "executor,", (fwd_executors + cudnn_fwd_executors), ids=(fwd_executor_ids + cudnn_fwd_executors_ids)
+    "executor,", (executors + cudnn_executors), ids=(executors_ids + cudnn_executors_ids)
 )
 @parametrize_compute_type
 def test_open_llama_7b(benchmark, executor: Callable, compute_type: ComputeType):
@@ -397,7 +397,7 @@ def test_open_llama_7b(benchmark, executor: Callable, compute_type: ComputeType)
 
 
 @pytest.mark.parametrize(
-    "executor,", (fwd_executors + cudnn_fwd_executors), ids=(fwd_executor_ids + cudnn_fwd_executors_ids)
+    "executor,", (executors + cudnn_executors), ids=(executors_ids + cudnn_executors_ids)
 )
 @parametrize_compute_type
 def test_llama_2_7b_hf(benchmark, executor: Callable, compute_type: ComputeType):
@@ -412,8 +412,8 @@ def test_llama_2_7b_hf(benchmark, executor: Callable, compute_type: ComputeType)
 
 @pytest.mark.parametrize(
     "executor,",
-    fwd_executors,
-    ids=fwd_executor_ids,
+    executors,
+    ids=executors_ids,
 )
 @parametrize_compute_type
 def test_llama2_mlp_7b(benchmark, executor: Callable, compute_type: ComputeType):
@@ -429,8 +429,8 @@ def test_llama2_mlp_7b(benchmark, executor: Callable, compute_type: ComputeType)
 
 @pytest.mark.parametrize(
     "executor,",
-    fwd_executors,
-    ids=fwd_executor_ids,
+    executors,
+    ids=executors_ids,
 )
 @parametrize_compute_type
 def test_llama2_causal_self_attention_7b(benchmark, executor: Callable, compute_type: ComputeType):
@@ -446,8 +446,8 @@ def test_llama2_causal_self_attention_7b(benchmark, executor: Callable, compute_
 
 @pytest.mark.parametrize(
     "executor,",
-    fwd_executors,
-    ids=fwd_executor_ids,
+    executors,
+    ids=executors_ids,
 )
 @parametrize_compute_type
 def test_llama2_7b_rmsnorm_grad(benchmark, executor: Callable, compute_type: ComputeType):
