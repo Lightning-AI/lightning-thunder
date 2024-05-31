@@ -808,16 +808,8 @@ def test_litgpt_qkv_split_rope_train_backward(benchmark, executor: Callable, use
         use_apex=use_apex,
     )
 
-    def make_setup(b: Benchmark):
-        def thunk():
-            args_and_kwargs = b.make_batch()
-            return args_and_kwargs
-
-        return thunk
-
-    fw_setup = make_setup(bench)
     jfn = executor(bench.fn())
-    fn, bw_setup = backward_only(jfn, fw_setup)
+    fn, bw_setup = backward_only(jfn, bench.make_batch)
     args = bw_setup()
 
     benchmark(fn, *args)
