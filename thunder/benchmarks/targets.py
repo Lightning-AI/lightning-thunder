@@ -357,38 +357,19 @@ def test_nanogpt_mlp(benchmark, executor: Callable, compute_type: ComputeType):
     fwd_executors,
     ids=fwd_executor_ids,
 )
-def test_nanogpt_csa_fwd(benchmark, executor: Callable):
+@parametrize_compute_type
+def test_nanogpt_csa(benchmark, executor: Callable, compute_type: ComputeType):
     bench: Benchmark = NanoGPTCSABenchmark(
         config="gpt2-xl",
         device="cuda:0",
         dtype=thunder.bfloat16,
-        requires_grad=False,
+        requires_grad=is_requires_grad(compute_type),
     )
 
     args, kwargs = bench.make_batch()
     fn = executor(bench.fn())
 
-    benchmark(fn, *args, **kwargs)
-
-
-# NOTE The CSA module is linear -> sdpa -> dropout
-@pytest.mark.parametrize(
-    "executor,",
-    grad_executors,
-    ids=grad_executors_ids,
-)
-def test_nanogpt_csa_grad(benchmark, executor: Callable):
-    bench: Benchmark = NanoGPTCSABenchmark(
-        config="gpt2-xl",
-        device="cuda:0",
-        dtype=thunder.bfloat16,
-        requires_grad=True,
-    )
-
-    args, kwargs = bench.make_batch()
-    fn = executor(bench.fn())
-
-    benchmark(fn, *args, **kwargs)
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
 # NOTE NanoGPT's block module is layernorm -> csa -> layernorm -> mlp
