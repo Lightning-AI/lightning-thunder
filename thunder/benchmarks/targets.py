@@ -253,35 +253,19 @@ def test_nanogpt_layer_norm(benchmark, executor: None | Callable, compute_type: 
 @pytest.mark.parametrize(
     "executor,", (fwd_executors + cudnn_fwd_executors), ids=(fwd_executor_ids + cudnn_fwd_executors_ids)
 )
-def test_nanogpt_sdpa_fwd(benchmark, executor: None | Callable):
+@parametrize_compute_type
+def test_nanogpt_sdpa(benchmark, executor: None | Callable, compute_type: ComputeType):
     if executor is None:
         pytest.skip("Executor is unavailable")
 
     bench: Benchmark = NanoGPTSDPABenchmark(
-        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=False
+        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type)
     )
 
     args, kwargs = bench.make_batch()
     fn = executor(bench.fn())
 
-    benchmark(fn, *args, **kwargs)
-
-
-# TODO Fix thunder-fwd-bwd+nvfuser
-@pytest.mark.parametrize(
-    "executor,",
-    grad_executors,
-    ids=grad_executors_ids,
-)
-def test_nanogpt_sdpa_grad(benchmark, executor: Callable):
-    bench: Benchmark = NanoGPTSDPABenchmark(
-        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=True
-    )
-
-    args, kwargs = bench.make_batch()
-    fn = executor(bench.fn())
-
-    benchmark(fn, *args, **kwargs)
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
 @pytest.mark.parametrize(
