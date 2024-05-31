@@ -168,31 +168,21 @@ cudnn_layernorm_fwd_executors_ids = (
     fwd_executors,
     ids=fwd_executor_ids,
 )
-def test_nanogpt_gelu_fwd(benchmark, executor: Callable):
+@parametrize_compute_type
+def test_nanogpt_gelu(benchmark, executor: Callable, compute_type: ComputeType):
     gelu_bench: Benchmark = NanoGPTGeLUBenchmark(
-        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=False
+        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type)
     )
 
     args, kwargs = gelu_bench.make_batch()
     fn = executor(gelu_bench.fn())
 
-    benchmark(fn, *args, **kwargs)
-
-
-@pytest.mark.parametrize(
-    "executor,",
-    grad_executors,
-    ids=grad_executors_ids,
-)
-def test_nanogpt_gelu_grad(benchmark, executor: Callable):
-    gelu_bench: Benchmark = NanoGPTGeLUBenchmark(
-        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=True
-    )
-
-    args, kwargs = gelu_bench.make_batch()
-    fn = executor(gelu_bench.fn())
-
-    benchmark(fn, *args, **kwargs)
+    match compute_type:
+        case ComputeType.INFERENCE | ComputeType.TRAINING_FORWARD:
+            benchmark(fn, *args, **kwargs)
+        case ComputeType.TRAINING_BACKWARD:
+            fn, bw_setup = backward_only(fn, *args, **kwargs)
+            benchmark(fn, *bw_setup())
 
 
 @pytest.mark.parametrize(
