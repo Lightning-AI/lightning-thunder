@@ -61,7 +61,7 @@ def interpreter_fwd(module: Callable):
     return fn_
 
 
-def thunder_fwd_bwd(b: Benchmark, compile_fn: Callable):
+def make_fwd_bwd(b: Benchmark, compile_fn: Callable):
     module: torch.nn.Module = b.fn()
     cfn = compile_fn(module)
 
@@ -81,22 +81,22 @@ def thunder_fwd_bwd(b: Benchmark, compile_fn: Callable):
 # To compare with PyTorch and raw torch.compile (i.e. not through thunder). The
 # latter can help us isolate whether it's something we need to fix ourselves or
 # report upstream.
-torch_fwd_bwd = partial(thunder_fwd_bwd, compile_fn=torch_executor)
-torchcompile_fwd_bwd = partial(thunder_fwd_bwd, compile_fn=torch_compile_executor)
+torch_fwd_bwd = partial(make_fwd_bwd, compile_fn=torch_executor)
+torchcompile_fwd_bwd = partial(make_fwd_bwd, compile_fn=torch_compile_executor)
 
 # Default thunder configs
-thunder_fwd_bwd = partial(thunder_fwd_bwd, compile_fn=thunder_executor)
+thunder_fwd_bwd = partial(make_fwd_bwd, compile_fn=thunder_executor)
 
 # Executing with just the apex executor
 # NOTE apex may or may not be available
 thunder_apex_grad: None | Callable = None
 if thunder_apex_executor is not None:
-    thunder_apex_grad = partial(thunder_fwd_bwd, compile_fn=thunder_apex_executor)
+    thunder_apex_grad = partial(make_fwd_bwd, compile_fn=thunder_apex_executor)
 
 # Executing with the apex and nvfuser executors
 thunder_apex_nvfuser_grad: None | Callable = None
 if thunder_apex_nvfuser_executor is not None:
-    thunder_apex_nvfuser_grad = partial(thunder_fwd_bwd, compile_fn=thunder_apex_nvfuser_executor)
+    thunder_apex_nvfuser_grad = partial(make_fwd_bwd, compile_fn=thunder_apex_nvfuser_executor)
 
 
 fwd_executors = (torch_executor, torch_compile_executor, thunder_executor)
@@ -107,12 +107,12 @@ fwd_executor_ids = (
 )
 
 thunder_fwd_bwd_sdpa_torch_compile_nvfuser = partial(
-    thunder_fwd_bwd, compile_fn=thunder_sdpa_torch_compile_nvfuser_executor
+    make_fwd_bwd, compile_fn=thunder_sdpa_torch_compile_nvfuser_executor
 )
 
 grad_executors = (
     *(
-        (partial(thunder_fwd_bwd, compile_fn=thunder_cudnn_nvfuser_executor),)
+        (partial(make_fwd_bwd, compile_fn=thunder_cudnn_nvfuser_executor),)
         if thunder_cudnn_nvfuser_executor is not None
         else ()
     ),
@@ -372,7 +372,7 @@ def test_litgpt_sdpa_grad(benchmark, executor: Callable, bs, config):
     )
 
     args, kwargs = bench.make_batch()
-    fn = thunder_fwd_bwd(bench, compile_fn=executor)
+    fn = make_fwd_bwd(bench, compile_fn=executor)
 
     benchmark(fn, *args, **kwargs)
 
