@@ -2,6 +2,7 @@ from __future__ import annotations
 from enum import auto, Enum
 from numbers import Number
 from typing import TYPE_CHECKING
+from abc import ABC, abstractmethod
 
 import torch.distributed
 
@@ -408,6 +409,50 @@ def synchronize_backward_rule(
     return synced_grad, None
 
 
+class _FwdBwdInterface(ABC):
+
+    @staticmethod
+    @abstractmethod
+    def forward(t: TensorProxy, group: torch.distributed.ProcessGroup) -> TensorProxy: ...
+
+    @staticmethod
+    @abstractmethod
+    def backward(grad: TensorProxy, group: torch.distributed.ProcessGroup) -> TensorProxy: ...
+
+
+class FwdGatherBwdSplitAlongLastDim(_FwdBwdInterface):
+
+    @staticmethod
+    def forward(t: TensorProxy, group: torch.distributed.ProcessGroup) -> TensorProxy:
+        """Gather along last dim"""
+        import thunder.torch as ltorch
+
+        all_gathered = all_gather(t, group, True, 0).wait()
+        chunked = ltorch.chunk(all_gathered, group.size(), 0)
+        gathered = ltorch.cat(chunked, dim=-1)
+        return gathered
+
+    @staticmethod
+    def backward(grad: TensorProxy, group: torch.distributed.ProcessGroup) -> TensorProxy:
+        """Split along last dim"""
+        from torch.distributed import distributed_c10d as c10d
+        import thunder.torch as ltorch
+
+        local_grad = ltorch.chunk(grad, c10d.get_world_size(group), dim=grad.ndim - 1)[c10d.get_rank(group)]
+        return local_grad
+
+
+class FwdAllReduceBwdIdentity(_FwdBwdInterface):
+
+    @staticmethod
+    def forward(t: TensorProxy, group: torch.distributed.ProcessGroup) -> TensorProxy:
+        return all_reduce(t, DistributedReduceOps.SUM, group, do_async=True, skip_clone=True).wait()
+
+    @staticmethod
+    def backward(grad: TensorProxy, _: torch.distributed.ProcessGroup) -> TensorProxy:
+        return grad
+
+
 @register_augmented_forward(PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_OUTPUT)
 def synchronize_tensor_parallel_output_forward_rule(
     t: TensorProxy,
@@ -419,28 +464,20 @@ def synchronize_tensor_parallel_output_forward_rule(
 
     match layer_type:
         case TensorParallelLayerType.COLUMN_PARALLEL_LINEAR:
-            # all-gather in the last dim
-            future_of_all_gathered = all_gather(t, group, True, 0)
-            all_gathered = wait(future_of_all_gathered)
-            chunked = ltorch.chunk(all_gathered, group.size(), 0)
-            gathered = ltorch.cat(chunked, dim=-1)
+            gathered = FwdGatherBwdSplitAlongLastDim.forward(t, group)
             return gathered, (group, layer_type)
         case TensorParallelLayerType.ROW_PARALLEL_LINEAR:
-            return all_reduce(t, DistributedReduceOps.SUM, group, do_async=True, skip_clone=True).wait(), (
+            return FwdAllReduceBwdIdentity.forward(t, group), (
                 group,
                 layer_type,
             )
         case TensorParallelLayerType.COLUMN_PARALLEL_EMBED:
-            return all_reduce(t, DistributedReduceOps.SUM, group, do_async=True, skip_clone=True).wait(), (
+            return FwdAllReduceBwdIdentity.forward(t, group), (
                 group,
                 layer_type,
             )
         case TensorParallelLayerType.ROW_PARALLEL_EMBED:
-            # all-gather in the last dim
-            future_of_all_gathered = all_gather(t, group, True, 0)
-            all_gathered = wait(future_of_all_gathered)
-            chunked = ltorch.chunk(all_gathered, group.size(), 0)
-            gathered = ltorch.cat(chunked, dim=-1)
+            gathered = FwdGatherBwdSplitAlongLastDim.forward(t, group)
             return gathered, (group, layer_type)
         case _:
             utils.check(False, lambda: f"Invalid {layer_type=}")
@@ -456,27 +493,13 @@ def synchronize_tensor_parallel_output_backward_rule(
 
     match layer_type:
         case TensorParallelLayerType.COLUMN_PARALLEL_LINEAR:
-            from torch.distributed import distributed_c10d as c10d
-            import thunder.torch as ltorch
-
-            # split along last dim
-            local_grad = ltorch.chunk(grad, group.size(), dim=grad.ndim - 1)[c10d.get_rank(group)]
-            return (
-                local_grad,
-                None,
-                None,
-            )
+            return FwdGatherBwdSplitAlongLastDim.backward(grad, group), None, None
         case TensorParallelLayerType.ROW_PARALLEL_LINEAR:
-            return grad, None, None
+            return FwdAllReduceBwdIdentity.backward(grad, group), None, None
         case TensorParallelLayerType.COLUMN_PARALLEL_EMBED:
-            return grad, None, None
+            return FwdAllReduceBwdIdentity.backward(grad, group), None, None
         case TensorParallelLayerType.ROW_PARALLEL_EMBED:
-            from torch.distributed import distributed_c10d as c10d
-            import thunder.torch as ltorch
-
-            # split along last dim
-            local_grad = ltorch.chunk(grad, group.size(), dim=grad.ndim - 1)[c10d.get_rank(group)]
-            return (local_grad, None, None)
+            return FwdGatherBwdSplitAlongLastDim.backward(grad, group), None, None
         case _:
             utils.check(False, lambda: f"Invalid {layer_type=}")
 
