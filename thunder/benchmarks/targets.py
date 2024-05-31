@@ -195,34 +195,16 @@ def test_nanogpt_gelu(benchmark, executor: Callable, compute_type: ComputeType):
     fwd_executors,
     ids=fwd_executor_ids,
 )
-def test_batch_norm_fwd(benchmark, executor: Callable):
+@parametrize_compute_type
+def test_batch_norm(benchmark, executor: Callable, compute_type: ComputeType):
     bn_bench: Benchmark = BatchNormBenchmark(
-        (16, 128, 768), device="cuda:0", dtype=thunder.bfloat16, requires_grad=False
+        (16, 128, 768), device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type)
     )
 
     args, kwargs = bn_bench.make_batch()
     fn = executor(bn_bench.fn())
 
-    benchmark(fn, *args, **kwargs)
-
-
-@pytest.mark.parametrize(
-    "executor,",
-    (
-        torch_fwd_bwd,
-        torchcompile_fwd_bwd,
-        thunder_fwd_bwd,
-    ),
-    ids=fwd_executor_ids,
-)
-def test_batch_norm_grad(benchmark, executor: Callable):
-    bn_bench: Benchmark = BatchNormBenchmark(
-        (16, 128, 768), device="cuda:0", dtype=thunder.bfloat16, requires_grad=True
-    )
-
-    args, kwargs = bn_bench.make_batch()
-    fn = executor(bn_bench.fn())
-    benchmark(fn, *args, **kwargs)
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
 # TODO Improve cross entropy's fwd+bwd perf when using the PyTorch executor
