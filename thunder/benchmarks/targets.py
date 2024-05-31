@@ -378,32 +378,16 @@ def test_nanogpt_csa(benchmark, executor: Callable, compute_type: ComputeType):
     fwd_executors,
     ids=fwd_executor_ids,
 )
-def test_nanogpt_block_fwd(benchmark, executor: Callable):
+@parametrize_compute_type
+def test_nanogpt_block(benchmark, executor: Callable, compute_type: ComputeType):
     bench: Benchmark = NanoGPTBlockBenchmark(
-        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=False
+        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type)
     )
 
     args, kwargs = bench.make_batch()
     fn = executor(bench.fn())
 
-    benchmark(fn, *args, **kwargs)
-
-
-# NOTE NanoGPT's block module is layernorm -> csa -> layernorm -> mlp
-@pytest.mark.parametrize(
-    "executor,",
-    grad_executors,
-    ids=grad_executors_ids,
-)
-def test_nanogpt_block_grad(benchmark, executor: Callable):
-    bench: Benchmark = NanoGPTBlockBenchmark(
-        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=True
-    )
-
-    args, kwargs = bench.make_batch()
-    fn = executor(bench.fn())
-
-    benchmark(fn, *args, **kwargs)
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
 # TODO Fix torch.compiles bfloat16 atomic add issue with this benchmark -- why does thunder trigger it but regular torch.compile does not
