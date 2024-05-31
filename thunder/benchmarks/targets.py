@@ -466,7 +466,7 @@ def test_llama_2_7b_hf(benchmark, executor: Callable, compute_type: ComputeType)
 
 @pytest.mark.parametrize(
     "executor,",
-    fwd_executors
+    fwd_executors,
     ids=fwd_executor_ids,
 )
 @parametrize_compute_type
