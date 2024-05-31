@@ -404,6 +404,10 @@ def fsdp_transform_module(
     # modify module
     sharded_params = {}
     device_adjustments = {}
+    # We use `shared_params` dictionary to track the shared parameters.
+    # Key to this dictionary is the original parameter from the user's Module.
+    # Values are the copied and sharded parameter for the thunder module and meta-data related to sharding.
+    shared_params = WeakTensorKeyDictionary()
     for module_name, _ in thunder_model._model.named_modules():
         submodule = thunder_model.get_submodule(module_name)
 
@@ -448,6 +452,14 @@ def fsdp_transform_module(
                 tdist.broadcast(thunder_model.get_buffer(pn), src=broadcast_from, group=process_group, async_op=False)
 
         for pn, p in submodule.named_parameters(recurse=False, prefix=module_name):
+            # If there are shared params in the original user Module, we reuse the sharded copy created from the original parameter below.
+            # This way we re-create parameter sharing in thunder's copy of the Module.
+            if p in shared_params:
+                # Re-use the previous copy of this parameter.
+                thunder_model._overrides_parameters[pn] = shared_params[p]["param_copy"]
+                sharded_params[pn] = shared_params[p]["param_shard_meta"]
+                continue
+
             # if we don't have an override or it is just the original, do create a copy
             if thunder_model._overrides_parameters.get(pn, p) is p:
                 thunder_model._overrides_parameters[pn] = copy.copy(p)
@@ -458,6 +470,12 @@ def fsdp_transform_module(
             )
             new_shape = thunder_model._overrides_parameters[pn].shape
             sharded_params[pn] = (old_shape, new_shape, thunder_model._overrides_parameters[pn].device)
+
+            # Track the original param and it's corresponding copied shard and metadata.
+            shared_params[p] = {
+                "param_copy": thunder_model._overrides_parameters[pn],
+                "param_shard_meta": sharded_params[pn],
+            }
 
     early_transform_from_trace_to_fsdp_trace = FSDPTraceTransform(
         sharded_params=sharded_params,
