@@ -339,31 +339,16 @@ def test_litgpt_sdpa(benchmark, executor: Callable, bs, compute_type, config):
     fwd_executors,
     ids=fwd_executor_ids,
 )
-def test_nanogpt_mlp_fwd(benchmark, executor: Callable):
+@parametrize_compute_type
+def test_nanogpt_mlp(benchmark, executor: Callable, compute_type: ComputeType):
     bench: Benchmark = NanoGPTMLPBenchmark(
-        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=False
+        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type)
     )
 
     args, kwargs = bench.make_batch()
     fn = executor(bench.fn())
 
-    benchmark(fn, *args, **kwargs)
-
-
-@pytest.mark.parametrize(
-    "executor,",
-    grad_executors,
-    ids=grad_executors_ids,
-)
-def test_nanogpt_mlp_grad(benchmark, executor: Callable):
-    bench: Benchmark = NanoGPTMLPBenchmark(
-        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=True
-    )
-
-    args, kwargs = bench.make_batch()
-    fn = executor(bench.fn())
-
-    benchmark(fn, *args, **kwargs)
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
 # NOTE The CSA module is linear -> sdpa -> dropout
