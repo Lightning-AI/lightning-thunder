@@ -3609,6 +3609,7 @@ def cross_entropy(
 
 def _cross_entropy_input_checks(
     a: TensorLike,
+    /,
     target: TensorLike,
     weight: None | TensorLike,
     ignore_index: int,
@@ -3677,8 +3678,9 @@ def _cross_entropy_input_checks(
 
 def _cross_entropy_loss_probability_target(
     a: TensorLike,
+    /,
     target: TensorLike,
-    weight: TensorLike | None,
+    weight: None | TensorLike,
     ignore_index: int,
     reduction: str,
     label_smoothing: float,
@@ -3709,6 +3711,7 @@ def _cross_entropy_loss_probability_target(
 
 def _cross_entropy_loss_label_smoothing(
     a: TensorLike,
+    /,
     target: TensorLike,
     weight: None | TensorLike,
     ignore_index: int,
