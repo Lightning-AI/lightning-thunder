@@ -1,6 +1,7 @@
 import math
 import os
 import sys
+from typing import ClassVar
 
 import torch
 import torch.nn as nn
@@ -30,13 +31,18 @@ def new_gelu(x):
 class ToyModel(nn.Module):
     """Linear(12, 12) -> gelu -> Linear(12, 8)."""
 
+    N_IN: ClassVar[int] = 12
+    N_HIDDEN: ClassVar[int] = 16
+    N_OUT: ClassVar[int] = 8
+    LAYER_NAMES: ClassVar[tuple[str, ...]] = ("net2", "net1")
+
     def __init__(self, bias: bool = True):
         super().__init__()
-        self.net1 = nn.Linear(12, 12, bias=bias)
-        self.net2 = nn.Linear(12, 8, bias=bias)
+        self.net1 = nn.Linear(ToyModel.N_IN, ToyModel.N_HIDDEN, bias=bias)
+        self.net2 = nn.Linear(ToyModel.N_HIDDEN, ToyModel.N_OUT, bias=bias)
 
     def forward(self, x):
-        return self.net2(new_gelu(self.net1(x)))
+        return self.net2(torch.relu(self.net1(x)))
 
 
 # note(crcrpar): How to write a test with `DDP`
