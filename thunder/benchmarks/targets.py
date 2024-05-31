@@ -89,43 +89,6 @@ def interpreter_fwd(module: Callable):
     return fn_
 
 
-def make_fwd_bwd(fn: Callable, compile_fn: Callable):
-    cfn = compile_fn(fn)
-
-    @wraps(cfn)
-    def wrapper(*args, **kwargs):
-        clear_grads(fn)
-        result = cfn(*args, **kwargs)
-        backwardable_tensor_result = thunder.core.utils.sequencify(result)
-        backwardable_tensor_result = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, backwardable_tensor_result))
-        result_grads = [torch.ones_like(x) for x in backwardable_tensor_result]
-        torch.autograd.backward(backwardable_tensor_result, result_grads)
-        return result
-
-    return wrapper
-
-
-# To compare with PyTorch and raw torch.compile (i.e. not through thunder). The
-# latter can help us isolate whether it's something we need to fix ourselves or
-# report upstream.
-torch_fwd_bwd = partial(make_fwd_bwd, compile_fn=torch_executor)
-torchcompile_fwd_bwd = partial(make_fwd_bwd, compile_fn=torch_compile_executor)
-
-# Default thunder configs
-thunder_fwd_bwd = partial(make_fwd_bwd, compile_fn=thunder_executor)
-
-# Executing with just the apex executor
-# NOTE apex may or may not be available
-thunder_apex_grad: None | Callable = None
-if thunder_apex_executor is not None:
-    thunder_apex_grad = partial(make_fwd_bwd, compile_fn=thunder_apex_executor)
-
-# Executing with the apex and nvfuser executors
-thunder_apex_nvfuser_grad: None | Callable = None
-if thunder_apex_nvfuser_executor is not None:
-    thunder_apex_nvfuser_grad = partial(make_fwd_bwd, compile_fn=thunder_apex_nvfuser_executor)
-
-
 fwd_executors = (
     torch_executor,
     torch_compile_executor,
@@ -137,10 +100,6 @@ fwd_executor_ids = (
     "torch.compile",
     "thunder",
     "thunder+nvfuser+torch.compile",
-)
-
-thunder_fwd_bwd_sdpa_torch_compile_nvfuser = partial(
-    make_fwd_bwd, compile_fn=thunder_sdpa_torch_compile_nvfuser_executor
 )
 
 apex_executors = (thunder_apex_executor, thunder_apex_nvfuser_executor)
