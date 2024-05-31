@@ -217,13 +217,6 @@ def _div_prim_impl(a: Number, b: Number) -> Number:
     return a / b
 
 
-# Maps exact inputs to truncation division
-def _div_prim_impl(a: Number, b: Number) -> torch.Tensor:
-    if isinstance(a, (int, bool)) and isinstance(b, (int, bool)):
-        return a // b
-    return a / b
-
-
 # NOTE Tensor abs is distinct from Python's builtin abs because it preserves the dtype of booleans
 #   i.e. tensor_abs(True) -> True, while builtins.abs(True) -> 1
 def _tensor_abs_prim_impl(a: Number) -> Number:
