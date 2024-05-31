@@ -68,10 +68,10 @@ def make_fwd_bwd(fn: Callable, compile_fn: Callable):
     def wrapper(*args, **kwargs):
         clear_grads(fn)
         result = cfn(*args, **kwargs)
-        if isinstance(result, Sequence):
-            torch.autograd.backward(result, [torch.ones_like(x) for x in result])
-        else:
-            result.backward(torch.ones_like(result))
+        backwardable_tensor_result = thunder.core.utils.sequencify(result)
+        backwardable_tensor_result = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, backwardable_tensor_result))
+        result_grads = [torch.ones_like(x) for x in backwardable_tensor_result]
+        torch.autograd.backward(backwardable_tensor_result, result_grads)
         return result
 
     return wrapper
