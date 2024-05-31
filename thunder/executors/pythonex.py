@@ -202,10 +202,18 @@ def _elementwise_unary_checker(x: NumberLike | TensorProxy) -> bool:
     return isinstance(x, (Number, NumberProxy))
 
 
-# Maps exact inputs to truncation division
-def _div_prim_impl(a: Number, b: Number) -> torch.Tensor:
-    if isinstance(a, (int, bool)) and isinstance(b, (int, bool)):
-        return a // b
+def _div_prim_impl(a: Number, b: Number) -> Number:
+    if dtypes.is_exact_dtype(type(a)) and dtypes.is_exact_dtype(type(b)):
+        if (a >= 0) != (b >= 0) and a % b:
+            # This implementation follows c-style integer division, which is
+            # truncation division. When the quotient is negative and not evenly
+            # divisible, special handling is necessary to round values to zero.
+            return a // b + 1
+        else:
+            # Python uses floor division for integers, which rounds values to
+            # negative infinity.
+            return a // b
+
     return a / b
 
 
