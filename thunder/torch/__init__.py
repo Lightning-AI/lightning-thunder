@@ -3559,6 +3559,53 @@ def _dropout_helper(a, p):
     return result
 
 
+@torchsymbol(torch.nn.functional.cross_entropy)
+def cross_entropy(
+    a: TensorProxy,
+    target: TensorProxy,
+    weight: None | TensorProxy = None,
+    size_average: None | Any = None,
+    ignore_index: int = -100,
+    reduce: None | Any = None,
+    reduction: str = "mean",
+    label_smoothing: float = 0.0,
+) -> TensorProxy:
+    utils.check(
+        size_average is None and reduce is None,
+        lambda: f"Deprecated size_average={size_average} and reduce={reduce} is not supported!",
+    )
+
+    _cross_entropy_input_checks(a, target, weight, ignore_index, reduction, label_smoothing)
+
+    # channels dimension is either the first one if no batch dim present (i.e. a.shape[0]),
+    # or right next to it (i.e. a.shape[1]).
+    channels_dim = 1 if a.ndim >= 2 else 0
+
+    # NOTE This short-circuit is subject to change and is placed ahead of other input checks to match PyTorch behavior.
+    # The expected behavior when the target and input have zero elements:
+    #   reduction = 'none' --- tensor([], shape) or tensor(0.)
+    #   reduction = 'sum'  --- tensor(0.)
+    #   reduction = 'mean' --- tensor(nan)
+    # Mean reduction on empty tensors produces NaN.
+    if a.numel() == 0:
+        if reduction == "none":
+            output_shape = list(a.shape)
+            output_shape.pop(channels_dim)
+            return full(output_shape, 0.0, device=a.device, dtype=a.dtype)
+        elif reduction == "sum":
+            return full(result_shape := [], fill_value := 0.0, device=a.device, dtype=a.dtype)
+        elif reduction == "mean":
+            return full(result_shape := [], fill_value := float("nan"), device=a.device, dtype=a.dtype)
+
+    if a.shape == target.shape:
+        return _cross_entropy_loss_probability_target(a, target, weight, ignore_index, reduction, label_smoothing)
+    elif label_smoothing != 0.0:
+        return _cross_entropy_loss_label_smoothing(a, target, weight, ignore_index, reduction, label_smoothing)
+    else:
+        log_softmax_input = log_softmax(a, dim=channels_dim)
+        return nll_loss(log_softmax_input, target, weight, ignore_index, reduction)
+
+
 def _cross_entropy_input_checks(
     a: TensorProxy,
     target: TensorProxy,
@@ -3710,53 +3757,6 @@ def _cross_entropy_loss_label_smoothing(
     nll_loss_value = nll_loss(log_softmax_value, target, weight, ignore_index, reduction)
 
     return (nll_loss_value * (1.0 - label_smoothing)) + (ret * (label_smoothing / num_channels))
-
-
-@torchsymbol(torch.nn.functional.cross_entropy)
-def cross_entropy(
-    a: TensorProxy,
-    target: TensorProxy,
-    weight: None | TensorProxy = None,
-    size_average: None | Any = None,
-    ignore_index: int = -100,
-    reduce: None | Any = None,
-    reduction: str = "mean",
-    label_smoothing: float = 0.0,
-) -> TensorProxy:
-    utils.check(
-        size_average is None and reduce is None,
-        lambda: f"Deprecated size_average={size_average} and reduce={reduce} is not supported!",
-    )
-
-    _cross_entropy_input_checks(a, target, weight, ignore_index, reduction, label_smoothing)
-
-    # channels dimension is either the first one if no batch dim present (i.e. a.shape[0]),
-    # or right next to it (i.e. a.shape[1]).
-    channels_dim = 1 if a.ndim >= 2 else 0
-
-    # NOTE This short-circuit is subject to change and is placed ahead of other input checks to match PyTorch behavior.
-    # The expected behavior when the target and input have zero elements:
-    #   reduction = 'none' --- tensor([], shape) or tensor(0.)
-    #   reduction = 'sum'  --- tensor(0.)
-    #   reduction = 'mean' --- tensor(nan)
-    # Mean reduction on empty tensors produces NaN.
-    if a.numel() == 0:
-        if reduction == "none":
-            output_shape = list(a.shape)
-            output_shape.pop(channels_dim)
-            return full(output_shape, 0.0, device=a.device, dtype=a.dtype)
-        elif reduction == "sum":
-            return full(result_shape := [], fill_value := 0.0, device=a.device, dtype=a.dtype)
-        elif reduction == "mean":
-            return full(result_shape := [], fill_value := float("nan"), device=a.device, dtype=a.dtype)
-
-    if a.shape == target.shape:
-        return _cross_entropy_loss_probability_target(a, target, weight, ignore_index, reduction, label_smoothing)
-    elif label_smoothing != 0.0:
-        return _cross_entropy_loss_label_smoothing(a, target, weight, ignore_index, reduction, label_smoothing)
-    else:
-        log_softmax_input = log_softmax(a, dim=channels_dim)
-        return nll_loss(log_softmax_input, target, weight, ignore_index, reduction)
 
 
 # TODO Is this a method?
