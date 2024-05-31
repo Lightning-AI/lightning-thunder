@@ -55,15 +55,6 @@ IMPORTANT_CONFIGS = [
 RUN_ALL_CONFIGS = os.environ.get("THUNDER_BENCH_RUN_ALL_CONFIGS", "0") == "1"
 
 
-def make_setup(b: Benchmark):
-    def setup():
-        args_and_kwargs = b.make_batch()
-        torch.cuda.synchronize()
-        return args_and_kwargs
-
-    return setup
-
-
 def interpreter_fwd(module: Callable):
     fn_ = torch_executor(module)
     fn_ = interpret(fn_)
@@ -835,6 +826,13 @@ def test_litgpt_qkv_split_rope_train_backward(benchmark, executor: Callable, use
         requires_grad=True,
         use_apex=use_apex,
     )
+
+    def make_setup(b: Benchmark):
+        def thunk():
+            args_and_kwargs = b.make_batch()
+            return args_and_kwargs
+
+        return thunk
 
     fw_setup = make_setup(bench)
     fn, bw_setup = backward_only(bench.fn(), executor, fw_setup)
