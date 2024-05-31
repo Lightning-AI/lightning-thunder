@@ -754,11 +754,14 @@ def backward_only(fn: Callable, fw_setup_fn: Callable):
     result = fn(*args, **kwargs)
     result = thunder.core.utils.sequencify(result)
 
-    result_metadata = [(r.dtype, r.device, r.shape) for r in result]
+    backwardable_tensor_result = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, result))
 
-    def bw_setup():
+    # Capture metadata for backward to avoid keeping the result in memory
+    backwardable_result_metadata = [(r.dtype, r.device, r.shape) for r in backwardable_tensor_result]
+
+    def backward_setup():
         args = []
-        for dtype, device, shape in result_metadata:
+        for dtype, device, shape in backwardable_result_metadata:
             torch_dtype = thunder.torch.to_torch_dtype(dtype)
             torch_device = thunder.core.devices.to_torch_device(device)
             args.append(make_tensor(shape, dtype=torch_dtype, device=torch_device, requires_grad=False))
@@ -770,7 +773,7 @@ def backward_only(fn: Callable, fw_setup_fn: Callable):
 
         torch.autograd.backward(result, args, retain_graph=True)
 
-    return backward_fn, bw_setup
+    return backward_fn, backward_setup
 
 
 # Sample command to run this benchmark:
