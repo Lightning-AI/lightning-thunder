@@ -399,7 +399,7 @@ def synchronize_backward_rule(
     group: torch.distributed.ProcessGroup,
     grad: TensorProxy,
 ) -> tuple[TensorProxy, None]:
-    if get_skip_data_parallel_grad_sync() and ddp_type == DDPType.REPLICATED:
+    if get_skip_data_parallel_grad_sync() and distparallel_type == DistParallelType.REPLICATED:
         return grad, None
     preaverage_grad = grad / group.size()
     match distparallel_type:
