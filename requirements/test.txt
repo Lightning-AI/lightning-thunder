@@ -9,7 +9,7 @@ pytest-timestamper ==0.0.10
 graphviz ==0.20.3
 fdm ==0.4.1
 expecttest ==0.2.1  # for test_ddp.py
-hypothesis ==6.100.0  # for test_ddp.py
+hypothesis ==6.103.0  # for test_ddp.py
 numpy  # for test_ops.py
 einops  # for test_einops.py
 litgpt==0.3.1  # for the model definition in tests and benchmarks
