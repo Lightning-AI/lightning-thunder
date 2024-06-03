@@ -38,6 +38,43 @@ __all__ = [
 _skip_data_parallel_grad_sync = ContextVar("skip_data_parallel_grad_sync", default=False)
 
 
+def _avoid_torch_nccl_record_streams(func):
+    """
+    Avoids the allocator thrashing issue in PyTorch NCCL backend.
+    """
+
+    env_var = "TORCH_NCCL_AVOID_RECORD_STREAMS"
+    value = os.environ.get(env_var, "0")
+
+    def wrapper(*args, **kwargs):
+        try:
+            os.environ[env_var] = "1"
+            return func(*args, **kwargs)
+        finally:
+            os.environ[env_var] = value
+
+    return wrapper
+
+
+@_avoid_torch_nccl_record_streams
+def copy_default_process_group() -> ProcessGroup:
+    """Create a new process group with the same ranks as the default process group.
+
+    Returns:
+        A new process group with the same ranks as the default process group.
+    """
+    default_pg = tdist.distributed_c10d._get_default_group()
+    ranks = list(range(tdist.get_world_size(group=default_pg)))
+    backend = tdist.distributed_c10d.get_backend(default_pg)
+    # What's the better way to query this from the default process group? This
+    # is the default value for `is_high_priority_stream` in PyTorch
+    # default_pg.options returns ProcessGroup.Options object while
+    # ProcessGroupNCCL.Options is required
+    options = tdist.ProcessGroupNCCL.Options()
+    options.is_high_priority_stream = False
+    return tdist.new_group(ranks, backend=backend, pg_options=options)
+
+
 def set_skip_data_parallel_grad_sync(value: bool) -> Token:
     """Set whether to skip data parallel grad sync.
 
@@ -246,7 +283,7 @@ def ddp(
         lambda: "ddp requires torch distributed to be available (but it's not)",
     )
 
-    pg = tdist.distributed_c10d._get_default_group()
+    pg = copy_default_process_group()
     utils.check(pg is not None, lambda: "The default process group is None")
     model.use_ddp = True
     model.process_group_for_ddp = pg
@@ -384,7 +421,7 @@ def fsdp_transform_module(
     from thunder.core.module import ThunderModule
     from thunder.distributed.transforms.fsdp_v2 import FSDPTraceTransform
 
-    process_group = tdist.distributed_c10d._get_default_group()
+    process_group = copy_default_process_group()
     utils.check(process_group is not None, lambda: "The default process group is None")
     global_rank = tdist.get_rank(group=process_group)
     world_size = tdist.get_world_size(group=process_group)
@@ -549,7 +586,7 @@ def fsdp(
             bucketing_strategy=bucketing_strategy,
         )
 
-    process_group = tdist.distributed_c10d._get_default_group()
+    process_group = copy_default_process_group()
     utils.check(process_group is not None, lambda: "The default process group is None")
     model.use_fsdp = True
     model.process_group_for_ddp = process_group

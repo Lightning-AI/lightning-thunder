@@ -222,11 +222,12 @@ def row_parallel(
     from thunder.distributed import _shard_param
     from thunder.core.transforms import add_transform
     from thunder.core.module import ThunderModule
+    from thunder.distributed import copy_default_process_group
 
     utils.check_type(thunder_module, ThunderModule)
 
     if process_group is None:
-        process_group = distributed_c10d._get_default_group()
+        process_group = copy_default_process_group()
     rank = distributed_c10d.get_rank(process_group)
     world_size = distributed_c10d.get_world_size(process_group)
 
