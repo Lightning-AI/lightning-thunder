@@ -10,6 +10,7 @@ from thunder.core import utils
 from thunder.core.proxies import DistParallelType
 from thunder.core.proxies import TensorProxy
 from thunder.core.proxies import variableify
+from thunder.distributed import copy_default_process_group
 from thunder.distributed.tensor_parallel.common import PrePostProcessInterface
 from thunder.distributed.tensor_parallel.common import ComputationTraceTransformVisitorForTensorParallel
 from thunder.distributed.tensor_parallel.common import TransformForTensorParallel
@@ -226,7 +227,7 @@ def row_parallel(
     utils.check_type(thunder_module, ThunderModule)
 
     if process_group is None:
-        process_group = distributed_c10d._get_default_group()
+        process_group = copy_default_process_group()
     rank = distributed_c10d.get_rank(process_group)
     world_size = distributed_c10d.get_world_size(process_group)
 
