@@ -9,7 +9,6 @@ from torch.distributed import distributed_c10d
 from thunder.core import utils
 from thunder.core.proxies import TensorProxy
 from thunder.core.proxies import DistParallelType
-from thunder.distributed import copy_default_process_group
 from thunder.distributed.tensor_parallel.common import PrePostProcessInterface
 from thunder.distributed.tensor_parallel.common import ComputationTraceTransformVisitorForTensorParallel
 from thunder.distributed.tensor_parallel.common import TransformForTensorParallel
@@ -221,6 +220,7 @@ def column_parallel(
     from thunder.distributed import _shard_param
     from thunder.core.transforms import add_transform
     from thunder.core.module import ThunderModule
+    from thunder.distributed import copy_default_process_group
 
     utils.check_type(thunder_module, ThunderModule)
 
