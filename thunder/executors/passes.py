@@ -129,7 +129,15 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
 
 
 def transform_for_execution(trace: TraceCtx, executors_list: Sequence[Executor]) -> TraceCtx:
+    import torch
+
     start_time_ns = time.time_ns()
+
+    if torch.distributed.is_available():
+        # Apply AllReduce bucketing if possible & needed
+        from thunder.distributed.transforms.ddp import apply_bucketing_to_grad_allreduce
+
+        trace = apply_bucketing_to_grad_allreduce(trace)
 
     trace = dce(trace)
 

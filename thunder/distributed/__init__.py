@@ -16,7 +16,9 @@ import torch.distributed as tdist
 from torch.utils.weak import WeakTensorKeyDictionary
 
 import thunder.core.utils as utils
-from thunder.core.proxies import DDPType
+from thunder.core.proxies import DistParallelType
+from thunder.distributed.tensor_parallel import column_parallel
+from thunder.distributed.tensor_parallel import row_parallel
 
 if TYPE_CHECKING:
     from torch.distributed import ProcessGroup
@@ -28,6 +30,8 @@ __all__ = [
     "fsdp",
     "FSDPBucketingStrategy",
     "FSDPType",
+    "column_parallel",
+    "row_parallel",
 ]
 
 
@@ -273,14 +277,14 @@ def ddp(
             ),
         )
 
-    # Note [DistributedDataParallel and ddp_type]
+    # Note [DistributedDataParallel and distparallel_type]
     # If model was wrapped with thunder.distributed.ddp it would have a
     # .use_ddp attribute set to True and all parameters would be already
     # broadcasted to all other processes. So that our tracing is aware of
-    # this we need to mark the ddp_type of model's parameters as
-    # thunder.proxies.DDPType.REPLICATED
+    # this we need to mark the distparallel_type of model's parameters as
+    # thunder.proxies.DistParallelType.REPLICATED
     for p in model.parameters():
-        p.ddp_type = DDPType.REPLICATED
+        p.distparallel_type = DistParallelType.REPLICATED
 
     if broadcast_from is None:
         return model
@@ -404,6 +408,10 @@ def fsdp_transform_module(
     # modify module
     sharded_params = {}
     device_adjustments = {}
+    # We use `shared_params` dictionary to track the shared parameters.
+    # Key to this dictionary is the original parameter from the user's Module.
+    # Values are the copied and sharded parameter for the thunder module and meta-data related to sharding.
+    shared_params = WeakTensorKeyDictionary()
     for module_name, _ in thunder_model._model.named_modules():
         submodule = thunder_model.get_submodule(module_name)
 
@@ -448,6 +456,14 @@ def fsdp_transform_module(
                 tdist.broadcast(thunder_model.get_buffer(pn), src=broadcast_from, group=process_group, async_op=False)
 
         for pn, p in submodule.named_parameters(recurse=False, prefix=module_name):
+            # If there are shared params in the original user Module, we reuse the sharded copy created from the original parameter below.
+            # This way we re-create parameter sharing in thunder's copy of the Module.
+            if p in shared_params:
+                # Re-use the previous copy of this parameter.
+                thunder_model._overrides_parameters[pn] = shared_params[p]["param_copy"]
+                sharded_params[pn] = shared_params[p]["param_shard_meta"]
+                continue
+
             # if we don't have an override or it is just the original, do create a copy
             if thunder_model._overrides_parameters.get(pn, p) is p:
                 thunder_model._overrides_parameters[pn] = copy.copy(p)
@@ -458,6 +474,12 @@ def fsdp_transform_module(
             )
             new_shape = thunder_model._overrides_parameters[pn].shape
             sharded_params[pn] = (old_shape, new_shape, thunder_model._overrides_parameters[pn].device)
+
+            # Track the original param and it's corresponding copied shard and metadata.
+            shared_params[p] = {
+                "param_copy": thunder_model._overrides_parameters[pn],
+                "param_shard_meta": sharded_params[pn],
+            }
 
     early_transform_from_trace_to_fsdp_trace = FSDPTraceTransform(
         sharded_params=sharded_params,
@@ -537,14 +559,14 @@ def fsdp(
     # Shard the parameters
     _shard_params(model, process_group, device, broadcast_from, allow_padding_for_fsdp=True)
 
-    # See Note [DistributedDataParallel and ddp_type]
+    # See Note [DistributedDataParallel and distparallel_type]
     # If model was wrapped with thunder.distributed.fsdp it would have a
     # .use_fsdp attribute set to True and all parameters would be already
     # sharded across all other processes. So that our tracing is aware of
-    # this we need to mark the ddp_type of model's parameters as
-    # thunder.proxies.DDPType.FULLY_SHARDED
+    # this we need to mark the distparallel_type of model's parameters as
+    # thunder.proxies.DistParallelType.FULLY_SHARDED
     for p in model.parameters():
-        p.ddp_type = DDPType.FULLY_SHARDED
+        p.distparallel_type = DistParallelType.FULLY_SHARDED
 
     return model
 
@@ -601,33 +623,40 @@ def _shard_param(
     rank: int,
     world_size: int,
     name: str,
+    *,
     allow_padding_for_fsdp: bool = False,
+    dim: int | None = None,
 ) -> None:
 
-    if not allow_padding_for_fsdp or (param.size(0) % world_size == 0):
-        if not allow_padding_for_fsdp:
-            utils.check(
-                param.shape[0] % world_size == 0,
-                lambda: (
-                    f"Current sharding requires the first dimension of the parameter {name!r} ({param.shape[0]})"
-                    f" to be divisible by the world size ({world_size})"
-                ),
-            )
-        chunk_size = param.shape[0] // world_size
-        # NOTE This could be a ShardTensor to indicate other parts of the code
-        # that it's sharded and should be treated differently
-        shard = param.data.narrow(0, chunk_size * rank, chunk_size).clone()
-        param.data = shard
-    else:
+    dim_to_shard = 0 if dim is None else dim
+    if allow_padding_for_fsdp:
+        utils.check(dim_to_shard == 0, lambda: f"Invalid {dim=} with {allow_padding_for_fsdp=}, Only 0 is supported")
         padded_param_shape = list(param.shape)
-        orig_0dim_size = param.size(0)
+        orig_0dim_size = param.size(dim_to_shard)
         chunk_size = (padded_param_shape[0] + world_size - 1) // world_size
         padded_param_shape[0] = chunk_size * world_size
         _thunder_fsdp_padding_size = padded_param_shape[0] - param.size(0)
-        padded_param = torch.empty(padded_param_shape, device=param.device, dtype=param.dtype)
-        padded_param[:orig_0dim_size].copy_(param)
-        param.data = padded_param.data.narrow(0, chunk_size * rank, chunk_size).clone()
-        param._thunder_fsdp_padding_size = _thunder_fsdp_padding_size
+        if _thunder_fsdp_padding_size > 0:
+            padded_param = torch.empty(padded_param_shape, device=param.device, dtype=param.dtype)
+            padded_param[:orig_0dim_size].copy_(param)
+            param.data = padded_param.data.narrow(0, chunk_size * rank, chunk_size).clone()
+            param._thunder_fsdp_padding_size = _thunder_fsdp_padding_size
+        else:
+            param.data = param.data.narrow(0, chunk_size * rank, chunk_size).clone()
+            param._thunder_fsdp_padding_size = None
+    else:
+        utils.check(
+            param.shape[dim_to_shard] % world_size == 0,
+            lambda: (
+                f"Current sharding requires the sharded dimension of the parameter {name!r} ({param.shape[dim_to_shard]})"
+                f" to be divisible by the world size ({world_size})"
+            ),
+        )
+        chunk_size = param.shape[dim_to_shard] // world_size
+        # NOTE This could be a ShardTensor to indicate other parts of the code
+        # that it's sharded and should be treated differently
+        shard = param.data.narrow(dim_to_shard, chunk_size * rank, chunk_size).clone()
+        param.data = shard
 
 
 @torch.no_grad()

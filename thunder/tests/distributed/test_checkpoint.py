@@ -20,7 +20,7 @@ from thunder.distributed.checkpoint import (
     get_model_state_dict,
     _TORCH_GREATER_EQUAL_2_3,
 )
-from thunder.tests.distributed.test_ddp import DataParallelTestCase
+from thunder.tests.distributed.helper import DataParallelTestCase
 
 
 class Submodule(torch.nn.Module):
