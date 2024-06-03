@@ -2639,10 +2639,12 @@ def test_bound_symbol_source_location_context(executor, device: str, dtype: dtyp
     assert str(trace).count("return clang.sin(x)") == 1
     assert str(trace).count(f"# {__file__}:{lineno}") == 1
 
+
 @instantiate(dtypes=(thunder.float32,), executors=(TorchExecutor,))
-def test_limit_source_location(executor, device: str, dtype: dtypes.dtype):
+def test_refine_source_location(executor, device: str, dtype: dtypes.dtype):
     def foo_thunder(x):
         return thunder.torch.softmax(x, 0)
+
     def foo_torch(x):
         return torch.softmax(x, 0)
 
