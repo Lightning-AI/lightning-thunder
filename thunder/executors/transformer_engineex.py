@@ -385,6 +385,9 @@ def _linear_checker(
     w: TensorProxy,
     bias: None | TensorProxy,
 ) -> bool:
+    # Make sure that we don't claim an operator
+    # if `TransformerEngine` is not available (not installed or version requirements not met)
+    # and it is passed as an executor to `thunder.jit()`
     if not TE_AVAILABLE:
         return False
 
