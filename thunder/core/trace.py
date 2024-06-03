@@ -371,7 +371,6 @@ class TraceCtx:
 
             if include_decorators:
                 program.append("from thunder.executors.torchex import no_autocast")
-                program.append("from thunder.core.decorators import avoid_torch_nccl_record_streams")
 
             # Separates imports from the function for readability
             if len(import_ctx) > 0:
@@ -395,8 +394,6 @@ class TraceCtx:
                 # Disable autocast since we already generated the trace with it in consideration (for when calling torch
                 # operations)
                 program.append("@no_autocast")
-                # Avoids the allocator thrashing issue in PyTorch NCCL backend
-                program.append("@avoid_torch_nccl_record_streams")
 
             # Prints the signature
             program.append(signature_str)
