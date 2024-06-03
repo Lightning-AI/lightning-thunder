@@ -266,13 +266,12 @@ class TELinear(TransformerEngineBaseModule):
         if not TE_VERSION_1_8_PLUS:
             weight_fp8, weight_t_fp8 = self.get_fp8_weights_scratchpad(is_first_microbatch)
         else:
-            # Initialize FP8 weights if needed
-            weight_fp8 = None
+            # Initialize FP8 weights workspace if needed
 
-            with_transpose = is_grad_enabled
             # FP8 cast to workspace buffer
+            with_transpose = is_grad_enabled
             update_workspace = is_first_microbatch is None or is_first_microbatch
-            skip_fp8_weight_update = None  # We don't support FP8-only Weight
+            skip_fp8_weight_update = None
 
             weight_fp8 = self.get_fp8_workspace(
                 tensor=weight,
@@ -283,6 +282,7 @@ class TELinear(TransformerEngineBaseModule):
                 skip_update_flag=skip_fp8_weight_update,
                 with_transpose=with_transpose,
             )
+
         return weight_fp8, weight_t_fp8
 
     # This method is used for supporting TE v1.6 and v1.7.
