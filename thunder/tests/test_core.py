@@ -2638,3 +2638,26 @@ def test_bound_symbol_source_location_context(executor, device: str, dtype: dtyp
     sin_symbol = trace.bound_symbols[1]
     assert str(trace).count("return clang.sin(x)") == 1
     assert str(trace).count(f"# {__file__}:{lineno}") == 1
+
+@instantiate(dtypes=(thunder.float32,), executors=(TorchExecutor,))
+def test_limit_source_location(executor, device: str, dtype: dtypes.dtype):
+    def foo_thunder(x):
+        return thunder.torch.softmax(x, 0)
+    def foo_torch(x):
+        return torch.softmax(x, 0)
+
+    a = make_tensor((2, 2), device=device, dtype=ltorch.to_torch_dtype(dtype))
+
+    jfn_thunder = thunder.jit(foo_thunder)
+    jfn_thunder(a)
+    jfn_torch = thunder.jit(foo_torch)
+    jfn_torch(a)
+
+    trace_thunder = thunder.last_traces(jfn_thunder)[0]
+    trace_torch = thunder.last_traces(jfn_torch)[0]
+
+    # make sure we are not showing the internals of Thunder
+    assert str(trace_thunder).count("return _softmax(a, dim=dim, dtype=dtype)") == 0
+    assert str(trace_thunder).count("return thunder.torch.softmax(x, 0)") == 1
+    # torch.softmax should be traced as usual
+    assert str(trace_torch).count(f"return torch.softmax(x, 0)") == 1
