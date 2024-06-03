@@ -733,33 +733,14 @@ def test_interpreter_nanogpt_gpt2_fwd(benchmark, executor: Callable):
 
 @pytest.mark.parametrize(
     "executor,",
-    fwd_executors,
-    ids=fwd_executor_ids,
+    executors,
+    ids=executors_ids,
 )
-def test_resnet50_fwd(benchmark, executor: Callable):
-    b = ResNet50Benchmark((64, 3, 224, 224), device="cuda:0", dtype=torch.bfloat16, requires_grad=False)
+@parametrize_compute_type
+def test_resnet50(benchmark, executor: Callable, compute_type: ComputeType):
+    b = ResNet50Benchmark((64, 3, 224, 224), device="cuda:0", dtype=torch.bfloat16, requires_grad=is_requires_grad(compute_type))
 
-    setup = make_setup(b)
-    fn = executor(b)
-    fn = wrap_for_benchmark(fn)
+    args, kwargs = b.make_batch()
+    fn = executor(b.fn())
 
-    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=1)
-
-
-@pytest.mark.parametrize(
-    "executor,",
-    (
-        torch_fwd_bwd,
-        torchcompile_fwd_bwd,
-        thunder_fwd_bwd,
-    ),
-    ids=fwd_executor_ids,
-)
-def test_resnet50_grad(benchmark, executor: Callable):
-    b = ResNet50Benchmark((64, 3, 224, 224), device="cuda:0", dtype=torch.bfloat16, requires_grad=True)
-
-    setup = make_setup(b)
-    fn = executor(b)
-    fn = wrap_for_benchmark(fn)
-
-    benchmark.pedantic(fn, setup=setup, rounds=5, warmup_rounds=1)
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
