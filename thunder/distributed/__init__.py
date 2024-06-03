@@ -66,7 +66,12 @@ def copy_default_process_group() -> ProcessGroup:
     default_pg = tdist.distributed_c10d._get_default_group()
     ranks = list(range(tdist.get_world_size(group=default_pg)))
     backend = tdist.distributed_c10d.get_backend(default_pg)
-    options = default_pg.options
+    # What's the better way to query this from the default process group? This
+    # is the default value for `is_high_priority_stream` in PyTorch
+    # default_pg.options returns ProcessGroup.Options object while
+    # ProcessGroupNCCL.Options is required
+    options = tdist.ProcessGroupNCCL.Options()
+    options.is_high_priority_stream = False
     return tdist.new_group(ranks, backend=backend, pg_options=options)
 
 
