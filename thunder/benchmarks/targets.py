@@ -72,7 +72,9 @@ parametrize_compute_type = pytest.mark.parametrize(
 
 
 import functools
-def timer_and_memory_stats(benchmark) ->float:
+
+
+def timer_and_memory_stats(benchmark) -> float:
     def deco(func):
         @functools.wraps(func)
         def wrapper():
@@ -80,11 +82,15 @@ def timer_and_memory_stats(benchmark) ->float:
             benchmark.extra_info["max_allocated_memory(MB)"] = torch.cuda.max_memory_allocated() / (1024 * 1024.0)
             torch.cuda.reset_peak_memory_stats()
             return ret
+
         return wrapper
+
     return deco
 
 
 from contextlib import contextmanager
+
+
 @contextmanager
 def record_peak_allocated_memory(benchmark):
     old_timer = benchmark._timer
@@ -92,7 +98,7 @@ def record_peak_allocated_memory(benchmark):
     try:
         yield
     finally:
-        benchmark._timer=old_timer
+        benchmark._timer = old_timer
 
 
 def benchmark_for_compute_type(compute_type: ComputeType, benchmark, fn: Callable, args, kwargs):
