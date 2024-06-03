@@ -79,6 +79,13 @@ import thunder.executors.nvfuserex
 pythonex = extend.get_executor("python")
 assert pythonex is not None
 
+# Avoids the allocator thrashing issue in PyTorch NCCL backend.
+# This is a workaround for the problem described in
+# https://github.com/Lightning-AI/lightning-thunder/issues/420
+# Unfortunately, PyTorch reads this value only once at the ProcessGroupNCCL initialization time,
+# so we need to set it before the first call to ProcessGroupNCCL.
+# Hopefully, Thunder is imported before any other PyTorch code that uses NCCL.
+os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
 
 _PACKAGE_ROOT = os.path.dirname(__file__)
 _PROJECT_ROOT = os.path.dirname(_PACKAGE_ROOT)
