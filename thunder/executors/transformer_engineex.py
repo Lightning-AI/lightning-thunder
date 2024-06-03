@@ -385,6 +385,9 @@ def _linear_checker(
     w: TensorProxy,
     bias: None | TensorProxy,
 ) -> bool:
+    if not TE_AVAILABLE:
+        return False
+
     def is_cuda(t):
         return t.device.devicetype == devices.DeviceType.CUDA
 
