@@ -960,30 +960,6 @@ def _print_benchmark_arguments(bmark: Benchmark) -> None:
         print(f"\t{arg.name}={getattr(bmark, arg.name)}")
 
 
-class BwdModule(torch.nn.Module):
-    def __init__(self, postprocess_for_backward: Callable):
-        super().__init__()
-
-        self.postprocess_for_backward = postprocess_for_backward
-
-    def forward(self, *args, **kwargs):
-        bwd_tensor: torch.Tensor = self.postprocess_for_backward(*args, **kwargs)
-        return bwd_tensor
-
-
-# This class can be chained with another module, using sequential, to produce
-#   an output suitable for calling .backward() on, simplifying its integration into other benchmarks
-class SumModule(torch.nn.Module):
-    def __init__(self, postprocess_for_backward: Callable):
-        super().__init__()
-
-        self.postprocess_for_backward = postprocess_for_backward
-
-    def forward(self, *args, **kwargs):
-        bwd_tensor: torch.Tensor = self.postprocess_for_backward(*args, **kwargs)
-        return bwd_tensor.sum()
-
-
 class StackedAddBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
@@ -1343,24 +1319,7 @@ class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             .requires_grad_(self.requires_grad)
         )
 
-        if not self.only_return_loss:
-            return gpt
-
-        # NOTE This module filters NanoGPT's (logits, loss) output to the tensor to call ".backward()" on
-        class FilterForBwd(torch.nn.Module):
-            def __init__(self):
-                super().__init__()
-
-            def forward(self, tup: tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
-                logits: torch.Tensor
-                loss: torch.Tensor
-                logits, loss = tup
-                return loss
-
-        ffb = FilterForBwd()
-        module: torch.nn.Module = torch.nn.Sequential(gpt, ffb)
-
-        return module
+        return gpt
 
     def postprocess_for_backward(self, output: tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor | None:
         if not self.requires_grad:

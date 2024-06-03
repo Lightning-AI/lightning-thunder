@@ -50,17 +50,6 @@ class TensorParallelTest(DataParallelTestCase):
         expected.mean().backward()
         y.mean().backward()
 
-        if self.rank == 0:
-            fwd_extrace = thunder.last_traces(tp_jitted_model)[-1]
-            bwd_extrace = thunder.last_backward_traces(tp_jitted_model)[-1]
-            for bsym in fwd_extrace.bound_symbols + bwd_extrace.bound_symbols:
-                bsym.subsymbols = []
-
-            with open("./fwd_extrace_1.py", "w") as f:
-                f.write(str(fwd_extrace))
-            with open("./bwd_extrace_1.py", "w") as f:
-                f.write(str(bwd_extrace))
-
         dim = 1 if name == _ROW else 0
         for layer_name in ("net1", "net2"):
             param_name = f"{layer_name}.weight"
