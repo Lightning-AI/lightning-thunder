@@ -314,13 +314,13 @@ def _elementwise_binary_checker(a: NumberLike | TensorProxy, b: NumberLike | Ten
 
 
 add = ex.register_operator("add", like=prims.add, module=operator)
-atan2 = ex.register_operator("atan2", like=prims.atan2, module=operator)
-bitwise_and = ex.register_operator("bitwise_and", like=prims.bitwise_and, module=operator)
-bitwise_or = ex.register_operator("bitwise_or", like=prims.bitwise_or, module=operator)
-bitwise_xor = ex.register_operator("bitwise_xor", like=prims.bitwise_xor, module=operator)
+atan2 = ex.register_operator("atan2", like=prims.atan2, module=math)
+bitwise_and = ex.register_operator("bitwise_and", like=prims.bitwise_and, fn=operator.and_)
+bitwise_or = ex.register_operator("bitwise_or", like=prims.bitwise_or, fn=operator.or_)
+bitwise_xor = ex.register_operator("bitwise_xor", like=prims.bitwise_xor, fn=operator.xor)
 eq = ex.register_operator("eq", like=prims.eq, module=operator)
 py_floordiv = ex.register_operator("floordiv", like=prims.py_floordiv, module=operator)
-fmod = ex.register_operator("fmod", like=prims.fmod, module=operator)
+fmod = ex.register_operator("fmod", like=prims.fmod, module=math)
 ge = ex.register_operator("ge", like=prims.ge, module=operator)
 gt = ex.register_operator("gt", like=prims.gt, module=operator)
 le = ex.register_operator("le", like=prims.le, module=operator)
