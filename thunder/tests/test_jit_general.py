@@ -780,3 +780,33 @@ def test_tom_overrides_proxy(device):
 
     for k, v in params_expected.items():
         assert v is params_actual[k]
+
+
+@pytest.mark.parametrize(
+    "device",
+    ("cpu", "cuda"),
+)
+def test_cache_symbolic_values(device):
+    def foo(a, scalar):
+        return (a * scalar).sum(scalar)
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+
+    a = torch.randn((2, 2, 2), device=device)
+    scalar = 1
+
+    actual = jfoo(a, b)
+    expected = foo(a, b)
+
+    assert_close(actual, expected)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    scalar = 2
+
+    actual = jfoo(a, b)
+    expected = foo(a, b)
+
+    assert_close(actual, expected)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1
