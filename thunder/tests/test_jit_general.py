@@ -802,7 +802,7 @@ def test_cache_symbolic_values(device):
     assert thunder.cache_misses(jfoo) == 1
     assert thunder.cache_hits(jfoo) == 0
 
-    scalar = 2
+    b = 2
 
     actual = jfoo(a, b)
     expected = foo(a, b)
