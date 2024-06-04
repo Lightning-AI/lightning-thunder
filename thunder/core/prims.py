@@ -65,7 +65,6 @@ from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
 from thunder.core.proxies import (
     CollectionProxy,
     TensorProxy,
-    IntegerProxy,
     NumberProxy,
     is_proxyable,
     proxy,

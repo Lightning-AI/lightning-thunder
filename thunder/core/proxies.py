@@ -5,6 +5,7 @@ from numbers import Number
 from typing import Type, Optional, Any, Tuple, List, Union
 from collections.abc import Callable
 from collections.abc import Sequence
+
 from functools import reduce, partial
 import operator
 import builtins
@@ -388,6 +389,10 @@ class StringProxy(Proxy, str):
 
     def __repr__(self) -> str:
         return f"<StringProxy '{self.value}'>"
+
+    def replace_name(self, name: str, /):
+        """Return a copy of this proxy with the given name."""
+        return StringProxy(self.value, name=name, history=self.history)
 
     def type_string(self) -> str:
         return "str"
@@ -901,7 +906,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
 NumberLike = Number | NumberProxy
 
 
-def pyval(x: Number | str | AnyProxy) -> Number | str | any:
+def pyval(x: NumberLike | str | AnyProxy) -> Number | str | any:
     baseutils.check_type(x, (NumberProxy, Number, str, AnyProxy))
 
     if isinstance(x, AnyProxy):
@@ -1041,13 +1046,8 @@ def _infer_tensor_properties(
         thunder_fsdp_padding_size if thunder_fsdp_padding_size is not None else _thunder_fsdp_padding_size
     )
 
-    # Extracts actual values for shape
-    # TODO RC1 Enable this
-    if using_symbolic_values():
-        raise NotImplementedError(
-            f"Trying to construct a tensor proxy while using symbolic values, but this is not yet supported"
-        )
-
+    # dynamic shape not yet enabled, otherwise, the bake in should be guarded with if not using_symbolic_values():
+    # dynamic shape support is currently block by #471 https://github.com/Lightning-AI/lightning-thunder/issues/471
     _shape = tuple(pyval(x) for x in _shape)
 
     # Computes derived properties
