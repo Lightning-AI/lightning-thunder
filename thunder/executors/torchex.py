@@ -65,7 +65,7 @@ def _wrap_in_tensor(x):
     if isinstance(x, TensorProxy):
         return x
     elif isinstance(x, int):
-        return ltorch.tensor(seed)
+        return ltorch.tensor(x)
     elif isinstance(x, IntegerProxy):
         return full(tuple(), x, dtype=torch.int64)
     else:
