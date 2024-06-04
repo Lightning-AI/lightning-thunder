@@ -6,7 +6,6 @@ from typing import Type, Optional, Any, Tuple, List, Union
 from collections.abc import Callable
 from collections.abc import Sequence
 
-# from functools import reduce, partial, wraps
 from functools import reduce, partial
 import operator
 import builtins
