@@ -11,7 +11,6 @@ from thunder.core.proxies import DistParallelType
 
 if TYPE_CHECKING:
     from typing import Any
-    from collections.abc import Callable
     from torch.distributed import ProcessGroup
     from thunder.common import CompileData
     from thunder.core.proxies import ProxyInterface
@@ -137,7 +136,7 @@ class TransformForTensorParallel:
     def get_visitor_of_computation_trace_and_provenance(
         self,
         computation_trace: TraceCtx,
-    ) -> tuple[Callable[[BoundSymbol], VISIT_TYPE], TraceProvenance | str]: ...
+    ) -> tuple[ComputationTraceTransformVisitorForTensorParallel, TraceProvenance | str]: ...
 
     @abstractmethod
     def _calc_new_shape(self, orig_shape) -> tuple[int, ...]: ...

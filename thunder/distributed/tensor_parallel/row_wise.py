@@ -18,7 +18,6 @@ from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
 if TYPE_CHECKING:
     from typing import Any
     from collections.abc import Sequence
-    from collections.abc import Callable
     from torch.distributed import ProcessGroup
     from thunder.core.module import ThunderModule
     from thunder.core.symbol import BoundSymbol
@@ -114,7 +113,7 @@ class TransformForRowWiseParallel(TransformForTensorParallel):
     def get_visitor_of_computation_trace_and_provenance(
         self,
         computation_trace: TraceCtx,
-    ) -> tuple[Callable[[BoundSymbol], VISIT_TYPE], TraceProvenance | str]:
+    ) -> tuple[ComputationTraceTransformVisitorForTensorParallel, TraceProvenance | str]:
         from thunder.core.pytree import tree_flatten
 
         consumers = utils.consumers(computation_trace)

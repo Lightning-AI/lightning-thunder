@@ -16,7 +16,6 @@ from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
 
 if TYPE_CHECKING:
     from typing import Any
-    from collections.abc import Callable
     from collections.abc import Sequence
     from torch.distributed import ProcessGroup
     from thunder.core.trace import TraceCtx
@@ -65,8 +64,6 @@ class ColumnParallelEmbeddingPrePostProcess(PrePostProcessInterface):
     layer_type: ClassVar[TensorParallelLayerType] = TensorParallelLayerType.COLUMN_PARALLEL_EMBED
 
     def __post_init__(self) -> None:
-        from torch.distributed import distributed_c10d
-
         rank = distributed_c10d.get_rank(self.process_group)
 
         self.vocab_start_index: int = rank * self.num_local_embeddings
@@ -121,7 +118,7 @@ class TransformForColumnWiseParallel(TransformForTensorParallel):
     def get_visitor_of_computation_trace_and_provenance(
         self,
         computation_trace: TraceCtx,
-    ) -> tuple[Callable[[BoundSymbol], VISIT_TYPE], TraceProvenance | str]:
+    ) -> tuple[ComputationTraceTransformVisitorForTensorParallel, TraceProvenance | str]:
         from thunder.core.pytree import tree_flatten
 
         consumers = utils.consumers(computation_trace)
