@@ -121,7 +121,7 @@ class TransformForColumnWiseParallel(TransformForTensorParallel):
     def get_visitor_of_computation_trace_and_provenance(
         self,
         computation_trace: TraceCtx,
-    ) -> tuple[Callable[[BoundSymbol], VISIT_TYPE], TraceProvenance | str]:
+    ) -> tuple[ComputationTraceTransformVisitorForTensorParallel, TraceProvenance | str]:
         from thunder.core.pytree import tree_flatten
 
         consumers = utils.consumers(computation_trace)
