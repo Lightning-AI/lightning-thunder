@@ -1047,8 +1047,8 @@ def _infer_tensor_properties(
         thunder_fsdp_padding_size if thunder_fsdp_padding_size is not None else _thunder_fsdp_padding_size
     )
 
-    # dynamic shape not yet enabled, otherwise, the bake in should be guarded.
-    # if not using_symbolic_values():
+    # dynamic shape not yet enabled, otherwise, the bake in should be guarded with if not using_symbolic_values():
+    # dynamic shape support is currently block by #471 https://github.com/Lightning-AI/lightning-thunder/issues/471
     _shape = tuple(pyval(x) for x in _shape)
 
     # Computes derived properties
