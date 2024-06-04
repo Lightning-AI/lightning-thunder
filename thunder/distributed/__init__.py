@@ -70,8 +70,10 @@ def copy_default_process_group() -> ProcessGroup:
     # is the default value for `is_high_priority_stream` in PyTorch
     # default_pg.options returns ProcessGroup.Options object while
     # ProcessGroupNCCL.Options is required
-    options = tdist.ProcessGroupNCCL.Options()
-    options.is_high_priority_stream = False
+    options = None
+    if backend == "nccl":
+        options = tdist.ProcessGroupNCCL.Options()
+        options.is_high_priority_stream = False
     return tdist.new_group(ranks, backend=backend, pg_options=options)
 
 
