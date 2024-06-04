@@ -8,13 +8,13 @@ from dataclasses import field
 from typing import TYPE_CHECKING
 
 from thunder.core.proxies import DistParallelType
+from thunder.core.proxies import TensorProxy
 
 if TYPE_CHECKING:
     from typing import Any
     from torch.distributed import ProcessGroup
     from thunder.common import CompileData
     from thunder.core.proxies import ProxyInterface
-    from thunder.core.proxies import TensorProxy
     from thunder.core.symbol import BoundSymbol
     from thunder.core.trace import TraceCtx
     from thunder.core.trace import TraceProvenance
@@ -69,6 +69,12 @@ class NoOp(PrePostProcessInterface):
         return super().postprocess(y)
 
 
+_TENSOR_PARALLLE_ENUM_VALS: set[DistParallelType] = {
+    DistParallelType.COLUMN_WISE,
+    DistParallelType.ROW_WISE,
+}
+
+
 @dataclass
 class ComputationTraceTransformVisitorForTensorParallel:
     """Wrap tensor parallel ops with necessary preprocessing and postprocessing.
@@ -85,12 +91,28 @@ class ComputationTraceTransformVisitorForTensorParallel:
     """
 
     bsym_to_prepostprocess: dict[BoundSymbol, PrePostProcessInterface]
+    distparallel_type: DistParallelType
+
     swap_map: dict[VariableInterface, ProxyInterface] = field(init=False, default_factory=dict)
+    _has_other_tensor_parallel: bool = field(init=False, default=False)
+
+    def _maybe_other_tensor_parallel(self, t: ProxyInterface) -> bool:
+        if isinstance(t, TensorProxy) and not self._has_other_tensor_parallel:
+            self._has_other_tensor_parallel = (
+                t.distparallel_type in _TENSOR_PARALLLE_ENUM_VALS and t.distparallel_type != self.distparallel_type
+            )
+
+    @property
+    def eligible_for_comm_optimization(self) -> bool:
+        return self._has_other_tensor_parallel
 
     def __call__(self, bsym: BoundSymbol) -> VISIT_TYPE:
         from thunder.core.transforms import VISIT_TYPE
         from thunder.core.trace import get_tracectx
         from thunder.core.proxies import variableify
+
+        for t in bsym.flat_proxy_args:
+            self._maybe_other_tensor_parallel(t)
 
         input_swap_map: dict[VariableInterface, ProxyInterface] = {}
         pre_post_process: PrePostProcessInterface | None = None
@@ -105,6 +127,8 @@ class ComputationTraceTransformVisitorForTensorParallel:
         if pre_post_process is not None:
             new_bsym = new_bsym.from_bsym_swap_proxies(input_swap_map)
             new_bsym = pre_post_process.maybe_modify_args_and_kwargs(new_bsym)
+            # note(crcrpar): This header seems to be lost in the extrace.
+            new_bsym.header = f"{pre_post_process.__class__.layer_type}"
         trace = get_tracectx()
         trace.scopes[-1].append(new_bsym)
 
@@ -142,6 +166,7 @@ class TransformForTensorParallel:
     def _calc_new_shape(self, orig_shape) -> tuple[int, ...]: ...
 
     @property
+    @abstractmethod
     def distparallel_type(self) -> DistParallelType: ...
 
     def __call__(
@@ -217,4 +242,9 @@ class TransformForTensorParallel:
             visit=visit,
             provenance=provenance,
         )
-        return prologue_trace, new_computation_trace, epilogue_trace
+        if not visit.eligible_for_comm_optimization:
+            return prologue_trace, new_computation_trace, epilogue_trace
+        else:
+            from thunder.distributed.tensor_parallel.optimize_comm import remove_redundant_comms
+
+            return prologue_trace, remove_redundant_comms(new_computation_trace), epilogue_trace
