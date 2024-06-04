@@ -787,6 +787,9 @@ def test_tom_overrides_proxy(device):
     ("cpu", "cuda"),
 )
 def test_cache_symbolic_values(device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
     def foo(a, scalar):
         return (a * scalar).sum(scalar)
 
