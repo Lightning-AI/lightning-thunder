@@ -21,6 +21,8 @@ from thunder.core.baseutils import BoundSymbolInterface
 from thunder.core.prims import PrimIDs
 from thunder.core.proxies import (
     NumberProxy,
+    IntegerProxy,
+    StringProxy,
     Proxy,
     TupleProxy,
     TensorProxy,
@@ -246,6 +248,10 @@ def create_fd(
                 # TODO: validate x is a tuple of int
                 utils.check_type(y, type)
                 nv = fd.define_vector(len(x._value))
+            elif isinstance(x, StringProxy):
+                utils.check_type(y, type)
+                # TODO: should we add a string type? I think we should reject it here and instead ask thunder to bake in string.
+                nv = x
             elif isinstance(x, Proxy):
                 utils.check(False, lambda: f"Unsupported proxy type {type(x)} in fusion", exception_type=AssertionError)
             else:
@@ -366,7 +372,7 @@ def get_tensor_descriptor(t: torch.Tensor) -> tuple[tuple[int, ...], tuple[bool,
 # TODO Inline the get_tensor_descriptor call
 def to_descriptors(args) -> tuple:
     def to_descriptor(arg):
-        if isinstance(arg, Number):
+        if isinstance(arg, (Number, str)):
             return type(arg)
         elif isinstance(arg, tuple):
             if len(arg) != 0:
@@ -408,6 +414,8 @@ class FusionDefinitionWrapper:
             if nv_version >= LooseVersion("0.0.13") and hasattr(fd, "_selected_device")
             else {}
         )
+        # TODO: quick hack to drop str
+        args = [x for x in args if not isinstance(x, str)]
         with add_markers(self.name):
             return fd.execute(args, **kwargs)
 
@@ -954,10 +962,11 @@ def full(
 ) -> Any:
     nv_fill_value = getnv(fill_value, fd, lc_to_nv_map)
     nvdtype = lcdtype_to_nvdtype(dtype)
+    nv_shape = [getnv(i, fd, lc_to_nv_map) for i in shape]
 
     _select_device(fd, device)
 
-    return fd.ops.full(shape, nv_fill_value, nvdtype)
+    return fd.ops.full(nv_shape, nv_fill_value, nvdtype)
 
 
 register_supported(PrimIDs.FULL, full, _full_check)
@@ -1011,11 +1020,11 @@ def uniform(
     nv_minval = getnv(minval, fd, lc_to_nv_map)
     nv_maxval = getnv(maxval, fd, lc_to_nv_map)
 
-    nvshape = list(getnv(x, fd, lc_to_nv_map) for x in shape)
+    nv_shape = [getnv(i, fd, lc_to_nv_map) for i in shape]
 
     _select_device(fd, device)
 
-    return fd.ops.uniform(nv_minval, nv_maxval, nvshape, dtype=nvdtype)
+    return fd.ops.uniform(nv_minval, nv_maxval, nv_shape, dtype=nvdtype)
 
 
 register_supported(PrimIDs.UNIFORM, uniform, _uniform_check)
@@ -1034,8 +1043,8 @@ def _uniform_philox_check(
     return (
         is_supported_device(device)
         and is_supported_dtype(dtype)
-        and is_supported_tensor_or_number(seed)
-        and is_supported_tensor_or_number(offset)
+        and isinstance(seed, (int, IntegerProxy))
+        and isinstance(offset, (int, IntegerProxy))
     )
 
 
@@ -1056,7 +1065,7 @@ def uniform_philox(
     nv_minval = getnv(minval, fd, lc_to_nv_map)
     nv_maxval = getnv(maxval, fd, lc_to_nv_map)
 
-    nvshape = list(getnv(x, fd, lc_to_nv_map) for x in shape)
+    nv_shape = [getnv(i, fd, lc_to_nv_map) for i in shape]
 
     nv_rng_seed = getnv(seed, fd, lc_to_nv_map)
     nv_rng_offset = getnv(offset, fd, lc_to_nv_map)
@@ -1066,7 +1075,7 @@ def uniform_philox(
     return fd.ops.uniform(
         nv_minval,
         nv_maxval,
-        nvshape,
+        nv_shape,
         dtype=nvdtype,
         rng_seed=nv_rng_seed,
         rng_offset=nv_rng_offset,
@@ -1093,8 +1102,9 @@ def broadcast_in_dim(
     a: TensorProxy, shape: list[int], broadcast_dimensions: list[int], *, fd: FusionDefinition, lc_to_nv_map: dict
 ) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
+    nv_shape = [getnv(i, fd, lc_to_nv_map) for i in shape]
 
-    return fd.ops.broadcast_in_dim(nva, shape, broadcast_dimensions)
+    return fd.ops.broadcast_in_dim(nva, nv_shape, broadcast_dimensions)
 
 
 register_supported(PrimIDs.BROADCAST_IN_DIM, broadcast_in_dim, _broadcast_in_dim_check)
@@ -1191,11 +1201,12 @@ def _reshape_check(a: TensorProxy, shape: list[int]) -> bool:
 
 def reshape(a: TensorProxy, shape: list[int], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nv_a = getnv(a, fd, lc_to_nv_map)
+    nv_shape = [getnv(i, fd, lc_to_nv_map) for i in shape]
 
     if nv_version < LooseVersion("0.0.22"):
-        return fd.ops.reshape(nv_a, a.shape, shape)
+        return fd.ops.reshape(nv_a, a.shape, nv_shape)
     else:
-        return fd.ops.reshape(nv_a, shape)
+        return fd.ops.reshape(nv_a, nv_shape)
 
 
 register_supported(PrimIDs.RESHAPE, reshape, _reshape_check)
@@ -1879,7 +1890,9 @@ register_supported(PrimIDs.WHERE, where, _where_check)
 
 # TODO Checks that the dtype is supported by nvFuser
 def _reduction_check(a: TensorProxy, dims: Sequence[int]) -> bool:
-    return is_supported_tensor(a, allow_low_precision_floats=False)
+    return is_supported_tensor(a, allow_low_precision_floats=False) and not any(
+        isinstance(dim, NumberProxy) for dim in dims
+    )
 
 
 # TODO Review if this accepts empty dim sequences

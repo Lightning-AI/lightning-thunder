@@ -273,7 +273,7 @@ def jit(
     executors: None | Sequence[Executor | str] = None,
     sharp_edges: None | SHARP_EDGES_OPTIONS | str = None,
     interpretation: None | INTERPRETATION_OPTIONS | str = None,
-    cache: None | CACHE_OPTIONS | str = None,
+    cache: None | CACHE_OPTIONS | str = CACHE_OPTIONS.SYMBOLIC_VALUES,
     disable_torch_autograd: bool = False,  # TODO Revisit this UX for RC1
     early_transforms: list | None = None,
     additional_transforms: list | None = None,

@@ -26,7 +26,7 @@ from thunder.core.devices import to_torch_device, to_device
 import thunder.core.prims as prims
 from thunder.core.prims import PrimIDs
 from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, from_trace
-from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy, variableify, pytype
+from thunder.core.proxies import NumberProxy, IntegerProxy, TensorProxy, FutureTensorProxy, variableify, pytype
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import Symbol, BoundSymbol
 from thunder.distributed.prims import DistributedReduceOps
@@ -59,6 +59,17 @@ dtypeLike = dtypes.dtype | torch.dtype
 #
 # Helper functions
 #
+
+
+def _wrap_in_tensor(x):
+    if isinstance(x, TensorProxy):
+        return x
+    elif isinstance(x, int):
+        return ltorch.tensor(seed)
+    elif isinstance(x, IntegerProxy):
+        return full(tuple(), x, dtype=torch.int64)
+    else:
+        utils.check(False, lambda: f"unsupported seed/offset: {x=}")
 
 
 def _always_executable(*args, **kwargs) -> bool:
@@ -305,14 +316,14 @@ def _uniform_philox_prim_transform(
     *,
     device: devices.Device,
     dtype: dtypes.dtype,
-    seed: int | TensorProxy,
-    offset: int | TensorProxy,
+    seed: int | IntegerProxy | TensorProxy,
+    offset: int | IntegerProxy | TensorProxy,
 ) -> TensorLike:
     torch_device = to_torch_device(device)
     torch_dtype = to_torch_dtype(dtype)
 
-    seed_tensor: TensorLike = ltorch.tensor(seed) if isinstance(seed, int) else seed
-    offset_tensor: TensorLike = ltorch.tensor(offset) if isinstance(offset, int) else offset
+    seed_tensor: TensorLike = _wrap_in_tensor(seed)
+    offset_tensor: TensorLike = _wrap_in_tensor(offset)
 
     random_values, offset = uniform_philox(
         shape, stride=None, seed=seed_tensor, offset=offset_tensor, device=torch_device, dtype=torch_dtype
@@ -329,12 +340,13 @@ def _uniform_philox_prim_checker(
     *,
     device: devices.Device,
     dtype: dtypes.dtype,
-    seed: int | TensorProxy,
-    offset: int | TensorProxy,
+    seed: int | IntegerProxy | TensorProxy,
+    offset: int | IntegerProxy | TensorProxy,
 ) -> bool:
     if minval != 0 or maxval != 1:
         return False
 
+    # TODO -- validate IntegerProxy
     if offset % 4 != 0:
         return False
 
@@ -358,8 +370,8 @@ def _uniform_philox_transform(
     torch_device = to_torch_device(device)
     torch_dtype = to_torch_dtype(dtype)
 
-    seed_tensor: TensorLike = ltorch.tensor(seed) if isinstance(seed, int) else seed
-    offset_tensor: TensorLike = ltorch.tensor(offset) if isinstance(offset, int) else offset
+    seed_tensor: TensorLike = _wrap_in_tensor(seed)
+    offset_tensor: TensorLike = _wrap_in_tensor(offset)
 
     random_values, offset = uniform_philox(
         shape, stride=None, seed=seed_tensor, offset=offset_tensor, device=torch_device, dtype=torch_dtype
@@ -376,12 +388,13 @@ def _uniform_philox_checker(
     *,
     device: DeviceLike,
     dtype: dtypeLike,
-    seed: int | TensorProxy,
-    offset: int | TensorProxy,
+    seed: int | IntegerProxy | TensorProxy,
+    offset: int | IntegerProxy | TensorProxy,
 ) -> bool:
     if minval != 0 or maxval != 1:
         return False
 
+    # TODO -- validate IntegerProxy
     if isinstance(offset, TensorProxy) or offset % 4 != 0:
         return False
 

@@ -20,8 +20,7 @@ from io import StringIO
 import inspect
 import time
 
-from thunder.core.compile_data import compile_data_and_stats, get_cache_option, using_symbolic_values, get_compile_data
-from thunder.core.symbol import bsym_header
+from thunder.core.compile_data import compile_data_and_stats, get_cache_option, get_compile_data
 import thunder.clang as clang
 import thunder.core.transforms
 
@@ -595,6 +594,9 @@ class GeneralJitCtx(MinimalCtx):
             co: CACHE_OPTIONS = get_cache_option()
             if co is CACHE_OPTIONS.CONSTANT_VALUES:
                 self.add_constraint((clang.check_tensor_shape_and_metadata, p_orig))
+            elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
+                # TODO: establish guarding logic to allow non-broadcast shape change
+                self.add_constraint((clang.check_tensor_shape_and_metadata, p_orig))
             elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
                 raise NotImplementedError(f"Unsupported cache option {co}")
             return p
@@ -612,6 +614,10 @@ class GeneralJitCtx(MinimalCtx):
                     self.add_constraint((clang.check_string_value, p, uvalue))
                 else:
                     self.add_constraint((clang.check_number_type_and_value, p, uvalue))
+            elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
+                # TODO: establish guarding logic
+                if p is not uvalue:
+                    value.register_proxy(p)
             elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
                 raise NotImplementedError(f"Unsupported cache option {co}")
             return p
@@ -1546,7 +1552,7 @@ def thunder_general_jit(
         )
 
     co: CACHE_OPTIONS = get_cache_option()
-    if co not in {CACHE_OPTIONS.CONSTANT_VALUES, CACHE_OPTIONS.NO_CACHING}:
+    if co not in {CACHE_OPTIONS.CONSTANT_VALUES, CACHE_OPTIONS.NO_CACHING, CACHE_OPTIONS.SYMBOLIC_VALUES}:
         raise NotImplementedError(f"Only constant constraints is supported")
 
     prologue_trace: TraceCtx = TraceCtx(fn)
@@ -1578,6 +1584,7 @@ def thunder_general_jit(
         record_history=record_history,
     )
 
+    # NOTE(jiej): numbers are baked in as constant here vvv
     with general_jit_ctx(ctx):
         with tracectx(computation_trace):
             result = jfn(*args, **kwargs)
@@ -1613,6 +1620,7 @@ def thunder_general_jit(
     else:
         epilogue_trace = None
 
+    # NOTE(jiej): prologue trace is produced here vvv
     pro_to_comp_proxies, pro_to_epi_proxies = unpack_inputs(
         ctx, prologue_trace, pro_to_comp, pro_to_epi, args, kwargs, has_epilogue=epilogue_trace is not None
     )

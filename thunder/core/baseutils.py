@@ -130,7 +130,8 @@ def check_valid_length(length: int):
 
     # maybe we should skip the check for IntegerProxy in general
     check_type(length, (int, NumberProxyInterface))
-    check(length >= 0, lambda: f"Found invalid length {length}!")
+    if isinstance(length, int):
+        check(length >= 0, lambda: f"Found invalid length {length}!")
 
 
 def check_valid_shape(shape: tuple[int, ...] | list[int]):
