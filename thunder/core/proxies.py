@@ -907,18 +907,6 @@ class NumberProxy(Proxy, NumberProxyInterface):
 NumberLike = Number | NumberProxy
 
 
-def unwrap_number_proxy(func):
-    @wraps(func)
-    def with_pyval(*args, **kwargs):
-        args = [pyval(arg) if isinstance(arg, NumberProxy) else arg for arg in args]
-        for k, v in kwargs.items():
-            if isinstance(v, NumberProxy):
-                kwargs[k] = pyval(v)
-        return func(*args, **kwargs)
-
-    return with_pyval
-
-
 def pyval(x: NumberLike | str | AnyProxy) -> Number | str | any:
     baseutils.check_type(x, (NumberProxy, Number, str, AnyProxy))
 

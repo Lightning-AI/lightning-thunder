@@ -76,7 +76,6 @@ from thunder.core.proxies import (
     TupleProxy,
     AnyProxy,
     IntegerProxy,
-    # unwrap_number_proxy,
 )
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
@@ -87,7 +86,6 @@ import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 from thunder.core.trace import get_tracectx
 from thunder.core.langctxs import langctx, LanguageContext, register_langctx, Languages
-
 
 #
 # Primitives and helpers for defining them
@@ -2611,7 +2609,6 @@ exogenous_like = make_prim(
 #   Logically these tensors are constructed intermediate to a trace, so there's no mechanism for a user to
 #   extract their grad, but we could support compiling forward and backward and accessing grad attributes
 #   in the future
-# @unwrap_number_proxy
 def _full_meta(shape: Sequence[int], fill_value: Number, *, device: devices.Device, dtype: dtypes.dtype) -> TensorProxy:
     # Checks inputs
     utils.check_type(fill_value, (Number, NumberProxy))
@@ -3385,7 +3382,6 @@ transpose = make_prim(PrimIDs.TRANSPOSE, "transpose", meta=transpose_meta, tags=
 view = make_prim(PrimIDs.VIEW, "view", meta=reshape_meta, tags=(OpTags.SHAPE_OP,))
 
 
-# @unwrap_number_proxy
 def unfold_meta(a: TensorProxy, /, dim: int, size: int, step: int) -> TensorProxy:
     dim = utils.canonicalize_dim(a.ndim, dim)
     max_size = 1 if a.ndim == 0 else a.shape[dim]
