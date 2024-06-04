@@ -18,7 +18,6 @@ from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
 if TYPE_CHECKING:
     from typing import Any
     from collections.abc import Sequence
-    from collections.abc import Callable
     from torch.distributed import ProcessGroup
     from thunder.core.module import ThunderModule
     from thunder.core.symbol import BoundSymbol

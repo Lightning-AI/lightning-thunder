@@ -11,7 +11,6 @@ from thunder.core.proxies import DistParallelType
 
 if TYPE_CHECKING:
     from typing import Any
-    from collections.abc import Callable
     from torch.distributed import ProcessGroup
     from thunder.common import CompileData
     from thunder.core.proxies import ProxyInterface
