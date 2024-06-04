@@ -100,15 +100,15 @@ def timer_and_memory_stats(benchmark) -> float:
         The decorator that records the peak allocated memory
     """
 
-    def deco(func):
-        @functools.wraps(func)
-        def wrapper():
-            ret = func()
+    def deco(old_timer):
+        @functools.wraps(old_timer)
+        def timer():
+            ret = old_timer()
             benchmark.extra_info["max_allocated_memory(MB)"] = torch.cuda.max_memory_allocated() / (1024 * 1024.0)
             torch.cuda.reset_peak_memory_stats()
             return ret
 
-        return wrapper
+        return timer
 
     return deco
 
