@@ -21,8 +21,6 @@ from thunder.core.baseutils import BoundSymbolInterface
 from thunder.core.prims import PrimIDs
 from thunder.core.proxies import (
     NumberProxy,
-    IntegerProxy,
-    StringProxy,
     Proxy,
     TupleProxy,
     TensorProxy,
@@ -956,11 +954,10 @@ def full(
 ) -> Any:
     nv_fill_value = getnv(fill_value, fd, lc_to_nv_map)
     nvdtype = lcdtype_to_nvdtype(dtype)
-    nv_shape = [getnv(i, fd, lc_to_nv_map) for i in shape]
 
     _select_device(fd, device)
 
-    return fd.ops.full(nv_shape, nv_fill_value, nvdtype)
+    return fd.ops.full(shape, nv_fill_value, nvdtype)
 
 
 register_supported(PrimIDs.FULL, full, _full_check)
@@ -1014,11 +1011,11 @@ def uniform(
     nv_minval = getnv(minval, fd, lc_to_nv_map)
     nv_maxval = getnv(maxval, fd, lc_to_nv_map)
 
-    nv_shape = [getnv(i, fd, lc_to_nv_map) for i in shape]
+    nvshape = list(getnv(x, fd, lc_to_nv_map) for x in shape)
 
     _select_device(fd, device)
 
-    return fd.ops.uniform(nv_minval, nv_maxval, nv_shape, dtype=nvdtype)
+    return fd.ops.uniform(nv_minval, nv_maxval, nvshape, dtype=nvdtype)
 
 
 register_supported(PrimIDs.UNIFORM, uniform, _uniform_check)
@@ -1037,8 +1034,8 @@ def _uniform_philox_check(
     return (
         is_supported_device(device)
         and is_supported_dtype(dtype)
-        and isinstance(seed, (int, IntegerProxy))
-        and isinstance(offset, (int, IntegerProxy))
+        and is_supported_tensor_or_number(seed)
+        and is_supported_tensor_or_number(offset)
     )
 
 
@@ -1059,7 +1056,7 @@ def uniform_philox(
     nv_minval = getnv(minval, fd, lc_to_nv_map)
     nv_maxval = getnv(maxval, fd, lc_to_nv_map)
 
-    nv_shape = [getnv(i, fd, lc_to_nv_map) for i in shape]
+    nvshape = list(getnv(x, fd, lc_to_nv_map) for x in shape)
 
     nv_rng_seed = getnv(seed, fd, lc_to_nv_map)
     nv_rng_offset = getnv(offset, fd, lc_to_nv_map)
@@ -1069,7 +1066,7 @@ def uniform_philox(
     return fd.ops.uniform(
         nv_minval,
         nv_maxval,
-        nv_shape,
+        nvshape,
         dtype=nvdtype,
         rng_seed=nv_rng_seed,
         rng_offset=nv_rng_offset,
@@ -1096,9 +1093,8 @@ def broadcast_in_dim(
     a: TensorProxy, shape: list[int], broadcast_dimensions: list[int], *, fd: FusionDefinition, lc_to_nv_map: dict
 ) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
-    nv_shape = [getnv(i, fd, lc_to_nv_map) for i in shape]
 
-    return fd.ops.broadcast_in_dim(nva, nv_shape, broadcast_dimensions)
+    return fd.ops.broadcast_in_dim(nva, shape, broadcast_dimensions)
 
 
 register_supported(PrimIDs.BROADCAST_IN_DIM, broadcast_in_dim, _broadcast_in_dim_check)
@@ -1195,12 +1191,11 @@ def _reshape_check(a: TensorProxy, shape: list[int]) -> bool:
 
 def reshape(a: TensorProxy, shape: list[int], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nv_a = getnv(a, fd, lc_to_nv_map)
-    nv_shape = [getnv(i, fd, lc_to_nv_map) for i in shape]
 
     if nv_version < LooseVersion("0.0.22"):
-        return fd.ops.reshape(nv_a, a.shape, nv_shape)
+        return fd.ops.reshape(nv_a, a.shape, shape)
     else:
-        return fd.ops.reshape(nv_a, nv_shape)
+        return fd.ops.reshape(nv_a, shape)
 
 
 register_supported(PrimIDs.RESHAPE, reshape, _reshape_check)
@@ -1884,9 +1879,7 @@ register_supported(PrimIDs.WHERE, where, _where_check)
 
 # TODO Checks that the dtype is supported by nvFuser
 def _reduction_check(a: TensorProxy, dims: Sequence[int]) -> bool:
-    return is_supported_tensor(a, allow_low_precision_floats=False) and not any(
-        isinstance(dim, NumberProxy) for dim in dims
-    )
+    return is_supported_tensor(a, allow_low_precision_floats=False)
 
 
 # TODO Review if this accepts empty dim sequences
