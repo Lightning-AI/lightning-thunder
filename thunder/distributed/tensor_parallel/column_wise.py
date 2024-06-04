@@ -144,7 +144,7 @@ class TransformForColumnWiseParallel(TransformForTensorParallel):
                             )
         utils.check(bsym_to_prepostprocess, lambda: f"{bsym_to_prepostprocess} must not be empty")
 
-        visit = ComputationTraceTransformVisitorForTensorParallel(bsym_to_prepostprocess)
+        visit = ComputationTraceTransformVisitorForTensorParallel(bsym_to_prepostprocess, self.distparallel_type)
         return visit, "transform into column-wise tensor parallel"
 
 
