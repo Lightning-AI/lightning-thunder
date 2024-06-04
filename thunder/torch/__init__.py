@@ -846,11 +846,7 @@ def flip(a: TensorLike, /, *dims: int) -> TensorLike:
     # PyTorch supports 0-dim inputs with len(dims) <= 1
     if a.ndim == 0 and isinstance(dims, Sequence) and len(dims) > 0:
         utils.check(
-            len(dims) == 1
-            and (
-                (isinstance(dims[0], (int, IntegerProxy)) and dims[0] in (0, -1))
-                or (isinstance(dims[0], NumberProxy) and pyval(dims[0]) in (0, -1))
-            ),
+            len(dims) == 1 and (isinstance(dims[0], (int, IntegerProxy)) and dims[0] in (0, -1)),
             lambda: f"Expected {dims=} to be a sequence of integers in range [-1, 0], and of length 1",
         )
         return clang.flip(a, ())
@@ -3173,15 +3169,22 @@ def _conv_helper(
             elif padding == "same":
                 # padding == "same" only works with strides equal to 1.
                 # NOTE: stride has to be a Sequence, see the annotation!
+
+                # NOTE: the handling here is not right
+                py_stride = tuple(pyval(s) for s in stride)
+                py_dilation = tuple(pyval(s) for s in dilation)
+
                 utils.check(
-                    all(s == 1 for s in stride), lambda: f"{padding=} requires all `strides` to be 1, but got {stride=}"
+                    all(s == 1 for s in stride),
+                    lambda: f"padding='{pyval(padding)}' requires all `strides` to be 1, but got stride={py_stride}",
                 )
                 utils.check(
-                    len(dilation) == 1 or len(dilation) == dim, lambda: f"{len(dilation)=} has to be either 1 or {dim}"
+                    len(dilation) == 1 or len(dilation) == dim,
+                    lambda: f"{len(dilation)=} has to be either 1 or {pyval(dim)}",
                 )
                 utils.check(
                     all(isinstance(d, (int, IntegerProxy)) and d >= 1 for d in dilation),
-                    lambda: f"{dilation=} has to be a Sequences of integers >= 1",
+                    lambda: f"dilation={py_dilation} has to be a Sequences of integers >= 1",
                 )
 
                 # Need to pad a because "low" padding might not be equal to "high" padding,
