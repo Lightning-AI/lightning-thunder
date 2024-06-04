@@ -1057,9 +1057,9 @@ def _infer_tensor_properties(
         thunder_fsdp_padding_size if thunder_fsdp_padding_size is not None else _thunder_fsdp_padding_size
     )
 
-    if not using_symbolic_values():
-        # Extracts actual values for shape
-        _shape = tuple(pyval(x) for x in _shape)
+    # Note: enable symbolic shape if not using_symbolic_values():
+    # Extracts actual values for shape
+    _shape = tuple(pyval(x) for x in _shape)
 
     # Computes derived properties
     _numel = reduce(operator.mul, _shape, 1)
