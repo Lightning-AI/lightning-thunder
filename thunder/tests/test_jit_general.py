@@ -793,7 +793,7 @@ def test_cache_symbolic_values(device):
     jfoo = thunder.jit(foo, cache="symbolic values")
 
     a = torch.randn((2, 2, 2), device=device)
-    scalar = 1
+    b = 1
 
     actual = jfoo(a, b)
     expected = foo(a, b)
