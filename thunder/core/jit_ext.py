@@ -1552,7 +1552,7 @@ def thunder_general_jit(
 
     co: CACHE_OPTIONS = get_cache_option()
     if co not in {CACHE_OPTIONS.CONSTANT_VALUES, CACHE_OPTIONS.NO_CACHING, CACHE_OPTIONS.SYMBOLIC_VALUES}:
-        raise NotImplementedError(f"Only constant constraints is supported")
+        raise NotImplementedError(f"cache option {co.name} is not supported")
 
     prologue_trace: TraceCtx = TraceCtx(fn)
     computation_trace: TraceCtx = TraceCtx()
