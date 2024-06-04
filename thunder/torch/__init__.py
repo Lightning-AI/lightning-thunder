@@ -908,8 +908,15 @@ def pad(a: TensorProxy, /, pad: tuple[int, ...], mode: str | None = "constant", 
 
     if value is None:
         value = 0
+    a_typ = to_dtype(a, true_dtype=True)
+    # Note that this can be unsafe. This can happen, for example, if `a` is an
+    # integer tensor and `value` is a float. It can also be more subtle, where
+    # `a` is a lower-precision float than `value`.
+    if a_typ is not to_dtype(value, true_dtype=True):
+        warnings.warn("`value` and Tensor input are of different types. This " "may create numeric issues.")
+    v2 = clang.maybe_convert_to_dtype(value, a_typ)
 
-    return clang.pad(a, value, pad_config)
+    return clang.pad(a, v2, pad_config)
 
 
 @torchsymbol(torch.permute, is_method=True)
@@ -1520,6 +1527,25 @@ def copysign(a, b, /):
 
 
 # TODO Implement div
+@torchsymbol(torch.div, is_method=True)
+def div(
+    a: Number | TensorLike,
+    b: Number | TensorLike,
+    /,
+    *,
+    rounding_mode: None | str = None,
+    out: None | TensorLike = None,
+) -> Number | TensorLike:
+    utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
+
+    if rounding_mode is None:
+        return true_divide(a, b)
+    elif rounding_mode == "trunc":
+        return clang.trunc_divide(a, b)
+    elif rounding_mode == "floor":
+        return floor_divide(a, b)
+    else:
+        raise ValueError(f"div does not support the rounding_mode={rounding_mode} argument")
 
 
 @torchsymbol(torch.eq, is_method=True)
@@ -4474,10 +4500,11 @@ if torch.distributed.is_available():
         a: TensorLike,
         group: torch.distributed.ProcessGroup | None = None,
         async_op: bool = False,
+        dim: int | None = None,
     ) -> TensorLike | FutureTensorLike:
         group = group if group is not None else torch.distributed.new_group()
 
-        return dist_prims.all_gather(a, group, async_op)
+        return dist_prims.all_gather(a, group, async_op, dim=dim)
 
     # NOTE torch.distributed.all_reduce is an inplace operation (although the underlying NCCL
     #   call does not need to be inplace). This, however, is modeled as an out-of-place functional
@@ -4525,11 +4552,12 @@ if torch.distributed.is_available():
         op: DistributedReduceOpLike | None = None,
         group: torch.distributed.ProcessGroup | None = None,
         async_op: bool = False,
+        dim: int | None = None,
     ) -> TensorLike | FutureTensorLike:
         op = to_thunder_distributed_reduce_op(op)
         group = group if group is not None else torch.distributed.new_group()
 
-        return dist_prims.reduce_scatter(a, op, group, async_op)
+        return dist_prims.reduce_scatter(a, op, group, async_op, dim=dim)
 
 else:
 

@@ -65,7 +65,6 @@ from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
 from thunder.core.proxies import (
     CollectionProxy,
     TensorProxy,
-    IntegerProxy,
     NumberProxy,
     is_proxyable,
     proxy,
@@ -76,6 +75,7 @@ from thunder.core.proxies import (
     StringProxy,
     TupleProxy,
     AnyProxy,
+    IntegerProxy,
     unwrap_number_proxy,
 )
 import thunder.core.codeutils as codeutils
@@ -153,6 +153,7 @@ class PrimIDs(Enum):
     TENSOR_FROM_SEQUENCE = auto()
     # Probability distribution-related ops
     MULTINOMIAL = auto()
+    GET_AND_UPDATE_RNG_STATE = auto()
     # Reshaping and permuting prims
     BROADCAST_IN_DIM = auto()
     CAT = auto()
@@ -2679,6 +2680,36 @@ uniform = make_prim(
 )
 
 
+# Follow the nvFuser way to get the seed/offset used in nvFuser's philox RNG from the Torch's RNG state and
+# update the Torch's RNG state
+def _get_and_update_rng_state_meta(
+    seed: IntegerProxy | int | None, offset: IntegerProxy | int | None, device: devices.Device
+) -> tuple[IntegerProxy, IntegerProxy]:
+    seed_is_none = seed is None
+    offset_is_none = offset is None
+    utils.check(
+        not (seed_is_none ^ offset_is_none),
+        lambda: f"seed and offset must be given in pair (they are both None only used on first use of get_and_update_rng_statebut), but got {seed}, {offset}",
+    )
+    if not seed_is_none:
+        utils.check_type(seed, (IntegerProxy, int))
+    if not offset_is_none:
+        utils.check_type(offset, (IntegerProxy, int))
+    utils.check(
+        device.devicetype is devices.DeviceType.CUDA,
+        lambda: f"get_and_update_rng_state is supported for CUDA only",
+        exception_type=NotImplementedError,
+    )
+    return numberproxy(int, None), numberproxy(int, None)
+
+
+get_and_update_rng_state = make_prim(
+    PrimIDs.GET_AND_UPDATE_RNG_STATE,
+    "get_and_update_rng_state",
+    meta=_get_and_update_rng_state_meta,
+)
+
+
 def _uniform_philox_meta(
     shape: Sequence[int],
     minval: float,
@@ -2694,8 +2725,8 @@ def _uniform_philox_meta(
     utils.check_type(maxval, float)
     utils.check_type(device, devices.Device)
     utils.check_type(dtype, dtypes.dtype)
-    utils.check_type(seed, (int, IntegerProxy, TensorProxy))
-    utils.check_type(offset, (int, IntegerProxy, TensorProxy))
+    utils.check_type(seed, (int, TensorProxy, IntegerProxy))
+    utils.check_type(offset, (int, TensorProxy, IntegerProxy))
     utils.check(
         isinstance(seed, (int, IntegerProxy)) or seed.dtype is dtypes.int64,
         lambda: f"Expected {seed=} to be an integer or an int64 tensor",

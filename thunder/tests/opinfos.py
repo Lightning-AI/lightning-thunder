@@ -79,7 +79,7 @@ def make_number(**kwargs):
     return v
 
 
-# Returns a noncontiguous (tensor with the same shape and values as t
+# Returns a noncontiguous tensor (with the same shape and values as t)
 # The noncontiguous tensor is constructed such that elements in the innermost
 #   dimension are separated by zeros or (whenever possible) nans
 # TODO: consider more complicated noncontiguity schemes
@@ -1833,6 +1833,7 @@ real_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(real_opinfo)
 
+
 # Puts all opinfos into the "opinfos" list
 opinfos.extend(elementwise_unary_ops)
 
@@ -2403,6 +2404,41 @@ zeta_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(zeta_opinfo)
 
+
+def div_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad, exclude_zero=True)
+    number = partial(make_number, dtype=dtype, exclude_zero=True)
+    shapes = [((4, 2, 3), (4, 2, 3)), ((4, 2, 3), (2, 3)), ((4, 2, 3), (2, 1))]
+    for shape_a, shape_b in shapes:
+        for rounding_mode in (None, "trunc", "floor"):
+            # numerator, denominator, rounding_mode
+            yield SampleInput(make(shape_a), make(shape_b), rounding_mode=rounding_mode)
+            yield SampleInput(make(shape_a), number(), rounding_mode=rounding_mode)
+
+
+div_opinfo = OpInfo(
+    ltorch.div,
+    sample_input_generator=div_sample_generator,
+    dtypes=(datatypes.exact, datatypes.floating),
+    torch_reference=torch.div,
+    test_directives=(
+        # NOTE: PyTorch doesn't support boolean division
+        # TODO: fix dtype mismatch when using nvfuser executors
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bool8,),
+            devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
+        ),
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            executors=("nvfuser",),
+        ),
+        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
+    ),
+)
+elementwise_binary_ops.append(div_opinfo)
 
 # Puts all opinfos into the "opinfos" list
 opinfos.extend(elementwise_binary_ops)
@@ -3004,6 +3040,7 @@ def broadcast_in_dim_sample_generator(op, device, dtype, requires_grad, **kwargs
 
     # inshape, outshape, dims
     cases = (
+        ([5], [5], [0]),
         ([2], [2, 2], [0]),
         ([2], [2, 2], [1]),
         ([2], [2, 3], [0]),

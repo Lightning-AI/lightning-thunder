@@ -20,9 +20,9 @@ import thunder.core.dtypes as dtypes
 from thunder.core import utils
 import thunder.core.prims as prims
 from thunder.core.proxies import (
-    NumberLike,
     IntegerProxy,
     NumberProxy,
+    NumberLike,
     TensorProxy,
     pyval,
     pytype,
@@ -1785,6 +1785,11 @@ def floor_divide(a: TensorProxy | Number, b: TensorProxy | Number) -> TensorProx
     return _floor_divide_integer(a, b, computation_dtype=computation_dtype)
 
 
+@clangop(method_name="trunc_divide")
+def trunc_divide(a: TensorProxy | Number, b: TensorProxy | Number, /) -> TensorProxy | Number:
+    return trunc(_c_div(a, b))
+
+
 @clangop()
 def fmod(a, b):
     return _elementwise_binary_wrapper(a, b, prim=prims.fmod)
@@ -1957,7 +1962,7 @@ def argmin(a: TensorProxy, /, dim: int | None = None, keepdim: bool | None = Fal
 @clangop()
 def topk(
     a: TensorLike, /, k: int, dim: int | None = None, largest: bool = True, sorted: bool = True, *, out=None
-) -> (TensorProxy, TensorProxy):
+) -> tuple[TensorProxy, TensorProxy]:
     if dim is None:
         dim = a.ndim - 1 if a.ndim > 0 else 0
     dim = utils.canonicalize_dim(a.ndim, dim)

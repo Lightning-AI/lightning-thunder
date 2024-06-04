@@ -8,6 +8,7 @@ from collections.abc import Callable, Sequence
 import weakref
 import random
 from functools import partial, wraps, reduce
+import linecache
 import operator
 import copy
 import contextvars
@@ -52,7 +53,7 @@ from types import (
 
 import torch
 from thunder.core.proxies import (
-    DDPType,
+    DistParallelType,
     proxy,
     Proxy,
     NumberProxy,
@@ -78,6 +79,8 @@ from thunder.core.interpreter import (
     _default_lookaside_map,
     default_lookaside,
     do_raise,
+    get_interpreterruntimectx,
+    InterpreterRuntimeCtx,
     is_opaque,
     Py_NULL,
     member_descriptor,
@@ -571,7 +574,10 @@ class GeneralJitCtx(MinimalCtx):
             # TensorProxy attributes should be considered derived quantities, so we flag TensorProxies here
             value.provenance.ext_flag |= EXT_FLAG_IS_TENSOR_PROXY
 
-            if isinstance(p, TensorProxy) and p.ddp_type in (DDPType.REPLICATED, DDPType.FULLY_SHARDED):
+            if isinstance(p, TensorProxy) and p.distparallel_type in (
+                DistParallelType.REPLICATED,
+                DistParallelType.FULLY_SHARDED,
+            ):
                 p_new = thunder.distributed.prims.synchronize(
                     p,
                     self._process_group_for_ddp,
@@ -671,8 +677,23 @@ def ensure_recursive_proxies(fn):  # shortcut for things we already processed?
     return wrapper
 
 
+def record_source_loc_in_symbol_header(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        runtimectx: Interpreterruntimectx = get_interpreterruntimectx()
+        filename, positions = runtimectx.get_current_user_source_location()
+        ctx: GeneralJitCtx = get_general_jit_ctx()
+        ctx._computation_trace.set_current_source_location(filename, positions)
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
 _general_jit_lookaside_map.update(
-    {k: ensure_recursive_proxies(interpreter_needs_wrap(v)) for k, v in _torch_to_thunder_function_map.items()}
+    {
+        k: ensure_recursive_proxies(interpreter_needs_wrap(record_source_loc_in_symbol_header(v)))
+        for k, v in _torch_to_thunder_function_map.items()
+    }
 )
 
 
@@ -822,8 +843,14 @@ def get_methods_properties(typ):
 
 _general_jit_lookaside_map.update(
     {
-        **{fn: interpreter_needs_wrap(la) for fn, la in get_methods_properties(NumberProxy)},
-        **{fn: ensure_recursive_proxies(interpreter_needs_wrap(la)) for fn, la in get_methods_properties(TensorProxy)},
+        **{
+            fn: interpreter_needs_wrap(record_source_loc_in_symbol_header(la))
+            for fn, la in get_methods_properties(NumberProxy)
+        },
+        **{
+            fn: ensure_recursive_proxies(interpreter_needs_wrap(record_source_loc_in_symbol_header(la)))
+            for fn, la in get_methods_properties(TensorProxy)
+        },
         prop_lookaside_helper: prop_lookaside_helper,
     }
 )
@@ -896,7 +923,7 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
         # NOTE Symbols "lookaside" to themselves; this just prevents their internals from being jitted
         # NOTE clang operations are not symbols, but we still prevent their internals from being jitted
         recursively_proxy(*args, **kwargs)
-        lookaside = interpreter_needs_wrap(fn)
+        lookaside = interpreter_needs_wrap(record_source_loc_in_symbol_header(fn))
     elif (general_jit_lookaside := _general_jit_lookaside_map.get(fn, None)) is not None:
         lookaside = general_jit_lookaside
     else:
@@ -1562,6 +1589,7 @@ def thunder_general_jit(
         with tracectx(computation_trace):
             result = jfn(*args, **kwargs)
             prims.python_return(result)
+            computation_trace.set_current_source_location(None, None)
             process_recorded_modifications(ctx, epilogue_trace)
             last_interpreter_log = jfn._last_interpreter_log
 

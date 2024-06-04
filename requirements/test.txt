@@ -1,5 +1,6 @@
 coverage ==7.5.1
 pytest ==8.1.1
+pytest-benchmark ==4.0.0
 pytest-timeout ==2.3.1
 pytest-cov ==4.1.0
 pytest-xdist ==3.6.1
@@ -8,10 +9,10 @@ pytest-timestamper ==0.0.10
 graphviz ==0.20.3
 fdm ==0.4.1
 expecttest ==0.2.1  # for test_ddp.py
-hypothesis ==6.100.0  # for test_ddp.py
+hypothesis ==6.103.0  # for test_ddp.py
 numpy  # for test_ops.py
 einops  # for test_einops.py
-litgpt==0.3.0  # for the model definition in tests and benchmarks
+litgpt==0.3.1  # for the model definition in tests and benchmarks
 absl-py # thunder/benchmarks/test_benchmark_litgpt.py
 pandas # thunder/benchmarks/test_benchmark_litgpt.py
 xlsxwriter # thunder/benchmarks/test_benchmark_litgpt.py
