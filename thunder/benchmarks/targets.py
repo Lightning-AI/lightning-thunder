@@ -104,7 +104,7 @@ def timer_and_memory_stats(benchmark) -> float:
         @functools.wraps(old_timer)
         def timer():
             ret = old_timer()
-            benchmark.extra_info["max_allocated_memory(MB)"] = torch.cuda.max_memory_allocated() / (1024 * 1024.0)
+            benchmark.extra_info["max_allocated_memory_MB"] = torch.cuda.max_memory_allocated() / (1024 * 1024.0)
             torch.cuda.reset_peak_memory_stats()
             return ret
 
