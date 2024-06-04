@@ -615,7 +615,6 @@ class GeneralJitCtx(MinimalCtx):
                 else:
                     self.add_constraint((clang.check_number_type_and_value, p, uvalue))
             elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
-                # TODO: establish guarding logic
                 if p is not uvalue:
                     value.register_proxy(p)
             elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
@@ -1584,7 +1583,6 @@ def thunder_general_jit(
         record_history=record_history,
     )
 
-    # NOTE(jiej): numbers are baked in as constant here vvv
     with general_jit_ctx(ctx):
         with tracectx(computation_trace):
             result = jfn(*args, **kwargs)
@@ -1620,7 +1618,6 @@ def thunder_general_jit(
     else:
         epilogue_trace = None
 
-    # NOTE(jiej): prologue trace is produced here vvv
     pro_to_comp_proxies, pro_to_epi_proxies = unpack_inputs(
         ctx, prologue_trace, pro_to_comp, pro_to_epi, args, kwargs, has_epilogue=epilogue_trace is not None
     )

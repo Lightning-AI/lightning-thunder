@@ -248,10 +248,6 @@ def create_fd(
                 # TODO: validate x is a tuple of int
                 utils.check_type(y, type)
                 nv = fd.define_vector(len(x._value))
-            elif isinstance(x, StringProxy):
-                utils.check_type(y, type)
-                # TODO: should we add a string type? I think we should reject it here and instead ask thunder to bake in string.
-                nv = x
             elif isinstance(x, Proxy):
                 utils.check(False, lambda: f"Unsupported proxy type {type(x)} in fusion", exception_type=AssertionError)
             else:
@@ -372,7 +368,7 @@ def get_tensor_descriptor(t: torch.Tensor) -> tuple[tuple[int, ...], tuple[bool,
 # TODO Inline the get_tensor_descriptor call
 def to_descriptors(args) -> tuple:
     def to_descriptor(arg):
-        if isinstance(arg, (Number, str)):
+        if isinstance(arg, Number):
             return type(arg)
         elif isinstance(arg, tuple):
             if len(arg) != 0:
@@ -414,8 +410,6 @@ class FusionDefinitionWrapper:
             if nv_version >= LooseVersion("0.0.13") and hasattr(fd, "_selected_device")
             else {}
         )
-        # TODO: quick hack to drop str
-        args = [x for x in args if not isinstance(x, str)]
         with add_markers(self.name):
             return fd.execute(args, **kwargs)
 

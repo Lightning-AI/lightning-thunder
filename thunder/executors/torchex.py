@@ -346,7 +346,6 @@ def _uniform_philox_prim_checker(
     if minval != 0 or maxval != 1:
         return False
 
-    # TODO -- validate IntegerProxy
     if offset % 4 != 0:
         return False
 
@@ -394,7 +393,6 @@ def _uniform_philox_checker(
     if minval != 0 or maxval != 1:
         return False
 
-    # TODO -- validate IntegerProxy
     if isinstance(offset, TensorProxy) or offset % 4 != 0:
         return False
 

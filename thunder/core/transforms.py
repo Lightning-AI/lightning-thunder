@@ -1089,24 +1089,9 @@ def _div_prim_grad(a: Number | TensorProxy, b: Number | TensorProxy, /) -> Numbe
 
 register_grad(pids.DIV, _div_prim_grad)
 
-
-# NOTE not differentiable, but it would trigger a flatten failure without a grad function
-# NOTE that's probably a bad error message that we should fix.
-@torchctx
-def _py_floordiv_prim_grad(a: Number | TensorProxy, b: Number | TensorProxy, /) -> Number | TensorProxy:
-    fwd = prims.py_floordiv(a, b)
-
-    return fwd
-
-
-register_grad(pids.PY_FLOORDIV, _py_floordiv_prim_grad)
-
 # Comparison operators -- these create no grad associations
 register_grad(pids.EQ, prims.eq)
 register_grad(pids.GE, prims.ge)
-register_grad(pids.GT, prims.gt)
-register_grad(pids.NE, prims.ne)
-register_grad(pids.LE, prims.le)
 register_grad(pids.LT, prims.lt)
 register_grad(pids.NE, prims.ne)
 register_grad(pids.GT, prims.gt)

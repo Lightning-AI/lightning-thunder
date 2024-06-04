@@ -5,7 +5,8 @@ from numbers import Number
 from typing import Type, Optional, Any, Tuple, List, Union
 from collections.abc import Callable
 from collections.abc import Sequence
-from functools import reduce, partial, wraps
+#from functools import reduce, partial, wraps
+from functools import reduce, partial
 import operator
 import builtins
 import math
@@ -1057,9 +1058,9 @@ def _infer_tensor_properties(
         thunder_fsdp_padding_size if thunder_fsdp_padding_size is not None else _thunder_fsdp_padding_size
     )
 
-    if not using_symbolic_values():
-        # Extracts actual values for shape
-        _shape = tuple(pyval(x) for x in _shape)
+    # dynamic shape not yet enabled, otherwise, the bake in should be guarded.
+    # if not using_symbolic_values():
+    _shape = tuple(pyval(x) for x in _shape)
 
     # Computes derived properties
     _numel = reduce(operator.mul, _shape, 1)
