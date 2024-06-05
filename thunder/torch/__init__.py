@@ -2847,7 +2847,13 @@ def normalize(
     a: TensorProxy, /, p: float = 2, dim: int | Sequence[int] = 1, eps: float = 1e-12, out: None | TensorProxy = None
 ) -> TensorProxy:
     utils.check(out is None, lambda: "normalize: out is not None which is currently unsupported", NotImplementedError)
-    denom = a**p
+    # dim = utils.canonicalize_dims(a.ndim, dim)
+    denom = pow(a, p)
+    denom = sum(denom, dim=dim, keepdim=True)
+    denom = pow(denom, 1 / p)
+    denom = clamp(denom, min=eps)
+    denom = expand_as(denom, a)
+    return a / denom
 
 
 # TODO: likely want to refactor these normalizations

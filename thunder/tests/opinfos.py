@@ -5868,6 +5868,29 @@ opinfos.extend(tensor_creation_ops)
 linear_algebra_ops = []
 
 
+def normalize_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    # make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    # # input shape
+    # cases = (
+    #     # (),
+    #     # (11,),
+    #     (4, 4),
+    #     # (1024, 1024),
+    #     # (64, 64, 64),
+    #     # (4, 2, 4, 5),
+    # )
+    input_tensor = torch.empty(())
+    # for case in cases:
+    # yield SampleInput(make(case))
+    yield SampleInput(input_tensor)
+
+
+normalize_opinfo = OpInfo(
+    ltorch.normalize, sample_input_generator=normalize_sample_generator, torch_reference=torch.nn.functional.normalize
+)
+# linear_algebra_ops.append(normalize_opinfo)
+
+
 def matmul_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
