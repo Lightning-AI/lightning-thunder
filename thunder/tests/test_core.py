@@ -2313,6 +2313,55 @@ def test_preserve_weight_names(executor, device: str, dtype: dtypes.dtype):
     assert "t_fc2_weight" in sig.parameters
 
 
+@requiresCUDA
+def test_clone():
+    def foo(a):
+        return a.clone()
+
+    jfoo = thunder.jit(foo)
+    for shp in ((3, 5), [7], (8, 6, 4)):
+        for dev in (torch.device("cpu"), torch.device("cuda:0")):
+            for dt in (torch.float32, torch.float16, torch.bfloat16):
+                # there are issues with layouts other than strided; see
+                # test_clone_sparse_coo.
+                lout = torch.strided
+                b = jfoo(torch.randn(shp, device=dev, layout=lout, dtype=dt))
+                assert b.dtype == dt
+                assert b.layout == lout
+                assert b.device == dev
+                assert b.shape == torch.Size(shp)
+
+
+# Separate out the sparse test because creating a sparse tensor is tricky.
+def test_clone_sparse_coo():
+    def foo(a):
+        return a.clone()
+
+    jfoo = thunder.jit(foo)
+    shp = (3, 5)
+    dev = torch.device("cpu")
+    dt = torch.float32
+    # randn(layout=torch.sparse_coo, ...) will throw an exception deep in
+    # PyTorch, so we use to_sparse() from a dense tensor to get a sparse one.
+    b = jfoo(torch.randn(shp, device=dev, dtype=dt).to_sparse())
+    assert b.dtype == dt
+    assert b.layout == torch.sparse_coo
+    assert b.device == dev
+    assert b.shape == torch.Size(shp)
+
+
+@pytest.mark.xfail(reason="we improperly use an alias")
+def test_clone_alias():
+    def foo(a):
+        b = a.clone()
+        b[0] = 42
+
+    jfoo = thunder.jit(foo)
+    arg = torch.tensor([7, 19])
+    jfoo(arg)
+    assert arg[0] == 7
+
+
 @instantiate(dtypes=(thunder.float32,))
 def test_default_method(executor, device: str, dtype: dtypes.dtype):
     # This test ensures that when no language context is given, it will fallback to the default implementation.
@@ -2570,3 +2619,22 @@ def test_default_method(executor, device: str, dtype: dtypes.dtype):
 #     # Same as above, but now the last del should be removed since the variable
 #     # is used in the output
 #     assert code_str.count("del") == 3
+
+
+@instantiate(dtypes=(thunder.float32,), executors=(TorchExecutor,))
+def test_bound_symbol_source_location_context(executor, device: str, dtype: dtypes.dtype):
+    def foo(x):
+        return clang.sin(x)
+
+    a = make_tensor((2, 2), device=device, dtype=ltorch.to_torch_dtype(dtype))
+
+    lineno = foo.__code__.co_firstlineno + 1
+    jfn = thunder.jit(foo)
+    jfn(a)
+
+    trace = thunder.last_traces(jfn)[0]
+
+    assert len(trace.bound_symbols) == 3
+    sin_symbol = trace.bound_symbols[1]
+    assert str(trace).count("return clang.sin(x)") == 1
+    assert str(trace).count(f"# {__file__}:{lineno}") == 1

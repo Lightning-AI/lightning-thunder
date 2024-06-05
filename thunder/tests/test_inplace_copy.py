@@ -1,27 +1,24 @@
 from functools import partial
 
+import pytest
 import torch
 from torch.testing import assert_close, make_tensor
 
 import thunder
 import thunder.core.dtypes as datatypes
 import thunder.torch as ttorch
-from thunder.tests.framework import instantiate
+from thunder.tests.framework import instantiate, nvFuserExecutor
 
 
-@instantiate()
+@instantiate(dtypes=datatypes.all_dtypes - datatypes.float_8bit_dtypes)
 def test_prim_inplace_copy_fwd(executor, device, dtype):
     def torch_foo(x, y):
-        z = x * y
-        z = z + z
-        z = x + z
+        z = x + y
         o = x.copy_(z)
         return o
 
     def foo(x, y):
-        z = x * y
-        z = z + z
-        z = x + z
+        z = x + y
         # NOTE: nvfuserex doesn't support `return z`, i.e. the copy_from argument
         o = thunder.core.prims.copy_(z, x)
         return o
@@ -36,16 +33,11 @@ def test_prim_inplace_copy_fwd(executor, device, dtype):
     thunder_result = traced_nvfuser_foo(a, b)
     torch_result = torch_foo(a1, b1)
 
-    custom_comparator = (
-        partial(assert_close, atol=1e-2, rtol=1e-2)
-        if dtype in (datatypes.bfloat16, datatypes.float16)
-        else assert_close
-    )
-    custom_comparator(thunder_result, torch_result)
-    custom_comparator(a, a1)
+    assert_close(thunder_result, torch_result)
+    assert_close(a, a1)
 
 
-@instantiate(dtypes=(datatypes.floating,))
+@instantiate(dtypes=datatypes.float_math_dtypes)
 def test_prim_inplace_copy_bwd(executor, device, dtype):
     def torch_foo(x, y):
         z = x * y
@@ -121,3 +113,41 @@ def test_batch_norm_running_stats(executor, device, dtype):
     assert_close(net.state_dict()["dense1_bn.running_mean"], torch_net.state_dict()["dense1_bn.running_mean"])
     assert_close(net.state_dict()["dense1_bn.running_var"], torch_net.state_dict()["dense1_bn.running_var"])
     assert_close(x.grad, x1.grad)
+
+
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
+def test_inplace_copy_sanity_check(executor, device, dtype):
+    def func0(x, y):
+        z = x * y
+        x = thunder.core.prims.copy_(z, x)
+        return x + y
+
+    def func1(x, y):
+        z = x * y
+        thunder.core.prims.copy_(z, x)
+        thunder.core.prims.copy_(y, x)
+        return x
+
+    def func2(x, y):
+        z = x * y
+        thunder.core.prims.copy_(z, x)
+        thunder.core.prims.copy_(x, y)
+        return y
+
+    def func3(x, y):
+        z = x * y
+        o = thunder.core.prims.copy_(z, x)
+        thunder.core.prims.copy_(o, y)
+        return y
+
+    for foo in (func0, func1, func2, func3):
+        traced_foo = executor.make_callable(foo)
+
+        tdtype = ttorch.to_torch_dtype(dtype)
+        a = make_tensor((4, 4), device=device, dtype=tdtype)
+        b = make_tensor((4, 4), device=device, dtype=tdtype)
+        with pytest.raises(
+            NotImplementedError,
+            match=r"If you are sure you don't want to use this check, it can be disabled by setting `disable_inplace_copy_check=True` in `thunder.jit`.$",
+        ):
+            traced_foo(a, b)

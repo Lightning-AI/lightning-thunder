@@ -14,7 +14,7 @@ from thunder.tests.framework import instantiate, TorchExecutor
 
 # TODO This test currently ignores the "should_autocast" argument enumerated in it
 @instantiate(
-    dtypes=dtypes.float_dtypes - {float},
+    dtypes=dtypes.float_math_dtypes,
 )
 def test_thunder_autocast_transform(executor, device, dtype):
     from thunder.core.transforms import autocast
@@ -65,7 +65,7 @@ def test_thunder_autocast_transform(executor, device, dtype):
 
 @instantiate(
     executors=[TorchExecutor],
-    dtypes=dtypes.float_dtypes - {float},
+    dtypes=dtypes.float_math_dtypes,
 )
 def test_no_autocast(executor, device, dtype):
     from thunder.core.symbol import Symbol
@@ -112,7 +112,7 @@ def test_no_autocast(executor, device, dtype):
 
 
 @instantiate(
-    dtypes=dtypes.float_dtypes - {float},
+    dtypes=dtypes.float_math_dtypes,
     decorators=(pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported"),),
 )
 def test_compile_autocast(executor, device, dtype):

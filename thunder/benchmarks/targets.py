@@ -7,7 +7,7 @@ from lightning_utilities.core.imports import package_available
 import pytest
 import torch
 import thunder
-from thunder.core.transforms import grad, grad_v1, clear_grads, populate_grads, get_grad, put_grad, put_grads
+from thunder.core.transforms import grad, clear_grads, populate_grads, get_grad, put_grad, put_grads
 from thunder.core.interpreter import interpret
 
 from thunder.benchmarks import (
@@ -41,6 +41,9 @@ from thunder.benchmarks import (
 )
 
 from thunder.tests.litgpt_model import Config as LitGPTConfig
+from thunder.tests.make_tensor import make_tensor
+
+from litgpt.config import configs
 
 
 APEX_FUSED_ROPE_AVAILABLE: bool = package_available("fused_rotary_positional_embedding")
@@ -178,70 +181,10 @@ def thunder_fwd(b: Benchmark, compile_fn: Callable):
     return wrapper
 
 
-# TODO Actually return the fwd, currently just requires computation
-# by making the fwd equal to the grad
-def thunder_value_and_grad_transform(b: Benchmark, compile_fn: Callable):
-    module: torch.nn.Module = b.fn()
-    cfn = compile_fn(module)
-
-    # Note on grad_specifier:
-    # requires the function output actually be computed to compute the grad
-    def grad_specifier(outs):
-        if not isinstance(outs, Sequence):
-            outs = (outs,)
-
-        for out in outs:
-            put_grad(out, out)
-
-    cfn_grad = grad(cfn, grad_specifier=grad_specifier)
-
-    if isinstance(module, torch.nn.Sequential):
-
-        @wraps(cfn_grad)
-        def wrapper(*args):
-            clear_grads(cfn)
-            grads = cfn_grad(args)
-            populate_grads(grads, cfn, args=args)
-
-        return wrapper
-
-    @wraps(cfn_grad)
-    def wrapper(*args, **kwargs):
-        clear_grads(cfn)
-        grads = cfn_grad(*args, **kwargs)
-        populate_grads(grads, cfn, args=args, kwargs=kwargs)
-
-    return wrapper
-
-
 def thunder_grad_transform(b: Benchmark, compile_fn: Callable):
     module: torch.nn.Module = b.fn()
     cfn = compile_fn(module)
     cfn_grad = grad(cfn)
-
-    if isinstance(module, torch.nn.Sequential):
-
-        @wraps(cfn_grad)
-        def wrapper(*args):
-            clear_grads(cfn)
-            grads = cfn_grad(args)
-            populate_grads(grads, cfn, args=args)
-
-        return wrapper
-
-    @wraps(cfn_grad)
-    def wrapper(*args, **kwargs):
-        clear_grads(cfn)
-        grads = cfn_grad(*args, **kwargs)
-        populate_grads(grads, cfn, args=args, kwargs=kwargs)
-
-    return wrapper
-
-
-def thunder_grad_transform_v1(b: Benchmark, compile_fn: Callable):
-    module: torch.nn.Module = b.fn()
-    cfn = compile_fn(module)
-    cfn_grad = grad_v1(cfn)
 
     if isinstance(module, torch.nn.Sequential):
 
@@ -296,29 +239,12 @@ def thunder_fwd_bwd(b: Benchmark, compile_fn: Callable):
 torch_fwd_bwd = partial(thunder_fwd_bwd, compile_fn=torch_executor)
 torchcompile_fwd_bwd = partial(thunder_fwd_bwd, compile_fn=torch_compile_executor)
 
-# Executing with just PyTorch
-thunder_torch_grad = partial(thunder_grad_transform, compile_fn=thunder_torch_executor)
-thunder_torch_gradv1 = partial(thunder_grad_transform_v1, compile_fn=thunder_torch_executor)
-thunder_torch_value_and_grad = partial(thunder_value_and_grad_transform, compile_fn=thunder_torch_executor)
-
 # Default thunder configs
 thunder_fwd = partial(thunder_fwd, compile_fn=thunder_executor)
 thunder_fwd_bwd = partial(thunder_fwd_bwd, compile_fn=thunder_executor)
-thunder_grad = partial(thunder_grad_transform, compile_fn=thunder_executor)
-thunder_gradv1 = partial(thunder_grad_transform_v1, compile_fn=thunder_executor)
-thunder_value_and_grad = partial(thunder_value_and_grad_transform, compile_fn=thunder_executor)
 
 # Executing with torchcompile as a Thunder executor
 thunder_torchcompile_fwd = partial(thunder_fwd, compile_fn=thunder_torch_compile_executor)
-thunder_torchcompile_grad = partial(thunder_grad_transform, compile_fn=thunder_torch_compile_executor)
-thunder_torchcompile_gradv1 = partial(thunder_grad_transform_v1, compile_fn=thunder_torch_compile_executor)
-thunder_torchcompile_value_and_grad = partial(
-    thunder_value_and_grad_transform, compile_fn=thunder_torch_compile_executor
-)
-
-# Executing with just the sdpa executor
-thunder_sdpa_grad = partial(thunder_grad_transform, compile_fn=thunder_sdpa_executor)
-thunder_sdpa_gradv1 = partial(thunder_grad_transform_v1, compile_fn=thunder_sdpa_executor)
 
 # Executing with just the apex executor
 # NOTE apex may or may not be available
@@ -953,34 +879,83 @@ def test_llama2_7b_rmsnorm_grad(benchmark, executor: Callable):
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
 
 
+# There are many configurations but only the following parameters affect the QKV split+RoPE benchmark:
+# - head_size
+# - n_head
+# - n_query_groups
+# - rope_n_elem
+# - block_size
+# Let's select only the configurations that differ in these parameters
+def get_configs_for_qkv_split_rope():
+    config_names = list(sorted(c["name"] for c in configs))
+    unique_config_names = {}
+    important_configs = ["Llama-2-7b-hf", "Llama-3-8B", "Llama-3-70B", "Mistral-7B-v0.1"]
+    for config_name in config_names:
+        config = LitGPTConfig.from_name(config_name)
+        key = tuple(
+            getattr(config, k)
+            for k in (
+                "head_size",
+                "n_head",
+                "n_query_groups",
+                "rope_n_elem",
+                "block_size",
+            )
+        )
+        if config_name in important_configs:
+            unique_config_names[key] = config_name
+        unique_config_names.setdefault(key, config_name)
+
+    config_names = list(sorted(unique_config_names.values()))
+    return config_names
+
+
+qkv_split_rope_executors = (
+    (torch_executor, False),
+    (torch_compile_executor, False),
+    (thunder_executor, False),
+    (thunder_sdpa_torch_compile_nvfuser_executor, False),
+    (torch_executor, True),
+    (torch_compile_executor, True),
+)
+qkv_split_rope_executors_ids = (
+    "torch",
+    "torch.compile",
+    "thunder",
+    "thunder+nvfuser+torch.compile",
+    "torch+apex",
+    "torch.compile+apex",
+)
+
+
+# Sample command to run this benchmark:
+# pytest thunder/benchmarks/targets.py -k "test_litgpt_qkv_split_rope_train_forward" --benchmark-group-by='param:config,param:bs' --benchmark-columns='min,max,mean,stddev,median'
 @pytest.mark.parametrize(
     "executor,use_apex,",
-    (
-        (torch_fwd_bwd, False),
-        (torchcompile_fwd_bwd, False),
-        (thunder_fwd_bwd, False),
-        (thunder_fwd_bwd_sdpa_torch_compile_nvfuser, False),
-        (torch_fwd_bwd, True),
-        (torchcompile_fwd_bwd, True),
-    ),
-    ids=(
-        "torch",
-        "torch.compile",
-        "thunder",
-        "thunder+nvfuser+torch.compile",
-        "torch+apex",
-        "torch.compile+apex",
-    ),
+    qkv_split_rope_executors,
+    ids=qkv_split_rope_executors_ids,
 )
-def test_llama2_qkv_split_rope_7b_train(benchmark, executor: Callable, use_apex: bool):
+# bs = batch size
+# It's typically small for LLMs
+@pytest.mark.parametrize(
+    "bs,",
+    (2**i for i in range(0, 2)),
+    ids=(f"bs{2**i}" for i in range(0, 2)),
+)
+@pytest.mark.parametrize(
+    "config,",
+    get_configs_for_qkv_split_rope(),
+)
+@pytest.mark.benchmark(group="forward")
+def test_litgpt_qkv_split_rope_train_forward(benchmark, executor: Callable, use_apex: bool, bs: int, config: str):
     from thunder.benchmarks import LlamaQKVSplitRopeBenchmark
 
     if use_apex and not APEX_FUSED_ROPE_AVAILABLE:
         pytest.skip("Apex fused rotary positional embedding is unavailable")
 
     bench: Benchmark = LlamaQKVSplitRopeBenchmark(
-        config="Llama-2-7b-hf",
-        batchdims=(32,),
+        config=config,
+        batchdims=(bs,),
         device="cuda:0",
         dtype=thunder.bfloat16,
         requires_grad=True,
@@ -988,10 +963,74 @@ def test_llama2_qkv_split_rope_7b_train(benchmark, executor: Callable, use_apex:
     )
 
     setup = make_setup(bench)
-    fn = executor(bench)
+    fn = executor(bench.fn())
     fn = wrap_for_benchmark(fn)
 
     benchmark.pedantic(fn, setup=setup, rounds=40, warmup_rounds=1)
+
+
+def backward_only(fn: Callable, jit_fn: Callable, fw_setup_fn: Callable):
+    jfn = jit_fn(fn)
+    args, kwargs = fw_setup_fn()
+    result = jfn(*args, **kwargs)
+    result = thunder.core.utils.sequencify(result)
+
+    result_metadata = [(r.dtype, r.device, r.shape) for r in result]
+
+    def bw_setup():
+        args = []
+        for dtype, device, shape in result_metadata:
+            torch_dtype = thunder.torch.to_torch_dtype(dtype)
+            torch_device = thunder.core.devices.to_torch_device(device)
+            args.append(make_tensor(shape, dtype=torch_dtype, device=torch_device, requires_grad=False))
+        return args, {}
+
+    def backward_fn(*args, **kwargs):
+        for a in args:
+            a.grad = None
+
+        torch.autograd.backward(result, args, retain_graph=True)
+
+    return backward_fn, bw_setup
+
+
+# Sample command to run this benchmark:
+# pytest thunder/benchmarks/targets.py -k "test_litgpt_qkv_split_rope_train_backward" --benchmark-group-by='param:config,param:bs' --benchmark-columns='min,max,mean,stddev,median'
+@pytest.mark.parametrize(
+    "executor,use_apex,",
+    qkv_split_rope_executors,
+    ids=qkv_split_rope_executors_ids,
+)
+@pytest.mark.parametrize(
+    "bs,",
+    (2**i for i in range(0, 2)),
+    ids=(f"bs{2**i}" for i in range(0, 2)),
+)
+@pytest.mark.parametrize(
+    "config,",
+    get_configs_for_qkv_split_rope(),
+)
+@pytest.mark.benchmark(group="backward")
+def test_litgpt_qkv_split_rope_train_backward(benchmark, executor: Callable, use_apex: bool, bs: int, config: str):
+    from thunder.benchmarks import LlamaQKVSplitRopeBenchmark
+
+    if use_apex and not APEX_FUSED_ROPE_AVAILABLE:
+        pytest.skip("Apex fused rotary positional embedding is unavailable")
+
+    bench: Benchmark = LlamaQKVSplitRopeBenchmark(
+        config=config,
+        batchdims=(bs,),
+        device="cuda:0",
+        dtype=thunder.bfloat16,
+        requires_grad=True,
+        use_apex=use_apex,
+    )
+
+    fw_setup = make_setup(bench)
+    fn, bw_setup = backward_only(bench.fn(), executor, fw_setup)
+    fn = wrap_for_benchmark(fn)
+
+    benchmark.pedantic(fn, setup=bw_setup, rounds=40, warmup_rounds=1)
 
 
 #

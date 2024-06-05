@@ -9,6 +9,7 @@ import time
 from copy import copy
 from itertools import chain, filterfalse
 from functools import partial
+import warnings
 
 from looseversion import LooseVersion
 import torch
@@ -157,7 +158,7 @@ def is_supported_tensor(a: TensorProxy, *, allow_low_precision_floats: bool = Tr
 
 
 def is_supported_tensor_or_number(a: TensorProxy | Number) -> bool:
-    if isinstance(a, Number):
+    if isinstance(a, (Number, NumberProxy)):
         return True
 
     return is_supported_tensor(a)
@@ -1027,11 +1028,14 @@ def _uniform_philox_check(
     *,
     device: Device,
     dtype: dtypes.dtype,
-    seed: int | TensorProxy,
-    offset: int | TensorProxy,
+    seed: int | NumberProxy | TensorProxy,
+    offset: int | NumberProxy | TensorProxy,
 ) -> bool:
     return (
-        is_supported_device(device) and is_supported_dtype(dtype) and isinstance(seed, int) and isinstance(offset, int)
+        is_supported_device(device)
+        and is_supported_dtype(dtype)
+        and is_supported_tensor_or_number(seed)
+        and is_supported_tensor_or_number(offset)
     )
 
 
@@ -2200,18 +2204,17 @@ def _linear_check(a: TensorProxy, b: TensorProxy, bias: TensorProxy | None) -> b
     if nv_version < LooseVersion("0.2.3"):
         return False
 
-    enable_linear: None | bool = get_compile_option("nv_enable_linear", "Enable nvFuser matmul.")
+    enable_linear: None | bool = get_compile_option("nv_enable_linear", "Enable nvFuser linear.")
     if not enable_linear:
         return False
     # Verify linear inputs and bias (optional) are supported tensors.
-    if not are_supported_tensors(a, b):
+    if not are_supported_tensors(a, b) or (bias is not None and not is_supported_tensor(bias)):
         return False
-    if bias is not None and not is_supported_tensor(bias):
-        return False
-
-    # nvFuser only supports 2D inputs in v0.2.3.
-    if not a.ndim == 2:
-        return False
+    if nv_version < LooseVersion("0.2.5"):
+        warnings.warn("nvFuser v0.2.3 has limited support for linear. Consider using v0.2.5 or above")
+        # nvFuser only supports 2D inputs in v0.2.3.
+        if not a.ndim == 2:
+            return False
     return True
 
 
@@ -2240,12 +2243,13 @@ def _matmul_check(
         return False
 
     enable_matmul: None | bool = get_compile_option("nv_enable_matmul", "Enable nvFuser matmul.")
-    if not enable_matmul:
+
+    if not enable_matmul or not are_supported_tensors(a, b):
         return False
-    if not are_supported_tensors(a, b):
-        return False
-    if not (a.ndim == b.ndim and a.ndim == 2):
-        return False
+    if nv_version < LooseVersion("0.2.4"):
+        warnings.warn("nvFuser v0.2.2 has limited support for matmuls. Consider using v0.2.4 or above")
+        if not (a.ndim == b.ndim and a.ndim == 2):
+            return False
     return True
 
 

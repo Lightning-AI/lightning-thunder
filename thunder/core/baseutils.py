@@ -128,7 +128,8 @@ def check_types(xs: Sequence[Any], types: type | Sequence[type]):
 def check_valid_length(length: int):
     """Validates that an object represents a valid dimension length."""
 
-    check_type(length, int)
+    # maybe we should skip the check for IntegerProxy in general
+    check_type(length, (int, NumberProxyInterface))
     check(length >= 0, lambda: f"Found invalid length {length}!")
 
 
@@ -303,6 +304,10 @@ _torch_dtype_to_str_map = {
     torch.int32: "torch.int32",
     torch.int64: "torch.int64",
     torch.bfloat16: "torch.bfloat16",
+    torch.float8_e4m3fn: "torch.float8_e4m3fn",
+    torch.float8_e4m3fnuz: "torch.float8_e4m3fnuz",
+    torch.float8_e5m2: "torch.float8_e5m2",
+    torch.float8_e5m2fnuz: "torch.float8_e5m2fnuz",
     torch.float16: "torch.float16",
     torch.float32: "torch.float32",
     torch.float64: "torch.float64",

@@ -8,6 +8,7 @@ from collections.abc import Callable, Sequence
 import weakref
 import random
 from functools import partial, wraps, reduce
+import linecache
 import operator
 import copy
 import contextvars
@@ -20,6 +21,7 @@ import inspect
 import time
 
 from thunder.core.compile_data import compile_data_and_stats, get_cache_option, using_symbolic_values, get_compile_data
+from thunder.core.symbol import bsym_header
 import thunder.clang as clang
 import thunder.core.transforms
 
@@ -78,6 +80,8 @@ from thunder.core.interpreter import (
     _default_lookaside_map,
     default_lookaside,
     do_raise,
+    get_interpreterruntimectx,
+    InterpreterRuntimeCtx,
     is_opaque,
     Py_NULL,
     member_descriptor,
@@ -553,8 +557,10 @@ class GeneralJitCtx(MinimalCtx):
     def proxify(self, value: WrappedValue) -> Any:
         assert isinstance(value, WrappedValue)
         uvalue = value.value
-        if isinstance(uvalue, Proxy):
-            return p
+        # Sequence / dict is not registered as Proxy
+        # avoid double registration by skipping if value has a registered proxy.
+        if isinstance(uvalue, Proxy) or value.original_value is not value.nothing:
+            return uvalue
         elif isinstance(uvalue, torch.Tensor):
             # we always want to proxy torch.Tensor, even const
 
@@ -570,7 +576,12 @@ class GeneralJitCtx(MinimalCtx):
             value.provenance.ext_flag |= EXT_FLAG_IS_TENSOR_PROXY
 
             if isinstance(p, TensorProxy) and p.ddp_type in (DDPType.REPLICATED, DDPType.FULLY_SHARDED):
-                p_new = thunder.distributed.prims.synchronize(p, self._process_group_for_ddp)
+                p_new = thunder.distributed.prims.synchronize(
+                    p,
+                    self._process_group_for_ddp,
+                )
+                if isinstance(p.thunder_fsdp_padding_size, int):
+                    p_new = p_new[: (p_new.shape[0] - p.thunder_fsdp_padding_size)]
                 p_orig = p
                 p = p_new
             else:
@@ -612,6 +623,7 @@ class GeneralJitCtx(MinimalCtx):
                     raise NotImplementedError(
                         f"proxify {type(uvalue).__name__} with attribute {an} of type {type(av.value).__name__}"
                     )
+            return proxy_d
         elif isinstance(uvalue, Sequence):
             value.track_items()
             proxy_s = type(uvalue)(i.value for i in value.item_wrappers)
@@ -623,6 +635,7 @@ class GeneralJitCtx(MinimalCtx):
                     raise NotImplementedError(
                         f"proxify {type(uvalue).__name__} with attribute {an} of type {type(av.value).__name__}"
                     )
+            return proxy_s
         else:
             raise ValueError("cannot proxify value of {type(uvalue).__type} objects")
 
@@ -655,8 +668,23 @@ def ensure_recursive_proxies(fn):  # shortcut for things we already processed?
     return wrapper
 
 
+def record_source_loc_in_symbol_header(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        runtimectx: Interpreterruntimectx = get_interpreterruntimectx()
+        filename, positions = runtimectx.get_current_user_source_location()
+        ctx: GeneralJitCtx = get_general_jit_ctx()
+        ctx._computation_trace.set_current_source_location(filename, positions)
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
 _general_jit_lookaside_map.update(
-    {k: ensure_recursive_proxies(interpreter_needs_wrap(v)) for k, v in _torch_to_thunder_function_map.items()}
+    {
+        k: ensure_recursive_proxies(interpreter_needs_wrap(record_source_loc_in_symbol_header(v)))
+        for k, v in _torch_to_thunder_function_map.items()
+    }
 )
 
 
@@ -806,8 +834,14 @@ def get_methods_properties(typ):
 
 _general_jit_lookaside_map.update(
     {
-        **{fn: interpreter_needs_wrap(la) for fn, la in get_methods_properties(NumberProxy)},
-        **{fn: ensure_recursive_proxies(interpreter_needs_wrap(la)) for fn, la in get_methods_properties(TensorProxy)},
+        **{
+            fn: interpreter_needs_wrap(record_source_loc_in_symbol_header(la))
+            for fn, la in get_methods_properties(NumberProxy)
+        },
+        **{
+            fn: ensure_recursive_proxies(interpreter_needs_wrap(record_source_loc_in_symbol_header(la)))
+            for fn, la in get_methods_properties(TensorProxy)
+        },
         prop_lookaside_helper: prop_lookaside_helper,
     }
 )
@@ -880,7 +914,7 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
         # NOTE Symbols "lookaside" to themselves; this just prevents their internals from being jitted
         # NOTE clang operations are not symbols, but we still prevent their internals from being jitted
         recursively_proxy(*args, **kwargs)
-        lookaside = interpreter_needs_wrap(fn)
+        lookaside = interpreter_needs_wrap(record_source_loc_in_symbol_header(fn))
     elif (general_jit_lookaside := _general_jit_lookaside_map.get(fn, None)) is not None:
         lookaside = general_jit_lookaside
     else:
@@ -1130,6 +1164,30 @@ def get_computation_inputs_and_intermediates(computation_trace):
     return inputs_list, intermediates_set
 
 
+def get_parameter_or_buffer_or_submodule_name_and_root(provenance):
+    assert provenance.inputs[0].inst is PseudoInst.LOAD_ATTR
+    assert provenance.inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE
+    typ = provenance.inputs[0].inputs[1].value
+    name = [provenance.inputs[1].value]
+    mprovenance = provenance.inputs[0].inputs[0]
+
+    while (
+        mprovenance.inst is PseudoInst.BINARY_SUBSCR
+        and mprovenance.inputs[1].inst is PseudoInst.CONSTANT
+        and mprovenance.inputs[0].inst is PseudoInst.LOAD_ATTR
+        and mprovenance.inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE
+    ):
+        assert (
+            mprovenance.inputs[0].inputs[1].inst is PseudoInst.CONSTANT
+            and mprovenance.inputs[0].inputs[1].value == "_modules"
+        )
+
+        name_component = mprovenance.inputs[1].value
+        name.insert(0, name_component)
+        mprovenance = mprovenance.inputs[0].inputs[0]
+    return typ, name, mprovenance
+
+
 def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, kwargs, *, has_epilogue: bool):
     already_unpacked: dict[int, Proxy] = {}
     orig_modules: dict[int, Proxy] = {}
@@ -1155,11 +1213,12 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             prologue_trace.add_name(p.name)
 
         def from_input(provenance, *, new_output=False):
-            assert new_output
             if provenance.inst == PseudoInst.INPUT_ARGS:
+                assert new_output
                 param_ordering[id(pro_args_proxy)] = (pro_args_proxy, [0])
                 return pro_args_proxy
             elif provenance.inst == PseudoInst.INPUT_KWARGS:
+                assert new_output
                 param_ordering[id(pro_kwargs_proxy)] = (pro_kwargs_proxy, [1])
                 return pro_kwargs_proxy
             elif provenance.inst == PseudoInst.INPUT_FN:
@@ -1167,7 +1226,10 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                     name = "module"
                 else:
                     name = "fn"
-                output = Proxy(name=name)
+                if new_output:
+                    output = Proxy(name=name)
+                else:
+                    output = p
                 param_ordering[id(output)] = (output, [3])
                 provenance.proxy = output
                 bsym = prims.unpack_function_obj.bind(output, output=output)
@@ -1197,28 +1259,8 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 raise NotImplementedError(f"constant of type {type(provenance.value)} {provenance.value}")
 
         def unpack_parameter_or_buffer_or_submodule(provenance, *, new_output=False):
-            assert provenance.inputs[0].inst is PseudoInst.LOAD_ATTR
-            assert provenance.inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE
-            typ = provenance.inputs[0].inputs[1].value
-            name = [provenance.inputs[1].value]
-            mprovenance = provenance.inputs[0].inputs[0]
-
-            while (
-                mprovenance.inst is PseudoInst.BINARY_SUBSCR
-                and mprovenance.inputs[1].inst is PseudoInst.CONSTANT
-                and mprovenance.inputs[0].inst is PseudoInst.LOAD_ATTR
-                and mprovenance.inputs[0].inputs[0].ext_flag & EXT_FLAG_IS_MODULE
-            ):
-                assert (
-                    mprovenance.inputs[0].inputs[1].inst is PseudoInst.CONSTANT
-                    and mprovenance.inputs[0].inputs[1].value == "_modules"
-                )
-
-                name_component = mprovenance.inputs[1].value
-                name.insert(0, name_component)
-                mprovenance = mprovenance.inputs[0].inputs[0]
-
-            root_module = from_provenance(mprovenance, new_output=True)
+            typ, name, root_module_provenance = get_parameter_or_buffer_or_submodule_name_and_root(provenance)
+            root_module = from_provenance(root_module_provenance, new_output=True)
             if new_output:
                 output = Proxy("m")  # name? collectify?
             else:
@@ -1410,11 +1452,9 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
 
 
 def process_recorded_modifications(ctx, epilogue_trace):
+    root_for_provenances = {}
     for modified_object, modifications in ctx._additional_outputs.items():
         umodified_object = modified_object.value
-        ## we want this to created in the compute trace context for namespace...
-        modified_object_proxy = Proxy(history=modified_object.provenance)
-        epilogue_trace.add_name(modified_object_proxy.name)
 
         if isinstance(umodified_object, dict):
             last_modification = {}
@@ -1430,8 +1470,24 @@ def process_recorded_modifications(ctx, epilogue_trace):
                     (value,) = args
                     assert isinstance(value.value, Proxy)
 
+                    assert modified_object.provenance.inst is PseudoInst.LOAD_ATTR
+                    assert modified_object.provenance.inputs[1].inst is PseudoInst.CONSTANT
+                    assert modified_object.provenance.inputs[1].value == "_buffers"
+
+                    typ, name, root_module_provenance = get_parameter_or_buffer_or_submodule_name_and_root(
+                        modified_object.provenance.inputs[0]
+                    )
+                    assert typ == "_modules"
+                    root_module_proxy = root_for_provenances.get(root_module_provenance)
+                    if root_module_proxy is None:
+                        ## we want this to created in the compute trace context for namespace...
+                        root_module_proxy = Proxy(history=root_module_provenance)
+                        epilogue_trace.add_name(root_module_proxy.name)
+                        root_for_provenances[root_module_provenance] = root_module_proxy
+
+                    name = ".".join(name + [k])
                     with tracectx(epilogue_trace):
-                        bsym = prims.pack_setitem.bind(modified_object_proxy, k, value.value, output=None)
+                        bsym = prims.pack_buffer.bind(root_module_proxy, name, value.value, output=None)
                         epilogue_trace.bound_symbols.append(bsym)
                 else:
                     raise NotImplementedError(f"Modifications {inst} on dicts are not supported")
@@ -1523,6 +1579,7 @@ def thunder_general_jit(
         with tracectx(computation_trace):
             result = jfn(*args, **kwargs)
             prims.python_return(result)
+            computation_trace.set_current_source_location(None, None)
             process_recorded_modifications(ctx, epilogue_trace)
             last_interpreter_log = jfn._last_interpreter_log
 

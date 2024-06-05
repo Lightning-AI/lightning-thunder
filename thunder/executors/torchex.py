@@ -26,7 +26,7 @@ from thunder.core.devices import to_torch_device, to_device
 import thunder.core.prims as prims
 from thunder.core.prims import PrimIDs
 from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, from_trace
-from thunder.core.proxies import TensorProxy, FutureTensorProxy, variableify, pytype
+from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy, variableify, pytype
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import Symbol, BoundSymbol
 from thunder.distributed.prims import DistributedReduceOps
@@ -167,6 +167,7 @@ tensor_from_sequence = _register_torch_operation("tensor")
 zeros = _register_torch_operation("zeros")
 zeros_like = _register_torch_operation("zeros_like")
 randn = _register_torch_operation("randn")
+empty = _register_torch_operation("empty")
 einsum = _register_torch_operation("einsum")
 
 
@@ -417,6 +418,17 @@ def _randn_prims_transform(
     return randn(shape, device=torch_device, dtype=torch_dtype)
 
 
+def _empty_prims_transform(
+    shape: tuple[int, ...],
+    *,
+    device: devices.Device,
+    dtype: dtypes.dtype,
+) -> TensorLike:
+    torch_device: torch.device = to_torch_device(device)
+    torch_dtype: torch.dtype = to_torch_dtype(dtype)
+    return empty(shape, device=torch_device, dtype=torch_dtype)
+
+
 def _tensor_from_sequence_prims_transform(
     seq_or_number, *, device: devices.Device, dtype: None | dtypes.dtype
 ) -> TensorLike:
@@ -425,13 +437,39 @@ def _tensor_from_sequence_prims_transform(
     return tensor_from_sequence(seq_or_number, device=torch_device, dtype=torch_dtype)
 
 
+def _get_and_update_rng_state_impl(seed, offset, device):
+    state = torch.cuda.get_rng_state(device)
+    seed, offset = torch.chunk(state, 2)
+    # We follow the nvFuser way here. The offset used by nvfuser = pytorch_offset // 4
+    # See Note [Divide offset by 4] https://github.com/NVIDIA/Fuser/blob/729f36c/csrc/rng.cpp#L54
+    seed = seed.view(torch.int64).item()
+    offset = offset.view(torch.int64).item() // 4
+    # We follow the nvFuser way here. pytorch_new_offset = (nvfuser_offset + 1) * 4
+    # See Note [Divide offset by 4] https://github.com/NVIDIA/Fuser/blob/729f36c/csrc/rng.cpp#L54
+    new_offset = (offset + 1) * 4
+    seed_portion = torch.tensor([seed]).view(torch.uint8)
+    offset_portion = torch.tensor([new_offset]).view(torch.uint8)
+    new_state = torch.cat([seed_portion, offset_portion])
+    torch.cuda.set_rng_state(new_state, device)
+    return seed, offset
+
+
+get_and_update_rng_state_impl = ex.register_operator(
+    "get_and_update_rng_state_impl",
+    meta=prims.get_and_update_rng_state.meta,
+    fn=_get_and_update_rng_state_impl,
+)
+
+
 _register_implementation(prims.full, checker=_always_executable, execution_transform=_full_transform)
 _register_implementation(prims.iota, checker=_always_executable, execution_transform=_iota_transform)
 _register_implementation(prims.uniform, checker=_always_executable, execution_transform=_uniform_transform)
 _register_implementation(
     prims.uniform_philox, checker=_uniform_philox_prim_checker, execution_transform=_uniform_philox_prim_transform
 )
+_register_implementation(prims.get_and_update_rng_state, get_and_update_rng_state_impl, checker=_always_executable)
 _register_implementation(prims.randn, checker=_always_executable, execution_transform=_randn_prims_transform)
+_register_implementation(prims.empty, checker=_always_executable, execution_transform=_empty_prims_transform)
 _register_implementation(
     prims.tensor_from_sequence, checker=_always_executable, execution_transform=_tensor_from_sequence_prims_transform
 )
@@ -474,6 +512,8 @@ unfold = _register_torch_operation("unfold", module=torch.Tensor)
 unsqueeze = _register_torch_operation("unsqueeze")
 view = _register_torch_operation("view", module=torch.Tensor)
 view_as = _register_torch_operation("view_as", module=torch.Tensor)
+all_tensor = _register_torch_operation("all", like=ltorch.all_tensor)
+any_tensor = _register_torch_operation("any", like=ltorch.any_tensor)
 
 
 def _broadcast_in_dim_prim_transform(
@@ -532,6 +572,30 @@ def _squeeze_transform(a: TensorLike, /, dim: None | int | Sequence[int] = None)
     return squeeze(a, dim)
 
 
+def _empty_transform(
+    shape: Sequence[int],
+    device: None | DeviceLike = None,
+    dtype: None | dtypeLike = None,
+    out: None | TensorLike = None,
+    layout: torch.layout = torch.strided,
+    requires_grad: bool = False,
+    pin_memory: bool = False,
+    memory_format: torch.memory_format = torch.contiguous_format,
+):
+    torch_device: None | torch.device = to_torch_device(device)
+    torch_dtype: None | torch.dtype = to_torch_dtype(dtype)
+    return empty(
+        shape,
+        device=torch_device,
+        dtype=torch_dtype,
+        out=out,
+        layout=layout,
+        requires_grad=requires_grad,
+        pin_memory=pin_memory,
+        memory_format=memory_format,
+    )
+
+
 _register_implementation(
     prims.broadcast_in_dim, checker=_always_executable, execution_transform=_broadcast_in_dim_prim_transform
 )
@@ -567,6 +631,9 @@ _register_implementation(ltorch.unfold, unfold, checker=_always_executable)
 _register_implementation(ltorch.unsqueeze, unsqueeze, checker=_always_executable)
 _register_implementation(ltorch.view, view, checker=_always_executable)
 _register_implementation(ltorch.view_as, view_as, checker=_always_executable)
+_register_implementation(ltorch.empty, empty, checker=_always_executable, execution_transform=_empty_transform)
+_register_implementation(ltorch.all_tensor, all_tensor, checker=_always_executable)
+_register_implementation(ltorch.any_tensor, any_tensor, checker=_always_executable)
 
 #
 # Memory format operations
@@ -801,11 +868,22 @@ remainder = _register_torch_operation("remainder")
 sub = _register_torch_operation("sub")
 true_divide = _register_torch_operation("true_divide")
 zeta = _register_torch_operation("zeta", module=torch.special)
+div = _register_torch_operation("div")
 
 
 # NOTE PyTorch elementwise operations require at least one input to be a tensor
 def _elementwise_binary_checker(a: Number | TensorProxy, b: Number | TensorProxy) -> bool:
     return isinstance(a, TensorLike) or isinstance(b, TensorLike)
+
+
+def _div_checker(
+    a: Number | TensorProxy,
+    b: Number | TensorProxy,
+    *,
+    rounding_mode: None | str = None,
+    out: None | TensorProxy = None,
+) -> TensorProxy:
+    return _elementwise_binary_checker(a, b) and (rounding_mode is None or isinstance(rounding_mode, str))
 
 
 # NOTE add and sub have special check and factory functions to support alpha
@@ -839,6 +917,20 @@ def _sub_transform(a: Number | TensorProxy, b: Number | TensorProxy, *, alpha: N
         return sub(a, b)
 
     return sub(a, b, alpha=alpha)
+
+
+def _div_transform(
+    a: Number | TensorProxy,
+    b: Number | TensorProxy,
+    /,
+    *,
+    rounding_mode: None | str = None,
+    out: None | TensorProxy = None,
+) -> TensorProxy:
+    if rounding_mode is None:
+        return div(a, b)
+
+    return div(a, b, rounding_mode=rounding_mode)
 
 
 _register_elementwise_binary_implementation = partial(_register_implementation, checker=_elementwise_binary_checker)
@@ -891,6 +983,7 @@ _register_elementwise_binary_implementation(ltorch.remainder, remainder)
 _register_elementwise_binary_implementation(ltorch.sub, checker=_add_sub_checker, execution_transform=_sub_transform)
 _register_elementwise_binary_implementation(ltorch.true_divide, true_divide)
 _register_elementwise_binary_implementation(ltorch.zeta, zeta)
+_register_elementwise_binary_implementation(ltorch.div, checker=_div_checker, execution_transform=_div_transform)
 
 #
 # Elementwise ternary operations
@@ -980,7 +1073,7 @@ def _masked_fill_checker(a: TensorLike, /, mask: TensorLike, value: Number | Ten
         return False
 
     value_dtype: type | dtypes.dtype
-    if isinstance(value, Number):
+    if isinstance(value, (Number, NumberProxy)):
         value_dtype = pytype(value)
     else:
         if len(value.shape) != 0:
@@ -1234,6 +1327,10 @@ log_softmax_backward = _register_torch_operation(
 max_pool1d = _register_torch_operation("max_pool1d", module=torch.nn.functional)
 max_pool2d = _register_torch_operation("max_pool2d", module=torch.nn.functional)
 max_pool3d = _register_torch_operation("max_pool3d", module=torch.nn.functional)
+adaptive_avg_pool2d = _register_torch_operation("adaptive_avg_pool2d", module=torch.nn.functional)
+adaptive_avg_pool2d_backward = _register_torch_operation(
+    "torch.ops.aten._adaptive_avg_pool2d_backward", like=ltorch.adaptive_avg_pool2d_backward
+)
 
 
 def _max_pool_with_indices_helper(
@@ -1277,7 +1374,7 @@ def _max_pool_with_indices_helper(
             )
             return seq[i]
 
-    out_sizes = []
+    out_sizes = list(a.shape[:-ndim])
     for i in range(ndim):
         in_ = a.shape[i - ndim]  # i - ndim is the i-th spatial dimension
         kernel_ = get_maybe_ith_entry("kernel_size", kernel_size, i)
@@ -1626,6 +1723,29 @@ ex.register_implementation(
 ex.register_implementation(
     ltorch.max_pool3d, max_pool3d, checker=_always_executable, grad_transform=max_pool3d_bwd_wrapper
 )
+
+
+def adaptive_avg_pool2d_bwd_wrapper(
+    a: TensorProxy,
+    /,
+    output_size: int | Sequence[int],
+) -> TensorProxy:
+    primals = adaptive_avg_pool2d(a, output_size)
+
+    grad = get_grad(primals)
+    grad_a = adaptive_avg_pool2d_backward(grad, a)
+    put_grad(a, grad_a)
+
+    return primals
+
+
+ex.register_implementation(
+    ltorch.adaptive_avg_pool2d,
+    adaptive_avg_pool2d,
+    checker=_always_executable,
+    grad_transform=adaptive_avg_pool2d_bwd_wrapper,
+)
+_register_implementation(ltorch.adaptive_avg_pool2d_backward, adaptive_avg_pool2d_backward, checker=_always_executable)
 _register_implementation(ltorch.nll_loss, checker=_always_executable, execution_transform=_nll_loss_transform)
 nll_loss_backward = ex.register_operator(
     "torch_nll_loss_backward_impl", meta=ltorch.nll_loss_backward, fn=_nll_loss_backward_impl
