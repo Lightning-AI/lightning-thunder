@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 
 from thunder.core.proxies import DistParallelType
 from thunder.core.proxies import TensorProxy
-from thunder.core import utils
 
 if TYPE_CHECKING:
     from typing import Any
