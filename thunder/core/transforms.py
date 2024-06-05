@@ -1096,9 +1096,6 @@ register_grad(pids.GE, prims.ge)
 register_grad(pids.GT, prims.gt)
 register_grad(pids.LE, prims.le)
 register_grad(pids.LT, prims.lt)
-register_grad(pids.NE, prims.ne)
-register_grad(pids.GT, prims.gt)
-register_grad(pids.LE, prims.le)
 
 
 @torchctx

@@ -7858,12 +7858,12 @@ def cross_entropy_error_generator(op, device, dtype=torch.float32, **kwargs):
         "Expected the input tensor to have (.*?) dimensions, but it has (.*?) dimensions.",
     )
 
-    # target shape is input shape except channels dimension
+    # target shape is input shape except class dimension
     incorrect_batch_target = make((10,), low=0, high=C, dtype=torch.long, requires_grad=False)
     yield (
         SampleInput(valid_input, incorrect_batch_target),
         RuntimeError,
-        "Expected the target tensor to have the same shape as the input tensor except for the channels dimension \
+        "Expected the target tensor to have the same shape as the input tensor except for the class dimension \
             (.*?), but it has shape (.*?).",
     )
 
@@ -8013,12 +8013,12 @@ def nll_loss_error_generator(op, device, dtype=torch.float32, **kwargs):
         "Expected the input tensor to have (.*?) dimensions, but it has (.*?) dimensions.",
     )
 
-    # target shape is input shape except channels dimension
+    # target shape is input shape except class dimension
     incorrect_batch_target = make((10,), low=0, high=C, dtype=torch.long, requires_grad=False)
     yield (
         SampleInput(valid_input, incorrect_batch_target),
         RuntimeError,
-        "Expected the target tensor to have the same shape as the input tensor except for the channels dimension \
+        "Expected the target tensor to have the same shape as the input tensor except for the class dimension \
             (.*?), but it has shape (.*?).",
     )
 
