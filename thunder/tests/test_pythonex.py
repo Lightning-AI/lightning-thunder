@@ -45,7 +45,7 @@ def test_math_atan2():
         # TODO: calling through math.atan2 bakes in constant, this needs to be investigated.
         return thunder.clang.atan2(a, b)
 
-    # TODO: we cannot run foo(2.0, 1.3), inputs is converted to NumberProxy. I think this needs to be fixed.
+    # NOTE: we have thunder.clang in foo, which cannot be run with non-proxy
     _run_cache_symbolic_values(foo, math.atan2, 2.0, 1.3)
 
 def test_math_fmod():
