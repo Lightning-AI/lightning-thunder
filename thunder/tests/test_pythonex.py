@@ -19,12 +19,8 @@ def _run_cache_symbolic_values(fn, ref_fn, *args):
 def test_fmod():
     def foo(a, b):
         return a % b
-        # note to myself. this one is not getting traced.
-        #return math.atan2(a, b)
-        #return thunder.clang.atan2(a, b)
 
     _run_cache_symbolic_values(foo, foo, 2.0, 1.3)
-    #out_ref = math.atan2(a, b)
 
 def test_bitwise_or():
     def foo(a, b):
@@ -51,3 +47,9 @@ def test_math_atan2():
 
     # TODO: we cannot run foo(2.0, 1.3), inputs is converted to NumberProxy. I think this needs to be fixed.
     _run_cache_symbolic_values(foo, math.atan2, 2.0, 1.3)
+
+def test_math_fmod():
+    def foo(a, b):
+        return thunder.clang.fmod(a, b)
+
+    _run_cache_symbolic_values(foo, math.fmod, 2.0, 1.3)
