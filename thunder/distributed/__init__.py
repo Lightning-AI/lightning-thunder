@@ -162,7 +162,7 @@ def _sync_grads(module: torch.nn.Module) -> None:
         sharded_grads = [prep_shard(g, rank, world_size) for g in unsharded_grads]
         with tdist.distributed_c10d._coalescing_manager(group=process_group, async_ops=True) as cm:
             for u, s in zip(unsharded_grads, sharded_grads):
-                tdist.distributed_c10d.reduce_scatter_tensor(s, u, op=tdist.distributed_c10d.ReduceOp.AVG)
+                tdist.distributed_c10d.reduce_scatter_tensor(s, u, op=tdist.distributed_c10d.ReduceOp.AVG, group=process_group)
         cm.wait()
         for p, g in zip(params_with_grad, sharded_grads):
             p.grad = g
