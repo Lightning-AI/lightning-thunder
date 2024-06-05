@@ -662,7 +662,7 @@ class BoundSymbolRHS:
     @functools.cached_property
     def _hash(self) -> int:
         # TODO: Find a better way to identify inputs by id instead of hash.
-        if self.parent.sym.name == 'unpack_trivial':
+        if self.parent.sym.name == "unpack_trivial":
             return id(self)
         try:
             return hash((self.parent.sym, self.parent._var_args, self._frozen_kwargs))
@@ -677,4 +677,8 @@ class BoundSymbolRHS:
             return False
         if self.parent is other.parent:
             return True
-        return (self.parent.sym, self.parent._var_args, self._frozen_kwargs) == (other.parent.sym, other.parent._var_args, other._frozen_kwargs)
+        return (self.parent.sym, self.parent._var_args, self._frozen_kwargs) == (
+            other.parent.sym,
+            other.parent._var_args,
+            other._frozen_kwargs,
+        )
