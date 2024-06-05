@@ -3750,8 +3750,8 @@ def pad_torch_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     # The `value` parameter of the pad op is unceremoniously cast to the type of the
     # tensor being padded. Yield some tests with explicitly-different data types.
-    yield SampleInput(make((2,3)), pad=(1,2), value=6.4)
-    yield SampleInput(make((2,)), pad=(1,2), value=1)
+    yield SampleInput(make((2, 3)), pad=(1, 2), value=6.4)
+    yield SampleInput(make((2,)), pad=(1, 2), value=1)
 
 
 def pad_torch_error_generator(op, device, dtype=torch.float32, **kwargs):
