@@ -141,7 +141,7 @@ def _sync_grads(module: torch.nn.Module) -> None:
         torch._foreach_div_(grads, process_group.size())
         with tdist.distributed_c10d._coalescing_manager(group=process_group, async_ops=True) as cm:
             for g in grads:
-                tdist.distributed_c10d.all_reduce(g)
+                tdist.distributed_c10d.all_reduce(g, group=process_group)
         cm.wait()
     elif getattr(module, "use_fsdp", False):
 
