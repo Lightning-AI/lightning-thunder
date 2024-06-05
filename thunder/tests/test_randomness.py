@@ -201,10 +201,10 @@ class ParallelLinearAdapter(nn.Module):
         in_features: int,
         out_features: int,
         dim: int,
-        norm_position: str = 'post',
+        norm_position: str = "post",
         dropout: float = 0.5,
         alpha: float | None = None,
-        dropout_position: str = 'post',
+        dropout_position: str = "post",
         **kwargs,
     ):
         super().__init__()
@@ -226,19 +226,19 @@ class ParallelLinearAdapter(nn.Module):
             self.dropout = None
 
     def forward(self, x):
-        if self.dropout is not None and self.dropout_position == 'pre':
+        if self.dropout is not None and self.dropout_position == "pre":
             x = self.dropout(x)
 
-        if self.norm_position == 'pre':
+        if self.norm_position == "pre":
             x = self.layer_norm(x)
 
         x = self.activation(x)
 
-        if self.norm_position == 'post':
+        if self.norm_position == "post":
             x = self.layer_norm(x)
 
         # Add dropout if available
-        if self.dropout is not None and self.dropout_position == 'post':
+        if self.dropout is not None and self.dropout_position == "post":
             x = self.dropout(x)
 
         x = x * (self.alpha / self.dim)
