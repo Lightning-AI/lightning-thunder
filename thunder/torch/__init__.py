@@ -4128,30 +4128,30 @@ def _nll_loss_helper(
         lambda: f"Expected the input tensor to have {(target.ndim + 1)=} dimensions, but it has {a.ndim} dimensions.",
     )
 
-    # channels dimension is either the first one if no batch dim present (i.e. a.shape[0]),
+    # class dimension is either the first one if no batch dim present (i.e. a.shape[0]),
     # or right next to it (i.e. a.shape[1]).
-    channels_dim = 1 if a.ndim >= 2 else 0
-    num_channels = a.shape[channels_dim]
-    # target should match input in dims which do not correspond to the channels dim, i.e.
-    # (input.shape[:channels_dim] + input.shape[channels_dim + 1:]) == target.shape <=> True
-    expected_target_shape = a.shape[:channels_dim] + a.shape[channels_dim + 1 :]
+    class_dim = 1 if a.ndim >= 2 else 0
+    num_class = a.shape[class_dim]
+    # target should match input in dims which do not correspond to the class dim, i.e.
+    # (input.shape[:class_dim] + input.shape[class_dim + 1:]) == target.shape <=> True
+    expected_target_shape = a.shape[:class_dim] + a.shape[class_dim + 1 :]
 
     utils.check(
         expected_target_shape == target.shape,
-        lambda: f"Expected the target tensor to have the same shape as the input tensor except for the channels dimension \
+        lambda: f"Expected the target tensor to have the same shape as the input tensor except for the class dimension \
             {expected_target_shape}, but it has shape {target.shape}.",
     )
 
     utils.check(
-        weight is None or (weight.ndim == 1 and weight.shape[0] == num_channels),
-        lambda: f"Expected a 1D tensor with {num_channels} elements for weight argument, \
+        weight is None or (weight.ndim == 1 and weight.shape[0] == num_class),
+        lambda: f"Expected a 1D tensor with {num_class} elements for weight argument, \
             but found a tensor with {weight.ndim} dimensions and {weight.shape[0]} elements.",
     )
 
     # NOTE: [Handling of 'ignore_index' parameter]
     # What does it mean to ignore an index?
     #   The 'ignore_index' parameter specifies a target value that does not contribute to input gradient.
-    # 'ignore_index' can be outside of the [0, num_channels) range, which can cause out-of-bounds errors when gathering
+    # 'ignore_index' can be outside of the [0, num_class) range, which can cause out-of-bounds errors when gathering
     # values from input tensor.
     #
     # What does ATen do?
@@ -4160,12 +4160,12 @@ def _nll_loss_helper(
     #
     # What do we do?
     #   We mask the ignore_index entries on the output tensor from take_along_axis because we expect the targets to be
-    # within [0, num_channels) range.
+    # within [0, num_class) range.
     #
     # Why do we like our approach better?
     #   Mimicking Aten behavior requires masking the target tensor before calling take_along_axis, which would add more
     # operations to the fusion. We should follow this approach until we see real examples where ignore_index is
-    # out-of-bounds of [0, num_channels) range.
+    # out-of-bounds of [0, num_class) range.
     #
     # What are the alternative options?
     #   We can add a `mode` parameter to take_along_axis that controls how to handle out-of-bounds indices.
@@ -4174,20 +4174,20 @@ def _nll_loss_helper(
     out = -a
 
     if weight is not None:
-        bcast_weight = reshape(weight, [num_channels] + [1 for _ in range(2, a.ndim)])
+        bcast_weight = reshape(weight, [num_class] + [1 for _ in range(2, a.ndim)])
         out = out * bcast_weight
 
     # Make target broadcastable with output, which has same shape as input tensor.
-    bcast_target = unsqueeze(target, channels_dim)
+    bcast_target = unsqueeze(target, class_dim)
 
-    out = take_along_dim(out, bcast_target, channels_dim)
+    out = take_along_dim(out, bcast_target, class_dim)
     selected_target_mask = bcast_target != ignore_index
     out = where(selected_target_mask, out, 0)
 
     # This section handles applying the reduction parameter to the output.
     # We return None for the total_weight when reduction is "none" or "sum" since it is unused in the backwards pass.
     if reduction == "none":
-        return squeeze(out, channels_dim), None
+        return squeeze(out, class_dim), None
     elif reduction == "sum":
         return sum(out), None
     elif reduction == "mean":
@@ -4197,7 +4197,7 @@ def _nll_loss_helper(
             # Mask the ignored target classes.
             # Sum together all target weights.
             expanded_weight = expand(bcast_weight, a.shape)
-            selected_weight = take_along_dim(expanded_weight, bcast_target, channels_dim)
+            selected_weight = take_along_dim(expanded_weight, bcast_target, class_dim)
             selected_weight = where(selected_target_mask, selected_weight, 0)
             bcast_weight_sum = sum(selected_weight)
             return (reduced_sum / bcast_weight_sum), bcast_weight_sum
