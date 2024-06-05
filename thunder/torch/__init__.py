@@ -3578,9 +3578,9 @@ def cross_entropy(
 
     _cross_entropy_input_checks(a, target, weight, ignore_index, reduction, label_smoothing)
 
-    # channels dimension is either the first one if no batch dim present (i.e. a.shape[0]),
-    # or right next to it (i.e. a.shape[1]).
-    channels_dim = 1 if a.ndim >= 2 else 0
+    # the class dimension is either the first one if no batch dim present (i.e. a.shape[0]),
+    # or the one right next to it (i.e. a.shape[1]).
+    class_dim = 1 if a.ndim >= 2 else 0
 
     # NOTE This short-circuit is subject to change and is placed ahead of other input checks to match PyTorch behavior.
     # The expected behavior when the target and input have zero elements:
@@ -3591,7 +3591,7 @@ def cross_entropy(
     if a.numel() == 0:
         if reduction == "none":
             output_shape = list(a.shape)
-            output_shape.pop(channels_dim)
+            output_shape.pop(class_dim)
             return full(output_shape, 0.0, device=a.device, dtype=a.dtype)
         elif reduction == "sum":
             return full(result_shape := [], fill_value := 0.0, device=a.device, dtype=a.dtype)
@@ -3603,7 +3603,7 @@ def cross_entropy(
     elif label_smoothing != 0.0:
         return _cross_entropy_loss_label_smoothing(a, target, weight, ignore_index, reduction, label_smoothing)
     else:
-        log_softmax_input = log_softmax(a, dim=channels_dim)
+        log_softmax_input = log_softmax(a, dim=class_dim)
         return nll_loss(log_softmax_input, target, weight, ignore_index, reduction)
 
 
@@ -3632,14 +3632,14 @@ def _cross_entropy_input_checks(
         lambda: f"Expected label_smoothing to be in [0, 1] range but got {label_smoothing}.",
     )
 
-    # channels dimension is either the first one if no batch dim present (i.e. a.shape[0]),
-    # or right next to it (i.e. a.shape[1]).
-    channels_dim = 1 if a.ndim >= 2 else 0
-    num_channels = a.shape[channels_dim]
+    # The class dimension is either the first one if no batch dim present (i.e. a.shape[0]),
+    # or the one right next to it (i.e. a.shape[1]).
+    class_dim = 1 if a.ndim >= 2 else 0
+    num_classes = a.shape[class_dim]
 
     utils.check(
-        weight is None or (weight.ndim == 1 and weight.shape[0] == num_channels),
-        lambda: f"Expected a 1D tensor with {num_channels} elements for weight argument, \
+        weight is None or (weight.ndim == 1 and weight.shape[0] == num_classes),
+        lambda: f"Expected a 1D tensor with {num_classes} elements for weight argument, \
             but found a tensor with {weight.ndim} dimensions and {weight.shape[0]} elements.",
     )
 
@@ -3654,13 +3654,13 @@ def _cross_entropy_input_checks(
             lambda: f"Expected the input tensor to have {(target.ndim + 1)=} dimensions, but it has {a.ndim} dimensions.",
         )
 
-        # target should match input in dims which do not correspond to the channels dim, i.e.
-        # (input.shape[:channels_dim] + input.shape[channels_dim + 1:]) == target.shape <=> True
-        expected_target_shape = a.shape[:channels_dim] + a.shape[channels_dim + 1 :]
+        # target should match input in dims which do not correspond to the class dim, i.e.
+        # (input.shape[:class_dim] + input.shape[class_dim + 1:]) == target.shape <=> True
+        expected_target_shape = a.shape[:class_dim] + a.shape[class_dim + 1 :]
 
         utils.check(
             expected_target_shape == target.shape,
-            lambda: f"Expected the target tensor to have the same shape as the input tensor except for the channels dimension \
+            lambda: f"Expected the target tensor to have the same shape as the input tensor except for the class dimension \
                 {expected_target_shape}, but it has shape {target.shape}.",
         )
     else:
@@ -3685,28 +3685,28 @@ def _cross_entropy_loss_probability_target(
     reduction: str,
     label_smoothing: float,
 ) -> TensorLike:
-    # channels dimension is either the first one if no batch dim present (i.e. a.shape[0]),
-    # or right next to it (i.e. a.shape[1]).
-    channels_dim = 1 if a.ndim >= 2 else 0
-    num_channels = a.shape[channels_dim]
+    # The class dimension is either the first one if no batch dim present (i.e. a.shape[0]),
+    # or the one right next to it (i.e. a.shape[1]).
+    class_dim = 1 if a.ndim >= 2 else 0
+    num_classes = a.shape[class_dim]
 
     if label_smoothing > 0.0:
-        target = (target * (1 - label_smoothing)) + (label_smoothing / num_channels)
+        target = (target * (1 - label_smoothing)) + (label_smoothing / num_classes)
 
-    out = log_softmax(a, dim=channels_dim) * target
+    out = log_softmax(a, dim=class_dim) * target
 
     if weight is not None:
-        bcast_weight = reshape(weight, [num_channels] + [1 for _ in range(2, a.ndim)])
+        bcast_weight = reshape(weight, [num_classes] + [1 for _ in range(2, a.ndim)])
         out = out * bcast_weight
 
     out = -out
 
     if reduction == "none":
-        return sum(out, dim=channels_dim)
+        return sum(out, dim=class_dim)
     elif reduction == "sum":
         return sum(out)
     elif reduction == "mean":
-        return sum(out) / (a.numel() // num_channels)
+        return sum(out) / (a.numel() // num_classes)
 
 
 def _cross_entropy_loss_label_smoothing(
@@ -3718,20 +3718,20 @@ def _cross_entropy_loss_label_smoothing(
     reduction: str,
     label_smoothing: int,
 ) -> TensorLike:
-    # channels dimension is either the first one if no batch dim present (i.e. a.shape[0]),
-    # or right next to it (i.e. a.shape[1]).
-    channels_dim = 1 if a.ndim >= 2 else 0
-    num_channels = a.shape[channels_dim]
+    # The class dimension is either the first one if no batch dim present (i.e. a.shape[0]),
+    # or the one right next to it (i.e. a.shape[1]).
+    class_dim = 1 if a.ndim >= 2 else 0
+    num_classes = a.shape[class_dim]
 
-    log_softmax_value = log_softmax(a, dim=channels_dim)
+    log_softmax_value = log_softmax(a, dim=class_dim)
 
     if weight is not None:
-        bcast_weight = reshape(weight, [num_channels] + [1 for _ in range(2, len(a.shape))])
+        bcast_weight = reshape(weight, [num_classes] + [1 for _ in range(2, len(a.shape))])
         out = -(log_softmax_value * bcast_weight)
     else:
         out = -log_softmax_value
 
-    smooth_loss = sum(out, dim=channels_dim)
+    smooth_loss = sum(out, dim=class_dim)
 
     # Make target broadcastable with output, which has same shape as input tensor.
     selected_target_mask = target != ignore_index
@@ -3749,8 +3749,8 @@ def _cross_entropy_loss_label_smoothing(
             # Sum together all target weights.
             # Make target broadcastable with output, which has same shape as input tensor.
             expanded_weight = expand(bcast_weight, a.shape)
-            bcast_target = unsqueeze(target, channels_dim)
-            selected_weight = take_along_dim(expanded_weight, bcast_target, channels_dim)
+            bcast_target = unsqueeze(target, class_dim)
+            selected_weight = take_along_dim(expanded_weight, bcast_target, class_dim)
             selected_weight = where(selected_target_mask, squeeze(selected_weight), 0)
             ret = reduced_sum / sum(selected_weight)
         else:
@@ -3760,7 +3760,7 @@ def _cross_entropy_loss_label_smoothing(
 
     nll_loss_value = nll_loss(log_softmax_value, target, weight, ignore_index, reduction)
 
-    return (nll_loss_value * (1.0 - label_smoothing)) + (ret * (label_smoothing / num_channels))
+    return (nll_loss_value * (1.0 - label_smoothing)) + (ret * (label_smoothing / num_classes))
 
 
 # TODO Is this a method?
