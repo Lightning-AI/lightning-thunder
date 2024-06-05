@@ -9,6 +9,7 @@ from collections import namedtuple
 
 CudaVersion = namedtuple("CudaVersion", "major minor")
 
+
 def _run_cache_symbolic_values(fn, ref_fn, *args):
     jit_fn = thunder.jit(fn, cache="symbolic values")
     out = jit_fn(*args)
@@ -16,15 +17,17 @@ def _run_cache_symbolic_values(fn, ref_fn, *args):
     out_ref = ref_fn(*args)
     assert out == out_ref
 
+
 def test_fmod():
     def foo(a, b):
         return a % b
         # note to myself. this one is not getting traced.
-        #return math.atan2(a, b)
-        #return thunder.clang.atan2(a, b)
+        # return math.atan2(a, b)
+        # return thunder.clang.atan2(a, b)
 
     _run_cache_symbolic_values(foo, foo, 2.0, 1.3)
-    #out_ref = math.atan2(a, b)
+    # out_ref = math.atan2(a, b)
+
 
 def test_bitwise_or():
     def foo(a, b):
@@ -32,17 +35,20 @@ def test_bitwise_or():
 
     _run_cache_symbolic_values(foo, foo, 3, 5)
 
+
 def test_bitwise_and():
     def foo(a, b):
         return a & b
 
     _run_cache_symbolic_values(foo, foo, 3, 5)
 
+
 def test_bitwise_xor():
     def foo(a, b):
         return a ^ b
 
     _run_cache_symbolic_values(foo, foo, 3, 5)
+
 
 def test_math_atan2():
     def foo(a, b):
