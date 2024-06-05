@@ -1,13 +1,8 @@
 import pytest
+import math
 
 import thunder
-import thunder.core
-from thunder.executors.sdpaex import sdpa_ex
-from thunder.tests.framework import requiresCUDA, run_snippet
-from thunder.tests.opinfos import get_opinfo
-from collections import namedtuple
 
-CudaVersion = namedtuple("CudaVersion", "major minor")
 
 def _run_cache_symbolic_values(fn, ref_fn, *args):
     jit_fn = thunder.jit(fn, cache="symbolic values")
