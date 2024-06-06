@@ -357,5 +357,5 @@ class PostOptimizationTransform(Transform, ABC):
     """
 
     @abstractmethod
-    def __call__(self, fwd_computation_trace: Trace, bwd_computation_trace: Trace | None, **kwargs):
+    def __call__(self, computation_trace: Trace, **kwargs):
         pass

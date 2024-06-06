@@ -603,11 +603,10 @@ def jit(
             for transform in post_optimization_transforms:
                 # NOTE: `backward_trc` could be None.
                 thunder.core.utils.check_type(transform, PostOptimizationTransform)
-                computation_trc, backward_trc = transform(
-                    computation_trc, backward_trc, executors_list=cd.executors_list
-                )
+                computation_trc = transform(computation_trc, executors_list=cd.executors_list)
                 extraces.append(computation_trc)
                 if backward_trc is not None:
+                    backward_trc = transform(backward_trc, executors_list=cd.executors_list)
                     backward_traces.append(backward_trc)
 
             comp = computation_trc.python_callable()

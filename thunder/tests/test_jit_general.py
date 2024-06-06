@@ -820,26 +820,21 @@ def test_post_optimization_transform():
         return a * a + b * c
 
     class MyTransform(PostOptimizationTransform):
-        def __call__(self, fwd_trc, bwd_trc, executors_list=None):
+        def __call__(self, trace, executors_list=None):
             # Transform that adds a comment before any `add` BoundSymbol.
-            def _comment_add_op_transform(trace):
-                commented_trace = thunder.core.trace.from_trace(trace)
+            commented_trace = thunder.core.trace.from_trace(trace)
 
-                bsyms = []
-                for bsym in trace.bound_symbols:
-                    if bsym.sym.name == "add":
-                        op_name = bsym.sym.name
-                        comment_bsym = prims.comment.bind(f"Executing {op_name}", output=None)
-                        bsyms.append(comment_bsym)
+            bsyms = []
+            for bsym in trace.bound_symbols:
+                if bsym.sym.name == "add":
+                    op_name = bsym.sym.name
+                    comment_bsym = prims.comment.bind(f"Executing {op_name}", output=None)
+                    bsyms.append(comment_bsym)
 
-                    bsyms.append(bsym)
+                bsyms.append(bsym)
 
-                commented_trace.bound_symbols = bsyms
-                return commented_trace
-
-            return _comment_add_op_transform(fwd_trc), (
-                _comment_add_op_transform(bwd_trc) if bwd_trc is not None else None
-            )
+            commented_trace.bound_symbols = bsyms
+            return commented_trace
 
     jfoo = thunder.jit(foo, post_optimization_transforms=[MyTransform()])
 
