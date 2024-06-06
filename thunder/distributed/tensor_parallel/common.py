@@ -120,7 +120,7 @@ class ComputationTraceTransformVisitorForTensorParallel:
             return VISIT_TYPE.NO_OP
 
         pre_post_process: PrePostProcessInterface | None = self.bsym_to_prepostprocess.get(bsym, None)
-        new_bsym = bsym.from_bsym_swap_proxies(self.swap_map, skip_output=True)
+        new_bsym = bsym.from_bsym_swap_proxies(self.swap_map)
         for t in new_bsym.flat_proxy_args:
             self._maybe_other_tensor_parallel(t)
 
