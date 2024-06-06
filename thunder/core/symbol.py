@@ -7,6 +7,7 @@ from contextvars import ContextVar
 from contextlib import contextmanager
 from itertools import chain
 from types import ModuleType
+from typing import NamedTuple
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, List, Type, Tuple, TYPE_CHECKING
@@ -21,7 +22,6 @@ from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 from thunder.core.proxies import Proxy, NumberProxy, variableify, CollectionProxy
-from thunder.core.utils import FrozenDict
 
 from thunder.core.trace import (
     get_tracectx,
@@ -527,7 +527,7 @@ class BoundSymbol(BoundSymbolInterface):
         return (self.sym, self._var_args, self._var_output) == (other.sym, other._var_args, other._var_output)
 
     def rhs(self):
-        return BoundSymbolRHS(self)
+        return BoundSymbolRHS(self.sym, tuple(tree_flatten(self._var_args)[0]), tuple(tree_flatten(self._var_kwargs)[0]))
 
     # TODO Document contexts
     def import_ctx(self):
@@ -650,35 +650,18 @@ def has_tags(bsym: BoundSymbol, tags: set[OpTags]) -> bool:
 
 # Wrapper class that hashes and equates only the right hand side of a BoundSymbol for CSE.
 # That is to say, its symbol, args, and kwargs, but not its output.
-@dataclass
-class BoundSymbolRHS:
-    parent: BoundSymbol
-    _frozen_kwargs: FrozenDict
-
-    def __init__(self, parent: BoundSymbol) -> None:
-        self.parent = parent
-        self._frozen_kwargs = FrozenDict(parent._var_kwargs)
-
-    @functools.cached_property
-    def _hash(self) -> int:
-        # TODO: Find a better way to identify inputs by id instead of hash.
-        if self.parent.sym.name == "unpack_trivial":
-            return id(self)
-        try:
-            return hash((self.parent.sym, self.parent._var_args, self._frozen_kwargs))
-        except:
-            return id(self)
+# NOTE: once the unpack_trivial is fixed this can be changed to a default immmutable namedtuple.
+class BoundSymbolRHS(NamedTuple):
+    sym: Symbol
+    args: tuple[Any]
+    kwargs: tuple[Any]
 
     def __hash__(self) -> int:
-        return self._hash
+        # TODO: Fix unpack_trivial usage such that the name is kept in the kwargs.
+        if self.sym.name == "unpack_trivial":
+            return id(self)
 
-    def __eq__(self, other: BoundSymbolRHS) -> bool:
-        if not isinstance(other, BoundSymbolRHS):
-            return False
-        if self.parent is other.parent:
-            return True
-        return (self.parent.sym, self.parent._var_args, self._frozen_kwargs) == (
-            other.parent.sym,
-            other.parent._var_args,
-            other._frozen_kwargs,
-        )
+        return hash((self.sym, self.args, self.kwargs))
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, self.__class__) and tuple(self) == tuple(other)
