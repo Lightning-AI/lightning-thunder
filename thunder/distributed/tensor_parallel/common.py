@@ -135,11 +135,12 @@ class ComputationTraceTransformVisitorForTensorParallel:
 
         new_out = new_bsym.sym(*new_bsym.args, **new_bsym.kwargs)
 
-        orig_y = new_bsym.flat_proxy_outs[0]
-        self.swap_map[variableify(orig_y)] = new_out
+        var_original_bsym_output = variableify(new_bsym.flat_proxy_outs[0])
         if pre_post_process is not None:
             processed_y = pre_post_process.postprocess(new_out, preprocess_artifacts)
-            self.swap_map[variableify(orig_y)] = processed_y
+            self.swap_map[var_original_bsym_output] = processed_y
+        else:
+            self.swap_map[var_original_bsym_output] = new_out
 
         return VISIT_TYPE.REPLACE
 
