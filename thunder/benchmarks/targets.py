@@ -21,6 +21,7 @@ from thunder.benchmarks import (
     LitGPTSwigluBenchmark,
     LlamaMLPBenchmark,
     NanoGPTBenchmark,
+    NanoGPTBlockBenchmark,
     NanoGPTCrossEntropyBenchmark,
     LitGPTGeluBenchmark,
     NanoGPTLayerNormBenchmark,
@@ -407,6 +408,26 @@ def test_litgpt_sdpa(benchmark, executor: Callable, bs, compute_type, config):
     args, kwargs = bench.make_batch()
     fn = executor(bench.fn())
 
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
+
+
+@pytest.mark.parametrize(
+    "executor,",
+    executors,
+    ids=executors_ids,
+)
+@parametrize_compute_type
+def test_nanogpt_block(benchmark, executor: Callable, compute_type: ComputeType):
+    bench: Benchmark = NanoGPTBlockBenchmark(
+        config="gpt3",
+        batchdims=(1,),
+        device="cuda:0",
+        dtype=thunder.bfloat16,
+        requires_grad=is_requires_grad(compute_type),
+    )
+
+    args, kwargs = bench.make_batch()
+    fn = executor(bench.fn())
     benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 

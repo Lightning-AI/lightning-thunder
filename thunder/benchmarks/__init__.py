@@ -1149,6 +1149,7 @@ _nanogpt_configs = {
     "gpt2-medium": dict(n_layer=24, n_head=16, n_embd=1024),  # 350M params
     "gpt2-large": dict(n_layer=36, n_head=20, n_embd=1280),  # 774M params
     "gpt2-xl": dict(n_layer=48, n_head=25, n_embd=1600),  # 1558M params
+    "gpt3": dict(block_size=2048, seq_len=2048, vocab_size=51200, n_layer=96, n_head=96, n_embd=12288),
 }
 
 
