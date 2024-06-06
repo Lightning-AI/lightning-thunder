@@ -1,5 +1,5 @@
 from functools import wraps
-from typing import Any, List
+from typing import Any
 from collections import defaultdict, namedtuple
 from collections.abc import Callable
 from collections.abc import Sequence
