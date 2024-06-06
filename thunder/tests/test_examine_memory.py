@@ -145,16 +145,16 @@ def test_nanogpt_block(executor, device, dtype):
 
     if isinstance(executor, nvFuserTestExecutor):
         assert fw_alloc_mem[0] == 267426816
-        # t67 is the expand result of ln_2_weight, and they are both return values in trace
-        # but for calculation we assume they share memory, so expect to subtract the size of t67
-        expected_return_calculated_mem = get_return_memory(fw_extrace.bound_symbols[-1]) - 4 * 2 * 1024 * 768
+        expected_return_calculated_mem = get_return_memory(fw_extrace.bound_symbols[-1])
         assert expected_return_calculated_mem == sum(fw_alloc_mem[1].values())
 
-        assert bw_alloc_mem[0] == 361881600
+        assert bw_alloc_mem[0] == 412112896
         assert sum(bw_alloc_mem[1].values()) == get_return_memory(bw_extrace.bound_symbols[-1])
     if isinstance(executor, TorchTestExecutor):
         assert fw_alloc_mem[0] == 362863616
-        # same reason as above, expect to -t38+t37-t65-t67
+        # Expect the memory to -t38+t37-t65-t67.
+        # t67 is the expand result of ln_2_weight, and they are both return values in trace
+        # but for calculation we assume they share memory, so expect to subtract the size of t67.
         expected_return_calculated_mem = (
             get_return_memory(fw_extrace.bound_symbols[-1]) - 23 * 1024 * 1024 - 4 * 2 * 1024 * 768 * 2
         )
