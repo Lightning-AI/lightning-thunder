@@ -75,15 +75,40 @@ import functools
 
 
 def timer_and_memory_stats(benchmark) -> float:
-    def deco(func):
-        @functools.wraps(func)
-        def wrapper():
-            ret = func()
-            benchmark.extra_info["max_allocated_memory(MB)"] = torch.cuda.max_memory_allocated() / (1024 * 1024.0)
+    """
+    Make a timer that also records the peak allocated memory.
+
+    pytest-benchmark has the following benchmarking code structure:
+
+    start = timer()
+    for _ in loops_range:
+        function_to_benchmark(*args, **kwargs)
+    end = timer()
+
+    So the information about the peak allocated memory should be recorded
+    after the function_to_benchmark call and we need to reset the peak memory
+    stats before the function_to_benchmark call.
+
+    If reset_peak_memory_stats is called inside the function_to_benchmark call,
+    the peak memory stats will be reset multiple times and the peak memory
+    stats may not be accurate.
+
+    Args:
+        benchmark: The pytest-benchmark object
+
+    Returns:
+        The decorator that records the peak allocated memory
+    """
+
+    def deco(old_timer):
+        @functools.wraps(old_timer)
+        def timer():
+            ret = old_timer()
+            benchmark.extra_info["max_allocated_memory_MB"] = torch.cuda.max_memory_allocated() / (1024 * 1024.0)
             torch.cuda.reset_peak_memory_stats()
             return ret
 
-        return wrapper
+        return timer
 
     return deco
 

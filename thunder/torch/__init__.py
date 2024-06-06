@@ -3559,20 +3559,6 @@ def _dropout_helper(a, p):
     return result
 
 
-# TODO Add annotations, make not a prim
-# The backward decomposition of cross_entropy cannot be efficiently fused, so we have this cross_entropy_backward
-# primitive. Executors can override the primitive using internal implementations.
-# See issue "Cross_entropy is decomposed for backward but the decomposition is
-# not fusible currently"
-@torchsymbol("cross_entropy_backward", id="cross_entropy_backward", is_prim=True)
-def cross_entropy_backward(g, a, /, target, weight, reduction, ignore_index, label_smoothing):
-    return TensorProxy(like=g, shape=a.shape)
-
-
-# TODO (mruberry) -- I think this implementation gets the dtype of the output incorrect
-# TODO Revise this to consistently call other torch operations where possible
-# TODO -- Maybe cut this up into _cross_entropy_mean, _cross_entropy_sum, ...
-# TODO Add type annotations
 @torchsymbol(torch.nn.functional.cross_entropy)
 def cross_entropy(
     a: TensorLike,
@@ -3590,253 +3576,191 @@ def cross_entropy(
         lambda: f"Deprecated size_average={size_average} and reduce={reduce} is not supported!",
     )
 
-    utils.check(
-        a.ndim != 0,
-        lambda: f"Cross entropy expects its input to have one or more dimensions, but it had zero dimensions",
-    )
+    _cross_entropy_input_checks(a, target, weight, ignore_index, reduction, label_smoothing)
 
-    # NOTE label_smoothing < 0 will just be ignored.
-    utils.check(
-        label_smoothing <= 1.0,
-        lambda: f"Cross entropy's {label_smoothing=} must be less than or equal to 1.0",
-    )
+    # class dimension is either the first one if no batch dim present (i.e. a.shape[0]),
+    # or right next to it (i.e. a.shape[1]).
+    class_dim = 1 if a.ndim >= 2 else 0
 
-    # extract shape information
-    C_dim = 1 if a.ndim >= 2 else 0
-    N = a.shape[0] if a.ndim >= 2 else 1
-    C = a.shape[C_dim]
-    feature_size = int(a.numel() / N / C)
-
-    # Short-circuits if a is empty
+    # NOTE This short-circuit is subject to change and is placed ahead of other input checks to match PyTorch behavior.
+    # The expected behavior when the target and input have zero elements:
+    #   reduction = 'none' --- tensor([], shape) or tensor(0.)
+    #   reduction = 'sum'  --- tensor(0.)
+    #   reduction = 'mean' --- tensor(nan)
+    # Mean reduction on empty tensors produces NaN.
     if a.numel() == 0:
         if reduction == "none":
             output_shape = list(a.shape)
-            output_shape.pop(C_dim)
-            return zeros(output_shape, device=a.device, dtype=a.dtype)
-        elif reduction == "mean":
-            fill_value = float("nan")
+            output_shape.pop(class_dim)
+            return full(output_shape, 0.0, device=a.device, dtype=a.dtype)
         elif reduction == "sum":
-            fill_value = 0.0
-        else:
-            raise ValueError(f"Reduction argument {reduction} to cross_entropy is not supported")
-
-        return full([], fill_value, device=a.device, dtype=a.dtype)
-
-    if weight is not None:
-        utils.check(
-            weight.ndim == 1 and weight.numel() == C,
-            lambda: f"Expected {weight.shape=} to have one dimension and {C} elements",
-        )
-        bcast_weight = reshape(weight, [C] + [1 for i in range(2, a.ndim)])
-
-    log_softmax_a = log_softmax(a, C_dim)
-    out = -log_softmax_a
+            return full(result_shape := [], fill_value := 0.0, device=a.device, dtype=a.dtype)
+        elif reduction == "mean":
+            return full(result_shape := [], fill_value := float("nan"), device=a.device, dtype=a.dtype)
 
     if a.shape == target.shape:
-        utils.check(
-            utils.is_float_dtype(target.dtype),
-            lambda: f"expect float dtype for probability target, but got: {target.dtype}!",
-        )
-        utils.check(
-            ignore_index < 0,
-            lambda: f"ignore_index is not supported for probability target, set ignore_index < 0!",
-        )
-
-        if label_smoothing > 0.0:
-            target = target * (1 - label_smoothing) + label_smoothing / C
-
-        out = out * target
-
-        if weight is not None:
-            out = out * bcast_weight
-
-        if target.ndim == 1:
-            out = _reduction(
-                out,
-                prims.sum,
-                output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
-            )
-        else:
-            out = _reduction(
-                out,
-                prims.sum,
-                dims=C_dim,
-                output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
-            )
-
-        if reduction == "none":
-            return out
-        # TODO: duplicate this in probability target!
-        elif reduction == "sum":
-            # NOTE: do we need to promote dtype?!
-            return _reduction(
-                out,
-                prims.sum,
-                output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
-            )
-        elif reduction == "mean":
-            reduced_sum = _reduction(
-                out,
-                prims.sum,
-                output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
-            )
-            # NOTE: does it work with dynamic size?!
-            return reduced_sum / N * feature_size
-        else:
-            raise ValueError(f"reduction argument: {reduction} to cross_entropy is not supported")
+        return _cross_entropy_loss_probability_target(a, target, weight, ignore_index, reduction, label_smoothing)
+    elif label_smoothing != 0.0:
+        return _cross_entropy_loss_label_smoothing(a, target, weight, ignore_index, reduction, label_smoothing)
     else:
-        utils.check(
-            utils.is_integer_dtype(target.dtype),
-            lambda: f"expect integer dtype for class indices target, but got: {target.dtype}!",
-        )
-        no_C_shape = list(a.shape)
-        no_C_shape.pop(C_dim)
-        utils.check(
-            a.ndim == target.ndim + 1 and no_C_shape == list(target.shape),
-            lambda: f"Inconsistent shape input: {a.shape} / target: {a.shape} to cross_entropy!",
-        )
-
-        # nll_loss
-        if weight is not None:
-            out = out * bcast_weight
-
-        smooth_loss_no_sum = out
-        # TODO: swap reshape with unsqueeze when nvfuser support is added
-        # bcast_target = clang.unsqueeze(target, [C_dim])
-        bcast_target_shape = list(a.shape)
-        bcast_target_shape[C_dim] = 1
-        bcast_target = reshape(target, bcast_target_shape)
-
-        out = clang.take_along_axis(out, bcast_target, C_dim)
-
-        if label_smoothing > 0:
-            # smooth_loss shape [N, SPATIAL...]
-            smooth_loss = _reduction(
-                smooth_loss_no_sum,
-                prims.sum,
-                dims=[C_dim],
-                output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
-            )
-        # NOTE: [handling of 'ignore_index']
-        #       Semantically, I think we are doing the right thing here where we mask out the ignore_index entries on output from clang.take_along_axis. Because targets is expected to be within [0, C)
-        #       However, in Torch/ATen implementation, 'ignore_index' can be outside of the range, so is targets. So it could even prevent an out-of-bound error from NLLLoss. Which diverges from the behavior here.
-        #       Note that we can mimic that behavior by mask targets before take_along_axis, but that's going to add more operations here, which means more overhead. Let's not do that until we see real examples exploiting the behavior.
-        #       Alternatively, we can revisit the choice of numpy.take_along_axis.
-        #       jax.numpy.take_along_axis gives a 'mode' arg custom out-of-bound behavior. But that might be slightly tricky to handle for codegen.
-        if ignore_index >= 0:
-            # mask shape [N, 1, SPATIAL...]
-            mask = bcast_target == ignore_index
-            out = where(mask, 0, out)
-            if label_smoothing > 0:
-                # TODO: switch to squeeze
-                smooth_loss = where(reshape(mask, list(smooth_loss.shape)), 0, smooth_loss)
-
-        if reduction == "none":
-            # TODO: swap reshape with squeeze when nvfuser support is added
-            # return clang.squeeze(out, [C_dim])
-            out = reshape(out, target.shape)
-            if label_smoothing > 0:
-                ret = smooth_loss
-        # TODO: duplicate this in probability target!
-        elif reduction == "sum":
-            # NOTE: do we need to promote dtype?!
-            out = _reduction(
-                out,
-                prims.sum,
-                output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
-            )
-            if label_smoothing > 0:
-                ret = _reduction(
-                    smooth_loss,
-                    prims.sum,
-                    output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
-                )
-        elif reduction == "mean":
-            # NOTE: do we need to promote dtype?!
-            reduced_sum = _reduction(
-                out,
-                prims.sum,
-                output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
-            )
-            if label_smoothing > 0:
-                ret = _reduction(
-                    smooth_loss,
-                    prims.sum,
-                    output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
-                )
-            if weight is not None:
-                # NOTE: this seems unreasonably complicated. Am I missing something obvious?!
-                input_shape = list(a.shape)
-                expanded_weight = clang.expand(bcast_weight, input_shape)
-                # DEBUG!!! this gives segfaults
-                selected_weight = clang.take_along_axis(expanded_weight, bcast_target, C_dim)
-
-                if ignore_index >= 0:
-                    selected_weight = where(mask, 0, selected_weight)
-
-                bcast_weight_sum = _reduction(
-                    selected_weight,
-                    prims.sum,
-                    output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
-                )
-                out = reduced_sum / bcast_weight_sum
-                if label_smoothing > 0:
-                    ret = ret / bcast_weight_sum
-            elif ignore_index >= 0:
-                mask_sum = _reduction(
-                    mask,
-                    prims.sum,
-                    dtype=to_dtype(torch.float),
-                    output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
-                )
-                # NOTE: does the call numel here work with dynamic shape?!
-                out = reduced_sum / (target.numel() - mask_sum)
-                if label_smoothing > 0:
-                    ret = ret / (target.numel() - mask_sum)
-                elif target.ndim == 0:
-                    # NOTE: this is pytorch implementation details.
-                    # overwrite output to 0 when target hits ignore_index AND label_smoothing is missing.
-                    # https://github.com/pytorch/pytorch/pull/64572
-                    out = where((target == ignore_index), 0, out)
-            else:
-                out = reduced_sum / target.numel()
-                if label_smoothing > 0:
-                    ret = ret / target.numel()
-        else:
-            raise ValueError(f"Reduction argument: {reduction} to cross_entropy is not supported")
-
-        # TODO FIXME This is probably incorrect -- but somewhere above the dtype of out can disagree with PyTorch
-        out = out.to(a.dtype)
-
-        if label_smoothing > 0:
-            return out * (1 - label_smoothing) + (ret * (label_smoothing / C))
-        else:
-            return out
+        log_softmax_input = log_softmax(a, dim=class_dim)
+        return nll_loss(log_softmax_input, target, weight, ignore_index, reduction)
 
 
-# TODO The function cross_entropy_backward shouldn't be registered as a primitive operation (above), but as
-#   a composite operation
-def _cross_entropy_grad(
+def _cross_entropy_input_checks(
     a: TensorLike,
     /,
     target: TensorLike,
-    weight: None | TensorLike = None,
-    size_average: None | Any = None,
-    ignore_index: int = -100,
-    reduce: None | Any = None,
-    reduction: str = "mean",
-    label_smoothing: float = 0.0,
+    weight: None | TensorLike,
+    ignore_index: int,
+    reduction: str,
+    label_smoothing: float,
+):
+    utils.check(
+        reduction in ("none", "sum", "mean"),
+        lambda: f'Expected reduction string to be "none", "sum", or "mean", but it is {reduction}.',
+        exception_type=ValueError,
+    )
+
+    utils.check(
+        a.ndim >= 1,
+        lambda: f"Expected the input tensor to have more than 1 dimension, but it has {a.ndim} dimensions.",
+    )
+
+    utils.check(
+        label_smoothing >= 0.0 and label_smoothing <= 1.0,
+        lambda: f"Expected label_smoothing to be in [0, 1] range but got {label_smoothing}.",
+    )
+
+    # class dimension is either the first one if no batch dim present (i.e. a.shape[0]),
+    # or right next to it (i.e. a.shape[1]).
+    class_dim = 1 if a.ndim >= 2 else 0
+    num_class = a.shape[class_dim]
+
+    utils.check(
+        weight is None or (weight.ndim == 1 and weight.shape[0] == num_class),
+        lambda: f"Expected a 1D tensor with {num_class} elements for weight argument, \
+            but found a tensor with {weight.ndim} dimensions and {weight.shape[0]} elements.",
+    )
+
+    if a.shape != target.shape:
+        utils.check(
+            utils.is_integer_dtype(target.dtype),
+            lambda: f"Expected target to be a tensor with an integer dtype, but it has dtype {target.dtype}.",
+        )
+
+        utils.check(
+            a.ndim == target.ndim + 1,
+            lambda: f"Expected the input tensor to have {(target.ndim + 1)=} dimensions, but it has {a.ndim} dimensions.",
+        )
+
+        # target should match input in dims which do not correspond to the class dim, i.e.
+        # (input.shape[:class_dim] + input.shape[class_dim + 1:]) == target.shape <=> True
+        expected_target_shape = a.shape[:class_dim] + a.shape[class_dim + 1 :]
+
+        utils.check(
+            expected_target_shape == target.shape,
+            lambda: f"Expected the target tensor to have the same shape as the input tensor except for the class dimension \
+                {expected_target_shape}, but it has shape {target.shape}.",
+        )
+    else:
+        # target represents class probabilities and is the range [0.0, 1.0]
+        utils.check(
+            utils.is_float_dtype(target.dtype),
+            lambda: f"Expected the target to have float dtype when target contains class probabilities \
+                but it is {target.dtype}.",
+        )
+        utils.check(
+            ignore_index < 0,
+            lambda: "ignore_index argument is not supported when target contains class probabilities.",
+        )
+
+
+def _cross_entropy_loss_probability_target(
+    a: TensorLike,
+    /,
+    target: TensorLike,
+    weight: None | TensorLike,
+    ignore_index: int,
+    reduction: str,
+    label_smoothing: float,
 ) -> TensorLike:
-    fwd: TensorLike = cross_entropy(a, target, weight, size_average, ignore_index, reduce, reduction, label_smoothing)
+    # class dimension is either the first one if no batch dim present (i.e. a.shape[0]),
+    # or right next to it (i.e. a.shape[1]).
+    class_dim = 1 if a.ndim >= 2 else 0
+    num_class = a.shape[class_dim]
 
-    g: TensorLike = get_grad(fwd)
-    a_grad: TensorLike = cross_entropy_backward(g, a, target, weight, reduction, ignore_index, label_smoothing)
-    put_grad(a, a_grad)
+    if label_smoothing > 0.0:
+        target = (target * (1 - label_smoothing)) + (label_smoothing / num_class)
 
-    return fwd
+    out = log_softmax(a, dim=class_dim) * target
+
+    if weight is not None:
+        bcast_weight = reshape(weight, [num_class] + [1 for _ in range(2, a.ndim)])
+        out = out * bcast_weight
+
+    out = -out
+
+    if reduction == "none":
+        return sum(out, dim=class_dim)
+    elif reduction == "sum":
+        return sum(out)
+    elif reduction == "mean":
+        return sum(out) / (a.numel() // num_class)
 
 
-register_grad(cross_entropy, _cross_entropy_grad)
+def _cross_entropy_loss_label_smoothing(
+    a: TensorLike,
+    /,
+    target: TensorLike,
+    weight: None | TensorLike,
+    ignore_index: int,
+    reduction: str,
+    label_smoothing: int,
+) -> TensorLike:
+    # class dimension is either the first one if no batch dim present (i.e. a.shape[0]),
+    # or right next to it (i.e. a.shape[1]).
+    class_dim = 1 if a.ndim >= 2 else 0
+    num_class = a.shape[class_dim]
+
+    log_softmax_value = log_softmax(a, dim=class_dim)
+
+    if weight is not None:
+        bcast_weight = reshape(weight, [num_class] + [1 for _ in range(2, len(a.shape))])
+        out = -(log_softmax_value * bcast_weight)
+    else:
+        out = -log_softmax_value
+
+    smooth_loss = sum(out, dim=class_dim)
+
+    # Make target broadcastable with output, which has same shape as input tensor.
+    selected_target_mask = target != ignore_index
+    smooth_loss = where(selected_target_mask, smooth_loss, 0)
+
+    if reduction == "none":
+        ret = smooth_loss
+    elif reduction == "sum":
+        ret = sum(smooth_loss)
+    elif reduction == "mean":
+        reduced_sum = sum(out)
+        if weight is not None:
+            # Gather the weights for each target class.
+            # Mask the ignored target classes.
+            # Sum together all target weights.
+            # Make target broadcastable with output, which has same shape as input tensor.
+            expanded_weight = expand(bcast_weight, a.shape)
+            bcast_target = unsqueeze(target, class_dim)
+            selected_weight = take_along_dim(expanded_weight, bcast_target, class_dim)
+            selected_weight = where(selected_target_mask, squeeze(selected_weight), 0)
+            ret = reduced_sum / sum(selected_weight)
+        else:
+            # The weight tensor is none, so the total weight is the number of valid target elements not equal to
+            # ignore_index argument
+            ret = reduced_sum / sum(selected_target_mask)
+
+    nll_loss_value = nll_loss(log_softmax_value, target, weight, ignore_index, reduction)
+
+    return (nll_loss_value * (1.0 - label_smoothing)) + (ret * (label_smoothing / num_class))
 
 
 # TODO Is this a method?
@@ -4204,30 +4128,30 @@ def _nll_loss_helper(
         lambda: f"Expected the input tensor to have {(target.ndim + 1)=} dimensions, but it has {a.ndim} dimensions.",
     )
 
-    # channels dimension is either the first one if no batch dim present (i.e. a.shape[0]),
+    # class dimension is either the first one if no batch dim present (i.e. a.shape[0]),
     # or right next to it (i.e. a.shape[1]).
-    channels_dim = 1 if a.ndim >= 2 else 0
-    num_channels = a.shape[channels_dim]
-    # target should match input in dims which do not correspond to the channels dim, i.e.
-    # (input.shape[:channels_dim] + input.shape[channels_dim + 1:]) == target.shape <=> True
-    expected_target_shape = a.shape[:channels_dim] + a.shape[channels_dim + 1 :]
+    class_dim = 1 if a.ndim >= 2 else 0
+    num_class = a.shape[class_dim]
+    # target should match input in dims which do not correspond to the class dim, i.e.
+    # (input.shape[:class_dim] + input.shape[class_dim + 1:]) == target.shape <=> True
+    expected_target_shape = a.shape[:class_dim] + a.shape[class_dim + 1 :]
 
     utils.check(
         expected_target_shape == target.shape,
-        lambda: f"Expected the target tensor to have the same shape as the input tensor except for the channels dimension \
+        lambda: f"Expected the target tensor to have the same shape as the input tensor except for the class dimension \
             {expected_target_shape}, but it has shape {target.shape}.",
     )
 
     utils.check(
-        weight is None or (weight.ndim == 1 and weight.shape[0] == num_channels),
-        lambda: f"Expected a 1D tensor with {num_channels} elements for weight argument, \
+        weight is None or (weight.ndim == 1 and weight.shape[0] == num_class),
+        lambda: f"Expected a 1D tensor with {num_class} elements for weight argument, \
             but found a tensor with {weight.ndim} dimensions and {weight.shape[0]} elements.",
     )
 
     # NOTE: [Handling of 'ignore_index' parameter]
     # What does it mean to ignore an index?
     #   The 'ignore_index' parameter specifies a target value that does not contribute to input gradient.
-    # 'ignore_index' can be outside of the [0, num_channels) range, which can cause out-of-bounds errors when gathering
+    # 'ignore_index' can be outside of the [0, num_class) range, which can cause out-of-bounds errors when gathering
     # values from input tensor.
     #
     # What does ATen do?
@@ -4236,12 +4160,12 @@ def _nll_loss_helper(
     #
     # What do we do?
     #   We mask the ignore_index entries on the output tensor from take_along_axis because we expect the targets to be
-    # within [0, num_channels) range.
+    # within [0, num_class) range.
     #
     # Why do we like our approach better?
     #   Mimicking Aten behavior requires masking the target tensor before calling take_along_axis, which would add more
     # operations to the fusion. We should follow this approach until we see real examples where ignore_index is
-    # out-of-bounds of [0, num_channels) range.
+    # out-of-bounds of [0, num_class) range.
     #
     # What are the alternative options?
     #   We can add a `mode` parameter to take_along_axis that controls how to handle out-of-bounds indices.
@@ -4250,20 +4174,20 @@ def _nll_loss_helper(
     out = -a
 
     if weight is not None:
-        bcast_weight = reshape(weight, [num_channels] + [1 for _ in range(2, a.ndim)])
+        bcast_weight = reshape(weight, [num_class] + [1 for _ in range(2, a.ndim)])
         out = out * bcast_weight
 
     # Make target broadcastable with output, which has same shape as input tensor.
-    bcast_target = unsqueeze(target, channels_dim)
+    bcast_target = unsqueeze(target, class_dim)
 
-    out = take_along_dim(out, bcast_target, channels_dim)
+    out = take_along_dim(out, bcast_target, class_dim)
     selected_target_mask = bcast_target != ignore_index
     out = where(selected_target_mask, out, 0)
 
     # This section handles applying the reduction parameter to the output.
     # We return None for the total_weight when reduction is "none" or "sum" since it is unused in the backwards pass.
     if reduction == "none":
-        return squeeze(out, channels_dim), None
+        return squeeze(out, class_dim), None
     elif reduction == "sum":
         return sum(out), None
     elif reduction == "mean":
@@ -4273,7 +4197,7 @@ def _nll_loss_helper(
             # Mask the ignored target classes.
             # Sum together all target weights.
             expanded_weight = expand(bcast_weight, a.shape)
-            selected_weight = take_along_dim(expanded_weight, bcast_target, channels_dim)
+            selected_weight = take_along_dim(expanded_weight, bcast_target, class_dim)
             selected_weight = where(selected_target_mask, selected_weight, 0)
             bcast_weight_sum = sum(selected_weight)
             return (reduced_sum / bcast_weight_sum), bcast_weight_sum

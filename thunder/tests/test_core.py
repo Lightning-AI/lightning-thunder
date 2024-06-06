@@ -1312,7 +1312,6 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
     all_eq([hash(b.rhs()) for b in bsyms])
     all_eq([b.rhs() for b in bsyms])
 
-    # TODO Update needed here
     # The current way BoundSymbols are compared treats args and kwargs the same,
     # so the same semantic call can be considered 'equal' if the arguments are
     # passed differently.
@@ -1321,8 +1320,6 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
         d = ltorch.mul(a, b)
         return c, d
 
-    # Assert the current behavior.
-    # When the test case is supported, switch this to all_eq.
     bsyms = extract_bsyms(mul_rhs_kwargs, (a, b), ("mul",))
     all_eq([hash(b.rhs()) for b in bsyms])
     all_eq([b.rhs() for b in bsyms])
@@ -1331,25 +1328,21 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
     all_eq([b.sym for b in bsyms])
     all_eq([hash(b.sym) for b in bsyms])
 
-    # TODO: We also currently cannot assert that the right hand side of
-    #       identical operators with kwargs are equal.
+    # Assert that rhs of identical operators with same kwargs are equal.
     def same_kwargs(device, dtype):
         a = ltorch.full((2, 2), 5, device=device, dtype=dtype)
         b = ltorch.full((2, 2), 5, device=device, dtype=dtype)
         return a + b
 
-    # Assert the current behavior.
-    # When the test case is supported, switch the all_neq below to all_eq.
     bsyms = extract_bsyms(same_kwargs, (device, dtype), ("full",))
     all_eq([hash(b.rhs()) for b in bsyms])
-    all_neq([b.rhs() for b in bsyms])
+    all_eq([b.rhs() for b in bsyms])
 
-    # Again, the symbols should be the same.
+    # The symbols should be the same.
     all_eq([b.sym for b in bsyms])
     all_eq([hash(b.sym) for b in bsyms])
 
-    # We can, however, know when the number of kwargs are different,
-    # or the args are different.
+    # Assert that the kwargs are different and hash differently.
     def diff_kwargs(device, dtype):
         a = ltorch.full((1, 2), 2, device=device, dtype=dtype)
         b = ltorch.full((2, 3), 5, device=device, dtype=dtype)
@@ -1357,7 +1350,7 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
         return a, b, c
 
     bsyms = extract_bsyms(diff_kwargs, (device, dtype), ("full",))
-    all_eq([hash(b.rhs()) for b in bsyms])
+    all_neq([hash(b.rhs()) for b in bsyms])
     all_neq([b.rhs() for b in bsyms])
 
     # Assert that boundsymbols for different ops hash/compare differently.

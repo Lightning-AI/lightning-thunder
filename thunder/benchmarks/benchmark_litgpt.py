@@ -27,6 +27,9 @@ world_size = int(os.environ.get("WORLD_SIZE", 1))
 local_rank = int(os.environ.get("LOCAL_RANK", 0))
 global_rank = int(os.environ.get("RANK", 0))
 if world_size > 1:
+    # Avoids the allocator thrashing issue in PyTorch NCCL backend.
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/420
+    os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
     torch_dist.init_process_group(backend="nccl")
     pg = torch_dist.distributed_c10d._get_default_group()
 device = torch.device("cuda", local_rank)
