@@ -115,7 +115,7 @@ def test_view_ops(executor, device: str, dtype: dtypes.dtype):
     extrace = traces[-1]
     alloc_mem = get_alloc_memory(extrace)
     if isinstance(executor, nvFuserTestExecutor):
-        assert alloc_mem[0] == 144
+        assert alloc_mem[0] == 128
         assert sum(alloc_mem[1].values()) == get_return_memory(extrace.bound_symbols[-1])  # 72
     if isinstance(executor, TorchTestExecutor):
         assert alloc_mem[0] == 112
