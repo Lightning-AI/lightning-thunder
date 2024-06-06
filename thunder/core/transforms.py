@@ -7,6 +7,7 @@ from functools import lru_cache, partial, wraps
 import math
 from numbers import Number
 from typing import Any, Dict, Union, Optional
+from types import NoneType
 from collections.abc import Callable
 from collections.abc import Hashable
 from collections.abc import Sequence
@@ -59,7 +60,7 @@ from thunder.clang import (
     reciprocal,
     convolution,
 )
-from thunder.core.transform_common import dce
+from thunder.core.transform_common import dce, EarlyTransform, AdditionalTransform, PostOptimizationTransform
 from thunder.core.vjp_utils import make_aug_forward_and_backward
 from thunder.extend import Executor
 import thunder.torch as ltorch
@@ -400,8 +401,8 @@ def visitor_transform(trace_from: Trace, visit: Callable, *, provenance: None | 
 def add_transform(
     cfn: Callable,
     *,
-    transform: Callable | None = None,
-    early_transform: Callable | None = None,
+    transform: AdditionalTransform | None = None,
+    early_transform: EarlyTransform | None = None,
     disable_torch_autograd_support=False,
 ) -> Callable:
     from thunder.common import _create_callable, CompileData, CompileStats
@@ -410,6 +411,8 @@ def add_transform(
 
     utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
     utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
+    utils.check_type(transform, (NoneType, AdditionalTransform))
+    utils.check_type(transform, (NoneType, EarlyTransform))
 
     assert cd.using_jit or early_transform is None
     assert transform is not None or early_transform is not None
@@ -431,6 +434,7 @@ def add_transform(
             # cache, interpretation?
             early_transforms=early_transforms,
             additional_transforms=additional_transforms,
+            post_optimization_transforms=cfn._lc_post_optimization_transforms,
             disable_torch_autograd=cd.disable_torch_autograd_support or disable_torch_autograd_support,
             **cd.compile_options,
         )
@@ -461,13 +465,38 @@ def add_transform(
 
 # TODO Consider refactoring this with the above
 # Helper function to add a post-optimization transform
-def add_post_optimization_transform(cfn: Callable, transform: Callable) -> Callable:
+def add_post_optimization_transform(cfn: Callable, transform: PostOptimizationTransform) -> Callable:
     from thunder.common import _create_callable, CompileData, CompileStats
 
     cd: None | Any = getattr(cfn, "_lc_cd", None)
 
     utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
     utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
+    utils.check_type(transform, PostOptimizationTransform)
+
+    if cd.using_jit:
+        from thunder import jit
+
+        post_optimization_transforms = cfn._lc_post_optimization_transforms[:]
+        post_optimization_transforms.append(transform)
+        jfn = jit(
+            cd.fn,
+            langctx=cd.langctx,
+            executors=cd.executors_list,
+            sharp_edges=cd.sharp_edges,
+            # cache, interpretation?
+            early_transforms=cfn._lc_early_transforms[:],
+            additional_transforms=cfn._lc_transforms[:],
+            post_optimization_transforms=post_optimization_transforms,
+            disable_torch_autograd=cd.disable_torch_autograd_support,
+            **cd.compile_options,
+        )
+        from thunder import ThunderModule
+
+        if isinstance(jfn, ThunderModule):
+            jfn._overrides_parameters = cfn._overrides_parameters
+            jfn._overrides_buffers = cfn._overrides_buffers
+        return jfn
 
     cs = CompileStats()
     transforms = cfn._lc_transforms
