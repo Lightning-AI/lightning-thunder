@@ -107,35 +107,40 @@ class ComputationTraceTransformVisitorForTensorParallel:
         return self._has_other_tensor_parallel
 
     def __call__(self, bsym: BoundSymbol) -> VISIT_TYPE:
+        from thunder.core.prims import PrimIDs
         from thunder.core.transforms import VISIT_TYPE
-        from thunder.core.trace import get_tracectx
         from thunder.core.proxies import variableify
 
-        for t in bsym.flat_proxy_args:
+        if bsym.sym.id in {
+            PrimIDs.UNPACK_TRIVIAL,
+            PrimIDs.UNPACK_SEQUENCE,
+            PrimIDs.UNPACK_KEY,
+            PrimIDs.UNPACK_EMPTY_DICT,
+        }:
+            return VISIT_TYPE.NO_OP
+
+        pre_post_process: PrePostProcessInterface | None = self.bsym_to_prepostprocess.get(bsym, None)
+        new_bsym = bsym.from_bsym_swap_proxies(self.swap_map)
+        for t in new_bsym.flat_proxy_args:
             self._maybe_other_tensor_parallel(t)
 
-        input_swap_map: dict[VariableInterface, ProxyInterface] = {}
-        pre_post_process: PrePostProcessInterface | None = None
-        if bsym in self.bsym_to_prepostprocess:
-            pre_post_process = self.bsym_to_prepostprocess[bsym]
-            orig_arg = bsym.flat_proxy_args[0]
+        if pre_post_process is not None:
+            orig_arg = new_bsym.flat_proxy_args[0]
             new_arg, preprocess_artifacts = pre_post_process.preprocess(orig_arg)
             if new_arg.name != orig_arg.name:
-                input_swap_map[variableify(orig_arg)] = new_arg
-
-        new_bsym = bsym.from_bsym_swap_proxies(self.swap_map, skip_output=True)
-        if pre_post_process is not None:
-            new_bsym = new_bsym.from_bsym_swap_proxies(input_swap_map)
+                new_bsym = new_bsym.from_bsym_swap_proxies({variableify(orig_arg): new_arg})
             new_bsym = pre_post_process.maybe_modify_args_and_kwargs(new_bsym)
             # note(crcrpar): This header seems to be lost in the extrace.
             new_bsym.header = f"{pre_post_process.__class__.layer_type}"
-        trace = get_tracectx()
-        trace.scopes[-1].append(new_bsym)
 
+        new_out = new_bsym.sym(*new_bsym.args, **new_bsym.kwargs)
+
+        var_original_bsym_output = variableify(new_bsym.flat_proxy_outs[0])
         if pre_post_process is not None:
-            y = bsym.flat_proxy_outs[0]
-            processed_y = pre_post_process.postprocess(y, preprocess_artifacts)
-            self.swap_map[variableify(y)] = processed_y
+            processed_y = pre_post_process.postprocess(new_out, preprocess_artifacts)
+            self.swap_map[var_original_bsym_output] = processed_y
+        else:
+            self.swap_map[var_original_bsym_output] = new_out
 
         return VISIT_TYPE.REPLACE
 
