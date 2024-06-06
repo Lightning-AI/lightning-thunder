@@ -7782,7 +7782,7 @@ def cross_entropy_sample_generator(op, device, dtype, requires_grad, **kwargs):
                 if not probability_target
                 else make(shape[1], low=0.0, high=1.0, requires_grad=True)
             ),
-            weight=make(C, requires_grad=False) if weight_flag else None,
+            weight=make(C, low=1.0, high=2.0, requires_grad=False) if weight_flag else None,
             ignore_index=ignore_index,
             reduction=reduction_str,
             label_smoothing=label_smoothing,
