@@ -527,7 +527,9 @@ class BoundSymbol(BoundSymbolInterface):
         return (self.sym, self._var_args, self._var_output) == (other.sym, other._var_args, other._var_output)
 
     def rhs(self):
-        return BoundSymbolRHS(self.sym, tuple(tree_flatten(self._var_args)[0]), tuple(tree_flatten(self._var_kwargs)[0]))
+        return BoundSymbolRHS(
+            self.sym, tuple(tree_flatten(self._var_args)[0]), tuple(tree_flatten(self._var_kwargs)[0])
+        )
 
     # TODO Document contexts
     def import_ctx(self):
