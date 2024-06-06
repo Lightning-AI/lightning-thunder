@@ -1,5 +1,6 @@
 import time
-from typing import Any, Dict
+from typing import Any
+from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from itertools import filterfalse
 from functools import partial
@@ -318,3 +319,43 @@ def cse(trace: Trace) -> Trace:
         TraceProvenance(f"Common Subexpression Elimination (took {elapsed_time_millis} milliseconds)")
     )
     return cse_trace
+
+
+# Base class for all types of Transform.
+class Transform:
+    pass
+
+
+# Below are the types of Transform that user can create and apply to the `jitted` function.
+class EarlyTransform(Transform, ABC):
+    """
+    EarlyTransform enables transforming prologue, computation and epilogue trace.
+    Note that the computation trace here is before the autograd transform, so any update to
+    the computation trace will also update backward trace.
+    """
+
+    @abstractmethod
+    def __call__(self, prologue_trace: Trace, computation_trace: Trace, epilogue_trace: Trace | None, **kwargs):
+        pass
+
+
+class AdditionalTransform(Transform, ABC):
+    """
+    AdditionalTransform enables transforming the computation trace before optimization pass.
+    Note that this transform is only applicable if autograd is disabled.
+    """
+
+    @abstractmethod
+    def __call__(self, computation_trace: Trace, **kwargs):
+        pass
+
+
+class PostOptimizationTransform(Transform, ABC):
+    """
+    PostOptimizationTransform EarlyTransform enables transforming computation trace after optimization pass.
+    Note that this transform will also be applied to the backward trace if the the autograd transform was enabled.
+    """
+
+    @abstractmethod
+    def __call__(self, computation_trace: Trace, **kwargs):
+        pass
