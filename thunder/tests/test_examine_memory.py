@@ -71,19 +71,12 @@ def test_view_ops(executor, device: str, dtype: dtypes.dtype):
     bw_traces = thunder.last_backward_traces(cbar)
     bw_extrace = bw_traces[-1]
     max_mem_bw = get_alloc_memory(bw_extrace)
-
-    # NOTE: nvFuser is able to avoid the allocation of result2 and produce it as alias to result1.
-    if executor.name == "nvfuser":
-        assert max_mem_bw[0] == 128
-    else:
-        assert max_mem_bw[0] == 144
+    # nvFuser should be able to avoid the allocation of result2 and produce it as alias to result1, reducing the allocated memory to 128. However,
+    # due to a limitation of `get_alloc_memory` (https://github.com/Lightning-AI/lightning-thunder/blob/6dfe7e939a19d1ef5ab259de8709a79f0104fa42/thunder/examine/memory_caculation.py#L123-L125), this saved memory is not taken into consideration.
+    assert max_mem_bw[0] == 144
 
     # NOTE: The get_return_memory method cannot distinguish wether the returned values come from an alias op.
-    # In this case, since nvFuser returns one tensor and it's reshaped alias it only allocates once (32/2).
-    if executor.name == "nvfuser":
-        assert sum(max_mem_bw[1].values()) == 16
-    else:
-        assert sum(max_mem_bw[1].values()) == get_return_memory(bw_extrace.bound_symbols[-1])  # 32
+    assert sum(max_mem_bw[1].values()) == get_return_memory(bw_extrace.bound_symbols[-1])  # 32
 
     def bar1(a, b, c):  # [4], [1,4,4], [4,1,4]
         a_1 = torch.unsqueeze(a, 0)  # [1,4]
@@ -126,7 +119,7 @@ def test_view_ops(executor, device: str, dtype: dtypes.dtype):
     extrace = traces[-1]
     alloc_mem = get_alloc_memory(extrace)
     if isinstance(executor, nvFuserTestExecutor):
-        assert alloc_mem[0] == 144
+        assert alloc_mem[0] == 128
         assert sum(alloc_mem[1].values()) == get_return_memory(extrace.bound_symbols[-1])  # 72
     if isinstance(executor, TorchTestExecutor):
         assert alloc_mem[0] == 112
