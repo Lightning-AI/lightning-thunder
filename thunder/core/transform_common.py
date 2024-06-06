@@ -353,7 +353,7 @@ class AdditionalTransform(Transform, ABC):
 class PostOptimizationTransform(Transform, ABC):
     """
     PostOptimizationTransform EarlyTransform enables transforming computation trace after optimization pass.
-    Note that this transform will also get backward computation trace if the the autograd transform was enabled.
+    Note that this transform will also be applied to the backward trace if the the autograd transform was enabled.
     """
 
     @abstractmethod
