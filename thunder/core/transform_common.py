@@ -335,7 +335,7 @@ class EarlyTransform(Transform, ABC):
     """
 
     @abstractmethod
-    def __call__(self, prologue_trace: Trace, computation_trace: Trace, epilogue_trace: Trace, **kwargs):
+    def __call__(self, prologue_trace: Trace, computation_trace: Trace, epilogue_trace: Trace | None, **kwargs):
         pass
 
 

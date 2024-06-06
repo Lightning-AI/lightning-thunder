@@ -412,7 +412,7 @@ def add_transform(
     utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
     utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
     utils.check_type(transform, (NoneType, AdditionalTransform))
-    utils.check_type(transform, (NoneType, EarlyTransform))
+    utils.check_type(early_transform, (NoneType, EarlyTransform))
 
     assert cd.using_jit or early_transform is None
     assert transform is not None or early_transform is not None
@@ -507,28 +507,30 @@ def add_post_optimization_transform(cfn: Callable, transform: PostOptimizationTr
 
 
 # The no-op transform. A trivial composable transform, only useful as an example.
-def _noop_transform(trace: Trace, **kwargs) -> Trace:
-    start_time_ns = time.time_ns()
-    noop_trace = from_trace(trace)
+class _NoopTransform(AdditionalTransform):
+    def __call__(self, trace: Trace, **kwargs) -> Trace:
+        start_time_ns = time.time_ns()
+        noop_trace = from_trace(trace)
 
-    tracectx_tok: Any
-    try:
-        tracectx_tok = set_tracectx(noop_trace)
-        prims.comment("This comment added by the no-op transform")
-    finally:
-        reset_tracectx(tracectx_tok)
+        tracectx_tok: Any
+        try:
+            tracectx_tok = set_tracectx(noop_trace)
+            prims.comment("This comment added by the no-op transform")
+        finally:
+            reset_tracectx(tracectx_tok)
 
-    noop_trace.bound_symbols.extend(trace.bound_symbols)
+        noop_trace.bound_symbols.extend(trace.bound_symbols)
 
-    end_time_ns = time.time_ns()
-    elapsed_time_ns = end_time_ns - start_time_ns
-    elapsed_time_millis = elapsed_time_ns // 1000000
-    noop_trace.set_provenance(TraceProvenance(f"No-op Transform (took {elapsed_time_millis} milliseconds)"))
+        end_time_ns = time.time_ns()
+        elapsed_time_ns = end_time_ns - start_time_ns
+        elapsed_time_millis = elapsed_time_ns // 1000000
+        noop_trace.set_provenance(TraceProvenance(f"No-op Transform (took {elapsed_time_millis} milliseconds)"))
 
-    return noop_trace
+        return noop_trace
 
 
 def noop(cfn: Callable) -> Callable:
+    _noop_transform = _NoopTransform()
     return add_transform(cfn, transform=_noop_transform)
 
 
@@ -1392,18 +1394,20 @@ def grad(
 
         return grad_func
 
-    def _grad_transform(trc: Trace, *, executors_list: Sequence[Any]) -> Trace:
-        # Using trc.python_callable() makes it impossible to retrace the
-        # function because the python_callable uses python_ctx which replaces
-        # symbol occurrences with its symbol._call_ctx function
-        @wraps(trc.python_callable())
-        def python_callable(*args, **kwargs):
-            return eval_trace(trc, *args, **kwargs)
+    class _GradTransform(AdditionalTransform):
+        def __call__(self, trc: Trace, *, executors_list: Sequence[Any]) -> Trace:
+            # Using trc.python_callable() makes it impossible to retrace the
+            # function because the python_callable uses python_ctx which replaces
+            # symbol occurrences with its symbol._call_ctx function
+            @wraps(trc.python_callable())
+            def python_callable(*args, **kwargs):
+                return eval_trace(trc, *args, **kwargs)
 
-        gradtrc = construct_trace()(grad(python_callable), *trc.args, **trc.kwargs)
-        return gradtrc
+            gradtrc = construct_trace()(grad(python_callable), *trc.args, **trc.kwargs)
+            return gradtrc
 
     cfn._using_grad_transform = True
+    _grad_transform = _GradTransform()
     return add_transform(cfn, transform=_grad_transform, disable_torch_autograd_support=True)
 
 

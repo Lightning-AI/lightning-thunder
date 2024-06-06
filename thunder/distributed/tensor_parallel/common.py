@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from thunder.core.proxies import DistParallelType
 from thunder.core.proxies import TensorProxy
+from thunder.core.transform_common import EarlyTransform
 
 if TYPE_CHECKING:
     from typing import Any
@@ -146,7 +147,7 @@ class ComputationTraceTransformVisitorForTensorParallel:
 
 
 @dataclass
-class TransformForTensorParallel:
+class TransformForTensorParallel(EarlyTransform):
     rank: int
     world_size: int
     compile_data: CompileData
