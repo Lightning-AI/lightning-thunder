@@ -397,7 +397,6 @@ class FusionDefinitionWrapper:
     cache_info: None | Callable = None
     cache_clear: None | Callable = None
     last_used: None | FusionDefinition = None
-    bound_symbols: None | list[BoundSymbol] = None
 
     def __call__(self, *args):
         fd = self.get_fd(to_descriptors(args))
@@ -512,7 +511,7 @@ def create_fusion_definition_wrapper(
         # A closure over local trace and region
         return create_fd(bsyms, input_descriptors, sorted_unique_inputs, sorted_unique_outputs)
 
-    fdw = FusionDefinitionWrapper(get_fd, name, get_fd.cache_info, get_fd.cache_clear, bsyms)
+    fdw = FusionDefinitionWrapper(get_fd, name, get_fd.cache_info, get_fd.cache_clear)
     return fdw
 
 
