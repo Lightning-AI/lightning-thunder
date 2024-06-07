@@ -88,7 +88,7 @@ def test_sdpa_autocast_flash():
 
     # Verifies the result is close to PyTorch
     for autocast_dtype in (torch.bfloat16, torch.float16):
-        with torch.amp.autocast('cuda', dtype=autocast_dtype):
+        with torch.amp.autocast("cuda", dtype=autocast_dtype):
             # NOTE The new context manager torch.nn.attention.sdpa_kernel takes
             # an opt-in approach. Any backends not included in the arguments
             # list are disabled within the context and restored when exiting context.
