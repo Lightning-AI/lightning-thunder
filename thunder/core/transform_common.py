@@ -335,7 +335,7 @@ class EarlyTransform(Transform, ABC):
     """
 
     @abstractmethod
-    def __call__(self, prologue_trace: Trace, computation_trace: Trace, epilogue_trace: Trace | None, **kwargs):
+    def transform_traces(self, prologue_trace: Trace, computation_trace: Trace, epilogue_trace: Trace | None, **kwargs):
         pass
 
 
@@ -346,7 +346,7 @@ class AdditionalTransform(Transform, ABC):
     """
 
     @abstractmethod
-    def __call__(self, computation_trace: Trace, **kwargs):
+    def transform_trace(self, computation_trace: Trace, **kwargs):
         pass
 
 
@@ -357,5 +357,5 @@ class PostOptimizationTransform(Transform, ABC):
     """
 
     @abstractmethod
-    def __call__(self, computation_trace: Trace, **kwargs):
+    def transform_trace(self, computation_trace: Trace, **kwargs):
         pass

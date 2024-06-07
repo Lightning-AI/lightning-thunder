@@ -175,7 +175,7 @@ class TransformForTensorParallel(EarlyTransform):
     @abstractmethod
     def distparallel_type(self) -> DistParallelType: ...
 
-    def __call__(
+    def transform_traces(
         self,
         prologue_trace: TraceCtx,
         computation_trace: TraceCtx,

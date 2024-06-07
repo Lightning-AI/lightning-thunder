@@ -508,7 +508,7 @@ def add_post_optimization_transform(cfn: Callable, transform: PostOptimizationTr
 
 # The no-op transform. A trivial composable transform, only useful as an example.
 class _NoopTransform(AdditionalTransform):
-    def __call__(self, trace: Trace, **kwargs) -> Trace:
+    def transform_trace(self, trace: Trace, **kwargs) -> Trace:
         start_time_ns = time.time_ns()
         noop_trace = from_trace(trace)
 
@@ -1395,7 +1395,7 @@ def grad(
         return grad_func
 
     class _GradTransform(AdditionalTransform):
-        def __call__(self, trc: Trace, *, executors_list: Sequence[Any]) -> Trace:
+        def transform_trace(self, trc: Trace, *, executors_list: Sequence[Any]) -> Trace:
             # Using trc.python_callable() makes it impossible to retrace the
             # function because the python_callable uses python_ctx which replaces
             # symbol occurrences with its symbol._call_ctx function

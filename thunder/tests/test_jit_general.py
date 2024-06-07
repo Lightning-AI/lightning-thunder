@@ -820,7 +820,7 @@ def test_post_optimization_transform():
         return a * a + b * c
 
     class MyTransform(PostOptimizationTransform):
-        def __call__(self, trace, executors_list=None):
+        def transform_trace(self, trace, executors_list=None):
             # Transform that adds a comment before any `add` BoundSymbol.
             commented_trace = thunder.core.trace.from_trace(trace)
 
