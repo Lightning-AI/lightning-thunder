@@ -223,7 +223,6 @@ def cse_single_bsym(
         swap_map=redundant_map,
         skip_inputs=False,
         skip_output=True,
-        skip_subsymbols=True,
     )
 
     # Skip appending this bsym to the new bound symbols due to its rhs being a common subexpression.
