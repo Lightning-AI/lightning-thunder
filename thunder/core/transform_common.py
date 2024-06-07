@@ -86,7 +86,7 @@ def _inplace_copy_sanity_check(extrace: Trace):
 #   that only produce non-proxy objects
 # NOTE needed_proxies is an in/out argument, it takes an initial set of Variables you want to keep, and return
 #   all the needed proxies of the input trace
-def dce(trace: Trace, needed_proxies=None) -> Trace:
+def dce(trace: Trace, needed_proxies: None | set[Variable] =None) -> Trace:
     start_time_ns = time.time_ns()
 
     producer_map: ProxyDict = producers(trace)
