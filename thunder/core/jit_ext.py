@@ -56,6 +56,7 @@ from thunder.core.proxies import (
     DistParallelType,
     proxy,
     Proxy,
+    AnyProxy,
     NumberProxy,
     StringProxy,
     TensorProxy,
@@ -560,6 +561,17 @@ class GeneralJitCtx(MinimalCtx):
         # avoid double registration by skipping if value has a registered proxy.
         if isinstance(uvalue, Proxy) or value.original_value is not value.nothing:
             return uvalue
+        elif isinstance(uvalue, torch.device):
+            co: CACHE_OPTIONS = get_cache_option()
+            p: AnyProxy = proxy(uvalue, history=value.provenance)
+            if co in (CACHE_OPTIONS.CONSTANT_VALUES, CACHE_OPTIONS.SYMBOLIC_VALUES):
+                # NOTE: Even with SYMBOLIC_VALUES, we want to strictly constraint the device as
+                # the computation trace may utilize device specific executors.
+                self.add_constraint((clang.check_literal_like, p, uvalue))
+            elif co in (CACHE_OPTIONS.SAME_INPUT,):
+                raise NotImplementedError(f"Unsupported cache option {co}")
+            else:  # co is CACHE_OPTIONS.NO_CACHING
+                pass
         elif isinstance(uvalue, torch.Tensor):
             # we always want to proxy torch.Tensor, even const
 
@@ -895,7 +907,7 @@ def recursively_proxy(*args, **kwargs):
             v.track_items()
             need_proxy = any(proxy_recursion(i) for i in v.item_wrappers)
         else:
-            need_proxy = isinstance(v.value, torch.Tensor)
+            need_proxy = isinstance(v.value, torch.Tensor) or isinstance(v.value, torch.device)
         if need_proxy:
             ctx: GeneralJitCtx = get_general_jit_ctx()
             ctx.proxify(v)
