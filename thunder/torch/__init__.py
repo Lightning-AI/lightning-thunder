@@ -4056,12 +4056,14 @@ def create_symtype(cls, pytype, shape_env, val):
         dynamic_dim=DimDynamic.DUCK,
         constraint_dim=None,
     )
-    return cls(SymNode(
-        symbol,
-        shape_env,
-        pytype,
-        hint=val,
-    ))
+    return cls(
+        SymNode(
+            symbol,
+            shape_env,
+            pytype,
+            hint=val,
+        )
+    )
 
 
 def convert_nontensor(shape_env, a):
@@ -4090,9 +4092,11 @@ def meta_adaptor(func):
         from thunder.executors.sdpaex import _convert_to_fake_tensor, _convert_to_meta_tensor
         from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
         from torch.fx.experimental.symbolic_shapes import ShapeEnv, DimDynamic
-        fake_args=[]
-        fake_kwargs={}
-        shape_env = ShapeEnv() # what's shapeEnv?
+
+        fake_args = []
+        fake_kwargs = {}
+        shape_env = ShapeEnv()  # what's shapeEnv?
+
         def get_fake_arg(inp):
             if isinstance(inp, TensorProxy):
                 return _convert_to_meta_tensor(inp)
@@ -4104,14 +4108,16 @@ def meta_adaptor(func):
             else:
                 # non tensor, non sequence
                 return convert_nontensor(shape_env, inp)
+
         with FakeTensorMode() as mode:
             for arg in args:
                 fake_args.append(get_fake_arg(arg))
-            fake_kwargs = {k:get_fake_arg(v) for k, v in kwargs.items()}
+            fake_kwargs = {k: get_fake_arg(v) for k, v in kwargs.items()}
             fake_outs = func(*fake_args, **fake_kwargs)
         if isinstance(fake_outs, tuple):
             return tuple(TensorProxy(like=args[0], shape=fake_out.shape) for fake_out in fake_outs)
         return TensorProxy(like=args[0], shape=fake_outs.shape)
+
     return wrapper
 
 
