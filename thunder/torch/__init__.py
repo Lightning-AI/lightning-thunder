@@ -4044,6 +4044,77 @@ def avg_pool3d(
     return _avg_pool_helper(3, a, kernel_size, stride, padding, ceil_mode, count_include_pad, divisor_override)
 
 
+def create_symtype(cls, pytype, shape_env, val):
+    from torch._dynamo.source import ConstantSource
+    from torch import sym_int, SymBool, SymFloat, SymInt
+    from torch.fx.experimental.sym_node import to_node, SymNode, method_to_operator
+    from torch.fx.experimental.symbolic_shapes import ShapeEnv, DimDynamic
+
+    symbol = shape_env.create_symbol(
+        val,
+        source=ConstantSource(f"__testing_only{len(shape_env.var_to_val)}"),
+        dynamic_dim=DimDynamic.DUCK,
+        constraint_dim=None,
+    )
+    return cls(SymNode(
+        symbol,
+        shape_env,
+        pytype,
+        hint=val,
+    ))
+
+
+def convert_nontensor(shape_env, a):
+    from torch import sym_int, SymBool, SymFloat, SymInt
+    from thunder.core.proxies import IntegerProxy, FloatProxy
+
+    if isinstance(a, NumberProxy):
+        if a.value == None:
+            raise NotImplementedError("dynamic shape in thunder?")
+    if isinstance(a, IntegerProxy):
+        return create_symtype(SymInt, int, shape_env, a.value)
+    elif isinstance(a, FloatProxy):
+        return create_symtype(SymFloat, float, shape_env, a.value)
+    elif isinstance(a, float):
+        # return create_symtype(SymFloat, float, shape_env, a)
+        return a
+    elif isinstance(a, int):
+        # return create_symtype(SymInt, int, shape_env, a)
+        return a
+    else:
+        raise NotImplementedError(f"unknown type: {type(a)}")
+
+
+def meta_adaptor(func):
+    def wrapper(*args, **kwargs):
+        from thunder.executors.sdpaex import _convert_to_fake_tensor, _convert_to_meta_tensor
+        from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
+        from torch.fx.experimental.symbolic_shapes import ShapeEnv, DimDynamic
+        fake_args=[]
+        fake_kwargs={}
+        shape_env = ShapeEnv() # what's shapeEnv?
+        def get_fake_arg(inp):
+            if isinstance(inp, TensorProxy):
+                return _convert_to_meta_tensor(inp)
+            elif isinstance(inp, (list, tuple)):
+                out_s = []
+                for s in inp:
+                    out_s.append(get_fake_arg(s))
+                return out_s
+            else:
+                # non tensor, non sequence
+                return convert_nontensor(shape_env, inp)
+        with FakeTensorMode() as mode:
+            for arg in args:
+                fake_args.append(get_fake_arg(arg))
+            fake_kwargs = {k:get_fake_arg(v) for k, v in kwargs.items()}
+            fake_outs = func(*fake_args, **fake_kwargs)
+        if isinstance(fake_outs, tuple):
+            return tuple(TensorProxy(like=args[0], shape=fake_out.shape) for fake_out in fake_outs)
+        return TensorProxy(like=args[0], shape=fake_outs.shape)
+    return wrapper
+
+
 @torchsymbol(
     torch.nn.functional.adaptive_avg_pool2d, id="torch.nn.functional.adaptive_avg_pool2d", is_method=False, is_prim=True
 )

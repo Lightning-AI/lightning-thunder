@@ -6466,6 +6466,48 @@ def _call_dispatch(
                 unbound_fn = wrap_const(unbound_fn)  # TODO!
                 return _interpret_call(unbound_fn, slf, *args, **kwargs)
 
+    # torch.ops.aten._adaptive_avg_pool2d_backward
+    def is_torch_operators(fn):
+        if not hasattr(fn, '__module__'): return False
+        from thunder.torch import _torch_to_thunder_function_map
+        if fn not in _torch_to_thunder_function_map and fn.__module__ in ("torch", "torch.nn.functional"):
+            return True
+        return False
+    def register_torch_op(fn, fn_meta):
+        from thunder.core.langctxs import langctx, Languages
+        from thunder.core.symbol import Symbol
+        from thunder.torch import _torch_to_thunder_function_map
+        _fn = langctx(Languages.TORCH)(fn_meta)
+        sym = Symbol(
+                name=fn.__name__, meta=_fn, id=fn.__module__+fn.__name__,
+            )
+        _torch_to_thunder_function_map[fn] = sym
+        from thunder.core.jit_ext import ensure_recursive_proxies, record_source_loc_in_symbol_header, _general_jit_lookaside_map
+        _general_jit_lookaside_map.update(
+        {
+            fn: ensure_recursive_proxies(interpreter_needs_wrap(record_source_loc_in_symbol_header(sym)))
+        }
+        )
+        from thunder.executors.torchex import ex, _always_executable
+        op = ex.register_operator(fn.__name__, module=eval(fn.__module__), meta=fn_meta)
+        ex.register_implementation(sym, op, checker=_always_executable)
+        # have problem registering the augmented_fwd and bwd, which residuals? fwd and bwd name correspondance?
+        # possible_bwd_op = "_adaptive_avg_pool3d_backward"
+        # def bwd_wrapper(fwd_func, bwd_name):
+        #     def wrapper(*args, **kwargs):
+        #         primals = fwd_func(*args, **kwargs)
+
+        #         grad = get_grad(primals)
+        #         grad_a = bwd_func(grad, a)
+        #         put_grad(a, grad_a)
+
+        #         return primals
+        #     return wrapper
+
+    if is_torch_operators(fn):
+        from thunder.torch import meta_adaptor
+        register_torch_op(fn, meta_adaptor(fn))
+
     # (2) Handles lookasides
     lookaside_fn: INTERPRETER_SIGNALS | None | Callable = compilectx.lookaside(fn, *args, **kwargs)
     if lookaside_fn is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
