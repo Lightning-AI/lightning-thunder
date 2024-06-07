@@ -1517,25 +1517,6 @@ def copysign(a, b, /):
 
 
 # TODO Implement div
-@torchsymbol(torch.div, is_method=True)
-def div(
-    a: Number | TensorLike,
-    b: Number | TensorLike,
-    /,
-    *,
-    rounding_mode: None | str = None,
-    out: None | TensorLike = None,
-) -> Number | TensorLike:
-    utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
-
-    if rounding_mode is None:
-        return true_divide(a, b)
-    elif rounding_mode == "trunc":
-        return clang.trunc_divide(a, b)
-    elif rounding_mode == "floor":
-        return floor_divide(a, b)
-    else:
-        raise ValueError(f"div does not support the rounding_mode={rounding_mode} argument")
 
 
 @torchsymbol(torch.eq, is_method=True)
