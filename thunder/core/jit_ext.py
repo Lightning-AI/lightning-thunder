@@ -907,7 +907,7 @@ def recursively_proxy(*args, **kwargs):
             v.track_items()
             need_proxy = any(proxy_recursion(i) for i in v.item_wrappers)
         else:
-            need_proxy = isinstance(v.value, torch.Tensor) or isinstance(v.value, torch.device)
+            need_proxy = isinstance(v.value, torch.Tensor)
         if need_proxy:
             ctx: GeneralJitCtx = get_general_jit_ctx()
             ctx.proxify(v)
@@ -1117,7 +1117,7 @@ def _general_jit_wrap_callback(value):
         pass  # basic containers are OK, too, subclasses?
     elif isinstance(uvalue, Proxy):
         value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
-    elif isinstance(uvalue, (float, int, complex, str)) and not isinstance(uvalue, Proxy):
+    elif isinstance(uvalue, (float, int, complex, str, torch.device)) and not isinstance(uvalue, Proxy):
         if value.provenance.ext_flag & EXT_FLAG_IS_PROXY_DERIVED:  # we already have seen this
             pass
         elif should_register_for_prologue(value.provenance):
