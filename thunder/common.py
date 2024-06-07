@@ -673,7 +673,7 @@ def _execute_trace(
 
     # Applies post-optimization transforms
     for transform in post_optimization_transforms:
-        extrace = transform(extrace)
+        extrace = transform.transform_trace(extrace)
         extraces.append(extrace)
 
     # Constructs the Python callable
@@ -825,7 +825,7 @@ def _create_callable(
 
             # Applies transforms
             for transform in transforms:
-                trc = transform(trc, executors_list=cd.executors_list)
+                trc = transform.transform_trace(trc, executors_list=cd.executors_list)
                 traces.append(trc)
 
             #
