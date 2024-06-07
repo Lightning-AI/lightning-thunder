@@ -437,12 +437,37 @@ def _tensor_from_sequence_prims_transform(
     return tensor_from_sequence(seq_or_number, device=torch_device, dtype=torch_dtype)
 
 
+def _get_and_update_rng_state_impl(seed, offset, device):
+    state = torch.cuda.get_rng_state(device)
+    seed, offset = torch.chunk(state, 2)
+    # We follow the nvFuser way here. The offset used by nvfuser = pytorch_offset // 4
+    # See Note [Divide offset by 4] https://github.com/NVIDIA/Fuser/blob/729f36c/csrc/rng.cpp#L54
+    seed = seed.view(torch.int64).item()
+    offset = offset.view(torch.int64).item() // 4
+    # We follow the nvFuser way here. pytorch_new_offset = (nvfuser_offset + 1) * 4
+    # See Note [Divide offset by 4] https://github.com/NVIDIA/Fuser/blob/729f36c/csrc/rng.cpp#L54
+    new_offset = (offset + 1) * 4
+    seed_portion = torch.tensor([seed]).view(torch.uint8)
+    offset_portion = torch.tensor([new_offset]).view(torch.uint8)
+    new_state = torch.cat([seed_portion, offset_portion])
+    torch.cuda.set_rng_state(new_state, device)
+    return seed, offset
+
+
+get_and_update_rng_state_impl = ex.register_operator(
+    "get_and_update_rng_state_impl",
+    meta=prims.get_and_update_rng_state.meta,
+    fn=_get_and_update_rng_state_impl,
+)
+
+
 _register_implementation(prims.full, checker=_always_executable, execution_transform=_full_transform)
 _register_implementation(prims.iota, checker=_always_executable, execution_transform=_iota_transform)
 _register_implementation(prims.uniform, checker=_always_executable, execution_transform=_uniform_transform)
 _register_implementation(
     prims.uniform_philox, checker=_uniform_philox_prim_checker, execution_transform=_uniform_philox_prim_transform
 )
+_register_implementation(prims.get_and_update_rng_state, get_and_update_rng_state_impl, checker=_always_executable)
 _register_implementation(prims.randn, checker=_always_executable, execution_transform=_randn_prims_transform)
 _register_implementation(prims.empty, checker=_always_executable, execution_transform=_empty_prims_transform)
 _register_implementation(
@@ -843,11 +868,22 @@ remainder = _register_torch_operation("remainder")
 sub = _register_torch_operation("sub")
 true_divide = _register_torch_operation("true_divide")
 zeta = _register_torch_operation("zeta", module=torch.special)
+div = _register_torch_operation("div")
 
 
 # NOTE PyTorch elementwise operations require at least one input to be a tensor
 def _elementwise_binary_checker(a: Number | TensorProxy, b: Number | TensorProxy) -> bool:
     return isinstance(a, TensorLike) or isinstance(b, TensorLike)
+
+
+def _div_checker(
+    a: Number | TensorProxy,
+    b: Number | TensorProxy,
+    *,
+    rounding_mode: None | str = None,
+    out: None | TensorProxy = None,
+) -> TensorProxy:
+    return _elementwise_binary_checker(a, b) and (rounding_mode is None or isinstance(rounding_mode, str))
 
 
 # NOTE add and sub have special check and factory functions to support alpha
@@ -881,6 +917,20 @@ def _sub_transform(a: Number | TensorProxy, b: Number | TensorProxy, *, alpha: N
         return sub(a, b)
 
     return sub(a, b, alpha=alpha)
+
+
+def _div_transform(
+    a: Number | TensorProxy,
+    b: Number | TensorProxy,
+    /,
+    *,
+    rounding_mode: None | str = None,
+    out: None | TensorProxy = None,
+) -> TensorProxy:
+    if rounding_mode is None:
+        return div(a, b)
+
+    return div(a, b, rounding_mode=rounding_mode)
 
 
 _register_elementwise_binary_implementation = partial(_register_implementation, checker=_elementwise_binary_checker)
@@ -933,6 +983,7 @@ _register_elementwise_binary_implementation(ltorch.remainder, remainder)
 _register_elementwise_binary_implementation(ltorch.sub, checker=_add_sub_checker, execution_transform=_sub_transform)
 _register_elementwise_binary_implementation(ltorch.true_divide, true_divide)
 _register_elementwise_binary_implementation(ltorch.zeta, zeta)
+_register_elementwise_binary_implementation(ltorch.div, checker=_div_checker, execution_transform=_div_transform)
 
 #
 # Elementwise ternary operations
@@ -1260,7 +1311,6 @@ conv1d = _register_torch_operation("conv1d", module=torch.nn.functional)
 conv2d = _register_torch_operation("conv2d", module=torch.nn.functional)
 conv3d = _register_torch_operation("conv3d", module=torch.nn.functional)
 mse_loss = _register_torch_operation("mse_loss", module=torch.nn.functional)
-cross_entropy = _register_torch_operation("cross_entropy", module=torch.nn.functional)
 dropout = _register_torch_operation("dropout", module=torch.nn.functional)
 embedding = _register_torch_operation("embedding", module=torch.nn.functional)
 embedding_backward = _register_torch_operation("torch.ops.aten.embedding_backward", like=ltorch.embedding_backward)
@@ -1323,7 +1373,7 @@ def _max_pool_with_indices_helper(
             )
             return seq[i]
 
-    out_sizes = []
+    out_sizes = list(a.shape[:-ndim])
     for i in range(ndim):
         in_ = a.shape[i - ndim]  # i - ndim is the i-th spatial dimension
         kernel_ = get_maybe_ith_entry("kernel_size", kernel_size, i)
@@ -1395,59 +1445,6 @@ def _convolution_transform(
     return convolution(a, weight, bias, stride, padding, dilation, bool(transposed), output_padding, groups)
 
 
-def _cross_entropy_backward_impl(
-    g: torch.Tensor,
-    a: torch.Tensor,
-    target: torch.Tensor,
-    weight: torch.Tensor,
-    reduction: str,
-    ignore_index: int,
-    label_smoothing: int,
-) -> torch.Tensor:
-    # forward - given input and target
-    # a = log_softmax(input, dim)
-    # return cross_entropy(a, target, weight, reduction, ignore_index, label_smoothing)
-
-    # backward - given grad_cross_entropy and saved_tensors
-    # grad_a = torch.ops.aten.nll_loss_backward(grad, a, target, weight, reduction, ignore_index, total_weight)
-    # return torch.ops.aten._log_softmax_backward_data(grad_a, a, dim, a.scalar_type())
-
-    if reduction == "none":
-        reduction_idx = 0
-    elif reduction == "mean":
-        reduction_idx = 1
-    elif reduction == "sum":
-        reduction_idx = 2
-    else:
-        reduction_idx = -1
-
-    utils.check(
-        reduction_idx > -1 and reduction_idx < 3,
-        lambda: f"{reduction} is not a valid value for reduction parameter.",
-    )
-
-    # TODO Add support nll_loss_nd, weight tensor, and label_smoothing options.
-    # See issue "Add support for remaining cross_entropy_loss arguments."
-    utils.check(a.ndim <= 2 and target.ndim <= 1, lambda: f"multi-dimension cross-entropy is not supported.")
-
-    utils.check(weight is None, lambda: f"weight tensor argument is not supported.")
-
-    utils.check(label_smoothing == 0.0, lambda: f"label smoothing values not equal to zero are not supported.")
-
-    dim = 0 if a.dim() == 1 else 1
-    a = torch.log_softmax(a, dim, a.dtype)
-
-    if weight is not None:
-        total_weight = torch.sum(weight)
-    elif reduction == "none":
-        total_weight = torch.tensor(0.0, dtype=a.dtype, device=a.device)
-    elif reduction == "sum" or reduction == "mean":
-        total_weight = torch.sum(torch.ne(target, ignore_index)).to(dtype=a.dtype, device=a.device)
-
-    g_a = torch.ops.aten.nll_loss_backward(g, a, target, weight, reduction_idx, ignore_index, total_weight)
-    return torch.ops.aten._log_softmax_backward_data(g_a, a, dim, a.dtype)
-
-
 # NOTE PyTorch's nn.functional.interpolate only supports 3D, 4D, and 5D interpolation
 def _interpolate_checker(
     a: TensorLike,
@@ -1512,11 +1509,11 @@ def _nll_loss_backward_impl(
 ) -> torch.Tensor:
     reduction: int = _reduction_str_to_num_map[reduction]
 
-    # NOTE PyTorch expects total_weight to be a float64 tensor
     if total_weight is None:
+        # NOTE aten.nll_loss_backward expects total_weight to be a float64 tensor
         total_weight = torch.tensor(0.0, dtype=torch.float64, device=a.device)
     else:
-        total_weight = total_weight.to(torch.float64)
+        total_weight = total_weight.to(a.dtype)
 
     if a.ndim <= 2:
         return torch.ops.aten.nll_loss_backward(g, a, target, weight, reduction, ignore_index, total_weight)
@@ -1601,11 +1598,6 @@ _register_implementation(ltorch.conv1d, conv1d, checker=_always_executable)
 _register_implementation(ltorch.conv2d, conv2d, checker=_always_executable)
 _register_implementation(ltorch.conv3d, conv3d, checker=_always_executable)
 _register_implementation(ltorch.mse_loss, mse_loss, checker=_always_executable)
-_register_implementation(ltorch.cross_entropy, cross_entropy, checker=_always_executable)
-cross_entropy_backward = ex.register_operator(
-    "torch_cross_entropy_backward_impl", meta=ltorch.cross_entropy_backward, fn=_cross_entropy_backward_impl
-)
-_register_implementation(ltorch.cross_entropy_backward, cross_entropy_backward, checker=_always_executable)
 _register_implementation(ltorch.dropout, dropout, checker=_always_executable)
 _register_implementation(ltorch.embedding, embedding, checker=_always_executable)
 _register_implementation(ltorch.embedding_backward, embedding_backward, checker=_always_executable)
@@ -1755,8 +1747,16 @@ if torch.distributed.is_available():
         /,
         group: torch.distributed.ProcessGroup,
         do_async: Number,
+        dim: int | None = None,
     ) -> torch.Tensor | tuple[torch.distributed.distributed_c10d.Work, torch.Tensor]:
-        out: torch.Tensor = torch.empty((group.size() * a.shape[0],) + a.shape[1:], dtype=a.dtype, device=a.device)
+        result_shape = list(a.shape)
+        if dim is not None:
+            utils.check_type(dim, int)
+            utils.check(dim >= 0 and dim < a.dim(), lambda: f"dim must satisfy 0 <= {dim=} < {a.dim()=}")
+            result_shape[dim] *= group.size()
+        else:
+            result_shape[0] *= group.size()
+        out: torch.Tensor = torch.empty(result_shape, dtype=a.dtype, device=a.device)
         do_async: bool = bool(do_async)
 
         handle: None | torch.distributed.distributed_c10d.Work = torch.distributed.all_gather_into_tensor(
@@ -1809,8 +1809,16 @@ if torch.distributed.is_available():
         op: DistributedReduceOps,
         group: torch.distributed.ProcessGroup,
         do_async: Number,
+        dim: int | None,
     ) -> torch.Tensor | tuple[torch.distributed.distributed_c10d.Work, torch.Tensor]:
-        out = torch.empty((a.shape[0] // group.size(),) + a.shape[1:], dtype=a.dtype, device=a.device)
+        result_shape = list(a.shape)
+        if dim is not None:
+            utils.check_type(dim, int)
+            utils.check(dim >= 0 and dim < a.dim(), lambda: f"dim must satisfry 0 <= {dim=} < {a.dim()=}")
+            result_shape[dim] //= group.size()
+        else:
+            result_shape[0] //= group.size()
+        out = torch.empty(result_shape, dtype=a.dtype, device=a.device)
         op: torch.distributed.ReduceOp = ltorch.to_torch_distributed_reduce_op(op)
         do_async: bool = bool(do_async)
 

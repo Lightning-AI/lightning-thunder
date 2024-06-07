@@ -14,7 +14,7 @@ import torch
 
 import thunder.core.prims as prims
 from thunder.core.prims import PrimIDs
-from thunder.core.proxies import NumberProxy, TensorProxy, CollectionProxy
+from thunder.core.proxies import NumberProxy, NumberLike, TensorProxy, CollectionProxy
 from thunder.core.symbol import Symbol, BoundSymbol
 from thunder.core import baseutils
 import thunder.core.dtypes as dtypes
@@ -183,8 +183,8 @@ ex.register_implementation(prims.construct_tuple, construct_tuple, checker=_alwa
 #
 
 
-def _convert_element_type_prim_checker(a: Number | TensorProxy, /, dtype: type | dtypes.dtype) -> bool:
-    return isinstance(a, Number) and dtype in (bool, int, float, complex)
+def _convert_element_type_prim_checker(a: NumberLike | TensorProxy, /, dtype: type | dtypes.dtype) -> bool:
+    return isinstance(a, (Number, NumberProxy)) and dtype in (bool, int, float, complex)
 
 
 def _convert_element_type_prim_impl(a: Number, dtype: type) -> Number:
@@ -207,8 +207,23 @@ ex.register_implementation(prims.convert_element_type, convert_element_type, che
 # TODO Review differences in type promotion (for example round(2.3))
 
 
-def _elementwise_unary_checker(x: Number | TensorProxy) -> bool:
-    return isinstance(x, Number)
+def _elementwise_unary_checker(x: NumberLike | TensorProxy) -> bool:
+    return isinstance(x, (Number, NumberProxy))
+
+
+def _div_prim_impl(a: Number, b: Number) -> Number:
+    if dtypes.is_exact_dtype(type(a)) and dtypes.is_exact_dtype(type(b)):
+        if (a >= 0) != (b >= 0) and a % b:
+            # This implementation follows c-style integer division, which is
+            # truncation division. When the quotient is negative and not evenly
+            # divisible, special handling is necessary to round values to zero.
+            return a // b + 1
+        else:
+            # Python uses floor division for integers, which rounds values to
+            # negative infinity.
+            return a // b
+
+    return a / b
 
 
 # NOTE Tensor abs is distinct from Python's builtin abs because it preserves the dtype of booleans
@@ -303,18 +318,19 @@ ex.register_implementation(prims.signbit, signbit, checker=_elementwise_unary_ch
 #
 
 
-def _elementwise_binary_checker(a: Number | TensorProxy, b: Number | TensorProxy) -> bool:
+def _elementwise_binary_checker(a: NumberLike | TensorProxy, b: NumberLike | TensorProxy) -> bool:
     return isinstance(a, (Number, NumberProxy)) and isinstance(b, (Number, NumberProxy))
 
 
 add = ex.register_operator("add", like=prims.add, module=operator)
-atan2 = ex.register_operator("atan2", like=prims.atan2, module=operator)
-bitwise_and = ex.register_operator("bitwise_and", like=prims.bitwise_and, module=operator)
-bitwise_or = ex.register_operator("bitwise_or", like=prims.bitwise_or, module=operator)
-bitwise_xor = ex.register_operator("bitwise_xor", like=prims.bitwise_xor, module=operator)
+atan2 = ex.register_operator("atan2", like=prims.atan2, module=math)
+bitwise_and = ex.register_operator("bitwise_and", like=prims.bitwise_and, fn=operator.and_)
+bitwise_or = ex.register_operator("bitwise_or", like=prims.bitwise_or, fn=operator.or_)
+bitwise_xor = ex.register_operator("bitwise_xor", like=prims.bitwise_xor, fn=operator.xor)
 eq = ex.register_operator("eq", like=prims.eq, module=operator)
 py_floordiv = ex.register_operator("floordiv", like=prims.py_floordiv, module=operator)
-fmod = ex.register_operator("fmod", like=prims.fmod, module=operator)
+fmod = ex.register_operator("fmod", like=prims.fmod, module=math)
+remainder = ex.register_operator("mod", like=prims.remainder, module=operator)
 ge = ex.register_operator("ge", like=prims.ge, module=operator)
 gt = ex.register_operator("gt", like=prims.gt, module=operator)
 le = ex.register_operator("le", like=prims.le, module=operator)
@@ -324,6 +340,7 @@ ne = ex.register_operator("ne", like=prims.ne, module=operator)
 # NOTE pythonex_pow to avoid a name conflict with the builtin pow
 pythonex_pow = ex.register_operator("pow", like=prims.pow, module=operator)
 sub = ex.register_operator("sub", like=prims.sub, module=operator)
+div = ex.register_operator("div", like=prims.div, fn=_div_prim_impl)
 
 # TODO: Restore truediv once we find it...
 # truediv = ex.register_operator("truediv", like=prims.truediv, module=operator)
@@ -336,6 +353,7 @@ ex.register_implementation(prims.bitwise_xor, bitwise_xor, checker=_elementwise_
 ex.register_implementation(prims.eq, eq, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.py_floordiv, py_floordiv, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.fmod, fmod, checker=_elementwise_binary_checker)
+ex.register_implementation(prims.remainder, remainder, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.ge, ge, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.gt, gt, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.le, le, checker=_elementwise_binary_checker)
@@ -345,6 +363,7 @@ ex.register_implementation(prims.ne, ne, checker=_elementwise_binary_checker)
 # NOTE pythonex_pow to avoid a name conflict with the builtin pow
 ex.register_implementation(prims.pow, pythonex_pow, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.sub, sub, checker=_elementwise_binary_checker)
+ex.register_implementation(prims.div, div, checker=_elementwise_binary_checker)
 
 # TODO: Restore truediv once we find it...
 # ex.register_implementation(prims.truediv, truediv, checker=_elementwise_binary_checker)

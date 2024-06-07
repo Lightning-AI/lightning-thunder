@@ -8,6 +8,7 @@ from collections.abc import Callable, Sequence
 import weakref
 import random
 from functools import partial, wraps, reduce
+import linecache
 import operator
 import copy
 import contextvars
@@ -19,7 +20,7 @@ from io import StringIO
 import inspect
 import time
 
-from thunder.core.compile_data import compile_data_and_stats, get_cache_option, using_symbolic_values, get_compile_data
+from thunder.core.compile_data import compile_data_and_stats, get_cache_option, get_compile_data
 import thunder.clang as clang
 import thunder.core.transforms
 
@@ -52,7 +53,7 @@ from types import (
 
 import torch
 from thunder.core.proxies import (
-    DDPType,
+    DistParallelType,
     proxy,
     Proxy,
     NumberProxy,
@@ -78,6 +79,8 @@ from thunder.core.interpreter import (
     _default_lookaside_map,
     default_lookaside,
     do_raise,
+    get_interpreterruntimectx,
+    InterpreterRuntimeCtx,
     is_opaque,
     Py_NULL,
     member_descriptor,
@@ -571,7 +574,10 @@ class GeneralJitCtx(MinimalCtx):
             # TensorProxy attributes should be considered derived quantities, so we flag TensorProxies here
             value.provenance.ext_flag |= EXT_FLAG_IS_TENSOR_PROXY
 
-            if isinstance(p, TensorProxy) and p.ddp_type in (DDPType.REPLICATED, DDPType.FULLY_SHARDED):
+            if isinstance(p, TensorProxy) and p.distparallel_type in (
+                DistParallelType.REPLICATED,
+                DistParallelType.FULLY_SHARDED,
+            ):
                 p_new = thunder.distributed.prims.synchronize(
                     p,
                     self._process_group_for_ddp,
@@ -587,6 +593,9 @@ class GeneralJitCtx(MinimalCtx):
             # TODO: other caching modes
             co: CACHE_OPTIONS = get_cache_option()
             if co is CACHE_OPTIONS.CONSTANT_VALUES:
+                self.add_constraint((clang.check_tensor_shape_and_metadata, p_orig))
+            elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
+                # TODO: establish guarding logic to allow non-broadcast shape change
                 self.add_constraint((clang.check_tensor_shape_and_metadata, p_orig))
             elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
                 raise NotImplementedError(f"Unsupported cache option {co}")
@@ -607,6 +616,9 @@ class GeneralJitCtx(MinimalCtx):
                     self.add_constraint((clang.check_slice_value, p, uvalue))
                 else:
                     self.add_constraint((clang.check_number_type_and_value, p, uvalue))
+            elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
+                if p is not uvalue:
+                    value.register_proxy(p)
             elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
                 raise NotImplementedError(f"Unsupported cache option {co}")
             return p
@@ -666,8 +678,23 @@ def ensure_recursive_proxies(fn):  # shortcut for things we already processed?
     return wrapper
 
 
+def record_source_loc_in_symbol_header(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        runtimectx: Interpreterruntimectx = get_interpreterruntimectx()
+        filename, positions = runtimectx.get_current_user_source_location()
+        ctx: GeneralJitCtx = get_general_jit_ctx()
+        ctx._computation_trace.set_current_source_location(filename, positions)
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
 _general_jit_lookaside_map.update(
-    {k: ensure_recursive_proxies(interpreter_needs_wrap(v)) for k, v in _torch_to_thunder_function_map.items()}
+    {
+        k: ensure_recursive_proxies(interpreter_needs_wrap(record_source_loc_in_symbol_header(v)))
+        for k, v in _torch_to_thunder_function_map.items()
+    }
 )
 
 
@@ -817,8 +844,14 @@ def get_methods_properties(typ):
 
 _general_jit_lookaside_map.update(
     {
-        **{fn: interpreter_needs_wrap(la) for fn, la in get_methods_properties(NumberProxy)},
-        **{fn: ensure_recursive_proxies(interpreter_needs_wrap(la)) for fn, la in get_methods_properties(TensorProxy)},
+        **{
+            fn: interpreter_needs_wrap(record_source_loc_in_symbol_header(la))
+            for fn, la in get_methods_properties(NumberProxy)
+        },
+        **{
+            fn: ensure_recursive_proxies(interpreter_needs_wrap(record_source_loc_in_symbol_header(la)))
+            for fn, la in get_methods_properties(TensorProxy)
+        },
         prop_lookaside_helper: prop_lookaside_helper,
     }
 )
@@ -891,7 +924,7 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
         # NOTE Symbols "lookaside" to themselves; this just prevents their internals from being jitted
         # NOTE clang operations are not symbols, but we still prevent their internals from being jitted
         recursively_proxy(*args, **kwargs)
-        lookaside = interpreter_needs_wrap(fn)
+        lookaside = interpreter_needs_wrap(record_source_loc_in_symbol_header(fn))
     elif (general_jit_lookaside := _general_jit_lookaside_map.get(fn, None)) is not None:
         lookaside = general_jit_lookaside
     else:
@@ -1370,13 +1403,6 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
 
         already_unpacked[id(p)] = p
 
-        # Adds cache constraints
-        # TODO Consider refactoring these contraints
-        # TODO Constrain on rank, device, and dtype
-        if isinstance(p, TensorProxy):
-            with tracectx(prologue_trace):
-                prims.assert_tensor_metadata(p, p.shape, p.device, p.dtype, p.requires_grad)
-
         return p
 
     with tracectx(prologue_trace):
@@ -1520,8 +1546,8 @@ def thunder_general_jit(
         )
 
     co: CACHE_OPTIONS = get_cache_option()
-    if co not in {CACHE_OPTIONS.CONSTANT_VALUES, CACHE_OPTIONS.NO_CACHING}:
-        raise NotImplementedError(f"Only constant constraints is supported")
+    if co not in {CACHE_OPTIONS.CONSTANT_VALUES, CACHE_OPTIONS.NO_CACHING, CACHE_OPTIONS.SYMBOLIC_VALUES}:
+        raise NotImplementedError(f"cache option {co.name} is not supported")
 
     prologue_trace: TraceCtx = TraceCtx(fn)
     computation_trace: TraceCtx = TraceCtx()
@@ -1556,6 +1582,7 @@ def thunder_general_jit(
         with tracectx(computation_trace):
             result = jfn(*args, **kwargs)
             prims.python_return(result)
+            computation_trace.set_current_source_location(None, None)
             process_recorded_modifications(ctx, epilogue_trace)
             last_interpreter_log = jfn._last_interpreter_log
 

@@ -1312,7 +1312,6 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
     all_eq([hash(b.rhs()) for b in bsyms])
     all_eq([b.rhs() for b in bsyms])
 
-    # TODO Update needed here
     # The current way BoundSymbols are compared treats args and kwargs the same,
     # so the same semantic call can be considered 'equal' if the arguments are
     # passed differently.
@@ -1321,8 +1320,6 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
         d = ltorch.mul(a, b)
         return c, d
 
-    # Assert the current behavior.
-    # When the test case is supported, switch this to all_eq.
     bsyms = extract_bsyms(mul_rhs_kwargs, (a, b), ("mul",))
     all_eq([hash(b.rhs()) for b in bsyms])
     all_eq([b.rhs() for b in bsyms])
@@ -1331,25 +1328,21 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
     all_eq([b.sym for b in bsyms])
     all_eq([hash(b.sym) for b in bsyms])
 
-    # TODO: We also currently cannot assert that the right hand side of
-    #       identical operators with kwargs are equal.
+    # Assert that rhs of identical operators with same kwargs are equal.
     def same_kwargs(device, dtype):
         a = ltorch.full((2, 2), 5, device=device, dtype=dtype)
         b = ltorch.full((2, 2), 5, device=device, dtype=dtype)
         return a + b
 
-    # Assert the current behavior.
-    # When the test case is supported, switch the all_neq below to all_eq.
     bsyms = extract_bsyms(same_kwargs, (device, dtype), ("full",))
     all_eq([hash(b.rhs()) for b in bsyms])
-    all_neq([b.rhs() for b in bsyms])
+    all_eq([b.rhs() for b in bsyms])
 
-    # Again, the symbols should be the same.
+    # The symbols should be the same.
     all_eq([b.sym for b in bsyms])
     all_eq([hash(b.sym) for b in bsyms])
 
-    # We can, however, know when the number of kwargs are different,
-    # or the args are different.
+    # Assert that the kwargs are different and hash differently.
     def diff_kwargs(device, dtype):
         a = ltorch.full((1, 2), 2, device=device, dtype=dtype)
         b = ltorch.full((2, 3), 5, device=device, dtype=dtype)
@@ -1357,7 +1350,7 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
         return a, b, c
 
     bsyms = extract_bsyms(diff_kwargs, (device, dtype), ("full",))
-    all_eq([hash(b.rhs()) for b in bsyms])
+    all_neq([hash(b.rhs()) for b in bsyms])
     all_neq([b.rhs() for b in bsyms])
 
     # Assert that boundsymbols for different ops hash/compare differently.
@@ -2619,3 +2612,47 @@ def test_default_method(executor, device: str, dtype: dtypes.dtype):
 #     # Same as above, but now the last del should be removed since the variable
 #     # is used in the output
 #     assert code_str.count("del") == 3
+
+
+@instantiate(dtypes=(thunder.float32,), executors=(TorchExecutor,))
+def test_bound_symbol_source_location_context(executor, device: str, dtype: dtypes.dtype):
+    def foo(x):
+        return clang.sin(x)
+
+    a = make_tensor((2, 2), device=device, dtype=ltorch.to_torch_dtype(dtype))
+
+    lineno = foo.__code__.co_firstlineno + 1
+    jfn = thunder.jit(foo)
+    jfn(a)
+
+    trace = thunder.last_traces(jfn)[0]
+
+    assert len(trace.bound_symbols) == 3
+    sin_symbol = trace.bound_symbols[1]
+    assert str(trace).count("return clang.sin(x)") == 1
+    assert str(trace).count(f"# {__file__}:{lineno}") == 1
+
+
+@instantiate(dtypes=(thunder.float32,), executors=(TorchExecutor,))
+def test_refine_source_location(executor, device: str, dtype: dtypes.dtype):
+    def foo_thunder(x):
+        return thunder.torch.softmax(x, 0)
+
+    def foo_torch(x):
+        return torch.softmax(x, 0)
+
+    a = make_tensor((2, 2), device=device, dtype=ltorch.to_torch_dtype(dtype))
+
+    jfn_thunder = thunder.jit(foo_thunder)
+    jfn_thunder(a)
+    jfn_torch = thunder.jit(foo_torch)
+    jfn_torch(a)
+
+    trace_thunder = thunder.last_traces(jfn_thunder)[0]
+    trace_torch = thunder.last_traces(jfn_torch)[0]
+
+    # make sure we are not showing the internals of Thunder
+    assert str(trace_thunder).count("return _softmax(a, dim=dim, dtype=dtype)") == 0
+    assert str(trace_thunder).count("return thunder.torch.softmax(x, 0)") == 1
+    # torch.softmax should be traced as usual
+    assert str(trace_torch).count(f"return torch.softmax(x, 0)") == 1

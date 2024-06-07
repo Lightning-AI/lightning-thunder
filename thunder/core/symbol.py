@@ -15,12 +15,13 @@ from collections.abc import Sequence
 
 import thunder.core.baseutils as baseutils
 import thunder.core.codeutils as codeutils
-from thunder.core.codeutils import Printable
+from thunder.core.codeutils import Printable, Positions
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 from thunder.core.proxies import Proxy, NumberProxy, variableify, CollectionProxy
+from thunder.core.utils import FrozenDict
 
 from thunder.core.trace import (
     get_tracectx,
@@ -213,6 +214,14 @@ class Symbol:
         if self.meta is not None:
             args, kwargs = self.normalize(*args, **kwargs)
 
+        trace = get_tracectx()
+        if trace is not None:
+            source_filename = trace._current_source_filename
+            source_positions = trace._current_source_positions
+        else:
+            source_filename = None
+            source_positions = None
+
         b = BoundSymbol(
             self,
             args=args,
@@ -220,6 +229,8 @@ class Symbol:
             output=output,
             subsymbols=subsymbols,
             header=_bsym_header.get(),
+            source_filename=source_filename,
+            source_positions=source_positions,
             _call_ctx=_call_ctx,
         )
         if self._bind_postprocess:
@@ -294,6 +305,8 @@ class BoundSymbol(BoundSymbolInterface):
 
     # Header is a string that may be printed before the symbol
     header: str | list[str] = ""
+    source_filename: str | None = None
+    source_positions: Positions | None = None
 
     _call_ctx: None | dict[str, Any] = None
 
@@ -324,6 +337,8 @@ class BoundSymbol(BoundSymbolInterface):
             "output": self.output,
             "subsymbols": self.subsymbols,
             "header": self.header,
+            "source_filename": self.source_filename,
+            "source_positions": self.source_positions,
             "_call_ctx": self._call_ctx,
             "_import_ctx": self._import_ctx,
             "_object_ctx": self._object_ctx,
@@ -633,36 +648,37 @@ def has_tags(bsym: BoundSymbol, tags: set[OpTags]) -> bool:
     return not tags.isdisjoint(gather_tags(bsym))
 
 
-# NOTE: A wrapper class that hashes and equates only the right hand side of a BoundSymbol.
+# Wrapper class that hashes and equates only the right hand side of a BoundSymbol for CSE.
 # That is to say, its symbol, args, and kwargs, but not its output.
-# The intent is that this will be useful in writing a common subexpression elimination pass, beacuse
-# it will allow dictionary lookups to find equivalent BoundSymbols.
-@dataclass(**baseutils.default_dataclass_params)
+@dataclass
 class BoundSymbolRHS:
     parent: BoundSymbol
-    _hash: int | None = None
+    _frozen_kwargs: FrozenDict
 
-    def _do_hash(self) -> int:
-        if self.parent.kwargs and len(self.parent.kwargs) > 0:
+    def __init__(self, parent: BoundSymbol) -> None:
+        self.parent = parent
+        self._frozen_kwargs = FrozenDict(parent._var_kwargs)
+
+    @functools.cached_property
+    def _hash(self) -> int:
+        # TODO: Find a better way to identify inputs by id instead of hash.
+        if self.parent.sym.name == "unpack_trivial":
             return id(self)
         try:
-            return hash((self.parent.sym, self.parent._var_args))
+            return hash((self.parent.sym, self.parent._var_args, self._frozen_kwargs))
         except:
             return id(self)
 
     def __hash__(self) -> int:
-        if not self._hash:
-            h = self._do_hash()
-            object.__setattr__(self, "_hash", h)
-            return h
         return self._hash
 
-    # TODO: Deal with kwargs, in __eq__ and __hash__, just like with BoundSymbol.
     def __eq__(self, other: BoundSymbolRHS) -> bool:
         if not isinstance(other, BoundSymbolRHS):
             return False
         if self.parent is other.parent:
             return True
-        if len(self.parent.kwargs) > 0 or len(other.parent.kwargs) > 0:
-            return False
-        return (self.parent.sym, self.parent._var_args) == (other.parent.sym, other.parent._var_args)
+        return (self.parent.sym, self.parent._var_args, self._frozen_kwargs) == (
+            other.parent.sym,
+            other.parent._var_args,
+            other._frozen_kwargs,
+        )

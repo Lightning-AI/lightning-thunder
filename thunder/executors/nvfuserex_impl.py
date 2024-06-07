@@ -619,11 +619,14 @@ class nvFuserExecutor(FusionExecutor):
 
         return False
 
-    def _dce_bsyms(self, output, bsyms: list[BoundSymbol]) -> list[BoundSymbol]:
+    def _dce_bsyms(self, input_list, output, bsyms: list[BoundSymbol]) -> list[BoundSymbol]:
         trace = TraceCtx(None)
         trace.bound_symbols = bsyms
         bsyms.append(prims.python_return.bind(output, output=()))
-        trace = dce(trace)
+        needed_proxies: set[Variable] = set()
+        trace = dce(trace, needed_proxies)
+        # update the input_list by removing the unused inputs
+        input_list[:] = [x for x in input_list if variableify(x) in needed_proxies]
         return list(filter(lambda x: x.sym != prims.python_return, trace.bound_symbols))
 
     def fuse(self, region: Region, fusion_counter: int) -> BoundSymbol:
@@ -637,7 +640,7 @@ class nvFuserExecutor(FusionExecutor):
         for bsym in region.bound_symbols:
             flattened_bsyms.extend(self.flatten(bsym))
 
-        flattened_bsyms = self._dce_bsyms(sorted_unique_outputs, flattened_bsyms)
+        flattened_bsyms = self._dce_bsyms(sorted_unique_inputs, sorted_unique_outputs, flattened_bsyms)
 
         fusion_name = f"nvFusion{fusion_counter}"
         annotation = f"{fusion_name}: ({', '.join(bsym.sym.name for bsym in flattened_bsyms)})"
@@ -1028,11 +1031,14 @@ def _uniform_philox_check(
     *,
     device: Device,
     dtype: dtypes.dtype,
-    seed: int | TensorProxy,
-    offset: int | TensorProxy,
+    seed: int | NumberProxy | TensorProxy,
+    offset: int | NumberProxy | TensorProxy,
 ) -> bool:
     return (
-        is_supported_device(device) and is_supported_dtype(dtype) and isinstance(seed, int) and isinstance(offset, int)
+        is_supported_device(device)
+        and is_supported_dtype(dtype)
+        and is_supported_tensor_or_number(seed)
+        and is_supported_tensor_or_number(offset)
     )
 
 
@@ -1876,7 +1882,9 @@ register_supported(PrimIDs.WHERE, where, _where_check)
 
 # TODO Checks that the dtype is supported by nvFuser
 def _reduction_check(a: TensorProxy, dims: Sequence[int]) -> bool:
-    return is_supported_tensor(a, allow_low_precision_floats=False)
+    return is_supported_tensor(a, allow_low_precision_floats=False) and not any(
+        isinstance(dim, NumberProxy) for dim in dims
+    )
 
 
 # TODO Review if this accepts empty dim sequences
