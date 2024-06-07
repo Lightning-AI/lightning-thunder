@@ -639,6 +639,7 @@ class nvFuserExecutor(FusionExecutor):
         flattened_bsyms: list[BoundSymbol] = []
         for bsym in region.bound_symbols:
             flattened_bsyms.extend(self.flatten(bsym))
+
         flattened_bsyms = self._dce_bsyms(sorted_unique_inputs, sorted_unique_outputs, flattened_bsyms)
 
         fusion_name = f"nvFusion{fusion_counter}"
