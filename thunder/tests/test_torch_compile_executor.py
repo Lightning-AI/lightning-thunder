@@ -7,7 +7,7 @@ from thunder.executors.torch_compile import supported_ops, torch_compile_ex, tor
 from thunder.executors.torchex import ex as pytorch_ex
 from thunder.executors.nvfuserex import nvfuserex
 from thunder.tests.litgpt_model import GPT, Config
-from thunder.tests .framework import requiresCUDA
+from thunder.tests.framework import requiresCUDA
 
 
 def test_supported_ops_are_in_pytorch_executor():
@@ -25,6 +25,7 @@ def test_torch_compile_litgpt():
     # a single torch.compile region. normally you would want to enable sdpa too
     assert "TorchCompile0" in forward_trace
     assert "TorchCompile1" not in forward_trace
+
 
 # Testing the following issue:
 # https://github.com/Lightning-AI/lightning-thunder/issues/292 The issue was
