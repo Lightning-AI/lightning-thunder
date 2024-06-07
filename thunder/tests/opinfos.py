@@ -1833,7 +1833,6 @@ real_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(real_opinfo)
 
-
 # Puts all opinfos into the "opinfos" list
 opinfos.extend(elementwise_unary_ops)
 
