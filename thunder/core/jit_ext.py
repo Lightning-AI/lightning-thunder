@@ -774,6 +774,12 @@ def _general_jit_setattr_lookaside(obj: Any, name: str, value: Any):
         return res
     return res
 
+@general_jit_lookaside(torch.compile)
+def torch_compile_lookaside(*args, **kwargs):
+    return do_raise(NotImplementedError(
+        "Using torch.compile within a function to be JIT-compiled by Thunder is not supported. "
+        "Please remove the call to torch.compile or apply it outside the function."
+    ))
 
 # TODO Expand on this
 @interpreter_needs_wrap
