@@ -104,6 +104,7 @@ class PrimIDs(Enum):
     CHECK_NUMBER_TYPE_AND_VALUE = auto()
     CHECK_BOOL_CONVERSION = auto()
     CHECK_STRING_VALUE = auto()
+    CHECK_SLICE_VALUE = auto()
     CHECK_LEN = auto()
     ASSERT_COMPARE = auto()
     PYTHON_VARS = auto()
@@ -611,6 +612,19 @@ check_string_value = make_prim(
     PrimIDs.CHECK_STRING_VALUE,
     "check_string_value",
     meta=_check_string_value_meta,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
+def _check_slice_value_meta(s: AnyProxy, value: slice) -> None:
+    baseutils.check_type(s, AnyProxy)
+    baseutils.check_type(value, slice)
+
+
+check_slice_value = make_prim(
+    PrimIDs.CHECK_SLICE_VALUE,
+    "check_slice_value",
+    meta=_check_slice_value_meta,
     tags=(OpTags.DONT_DCE,),
 )
 
