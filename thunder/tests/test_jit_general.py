@@ -1,6 +1,7 @@
 from collections.abc import Iterable, Iterator, Sequence
 from functools import partial, wraps
 from itertools import product
+from contextlib import nullcontext
 
 import operator
 import sys
@@ -850,3 +851,35 @@ def test_post_optimization_transform():
     bwd_trc = thunder.last_backward_traces(jfoo)[-1]
     comment_bsyms = list(filter(lambda bsym: bsym.sym.id == thunder.prims.PrimIDs.COMMENT, bwd_trc.bound_symbols))
     assert any(map(lambda bsym: bsym.args[0].startswith("Executing"), comment_bsyms))
+
+
+@pytest.mark.parametrize(
+    "cache_option",
+    (
+        thunder.CACHE_OPTIONS.CONSTANT_VALUES,
+        thunder.CACHE_OPTIONS.SYMBOLIC_VALUES,
+        thunder.CACHE_OPTIONS.NO_CACHING,
+        thunder.CACHE_OPTIONS.SAME_INPUT,
+    ),
+)
+def test_device_as_input(cache_option):
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    x = torch.randn(3, 3)
+    devices_to_check = ("cuda:0", "cpu")
+
+    def foo(x, device):
+        return x.to(device)
+
+    ctx = nullcontext()
+    if cache_option is thunder.CACHE_OPTIONS.SAME_INPUT:
+        ctx = pytest.raises(NotImplementedError)
+
+    jfoo = thunder.jit(foo, cache=cache_option)
+
+    for device in devices_to_check:
+        expected_device = torch.device(device)
+        with ctx:
+            actual_device = jfoo(x, expected_device).device
+            assert actual_device == expected_device
