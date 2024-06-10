@@ -1816,6 +1816,46 @@ def test_constant_values_caching_with_tuples():
     assert thunder.cache_hits(jfoo) == 3
 
 
+def test_constant_values_caching_with_slices():
+    def foo(a, s):
+        import operator
+
+        return operator.getitem(a, s)
+
+    jfoo = thunder.functional.jit(foo)
+
+    a = torch.randn(5, 3)
+    s0 = (slice(3, 4), slice(0, 1))
+
+    actual = jfoo(a, s0)
+    expected = foo(a, s0)
+
+    assert_close(actual, expected)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    jfoo(a, s0)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1
+
+    s1 = (slice(3, 4), slice(0, 1))
+
+    jfoo(a, s1)
+
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 2
+
+    s2 = (slice(2, 3), slice(1, 2))
+
+    actual = jfoo(a, s2)
+    expected = foo(a, s2)
+
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 2
+
+
 def test_constant_values_caching_with_lists():
     def foo(lst0, lst1):
         return lst0[0] + lst1[1]

@@ -517,7 +517,7 @@ def jit(
             transform: Callable
             for transform in early_transforms:
                 thunder.core.utils.check_type(transform, EarlyTransform)
-                prologue_trc, computation_trc, epilogue_trc = transform(
+                prologue_trc, computation_trc, epilogue_trc = transform.transform_traces(
                     prologue_trc, computation_trc, epilogue_trc, executors_list=cd.executors_list
                 )
                 prologue_traces.append(prologue_trc)
@@ -586,7 +586,7 @@ def jit(
                 cs.last_computation_transformation_start = time.time_ns()
                 for transform in additional_transforms:
                     thunder.core.utils.check_type(transform, AdditionalTransform)
-                    computation_trc = transform(computation_trc, executors_list=cd.executors_list)
+                    computation_trc = transform.transform_trace(computation_trc, executors_list=cd.executors_list)
                     computation_traces.append(computation_trc)
                 cs.last_computation_transformation_stop = time.time_ns()
 
@@ -603,10 +603,10 @@ def jit(
             for transform in post_optimization_transforms:
                 # NOTE: `backward_trc` could be None.
                 thunder.core.utils.check_type(transform, PostOptimizationTransform)
-                computation_trc = transform(computation_trc, executors_list=cd.executors_list)
+                computation_trc = transform.transform_trace(computation_trc, executors_list=cd.executors_list)
                 extraces.append(computation_trc)
                 if backward_trc is not None:
-                    backward_trc = transform(backward_trc, executors_list=cd.executors_list)
+                    backward_trc = transform.transform_trace(backward_trc, executors_list=cd.executors_list)
                     backward_traces.append(backward_trc)
 
             comp = computation_trc.python_callable()

@@ -85,13 +85,18 @@ def _inplace_copy_sanity_check(extrace: Trace):
 # Runs a Dead Code Elimination (DCE) pass
 # NOTE Today we are only interested in computations that produce proxies, so this will eliminate operations
 #   that only produce non-proxy objects
-def dce(trace: Trace) -> Trace:
+# NOTE needed_proxies is an in/out argument, it takes an initial set of Variables you want to keep, and return
+#   all the needed proxies of the input trace
+def dce(trace: Trace, needed_proxies: None | set[Variable] = None) -> Trace:
     start_time_ns = time.time_ns()
 
     producer_map: ProxyDict = producers(trace)
 
     flat_trace_outputs, _ = tree_flatten(trace.output)
-    needed_proxies: set[Variable] = set(tuple(variableify(x) for x in flat_trace_outputs if isinstance(x, Proxy)))
+    if needed_proxies is None:
+        needed_proxies: set[Variable] = set(tuple(variableify(x) for x in flat_trace_outputs if isinstance(x, Proxy)))
+    else:
+        needed_proxies.update(tuple(variableify(x) for x in flat_trace_outputs if isinstance(x, Proxy)))
     dced = []
 
     bsym: BoundSymbol
@@ -218,7 +223,6 @@ def cse_single_bsym(
         swap_map=redundant_map,
         skip_inputs=False,
         skip_output=True,
-        skip_subsymbols=True,
     )
 
     # Skip appending this bsym to the new bound symbols due to its rhs being a common subexpression.
@@ -335,7 +339,7 @@ class EarlyTransform(Transform, ABC):
     """
 
     @abstractmethod
-    def __call__(self, prologue_trace: Trace, computation_trace: Trace, epilogue_trace: Trace | None, **kwargs):
+    def transform_traces(self, prologue_trace: Trace, computation_trace: Trace, epilogue_trace: Trace | None, **kwargs):
         pass
 
 
@@ -346,7 +350,7 @@ class AdditionalTransform(Transform, ABC):
     """
 
     @abstractmethod
-    def __call__(self, computation_trace: Trace, **kwargs):
+    def transform_trace(self, computation_trace: Trace, **kwargs):
         pass
 
 
@@ -357,5 +361,5 @@ class PostOptimizationTransform(Transform, ABC):
     """
 
     @abstractmethod
-    def __call__(self, computation_trace: Trace, **kwargs):
+    def transform_trace(self, computation_trace: Trace, **kwargs):
         pass

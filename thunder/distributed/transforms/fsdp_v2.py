@@ -28,7 +28,7 @@ class FSDPTraceTransform(EarlyTransform):
     sharded_params: dict[str, Any]
     process_group: ProcessGroup
 
-    def __call__(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
+    def transform_traces(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
         from thunder.distributed import prims as dist_prims
 
         prologue_producers, prologue_consumers = utils.producers_and_consumers(prologue_trace)
