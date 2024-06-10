@@ -1,5 +1,6 @@
 import os
 import time
+import warnings
 from typing import Any
 from contextlib import nullcontext
 
@@ -168,7 +169,9 @@ class Benchmark_litGPT:
             ), f"Global Batch Size {self.global_batch_size} should be a multiple Micro Batch Size {self.micro_batch_size} * World Size {world_size}."
 
         if self.checkpoint_activations:
-            assert "thunder" not in self.compile, "Activations checkpointing is not supported for Thunder."
+            warnings.warn(
+                "Activations checkpointing is configured, but Thunder does not support checkpointing. Checkpointing will be ignored."
+            )
         self.skip_data_sync = skip_data_sync
 
         # Profiling Args
