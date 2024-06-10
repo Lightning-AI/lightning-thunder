@@ -1,8 +1,11 @@
 from __future__ import annotations
+import copy
 from dataclasses import dataclass
+from itertools import chain
 from typing import TYPE_CHECKING
 from typing import ClassVar
 
+import torch
 import torch.nn as nn
 from torch.distributed import distributed_c10d
 
@@ -23,7 +26,6 @@ if TYPE_CHECKING:
     from thunder.core.symbol import BoundSymbol
     from thunder.core.trace import TraceCtx
     from thunder.core.trace import TraceProvenance
-    from thunder.core.transforms import VISIT_TYPE
 
 
 __all__ = [
@@ -158,6 +160,8 @@ def row_parallel(
     thunder_module: ThunderModule,
     target_modules: Sequence[str],
     process_group: ProcessGroup | None = None,
+    *,
+    device: torch.device | None = None,
 ) -> ThunderModule:
     """Convert specified modules into row-wise parallel ones.
 
@@ -230,6 +234,12 @@ def row_parallel(
     rank = distributed_c10d.get_rank(process_group)
     world_size = distributed_c10d.get_world_size(process_group)
 
+    if device is None:
+        device = torch.device(f"cuda:{rank}")
+    else:
+        utils.check_type(device, torch.device)
+        utils.check(device.index == rank, lambda: f"{device.index=} expected to match {rank=} of {process_group=}")
+
     chunked_param_name_to_layer_type: dict[str, Any] = {}
     for target_mod_name in target_modules:
         mod = thunder_module.get_submodule(target_mod_name)
@@ -242,13 +252,25 @@ def row_parallel(
                 continue
             chunked_param_name_to_layer_type["t_" + f"{target_mod_name}.{name}".replace(".", "_")] = type(mod)
 
-    import copy
-
     # Modify module
     for module_name, _ in thunder_module._model.named_modules():
+        submodule = thunder_module.get_submodule(module_name)
+
+        # Materialize meta parameters on device if necessary.
+        # This is done before sharding in case the materialization logic depends on the tensor shape.
+        # The trade-off is that all of a module's direct parameters need to fit in device.
+        # Each module only initializes its own parameters and not those of its children (recurse=False)
+        if any(t.is_meta for t in chain(submodule.parameters(recurse=False), submodule.buffers(recurse=False))):
+            from thunder.distributed import _materialize
+
+            _materialize(submodule, device=device)
+            for n, p in submodule.named_parameters(recurse=False, prefix=module_name):
+                thunder_module._overrides_parameters[n] = p
+            for n, b in submodule.named_buffers(recurse=False, prefix=module_name):
+                thunder_module._overrides_buffers[n] = b
+
         if module_name not in target_modules:
             continue
-        submodule = thunder_module.get_submodule(module_name)
 
         for pn, p in submodule.named_parameters(recurse=False, prefix=module_name):
             # if we don't have an override or it is just the original, do create a copy
