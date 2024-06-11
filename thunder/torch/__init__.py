@@ -3040,8 +3040,11 @@ def batch_norm(
 # NN Operations
 #
 
+
 @torchsymbol(torch.baddbmm, is_method=True)
-def baddbmm(a:TensorLike, b1: TensorLike, b2: TensorLike, *, beta: float = 1., alpha: float = 1., out:TensorLike = None) -> TensorLike:
+def baddbmm(
+    a: TensorLike, b1: TensorLike, b2: TensorLike, *, beta: float = 1.0, alpha: float = 1.0, out: TensorLike = None
+) -> TensorLike:
     utils.check(out is None, lambda: "Non-None out is not supported", NotImplementedError)
 
     utils.check_same_dtype(a, b1, b2)
@@ -3057,6 +3060,7 @@ def baddbmm(a:TensorLike, b1: TensorLike, b2: TensorLike, *, beta: float = 1., a
     if beta == 0:
         return t1
     return add(t1, a, alpha=beta)
+
 
 # TODO bmm is more restrictive than matmul
 @torchsymbol(torch.bmm, is_method=True)

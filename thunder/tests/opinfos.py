@@ -6153,6 +6153,63 @@ opinfos.extend(linear_algebra_ops)
 nn_ops = []
 
 
+def baddbmm_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    cases = (
+        ((0, 0, 0), (0, 0, 0), (0, 0, 0)),
+        ((3, 0, 5), (3, 0, 0), (3, 0, 5)),
+        ((0, 5, 6), (0, 5, 0), (0, 0, 6)),
+        ((3, 5, 6), (3, 5, 0), (3, 0, 6)),
+    )
+
+    constants_cases = (
+        (2.0, 2.0),
+        (1.0, 0.0),
+        (0.0, 1.0),
+    )
+
+    for shape_in, shape_batch1, shape_batch2 in cases:
+        for alpha, beta in constants_cases:
+            if isinstance(to_dtype(dtype), datatypes.exact):
+                alpha, beta = int(alpha), int(beta)
+
+            yield SampleInput(make(shape_in), make(shape_batch1), make(shape_batch2), alpha=alpha, beta=beta)
+
+
+def baddbmm_error_generator(op, device, dtype=torch.int32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+    cases = (
+        ((3, 5, 6), (3, 5), (3, 0, 6), RuntimeError, "batch1 must be a 3D tensor, found 2 instead."),
+        ((3, 5, 6), (3, 5, 0), (3, 0), RuntimeError, "batch2 must be a 3D tensor, found 2 instead."),
+        (
+            (3, 5, 6),
+            (3, 5, 0),
+            (3, 0, 6),
+            ValueError,
+            "2.0 had an unexpected type <class 'float'>. Supported types are <class 'int'>",
+        ),
+    )
+
+    for shape_in, shape_batch1, shape_batch2, err_type, err_msg in cases:
+        yield (
+            SampleInput(make(shape_in), make(shape_batch1), make(shape_batch2), alpha=2.0, beta=2.0),
+            err_type,
+            err_msg,
+        )
+
+
+baddbmm_opinfo = OpInfo(
+    ltorch.baddbmm,
+    supports_grad=True,
+    dtypes=(datatypes.floating, datatypes.signedinteger, datatypes.unsignedinteger),
+    sample_input_generator=baddbmm_sample_generator,
+    error_input_generator=baddbmm_error_generator,
+    torch_reference=torch.baddbmm,
+)
+
+nn_ops.append(baddbmm_opinfo)
+
+
 def _convolution_get_default_args():
     defaults = {
         "stride": (1,),
