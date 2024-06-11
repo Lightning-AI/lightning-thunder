@@ -2660,6 +2660,10 @@ def test_refine_source_location(executor, device: str, dtype: dtypes.dtype):
 
 def test_torch_device():
     # Test `thunder.jit` support for `torch.device()`.
+    if not torch.cuda.is_available():
+        # thunder.core.devices.Device __init__ calls `torch.cuda.device_count()` when DeviceType is CUDA.
+        # https://github.com/Lightning-AI/lightning-thunder/blob/067f15aae47ad71229732ca6c35a5d190135e48c/thunder/core/devices.py#L96-L101
+        pytest.skip("CUDA not available")
 
     # Check the output against the PyTorch eager output.
     def _test(foo, inputs):
