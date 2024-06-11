@@ -2656,3 +2656,69 @@ def test_refine_source_location(executor, device: str, dtype: dtypes.dtype):
     assert str(trace_thunder).count("return thunder.torch.softmax(x, 0)") == 1
     # torch.softmax should be traced as usual
     assert str(trace_torch).count(f"return torch.softmax(x, 0)") == 1
+
+
+def test_torch_device():
+    # Test `thunder.jit` support for `torch.device()`.
+
+    # Check the output against the PyTorch eager output.
+    def _test(foo, inputs):
+        for input in inputs:
+            actual = thunder.jit(foo)(input)
+            expected = foo(input)
+            assert actual.device == expected.device
+
+    # Test with str input
+    device_strs = ("cpu", "cuda", "cuda:0", "meta")
+
+    def foo1(dev):
+        # If we return the device here, thunder.jit version will return `thunder.device`
+        # while eager will return `torch.device`
+        # https://github.com/Lightning-AI/lightning-thunder/issues/573
+        return torch.ones(3, 3, device=torch.device(dev))
+
+    _test(foo1, device_strs)
+
+    # Test with str and index input
+    device_strs_and_idxs = (("cpu", 0), ("cpu", 1), ("cuda", 0), ("meta", 0), ("meta", 1))
+
+    def foo2(dev_and_idx):
+        return torch.ones(3, 3, device=torch.device(*dev_and_idx))
+
+    _test(foo2, device_strs_and_idxs)
+
+    # Test with `torch.device` as input
+    torch_devices = (torch.device("cpu"), torch.device("cuda"), torch.device("meta"))
+
+    def foo3(device):
+        return torch.ones(3, 3, device=torch.device(device))
+
+    _test(foo3, torch_devices)
+
+    # Test with `thunder.device` as input
+    tensor_proxy_devices = (
+        torch.ones(1, device=torch.device("cpu")),
+        torch.ones(1, device=torch.device("cuda")),
+        torch.ones(1, device=torch.device("meta")),
+    )
+
+    # Here `torch.device()` will see a `thunder.device` as input.
+    def foo4(ref_t):
+        return torch.ones(3, 3, device=torch.device(ref_t.device))
+
+    _test(foo4, tensor_proxy_devices)
+
+    # Error inputs
+    error_inputs = (
+        ((torch.device("cpu"), 0), RuntimeError),
+        (("cuda:0", 0), RuntimeError),
+        (("cpu:",), ValueError),
+        (("cuda:",), ValueError),
+    )
+
+    def foo_error(args):
+        return torch.device(*args)
+
+    for inp, err in error_inputs:
+        with pytest.raises(err):
+            thunder.jit(foo_error)(inp)
