@@ -1194,33 +1194,6 @@ rsqrt_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(rsqrt_opinfo)
 
-silu_opinfo = OpInfo(
-    clang.silu,
-    dtypes=(datatypes.floating,),
-    sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
-    torch_reference=_elementwise_unary_torch(torch.nn.functional.silu),
-    test_directives=(
-        DecorateInfo(
-            pytest.mark.xfail,
-            executors=("nvfuser",),
-            active_if=nvfuser_version < "0.0.3",
-        ),
-        # NOTE: Torch doesn't support CPU float16 silu
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.float16,),
-            devicetypes=(devices.DeviceType.CPU,),
-        ),
-        # test tols are too tight for these half precision tests
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.float16, datatypes.bfloat16),
-        ),
-    ),
-)
-elementwise_unary_ops.append(silu_opinfo)
 
 sigmoid_opinfo = OpInfo(
     clang.sigmoid,
@@ -1295,10 +1268,17 @@ signbit_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(signbit_opinfo)
 
+
+def silu_error_generator(op, device, dtype=torch.float32, **kwargs):
+    a = make_tensor((), dtype=dtype, device=device)
+    yield (SampleInput(a, inplace=True), NotImplementedError, "Thunder only supports silu with inplace=False")
+
+
 silu_opinfo = OpInfo(
-    clang.silu,
+    ltorch.silu,
     dtypes=(datatypes.floating,),
     sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
+    error_input_generator=silu_error_generator,
     torch_reference=_elementwise_unary_torch(torch.nn.functional.silu),
     test_directives=(
         DecorateInfo(

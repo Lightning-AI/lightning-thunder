@@ -1486,7 +1486,10 @@ def selu(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
 
 
 @torchsymbol(torch.nn.functional.silu)
-def silu(a, /):
+def silu(a: TensorLike, /, *, inplace: bool = False):
+    utils.check(
+        not inplace, lambda: "Thunder only supports silu with inplace=False", exception_type=NotImplementedError
+    )
     return clang.silu(a)
 
 
