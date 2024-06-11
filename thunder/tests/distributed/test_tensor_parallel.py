@@ -249,6 +249,36 @@ class TensorParallelTest(DataParallelTestCase):
         # - postprocessing of row-wise parallel linear
         self.assertEqual(len(bsyms_of_tp_sync), 2, msg=msg)
 
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
+    def test_litgpt_causal_self_attention(self):
+        from thunder.tests.litgpt_model import Config
+        from thunder.tests.litgpt_model import CausalSelfAttention
+        from thunder.tests.make_tensor import make_tensor
+
+        device = torch.device(f"cuda:{self.rank}")
+        dtype = torch.bfloat16
+
+        batch_size: int = 4
+        config_name: str = "Llama-2-13b-hf"
+        config = Config.from_name(config_name)
+
+        x_shape = (batch_size, config.block_size, config.n_embd)
+        cos_shape = (config.block_size, config.rope_n_elem)
+        sin_shape = (config.block_size, config.rope_n_elem)
+        mask = None
+        input_pos = None
+
+        attention = CausalSelfAttention(config).to(device=device, dtype=dtype)
+        tp_attention = thunder.jit(attention)
+        tp_attention = column_parallel(tp_attention, ["attn"])
+        tp_attention = row_parallel(tp_attention, ["proj"])
+
+        x = make_tensor(x_shape, device=device, dtype=dtype, requires_grad=True)
+        cos = make_tensor(cos_shape, device=device, dtype=dtype, requires_grad=True)
+        sin = make_tensor(sin_shape, device=device, dtype=dtype, requires_grad=True)
+
+        y = tp_attention(x, cos, sin, mask, input_pos)
+
 
 common_utils.instantiate_parametrized_tests(TensorParallelTest)
 
