@@ -254,11 +254,12 @@ class TensorParallelTest(DataParallelTestCase):
         from thunder.tests.litgpt_model import Config
         from thunder.tests.litgpt_model import CausalSelfAttention
         from thunder.tests.make_tensor import make_tensor
+        from thunder.distributed.prims import PrimIDs
 
         device = torch.device(f"cuda:{self.rank}")
         dtype = torch.bfloat16
 
-        batch_size: int = 4
+        batch_size: int = 4  # 4 is chosen arbitrarily.
         config_name: str = "Llama-2-13b-hf"
         config = Config.from_name(config_name)
 
@@ -277,7 +278,25 @@ class TensorParallelTest(DataParallelTestCase):
         cos = make_tensor(cos_shape, device=device, dtype=dtype, requires_grad=True)
         sin = make_tensor(sin_shape, device=device, dtype=dtype, requires_grad=True)
 
+        # TODO(crcrpar): add numeircal check
         y = tp_attention(x, cos, sin, mask, input_pos)
+        tp_syncs = {PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_INPUT, PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_OUTPUT}
+        fwd_traces_with_tensor_parallel_syncs = list(
+            filter(
+                lambda trace: any(bsym.sym.id in tp_syncs for bsym in trace.bound_symbols),
+                thunder.last_traces(tp_attention),
+            )
+        )
+
+        last_fwd_trace_with_tp_sync = fwd_traces_with_tensor_parallel_syncs[-1]
+        bsyms_of_tp_sync = tuple(
+            filter(lambda bsym: bsym.sym.id in tp_syncs, last_fwd_trace_with_tp_sync.bound_symbols)
+        )
+        msg = f"{bsyms_of_tp_sync=}"
+        # TODO(crcrpar): Fix the comm optimization path. Ideally, 2.
+        # Though note this class' forward seems to depend on a hyperparam that could be affected by tensor parallel transform.
+        # ref: https://github.com/Lightning-AI/litgpt/blob/8ca46d2f/litgpt/model.py#L218
+        self.assertEqual(len(bsyms_of_tp_sync), 4, msg=msg)
 
 
 common_utils.instantiate_parametrized_tests(TensorParallelTest)
