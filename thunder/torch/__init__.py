@@ -4371,14 +4371,15 @@ def softmax(a: TensorLike, dim: int, dtype: None | dtypeLike = None, _stacklevel
     return _softmax(a, dim=dim, dtype=dtype)
 
 
-def torch_device(device_or_str: DeviceLike, index: int | None = None) -> torch.device:
-    if not isinstance(device_or_str, str):
+def torch_device(device_or_str: DeviceLike, /, index: int | None = None) -> devices.Device:
+    if isinstance(device_or_str, (devices.Device, torch.device)):
         # PyTorch behavior:
         # >>> torch.device(torch.device("cuda"), 0)
         # TypeError: device(): argument 'type' (position 1) must be str, not torch.device
         utils.check(index is None, lambda: f"device(): `index` is only allowed when `device` is a `str`.")
         return to_device(device_or_str)
 
+    # NOTE: device_or_str is `str`
     if index is not None:
         # PyTorch behavior:
         # >>> torch.device("cuda:0", 0)
