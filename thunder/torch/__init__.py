@@ -2846,13 +2846,33 @@ def _normalize(a: TensorProxy, /, norm_dims, eps: Number) -> tuple[TensorLike, T
 def normalize(
     a: TensorProxy, /, p: float = 2.0, dim: int | Sequence[int] = 1, eps: float = 1e-12, out: None | TensorProxy = None
 ) -> TensorProxy:
+    utils.check(
+        dtypes.is_float_dtype(a.dtype) or dtypes.is_complex_dtype(a.dtype),
+        lambda: f"normalize: Expected a floating point or complext tensor as input. Got {a.dtype}",
+        TypeError,
+    )
     utils.check(out is None, lambda: "normalize: out is not None which is currently unsupported", NotImplementedError)
-    denom = a**p
-    denom = sum(denom, dim=dim, keepdim=True)
-    denom = pow(denom, 1 / p)
-    denom = clamp(denom, min=eps)
-    denom = expand_as(denom, a)
-    return a / denom
+    computation_dtype, result_dtype = _reduction_dtypes(a, REDUCTION_OUTPUT_TYPE_KIND.COMPLEX_TO_FLOAT, a.dtype)
+    if p == 0.0:
+        return a / sum(ne(a, 0.0), dim=dim, keepdim=True)
+    elif p == float("inf"):
+        denom = amax(abs(a), dim=dim, keepdim=True)
+    elif p == -float("inf"):
+        denom = amin(abs(a), dim=dim, keepdim=True)
+    else:
+        dim = utils.canonicalize_dim(a.ndim, dim)
+        a_ = clang.maybe_convert_to_dtype(a, computation_dtype)
+        is_p_even = p % 2.0 == 0
+        if not (is_p_even and dtypes.is_float_dtype(a.dtype)):
+            a_ = abs(a_)
+        denom = a_**p
+        denom = sum(denom, dim=dim, keepdim=True)
+        denom = denom ** (1.0 / p)
+        denom = clamp(denom, min=eps)
+        denom = expand_as(denom, a)
+    denom = clang.maybe_convert_to_dtype(denom, result_dtype)
+    out = a / denom
+    return out
 
 
 # TODO: likely want to refactor these normalizations
