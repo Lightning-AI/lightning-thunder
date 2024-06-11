@@ -6466,7 +6466,7 @@ def _call_dispatch(
                 unbound_fn = wrap_const(unbound_fn)  # TODO!
                 return _interpret_call(unbound_fn, slf, *args, **kwargs)
 
-    # torch.ops.aten._adaptive_avg_pool2d_backward
+
     def is_torch_operators(fn):
         if not hasattr(fn, "__module__"):
             return False
@@ -6498,7 +6498,7 @@ def _call_dispatch(
             {fn: ensure_recursive_proxies(interpreter_needs_wrap(record_source_loc_in_symbol_header(sym)))}
         )
         from thunder.executors.torchex import ex, _always_executable
-
+        # TODO: there are other logics in torchsymbol, find out if they are needed to replicate here
         op = ex.register_operator(fn.__name__, module=eval(fn.__module__), meta=fn_meta)
         ex.register_implementation(sym, op, checker=_always_executable)
 
@@ -6518,6 +6518,7 @@ def _call_dispatch(
                 flat_args, _ = tree_flatten(args)
                 differentiable_args = tuple(a for a in flat_args if isinstance(a, torch.Tensor))
                 differentiable_args_idx = tuple(i for i,a in enumerate(flat_args) if isinstance(a, torch.Tensor))
+                # TODO: figure out why?
                 def wrapper(*diff_args):
                     new_args = []
                     idx = 0

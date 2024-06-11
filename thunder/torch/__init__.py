@@ -4086,10 +4086,26 @@ def convert_nontensor(shape_env, a):
     else:
         raise NotImplementedError(f"unknown type: {type(a)}")
 
+
+def get_fake_arg(inp, shape_env):
+    from thunder.executors.sdpaex import _convert_to_fake_tensor, _convert_to_meta_tensor
+
+    if isinstance(inp, TensorProxy):
+        return _convert_to_meta_tensor(inp)
+    elif isinstance(inp, (list, tuple)):
+        out_s = []
+        for s in inp:
+            out_s.append(get_fake_arg(s, shape_env))
+        return out_s
+    else:
+        # non tensor, non sequence
+        return convert_nontensor(shape_env, inp)
+
+
 def augmented_forward_adaptor(func, sym_op):
     def wrapper(*args, **kwargs):
         from thunder.core.transforms import VJPDual
-
+        # import pdb;pdb.set_trace()
         out = sym_op(*args, **kwargs)
         primal = out if isinstance(out, tuple) else (out,)
         residuals = ({"inputs": (args, kwargs), "func":func}, )
@@ -4109,45 +4125,31 @@ def backward_adaptor():
         inp_args = inps[0]
         inp_kwargs = inps[1]
 
-        from thunder.executors.sdpaex import _convert_to_fake_tensor, _convert_to_meta_tensor
+        from thunder.executors.sdpaex import _convert_to_meta_tensor
         from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
-        from torch.fx.experimental.symbolic_shapes import ShapeEnv, DimDynamic
+        from torch.fx.experimental.symbolic_shapes import ShapeEnv
 
-        fake_args = []
-        # fake_kwargs = {}
+        fake_inp_args = []
         shape_env = ShapeEnv()  # what's shapeEnv?
-        def get_fake_arg(inp):
-            if isinstance(inp, TensorProxy):
-                return _convert_to_meta_tensor(inp)
-            elif isinstance(inp, (list, tuple)):
-                out_s = []
-                for s in inp:
-                    out_s.append(get_fake_arg(s))
-                return out_s
-            else:
-                # non tensor, non sequence
-                return convert_nontensor(shape_env, inp)
+
         # use a wrapper because the inputs of vjp can only be tuple of tensors or tensor
-        def _make_differentiable_wrapper(func, *args):
+        # TODO: what if one arg is tuple of tensor? replace the corresponding diff_args in the args with input diff_args in wrapper func(why it works now?)
+        def _make_differentiable_wrapper(func, *args, **kwargs):
             from thunder.core.pytree import tree_flatten, tree_map
             flat_args, _ = tree_flatten(args)
             differentiable_args = tuple(a for a in flat_args if isinstance(a, FakeTensor))
             def wrapper(*diff_args):
-                return func(*args)
+                return func(*args, **kwargs)
 
             # filtered_args = tuple(arg for i, arg in enumerate(args) if i in differentiable_args_idx)
             return wrapper, differentiable_args
 
         with FakeTensorMode() as mode:
             for arg in inp_args:
-                fake_args.append(get_fake_arg(arg))
+                fake_inp_args.append(get_fake_arg(arg, shape_env))
+            fake_inp_kwargs = {k: get_fake_arg(v, shape_env) for k, v in inp_kwargs.items()}
 
-            fake_kwargs = [get_fake_arg(v) for k, v in inp_kwargs.items()]
-            # fake_args = tree_map(lambda x:x.requires_grad_(True) if isinstance(x,FakeTensor) else x, fake_args)
-            # fake_kwargs = tree_map(lambda x:x.requires_grad_(True) if isinstance(x,FakeTensor) else x, fake_kwargs)
-            # how to convert kwargs to args
-            from itertools import chain
-            wrapped_func, diff_args = _make_differentiable_wrapper(func, *chain(fake_args, fake_kwargs))
+            wrapped_func, diff_args = _make_differentiable_wrapper(func, *fake_inp_args, **fake_inp_kwargs)
             _, fake_outs = torch.autograd.functional.vjp(wrapped_func, diff_args, v=tree_map(_convert_to_meta_tensor, grad_output))
 
         if isinstance(fake_outs, tuple):
@@ -4158,30 +4160,17 @@ def backward_adaptor():
 
 def meta_adaptor(func):
     def wrapper(*args, **kwargs):
-        from thunder.executors.sdpaex import _convert_to_fake_tensor, _convert_to_meta_tensor
         from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
-        from torch.fx.experimental.symbolic_shapes import ShapeEnv, DimDynamic
+        from torch.fx.experimental.symbolic_shapes import ShapeEnv
 
         fake_args = []
         fake_kwargs = {}
         shape_env = ShapeEnv()  # what's shapeEnv?
 
-        def get_fake_arg(inp):
-            if isinstance(inp, TensorProxy):
-                return _convert_to_meta_tensor(inp)
-            elif isinstance(inp, (list, tuple)):
-                out_s = []
-                for s in inp:
-                    out_s.append(get_fake_arg(s))
-                return out_s
-            else:
-                # non tensor, non sequence
-                return convert_nontensor(shape_env, inp)
-
         with FakeTensorMode() as mode:
             for arg in args:
-                fake_args.append(get_fake_arg(arg))
-            fake_kwargs = {k: get_fake_arg(v) for k, v in kwargs.items()}
+                fake_args.append(get_fake_arg(arg, shape_env))
+            fake_kwargs = {k: get_fake_arg(v, shape_env) for k, v in kwargs.items()}
             fake_outs = func(*fake_args, **fake_kwargs)
         if isinstance(fake_outs, tuple):
             return tuple(TensorProxy(like=args[0], shape=fake_out.shape) for fake_out in fake_outs)
