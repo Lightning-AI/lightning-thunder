@@ -4086,6 +4086,75 @@ def convert_nontensor(shape_env, a):
     else:
         raise NotImplementedError(f"unknown type: {type(a)}")
 
+def augmented_forward_adaptor(func, sym_op):
+    def wrapper(*args, **kwargs):
+        from thunder.core.transforms import VJPDual
+
+        out = sym_op(*args, **kwargs)
+        primal = out if isinstance(out, tuple) else (out,)
+        residuals = ({"inputs": (args, kwargs), "func":func}, )
+        return VJPDual(primal, residuals)
+
+    return wrapper
+
+
+def backward_adaptor():
+    def wrapper(*args):
+        # import pdb;pdb.set_trace()
+        # assert kwargs=={}
+        saved_for_backward: dict = args[0]
+        grad_output = args[1:]
+        func = saved_for_backward["func"]
+        inps = saved_for_backward["inputs"]
+        inp_args = inps[0]
+        inp_kwargs = inps[1]
+
+        from thunder.executors.sdpaex import _convert_to_fake_tensor, _convert_to_meta_tensor
+        from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
+        from torch.fx.experimental.symbolic_shapes import ShapeEnv, DimDynamic
+
+        fake_args = []
+        # fake_kwargs = {}
+        shape_env = ShapeEnv()  # what's shapeEnv?
+        def get_fake_arg(inp):
+            if isinstance(inp, TensorProxy):
+                return _convert_to_meta_tensor(inp)
+            elif isinstance(inp, (list, tuple)):
+                out_s = []
+                for s in inp:
+                    out_s.append(get_fake_arg(s))
+                return out_s
+            else:
+                # non tensor, non sequence
+                return convert_nontensor(shape_env, inp)
+        # use a wrapper because the inputs of vjp can only be tuple of tensors or tensor
+        def _make_differentiable_wrapper(func, *args):
+            from thunder.core.pytree import tree_flatten, tree_map
+            flat_args, _ = tree_flatten(args)
+            differentiable_args = tuple(a for a in flat_args if isinstance(a, FakeTensor))
+            def wrapper(*diff_args):
+                return func(*args)
+
+            # filtered_args = tuple(arg for i, arg in enumerate(args) if i in differentiable_args_idx)
+            return wrapper, differentiable_args
+
+        with FakeTensorMode() as mode:
+            for arg in inp_args:
+                fake_args.append(get_fake_arg(arg))
+
+            fake_kwargs = [get_fake_arg(v) for k, v in inp_kwargs.items()]
+            # fake_args = tree_map(lambda x:x.requires_grad_(True) if isinstance(x,FakeTensor) else x, fake_args)
+            # fake_kwargs = tree_map(lambda x:x.requires_grad_(True) if isinstance(x,FakeTensor) else x, fake_kwargs)
+            # how to convert kwargs to args
+            from itertools import chain
+            wrapped_func, diff_args = _make_differentiable_wrapper(func, *chain(fake_args, fake_kwargs))
+            _, fake_outs = torch.autograd.functional.vjp(wrapped_func, diff_args, v=tree_map(_convert_to_meta_tensor, grad_output))
+
+        if isinstance(fake_outs, tuple):
+            return tuple(TensorProxy(like=g, shape=fake_out.shape) for fake_out,g in zip(fake_outs, grad_output))
+        return TensorProxy(like=grad_output, shape=fake_outs.shape)
+
+    return wrapper
 
 def meta_adaptor(func):
     def wrapper(*args, **kwargs):

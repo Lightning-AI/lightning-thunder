@@ -6501,18 +6501,46 @@ def _call_dispatch(
 
         op = ex.register_operator(fn.__name__, module=eval(fn.__module__), meta=fn_meta)
         ex.register_implementation(sym, op, checker=_always_executable)
-        # have problem registering the augmented_fwd and bwd, which residuals? fwd and bwd name correspondance?
-        # possible_bwd_op = "_adaptive_avg_pool3d_backward"
-        # def bwd_wrapper(fwd_func, bwd_name):
-        #     def wrapper(*args, **kwargs):
-        #         primals = fwd_func(*args, **kwargs)
 
-        #         grad = get_grad(primals)
-        #         grad_a = bwd_func(grad, a)
-        #         put_grad(a, grad_a)
+        from thunder.torch import augmented_forward_adaptor, backward_adaptor
+        from thunder.core.transforms import augmented_forward_impls, backward_impls
+        augmented_forward_impls[sym.id] = augmented_forward_adaptor(fn, op)
 
-        #         return primals
-        #     return wrapper
+        def _vjp_impl(
+            residules, *gs
+        ) -> torch.Tensor:
+            assert isinstance(residules, dict)
+            inp_args = residules['inputs'][0]
+            inp_kwargs = residules['inputs'][1]
+            func = residules['func']
+            def _make_differentiable_wrapper(func, *args):
+                from thunder.core.pytree import tree_flatten, tree_map
+                flat_args, _ = tree_flatten(args)
+                differentiable_args = tuple(a for a in flat_args if isinstance(a, torch.Tensor))
+                differentiable_args_idx = tuple(i for i,a in enumerate(flat_args) if isinstance(a, torch.Tensor))
+                def wrapper(*diff_args):
+                    new_args = []
+                    idx = 0
+                    for i, a in enumerate(args):
+                        if i in differentiable_args_idx:
+                            new_args.append(diff_args[idx])
+                            idx = idx+1
+                        else:
+                            new_args.append(a)
+                    return func(*new_args)
+
+                return wrapper, differentiable_args
+
+            from itertools import chain
+            wrapped_func, diff_args = _make_differentiable_wrapper(func, *chain(inp_args, inp_kwargs.values()))
+            _, outs = torch.autograd.functional.vjp(wrapped_func, diff_args, v=gs)
+
+            return outs
+
+        bwd_op = ex.register_operator(fn.__name__+"_vjp", meta=backward_adaptor(), fn=_vjp_impl)
+        ex.register_implementation(bwd_op.id, bwd_op, checker=_always_executable)
+        backward_impls[sym.id] = bwd_op
+
 
     if is_torch_operators(fn):
         from thunder.torch import meta_adaptor
