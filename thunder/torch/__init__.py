@@ -3057,8 +3057,7 @@ def baddbmm(
 
     t0 = matmul(b1, b2)
     t1 = mul(alpha, t0)
-    if beta == 0:
-        return t1
+
     return add(t1, a, alpha=beta)
 
 
