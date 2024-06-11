@@ -401,8 +401,7 @@ class BoundSymbol(BoundSymbolInterface):
                 if isinstance(fa, CollectionProxy):
                     fa.coll = tree_map(swap, fa.collection())
                 if isinstance(fa, Proxy):
-                    ovfa = variableify(fa)
-                    vfa = ovfa
+                    vfa = variableify(fa)
                     while vfa in swap_map:
                         baseutils.check(
                             vfa not in visited, lambda: f"Detected a cycle while swapping; the cycle includes {visited}"
