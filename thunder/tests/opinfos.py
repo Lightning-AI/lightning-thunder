@@ -5878,12 +5878,15 @@ def normalize_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # input shape
     cases = (
         (4, 4),
-        (1024, 1024),
-        (64, 64, 64),
+        (32, 32),
+        (16, 16, 16),
         (4, 2, 4, 5),
     )
     for case in cases:
         yield SampleInput(make(case))
+        yield SampleInput(make(case), p=1)
+        yield SampleInput(make(case), p=4)
+        yield SampleInput(make(case), p=math.inf)
 
 
 normalize_opinfo = OpInfo(
