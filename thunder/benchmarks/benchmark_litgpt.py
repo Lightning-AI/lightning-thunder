@@ -1,5 +1,6 @@
 import os
 import time
+import warnings
 from typing import Any
 from contextlib import nullcontext
 
@@ -27,6 +28,9 @@ world_size = int(os.environ.get("WORLD_SIZE", 1))
 local_rank = int(os.environ.get("LOCAL_RANK", 0))
 global_rank = int(os.environ.get("RANK", 0))
 if world_size > 1:
+    # Avoids the allocator thrashing issue in PyTorch NCCL backend.
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/420
+    os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
     torch_dist.init_process_group(backend="nccl")
     pg = torch_dist.distributed_c10d._get_default_group()
 device = torch.device("cuda", local_rank)
@@ -165,7 +169,9 @@ class Benchmark_litGPT:
             ), f"Global Batch Size {self.global_batch_size} should be a multiple Micro Batch Size {self.micro_batch_size} * World Size {world_size}."
 
         if self.checkpoint_activations:
-            assert "thunder" not in self.compile, "Activations checkpointing is not supported for Thunder."
+            warnings.warn(
+                "Activations checkpointing is configured, but Thunder does not support checkpointing. Checkpointing will be ignored."
+            )
         self.skip_data_sync = skip_data_sync
 
         # Profiling Args

@@ -1,4 +1,3 @@
-import math
 import multiprocessing as mp
 import os
 import sys
@@ -22,6 +21,7 @@ from torch.distributed.fsdp.wrap import always_wrap_policy
 from torch.testing import assert_close, make_tensor
 
 import thunder
+import thunder.executors
 import thunder.torch as ltorch
 from thunder.core import devices
 from thunder.distributed import FSDPBucketingStrategy, FSDPType
@@ -33,7 +33,6 @@ from thunder.tests.framework import instantiate
 from thunder.executors.transformer_engineex import (
     transformer_engine_ex,
     TE_AVAILABLE,
-    TE_VERSION_1_6_PLUS,
     te_sync_fp8_meta_bwd,
 )
 
@@ -49,105 +48,14 @@ if TE_AVAILABLE:
 
     is_fp8_supported, fp8_support_reason = check_fp8_support()
 
-try:
-    import expecttest  # noqa: F401
-    import hypothesis  # noqa: F401
-except ImportError:
-    raise ImportError(
-        "Required packages of `expecttest` and/or `hypothesis` are missing. "
-        "Install them with `pip install expecttest hypothesis`"
-    )
-from torch.testing._internal import common_distributed, common_utils
+from thunder.tests.distributed.helper import ToyModel, DataParallelTestCase, new_gelu
+from torch.testing._internal import common_utils
 
 executors_map = {
     TorchExecutor.name: TorchExecutor,
 }
 if nvFuserExecutor is not None:
     executors_map[nvFuserExecutor.name] = nvFuserExecutor
-
-
-# Compile - DDP tests
-def new_gelu(x):
-    return 0.5 * x * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (x + 0.044715 * torch.pow(x, 3.0))))
-
-
-class ToyModel(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.net1 = nn.Linear(12, 12)
-        self.net2 = nn.Linear(12, 8)
-
-    def forward(self, x):
-        return self.net2(new_gelu(self.net1(x)))
-
-
-# note(crcrpar): How to write a test with `DDP`
-# Just add a method to :class:`CompileDDPTest`. The class is responsible for
-#     - calling `torch.distributed.init_process_group` with NCCL backend
-#     - setting rank to each process group / device
-# so what you'd need to do is to prepare a model and tensors, wrap the model with DDP, and
-# `thunder.jit` the original model or the DDP'd model, and do some computation and/or
-# examine the traces of the `thunder.jit`d.
-# If you force a test to be run with >2 GPUs for a test, you might want to inherit `CompileDDPTest`
-# and modify `world_size` to e.g. `max(torch.cuda.device_count(), 2)`.
-
-
-# note(crcrpar): Why inheriting `common_distributed.MultiProcessTestCase`?
-# When we're quite sure that we would only use `pytest` instead of `unittest`,
-# IIUC it's possible to run a test that is dependent on `DistributedDataParallel` and/or
-# `torch.distributed` by running the test file with [`torchrun`](https://pytorch.org/docs/stable/elastic/run.html),
-# but I don't think (a) it's quite intuitive to require `torchrun` explicitly to run a test and
-# (b) it's quite friendly to our CI as it's currently simply runs `pytest thunder/tests`.
-# I would say it's feasible to write a test with `torch.distributed` by using `torch.multiprocessing`,
-# but it would require us to make the function which defines the test logic picklable and would
-# lead to boilerplate test functions.
-# Ref: https://github.com/NVIDIA/apex/blob/7b2e71b0d4013f8e2f9f1c8dd21980ff1d76f1b6/apex/transformer/testing/distributed_test_base.py#L22
-class DataParallelTestCase(common_distributed.MultiProcessTestCase):
-    DISTRIBUTED_BACKEND = "nccl"
-
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-
-    def setUp(self) -> None:
-        super().setUp()
-        self._spawn_processes()
-
-    def tearDown(self) -> None:
-        torch.cuda.empty_cache()
-        super().tearDown()
-
-    # note(crcrpar): This means the world_size is up to two.
-    @property
-    def world_size(self) -> int:
-        return min(torch.cuda.device_count(), 2)
-
-    @property
-    def init_method(self):
-        return f"{common_utils.FILE_SCHEMA}{self.file_name}"
-
-    @classmethod
-    def _run(cls, rank, test_name, file_name, pipe):
-        self = cls(test_name)
-        self.rank = rank
-        self.file_name = file_name
-
-        torch.distributed.init_process_group(
-            init_method=self.init_method,
-            backend=self.DISTRIBUTED_BACKEND,
-            world_size=self.world_size,
-            rank=self.rank,
-        )
-
-        local_rank = self.rank % torch.cuda.device_count()
-        torch.cuda.set_device(local_rank)
-        os.environ["LOCAL_RANK"] = str(local_rank)
-
-        torch.distributed.barrier()
-        self.run_test(test_name, pipe)
-        torch.distributed.barrier()
-
-        torch.distributed.destroy_process_group()
-        sys.exit(0)
 
 
 @unittest.skipUnless(
@@ -287,8 +195,8 @@ class CompileDDPTest(DataParallelTestCase):
 
             self.assertEqual(actual, expected)
 
-    @common_utils.parametrize("executor", tuple(executors_map.keys()))
-    def test_all_gather(self, executor):
+    @common_utils.parametrize("executor,dim", product(tuple(executors_map.keys()), (None, 0, 1)))
+    def test_all_gather(self, executor, dim: int | None):
         _executor = executors_map[executor]
 
         # NOTE torch.distributed.all_gather is an inplace operation
@@ -297,9 +205,16 @@ class CompileDDPTest(DataParallelTestCase):
             b,
             process_group: torch.distributed.ProcessGroup,
             async_op: bool,
+            dim: int | None,
         ):
             c = a + b
-            d = torch.empty((c.shape[0] * process_group.size(), *c.shape[1:]), device=c.device, dtype=c.dtype)
+
+            result_shape = list(c.shape)
+            if dim is not None:
+                result_shape[dim] *= process_group.size()
+            else:
+                result_shape[0] *= process_group.size()
+            d = torch.empty(result_shape, device=c.device, dtype=c.dtype)
             handle = torch.distributed.all_gather_into_tensor(d, c, group=process_group, async_op=async_op)
 
             if async_op:
@@ -314,10 +229,11 @@ class CompileDDPTest(DataParallelTestCase):
             b,
             process_group: torch.distributed.ProcessGroup,
             async_op: bool,
+            dim: int | None,
         ):
             c = a + b
 
-            d = ltorch.all_gather(c, group=process_group, async_op=async_op)
+            d = ltorch.all_gather(c, group=process_group, async_op=async_op, dim=dim)
 
             if async_op:
                 d = prims.wait(d)
@@ -334,8 +250,8 @@ class CompileDDPTest(DataParallelTestCase):
         cfoo = thunder.jit(lc_foo, executors=_executor.executors_list())
 
         for async_op in (True, False):
-            expected = foo(a, b, process_group, async_op)
-            actual = cfoo(a, b, process_group, async_op)
+            expected = foo(a, b, process_group, async_op, dim)
+            actual = cfoo(a, b, process_group, async_op, dim)
 
             self.assertEqual(actual, expected)
 
@@ -397,8 +313,8 @@ class CompileDDPTest(DataParallelTestCase):
 
             self.assertEqual(actual, expected)
 
-    @common_utils.parametrize("executor", tuple(executors_map.keys()))
-    def test_reduce_scatter(self, executor):
+    @common_utils.parametrize("executor,dim", product(tuple(executors_map.keys()), (None, 0, 1)))
+    def test_reduce_scatter(self, executor, dim):
         _executor = executors_map[executor]
 
         # NOTE torch.distributed.all_gather is an inplace operation
@@ -408,9 +324,15 @@ class CompileDDPTest(DataParallelTestCase):
             op,
             process_group: torch.distributed.ProcessGroup,
             async_op: bool,
+            dim: int | None,
         ):
             c = a + b
-            d = torch.empty((c.shape[0] // process_group.size(), *c.shape[1:]), device=c.device, dtype=c.dtype)
+            result_shape = list(a.shape)
+            if dim is None:
+                result_shape[0] //= process_group.size()
+            else:
+                result_shape[dim] //= process_group.size()
+            d = torch.empty(result_shape, device=c.device, dtype=c.dtype)
             if op is not None:
                 handle = torch.distributed.reduce_scatter_tensor(d, c, op, group=process_group, async_op=async_op)
             else:
@@ -429,10 +351,11 @@ class CompileDDPTest(DataParallelTestCase):
             op,
             process_group: torch.distributed.ProcessGroup,
             async_op: bool,
+            dim: int | None,
         ):
             c = a + b
 
-            d = ltorch.reduce_scatter(c, op, group=process_group, async_op=async_op)
+            d = ltorch.reduce_scatter(c, op, group=process_group, async_op=async_op, dim=dim)
 
             if async_op:
                 d = prims.wait(d)
@@ -449,8 +372,8 @@ class CompileDDPTest(DataParallelTestCase):
         cfoo = thunder.jit(lc_foo, executors=_executor.executors_list())
 
         for op, async_op in product((None, torch.distributed.ReduceOp.SUM), (False, True)):
-            expected = foo(a, b, op, process_group, async_op)
-            actual = cfoo(a, b, op, process_group, async_op)
+            expected = foo(a, b, op, process_group, async_op, dim=dim)
+            actual = cfoo(a, b, op, process_group, async_op, dim=dim)
 
             self.assertEqual(actual, expected)
 
@@ -1037,36 +960,49 @@ class CompileDDPTest(DataParallelTestCase):
             def forward(self, x):
                 return self.fc1(x) + self.fc2(x)
 
-        # Check `jit(fsdp(model))` works
+        def _test_model_output_and_gradients(model, x):
+            output = model(x)
+            with device:
+                grad_output = torch.ones_like(output)
+            output.backward(grad_output)
+            expected_shape = (4, 16)
+
+            assert output.shape == expected_shape, f"{output.shape=} - {expected_shape=}"
+
+            # Verify that both params point to same grad tensor.
+            assert id(model.get_parameter("fc1.weight").grad) == id(model.get_parameter("fc2.weight").grad)
+
+            # Verify that we accumulate the gradients for the shared parameter.
+            gathered_grad_shape = (model.get_parameter("fc1.weight").shape[0] * self.world_size,) + model.get_parameter(
+                "fc1.weight"
+            ).shape[1:]
+            with device:
+                actual_grad_gathered = torch.empty(gathered_grad_shape)
+
+            tdist.all_gather_into_tensor(actual_grad_gathered, model.get_parameter("fc1.weight").grad)
+
+            # Based on the forward, grad for both params is `(grad_output.T @ x)`. Multiplying by 2 as the grad will be accumulated.
+            expected_grad = 2 * (grad_output.T @ x)
+            torch.testing.assert_close(actual_grad_gathered, expected_grad)
+
         with device:
-            model = Model()
+            jit_fsdp_model = Model()
+            fsdp_jit_model = Model()
             x = torch.ones(4, 16)
 
-        model.fc1.weight = model.fc2.weight
+        # Check `jit(fsdp(model))` works
+        jit_fsdp_model.fc1.weight = jit_fsdp_model.fc2.weight
 
-        model = thunder.jit(thunder.distributed.fsdp(model), executors=["torch"])
+        jit_fsdp_model = thunder.jit(thunder.distributed.fsdp(jit_fsdp_model), executors=["torch"])
 
-        output = model(x)
-        with device:
-            grad_output = torch.ones_like(output)
-        output.backward(grad_output)
-        expected_shape = (4, 16)
+        _test_model_output_and_gradients(jit_fsdp_model, x)
 
-        assert output.shape == expected_shape, f"{output.shape=} - {expected_shape=}"
+        # Check `fsdp(jit(model))` works
+        fsdp_jit_model.fc1.weight = fsdp_jit_model.fc2.weight
 
-        # Verify that both params point to same grad tensor.
-        assert id(model.get_parameter("fc1.weight").grad) == id(model.get_parameter("fc2.weight").grad)
+        fsdp_jit_model = thunder.distributed.fsdp(thunder.jit(fsdp_jit_model, executors=["torch"]))
 
-        # Verify that we accumulate the gradients for the shared parameter.
-        gathered_grad_shape = (model.fc1.weight.shape[0] * self.world_size,) + model.fc1.weight.shape[1:]
-        with device:
-            actual_grad_gathered = torch.empty(gathered_grad_shape)
-
-        tdist.all_gather_into_tensor(actual_grad_gathered, model.get_parameter("fc1.weight").grad)
-
-        # Based on the forward, grad for both params is `(grad_output.T @ x)`. Multiplying by 2 as the grad will be accumulated.
-        expected_grad = 2 * (grad_output.T @ x)
-        torch.testing.assert_close(actual_grad_gathered, expected_grad)
+        _test_model_output_and_gradients(fsdp_jit_model, x)
 
 
 common_utils.instantiate_parametrized_tests(CompileDDPTest)
@@ -1615,31 +1551,13 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
         fwd_exec_trace = thunder.last_traces(jit_model)[-1]
         bwd_exec_trace = thunder.last_backward_traces(jit_model)[-1]
 
-        if TE_VERSION_1_6_PLUS:
-            # Verify that the symbol to sync backward
-            # fp8 metadata is present in backward trace.
-            for bsym in reversed(bwd_exec_trace.bound_symbols):
-                if bsym.sym.id == te_sync_fp8_meta_bwd.id:
-                    break
-            else:
-                raise RuntimeError("Backward sync symbol not found.")
-
+        # Verify that the symbol to sync backward
+        # fp8 metadata is present in backward trace.
+        for bsym in reversed(bwd_exec_trace.bound_symbols):
+            if bsym.sym.id == te_sync_fp8_meta_bwd.id:
+                break
         else:
-            # Verify that the first te_linear in fwd_exec_trace is the
-            # last one in bwd_exec_tarce.
-            # We verify that by managing the `ctx` (CollectionProxy) output by `te_linear` which is
-            # passed to backward.
-            # As CollectionProxy don't implement __eq__, we verify them by name.
-            first_ctx_name = None
-            for bsym in fwd_exec_trace.bound_symbols:
-                if bsym.sym.name.startswith("te_linear"):
-                    first_ctx_name = bsym.output[1].name
-                    break
-
-            for bsym in reversed(bwd_exec_trace.bound_symbols):
-                if bsym.sym.name.startswith("te_functional"):
-                    assert first_ctx_name == bsym.args[-1].name, (first_ctx_name, bsym.args[-1].name)
-                    break
+            raise RuntimeError("Backward sync symbol not found.")
     except Exception as e:
         sanity_exceptions.append(e)
 
@@ -1790,6 +1708,8 @@ def _test_fsdp_transformer_engine(input_data):
 @instantiate(
     dtypes=(thunder.float32,),
     num_devices=2,
+    # CPU broke around PyTorch 2.3.1, see PR #545
+    devicetypes=(devices.DeviceType.CUDA,),
     decorators=(pytest.mark.parametrize("bucket_size_in_mb", (0, 25)),),
 )
 @ddp_wrapper("test_native_ddp", _test_native_ddp_helper)

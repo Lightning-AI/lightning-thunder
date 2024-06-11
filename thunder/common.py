@@ -33,7 +33,15 @@ from thunder.core.trace import (
     reset_tracectx,
 )
 from thunder.core.transform_common import dce, cse
-from thunder.core.proxies import is_proxyable, proxy, Proxy, CollectionProxy, TensorProxy, DDPType, FutureTensorProxy
+from thunder.core.proxies import (
+    is_proxyable,
+    proxy,
+    Proxy,
+    CollectionProxy,
+    TensorProxy,
+    DistParallelType,
+    FutureTensorProxy,
+)
 import thunder.core.prims as prims
 import thunder.distributed as dist
 import thunder.torch as ltorch
@@ -559,7 +567,10 @@ def trace(
                 )
 
                 def ddp_sync(arg: Any | TensorProxy) -> Any | TensorProxy:
-                    if isinstance(arg, TensorProxy) and arg.ddp_type in (DDPType.REPLICATED, DDPType.FULLY_SHARDED):
+                    if isinstance(arg, TensorProxy) and arg.distparallel_type in (
+                        DistParallelType.REPLICATED,
+                        DistParallelType.FULLY_SHARDED,
+                    ):
                         return dist.prims.synchronize(arg, compile_data.process_group_for_ddp)
                     else:
                         return arg
@@ -662,7 +673,7 @@ def _execute_trace(
 
     # Applies post-optimization transforms
     for transform in post_optimization_transforms:
-        extrace = transform(extrace)
+        extrace = transform.transform_trace(extrace)
         extraces.append(extrace)
 
     # Constructs the Python callable
@@ -814,7 +825,7 @@ def _create_callable(
 
             # Applies transforms
             for transform in transforms:
-                trc = transform(trc, executors_list=cd.executors_list)
+                trc = transform.transform_trace(trc, executors_list=cd.executors_list)
                 traces.append(trc)
 
             #

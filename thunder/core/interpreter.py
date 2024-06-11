@@ -609,7 +609,7 @@ class InterpreterRuntimeCtx:
     def get_current_user_source_location(self) -> tuple[str, Positions]:
         for frame in reversed(self.frame_stack):
             modname = unwrap(frame.globals).get("__name__", "")
-            if modname not in ("thunder.core.interpreter", "thunder.core.jit_ext"):
+            if modname not in ("thunder.core.interpreter", "thunder.core.jit_ext", "thunder.torch"):
                 return frame.code.co_filename, frame.positions
         return None, None
 

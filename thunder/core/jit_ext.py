@@ -20,8 +20,7 @@ from io import StringIO
 import inspect
 import time
 
-from thunder.core.compile_data import compile_data_and_stats, get_cache_option, using_symbolic_values, get_compile_data
-from thunder.core.symbol import bsym_header
+from thunder.core.compile_data import compile_data_and_stats, get_cache_option, get_compile_data
 import thunder.clang as clang
 import thunder.core.transforms
 
@@ -54,9 +53,10 @@ from types import (
 
 import torch
 from thunder.core.proxies import (
-    DDPType,
+    DistParallelType,
     proxy,
     Proxy,
+    AnyProxy,
     NumberProxy,
     StringProxy,
     TensorProxy,
@@ -561,6 +561,17 @@ class GeneralJitCtx(MinimalCtx):
         # avoid double registration by skipping if value has a registered proxy.
         if isinstance(uvalue, Proxy) or value.original_value is not value.nothing:
             return uvalue
+        elif isinstance(uvalue, torch.device):
+            co: CACHE_OPTIONS = get_cache_option()
+            p: AnyProxy = proxy(uvalue, history=value.provenance)
+            if co in (CACHE_OPTIONS.CONSTANT_VALUES, CACHE_OPTIONS.SYMBOLIC_VALUES):
+                # NOTE: Even with SYMBOLIC_VALUES, we want to strictly constraint the device as
+                # the computation trace may utilize device specific executors.
+                self.add_constraint((clang.check_literal_like, p, uvalue))
+            elif co in (CACHE_OPTIONS.SAME_INPUT,):
+                raise NotImplementedError(f"Unsupported cache option {co}")
+            else:  # co is CACHE_OPTIONS.NO_CACHING
+                pass
         elif isinstance(uvalue, torch.Tensor):
             # we always want to proxy torch.Tensor, even const
 
@@ -575,7 +586,10 @@ class GeneralJitCtx(MinimalCtx):
             # TensorProxy attributes should be considered derived quantities, so we flag TensorProxies here
             value.provenance.ext_flag |= EXT_FLAG_IS_TENSOR_PROXY
 
-            if isinstance(p, TensorProxy) and p.ddp_type in (DDPType.REPLICATED, DDPType.FULLY_SHARDED):
+            if isinstance(p, TensorProxy) and p.distparallel_type in (
+                DistParallelType.REPLICATED,
+                DistParallelType.FULLY_SHARDED,
+            ):
                 p_new = thunder.distributed.prims.synchronize(
                     p,
                     self._process_group_for_ddp,
@@ -592,11 +606,14 @@ class GeneralJitCtx(MinimalCtx):
             co: CACHE_OPTIONS = get_cache_option()
             if co is CACHE_OPTIONS.CONSTANT_VALUES:
                 self.add_constraint((clang.check_tensor_shape_and_metadata, p_orig))
+            elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
+                # TODO: establish guarding logic to allow non-broadcast shape change
+                self.add_constraint((clang.check_tensor_shape_and_metadata, p_orig))
             elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
                 raise NotImplementedError(f"Unsupported cache option {co}")
             return p
 
-        elif isinstance(uvalue, (float, int, complex, str)):
+        elif isinstance(uvalue, (float, int, complex, str, slice)):
             assert should_register_for_prologue(value.provenance)
             value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
             # we follow the caching mechanisms of the eager_unpack_interpreter
@@ -607,8 +624,13 @@ class GeneralJitCtx(MinimalCtx):
             if co is CACHE_OPTIONS.CONSTANT_VALUES:
                 if isinstance(uvalue, str):
                     self.add_constraint((clang.check_string_value, p, uvalue))
+                elif isinstance(uvalue, slice):
+                    self.add_constraint((clang.check_slice_value, p, uvalue))
                 else:
                     self.add_constraint((clang.check_number_type_and_value, p, uvalue))
+            elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
+                if p is not uvalue:
+                    value.register_proxy(p)
             elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
                 raise NotImplementedError(f"Unsupported cache option {co}")
             return p
@@ -1097,7 +1119,7 @@ def _general_jit_wrap_callback(value):
         pass  # basic containers are OK, too, subclasses?
     elif isinstance(uvalue, Proxy):
         value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
-    elif isinstance(uvalue, (float, int, complex, str)) and not isinstance(uvalue, Proxy):
+    elif isinstance(uvalue, (float, int, complex, str, slice, torch.device)) and not isinstance(uvalue, Proxy):
         if value.provenance.ext_flag & EXT_FLAG_IS_PROXY_DERIVED:  # we already have seen this
             pass
         elif should_register_for_prologue(value.provenance):
@@ -1393,13 +1415,6 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
 
         already_unpacked[id(p)] = p
 
-        # Adds cache constraints
-        # TODO Consider refactoring these contraints
-        # TODO Constrain on rank, device, and dtype
-        if isinstance(p, TensorProxy):
-            with tracectx(prologue_trace):
-                prims.assert_tensor_metadata(p, p.shape, p.device, p.dtype, p.requires_grad)
-
         return p
 
     with tracectx(prologue_trace):
@@ -1543,8 +1558,8 @@ def thunder_general_jit(
         )
 
     co: CACHE_OPTIONS = get_cache_option()
-    if co not in {CACHE_OPTIONS.CONSTANT_VALUES, CACHE_OPTIONS.NO_CACHING}:
-        raise NotImplementedError(f"Only constant constraints is supported")
+    if co not in {CACHE_OPTIONS.CONSTANT_VALUES, CACHE_OPTIONS.NO_CACHING, CACHE_OPTIONS.SYMBOLIC_VALUES}:
+        raise NotImplementedError(f"cache option {co.name} is not supported")
 
     prologue_trace: TraceCtx = TraceCtx(fn)
     computation_trace: TraceCtx = TraceCtx()
