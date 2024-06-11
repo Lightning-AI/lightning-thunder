@@ -1,6 +1,7 @@
 from collections.abc import Iterable, Iterator, Sequence
 from functools import partial, wraps
 from itertools import product
+from contextlib import nullcontext
 
 import operator
 import sys
@@ -24,7 +25,7 @@ import thunder.core.prims as prims
 from thunder import pytorch_executor, nvfuser_executor
 from thunder.executors.sdpaex import sdpa_ex
 from thunder.core.jit_ext import JITSharpEdgeError
-
+from thunder.core.transforms import PostOptimizationTransform
 
 #
 # Test suite for the general jit
@@ -629,7 +630,7 @@ def test_nanogpt():
 )
 @pytest.mark.parametrize(
     "device",
-    ("cpu", "cuda"),
+    ("cpu", "cuda", "meta"),
 )
 def test_litgpt_variants(name, device):
     if device == "cuda" and not torch.cuda.is_available():
@@ -723,3 +724,162 @@ def test_litgpt_variants_kvcache(name, device):
 
     assert_close(logits_1, thunder_logits_1)
     assert_close(logits_2[:, -1:], thunder_logits_2)
+
+
+@pytest.mark.parametrize(
+    "device",
+    ("cpu", "cuda"),
+)
+def test_tom_overrides_proxy(device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    device = torch.device(device)
+
+    x = torch.randint(0, 200, (5, 5), device=device)
+    config = litgpt_model.Config.from_name("llama2-like")
+
+    with device:
+        reference = litgpt_model.GPT(config)
+    expected_logits = reference(x)
+
+    expected_logits.sum().backward()
+
+    with device:
+        model = litgpt_model.GPT(config)
+    model.load_state_dict(reference.state_dict())
+    tom = thunder.jit(model, executors=nvfuserex if device.type == "cuda" else torchex)
+
+    # we manually replace tensors here, early transforms (like distributed) will do this
+    for k, v in tom._overrides_parameters.items():
+        tom._overrides_parameters[k] = torch.nn.Parameter(v.detach().clone())
+
+    actual_logits = tom(x)
+    assert_close(actual_logits, expected_logits)
+
+    actual_logits.sum().backward()
+
+    grads_expected = {k: t.grad for k, t in reference.named_parameters()}
+    grads_actual = {k: t.grad for k, t in tom.named_parameters()}
+
+    # on the original model, we have no grads
+    for param in model.parameters():
+        assert param.grad is None
+
+    assert len(grads_expected) == len(grads_actual)
+
+    for k, v in grads_expected.items():
+        torch.testing.assert_close(v, grads_actual[k], rtol=1e-2, atol=1e-2)
+
+    # after deleting overrides, we expect the tom to have the same named params as the original model
+    tom._overrides_parameters.clear()
+
+    params_expected = {k: t.grad for k, t in model.named_parameters()}
+    params_actual = {k: t.grad for k, t in tom.named_parameters()}
+
+    assert len(params_expected) == len(params_actual)
+
+    for k, v in params_expected.items():
+        assert v is params_actual[k]
+
+
+@pytest.mark.parametrize(
+    "device",
+    ("cpu", "cuda"),
+)
+def test_cache_symbolic_values(device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    def foo(a, scalar):
+        return (a * scalar).sum(scalar)
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+
+    a = torch.randn((2, 2, 2), device=device)
+    b = 1
+
+    actual = jfoo(a, b)
+    expected = foo(a, b)
+
+    assert_close(actual, expected)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    b = 2
+
+    actual = jfoo(a, b)
+    expected = foo(a, b)
+
+    assert_close(actual, expected)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1
+
+
+def test_post_optimization_transform():
+    def foo(a, b, c):
+        return a * a + b * c
+
+    class MyTransform(PostOptimizationTransform):
+        def transform_trace(self, trace, executors_list=None):
+            # Transform that adds a comment before any `add` BoundSymbol.
+            commented_trace = thunder.core.trace.from_trace(trace)
+
+            bsyms = []
+            for bsym in trace.bound_symbols:
+                if bsym.sym.name == "add":
+                    op_name = bsym.sym.name
+                    comment_bsym = prims.comment.bind(f"Executing {op_name}", output=None)
+                    bsyms.append(comment_bsym)
+
+                bsyms.append(bsym)
+
+            commented_trace.bound_symbols = bsyms
+            return commented_trace
+
+    jfoo = thunder.jit(foo, post_optimization_transforms=[MyTransform()])
+
+    a = torch.randn(3, 3, requires_grad=True)
+    b = torch.randn(3, 3)
+    c = torch.randn(3, 3)
+    _ = jfoo(a, b, c)
+    exec_trc = thunder.last_traces(jfoo)[-1]
+
+    comment_bsyms = list(filter(lambda bsym: bsym.sym.id == thunder.prims.PrimIDs.COMMENT, exec_trc.bound_symbols))
+    assert any(map(lambda bsym: bsym.args[0].startswith("Executing"), comment_bsyms))
+
+    bwd_trc = thunder.last_backward_traces(jfoo)[-1]
+    comment_bsyms = list(filter(lambda bsym: bsym.sym.id == thunder.prims.PrimIDs.COMMENT, bwd_trc.bound_symbols))
+    assert any(map(lambda bsym: bsym.args[0].startswith("Executing"), comment_bsyms))
+
+
+@pytest.mark.parametrize(
+    "cache_option",
+    (
+        thunder.CACHE_OPTIONS.CONSTANT_VALUES,
+        thunder.CACHE_OPTIONS.SYMBOLIC_VALUES,
+        thunder.CACHE_OPTIONS.NO_CACHING,
+        thunder.CACHE_OPTIONS.SAME_INPUT,
+    ),
+)
+def test_device_as_input(cache_option):
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    x = torch.randn(3, 3)
+    devices_to_check = ("cuda:0", "cpu")
+
+    def foo(x, device):
+        return x.to(device)
+
+    ctx = nullcontext()
+    if cache_option is thunder.CACHE_OPTIONS.SAME_INPUT:
+        ctx = pytest.raises(NotImplementedError)
+
+    jfoo = thunder.jit(foo, cache=cache_option)
+
+    for device in devices_to_check:
+        expected_device = torch.device(device)
+        with ctx:
+            actual_device = jfoo(x, expected_device).device
+            assert actual_device == expected_device

@@ -140,9 +140,6 @@ class FUEL_LEVEL(enum.Enum):
 
 # To implement a FusionExecutor, create a subclass of it that implements the fusion_pass method
 class FusionExecutor(Executor):
-    def __init__(self, name: Hashable, *, version: None | Any = None):
-        super().__init__(name, version=version)
-
     # Optimization fuel is a concept introduced by David B.
     # Whalley (https://dl.acm.org/doi/pdf/10.1145/186025.186103) to isolate
     # compiler bugs.

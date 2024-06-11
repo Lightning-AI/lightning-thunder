@@ -3,14 +3,18 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from thunder.common import CompileData
 from thunder.core import dtypes
 from thunder.core import devices
 from thunder.core import prims
 from thunder.core.prims import PrimIDs
 from thunder.core.proxies import FutureTensorProxy
 from thunder.core.proxies import TensorProxy
+from thunder.core.proxies import variableify
 from thunder.core.pytree import tree_flatten
 from thunder.core.pytree import tree_unflatten
+from thunder.core.trace import from_trace
+from thunder.core.trace import TraceProvenance
 from thunder.core.transforms import visitor_transform
 from thunder.core.transforms import VISIT_TYPE
 from thunder.core import utils
@@ -24,11 +28,11 @@ if TYPE_CHECKING:
     from thunder.core.symbol import Symbol
     from thunder.core.symbol import BoundSymbol
     from thunder.core.trace import TraceCtx
-    from thunder.common import CompileData
+    from thunder.core.trace import VariableInterface
 
 
 __all__ = [
-    "optimize_allreduce_in_ddp_backward",
+    "apply_bucketing_to_grad_allreduce",
 ]
 
 
@@ -48,6 +52,38 @@ def get_bsym_of_wait(tensor: TensorProxy, producers: utils.ProxyDict) -> BoundSy
     t = prod_bsym.flat_proxy_args[0]
     utils.check_type(t, (TensorProxy, FutureTensorProxy))
     return get_bsym_of_wait(t, producers)
+
+
+def remove_grad_sync(backward_trace_with_grad_sync: TraceCtx) -> TraceCtx:
+    flat_synced_grads, _ = tree_flatten(backward_trace_with_grad_sync.output)
+    producers = utils.producers(backward_trace_with_grad_sync)
+    synced_to_unsynced: dict[VariableInterface, TensorProxy] = {}
+    bsym_to_remove: list[BoundSymbol] = []
+    for synced_grad in flat_synced_grads:
+        if not isinstance(synced_grad, TensorProxy):
+            continue
+        bsym_of_allreduce = get_bsym_of_allreduce_of_grad(synced_grad, producers)
+        bsym_of_wait = get_bsym_of_wait(synced_grad, producers)
+        bsym_of_preaveraging: BoundSymbol = producers[bsym_of_allreduce.flat_proxy_args[0]]
+        utils.check(
+            bsym_of_preaveraging.sym.id in {PrimIDs.DIV, "torch.true_divide"},
+            lambda: f"expected to be either of {(PrimIDs.DIV, 'torch.true_divide')} but {bsym_of_preaveraging.sym.id=} for {synced_grad=}",
+        )
+        bsym_to_remove.extend([bsym_of_allreduce, bsym_of_wait, bsym_of_preaveraging])
+        synced_to_unsynced[variableify(synced_grad)] = bsym_of_preaveraging.flat_proxy_args[0]
+    bsym_denylist = set(bsym_to_remove)
+
+    backward_trace = from_trace(backward_trace_with_grad_sync)
+    bsym: BoundSymbol
+    for bsym in backward_trace_with_grad_sync.bound_symbols:
+        if bsym in bsym_denylist:
+            continue
+        if bsym.sym.id == PrimIDs.RETURN:
+            backward_trace.add_bound_symbol(bsym.from_bsym_swap_proxies(swap_map=synced_to_unsynced))
+        else:
+            backward_trace.add_bound_symbol(bsym)
+    backward_trace.set_provenance(TraceProvenance("remove grad sync comms"))
+    return backward_trace
 
 
 @dataclass
@@ -161,7 +197,7 @@ def optimize_allreduce_in_ddp_backward(
     """
 
     if get_skip_data_parallel_grad_sync():
-        return backward_trace
+        return remove_grad_sync(backward_trace)
 
     # Map from preaveraged grad to index in trace.output
     producers = utils.producers(backward_trace)
@@ -202,3 +238,69 @@ def optimize_allreduce_in_ddp_backward(
     )
     utils.check(visit_callable.has_replaced_return, lambda: "")
     return updated_bwd_trace
+
+
+def apply_bucketing_to_grad_allreduce(trace: TraceCtx) -> TraceCtx:
+    """Apply Bucketing to Gradient AllReduce.
+
+    This method takes a trace which could be one representing forward or backward of an
+    :class:`~torch.nn.Module` and also one representing a method, not a PyTorch Module.
+    Then this applies bucketing to the input when it is a trace defining a DDP backward computation
+    where :func:`~thunder.distributed.all_reduce` is applied to gradients.
+    Otherwise, this method returns the input trace as is.
+
+    Args:
+        trace: A :class:`thunder.core.trace.TraceCtx`.
+
+    Returns:
+        :class:`thunder.core.trace.TraceCtx`
+    """
+
+    from torch.distributed import ProcessGroup
+    from thunder.core.compile_data import get_compile_data
+
+    if get_skip_data_parallel_grad_sync():
+        return trace
+
+    compile_data = get_compile_data()
+    if compile_data is None:
+        import thunder
+
+        compile_data = thunder.compile_data(trace)
+    # There's no ways to move forward if `compile_data` is None, so early exit.
+    if compile_data is None:
+        return trace
+    utils.check_type(compile_data, CompileData)
+
+    if not compile_data.is_module:
+        return trace
+
+    # NOTE(crcrpar): Will need to allow `use_fsdp` once hybrid shard is implemented.
+    if getattr(compile_data.fn, "use_ddp", False):
+        utils.check_type(compile_data.process_group_for_ddp, ProcessGroup)
+    else:
+        return trace
+
+    producers = utils.producers(trace)
+    flat_trace_output, _ = tree_flatten(trace.output)
+    output_tensor_to_index_and_prod_bsym = utils.ProxyDict()  # dict[Proxy, tuple[int, BoundSymbol]]
+    for index, output in enumerate(flat_trace_output):
+        if isinstance(output, TensorProxy):
+            output_tensor_to_index_and_prod_bsym[output] = (index, producers[output])
+
+    grad_before_after_allreduce = utils.ProxyDict()
+    bsym: BoundSymbol
+    for key in output_tensor_to_index_and_prod_bsym._dict:
+        _, bsym = output_tensor_to_index_and_prod_bsym.get_by_name(key)
+        if bsym.sym.id == dist_prims.PrimIDs.WAIT:
+            bsym_of_allreduce: BoundSymbol = producers[bsym.flat_proxy_args[0]]
+            utils.check(
+                bsym_of_allreduce.sym.id,
+                dist_prims.PrimIDs.ALL_REDUCE,
+                lambda: f"{bsym.sym.id=}, {bsym_of_allreduce.sym.id=}",
+            )
+            grad_before_after_allreduce[bsym.flat_proxy_outs[0]] = bsym_of_allreduce.flat_proxy_args[0]
+    if len(grad_before_after_allreduce._dict) == 0:
+        return trace
+
+    return optimize_allreduce_in_ddp_backward(trace, compile_data=compile_data)

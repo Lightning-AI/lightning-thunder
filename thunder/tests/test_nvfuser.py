@@ -6,7 +6,7 @@ import torch
 import thunder
 import thunder.examine as examine
 from thunder.examine import get_fusions
-from thunder.executors.nvfuserex import nvfuserex
+from thunder.executors.nvfuserex import nvfuser_version, nvfuserex
 import thunder.torch as ltorch
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
@@ -34,7 +34,15 @@ from thunder.tests.framework import (
     TorchExecutor,
 )
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
-from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops, get_opinfo
+from thunder.tests.opinfos import (
+    opinfos,
+    push_away_from_singularities,
+    tensor_creation_ops,
+    get_opinfo,
+    linear_opinfo,
+    matmul_opinfo,
+)
+from looseversion import LooseVersion
 
 
 @instantiate(
@@ -850,3 +858,92 @@ def test_optimization_fuel(executor, device, _):
     assert get_num_fusions(cfn_without_fusion) == 0
 
     nvfuserex.set_fuel(thunder.extend.FUEL_LEVEL.UNLIMITED)
+
+
+@instantiate(
+    dtypes=(thunder.float16, thunder.bfloat16),
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(nvFuserExecutor,),
+    decorators=(
+        pytest.mark.skipif(
+            nvfuser_version() is None or nvfuser_version() < LooseVersion("0.2.3"),
+            reason="Requires nvFuser version 0.2.3 or later",
+        ),
+        pytest.mark.parametrize("has_bias", [True, False], ids=["bias", "no_bias"]),
+    ),
+)
+def test_linear(executor, device: str, dtype: dtypes.dtype, has_bias: bool):
+
+    def fn(a, b, bias=None):
+        return torch.nn.functional.linear(a, b, bias)
+
+    for sample in linear_opinfo.sample_inputs(device, dtype):
+        if nvfuser_version() < LooseVersion("0.2.5") and sample.args[0].ndim != 2:
+            # Only 2D inputs are supported for version < 0.2.5.
+            continue
+
+    compiled_func = thunder.jit(fn, executors_list=executor.executors_list(), nv_enable_linear=True)
+
+    out = compiled_func(*sample.args)
+    traces = thunder.last_traces(compiled_func)
+    fusions = examine.get_fusions(traces[-1])
+
+    assert len(fusions) == 1
+    torch.testing.assert_close(out, torch.nn.functional.linear(*sample.args))
+
+
+@instantiate(
+    dtypes=(thunder.float16, thunder.bfloat16),
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(nvFuserExecutor,),
+    decorators=(
+        pytest.mark.skipif(
+            nvfuser_version() is None or nvfuser_version() < LooseVersion("0.2.2"),
+            reason="Requires nvFuser version 0.2.2 or later",
+        ),
+    ),
+)
+def test_matmul(executor, device: str, dtype: dtypes.dtype):
+
+    def fn(a, b):
+        return torch.matmul(a, b)
+
+    for sample in matmul_opinfo.sample_inputs(device, dtype):
+        if nvfuser_version() < LooseVersion("0.2.4") and (sample.args[0].ndim != 2 or sample.args[1].ndim != 2):
+            # Only 2D inputs are supported for version < 0.2.4.
+            continue
+
+        compiled_func = thunder.jit(fn, executors_list=executor.executors_list(), nv_enable_matmul=True)
+
+        out = compiled_func(*sample.args)
+        traces = thunder.last_traces(compiled_func)
+        fusions = examine.get_fusions(traces[-1])
+
+        assert len(fusions) == 1
+        torch.testing.assert_close(out, torch.matmul(*sample.args))
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=(nvFuserExecutor,),
+)
+def test_rm_unused_inputs_of_nvfusion(executor, device, _):
+    import operator
+
+    def foo(t, ab):
+        return operator.getitem(t, ab)
+
+    t = make_tensor(5, 3, device=device, dtype=torch.float32)
+    ab = (slice(3, 1), slice(1, 2))
+    # enable bookend would remove the error and let you look at the trace without fusion.
+    jfoo = thunder.functional.jit(
+        foo,
+        interpretation="python interpreter",
+        cache="no caching",
+        disable_torch_autograd=True,
+        nv_enable_bookend=False,
+    )
+    out = jfoo(t, ab)
+    out_ref = foo(t, ab)
+
+    assert out.equal(out_ref)

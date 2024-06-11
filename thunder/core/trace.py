@@ -16,7 +16,7 @@ import thunder.core.baseutils as baseutils
 from thunder.core.baseutils import ProxyInterface, BoundSymbolInterface
 import thunder.core.devices as devices
 from thunder.core.pytree import tree_flatten, tree_unflatten
-from thunder.core.codeutils import ContextObject
+from thunder.core.codeutils import ContextObject, get_source_line, Positions
 
 
 # TODO see issue "Improve TraceProvenance"
@@ -51,7 +51,7 @@ class TraceCtx:
         self._is_prologue: bool = is_prologue
 
         self.args = None
-        self.kwargs = None
+        self.kwargs = {}
 
         self.bound_symbols: list[BoundSymbolInterface] = []
         self.scopes = [self.bound_symbols]
@@ -61,6 +61,9 @@ class TraceCtx:
         self.names = set()
 
         self._object_ctx: dict[int, ContextObject] = {}
+
+        self._current_source_filename: str | None = None
+        self._current_source_positions: Positions | None = None
 
         self._provenance: TraceProvenance | None = None
 
@@ -306,11 +309,15 @@ class TraceCtx:
 
         return import_ctx
 
+    def set_current_source_location(self, filename: str | None, positions: Positions | None):
+        self._current_source_filename = filename
+        self._current_source_positions = positions
+
     # TODO Account for multi-line signatures
     # TODO issue "Add type annotations to Python function produced by traces"
     #   Consider extending the signature with type information, in particular the
     #   the type information of the return value might be interesting
-    def python(self, *, print_depth: int = 1) -> str:
+    def python(self, *, print_depth: int = 1, include_decorators: bool = True) -> str:
         token = set_tracectx(self)
 
         try:
@@ -362,25 +369,33 @@ class TraceCtx:
                         import_str = f"import {module.__name__} as {name}"
                 program.append(import_str)
 
-            program.append("from thunder.executors.torchex import no_autocast")
+            if include_decorators:
+                program.append("from thunder.executors.torchex import no_autocast")
+
             # Separates imports from the function for readability
             if len(import_ctx) > 0:
                 program.append("")
 
-            # Prints the signature and the no_grad context (for when calling torch operations)
-            program.append("@torch.no_grad()")
-            # Prints the signature and the no_autocast context
-            program.append("@no_autocast()")
+            if include_decorators:
+                # NOTE: For TransformerEngine executor, we want to wrap the generated
+                # forward function in fp8_autocast ctx manager.
+                # In the future, if other executor has similar requirements, we should
+                # add a new extension point for executors
+                # NOTE: For TE v1.6 onwards, `fp8_autocast` checks if `torch.is_grad_enabled` for updating
+                # the FP8 scales/inverses. So this decorator should be applied before `torch.no_grad` (so that
+                # it is in grad enabled part).
+                from thunder.executors.transformer_engineex import _is_te_linear_enabled, _get_te_wrapper_string
 
-            # NOTE: For TransformerEngine executor, we want to wrap the generated
-            # forward function in fp8_autocast ctx manager.
-            # In future, if other executor has similar requirements, we should
-            # add a new extension point for executors
-            from thunder.executors.transformer_engineex import _is_te_linear_enabled, _get_te_wrapper_string
+                if self._include_te_fp8_autocast and _is_te_linear_enabled(import_ctx, object_ctx):
+                    program.append(_get_te_wrapper_string())
 
-            if self._include_te_fp8_autocast and _is_te_linear_enabled(import_ctx, object_ctx):
-                program.append(_get_te_wrapper_string())
+                # Disable gradients since Thunder takes care of this (for when calling torch operations)
+                program.append("@torch.no_grad()")
+                # Disable autocast since we already generated the trace with it in consideration (for when calling torch
+                # operations)
+                program.append("@no_autocast")
 
+            # Prints the signature
             program.append(signature_str)
 
             # TODO Print objects from context
@@ -398,7 +413,22 @@ class TraceCtx:
             #     program.append("")
 
             # Prints operations
-            for bsym in self.bound_symbols:
+
+            filename = None
+            lineno = None
+            for i, bsym in enumerate(self.bound_symbols):
+                if (
+                    bsym.source_filename is not None
+                    and bsym.source_positions is not None
+                    and bsym.source_positions.lineno is not None
+                ) and (filename != bsym.source_filename or lineno != bsym.source_positions.lineno):
+                    if i > 0:
+                        program.append("")
+                    src_line = get_source_line(bsym.source_filename, bsym.source_positions.lineno)
+                    program.append(f"""  # {bsym.source_filename}:{bsym.source_positions.lineno}: \t{src_line}""")
+                filename = bsym.source_filename
+                lineno = bsym.source_positions and bsym.source_positions.lineno
+
                 lines = bsym.python(indent=1, print_depth=print_depth)
                 program.extend(lines)
 
@@ -411,14 +441,14 @@ class TraceCtx:
     # Returns a Python callable that executes the trace
     # TODO issue "Create a mechanism for freezing TraceCtx objects"
     #   Create a mechanism for freezing traces and cache the compilation
-    def python_callable(self, *, global_dicts: None | dict = None) -> Callable:
+    def python_callable(self, *, global_dicts: None | dict = None, **kwargs: Any) -> Callable:
         python_str: str
 
         # Writes the program to allow it to be edited before execution
         path: None | str = _get_execution_file()
         if path is not None:
             f = open(path, "w")
-            f.write(self.python())
+            f.write(self.python(**kwargs))
             f.close()
 
             input(f"Trace written to {os.path.realpath(path)}  Press Any key to execute it")
@@ -426,7 +456,7 @@ class TraceCtx:
             with open(path) as file:
                 python_str = file.read()
         else:
-            python_str = self.python()
+            python_str = self.python(**kwargs)
 
         ctx = self.python_ctx()
         if global_dicts is not None:

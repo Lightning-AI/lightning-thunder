@@ -20,12 +20,11 @@ ARG IMAGE_TYPE="devel"
 FROM nvidia/cuda:${CUDA_VERSION}-${IMAGE_TYPE}-ubuntu${UBUNTU_VERSION}
 
 ARG CUDNN_VERSION="9.1.0.70"
-ARG CUDNN_FRONTEND_CHECKOUT="v1.3.0"
+ARG CUDNN_FRONTEND_VERSION="1.4.0"
 ARG PYTHON_VERSION="3.10"
 ARG TORCH_VERSION="2.2.1"
 ARG TRITON_VERSION="2.2.0"
 ARG TORCH_INSTALL="stable"
-ARG APEX_CHECKOUT="master"
 
 SHELL ["/bin/bash", "-c"]
 # https://techoverflow.net/2019/05/18/how-to-fix-configuring-tzdata-interactive-input-when-building-docker-images/
@@ -35,7 +34,8 @@ ENV \
     PATH="$PATH:/root/.local/bin" \
     CUDA_TOOLKIT_ROOT_DIR="/usr/local/cuda" \
     MKL_THREADING_LAYER="GNU" \
-    MAKEFLAGS="-j$(nproc)"
+    # compilation si too memory demanding so use only half of the cores
+    MAKEFLAGS="-j$(( $(nproc) / 2 ))"
 
 RUN \
     apt-get update -qq --fix-missing && \
@@ -67,13 +67,16 @@ RUN \
     update-alternatives --install /usr/bin/python${PYTHON_VERSION%%.*} python${PYTHON_VERSION%%.*} /usr/bin/python${PYTHON_VERSION} 1 && \
     update-alternatives --install /usr/bin/python python /usr/bin/python${PYTHON_VERSION} 1 && \
     curl https://bootstrap.pypa.io/get-pip.py | python${PYTHON_VERSION} && \
+    pip install "numpy >=1.23.0,<2" && \
     # Cleaning
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /root/.cache && \
     rm -rf /var/lib/apt/lists/*;
 
-# cuda TK is only needed for building from source, otherwise PyTorch wheels include it
+# cuDNN package is used by both torch and cuDNN frontend python package.
+# When using torch wheels, cuDNN pure-lib python package is fetched as a dependency.
+# But when building torch from source, cuDNN needs to be manually installed first.
 RUN if [ "${TORCH_INSTALL}" == "source" ]; then \
         echo "CUDA_VERSION=$CUDA_VERSION ; CUDNN_VERSION=$CUDNN_VERSION" && \
         CUDNN_BASE_VER=${CUDNN_VERSION%%.*} && \
@@ -96,8 +99,6 @@ RUN if [ "${TORCH_INSTALL}" == "source" ]; then \
         rm -rf /root/.cache && \
         rm -rf /var/lib/apt/lists/*; \
     fi
-
-COPY requirements/ requirements/
 
 ENV \
     PYTHONPATH="/usr/lib/python${PYTHON_VERSION}/site-packages" \
@@ -160,32 +161,7 @@ RUN \
     fi
 
 RUN \
-    # building Apex from source
-    pip install "pip>=23.1" packaging && \
-    git clone https://github.com/NVIDIA/apex && \
-    cd apex && \
-    git checkout ${APEX_CHECKOUT} && \
-    # https://github.com/NVIDIA/apex#linux
-    pip install -v \
-      --disable-pip-version-check \
-      --no-cache-dir \
-      --no-build-isolation \
-      --config-settings "--build-option=--xentropy" \
-      . && \
-    cd .. && \
-    rm -rf apex
-
-RUN \
-    # building cudnn-frontend from source
-    git clone --branch ${CUDNN_FRONTEND_CHECKOUT} https://github.com/NVIDIA/cudnn-frontend.git && \
-    CMAKE_BUILD_PARALLEL_LEVEL=16 pip install cudnn-frontend/ -v && \
-    rm -rf cudnn-frontend
-
-RUN \
-    ls -lh requirements/ && \
-    CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
-    pip install -U -r requirements/test.txt && \
-    rm -rf requirements/
+    pip install nvidia-cudnn-frontend==${CUDNN_FRONTEND_VERSION}
 
 RUN \
     # Show what we have

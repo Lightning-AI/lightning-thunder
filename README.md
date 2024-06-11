@@ -73,14 +73,23 @@ The easiest way to get started with Thunder, requiring no extra installations or
 
 ## Install Thunder
 
-To use Thunder on your local machine, first install [nvFuser](https://github.com/NVIDIA/Fuser) nightly and PyTorch nightly together as follows:
+To use Thunder on your local machine:
+
+- install [nvFuser](https://github.com/NVIDIA/Fuser) nightly and PyTorch nightly together as follows:
 
 ```bash
 # install nvFuser which installs the matching nightly PyTorch
 pip install --pre 'nvfuser-cu121[torch]' --extra-index-url https://pypi.nvidia.com
 ```
 
-Then, install Thunder as follows:
+- install [cudnn](https://gitlab-master.nvidia.com/cudnn/cudnn_frontend) as follows:
+
+```bash
+# install cudnn
+pip install nvidia-cudnn-frontend
+```
+
+- Finally, install Thunder as follows:
 
 ```
 # install thunder

@@ -1,4 +1,4 @@
-ipython[all] ==8.23.0
+ipython[all] ==8.25.0
 
 cuda-python
 

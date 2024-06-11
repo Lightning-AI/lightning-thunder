@@ -117,9 +117,15 @@ def make_tensor(
     shape = cast(tuple[int, ...], tuple(shape))
 
     _integral_types = [torch.uint8, torch.int8, torch.int16, torch.int32, torch.int64]
+    _floating_8bit_types = [torch.float8_e4m3fn, torch.float8_e4m3fnuz, torch.float8_e5m2, torch.float8_e5m2fnuz]
     _floating_types = [torch.float16, torch.bfloat16, torch.float32, torch.float64]
     _complex_types = [torch.complex32, torch.complex64, torch.complex128]
-    if requires_grad and dtype not in _floating_types and dtype not in _complex_types:
+    if (
+        requires_grad
+        and dtype not in _floating_types
+        and dtype not in _floating_8bit_types
+        and dtype not in _complex_types
+    ):
         raise ValueError("make_tensor: requires_grad must be False for integral dtype")
 
     if dtype is torch.bool:
@@ -145,10 +151,10 @@ def make_tensor(
         if low == high:
             return torch.full(shape, low, device=device, dtype=dtype)
         result = torch.randint(low, high, shape, device=device, dtype=dtype)  # type: ignore[call-overload]
-    elif dtype in _floating_types:
+    elif dtype in _floating_types + _floating_8bit_types:
         ranges_floats = (torch.finfo(dtype).min, torch.finfo(dtype).max)
         m_low, m_high = _modify_low_high(low, high, ranges_floats[0], ranges_floats[1], -9, 9, dtype)
-        result = torch.empty(shape, device=device, dtype=dtype)
+        result = torch.empty(shape, device=device, dtype=dtype if dtype not in _floating_8bit_types else torch.float32)
         _uniform_random(result, m_low, m_high)
     elif dtype in _complex_types:
         float_dtype = complex_to_corresponding_float_type_map[dtype]
@@ -175,6 +181,8 @@ def make_tensor(
             replace_with = torch.tensor(1, device=device, dtype=dtype)
         elif dtype in _floating_types:
             replace_with = torch.tensor(torch.finfo(dtype).tiny, device=device, dtype=dtype)
+        elif dtype in _floating_8bit_types:
+            replace_with = torch.tensor(torch.finfo(dtype).tiny, device=device, dtype=torch.float32)
         else:  # dtype in _complex_types:
             float_dtype = complex_to_corresponding_float_type_map[dtype]
             float_eps = torch.tensor(torch.finfo(float_dtype).tiny, device=device, dtype=float_dtype)
@@ -183,6 +191,11 @@ def make_tensor(
 
     if dtype in _floating_types + _complex_types:
         result.requires_grad = requires_grad
+
+    # NOTE This is a workaround. There are so many not supported operations that,
+    # even creating the test tensors is hard.
+    if dtype in _floating_8bit_types:
+        result = result.to(dtype)
 
     return result
 
