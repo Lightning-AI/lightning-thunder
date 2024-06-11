@@ -4105,10 +4105,11 @@ def get_fake_arg(inp, shape_env):
 def augmented_forward_adaptor(func, sym_op):
     def wrapper(*args, **kwargs):
         from thunder.core.transforms import VJPDual
+
         # import pdb;pdb.set_trace()
         out = sym_op(*args, **kwargs)
         primal = out if isinstance(out, tuple) else (out,)
-        residuals = ({"inputs": (args, kwargs), "func":func}, )
+        residuals = ({"inputs": (args, kwargs), "func": func},)
         return VJPDual(primal, residuals)
 
     return wrapper
@@ -4136,8 +4137,10 @@ def backward_adaptor():
         # TODO: what if one arg is tuple of tensor? replace the corresponding diff_args in the args with input diff_args in wrapper func(why it works now?)
         def _make_differentiable_wrapper(func, *args, **kwargs):
             from thunder.core.pytree import tree_flatten, tree_map
+
             flat_args, _ = tree_flatten(args)
             differentiable_args = tuple(a for a in flat_args if isinstance(a, FakeTensor))
+
             def wrapper(*diff_args):
                 return func(*args, **kwargs)
 
@@ -4150,13 +4153,16 @@ def backward_adaptor():
             fake_inp_kwargs = {k: get_fake_arg(v, shape_env) for k, v in inp_kwargs.items()}
 
             wrapped_func, diff_args = _make_differentiable_wrapper(func, *fake_inp_args, **fake_inp_kwargs)
-            _, fake_outs = torch.autograd.functional.vjp(wrapped_func, diff_args, v=tree_map(_convert_to_meta_tensor, grad_output))
+            _, fake_outs = torch.autograd.functional.vjp(
+                wrapped_func, diff_args, v=tree_map(_convert_to_meta_tensor, grad_output)
+            )
 
         if isinstance(fake_outs, tuple):
-            return tuple(TensorProxy(like=g, shape=fake_out.shape) for fake_out,g in zip(fake_outs, grad_output))
+            return tuple(TensorProxy(like=g, shape=fake_out.shape) for fake_out, g in zip(fake_outs, grad_output))
         return TensorProxy(like=grad_output, shape=fake_outs.shape)
 
     return wrapper
+
 
 def meta_adaptor(func):
     def wrapper(*args, **kwargs):
