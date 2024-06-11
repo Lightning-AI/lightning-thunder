@@ -1194,10 +1194,15 @@ rsqrt_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(rsqrt_opinfo)
 
+def silu_error_generator(op, device, dtype=torch.float32, **kwargs):
+    a = make_tensor((), dtype=dtype, device=device)
+    yield (SampleInput(a, inplace=True), NotImplementedError, "silu only supports inplace=False")
+
 silu_opinfo = OpInfo(
-    clang.silu,
+    ltorch.silu,
     dtypes=(datatypes.floating,),
     sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
+    error_input_generator=silu_error_generator,
     torch_reference=_elementwise_unary_torch(torch.nn.functional.silu),
     test_directives=(
         DecorateInfo(
