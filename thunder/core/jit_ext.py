@@ -1576,14 +1576,29 @@ def process_recorded_modifications(ctx, epilogue_trace):
 
 
 def bind_inputs(name, trace, input_vars, input_proxies):
+    from thunder.core import utils
+
     # Unpacks inputs into the computation trace
     # TODO This currently does the unpacks at the end of the trace, then moves them to the beginning, there's
     #   almost certainly a more elegant way to do this
-    with tracectx(trace):
-        p: Proxy
-        for p in input_proxies:
-            prims.unpack_trivial(p, name=p.name)
+    num_orig_bsyms = len(trace.bound_symbols)
 
+    # note(crcrpar): The path looks neat but it does not work for a trace
+    # if it's :func:`thunder.core.jit_ext.functionalize_inplace_ops`'d, :shrug:
+    # with tracectx(trace):
+    #     p: Proxy
+    #     for p in input_proxies:
+    #         prims.unpack_trivial(p)
+
+    for p in input_proxies:
+        bsym = prims.unpack_trivial.bind(p, output=p)
+        trace.add_bound_symbol(bsym)
+
+    num_bsyms = len(trace.bound_symbols)
+    utils.check(
+        num_bsyms == len(input_proxies) + num_orig_bsyms,
+        lambda: f"{num_bsyms=} expected to be {len(input_proxies)=} + {num_orig_bsyms}",
+    )
     bsyms = trace.bound_symbols
     trace.bound_symbols = bsyms[-len(input_proxies) :] + bsyms[: -len(input_proxies)]
 
