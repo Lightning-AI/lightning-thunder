@@ -190,7 +190,8 @@ class TensorParallelTest(DataParallelTestCase):
                 torch.testing.assert_close(actual=grad, expected=ref_grad, msg=msg)
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
-    def test_parallel_mlp(self):
+    @common_utils.parametrize("meta_init", (False, True))
+    def test_parallel_mlp(self, meta_init):
         from thunder.distributed.prims import PrimIDs
 
         sequence_length: int = 32
@@ -201,8 +202,14 @@ class TensorParallelTest(DataParallelTestCase):
 
         ref_mlp = ParallelMLP(hidden_size=hidden_size, ffn_hidden_size=ffn_hidden_size).to(device)
         ref_state_dict = ref_mlp.state_dict()
-        mlp = ParallelMLP(hidden_size=hidden_size, ffn_hidden_size=ffn_hidden_size).to(device)
-        mlp.load_state_dict(ref_state_dict)
+
+        # TODO(crcrpar): Support checkpoint load/save
+        if meta_init:
+            with torch.device("meta"):
+                mlp = ParallelMLP(hidden_size=hidden_size, ffn_hidden_size=ffn_hidden_size)
+        else:
+            mlp = ParallelMLP(hidden_size=hidden_size, ffn_hidden_size=ffn_hidden_size).to(device)
+            mlp.load_state_dict(ref_state_dict)
         tp_mlp = thunder.jit(mlp)
         tp_mlp = column_parallel(tp_mlp, ParallelMLP.COLUMN_WISE)
         tp_mlp = row_parallel(tp_mlp, ParallelMLP.ROW_WISE)
@@ -213,12 +220,16 @@ class TensorParallelTest(DataParallelTestCase):
 
         expected = ref_mlp(x_ref)
         actual = tp_mlp(x)
-        torch.testing.assert_close(actual=actual, expected=expected)
+
+        if not meta_init:
+            torch.testing.assert_close(actual=actual, expected=expected)
 
         grad = torch.rand_like(x_ref)
         expected.backward(grad)
         actual.backward(grad)
-        torch.testing.assert_close(actual=x.grad, expected=x_ref.grad)
+
+        if not meta_init:
+            torch.testing.assert_close(actual=x.grad, expected=x_ref.grad)
 
         tp_syncs = {PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_INPUT, PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_OUTPUT}
         fwd_traces_with_tensor_parallel_syncs = list(

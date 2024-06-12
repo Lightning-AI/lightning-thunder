@@ -105,6 +105,11 @@ def check_string_value(s: str, value: str, /) -> None:
 
 
 @clangop()
+def check_slice_value(s: slice, value: slice, /) -> None:
+    return prims.check_slice_value(s, value)
+
+
+@clangop()
 def unpack_tuple(tup: tuple, /) -> tuple:
     return prims.unpack_tuple(tup)
 

@@ -20,7 +20,16 @@ from thunder.core.dtypes import is_exact_dtype, to_dtype as thunder_dtype
 from thunder.core.pytree import tree_map, tree_flatten
 from thunder.core.transforms import jvp, vjp, grad, check_bsym_for_vjp
 from thunder.core.utils import flatten_func
-from thunder.tests.framework import instantiate, NOTHING, ops, run_snippet, assert_closer, IN_CI, requiresCUDA
+from thunder.tests.framework import (
+    instantiate,
+    NOTHING,
+    ops,
+    run_snippet,
+    assert_closer,
+    IN_CI,
+    requiresCUDA,
+    version_between,
+)
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops, get_opinfo
 
@@ -530,12 +539,21 @@ def test_vjp_correctness_index_put_manual(op, device, dtype, executor, comp):
 
 # NOTE Scaled_Dot_Product_Efficient_Attention_Backward does not support fp64 dtypes
 # RuntimeError: Only fp32, half & bf16 supported at the moment
+@pytest.mark.skipif(
+    not version_between(torch.__version__, min_ver="2.4.0a0", max_ver="2.4.0a99"),
+    reason="https://github.com/Lightning-AI/lightning-thunder/issues/567",
+)
 @ops(
     (get_opinfo("grad_forward_scaled_dot_product_attention"),),
     supported_dtypes=(dtypes.float16, dtypes.bfloat16),
     supported_devicetypes=(devices.DeviceType.CUDA,),
 )
 def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
+    if version_between(torch.__version__, min_ver="2.4.0a0", max_ver="2.4.0a99"):
+        raise pytest.skip(
+            "https://github.com/Lightning-AI/lightning-thunder/issues/567",
+        )
+
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
         from thunder.executors.sdpaex import sdpa_ex
 

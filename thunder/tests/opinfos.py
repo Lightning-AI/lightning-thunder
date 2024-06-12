@@ -27,7 +27,7 @@ import thunder.executors as executors
 import thunder.torch as ltorch
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
-from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator, IS_WINDOWS
+from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator, IS_WINDOWS, version_between
 from thunder.tests.make_tensor import make_tensor
 import thunder.extend as extend
 import thunder.tests.bf16
@@ -42,7 +42,6 @@ import thunder.tests.bf16
 nvfuser_version: LooseVersion = (
     LooseVersion(executors.get_nvfuser_executor().version) if executors.nvfuser_available() else LooseVersion("0.0.0")
 )
-
 
 # Useful when specifying the domain of an operation
 # NOTE: Big enough such that -1 + eps != -1 in bfloat16
@@ -1194,33 +1193,6 @@ rsqrt_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(rsqrt_opinfo)
 
-silu_opinfo = OpInfo(
-    clang.silu,
-    dtypes=(datatypes.floating,),
-    sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
-    torch_reference=_elementwise_unary_torch(torch.nn.functional.silu),
-    test_directives=(
-        DecorateInfo(
-            pytest.mark.xfail,
-            executors=("nvfuser",),
-            active_if=nvfuser_version < "0.0.3",
-        ),
-        # NOTE: Torch doesn't support CPU float16 silu
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.float16,),
-            devicetypes=(devices.DeviceType.CPU,),
-        ),
-        # test tols are too tight for these half precision tests
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.float16, datatypes.bfloat16),
-        ),
-    ),
-)
-elementwise_unary_ops.append(silu_opinfo)
 
 sigmoid_opinfo = OpInfo(
     clang.sigmoid,
@@ -1295,10 +1267,17 @@ signbit_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(signbit_opinfo)
 
+
+def silu_error_generator(op, device, dtype=torch.float32, **kwargs):
+    a = make_tensor((), dtype=dtype, device=device)
+    yield (SampleInput(a, inplace=True), NotImplementedError, "Thunder only supports silu with inplace=False")
+
+
 silu_opinfo = OpInfo(
-    clang.silu,
+    ltorch.silu,
     dtypes=(datatypes.floating,),
     sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
+    error_input_generator=silu_error_generator,
     torch_reference=_elementwise_unary_torch(torch.nn.functional.silu),
     test_directives=(
         DecorateInfo(
@@ -7688,6 +7667,15 @@ grad_sdpa_opinfo = OpInfo(
     # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention' with arguments from the 'CPU' backend.
     # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention_backward' with arguments from the 'CPU' backend
     devicetypes=(devices.DeviceType.CUDA,),
+    test_directives=(
+        DecorateInfo(
+            pytest.mark.skip(reason="https://github.com/Lightning-AI/lightning-thunder/issues/567"),
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16, datatypes.float16, datatypes.float32),
+            devicetypes=(devices.DeviceType.CUDA,),
+            active_if=version_between(torch.__version__, min_ver="2.4.0a0", max_ver="2.4.0a99"),
+        ),
+    ),
 )
 nn_ops.append(grad_sdpa_opinfo)
 
@@ -7782,7 +7770,7 @@ def cross_entropy_sample_generator(op, device, dtype, requires_grad, **kwargs):
                 if not probability_target
                 else make(shape[1], low=0.0, high=1.0, requires_grad=True)
             ),
-            weight=make(C, requires_grad=False) if weight_flag else None,
+            weight=make(C, low=1.0, high=2.0, requires_grad=False) if weight_flag else None,
             ignore_index=ignore_index,
             reduction=reduction_str,
             label_smoothing=label_smoothing,
