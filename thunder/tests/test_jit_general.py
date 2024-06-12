@@ -342,14 +342,13 @@ def test_nn_module():
     actual = jfn2(a)
     assert_close(expected, actual)
 
-
 def test_compile_within_jit():
     def model(a, b, c):
         return a @ b + c
 
-    def jit_me(x):
+    def jit_me(a, b, c):
         cfn = torch.compile(model)
-        return cfn(x)
+        return cfn(a, b, c)
 
     jcfn = thunder.jit(jit_me)
 
@@ -360,9 +359,7 @@ def test_compile_within_jit():
     with pytest.raises(NotImplementedError) as exc_info:
         jcfn(x, y, z)
 
-    assert "Using torch.compile within a function to be JIT-compiled by Thunder is not supported." in str(
-        exc_info.value
-    )
+    assert "Using torch.compile within a function to be JIT-compiled by Thunder is not supported." in str(exc_info.value)
 
 
 def test_add_numbers():
