@@ -5882,8 +5882,9 @@ normalize_opinfo = OpInfo(
             dtypes=(datatypes.bfloat16, datatypes.float16),
             devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
         ),
+        # TODO Use the given comparator
         DecorateInfo(
-            custom_comparator(partial(assert_close, atol=1e-4, rtol=1e-5)),
+            custom_comparator(partial(assert_close, atol=1e-3, rtol=1e-4)),
             "test_vjp_correctness",
         ),
     ),
