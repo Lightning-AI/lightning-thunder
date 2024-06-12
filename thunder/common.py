@@ -1,16 +1,9 @@
 import dis
-from typing import Any, Optional
-from collections.abc import Generator
-from collections.abc import Callable
-from collections.abc import Sequence
-from enum import Enum, auto
+from typing import Any
+from collections.abc import Callable, Generator, Hashable, Sequence
 from collections import deque, defaultdict
-from contextlib import contextmanager
 import time
-import warnings
-from collections.abc import Hashable, Sequence
 from functools import wraps
-import os
 from io import StringIO
 
 from thunder.core.options import (
@@ -32,7 +25,7 @@ from thunder.core.trace import (
     set_tracectx,
     reset_tracectx,
 )
-from thunder.core.transform_common import dce, cse
+from thunder.core.transform_common import dce
 from thunder.core.proxies import (
     is_proxyable,
     proxy,
@@ -44,7 +37,6 @@ from thunder.core.proxies import (
 )
 import thunder.core.prims as prims
 import thunder.distributed as dist
-import thunder.torch as ltorch
 from thunder.extend import Executor, get_default_executors, get_always_executors, OperatorExecutor, add_executor_lists
 import thunder.executors as executors
 from thunder.core.transforms import autocast
