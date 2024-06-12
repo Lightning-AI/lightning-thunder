@@ -5864,6 +5864,7 @@ def normalize_sample_generator(op, device, dtype, requires_grad, **kwargs):
     )
     for case in cases:
         yield SampleInput(make(case))
+        yield SampleInput(make(case), p=0)
         yield SampleInput(make(case), p=1)
         yield SampleInput(make(case), p=4)
         yield SampleInput(make(case), p=math.inf)

@@ -2857,7 +2857,7 @@ def normalize(
     utils.check(out is None, lambda: "normalize: out is not None which is currently unsupported", NotImplementedError)
     computation_dtype, result_dtype = _reduction_dtypes(a, REDUCTION_OUTPUT_TYPE_KIND.COMPLEX_TO_FLOAT, a.dtype)
     if p == 0.0:
-        return a / sum(ne(a, 0.0), dim=dim, keepdim=True)
+        denom = sum(a != 0.0, dim=dim, keepdim=True)
     elif p == float("inf"):
         denom = amax(abs(a), dim=dim, keepdim=True)
     elif p == -float("inf"):
@@ -2871,8 +2871,8 @@ def normalize(
         denom = a_**p
         denom = sum(denom, dim=dim, keepdim=True)
         denom = denom ** (1.0 / p)
-        denom = clamp(denom, min=eps)
-        denom = expand_as(denom, a)
+    denom = clamp(denom, min=eps)
+    denom = expand_as(denom, a)
     denom = clang.maybe_convert_to_dtype(denom, result_dtype)
     out = a / denom
     return out
