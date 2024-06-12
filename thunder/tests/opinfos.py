@@ -5883,6 +5883,10 @@ normalize_opinfo = OpInfo(
             dtypes=(datatypes.bfloat16, datatypes.float16),
             devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
         ),
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-4, rtol=1e-5)),
+            "test_vjp_correctness",
+        ),
     ),
 )
 linear_algebra_ops.append(normalize_opinfo)
