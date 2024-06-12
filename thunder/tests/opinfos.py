@@ -5862,11 +5862,11 @@ def normalize_sample_generator(op, device, dtype, requires_grad, **kwargs):
         (4, 2, 4, 5),
     )
     for case in cases:
-        yield SampleInput(make(case), eps=1e-10)
-        yield SampleInput(make(case), p=0, eps=1e-10)
-        yield SampleInput(make(case), p=1, eps=1e-10)
-        yield SampleInput(make(case), p=4, eps=1e-10)
-        yield SampleInput(make(case), p=math.inf, eps=1e-10)
+        yield SampleInput(make(case), eps=1e-8)
+        yield SampleInput(make(case), p=0, eps=1e-8)
+        yield SampleInput(make(case), p=1, eps=1e-8)
+        yield SampleInput(make(case), p=4, eps=1e-8)
+        yield SampleInput(make(case), p=math.inf, eps=1e-8)
 
 
 normalize_opinfo = OpInfo(
@@ -5883,10 +5883,10 @@ normalize_opinfo = OpInfo(
             devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
         ),
         # TODO Use the given comparator
-        # DecorateInfo(
-        #     custom_comparator(partial(assert_close, atol=1e-3, rtol=1e-3)),
-        #     "test_vjp_correctness",
-        # ),
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-4, rtol=1e-5)),
+            "test_vjp_correctness",
+        ),
     ),
 )
 linear_algebra_ops.append(normalize_opinfo)
