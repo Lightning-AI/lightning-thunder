@@ -1744,6 +1744,12 @@ def thunder_general_jit(
 
 
 def functionalize_inplace_ops(computation_trace: TraceCtx) -> TraceCtx:
+    """Functionalize in-place ops in ``computation_trace``.
+
+    This is a two-step function. The first step is to use the output of :func:`thunder.core.prims.copy_`'s
+    outputs as trace's outputs. The second step is to remove :func:`thunder.core.prims.copy_`
+    from :attr:`~thunder.core.symbol.Boundsymbol.subsymbols` if it's the last symbol.
+    """
     from thunder.core import utils
     from thunder.core.proxies import ProxyInterface
     from thunder.core.symbol import VariableInterface
@@ -1758,8 +1764,7 @@ def functionalize_inplace_ops(computation_trace: TraceCtx) -> TraceCtx:
     if not any(is_inplace(bsym) for bsym in computation_trace.bound_symbols):
         return computation_trace
 
-    # Step 1: don't return tensors who have their consumers in any way, i.e., return
-    # the tensors returned from `prims.copy_` as possible.
+    # Step 1: return the tensors returned from `prims.copy_` as possible not the args for clarity.
     bsym: BoundSymbol
     swap_map: dict[VariableInterface, ProxyInterface] = {}
     bsyms: list[BoundSymbol] = []
