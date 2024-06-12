@@ -805,6 +805,8 @@ _general_jit_lookaside_map[hasattr] = _general_jit_hasattr_lookaside
 # recording the constraint to conditional jumps and such.
 def _general_jit_bool_lookaside(wrapped_x: Any) -> bool | INTERPRETER_SIGNALS:
     assert isinstance(wrapped_x, WrappedValue)
+    if isinstance(wrapped_x.value, NumberProxy):
+        wrapped_x.value.static_constraint = True
     bool_lookaside = default_lookaside(bool) or bool
     return bool_lookaside(wrapped_x)
 
