@@ -5080,6 +5080,8 @@ def _pop_jump_if_false_handler(
     assert type(inst.arg) is int
 
     tos = stack.pop_wrapped()
+    if isinstance(tos.value, NumberProxy):
+        tos.value.static_constraint = True
 
     res = _interpret_call(bool, tos)
     if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:

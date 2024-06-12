@@ -571,10 +571,11 @@ class DictProxy(Proxy, dict):
 # TODO Maybe NumberProxies should be Numbers?
 class NumberProxy(Proxy, NumberProxyInterface):
     def __init__(
-        self, name: str | None = None, value: Number | None = None, *, python_type: type, history: None | tuple = None
+        self, name: str | None = None, value: Number | None = None, static_constraint: bool = False, *, python_type: type, history: None | tuple = None
     ):
         self.value = value
         self.python_type = python_type
+        self.static_constraint = static_constraint
 
         Proxy.__init__(self, name, history=history)
 
@@ -976,7 +977,7 @@ class IntegerProxy(NumberProxy):
     def __repr__(self):
         if self.python_type is bool:
             return f"[IntegerProxy (bool type) name={self.name}, value={self.value}]"
-        return f"[IntegerProxy name={self.name}, value={self.value}]"
+        return f"[IntegerProxy name={self.name}, value={self.value}, static={self.static_constraint}]"
 
     def __index__(self):
         return self.value
@@ -996,7 +997,7 @@ class FloatProxy(NumberProxy):
         return f"float {value_str}"
 
     def __repr__(self):
-        return f"[FloatProxy name={self.name}, value={self.value}]"
+        return f"[FloatProxy name={self.name}, value={self.value}, static={self.static_constraint}]"
 
 
 class DistParallelType(Enum):

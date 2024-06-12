@@ -1599,6 +1599,9 @@ def thunder_general_jit(
             last_interpreter_log = jfn._last_interpreter_log
 
     pro_to_comp, computation_intermediates = get_computation_inputs_and_intermediates(computation_trace)
+    print(f"{computation_trace=}")
+    print(f"{pro_to_comp=}")
+    print(f"{computation_intermediates=}")
 
     epilogue_inputs, _ = get_computation_inputs_and_intermediates(epilogue_trace)
 
