@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from enum import Enum
 from functools import partial, reduce, wraps
 from numbers import Number
-from typing import Any, Union, Optional, Tuple
+from typing import Any
 from collections.abc import Callable
 
 import opt_einsum
@@ -35,7 +35,7 @@ from thunder.core.proxies import (
 )
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
-from thunder.core.transforms import register_grad, put_grads
+from thunder.core.transforms import register_grad
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.baseutils import run_once
 
@@ -45,7 +45,6 @@ __all__ = [
 
 # NOTE torch is a requirement
 import torch
-import torch.distributed as tdist
 
 import warnings
 
