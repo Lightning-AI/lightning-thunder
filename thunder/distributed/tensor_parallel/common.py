@@ -136,12 +136,26 @@ class ComputationTraceTransformVisitorForTensorParallel:
 
         new_out = new_bsym.sym(*new_bsym.args, **new_bsym.kwargs)
 
-        var_original_bsym_output = variableify(new_bsym.flat_proxy_outs[0])
         if pre_post_process is not None:
+            from thunder.core import utils
+
+            # This is because current support coverage are only `Linear` and `Embedding` that return one tensor.
+            utils.check(
+                len(new_bsym.flat_proxy_outs) == 1,
+                lambda: f"{len(new_bsym.flat_proxy_outs)=} expected to be 1",
+            )
+            var_original_bsym_output = variableify(new_bsym.flat_proxy_outs[0])
             processed_y = pre_post_process.postprocess(new_out, preprocess_artifacts)
             self.swap_map[var_original_bsym_output] = processed_y
         else:
-            self.swap_map[var_original_bsym_output] = new_out
+            from thunder.core.pytree import tree_flatten
+
+            for orig_o, new_o in zip(
+                new_bsym.flat_outs,
+                tree_flatten(new_out)[0],
+            ):
+                if isinstance(orig_o, TensorProxy) and isinstance(new_o, TensorProxy) and orig_o.name != new_o.name:
+                    self.swap_map[variableify(orig_o)] = new_o
 
         return VISIT_TYPE.REPLACE
 

@@ -634,6 +634,7 @@ def unpack_trivial_impl(x: Any, /, *, name: str | None = None) -> Any:
 
 
 def unpack_trivial_meta(x: Any, /, *, name: str | None = None) -> Any:
+    utils.check(name is not None, lambda: "Expected name argmument to not be None")
     return _collectify(x, name=name)
 
 
