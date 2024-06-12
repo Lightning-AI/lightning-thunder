@@ -1134,6 +1134,41 @@ def test_forward_and_backward_from_trace(executor, device, _):
 @instantiate(
     dtypes=NOTHING,
 )
+def test_update_forward_with_new_saved_for_backward_numberproxy(executor, device, _):
+
+    def foo(t, ab):
+        return t * ab * 0.5
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+
+    t = make_tensor((5, 3), device=device, dtype=torch.float32)
+    t_ref = t.detach()
+    t.requires_grad_()
+    t_ref.requires_grad_()
+
+    out = jfoo(t, 1.5)
+    out_ref = foo(t_ref, 1.5)
+    torch.testing.assert_close(out, out_ref)
+
+    out.sum().backward()
+    out_ref.sum().backward()
+    torch.testing.assert_close(t.grad, t_ref.grad)
+
+    t.grad = None
+    t_ref.grad = None
+
+    out = jfoo(t, 2.7)
+    out_ref = foo(t_ref, 2.7)
+    torch.testing.assert_close(out, out_ref)
+
+    out.sum().backward()
+    out_ref.sum().backward()
+    torch.testing.assert_close(t.grad, t_ref.grad)
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
 def test_torch_autograd_redundant_casts(executor, device, _):
     # There was a bug where we would eliminate the redundant casts in forward
     # but backward wasn't updated with the new proxies. This test ensures that
