@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from enum import Enum
 from functools import partial, reduce, wraps
 from numbers import Number
-from typing import Any, Union, Optional, Tuple
+from typing import Any
 from collections.abc import Callable
 
 import opt_einsum
@@ -35,7 +35,7 @@ from thunder.core.proxies import (
 )
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
-from thunder.core.transforms import register_grad, put_grads
+from thunder.core.transforms import register_grad
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.baseutils import run_once
 
@@ -45,7 +45,6 @@ __all__ = [
 
 # NOTE torch is a requirement
 import torch
-import torch.distributed as tdist
 
 import warnings
 
@@ -4389,6 +4388,33 @@ register_method("softmax", _softmax)
 # ref: https://github.com/pytorch/pytorch/blob/8d12ba9acfa20ed7df438a8892c9bf8e6bef5775/torch/nn/modules/activation.py#L1545
 def softmax(a: TensorLike, dim: int, dtype: None | dtypeLike = None, _stacklevel: int = 3) -> TensorLike:
     return _softmax(a, dim=dim, dtype=dtype)
+
+
+def torch_device(device_or_str: DeviceLike, /, index: int | None = None) -> devices.Device:
+    if isinstance(device_or_str, (devices.Device, torch.device)):
+        # PyTorch behavior:
+        # >>> torch.device(torch.device("cuda"), 0)
+        # TypeError: device(): argument 'type' (position 1) must be str, not torch.device
+        utils.check(index is None, lambda: f"device(): `index` is only allowed when `device` is a `str`.")
+        return to_device(device_or_str)
+
+    # NOTE: device_or_str is `str`
+    if index is not None:
+        # PyTorch behavior:
+        # >>> torch.device("cuda:0", 0)
+        # RuntimeError: type (string) must not include an index because index was passed explicitly: cuda:0
+        has_device_idx = len(device_or_str.split(":")) > 1
+        utils.check(
+            not has_device_idx,
+            lambda: f"device string must not include an index because index was passed explicitly: {device_or_str}",
+        )
+
+    return devices.Device(device_or_str, index)
+
+
+# We don't use @torchsymbol as we don't want `torch.device()` to appear in trace as a symbol.
+# Because of this, we need to manually register the implementation.
+_torch_to_thunder_function_map[torch.device] = torch_device
 
 
 #
