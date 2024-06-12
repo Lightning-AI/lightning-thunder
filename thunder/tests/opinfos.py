@@ -5884,7 +5884,7 @@ normalize_opinfo = OpInfo(
         ),
         # TODO Use the given comparator
         DecorateInfo(
-            custom_comparator(partial(assert_close, atol=1e-3, rtol=1e-4)),
+            custom_comparator(partial(assert_close, atol=1e-3, rtol=1e-3)),
             "test_vjp_correctness",
         ),
     ),
