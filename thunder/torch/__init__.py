@@ -1516,6 +1516,17 @@ def add(
     return clang.add(a, b)
 
 
+@torchsymbol(torch.Tensor.add_, is_method=True)
+def add_(
+    a: TensorLike,
+    b: NumberLike | TensorLike,
+    /,
+    *,
+    alpha: None | Number | TensorLike = None,
+) -> TensorLike:
+    return prims.copy_(add(a, b, alpha=alpha), a)
+
+
 @torchsymbol(torch.atan2, is_method=True)
 def atan2(a, b, /):
     return clang.atan2(a, b)
@@ -1561,6 +1572,22 @@ def div(
         return floor_divide(a, b)
     else:
         raise ValueError(f"div does not support the rounding_mode={rounding_mode} argument")
+
+
+@torchsymbol(torch.Tensor.div_, is_method=True)
+def div_(
+    a: TensorLike,
+    b: Number | TensorLike,
+    /,
+    *,
+    rounding_mode: None | str = None,
+) -> TensorLike:
+    utils.check(
+        rounding_mode is None,
+        lambda: f"Invalid {rounding_mode=}, `None` i.e. true is only supported",
+    )
+
+    return prims.copy_(div(a, b), a)
 
 
 @torchsymbol(torch.eq, is_method=True)
@@ -1630,6 +1657,11 @@ def mul(a, b, /):
     return clang.mul(a, b)
 
 
+@torchsymbol(torch.Tensor.mul_, is_method=True)
+def mul_(a, b, /):
+    return prims.copy_(mul(a, b), a)
+
+
 @torchsymbol(torch.ne, is_method=True)
 def ne(a, b, /):
     return clang.ne(a, b)
@@ -1663,6 +1695,11 @@ def pow(a, b, /):
     return clang.pow(a, b)
 
 
+@torchsymbol(torch.Tensor.pow_, is_method=True)
+def pow_(a, b, /):
+    return prims.copy_(pow(a, b), a)
+
+
 @torchsymbol(torch.remainder, is_method=True)
 def remainder(a, b, /):
     return clang.remainder(a, b)
@@ -1674,6 +1711,11 @@ def sub(a, b, /, *, alpha=None):
         b = b * alpha
 
     return clang.sub(a, b)
+
+
+@torchsymbol(torch.Tensor.sub_, is_method=True)
+def sub_(a, b, /, *, alpha=None):
+    return prims.copy_(sub(a, b, alpha=alpha), a)
 
 
 @torchsymbol(torch.true_divide, is_method=True)

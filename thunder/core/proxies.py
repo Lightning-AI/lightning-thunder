@@ -1391,6 +1391,13 @@ class TensorProxy(Proxy, TensorProxyInterface):
         method = resolve_method("add", self, other)
         return method(self, other)
 
+    def __iadd__(self, other):
+        return self.add_(other)
+
+    def add_(self, other):
+        method = resolve_method("add_", self, other)
+        return method(self, other)
+
     def __radd__(self, other):
         method = resolve_method("add", other, self)
         return method(other, self)
@@ -1427,6 +1434,13 @@ class TensorProxy(Proxy, TensorProxyInterface):
         method = resolve_method("mul", self, other)
         return method(self, other)
 
+    def __imul__(self, other):
+        return self.mul_(other)
+
+    def mul_(self, other):
+        method = resolve_method("mul_", self, other)
+        return method(self, other)
+
     def __rmul__(self, other):
         method = resolve_method("mul", other, self)
         return method(other, self)
@@ -1435,12 +1449,26 @@ class TensorProxy(Proxy, TensorProxyInterface):
         method = resolve_method("pow", self, other)
         return method(self, other)
 
+    def __ipow__(self, other):
+        return self.pow_(other)
+
+    def pow_(self, other):
+        method = resolve_method("pow_", self, other)
+        return method(self, other)
+
     def __rpow__(self, other):
         method = resolve_method("pow", other, self)
         return method(other, self)
 
     def __sub__(self, other):
         method = resolve_method("sub", self, other)
+        return method(self, other)
+
+    def __isub__(self, other):
+        return self.sub_(other)
+
+    def sub_(self, other):
+        method = resolve_method("sub_", self, other)
         return method(self, other)
 
     def __rsub__(self, other):
@@ -1454,6 +1482,13 @@ class TensorProxy(Proxy, TensorProxyInterface):
     def __rtruediv__(self, other):
         method = resolve_method("true_divide", other, self)
         return method(other, self)
+
+    def __itruediv__(self, other):
+        return self.div_(other)
+
+    def div_(self, other):
+        method = resolve_method("div_", self, other)
+        return method(self, other)
 
     #
     # Logical operations
