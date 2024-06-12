@@ -6159,6 +6159,7 @@ def baddbmm_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((3, 0, 5), (3, 0, 0), (3, 0, 5)),
         ((0, 5, 6), (0, 5, 0), (0, 0, 6)),
         ((3, 5, 6), (3, 5, 0), (3, 0, 6)),
+        ((3, 5, 6), (3, 5, 8), (3, 8, 6)),
     )
 
     constants_cases = (
@@ -6204,6 +6205,14 @@ baddbmm_opinfo = OpInfo(
     sample_input_generator=baddbmm_sample_generator,
     error_input_generator=baddbmm_error_generator,
     torch_reference=torch.baddbmm,
+    test_directives=(
+        # baddbmm not implemented on CUDA for int
+        DecorateInfo(
+            pytest.mark.xfail,
+            dtypes=(datatypes.exact,),
+            devicetypes=(devices.DeviceType.CUDA,),
+        ),
+    ),
 )
 
 nn_ops.append(baddbmm_opinfo)
