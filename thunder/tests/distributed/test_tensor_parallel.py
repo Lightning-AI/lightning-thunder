@@ -270,7 +270,8 @@ class TensorParallelTest(DataParallelTestCase):
         input_pos = None
 
         attention = CausalSelfAttention(config).to(device=device, dtype=dtype)
-        tp_attention = thunder.jit(attention)
+        # Temporarily use only torchex due to https://github.com/NVIDIA/Fuser/issues/2390
+        tp_attention = thunder.jit(attention, executors=[thunder.executors.get_torch_executor()])
         tp_attention = column_parallel(tp_attention, ["attn"])
         tp_attention = row_parallel(tp_attention, ["proj"])
 
