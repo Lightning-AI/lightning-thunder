@@ -1533,7 +1533,7 @@ def bind_inputs(name, trace, input_vars, input_proxies):
     # with tracectx(trace):
     #     p: Proxy
     #     for p in input_proxies:
-    #         prims.unpack_trivial(p)
+    #         prims.unpack_trivial(p, name=p.name)
 
     for p in input_proxies:
         bsym = prims.unpack_trivial.bind(p, output=p)
