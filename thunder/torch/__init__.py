@@ -3047,6 +3047,7 @@ def baddbmm(
     utils.check(out is None, lambda: "Non-None out is not supported", NotImplementedError)
 
     utils.check_same_dtype(a, b1, b2)
+    utils.check_same_device(a, b1, b2)
     utils.check(b1.ndim == 3, lambda: f"batch1 must be a 3D tensor, found {b1.ndim} instead.")
     utils.check(b2.ndim == 3, lambda: f"batch2 must be a 3D tensor, found {b2.ndim} instead.")
 
@@ -3054,10 +3055,18 @@ def baddbmm(
         utils.check_type(beta, int)
         utils.check_type(alpha, int)
 
-    t0 = matmul(b1, b2)
-    t1 = mul(alpha, t0)
+    if alpha == 0 and beta == 0:
+        b, n, _ = b1.shape
+        _, _, p = b2.shape
+        return zeros(b, n, p)
 
-    return add(t1, a, alpha=beta)
+    if alpha == 0:
+        return beta * a
+
+    if beta == 0:
+        return alpha * matmul(b1, b2)
+
+    return (beta * a) + (alpha * matmul(b1, b2))
 
 
 # TODO bmm is more restrictive than matmul
