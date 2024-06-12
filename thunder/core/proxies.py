@@ -976,7 +976,7 @@ class IntegerProxy(NumberProxy):
 
     def __repr__(self):
         if self.python_type is bool:
-            return f"[IntegerProxy (bool type) name={self.name}, value={self.value}]"
+            return f"[IntegerProxy (bool type) name={self.name}, value={self.value}, static={self.static_constraint}]"
         return f"[IntegerProxy name={self.name}, value={self.value}, static={self.static_constraint}]"
 
     def __index__(self):
