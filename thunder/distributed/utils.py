@@ -51,64 +51,6 @@ def sort_data_parallel_syncs(primal_trace):
         return primal_trace
 
 
-def sort_communication_ops(execution_trace):
-    """
-    Sorts the wait_prim_impl nodes in the execution trace to be as far from the
-    communication ops as possible, except for the all_gather_prim_impl nodes, the all_gather_prim_impl nodes
-    are sorted to be next to wait_prim_impl node to reduce the peak allocated memory
-
-    Args:
-        execution_trace (TraceCtx): The execution trace to sort.
-
-    Returns:
-        TraceCtx: The sorted execution trace.
-    """
-    from thunder.executors.torchex import (
-        wait_prim_impl,
-        reduce_scatter_prim_impl,
-        all_reduce_prim_impl,
-        all_gather_prim_impl,
-        unpack_for_fsdp_prim_impl,
-    )
-
-    if not any(bsym.sym.id == wait_prim_impl.id for bsym in execution_trace.bound_symbols):
-        return execution_trace
-
-    order_in_trace = {bsym: i for i, bsym in enumerate(execution_trace.bound_symbols)}
-
-    def prefer_comm_over_other_over_wait_over_allgather(eligible_nodes: list[Node]) -> int:
-        # Prefer communication ops other than "all_gather_prim_impl" over other nodes and prefer other
-        # nodes over "wait_prim_impl", pick "all_gather_prim_impl" last.
-        def key(node: Node) -> int:
-            match node.bsym.sym.id:
-                case wait_prim_impl.id | unpack_for_fsdp_prim_impl.id:
-                    return len(order_in_trace)
-                case reduce_scatter_prim_impl.id | all_reduce_prim_impl.id:
-                    # Prefer larger communication ops over smaller ones
-                    return -node.bsym.args[0].numel
-                case all_gather_prim_impl.id:
-                    return len(order_in_trace) + order_in_trace[node.bsym]
-                case _:
-                    # Prefer nodes that are earlier in the trace
-                    return order_in_trace[node.bsym]
-
-        return max(range(len(eligible_nodes)), key=lambda i: key(eligible_nodes[i]))
-
-    new_execution_trace = from_trace(execution_trace)
-
-    # TODO: This pass doesn't behave correctly if del nodes are present in the trace
-    check(
-        not any(bsym.sym.name == "del" for bsym in execution_trace.bound_symbols),
-        lambda: "Cannot sort execution trace with del nodes",
-    )
-    new_execution_trace.bound_symbols = toposort_bsym_dag(
-        bsym_list_to_dag(execution_trace.bound_symbols)[1],
-        TOPOSORT_ORDER.BOTTOM_UP,
-        selector=prefer_comm_over_other_over_wait_over_allgather,
-    )
-    return new_execution_trace
-
-
 def sort_waits(execution_trace):
     """
     Sorts the wait_prim_impl nodes in the execution trace to be as far from the
@@ -265,4 +207,119 @@ def limit_in_flight_allgathers(
     check(len(new_bsyms) == len(orig_bound_symbols), lambda: f"{len(orig_bound_symbols) = } but {len(new_bsyms) = }")
 
     new_execution_trace.bound_symbols = new_bsyms
+    return new_execution_trace
+
+
+def sort_allgathers(execution_trace):
+    """
+    Sort the all_gather_prim_impl and its wait nodes according to the consumer order,
+    and put all_gather_prim_impl just before wait
+
+    Args:
+        execution_trace (TraceCtx): The execution trace to sort.
+
+    Returns:
+        TraceCtx: The sorted execution trace.
+    """
+    from thunder.executors.torchex import (
+        wait_prim_impl,
+        reduce_scatter_prim_impl,
+        all_reduce_prim_impl,
+        all_gather_prim_impl,
+        unpack_for_fsdp_prim_impl,
+    )
+    from thunder.core import utils
+
+    if not any(bsym.sym.id == wait_prim_impl.id for bsym in execution_trace.bound_symbols):
+        return execution_trace
+
+    order_in_trace = {bsym: i for i, bsym in enumerate(execution_trace.bound_symbols)}
+    producers, consumers = utils.producers_and_consumers(execution_trace)
+
+    def prefer_comm_over_other_over_wait_over_allgather(eligible_nodes: list[Node]) -> int:
+        # bottom-up topological sorting, prefer allgather and wait for topological equal nodes 
+        def key(node: Node) -> int:
+            match node.bsym.sym.id:
+                case wait_prim_impl.id:
+                    if producers[node.bsym.flat_proxy_args[0]].sym.id == all_gather_prim_impl.id:
+                        return len(order_in_trace)
+                    return order_in_trace[node.bsym]
+                case all_gather_prim_impl.id:
+                    # return -node.bsym.args[0].numel # chose smaller first, max distance
+                    return len(order_in_trace) + order_in_trace[node.bsym]  # use the consumer order, min distance
+                case _:
+                    # Prefer nodes that are earlier in the trace
+                    return order_in_trace[node.bsym]
+
+        return max(range(len(eligible_nodes)), key=lambda i: key(eligible_nodes[i]))
+
+    new_execution_trace = from_trace(execution_trace)
+
+    # TODO: This pass doesn't behave correctly if del nodes are present in the trace
+    check(
+        not any(bsym.sym.name == "del" for bsym in execution_trace.bound_symbols),
+        lambda: "Cannot sort execution trace with del nodes",
+    )
+    new_execution_trace.bound_symbols = toposort_bsym_dag(
+        bsym_list_to_dag(execution_trace.bound_symbols)[1],
+        TOPOSORT_ORDER.BOTTOM_UP,
+        selector=prefer_comm_over_other_over_wait_over_allgather,
+    )
+    return new_execution_trace
+
+
+def sort_reduce_ops(execution_trace):
+    """
+    Sort the reduce/reduce_scatter and its wait node according to the producer order,
+    and maximum the distance between reduce/reduce_scatter and wait
+
+    Args:
+        execution_trace (TraceCtx): The execution trace to sort.
+
+    Returns:
+        TraceCtx: The sorted execution trace.
+    """
+    from thunder.executors.torchex import (
+        wait_prim_impl,
+        reduce_scatter_prim_impl,
+        all_reduce_prim_impl,
+        all_gather_prim_impl,
+    )
+    from thunder.core import utils
+
+    if not any(bsym.sym.id == wait_prim_impl.id for bsym in execution_trace.bound_symbols):
+        return execution_trace
+
+    order_in_trace = {bsym: i for i, bsym in enumerate(execution_trace.bound_symbols)}
+    producers, consumers = utils.producers_and_consumers(execution_trace)
+
+    def prefer_comm_over_other_over_wait(eligible_nodes: list[Node]) -> int:
+        # top-down topological sorting, prefer reduce/reduce_scatter and pick wait at last for topological equal nodes 
+        def key(node: Node) -> int:
+            match node.bsym.sym.id:
+                case wait_prim_impl.id:
+                    if producers[node.bsym.flat_proxy_args[0]].sym.id in (reduce_scatter_prim_impl.id, all_reduce_prim_impl.id): # all_gather_prim_impl.id:
+                        return len(order_in_trace)
+                    return order_in_trace[node.bsym]
+                case reduce_scatter_prim_impl.id | all_reduce_prim_impl.id:
+                    # Prefer larger communication ops over smaller ones
+                    return -node.bsym.args[0].numel
+                case _:
+                    # Prefer nodes that are earlier in the trace
+                    return order_in_trace[node.bsym]
+
+        return min(range(len(eligible_nodes)), key=lambda i: key(eligible_nodes[i]))
+
+    new_execution_trace = from_trace(execution_trace)
+
+    # TODO: This pass doesn't behave correctly if del nodes are present in the trace
+    check(
+        not any(bsym.sym.name == "del" for bsym in execution_trace.bound_symbols),
+        lambda: "Cannot sort execution trace with del nodes",
+    )
+    new_execution_trace.bound_symbols = toposort_bsym_dag(
+        bsym_list_to_dag(execution_trace.bound_symbols)[0],
+        TOPOSORT_ORDER.TOP_DOWN,
+        selector=prefer_comm_over_other_over_wait,
+    )
     return new_execution_trace
