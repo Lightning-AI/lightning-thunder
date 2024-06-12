@@ -1160,7 +1160,6 @@ def pack_buffer_printer(
 
 def pack_buffer_impl(o: Any, key: Any, v: Any) -> None:
     # o[key] = v
-    XXX
     return None
 
 
@@ -3274,7 +3273,7 @@ def take_along_axis_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> Ten
     utils.check_type(index, TensorProxy)
     utils.check_type(dim, (int, IntegerProxy))
     utils.check_same_device(a, index)
-    utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={dtype} was not an integer dtype")
+    utils.check(utils.is_integer_dtype(index.dtype), lambda: f"{index.dtype=} was not an integer dtype")
     utils.check(
         index.ndim == a.ndim, lambda: f"Expected index (rank={index.ndim}) to have the same rank as a (rank={a.ndim})"
     )

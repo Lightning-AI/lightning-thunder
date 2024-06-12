@@ -49,7 +49,6 @@ if TE_AVAILABLE:
         from transformer_engine.pytorch.fp8 import FP8GlobalStateManager
         from transformer_engine.pytorch.utils import check_dim_for_fp8_exec
         from transformer_engine.pytorch.cpu_offload import CPUOffloadEnabled
-        import transformer_engine_extensions as tex
     except Exception as ex:
         warnings.warn(f"transformer_engine failed to import with exception {ex}")
         TE_AVAILABLE = False
@@ -61,6 +60,9 @@ if TE_AVAILABLE:
             f"Installed version of transformer_engine {version('transformer_engine')} is not supported, please upgrade. `transformer_engine_ex` will not be used."
         )
         TE_AVAILABLE = False
+
+    if TE_VERSION_1_8_PLUS:
+        import transformer_engine_torch as tex
 
 if not TE_AVAILABLE:
     TransformerEngineBaseModule = object
