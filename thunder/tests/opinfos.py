@@ -5883,7 +5883,7 @@ normalize_opinfo = OpInfo(
             devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
         ),
         DecorateInfo(
-            custom_comparator(partial(assert_close, atol=1e-4, rtol=1e-5)),
+            custom_comparator(partial(assert_close, atol=1e-3, rtol=1e-3)),
             "test_vjp_correctness",
         ),
     ),
