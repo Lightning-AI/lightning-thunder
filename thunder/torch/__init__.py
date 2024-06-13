@@ -1891,7 +1891,7 @@ def mod(a, b):
 
 
 def mod_(a, b):
-    return prims.copy_(clang.mod(a, b), a)
+    return prims.copy_(mod(a, b), a)
 
 
 @torchsymbol(torch.mul, is_method=True)
