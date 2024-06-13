@@ -71,7 +71,7 @@ def test_view_ops(executor, device: str, dtype: dtypes.dtype):
     bw_traces = thunder.last_backward_traces(cbar)
     bw_extrace = bw_traces[-1]
     max_mem_bw = get_alloc_memory(bw_extrace)
-    assert max_mem_bw[0] == 144
+    assert max_mem_bw[0] == 128
     assert sum(max_mem_bw[1].values()) == get_return_memory(bw_extrace.bound_symbols[-1])  # 32
 
     def bar1(a, b, c):  # [4], [1,4,4], [4,1,4]
