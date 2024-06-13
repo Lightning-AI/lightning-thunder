@@ -3548,7 +3548,7 @@ def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_fo
 # instead of the plain tuple or dict that we're using now.
 TorchAutogradForwardData = namedtuple(
     "TorchAutogradForwardData",
-    ["output", "flat_args", "flat_output"],
+    ["output", "flat_args", "flat_output", "flat_tensor_output"],
 )
 
 
@@ -3615,12 +3615,13 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
             nonlocal output_spec
             flat_args, _ = tree_flatten((args, kwargs))
             flat_output, output_spec = tree_flatten(result)
-            flat_output = tuple(flat_output)
+            flat_tensor_output = tuple(out for out in flat_output if isinstance(out, TensorProxy))
             # See Note [Grad forward output spec]
             for_autograd = TorchAutogradForwardData(
                 result,
                 flat_args,
                 flat_output,
+                flat_tensor_output,
             )._asdict()
             return (for_autograd, saved_for_backward)
         return result, saved_for_backward
