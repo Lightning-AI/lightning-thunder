@@ -530,8 +530,10 @@ class BoundSymbol(BoundSymbolInterface):
         def make_hashable(x: Any) -> tuple | FrozenDict:
             if isinstance(x, dict):
                 return FrozenDict(x)
-            if isinstance(x, list):
-                return tuple(x)
+            if isinstance(x, (list, tuple)):
+                return tuple(map(make_hashable, x))
+            if isinstance(x, slice):
+                return id(x)
             return x
 
         hashable_args = tuple(map(make_hashable, self._var_args))
