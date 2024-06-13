@@ -772,7 +772,14 @@ class FrozenDict(_UserDictT[T, T1], Mapping[T, T1]):
         return f"{self.__class__.__name__}({{{body}}})"
 
     def __hash__(self) -> int:
-        return hash(frozenset(self.items()))
+        def make_hashable(item) -> tuple:
+            k, v = item
+            if isinstance(v, list):
+                return (k, tuple(v))
+            return item
+
+        hashable_items = map(make_hashable, self.items())
+        return hash(frozenset(hashable_items))
 
 
 #
