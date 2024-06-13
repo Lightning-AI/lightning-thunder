@@ -150,6 +150,14 @@ class torchsymbol:
         return sym
 
 
+# This is function maps an implementation for `torch` operation without creating a Symbol.
+# So, the registered implementation will not show up in trace as a Symbol (but will get inlined).
+# This is helpful if we want to support a torch operation and bake it's output directly into the trace.
+# See `clone` and `torch.device` for example.
+def register_function(torchfn, thunderfn_impl):
+    _torch_to_thunder_function_map[torchfn] = thunderfn_impl
+
+
 #
 # Tensor properties
 #
@@ -2062,8 +2070,8 @@ def clone(a: TensorProxy, *, memory_format=torch.preserve_format) -> TensorProxy
 
 # Because we do not use @torchsymbol, we need to manually register the
 # implementation.
-_torch_to_thunder_function_map[torch.clone] = clone
-_torch_to_thunder_function_map[torch.Tensor.clone] = clone
+register_function(torch.clone, clone)
+register_function(torch.Tensor.clone, clone)
 register_method("clone", clone)
 
 
@@ -4394,7 +4402,14 @@ def torch_device(device_or_str: DeviceLike, /, index: int | None = None) -> devi
 
 # We don't use @torchsymbol as we don't want `torch.device()` to appear in trace as a symbol.
 # Because of this, we need to manually register the implementation.
-_torch_to_thunder_function_map[torch.device] = torch_device
+register_function(torch.device, torch_device)
+
+
+def _set_grad_enabled_with_warning(enabled: bool) -> None:
+    warnings.warn("torch.enable_grad/torch.no_grad/torch._C._set_grad_enabled have no effect under thunder.jit")
+
+
+register_function(torch._C._set_grad_enabled, _set_grad_enabled_with_warning)
 
 
 #
