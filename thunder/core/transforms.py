@@ -3511,10 +3511,7 @@ def _update_forward_with_new_saved_for_backward(forward_trace: Trace, saved_for_
         return
 
     # TODO: Make augmented forward trace return the named tuple object directly instead of dict
-    if (
-        isinstance(forward_trace.output, Sequence)
-        and len(forward_trace.output) == 2
-    ):
+    if isinstance(forward_trace.output, Sequence) and len(forward_trace.output) == 2:
         assert forward_trace.bound_symbols[-1].sym.id == prims.PrimIDs.RETURN
         new_return = (forward_trace.output[0], (saved_tensors, saved_other))
         forward_trace.bound_symbols[-1] = replace(forward_trace.bound_symbols[-1], args=new_return)
