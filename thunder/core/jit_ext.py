@@ -1170,6 +1170,7 @@ general_jit_callbacks: dict[INTERPRETER_CALLBACKS, Callable] = {
 }
 general_jit_callbacks = default_callbacks | general_jit_callbacks
 
+
 def propagate_constraints(ctx, inputs, intermediates, computation_trace):
     import thunder.core.utils as utils
 
@@ -1197,7 +1198,7 @@ def propagate_constraints(ctx, inputs, intermediates, computation_trace):
         # static_constraint
 
         front = [intermediate]
-        while len(front)!=0:
+        while len(front) != 0:
             v = front.pop()
             if v in static_np_set:
                 continue
@@ -1212,6 +1213,7 @@ def propagate_constraints(ctx, inputs, intermediates, computation_trace):
                     if not isinstance(inp, NumberProxy):
                         continue
                     front.append(variableify(inp))
+
 
 def get_computation_inputs_and_intermediates(computation_trace):
     inputs_list = []

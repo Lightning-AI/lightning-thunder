@@ -571,7 +571,13 @@ class DictProxy(Proxy, dict):
 # TODO Maybe NumberProxies should be Numbers?
 class NumberProxy(Proxy, NumberProxyInterface):
     def __init__(
-        self, name: str | None = None, value: Number | None = None, static_constraint: bool = False, *, python_type: type, history: None | tuple = None
+        self,
+        name: str | None = None,
+        value: Number | None = None,
+        static_constraint: bool = False,
+        *,
+        python_type: type,
+        history: None | tuple = None,
     ):
         self.value = value
         self.python_type = python_type
