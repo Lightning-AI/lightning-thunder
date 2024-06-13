@@ -369,7 +369,7 @@ class PostOptimizationTransform(Transform, ABC):
         pass
 
 
-def functionalize_inplace_ops(computation_trace: Trace, computation_traces: list[Trace]) -> Trace:
+def functionalize_inplace_ops(computation_trace: Trace) -> list[Trace]:
     """Functionalize in-place ops in ``computation_trace``.
 
     This is a two-step function. The first step is to use the output of :func:`thunder.core.prims.copy_`'s
@@ -388,7 +388,7 @@ def functionalize_inplace_ops(computation_trace: Trace, computation_traces: list
             return False
 
     if not any(is_inplace(bsym) for bsym in computation_trace.bound_symbols):
-        return computation_trace
+        return []
 
     # Step 1: return the tensors returned from `prims.copy_` as possible not the args for clarity.
     bsym: BoundSymbol
@@ -464,6 +464,4 @@ def functionalize_inplace_ops(computation_trace: Trace, computation_traces: list
     # note(crcrpar): I kind of want to do the following two.
     # functionalized_computation_trace._provenance.swap_map = swap_map
     # functionalized_computation_trace._provenance.bsym_inplace_to_functional = bsym_inplace_to_functional
-    computation_traces.append(intermediate_trace)
-    computation_traces.append(functionalized_computation_trace)
-    return functionalized_computation_trace
+    return [intermediate_trace, functionalized_computation_trace]
