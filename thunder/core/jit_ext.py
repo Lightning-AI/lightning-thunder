@@ -1204,7 +1204,7 @@ def propagate_constraints(ctx, inputs, intermediates, computation_trace):
             static_np_set.add(v)
 
             uv = unvariableify(v)
-            if v in inp:
+            if v in inputs:
                 ctx.add_constraint((clang.check_number_type_and_value, uv, uv.value))
             else:
                 producer = producers[uv]
@@ -1648,9 +1648,6 @@ def thunder_general_jit(
     comp_to_epi = []
     pro_to_epi = []
 
-    print(f"{computation_trace=}")
-    print(f"{pro_to_comp=}")
-    print(f"{computation_intermediates=}")
     # propagate static constrained intermediates to inputs
     propagate_constraints(ctx, pro_to_comp, computation_intermediates, computation_trace)
 
