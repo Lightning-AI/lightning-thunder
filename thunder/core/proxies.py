@@ -601,8 +601,17 @@ class NumberProxy(Proxy, NumberProxyInterface):
     def known_value(self) -> bool:
         return self.value is not None
 
+    def make_static_constrained(self):
+        baseutils.check(
+            self.constraint != CONSTRAINT.DYNAMIC,
+            lambda: f"dynamic NumberProxy cannot be made static")
+        self.constraint = CONSTRAINT.STATIC
+
     def is_static_constrained(self) -> bool:
-        return self.constraint = CONSTRAINT.STATIC
+        return self.constraint == CONSTRAINT.STATIC
+
+    def is_dynamic(self) -> bool:
+        return self.constraint == CONSTRAINT.DYNAMIC
 
     #
     # Elementwise unary operators

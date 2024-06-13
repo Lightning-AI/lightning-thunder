@@ -53,7 +53,6 @@ from types import (
 
 import torch
 from thunder.core.proxies import (
-    CONSTRAINTS,
     DistParallelType,
     proxy,
     Proxy,
@@ -808,9 +807,9 @@ def _general_jit_bool_lookaside(wrapped_x: Any) -> bool | INTERPRETER_SIGNALS:
     assert isinstance(wrapped_x, WrappedValue)
     # It doesn't feel right to insert constraints in bool lookaside, constraints here only applies when the bool value is used in control flow.
     if isinstance(wrapped_x.value, NumberProxy):
-        if wrapped_x.value.constraint == CONSTRAINTS.DYNAMIC:
-            raise NotImplementedError(f"conversion to bool is only allowed on constrainable scalars")
-        wrapped_x.value.constraint = CONSTRAINTS.STATIC
+        if wrapped_x.value.is_dynamic():
+            raise NotImplementedError(f"conversion to bool is not allowed on dynamic proxy={wrapped_x.value=}")
+        wrapped_x.value.make_static_constrained()
     bool_lookaside = default_lookaside(bool) or bool
     return bool_lookaside(wrapped_x)
 
@@ -1185,7 +1184,7 @@ def propagate_constraints(ctx, inputs, intermediates, computation_trace):
         u_inp = unvariableify(inp)
         if not isinstance(u_inp, NumberProxy):
             continue
-        if u_inp.constraint == CONSTRAINTS.STATIC:
+        if u_inp.is_static_constrained():
             ctx.add_constraint((clang.check_number_type_and_value, u_inp, u_inp.value))
             static_np_set.add(inp)
 
@@ -1194,7 +1193,7 @@ def propagate_constraints(ctx, inputs, intermediates, computation_trace):
     # add static constraints propagated from intermediates.
     for intermediate in intermediates:
         u_intermediate = unvariableify(intermediate)
-        if not isinstance(u_intermediate, NumberProxy) or u_intermediate.constraint != CONSTRAINTS.STATIC:
+        if not isinstance(u_intermediate, NumberProxy) or not u_intermediate.is_static_constrained():
             continue
 
         front = [intermediate]
