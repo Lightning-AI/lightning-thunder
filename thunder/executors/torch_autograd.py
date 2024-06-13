@@ -222,9 +222,14 @@ def transform_for_torch_autograd(computation_trc: TraceCtx, compile_data, compil
     # Some of the optimization passes change proxies in the trace and
     # any change in the forward trace must be reflected in the backward
     # trace.
+    # We do this only if connect_to_autograd_impl was not removed by
+    # the optimization passes
     original_bw_saved_tensors_for_backward = bw_trace.args[0][0]
-    assert fw_extrace.bound_symbols[-2].sym.name == "connect_to_autograd_impl"
-    new_fw_saved_tensors_for_backward = fw_extrace.bound_symbols[-2].kwargs["saved_tensors"]
+    if any(bsym.sym.name == "connect_to_autograd_impl" for bsym in reversed(fw_extrace.bound_symbols)):
+        assert fw_extrace.bound_symbols[-2].sym.name == "connect_to_autograd_impl"
+        new_fw_saved_tensors_for_backward = fw_extrace.bound_symbols[-2].kwargs["saved_tensors"]
+    else:
+        new_fw_saved_tensors_for_backward = original_bw_saved_tensors_for_backward
     swap_map = {
         variableify(x): y
         for x, y in zip(original_bw_saved_tensors_for_backward, new_fw_saved_tensors_for_backward)
@@ -315,14 +320,15 @@ def transform_for_torch_autograd(computation_trc: TraceCtx, compile_data, compil
     bw_traces.append(bw_extrace)
 
     # Update the forward trace with the correct backward function
-    assert fw_extrace.bound_symbols[-2].sym.name == "connect_to_autograd_impl"
-    fw_extrace.bound_symbols[-2] = replace(
-        fw_extrace.bound_symbols[-2],
-        kwargs={
-            **fw_extrace.bound_symbols[-2].kwargs,
-            "backward": bw_extrace.python_callable(),
-        },
-    )
+    if any(bsym.sym.name == "connect_to_autograd_impl" for bsym in reversed(fw_extrace.bound_symbols)):
+        assert fw_extrace.bound_symbols[-2].sym.name == "connect_to_autograd_impl"
+        fw_extrace.bound_symbols[-2] = replace(
+            fw_extrace.bound_symbols[-2],
+            kwargs={
+                **fw_extrace.bound_symbols[-2].kwargs,
+                "backward": bw_extrace.python_callable(),
+            },
+        )
 
     fw_extrace = del_last_used(fw_extrace)
     fw_traces.append(fw_extrace)
