@@ -3270,7 +3270,11 @@ def backward_pass(forward_env, trace, init_cotangents, *, flat_cotangents=False)
         trace_tensor_output = [x for x in tree_flatten(trace.output)[0] if isinstance(x, TensorProxy)]
         safe_map_flat(put_grad, trace_tensor_output, init_cotangents)
     else:
-        if isinstance(init_cotangents, Sequence) and len(init_cotangents) == 1 and not isinstance(trace.output, Sequence):
+        if (
+            isinstance(init_cotangents, Sequence)
+            and len(init_cotangents) == 1
+            and not isinstance(trace.output, Sequence)
+        ):
             init_cotangents = init_cotangents[0]
         safe_map_flat(put_grad, trace.output, init_cotangents)
 
@@ -3507,7 +3511,11 @@ def _update_forward_with_new_saved_for_backward(forward_trace: Trace, saved_for_
         return
 
     # TODO: Make augmented forward trace return the named tuple object directly instead of dict
-    if isinstance(forward_trace.output, Sequence) and isinstance(forward_trace.output[0], dict) and "flat_tensor_output" in forward_trace.output[0]:
+    if (
+        isinstance(forward_trace.output, Sequence)
+        and isinstance(forward_trace.output[0], dict)
+        and "flat_tensor_output" in forward_trace.output[0]
+    ):
         assert forward_trace.bound_symbols[-1].sym.id == prims.PrimIDs.RETURN
         new_return = (forward_trace.output[0], (saved_tensors, saved_other))
         forward_trace.bound_symbols[-1] = replace(forward_trace.bound_symbols[-1], args=new_return)
