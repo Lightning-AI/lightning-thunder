@@ -73,6 +73,16 @@ def push_away_from_singularities(x, singularity_fn, eps):
     return torch.where((x_dist < 0) & (x_dist > -eps), x - eps, x_)
 
 
+# Randomly select a fraction of the elements in a tensor and set them to specified value
+def replace_random_percentage(a: torch.Tensor, value: Number, percentage: float) -> torch.Tensor:
+    flat = torch.flatten(a.detach().clone())
+    num_values_to_replace: int = math.floor(flat.numel() * percentage)
+    choice_np = np.random.choice(np.arange(0, flat.numel()), (num_values_to_replace,), replace=False)
+    choice = torch.asarray(choice_np, device=a.device)
+    flat[choice] = value
+    return flat.reshape(a.shape).requires_grad_(a.requires_grad)
+
+
 def make_number(**kwargs):
     v = make_tensor((), device="cpu", **kwargs).item()
     return v
@@ -5043,15 +5053,6 @@ def logsumexp_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((8, 7, 5, 1), (1, 3), False),
     )
 
-    # Randomly select a fraction of the elements in a tensor and set them to specified value
-    def _replace_random_percentage(a: torch.Tensor, value: Number, percentage: float) -> torch.Tensor:
-        flat = torch.flatten(a.detach().clone())
-        num_values_to_replace: int = math.floor(flat.numel() * percentage)
-        choice_np = np.random.choice(np.arange(0, flat.numel()), (num_values_to_replace,), replace=False)
-        choice = torch.asarray(choice_np, device=a.device)
-        flat[choice] = value
-        return flat.reshape(a.shape).requires_grad_(a.requires_grad)
-
     for shape, dim, keepdim in cases:
         yield (SampleInput(make(shape), dim, keepdim))
 
@@ -5059,9 +5060,9 @@ def logsumexp_sample_generator(op, device, dtype, requires_grad, **kwargs):
         if dtype.is_floating_point:
             inf_input_tensor = make(shape)
             # Set a quarter of elements to positive infinity
-            inf_input_tensor = _replace_random_percentage(inf_input_tensor, float("inf"), 0.25)
+            inf_input_tensor = replace_random_percentage(inf_input_tensor, float("inf"), 0.25)
             # Set a quarter of elements to negative infinity
-            inf_input_tensor = _replace_random_percentage(inf_input_tensor, float("-inf"), 0.25)
+            inf_input_tensor = replace_random_percentage(inf_input_tensor, float("-inf"), 0.25)
             yield (SampleInput(inf_input_tensor, dim, keepdim))
 
 
