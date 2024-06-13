@@ -1173,26 +1173,45 @@ general_jit_callbacks = default_callbacks | general_jit_callbacks
 def propagate_constraints(ctx, inputs, intermediates, computation_trace):
     import thunder.core.utils as utils
 
-    dynamic_number_proxy_set = set()
+    dynamic_np_set = set()
+    static_np_set = set()
 
     # add static constraints for inputs, put candidates in set
     for inp in inputs:
-        if not isinstance(x, NumberProxy):
+        u_inp = unvariableify(inp)
+        if not isinstance(u_inp, NumberProxy):
             continue
-        x = unvariableify(inp)
-        if x.static_constraint:
-            ctx.add_constraint((clang.check_number_type_and_value, x, x.value))
+        if u_inp.static_constraint:
+            ctx.add_constraint((clang.check_number_type_and_value, u_inp, u_inp.value))
+            static_np_set.add(inp)
         else:
-            dynamic_number_proxy_set.add(inp)
+            dynamic_np_set.add(inp)
+
+    producers = utils.producers(computation_trace.bound_symbols, _map_to_numbers=False)
 
     # add static constraints propagated from intermediates.
-    producers = utils.producers(bsyms, _map_to_numbers=True)
     for intermediate in intermediates:
-        
-    for bsym in computation_trace.bound_symbols:
-        for v in bsym.flat_variableified_proxy_outs:
-            intermediates_set.add(v)
-    
+        u_intermediate = unvariableify(intermediate)
+        if not isinstance(u_intermediate, NumberProxy) or not u_intermediate.static_constraint:
+            continue
+        # static_constraint
+
+        front = [intermediate]
+        while len(front)!=0:
+            v = front.pop()
+            if v in static_np_set:
+                continue
+            static_np_set.add(v)
+
+            uv = unvariableify(v)
+            if v in inp:
+                ctx.add_constraint((clang.check_number_type_and_value, uv, uv.value))
+            else:
+                producer = producers[uv]
+                for inp in producer.flat_proxy_args:
+                    if not isinstance(inp, NumberProxy):
+                        continue
+                    front.append(variableify(inp))
 
 def get_computation_inputs_and_intermediates(computation_trace):
     inputs_list = []
