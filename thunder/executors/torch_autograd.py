@@ -10,7 +10,7 @@ import thunder.core.utils as utils
 from thunder.core.prims import make_prim, PrimIDs, python_return
 
 from thunder.core.proxies import TensorProxy, variableify
-from thunder.core.pytree import tree_flatten
+from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import TraceCtx, tracectx, from_trace, set_tracectx, reset_tracectx
 from thunder.core.transform_common import replace_redundant_inputs
@@ -169,7 +169,7 @@ def transform_for_torch_autograd(computation_trc: TraceCtx, compile_data, compil
         fw_trace.scopes = [fw_trace.bound_symbols]
         return_bsym = fw_trace.bound_symbols.pop()
         assert return_bsym.sym.id == PrimIDs.RETURN
-        out = connect_to_torch_autograd(
+        new_flat_output = connect_to_torch_autograd(
             backward=bw_trace,
             return_none_instead_of_grads=compile_data.return_none_instead_of_grads,
             saved_tensors=saved_tensors,
@@ -177,7 +177,9 @@ def transform_for_torch_autograd(computation_trc: TraceCtx, compile_data, compil
             flat_args=data_for_autograd["flat_args"],
             flat_output=data_for_autograd["flat_output"],
         )
-        python_return(out)
+        old_to_new_output = {variableify(old): new for old, new in utils.safe_zip(data_for_autograd["flat_output"], new_flat_output)}
+        new_output = tree_map(lambda out: old_to_new_output[variableify(out)], data_for_autograd["output"])
+        python_return(new_output)
 
     fw_traces = [fw_trace]
     bw_traces = [bw_trace]
