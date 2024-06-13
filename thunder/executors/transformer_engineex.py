@@ -175,6 +175,7 @@ class TELinear(TransformerEngineBaseModule):
             # Required by `get_fp8_weights_scratchpad`
             self.fp8_weight_shapes.append(torch.Size((self.out_features, self.in_features)))
 
+    def forward(self, inp, weight, bias, is_first_microbatch: bool | None = None, is_grad_enabled: bool = False):
         # NOTE: Backward FP8 metadata sync
         # TransformerEngine v1.6 onwards, we control the sync and update of FP8 metadata for FP8 tensors
         # tied to backward pass (i.e. the gradient tensors)
@@ -184,7 +185,6 @@ class TELinear(TransformerEngineBaseModule):
         # We consume the `is_first_fp8_module` so that the automatic sync for FP8 metadata is disabled.
         FP8GlobalStateManager.is_first_fp8_module()  # Consume first module token.
 
-    def forward(self, inp, weight, bias, is_first_microbatch: bool | None = None, is_grad_enabled: bool = False):
         tensor_inputs = tuple(filter(lambda t: isinstance(t, torch.Tensor), (inp, weight, bias)))
         # See [NOTE] Enable grad within context
         # TE backward depends on `requires_grad` to compute grads.
@@ -534,4 +534,4 @@ def _insert_bwd_fp8_meta_sync(bw_extrace):
     # trace which takes care of syncing and updating the FP8 metadata for backward tensors.
     # See NOTE: Backward FP8 metadata sync
     bwd_idx = len(bw_extrace.bound_symbols) - 1
-    bw_extrace.bound_symbols.insert(bwd_idx + 1, te_sync_fp8_meta_bwd.bind(output=None))
+    bw_extrace.bound_symbols.insert(bwd_idx, te_sync_fp8_meta_bwd.bind(output=None))
