@@ -13,7 +13,7 @@ from thunder.core.proxies import TensorProxy, variableify
 from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import TraceCtx, tracectx, from_trace, set_tracectx, reset_tracectx
-from thunder.core.transform_common import replace_redundant_inputs
+from thunder.core.transform_common import replace_redundant_inputs, PostOptimizationTransform
 
 if TYPE_CHECKING:
     from thunder.core.trace import VariableInterface
@@ -318,6 +318,11 @@ def transform_for_torch_autograd(computation_trc: TraceCtx, compile_data, compil
     # We only want the forward function to be called with `te.fp8_autocast` manager.
     bw_extrace._include_te_fp8_autocast = False
     bw_traces.append(bw_extrace)
+
+    for transform in compile_data.post_optimization_transforms:
+        utils.check_type(transform, PostOptimizationTransform)
+        bw_extrace = transform.transform_trace(bw_extrace, executors_list=compile_data.executors_list)
+        bw_traces.append(bw_extrace)
 
     # Update the forward trace with the correct backward function
     if any(bsym.sym.name == "connect_to_autograd_impl" for bsym in reversed(fw_extrace.bound_symbols)):

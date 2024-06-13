@@ -359,6 +359,7 @@ def jit(
         compile_options=compile_options,
         executor_lookasides=executor_lookasides,
     )
+    cd.post_optimization_transforms = post_optimization_transforms
     cs = CompileStats()
 
     @_with_cache_info_ctx
