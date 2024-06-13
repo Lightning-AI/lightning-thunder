@@ -7,7 +7,7 @@ from functools import wraps, partial
 from inspect import signature
 from itertools import groupby
 from numbers import Number
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from collections.abc import Callable
 from collections.abc import Hashable, Sequence
 from collections.abc import Sequence
