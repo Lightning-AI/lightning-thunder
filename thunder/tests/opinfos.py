@@ -6237,6 +6237,11 @@ baddbmm_opinfo = OpInfo(
             dtypes=(datatypes.exact,),
             devicetypes=(devices.DeviceType.CUDA,),
         ),
+        # test_phantom_grad_vs_torch_consistency does not support nan singularity
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_phantom_grad_vs_torch_consistency",
+        ),
     ),
 )
 
