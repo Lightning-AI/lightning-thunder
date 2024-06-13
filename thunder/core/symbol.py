@@ -18,6 +18,7 @@ import thunder.core.baseutils as baseutils
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable, Positions
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
+from thunder.core.utils import FrozenDict
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
@@ -526,9 +527,16 @@ class BoundSymbol(BoundSymbolInterface):
         return (self.sym, self._var_args, self._var_output) == (other.sym, other._var_args, other._var_output)
 
     def rhs(self):
-        return BoundSymbolRHS(
-            self.sym, tuple(tree_flatten(self._var_args)[0]), tuple(tree_flatten(self._var_kwargs)[0])
-        )
+        def make_hashable(x: Any) -> tuple | FrozenDict:
+            if isinstance(x, dict):
+                return FrozenDict(x)
+            if isinstance(x, list):
+                return tuple(x)
+            return x
+
+        hashable_args = tuple(map(make_hashable, self._var_args))
+
+        return BoundSymbolRHS(self.sym, hashable_args, FrozenDict(self._var_kwargs))
 
     # TODO Document contexts
     def import_ctx(self):
@@ -651,18 +659,8 @@ def has_tags(bsym: BoundSymbol, tags: set[OpTags]) -> bool:
 
 # Wrapper class that hashes and equates only the right hand side of a BoundSymbol for CSE.
 # That is to say, its symbol, args, and kwargs, but not its output.
-# NOTE: once the unpack_trivial is fixed this can be changed to a default immmutable namedtuple.
-class BoundSymbolRHS(NamedTuple):
+@dataclass(**baseutils.default_dataclass_params)
+class BoundSymbolRHS:
     sym: Symbol
     args: tuple[Any]
-    kwargs: tuple[Any]
-
-    def __hash__(self) -> int:
-        # TODO: Fix unpack_trivial usage such that the name is kept in the kwargs.
-        if self.sym.name == "unpack_trivial":
-            return id(self)
-
-        return hash((self.sym, self.args, self.kwargs))
-
-    def __eq__(self, other) -> bool:
-        return isinstance(other, self.__class__) and tuple(self) == tuple(other)
+    kwargs: FrozenDict
