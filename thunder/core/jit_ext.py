@@ -53,6 +53,7 @@ from types import (
 
 import torch
 from thunder.core.proxies import (
+    CONSTRAINTS,
     DistParallelType,
     proxy,
     Proxy,
@@ -805,8 +806,11 @@ _general_jit_lookaside_map[hasattr] = _general_jit_hasattr_lookaside
 # recording the constraint to conditional jumps and such.
 def _general_jit_bool_lookaside(wrapped_x: Any) -> bool | INTERPRETER_SIGNALS:
     assert isinstance(wrapped_x, WrappedValue)
+    # It doesn't feel right to insert constraints in bool lookaside, constraints here only applies when the bool value is used in control flow.
     if isinstance(wrapped_x.value, NumberProxy):
-        wrapped_x.value.static_constraint = True
+        if wrapped_x.value.constraint == CONSTRAINTS.DYNAMIC:
+            raise NotImplementedError(f"conversion to bool is only allowed on constrainable scalars")
+        wrapped_x.value.constraint = CONSTRAINTS.STATIC
     bool_lookaside = default_lookaside(bool) or bool
     return bool_lookaside(wrapped_x)
 
@@ -1174,7 +1178,6 @@ general_jit_callbacks = default_callbacks | general_jit_callbacks
 def propagate_constraints(ctx, inputs, intermediates, computation_trace):
     import thunder.core.utils as utils
 
-    dynamic_np_set = set()
     static_np_set = set()
 
     # add static constraints for inputs, put candidates in set
@@ -1182,20 +1185,17 @@ def propagate_constraints(ctx, inputs, intermediates, computation_trace):
         u_inp = unvariableify(inp)
         if not isinstance(u_inp, NumberProxy):
             continue
-        if u_inp.static_constraint:
+        if u_inp.constraint == CONSTRAINTS.STATIC:
             ctx.add_constraint((clang.check_number_type_and_value, u_inp, u_inp.value))
             static_np_set.add(inp)
-        else:
-            dynamic_np_set.add(inp)
 
     producers = utils.producers(computation_trace.bound_symbols, _map_to_numbers=False)
 
     # add static constraints propagated from intermediates.
     for intermediate in intermediates:
         u_intermediate = unvariableify(intermediate)
-        if not isinstance(u_intermediate, NumberProxy) or not u_intermediate.static_constraint:
+        if not isinstance(u_intermediate, NumberProxy) or u_intermediate.constraint != CONSTRAINTS.STATIC:
             continue
-        # static_constraint
 
         front = [intermediate]
         while len(front) != 0:

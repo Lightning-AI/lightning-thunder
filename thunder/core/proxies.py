@@ -567,6 +567,11 @@ class DictProxy(Proxy, dict):
         raise NotImplementedError("Calling setdefault on an input dict is not yet supported")
 
 
+class CONSTRAINTS(Enum):
+    DYNAMIC = auto()
+    CONSTRAINABLE = auto()
+    STATIC = auto()
+
 # NOTE NumberProxies are NOT Numbers
 # TODO Maybe NumberProxies should be Numbers?
 class NumberProxy(Proxy, NumberProxyInterface):
@@ -574,14 +579,14 @@ class NumberProxy(Proxy, NumberProxyInterface):
         self,
         name: str | None = None,
         value: Number | None = None,
-        static_constraint: bool = False,
+        constraint: CONSTRAINTS = CONSTRAINTS.DYNAMIC,
         *,
         python_type: type,
         history: None | tuple = None,
     ):
         self.value = value
         self.python_type = python_type
-        self.static_constraint = static_constraint
+        self.constraint = constraint
 
         Proxy.__init__(self, name, history=history)
 
@@ -595,6 +600,9 @@ class NumberProxy(Proxy, NumberProxyInterface):
 
     def known_value(self) -> bool:
         return self.value is not None
+
+    def is_static_constrained(self) -> bool:
+        return self.constraint = CONSTRAINT.STATIC
 
     #
     # Elementwise unary operators
@@ -982,8 +990,8 @@ class IntegerProxy(NumberProxy):
 
     def __repr__(self):
         if self.python_type is bool:
-            return f"[IntegerProxy (bool type) name={self.name}, value={self.value}, static={self.static_constraint}]"
-        return f"[IntegerProxy name={self.name}, value={self.value}, static={self.static_constraint}]"
+            return f"[IntegerProxy (bool type) name={self.name}, value={self.value}, static={self.constraint}]"
+        return f"[IntegerProxy name={self.name}, value={self.value}, static={self.constraint}]"
 
     def __index__(self):
         return self.value
@@ -1003,7 +1011,7 @@ class FloatProxy(NumberProxy):
         return f"float {value_str}"
 
     def __repr__(self):
-        return f"[FloatProxy name={self.name}, value={self.value}, static={self.static_constraint}]"
+        return f"[FloatProxy name={self.name}, value={self.value}, static={self.constraint}]"
 
 
 class DistParallelType(Enum):
