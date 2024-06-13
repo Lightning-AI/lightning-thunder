@@ -237,7 +237,7 @@ def sort_allgathers(execution_trace):
     producers, consumers = utils.producers_and_consumers(execution_trace)
 
     def prefer_comm_over_other_over_wait_over_allgather(eligible_nodes: list[Node]) -> int:
-        # bottom-up topological sorting, prefer allgather and wait for topological equal nodes 
+        # bottom-up topological sorting, prefer allgather and wait for topological equal nodes
         def key(node: Node) -> int:
             match node.bsym.sym.id:
                 case wait_prim_impl.id:
@@ -294,11 +294,14 @@ def sort_reduce_ops(execution_trace):
     producers, consumers = utils.producers_and_consumers(execution_trace)
 
     def prefer_comm_over_other_over_wait(eligible_nodes: list[Node]) -> int:
-        # top-down topological sorting, prefer reduce/reduce_scatter and pick wait at last for topological equal nodes 
+        # top-down topological sorting, prefer reduce/reduce_scatter and pick wait at last for topological equal nodes
         def key(node: Node) -> int:
             match node.bsym.sym.id:
                 case wait_prim_impl.id:
-                    if producers[node.bsym.flat_proxy_args[0]].sym.id in (reduce_scatter_prim_impl.id, all_reduce_prim_impl.id): # all_gather_prim_impl.id:
+                    if producers[node.bsym.flat_proxy_args[0]].sym.id in (
+                        reduce_scatter_prim_impl.id,
+                        all_reduce_prim_impl.id,
+                    ):  # all_gather_prim_impl.id:
                         return len(order_in_trace)
                     return order_in_trace[node.bsym]
                 case reduce_scatter_prim_impl.id | all_reduce_prim_impl.id:
