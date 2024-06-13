@@ -6156,25 +6156,49 @@ nn_ops = []
 def baddbmm_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
     cases = (
-        ((0, 0, 0), (0, 0, 0), (0, 0, 0)),
-        ((3, 0, 5), (3, 0, 0), (3, 0, 5)),
-        ((0, 5, 6), (0, 5, 0), (0, 0, 6)),
-        ((3, 5, 6), (3, 5, 0), (3, 0, 6)),
-        ((3, 5, 6), (3, 5, 8), (3, 8, 6)),
+        ((0, 0, 0), (0, 0, 0), (0, 0, 0), 0.0, None),
+        ((3, 0, 5), (3, 0, 0), (3, 0, 5), 0.0, None),
+        ((0, 5, 6), (0, 5, 0), (0, 0, 6), 0.0, None),
+        ((3, 5, 6), (3, 5, 0), (3, 0, 6), 0.0, None),
+        ((3, 5, 6), (3, 5, 8), (3, 8, 6), 0.0, None),
+        ((3, 5, 6), (3, 5, 8), (3, 8, 6), 0.25, float("inf")),
+        ((3, 5, 6), (3, 5, 8), (3, 8, 6), 0.25, float("-inf")),
+        ((3, 5, 6), (3, 5, 8), (3, 8, 6), 0.25, float("nan")),
     )
 
-    constants_cases = (
+    int_constants_cases = ((2, 2), (1, 0), (0, 1))
+
+    float_constants_cases = (
         (2.0, 2.0),
         (1.0, 0.0),
         (0.0, 1.0),
+        (float("inf"), 2.0),
+        (2.0, float("inf")),
+        (float("inf"), float("inf")),
+        (float("-inf"), 2.0),
+        (2.0, float("-inf")),
+        (float("-inf"), float("-inf")),
+        (float("nan"), 2.0),
+        (2.0, float("nan")),
+        (float("nan"), float("nan")),
     )
 
-    for shape_in, shape_batch1, shape_batch2 in cases:
-        for alpha, beta in constants_cases:
-            if isinstance(to_dtype(dtype), datatypes.exact):
-                alpha, beta = int(alpha), int(beta)
+    for shape_in, shape_batch1, shape_batch2, singularity_amount, singularity_value in cases:
+        a = make(shape_in)
+        b1 = make(shape_batch1)
+        b2 = make(shape_batch2)
 
-            yield SampleInput(make(shape_in), make(shape_batch1), make(shape_batch2), alpha=alpha, beta=beta)
+        if isinstance(to_dtype(dtype), datatypes.exact):
+            for alpha, beta in int_constants_cases:
+                yield SampleInput(make(shape_in), make(shape_batch1), make(shape_batch2), alpha=alpha, beta=beta)
+        else:
+            if singularity_value is not None:
+                a = replace_random_percentage(a, singularity_value, singularity_amount)
+                b1 = replace_random_percentage(b1, singularity_value, singularity_amount)
+                b2 = replace_random_percentage(b2, singularity_value, singularity_amount)
+
+            for alpha, beta in float_constants_cases:
+                yield SampleInput(make(shape_in), make(shape_batch1), make(shape_batch2), alpha=alpha, beta=beta)
 
 
 def baddbmm_error_generator(op, device, dtype=torch.int32, **kwargs):
