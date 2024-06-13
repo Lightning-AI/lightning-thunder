@@ -567,7 +567,7 @@ class DictProxy(Proxy, dict):
         raise NotImplementedError("Calling setdefault on an input dict is not yet supported")
 
 
-class CONSTRAINTS(Enum):
+class CONSTRAINT(Enum):
     DYNAMIC = auto()
     CONSTRAINABLE = auto()
     STATIC = auto()
@@ -579,7 +579,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
         self,
         name: str | None = None,
         value: Number | None = None,
-        constraint: CONSTRAINTS = CONSTRAINTS.DYNAMIC,
+        constraint: CONSTRAINT = CONSTRAINT.DYNAMIC,
         *,
         python_type: type,
         history: None | tuple = None,
