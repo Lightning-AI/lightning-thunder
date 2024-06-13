@@ -395,7 +395,7 @@ def jit(
 
             no_grad_sync = get_skip_data_parallel_grad_sync()
         cache_info["no_grad_sync"] = no_grad_sync
-        return_none_instead_of_grads = is_fsdp_enabled and no_grad_sync
+        cd.return_none_instead_of_grads = is_fsdp_enabled and no_grad_sync
 
         # TODO RC1 Add module and function checks to prologue (make it a compile option)
 
@@ -623,7 +623,7 @@ def jit(
                 epilogue,
                 epilogue_traces,
                 backward_traces,
-                return_none_instead_of_grads,
+                cd.return_none_instead_of_grads,
             )
             if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
                 cs.interpreter_cache.append(cache_entry)

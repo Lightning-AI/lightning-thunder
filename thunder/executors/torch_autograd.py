@@ -26,6 +26,7 @@ class IDs(Enum):
 def torch_autograd_function_meta(
     *,
     backward: TraceCtx | Callable,
+    return_none_instead_of_grads: bool,
     saved_tensors: Sequence[TensorProxy],
     saved_other: Sequence[Any],
     flat_args: Sequence[TensorProxy],
@@ -170,6 +171,7 @@ def transform_for_torch_autograd(computation_trc: TraceCtx, compile_data, compil
         assert return_bsym.sym.id == PrimIDs.RETURN
         out = connect_to_torch_autograd(
             backward=bw_trace,
+            return_none_instead_of_grads=compile_data.return_none_instead_of_grads,
             saved_tensors=saved_tensors,
             saved_other=saved_other,
             flat_args=data_for_autograd["flat_args"],

@@ -2088,6 +2088,7 @@ _register_implementation(prims.copy_, copy_, checker=_always_executable)
 def _torch_autograd_function_impl(
     *,
     backward: TraceCtx | Callable,
+    return_none_instead_of_grads: bool,
     saved_tensors: Sequence[torch.Tensor],
     saved_other: Sequence[Any],
     flat_args: Sequence[torch.Tensor],
@@ -2095,6 +2096,7 @@ def _torch_autograd_function_impl(
 ):
     # Connect produced tensors with PyTorch's autograd graph
     ThunderFunction.apply(
+        return_none_instead_of_grads,
         backward,
         saved_tensors,
         saved_other,
