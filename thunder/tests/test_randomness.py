@@ -39,6 +39,7 @@ def test_rng_state_prims(executor, device: str, _):
         return s0, o0, s1, o1
 
     dev = devices.to_device(device)
+    torch.cuda.init()
     cuda_generator = torch.cuda.default_generators[dev.index]
     jfunc = thunder.jit(func, executors=executor.executors_list())
     with torch.random.fork_rng(devices=(device,)):
@@ -75,7 +76,7 @@ def test_uniform_philox_with_rng_state_prims(executor, device: str, dtype: dtype
         return out1, out2
 
     dev = devices.to_device(device)
-
+    torch.cuda.init()
     cuda_generator = torch.cuda.default_generators[dev.index]
     jfunc1 = thunder.jit(func1, executors=executor.executors_list())
     jfunc2 = thunder.jit(func2, executors=executor.executors_list())
@@ -145,6 +146,7 @@ def test_uniform_philox_vs_uniform(executor, device: str, dtype: dtypes.dtype):
     import torch
 
     dev = devices.to_torch_device(device)
+    torch.cuda.init()
     cuda_generator = torch.cuda.default_generators[dev.index]
 
     def func(a):
@@ -160,7 +162,6 @@ def test_uniform_philox_vs_uniform(executor, device: str, dtype: dtypes.dtype):
 
     jfunc = thunder.jit(func, executors=executor.executors_list())
 
-    # TODO: Check the backward results when #231 is fixed
     with torch.random.fork_rng(devices=(dev,)):
         cuda_generator.manual_seed(20)
         expects = []
@@ -169,6 +170,7 @@ def test_uniform_philox_vs_uniform(executor, device: str, dtype: dtypes.dtype):
             out = jfunc(a)
             out.sum().backward()
             expects.append(out)
+            expects.append(a.grad)
         assert cuda_generator.get_offset() == 12 * 4
         rng_syms = ("get_and_update_rng_state_impl",)
         # check the transform has inserted the rng state operators
@@ -188,6 +190,7 @@ def test_uniform_philox_vs_uniform(executor, device: str, dtype: dtypes.dtype):
                 out = jfunc(a1)
                 out.sum().backward()
                 results.append(out)
+                results.append(a1.grad)
             assert cuda_generator.get_offset() == 12 * 4
 
     for expected, result in zip(expects, results):
@@ -255,6 +258,7 @@ def test_uniform_philox_vs_uniform_module(executor, device: str, dtype: dtypes.d
     import torch
 
     dev = devices.to_torch_device(device)
+    torch.cuda.init()
     cuda_generator = torch.cuda.default_generators[dev.index]
     tdtype = thunder.torch.to_torch_dtype(dtype)
     m_post = ParallelLinearAdapter(8000, 24000, 16, dropout_position="post").train().to(device=dev, dtype=tdtype)
@@ -265,7 +269,6 @@ def test_uniform_philox_vs_uniform_module(executor, device: str, dtype: dtypes.d
 
         jfunc = thunder.jit(m, executors=executor.executors_list())
 
-        # TODO: Check the backward results when #231 is fixed
         with torch.random.fork_rng(devices=(dev,)):
             cuda_generator.manual_seed(20)
             expects = []
@@ -274,6 +277,8 @@ def test_uniform_philox_vs_uniform_module(executor, device: str, dtype: dtypes.d
                 out = jfunc(a)
                 out.sum().backward()
                 expects.append(out)
+                expects.append(a.grad)
+
             rng_syms = ("get_and_update_rng_state_impl",)
             # check the transform has inserted the rng state operators
             assert any(t.sym.id in rng_syms for t in thunder.last_traces(jfunc)[-1].bound_symbols)
@@ -292,5 +297,6 @@ def test_uniform_philox_vs_uniform_module(executor, device: str, dtype: dtypes.d
                     out = jfunc(a1)
                     out.sum().backward()
                     results.append(out)
+                    results.append(a1.grad)
         for expected, result in zip(expects, results):
             assert_close(expected, result)
