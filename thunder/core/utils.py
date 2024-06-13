@@ -5,7 +5,7 @@ from functools import reduce, wraps
 import itertools
 from itertools import chain
 from numbers import Number
-from typing import overload, Generic, Optional, TypeVar, TYPE_CHECKING
+from typing import Any, overload, Generic, Optional, TypeVar, TYPE_CHECKING
 from collections.abc import Callable
 from collections.abc import Iterable, Iterator, Sequence
 
@@ -772,13 +772,7 @@ class FrozenDict(_UserDictT[T, T1], Mapping[T, T1]):
         return f"{self.__class__.__name__}({{{body}}})"
 
     def __hash__(self) -> int:
-        def make_hashable(item) -> tuple:
-            k, v = item
-            if isinstance(v, list):
-                return (k, tuple(v))
-            return item
-
-        hashable_items = map(make_hashable, self.items())
+        hashable_items = map(lambda item: (item[0], make_hashable(item[1])), self.items())
         return hash(frozenset(hashable_items))
 
 
@@ -1130,3 +1124,13 @@ def partition(pred, iterable):
     # partition(is_odd, range(10)) --> 0 2 4 6 8   and  1 3 5 7 9
     t1, t2 = itertools.tee(iterable)
     return itertools.filterfalse(pred, t1), filter(pred, t2)
+
+
+def make_hashable(item: Any, /) -> tuple:
+    if isinstance(item, (list, tuple)):
+        return tuple(map(make_hashable, item))
+    if isinstance(item, dict):
+        return FrozenDict(item)
+    if isinstance(item, slice):
+        return id(item)
+    return item

@@ -18,7 +18,7 @@ import thunder.core.baseutils as baseutils
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable, Positions
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
-from thunder.core.utils import FrozenDict
+from thunder.core.utils import FrozenDict, make_hashable
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
@@ -527,17 +527,7 @@ class BoundSymbol(BoundSymbolInterface):
         return (self.sym, self._var_args, self._var_output) == (other.sym, other._var_args, other._var_output)
 
     def rhs(self):
-        def make_hashable(x: Any) -> tuple | FrozenDict:
-            if isinstance(x, dict):
-                return FrozenDict(x)
-            if isinstance(x, (list, tuple)):
-                return tuple(map(make_hashable, x))
-            if isinstance(x, slice):
-                return id(x)
-            return x
-
         hashable_args = tuple(map(make_hashable, self._var_args))
-
         return BoundSymbolRHS(self.sym, hashable_args, FrozenDict(self._var_kwargs))
 
     # TODO Document contexts
