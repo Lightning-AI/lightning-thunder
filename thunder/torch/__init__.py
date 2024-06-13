@@ -3048,6 +3048,26 @@ def batch_norm(
 #
 
 
+@torchsymbol(torch.baddbmm, is_method=True)
+def baddbmm(
+    a: TensorLike, b1: TensorLike, b2: TensorLike, *, beta: float = 1.0, alpha: float = 1.0, out: TensorLike = None
+) -> TensorLike:
+    utils.check(out is None, lambda: "Non-None out is not supported", NotImplementedError)
+
+    utils.check_same_dtype(a, b1, b2)
+    utils.check_same_device(a, b1, b2)
+    utils.check(b1.ndim == 3, lambda: f"batch1 must be a 3D tensor, found {b1.ndim} instead.")
+    utils.check(b2.ndim == 3, lambda: f"batch2 must be a 3D tensor, found {b2.ndim} instead.")
+
+    if a.dtype not in dtypes.inexact_dtypes:
+        utils.check_type(beta, int)
+        utils.check_type(alpha, int)
+
+    t0 = matmul(b1, b2)
+    t1 = alpha * t0
+    return t1 + (beta * a)
+
+
 # TODO bmm is more restrictive than matmul
 @torchsymbol(torch.bmm, is_method=True)
 def bmm(a: TensorLike, b: TensorLike, /) -> TensorLike:
