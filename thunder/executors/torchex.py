@@ -1,3 +1,4 @@
+from __future__ import annotations
 import operator
 import importlib
 from dataclasses import replace
@@ -6,7 +7,7 @@ from functools import wraps, partial
 from inspect import signature
 from itertools import groupby
 from numbers import Number
-from typing import Union, Any, Tuple, Optional
+from typing import TYPE_CHECKING
 from collections.abc import Callable
 from collections.abc import Hashable, Sequence
 from collections.abc import Sequence
@@ -25,7 +26,7 @@ from thunder.core.devices import to_torch_device, to_device
 import thunder.core.prims as prims
 from thunder.core.prims import PrimIDs
 from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, from_trace
-from thunder.core.proxies import TensorProxy, FutureTensorProxy, variableify, pytype
+from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy, variableify, pytype
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import Symbol, BoundSymbol
 from thunder.distributed.prims import DistributedReduceOps
@@ -42,6 +43,9 @@ from thunder.core.transforms import (
     get_grad,
     put_grad,
 )
+
+if TYPE_CHECKING:
+    from thunder.common import CompileData
 
 ex = OperatorExecutor("torch", version=torch.__version__)
 register_executor(ex)
@@ -146,16 +150,10 @@ _register_implementation(ltorch.to, checker=_always_executable, execution_transf
 #
 
 
-class no_autocast(ContextDecorator):
-    def __enter__(self, *args, **kwargs):
-        self.was_cuda_enabled = torch.is_autocast_enabled()
-        self.was_cpu_enabled = torch.is_autocast_cpu_enabled()
-        torch.set_autocast_enabled(False)
-        torch.set_autocast_cpu_enabled(False)
-
-    def __exit__(self, exc_type, exc_value, exc_traceback):
-        torch.set_autocast_enabled(self.was_cuda_enabled)
-        torch.set_autocast_cpu_enabled(self.was_cpu_enabled)
+def no_autocast(fn):
+    fn = torch.autocast(device_type="cpu", enabled=False, cache_enabled=False)(fn)
+    fn = torch.autocast(device_type="cuda", enabled=False, cache_enabled=False)(fn)
+    return fn
 
 
 #
@@ -170,6 +168,7 @@ tensor_from_sequence = _register_torch_operation("tensor")
 zeros = _register_torch_operation("zeros")
 zeros_like = _register_torch_operation("zeros_like")
 randn = _register_torch_operation("randn")
+empty = _register_torch_operation("empty")
 einsum = _register_torch_operation("einsum")
 
 
@@ -420,6 +419,17 @@ def _randn_prims_transform(
     return randn(shape, device=torch_device, dtype=torch_dtype)
 
 
+def _empty_prims_transform(
+    shape: tuple[int, ...],
+    *,
+    device: devices.Device,
+    dtype: dtypes.dtype,
+) -> TensorLike:
+    torch_device: torch.device = to_torch_device(device)
+    torch_dtype: torch.dtype = to_torch_dtype(dtype)
+    return empty(shape, device=torch_device, dtype=torch_dtype)
+
+
 def _tensor_from_sequence_prims_transform(
     seq_or_number, *, device: devices.Device, dtype: None | dtypes.dtype
 ) -> TensorLike:
@@ -428,13 +438,39 @@ def _tensor_from_sequence_prims_transform(
     return tensor_from_sequence(seq_or_number, device=torch_device, dtype=torch_dtype)
 
 
+def _get_and_update_rng_state_impl(seed, offset, device):
+    state = torch.cuda.get_rng_state(device)
+    seed, offset = torch.chunk(state, 2)
+    # We follow the nvFuser way here. The offset used by nvfuser = pytorch_offset // 4
+    # See Note [Divide offset by 4] https://github.com/NVIDIA/Fuser/blob/729f36c/csrc/rng.cpp#L54
+    seed = seed.view(torch.int64).item()
+    offset = offset.view(torch.int64).item() // 4
+    # We follow the nvFuser way here. pytorch_new_offset = (nvfuser_offset + 1) * 4
+    # See Note [Divide offset by 4] https://github.com/NVIDIA/Fuser/blob/729f36c/csrc/rng.cpp#L54
+    new_offset = (offset + 1) * 4
+    seed_portion = torch.tensor([seed]).view(torch.uint8)
+    offset_portion = torch.tensor([new_offset]).view(torch.uint8)
+    new_state = torch.cat([seed_portion, offset_portion])
+    torch.cuda.set_rng_state(new_state, device)
+    return seed, offset
+
+
+get_and_update_rng_state_impl = ex.register_operator(
+    "get_and_update_rng_state_impl",
+    meta=prims.get_and_update_rng_state.meta,
+    fn=_get_and_update_rng_state_impl,
+)
+
+
 _register_implementation(prims.full, checker=_always_executable, execution_transform=_full_transform)
 _register_implementation(prims.iota, checker=_always_executable, execution_transform=_iota_transform)
 _register_implementation(prims.uniform, checker=_always_executable, execution_transform=_uniform_transform)
 _register_implementation(
     prims.uniform_philox, checker=_uniform_philox_prim_checker, execution_transform=_uniform_philox_prim_transform
 )
+_register_implementation(prims.get_and_update_rng_state, get_and_update_rng_state_impl, checker=_always_executable)
 _register_implementation(prims.randn, checker=_always_executable, execution_transform=_randn_prims_transform)
+_register_implementation(prims.empty, checker=_always_executable, execution_transform=_empty_prims_transform)
 _register_implementation(
     prims.tensor_from_sequence, checker=_always_executable, execution_transform=_tensor_from_sequence_prims_transform
 )
@@ -476,6 +512,9 @@ unbind = _register_torch_operation("unbind")
 unfold = _register_torch_operation("unfold", module=torch.Tensor)
 unsqueeze = _register_torch_operation("unsqueeze")
 view = _register_torch_operation("view", module=torch.Tensor)
+view_as = _register_torch_operation("view_as", module=torch.Tensor)
+all_tensor = _register_torch_operation("all", like=ltorch.all_tensor)
+any_tensor = _register_torch_operation("any", like=ltorch.any_tensor)
 
 
 def _broadcast_in_dim_prim_transform(
@@ -534,6 +573,30 @@ def _squeeze_transform(a: TensorLike, /, dim: None | int | Sequence[int] = None)
     return squeeze(a, dim)
 
 
+def _empty_transform(
+    shape: Sequence[int],
+    device: None | DeviceLike = None,
+    dtype: None | dtypeLike = None,
+    out: None | TensorLike = None,
+    layout: torch.layout = torch.strided,
+    requires_grad: bool = False,
+    pin_memory: bool = False,
+    memory_format: torch.memory_format = torch.contiguous_format,
+):
+    torch_device: None | torch.device = to_torch_device(device)
+    torch_dtype: None | torch.dtype = to_torch_dtype(dtype)
+    return empty(
+        shape,
+        device=torch_device,
+        dtype=torch_dtype,
+        out=out,
+        layout=layout,
+        requires_grad=requires_grad,
+        pin_memory=pin_memory,
+        memory_format=memory_format,
+    )
+
+
 _register_implementation(
     prims.broadcast_in_dim, checker=_always_executable, execution_transform=_broadcast_in_dim_prim_transform
 )
@@ -568,6 +631,10 @@ _register_implementation(ltorch.unbind, unbind, checker=_always_executable)
 _register_implementation(ltorch.unfold, unfold, checker=_always_executable)
 _register_implementation(ltorch.unsqueeze, unsqueeze, checker=_always_executable)
 _register_implementation(ltorch.view, view, checker=_always_executable)
+_register_implementation(ltorch.view_as, view_as, checker=_always_executable)
+_register_implementation(ltorch.empty, empty, checker=_always_executable, execution_transform=_empty_transform)
+_register_implementation(ltorch.all_tensor, all_tensor, checker=_always_executable)
+_register_implementation(ltorch.any_tensor, any_tensor, checker=_always_executable)
 
 #
 # Memory format operations
@@ -770,7 +837,7 @@ _register_elementwise_unary_implementation(ltorch.relu, relu, checker=_elementwi
 _register_elementwise_unary_implementation(ltorch.relu6, relu6, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.hardswish, hardswish, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.selu, selu, checker=_elementwise_unary_with_inplace_checker)
-_register_elementwise_unary_implementation(ltorch.silu, silu)
+_register_elementwise_unary_implementation(ltorch.silu, silu, checker=_always_executable)
 
 #
 # Elementwise binary operations
@@ -802,11 +869,22 @@ remainder = _register_torch_operation("remainder")
 sub = _register_torch_operation("sub")
 true_divide = _register_torch_operation("true_divide")
 zeta = _register_torch_operation("zeta", module=torch.special)
+div = _register_torch_operation("div")
 
 
 # NOTE PyTorch elementwise operations require at least one input to be a tensor
 def _elementwise_binary_checker(a: Number | TensorProxy, b: Number | TensorProxy) -> bool:
     return isinstance(a, TensorLike) or isinstance(b, TensorLike)
+
+
+def _div_checker(
+    a: Number | TensorProxy,
+    b: Number | TensorProxy,
+    *,
+    rounding_mode: None | str = None,
+    out: None | TensorProxy = None,
+) -> TensorProxy:
+    return _elementwise_binary_checker(a, b) and (rounding_mode is None or isinstance(rounding_mode, str))
 
 
 # NOTE add and sub have special check and factory functions to support alpha
@@ -840,6 +918,20 @@ def _sub_transform(a: Number | TensorProxy, b: Number | TensorProxy, *, alpha: N
         return sub(a, b)
 
     return sub(a, b, alpha=alpha)
+
+
+def _div_transform(
+    a: Number | TensorProxy,
+    b: Number | TensorProxy,
+    /,
+    *,
+    rounding_mode: None | str = None,
+    out: None | TensorProxy = None,
+) -> TensorProxy:
+    if rounding_mode is None:
+        return div(a, b)
+
+    return div(a, b, rounding_mode=rounding_mode)
 
 
 _register_elementwise_binary_implementation = partial(_register_implementation, checker=_elementwise_binary_checker)
@@ -892,6 +984,7 @@ _register_elementwise_binary_implementation(ltorch.remainder, remainder)
 _register_elementwise_binary_implementation(ltorch.sub, checker=_add_sub_checker, execution_transform=_sub_transform)
 _register_elementwise_binary_implementation(ltorch.true_divide, true_divide)
 _register_elementwise_binary_implementation(ltorch.zeta, zeta)
+_register_elementwise_binary_implementation(ltorch.div, checker=_div_checker, execution_transform=_div_transform)
 
 #
 # Elementwise ternary operations
@@ -981,7 +1074,7 @@ def _masked_fill_checker(a: TensorLike, /, mask: TensorLike, value: Number | Ten
         return False
 
     value_dtype: type | dtypes.dtype
-    if isinstance(value, Number):
+    if isinstance(value, (Number, NumberProxy)):
         value_dtype = pytype(value)
     else:
         if len(value.shape) != 0:
@@ -1106,6 +1199,7 @@ _register_implementation(ltorch.topk, topk, checker=_always_executable, executio
 # Scatter and gather operations
 #
 
+gather = _register_torch_operation("gather")
 index_add = _register_torch_operation("index_add")
 index_put = _register_torch_operation("index_put")
 scatter_add = _register_torch_operation("scatter_add")
@@ -1122,6 +1216,16 @@ def _index_put_prim_transform(
     a: TensorLike, /, indices: Sequence[TensorLike], values: TensorLike, accumulate: bool = False
 ) -> TensorLike:
     return index_put(a, indices, values, accumulate)
+
+
+@langctx(Languages.TORCH)
+def _gather_prim_transform(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
+    return gather(a, dim, index)
+
+
+@langctx(Languages.TORCH)
+def _gather_transform(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
+    return gather(a, dim, index)
 
 
 # NOTE torch.compile has a compilation issue with scatter add in bfloat16,
@@ -1159,6 +1263,7 @@ def _take_along_axis_prim_transform(a: TensorProxy, /, index: TensorProxy, dim: 
     return take_along_dim(a, index, dim)
 
 
+_register_implementation(prims.gather, checker=_always_executable, execution_transform=_gather_prim_transform)
 _register_implementation(prims.index_add, checker=_always_executable, execution_transform=_index_add_prim_transform)
 _register_implementation(prims.index_put, checker=_always_executable, execution_transform=_index_put_prim_transform)
 _register_implementation(prims.scatter_add, checker=_always_executable, execution_transform=_scatter_add_prim_transform)
@@ -1167,6 +1272,7 @@ _register_implementation(
     prims.take_along_axis, checker=_always_executable, execution_transform=_take_along_axis_prim_transform
 )
 
+_register_implementation(ltorch.gather, checker=_always_executable, execution_transform=_gather_transform)
 _register_implementation(ltorch.index_add, index_add, checker=_always_executable)
 _register_implementation(ltorch.index_put, index_put, checker=_always_executable)
 _register_implementation(ltorch.index_select, index_select, checker=_always_executable)
@@ -1205,7 +1311,7 @@ convolution = _register_torch_operation("convolution")
 conv1d = _register_torch_operation("conv1d", module=torch.nn.functional)
 conv2d = _register_torch_operation("conv2d", module=torch.nn.functional)
 conv3d = _register_torch_operation("conv3d", module=torch.nn.functional)
-cross_entropy = _register_torch_operation("cross_entropy", module=torch.nn.functional)
+mse_loss = _register_torch_operation("mse_loss", module=torch.nn.functional)
 dropout = _register_torch_operation("dropout", module=torch.nn.functional)
 embedding = _register_torch_operation("embedding", module=torch.nn.functional)
 embedding_backward = _register_torch_operation("torch.ops.aten.embedding_backward", like=ltorch.embedding_backward)
@@ -1221,6 +1327,10 @@ log_softmax_backward = _register_torch_operation(
 max_pool1d = _register_torch_operation("max_pool1d", module=torch.nn.functional)
 max_pool2d = _register_torch_operation("max_pool2d", module=torch.nn.functional)
 max_pool3d = _register_torch_operation("max_pool3d", module=torch.nn.functional)
+adaptive_avg_pool2d = _register_torch_operation("adaptive_avg_pool2d", module=torch.nn.functional)
+adaptive_avg_pool2d_backward = _register_torch_operation(
+    "torch.ops.aten._adaptive_avg_pool2d_backward", like=ltorch.adaptive_avg_pool2d_backward
+)
 
 
 def _max_pool_with_indices_helper(
@@ -1264,7 +1374,7 @@ def _max_pool_with_indices_helper(
             )
             return seq[i]
 
-    out_sizes = []
+    out_sizes = list(a.shape[:-ndim])
     for i in range(ndim):
         in_ = a.shape[i - ndim]  # i - ndim is the i-th spatial dimension
         kernel_ = get_maybe_ith_entry("kernel_size", kernel_size, i)
@@ -1318,7 +1428,7 @@ max_pool3d_with_indices_backward = ex.register_operator(
 nll_loss = _register_torch_operation("nll_loss", module=torch.nn.functional)
 pad = _register_torch_operation("pad", module=torch.nn.functional)
 scaled_dot_product_attention = _register_torch_operation("scaled_dot_product_attention", module=torch.nn.functional)
-softmax = _register_torch_operation("softmax")
+softmax = _register_torch_operation("softmax", like=ltorch._softmax)
 
 
 # NOTE This transform translates number proxies to boolean values
@@ -1334,59 +1444,6 @@ def _convolution_transform(
     groups: int,
 ) -> TensorProxy:
     return convolution(a, weight, bias, stride, padding, dilation, bool(transposed), output_padding, groups)
-
-
-def _cross_entropy_backward_impl(
-    g: torch.Tensor,
-    a: torch.Tensor,
-    target: torch.Tensor,
-    weight: torch.Tensor,
-    reduction: str,
-    ignore_index: int,
-    label_smoothing: int,
-) -> torch.Tensor:
-    # forward - given input and target
-    # a = log_softmax(input, dim)
-    # return cross_entropy(a, target, weight, reduction, ignore_index, label_smoothing)
-
-    # backward - given grad_cross_entropy and saved_tensors
-    # grad_a = torch.ops.aten.nll_loss_backward(grad, a, target, weight, reduction, ignore_index, total_weight)
-    # return torch.ops.aten._log_softmax_backward_data(grad_a, a, dim, a.scalar_type())
-
-    if reduction == "none":
-        reduction_idx = 0
-    elif reduction == "mean":
-        reduction_idx = 1
-    elif reduction == "sum":
-        reduction_idx = 2
-    else:
-        reduction_idx = -1
-
-    utils.check(
-        reduction_idx > -1 and reduction_idx < 3,
-        lambda: f"{reduction} is not a valid value for reduction parameter.",
-    )
-
-    # TODO Add support nll_loss_nd, weight tensor, and label_smoothing options.
-    # See issue "Add support for remaining cross_entropy_loss arguments."
-    utils.check(a.ndim <= 2 and target.ndim <= 1, lambda: f"multi-dimension cross-entropy is not supported.")
-
-    utils.check(weight is None, lambda: f"weight tensor argument is not supported.")
-
-    utils.check(label_smoothing == 0.0, lambda: f"label smoothing values not equal to zero are not supported.")
-
-    dim = 0 if a.dim() == 1 else 1
-    a = torch.log_softmax(a, dim, a.dtype)
-
-    if weight is not None:
-        total_weight = torch.sum(weight)
-    elif reduction == "none":
-        total_weight = torch.tensor(0.0, dtype=a.dtype, device=a.device)
-    elif reduction == "sum" or reduction == "mean":
-        total_weight = torch.sum(torch.ne(target, ignore_index)).to(dtype=a.dtype, device=a.device)
-
-    g_a = torch.ops.aten.nll_loss_backward(g, a, target, weight, reduction_idx, ignore_index, total_weight)
-    return torch.ops.aten._log_softmax_backward_data(g_a, a, dim, a.dtype)
 
 
 # NOTE PyTorch's nn.functional.interpolate only supports 3D, 4D, and 5D interpolation
@@ -1453,11 +1510,11 @@ def _nll_loss_backward_impl(
 ) -> torch.Tensor:
     reduction: int = _reduction_str_to_num_map[reduction]
 
-    # NOTE PyTorch expects total_weight to be a float64 tensor
     if total_weight is None:
+        # NOTE aten.nll_loss_backward expects total_weight to be a float64 tensor
         total_weight = torch.tensor(0.0, dtype=torch.float64, device=a.device)
     else:
-        total_weight = total_weight.to(torch.float64)
+        total_weight = total_weight.to(a.dtype)
 
     if a.ndim <= 2:
         return torch.ops.aten.nll_loss_backward(g, a, target, weight, reduction, ignore_index, total_weight)
@@ -1541,11 +1598,7 @@ _register_implementation(ltorch.convolution, checker=_always_executable, executi
 _register_implementation(ltorch.conv1d, conv1d, checker=_always_executable)
 _register_implementation(ltorch.conv2d, conv2d, checker=_always_executable)
 _register_implementation(ltorch.conv3d, conv3d, checker=_always_executable)
-_register_implementation(ltorch.cross_entropy, cross_entropy, checker=_always_executable)
-cross_entropy_backward = ex.register_operator(
-    "torch_cross_entropy_backward_impl", meta=ltorch.cross_entropy_backward, fn=_cross_entropy_backward_impl
-)
-_register_implementation(ltorch.cross_entropy_backward, cross_entropy_backward, checker=_always_executable)
+_register_implementation(ltorch.mse_loss, mse_loss, checker=_always_executable)
 _register_implementation(ltorch.dropout, dropout, checker=_always_executable)
 _register_implementation(ltorch.embedding, embedding, checker=_always_executable)
 _register_implementation(ltorch.embedding_backward, embedding_backward, checker=_always_executable)
@@ -1612,6 +1665,29 @@ ex.register_implementation(
 ex.register_implementation(
     ltorch.max_pool3d, max_pool3d, checker=_always_executable, grad_transform=max_pool3d_bwd_wrapper
 )
+
+
+def adaptive_avg_pool2d_bwd_wrapper(
+    a: TensorProxy,
+    /,
+    output_size: int | Sequence[int],
+) -> TensorProxy:
+    primals = adaptive_avg_pool2d(a, output_size)
+
+    grad = get_grad(primals)
+    grad_a = adaptive_avg_pool2d_backward(grad, a)
+    put_grad(a, grad_a)
+
+    return primals
+
+
+ex.register_implementation(
+    ltorch.adaptive_avg_pool2d,
+    adaptive_avg_pool2d,
+    checker=_always_executable,
+    grad_transform=adaptive_avg_pool2d_bwd_wrapper,
+)
+_register_implementation(ltorch.adaptive_avg_pool2d_backward, adaptive_avg_pool2d_backward, checker=_always_executable)
 _register_implementation(ltorch.nll_loss, checker=_always_executable, execution_transform=_nll_loss_transform)
 nll_loss_backward = ex.register_operator(
     "torch_nll_loss_backward_impl", meta=ltorch.nll_loss_backward, fn=_nll_loss_backward_impl
@@ -1620,7 +1696,7 @@ _register_implementation(ltorch.nll_loss_backward, nll_loss_backward, checker=_a
 _register_implementation(ltorch.pad, pad, checker=_always_executable)
 pad_prim_impl = ex.register_operator("torch_pad_prim_impl", meta=prims.pad.meta, fn=_pad_prim_impl)
 _register_implementation(prims.pad, pad_prim_impl, checker=_always_executable)
-_register_implementation(ltorch.softmax, checker=_always_executable, execution_transform=_softmax_transform)
+_register_implementation(ltorch._softmax, checker=_always_executable, execution_transform=_softmax_transform)
 _register_implementation(ltorch.scaled_dot_product_attention, scaled_dot_product_attention, checker=_always_executable)
 
 
@@ -1672,8 +1748,16 @@ if torch.distributed.is_available():
         /,
         group: torch.distributed.ProcessGroup,
         do_async: Number,
+        dim: int | None = None,
     ) -> torch.Tensor | tuple[torch.distributed.distributed_c10d.Work, torch.Tensor]:
-        out: torch.Tensor = torch.empty((group.size() * a.shape[0],) + a.shape[1:], dtype=a.dtype, device=a.device)
+        result_shape = list(a.shape)
+        if dim is not None:
+            utils.check_type(dim, int)
+            utils.check(dim >= 0 and dim < a.dim(), lambda: f"dim must satisfy 0 <= {dim=} < {a.dim()=}")
+            result_shape[dim] *= group.size()
+        else:
+            result_shape[0] *= group.size()
+        out: torch.Tensor = torch.empty(result_shape, dtype=a.dtype, device=a.device)
         do_async: bool = bool(do_async)
 
         handle: None | torch.distributed.distributed_c10d.Work = torch.distributed.all_gather_into_tensor(
@@ -1726,8 +1810,16 @@ if torch.distributed.is_available():
         op: DistributedReduceOps,
         group: torch.distributed.ProcessGroup,
         do_async: Number,
+        dim: int | None,
     ) -> torch.Tensor | tuple[torch.distributed.distributed_c10d.Work, torch.Tensor]:
-        out = torch.empty((a.shape[0] // group.size(),) + a.shape[1:], dtype=a.dtype, device=a.device)
+        result_shape = list(a.shape)
+        if dim is not None:
+            utils.check_type(dim, int)
+            utils.check(dim >= 0 and dim < a.dim(), lambda: f"dim must satisfry 0 <= {dim=} < {a.dim()=}")
+            result_shape[dim] //= group.size()
+        else:
+            result_shape[0] //= group.size()
+        out = torch.empty(result_shape, dtype=a.dtype, device=a.device)
         op: torch.distributed.ReduceOp = ltorch.to_torch_distributed_reduce_op(op)
         do_async: bool = bool(do_async)
 
@@ -1884,6 +1976,21 @@ if torch.distributed.is_available():
         views[index_of_dst_view].copy_(tensor)
         return tensor
 
+    # TODO(crcrpar): Update to return None instead
+    def _stash_grad_for_fsdp_prim_impl(
+        grad: torch.Tensor,
+        param_fqn: str,
+        compile_data: CompileData,
+    ) -> None:
+        grad_name = "_thunder_fsdp_unsharded_grad"
+        param = compile_data.fn.get_parameter(param_fqn)
+        if torch.is_tensor(unsharded_grad := getattr(param, grad_name, None)):
+            unsharded_grad += grad
+        else:
+            setattr(param, grad_name, grad)
+
+        return grad
+
     all_gather_prim_impl = ex.register_operator(
         "torch_all_gather_prim_impl", meta=dist_prims.all_gather.meta, fn=_all_gather_prim_impl
     )
@@ -1925,6 +2032,17 @@ if torch.distributed.is_available():
     _register_implementation(
         dist_prims.pack_for_fsdp,
         pack_for_fsdp_prim_impl,
+        checker=_always_executable,
+    )
+
+    stash_grad_for_fsdp_prim_impl = ex.register_operator(
+        "torch_stash_grad_for_fsdp_prim_impl",
+        meta=dist_prims.stash_grad_for_fsdp.meta,
+        fn=_stash_grad_for_fsdp_prim_impl,
+    )
+    _register_implementation(
+        dist_prims.stash_grad_for_fsdp,
+        stash_grad_for_fsdp_prim_impl,
         checker=_always_executable,
     )
 

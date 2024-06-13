@@ -325,7 +325,7 @@ def _eager_unpacking_interpreter(
         for name, x in si.args:
             p: Proxy
             p, _ = _eager_unpack(x, name, co=co)
-            prims.unpack_trivial(p)
+            prims.unpack_trivial(p, name=name)
             cargs, iargs = _eager_validate(p, co=co)
             computation_args.extend(cargs)
 
@@ -339,7 +339,7 @@ def _eager_unpacking_interpreter(
 
             p: Proxy
             p, _ = _eager_unpack(x, name, co=co)
-            prims.unpack_trivial(p)
+            prims.unpack_trivial(p, name=name)
             cargs, iargs = _eager_validate(p, co=co)
             computation_args.extend(cargs)
 
@@ -351,7 +351,7 @@ def _eager_unpacking_interpreter(
         for name, x in si.kwargs.items():
             p: Proxy
             p, _ = _eager_unpack(x, name, co=co)
-            prims.unpack_trivial(p)
+            prims.unpack_trivial(p, name=name)
             cargs, iargs = _eager_validate(p, co=co)
             computation_args.extend(cargs)
 
@@ -364,7 +364,7 @@ def _eager_unpacking_interpreter(
 
             p: Proxy
             p, _ = _eager_unpack(x, name, co=co)
-            prims.unpack_trivial(p)
+            prims.unpack_trivial(p, name=name)
             cargs, iargs = _eager_validate(p, co=co)
             computation_args.extend(cargs)
 
@@ -382,7 +382,7 @@ def _eager_unpacking_interpreter(
     with tracectx(computation_trc):
         p: Proxy
         for p in computation_args:
-            prims.unpack_trivial(p)
+            prims.unpack_trivial(p, name=p.name)
             csi.args.append((p.name, None))
             computation_trc.add_name(p.name)
 
@@ -419,10 +419,12 @@ def _eager_unpacking_interpreter(
 
 
 # Translates the Python function a thunder program using the Python interpreter
-def _python_interpreter(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS) -> TraceResults:
+def _python_interpreter(
+    fn: Callable, args, kwargs, /, *, record_history: bool = False, sharp_edges: SHARP_EDGES_OPTIONS
+) -> TraceResults:
     if sharp_edges is not SHARP_EDGES_OPTIONS.ALLOW:
         raise ValueError(
-            f"Detecting sharp edges is not supported when using the Python interpreter. To detect sharp edges use another interpretation option."
+            "Detecting sharp edges is not supported when using the Python interpreter. To detect sharp edges use another interpretation option."
         )
 
     def _interpreter(fn_):
@@ -433,11 +435,11 @@ def _python_interpreter(fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDG
 
 # Translates the Python function to a thunder program using the thunder interpreter
 def _translate_functions_interpreter(
-    fn: Callable, args, kwargs, /, *, sharp_edges: SHARP_EDGES_OPTIONS
+    fn: Callable, args, kwargs, /, *, record_history: bool = False, sharp_edges: SHARP_EDGES_OPTIONS
 ) -> TraceResults:
     from thunder.core.jit_ext import minimal_thunder_jit
 
-    pjit = partial(minimal_thunder_jit, sharp_edges=sharp_edges)
+    pjit = partial(minimal_thunder_jit, sharp_edges=sharp_edges, record_history=record_history)
     return _eager_unpacking_interpreter(pjit, fn, args, kwargs, interpreter_name="translate functions")
 
 

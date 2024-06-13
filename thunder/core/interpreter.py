@@ -44,6 +44,7 @@ from types import (
 )
 
 from thunder.core.baseutils import Singleton, init_colors, extract_callable_name
+from thunder.core.codeutils import Positions
 
 
 #
@@ -453,30 +454,30 @@ def interpretercompilectx(_interpretercompilectx: InterpreterCompileCtx):
 
 class LineLogItem(TypedDict):
     kind: Literal["Line"]
-    fn: Callable | CodeType
+    fn: str
     filename: str
     position: Positions | None
 
 
 class OpaqueLogItem(TypedDict):
     kind: Literal["Opaque"]
-    fn: Callable
+    fn: str
 
 
 class LookasideLogItem(TypedDict):
     kind: Literal["Lookaside"]
-    fn: Callable
+    fn: str
 
 
 class CallLogItem(TypedDict):
     kind: Literal["InterpreterCall"]
-    fn: Callable
+    fn: str
     prev_frame: str
 
 
 class ReturnLogItem(TypedDict):
     kind: Literal["InterpreterReturn"]
-    fn: Callable
+    fn: str
     is_signal: bool
     rval: type | INTERPRETER_SIGNALS
 
@@ -512,7 +513,7 @@ InterpreterLogItem = (
 
 # The interpreter's runtime context, which tracks stack changes in Python mode
 class InterpreterRuntimeCtx:
-    def __init__(self, *, debug_log: None | StringIO = None):
+    def __init__(self, record_history: bool, debug_log: None | StringIO):
         self.frame_stack: list[InterpreterFrame] = []
         self._globals_dict: dict[str, Any] | None = None
         self._interpreter_log: list[InterpreterLogItem] = []
@@ -533,6 +534,7 @@ class InterpreterRuntimeCtx:
         self._prev_position: Positions | None = None
         self._known_wrappers = {}
         self._proxied_values = set()
+        self._record_history = record_history
 
     def register_proxied_value(self, v):
         self._proxied_values.add(v)
@@ -572,6 +574,9 @@ class InterpreterRuntimeCtx:
         return self._interpreter_log
 
     def record(self, val: InterpreterLogItem, /) -> None:
+        if not self._record_history:
+            return
+
         self._interpreter_log.append(val)
 
         if self.debug_log is not None:
@@ -601,54 +606,83 @@ class InterpreterRuntimeCtx:
             pf = self._pop_frame_stack()
             assert pf is frame, "Frame stack inconsistency"
 
+    def get_current_user_source_location(self) -> tuple[str, Positions]:
+        for frame in reversed(self.frame_stack):
+            modname = unwrap(frame.globals).get("__name__", "")
+            if modname not in ("thunder.core.interpreter", "thunder.core.jit_ext", "thunder.torch"):
+                return frame.code.co_filename, frame.positions
+        return None, None
+
     # TODO Instead of appending to both the log and and interpreted_instructions we could
     #   consider just appending to the log and then filtering to only instructions when
     #   interpreted_instructions is accessed
     def record_interpreted_instruction(self, inst: dis.Instruction, /) -> InterpreterRuntimeCtx:
+        if not self._record_history:
+            return self
+
         self._interpreted_instructions.append(inst)
         self.record(inst)
         return self
 
     def record_interpreter_call(self, fn: Callable) -> InterpreterRuntimeCtx:
+        if not self._record_history:
+            return self
+
         frame: InterpreterFrame | None = self.peek_frame_stack()
 
         # If frame is None, that means that this is the first call to _interpret_call, in _run_frame.
         # In that case we should also print out what line we're starting on, since
         # no line number changes have happened yet.
         if frame is not None:
-            self.record({"kind": "InterpreterCall", "fn": fn, "prev_frame": frame.qualname})
+            self.record(
+                {"kind": "InterpreterCall", "fn": extract_callable_name(unwrap(fn)), "prev_frame": frame.qualname}
+            )
         else:
             if hasattr(self._original_callsite, "positions"):
                 pos = self._original_callsite.positions
             else:
                 pos = Positions(self._original_callsite.lineno, self._original_callsite.lineno, 0, 999)
-            # self.record_position(fn, self._original_callsite.filename, pos)
+            self.record_position(fn, self._original_callsite.filename, pos)
             self.record(
                 {
                     "kind": "InterpreterCall",
-                    "fn": fn,
+                    "fn": extract_callable_name(unwrap(fn)),
                     "prev_frame": self._original_callsite.function,
                 }
             )
         return self
 
     def record_interpreter_return(self, fn: Callable, rval: Any | INTERPRETER_SIGNALS, /) -> InterpreterRuntimeCtx:
+        if not self._record_history:
+            return self
+
         is_signal: bool = isinstance(rval, INTERPRETER_SIGNALS)
         rv: type | INTERPRETER_SIGNALS = rval if is_signal else type(unwrap(rval))
-        self.record(ReturnLogItem(kind="InterpreterReturn", fn=fn, is_signal=is_signal, rval=rv))
+        self.record(
+            ReturnLogItem(kind="InterpreterReturn", fn=extract_callable_name(unwrap(fn)), is_signal=is_signal, rval=rv)
+        )
         return self
 
     def record_opaque_call(self, fn: Callable) -> InterpreterRuntimeCtx:
-        self.record(OpaqueLogItem(kind="Opaque", fn=fn))
+        if not self._record_history:
+            return self
+
+        self.record(OpaqueLogItem(kind="Opaque", fn=extract_callable_name(unwrap(fn))))
         return self
 
     def record_lookaside(self, fn: Callable) -> InterpreterRuntimeCtx:
-        self.record(LookasideLogItem(kind="Lookaside", fn=fn))
+        if not self._record_history:
+            return self
+
+        self.record(LookasideLogItem(kind="Lookaside", fn=extract_callable_name(unwrap(fn))))
         return self
 
     def record_position(
         self, fn: Callable | CodeType, filename: str, position: Positions | None, /
     ) -> InterpreterRuntimeCtx:
+        if not self._record_history:
+            return self
+
         # Only record a change in the Python line
         if filename == self._prev_filename and _positions_equal(position, self._prev_position):
             return self
@@ -658,7 +692,7 @@ class InterpreterRuntimeCtx:
 
         self._prev_position = position
         self._prev_filename = filename
-        line = LineLogItem(kind="Line", fn=fn, filename=filename, position=position)
+        line = LineLogItem(kind="Line", fn=extract_callable_name(unwrap(fn)), filename=filename, position=position)
         self.record(line)
         return self
 
@@ -812,19 +846,6 @@ class PyTryBlock:
 
     def __repr__(self):
         return self.__str__()
-
-
-# Use dis.Positions in 3.11+ and make it up in <3.11
-if sys.version_info < (3, 11):
-
-    class Positions(NamedTuple):
-        lineno: int = None
-        end_lineno: int = None
-        col_offset: int = None
-        end_col_offset: int = None
-
-else:
-    Positions = dis.Positions
 
 
 def _positions_equal(p1: Positions | None, p2: Positions | None):
@@ -5974,12 +5995,12 @@ def _interpret_call_with_unwrapping(fn: Callable, /, *args, **kwargs) -> Any | I
     return unwrap(res)
 
 
-def _interpret_call(fn: Callable | WrappedValue, /, *args, **kwargs) -> Any | INTERPRETER_SIGNALS:
+def _interpret_call(fn: Callable, /, *args, **kwargs) -> Any | INTERPRETER_SIGNALS:
     compilectx: InterpreterCompileCtx = get_interpretercompilectx()
     runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
 
     # TODO: Implement generics and fix WrappedValue[T] everywhere.
-    runtimectx.record_interpreter_call(fn)  # type: ignore
+    runtimectx.record_interpreter_call(fn)
     rval = _call_dispatch(compilectx, runtimectx, fn, *args, **kwargs)  # type: ignore
     if compilectx._with_provenance_tracking:
         assert isinstance(rval, (INTERPRETER_SIGNALS, WrappedValue)), f"return {rval} unexpected calling {unwrap(fn)}"
@@ -6160,10 +6181,11 @@ def _call_dispatch(
 
     # (4) Handles opaque functions
     if is_opaque(fn):
-        runtimectx.record_opaque_call(fn)
-        args_ = [unwrap(a) for a in args]
+        # TODO: Deeper unwrapping?
+        args_ = tuple(unwrap(a) for a in args)
         kwargs_ = {unwrap(k): unwrap(v) for k, v in kwargs.items()}
         try:
+            runtimectx.record_opaque_call(fn)
             opaque_result: Any = fn(*args_, **kwargs_)
         except Exception as e:
             runtimectx.curexc = e
@@ -6601,6 +6623,7 @@ def interpret(
     debug_log: None | StringIO = None,
     with_provenance_tracking: bool = False,
     uncacheable_classes: list[type] | None = None,
+    record_history: bool = False,
 ) -> Callable:
     compilectx: InterpreterCompileCtx = InterpreterCompileCtx(
         opcode_interpreter=opcode_interpreter,
@@ -6614,7 +6637,7 @@ def interpret(
 
     @functools.wraps(fn)
     def fn_(*args, **kwargs) -> Any:
-        runtimectx: InterpreterRuntimeCtx = InterpreterRuntimeCtx(debug_log=debug_log)
+        runtimectx: InterpreterRuntimeCtx = InterpreterRuntimeCtx(debug_log=debug_log, record_history=record_history)
 
         with interpreter_ctx(compilectx, runtimectx):
             try:
@@ -6720,18 +6743,16 @@ def print_interpreter_log(
                 linecolor = colors["RESET"]
                 log_line = item
 
-            case {"kind": "Line", "fn": _fn, "filename": filename, "position": position}:
+            case {"kind": "Line", "fn": fn, "filename": filename, "position": position}:
                 # LineLogItem
-                _fn = unwrap(_fn)
                 inside_inner_interpreter = interpreter_path in filename
                 if color_internals or not inside_inner_interpreter:
                     linecolor = colors["YELLOW"]
                 nl = os.linesep
-                fnname = extract_callable_name(_fn)
                 if position:
-                    log_line = f"# Line {filename}:{position.lineno} in {fnname}()"
+                    log_line = f"# Line {filename}:{position.lineno} in {fn}()"
                 else:
-                    log_line = f"# {filename} in {fnname}()"
+                    log_line = f"# {filename} in {fn}()"
 
                 if not print_source_code or not position:
                     continue
@@ -6745,36 +6766,35 @@ def print_interpreter_log(
 
             case {"kind": "InterpreterCall", "fn": fn, "prev_frame": prev_frame}:
                 # CallLogItem
-                fn = unwrap(fn)
                 if color_internals or not inside_inner_interpreter:
                     linecolor = colors["GREEN"]
                 c_indent += 1
-                log_line = f"Interpreting call to {extract_callable_name(fn)}() from {prev_frame}{'()' if not prev_frame.endswith('>') else ''}"
+                log_line = (
+                    f"Interpreting call to {fn}() from {prev_frame}{'()' if not prev_frame.endswith('>') else ''}"
+                )
 
-            case {"kind": "InterpreterReturn", "fn": fn, "is_signal": is_signal, "rval": rval}:
+            case {"kind": "InterpreterReturn", "fn": fn, "rval": rval}:
                 # ReturnLogItem
-                fn = unwrap(fn)
                 rval = unwrap(rval)
                 if color_internals or not inside_inner_interpreter:
                     linecolor = colors["RED"]
                 deindent = True
+                is_signal = isinstance(rval, INTERPRETER_SIGNALS)
                 meaning = "signal" if is_signal else "value of type"
                 val = rval if is_signal else rval.__qualname__
-                log_line = f"Returning from call to {extract_callable_name(fn)}() with {meaning} {val}"
+                log_line = f"Returning from call to {fn}() with {meaning} {val}"
 
             case {"kind": "Lookaside", "fn": fn}:
                 # LookasideLogItem
-                fn = unwrap(fn)
                 if color_internals or not inside_inner_interpreter:
                     linecolor = colors["BLUE"]
-                log_line = f"Lookaside to {extract_callable_name(fn)}()"
+                log_line = f"Lookaside to {fn}()"
 
             case {"kind": "Opaque", "fn": fn}:
                 # OpaqueLogItem
-                fn = unwrap(fn)
                 if color_internals or not inside_inner_interpreter:
                     linecolor = colors["CYAN"]
-                log_line = f"Opaque call to {fn} with name {extract_callable_name(fn)}"
+                log_line = f"Opaque call to {fn}()"
 
             case _:
                 raise NotImplementedError(f"Unexpected log item {item}")

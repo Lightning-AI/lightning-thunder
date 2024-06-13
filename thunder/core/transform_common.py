@@ -1,5 +1,6 @@
 import time
-from typing import Any, Dict
+from typing import Any
+from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from itertools import filterfalse
 from functools import partial
@@ -33,18 +34,69 @@ def _remove_noop_subsymbols(bsym: BoundSymbol) -> None:
     bsym.subsymbols = nsbsyms
 
 
+def _inplace_copy_sanity_check(extrace: Trace):
+    """The sanity check is based on the sharp edge of nvfuser's `add_ouput(output, input)` interface,
+    it makes sure that the `copy_to` argument of `prims.copy_` is not used as input for any of its subsequent operators in a nvFusion fused operator
+
+    Anti-pattern:
+
+    .. code-block:: python
+
+        [t2] = nvFusion0(x, y)
+            # result = prims.mul(x, y)
+            # a = prims.copy_(result, x)
+            # t2 = prims.add(a, y) or t2 = prims.add(x, y)
+
+    Do not use the `copy_to` variable `x` or `a` after it has been updated, use the `copy_from` variable `result` instead to reflect the dependency:
+
+    .. code-block:: python
+
+        [t2] = nvFusion0(x, y)
+            # result = prims.mul(x, y)
+            # a = prims.copy_(result, x)
+            # t2 = prims.add(result, y)
+    """
+
+    from thunder.core.utils import consumers
+
+    nvfuser_symbols = (bsym for bsym in extrace.bound_symbols if bsym.sym.name.startswith("nvFusion"))
+    for bsym in nvfuser_symbols:
+        consumer_dict = consumers(list(bsym.subsymbols), _map_to_numbers=True)
+        inplace_copy_idx = ((idx, sym) for idx, sym in enumerate(bsym.subsymbols) if sym.sym.id == prims.PrimIDs.COPY_)
+        for idx, subbsym in inplace_copy_idx:
+            copy_to_arg = subbsym.flat_args[1]
+            copy_to_out = subbsym.output
+
+            def check(inp, log_str):
+                if inp is not None and inp in consumer_dict:
+                    last_used_idx = max(consumer_dict[inp])
+                    if last_used_idx > idx:
+                        raise NotImplementedError(
+                            f"{bsym.subsymbols[last_used_idx]} trying to use {inp} (the {log_str} of 'prims.copy_') as input, which is not safe."
+                            f" There is a risk of accessing the wrong memory. If you are sure you don't want to use this check, it can be disabled by setting `disable_inplace_copy_check=True` in `thunder.jit`."
+                        )
+
+            check(copy_to_arg, "'copy_to' argument")
+            check(copy_to_out, "output")
+
+
 # TODO This calls variableify(), but we could directly construct Variable objects instead, which might slightly
 #   improve performance
 # Runs a Dead Code Elimination (DCE) pass
 # NOTE Today we are only interested in computations that produce proxies, so this will eliminate operations
 #   that only produce non-proxy objects
-def dce(trace: Trace) -> Trace:
+# NOTE needed_proxies is an in/out argument, it takes an initial set of Variables you want to keep, and return
+#   all the needed proxies of the input trace
+def dce(trace: Trace, needed_proxies: None | set[Variable] = None) -> Trace:
     start_time_ns = time.time_ns()
 
     producer_map: ProxyDict = producers(trace)
 
     flat_trace_outputs, _ = tree_flatten(trace.output)
-    needed_proxies: set[Variable] = set(tuple(variableify(x) for x in flat_trace_outputs if isinstance(x, Proxy)))
+    if needed_proxies is None:
+        needed_proxies: set[Variable] = set(tuple(variableify(x) for x in flat_trace_outputs if isinstance(x, Proxy)))
+    else:
+        needed_proxies.update(tuple(variableify(x) for x in flat_trace_outputs if isinstance(x, Proxy)))
     dced = []
 
     bsym: BoundSymbol
@@ -171,7 +223,6 @@ def cse_single_bsym(
         swap_map=redundant_map,
         skip_inputs=False,
         skip_output=True,
-        skip_subsymbols=True,
     )
 
     # Skip appending this bsym to the new bound symbols due to its rhs being a common subexpression.
@@ -272,3 +323,43 @@ def cse(trace: Trace) -> Trace:
         TraceProvenance(f"Common Subexpression Elimination (took {elapsed_time_millis} milliseconds)")
     )
     return cse_trace
+
+
+# Base class for all types of Transform.
+class Transform:
+    pass
+
+
+# Below are the types of Transform that user can create and apply to the `jitted` function.
+class EarlyTransform(Transform, ABC):
+    """
+    EarlyTransform enables transforming prologue, computation and epilogue trace.
+    Note that the computation trace here is before the autograd transform, so any update to
+    the computation trace will also update backward trace.
+    """
+
+    @abstractmethod
+    def transform_traces(self, prologue_trace: Trace, computation_trace: Trace, epilogue_trace: Trace | None, **kwargs):
+        pass
+
+
+class AdditionalTransform(Transform, ABC):
+    """
+    AdditionalTransform enables transforming the computation trace before optimization pass.
+    Note that this transform is only applicable if autograd is disabled.
+    """
+
+    @abstractmethod
+    def transform_trace(self, computation_trace: Trace, **kwargs):
+        pass
+
+
+class PostOptimizationTransform(Transform, ABC):
+    """
+    PostOptimizationTransform EarlyTransform enables transforming computation trace after optimization pass.
+    Note that this transform will also be applied to the backward trace if the the autograd transform was enabled.
+    """
+
+    @abstractmethod
+    def transform_trace(self, computation_trace: Trace, **kwargs):
+        pass

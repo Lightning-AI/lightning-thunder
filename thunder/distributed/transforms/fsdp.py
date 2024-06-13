@@ -19,11 +19,13 @@ from thunder.core.pytree import tree_unflatten
 from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import VariableInterface
 from thunder.core.trace import from_trace
+from thunder.core.trace import TraceCtx
 from thunder.core.transforms import VISIT_TYPE
 from thunder.core.transforms import visitor_transform
 from thunder.distributed import FSDPBucketingStrategy
 from thunder.distributed import FSDPType
 from thunder.distributed import get_extract_bucket_name_from_tensor_proxy
+from thunder.distributed import get_skip_data_parallel_grad_sync
 from thunder.distributed.bucketing import FSDPBackwardBucket
 from thunder.distributed.bucketing import FSDPForwardBucket
 from thunder.distributed import prims as dist_prims
@@ -36,8 +38,8 @@ from thunder.executors.torchex import unpack_for_fsdp_prim_impl
 from thunder.executors.torchex import wait_prim_impl
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from thunder import CompileData
-    from thunder.core.trace import TraceCtx
     from thunder.distributed.bucketing import Bucket
 
 
@@ -113,6 +115,74 @@ def create_map_of_before_after_comm(
         return map_from_sharded_to_unsharded, (params_before_comm, params_after_comm)
     else:
         return map_from_sharded_to_unsharded
+
+
+def stash_unsharded_grads_and_return_none_as_grads(
+    fsdp_bwd_trace: TraceCtx,
+    compile_data: CompileData,
+    index_to_fqn: dict[int, str],
+) -> TraceCtx:
+    """Set or accumulate unsharded grads to ``param._thunder_fsdp_unsharded_grad``
+
+    This function removes :func:`~thunder.distributed.prims.reduce_scatter`s and following :func:`~thunder.distributed.prims.wait`
+    and inserts :func:`~thunder.distributed.prims.stash_grad_for_fsdp` so that the unsharded gradients are stored and accumulated
+    when :class:`~thunder.ThunderModule` is called in the context of :func:`~thunder.ThunderModule.no_sync`.
+
+    Args:
+        fsdp_bwd_trace:
+        compile_data:
+        index_to_fqn: A dictionary from index to :class:`~torch.nn.Module`'s :class:`~torch.nn.Parameter`'s name given by :func:`~torch.nn.Module.named_parameters`.
+
+    Returns:
+        - TraceCtx
+
+    """
+    producers, consumers = utils.producers_and_consumers(fsdp_bwd_trace)
+    bsyms_of_unsharded_grad_to_index_and_fqn_of_param: dict[BoundSymbol, tuple[int, str]] = {}
+    bsyms_to_skip: dict[BoundSymbol, BoundSymbol] = {}
+
+    flat_outputs, output_spec = tree_flatten(fsdp_bwd_trace.output)
+    for index, output_proxy in enumerate(flat_outputs):
+        if isinstance(output_proxy, TensorProxy):
+            reduce_scatter_bsym = get_bsym_of_reduce_scatter(output_proxy, producers)
+            preaverage_bsym: BoundSymbol = producers[reduce_scatter_bsym.flat_proxy_args[0]]
+            prod_of_unsharded_grad = producers[preaverage_bsym.flat_proxy_args[0]]
+            utils.check(
+                preaverage_bsym.sym.id in {PrimIDs.DIV, "torch.true_divide"},
+                lambda: f"expected to be either of {(PrimIDs.DIV, 'torch.true_divide')} but {preaverage_bsym.sym.id=} for {output_proxy=}",
+            )
+            wait_bsym = consumers[reduce_scatter_bsym.flat_proxy_outs[0]][0]
+
+            bsyms_to_skip[reduce_scatter_bsym] = reduce_scatter_bsym
+            bsyms_to_skip[preaverage_bsym] = preaverage_bsym
+            bsyms_to_skip[wait_bsym] = wait_bsym
+
+            param_fqn = index_to_fqn[index]
+            bsyms_of_unsharded_grad_to_index_and_fqn_of_param[prod_of_unsharded_grad] = (index, param_fqn)
+
+    index_to_new_grad = {}
+
+    def visit(bsym: BoundSymbol) -> VISIT_TYPE:
+        if bsym in bsyms_to_skip:
+            return VISIT_TYPE.REPLACE
+        elif bsym in bsyms_of_unsharded_grad_to_index_and_fqn_of_param:
+            unsharded_grad = bsym.flat_proxy_outs[0]
+            index, param_fqn = bsyms_of_unsharded_grad_to_index_and_fqn_of_param[bsym]
+            stashed_grad = dist_prims.stash_grad_for_fsdp(unsharded_grad, param_fqn, compile_data)
+            index_to_new_grad[index] = stashed_grad
+            return VISIT_TYPE.INSERT_AFTER
+        elif bsym.sym.id == prims.PrimIDs.RETURN:
+            new_return_args = [index_to_new_grad.get(i, g) for i, g in enumerate(flat_outputs)]
+            prims.python_return(tree_unflatten(new_return_args, output_spec))
+            return VISIT_TYPE.REPLACE
+        else:
+            return VISIT_TYPE.NO_OP
+
+    return visitor_transform(
+        fsdp_bwd_trace,
+        visit,
+        provenance="Remove grad sync of fsdp",
+    )
 
 
 @dataclass
@@ -381,6 +451,7 @@ class FSDPCommBucketing:
     def __init__(
         self,
         compile_data: CompileData,
+        computation_trc: TraceCtx | Callable,
     ) -> None:
         self.compile_data = compile_data
         utils.check(
@@ -396,20 +467,44 @@ class FSDPCommBucketing:
 
         self.requires_bwd_bucketing_allgather = compile_data.fn.sharding_strategy == FSDPType.ZERO3
 
-    def update_name_set(self, backward_trace: TraceCtx) -> TraceCtx:
-        if not self.apply_bucketing:
-            return
-        utils.check(
-            hasattr(self, "fsdp_fwd_trace"),
-            lambda: "This method must be called after :func:`FSDPCommsOptimizer.apply_bucketing_to_forward_trace`",
-        )
-        backward_trace.names.update(self.fsdp_fwd_trace.names)
+        # Information for no_sync transform: `index_to_fqn`.
+        self.computation_trc = computation_trc
+        if not isinstance(self.computation_trc, TraceCtx):
+            import warnings
+
+            warnings.warn("`computation_trc` is not `TraceCtx`")
+            self.computation_trc_flat_args = []
+            self.computation_trc_flat_args_spec = None
+            self.index_to_fqn: dict[int, str] = {}
+        else:
+            self.computation_trc_flat_args, self._computation_trc_flat_args_spec = tree_flatten(
+                (self.computation_trc.args, self.computation_trc.kwargs)
+            )
+            rev_fqn_to_proxy_name: dict[str, str] = {}
+            fqn: str
+            for fqn, _ in compile_data.fn.named_parameters():
+                proxy_name = fqn.replace(".", "_")
+                rev_fqn_to_proxy_name[proxy_name] = fqn
+
+            index_to_fqn: dict[int, str] = {}
+            for index, proxy in enumerate(self.computation_trc_flat_args):
+                if not isinstance(proxy, TensorProxy):
+                    continue
+                proxy_name = proxy.name
+                fqn: str
+                if proxy_name in rev_fqn_to_proxy_name:
+                    index_to_fqn[index] = rev_fqn_to_proxy_name[proxy_name]
+                elif proxy_name.startswith("t_"):
+                    tmp_name = proxy_name[2:]
+                    if tmp_name in rev_fqn_to_proxy_name:
+                        index_to_fqn[index] = rev_fqn_to_proxy_name[tmp_name]
+            self.index_to_fqn = index_to_fqn
 
     def _collect_sharded_parameters(self, fwd_trace: TraceCtx) -> list[TensorProxy]:
         fwd_trace_flat_args, _ = tree_flatten((fwd_trace.args, fwd_trace.kwargs))
         return fwd_trace_flat_args
 
-    def apply_bucketing_to_forward_trace(self, fwd_trace: TraceCtx, bwd_trace_names: set[str]) -> TraceCtx:
+    def apply_bucketing_to_forward_trace(self, fwd_trace: TraceCtx) -> TraceCtx:
         """Optimize collective comms in fsdp with bucketing.
 
         This function is no-op if you pass :obj:`BucketingStrategy.NONE` as kwarg of ``sharding_strategy`` to :func:`thunder.distributed.fsdp`.
@@ -435,7 +530,6 @@ class FSDPCommBucketing:
             return fwd_trace
         fsdp_fwd_trace = from_trace(fwd_trace)
         fsdp_fwd_trace.bound_symbols = fwd_trace.bound_symbols
-        fsdp_fwd_trace.names.update(bwd_trace_names)
         trace_flat_args = self._collect_sharded_parameters(fsdp_fwd_trace)
         arg_to_index_in_flat_args = utils.ProxyDict()
         index_in_flat_args_to_param_and_bucket: dict[int, tuple[TensorProxy, Bucket]] = {}
@@ -521,6 +615,8 @@ class FSDPCommBucketing:
         return bwd_trace
 
     def _apply_bucketing_to_backward_all_gather(self, fsdp_bwd_trace: TraceCtx) -> TraceCtx:
+        if not self.apply_bucketing:
+            return fsdp_bwd_trace
         fwd_trace_flat_args = self._collect_sharded_parameters(self.fsdp_fwd_trace)
         arg_to_index_in_flat_args = utils.ProxyDict()
         for i, a in enumerate(fwd_trace_flat_args):
@@ -620,6 +716,19 @@ class FSDPCommBucketing:
         Returns:
             - :class:`TraceCtx`
         """
+
+        if get_skip_data_parallel_grad_sync():
+            utils.check(
+                self.index_to_fqn,
+                lambda: f"`computation_trc` passed to the dunder init expected to be a `TraceCtx`",
+            )
+            if self.requires_bwd_bucketing_allgather:
+                fsdp_bwd_trace = self._apply_bucketing_to_backward_all_gather(fsdp_bwd_trace)
+            return stash_unsharded_grads_and_return_none_as_grads(
+                fsdp_bwd_trace,
+                self.compile_data,
+                self.index_to_fqn,
+            )
 
         if not self.apply_bucketing:
             return fsdp_bwd_trace

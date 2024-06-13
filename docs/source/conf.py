@@ -17,7 +17,21 @@ import shutil
 import sys
 from importlib.util import module_from_spec, spec_from_file_location
 
-import lai_sphinx_theme
+from lightning_utilities.core.imports import package_available
+
+_INSTALLED_NEW_THEME = package_available("lai_sphinx_theme")
+
+if _INSTALLED_NEW_THEME:
+    import lai_sphinx_theme
+else:
+    import pt_lightning_sphinx_theme
+    import warnings
+
+    warnings.warn(
+        "You are using the old theme, please install the new theme 'lai_sphinx_theme';"
+        " you can do this by running 'make get-sphinx-theme'."
+    )
+
 
 _PATH_HERE = os.path.abspath(os.path.dirname(__file__))
 _PATH_ROOT = os.path.realpath(os.path.join(_PATH_HERE, "..", ".."))
@@ -98,8 +112,9 @@ extensions = [
     "sphinx_copybutton",
     "sphinx_paramlinks",
     "sphinx_togglebutton",
-    "lai_sphinx_theme.extensions.lightning",
 ]
+if _INSTALLED_NEW_THEME:
+    extensions.append("lai_sphinx_theme.extensions.lightning")
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ["_templates"]
@@ -152,8 +167,10 @@ pygments_style = None
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = "lai_sphinx_theme"
-html_theme_path = [lai_sphinx_theme.get_html_theme_path()]
+html_theme = "lai_sphinx_theme" if _INSTALLED_NEW_THEME else "pt_lightning_sphinx_theme"
+html_theme_path = [
+    lai_sphinx_theme.get_html_theme_path() if _INSTALLED_NEW_THEME else pt_lightning_sphinx_theme.get_html_theme_path()
+]
 
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the
@@ -357,6 +374,7 @@ def linkcode_resolve(domain, info):
 
 
 autosummary_generate = True
+autodoc_typehints = "description"
 
 autodoc_member_order = "groupwise"
 autoclass_content = "both"

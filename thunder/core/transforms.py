@@ -7,6 +7,7 @@ from functools import lru_cache, partial, wraps
 import math
 from numbers import Number
 from typing import Any, Dict, Union, Optional
+from types import NoneType
 from collections.abc import Callable
 from collections.abc import Hashable
 from collections.abc import Sequence
@@ -59,7 +60,7 @@ from thunder.clang import (
     reciprocal,
     convolution,
 )
-from thunder.core.transform_common import dce
+from thunder.core.transform_common import dce, EarlyTransform, AdditionalTransform, PostOptimizationTransform
 from thunder.core.vjp_utils import make_aug_forward_and_backward
 from thunder.extend import Executor
 import thunder.torch as ltorch
@@ -397,27 +398,52 @@ def visitor_transform(trace_from: Trace, visit: Callable, *, provenance: None | 
 
 
 # Helper function to add a transform
-def add_transform(cfn: Callable, transform: Callable) -> Callable:
+def add_transform(
+    cfn: Callable,
+    *,
+    transform: AdditionalTransform | None = None,
+    early_transform: EarlyTransform | None = None,
+    disable_torch_autograd_support=False,
+) -> Callable:
     from thunder.common import _create_callable, CompileData, CompileStats
 
     cd: None | Any = getattr(cfn, "_lc_cd", None)
 
     utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
     utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
+    utils.check_type(transform, (NoneType, AdditionalTransform))
+    utils.check_type(early_transform, (NoneType, EarlyTransform))
+
+    assert cd.using_jit or early_transform is None
+    assert transform is not None or early_transform is not None
 
     if cd.using_jit:
         from thunder import jit
 
-        return jit(
+        early_transforms = cfn._lc_early_transforms[:]
+        additional_transforms = cfn._lc_transforms[:]
+        if early_transform is not None:
+            early_transforms.append(early_transform)
+        if transform is not None:
+            additional_transforms.append(transform)
+        jfn = jit(
             cd.fn,
             langctx=cd.langctx,
             executors=cd.executors_list,
             sharp_edges=cd.sharp_edges,
             # cache, interpretation?
-            additional_transforms=cfn._lc_transforms + [transform],
-            disable_torch_autograd=True,  # cd.disable_torch_autograd_support,
+            early_transforms=early_transforms,
+            additional_transforms=additional_transforms,
+            post_optimization_transforms=cfn._lc_post_optimization_transforms,
+            disable_torch_autograd=cd.disable_torch_autograd_support or disable_torch_autograd_support,
             **cd.compile_options,
         )
+        from thunder import ThunderModule
+
+        if isinstance(jfn, ThunderModule):
+            jfn._overrides_parameters = cfn._overrides_parameters
+            jfn._overrides_buffers = cfn._overrides_buffers
+        return jfn
 
     cs = getattr(cfn, "_lc_cs", None)
     if cs is None:
@@ -439,13 +465,38 @@ def add_transform(cfn: Callable, transform: Callable) -> Callable:
 
 # TODO Consider refactoring this with the above
 # Helper function to add a post-optimization transform
-def add_post_optimization_transform(cfn: Callable, transform: Callable) -> Callable:
+def add_post_optimization_transform(cfn: Callable, transform: PostOptimizationTransform) -> Callable:
     from thunder.common import _create_callable, CompileData, CompileStats
 
     cd: None | Any = getattr(cfn, "_lc_cd", None)
 
     utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
     utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
+    utils.check_type(transform, PostOptimizationTransform)
+
+    if cd.using_jit:
+        from thunder import jit
+
+        post_optimization_transforms = cfn._lc_post_optimization_transforms[:]
+        post_optimization_transforms.append(transform)
+        jfn = jit(
+            cd.fn,
+            langctx=cd.langctx,
+            executors=cd.executors_list,
+            sharp_edges=cd.sharp_edges,
+            # cache, interpretation?
+            early_transforms=cfn._lc_early_transforms[:],
+            additional_transforms=cfn._lc_transforms[:],
+            post_optimization_transforms=post_optimization_transforms,
+            disable_torch_autograd=cd.disable_torch_autograd_support,
+            **cd.compile_options,
+        )
+        from thunder import ThunderModule
+
+        if isinstance(jfn, ThunderModule):
+            jfn._overrides_parameters = cfn._overrides_parameters
+            jfn._overrides_buffers = cfn._overrides_buffers
+        return jfn
 
     cs = CompileStats()
     transforms = cfn._lc_transforms
@@ -456,29 +507,31 @@ def add_post_optimization_transform(cfn: Callable, transform: Callable) -> Calla
 
 
 # The no-op transform. A trivial composable transform, only useful as an example.
-def _noop_transform(trace: Trace, **kwargs) -> Trace:
-    start_time_ns = time.time_ns()
-    noop_trace = from_trace(trace)
+class _NoopTransform(AdditionalTransform):
+    def transform_trace(self, trace: Trace, **kwargs) -> Trace:
+        start_time_ns = time.time_ns()
+        noop_trace = from_trace(trace)
 
-    tracectx_tok: Any
-    try:
-        tracectx_tok = set_tracectx(noop_trace)
-        prims.comment("This comment added by the no-op transform")
-    finally:
-        reset_tracectx(tracectx_tok)
+        tracectx_tok: Any
+        try:
+            tracectx_tok = set_tracectx(noop_trace)
+            prims.comment("This comment added by the no-op transform")
+        finally:
+            reset_tracectx(tracectx_tok)
 
-    noop_trace.bound_symbols.extend(trace.bound_symbols)
+        noop_trace.bound_symbols.extend(trace.bound_symbols)
 
-    end_time_ns = time.time_ns()
-    elapsed_time_ns = end_time_ns - start_time_ns
-    elapsed_time_millis = elapsed_time_ns // 1000000
-    noop_trace.set_provenance(TraceProvenance(f"No-op Transform (took {elapsed_time_millis} milliseconds)"))
+        end_time_ns = time.time_ns()
+        elapsed_time_ns = end_time_ns - start_time_ns
+        elapsed_time_millis = elapsed_time_ns // 1000000
+        noop_trace.set_provenance(TraceProvenance(f"No-op Transform (took {elapsed_time_millis} milliseconds)"))
 
-    return noop_trace
+        return noop_trace
 
 
 def noop(cfn: Callable) -> Callable:
-    return add_transform(cfn, _noop_transform)
+    _noop_transform = _NoopTransform()
+    return add_transform(cfn, transform=_noop_transform)
 
 
 # The comment fusions transform. Just adds a comment before and after each fusion.
@@ -525,7 +578,7 @@ def flatten_for_transform(should_flatten: Callable, bsyms: list[BoundSymbol]) ->
         if should_flatten(bsym):
             check(
                 len(bsym.subsymbols) > 0,
-                lambda: f"Trying to flatten {bsym} to create a grad formula, but it has no subsymbols",
+                lambda: f"No grad rule found for {bsym} and no subsymbols inside it to create a grad formula",
             )
             for sbsym in bsym.subsymbols:
                 _flatten(sbsym)
@@ -701,7 +754,10 @@ def _broadcast_in_dim_prim_grad(
     bcast_dims = tuple(b for i, b in enumerate(broadcast_dimensions) if i not in unit_dims)
     reduce_dims = tuple(s for i, s in enumerate(range(len(shape))) if i not in bcast_dims)
 
-    g = ltorch.sum(g, reduce_dims)
+    # NOTE When the reduce_dims tuple is empty, pytorch reduces all dimensions.
+    # In this case, we do not want to reduce any dimensions, so skip this sum.
+    if len(reduce_dims) > 0:
+        g = ltorch.sum(g, reduce_dims)
 
     # NOTE This must be clang.unsqueeze because torch.unsqueeze, unlike clang.unsqueeze, only accepts an integer
     #   (put another way, torch only allows one unsqueeze at a time)
@@ -816,11 +872,50 @@ register_grad(pids.TAKE, _take_prim_grad)
 
 
 @torchctx
+def _gather_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy:
+    fwd = prims.gather(a, index, dim)
+
+    g = get_grad(fwd)
+    # NOTE Intentionally not calling zeros_like to avoid preserving TensorProxy a.
+    # TODO Update to call ltorch.zeros
+    zeros = prims.full(a.shape, fill_value=0, device=a.device, dtype=a.dtype)
+    a_grad = prims.scatter_add(zeros, index, g, dim)
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad(pids.GATHER, _gather_prim_grad)
+
+
+@torchctx
+def _scatter_add_prim_grad(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
+    utils.check(
+        not value._requires_grad or value.shape == index.shape,
+        lambda: f"The gradient for the value Tensor is implemented only when value.shape == index.shape. "
+        "value shape is {value.shape} while index shape is {index.shape}",
+    )
+
+    fwd = prims.scatter_add(a, index, value, dim)
+
+    g = get_grad(fwd)
+    # NOTE The value gradient is only correct when src.shape == index.shape.
+    # See https://github.com/pytorch/pytorch/issues/27614#issuecomment-564648819
+    value_grad = prims.gather(g, index, dim)
+    put_grads((a, value), (g, value_grad))
+
+    return fwd
+
+
+register_grad(pids.SCATTER_ADD, _scatter_add_prim_grad)
+
+
+@torchctx
 def _take_along_axis_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy:
     fwd = prims.take_along_axis(a, index, dim)
 
     g = get_grad(fwd)
-    # NOTE Intentionally not calling zeros_like to avoid preserving a
+    # NOTE Intentionally not calling zeros_like to avoid preserving TensorProxy a.
     # TODO Update to call ltorch.zeros
     zeros = prims.full(a.shape, fill_value=0, device=a.device, dtype=a.dtype)
     a_grad = prims.scatter_add(zeros, index, g, dim)
@@ -1027,7 +1122,10 @@ register_grad(pids.DIV, _div_prim_grad)
 
 # Comparison operators -- these create no grad associations
 register_grad(pids.EQ, prims.eq)
+register_grad(pids.NE, prims.ne)
 register_grad(pids.GE, prims.ge)
+register_grad(pids.GT, prims.gt)
+register_grad(pids.LE, prims.le)
 register_grad(pids.LT, prims.lt)
 
 
@@ -1142,7 +1240,7 @@ def _var_mean_prim_grad(a: TensorProxy, /, dims: Sequence[int], *, correction: N
     gv = get_grad(v)
     gm = get_grad(m)
 
-    n_elem_reduced = a.numel // m.numel if a.numel != 0 else 1
+    n_elem_reduced = a.numel() // m.numel() if a.numel() != 0 else 1
 
     # Computes mean bwd
     mean_scale = 1.0 / n_elem_reduced
@@ -1264,7 +1362,9 @@ register_grad(pids.EMBEDDING, _embedding_prim_grad)
 #
 
 
-def _get_gradfn(bsym: BoundSymbol, *, executors_list: Sequence[Any] = tuple()) -> None | Callable:
+def _get_gradfn_and_executor(
+    bsym: BoundSymbol, *, executors_list: Sequence[Any] = tuple()
+) -> tuple[Callable | None, Executor | None]:
     cd = get_compile_data()
     executors_list = cd.executors_list if cd is not None else executors_list
     # Checks if the executor which has priority for this operation has a specific grad transform for it
@@ -1272,364 +1372,43 @@ def _get_gradfn(bsym: BoundSymbol, *, executors_list: Sequence[Any] = tuple()) -
         if ex.can_execute_or_fuse(bsym):
             ex_grad_transform: None | Callable = ex.get_grad_transform(bsym.sym)
             if ex_grad_transform is not None:
-                return ex_grad_transform
+                return ex_grad_transform, ex
             break
 
     # If the executor doesn't define its own grad transform, this just returns the default grad transform for the bsym
     gradfn = _grad_fn_map.get(bsym.sym.id, None)
-    return gradfn
+    return gradfn, None
 
 
-# The default grad specifier for the grad transform
-#   For each tensor output "o" requiring grad, specifies a grad of ones_like(o)
-def _grad_specifier_default(pytree: Any) -> None:
-    flats, _ = tree_flatten(pytree)
-
-    for f in flats:
-        if isinstance(f, TensorProxy) and f.requires_grad:
-            # NOTE This uses clang.ones_like for now because ltorch.ones_like will extend the
-            #   lifetime of f, while clang.ones_like will extract the metadata of f at trace time
-            prims.put_grad(f, clang.full_like(f, 1.0))
-
-
-# TODO Test with buffers
-def _grad_out_specifier_default(pytree: Any) -> list[TensorProxy]:
-    flats, _ = tree_flatten(pytree)
-    grads = list([prims.get_grad(f) for f in flats if isinstance(f, TensorProxy) and f.requires_grad])
-    return grads
-
-
-# TODO Formally define the "gradient" of a tensor
-# TODO If none of the inputs to an operation require grad, then we could leave that operation alone
-#   This could actually improve performance if the operation performs extra computations in its grad transform
-#   A workaround for this would be for the operation itself to check if its input requires grad or not
-# Transforms a function to compute the "gradient" of its inputs requiring grad, possibly
-#   modified by the grad specifiers (see below).
-# The optional grad_specifier argument accepts the function's output, runs in a no-grad context,
-#   and can put grads (using prims.put_grad()) for tensors. By default, for every tensor output "o"
-#   that requires grad, a grad of ones_like(o) is put.
-# The optional grad_out_specifier accepts the function's input and can call prims.get_grad() to
-#   acquire and return gradients as desired. By default, the input is flattened
-#   (tree_flatten(args, kwargs)) and a flat list of grads for all tensors requiring grad
-#   and None for other inputs is returned.
-# The algorithm for modifying the program has the following steps:
-#   1) Flattens the original trace for the grad transform -- ensuing that all top-level symbols have
-#       a grad function.
 def grad(
-    cfn, grad_specifier: Callable = _grad_specifier_default, grad_out_specifier: Callable = _grad_out_specifier_default
-) -> Callable:
-    # Creates a custom transform callable that binds the additional arguments to the grad transform
-    @langctx(Languages.CLANG)
-    def _grad_transform(trc: Trace, *, executors_list: Sequence[Any]) -> Trace:
-        start_time_ns = time.time_ns()
-
-        # STEP ONE -- Flattens and dces
-
-        # Returns True if the bsym has no grad function, and so must be flattened for the grad transform
-        never_flatten: set[Hashable] = {prims.PrimIDs.RETURN, prims.PrimIDs.UNPACK_TRIVIAL}
-
-        def should_flatten_for_grad(bsym: BoundSymbol) -> bool:
-            if bsym.sym.id in never_flatten:
-                return False
-
-            gradfn: None | Callable = _get_gradfn(bsym, executors_list=executors_list)
-            return gradfn is None
-
-        # TODO RC1: maybe move to produce these always on creation
-        if trc.kwargs is None:
-            trc.kwargs = {}
-        if trc.fn is None:
-            trc.fn = trc.python_callable()
-
-        gradtrc = from_trace(trc)
-        flattened_bsyms: list[BoundSymbol] = flatten_for_transform(should_flatten_for_grad, trc.bound_symbols)
-        gradtrc.bound_symbols = flattened_bsyms
-        gradtrc = dce(gradtrc)
-
-        # STEP TWO -- Replaces original calls with grad calls
-
-        # Defines the visitor pattern for the first pass of the grad transform,
-        #   which swaps BoundSymbols with their grad functions
-        def visit_(bsym: BoundSymbol) -> Callable:
-            gradfn: None | Callable = _get_gradfn(bsym, executors_list=executors_list)
-            check(
-                gradfn is not None,
-                lambda: f"Failed to find a gradfn for {bsym=} after flattening",
-                exception_type=AssertionError,
-            )
-            return gradfn
-
-        @wraps(trc.fn.meta if isinstance(trc.fn, Symbol) else trc.fn)
-        def interpreting_fn(*args, **kwargs):
-            result = eval_trace(gradtrc, *args, symbol_mapper=visit_, **kwargs)
-            # Sets grads for output
-            # TODO This effectively runs in a no grad context -- should it run in a grad context,
-            #   or should there be the option to run it in a grad context?
-            grad_specifier(result)
-            # Constructs return value
-            flat_grads = grad_out_specifier((args, kwargs))
-            return flat_grads
-
-        # NOTE After this call the gradtrc is invalid, because:
-        #   1) The non-executable put_grad operations are still in the trace, and multiple calls to put grad are not accumulated
-        #   2) The non-executable get_grad operations are still in the trace, and they may produce different proxies when
-        #       called on the same inputs
-        #   3) The operations are not in a valid order
-        gradtrc = construct_trace(
-            rename_proxies=False,
-            use_dce=False,
-        )(interpreting_fn, *gradtrc.args, **gradtrc.kwargs)
-        gradtrc.scopes = [gradtrc.bound_symbols]
-        gradtrc._complete = False
-
-        # STEP THREE -- Handles put_grad and get_grad operations and accumulates gradients
-
-        # Accumulates gradients, creating the primal -> accumulated grad mapping
-        # Sets the tracing context so accumulation operations are recorded into the trace
-        try:
-            tracectx_tok = set_tracectx(gradtrc)
-
-            # Maps primals to their gradients (which are returned from calling get_grad on the primal)
-            primals_to_ginput_map: dict[Variable, TensorProxy] = {}
-
-            # Handles put_grad operations
-            # NOTE This modifies a list that is being enumerated over, but it's OK because we're only
-            #   appending to the end of the list
-            bsym: BoundSymbol
-            for bsym in gradtrc.bound_symbols:
-                id: Hashable = bsym.sym.id
-                if id is pids.PUT_GRAD:
-                    primal: Number | TensorProxy
-                    grad: Number | TensorProxy
-                    primal, grad = bsym.flat_args
-
-                    # TODO Support autograd on numbers
-                    # Filters calls to put_grad that would put a grad on a non-tensor or a tensor that doesn't require grad
-                    if not isinstance(primal, TensorProxy) or not primal.requires_grad:
-                        continue
-
-                    # TODO Support complex autograd
-                    check(
-                        not dtypes.is_complex_dtype(dtypes.to_dtype(primal)),
-                        lambda: f"Complex grad is not supported yet",
-                    )
-
-                    vprimal: Variable = variableify(primal)
-                    accum: None | TensorProxy = primals_to_ginput_map.get(vprimal, None)
-
-                    if accum is None:
-                        primals_to_ginput_map[vprimal] = grad
-                    else:
-                        accum = accum + grad
-                        primals_to_ginput_map[vprimal] = accum
-
-            # Handles get_grad operations
-
-            # Resets the swapmap for grads
-            swapmap: dict[Variable, Proxy] = {}
-
-            for bsym in gradtrc.bound_symbols:
-                id: Hashable = bsym.sym.id
-                if id is pids.GET_GRAD:
-                    primal: Number | TensorProxy
-                    (primal,) = bsym.flat_args
-                    grad: Number | TensorProxy = bsym.output
-
-                    vprimal: Variable
-                    vgrad: Variable
-                    vprimal, vgrad = variableify(primal), variableify(grad)
-
-                    actual_grad: None | TensorProxy = primals_to_ginput_map.get(vprimal, None)
-
-                    # NOTE If actual_grad is None then there's a get_grad() request for a tensor which
-                    #   has no put_grad(), so we return zeros for the grad
-                    # TODO Revisit this -- can we remove these computations, or use a special ZeroTensor
-                    #   to simplify them?
-                    if actual_grad is None:
-                        actual_grad = ltorch.zeros_like(primal)
-                        primals_to_ginput_map[vprimal] = actual_grad
-
-                    # Updates the grad alias map
-                    vactual_grad: Variable = variableify(actual_grad)
-                    if vactual_grad != vgrad:
-                        swapmap[vgrad] = actual_grad
-
-        finally:
-            # Restores scope
-            reset_tracectx(tracectx_tok)
-
-        # Filters put_grad and get_grad operations and applies the swapmap
-        def _filter(bsym: BoundSymbol) -> bool:
-            id: Hashable = bsym.sym.id
-            return id in (pids.PUT_GRAD, pids.GET_GRAD)
-
-        gradtrc.bound_symbols = [
-            bsym.from_bsym_swap_proxies(swapmap) for bsym in gradtrc.bound_symbols if not _filter(bsym)
-        ]
-
-        # STEP FOUR --- Orders the operations
-        # TODO Consider alternative scheduling algorithms, maybe by using graph features
-        #   Some ideas are looking at memory-saving nodes, and nodes with a high in-degree or high out-degree
-
-        # Creates an initial valid ordering to DCE, so that additional ordering analysis doesn't need to consider all symbols
-        roots, leaves = bsym_list_to_dag(gradtrc.bound_symbols)
-        ordered_bsyms = toposort_bsym_dag(roots, TOPOSORT_ORDER.TOP_DOWN)
-        gradtrc.bound_symbols = ordered_bsyms
-        gradtrc = dce(gradtrc)
-
-        # Identifies the order of BoundSymbols using a "DFS and chain" algorithm
-        # TODO Elaborate on this algorithm and the implementation
-        roots, leaves = bsym_list_to_dag(gradtrc.bound_symbols)
-        check(
-            len(leaves) == 1,
-            lambda: f"Expected only one leaf node when sorting for grad, found there were {len(leaves)} leaves",
-        )
-        (leaf,) = leaves
-
-        # Computes the tensor memory used by the given pytree
-        def memory_used(pytree) -> int:
-            memory_use: int = 0
-
-            def count_memory_use(x):
-                nonlocal memory_use
-                if isinstance(x, TensorProxy):
-                    memory_use += x.dtype._bytes * x.numel
-
-            tree_map(count_memory_use, pytree)
-            return memory_use
-
-        # True when a node is a "link" -- a node with only one child and at most one parent
-        #   Conceptually the node is a "link" in a chain of nodes like A -> B -> C
-        def is_link(n: Node) -> bool:
-            _is_link = len(n.children) == 1 and len(n.parents) <= 1
-            return _is_link
-
-        counter: int = 0
-
-        def _chain(c: list[Node], end: Node) -> list[Node]:
-            nonlocal counter
-
-            # TODO Experiment with not always fusing this into the consumer -- there could be an
-            #   interesting mincut
-            # NOTE In this case the chain cannot be extended, and its origin is input to the function
-            #   so this just fuses it into the consumer
-            if len(end.parents) == 0:
-                for n in c:
-                    n.number = counter
-                    counter += 1
-                return []
-
-            # NOTE len(end.parents) == 1 on this path
-            (parent,) = end.parents
-
-            # Extends the chain if the parent is a link
-            if is_link(parent):
-                c.append(parent)
-                return _chain(c, parent)
-
-            # NOTE In this case the chain has a parent that is not a link
-            # Finds the mincut
-            mincut_idx: int = len(c)
-            min_memory_usage: int = memory_used(parent.bsym.output)
-
-            for idx, n in enumerate(c):
-                mem = memory_used(n.bsym.output)
-                if mem < min_memory_usage:
-                    mincut_idx = idx
-                    min_memory_usage = mem
-
-            for idx, n in enumerate(c):
-                if idx < mincut_idx:
-                    n.number = counter
-                    counter += 1
-
-            # Returns the producer-side chain cut if it exists
-            if mincut_idx < len(c):
-                return [c[mincut_idx]]
-            else:
-                assert mincut_idx == len(c)
-                return end.parents
-
-        def chain_out(n: Node, stack: list[Node]) -> None:
-            # Short-circuits if the original node n cannot be part of a chain
-            if not is_link(n):
-                stack.append(n)
-                return
-
-            # NOTE is_link(n) == True
-            post_chain: list[Node] = _chain([n], n)
-
-            for pc in post_chain:
-                stack.append(pc)
-
-        stack: list[Node] = [leaf]
-        while len(stack) > 0:
-            n: Node = stack.pop()
-
-            if n.number is not None:
-                continue
-
-            n.number = counter
-            counter += 1
-
-            for p in n.parents:
-                chain_out(p, stack)
-
-        def _selector(eligible_nodes: list[Node]) -> int:
-            min_idx: int = 0
-            min_number: int = eligible_nodes[0].number
-
-            # NOTE Although we've already processed the first element here, this still
-            #   enumerates the entire list c to align the enumeration idx properly
-            for idx, n in enumerate(eligible_nodes):
-                check(n.number is not None, lambda: f"Expected each node to be numbered, but {n} was not")
-
-                if n.number < min_number:
-                    min_idx = idx
-                    min_number = n.number
-
-            return min_idx
-
-        sorted_bsyms = toposort_bsym_dag(leaves, toposort_order=TOPOSORT_ORDER.BOTTOM_UP, selector=_selector)
-        gradtrc.bound_symbols = sorted_bsyms
-        gradtrc = dce(gradtrc)
-
-        # TODO Consider how to handle grad w.r.t. only some outputs -- should all grad
-        #   operations using the other output be removed? What kind of assumption does that
-        #   make about the grad structure? Probably some kind of independence assumption? Are
-        #   there practical examples where that's an issue?
-
-        end_time_ns = time.time_ns()
-        elapsed_time_ns = end_time_ns - start_time_ns
-        elapsed_time_millis = elapsed_time_ns // 1000000
-        gradtrc.set_provenance(TraceProvenance(f"Grad (took {elapsed_time_millis} milliseconds)"))
-
-        return gradtrc
-
-    # NOTE This is a kludge to indicate that we shouldn't use PyTorch's autograd because
-    #   we're using our own autograd transform
-    cfn._using_grad_transform = True
-
-    return add_transform(cfn, _grad_transform)
-
-
-def grad_v1(
     cfn,
 ) -> Callable:
     def grad(func):
+
+        @wraps(func)
         def grad_func(*args, **kwargs):
             _, grads = value_and_grad(func)(*args, **kwargs)
+            grads = tree_flatten(grads)[0]
             grads = [g for g in grads if g is not None]
             return grads
 
         return grad_func
 
-    def _grad_transform(trc: Trace, *, executors_list: Sequence[Any]) -> Trace:
-        gradtrc = construct_trace()(grad(trc.python_callable()), *trc.args, **trc.kwargs)
-        return gradtrc
+    class _GradTransform(AdditionalTransform):
+        def transform_trace(self, trc: Trace, *, executors_list: Sequence[Any]) -> Trace:
+            # Using trc.python_callable() makes it impossible to retrace the
+            # function because the python_callable uses python_ctx which replaces
+            # symbol occurrences with its symbol._call_ctx function
+            @wraps(trc.python_callable())
+            def python_callable(*args, **kwargs):
+                return eval_trace(trc, *args, **kwargs)
+
+            gradtrc = construct_trace()(grad(python_callable), *trc.args, **trc.kwargs)
+            return gradtrc
 
     cfn._using_grad_transform = True
-    return add_transform(cfn, _grad_transform)
+    _grad_transform = _GradTransform()
+    return add_transform(cfn, transform=_grad_transform, disable_torch_autograd_support=True)
 
 
 class Transforms(Enum):
@@ -1937,7 +1716,7 @@ def vmap_symbol_mapper(symbol: prims.Symbol, *, axis_size: int):
     def wrap_arg(x):
         if isinstance(x, BatchedValue):
             return x
-        elif isinstance(x, Number):
+        elif isinstance(x, (Number, NumberProxy)):
             return BatchedValue(x, not_mapped)
         else:
             raise ValueError(f"vmap wrap_arg got an unsupported type {type(x)}")
@@ -2008,7 +1787,7 @@ def _vmap_call_metafunc(detached: bool, args, in_dims, out_dims, axis_size, func
     if axis_size is None:
         (axis_size,) = {x.shape[ax] for x, ax in zip(args, in_dims) if ax is not not_mapped}
     in_dims = in_dims if isinstance(in_dims, Sequence) else (in_dims,)
-    in_dims = tuple(not_mapped if isinstance(a, Number) else d for a, d in safe_zip(args, in_dims))
+    in_dims = tuple(not_mapped if isinstance(a, (Number, NumberProxy)) else d for a, d in safe_zip(args, in_dims))
     out_dims = out_dims if isinstance(out_dims, Sequence) else (out_dims,)
 
     ctx = detached_trace() if detached else nullcontext()
@@ -2028,11 +1807,15 @@ def _vmap_call_metafunc(detached: bool, args, in_dims, out_dims, axis_size, func
                 out_dims = out_dims * len(outs)
             outs = safe_map(partial(move_batch_dim, axis_size), bdims, out_dims, outs)
             return tree_unflatten(outs, spec)
-        if isinstance(result, Number) and axis_size is not None:
+        if isinstance(result, (Number, NumberProxy)) and axis_size is not None:
             # TODO: fetch the default device from the context
             result = full(shape=(), fill_value=result, device=common_device)
             result = BatchedValue(result, not_mapped)
-        elif isinstance(result, BatchedValue) and isinstance(result.value, Number) and axis_size is not None:
+        elif (
+            isinstance(result, BatchedValue)
+            and isinstance(result.value, (Number, NumberProxy))
+            and axis_size is not None
+        ):
             result = BatchedValue(full(shape=(), fill_value=result.value, device=common_device), result.batch_dim)
         assert isinstance(result, BatchedValue)
         out = move_batch_dim(axis_size, result.batch_dim, out_dims[0], result.value)
@@ -2466,9 +2249,6 @@ augmented_forward_impls = {
     prims.PrimIDs.NDTRI: lambda x: (prims.ndtri(x), (prims.ndtri(x),)),
     prims.PrimIDs.SINH: lambda x: (prims.sinh(x), (x,)),
     prims.PrimIDs.SQRT: lambda x: (prims.sqrt(x), (prims.sqrt(x),)),
-    prims.PrimIDs.NE: lambda x, y: (prims.ne(x, y), (x, y)),
-    prims.PrimIDs.GT: lambda x, y: (prims.gt(x, y), (x, y)),
-    prims.PrimIDs.LE: lambda x, y: (prims.le(x, y), (x, y)),
     prims.PrimIDs.LOG10: lambda x: (prims.log10(x), (x,)),
     prims.PrimIDs.LOG1P: lambda x: (prims.log1p(x), (x,)),
     prims.PrimIDs.LOG2: lambda x: (prims.log2(x), (x,)),
@@ -2498,9 +2278,6 @@ backward_impls = {
     prims.PrimIDs.NDTRI: lambda result, g: g * prims.exp(0.5 * result**2) * math.sqrt(2.0 * math.pi),
     prims.PrimIDs.SINH: lambda x, g: prims.mul(g, prims.cosh(x)),
     prims.PrimIDs.SQRT: lambda result, g: g / (2.0 * result),
-    prims.PrimIDs.NE: ZeroBackward(num_args=2),
-    prims.PrimIDs.GT: ZeroBackward(num_args=2),
-    prims.PrimIDs.LE: ZeroBackward(num_args=2),
     prims.PrimIDs.LOG10: lambda x, g: g / (x * 2.302585092994046),
     prims.PrimIDs.LOG1P: lambda x, g: g / (x + 1),
     prims.PrimIDs.LOG2: lambda x, g: g / (x * 0.6931471805599453),
@@ -2615,7 +2392,7 @@ def var_aug_fwd(a, dim, *, correction):
 # TODO: fix grad when correction > n_elem_reduced.
 @register_backward(prims.PrimIDs.VAR)
 def var_backward(a, dim, correction, v, g):
-    n_elem_reduced = a.numel // v.numel if a.numel != 0 else 1
+    n_elem_reduced = a.numel() // v.numel() if a.numel() != 0 else 1
     normalization_scalar = n_elem_reduced - correction
     g = restore_reduced_dims(g, dim, a.shape)
     if a.dtype != v.dtype:
@@ -3104,7 +2881,7 @@ def cumsum_aug_fwd(a: Proxy, dim: int, *, dtype: None | dtypes.dtype = None) -> 
 @register_backward("torch.cumsum")
 def cumsum_backward(a_dtype, dim, g):
     g = g.to(a_dtype)
-    if g.numel <= 1 or g.shape[dim] == 1:
+    if g.numel() <= 1 or g.shape[dim] == 1:
         return g
     return g.flip(dim).cumsum(dim).flip(dim)
 
@@ -3348,7 +3125,7 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
     # Normal case, we have a proxy tangent
     vjp_impl = augmented_forward_impls.get(symbol.sym.id)
 
-    if _get_gradfn(symbol) is not None:
+    if _get_gradfn_and_executor(symbol)[0] is not None:
         vjp_impl, backward_fn = make_aug_forward_and_backward(symbol)
 
     if vjp_impl is None:
@@ -3517,7 +3294,7 @@ def backward_pass(forward_env, trace, init_cotangents):
         backward = backward_impls.get(symbol.sym.id)
         aug_forward = augmented_forward_impls.get(symbol.sym.id)
 
-        if _get_gradfn(symbol) is not None:
+        if _get_gradfn_and_executor(symbol)[0] is not None:
             aug_forward, backward = make_aug_forward_and_backward(symbol)
 
         if backward is None:
@@ -3662,7 +3439,7 @@ def value_and_grad(func):
         elif isinstance(x, NumberProxy):
             return type(x.value)(1)
         else:
-            raise ValueError(f"ones_like inside value_and_grad got an unsupported type {type(x)}")
+            return None
 
     def _value_and_grad(*args, **kwargs):
         trace = construct_trace()(func, *args, **kwargs)
@@ -3704,7 +3481,10 @@ def _update_forward_with_new_saved_for_backward(forward_trace: Trace, saved_for_
     """
     from thunder.executors.torchex import connect_to_autograd_impl
 
-    saved_for_backward = tree_map(lambda x: x.value if isinstance(x, NumberProxy) else x, saved_for_backward)
+    forward_trace_producers = utils.producers(forward_trace)
+    saved_for_backward = tree_map(
+        lambda x: x.value if isinstance(x, NumberProxy) and x not in forward_trace_producers else x, saved_for_backward
+    )
     saved_tensors, saved_other = _split_saved_for_backward_into_tensors_and_other(saved_for_backward)
 
     if any(x.sym.id == connect_to_autograd_impl.id for x in reversed(forward_trace.bound_symbols)):

@@ -140,9 +140,6 @@ class FUEL_LEVEL(enum.Enum):
 
 # To implement a FusionExecutor, create a subclass of it that implements the fusion_pass method
 class FusionExecutor(Executor):
-    def __init__(self, name: Hashable, *, version: None | Any = None):
-        super().__init__(name, version=version)
-
     # Optimization fuel is a concept introduced by David B.
     # Whalley (https://dl.acm.org/doi/pdf/10.1145/186025.186103) to isolate
     # compiler bugs.
@@ -469,9 +466,6 @@ def resolve_executors(executors: None | Sequence[Executor | str]) -> tuple[Execu
             + os.linesep
             + f"Registered executors: {get_all_executors()}"
         )
-
-    if duplicates := {x for x in resolved_executors if resolved_executors.count(x) > 1}:
-        raise ValueError(f"Duplicate executors in the list of executors. Duplicates: {duplicates}")
 
     return tuple(resolved_executors)
 

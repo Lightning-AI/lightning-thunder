@@ -1,11 +1,21 @@
 import os
 import time
+import warnings
+from typing import Any
+from contextlib import nullcontext
 
 import torch
 import functools
 from torch.utils.data import DataLoader, IterableDataset
 import torch.distributed as torch_dist
 from torch.distributed.device_mesh import init_device_mesh
+import warnings
+
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    apply_activation_checkpointing,
+    checkpoint_wrapper,
+    CheckpointWrapper,
+)
 
 import thunder
 from thunder.tests.litgpt_model import Config, GPT, Block
@@ -18,6 +28,9 @@ world_size = int(os.environ.get("WORLD_SIZE", 1))
 local_rank = int(os.environ.get("LOCAL_RANK", 0))
 global_rank = int(os.environ.get("RANK", 0))
 if world_size > 1:
+    # Avoids the allocator thrashing issue in PyTorch NCCL backend.
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/420
+    os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
     torch_dist.init_process_group(backend="nccl")
     pg = torch_dist.distributed_c10d._get_default_group()
 device = torch.device("cuda", local_rank)
@@ -35,6 +48,25 @@ def configure_optimizers(model, weight_decay, learning_rate, betas, device_type)
     return optimizer
 
 
+# NOTE(crcrpar): Calling this method seems to bloat the memory consumption to some extent.
+# e.g. ref: https://github.com/Lightning-AI/lightning-thunder/issues/439
+def _run_fwd_bwd_one_microbatch(
+    model: torch.nn.Module,
+    input_ids: torch.Tensor,
+    targets: torch.Tensor,
+    gradient_accumulation_steps: int,
+    device: torch.device,
+) -> torch.Tensor:
+    input_ids = input_ids.to(device)
+    targets = targets.to(device)
+    logits = model(input_ids)
+    logits = logits.reshape(-1, logits.size(-1))
+    targets = targets.reshape(-1)
+    loss = torch.nn.functional.cross_entropy(logits, targets, ignore_index=-1) / gradient_accumulation_steps
+    loss.backward()
+    return loss
+
+
 class Benchmark_litGPT:
     def __init__(
         self,
@@ -50,9 +82,11 @@ class Benchmark_litGPT:
         sharding_size: int | None = None,
         ddp_bucket_size: float = 256.0,
         fsdp_bucket_params: float | None = None,
+        checkpoint_activations: bool = False,
         n_layers: int | None = None,
         profiler_start: int = 15,
         profiler_stop: int = 15,
+        skip_data_sync: bool = False,
     ):
         seed = 1337
         torch.manual_seed(seed)
@@ -79,6 +113,7 @@ class Benchmark_litGPT:
         self.sharding_size = sharding_size
         self.ddp_bucket_size = ddp_bucket_size
         self.fsdp_bucket_params = fsdp_bucket_params
+        self.checkpoint_activations = checkpoint_activations
         self.micro_batch_size = micro_batch_size
 
         # Clarify benchmark assumptions
@@ -132,11 +167,12 @@ class Benchmark_litGPT:
             assert (
                 self.global_batch_size % self.micro_batch_size * world_size == 0
             ), f"Global Batch Size {self.global_batch_size} should be a multiple Micro Batch Size {self.micro_batch_size} * World Size {world_size}."
-            # TODO: Remove when gradient accumulation is ready for benchmarking.
-            if self.gradient_accumulation_steps > 1:
-                print(
-                    f"[WARNING] Gradient Accumulation is not fully supported yet. Benchmarking results may not be accurate. Gradient Accumulation Steps = {self.gradient_accumulation_steps}"
-                )
+
+        if self.checkpoint_activations:
+            warnings.warn(
+                "Activations checkpointing is configured, but Thunder does not support checkpointing. Checkpointing will be ignored."
+            )
+        self.skip_data_sync = skip_data_sync
 
         # Profiling Args
         self.nsys_enabled = nsys_enabled
@@ -154,6 +190,10 @@ class Benchmark_litGPT:
 
         # Setup the distributed algorithm choices
         self.model = self.setup_distributed(self.model)
+
+        # Setup activations checkpointing
+        if self.checkpoint_activations:
+            self.setup_activation_checkpointing()
 
         # Initialize the optimizer after the model is sharded if using FSDP
         self.optimizer = configure_optimizers(
@@ -202,9 +242,11 @@ class Benchmark_litGPT:
                 from thunder.distributed import fsdp, FSDPType, FSDPBucketingStrategy
 
                 sharding_strategy = {"zero2": FSDPType.ZERO2, "zero3": FSDPType.ZERO3}[self.shard_mode]
-                bucketing_strategy = {"none": FSDPBucketingStrategy.NONE, "block": FSDPBucketingStrategy.BLOCK}[
-                    self.bucketing_mode
-                ]
+                bucketing_strategy = {
+                    "none": FSDPBucketingStrategy.NONE,
+                    "block": FSDPBucketingStrategy.BLOCK,
+                    "layer": FSDPBucketingStrategy.LAYER,
+                }[self.bucketing_mode]
                 model = fsdp(
                     model,
                     broadcast_from=None,
@@ -257,6 +299,17 @@ class Benchmark_litGPT:
                 )
         return model
 
+    def setup_activation_checkpointing(self):
+        if any(isinstance(mod, CheckpointWrapper) for mod in self.model.modules()):
+            warnings.warn(
+                "FSDP checkpointing is configured, but the model already contains checkpointed layers."
+                " Checkpointing will be ignored."
+            )
+            return
+
+        check_fn = lambda submodule: isinstance(submodule, Block)
+        apply_activation_checkpointing(self.model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=check_fn)
+
     def setup_compile(self, model):
         if self.compile == "inductor":
             print("Resetting cache size for torch.compile")
@@ -266,8 +319,12 @@ class Benchmark_litGPT:
             model = torch.compile(model)
         elif "thunder" in self.compile:
             executors = [thunder.nvfuser_executor, thunder.pytorch_executor]
-            if "inductor" in self.compile:
-                from thunder.executors.torch_compile import torch_compile_executor as torch_compile_ex
+            if "inductor_cat" in self.compile:
+                from thunder.executors.torch_compile import torch_compile_cat_ex as torch_compile_ex
+
+                executors.insert(0, torch_compile_ex)
+            elif "inductor" in self.compile:
+                from thunder.executors.torch_compile import torch_compile_ex
 
                 executors.insert(0, torch_compile_ex)
             if "cudnn" in self.compile:
@@ -331,55 +388,52 @@ class Benchmark_litGPT:
             # Setup throughput Collection
             self.throughput = Throughput(window_size=self.max_iters - self.warmup_iter, world_size=world_size)
 
-        if "transformerengine" in self.compile:
-            import transformer_engine.pytorch as te
-
-            te_ctx = te.fp8_autocast
+        if self.skip_data_sync:
+            data_sync_ctx = self.model.no_sync
         else:
-            from contextlib import nullcontext
-
-            te_ctx = nullcontext
+            data_sync_ctx = nullcontext
 
         for i in range(self.max_iters):
             iter_t0 = time.perf_counter()
             if i == self.warmup_iter:  # warmup
                 t0 = iter_t0
 
-            for step_idx in range(self.gradient_accumulation_steps):
-                input_ids, targets = next(self.train_data_iter)
-                input_ids = input_ids.to(device=self.device)
-                targets = targets.to(device=self.device)
+            if self.nsys_enabled and i == self.profiler_start and global_rank in [0, None]:
+                print("=====Start NSYS Profiling======")
+                torch.cuda.cudart().cudaProfilerStart()
 
-                if self.nsys_enabled and i == self.profiler_start and global_rank in [0, None] and step_idx == 0:
-                    print("=====Start NSYS Profiling======")
-                    torch.cuda.cudart().cudaProfilerStart()
-
-                with te_ctx():
+            with data_sync_ctx():
+                for step_idx in range(self.gradient_accumulation_steps - 1):
+                    input_ids, targets = next(self.train_data_iter)
+                    input_ids = input_ids.to(self.device)
+                    targets = targets.to(self.device)
                     logits = self.model(input_ids)
+                    logits = logits.reshape(-1, logits.size(-1))
+                    targets = targets.reshape(-1)
+                    loss = (
+                        torch.nn.functional.cross_entropy(logits, targets, ignore_index=-1)
+                        / self.gradient_accumulation_steps
+                    )
+                    loss.backward()
 
-                logits = logits.reshape(-1, logits.size(-1))
-                targets = targets.reshape(-1)
-                loss = (
-                    torch.nn.functional.cross_entropy(logits, targets, ignore_index=-1)
-                    / self.gradient_accumulation_steps
-                )
+            input_ids, targets = next(self.train_data_iter)
+            input_ids = input_ids.to(self.device)
+            targets = targets.to(self.device)
+            logits = self.model(input_ids)
+            logits = logits.reshape(-1, logits.size(-1))
+            targets = targets.reshape(-1)
+            loss = (
+                torch.nn.functional.cross_entropy(logits, targets, ignore_index=-1) / self.gradient_accumulation_steps
+            )
+            loss.backward()
 
-                loss.backward()
+            # Simple Gradient Accumulation Implementation
+            self.optimizer.step()
+            self.optimizer.zero_grad(set_to_none=True)
 
-                # Simple Gradient Accumulation Implementation
-                if (step_idx + 1) % self.gradient_accumulation_steps == 0:
-                    self.optimizer.step()
-                    self.optimizer.zero_grad(set_to_none=True)
-
-                # torch.cuda.synchronize()
-                if (
-                    self.nsys_enabled
-                    and i == self.profiler_stop
-                    and global_rank in [0, None]
-                    and ((step_idx + 1) % self.gradient_accumulation_steps == 0)
-                ):
-                    print("=====Stop NSYS Profiling======")
-                    torch.cuda.cudart().cudaProfilerStop()
+            if self.nsys_enabled and i == self.profiler_stop and global_rank in [0, None]:
+                print("=====Stop NSYS Profiling======")
+                torch.cuda.cudart().cudaProfilerStop()
 
             loss_item = loss.item()  # synchronization
             t1 = time.perf_counter()
@@ -506,3 +560,7 @@ if __name__ == "__main__":
     from jsonargparse import CLI
 
     CLI(benchmark_main)
+
+    # ref: https://github.com/pytorch/pytorch/blob/3af12447/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp#L1110-L1116
+    if world_size > 1:
+        torch_dist.destroy_process_group()

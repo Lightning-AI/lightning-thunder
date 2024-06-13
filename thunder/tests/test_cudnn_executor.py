@@ -11,14 +11,22 @@ import thunder.core.devices as devices
 from thunder import dtypes
 from thunder.core.transforms import vjp
 from thunder.core.utils import flatten_func
-from thunder.tests.framework import instantiate, NOTHING, ops, requiresCUDA, run_snippet, TorchExecutor
+from thunder.tests.framework import instantiate, NOTHING, ops, requiresCUDA, run_snippet, TorchExecutor, version_between
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import get_opinfo, OpInfo
 from thunder.tests.test_grad import _make_differentiable_wrapper
 
 cudnn = pytest.importorskip("cudnn")
 from thunder.executors.cudnn_layernormex import cudnn_layernorm_ex
-from thunder.executors.cudnnex import cudnn_ex, cudnn_version
+from thunder.executors.cudnnex import cudnn_ex
+
+
+def _maybe_xfail() -> None:
+    dev: torch.device = thunder.core.devices.to_torch_device("cuda:0")
+    cuda_major: int
+    cuda_major, _ = torch.cuda.get_device_capability(dev)
+    if cuda_major < 8:
+        pytest.xfail("cuDNN SDPA uses flash attention, which requires Ampere+")
 
 
 # These reference inputs are currently used by cudnnex
@@ -86,16 +94,11 @@ grad_sdpa_cudnn_opinfo = OpInfo(
 
 @requiresCUDA
 def test_cudnn_sdpa():
+    _maybe_xfail()
+
     # expect sdpa to fail for 8.9.2 and below
     if cudnn.backend_version() <= 8902:
         pytest.xfail("Only interleaved layout is supported pre 8.9.2.")
-
-    dev: torch.device = thunder.core.devices.to_torch_device("cuda:0")
-    cuda_major: int
-    cuda_minor: int
-    cuda_major, cuda_minor = torch.cuda.get_device_capability(dev)
-    if cuda_major < 8:
-        pytest.xfail("cuDNN SDPA uses flash attention, which requires Ampere+")
 
     for dtype in (thunder.float16, thunder.bfloat16):
         b, h, s_q, s_kv, d_q, d_v = 8, 8, 256, 256, 64, 64
@@ -162,6 +165,8 @@ def snippet_torch_consistency(op, torch_op, sample):
     supported_executors=(TorchExecutor,),
 )
 def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
+    _maybe_xfail()
+
     if cudnn.backend_version() < 8905:  # todo: could be more specific, just for some cases?
         pytest.xfail("s_kv not a multiple of 64 required cudnn version atleast 8.9.5")
 
@@ -191,10 +196,19 @@ def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
             return result
 
 
-@pytest.mark.skipif(cudnn_version() < 8905, reason="cuDNN is required to be at least `8.9.5`")
+@pytest.mark.skipif(
+    LooseVersion(cudnn.backend_version_string()) < LooseVersion("8.9.5"),
+    reason="cuDNN is required to be at least `8.9.5`",
+)
+@pytest.mark.skipif(
+    version_between(torch.__version__, min_ver="2.4.0a0", max_ver="2.4.0a99"),
+    reason="https://github.com/Lightning-AI/lightning-thunder/issues/567",
+)
 @pytest.mark.parametrize("may_cat_grad_qkv", (True, False), ids=("may-cat-grad-qkv", "never-cat-grad-qkv"))
 @pytest.mark.parametrize("dtype", grad_sdpa_cudnn_opinfo.dtypes(), ids=tuple(map(str, grad_sdpa_cudnn_opinfo.dtypes())))
 def test_vjp_correctness_cudnn_sdpa(dtype, may_cat_grad_qkv):
+    _maybe_xfail()
+
     for sample in grad_sdpa_cudnn_opinfo.reference_inputs("cuda", dtype, requires_grad=True):
         # Enforce tensor arguments are contiguous for torch reference
         contiguous_args = list(map(lambda a: a.contiguous() if isinstance(a, torch.Tensor) else a, sample.args))

@@ -14,3 +14,5 @@ thunder.distributed
     reset_skip_data_parallel_grad_sync
     get_skip_data_parallel_grad_sync
     skip_data_parallel_grad_sync
+    column_parallel
+    row_parallel
