@@ -1170,6 +1170,29 @@ general_jit_callbacks: dict[INTERPRETER_CALLBACKS, Callable] = {
 }
 general_jit_callbacks = default_callbacks | general_jit_callbacks
 
+def propagate_constraints(ctx, inputs, intermediates, computation_trace):
+    import thunder.core.utils as utils
+
+    dynamic_number_proxy_set = set()
+
+    # add static constraints for inputs, put candidates in set
+    for inp in inputs:
+        if not isinstance(x, NumberProxy):
+            continue
+        x = unvariableify(inp)
+        if x.static_constraint:
+            ctx.add_constraint((clang.check_number_type_and_value, x, x.value))
+        else:
+            dynamic_number_proxy_set.add(inp)
+
+    # add static constraints propagated from intermediates.
+    producers = utils.producers(bsyms, _map_to_numbers=True)
+    for intermediate in intermediates:
+        
+    for bsym in computation_trace.bound_symbols:
+        for v in bsym.flat_variableified_proxy_outs:
+            intermediates_set.add(v)
+    
 
 def get_computation_inputs_and_intermediates(computation_trace):
     inputs_list = []
@@ -1601,14 +1624,16 @@ def thunder_general_jit(
             last_interpreter_log = jfn._last_interpreter_log
 
     pro_to_comp, computation_intermediates = get_computation_inputs_and_intermediates(computation_trace)
-    print(f"{computation_trace=}")
-    print(f"{pro_to_comp=}")
-    print(f"{computation_intermediates=}")
-
     epilogue_inputs, _ = get_computation_inputs_and_intermediates(epilogue_trace)
 
     comp_to_epi = []
     pro_to_epi = []
+
+    print(f"{computation_trace=}")
+    print(f"{pro_to_comp=}")
+    print(f"{computation_intermediates=}")
+    # propagate static constrained intermediates to inputs
+    propagate_constraints(ctx, pro_to_comp, computation_intermediates, computation_trace)
 
     for i in epilogue_inputs:
         if i in computation_intermediates:
