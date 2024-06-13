@@ -1,5 +1,6 @@
+from __future__ import annotations
 import time
-from typing import Any
+from typing import TYPE_CHECKING
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from itertools import filterfalse
@@ -12,6 +13,9 @@ from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, has_tags
 from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace
 from thunder.core.utils import ProxyDict, producers, check
+
+if TYPE_CHECKING:
+    from thunder.core.symbol import Symbol
 
 
 #
@@ -375,7 +379,6 @@ def functionalize_inplace_ops(computation_trace: Trace, computation_traces: list
     from thunder.core import utils
     from thunder.core.proxies import ProxyInterface
     from thunder.core.symbol import VariableInterface
-    from thunder.core.symbol import variableify
     import thunder.torch
 
     def is_inplace(bsym: BoundSymbol) -> bool:
