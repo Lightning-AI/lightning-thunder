@@ -572,6 +572,7 @@ class CONSTRAINT(Enum):
     CONSTRAINABLE = auto()
     STATIC = auto()
 
+
 # NOTE NumberProxies are NOT Numbers
 # TODO Maybe NumberProxies should be Numbers?
 class NumberProxy(Proxy, NumberProxyInterface):
@@ -602,9 +603,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
         return self.value is not None
 
     def make_static_constrained(self):
-        baseutils.check(
-            self.constraint != CONSTRAINT.DYNAMIC,
-            lambda: f"dynamic NumberProxy cannot be made static")
+        baseutils.check(self.constraint != CONSTRAINT.DYNAMIC, lambda: f"dynamic NumberProxy cannot be made static")
         self.constraint = CONSTRAINT.STATIC
 
     def is_static_constrained(self) -> bool:
