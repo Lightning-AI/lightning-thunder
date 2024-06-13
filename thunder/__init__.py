@@ -598,13 +598,9 @@ def jit(
                 thunder.core.transform_common._inplace_copy_sanity_check(computation_trc)
 
             for transform in post_optimization_transforms:
-                # NOTE: `backward_trc` could be None.
                 thunder.core.utils.check_type(transform, PostOptimizationTransform)
                 computation_trc = transform.transform_trace(computation_trc, executors_list=cd.executors_list)
                 extraces.append(computation_trc)
-                if backward_trc is not None:
-                    backward_trc = transform.transform_trace(backward_trc, executors_list=cd.executors_list)
-                    backward_traces.append(backward_trc)
 
             comp = computation_trc.python_callable()
 
