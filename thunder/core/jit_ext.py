@@ -1623,6 +1623,7 @@ def thunder_general_jit(
             process_recorded_modifications(ctx, epilogue_trace)
             last_interpreter_log = jfn._last_interpreter_log
 
+    # NOTE(crcrpar): We might want to move the call to https://github.com/Lightning-AI/lightning-thunder/blob/0165e23f/thunder/__init__.py#L600
     computation_trace = functionalize_inplace_ops(computation_trace)
 
     pro_to_comp, computation_intermediates = get_computation_inputs_and_intermediates(computation_trace)
@@ -1697,6 +1698,8 @@ def functionalize_inplace_ops(computation_trace: TraceCtx) -> TraceCtx:
     from thunder.core.proxies import ProxyInterface
     from thunder.core.symbol import VariableInterface
     from thunder.core.symbol import variableify
+    from thunder.core.transforms import visitor_transform
+    from thunder.core.transforms import VISIT_TYPE
 
     def is_inplace(bsym: BoundSymbol) -> bool:
         if (isinstance(bsym.sym.id, str) and bsym.sym.id.endswith("_")) and bsym.subsymbols:
@@ -1709,10 +1712,10 @@ def functionalize_inplace_ops(computation_trace: TraceCtx) -> TraceCtx:
 
     # Step 1: return the tensors returned from `prims.copy_` as possible not the args for clarity.
     bsym: BoundSymbol
-    swap_map: dict[VariableInterface, ProxyInterface] = {}
+    swap_map_for_step1: dict[VariableInterface, ProxyInterface] = {}
     bsyms: list[BoundSymbol] = []
     for bsym in computation_trace.bound_symbols:
-        new_bsym = bsym.from_bsym_swap_proxies(swap_map)
+        new_bsym = bsym.from_bsym_swap_proxies(swap_map_for_step1)
 
         # in-place ops has `prims.copy_` as the last subsymbol.
         if not is_inplace(new_bsym):
@@ -1728,21 +1731,26 @@ def functionalize_inplace_ops(computation_trace: TraceCtx) -> TraceCtx:
         )
         copy_out = copy_bsym.flat_proxy_outs[0]
         copy_dst = copy_bsym.flat_proxy_args[1]
-        swap_map[variableify(copy_dst)] = copy_out
-        # Remove `prims.copy_`
-        new_bsym = new_bsym.from_bsym_swap_proxies(swap_map, skip_inputs=True, skip_subsymbols=True)
+        swap_map_for_step1[variableify(copy_dst)] = copy_out
+        new_bsym = new_bsym.from_bsym_swap_proxies(
+            swap_map_for_step1,
+            skip_inputs=True,
+            skip_subsymbols=True,
+            skip_output=False,
+        )
         bsyms.append(new_bsym)
 
     intermediate_trace = from_trace(computation_trace)
     intermediate_trace.bound_symbols = bsyms[:]
+    intermediate_trace.set_provenance(TraceProvenance("Copy output canonicalization"))
     del bsyms
 
     # Step 2: Remove `prims.copy_` if it's the last one of `bsym.subsymbols`.
     bsym_inplace_to_functional = {}
-    swap_map.clear()
+    swap_map_for_step2: dict[VariableInterface, ProxyInterface] = {}
     new_bsyms: list[BoundSymbol] = []
     for bsym in intermediate_trace.bound_symbols:
-        new_bsym = bsym.from_bsym_swap_proxies(swap_map)
+        new_bsym = bsym.from_bsym_swap_proxies(swap_map_for_step2, skip_subsymbols=True)
 
         # in-place ops has `prims.copy_` as the last subsymbol.
         if not is_inplace(new_bsym):
@@ -1760,9 +1768,9 @@ def functionalize_inplace_ops(computation_trace: TraceCtx) -> TraceCtx:
             copy_bsym.sym.id == prims.PrimIDs.COPY_,
             lambda: f"bsym.subsymbols[-1] expected to be {prims.PrimIDs.COPY_} but {copy_bsym.sym.id=}",
         )
-        swap_map[variableify(copy_bsym.flat_proxy_outs[0])] = copy_bsym.flat_proxy_args[0]
+        swap_map_for_step2[variableify(copy_bsym.flat_proxy_outs[0])] = copy_bsym.flat_proxy_args[0]
         new_bsym.subsymbols = new_bsym.subsymbols[:-1]
-        new_bsym = new_bsym.from_bsym_swap_proxies(swap_map)
+        new_bsym = new_bsym.from_bsym_swap_proxies(swap_map_for_step2, skip_subsymbols=True)
         functional_sym: Symbol = getattr(thunder.torch, functional_sym_name)
         new_functional_bsym = functional_sym.bind(
             *new_bsym.args,
@@ -1778,6 +1786,43 @@ def functionalize_inplace_ops(computation_trace: TraceCtx) -> TraceCtx:
     functionalized_computation_trace.bound_symbols = new_bsyms
     functionalized_computation_trace.set_provenance(TraceProvenance("Functionalize in-place ops"))
     # note(crcrpar): I kind of want to do the following two.
-    # functionalized_computation_trace._provenance.swap_map = swap_map
-    # functionalized_computation_trace._provenance.bsym_inplace_to_functional = bsym_inplace_to_functional
-    return functionalized_computation_trace
+    functionalized_computation_trace._provenance.swap_map = swap_map_for_step2
+    functionalized_computation_trace._provenance.bsym_inplace_to_functional = bsym_inplace_to_functional
+
+    # Step 3: Bring back `prims.copy_` while keeping the trace compatible with nvfuser.
+    reverse_swap_map_for_step2: dict[VariableInterface, TensorProxy] = {}
+    for key, value in swap_map_for_step2.items():
+        reverse_swap_map_for_step2[variableify(value)] = unvariableify(key)
+    reverse_swap_map_for_step1: dict[VariableInterface, TensorProxy] = {}
+    for key, value in swap_map_for_step1.items():
+        reverse_swap_map_for_step1[variableify(value)] = unvariableify(key)
+
+    reverse_swap_map: dict[VariableInterface, TensorProxy] = {}
+    for key, value in reverse_swap_map_for_step2.items():
+        if (new_value := reverse_swap_map_for_step1.get(variableify(value), None)) is not None:
+            reverse_swap_map[key] = new_value
+
+    def visit(bsym: BoundSymbol) -> VISIT_TYPE:
+        if bsym.sym.id == prims.PrimIDs.RETURN:
+            proxy_map = utils.ProxyDict()
+            for flat_arg in bsym.flat_proxy_args:
+                if (v_arg := variableify(flat_arg)) not in reverse_swap_map:
+                    proxy_map[flat_arg] = flat_arg
+                    continue
+                else:
+                    copy_to = reverse_swap_map[v_arg]
+                    prims.copy_(flat_arg, copy_to)
+                    proxy_map[flat_arg] = copy_to
+            (new_args, new_kwargs) = tree_map(lambda p: proxy_map[p], (bsym.args, bsym.kwargs))
+            prims.python_return(*new_args, **new_kwargs)
+            return VISIT_TYPE.REPLACE
+        else:
+            return VISIT_TYPE.NO_OP
+
+    defunctionalized_trace = visitor_transform(
+        functionalized_computation_trace,
+        visit,
+        provenance=f"Defunctionalize trace using {reverse_swap_map}",
+    )
+    defunctionalized_trace._provenance.reverse_swap_map = reverse_swap_map
+    return defunctionalized_trace
