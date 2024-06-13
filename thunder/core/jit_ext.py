@@ -1678,8 +1678,6 @@ def thunder_general_jit(
             process_recorded_modifications(ctx, epilogue_trace)
             last_interpreter_log = jfn._last_interpreter_log
 
-    computation_trace = functionalize_inplace_ops(computation_trace)
-
     pro_to_comp, computation_intermediates = get_computation_inputs_and_intermediates(computation_trace)
     epilogue_inputs, _ = get_computation_inputs_and_intermediates(epilogue_trace)
 
@@ -1741,100 +1739,3 @@ def thunder_general_jit(
         )
 
     return TraceResults(prologue_trace, computation_trace, epilogue_trace, last_interpreter_log)
-
-
-def functionalize_inplace_ops(computation_trace: TraceCtx) -> TraceCtx:
-    """Functionalize in-place ops in ``computation_trace``.
-
-    This is a two-step function. The first step is to use the output of :func:`thunder.core.prims.copy_`'s
-    outputs as trace's outputs. The second step is to remove :func:`thunder.core.prims.copy_`
-    from :attr:`~thunder.core.symbol.Boundsymbol.subsymbols` if it's the last symbol.
-    """
-    from thunder.core import utils
-    from thunder.core.proxies import ProxyInterface
-    from thunder.core.symbol import VariableInterface
-    from thunder.core.symbol import variableify
-
-    def is_inplace(bsym: BoundSymbol) -> bool:
-        if (isinstance(bsym.sym.id, str) and bsym.sym.id.endswith("_")) and bsym.subsymbols:
-            return bsym.subsymbols[-1].sym.id == prims.PrimIDs.COPY_
-        else:
-            return False
-
-    if not any(is_inplace(bsym) for bsym in computation_trace.bound_symbols):
-        return computation_trace
-
-    # Step 1: return the tensors returned from `prims.copy_` as possible not the args for clarity.
-    bsym: BoundSymbol
-    swap_map: dict[VariableInterface, ProxyInterface] = {}
-    bsyms: list[BoundSymbol] = []
-    for bsym in computation_trace.bound_symbols:
-        new_bsym = bsym.from_bsym_swap_proxies(swap_map)
-
-        # in-place ops has `prims.copy_` as the last subsymbol.
-        if not is_inplace(new_bsym):
-            bsyms.append(new_bsym)
-            continue
-
-        sub_bsyms: list[BoundSymbol] = bsym.subsymbols
-        utils.check(sub_bsyms, lambda: f"{bsym.sym.id=} expected to have subsymbols but {bsym.subsymbols=}")
-        copy_bsym = sub_bsyms[-1]
-        utils.check(
-            copy_bsym.sym.id == prims.PrimIDs.COPY_,
-            lambda: f"bsym.subsymbols[-1] expected to be {prims.PrimIDs.COPY_} but {copy_bsym.sym.id=}",
-        )
-        copy_out = copy_bsym.flat_proxy_outs[0]
-        copy_dst = copy_bsym.flat_proxy_args[1]
-        swap_map[variableify(copy_dst)] = copy_out
-        # Remove `prims.copy_`
-        new_bsym = new_bsym.from_bsym_swap_proxies(swap_map, skip_inputs=True, skip_subsymbols=True)
-        bsyms.append(new_bsym)
-
-    intermediate_trace = from_trace(computation_trace)
-    intermediate_trace.bound_symbols = bsyms[:]
-    del bsyms
-
-    # Step 2: Remove `prims.copy_` if it's the last one of `bsym.subsymbols`.
-    bsym_inplace_to_functional = {}
-    swap_map.clear()
-    new_bsyms: list[BoundSymbol] = []
-    for bsym in intermediate_trace.bound_symbols:
-        new_bsym = bsym.from_bsym_swap_proxies(swap_map)
-
-        # in-place ops has `prims.copy_` as the last subsymbol.
-        if not is_inplace(new_bsym):
-            new_bsyms.append(new_bsym)
-            continue
-        functional_sym_name = new_bsym.sym.id.split(".")[-1][:-1]
-        utils.check(
-            hasattr(thunder.torch, functional_sym_name),
-            lambda: f"{functional_sym_name}, out-of-place impl of {bsym.sym.id=} not found in `thunder.torch` namespace",
-        )
-        sub_bsyms: list[BoundSymbol] = bsym.subsymbols
-        utils.check(sub_bsyms, lambda: f"{bsym.sym.id=} expected to have subsymbols but {bsym.subsymbols=}")
-        copy_bsym = sub_bsyms[-1]
-        utils.check(
-            copy_bsym.sym.id == prims.PrimIDs.COPY_,
-            lambda: f"bsym.subsymbols[-1] expected to be {prims.PrimIDs.COPY_} but {copy_bsym.sym.id=}",
-        )
-        swap_map[variableify(copy_bsym.flat_proxy_outs[0])] = copy_bsym.flat_proxy_args[0]
-        new_bsym.subsymbols = new_bsym.subsymbols[:-1]
-        new_bsym = new_bsym.from_bsym_swap_proxies(swap_map)
-        functional_sym: Symbol = getattr(thunder.torch, functional_sym_name)
-        new_functional_bsym = functional_sym.bind(
-            *new_bsym.args,
-            **new_bsym.kwargs,
-            output=new_bsym.output,
-            subsymbols=new_bsym.subsymbols,
-            _call_ctx=new_bsym._call_ctx,
-        )
-        new_bsyms.append(new_functional_bsym)
-        bsym_inplace_to_functional[new_bsym] = new_functional_bsym
-
-    functionalized_computation_trace = from_trace(computation_trace)
-    functionalized_computation_trace.bound_symbols = new_bsyms
-    functionalized_computation_trace.set_provenance(TraceProvenance("Functionalize in-place ops"))
-    # note(crcrpar): I kind of want to do the following two.
-    # functionalized_computation_trace._provenance.swap_map = swap_map
-    # functionalized_computation_trace._provenance.bsym_inplace_to_functional = bsym_inplace_to_functional
-    return functionalized_computation_trace
