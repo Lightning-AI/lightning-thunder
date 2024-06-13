@@ -3055,18 +3055,9 @@ def baddbmm(
         utils.check_type(beta, int)
         utils.check_type(alpha, int)
 
-    if alpha == 0 and beta == 0:
-        b, n, _ = b1.shape
-        _, _, p = b2.shape
-        return zeros(b, n, p)
-
-    if alpha == 0:
-        return beta * a
-
-    if beta == 0:
-        return alpha * matmul(b1, b2)
-
-    return (beta * a) + (alpha * matmul(b1, b2))
+    t0 = matmul(b1, b2)
+    t1 = alpha * t0
+    return t1 + (beta * a)
 
 
 # TODO bmm is more restrictive than matmul
