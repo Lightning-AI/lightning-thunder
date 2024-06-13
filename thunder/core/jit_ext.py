@@ -56,6 +56,7 @@ from thunder.core.proxies import (
     DistParallelType,
     proxy,
     Proxy,
+    AnyProxy,
     NumberProxy,
     StringProxy,
     TensorProxy,
@@ -560,6 +561,17 @@ class GeneralJitCtx(MinimalCtx):
         # avoid double registration by skipping if value has a registered proxy.
         if isinstance(uvalue, Proxy) or value.original_value is not value.nothing:
             return uvalue
+        elif isinstance(uvalue, torch.device):
+            co: CACHE_OPTIONS = get_cache_option()
+            p: AnyProxy = proxy(uvalue, history=value.provenance)
+            if co in (CACHE_OPTIONS.CONSTANT_VALUES, CACHE_OPTIONS.SYMBOLIC_VALUES):
+                # NOTE: Even with SYMBOLIC_VALUES, we want to strictly constraint the device as
+                # the computation trace may utilize device specific executors.
+                self.add_constraint((clang.check_literal_like, p, uvalue))
+            elif co in (CACHE_OPTIONS.SAME_INPUT,):
+                raise NotImplementedError(f"Unsupported cache option {co}")
+            else:  # co is CACHE_OPTIONS.NO_CACHING
+                pass
         elif isinstance(uvalue, torch.Tensor):
             # we always want to proxy torch.Tensor, even const
 
@@ -601,7 +613,7 @@ class GeneralJitCtx(MinimalCtx):
                 raise NotImplementedError(f"Unsupported cache option {co}")
             return p
 
-        elif isinstance(uvalue, (float, int, complex, str)):
+        elif isinstance(uvalue, (float, int, complex, str, slice)):
             assert should_register_for_prologue(value.provenance)
             value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
             # we follow the caching mechanisms of the eager_unpack_interpreter
@@ -612,6 +624,8 @@ class GeneralJitCtx(MinimalCtx):
             if co is CACHE_OPTIONS.CONSTANT_VALUES:
                 if isinstance(uvalue, str):
                     self.add_constraint((clang.check_string_value, p, uvalue))
+                elif isinstance(uvalue, slice):
+                    self.add_constraint((clang.check_slice_value, p, uvalue))
                 else:
                     self.add_constraint((clang.check_number_type_and_value, p, uvalue))
             elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
@@ -773,6 +787,16 @@ def _general_jit_setattr_lookaside(obj: Any, name: str, value: Any):
     if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
     return res
+
+
+@general_jit_lookaside(torch.compile)
+def _jit_torch_compile_lookaside(*args, **kwargs):
+    return do_raise(
+        NotImplementedError(
+            "Using torch.compile within a function to be JIT-compiled by Thunder is not supported. "
+            "Please remove the call to torch.compile or apply it outside the function."
+        )
+    )
 
 
 # TODO Expand on this
@@ -1105,7 +1129,7 @@ def _general_jit_wrap_callback(value):
         pass  # basic containers are OK, too, subclasses?
     elif isinstance(uvalue, Proxy):
         value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
-    elif isinstance(uvalue, (float, int, complex, str)) and not isinstance(uvalue, Proxy):
+    elif isinstance(uvalue, (float, int, complex, str, slice, torch.device)) and not isinstance(uvalue, Proxy):
         if value.provenance.ext_flag & EXT_FLAG_IS_PROXY_DERIVED:  # we already have seen this
             pass
         elif should_register_for_prologue(value.provenance):
@@ -1401,13 +1425,6 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
 
         already_unpacked[id(p)] = p
 
-        # Adds cache constraints
-        # TODO Consider refactoring these contraints
-        # TODO Constrain on rank, device, and dtype
-        if isinstance(p, TensorProxy):
-            with tracectx(prologue_trace):
-                prims.assert_tensor_metadata(p, p.shape, p.device, p.dtype, p.requires_grad)
-
         return p
 
     with tracectx(prologue_trace):
@@ -1505,12 +1522,12 @@ def process_recorded_modifications(ctx, epilogue_trace):
 
 def bind_inputs(name, trace, input_vars, input_proxies):
     # Unpacks inputs into the computation trace
-    # TODO This currently does the unpacks at the end of he trace, then moves them to the beginning, there's
+    # TODO This currently does the unpacks at the end of the trace, then moves them to the beginning, there's
     #   almost certainly a more elegant way to do this
     with tracectx(trace):
         p: Proxy
         for p in input_proxies:
-            prims.unpack_trivial(p)
+            prims.unpack_trivial(p, name=p.name)
 
     bsyms = trace.bound_symbols
     trace.bound_symbols = bsyms[-len(input_proxies) :] + bsyms[: -len(input_proxies)]

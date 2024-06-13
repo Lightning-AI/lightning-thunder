@@ -20,7 +20,16 @@ from thunder.core.dtypes import is_exact_dtype, to_dtype as thunder_dtype
 from thunder.core.pytree import tree_map, tree_flatten
 from thunder.core.transforms import jvp, vjp, grad, check_bsym_for_vjp
 from thunder.core.utils import flatten_func
-from thunder.tests.framework import instantiate, NOTHING, ops, run_snippet, assert_closer, IN_CI, requiresCUDA
+from thunder.tests.framework import (
+    instantiate,
+    NOTHING,
+    ops,
+    run_snippet,
+    assert_closer,
+    IN_CI,
+    requiresCUDA,
+    version_between,
+)
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops, get_opinfo
 
@@ -49,7 +58,6 @@ vjp_op_force = {
     "amax",
     "amin",
     "cat",
-    "cross_entropy",
     "softmax",
     "to",
     "linear",
@@ -531,12 +539,21 @@ def test_vjp_correctness_index_put_manual(op, device, dtype, executor, comp):
 
 # NOTE Scaled_Dot_Product_Efficient_Attention_Backward does not support fp64 dtypes
 # RuntimeError: Only fp32, half & bf16 supported at the moment
+@pytest.mark.skipif(
+    not version_between(torch.__version__, min_ver="2.4.0a0", max_ver="2.4.0a99"),
+    reason="https://github.com/Lightning-AI/lightning-thunder/issues/567",
+)
 @ops(
     (get_opinfo("grad_forward_scaled_dot_product_attention"),),
     supported_dtypes=(dtypes.float16, dtypes.bfloat16),
     supported_devicetypes=(devices.DeviceType.CUDA,),
 )
 def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
+    if version_between(torch.__version__, min_ver="2.4.0a0", max_ver="2.4.0a99"):
+        raise pytest.skip(
+            "https://github.com/Lightning-AI/lightning-thunder/issues/567",
+        )
+
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
         from thunder.executors.sdpaex import sdpa_ex
 
@@ -591,6 +608,28 @@ def test_vjp_correctness_zeta_manual(op, device, dtype, executor, comp):
 def test_vjp_correctness_nll_loss_manual(op, device, dtype, executor, comp):
     for sample in op.sample_inputs(device, dtype, requires_grad=True, no_rhs_numbers=True):
         # Traced backwards function does not follow PyTorch nll_loss behavior with zero element tensors
+        if sample.args[0].numel() == 0:
+            continue
+
+        # Compute vjp result using PyTorch
+        out = op.torch_reference(*sample.args, **sample.kwargs)
+        v = make_tensor_like(out)
+        expected_grad = torch.autograd.grad(out, sample.args[0], v)
+
+        # Compute vjp result using Thunder
+        flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
+        actual_out, grad_out = executor.make_callable_legacy(vjp(flat_op), disable_torch_autograd_support=True)(
+            flat_args, (v,)
+        )
+
+        comp(actual_out, out)
+        comp(grad_out[0], expected_grad[0])
+
+
+@ops((get_opinfo("cross_entropy"),), supported_dtypes=(dtypes.float64,))
+def test_vjp_correctness_cross_entropy_manual(op, device, dtype, executor, comp):
+    for sample in op.sample_inputs(device, dtype, requires_grad=True, no_rhs_numbers=True):
+        # Traced backwards function does not follow PyTorch cross_entropy behavior with zero element tensors
         if sample.args[0].numel() == 0:
             continue
 
@@ -1108,6 +1147,41 @@ def test_forward_and_backward_from_trace(executor, device, _):
     output_grads = tree_map(lambda x: torch.ones_like(x), fw_out)
     bw_out = bw(saved_for_backward, output_grads)
     torch.testing.assert_close(bw_out, expected_grads)
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_update_forward_with_new_saved_for_backward_numberproxy(executor, device, _):
+
+    def foo(t, ab):
+        return t * ab * 0.5
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+
+    t = make_tensor((5, 3), device=device, dtype=torch.float32)
+    t_ref = t.detach()
+    t.requires_grad_()
+    t_ref.requires_grad_()
+
+    out = jfoo(t, 1.5)
+    out_ref = foo(t_ref, 1.5)
+    torch.testing.assert_close(out, out_ref)
+
+    out.sum().backward()
+    out_ref.sum().backward()
+    torch.testing.assert_close(t.grad, t_ref.grad)
+
+    t.grad = None
+    t_ref.grad = None
+
+    out = jfoo(t, 2.7)
+    out_ref = foo(t_ref, 2.7)
+    torch.testing.assert_close(out, out_ref)
+
+    out.sum().backward()
+    out_ref.sum().backward()
+    torch.testing.assert_close(t.grad, t_ref.grad)
 
 
 @instantiate(

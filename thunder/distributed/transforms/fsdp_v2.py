@@ -11,6 +11,7 @@ from thunder.core.proxies import DistParallelType
 from thunder.core.trace import from_trace
 from thunder.core.trace import tracectx
 from thunder.core.trace import TraceProvenance
+from thunder.core.transform_common import EarlyTransform
 
 if TYPE_CHECKING:
     from typing import Any
@@ -23,11 +24,11 @@ __all__ = [
 
 
 @dataclass(frozen=True)
-class FSDPTraceTransform:
+class FSDPTraceTransform(EarlyTransform):
     sharded_params: dict[str, Any]
     process_group: ProcessGroup
 
-    def __call__(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
+    def transform_traces(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
         from thunder.distributed import prims as dist_prims
 
         prologue_producers, prologue_consumers = utils.producers_and_consumers(prologue_trace)

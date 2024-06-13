@@ -1708,6 +1708,8 @@ def _test_fsdp_transformer_engine(input_data):
 @instantiate(
     dtypes=(thunder.float32,),
     num_devices=2,
+    # CPU broke around PyTorch 2.3.1, see PR #545
+    devicetypes=(devices.DeviceType.CUDA,),
     decorators=(pytest.mark.parametrize("bucket_size_in_mb", (0, 25)),),
 )
 @ddp_wrapper("test_native_ddp", _test_native_ddp_helper)

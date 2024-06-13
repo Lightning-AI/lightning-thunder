@@ -104,6 +104,7 @@ class PrimIDs(Enum):
     CHECK_NUMBER_TYPE_AND_VALUE = auto()
     CHECK_BOOL_CONVERSION = auto()
     CHECK_STRING_VALUE = auto()
+    CHECK_SLICE_VALUE = auto()
     CHECK_LEN = auto()
     ASSERT_COMPARE = auto()
     PYTHON_VARS = auto()
@@ -615,11 +616,25 @@ check_string_value = make_prim(
 )
 
 
+def _check_slice_value_meta(s: AnyProxy, value: slice) -> None:
+    baseutils.check_type(s, AnyProxy)
+    baseutils.check_type(value, slice)
+
+
+check_slice_value = make_prim(
+    PrimIDs.CHECK_SLICE_VALUE,
+    "check_slice_value",
+    meta=_check_slice_value_meta,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
 def unpack_trivial_impl(x: Any, /, *, name: str | None = None) -> Any:
     return x
 
 
 def unpack_trivial_meta(x: Any, /, *, name: str | None = None) -> Any:
+    utils.check(name is not None, lambda: "Expected name argmument to not be None")
     return _collectify(x, name=name)
 
 
@@ -1145,7 +1160,6 @@ def pack_buffer_printer(
 
 def pack_buffer_impl(o: Any, key: Any, v: Any) -> None:
     # o[key] = v
-    XXX
     return None
 
 
@@ -3259,7 +3273,7 @@ def take_along_axis_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> Ten
     utils.check_type(index, TensorProxy)
     utils.check_type(dim, (int, IntegerProxy))
     utils.check_same_device(a, index)
-    utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={dtype} was not an integer dtype")
+    utils.check(utils.is_integer_dtype(index.dtype), lambda: f"{index.dtype=} was not an integer dtype")
     utils.check(
         index.ndim == a.ndim, lambda: f"Expected index (rank={index.ndim}) to have the same rank as a (rank={a.ndim})"
     )

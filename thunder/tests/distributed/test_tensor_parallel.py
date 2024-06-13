@@ -8,9 +8,9 @@ import thunder
 from thunder.distributed import column_parallel, row_parallel
 import thunder.executors
 from thunder.tests.distributed.helper import ToyModel, DataParallelTestCase
+from thunder.tests.distributed.modules import ParallelMLP
 
 from torch.testing._internal import common_utils
-from torch.distributed import distributed_c10d as c10d
 
 _COL = "column"
 _ROW = "row"
@@ -24,7 +24,7 @@ class TensorParallelTest(DataParallelTestCase):
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     @common_utils.parametrize("name,bias", product(tuple(_name_to_transform.keys()), (True, False)))
-    def test_tensor_parallel_linear(self, name, bias):
+    def test_linear(self, name, bias):
         device = torch.device("cuda", self.rank)
         x = torch.randn(2, 12).to(device).requires_grad_()
         x_ref = x.clone().detach().requires_grad_()
@@ -74,7 +74,7 @@ class TensorParallelTest(DataParallelTestCase):
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     @common_utils.parametrize("name", tuple(_name_to_transform.keys()))
-    def test_tensor_parallel_embedding(self, name):
+    def test_embedding(self, name):
         num_embeddings = 128
         embedding_dim = 32
 
@@ -130,7 +130,7 @@ class TensorParallelTest(DataParallelTestCase):
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     @common_utils.parametrize("bias", (True, False))
-    def test_tensor_parallel_both_column_and_row(self, bias):
+    def test_both_column_and_row(self, bias):
         num_embeddings = 128
         embedding_dim = 32
         n_hidden = 96
@@ -188,6 +188,116 @@ class TensorParallelTest(DataParallelTestCase):
                     ref_grad = ref_grad.chunk(self.world_size, dim)[self.rank]
                 grad = tp_model.get_parameter(param_fqn).grad
                 torch.testing.assert_close(actual=grad, expected=ref_grad, msg=msg)
+
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
+    @common_utils.parametrize("meta_init", (False, True))
+    def test_parallel_mlp(self, meta_init):
+        from thunder.distributed.prims import PrimIDs
+
+        sequence_length: int = 32
+        batch_size: int = 4
+        hidden_size: int = 128
+        ffn_hidden_size: int = 512
+        device = torch.device("cuda", self.rank)
+
+        ref_mlp = ParallelMLP(hidden_size=hidden_size, ffn_hidden_size=ffn_hidden_size).to(device)
+        ref_state_dict = ref_mlp.state_dict()
+
+        # TODO(crcrpar): Support checkpoint load/save
+        if meta_init:
+            with torch.device("meta"):
+                mlp = ParallelMLP(hidden_size=hidden_size, ffn_hidden_size=ffn_hidden_size)
+        else:
+            mlp = ParallelMLP(hidden_size=hidden_size, ffn_hidden_size=ffn_hidden_size).to(device)
+            mlp.load_state_dict(ref_state_dict)
+        tp_mlp = thunder.jit(mlp)
+        tp_mlp = column_parallel(tp_mlp, ParallelMLP.COLUMN_WISE)
+        tp_mlp = row_parallel(tp_mlp, ParallelMLP.ROW_WISE)
+
+        # See https://github.com/NVIDIA/NeMo/blob/95ca2f4/nemo/collections/nlp/modules/common/megatron/mlp.py#L221 for the input shape.
+        x_ref = torch.randn((sequence_length, batch_size, hidden_size), device=device, requires_grad=True)
+        x = x_ref.clone().detach().requires_grad_(True)
+
+        expected = ref_mlp(x_ref)
+        actual = tp_mlp(x)
+
+        if not meta_init:
+            torch.testing.assert_close(actual=actual, expected=expected)
+
+        grad = torch.rand_like(x_ref)
+        expected.backward(grad)
+        actual.backward(grad)
+
+        if not meta_init:
+            torch.testing.assert_close(actual=x.grad, expected=x_ref.grad)
+
+        tp_syncs = {PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_INPUT, PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_OUTPUT}
+        fwd_traces_with_tensor_parallel_syncs = list(
+            filter(
+                lambda trace: any(bsym.sym.id in tp_syncs for bsym in trace.bound_symbols),
+                thunder.last_traces(tp_mlp),
+            )
+        )
+
+        last_fwd_trace_with_tp_sync = fwd_traces_with_tensor_parallel_syncs[-1]
+        bsyms_of_tp_sync = tuple(
+            filter(lambda bsym: bsym.sym.id in tp_syncs, last_fwd_trace_with_tp_sync.bound_symbols)
+        )
+        msg = f"{bsyms_of_tp_sync=}"
+        # Two bsyms are supposed to be
+        # - preprocessing of column-wise parallel linear
+        # - postprocessing of row-wise parallel linear
+        self.assertEqual(len(bsyms_of_tp_sync), 2, msg=msg)
+
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
+    def test_litgpt_causal_self_attention(self):
+        from thunder.tests.litgpt_model import Config
+        from thunder.tests.litgpt_model import CausalSelfAttention
+        from thunder.tests.make_tensor import make_tensor
+        from thunder.distributed.prims import PrimIDs
+
+        device = torch.device(f"cuda:{self.rank}")
+        dtype = torch.bfloat16
+
+        batch_size: int = 4  # 4 is chosen arbitrarily.
+        config_name: str = "Llama-2-13b-hf"
+        config = Config.from_name(config_name)
+
+        x_shape = (batch_size, config.block_size, config.n_embd)
+        cos_shape = (config.block_size, config.rope_n_elem)
+        sin_shape = (config.block_size, config.rope_n_elem)
+        mask = None
+        input_pos = None
+
+        attention = CausalSelfAttention(config).to(device=device, dtype=dtype)
+        # Temporarily use only torchex due to https://github.com/NVIDIA/Fuser/issues/2390
+        tp_attention = thunder.jit(attention, executors=[thunder.executors.get_torch_executor()])
+        tp_attention = column_parallel(tp_attention, ["attn"])
+        tp_attention = row_parallel(tp_attention, ["proj"])
+
+        x = make_tensor(x_shape, device=device, dtype=dtype, requires_grad=True)
+        cos = make_tensor(cos_shape, device=device, dtype=dtype, requires_grad=True)
+        sin = make_tensor(sin_shape, device=device, dtype=dtype, requires_grad=True)
+
+        # TODO(crcrpar): add numeircal check
+        y = tp_attention(x, cos, sin, mask, input_pos)
+        tp_syncs = {PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_INPUT, PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_OUTPUT}
+        fwd_traces_with_tensor_parallel_syncs = list(
+            filter(
+                lambda trace: any(bsym.sym.id in tp_syncs for bsym in trace.bound_symbols),
+                thunder.last_traces(tp_attention),
+            )
+        )
+
+        last_fwd_trace_with_tp_sync = fwd_traces_with_tensor_parallel_syncs[-1]
+        bsyms_of_tp_sync = tuple(
+            filter(lambda bsym: bsym.sym.id in tp_syncs, last_fwd_trace_with_tp_sync.bound_symbols)
+        )
+        msg = f"{bsyms_of_tp_sync=}"
+        # TODO(crcrpar): Fix the comm optimization path. Ideally, 2.
+        # Though note this class' forward seems to depend on a hyperparam that could be affected by tensor parallel transform.
+        # ref: https://github.com/Lightning-AI/litgpt/blob/8ca46d2f/litgpt/model.py#L218
+        self.assertEqual(len(bsyms_of_tp_sync), 4, msg=msg)
 
 
 common_utils.instantiate_parametrized_tests(TensorParallelTest)

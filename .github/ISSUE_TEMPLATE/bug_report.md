@@ -2,9 +2,10 @@
 name: Bug report
 about: Create a report to help us improve
 title: ''
-labels: bug
 assignees: ''
 ---
+
+*Note*: If you have a model or program that is not supported yet but should be, please use the program coverage template.
 
 ## 🐛 Bug
 
