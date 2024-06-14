@@ -583,10 +583,12 @@ class NumberProxy(Proxy, NumberProxyInterface):
         *,
         python_type: type,
         history: None | tuple = None,
-        constraint: CONSTRAINT = CONSTRAINT.DYNAMIC,
+        constraint: None | CONSTRAINT = None,
     ):
         self.value = value
         self.python_type = python_type
+        if constraint is None:
+            constraint = CONSTRAINT.DYNAMIC 
         self.constraint = constraint
 
         Proxy.__init__(self, name, history=history)
@@ -605,6 +607,9 @@ class NumberProxy(Proxy, NumberProxyInterface):
     def make_static_constrained(self):
         baseutils.check(self.constraint != CONSTRAINT.DYNAMIC, lambda: f"dynamic NumberProxy cannot be made static")
         self.constraint = CONSTRAINT.STATIC
+
+    def make_constrainable(self):
+        self.constraint = CONSTRAINT.CONSTRAINABLE
 
     def is_static_constrained(self) -> bool:
         return self.constraint == CONSTRAINT.STATIC
@@ -968,7 +973,7 @@ def pytype(x: Proxy) -> type | None:
 # TODO RC1 Update Proxy number inits to be value, /, *, name, history
 class ComplexProxy(NumberProxy):
     def __init__(
-        self, name=None, value=None, history: None | tuple = None, constraint: CONSTRAINT = CONSTRAINT.DYNAMIC
+        self, name=None, value=None, history: None | tuple = None, constraint: None | CONSTRAINT = None 
     ):
         NumberProxy.__init__(self, name=name, value=value, python_type=complex, history=history, constraint=constraint)
 
@@ -989,7 +994,7 @@ class IntegerProxy(NumberProxy):
         name: str | None = None,
         value=None,
         history: None | tuple = None,
-        constraint: CONSTRAINT = CONSTRAINT.DYNAMIC,
+        constraint: None | CONSTRAINT = None,
     ):
         # NOTE bools are also integers in Python
         python_type = bool if isinstance(value, bool) else int
@@ -1018,7 +1023,7 @@ class IntegerProxy(NumberProxy):
 # TODO Review dtype conversions
 class FloatProxy(NumberProxy):
     def __init__(
-        self, name=None, value=None, history: None | tuple = None, constraint: CONSTRAINT = CONSTRAINT.DYNAMIC
+        self, name=None, value=None, history: None | tuple = None, constraint: None | CONSTRAINT = None
     ):
         NumberProxy.__init__(self, name=name, value=value, python_type=float, history=history, constraint=constraint)
 
@@ -1600,7 +1605,7 @@ def futuretensorproxy(
     )
 
 
-def numberproxy(cls: type, value: Number | None, constraint: CONSTRAINT = CONSTRAINT.DYNAMIC) -> NumberProxy:
+def numberproxy(cls: type, value: Number | None, constraint: None | CONSTRAINT = None) -> NumberProxy:
     pcls = _cls_to_number_proxy_map[cls]
     return pcls(value=value, constraint=constraint)
 

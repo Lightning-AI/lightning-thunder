@@ -119,6 +119,7 @@ EXT_FLAG_IS_TENSOR_PROXY = 2
 EXT_FLAG_IS_MODULE_MEMBER_DICT = 4
 EXT_FLAG_IS_MODULE = 8
 EXT_FLAG_IS_CALLABLE = 16
+EXT_FLAG_IS_CONSTRAINABLE_INPUT = 32
 MODULE_MEMBER_DICT_ATTRS = {
     "_parameters",
     "_modules",
@@ -618,6 +619,8 @@ class GeneralJitCtx(MinimalCtx):
             value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
             # we follow the caching mechanisms of the eager_unpack_interpreter
             p = proxy(uvalue, history=value.provenance)
+            if value.provenance.ext_flag &= EXT_FLAG_IS_CONSTRAINABLE_INPUT and hasattr(p, "make_constrainable"):
+                p.make_constrainable()
             assert p.history is not None, f"{p.history}, {value.provenance} {type(p)}"
 
             co: CACHE_OPTIONS = get_cache_option()
@@ -1129,6 +1132,7 @@ def _general_jit_wrap_callback(value):
             pass
         elif should_register_for_prologue(value.provenance):
             value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
+            value.provenance.ext_flag |= EXT_FLAG_IS_CONSTRAINABLE_INPUT
             # we follow the caching mechanisms of the eager_unpack_interpreter
             p = ctx.proxify(value)
         else:
