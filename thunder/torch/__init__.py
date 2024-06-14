@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from enum import Enum
 from functools import partial, reduce, wraps
 from numbers import Number
-from typing import Any, overload, Optional, Union
+from typing import Any, overload
 from types import NoneType
 from collections.abc import Callable
 
@@ -2045,6 +2045,7 @@ def amin(a, /, dim=None, keepdim: bool = False):
     )
 
 
+# NOTE: Using name `torch_max` to avoid conflict with Python's `max`
 @overload
 def torch_max(a: TensorLike, /) -> TensorLike: ...
 
