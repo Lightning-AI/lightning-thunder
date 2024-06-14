@@ -1364,10 +1364,11 @@ def _maximum_grad(a: TensorProxy, b: TensorProxy, /):
     g = get_grad(fwd)
 
     # Compute sub-gradient if `a == b`
-    a_grad = prims.where(a == b, g / 2, 0.0)
-    b_grad = prims.where(a == b, g / 2, 0.0)
-    a_grad = prims.where(a > b, g, a_grad)
-    b_grad = prims.where(b > a, g, b_grad)
+    # NOTE: We evenly distribute the gradient where the values are equal.
+    vals_equal_grad = prims.where(a == b, g / 2, 0.0)
+
+    a_grad = prims.where(a > b, g, vals_equal_grad)
+    b_grad = prims.where(b > a, g, vals_equal_grad)
 
     put_grad(a, a_grad)
     put_grad(b, b_grad)

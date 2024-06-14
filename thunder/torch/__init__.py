@@ -2068,17 +2068,21 @@ def torch_max(
     )  # `keepdim` can be a [IntegerProxy (bool type) name=keepdim, value=False]
     if isinstance(dim, TensorLike):
         # overload - torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike
+        # This overload corresponds to taking the elementwise max between tensors `a` and `b`.
         utils.check(not keepdim, lambda: "keepdim=True is invalid for torch.max(a, b) overload.")
         b = dim
         return maximum(a, b)
 
     if dim is None:
         # overload - torch_max(a: TensorLike, /) -> TensorLike
+        # This overload corresponds to taking the max over the flattened tensor.
         utils.check(not keepdim, lambda: "keepdim=True is invalid for torch.max(a) overload.")
         dim = list(range(a.ndim))
         return amax(a, dim, keepdim)
 
     # overload - torch_max(a: TensorLike, /, dim: int | tuple[int], keepdim: bool = False) -> TensorLike, TensorLike
+    # This overload corresponds to taking the max along the specified dimension `dim`.
+    # NOTE: It returns first occurence of the maximum value along the dimension and it's corresponding index.
     utils.check_type(dim, NumberLike)
     max_vals = amax(a, dim, keepdim)
     argmax_vals = argmax(a, dim, keepdim)

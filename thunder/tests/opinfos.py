@@ -5008,6 +5008,7 @@ def max_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     for shape, dim, keepdim in cases:
         # overload: torch_max(a: TensorLike, /) -> TensorLike
+        # This overload corresponds to taking the max over the flattened tensor.
         yield SampleInput(make(shape))
 
         if not requires_grad and dtype.is_floating_point:
@@ -5019,18 +5020,23 @@ def max_sample_generator(op, device, dtype, requires_grad, **kwargs):
             yield SampleInput(make_with_extremal_value(shape, float("inf")))
 
         # overload: torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike
+        # This overload corresponds to taking the elementwise max between tensors `a` and `b`.
         yield SampleInput(make(shape), make(shape))
 
         if not (dtype is torch.bool):  # argmax is not supported on `bool`
             # overload: torch_max(a: TensorLike, /, dim: int | tuple[int], keepdim: bool = False) -> TensorLike, TensorLike
+            # This overload corresponds to taking the max along the specified dimension `dim`.
+            # It returns first occurence of the maximum value along the dimension and it's corresponding index.
+            # NOTE: When same values are present, the first occurence of the `value` and corresponding index is returned
             yield SampleInput(make(shape), dim)
             yield SampleInput(make(shape), dim, keepdim)
 
             if not requires_grad and dtype.is_floating_point:
                 # Currently, if there are multiple `max` values
                 # `torch` eager - gradients max(dim) propagates gradient only to a single index in the source tensor
-                # `thunder` - gradients are distributed evenly.
+                # `thunder` - gradients are distributed evenly among the maximum values.
                 # Thus we don't pass these inputs to grad tests
+                # NOTE: When same values are present, the first occurence of the `value` and corresponding index is returned
                 yield SampleInput(make_with_extremal_value(shape, float("nan")), dim)
                 yield SampleInput(make_with_extremal_value(shape, float("inf")), dim)
 
