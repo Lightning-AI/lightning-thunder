@@ -7,7 +7,6 @@ from contextvars import ContextVar
 from contextlib import contextmanager
 from itertools import chain
 from types import ModuleType
-from typing import NamedTuple
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, List, Type, Tuple, TYPE_CHECKING
@@ -526,9 +525,10 @@ class BoundSymbol(BoundSymbolInterface):
 
         return (self.sym, self._var_args, self._var_output) == (other.sym, other._var_args, other._var_output)
 
-    def rhs(self):
-        hashable_args = tuple(map(make_hashable, self._var_args))
-        return BoundSymbolRHS(self.sym, hashable_args, FrozenDict(self._var_kwargs))
+    def rhs(self) -> BoundSymbolRHS:
+        hashable_args = make_hashable(self._var_args)
+        hashable_kwargs = make_hashable(self._var_kwargs)
+        return BoundSymbolRHS(self.sym, hashable_args, hashable_kwargs)
 
     # TODO Document contexts
     def import_ctx(self):
