@@ -2094,6 +2094,7 @@ maximum_opinfo = OpInfo(
     clang.maximum,
     sample_input_generator=partial(elementwise_binary_generator, no_rhs_numbers=True),
     torch_reference=torch.maximum,
+    supports_grad=True,
 )
 elementwise_binary_ops.append(maximum_opinfo)
 
@@ -5003,10 +5004,15 @@ def max_sample_generator(op, device, dtype, requires_grad, **kwargs):
     )
 
     for shape, dim, keepdim in cases:
+        # overload: torch_max(a: TensorLike, /) -> TensorLike
         yield SampleInput(make(shape))
+
+        # overload: torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike
         yield SampleInput(make(shape), make(shape))
 
         if not (dtype is torch.bool):  # argmax is not supported on `bool`
+            # overload: torch_max(a: TensorLike, /, dim: int | tuple[int], keepdim: bool = False) -> TensorLike, TensorLike
+            yield SampleInput(make(shape), dim)
             yield SampleInput(make(shape), dim, keepdim)
 
 
