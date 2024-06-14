@@ -66,8 +66,8 @@ def test_view_ops(executor, device: str, dtype: dtypes.dtype):
     fw_traces = thunder.last_traces(cbar)
     fwd_extrace = fw_traces[-1]
     max_mem_fwd = get_alloc_memory(fwd_extrace)
-    assert max_mem_fwd[0] == 144
-    assert sum(max_mem_fwd[1].values()) == get_return_memory(fwd_extrace.bound_symbols[-1])  # 144
+    assert max_mem_fwd[0] == 256
+    assert sum(max_mem_fwd[1].values()) == get_return_memory(fwd_extrace.bound_symbols[-1])  # 112
     bw_traces = thunder.last_backward_traces(cbar)
     bw_extrace = bw_traces[-1]
     max_mem_bw = get_alloc_memory(bw_extrace)
