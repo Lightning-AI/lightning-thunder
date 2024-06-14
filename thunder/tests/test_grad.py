@@ -321,7 +321,6 @@ def check_vjp(f, *primals, comp, executor="torch", atol=1e-5, rtol=1.3e-6):
         return  # skip this sample
     partial_comp = partial(comp, atol=atol, rtol=rtol, check_device=False)
     partial_comp(J_u_v, u_J_star_v)
-    # torch.testing.assert_close(J_u_v, u_J_star_v, atol=atol, rtol=rtol, check_device=False)
 
 
 def _is_differentiable(x):
