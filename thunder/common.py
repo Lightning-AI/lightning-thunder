@@ -703,11 +703,10 @@ def _execute_trace(
 def _create_callable(
     cd: CompileData,
     cs: CompileStats,
-    *,
-    transforms: list[Callable] = [],
-    post_optimization_transforms: list[Callable] = [],
-    _using_grad_transform: bool = False,
 ) -> Callable:
+    transforms = []
+    post_optimization_transforms = []
+    _using_grad_transform = False
     @wraps(cd.fn)
     def _fn(*args, **kwargs) -> tuple[Any, list[TraceCtx]]:
         cs.last_trace_host_start = time.time_ns()
