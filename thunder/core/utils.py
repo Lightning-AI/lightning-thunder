@@ -7,7 +7,7 @@ from itertools import chain
 from numbers import Number
 from typing import Any, overload, Generic, Optional, TypeVar, TYPE_CHECKING
 from collections.abc import Callable
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Hashable, Iterable, Iterator, Sequence
 
 from typing_extensions import Self
 
@@ -765,6 +765,10 @@ class FrozenDict(_UserDictT[T, T1], Mapping[T, T1]):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
+
+        if not all([is_hashable(v) for _, v in self.data.items()]):
+            raise TypeError("FrozenDict cannot be created from dict containing unhashable types")
+
         self.data = MappingProxyType({**self.data})
 
     def __repr__(self) -> str:
@@ -772,8 +776,7 @@ class FrozenDict(_UserDictT[T, T1], Mapping[T, T1]):
         return f"{self.__class__.__name__}({{{body}}})"
 
     def __hash__(self) -> int:
-        hashable_items = map(lambda item: (item[0], make_hashable(item[1])), self.items())
-        return hash(frozenset(hashable_items))
+        return hash(frozenset(self.items()))
 
 
 #
@@ -1126,11 +1129,17 @@ def partition(pred, iterable):
     return itertools.filterfalse(pred, t1), filter(pred, t2)
 
 
-def make_hashable(item: Any, /) -> tuple:
-    if isinstance(item, (list, tuple)):
-        return tuple(map(make_hashable, item))
-    if isinstance(item, dict):
-        return FrozenDict(item)
-    if isinstance(item, slice):
-        return id(item)
-    return item
+def is_hashable(a: Any, /) -> bool:
+    if isinstance(a, tuple):
+        return all([is_hashable(x) for x in a])
+    return isinstance(a, Hashable)
+
+
+def make_hashable(a: Any, /) -> tuple | FrozenDict:
+    if isinstance(a, Hashable) and not isinstance(a, tuple):
+        return a
+    if isinstance(a, Sequence):
+        return tuple(map(make_hashable, a))
+    if isinstance(a, dict):
+        return FrozenDict(map(lambda item: (item[0], make_hashable(item[1])), a.items()))
+    return id(a)
