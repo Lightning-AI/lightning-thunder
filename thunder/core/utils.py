@@ -134,6 +134,8 @@ corresponding_complex_dtype = dtypes.corresponding_complex_dtype
 def resolve_constraints(*args):
     all_static = True
     for arg in args:
+        if not isinstance(arg, Proxy):
+            continue
         if not isinstance(arg, NumberProxy) or arg.is_dynamic():
             return CONSTRAINT.DYNAMIC
         if not arg.is_static_constrained():

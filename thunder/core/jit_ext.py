@@ -619,7 +619,7 @@ class GeneralJitCtx(MinimalCtx):
             value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
             # we follow the caching mechanisms of the eager_unpack_interpreter
             p = proxy(uvalue, history=value.provenance)
-            if value.provenance.ext_flag &= EXT_FLAG_IS_CONSTRAINABLE_INPUT and hasattr(p, "make_constrainable"):
+            if value.provenance.ext_flag & EXT_FLAG_IS_CONSTRAINABLE_INPUT and hasattr(p, "make_constrainable"):
                 p.make_constrainable()
             assert p.history is not None, f"{p.history}, {value.provenance} {type(p)}"
 
