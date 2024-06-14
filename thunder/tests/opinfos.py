@@ -4997,6 +4997,9 @@ def max_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # For grad test stability it's better to use wider range of values
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad, low=-1000, high=1000)
 
+    def make_with_extremal_value(shape, extremal, percentage=0.5):
+        return replace_random_percentage(make(shape), extremal, percentage=percentage)
+
     # shape, dim, keepdim
     cases = (
         ((2, 2, 3), 1, True),
@@ -5007,6 +5010,14 @@ def max_sample_generator(op, device, dtype, requires_grad, **kwargs):
         # overload: torch_max(a: TensorLike, /) -> TensorLike
         yield SampleInput(make(shape))
 
+        if not requires_grad and dtype.is_floating_point:
+            # Currently, if there are multiple `max` values
+            # `torch` eager - gradients max(dim) propagates gradient only to a single index in the source tensor
+            # `thunder` - gradients are distributed evenly.
+            # Thus we don't pass these inputs to grad tests
+            yield SampleInput(make_with_extremal_value(shape, float("nan")))
+            yield SampleInput(make_with_extremal_value(shape, float("inf")))
+
         # overload: torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike
         yield SampleInput(make(shape), make(shape))
 
@@ -5014,6 +5025,14 @@ def max_sample_generator(op, device, dtype, requires_grad, **kwargs):
             # overload: torch_max(a: TensorLike, /, dim: int | tuple[int], keepdim: bool = False) -> TensorLike, TensorLike
             yield SampleInput(make(shape), dim)
             yield SampleInput(make(shape), dim, keepdim)
+
+            if not requires_grad and dtype.is_floating_point:
+                # Currently, if there are multiple `max` values
+                # `torch` eager - gradients max(dim) propagates gradient only to a single index in the source tensor
+                # `thunder` - gradients are distributed evenly.
+                # Thus we don't pass these inputs to grad tests
+                yield SampleInput(make_with_extremal_value(shape, float("nan")), dim)
+                yield SampleInput(make_with_extremal_value(shape, float("inf")), dim)
 
 
 def max_error_generator(op, device, **kwargs):
