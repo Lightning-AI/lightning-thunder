@@ -1365,7 +1365,7 @@ def _maximum_grad(a: TensorProxy, b: TensorProxy, /):
 
     # Compute sub-gradient if `a == b`
     # NOTE: We evenly distribute the gradient where the values are equal.
-    vals_equal_grad = prims.where(a == b, g / 2, 0.0)
+    vals_equal_grad = prims.where(a == b, g / 2, g)
 
     a_grad = prims.where(a > b, g, vals_equal_grad)
     b_grad = prims.where(b > a, g, vals_equal_grad)
