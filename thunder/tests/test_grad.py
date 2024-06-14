@@ -214,7 +214,7 @@ def numerical_jvp(f):
     return jvp
 
 
-def check_jvp(f, *primals, executor, atol=None, rtol=None):
+def check_jvp(f, *primals, comp, executor, atol=None, rtol=None):
     """Check that the Jacobian-vector product of a function is correct.
 
     Args:
@@ -230,8 +230,9 @@ def check_jvp(f, *primals, executor, atol=None, rtol=None):
     tangents = tree_map(make_tensor_like, primals)
     actual_p, actual_t = executor.make_callable_legacy(jvp(f))(primals, tangents)
     expected_p, expected_t = numerical_jvp(executor.make_callable_legacy(f))(primals, tangents)
-    torch.testing.assert_close(expected_p, actual_p, atol=atol, rtol=rtol)
-    torch.testing.assert_close(expected_t, actual_t, atol=atol, rtol=rtol)
+    partial_comp = partial(comp, atol=atol, rtol=rtol)
+    partial_comp(expected_p, actual_p)
+    partial_comp(expected_t, actual_t)
 
 
 def _replace_none_with_zero(x, y):
@@ -363,8 +364,8 @@ def _make_differentiable_wrapper(func, args):
     return wrapper, filtered_args
 
 
-def snippet_jvp_correctness(func, args, executor):
-    check_jvp(func, *args, executor=executor)
+def snippet_jvp_correctness(func, args, comp, executor):
+    check_jvp(func, *args, comp=comp, executor=executor)
 
 
 # TODO Use the given comparator
@@ -387,6 +388,7 @@ def test_jvp_correctness(op, device, dtype, executor, comp):
             dtype,
             filtered_op,
             filtered_args,
+            comp,
             executor,
         )
         if result is not None:
