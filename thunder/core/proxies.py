@@ -588,7 +588,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
         self.value = value
         self.python_type = python_type
         if constraint is None:
-            constraint = CONSTRAINT.DYNAMIC 
+            constraint = CONSTRAINT.DYNAMIC
         self.constraint = constraint
 
         Proxy.__init__(self, name, history=history)
@@ -972,9 +972,7 @@ def pytype(x: Proxy) -> type | None:
 
 # TODO RC1 Update Proxy number inits to be value, /, *, name, history
 class ComplexProxy(NumberProxy):
-    def __init__(
-        self, name=None, value=None, history: None | tuple = None, constraint: None | CONSTRAINT = None 
-    ):
+    def __init__(self, name=None, value=None, history: None | tuple = None, constraint: None | CONSTRAINT = None):
         NumberProxy.__init__(self, name=name, value=value, python_type=complex, history=history, constraint=constraint)
 
     def replace_name(self, name):
@@ -1022,9 +1020,7 @@ class IntegerProxy(NumberProxy):
 
 # TODO Review dtype conversions
 class FloatProxy(NumberProxy):
-    def __init__(
-        self, name=None, value=None, history: None | tuple = None, constraint: None | CONSTRAINT = None
-    ):
+    def __init__(self, name=None, value=None, history: None | tuple = None, constraint: None | CONSTRAINT = None):
         NumberProxy.__init__(self, name=name, value=value, python_type=float, history=history, constraint=constraint)
 
     def replace_name(self, name):
