@@ -325,7 +325,7 @@ def _eager_unpacking_interpreter(
         for name, x in si.args:
             p: Proxy
             p, _ = _eager_unpack(x, name, co=co)
-            prims.unpack_trivial(p)
+            prims.unpack_trivial(p, name=name)
             cargs, iargs = _eager_validate(p, co=co)
             computation_args.extend(cargs)
 
@@ -339,7 +339,7 @@ def _eager_unpacking_interpreter(
 
             p: Proxy
             p, _ = _eager_unpack(x, name, co=co)
-            prims.unpack_trivial(p)
+            prims.unpack_trivial(p, name=name)
             cargs, iargs = _eager_validate(p, co=co)
             computation_args.extend(cargs)
 
@@ -351,7 +351,7 @@ def _eager_unpacking_interpreter(
         for name, x in si.kwargs.items():
             p: Proxy
             p, _ = _eager_unpack(x, name, co=co)
-            prims.unpack_trivial(p)
+            prims.unpack_trivial(p, name=name)
             cargs, iargs = _eager_validate(p, co=co)
             computation_args.extend(cargs)
 
@@ -364,7 +364,7 @@ def _eager_unpacking_interpreter(
 
             p: Proxy
             p, _ = _eager_unpack(x, name, co=co)
-            prims.unpack_trivial(p)
+            prims.unpack_trivial(p, name=name)
             cargs, iargs = _eager_validate(p, co=co)
             computation_args.extend(cargs)
 
@@ -382,7 +382,7 @@ def _eager_unpacking_interpreter(
     with tracectx(computation_trc):
         p: Proxy
         for p in computation_args:
-            prims.unpack_trivial(p)
+            prims.unpack_trivial(p, name=p.name)
             csi.args.append((p.name, None))
             computation_trc.add_name(p.name)
 

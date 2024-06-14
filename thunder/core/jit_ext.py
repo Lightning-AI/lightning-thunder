@@ -792,6 +792,16 @@ def _general_jit_setattr_lookaside(obj: Any, name: str, value: Any):
     return res
 
 
+@general_jit_lookaside(torch.compile)
+def _jit_torch_compile_lookaside(*args, **kwargs):
+    return do_raise(
+        NotImplementedError(
+            "Using torch.compile within a function to be JIT-compiled by Thunder is not supported. "
+            "Please remove the call to torch.compile or apply it outside the function."
+        )
+    )
+
+
 # TODO Expand on this
 @interpreter_needs_wrap
 def _general_jit_hasattr_lookaside(obj: Any, name: str):
@@ -1561,12 +1571,12 @@ def process_recorded_modifications(ctx, epilogue_trace):
 
 def bind_inputs(name, trace, input_vars, input_proxies):
     # Unpacks inputs into the computation trace
-    # TODO This currently does the unpacks at the end of he trace, then moves them to the beginning, there's
+    # TODO This currently does the unpacks at the end of the trace, then moves them to the beginning, there's
     #   almost certainly a more elegant way to do this
     with tracectx(trace):
         p: Proxy
         for p in input_proxies:
-            prims.unpack_trivial(p)
+            prims.unpack_trivial(p, name=p.name)
 
     bsyms = trace.bound_symbols
     trace.bound_symbols = bsyms[-len(input_proxies) :] + bsyms[: -len(input_proxies)]

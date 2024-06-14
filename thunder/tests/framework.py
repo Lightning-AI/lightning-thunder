@@ -6,6 +6,7 @@ from functools import wraps, singledispatchmethod, partial
 from itertools import product
 from typing import List, Optional
 from collections.abc import Callable, Sequence, Iterable
+import packaging.version
 
 import pytest
 import torch
@@ -58,6 +59,15 @@ DISABLE_CUDA_TEST_INSTANTIATION: bool = (
     env_var_DISABLE_CUDA_TEST_INSTANTIATION == "true" or env_var_DISABLE_CUDA_TEST_INSTANTIATION == "1"
 )
 IS_WINDOWS = platform.system() == "Windows"
+
+
+def version_between(version: str, *, min_ver: str | None = None, max_ver: str | None = None):
+    v = packaging.version.parse(version)
+    if min_ver is not None and v < packaging.version.parse(min_ver):
+        return False
+    if max_ver is not None and v > packaging.version.parse(max_ver):
+        return False
+    return True
 
 
 # Filters the CPU devicetype when in CI, CUDA is available, and the environment variable

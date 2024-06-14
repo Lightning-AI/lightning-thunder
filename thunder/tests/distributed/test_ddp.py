@@ -1548,13 +1548,19 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
             out = jit_model(x, y).sum()
             out.backward()
 
-        fwd_exec_trace = thunder.last_traces(jit_model)[-1]
         bwd_exec_trace = thunder.last_backward_traces(jit_model)[-1]
+
+        # Last symbol of the trace should be `return`
+        return_sym_idx = len(bwd_exec_trace.bound_symbols) - 1
+        assert thunder.core.prims.PrimIDs.RETURN == bwd_exec_trace.bound_symbols[return_sym_idx].sym.id
 
         # Verify that the symbol to sync backward
         # fp8 metadata is present in backward trace.
-        for bsym in reversed(bwd_exec_trace.bound_symbols):
+        for idx, bsym in enumerate(bwd_exec_trace.bound_symbols):
             if bsym.sym.id == te_sync_fp8_meta_bwd.id:
+                # Verify that `te_sync_fp8_meta_bwd` is before the last symbol of the trace
+                # which is `return`
+                assert idx < return_sym_idx
                 break
         else:
             raise RuntimeError("Backward sync symbol not found.")

@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from enum import Enum
 from functools import partial, reduce, wraps
 from numbers import Number
-from typing import Any, Union, Optional, Tuple
+from typing import Any
 from collections.abc import Callable
 
 import opt_einsum
@@ -35,7 +35,7 @@ from thunder.core.proxies import (
 )
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
-from thunder.core.transforms import register_grad, put_grads
+from thunder.core.transforms import register_grad
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.baseutils import run_once
 
@@ -45,7 +45,6 @@ __all__ = [
 
 # NOTE torch is a requirement
 import torch
-import torch.distributed as tdist
 
 import warnings
 
@@ -149,6 +148,14 @@ class torchsymbol:
                 _torch_to_thunder_function_map[torchfn] = sym
 
         return sym
+
+
+# This is function maps an implementation for `torch` operation without creating a Symbol.
+# So, the registered implementation will not show up in trace as a Symbol (but will get inlined).
+# This is helpful if we want to support a torch operation and bake it's output directly into the trace.
+# See `clone` and `torch.device` for example.
+def register_function(torchfn, thunderfn_impl):
+    _torch_to_thunder_function_map[torchfn] = thunderfn_impl
 
 
 #
@@ -2063,8 +2070,8 @@ def clone(a: TensorProxy, *, memory_format=torch.preserve_format) -> TensorProxy
 
 # Because we do not use @torchsymbol, we need to manually register the
 # implementation.
-_torch_to_thunder_function_map[torch.clone] = clone
-_torch_to_thunder_function_map[torch.Tensor.clone] = clone
+register_function(torch.clone, clone)
+register_function(torch.Tensor.clone, clone)
 register_method("clone", clone)
 
 
@@ -3039,6 +3046,26 @@ def batch_norm(
 #
 # NN Operations
 #
+
+
+@torchsymbol(torch.baddbmm, is_method=True)
+def baddbmm(
+    a: TensorLike, b1: TensorLike, b2: TensorLike, *, beta: float = 1.0, alpha: float = 1.0, out: TensorLike = None
+) -> TensorLike:
+    utils.check(out is None, lambda: "Non-None out is not supported", NotImplementedError)
+
+    utils.check_same_dtype(a, b1, b2)
+    utils.check_same_device(a, b1, b2)
+    utils.check(b1.ndim == 3, lambda: f"batch1 must be a 3D tensor, found {b1.ndim} instead.")
+    utils.check(b2.ndim == 3, lambda: f"batch2 must be a 3D tensor, found {b2.ndim} instead.")
+
+    if a.dtype not in dtypes.inexact_dtypes:
+        utils.check_type(beta, int)
+        utils.check_type(alpha, int)
+
+    t0 = matmul(b1, b2)
+    t1 = alpha * t0
+    return t1 + (beta * a)
 
 
 # TODO bmm is more restrictive than matmul
@@ -4369,6 +4396,40 @@ register_method("softmax", _softmax)
 # ref: https://github.com/pytorch/pytorch/blob/8d12ba9acfa20ed7df438a8892c9bf8e6bef5775/torch/nn/modules/activation.py#L1545
 def softmax(a: TensorLike, dim: int, dtype: None | dtypeLike = None, _stacklevel: int = 3) -> TensorLike:
     return _softmax(a, dim=dim, dtype=dtype)
+
+
+def torch_device(device_or_str: DeviceLike, /, index: int | None = None) -> devices.Device:
+    if isinstance(device_or_str, (devices.Device, torch.device)):
+        # PyTorch behavior:
+        # >>> torch.device(torch.device("cuda"), 0)
+        # TypeError: device(): argument 'type' (position 1) must be str, not torch.device
+        utils.check(index is None, lambda: f"device(): `index` is only allowed when `device` is a `str`.")
+        return to_device(device_or_str)
+
+    # NOTE: device_or_str is `str`
+    if index is not None:
+        # PyTorch behavior:
+        # >>> torch.device("cuda:0", 0)
+        # RuntimeError: type (string) must not include an index because index was passed explicitly: cuda:0
+        has_device_idx = len(device_or_str.split(":")) > 1
+        utils.check(
+            not has_device_idx,
+            lambda: f"device string must not include an index because index was passed explicitly: {device_or_str}",
+        )
+
+    return devices.Device(device_or_str, index)
+
+
+# We don't use @torchsymbol as we don't want `torch.device()` to appear in trace as a symbol.
+# Because of this, we need to manually register the implementation.
+register_function(torch.device, torch_device)
+
+
+def _set_grad_enabled_with_warning(enabled: bool) -> None:
+    warnings.warn("torch.enable_grad/torch.no_grad/torch._C._set_grad_enabled have no effect under thunder.jit")
+
+
+register_function(torch._C._set_grad_enabled, _set_grad_enabled_with_warning)
 
 
 #
