@@ -967,7 +967,9 @@ def pytype(x: Proxy) -> type | None:
 
 # TODO RC1 Update Proxy number inits to be value, /, *, name, history
 class ComplexProxy(NumberProxy):
-    def __init__(self, name=None, value=None, history: None | tuple = None, constraint: CONSTRAINT = CONSTRAINT.DYNAMIC):
+    def __init__(
+        self, name=None, value=None, history: None | tuple = None, constraint: CONSTRAINT = CONSTRAINT.DYNAMIC
+    ):
         NumberProxy.__init__(self, name=name, value=value, python_type=complex, history=history, constraint=constraint)
 
     def replace_name(self, name):
@@ -982,10 +984,18 @@ class ComplexProxy(NumberProxy):
 # TODO Review dtype conversions
 # TODO Review -9999 as the marker value for unknown values
 class IntegerProxy(NumberProxy):
-    def __init__(self, name: str | None = None, value=None, history: None | tuple = None, constraint: CONSTRAINT = CONSTRAINT.DYNAMIC):
+    def __init__(
+        self,
+        name: str | None = None,
+        value=None,
+        history: None | tuple = None,
+        constraint: CONSTRAINT = CONSTRAINT.DYNAMIC,
+    ):
         # NOTE bools are also integers in Python
         python_type = bool if isinstance(value, bool) else int
-        NumberProxy.__init__(self, name=name, value=value, python_type=python_type, history=history, constraint=constraint)
+        NumberProxy.__init__(
+            self, name=name, value=value, python_type=python_type, history=history, constraint=constraint
+        )
 
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
@@ -1007,7 +1017,9 @@ class IntegerProxy(NumberProxy):
 
 # TODO Review dtype conversions
 class FloatProxy(NumberProxy):
-    def __init__(self, name=None, value=None, history: None | tuple = None, constraint: CONSTRAINT = CONSTRAINT.DYNAMIC):
+    def __init__(
+        self, name=None, value=None, history: None | tuple = None, constraint: CONSTRAINT = CONSTRAINT.DYNAMIC
+    ):
         NumberProxy.__init__(self, name=name, value=value, python_type=float, history=history, constraint=constraint)
 
     def replace_name(self, name):
