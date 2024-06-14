@@ -2063,7 +2063,9 @@ def torch_max(
     a, /, dim: NumberLike | TensorLike | None = None, keepdim: bool = False
 ) -> TensorLike | tuple[TensorLike, TensorLike]:
     utils.check_type(dim, (NumberLike, TensorLike, NoneType))
-    utils.check_type(keepdim, bool)
+    utils.check_type(
+        keepdim, (bool, IntegerProxy)
+    )  # `keepdim` can be a [IntegerProxy (bool type) name=keepdim, value=False]
     if isinstance(dim, TensorLike):
         # overload - torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike
         utils.check(not keepdim, lambda: "keepdim=True is invalid for torch.max(a, b) overload.")
