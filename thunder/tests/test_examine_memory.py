@@ -152,9 +152,7 @@ def test_nanogpt_block(executor, device, dtype):
         assert sum(bw_alloc_mem[1].values()) == get_return_memory(bw_extrace.bound_symbols[-1])
     if isinstance(executor, TorchTestExecutor):
         assert fw_alloc_mem[0] == 362863616
-        expected_return_calculated_mem = (
-            get_return_memory(fw_extrace.bound_symbols[-1])
-        )
+        expected_return_calculated_mem = get_return_memory(fw_extrace.bound_symbols[-1])
         assert expected_return_calculated_mem == sum(fw_alloc_mem[1].values())
         assert bw_alloc_mem[0] == 412109824
         assert sum(bw_alloc_mem[1].values()) == get_return_memory(bw_extrace.bound_symbols[-1])
