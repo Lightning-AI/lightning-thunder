@@ -580,10 +580,10 @@ class NumberProxy(Proxy, NumberProxyInterface):
         self,
         name: str | None = None,
         value: Number | None = None,
-        constraint: CONSTRAINT = CONSTRAINT.DYNAMIC,
         *,
         python_type: type,
         history: None | tuple = None,
+        constraint: CONSTRAINT = CONSTRAINT.DYNAMIC,
     ):
         self.value = value
         self.python_type = python_type
@@ -967,8 +967,8 @@ def pytype(x: Proxy) -> type | None:
 
 # TODO RC1 Update Proxy number inits to be value, /, *, name, history
 class ComplexProxy(NumberProxy):
-    def __init__(self, name=None, value=None, history: None | tuple = None):
-        NumberProxy.__init__(self, name=name, value=value, python_type=complex, history=history)
+    def __init__(self, name=None, value=None, history: None | tuple = None, constraint: CONSTRAINT = CONSTRAINT.DYNAMIC):
+        NumberProxy.__init__(self, name=name, value=value, python_type=complex, history=history, constraint=constraint)
 
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
@@ -982,10 +982,10 @@ class ComplexProxy(NumberProxy):
 # TODO Review dtype conversions
 # TODO Review -9999 as the marker value for unknown values
 class IntegerProxy(NumberProxy):
-    def __init__(self, name: str | None = None, value=None, history: None | tuple = None):
+    def __init__(self, name: str | None = None, value=None, history: None | tuple = None, constraint: CONSTRAINT = CONSTRAINT.DYNAMIC):
         # NOTE bools are also integers in Python
         python_type = bool if isinstance(value, bool) else int
-        NumberProxy.__init__(self, name=name, value=value, python_type=python_type, history=history)
+        NumberProxy.__init__(self, name=name, value=value, python_type=python_type, history=history, constraint=constraint)
 
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
@@ -1007,8 +1007,8 @@ class IntegerProxy(NumberProxy):
 
 # TODO Review dtype conversions
 class FloatProxy(NumberProxy):
-    def __init__(self, name=None, value=None, history: None | tuple = None):
-        NumberProxy.__init__(self, name=name, value=value, python_type=float, history=history)
+    def __init__(self, name=None, value=None, history: None | tuple = None, constraint: CONSTRAINT = CONSTRAINT.DYNAMIC):
+        NumberProxy.__init__(self, name=name, value=value, python_type=float, history=history, constraint=constraint)
 
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
@@ -1588,9 +1588,9 @@ def futuretensorproxy(
     )
 
 
-def numberproxy(cls: type, value: Number | None) -> NumberProxy:
+def numberproxy(cls: type, value: Number | None, constraint: CONSTRAINT = CONSTRAINT.DYNAMIC) -> NumberProxy:
     pcls = _cls_to_number_proxy_map[cls]
-    return pcls(value=value)
+    return pcls(value=value, constraint=constraint)
 
 
 # TODO RC1 Remove this function
