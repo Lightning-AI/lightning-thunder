@@ -298,8 +298,14 @@ def test_find_cut(executor, device, _):
 )
 def test_find_cut_dropout(executor, device, _):
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
-    compiled_func = thunder.compile(func_with_dropout, disable_preprocessing=True)
-    _ = compiled_func(t0)
+    from unittest.mock import patch, MagicMock
+
+    # mock the replace_uniform transform to return the input trace
+    replace_uniform_mock = MagicMock(side_effect=lambda trc: trc)
+
+    with patch("thunder.core.rematerialization.replace_uniform", new=replace_uniform_mock):
+        compiled_func = thunder.compile(func_with_dropout, disable_preprocessing=True)
+        _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
     nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
@@ -309,10 +315,12 @@ def test_find_cut_dropout(executor, device, _):
     consumer = nvfuser_symbols[2]
     ext_producer_outputs = find_external_producer_outputs(utils.consumers(trace), (), producer, consumer)
     cut = find_cut(ext_producer_outputs, producer, consumer)
-    # Note t5 is the boolean mask for dropout. It should be chosen over the t6
-    # that is the float32 mask. See this issue: "The Recomputation Algorithm on
-    # Dropout choses a float32 mask to save"
-    assert cut == ("t0", "t5", "t9")
+    assert cut[0] == producer.args[0].name
+    # Note cut[1]/producer.output[0] is the boolean mask for dropout. It should
+    # be chosen over the float32 mask. See this issue: "The Recomputation
+    # Algorithm on Dropout choses a float32 mask to save"
+    assert cut[1] == producer.output[0].name
+    assert cut[2] == producer.output[1].name
 
 
 @instantiate(

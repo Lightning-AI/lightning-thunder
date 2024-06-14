@@ -27,7 +27,7 @@ import thunder.executors as executors
 import thunder.torch as ltorch
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
-from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator, IS_WINDOWS
+from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator, IS_WINDOWS, version_between
 from thunder.tests.make_tensor import make_tensor
 import thunder.extend as extend
 import thunder.tests.bf16
@@ -42,7 +42,6 @@ import thunder.tests.bf16
 nvfuser_version: LooseVersion = (
     LooseVersion(executors.get_nvfuser_executor().version) if executors.nvfuser_available() else LooseVersion("0.0.0")
 )
-
 
 # Useful when specifying the domain of an operation
 # NOTE: Big enough such that -1 + eps != -1 in bfloat16
@@ -74,12 +73,22 @@ def push_away_from_singularities(x, singularity_fn, eps):
     return torch.where((x_dist < 0) & (x_dist > -eps), x - eps, x_)
 
 
+# Randomly select a fraction of the elements in a tensor and set them to specified value
+def replace_random_percentage(a: torch.Tensor, value: Number, percentage: float) -> torch.Tensor:
+    flat = torch.flatten(a.detach().clone())
+    num_values_to_replace: int = math.floor(flat.numel() * percentage)
+    choice_np = np.random.choice(np.arange(0, flat.numel()), (num_values_to_replace,), replace=False)
+    choice = torch.asarray(choice_np, device=a.device)
+    flat[choice] = value
+    return flat.reshape(a.shape).requires_grad_(a.requires_grad)
+
+
 def make_number(**kwargs):
     v = make_tensor((), device="cpu", **kwargs).item()
     return v
 
 
-# Returns a noncontiguous (tensor with the same shape and values as t
+# Returns a noncontiguous tensor (with the same shape and values as t)
 # The noncontiguous tensor is constructed such that elements in the innermost
 #   dimension are separated by zeros or (whenever possible) nans
 # TODO: consider more complicated noncontiguity schemes
@@ -562,6 +571,20 @@ is_cuda_opinfo = OpInfo(
 tensor_properties.append(is_cuda_opinfo)
 
 
+def _is_nested_torch(x: torch.Tensor) -> bool:
+    return x.is_nested
+
+
+is_nested_opinfo = OpInfo(
+    _is_nested_torch,
+    sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
+    torch_reference=_is_nested_torch,
+    dtypes=(datatypes.all_dtypes),
+)
+
+tensor_properties.append(is_nested_opinfo)
+
+
 def numel_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
@@ -582,6 +605,38 @@ numel_opinfo = OpInfo(
     torch_reference=torch.numel,
 )
 tensor_properties.append(numel_opinfo)
+
+
+def size_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make_t = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    shapes = (
+        (),
+        (1,),
+        (
+            2,
+            2,
+        ),
+        (0, 2, 1),
+        (2, 0, 1),
+    )
+
+    for shape in shapes:
+        t = make_t(shape)
+        yield SampleInput(t)
+
+        for d in range(len(shape)):
+            yield SampleInput(t, d)
+
+
+size_opinfo = OpInfo(
+    ltorch.size,
+    sample_input_generator=size_sample_generator,
+    torch_reference=torch.Tensor.size,
+)
+
+tensor_properties.append(size_opinfo)
+
 
 opinfos.extend(tensor_properties)
 
@@ -1148,33 +1203,6 @@ rsqrt_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(rsqrt_opinfo)
 
-silu_opinfo = OpInfo(
-    clang.silu,
-    dtypes=(datatypes.floating,),
-    sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
-    torch_reference=_elementwise_unary_torch(torch.nn.functional.silu),
-    test_directives=(
-        DecorateInfo(
-            pytest.mark.xfail,
-            executors=("nvfuser",),
-            active_if=nvfuser_version < "0.0.3",
-        ),
-        # NOTE: Torch doesn't support CPU float16 silu
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.float16,),
-            devicetypes=(devices.DeviceType.CPU,),
-        ),
-        # test tols are too tight for these half precision tests
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.float16, datatypes.bfloat16),
-        ),
-    ),
-)
-elementwise_unary_ops.append(silu_opinfo)
 
 sigmoid_opinfo = OpInfo(
     clang.sigmoid,
@@ -1249,10 +1277,17 @@ signbit_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(signbit_opinfo)
 
+
+def silu_error_generator(op, device, dtype=torch.float32, **kwargs):
+    a = make_tensor((), dtype=dtype, device=device)
+    yield (SampleInput(a, inplace=True), NotImplementedError, "Thunder only supports silu with inplace=False")
+
+
 silu_opinfo = OpInfo(
-    clang.silu,
+    ltorch.silu,
     dtypes=(datatypes.floating,),
     sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
+    error_input_generator=silu_error_generator,
     torch_reference=_elementwise_unary_torch(torch.nn.functional.silu),
     test_directives=(
         DecorateInfo(
@@ -1787,6 +1822,7 @@ real_opinfo = OpInfo(
 )
 elementwise_unary_ops.append(real_opinfo)
 
+
 # Puts all opinfos into the "opinfos" list
 opinfos.extend(elementwise_unary_ops)
 
@@ -1920,14 +1956,7 @@ eq_opinfo = OpInfo(
     clang.eq,
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.eq,
-    test_directives=(
-        # TODO: enable this; there was a now-fixed nvFuser bug causing issues.
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-            executors=("nvfuser",),
-        ),
-    ),
+    test_directives=(),
 )
 elementwise_binary_ops.append(eq_opinfo)
 
@@ -2018,20 +2047,7 @@ ge_opinfo = OpInfo(
     dtypes=(datatypes.exact, datatypes.floating),
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.ge,
-    test_directives=(
-        # TODO: enable this; there was a now-fixed nvFuser bug causing issues.
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-            executors=("nvfuser",),
-        ),
-        # This test is flaky in CI (which seems odd)
-        # AssertionError: Scalars are not close!
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_vjp_correctness",
-        ),
-    ),
+    test_directives=(),
 )
 elementwise_binary_ops.append(ge_opinfo)
 
@@ -2060,14 +2076,7 @@ le_opinfo = OpInfo(
     dtypes=(datatypes.exact, datatypes.floating),
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.le,
-    test_directives=(
-        # TODO: enable this; there was a now-fixed nvFuser bug causing issues.
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-            executors=("nvfuser",),
-        ),
-    ),
+    test_directives=(),
 )
 elementwise_binary_ops.append(le_opinfo)
 
@@ -2077,14 +2086,7 @@ lt_opinfo = OpInfo(
     dtypes=(datatypes.exact, datatypes.floating),
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.lt,
-    test_directives=(
-        # TODO: enable this; there was a now-fixed nvFuser bug causing issues.
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-            executors=("nvfuser",),
-        ),
-    ),
+    test_directives=(),
 )
 elementwise_binary_ops.append(lt_opinfo)
 
@@ -2130,14 +2132,7 @@ ne_opinfo = OpInfo(
     dtypes=(datatypes.exact, datatypes.floating),
     sample_input_generator=elementwise_comparison_generator,
     torch_reference=torch.ne,
-    test_directives=(
-        # TODO: enable this; there was a now-fixed nvFuser bug causing issues.
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
-            executors=("nvfuser",),
-        ),
-    ),
+    test_directives=(),
 )
 elementwise_binary_ops.append(ne_opinfo)
 
@@ -2398,6 +2393,41 @@ zeta_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(zeta_opinfo)
 
+
+def div_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad, exclude_zero=True)
+    number = partial(make_number, dtype=dtype, exclude_zero=True)
+    shapes = [((4, 2, 3), (4, 2, 3)), ((4, 2, 3), (2, 3)), ((4, 2, 3), (2, 1))]
+    for shape_a, shape_b in shapes:
+        for rounding_mode in (None, "trunc", "floor"):
+            # numerator, denominator, rounding_mode
+            yield SampleInput(make(shape_a), make(shape_b), rounding_mode=rounding_mode)
+            yield SampleInput(make(shape_a), number(), rounding_mode=rounding_mode)
+
+
+div_opinfo = OpInfo(
+    ltorch.div,
+    sample_input_generator=div_sample_generator,
+    dtypes=(datatypes.exact, datatypes.floating),
+    torch_reference=torch.div,
+    test_directives=(
+        # NOTE: PyTorch doesn't support boolean division
+        # TODO: fix dtype mismatch when using nvfuser executors
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bool8,),
+            devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
+        ),
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            executors=("nvfuser",),
+        ),
+        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
+    ),
+)
+elementwise_binary_ops.append(div_opinfo)
 
 # Puts all opinfos into the "opinfos" list
 opinfos.extend(elementwise_binary_ops)
@@ -2778,6 +2808,92 @@ data_movement_ops = []
 # data_movement_ops.append(convert_element_type_opinfo)
 
 
+def type_sample_generator_tensor(op, device, dtype, requires_grad, **kwargs):
+    # dtype is not None
+    # expected to return tensor
+
+    _torch_dtype_to_old_torch_typestring_map = {
+        torch.float32: "FloatTensor",
+        torch.float64: "DoubleTensor",
+        torch.float16: "HalfTensor",
+        torch.bfloat16: "BFloat16Tensor",
+        torch.uint8: "ByteTensor",
+        torch.int8: "CharTensor",
+        torch.int16: "ShortTensor",
+        torch.int32: "IntTensor",
+        torch.long: "LongTensor",
+        torch.bool: "BoolTensor",
+    }
+
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    to_dtype = torch.complex128 if dtype.is_complex else torch.float64
+
+    yield SampleInput(make(4, 4, device=device), dtype)
+    yield SampleInput(make(4, 4, device=device), dtype=to_dtype)
+    # below can be deleted if we don't support strings
+    yield SampleInput(make(4, 4, device=device), f"torch.{_torch_dtype_to_old_torch_typestring_map[to_dtype]}")
+
+    # Explictly pass device
+    if torch.device(device).type == "cuda":
+        yield SampleInput(make(4, 4, device=device), f"torch.cuda.{_torch_dtype_to_old_torch_typestring_map[to_dtype]}")
+
+
+# kind of redundant?
+def type_error_generator_tensor(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=False)
+
+    err_msg = r"type\(\): `non_blocking==True` is currently not supported."
+    yield SampleInput(make(3, 3), dtype, non_blocking=True), RuntimeError, err_msg
+
+
+type_opinfo_tensor = OpInfo(
+    ltorch.type,
+    sample_input_generator=type_sample_generator_tensor,
+    error_input_generator=type_error_generator_tensor,
+    torch_reference=torch.Tensor.type,
+)
+
+data_movement_ops.append(type_opinfo_tensor)
+
+
+def type_sample_generator_str(op, device, dtype, requires_grad, **kwargs):
+    # dtype is None
+    # expected to return string
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    yield SampleInput(make(4, 4))
+
+
+# kind of redundant?
+def type_error_generator_str(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=False)
+
+    err_msg = r"type\(\): `non_blocking==True` is currently not supported."
+    yield SampleInput(make(3, 3), non_blocking=True), RuntimeError, err_msg
+
+
+# comparing strings (NOTE: assert_close does not support string comparison)
+def string_compare(actual, expected, **kwargs):
+    assert actual == expected
+
+
+type_opinfo_str = OpInfo(
+    ltorch.type,
+    sample_input_generator=type_sample_generator_str,
+    error_input_generator=type_error_generator_str,
+    torch_reference=torch.Tensor.type,
+    test_directives=(
+        DecorateInfo(
+            custom_comparator(string_compare),
+            "test_core_vs_torch_consistency",
+        ),
+    ),
+)
+
+data_movement_ops.append(type_opinfo_str)
+
+
 def to_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
@@ -2874,6 +2990,28 @@ type_as_sample = OpInfo(
 data_movement_ops.append(type_as_sample)
 
 
+def long_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # input shape
+    shapes = (
+        (),
+        (0,),
+        (2,),
+        (1, 2),
+        (1, 2, 3),
+    )
+
+    for shape in shapes:
+        yield SampleInput(make(shape))
+
+
+long_opinfo = OpInfo(
+    ltorch.long,
+    sample_input_generator=long_sample_generator,
+    torch_reference=torch.Tensor.long,
+)
+
 opinfos.extend(data_movement_ops)
 
 #
@@ -2891,6 +3029,7 @@ def broadcast_in_dim_sample_generator(op, device, dtype, requires_grad, **kwargs
 
     # inshape, outshape, dims
     cases = (
+        ([5], [5], [0]),
         ([2], [2, 2], [0]),
         ([2], [2, 2], [1]),
         ([2], [2, 3], [0]),
@@ -3597,6 +3736,11 @@ def pad_torch_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     for shape, padding_config in cases:
         yield SampleInput(make(shape), padding_config, "constant", make_number(dtype=dtype))
+
+    # The `value` parameter of the pad op is unceremoniously cast to the type of the
+    # tensor being padded. Yield some tests with explicitly-different data types.
+    yield SampleInput(make((2, 3)), pad=(1, 2), value=6.4)
+    yield SampleInput(make((2,)), pad=(1, 2), value=1)
 
 
 def pad_torch_error_generator(op, device, dtype=torch.float32, **kwargs):
@@ -4634,13 +4778,18 @@ def scatter_add_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # torch.scatter_add expects index to be long but not int
     # Index is not differentiable! Marking requires_grad as False
     make_index = partial(make_tensor, device=device, dtype=torch.long, requires_grad=False)
-    # Not sure if we need to consider higher order gradient, marking requires_grad as False
-    make_source = partial(make_tensor, device=device, dtype=dtype, requires_grad=False)
+    make_source = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
+    # NOTE The value gradient is only correct when src.shape == index.shape.
+    # For gradient testing, we use the index shape for the source tensor.
+    # See https://github.com/pytorch/pytorch/issues/27614#issuecomment-564648819
     for shape_a, dim, shape_b in take_along_axis_cases:
         canonicalized_dim = dim if dim >= 0 else dim + len(shape_a)
-        shape_source = list(shape_a)
-        shape_source[canonicalized_dim] = shape_b[canonicalized_dim]
+        if requires_grad:
+            shape_source = shape_b
+        else:
+            shape_source = list(shape_a)
+            shape_source[canonicalized_dim] = shape_b[canonicalized_dim]
         a = make(shape_a)
         b = make_index(shape_b, low=0, high=shape_a[dim])
         c = make_source(shape_source)
@@ -4660,13 +4809,39 @@ def scatter_add_sample_generator(op, device, dtype, requires_grad, **kwargs):
     for shape_a, dim, shape_b, shape_source in scatter_add_cases:
         a = make(shape_a)
         b = make_index(shape_b, low=0, high=shape_a[dim])
-        c = make_source(shape_source)
+        c = make_source(shape_b if requires_grad else shape_source)
         yield SampleInput(a, index=b, src=c, dim=dim)
+
+
+def scatter_add_error_generator(op, device, dtype=torch.float32, requires_grad=True, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    # torch.scatter_add expects index to be long but not int
+    # Index is not differentiable! Marking requires_grad as False
+    make_index = partial(make_tensor, device=device, dtype=torch.long, requires_grad=False)
+    make_source = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # Gradient definition for src tensor is valid only if src.shape == index.shape
+    # NOTE The scatter_add prim renames src variable to value.
+    shape_a = (4, 5, 3)
+    dim = 0
+    shape_b = (3, 2, 3)
+    shape_source = (4, 3, 9)
+
+    a = make(shape_a)
+    b = make_index(shape_b, low=0, high=shape_a[dim])
+    c = make_source(shape_source)
+    yield (
+        SampleInput(a, index=b, src=c, dim=dim),
+        RuntimeError,
+        "The gradient for the value Tensor is implemented only when value.shape == index.shape. value shape is (.*?) while index shape is (.*?).",
+    )
 
 
 scatter_add_opinfo = OpInfo(
     ltorch.scatter_add,
+    supports_grad=True,
     sample_input_generator=scatter_add_sample_generator,
+    error_input_generator=scatter_add_error_generator,
     torch_reference=torch.scatter_add,
     test_directives=(
         # Torch doesn't support complex half on scatter_add
@@ -4731,6 +4906,53 @@ opinfos.extend(shape_ops)
 # Reduction OpInfos
 #
 reduction_ops = []
+
+
+def all_tensor_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    # input shape, dim, keepdim
+    dim_cases = (
+        ((4, 4), None, False),
+        ((4, 4), None, True),
+        ((2, 3), 0, True),
+        ((2, 3, 4), (1, 2), False),
+        ((2, 3, 4), (1, 2), True),
+        ((2, 3, 4), (-1, 1), False),
+        ((2, 3, 4), (-1, 1), True),
+    )
+
+    for input_shape, dim, keepdim in dim_cases:
+        yield SampleInput(make(input_shape), dim, keepdim)
+
+
+def all_tensor_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+    err_msg = r"Dimension out of range \(expected to be in range of \[.*?\], but got .*\)"
+    yield (
+        SampleInput(make(5, 1, 2, 3), 4),
+        IndexError,
+        err_msg,
+    )
+
+
+all_tensor_opinfo = OpInfo(
+    ltorch.all_tensor,
+    sample_input_generator=all_tensor_sample_generator,
+    error_input_generator=all_tensor_error_generator,
+    torch_reference=torch.all,
+)
+
+reduction_ops.append(all_tensor_opinfo)
+
+
+any_tensor_opinfo = OpInfo(
+    ltorch.any_tensor,
+    sample_input_generator=all_tensor_sample_generator,
+    torch_reference=torch.any,
+)
+
+reduction_ops.append(any_tensor_opinfo)
 
 
 # TODO: increase reduction samples and refacort amax and sum generators
@@ -4831,15 +5053,6 @@ def logsumexp_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((8, 7, 5, 1), (1, 3), False),
     )
 
-    # Randomly select a fraction of the elements in a tensor and set them to specified value
-    def _replace_random_percentage(a: torch.Tensor, value: Number, percentage: float) -> torch.Tensor:
-        flat = torch.flatten(a.detach().clone())
-        num_values_to_replace: int = math.floor(flat.numel() * percentage)
-        choice_np = np.random.choice(np.arange(0, flat.numel()), (num_values_to_replace,), replace=False)
-        choice = torch.asarray(choice_np, device=a.device)
-        flat[choice] = value
-        return flat.reshape(a.shape).requires_grad_(a.requires_grad)
-
     for shape, dim, keepdim in cases:
         yield (SampleInput(make(shape), dim, keepdim))
 
@@ -4847,9 +5060,9 @@ def logsumexp_sample_generator(op, device, dtype, requires_grad, **kwargs):
         if dtype.is_floating_point:
             inf_input_tensor = make(shape)
             # Set a quarter of elements to positive infinity
-            inf_input_tensor = _replace_random_percentage(inf_input_tensor, float("inf"), 0.25)
+            inf_input_tensor = replace_random_percentage(inf_input_tensor, float("inf"), 0.25)
             # Set a quarter of elements to negative infinity
-            inf_input_tensor = _replace_random_percentage(inf_input_tensor, float("-inf"), 0.25)
+            inf_input_tensor = replace_random_percentage(inf_input_tensor, float("-inf"), 0.25)
             yield (SampleInput(inf_input_tensor, dim, keepdim))
 
 
@@ -5163,23 +5376,8 @@ def topk_error_generator(op, device, **kwargs):
     yield (SampleInput(make(3, 3), 1, -3), IndexError, err_msg)
 
 
-# Phantom grad tests do not handle tensor outputs
-# that do not require grad and/or do not have grad_fn.
-# Therefore we explicitly filter outputs.
-# See https://github.com/Lightning-AI/lightning-thunder/issues/119 {
-def topk_thunder_ref(*args, **kwargs):
-    return clang.topk(*args, **kwargs)[0]
-
-
-def topk_torch_ref(*args, **kwargs):
-    return torch.topk(*args, **kwargs)[0]
-
-
-# }
-
-
 topk_opinfo = OpInfo(
-    topk_thunder_ref,
+    clang.topk,
     name="topk",
     supports_grad=True,
     # Without the fixed seed this generator does not guarantee
@@ -5189,7 +5387,7 @@ topk_opinfo = OpInfo(
     # fix the issue.
     sample_input_generator=topk_sample_generator,
     error_input_generator=topk_error_generator,
-    torch_reference=topk_torch_ref,
+    torch_reference=torch.topk,
     dtypes=(datatypes.signedinteger, datatypes.unsignedinteger, datatypes.floating),
     test_directives=(
         DecorateInfo(
@@ -5325,6 +5523,36 @@ full_like_opinfo = OpInfo(
     torch_reference=torch.full_like,
 )
 tensor_creation_ops.append(full_like_opinfo)
+
+
+def empty_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    # shape, fill_value
+    cases = (
+        (()),
+        ((4, 4)),
+        ((8, 1, 6)),
+        ((8, 7, 5, 1)),
+    )
+
+    for shape in cases:
+        yield SampleInput(shape, device=device, dtype=dtype)
+
+
+def empty_error_generator(op, device, **kwargs):
+    err_msg = "Can't safely cast fill_value of numbertype <class 'complex'> to dtype float32"
+    yield (SampleInput((1, 2), 1j, device=device, dtype=torch.float), RuntimeError, err_msg)
+
+
+# Helper function for `empty` opinfo.
+# It always returns zero tensors, so that the consistency tests pass.
+def torch_empty_and_zero(*args, **kwargs):
+    return ltorch.full_like(ltorch.empty(*args, **kwargs), 0)
+
+
+empty_opinfo = OpInfo(
+    name="empty", op=torch_empty_and_zero, sample_input_generator=empty_sample_generator, torch_reference=torch.zeros
+)
+tensor_creation_ops.append(empty_opinfo)
 
 
 def fixed_value_tensor_creation_op_sample_generator(op, device, dtype, requires_grad, **kwargs):
@@ -5923,6 +6151,101 @@ opinfos.extend(linear_algebra_ops)
 # NN Ops
 #
 nn_ops = []
+
+
+def baddbmm_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    cases = (
+        ((0, 0, 0), (0, 0, 0), (0, 0, 0), 0.0, None),
+        ((3, 0, 5), (3, 0, 0), (3, 0, 5), 0.0, None),
+        ((0, 5, 6), (0, 5, 0), (0, 0, 6), 0.0, None),
+        ((3, 5, 6), (3, 5, 0), (3, 0, 6), 0.0, None),
+        ((3, 5, 6), (3, 5, 8), (3, 8, 6), 0.0, None),
+        ((3, 5, 6), (3, 5, 8), (3, 8, 6), 0.25, float("inf")),
+        ((3, 5, 6), (3, 5, 8), (3, 8, 6), 0.25, float("-inf")),
+        ((3, 5, 6), (3, 5, 8), (3, 8, 6), 0.25, float("nan")),
+    )
+
+    int_constants_cases = ((2, 2), (1, 0), (0, 1))
+
+    float_constants_cases = (
+        (2.0, 2.0),
+        (1.0, 0.0),
+        (0.0, 1.0),
+        (float("inf"), 2.0),
+        (2.0, float("inf")),
+        (float("inf"), float("inf")),
+        (float("-inf"), 2.0),
+        (2.0, float("-inf")),
+        (float("-inf"), float("-inf")),
+        (float("nan"), 2.0),
+        (2.0, float("nan")),
+        (float("nan"), float("nan")),
+    )
+
+    for shape_in, shape_batch1, shape_batch2, singularity_amount, singularity_value in cases:
+        a = make(shape_in)
+        b1 = make(shape_batch1)
+        b2 = make(shape_batch2)
+
+        if isinstance(to_dtype(dtype), datatypes.exact):
+            for alpha, beta in int_constants_cases:
+                yield SampleInput(make(shape_in), make(shape_batch1), make(shape_batch2), alpha=alpha, beta=beta)
+        else:
+            if singularity_value is not None:
+                a = replace_random_percentage(a, singularity_value, singularity_amount)
+                b1 = replace_random_percentage(b1, singularity_value, singularity_amount)
+                b2 = replace_random_percentage(b2, singularity_value, singularity_amount)
+
+            for alpha, beta in float_constants_cases:
+                yield SampleInput(make(shape_in), make(shape_batch1), make(shape_batch2), alpha=alpha, beta=beta)
+
+
+def baddbmm_error_generator(op, device, dtype=torch.int32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+    cases = (
+        ((3, 5, 6), (3, 5), (3, 0, 6), RuntimeError, "batch1 must be a 3D tensor, found 2 instead."),
+        ((3, 5, 6), (3, 5, 0), (3, 0), RuntimeError, "batch2 must be a 3D tensor, found 2 instead."),
+        (
+            (3, 5, 6),
+            (3, 5, 0),
+            (3, 0, 6),
+            ValueError,
+            "2.0 had an unexpected type <class 'float'>. Supported types are <class 'int'>",
+        ),
+    )
+
+    for shape_in, shape_batch1, shape_batch2, err_type, err_msg in cases:
+        yield (
+            SampleInput(make(shape_in), make(shape_batch1), make(shape_batch2), alpha=2.0, beta=2.0),
+            err_type,
+            err_msg,
+        )
+
+
+baddbmm_opinfo = OpInfo(
+    ltorch.baddbmm,
+    supports_grad=True,
+    dtypes=(datatypes.floating, datatypes.signedinteger, datatypes.unsignedinteger),
+    sample_input_generator=baddbmm_sample_generator,
+    error_input_generator=baddbmm_error_generator,
+    torch_reference=torch.baddbmm,
+    test_directives=(
+        # baddbmm not implemented on CUDA for int
+        DecorateInfo(
+            pytest.mark.xfail,
+            dtypes=(datatypes.exact,),
+            devicetypes=(devices.DeviceType.CUDA,),
+        ),
+        # test_phantom_grad_vs_torch_consistency does not support nan singularity
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_phantom_grad_vs_torch_consistency",
+        ),
+    ),
+)
+
+nn_ops.append(baddbmm_opinfo)
 
 
 def _convolution_get_default_args():
@@ -6525,6 +6848,84 @@ avg_pool3d_opinfo = OpInfo(
     ),
 )
 nn_ops.append(avg_pool3d_opinfo)
+
+
+def adaptive_avg_pool2d_error_generator(op, device, **kwargs):
+    make = partial(make_tensor, device=device, dtype=torch.float32)
+
+    cases_runtime_error = (
+        ((3,), (1, 1), "adaptive_avg_pool2d: Expected 3D or 4D tensor, but got"),
+        ((3, 4, 5), (3,), "adaptive_avg_pool2d: output_size must be 2"),
+        (
+            (3, 4, 5),
+            (3, -2),
+            "Found invalid length",
+        ),
+        (
+            (3, 4, 0),
+            (3, 2),
+            "adaptive_avg_pool2d: Expected input to have non-zero size for non-batch dimensions, but input has sizes ",
+        ),
+        (
+            (1, 3, 0, 4),
+            (3, 2),
+            "adaptive_avg_pool2d: Expected input to have non-zero size for non-batch dimensions, but input has sizes ",
+        ),
+    )
+    cases_value_error = (
+        ((3, 4, 5), (3.0, 3.0), r"Element (.*?) \((.*?)\) had an unexpected type"),
+        ((3, 4, 5), 4.0, r"(.*?) had an unexpected type"),
+    )
+    for input_args, err_type in zip((cases_value_error, cases_runtime_error), (ValueError, RuntimeError)):
+        for op_shapes, output_sizes, err_msg in input_args:
+            yield (
+                SampleInput(
+                    make(op_shapes),
+                    output_sizes,
+                ),
+                err_type,
+                err_msg,
+            )
+
+
+def adaptive_avg_pool2d_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    cases = (
+        ((3, 3, 3), 5),
+        ((3, 4, 4), (3, 3)),
+        ((1, 3, 5, 2), 3),
+        ((3, 2, 3, 4), (2, 4)),
+        ((3, 0, 3, 4), (0, 0)),
+        ((0, 0, 3, 4), (0, 2)),
+    )
+
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    for input_shape, output_shape in cases:
+        a = make(input_shape)
+        yield SampleInput(a, output_shape)
+
+
+adaptive_avg_pool2d_opinfo = OpInfo(
+    ltorch.adaptive_avg_pool2d,
+    sample_input_generator=adaptive_avg_pool2d_sample_generator,
+    error_input_generator=adaptive_avg_pool2d_error_generator,
+    torch_reference=torch.nn.functional.adaptive_avg_pool2d,
+    dtypes=(datatypes.floating,),
+    test_directives=(
+        # nvfuser does not support adaptive_avg_pool2d for now
+        DecorateInfo(
+            pytest.mark.skip,
+            executors=("nvfuser",),
+        ),
+        # NOTE: Pytorch handles zero size non-batch dimension differently for adaptive_avg_pool2d_backward between CUDA and CPU
+        # RuntimeError: adaptive_avg_pool2d_backward(): Expected grad_output to have non-zero size for non-batch dimensions, but grad_output has sizes [3, 0, 0, 0] with dimension 1 being empty
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+    ),
+)
+nn_ops.append(adaptive_avg_pool2d_opinfo)
 
 
 max_pool1d_opinfo = OpInfo(
@@ -7362,6 +7763,15 @@ grad_sdpa_opinfo = OpInfo(
     # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention' with arguments from the 'CPU' backend.
     # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention_backward' with arguments from the 'CPU' backend
     devicetypes=(devices.DeviceType.CUDA,),
+    test_directives=(
+        DecorateInfo(
+            pytest.mark.skip(reason="https://github.com/Lightning-AI/lightning-thunder/issues/567"),
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16, datatypes.float16, datatypes.float32),
+            devicetypes=(devices.DeviceType.CUDA,),
+            active_if=version_between(torch.__version__, min_ver="2.4.0a0", max_ver="2.4.0a99"),
+        ),
+    ),
 )
 nn_ops.append(grad_sdpa_opinfo)
 
@@ -7407,16 +7817,13 @@ def cross_entropy_reference_generator(op, device, dtype, requires_grad, **kwargs
                 if not probability_target
                 else make(shape[1], low=0.0, high=1.0, requires_grad=True)
             ),
-            weight=make(C) if weight_flag else None,
+            weight=make(C, requires_grad=False) if weight_flag else None,
             ignore_index=ignore_index,
             reduction=reduction_str,
             label_smoothing=label_smoothing,
         )
 
 
-# TODO Enable cross entropy bwd weight support
-# TODO Enable test cases after adding support nll_loss_nd, weight tensor, and label_smoothing options.
-# TODO see issue "Add support for remaining cross_entropy_loss arguments"
 def cross_entropy_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
@@ -7424,15 +7831,15 @@ def cross_entropy_sample_generator(op, device, dtype, requires_grad, **kwargs):
     shapes = (
         ((2, 16), (2,)),
         ((7, 18), (7,)),
-        # ((7, 18), (7, 18)),
-        # ((3, 4, 2, 3), (3, 4, 2, 3)),
-        # ((3, 4, 2, 3), (3, 2, 3)),
+        ((7, 18), (7, 18)),
+        ((3, 4, 2, 3), (3, 4, 2, 3)),
+        ((3, 4, 2, 3), (3, 2, 3)),
         ((5,), ()),
-        # ((3, 4, 0), (3, 0)),
-        # ((3, 4, 0), (3, 4, 0)),
+        ((3, 4, 0), (3, 0)),
+        ((3, 4, 0), (3, 4, 0)),
     )
 
-    weight_options = (False,)
+    weight_options = (False, True)
     reduction_options = ("none", "mean", "sum")
     label_smoothing_options = (0.0, 0.5)
     ignore_index_options = (-1, 3)
@@ -7440,12 +7847,16 @@ def cross_entropy_sample_generator(op, device, dtype, requires_grad, **kwargs):
     for shape, weight_flag, reduction_str, label_smoothing, ignore_index in itertools.product(
         shapes, weight_options, reduction_options, label_smoothing_options, ignore_index_options
     ):
+        # NOTE According to pytorch/pytorch#64572, nll_loss should return NaN when reduction = "mean"
+        # and the whole target is equal to ignore_index. However, if the inputs are cuda tensors, PyTorch returns 0.
+        # Skip this case because we are consistent across devices.
+        if torch.device(device).type == "cuda" and reduction_str == "mean" and ignore_index > 0:
+            continue
+
         input_shape, target_shape = shape
         probability_target = input_shape == target_shape
         # ignore_index can't be supplied with probablity target
         if probability_target and ignore_index >= 0:
-            continue
-        if not probability_target and label_smoothing > 0.0:
             continue
         C = input_shape[1] if len(input_shape) >= 2 else input_shape[0]
         yield SampleInput(
@@ -7455,21 +7866,125 @@ def cross_entropy_sample_generator(op, device, dtype, requires_grad, **kwargs):
                 if not probability_target
                 else make(shape[1], low=0.0, high=1.0, requires_grad=True)
             ),
-            weight=make(C) if weight_flag else None,
+            weight=make(C, low=1.0, high=2.0, requires_grad=False) if weight_flag else None,
             ignore_index=ignore_index,
             reduction=reduction_str,
             label_smoothing=label_smoothing,
         )
 
 
+def cross_entropy_error_generator(op, device, dtype=torch.float32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=False)
+
+    input_shape = (7, 18)
+    target_shape = (7,)
+    C = input_shape[1] if len(input_shape) >= 2 else input_shape[0]
+    valid_input = make(input_shape)
+    valid_target = make(target_shape, low=0, high=C, dtype=torch.long, requires_grad=False)
+
+    # unexpected reduction string argument
+    yield (
+        SampleInput(valid_input, valid_target, reduction="foo"),
+        ValueError,
+        'Expected reduction string to be "none", "sum", or "mean", but it is (.*?).',
+    )
+
+    # target tensor is not integer dtype
+    float_target = make(target_shape, low=0, high=C, dtype=torch.float, requires_grad=False)
+    yield (
+        SampleInput(valid_input, float_target),
+        RuntimeError,
+        "Expected target to be a tensor with an integer dtype, but it has dtype (.*?).",
+    )
+
+    # input tensor has 0 dimensions
+    scalar_input = make(scalar_shape := ())
+    yield (
+        SampleInput(scalar_input, valid_target),
+        RuntimeError,
+        f"Expected the input tensor to have more than 1 dimension, but it has {scalar_input.ndim} dimensions.",
+    )
+
+    # weight tensor has more than 1 dimension
+    multiple_dim_weight = make((C, 10), requires_grad=False)
+    yield (
+        SampleInput(valid_input, valid_target, weight=multiple_dim_weight),
+        RuntimeError,
+        f"Expected a 1D tensor with {C} elements for weight argument, \
+            but found a tensor with {multiple_dim_weight.ndim} dimensions and {multiple_dim_weight.shape[0]} elements.",
+    )
+
+    # weight tensor numel != C
+    incorrect_numel_weight = make((C + 10,), requires_grad=False)
+    yield (
+        SampleInput(valid_input, valid_target, weight=incorrect_numel_weight),
+        RuntimeError,
+        f"Expected a 1D tensor with {C} elements for weight argument, \
+            but found a tensor with {incorrect_numel_weight.ndim} dimensions and {incorrect_numel_weight.shape[0]} elements.",
+    )
+
+    # label_smoothing out-of-bounds
+    out_of_bounds_label_smoothing = 1.5
+    yield (
+        SampleInput(valid_input, valid_target, label_smoothing=out_of_bounds_label_smoothing),
+        RuntimeError,
+        r"Expected label_smoothing to be in \[0, 1\] range but got 1.5.",
+    )
+
+    # target tensor is not integer dtype
+    float_target = make(target_shape, low=0, high=C, dtype=torch.float, requires_grad=False)
+    yield (
+        SampleInput(valid_input, float_target),
+        RuntimeError,
+        "Expected target to be a tensor with an integer dtype, but it has dtype (.*?).",
+    )
+
+    # input ndims != (target ndims + 1)
+    extra_dim_input = make(input_shape + (10,))
+    yield (
+        SampleInput(extra_dim_input, valid_target),
+        RuntimeError,
+        "Expected the input tensor to have (.*?) dimensions, but it has (.*?) dimensions.",
+    )
+
+    # target shape is input shape except class dimension
+    incorrect_batch_target = make((10,), low=0, high=C, dtype=torch.long, requires_grad=False)
+    yield (
+        SampleInput(valid_input, incorrect_batch_target),
+        RuntimeError,
+        "Expected the target tensor to have the same shape as the input tensor except for the class dimension \
+            (.*?), but it has shape (.*?).",
+    )
+
+    integer_prob_target = make(input_shape, low=0, high=C, dtype=torch.long, requires_grad=False)
+    yield (
+        SampleInput(valid_input, integer_prob_target),
+        RuntimeError,
+        "Expected the target to have float dtype when target contains class probabilities \
+                but it is (.*?).",
+    )
+
+    valid_prob_target = make(input_shape, low=0.0, high=1.0, dtype=torch.float, requires_grad=False)
+    yield (
+        SampleInput(valid_input, valid_prob_target, ignore_index=5),
+        RuntimeError,
+        "ignore_index argument is not supported when target contains class probabilities.",
+    )
+
+
 cross_entropy_opinfo = OpInfo(
     ltorch.cross_entropy,
-    supports_grad=True,
     sample_input_generator=cross_entropy_sample_generator,
     reference_input_generator=cross_entropy_reference_generator,
+    error_input_generator=cross_entropy_error_generator,
     torch_reference=torch.nn.functional.cross_entropy,
     dtypes=(datatypes.floating,),
     test_directives=(
+        # take_along_axis is disabled with nvfuser, which this operator relies on.
+        DecorateInfo(
+            pytest.mark.skip,
+            executors=("nvfuser",),
+        ),
         # TODO Investigate why CPU torch executor tests fail in CI (but not locally)
         DecorateInfo(
             pytest.mark.skip,
@@ -7483,6 +7998,11 @@ cross_entropy_opinfo = OpInfo(
                 datatypes.float16,
                 datatypes.bfloat16,
             ),
+        ),
+        # TODO FIXME -- These tests are hitting an odd issue where real torch tensors are being passed to nll_loss
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
         ),
     ),
 )
@@ -7582,12 +8102,12 @@ def nll_loss_error_generator(op, device, dtype=torch.float32, **kwargs):
         "Expected the input tensor to have (.*?) dimensions, but it has (.*?) dimensions.",
     )
 
-    # target shape is input shape except channels dimension
+    # target shape is input shape except class dimension
     incorrect_batch_target = make((10,), low=0, high=C, dtype=torch.long, requires_grad=False)
     yield (
         SampleInput(valid_input, incorrect_batch_target),
         RuntimeError,
-        "Expected the target tensor to have the same shape as the input tensor except for the channels dimension \
+        "Expected the target tensor to have the same shape as the input tensor except for the class dimension \
             (.*?), but it has shape (.*?).",
     )
 
