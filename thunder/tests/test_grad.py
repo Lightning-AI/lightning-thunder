@@ -274,7 +274,7 @@ def _dot(x, y):
     return sum([torch.dot(a.ravel().type(torch.float64), b.ravel().type(torch.float64)) for a, b in zip(x, y)])
 
 
-def check_vjp(f, *primals, executor="torch", atol=1e-5, rtol=1.3e-6):
+def check_vjp(f, *primals, comp, executor="torch", atol=1e-5, rtol=1.3e-6):
     """Check that the vector-Jacobian product of a function is correct.
 
     Args:
@@ -319,7 +319,9 @@ def check_vjp(f, *primals, executor="torch", atol=1e-5, rtol=1.3e-6):
     if J_u_v.isnan().any():
         # TODO: find a better way to handle NaNs in finite differences
         return  # skip this sample
-    torch.testing.assert_close(J_u_v, u_J_star_v, atol=atol, rtol=rtol, check_device=False)
+    partial_comp = partial(comp, atol=atol, rtol=rtol, check_device=False)
+    partial_comp(J_u_v, u_J_star_v)
+    # torch.testing.assert_close(J_u_v, u_J_star_v, atol=atol, rtol=rtol, check_device=False)
 
 
 def _is_differentiable(x):
@@ -398,8 +400,8 @@ def test_jvp_correctness(op, device, dtype, executor, comp):
         raise pytest.skip("No differentiable inputs found")
 
 
-def snippet_vjp_correctness(func, args, executor):
-    check_vjp(func, *args, executor=executor)
+def snippet_vjp_correctness(func, args, comp, executor):
+    check_vjp(func, *args, comp=comp, executor=executor)
 
 
 # TODO Use the given comparator
@@ -435,6 +437,7 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
             dtype,
             filtered_op,
             filtered_args,
+            comp,
             executor,
         )
         if result is not None:
