@@ -4992,6 +4992,36 @@ amin_opinfo = OpInfo(
 reduction_ops.append(amin_opinfo)
 
 
+def max_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    # For grad test stability it's better to use wider range of values
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad, low=-1000, high=1000)
+
+    # shape, dim, keepdim
+    cases = (
+        ((2, 2, 3), 1, True),
+        ((2, 3, 1), 0, False),
+    )
+
+    for shape, dim, keepdim in cases:
+        yield SampleInput(make(shape))
+        yield SampleInput(make(shape), make(shape))
+
+        if not (dtype is torch.bool):  # argmax is not supported on `bool`
+            yield SampleInput(make(shape), dim, keepdim)
+
+
+max_opinfo = OpInfo(
+    ltorch.torch_max,
+    supports_grad=True,
+    sample_input_generator=max_sample_generator,
+    torch_reference=torch.max,
+    # Complex numbers are unordered
+    dtypes=(datatypes.exact, datatypes.floating),
+)
+
+reduction_ops.append(max_opinfo)
+
+
 def reduction_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(
         make_tensor,

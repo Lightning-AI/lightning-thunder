@@ -1357,6 +1357,27 @@ def _embedding_prim_grad(
 
 register_grad(pids.EMBEDDING, _embedding_prim_grad)
 
+
+def _maximum_grad(a: TensorProxy, b: TensorProxy, /):
+    fwd = prims.maximum(a, b)
+
+    g = get_grad(fwd)
+
+    a_grad = prims.where(a == b, g / 2, 0.0)
+    b_grad = prims.where(a == b, g / 2, 0.0)
+    a_grad = prims.where(a > b, g, a_grad)
+    b_grad = prims.where(b > a, g, b_grad)
+
+    put_grad(a, a_grad)
+    put_grad(b, b_grad)
+    return fwd
+
+
+register_grad(pids.MAXIMUM, _maximum_grad)
+
+# This operation creates no grad associations
+register_grad(pids.ARGMAX, prims.argmax)
+
 #
 # Phantom grad transform helpers
 #
