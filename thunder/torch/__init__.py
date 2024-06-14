@@ -8,6 +8,7 @@ from enum import Enum
 from functools import partial, reduce, wraps
 from numbers import Number
 from typing import Any, overload, Optional, Union
+from types import NoneType
 from collections.abc import Callable
 
 import opt_einsum
@@ -2049,7 +2050,7 @@ def torch_max(a: TensorLike, /) -> TensorLike: ...
 
 
 @overload
-def torch_max(a: TensorLike, /, dim: int | tuple[int], keepdim: bool = False) -> tuple[TensorLike, TensorLike]: ...
+def torch_max(a: TensorLike, /, dim: NumberLike, keepdim: bool = False) -> tuple[TensorLike, TensorLike]: ...
 
 
 @overload
@@ -2058,22 +2059,24 @@ def torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike: ...
 
 @torchsymbol(torch.max, is_method=True, id="torch.max")
 def torch_max(
-    a, /, dim: int | tuple[int] | TensorLike | None = None, keepdim: bool = False
+    a, /, dim: NumberLike | TensorLike | None = None, keepdim: bool = False
 ) -> TensorLike | tuple[TensorLike, TensorLike]:
+    utils.check_type(dim, (NumberLike, TensorLike, NoneType))
+    utils.check_type(keepdim, bool)
     if isinstance(dim, TensorLike):
         # overload - torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike
-        utils.check(not keepdim, "keepdim=True is invalid for torch.max(a, b) overload.")
+        utils.check(not keepdim, lambda: "keepdim=True is invalid for torch.max(a, b) overload.")
         b = dim
         return maximum(a, b)
 
     if dim is None:
         # overload - torch_max(a: TensorLike, /) -> TensorLike
-        utils.check(not keepdim, "keepdim=True is invalid for torch.max(a) overload.")
+        utils.check(not keepdim, lambda: "keepdim=True is invalid for torch.max(a) overload.")
         dim = list(range(a.ndim))
         return amax(a, dim, keepdim)
 
-    # overload - torch_max(a: TensorLike, /, dim: int | tuple[int], keepdim: bool = False) -> TensorLike, TensorLike:
-    utils.check_type(dim, (int, IntegerProxy))
+    # overload - torch_max(a: TensorLike, /, dim: int | tuple[int], keepdim: bool = False) -> TensorLike, TensorLike
+    utils.check_type(dim, NumberLike)
     max_vals = amax(a, dim, keepdim)
     argmax_vals = argmax(a, dim, keepdim)
     return max_vals, argmax_vals

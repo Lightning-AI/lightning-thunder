@@ -5016,10 +5016,21 @@ def max_sample_generator(op, device, dtype, requires_grad, **kwargs):
             yield SampleInput(make(shape), dim, keepdim)
 
 
+def max_error_generator(op, device, **kwargs):
+    make = partial(make_tensor, device=device, dtype=torch.float, low=-1000, high=1000)
+
+    err_msg = r"keepdim=True is invalid for torch.max\(a, b\) overload."
+    yield (SampleInput(make(3, 3), make(3, 3), keepdim=True), RuntimeError, err_msg)
+
+    err_msg = r"keepdim=True is invalid for torch.max\(a\) overload."
+    yield (SampleInput(make(3, 3), keepdim=True), RuntimeError, err_msg)
+
+
 max_opinfo = OpInfo(
     ltorch.torch_max,
     supports_grad=True,
     sample_input_generator=max_sample_generator,
+    error_input_generator=max_error_generator,
     torch_reference=torch.max,
     # Complex numbers are unordered
     dtypes=(datatypes.exact, datatypes.floating),
