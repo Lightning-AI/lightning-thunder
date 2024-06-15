@@ -2094,6 +2094,7 @@ maximum_opinfo = OpInfo(
     clang.maximum,
     sample_input_generator=partial(elementwise_binary_generator, no_rhs_numbers=True),
     torch_reference=torch.maximum,
+    supports_grad=True,
 )
 elementwise_binary_ops.append(maximum_opinfo)
 
@@ -4990,6 +4991,81 @@ amin_opinfo = OpInfo(
     dtypes=(datatypes.exact, datatypes.floating),
 )
 reduction_ops.append(amin_opinfo)
+
+
+def max_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    # For grad test stability it's better to use wider range of values
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad, low=-1000, high=1000)
+
+    def make_with_extremal_value(shape, extremal, percentage=0.5):
+        return replace_random_percentage(make(shape), extremal, percentage=percentage)
+
+    # NOTE: Gradient Computation with multiple max values
+    # Currently, if there are multiple `max` values
+    # `torch` eager - gradients max(dim) propagates gradient only to a single index in the source tensor
+    # `thunder` - gradients are distributed evenly.
+    # So, we use the function below to create tensor with unique values.
+    def make_unique_t(shape):
+        # Add two random inputs, so it is unlikely to have same value across the tensor elements.
+        return make(shape) + make(shape)
+
+    # shape, dim, keepdim
+    cases = (
+        ((2, 2, 3), 1, True),
+        ((2, 3, 1), 0, False),
+    )
+
+    for shape, dim, keepdim in cases:
+        # overload: torch_max(a: TensorLike, /) -> TensorLike
+        # This overload corresponds to taking the max over the flattened tensor.
+        yield SampleInput(make_unique_t(shape))
+
+        if not requires_grad and dtype.is_floating_point:
+            # See NOTE: Gradient Computation with multiple max values
+            # Thus we don't pass these inputs to grad tests
+            yield SampleInput(make_with_extremal_value(shape, float("nan")))
+            yield SampleInput(make_with_extremal_value(shape, float("inf")))
+
+        # overload: torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike
+        # This overload corresponds to taking the elementwise max between tensors `a` and `b`.
+        yield SampleInput(make(shape), make(shape))
+
+        if not (dtype is torch.bool):  # argmax is not supported on `bool`
+            # overload: torch_max(a: TensorLike, /, dim: int | tuple[int], keepdim: bool = False) -> TensorLike, TensorLike
+            # This overload corresponds to taking the max along the specified dimension `dim`.
+            # It returns first occurence of the maximum value along the dimension and it's corresponding index.
+            # NOTE: When same values are present, the first occurence of the `value` and corresponding index is returned
+            yield SampleInput(make_unique_t(shape), dim)
+            yield SampleInput(make_unique_t(shape), dim, keepdim)
+
+            if not requires_grad and dtype.is_floating_point:
+                # See NOTE: Gradient Computation with multiple max values
+                # Thus we don't pass these inputs to grad tests
+                yield SampleInput(make_with_extremal_value(shape, float("nan")), dim)
+                yield SampleInput(make_with_extremal_value(shape, float("inf")), dim)
+
+
+def max_error_generator(op, device, **kwargs):
+    make = partial(make_tensor, device=device, dtype=torch.float, low=-1000, high=1000)
+
+    err_msg = r"keepdim=True is invalid for torch.max\(a, b\) overload."
+    yield (SampleInput(make(3, 3), make(3, 3), keepdim=True), RuntimeError, err_msg)
+
+    err_msg = r"keepdim=True is invalid for torch.max\(a\) overload."
+    yield (SampleInput(make(3, 3), keepdim=True), RuntimeError, err_msg)
+
+
+max_opinfo = OpInfo(
+    ltorch.torch_max,
+    supports_grad=True,
+    sample_input_generator=max_sample_generator,
+    error_input_generator=max_error_generator,
+    torch_reference=torch.max,
+    # Complex numbers are unordered
+    dtypes=(datatypes.exact, datatypes.floating),
+)
+
+reduction_ops.append(max_opinfo)
 
 
 def reduction_sample_generator(op, device, dtype, requires_grad, **kwargs):
