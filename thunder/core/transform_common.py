@@ -402,13 +402,7 @@ def functionalize_inplace_ops(computation_trace: Trace) -> list[Trace]:
             bsyms.append(new_bsym)
             continue
 
-        sub_bsyms: list[BoundSymbol] = bsym.subsymbols
-        check(sub_bsyms, lambda: f"{bsym.sym.id=} expected to have subsymbols but {bsym.subsymbols=}")
-        copy_bsym = sub_bsyms[-1]
-        check(
-            copy_bsym.sym.id == prims.PrimIDs.COPY_,
-            lambda: f"bsym.subsymbols[-1] expected to be {prims.PrimIDs.COPY_} but {copy_bsym.sym.id=}",
-        )
+        copy_bsym = bsym.subsymbols[-1]
         copy_out = copy_bsym.flat_proxy_outs[0]
         copy_dst = copy_bsym.flat_proxy_args[1]
         swap_map[variableify(copy_dst)] = copy_out
