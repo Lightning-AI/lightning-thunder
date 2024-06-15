@@ -406,7 +406,7 @@ def functionalize_inplace_ops(computation_trace: Trace) -> list[Trace]:
         copy_out = copy_bsym.flat_proxy_outs[0]
         copy_dst = copy_bsym.flat_proxy_args[1]
         swap_map[variableify(copy_dst)] = copy_out
-        # Remove `prims.copy_`
+        # make sure an in-place bsym returns `prims.copy_` output
         new_bsym = new_bsym.from_bsym_swap_proxies(swap_map, skip_inputs=True, skip_subsymbols=True)
         bsyms.append(new_bsym)
 
@@ -428,7 +428,6 @@ def functionalize_inplace_ops(computation_trace: Trace) -> list[Trace]:
     for bsym in intermediate_trace.bound_symbols:
         new_bsym = bsym.from_bsym_swap_proxies(swap_map)
 
-        # in-place ops has `prims.copy_` as the last subsymbol.
         if not is_inplace(new_bsym):
             new_bsyms.append(new_bsym)
             continue
