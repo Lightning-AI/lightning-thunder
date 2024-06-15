@@ -1701,7 +1701,7 @@ def add(
     return clang.add(a, b)
 
 
-@torchsymbol(torch.Tensor.add_, is_method=True)
+@torchsymbol(torch.Tensor.add_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def add_(
     a: TensorLike,
     b: NumberLike | TensorLike,
@@ -1717,7 +1717,7 @@ def atan2(a, b, /):
     return clang.atan2(a, b)
 
 
-@torchsymbol(torch.Tensor.atan2_, is_method=True)
+@torchsymbol(torch.Tensor.atan2_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def atan2_(a, b, /):
     return prims.copy_(atan2(a, b), a)
 
@@ -1727,7 +1727,7 @@ def bitwise_and(a, b, /):
     return clang.bitwise_and(a, b)
 
 
-@torchsymbol(torch.Tensor.bitwise_and_, is_method=True)
+@torchsymbol(torch.Tensor.bitwise_and_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def bitwise_and_(a, b, /):
     return prims.copy_(bitwise_and(a, b), a)
 
@@ -1737,7 +1737,7 @@ def bitwise_or(a, b, /):
     return clang.bitwise_or(a, b)
 
 
-@torchsymbol(torch.Tensor.bitwise_or_, is_method=True)
+@torchsymbol(torch.Tensor.bitwise_or_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def bitwise_or_(a, b, /):
     return prims.copy_(bitwise_or(a, b), a)
 
@@ -1747,7 +1747,7 @@ def bitwise_xor(a, b, /):
     return clang.bitwise_xor(a, b)
 
 
-@torchsymbol(torch.Tensor.bitwise_xor_, is_method=True)
+@torchsymbol(torch.Tensor.bitwise_xor_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def bitwise_xor_(a, b, /):
     return prims.copy_(bitwise_xor(a, b), a)
 
@@ -1757,7 +1757,7 @@ def copysign(a, b, /):
     return clang.copysign(a, b)
 
 
-@torchsymbol(torch.Tensor.copysign_, is_method=True)
+@torchsymbol(torch.Tensor.copysign_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def copysign_(a, b, /):
     return prims.copy_(copysign(a, b), a)
 
@@ -1784,7 +1784,7 @@ def div(
         raise ValueError(f"div does not support the rounding_mode={rounding_mode} argument")
 
 
-@torchsymbol(torch.Tensor.div_, is_method=True)
+@torchsymbol(torch.Tensor.div_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def div_(
     a: TensorLike,
     b: Number | TensorLike,
@@ -1800,7 +1800,7 @@ def eq(a, b, /):
     return clang.eq(a, b)
 
 
-@torchsymbol(torch.Tensor.eq_, is_method=True)
+@torchsymbol(torch.Tensor.eq_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def eq_(a, b, /):
     return prims.copy_(eq(a, b), a)
 
@@ -1810,7 +1810,7 @@ def floor_divide(a, b, /):
     return clang.floor_divide(a, b)
 
 
-@torchsymbol(torch.Tensor.floor_divide_, is_method=True)
+@torchsymbol(torch.Tensor.floor_divide_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def floor_divide_(a, b, /):
     return prims.copy_(floor_divide(a, b), a)
 
@@ -1820,7 +1820,7 @@ def fmod(a, b, /):
     return clang.fmod(a, b)
 
 
-@torchsymbol(torch.Tensor.fmod_, is_method=True)
+@torchsymbol(torch.Tensor.fmod_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def fmod_(a, b, /):
     return prims.copy_(fmod(a, b), a)
 
@@ -1830,7 +1830,7 @@ def ge(a, b, /):
     return clang.ge(a, b)
 
 
-@torchsymbol(torch.Tensor.ge_, is_method=True)
+@torchsymbol(torch.Tensor.ge_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def ge_(a, b, /):
     return prims.copy_(ge(a, b), a)
 
@@ -1840,7 +1840,7 @@ def gt(a, b, /):
     return clang.gt(a, b)
 
 
-@torchsymbol(torch.Tensor.gt_, is_method=True)
+@torchsymbol(torch.Tensor.gt_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def gt_(a, b, /):
     return prims.copy_(gt(a, b), a)
 
@@ -1850,7 +1850,7 @@ def logical_and(a, b, /):
     return clang.logical_and(a, b)
 
 
-@torchsymbol(torch.Tensor.logical_and_, is_method=True)
+@torchsymbol(torch.Tensor.logical_and_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def logical_and_(a, b, /):
     return prims.copy_(logical_and(a, b), a)
 
@@ -1860,7 +1860,7 @@ def logical_not(a: TensorLike, /) -> TensorLike:
     return clang.logical_not(a)
 
 
-@torchsymbol(torch.Tensor.logical_not_, is_method=True)
+@torchsymbol(torch.Tensor.logical_not_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def logical_not_(a: TensorLike, /) -> TensorLike:
     return prims.copy_(logical_not(a), a)
 
@@ -1870,7 +1870,7 @@ def le(a, b, /):
     return clang.le(a, b)
 
 
-@torchsymbol(torch.Tensor.le_, is_method=True)
+@torchsymbol(torch.Tensor.le_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def le_(a, b, /):
     return prims.copy_(le(a, b), a)
 
@@ -1880,7 +1880,7 @@ def lt(a, b, /):
     return clang.lt(a, b)
 
 
-@torchsymbol(torch.Tensor.lt_, is_method=True)
+@torchsymbol(torch.Tensor.lt_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def lt_(a, b, /):
     return prims.copy_(lt(a, b), a)
 
@@ -1911,7 +1911,7 @@ def mul(a, b, /):
     return clang.mul(a, b)
 
 
-@torchsymbol(torch.Tensor.mul_, is_method=True)
+@torchsymbol(torch.Tensor.mul_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def mul_(a, b, /):
     return prims.copy_(mul(a, b), a)
 
@@ -1921,7 +1921,7 @@ def ne(a, b, /):
     return clang.ne(a, b)
 
 
-@torchsymbol(torch.Tensor.ne_, is_method=True)
+@torchsymbol(torch.Tensor.ne_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def ne_(a, b, /):
     return prims.copy_(ne(a, b), a)
 
@@ -1931,7 +1931,7 @@ def nextafter(a, b, /):
     return clang.nextafter(a, b)
 
 
-@torchsymbol(torch.Tensor.nextafter_, is_method=True)
+@torchsymbol(torch.Tensor.nextafter_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def nextafter_(a, b, /):
     return prims.copy_(nextafter(a, b), a)
 
@@ -1954,7 +1954,7 @@ def polygamma(n: int, a: TensorLike, /) -> TensorLike:
     return sign * factorial_mul_zeta
 
 
-@torchsymbol(torch.Tensor.polygamma_, is_method=True)
+@torchsymbol(torch.Tensor.polygamma_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def polygamma_(a: TensorLike, n: int, /) -> TensorLike:
     return prims.copy_(polygamma(n, a), a)
 
@@ -1964,7 +1964,7 @@ def pow(a, b, /):
     return clang.pow(a, b)
 
 
-@torchsymbol(torch.Tensor.pow_, is_method=True)
+@torchsymbol(torch.Tensor.pow_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def pow_(a, b, /):
     return prims.copy_(pow(a, b), a)
 
@@ -1974,7 +1974,7 @@ def remainder(a, b, /):
     return clang.remainder(a, b)
 
 
-@torchsymbol(torch.Tensor.remainder_, is_method=True)
+@torchsymbol(torch.Tensor.remainder_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def remainder_(a, b, /):
     return prims.copy_(remainder(a, b), a)
 
@@ -1987,7 +1987,7 @@ def sub(a, b, /, *, alpha=None):
     return clang.sub(a, b)
 
 
-@torchsymbol(torch.Tensor.sub_, is_method=True)
+@torchsymbol(torch.Tensor.sub_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def sub_(a, b, /, *, alpha=None):
     return prims.copy_(sub(a, b, alpha=alpha), a)
 
@@ -1997,7 +1997,7 @@ def true_divide(a: NumberLike | TensorLike, b: NumberLike | TensorLike, /) -> Nu
     return clang.true_divide(a, b)
 
 
-@torchsymbol(torch.Tensor.true_divide_, is_method=True)
+@torchsymbol(torch.Tensor.true_divide_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def true_divide_(a: TensorLike, b: NumberLike | TensorLike, /) -> TensorLike:
     return prims.copy_(true_divide(a, b))
 
@@ -2036,7 +2036,7 @@ def addcmul(a: TensorLike, b: TensorLike, c: TensorLike, /, *, value: None | Num
     return addcmul_addcdiv_helper(a, b, c, add, mul, value=value)
 
 
-@torchsymbol(torch.Tensor.addcmul_, is_method=True)
+@torchsymbol(torch.Tensor.addcmul_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def addcmul_(a: TensorLike, b: TensorLike, c: TensorLike, /, *, value: None | Number = None) -> TensorLike:
     return prims.copy_(addcmul(a, b, c, value=value), a)
 
@@ -2046,7 +2046,7 @@ def addcdiv(a: TensorLike, b: TensorLike, c: TensorLike, /, *, value: None | Num
     return addcmul_addcdiv_helper(a, b, c, add, true_divide, value=value)
 
 
-@torchsymbol(torch.Tensor.addcdiv_, is_method=True)
+@torchsymbol(torch.Tensor.addcdiv_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def addcdiv_(a: TensorLike, b: TensorLike, c: TensorLike, /, *, value: None | Number = None) -> TensorLike:
     return prims.copy_(addcdiv(a, b, c, value=value), a)
 
@@ -2091,7 +2091,7 @@ def clamp(
     return a
 
 
-@torchsymbol(torch.Tensor.clamp_, is_method=True)
+@torchsymbol(torch.Tensor.clamp_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def clamp_(
     a: TensorLike, /, min: None | Number | TensorLike = None, max: None | Number | TensorLike = None
 ) -> TensorLike:
@@ -2121,7 +2121,7 @@ def masked_fill(a: TensorLike, /, mask: TensorLike, value: NumberLike | TensorLi
     return result
 
 
-@torchsymbol(torch.Tensor.masked_fill_, is_method=True)
+@torchsymbol(torch.Tensor.masked_fill_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def masked_fill_(a: TensorLike, /, mask: TensorLike, value: NumberLike | TensorLike) -> TensorLike:
     return prims.copy_(masked_fill(a, mask, value))
 
@@ -2148,7 +2148,7 @@ def tril(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = Non
     return _mask_tensor(a, mask, fill_value)
 
 
-@torchsymbol(torch.Tensor.tril_, is_method=True)
+@torchsymbol(torch.Tensor.tril_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def tril_(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = None) -> TensorLike:
     return prims.copy_(tril(a, diagonal, fill_value=fill_value), a)
 
@@ -2573,7 +2573,7 @@ def cumsum(a: TensorLike, dim: int, *, dtype: None | dtypeLike = None) -> Tensor
         return TensorProxy(like=a, dtype=to_dtype(dtype))
 
 
-@torchsymbol(torch.Tensor.cumsum_, is_method=True)
+@torchsymbol(torch.Tensor.cumsum_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def cumsum_(a: TensorLike, dim: int, *, dtype: None | dtypeLike = None) -> TensorLike:
     return prims.copy_(cumsum(a, dim, dtype=dtype), a)
 
@@ -2648,7 +2648,7 @@ def index_add(a: TensorLike, /, dim: int, index: TensorLike, source: TensorLike)
     return clang.index_add(a, index, source, dim)
 
 
-@torchsymbol(torch.Tensor.index_add_, is_method=True)
+@torchsymbol(torch.Tensor.index_add_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def index_add_(a: TensorLike, /, dim: int, index: TensorLike, source: TensorLike) -> TensorLike:
     return prims.copy_(index_add(a, dim, index, source), a)
 
@@ -2669,7 +2669,7 @@ def scatter_add(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike) 
     return clang.scatter_add(a, indices=index, value=src, dim=dim)
 
 
-@torchsymbol(torch.Tensor.scatter_add_, is_method=True)
+@torchsymbol(torch.Tensor.scatter_add_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def scatter_add_(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike) -> TensorLike:
     return prims.copy_(scatter_add(a, dim, index, src), a)
 
@@ -2686,7 +2686,7 @@ def index_put(
     return clang.index_put(a, indices, values, accumulate)
 
 
-@torchsymbol(torch.Tensor.index_put_, is_method=True)
+@torchsymbol(torch.Tensor.index_put_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def index_put_(
     a: TensorLike,
     /,

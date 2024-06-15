@@ -380,10 +380,12 @@ def functionalize_inplace_ops(computation_trace: Trace) -> list[Trace]:
     import thunder.torch
 
     def is_inplace(bsym: BoundSymbol) -> bool:
-        if (isinstance(bsym.sym.id, str) and bsym.sym.id.endswith("_")) and bsym.subsymbols:
-            return bsym.subsymbols[-1].sym.id == prims.PrimIDs.COPY_
-        else:
-            return False
+        return (
+            bsym.sym.tags
+            and prims.OpTags.IN_PLACE in bsym.sym.tags
+            and bsym.subsymbols
+            and bsym.subsymbols[-1].sym.id == prims.PrimIDs.COPY_
+        )
 
     if not any(is_inplace(bsym) for bsym in computation_trace.bound_symbols):
         return []
