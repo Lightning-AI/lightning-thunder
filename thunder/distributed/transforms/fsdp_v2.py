@@ -3,7 +3,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
-from collections import defaultdict
 
 from thunder.core import devices
 from thunder.core import prims
