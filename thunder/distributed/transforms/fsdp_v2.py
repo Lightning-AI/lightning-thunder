@@ -98,8 +98,10 @@ class FSDPTraceTransform(EarlyTransform):
         for param_name, base_param in self.shared_params_name.items():
             param_proxy = param_name_to_comp_trc_proxy[param_name]
             base_param_proxy = param_name_to_comp_trc_proxy[base_param]
-            # Replace - all usage of `param_proxy` with the output of `AllGather` on `base_param_proxy`.
-            proxies_to_replace[id(param_proxy)] = proxies_to_replace[id(base_param_proxy)]
+            allgather_base_param_proxy = proxies_to_replace[id(base_param_proxy)]
+            # Update `proxies_to_replace` so we replace all usage of `param_proxy`
+            # with the output of `AllGather` on `base_param_proxy`.
+            proxies_to_replace[id(param_proxy)] = allgather_base_param_proxy
 
         new_computation_trace = from_trace(computation_trace)
         for idx, bsym in enumerate(computation_trace.bound_symbols):
