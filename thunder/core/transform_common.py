@@ -373,9 +373,15 @@ class PostOptimizationTransform(Transform, ABC):
 def functionalize_inplace_ops(computation_trace: Trace) -> list[Trace]:
     """Functionalize in-place ops in ``computation_trace``.
 
-    This is a two-step function. The first step is to use the output of :func:`thunder.core.prims.copy_`'s
-    outputs as trace's outputs. The second step is to remove :func:`thunder.core.prims.copy_`
-    from :attr:`~thunder.core.symbol.Boundsymbol.subsymbols` if it's the last symbol.
+    In thunder, an in-place is an out-of-place or functional op followed by :func:`~thunder.core.prims.copy_`.
+    This function replaces such in-place ops with out-of-place ops.
+
+    For example, :func:`thunder.torch.add_` is represented as a :class:`thunder.core.symbol.BoundSymbol`
+    whose `subsymbols` are :func:`thunder.torch.add` and :func:`thunder.core.prims.copy_`. This function
+    replaces it with a :class:`~thunder.core.symbol.BoundSymbol` of :func:`~thunder.torch.add`.
+
+    Note that functionalization is not applied, if any of an in-place op's arguments are
+    ``computation_trace.args`` or ``computation_trace.kwargs``.
     """
     import thunder.torch
 
