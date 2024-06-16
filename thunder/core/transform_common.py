@@ -436,17 +436,14 @@ def functionalize_inplace_ops(computation_trace: Trace) -> list[Trace]:
             hasattr(thunder.torch, functional_sym_name),
             lambda: f"{functional_sym_name}, out-of-place impl of {bsym.sym.id=} not found in `thunder.torch` namespace",
         )
-        sub_bsyms: list[BoundSymbol] = bsym.subsymbols
-        check(sub_bsyms, lambda: f"{bsym.sym.id=} expected to have subsymbols but {bsym.subsymbols=}")
-        copy_bsym = sub_bsyms[-1]
-        check(
-            copy_bsym.sym.id == prims.PrimIDs.COPY_,
-            lambda: f"bsym.subsymbols[-1] expected to be {prims.PrimIDs.COPY_} but {copy_bsym.sym.id=}",
-        )
-        if (copy_to := copy_bsym.flat_proxy_args[1]) in trace_args_set:
+        copy_bsym = bsym.subsymbols[-1]
+        copy_return = copy_bsym.flat_proxy_outs[0]
+        copy_from = copy_bsym.flat_proxy_args[0]
+        copy_to = copy_bsym.flat_proxy_args[1]
+        if copy_to in trace_args_set:
             new_bsyms.append(new_bsym)
         else:
-            swap_map[variableify(copy_bsym.flat_proxy_outs[0])] = copy_bsym.flat_proxy_args[0]
+            swap_map[variableify(copy_return)] = copy_from
             new_bsym.subsymbols = new_bsym.subsymbols[:-1]
             new_bsym = new_bsym.from_bsym_swap_proxies(swap_map)
             functional_sym: Symbol = getattr(thunder.torch, functional_sym_name)
