@@ -5010,10 +5010,20 @@ def max_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # Currently, if there are multiple `max` values
     # `torch` eager - gradients max(dim) propagates gradient only to a single index in the source tensor
     # `thunder` - gradients are distributed evenly.
+    # Also, we need unique values when grad check with finite differences.
     # So, we use the function below to create tensor with unique values.
-    def make_unique_t(shape):
-        # Add two random inputs, so it is unlikely to have same value across the tensor elements.
-        return make(shape) + make(shape)
+    def make_t(shape):
+        if dtype.is_floating_point and requires_grad:
+            # Use `linspace` to create tensor with unique values.
+            numel = math.prod(shape)
+            inp_t = torch.linspace(
+                -1000, 1000, steps=numel, dtype=dtype, device=device, requires_grad=requires_grad
+            ).view(shape)
+            return inp_t
+
+        # If we are not computing gradients,
+        # it is ok to have repeated values.
+        return make(shape)
 
     # shape, dim, keepdim
     cases = (
@@ -5024,7 +5034,7 @@ def max_sample_generator(op, device, dtype, requires_grad, **kwargs):
     for shape, dim, keepdim in cases:
         # overload: torch_max(a: TensorLike, /) -> TensorLike
         # This overload corresponds to taking the max over the flattened tensor.
-        yield SampleInput(make_unique_t(shape))
+        yield SampleInput(make_t(shape))
 
         if not requires_grad and dtype.is_floating_point:
             # See NOTE: Gradient Computation with multiple max values
@@ -5041,8 +5051,8 @@ def max_sample_generator(op, device, dtype, requires_grad, **kwargs):
             # This overload corresponds to taking the max along the specified dimension `dim`.
             # It returns first occurence of the maximum value along the dimension and it's corresponding index.
             # NOTE: When same values are present, the first occurence of the `value` and corresponding index is returned
-            yield SampleInput(make_unique_t(shape), dim)
-            yield SampleInput(make_unique_t(shape), dim, keepdim)
+            yield SampleInput(make_t(shape), dim)
+            yield SampleInput(make_t(shape), dim, keepdim)
 
             if not requires_grad and dtype.is_floating_point:
                 # See NOTE: Gradient Computation with multiple max values
