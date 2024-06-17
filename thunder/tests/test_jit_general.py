@@ -926,14 +926,21 @@ def test_cache_symbolic_values_constraints():
     actual = jfoo(2.0)
 
     assert_close(expected, actual)
-    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 0
+
+    expected = foo(1.5)
+    actual = jfoo(1.5)
+
+    assert_close(expected, actual)
+    assert thunder.cache_misses(jfoo) == 2
     assert thunder.cache_hits(jfoo) == 1
 
     expected = foo(-0.3)
     actual = jfoo(-0.3)
 
     assert_close(expected, actual)
-    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_misses(jfoo) == 3
     assert thunder.cache_hits(jfoo) == 1
 
 
