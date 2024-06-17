@@ -223,7 +223,7 @@ def numerical_jvp(f):
     return jvp
 
 
-def check_jvp(f, *primals, comp, executor, atol=None, rtol=None):
+def check_jvp(f, *primals, comp, executor):
     """Check that the Jacobian-vector product of a function is correct.
 
     Args:
@@ -239,9 +239,8 @@ def check_jvp(f, *primals, comp, executor, atol=None, rtol=None):
     tangents = tree_map(make_tensor_like, primals)
     actual_p, actual_t = executor.make_callable_legacy(jvp(f))(primals, tangents)
     expected_p, expected_t = numerical_jvp(executor.make_callable_legacy(f))(primals, tangents)
-    partial_comp = partial(comp, atol=atol, rtol=rtol)
-    partial_comp(expected_p, actual_p)
-    partial_comp(expected_t, actual_t)
+    comp(expected_p, actual_p)
+    comp(expected_t, actual_t)
 
 
 def _replace_none_with_zero(x, y):
@@ -283,7 +282,7 @@ def _dot(x, y):
     return sum([torch.dot(a.ravel().type(torch.float64), b.ravel().type(torch.float64)) for a, b in zip(x, y)])
 
 
-def check_vjp(f, *primals, comp, executor="torch", atol=1e-5, rtol=1.3e-6):
+def check_vjp(f, *primals, comp, executor="torch"):
     """Check that the vector-Jacobian product of a function is correct.
 
     Args:
@@ -328,8 +327,7 @@ def check_vjp(f, *primals, comp, executor="torch", atol=1e-5, rtol=1.3e-6):
     if J_u_v.isnan().any():
         # TODO: find a better way to handle NaNs in finite differences
         return  # skip this sample
-    partial_comp = partial(comp, atol=atol, rtol=rtol, check_device=False)
-    partial_comp(J_u_v, u_J_star_v)
+    comp(J_u_v, u_J_star_v)
 
 
 def _is_differentiable(x):

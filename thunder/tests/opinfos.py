@@ -2986,6 +2986,14 @@ type_as_sample = OpInfo(
     ltorch.type_as,
     sample_input_generator=type_as_sample_generator,
     torch_reference=torch.Tensor.type_as,
+    test_directives=(
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-5, rtol=1e-5)),
+            "test_vjp_correctness",
+            # dtypes=(datatypes.bfloat16, datatypes.float16),
+            # devicetypes=(devices.DeviceType.CUDA,),
+        ),
+    ),
 )
 data_movement_ops.append(type_as_sample)
 
