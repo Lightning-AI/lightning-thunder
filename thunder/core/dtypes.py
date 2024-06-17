@@ -597,13 +597,24 @@ def to_torch_dtype(x: None | torch.dtype | dtype) -> None | torch.dtype:
 
 # Converts NumPy dtypes to and from thunder dtypes
 
+def _numpy_2_compat_dtypes():
+    if LooseVersion(np.__version__)  >= LooseVersion("2"):
+        return {
+            float: np.float64,
+            complex: np.complex128,
+        }
+    else:
+        return {
+            float: np.float_,
+            complex: np.cfloat,
+        }
+
 # NOTE NumPy does not support the bfloat16, complexhalf (complex32) or float8 datatypes
 _thunder_to_numpy_dtype_map = {
     bool: np.bool_,
     int: np.int_,
-    # np.float_ is removed in NumPy 2.0
-    float: np.float64 if LooseVersion(np.__version__) >= LooseVersion("2") else np.float_,
-    complex: np.cfloat,
+    # NumPy 2.0 compat float types
+    **_numpy_2_compat_dtypes(),
     bool8_: np.bool_,
     bool8: np.bool_,
     uint8_: np.uint8,
