@@ -4463,6 +4463,7 @@ def torch_device(device_or_str: DeviceLike, /, index: int | None = None) -> devi
         )
         if isinstance(index, NumberProxy):
             index.make_static_constrained()
+            prims.sink(index)
             index = index.value
 
     return devices.Device(device_or_str, index)

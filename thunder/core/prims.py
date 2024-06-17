@@ -261,6 +261,8 @@ class PrimIDs(Enum):
     # Memory access methods
     ITEM = auto()
     COPY_ = auto()
+    #
+    SINK = auto()
 
 
 class OpTags(Enum):
@@ -3887,3 +3889,10 @@ def copy__meta(
 
 
 copy_ = make_prim(PrimIDs.COPY_, "copy_", meta=copy__meta, tags=(OpTags.DONT_DCE,))
+
+
+def sink_meta(*args, **kwargs):
+    return
+
+# TODO do we want another tag to remove this after prologue is constructed?
+sink = make_prim(PrimIDs.SINK, "sink", meta=, tags=(OpTags.DONT_DCE,))
