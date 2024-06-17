@@ -375,17 +375,17 @@ def functionalize_inplace_ops(computation_trace: Trace) -> list[Trace]:
 
     In thunder, an in-place is an out-of-place or functional op followed by :func:`~thunder.core.prims.copy_`.
     This function replaces such in-place ops with out-of-place ops.
+    Note that functionalization is not applied, if any of an in-place op's arguments are
+    ``computation_trace.args`` or ``computation_trace.kwargs``.
 
     For example, :func:`thunder.torch.add_` is represented as a :class:`thunder.core.symbol.BoundSymbol`
     whose `subsymbols` are :func:`thunder.torch.add` and :func:`thunder.core.prims.copy_`. This function
     replaces it with a :class:`~thunder.core.symbol.BoundSymbol` of :func:`~thunder.torch.add`.
-
-    Note that functionalization is not applied, if any of an in-place op's arguments are
-    ``computation_trace.args`` or ``computation_trace.kwargs``.
     """
     import thunder.torch
 
-    def is_inplace(bsym: BoundSymbol) -> bool:
+    def is_functionalizable(bsym: BoundSymbol) -> bool:
+        """Has `OpTags.IN_PLACE` and its args are NOT ``computation_trace.args`` nor ``computation_trace.kwargs``."""
         return (
             bsym.sym.tags
             and prims.OpTags.IN_PLACE in bsym.sym.tags
@@ -393,7 +393,7 @@ def functionalize_inplace_ops(computation_trace: Trace) -> list[Trace]:
             and bsym.subsymbols[-1].sym.id == prims.PrimIDs.COPY_
         )
 
-    if not any(is_inplace(bsym) for bsym in computation_trace.bound_symbols):
+    if not any(is_functionalizable(bsym) for bsym in computation_trace.bound_symbols):
         return []
 
     # Step 1: return the tensors returned from `prims.copy_` as possible not the args for clarity.
@@ -404,7 +404,7 @@ def functionalize_inplace_ops(computation_trace: Trace) -> list[Trace]:
         new_bsym = bsym.from_bsym_swap_proxies(swap_map)
 
         # in-place ops has `prims.copy_` as the last subsymbol.
-        if not is_inplace(new_bsym):
+        if not is_functionalizable(new_bsym):
             bsyms.append(new_bsym)
             continue
 
@@ -434,7 +434,7 @@ def functionalize_inplace_ops(computation_trace: Trace) -> list[Trace]:
     for bsym in intermediate_trace.bound_symbols:
         new_bsym = bsym.from_bsym_swap_proxies(swap_map)
 
-        if not is_inplace(new_bsym):
+        if not is_functionalizable(new_bsym):
             new_bsyms.append(new_bsym)
             continue
         functional_sym_name = new_bsym.sym.id.split(".")[-1][:-1]
