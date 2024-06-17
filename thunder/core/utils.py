@@ -1126,6 +1126,9 @@ def partition(pred, iterable):
 
 
 def wrap_subject(subject, population_sampler_iter):
+    if subject is None:
+        return None
+
     @wraps(type(subject), updated=())
     class WrappedSubject(type(subject)):
         def __del__(self):
