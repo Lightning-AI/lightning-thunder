@@ -926,6 +926,7 @@ def test_cache_symbolic_values_constraints():
     actual = jfoo(2.0)
 
     assert_close(expected, actual)
+    # even though we should be able to re-use the cache, we cannot do it now. Because constraints are propagated to inputs being static number.
     assert thunder.cache_misses(jfoo) == 2
     assert thunder.cache_hits(jfoo) == 0
 

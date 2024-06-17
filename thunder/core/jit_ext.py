@@ -1192,6 +1192,7 @@ general_jit_callbacks = default_callbacks | general_jit_callbacks
 # The logic is that, if all inputs that produces a NumberProxy is marked statically constrained, then the value of the NumberProxy is statically constrained.
 # This pass currently only does backward propagation to insert constraints in prologue trace
 # TODO: We should be able to apply constant-folding and simplify computation_trace.
+# TODO: If we allow symbolic constraints, we would be able to get more cache re-use. i.e. rather than requiring a NumberProxy to be static, we can have a finer grained constraints as `check_number_gt`.
 def propagate_constraints(ctx, inputs, intermediates, computation_trace):
     import thunder.core.utils as utils
 
