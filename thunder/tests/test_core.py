@@ -2776,3 +2776,4 @@ def test_population_sampler():
     assert pop_sampler.subject_life_counts[1] == 1
     del x2
     assert len(pop_sampler.population) == 0 and len(pop_sampler.subject_life_counts) == 0
+

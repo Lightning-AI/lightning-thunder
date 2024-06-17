@@ -60,6 +60,7 @@ def rename_bwd_trace_outputs(bwd_trace: TraceCtx, fwd_trace: TraceCtx) -> TraceC
     return renamed_bwd_trace
 
 
+# TODO: think about where to place it, seems useful
 class BasicTensorSubclass(torch.Tensor):
     """
     A tensor subclass that does not own explicit storage (created with _make_wrapper_subclass),
@@ -69,16 +70,12 @@ class BasicTensorSubclass(torch.Tensor):
     @staticmethod
     def __new__(cls, t: torch.Tensor):
         res = torch.Tensor._make_wrapper_subclass(
-            cls,
-            t.shape,
-            device=t.device,
-            dtype=t.dtype,
-            requires_grad=t.requires_grad,
-            layout=t.layout,
-            strides=t.stride(),
-            storage_offset=t.storage_offset(),
+            cls, t.shape, device=t.device, dtype=t.dtype, requires_grad=t.requires_grad,
+            layout=t.layout, strides=t.stride(), storage_offset=t.storage_offset(),
         )
         res.tensor_obj = t
+        # Required for NVFuser, otherwise segfaults.
+        # Having it as property does not work for some reason.
         res.data = t
         return res
 
