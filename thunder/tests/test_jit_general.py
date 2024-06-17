@@ -936,7 +936,7 @@ def test_cache_symbolic_values_constraints():
     assert thunder.cache_misses(jfoo) == 2
     assert thunder.cache_hits(jfoo) == 1
 
-    
+
     def bar(t):
         if t[0].item() > 5:
             return t + 1.0
