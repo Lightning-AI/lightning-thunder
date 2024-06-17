@@ -600,7 +600,7 @@ _thunder_to_numpy_dtype_map = {
     bool: np.bool_,
     int: np.int_,
     float: np.float64,
-    complex: np.cfloat,
+    complex: np.complex128,
     bool8_: np.bool_,
     bool8: np.bool_,
     uint8_: np.uint8,
