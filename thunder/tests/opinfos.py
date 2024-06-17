@@ -2991,8 +2991,6 @@ type_as_sample = OpInfo(
         DecorateInfo(
             custom_comparator(partial(assert_close, atol=1e-5, rtol=1e-5)),
             "test_vjp_correctness",
-            # dtypes=(datatypes.bfloat16, datatypes.float16),
-            # devicetypes=(devices.DeviceType.CUDA,),
         ),
     ),
 )
