@@ -365,8 +365,10 @@ ex.register_implementation(prims.pow, pythonex_pow, checker=_elementwise_binary_
 ex.register_implementation(prims.sub, sub, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.div, div, checker=_elementwise_binary_checker)
 
+
 def _sink(*args, **kwargs):
     return
+
 
 sink = ex.register_operator("sink", like=prims.sink, fn=_sink)
 ex.register_implementation(prims.sink, sink, checker=_always_executable)
