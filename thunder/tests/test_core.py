@@ -2776,3 +2776,13 @@ def test_population_sampler():
     assert pop_sampler.subject_life_counts[1] == 1
     del x2
     assert len(pop_sampler.population) == 0 and len(pop_sampler.subject_life_counts) == 0
+
+    # Test with None
+    pop_sampler = PopulationSampler([None], lives_per_subject=lives)
+    assert pop_sampler.population[0] is None
+    x1, = pop_sampler
+    x2, = pop_sampler
+    assert x1 is not None and x2 is not None
+    del x1
+    del x2
+    assert len(pop_sampler.population) == 0 and len(pop_sampler.subject_life_counts) == 0

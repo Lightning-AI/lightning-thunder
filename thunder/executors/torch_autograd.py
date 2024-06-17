@@ -69,6 +69,7 @@ class BasicTensorSubclass(torch.Tensor):
 
     @staticmethod
     def __new__(cls, t: torch.Tensor | None):
+        # Allow to propagate None - this is useful in the context of torch.autograd
         if t is None:
             return None
 

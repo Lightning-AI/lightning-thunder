@@ -1126,31 +1126,40 @@ def partition(pred, iterable):
 
 
 def wrap_subject(subject, population_sampler_iter):
-    if subject is None:
-        return None
+    def del_impl(self):
+        assert hasattr(self, "id")
 
-    @wraps(type(subject), updated=())
-    class WrappedSubject(type(subject)):
-        def __del__(self):
-            assert hasattr(self, "id")
+        subject_life_counts = population_sampler_iter.population_sampler.subject_life_counts
+        assert subject_life_counts[self.id] > 0
+        subject_life_counts[self.id] -= 1
+        population_sampler_iter.population_sampler.n_lives -= 1
 
-            subject_life_counts = population_sampler_iter.population_sampler.subject_life_counts
-            assert subject_life_counts[self.id] > 0
-            subject_life_counts[self.id] -= 1
-            population_sampler_iter.population_sampler.n_lives -= 1
+        if subject_life_counts[self.id] == 0:
+            population = population_sampler_iter.population_sampler.population
+            population[self.id] = None
 
-            if subject_life_counts[self.id] == 0:
-                population = population_sampler_iter.population_sampler.population
-                assert population[self.id] is not None
-                population[self.id] = None
+            if population_sampler_iter.population_sampler.n_lives == 0:
+                population.clear()
+                subject_life_counts.clear()
 
-                if population_sampler_iter.population_sampler.n_lives == 0:
-                    population.clear()
-                    subject_life_counts.clear()
+    def wrap(subject):
+        if subject is None:
+            class WrappedNone(object):
+                def __del__(self):
+                    del_impl(self)
 
-                getattr(super(), "__del__", lambda self: None)(self)
+            return WrappedNone()
 
-    wrapped_subject = WrappedSubject(subject)
+        else:
+            @wraps(type(subject), updated=())
+            class WrappedSubject(type(subject)):
+                def __del__(self):
+                    del_impl(self)
+                    getattr(super(), "__del__", lambda self: None)(self)
+
+            return WrappedSubject(subject)
+
+    wrapped_subject = wrap(subject)
     wrapped_subject.id = population_sampler_iter.curr_subject_id
     return wrapped_subject
 
