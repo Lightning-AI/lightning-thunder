@@ -4461,6 +4461,9 @@ def torch_device(device_or_str: DeviceLike, /, index: int | None = None) -> devi
             not has_device_idx,
             lambda: f"device string must not include an index because index was passed explicitly: {device_or_str}",
         )
+        if isinstance(index, NumberProxy):
+            index.make_static_constrained()
+            index = index.value
 
     return devices.Device(device_or_str, index)
 
