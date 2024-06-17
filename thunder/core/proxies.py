@@ -1426,10 +1426,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
         method = resolve_method("mod", self, other)
         return method(self, other)
 
-    # def __imod__(self, other):
-    #     method = resolve_method("mod_", self, other)
-    #     return method(self, other)
-
     def __rmod__(self, other):
         method = resolve_method("mod", other, self)
         return method(other, self)
