@@ -7,7 +7,8 @@ from collections.abc import Sequence
 from enum import Enum
 from functools import partial, reduce, wraps
 from numbers import Number
-from typing import Any
+from typing import Any, overload
+from types import NoneType
 from collections.abc import Callable
 
 import opt_einsum
@@ -2042,6 +2043,50 @@ def amin(a, /, dim=None, keepdim: bool = False):
         has_identity=False,
         output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
     )
+
+
+# NOTE: Using name `torch_max` to avoid conflict with Python's `max`
+@overload
+def torch_max(a: TensorLike, /) -> TensorLike: ...
+
+
+@overload
+def torch_max(a: TensorLike, /, dim: NumberLike, keepdim: bool = False) -> tuple[TensorLike, TensorLike]: ...
+
+
+@overload
+def torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike: ...
+
+
+@torchsymbol(torch.max, is_method=True, id="torch.max")
+def torch_max(
+    a, /, dim: NumberLike | TensorLike | None = None, keepdim: bool = False
+) -> TensorLike | tuple[TensorLike, TensorLike]:
+    utils.check_type(dim, (NumberLike, TensorLike, NoneType))
+    utils.check_type(
+        keepdim, (bool, IntegerProxy)
+    )  # `keepdim` can be a [IntegerProxy (bool type) name=keepdim, value=False]
+    if isinstance(dim, TensorLike):
+        # overload - torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike
+        # This overload corresponds to taking the elementwise max between tensors `a` and `b`.
+        utils.check(not keepdim, lambda: "keepdim=True is invalid for torch.max(a, b) overload.")
+        b = dim
+        return maximum(a, b)
+
+    if dim is None:
+        # overload - torch_max(a: TensorLike, /) -> TensorLike
+        # This overload corresponds to taking the max over the flattened tensor.
+        utils.check(not keepdim, lambda: "keepdim=True is invalid for torch.max(a) overload.")
+        dim = list(range(a.ndim))
+        return amax(a, dim, keepdim)
+
+    # overload - torch_max(a: TensorLike, /, dim: int | tuple[int], keepdim: bool = False) -> TensorLike, TensorLike
+    # This overload corresponds to taking the max along the specified dimension `dim`.
+    # NOTE: It returns first occurence of the maximum value along the dimension and it's corresponding index.
+    utils.check_type(dim, NumberLike)
+    max_vals = amax(a, dim, keepdim)
+    argmax_vals = argmax(a, dim, keepdim)
+    return max_vals, argmax_vals
 
 
 # Clone is unique in that it's not registered as a symbol; as such we add it to
