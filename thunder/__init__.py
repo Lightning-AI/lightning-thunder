@@ -621,8 +621,6 @@ def jit(
             # See https://github.com/Lightning-AI/lightning-thunder/issues/433
             if cd.use_cudagraphs:
                 comp = CUDAGraphExecutor(comp)
-                # if backward_fn is not None:
-                #    backward_fn = CUDAGraphExecutor(backward_fn, num_constant_args=len(backward_trc.args[0][0]))
 
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(
