@@ -7,7 +7,8 @@ from collections.abc import Sequence
 from enum import Enum
 from functools import partial, reduce, wraps
 from numbers import Number
-from typing import Any
+from typing import Any, overload
+from types import NoneType
 from collections.abc import Callable
 
 import opt_einsum
@@ -148,6 +149,14 @@ class torchsymbol:
                 _torch_to_thunder_function_map[torchfn] = sym
 
         return sym
+
+
+# This is function maps an implementation for `torch` operation without creating a Symbol.
+# So, the registered implementation will not show up in trace as a Symbol (but will get inlined).
+# This is helpful if we want to support a torch operation and bake it's output directly into the trace.
+# See `clone` and `torch.device` for example.
+def register_function(torchfn, thunderfn_impl):
+    _torch_to_thunder_function_map[torchfn] = thunderfn_impl
 
 
 #
@@ -2036,6 +2045,50 @@ def amin(a, /, dim=None, keepdim: bool = False):
     )
 
 
+# NOTE: Using name `torch_max` to avoid conflict with Python's `max`
+@overload
+def torch_max(a: TensorLike, /) -> TensorLike: ...
+
+
+@overload
+def torch_max(a: TensorLike, /, dim: NumberLike, keepdim: bool = False) -> tuple[TensorLike, TensorLike]: ...
+
+
+@overload
+def torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike: ...
+
+
+@torchsymbol(torch.max, is_method=True, id="torch.max")
+def torch_max(
+    a, /, dim: NumberLike | TensorLike | None = None, keepdim: bool = False
+) -> TensorLike | tuple[TensorLike, TensorLike]:
+    utils.check_type(dim, (NumberLike, TensorLike, NoneType))
+    utils.check_type(
+        keepdim, (bool, IntegerProxy)
+    )  # `keepdim` can be a [IntegerProxy (bool type) name=keepdim, value=False]
+    if isinstance(dim, TensorLike):
+        # overload - torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike
+        # This overload corresponds to taking the elementwise max between tensors `a` and `b`.
+        utils.check(not keepdim, lambda: "keepdim=True is invalid for torch.max(a, b) overload.")
+        b = dim
+        return maximum(a, b)
+
+    if dim is None:
+        # overload - torch_max(a: TensorLike, /) -> TensorLike
+        # This overload corresponds to taking the max over the flattened tensor.
+        utils.check(not keepdim, lambda: "keepdim=True is invalid for torch.max(a) overload.")
+        dim = list(range(a.ndim))
+        return amax(a, dim, keepdim)
+
+    # overload - torch_max(a: TensorLike, /, dim: int | tuple[int], keepdim: bool = False) -> TensorLike, TensorLike
+    # This overload corresponds to taking the max along the specified dimension `dim`.
+    # NOTE: It returns first occurence of the maximum value along the dimension and it's corresponding index.
+    utils.check_type(dim, NumberLike)
+    max_vals = amax(a, dim, keepdim)
+    argmax_vals = argmax(a, dim, keepdim)
+    return max_vals, argmax_vals
+
+
 # Clone is unique in that it's not registered as a symbol; as such we add it to
 # the appropriate maps manually, instead of through the @torchsymbol decorator.
 # This means that clone will not appear in the trace; instead, this basically
@@ -2062,8 +2115,8 @@ def clone(a: TensorProxy, *, memory_format=torch.preserve_format) -> TensorProxy
 
 # Because we do not use @torchsymbol, we need to manually register the
 # implementation.
-_torch_to_thunder_function_map[torch.clone] = clone
-_torch_to_thunder_function_map[torch.Tensor.clone] = clone
+register_function(torch.clone, clone)
+register_function(torch.Tensor.clone, clone)
 register_method("clone", clone)
 
 
@@ -3038,6 +3091,26 @@ def batch_norm(
 #
 # NN Operations
 #
+
+
+@torchsymbol(torch.baddbmm, is_method=True)
+def baddbmm(
+    a: TensorLike, b1: TensorLike, b2: TensorLike, *, beta: float = 1.0, alpha: float = 1.0, out: TensorLike = None
+) -> TensorLike:
+    utils.check(out is None, lambda: "Non-None out is not supported", NotImplementedError)
+
+    utils.check_same_dtype(a, b1, b2)
+    utils.check_same_device(a, b1, b2)
+    utils.check(b1.ndim == 3, lambda: f"batch1 must be a 3D tensor, found {b1.ndim} instead.")
+    utils.check(b2.ndim == 3, lambda: f"batch2 must be a 3D tensor, found {b2.ndim} instead.")
+
+    if a.dtype not in dtypes.inexact_dtypes:
+        utils.check_type(beta, int)
+        utils.check_type(alpha, int)
+
+    t0 = matmul(b1, b2)
+    t1 = alpha * t0
+    return t1 + (beta * a)
 
 
 # TODO bmm is more restrictive than matmul
@@ -4394,7 +4467,14 @@ def torch_device(device_or_str: DeviceLike, /, index: int | None = None) -> devi
 
 # We don't use @torchsymbol as we don't want `torch.device()` to appear in trace as a symbol.
 # Because of this, we need to manually register the implementation.
-_torch_to_thunder_function_map[torch.device] = torch_device
+register_function(torch.device, torch_device)
+
+
+def _set_grad_enabled_with_warning(enabled: bool) -> None:
+    warnings.warn("torch.enable_grad/torch.no_grad/torch._C._set_grad_enabled have no effect under thunder.jit")
+
+
+register_function(torch._C._set_grad_enabled, _set_grad_enabled_with_warning)
 
 
 #
