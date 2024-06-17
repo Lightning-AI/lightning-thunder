@@ -821,7 +821,7 @@ def _general_jit_bool_lookaside(wrapped_x: Any) -> bool | INTERPRETER_SIGNALS:
     # It doesn't feel right to insert constraints in bool lookaside, constraints here only applies when the bool value is used in control flow.
     if isinstance(wrapped_x.value, NumberProxy):
         if wrapped_x.value.is_dynamic():
-            raise NotImplementedError(f"conversion to bool is not allowed on dynamic proxy={wrapped_x.value=}")
+            raise NotImplementedError(f"conversion to bool is not allowed on dynamic proxy={wrapped_x.value}")
         wrapped_x.value.make_static_constrained()
     bool_lookaside = default_lookaside(bool) or bool
     return bool_lookaside(wrapped_x)
