@@ -1,9 +1,11 @@
-import thunder
-from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform, nvtx_push, nvtx_pop
-
 import torch
 
+import thunder
+from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform, nvtx_push, nvtx_pop
+from thunder.tests.framework import requiresCUDA
 
+
+@requiresCUDA
 def test_nvtx_transform():
     DIM = 2
 
