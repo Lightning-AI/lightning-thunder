@@ -73,6 +73,16 @@ def push_away_from_singularities(x, singularity_fn, eps):
     return torch.where((x_dist < 0) & (x_dist > -eps), x - eps, x_)
 
 
+# Randomly select a fraction of the elements in a tensor and set them to specified value
+def replace_random_percentage(a: torch.Tensor, value: Number, percentage: float) -> torch.Tensor:
+    flat = torch.flatten(a.detach().clone())
+    num_values_to_replace: int = math.floor(flat.numel() * percentage)
+    choice_np = np.random.choice(np.arange(0, flat.numel()), (num_values_to_replace,), replace=False)
+    choice = torch.asarray(choice_np, device=a.device)
+    flat[choice] = value
+    return flat.reshape(a.shape).requires_grad_(a.requires_grad)
+
+
 def make_number(**kwargs):
     v = make_tensor((), device="cpu", **kwargs).item()
     return v
@@ -2084,6 +2094,7 @@ maximum_opinfo = OpInfo(
     clang.maximum,
     sample_input_generator=partial(elementwise_binary_generator, no_rhs_numbers=True),
     torch_reference=torch.maximum,
+    supports_grad=True,
 )
 elementwise_binary_ops.append(maximum_opinfo)
 
@@ -4982,6 +4993,81 @@ amin_opinfo = OpInfo(
 reduction_ops.append(amin_opinfo)
 
 
+def max_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    # For grad test stability it's better to use wider range of values
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad, low=-1000, high=1000)
+
+    def make_with_extremal_value(shape, extremal, percentage=0.5):
+        return replace_random_percentage(make(shape), extremal, percentage=percentage)
+
+    # NOTE: Gradient Computation with multiple max values
+    # Currently, if there are multiple `max` values
+    # `torch` eager - gradients max(dim) propagates gradient only to a single index in the source tensor
+    # `thunder` - gradients are distributed evenly.
+    # So, we use the function below to create tensor with unique values.
+    def make_unique_t(shape):
+        # Add two random inputs, so it is unlikely to have same value across the tensor elements.
+        return make(shape) + make(shape)
+
+    # shape, dim, keepdim
+    cases = (
+        ((2, 2, 3), 1, True),
+        ((2, 3, 1), 0, False),
+    )
+
+    for shape, dim, keepdim in cases:
+        # overload: torch_max(a: TensorLike, /) -> TensorLike
+        # This overload corresponds to taking the max over the flattened tensor.
+        yield SampleInput(make_unique_t(shape))
+
+        if not requires_grad and dtype.is_floating_point:
+            # See NOTE: Gradient Computation with multiple max values
+            # Thus we don't pass these inputs to grad tests
+            yield SampleInput(make_with_extremal_value(shape, float("nan")))
+            yield SampleInput(make_with_extremal_value(shape, float("inf")))
+
+        # overload: torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike
+        # This overload corresponds to taking the elementwise max between tensors `a` and `b`.
+        yield SampleInput(make(shape), make(shape))
+
+        if not (dtype is torch.bool):  # argmax is not supported on `bool`
+            # overload: torch_max(a: TensorLike, /, dim: int | tuple[int], keepdim: bool = False) -> TensorLike, TensorLike
+            # This overload corresponds to taking the max along the specified dimension `dim`.
+            # It returns first occurence of the maximum value along the dimension and it's corresponding index.
+            # NOTE: When same values are present, the first occurence of the `value` and corresponding index is returned
+            yield SampleInput(make_unique_t(shape), dim)
+            yield SampleInput(make_unique_t(shape), dim, keepdim)
+
+            if not requires_grad and dtype.is_floating_point:
+                # See NOTE: Gradient Computation with multiple max values
+                # Thus we don't pass these inputs to grad tests
+                yield SampleInput(make_with_extremal_value(shape, float("nan")), dim)
+                yield SampleInput(make_with_extremal_value(shape, float("inf")), dim)
+
+
+def max_error_generator(op, device, **kwargs):
+    make = partial(make_tensor, device=device, dtype=torch.float, low=-1000, high=1000)
+
+    err_msg = r"keepdim=True is invalid for torch.max\(a, b\) overload."
+    yield (SampleInput(make(3, 3), make(3, 3), keepdim=True), RuntimeError, err_msg)
+
+    err_msg = r"keepdim=True is invalid for torch.max\(a\) overload."
+    yield (SampleInput(make(3, 3), keepdim=True), RuntimeError, err_msg)
+
+
+max_opinfo = OpInfo(
+    ltorch.torch_max,
+    supports_grad=True,
+    sample_input_generator=max_sample_generator,
+    error_input_generator=max_error_generator,
+    torch_reference=torch.max,
+    # Complex numbers are unordered
+    dtypes=(datatypes.exact, datatypes.floating),
+)
+
+reduction_ops.append(max_opinfo)
+
+
 def reduction_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(
         make_tensor,
@@ -5043,15 +5129,6 @@ def logsumexp_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((8, 7, 5, 1), (1, 3), False),
     )
 
-    # Randomly select a fraction of the elements in a tensor and set them to specified value
-    def _replace_random_percentage(a: torch.Tensor, value: Number, percentage: float) -> torch.Tensor:
-        flat = torch.flatten(a.detach().clone())
-        num_values_to_replace: int = math.floor(flat.numel() * percentage)
-        choice_np = np.random.choice(np.arange(0, flat.numel()), (num_values_to_replace,), replace=False)
-        choice = torch.asarray(choice_np, device=a.device)
-        flat[choice] = value
-        return flat.reshape(a.shape).requires_grad_(a.requires_grad)
-
     for shape, dim, keepdim in cases:
         yield (SampleInput(make(shape), dim, keepdim))
 
@@ -5059,9 +5136,9 @@ def logsumexp_sample_generator(op, device, dtype, requires_grad, **kwargs):
         if dtype.is_floating_point:
             inf_input_tensor = make(shape)
             # Set a quarter of elements to positive infinity
-            inf_input_tensor = _replace_random_percentage(inf_input_tensor, float("inf"), 0.25)
+            inf_input_tensor = replace_random_percentage(inf_input_tensor, float("inf"), 0.25)
             # Set a quarter of elements to negative infinity
-            inf_input_tensor = _replace_random_percentage(inf_input_tensor, float("-inf"), 0.25)
+            inf_input_tensor = replace_random_percentage(inf_input_tensor, float("-inf"), 0.25)
             yield (SampleInput(inf_input_tensor, dim, keepdim))
 
 
@@ -6196,6 +6273,101 @@ opinfos.extend(linear_algebra_ops)
 # NN Ops
 #
 nn_ops = []
+
+
+def baddbmm_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    cases = (
+        ((0, 0, 0), (0, 0, 0), (0, 0, 0), 0.0, None),
+        ((3, 0, 5), (3, 0, 0), (3, 0, 5), 0.0, None),
+        ((0, 5, 6), (0, 5, 0), (0, 0, 6), 0.0, None),
+        ((3, 5, 6), (3, 5, 0), (3, 0, 6), 0.0, None),
+        ((3, 5, 6), (3, 5, 8), (3, 8, 6), 0.0, None),
+        ((3, 5, 6), (3, 5, 8), (3, 8, 6), 0.25, float("inf")),
+        ((3, 5, 6), (3, 5, 8), (3, 8, 6), 0.25, float("-inf")),
+        ((3, 5, 6), (3, 5, 8), (3, 8, 6), 0.25, float("nan")),
+    )
+
+    int_constants_cases = ((2, 2), (1, 0), (0, 1))
+
+    float_constants_cases = (
+        (2.0, 2.0),
+        (1.0, 0.0),
+        (0.0, 1.0),
+        (float("inf"), 2.0),
+        (2.0, float("inf")),
+        (float("inf"), float("inf")),
+        (float("-inf"), 2.0),
+        (2.0, float("-inf")),
+        (float("-inf"), float("-inf")),
+        (float("nan"), 2.0),
+        (2.0, float("nan")),
+        (float("nan"), float("nan")),
+    )
+
+    for shape_in, shape_batch1, shape_batch2, singularity_amount, singularity_value in cases:
+        a = make(shape_in)
+        b1 = make(shape_batch1)
+        b2 = make(shape_batch2)
+
+        if isinstance(to_dtype(dtype), datatypes.exact):
+            for alpha, beta in int_constants_cases:
+                yield SampleInput(make(shape_in), make(shape_batch1), make(shape_batch2), alpha=alpha, beta=beta)
+        else:
+            if singularity_value is not None:
+                a = replace_random_percentage(a, singularity_value, singularity_amount)
+                b1 = replace_random_percentage(b1, singularity_value, singularity_amount)
+                b2 = replace_random_percentage(b2, singularity_value, singularity_amount)
+
+            for alpha, beta in float_constants_cases:
+                yield SampleInput(make(shape_in), make(shape_batch1), make(shape_batch2), alpha=alpha, beta=beta)
+
+
+def baddbmm_error_generator(op, device, dtype=torch.int32, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype)
+    cases = (
+        ((3, 5, 6), (3, 5), (3, 0, 6), RuntimeError, "batch1 must be a 3D tensor, found 2 instead."),
+        ((3, 5, 6), (3, 5, 0), (3, 0), RuntimeError, "batch2 must be a 3D tensor, found 2 instead."),
+        (
+            (3, 5, 6),
+            (3, 5, 0),
+            (3, 0, 6),
+            ValueError,
+            "2.0 had an unexpected type <class 'float'>. Supported types are <class 'int'>",
+        ),
+    )
+
+    for shape_in, shape_batch1, shape_batch2, err_type, err_msg in cases:
+        yield (
+            SampleInput(make(shape_in), make(shape_batch1), make(shape_batch2), alpha=2.0, beta=2.0),
+            err_type,
+            err_msg,
+        )
+
+
+baddbmm_opinfo = OpInfo(
+    ltorch.baddbmm,
+    supports_grad=True,
+    dtypes=(datatypes.floating, datatypes.signedinteger, datatypes.unsignedinteger),
+    sample_input_generator=baddbmm_sample_generator,
+    error_input_generator=baddbmm_error_generator,
+    torch_reference=torch.baddbmm,
+    test_directives=(
+        # baddbmm not implemented on CUDA for int
+        DecorateInfo(
+            pytest.mark.xfail,
+            dtypes=(datatypes.exact,),
+            devicetypes=(devices.DeviceType.CUDA,),
+        ),
+        # test_phantom_grad_vs_torch_consistency does not support nan singularity
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_phantom_grad_vs_torch_consistency",
+        ),
+    ),
+)
+
+nn_ops.append(baddbmm_opinfo)
 
 
 def _convolution_get_default_args():

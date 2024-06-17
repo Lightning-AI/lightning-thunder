@@ -2726,3 +2726,27 @@ def test_torch_device():
     for inp, err in error_inputs:
         with pytest.raises(err):
             thunder.jit(foo_error)(inp)
+
+
+def test_grad_ctx():
+    @torch.enable_grad()
+    def foo1(x):
+        return x + 1
+
+    x = torch.randn(3, 3, requires_grad=True)
+    with pytest.warns(UserWarning, match="have no effect under thunder.jit"):
+        thunder.jit(foo1)(x).sum().backward()
+
+    assert x.grad is not None
+
+    @torch.no_grad()
+    def foo2(x):
+        return x + 1
+
+    x = torch.randn(3, 3, requires_grad=True)
+    with pytest.warns(UserWarning, match="have no effect under thunder.jit"):
+        thunder.jit(foo2)(x).sum().backward()
+
+    # `torch.no_grad` has no effect on thunder's autodiff which determines whether to compute grad based on `requires_grad=True`.
+    # Thus when backward is called it computes grad for the input.
+    assert x.grad is not None

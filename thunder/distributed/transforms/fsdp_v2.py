@@ -27,6 +27,7 @@ __all__ = [
 class FSDPTraceTransform(EarlyTransform):
     sharded_params: dict[str, Any]
     process_group: ProcessGroup
+    shared_params_name: dict[str, str]
 
     def transform_traces(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
         from thunder.distributed import prims as dist_prims
@@ -49,6 +50,7 @@ class FSDPTraceTransform(EarlyTransform):
         computation_trace.push_scope([])
 
         synchronized_parameters = []
+        param_name_to_comp_trc_proxy = {}  # Track param_name to it's corresponding proxy in computation_trc.
         # todo: deal with epilogue output
         for pro_out_p, comp_inp_p in zip(prologue_trace.output, computation_trace.args):
             bsym = prologue_producers[pro_out_p]
@@ -56,6 +58,7 @@ class FSDPTraceTransform(EarlyTransform):
                 param_thunder_module, param_name = bsym.args
                 assert param_thunder_module is thunder_module_proxy
                 if param_name in self.sharded_params:
+                    param_name_to_comp_trc_proxy[param_name] = comp_inp_p
                     old_shape, new_shape, new_torch_device = self.sharded_params[param_name]
                     thunder_device = devices.to_device(new_torch_device)
                     thunder_device_str = str(thunder_device)
@@ -90,6 +93,15 @@ class FSDPTraceTransform(EarlyTransform):
                     bsym.args = (a0, shape, thunder_device_str, *a2pp)
 
         proxies_to_replace = {id(bsym.args[0]): bsym.output for bsym in new_scope}
+
+        # See NOTE: Shared Parameters in Trace
+        for param_name, base_param in self.shared_params_name.items():
+            param_proxy = param_name_to_comp_trc_proxy[param_name]
+            base_param_proxy = param_name_to_comp_trc_proxy[base_param]
+            allgather_base_param_proxy = proxies_to_replace[id(base_param_proxy)]
+            # Update `proxies_to_replace` so we replace all usage of `param_proxy`
+            # with the output of `AllGather` on `base_param_proxy`.
+            proxies_to_replace[id(param_proxy)] = allgather_base_param_proxy
 
         new_computation_trace = from_trace(computation_trace)
         for idx, bsym in enumerate(computation_trace.bound_symbols):
