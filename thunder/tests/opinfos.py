@@ -5007,7 +5007,7 @@ def max_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # So, we use the function below to create tensor with unique values.
     def make_t(shape):
         if dtype.is_floating_point and requires_grad:
-            # Use `linspace` to create unique values.
+            # Use `linspace` to create tensor with unique values.
             numel = math.prod(shape)
             inp_t = torch.linspace(
                 -1000, 1000, steps=numel, dtype=dtype, device=device, requires_grad=requires_grad
