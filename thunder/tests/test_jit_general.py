@@ -943,13 +943,14 @@ def test_cache_symbolic_values_constraints():
     assert thunder.cache_misses(jfoo) == 3
     assert thunder.cache_hits(jfoo) == 1
 
-
     def bar(t):
         if t[0].item() > 5:
             return t + 1.0
         return t
 
-    with pytest.raises(thunder.core.interpreter.InterpreterError, match="conversion to bool is not allowed on dynamic proxy"):
+    with pytest.raises(
+        thunder.core.interpreter.InterpreterError, match="conversion to bool is not allowed on dynamic proxy"
+    ):
         jbar = thunder.jit(bar, cache="symbolic values")
         t = torch.randn(4, device="cpu")
         jbar(t)
