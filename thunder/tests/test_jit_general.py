@@ -909,7 +909,7 @@ def test_device_as_input(cache_option):
 
 def test_cache_symbolic_values_constraints():
     def foo(scalar):
-        if scalar > 0
+        if scalar > 0:
             return scalar
         return 0
 
@@ -938,7 +938,7 @@ def test_cache_symbolic_values_constraints():
 
     
     def bar(t):
-        if t[0].item() > 5
+        if t[0].item() > 5:
             return t + 1.0
         return t
 
