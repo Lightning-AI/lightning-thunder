@@ -73,6 +73,9 @@ class BasicTensorSubclass(torch.Tensor):
         if t is None:
             return None
 
+        while hasattr(t, "tensor_obj"):
+            t = t.tensor_obj
+
         res = torch.Tensor._make_wrapper_subclass(
             cls,
             t.shape,
