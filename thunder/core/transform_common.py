@@ -403,7 +403,7 @@ def functionalize_inplace_ops(computation_trace: Trace) -> list[Trace]:
     for bsym in computation_trace.bound_symbols:
         new_bsym = bsym.from_bsym_swap_proxies(swap_map)
 
-        # in-place ops has `prims.copy_` as the last subsymbol.
+        # in-place functionalizable ops has `prims.copy_` as the last subsymbol.
         if not is_functionalizable(new_bsym):
             bsyms.append(new_bsym)
             continue
