@@ -70,8 +70,14 @@ class BasicTensorSubclass(torch.Tensor):
     @staticmethod
     def __new__(cls, t: torch.Tensor):
         res = torch.Tensor._make_wrapper_subclass(
-            cls, t.shape, device=t.device, dtype=t.dtype, requires_grad=t.requires_grad,
-            layout=t.layout, strides=t.stride(), storage_offset=t.storage_offset(),
+            cls,
+            t.shape,
+            device=t.device,
+            dtype=t.dtype,
+            requires_grad=t.requires_grad,
+            layout=t.layout,
+            strides=t.stride(),
+            storage_offset=t.storage_offset(),
         )
         res.tensor_obj = t
         # Required for NVFuser, otherwise segfaults.
