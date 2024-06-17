@@ -63,7 +63,7 @@ def rename_bwd_trace_outputs(bwd_trace: TraceCtx, fwd_trace: TraceCtx) -> TraceC
 # TODO: think about where to place it, seems useful
 class BasicTensorSubclass(torch.Tensor):
     """
-    A tensor subclass that does not own explicit storage (created with _make_wrapper_subclass),
+    A tensor subclass that does own explicit storage (created with _make_wrapper_subclass),
     has a reference to a torch.Tensor instance, and dispatches to torch.Tensor operations.
     """
 
@@ -73,23 +73,11 @@ class BasicTensorSubclass(torch.Tensor):
         if t is None:
             return None
 
-        while hasattr(t, "tensor_obj"):
+        while isinstance(t, BasicTensorSubclass):
             t = t.tensor_obj
 
-        res = torch.Tensor._make_wrapper_subclass(
-            cls,
-            t.shape,
-            device=t.device,
-            dtype=t.dtype,
-            requires_grad=t.requires_grad,
-            layout=t.layout,
-            strides=t.stride(),
-            storage_offset=t.storage_offset(),
-        )
+        res = torch.Tensor._make_subclass(cls, t, t.requires_grad)
         res.tensor_obj = t
-        # Required for NVFuser, otherwise segfaults.
-        # Having it as property does not work for some reason.
-        res.data = t
         return res
 
     @classmethod
