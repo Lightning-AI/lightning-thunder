@@ -67,7 +67,7 @@ from thunder.core.proxies import (
     unvariableify,
     is_proxy_name_available,
 )
-from thunder.core.trace import set_tracectx, reset_tracectx, tracectx, from_trace, TraceProvenance
+from thunder.core.trace import set_tracectx, reset_tracectx, tracectx, from_trace
 from thunder.core.interpreter import (
     InterpreterLogItem,
     interpret,
