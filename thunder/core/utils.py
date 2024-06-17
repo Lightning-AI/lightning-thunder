@@ -1145,7 +1145,7 @@ def wrap_subject(subject, population_sampler_iter):
     def wrap(subject):
         if subject is None:
 
-            class WrappedNone(object):
+            class WrappedNone:
                 def __del__(self):
                     del_impl(self)
 
