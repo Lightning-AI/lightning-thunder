@@ -73,14 +73,14 @@ def test_view_ops(executor, device: str, dtype: dtypes.dtype):
     max_mem_bw = get_alloc_memory(bw_extrace)
 
     # NOTE: nvFuser is able to avoid the allocation of result2 and produce it as alias to result1.
-    if executor.name == 'nvfuser':
+    if executor.name == "nvfuser":
         assert max_mem_bw[0] == 128
     else:
         assert max_mem_bw[0] == 144
 
     # NOTE: The get_return_memory method cannot distinguish wether the returned values come from an alias op.
     # In this case, since nvFuser returns one tensor and it's reshaped alias it only allocates once (32/2).
-    if executor.name == 'nvfuser':
+    if executor.name == "nvfuser":
         assert sum(max_mem_bw[1].values()) == 16
     else:
         assert sum(max_mem_bw[1].values()) == get_return_memory(bw_extrace.bound_symbols[-1])  # 32
