@@ -5,6 +5,8 @@ from numbers import Number
 import torch
 import numpy as np
 
+from looseversion import LooseVersion
+
 import thunder.core.baseutils as baseutils
 from thunder.core.baseutils import NumberProxyInterface, TensorProxyInterface
 
@@ -599,7 +601,8 @@ def to_torch_dtype(x: None | torch.dtype | dtype) -> None | torch.dtype:
 _thunder_to_numpy_dtype_map = {
     bool: np.bool_,
     int: np.int_,
-    float: np.float_,
+    # np.float_ is removed in NumPy 2.0
+    float: np.float64 if LooseVersion(np.__version__)  >= LooseVersion("2") else np.float_,
     complex: np.cfloat,
     bool8_: np.bool_,
     bool8: np.bool_,
