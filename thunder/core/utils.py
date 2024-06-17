@@ -1123,3 +1123,71 @@ def partition(pred, iterable):
     # partition(is_odd, range(10)) --> 0 2 4 6 8   and  1 3 5 7 9
     t1, t2 = itertools.tee(iterable)
     return itertools.filterfalse(pred, t1), filter(pred, t2)
+
+
+def wrap_subject(subject, population_sampler_iter):
+    @wraps(type(subject), updated=())
+    class WrappedSubject(type(subject)):
+        def __del__(self):
+            assert hasattr(self, "id")
+
+            subject_life_counts = population_sampler_iter.population_sampler.subject_life_counts
+            assert subject_life_counts[self.id] > 0
+            subject_life_counts[self.id] -= 1
+            population_sampler_iter.population_sampler.n_lives -= 1
+
+            if subject_life_counts[self.id] == 0:
+                population = population_sampler_iter.population_sampler.population
+                assert population[self.id] is not None
+                population[self.id] = None
+
+                if population_sampler_iter.population_sampler.n_lives == 0:
+                    population.clear()
+                    subject_life_counts.clear()
+
+                getattr(super(), "__del__", lambda self: None)(self)
+
+
+    wrapped_subject = WrappedSubject(subject)
+    wrapped_subject.id = population_sampler_iter.curr_subject_id
+    return wrapped_subject
+
+
+class PopulationSamplerIter:
+    def __init__(self, population_sampler: 'PopulationSampler'):
+        self.population_sampler = population_sampler
+        self.population_iter = iter(self.population_sampler.population)
+        self.curr_subject_id = -1
+        self.cycles_left = population_sampler.cycles_left
+
+    def __next__(self):
+        try:
+            subject = next(self.population_iter)
+        except StopIteration:
+            raise StopIteration
+
+        self.curr_subject_id += 1
+
+        return wrap_subject(subject, self)
+
+
+class PopulationSampler(Iterable[T]):
+    def __init__(self, population: Sequence[T], *, lives_per_subject: int = 1):
+        if not isinstance(population, Sequence):
+            raise ValueError(f"Expected {type(population)=} to be a Sequence type")
+        if not isinstance(lives_per_subject, int) or lives_per_subject <= 0:
+            raise ValueError(f"Expected {lives_per_subject=} to be a greater than 0 integer")
+
+        self.population = population if isinstance(population, list) else list(population)
+        self.cycles_left = lives_per_subject
+        self.n_lives = lives_per_subject * len(self.population)
+        self.subject_life_counts = [lives_per_subject] * len(self.population)
+
+    def __iter__(self):
+        # Population is exhausted
+        if self.cycles_left == 0:
+            return iter([])
+
+        self.cycles_left -= 1
+
+        return PopulationSamplerIter(self)

@@ -6,7 +6,7 @@ import torch
 import thunder.core.utils as utils
 from thunder.core.prims import PrimIDs
 from thunder.core.proxies import TensorProxy, variableify
-from thunder.core.pytree import tree_flatten
+from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import TraceCtx, from_trace, set_tracectx, reset_tracectx
 from thunder.core.transform_common import replace_redundant_inputs
@@ -60,6 +60,37 @@ def rename_bwd_trace_outputs(bwd_trace: TraceCtx, fwd_trace: TraceCtx) -> TraceC
     return renamed_bwd_trace
 
 
+class BasicTensorSubclass(torch.Tensor):
+    """
+    A tensor subclass that does not own explicit storage (created with _make_wrapper_subclass),
+    has a reference to a torch.Tensor instance, and dispatches to torch.Tensor operations.
+    """
+
+    @staticmethod
+    def __new__(cls, t: torch.Tensor):
+        res = torch.Tensor._make_wrapper_subclass(
+            cls, t.shape, device=t.device, dtype=t.dtype, requires_grad=t.requires_grad,
+            layout=t.layout, strides=t.stride(), storage_offset=t.storage_offset(),
+        )
+        res.tensor_obj = t
+        res.data = t
+        return res
+
+    @classmethod
+    def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
+        def unwrap(t):
+            if isinstance(t, BasicTensorSubclass):
+                return t.tensor_obj
+            return t
+
+        if kwargs is None:
+            kwargs = {}
+
+        args = tree_map(unwrap, args)
+        kwargs = tree_map(unwrap, kwargs)
+        return func(*args, **kwargs)
+
+
 class ThunderFunction(torch.autograd.Function):
     @staticmethod
     def forward(
@@ -88,18 +119,14 @@ class ThunderFunction(torch.autograd.Function):
         # empty list and the memory will be freed immediately. We must also
         # delete the reference to the saved_tensors in the context, otherwise
         # the memory will be freed only when the context is deleted.
-        saved_tensors_list = list(ctx.saved_tensors)  # Make a copy as we will mutate it
+        saved_tensors = utils.PopulationSampler([BasicTensorSubclass(t) for t in ctx.saved_tensors])
 
         # This is an undocumented API, but it's the only way to clear the
         # reference to the saved tensors in the context
         ctx.maybe_clear_saved_tensors()  # Delete the reference to all saved tensors in the context
-        grads = ctx.compiled_backward([saved_tensors_list, ctx.saved_other], args)
+        grads = ctx.compiled_backward([saved_tensors, ctx.saved_other], args)
+        assert len(saved_tensors.population) == 0
 
-        if isinstance(ctx.compiled_backward, CUDAGraphExecutor):
-            saved_tensors_list.clear()
-
-        # Inside the compiled backward we must clear the saved_tensors_list
-        assert not saved_tensors_list, "saved_tensors_list must be empty after calling compiled_backward"
         # TODO(crcrpar): Remove if-else once `dist_prims.stash_grad_for_fsdp` starts to return `None`
         # NOTE(crcrpar): In fsdp no-sync, unsharded gradients are attached and accumulated to their parameters as the attr of `_thunder_fsdp_unsharded_grad` in order to avoid shape mismatch of a param and its grad. When exiting the no_sync context, the accumulated, unsharded gradients are reduce-scattered into the attr of `grad` and `_thunder_fsdp_unsharded_grad` is removed.
         if not ctx.return_none_instead_of_grads:
