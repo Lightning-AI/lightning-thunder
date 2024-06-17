@@ -2865,7 +2865,7 @@ def normalize(
         dim = utils.canonicalize_dim(a.ndim, dim)
         a_ = clang.maybe_convert_to_dtype(a, computation_dtype)
         is_p_even = p % 2.0 == 0
-        if not (is_p_even and dtypes.is_float_dtype(a.dtype)):
+        if dtypes.is_complex_dtype(a.dtype) or not is_p_even:
             a_ = abs(a_)
         denom = a_**p
         denom = sum(denom, dim=dim, keepdim=True)
