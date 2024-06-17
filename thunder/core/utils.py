@@ -1147,14 +1147,13 @@ def wrap_subject(subject, population_sampler_iter):
 
                 getattr(super(), "__del__", lambda self: None)(self)
 
-
     wrapped_subject = WrappedSubject(subject)
     wrapped_subject.id = population_sampler_iter.curr_subject_id
     return wrapped_subject
 
 
 class PopulationSamplerIter:
-    def __init__(self, population_sampler: 'PopulationSampler'):
+    def __init__(self, population_sampler: "PopulationSampler"):
         self.population_sampler = population_sampler
         self.population_iter = iter(self.population_sampler.population)
         self.curr_subject_id = -1
