@@ -131,6 +131,8 @@ corresponding_real_dtype = dtypes.corresponding_real_dtype
 corresponding_complex_dtype = dtypes.corresponding_complex_dtype
 
 
+# This function resolves the CONSTRAINT tag from args, by looking at each Proxy instance in args:
+# TODO: we currently only considers NumberProxy could be statically constrained. This is likely going to be extended to other proxies in the future.
 def resolve_constraints(*args):
     all_static = True
     for arg in args:

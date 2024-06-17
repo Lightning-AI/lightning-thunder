@@ -1188,12 +1188,17 @@ general_jit_callbacks: dict[INTERPRETER_CALLBACKS, Callable] = {
 general_jit_callbacks = default_callbacks | general_jit_callbacks
 
 
+# This pass identifies NumberProxy that's marked as statically constrained and propagate the constraints to inputs to the trace.
+# The logic is that, if all inputs that produces a NumberProxy is marked statically constrained, then the value of the NumberProxy is statically constrained.
+# This pass currently only does backward propagation to insert constraints in prologue trace
+# TODO: We should be able to apply constant-folding and simplify computation_trace.
 def propagate_constraints(ctx, inputs, intermediates, computation_trace):
     import thunder.core.utils as utils
 
+    # set of NumberProxy variables that has already been traversed and marked as statically constrained.
     static_np_set = set()
 
-    # add static constraints for inputs, put candidates in set
+    # add static constraints for inputs
     for inp in inputs:
         u_inp = unvariableify(inp)
         if not isinstance(u_inp, NumberProxy):
@@ -1203,13 +1208,13 @@ def propagate_constraints(ctx, inputs, intermediates, computation_trace):
             static_np_set.add(inp)
 
     producers = utils.producers(computation_trace.bound_symbols, _map_to_numbers=False)
-
     # add static constraints propagated from intermediates.
     for intermediate in intermediates:
         u_intermediate = unvariableify(intermediate)
         if not isinstance(u_intermediate, NumberProxy) or not u_intermediate.is_static_constrained():
             continue
 
+        # DFS traversal along producers, starting from seed `intermediate`
         front = [intermediate]
         while len(front) != 0:
             v = front.pop()

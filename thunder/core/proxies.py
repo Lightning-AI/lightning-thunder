@@ -567,6 +567,12 @@ class DictProxy(Proxy, dict):
         raise NotImplementedError("Calling setdefault on an input dict is not yet supported")
 
 
+# CONSTRAINT annotates NumberProxy as their get processed by interpreter.
+# A NumberProxy can be at one of the status:
+# - A DYNAMIC NumberProxy cannot be converted to a static number;
+# - A CONSTRAINABLE NumberProxy is treated as DYNAMIC by default, but it could be converted to STATIC by interpreter;
+# - A STATIC NumberProxy can be treated as a static number, but not necessarily so;
+#   The protocol here is that, if a NumberProxy instance is converted to static, we'll insert a guard logic in prologue trace to ensure the NumberProxy doesn't change at runtime.
 class CONSTRAINT(Enum):
     DYNAMIC = auto()
     CONSTRAINABLE = auto()
