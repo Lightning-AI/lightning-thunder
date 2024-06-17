@@ -5004,6 +5004,7 @@ def max_sample_generator(op, device, dtype, requires_grad, **kwargs):
     # Currently, if there are multiple `max` values
     # `torch` eager - gradients max(dim) propagates gradient only to a single index in the source tensor
     # `thunder` - gradients are distributed evenly.
+    # Also, we need unique values when grad check with finite differences.
     # So, we use the function below to create tensor with unique values.
     def make_t(shape):
         if dtype.is_floating_point and requires_grad:
