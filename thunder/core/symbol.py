@@ -525,6 +525,7 @@ class BoundSymbol(BoundSymbolInterface):
 
         return (self.sym, self._var_args, self._var_output) == (other.sym, other._var_args, other._var_output)
 
+    @functools.cached_property
     def rhs(self) -> BoundSymbolRHS:
         hashable_args = make_hashable(self._var_args)
         hashable_kwargs = make_hashable(self._var_kwargs)
