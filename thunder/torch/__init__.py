@@ -537,9 +537,9 @@ def tensor(
         exception_type=NotImplementedError,
     )
     utils.check(
-        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.compile", NotImplementedError
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.jit", NotImplementedError
     )
-    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.compile", NotImplementedError)
+    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.jit", NotImplementedError)
 
     if isinstance(seq_or_number, (Number, NumberProxy)):
         return full((), seq_or_number, dtype=dtype, device=device)
@@ -634,10 +634,10 @@ def randn(
     out: TensorLike = None,
 ):
     utils.check(
-        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.compile", NotImplementedError
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.jit", NotImplementedError
     )
     utils.check(layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError)
-    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.compile", NotImplementedError)
+    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.jit", NotImplementedError)
     # NOTE: Currently, we don't model randomness
     utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
     utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
@@ -667,14 +667,14 @@ def randn_like(
     memory_format: torch.memory_format = torch.preserve_format,
 ):
     utils.check(
-        not requires_grad, lambda: "requires_grad=True is not supported within thunder.compile", NotImplementedError
+        not requires_grad, lambda: "requires_grad=True is not supported within thunder.jit", NotImplementedError
     )
     utils.check(
         layout is None or layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError
     )
     utils.check(
         memory_format == torch.preserve_format,
-        lambda: "preserve_format!=torch.preserve_format is not supported within thunder.compile",
+        lambda: "preserve_format!=torch.preserve_format is not supported within thunder.jit",
         NotImplementedError,
     )
 
@@ -727,9 +727,9 @@ def empty(
     utils.check(out is None, lambda: "empty(): out is not None which is currently unsupported", NotImplementedError)
     utils.check(layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError)
     utils.check(
-        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.compile", NotImplementedError
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.jit", NotImplementedError
     )
-    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.compile", NotImplementedError)
+    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.jit", NotImplementedError)
     utils.check(
         memory_format == torch.contiguous_format,
         lambda: "Only torch.contiguous_format is supported",
@@ -1494,7 +1494,7 @@ def selu(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
 
 
 @torchsymbol(torch.nn.functional.silu)
-def silu(a: TensorLike, /, *, inplace: bool = False):
+def silu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
     utils.check(
         not inplace, lambda: "Thunder only supports silu with inplace=False", exception_type=NotImplementedError
     )
