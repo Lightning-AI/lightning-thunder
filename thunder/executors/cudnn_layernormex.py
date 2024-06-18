@@ -21,8 +21,15 @@ from typing import Union, Dict
 import thunder.core.dtypes as dtypes
 from thunder.core.proxies import TensorProxy
 
-from thunder.executors.cudnnex import CudnnTensorAttributes, torch_to_cudnn_dtype
+from thunder.executors.cudnnex import torch_to_cudnn_dtype
 
+
+@dataclass(frozen=True)
+class CudnnTensorAttributes:
+    size: tuple
+    stride: tuple
+    dtype: torch.dtype
+    device_index: int
 
 def make_cacheable_cudnn_graph_inputs(func):
     def wrapper(*args, **kwargs):
