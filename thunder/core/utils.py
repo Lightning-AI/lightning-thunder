@@ -1157,7 +1157,8 @@ def wrap_subject(subject, population_sampler_iter):
             class WrappedSubject(type(subject)):
                 def __del__(self):
                     del_impl(self)
-                    getattr(super(), "__del__", lambda self: None)(self)
+                    if hasattr(super(), "__del__"):
+                        super().__del__()
 
             return WrappedSubject(subject)
 
