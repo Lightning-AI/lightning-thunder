@@ -655,5 +655,5 @@ def has_tags(bsym: BoundSymbol, tags: set[OpTags]) -> bool:
 @dataclass(**baseutils.default_dataclass_params)
 class BoundSymbolRHS:
     sym: Symbol
-    args: tuple[Any]
+    args: tuple[typing.Hashable]
     kwargs: FrozenDict
