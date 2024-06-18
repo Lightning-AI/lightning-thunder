@@ -13,6 +13,22 @@ from thunder.tests.make_tensor import make_tensor
 from thunder.torch import _torch_to_thunder_function_map, _inplace_to_out_of_place
 
 
+def sample_generator_wrapper(sample_generator, is_silu: bool = False):
+
+    def f(*args, **kwargs):
+        for sample in sample_generator(*args, **kwargs):
+            if not is_silu:
+                yield SampleInput(*(list(sample.args) + [True]), **sample.kwargs)
+            else:
+                # ref: https://github.com/Lightning-AI/lightning-thunder/commit/335d84c89
+                new_kwargs = {"inplace": True}
+                if sample.kwargs:
+                    new_kwargs.update(sample.kwargs)
+                yield SampleInput(*sample.args, **new_kwargs)
+
+    return f
+
+
 def inplace_masked_fill_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
     number = partial(make_number, dtype=dtype)
@@ -29,13 +45,25 @@ _torchsymbol_to_torch: dict[Sybmol, Callable] = {v: k for k, v in _torch_to_thun
 _functional_to_inplace: dict[Callable, Callable] = {
     functional: inplace for inplace, (functional, index) in _inplace_to_out_of_place.items() if index == -1
 }
+_functional_to_functional_with_inplace_arg: dict[Callable, tuple[Callable, int]] = {
+    functional: (inplace, index) for inplace, (functional, index) in _inplace_to_out_of_place.items() if index >= 0
+}
 _inplace_opinfos: list[OpInfo] = []
-for op in filter(lambda op: op.op in _functional_to_inplace, opinfos):
-    if op.op not in _functional_to_inplace:
+for op in opinfos:
+    if not (op.op in _functional_to_inplace or op.op in _functional_to_functional_with_inplace_arg):
         continue
-    if (inplace_op := _functional_to_inplace.get(op.op, None)) is None:
-        continue
-    else:
+    # ops that have an argument of `inplace` such as `F.relu` and `F.gelu`
+    if op.op in _functional_to_functional_with_inplace_arg:
+        inplace_op, _ = _functional_to_functional_with_inplace_arg[op.op]
+        assert op.name != "masked_fill"
+        inplace_opinfo = OpInfo(
+            inplace_op,
+            sample_input_generator=sample_generator_wrapper(op.sample_input_generator, is_silu=op.name == "silu"),
+            torch_reference=getattr(torch.nn.functional, op.name),
+        )
+        _inplace_opinfos.append(inplace_opinfo)
+    if op.op in _functional_to_inplace:
+        inplace_op = _functional_to_inplace[op.op]
         inplace_opinfo = OpInfo(
             inplace_op,
             sample_input_generator=(

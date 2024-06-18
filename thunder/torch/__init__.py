@@ -41,8 +41,6 @@ from thunder.core.transforms import register_grad
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.baseutils import run_once
 
-if TYPE_CHECKING:
-    from thunder.core.symbol import BoundSymbol
 
 __all__ = [
     "is_available",
