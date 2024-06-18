@@ -510,10 +510,8 @@ def jit(
             prologue_traces = [prologue_trc]
             computation_traces = [computation_trc]
             if not compile_options.get("skip_inplace_functionalization", False):
-                print(f"# Before functionalization\n{computation_trc}")
                 computation_traces.extend(functionalize_inplace_ops(computation_trace=computation_trc))
                 computation_trc = computation_traces[-1]
-                print(f"# After functionalization\n{computation_trc}")
 
             if epilogue_trc is not None:
                 epilogue_traces = [epilogue_trc]
