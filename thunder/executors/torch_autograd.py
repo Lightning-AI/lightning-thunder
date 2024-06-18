@@ -89,6 +89,7 @@ class ThunderFunction(torch.autograd.Function):
         # delete the reference to the saved_tensors in the context, otherwise
         # the memory will be freed only when the context is deleted.
         saved_tensors_list = list(ctx.saved_tensors)  # Make a copy as we will mutate it
+        assert all(t is not None for t in saved_tensors_list)
 
         # This is an undocumented API, but it's the only way to clear the
         # reference to the saved tensors in the context
