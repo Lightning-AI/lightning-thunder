@@ -63,6 +63,7 @@ for op in opinfos:
             torch_reference=getattr(torch.nn.functional, op.name),
         )
         _inplace_opinfos.append(inplace_opinfo)
+    # in-place ops whose name ends with `_`
     if op.op in _functional_to_inplace:
         inplace_op = _functional_to_inplace[op.op]
         inplace_opinfo = OpInfo(
