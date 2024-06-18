@@ -1655,7 +1655,7 @@ def relu_(
     a: TensorLike,
     /,
 ) -> TensorLike:
-    return prims.copy_(relu(a, False), a)
+    return relu(a, True)
 
 
 # The default value of `inplace` is False, so no need to tweak args/kwargs
