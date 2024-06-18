@@ -115,7 +115,10 @@ class CudnnexLRUCache(OrderedDict):
 
 _cudnnex_cache = CudnnexLRUCache(maxlen=1024)
 
-def _make_cudnn_sdpa_forward_graph(query, key, value, attn_mask, dropout_p, is_causal, query_stride, key_stride, value_stride):
+
+def _make_cudnn_sdpa_forward_graph(
+    query, key, value, attn_mask, dropout_p, is_causal, query_stride, key_stride, value_stride
+):
     graph = cudnn.pygraph(
         intermediate_data_type=cudnn.data_type.FLOAT,
         compute_data_type=cudnn.data_type.FLOAT,
@@ -210,11 +213,13 @@ def torch_to_cudnn_dtype(lc_dtype: dtypes.dtype):
     }
     return _torch_to_cudnn_dtype_map[lc_dtype]
 
+
 def _compute_row_major_strides(shape):
     strides = [1]
     for dim in reversed(shape[:-1]):
         strides.append(strides[-1] * dim)
     return tuple(reversed(strides))
+
 
 # sdpa requires that the embedding dim stride be one.
 # And when registering for sdpa, cudnn assumes NHWC layout. (See _transform_sdpa_inputs())
@@ -291,7 +296,9 @@ def _cudnn_sdpa_fwd_impl(
         O,
         softmax_stats,
         graph,
-    ) = _make_cudnn_sdpa_forward_graph(query, key, value, attn_mask, dropout_p, is_causal, query.stride(), key.stride(), value.stride())
+    ) = _make_cudnn_sdpa_forward_graph(
+        query, key, value, attn_mask, dropout_p, is_causal, query.stride(), key.stride(), value.stride()
+    )
 
     b, h_q, s_q, d_q = query.size()
     _, _, _, d_v = value.size()
@@ -380,7 +387,9 @@ def _cudnn_sdpa_checker(
             attn_mask = TensorProxy(like=attn_mask, shape=attn_mask_shape, dtype=attn_mask_dtype)
 
         # Build both forward and backward graphs
-        _make_cudnn_sdpa_forward_graph(query, key, value, attn_mask, dropout_p, is_causal, query_stride, key_stride, value_stride)
+        _make_cudnn_sdpa_forward_graph(
+            query, key, value, attn_mask, dropout_p, is_causal, query_stride, key_stride, value_stride
+        )
         _make_cudnn_sdpa_backward_graph(
             query,
             key,
@@ -388,8 +397,12 @@ def _cudnn_sdpa_checker(
             attn_mask,
             dropout_p,
             is_causal,
-            query_stride, key_stride, value_stride,
-            query_stride, key_stride, value_stride # Use the same strides as inputs for their respective grads
+            query_stride,
+            key_stride,
+            value_stride,
+            query_stride,
+            key_stride,
+            value_stride,  # Use the same strides as inputs for their respective grads
         )
     # If cudnn can't support the graph, return false
     # Please turn on cudnn API logging for helpful messages that mention why the graph is not supported.
@@ -413,7 +426,18 @@ cudnn_sdpa_fwd = cudnn_ex.register_operator(
 
 
 def _make_cudnn_sdpa_backward_graph(
-    query, key, value, attn_mask, dropout_p, is_causal, query_stride, key_stride, value_stride, grad_query_stride, grad_key_stride, grad_value_stride
+    query,
+    key,
+    value,
+    attn_mask,
+    dropout_p,
+    is_causal,
+    query_stride,
+    key_stride,
+    value_stride,
+    grad_query_stride,
+    grad_key_stride,
+    grad_value_stride,
 ):
     b, h, s_q, _ = query.shape
     _, _, _, d_v = value.shape

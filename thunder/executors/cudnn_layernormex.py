@@ -31,6 +31,7 @@ class CudnnTensorAttributes:
     dtype: torch.dtype
     device_index: int
 
+
 def make_cacheable_cudnn_graph_inputs(func):
     def wrapper(*args, **kwargs):
         cudnn_input_args = [
