@@ -797,7 +797,7 @@ def test_multiple_output_vjp(executor, device, _):
 # TODO: see issue
 # "thunder/tests/test_grad.py::test_torch_autograd_saved_tensors_memory_release
 # is flaky"
-#@pytest.mark.xfail(strict=False, reason="This test is flaky")
+# @pytest.mark.xfail(strict=False, reason="This test is flaky")
 @requiresCUDA
 def test_torch_autograd_saved_tensors_memory_release():
     # This test checks that the saved tensors are released during compiled
