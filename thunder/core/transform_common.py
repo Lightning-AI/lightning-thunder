@@ -9,7 +9,7 @@ from functools import partial
 import thunder.core.prims as prims
 from thunder.core.baseutils import BoundSymbolInterface
 from thunder.core.proxies import Proxy, variableify, Variable, TensorProxy
-from thunder.core.pytree import tree_flatten, tree_map
+from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, has_tags
 from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace
 from thunder.core.utils import ProxyDict, producers, check
@@ -387,8 +387,7 @@ def functionalize_inplace_ops(computation_trace: Trace) -> list[Trace]:
     def is_functionalizable(bsym: BoundSymbol) -> bool:
         """Has `OpTags.IN_PLACE` and its args are NOT ``computation_trace.args`` nor ``computation_trace.kwargs``."""
         return (
-            bsym.sym.tags
-            and prims.OpTags.IN_PLACE in bsym.sym.tags
+            bsym.sym in thunder.torch._inplace_to_out_of_place
             and bsym.subsymbols
             and bsym.subsymbols[-1].sym.id == prims.PrimIDs.COPY_
         )
@@ -437,11 +436,6 @@ def functionalize_inplace_ops(computation_trace: Trace) -> list[Trace]:
         if not is_functionalizable(new_bsym):
             new_bsyms.append(new_bsym)
             continue
-        functional_sym_name = new_bsym.sym.id.split(".")[-1][:-1]
-        check(
-            hasattr(thunder.torch, functional_sym_name),
-            lambda: f"{functional_sym_name}, out-of-place impl of {bsym.sym.id=} not found in `thunder.torch` namespace",
-        )
         copy_bsym = bsym.subsymbols[-1]
         copy_return = copy_bsym.flat_proxy_outs[0]
         copy_from = copy_bsym.flat_proxy_args[0]
@@ -452,10 +446,18 @@ def functionalize_inplace_ops(computation_trace: Trace) -> list[Trace]:
             swap_map[variableify(copy_return)] = copy_from
             new_bsym.subsymbols = new_bsym.subsymbols[:-1]
             new_bsym = new_bsym.from_bsym_swap_proxies(swap_map)
-            functional_sym: Symbol = getattr(thunder.torch, functional_sym_name)
+
+            functional_sym: Symbol
+            optional_inplace_arg_index: int
+            functional_sym, optional_inplace_arg_index = thunder.torch._inplace_to_out_of_place[new_bsym.sym]
+
+            flat_args, flat_args_spec = tree_flatten((new_bsym.args, new_bsym.kwargs))
+            if optional_inplace_arg_index > -1:
+                flat_args[optional_inplace_arg_index] = False
+            args, kwargs = tree_unflatten(flat_args, flat_args_spec)
             new_functional_bsym = functional_sym.bind(
-                *new_bsym.args,
-                **new_bsym.kwargs,
+                *args,
+                **kwargs,
                 output=new_bsym.output,
                 subsymbols=new_bsym.subsymbols,
                 _call_ctx=new_bsym._call_ctx,

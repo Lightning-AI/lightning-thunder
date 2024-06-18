@@ -1,3 +1,4 @@
+from __future__ import annotations
 import itertools
 import math
 import operator
@@ -7,7 +8,7 @@ from collections.abc import Sequence
 from enum import Enum
 from functools import partial, reduce, wraps
 from numbers import Number
-from typing import Any, overload
+from typing import Any, overload, TYPE_CHECKING
 from types import NoneType
 from collections.abc import Callable
 
@@ -40,6 +41,9 @@ from thunder.core.transforms import register_grad
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.baseutils import run_once
 
+if TYPE_CHECKING:
+    from thunder.core.symbol import BoundSymbol
+
 __all__ = [
     "is_available",
 ]
@@ -71,7 +75,9 @@ _torch_to_thunder_function_map: dict[Callable, Callable] = {}
 #
 # torch operation definitions
 #
-_inplace_to_out_of_place: dict[Callable, Callable] = {}
+
+# in-place sym -> out-of-place (= functional) sym with index of `inplace` argument
+_inplace_to_out_of_place: dict[Callable, tuple[Callable, int]] = {}
 
 
 # A wrapper that executes the operations within the torch language context
@@ -150,10 +156,7 @@ class torchsymbol:
                 _torch_to_thunder_function_map[torchfn] = sym
 
         if self.tags and prims.OpTags.IN_PLACE in self.tags:
-            _inplace_to_out_of_place[sym] = globals()[name[:-1]]
-
-        if "relu" in id:
-            print(f"### {sym = }")
+            _inplace_to_out_of_place[sym] = globals()[name[:-1]], -1
 
         return sym
 
@@ -1646,6 +1649,9 @@ def relu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
     return out
 
 
+_inplace_to_out_of_place[relu] = relu, 1
+
+
 # id=torch.relu because we ignore inplace argument in torch.nn.functional.relu
 @torchsymbol(torch.nn.functional.relu6, id="torch.relu6", is_method=False)
 def relu6(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
@@ -1653,6 +1659,9 @@ def relu6(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
     if inplace:
         return prims.copy_(out, a)
     return out
+
+
+_inplace_to_out_of_place[relu6] = relu6, 1
 
 
 @torchsymbol(torch.nn.functional.hardswish, id="torch.hardswish", is_method=False)
@@ -1666,6 +1675,9 @@ def hardswish(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
     if inplace:
         return prims.copy_(out, a)
     return out
+
+
+_inplace_to_out_of_place[hardswish] = hardswish, 1
 
 
 # id=torch.selu because we ignore inplace argument in torch.nn.functional.selu
@@ -1682,6 +1694,9 @@ def selu(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
     return out
 
 
+_inplace_to_out_of_place[selu] = selu, 1
+
+
 @torchsymbol(torch.nn.functional.silu)
 def silu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
     utils.check(
@@ -1691,6 +1706,9 @@ def silu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
     if inplace:
         return prims.copy_(out, a)
     return out
+
+
+_inplace_to_out_of_place[silu] = silu, 1
 
 
 #
@@ -4278,7 +4296,13 @@ def dropout(a: TensorProxy, /, p: NumberLike = 0.5, training: bool = True, inpla
     scale = 1 / (1 - p)
     dropout_mask = _dropout_helper(a, 1 - p)
 
-    return a * dropout_mask * scale
+    out = a * dropout_mask * scale
+    if inplace:
+        return prims.copy_(out, a)
+    return out
+
+
+_inplace_to_out_of_place[dropout] = dropout, 3
 
 
 @torchsymbol(torch.nn.functional.embedding, id="torch.nn.functional.embedding")
