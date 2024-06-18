@@ -71,6 +71,7 @@ _torch_to_thunder_function_map: dict[Callable, Callable] = {}
 #
 # torch operation definitions
 #
+_inplace_to_out_of_place: dict[Callable, Callable] = {}
 
 
 # A wrapper that executes the operations within the torch language context
@@ -147,6 +148,12 @@ class torchsymbol:
         if self.torchfns is not None:
             for torchfn in self.torchfns:
                 _torch_to_thunder_function_map[torchfn] = sym
+
+        if self.tags and prims.OpTags.IN_PLACE in self.tags:
+            _inplace_to_out_of_place[sym] = globals()[name[:-1]]
+
+        if "relu" in id:
+            print(f"### {sym = }")
 
         return sym
 
@@ -1241,7 +1248,7 @@ def abs(a: NumberLike | TensorLike, /) -> Number | TensorLike:
     return clang.abs(a)
 
 
-@torchsymbol(torch.Tensor.abs_, is_method=True)
+@torchsymbol(torch.Tensor.abs_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def abs_(a: NumberLike | TensorLike, /) -> Number | TensorLike:
     return prims.copy_(abs(a), a)
 
@@ -1251,7 +1258,7 @@ def acos(a: NumberLike | TensorLike, /) -> Number | TensorLike:
     return clang.acos(a)
 
 
-@torchsymbol(torch.Tensor.acos_, is_method=True)
+@torchsymbol(torch.Tensor.acos_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def acos_(a: TensorLike, /) -> TensorLike:
     return prims.copy_(acos(a), a)
 
@@ -1261,7 +1268,7 @@ def acosh(a):
     return clang.acosh(a)
 
 
-@torchsymbol(torch.Tensor.acosh_, is_method=True)
+@torchsymbol(torch.Tensor.acosh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def acosh_(a):
     return prims.copy_(acosh(a), a)
 
@@ -1271,7 +1278,7 @@ def asin(a):
     return clang.asin(a)
 
 
-@torchsymbol(torch.Tensor.asin_, is_method=True)
+@torchsymbol(torch.Tensor.asin_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def asin_(a):
     return prims.copy_(asin(a), a)
 
@@ -1281,7 +1288,7 @@ def asinh(a):
     return clang.asinh(a)
 
 
-@torchsymbol(torch.Tensor.asinh_, is_method=True)
+@torchsymbol(torch.Tensor.asinh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def asinh_(a):
     return prims.copy_(asinh(a), a)
 
@@ -1291,7 +1298,7 @@ def atan(a):
     return clang.atan(a)
 
 
-@torchsymbol(torch.Tensor.atan_, is_method=True)
+@torchsymbol(torch.Tensor.atan_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def atan_(a):
     return prims.copy_(atan(a), a)
 
@@ -1301,7 +1308,7 @@ def atanh(a):
     return clang.atanh(a)
 
 
-@torchsymbol(torch.Tensor.atanh_, is_method=True)
+@torchsymbol(torch.Tensor.atanh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def atanh_(a):
     return prims.copy_(atanh(a), a)
 
@@ -1311,7 +1318,7 @@ def bitwise_not(a):
     return clang.bitwise_not(a)
 
 
-@torchsymbol(torch.Tensor.bitwise_not_, is_method=True)
+@torchsymbol(torch.Tensor.bitwise_not_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def bitwise_not_(a):
     return prims.copy_(bitwise_not(a), a)
 
@@ -1321,7 +1328,7 @@ def ceil(a):
     return clang.ceil(a)
 
 
-@torchsymbol(torch.Tensor.ceil_, is_method=True)
+@torchsymbol(torch.Tensor.ceil_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def ceil_(a):
     return prims.copy_(ceil(a), a)
 
@@ -1331,7 +1338,7 @@ def cos(a):
     return clang.cos(a)
 
 
-@torchsymbol(torch.Tensor.cos_, is_method=True)
+@torchsymbol(torch.Tensor.cos_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def cos_(a):
     return prims.copy_(cos(a), a)
 
@@ -1341,7 +1348,7 @@ def cosh(a):
     return clang.cosh(a)
 
 
-@torchsymbol(torch.Tensor.cosh_, is_method=True)
+@torchsymbol(torch.Tensor.cosh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def cosh_(a):
     return prims.copy_(cosh(a), a)
 
@@ -1351,7 +1358,7 @@ def digamma(a):
     return clang.digamma(a)
 
 
-@torchsymbol(torch.Tensor.digamma_, is_method=True)
+@torchsymbol(torch.Tensor.digamma_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def digamma_(a):
     return prims.copy_(digamma(a), a)
 
@@ -1361,7 +1368,7 @@ def erf(a):
     return clang.erf(a)
 
 
-@torchsymbol(torch.Tensor.erf_, is_method=True)
+@torchsymbol(torch.Tensor.erf_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def erf_(a):
     return prims.copy_(erf(a), a)
 
@@ -1371,7 +1378,7 @@ def erfc(a):
     return clang.erfc(a)
 
 
-@torchsymbol(torch.Tensor.erfc_, is_method=True)
+@torchsymbol(torch.Tensor.erfc_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def erfc_(a):
     return prims.copy_(erfc(a), a)
 
@@ -1381,7 +1388,7 @@ def erfinv(a):
     return clang.erfinv(a)
 
 
-@torchsymbol(torch.Tensor.erfinv_, is_method=True)
+@torchsymbol(torch.Tensor.erfinv_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def erfinv_(a):
     return prims.copy_(erfinv(a), a)
 
@@ -1391,7 +1398,7 @@ def exp(a):
     return clang.exp(a)
 
 
-@torchsymbol(torch.Tensor.exp_, is_method=True)
+@torchsymbol(torch.Tensor.exp_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def exp_(a):
     return prims.copy_(exp(a), a)
 
@@ -1401,7 +1408,7 @@ def exp2(a):
     return clang.exp2(a)
 
 
-@torchsymbol(torch.Tensor.exp2_, is_method=True)
+@torchsymbol(torch.Tensor.exp2_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def exp2_(a):
     return prims.copy_(exp2(a), a)
 
@@ -1411,7 +1418,7 @@ def expm1(a):
     return clang.expm1(a)
 
 
-@torchsymbol(torch.Tensor.expm1_, is_method=True)
+@torchsymbol(torch.Tensor.expm1_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def expm1_(a):
     return prims.copy_(expm1(a), a)
 
@@ -1421,7 +1428,7 @@ def floor(a):
     return clang.floor(a)
 
 
-@torchsymbol(torch.Tensor.floor_, is_method=True)
+@torchsymbol(torch.Tensor.floor_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def floor_(a):
     return prims.copy_(floor(a), a)
 
@@ -1436,7 +1443,7 @@ def lgamma(a):
     return clang.lgamma(a)
 
 
-@torchsymbol(torch.Tensor.lgamma_, is_method=True)
+@torchsymbol(torch.Tensor.lgamma_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def lgamma_(a):
     return prims.copy_(lgamma(a), a)
 
@@ -1446,7 +1453,7 @@ def log(a):
     return clang.log(a)
 
 
-@torchsymbol(torch.Tensor.log_, is_method=True)
+@torchsymbol(torch.Tensor.log_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def log_(a):
     return prims.copy_(log(a), a)
 
@@ -1456,7 +1463,7 @@ def log10(a):
     return clang.log10(a)
 
 
-@torchsymbol(torch.Tensor.log10_, is_method=True)
+@torchsymbol(torch.Tensor.log10_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def log10_(a):
     return prims.copy_(log10(a), a)
 
@@ -1466,7 +1473,7 @@ def log1p(a):
     return clang.log1p(a)
 
 
-@torchsymbol(torch.Tensor.log1p_, is_method=True)
+@torchsymbol(torch.Tensor.log1p_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def log1p_(a):
     return prims.copy_(log1p(a), a)
 
@@ -1476,7 +1483,7 @@ def log2(a):
     return clang.log2(a)
 
 
-@torchsymbol(torch.Tensor.log2_, is_method=True)
+@torchsymbol(torch.Tensor.log2_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def log2_(a):
     return prims.copy_(log2(a), a)
 
@@ -1492,7 +1499,7 @@ def neg(a):
     return clang.neg(a)
 
 
-@torchsymbol(torch.Tensor.neg_, is_method=True)
+@torchsymbol(torch.Tensor.neg_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def neg_(a):
     return prims.copy_(neg(a), a)
 
@@ -1502,7 +1509,7 @@ def reciprocal(a):
     return clang.reciprocal(a)
 
 
-@torchsymbol(torch.Tensor.reciprocal_, is_method=True)
+@torchsymbol(torch.Tensor.reciprocal_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def reciprocal_(a):
     return prims.copy_(reciprocal(a), a)
 
@@ -1512,7 +1519,7 @@ def round(a):
     return clang.round(a)
 
 
-@torchsymbol(torch.Tensor.round_, is_method=True)
+@torchsymbol(torch.Tensor.round_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def round_(a):
     return prims.copy_(round(a), a)
 
@@ -1522,7 +1529,7 @@ def rsqrt(a):
     return clang.rsqrt(a)
 
 
-@torchsymbol(torch.Tensor.rsqrt_, is_method=True)
+@torchsymbol(torch.Tensor.rsqrt_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def rsqrt_(a):
     return prims.copy_(rsqrt(a), a)
 
@@ -1534,7 +1541,7 @@ def sign(a):
     return clang.sign(a)
 
 
-@torchsymbol(torch.Tensor.sign_, is_method=True)
+@torchsymbol(torch.Tensor.sign_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def sign_(a):
     return prims.copy_(sign(a), a)
 
@@ -1549,7 +1556,7 @@ def sin(a):
     return clang.sin(a)
 
 
-@torchsymbol(torch.Tensor.sin_, is_method=True)
+@torchsymbol(torch.Tensor.sin_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def sin_(a):
     return prims.copy_(sin(a), a)
 
@@ -1559,7 +1566,7 @@ def sinh(a):
     return clang.sinh(a)
 
 
-@torchsymbol(torch.Tensor.sinh_, is_method=True)
+@torchsymbol(torch.Tensor.sinh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def sinh_(a):
     return prims.copy_(sinh(a), a)
 
@@ -1569,7 +1576,7 @@ def sqrt(a):
     return clang.sqrt(a)
 
 
-@torchsymbol(torch.Tensor.sqrt_, is_method=True)
+@torchsymbol(torch.Tensor.sqrt_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def sqrt_(a):
     return prims.copy_(sqrt(a), a)
 
@@ -1579,7 +1586,7 @@ def tan(a):
     return clang.tan(a)
 
 
-@torchsymbol(torch.Tensor.tan_, is_method=True)
+@torchsymbol(torch.Tensor.tan_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def tan_(a):
     return prims.copy_(tan(a), a)
 
@@ -1589,7 +1596,7 @@ def tanh(a):
     return clang.tanh(a)
 
 
-@torchsymbol(torch.Tensor.tanh_, is_method=True)
+@torchsymbol(torch.Tensor.tanh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def tanh_(a):
     return prims.copy_(tanh(a), a)
 
@@ -1599,7 +1606,7 @@ def trunc(a):
     return clang.trunc(a)
 
 
-@torchsymbol(torch.Tensor.trunc_, is_method=True)
+@torchsymbol(torch.Tensor.trunc_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def trunc_(a):
     return prims.copy_(trunc(a), a)
 
