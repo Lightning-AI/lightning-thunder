@@ -20,6 +20,7 @@ def sample_generator_wrapper(sample_generator, is_silu: bool = False):
             if not is_silu:
                 yield SampleInput(*(list(sample.args) + [True]), **sample.kwargs)
             else:
+                # silu treats `inplace` as a kwarg
                 # ref: https://github.com/Lightning-AI/lightning-thunder/commit/335d84c89
                 new_kwargs = {"inplace": True}
                 if sample.kwargs:
@@ -81,6 +82,11 @@ class InplaceOpWrapper:
     jitted: bool
 
     def __call__(self, *args, **kwargs):
+        # polygamma expects an int as its first argument and a tensor as its second but
+        # torch.Tensor.polygamma_ wants opposite; tensor first, int second.
+        # ref:
+        # - https://pytorch.org/docs/stable/special.html#torch.special.polygamma
+        # - https://pytorch.org/docs/stable/generated/torch.Tensor.polygamma_.html
         args = list(args)
         idx = int(self.is_polygamma and self.jitted)
         t = args[idx] + 1.0
