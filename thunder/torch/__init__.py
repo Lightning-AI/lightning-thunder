@@ -1709,9 +1709,6 @@ _inplace_to_out_of_place[selu] = selu, 1
 
 @torchsymbol(torch.nn.functional.silu)
 def silu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
-    utils.check(
-        not inplace, lambda: "Thunder only supports silu with inplace=False", exception_type=NotImplementedError
-    )
     out = clang.silu(a)
     if inplace:
         return prims.copy_(out, a)

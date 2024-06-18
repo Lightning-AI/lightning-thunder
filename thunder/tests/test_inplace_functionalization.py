@@ -14,19 +14,11 @@ from thunder.torch import _torch_to_thunder_function_map, _inplace_to_out_of_pla
 
 
 # `SampleInput`s of ops with `inplace` argument do not seem to come with `inplace` arg, so give it to them.
-def sample_generator_wrapper(sample_generator, is_silu: bool = False):
+def sample_generator_wrapper(sample_generator):
 
     def f(*args, **kwargs):
         for sample in sample_generator(*args, **kwargs):
-            if not is_silu:
-                yield SampleInput(*(list(sample.args) + [True]), **sample.kwargs)
-            else:
-                # silu treats `inplace` as a kwarg
-                # ref: https://github.com/Lightning-AI/lightning-thunder/commit/335d84c89
-                new_kwargs = {"inplace": True}
-                if sample.kwargs:
-                    new_kwargs.update(sample.kwargs)
-                yield SampleInput(*sample.args, **new_kwargs)
+            yield SampleInput(*(list(sample.args) + [True]), **sample.kwargs)
 
     return f
 
@@ -60,7 +52,7 @@ for op in opinfos:
         assert op.name != "masked_fill"
         inplace_opinfo = OpInfo(
             inplace_op,
-            sample_input_generator=sample_generator_wrapper(op.sample_input_generator, is_silu=op.name == "silu"),
+            sample_input_generator=sample_generator_wrapper(op.sample_input_generator),
             torch_reference=getattr(torch.nn.functional, op.name),
         )
         _inplace_opinfos.append(inplace_opinfo)
