@@ -1992,7 +1992,7 @@ def polygamma(n: int, a: TensorLike, /) -> TensorLike:
 
 
 @torchsymbol(torch.Tensor.polygamma_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
-def polygamma_(a: TensorLike, n: int, /) -> TensorLike:
+def polygamma_(n: int, a: TensorLike, /) -> TensorLike:
     return prims.copy_(polygamma(n, a), a)
 
 
@@ -2160,7 +2160,7 @@ def masked_fill(a: TensorLike, /, mask: TensorLike, value: NumberLike | TensorLi
 
 @torchsymbol(torch.Tensor.masked_fill_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def masked_fill_(a: TensorLike, /, mask: TensorLike, value: NumberLike | TensorLike) -> TensorLike:
-    return prims.copy_(masked_fill(a, mask, value))
+    return prims.copy_(masked_fill(a, mask, value), a)
 
 
 # NOTE The key to understanding tril is that it generates a mask
