@@ -13,6 +13,7 @@ from thunder.tests.make_tensor import make_tensor
 from thunder.torch import _torch_to_thunder_function_map, _inplace_to_out_of_place
 
 
+# `SampleInput`s of ops with `inplace` argument do not seem to come with `inplace` arg, so give it to them.
 def sample_generator_wrapper(sample_generator, is_silu: bool = False):
 
     def f(*args, **kwargs):
