@@ -11,7 +11,7 @@ import thunder.core.devices as devices
 from thunder import dtypes
 from thunder.core.transforms import vjp
 from thunder.core.utils import flatten_func
-from thunder.tests.framework import instantiate, NOTHING, ops, requiresCUDA, run_snippet, TorchExecutor
+from thunder.tests.framework import instantiate, NOTHING, ops, requiresCUDA, run_snippet, TorchExecutor, version_between
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import get_opinfo, OpInfo
 from thunder.tests.test_grad import _make_differentiable_wrapper
@@ -199,6 +199,10 @@ def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
 @pytest.mark.skipif(
     LooseVersion(cudnn.backend_version_string()) < LooseVersion("8.9.5"),
     reason="cuDNN is required to be at least `8.9.5`",
+)
+@pytest.mark.skipif(
+    version_between(torch.__version__, min_ver="2.4.0a0", max_ver="2.4.0a99"),
+    reason="https://github.com/Lightning-AI/lightning-thunder/issues/567",
 )
 @pytest.mark.parametrize("may_cat_grad_qkv", (True, False), ids=("may-cat-grad-qkv", "never-cat-grad-qkv"))
 @pytest.mark.parametrize("dtype", grad_sdpa_cudnn_opinfo.dtypes(), ids=tuple(map(str, grad_sdpa_cudnn_opinfo.dtypes())))

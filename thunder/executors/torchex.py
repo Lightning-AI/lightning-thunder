@@ -836,7 +836,7 @@ _register_elementwise_unary_implementation(ltorch.relu, relu, checker=_elementwi
 _register_elementwise_unary_implementation(ltorch.relu6, relu6, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.hardswish, hardswish, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.selu, selu, checker=_elementwise_unary_with_inplace_checker)
-_register_elementwise_unary_implementation(ltorch.silu, silu)
+_register_elementwise_unary_implementation(ltorch.silu, silu, checker=_always_executable)
 
 #
 # Elementwise binary operations
@@ -1306,6 +1306,7 @@ _register_implementation(ltorch.batch_norm, batch_norm, checker=_always_executab
 #
 
 bmm = _register_torch_operation("bmm")
+baddbmm = _register_torch_operation("baddbmm")
 convolution = _register_torch_operation("convolution")
 conv1d = _register_torch_operation("conv1d", module=torch.nn.functional)
 conv2d = _register_torch_operation("conv2d", module=torch.nn.functional)
@@ -1592,6 +1593,7 @@ _register_implementation(prims.embedding, embedding, checker=_always_executable)
 _register_implementation(prims.embedding_backward, embedding_backward, checker=_always_executable)
 _register_implementation(prims.linear, linear, checker=_always_executable)
 
+_register_implementation(ltorch.baddbmm, baddbmm, checker=_always_executable)
 _register_implementation(ltorch.bmm, bmm, checker=_always_executable)
 _register_implementation(ltorch.convolution, checker=_always_executable, execution_transform=_convolution_transform)
 _register_implementation(ltorch.conv1d, conv1d, checker=_always_executable)

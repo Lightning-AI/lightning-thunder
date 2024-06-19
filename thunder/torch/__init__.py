@@ -7,7 +7,8 @@ from collections.abc import Sequence
 from enum import Enum
 from functools import partial, reduce, wraps
 from numbers import Number
-from typing import Any, Union, Optional, Tuple
+from typing import Any, overload
+from types import NoneType
 from collections.abc import Callable
 
 import opt_einsum
@@ -35,7 +36,7 @@ from thunder.core.proxies import (
 )
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
-from thunder.core.transforms import register_grad, put_grads
+from thunder.core.transforms import register_grad
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.baseutils import run_once
 
@@ -45,7 +46,6 @@ __all__ = [
 
 # NOTE torch is a requirement
 import torch
-import torch.distributed as tdist
 
 import warnings
 
@@ -149,6 +149,14 @@ class torchsymbol:
                 _torch_to_thunder_function_map[torchfn] = sym
 
         return sym
+
+
+# This is function maps an implementation for `torch` operation without creating a Symbol.
+# So, the registered implementation will not show up in trace as a Symbol (but will get inlined).
+# This is helpful if we want to support a torch operation and bake it's output directly into the trace.
+# See `clone` and `torch.device` for example.
+def register_function(torchfn, thunderfn_impl):
+    _torch_to_thunder_function_map[torchfn] = thunderfn_impl
 
 
 #
@@ -529,9 +537,9 @@ def tensor(
         exception_type=NotImplementedError,
     )
     utils.check(
-        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.compile", NotImplementedError
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.jit", NotImplementedError
     )
-    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.compile", NotImplementedError)
+    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.jit", NotImplementedError)
 
     if isinstance(seq_or_number, (Number, NumberProxy)):
         return full((), seq_or_number, dtype=dtype, device=device)
@@ -626,10 +634,10 @@ def randn(
     out: TensorLike = None,
 ):
     utils.check(
-        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.compile", NotImplementedError
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.jit", NotImplementedError
     )
     utils.check(layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError)
-    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.compile", NotImplementedError)
+    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.jit", NotImplementedError)
     # NOTE: Currently, we don't model randomness
     utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
     utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
@@ -659,14 +667,14 @@ def randn_like(
     memory_format: torch.memory_format = torch.preserve_format,
 ):
     utils.check(
-        not requires_grad, lambda: "requires_grad=True is not supported within thunder.compile", NotImplementedError
+        not requires_grad, lambda: "requires_grad=True is not supported within thunder.jit", NotImplementedError
     )
     utils.check(
         layout is None or layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError
     )
     utils.check(
         memory_format == torch.preserve_format,
-        lambda: "preserve_format!=torch.preserve_format is not supported within thunder.compile",
+        lambda: "preserve_format!=torch.preserve_format is not supported within thunder.jit",
         NotImplementedError,
     )
 
@@ -719,9 +727,9 @@ def empty(
     utils.check(out is None, lambda: "empty(): out is not None which is currently unsupported", NotImplementedError)
     utils.check(layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError)
     utils.check(
-        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.compile", NotImplementedError
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.jit", NotImplementedError
     )
-    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.compile", NotImplementedError)
+    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.jit", NotImplementedError)
     utils.check(
         memory_format == torch.contiguous_format,
         lambda: "Only torch.contiguous_format is supported",
@@ -1486,7 +1494,10 @@ def selu(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
 
 
 @torchsymbol(torch.nn.functional.silu)
-def silu(a, /):
+def silu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
+    utils.check(
+        not inplace, lambda: "Thunder only supports silu with inplace=False", exception_type=NotImplementedError
+    )
     return clang.silu(a)
 
 
@@ -2034,6 +2045,50 @@ def amin(a, /, dim=None, keepdim: bool = False):
     )
 
 
+# NOTE: Using name `torch_max` to avoid conflict with Python's `max`
+@overload
+def torch_max(a: TensorLike, /) -> TensorLike: ...
+
+
+@overload
+def torch_max(a: TensorLike, /, dim: NumberLike, keepdim: bool = False) -> tuple[TensorLike, TensorLike]: ...
+
+
+@overload
+def torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike: ...
+
+
+@torchsymbol(torch.max, is_method=True, id="torch.max")
+def torch_max(
+    a, /, dim: NumberLike | TensorLike | None = None, keepdim: bool = False
+) -> TensorLike | tuple[TensorLike, TensorLike]:
+    utils.check_type(dim, (NumberLike, TensorLike, NoneType))
+    utils.check_type(
+        keepdim, (bool, IntegerProxy)
+    )  # `keepdim` can be a [IntegerProxy (bool type) name=keepdim, value=False]
+    if isinstance(dim, TensorLike):
+        # overload - torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike
+        # This overload corresponds to taking the elementwise max between tensors `a` and `b`.
+        utils.check(not keepdim, lambda: "keepdim=True is invalid for torch.max(a, b) overload.")
+        b = dim
+        return maximum(a, b)
+
+    if dim is None:
+        # overload - torch_max(a: TensorLike, /) -> TensorLike
+        # This overload corresponds to taking the max over the flattened tensor.
+        utils.check(not keepdim, lambda: "keepdim=True is invalid for torch.max(a) overload.")
+        dim = list(range(a.ndim))
+        return amax(a, dim, keepdim)
+
+    # overload - torch_max(a: TensorLike, /, dim: int | tuple[int], keepdim: bool = False) -> TensorLike, TensorLike
+    # This overload corresponds to taking the max along the specified dimension `dim`.
+    # NOTE: It returns first occurence of the maximum value along the dimension and it's corresponding index.
+    utils.check_type(dim, NumberLike)
+    max_vals = amax(a, dim, keepdim)
+    argmax_vals = argmax(a, dim, keepdim)
+    return max_vals, argmax_vals
+
+
 # Clone is unique in that it's not registered as a symbol; as such we add it to
 # the appropriate maps manually, instead of through the @torchsymbol decorator.
 # This means that clone will not appear in the trace; instead, this basically
@@ -2060,8 +2115,8 @@ def clone(a: TensorProxy, *, memory_format=torch.preserve_format) -> TensorProxy
 
 # Because we do not use @torchsymbol, we need to manually register the
 # implementation.
-_torch_to_thunder_function_map[torch.clone] = clone
-_torch_to_thunder_function_map[torch.Tensor.clone] = clone
+register_function(torch.clone, clone)
+register_function(torch.Tensor.clone, clone)
 register_method("clone", clone)
 
 
@@ -3036,6 +3091,26 @@ def batch_norm(
 #
 # NN Operations
 #
+
+
+@torchsymbol(torch.baddbmm, is_method=True)
+def baddbmm(
+    a: TensorLike, b1: TensorLike, b2: TensorLike, *, beta: float = 1.0, alpha: float = 1.0, out: TensorLike = None
+) -> TensorLike:
+    utils.check(out is None, lambda: "Non-None out is not supported", NotImplementedError)
+
+    utils.check_same_dtype(a, b1, b2)
+    utils.check_same_device(a, b1, b2)
+    utils.check(b1.ndim == 3, lambda: f"batch1 must be a 3D tensor, found {b1.ndim} instead.")
+    utils.check(b2.ndim == 3, lambda: f"batch2 must be a 3D tensor, found {b2.ndim} instead.")
+
+    if a.dtype not in dtypes.inexact_dtypes:
+        utils.check_type(beta, int)
+        utils.check_type(alpha, int)
+
+    t0 = matmul(b1, b2)
+    t1 = alpha * t0
+    return t1 + (beta * a)
 
 
 # TODO bmm is more restrictive than matmul
@@ -4366,6 +4441,40 @@ register_method("softmax", _softmax)
 # ref: https://github.com/pytorch/pytorch/blob/8d12ba9acfa20ed7df438a8892c9bf8e6bef5775/torch/nn/modules/activation.py#L1545
 def softmax(a: TensorLike, dim: int, dtype: None | dtypeLike = None, _stacklevel: int = 3) -> TensorLike:
     return _softmax(a, dim=dim, dtype=dtype)
+
+
+def torch_device(device_or_str: DeviceLike, /, index: int | None = None) -> devices.Device:
+    if isinstance(device_or_str, (devices.Device, torch.device)):
+        # PyTorch behavior:
+        # >>> torch.device(torch.device("cuda"), 0)
+        # TypeError: device(): argument 'type' (position 1) must be str, not torch.device
+        utils.check(index is None, lambda: f"device(): `index` is only allowed when `device` is a `str`.")
+        return to_device(device_or_str)
+
+    # NOTE: device_or_str is `str`
+    if index is not None:
+        # PyTorch behavior:
+        # >>> torch.device("cuda:0", 0)
+        # RuntimeError: type (string) must not include an index because index was passed explicitly: cuda:0
+        has_device_idx = len(device_or_str.split(":")) > 1
+        utils.check(
+            not has_device_idx,
+            lambda: f"device string must not include an index because index was passed explicitly: {device_or_str}",
+        )
+
+    return devices.Device(device_or_str, index)
+
+
+# We don't use @torchsymbol as we don't want `torch.device()` to appear in trace as a symbol.
+# Because of this, we need to manually register the implementation.
+register_function(torch.device, torch_device)
+
+
+def _set_grad_enabled_with_warning(enabled: bool) -> None:
+    warnings.warn("torch.enable_grad/torch.no_grad/torch._C._set_grad_enabled have no effect under thunder.jit")
+
+
+register_function(torch._C._set_grad_enabled, _set_grad_enabled_with_warning)
 
 
 #

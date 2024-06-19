@@ -226,7 +226,7 @@ def cse_single_bsym(
     )
 
     # Skip appending this bsym to the new bound symbols due to its rhs being a common subexpression.
-    rhs = new_bsym.rhs()
+    rhs = new_bsym.rhs
     if (prior_bsym := rhs_to_bsym_map.get(rhs)) is not None and bsym._executor is prior_bsym._executor:
         for src, dst in zip(bsym.flat_outs, prior_bsym.flat_outs):
             # Detects (and avoids) aliasing
