@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from enum import Enum
 from functools import partial, reduce, wraps
 from numbers import Number
-from typing import Any, overload, TYPE_CHECKING
+from typing import Any, overload
 from types import NoneType
 from collections.abc import Callable
 
