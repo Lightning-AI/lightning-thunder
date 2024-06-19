@@ -248,7 +248,7 @@ def test_quantization():
 
     jm = thunder.jit(
         model_fp_reference,
-        executors=(bitsandbytes_executor, *thunder.get_default_executors()),
+        executors=(bitsandbytes_executor,),
         early_transforms=[BitsAndBytesLinearQuant4bit()],
     )
 
