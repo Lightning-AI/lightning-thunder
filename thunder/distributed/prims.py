@@ -65,11 +65,27 @@ def all_gather_meta(
     group: torch.distributed.ProcessGroup,
     do_async: Number,
     dim: int | None = None,
+    output_tensor: TensorProxy | None = None,
 ) -> TensorProxy:
     check_if_distributed_available()
     utils.check_type(a, TensorProxy)
     utils.check_type(group, torch.distributed.ProcessGroup)
     utils.check(pytype(do_async) is bool, lambda: f"Expected {do_async=} to be a boolean value")
+
+    if output_tensor is not None:
+        utils.check_same_device(output_tensor, a)
+        utils.check_same_dtype(output_tensor, a)
+        utils.check(a.ndim == output_tensor.ndim, lambda: f"{output_tensor.ndim=} must be equal to {a.ndim=}")
+        utils.check(
+            output_tensor.numel == a.numel * group.size(),
+            lambda: f"{output_tensor.numel=} must be equal to {group.size()=}*{a.numel=}",
+        )
+
+        if dim is None:
+            for idx, (o_size, a_size) in enumerate(zip(output_tensor.shape, a.shape)):
+                if o_size != a_size:
+                    dim = idx
+                    break
 
     if dim is not None:
         utils.check_type(dim, int)
@@ -78,6 +94,12 @@ def all_gather_meta(
         result_shape[dim] *= group.size()
     else:
         result_shape = a.shape[0] * group.size(), *a.shape[1:]
+    result_shape = tuple(result_shape)
+    if output_tensor is not None:
+        utils.check(
+            result_shape == output_tensor.shape,
+            lambda: f"{output_tensor.shape=} does not match {result_shape=}",
+        )
 
     if do_async:
         return FutureTensorProxy(shape=result_shape, like=a)

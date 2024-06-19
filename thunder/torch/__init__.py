@@ -5066,6 +5066,28 @@ if torch.distributed.is_available():
 
         return dist_prims.all_gather(a, group, async_op, dim=dim)
 
+    @torchsymbol(
+        torch.distributed.all_gather_into_tensor,
+        is_method=False,
+        id="all_gather_",
+        tags=(prims.OpTags.IN_PLACE,),
+    )
+    def all_gather_(
+        output_tensor: TensorLike,
+        input_tensor: TensorLike,
+        /,
+        group: torch.distributed.ProcessGroup | None = None,
+        async_op: bool = False,
+    ) -> TensorLike:
+        utils.check(
+            not async_op,
+            lambda: f"`torch.distributed.all_gather_into_tensor` with {async_op=} is not supported",
+            NotImplementedError,
+        )
+        group = group if group is not None else torch.distributed.new_group()
+        out = dist_prims.all_gather(input_tensor, group, async_op, dim=None, output_tensor=output_tensor)
+        return prims.copy_(out, output_tensor)
+
     # NOTE torch.distributed.all_reduce is an inplace operation (although the underlying NCCL
     #   call does not need to be inplace). This, however, is modeled as an out-of-place functional
     #   operation, hence the id "functional_all_reduce", and why we do not translate PyTorch

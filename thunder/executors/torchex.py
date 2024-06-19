@@ -1784,15 +1784,20 @@ if torch.distributed.is_available():
         group: torch.distributed.ProcessGroup,
         do_async: Number,
         dim: int | None = None,
+        output_tensor: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.distributed.distributed_c10d.Work, torch.Tensor]:
-        result_shape = list(a.shape)
-        if dim is not None:
-            utils.check_type(dim, int)
-            utils.check(dim >= 0 and dim < a.dim(), lambda: f"dim must satisfy 0 <= {dim=} < {a.dim()=}")
-            result_shape[dim] *= group.size()
+        out: torch.Tensor
+        if output_tensor is not None:
+            out = output_tensor
         else:
-            result_shape[0] *= group.size()
-        out: torch.Tensor = torch.empty(result_shape, dtype=a.dtype, device=a.device)
+            result_shape = list(a.shape)
+            if dim is not None:
+                utils.check_type(dim, int)
+                utils.check(dim >= 0 and dim < a.dim(), lambda: f"dim must satisfy 0 <= {dim=} < {a.dim()=}")
+                result_shape[dim] *= group.size()
+            else:
+                result_shape[0] *= group.size()
+            out = torch.empty(result_shape, dtype=a.dtype, device=a.device)
         do_async: bool = bool(do_async)
 
         handle: None | torch.distributed.distributed_c10d.Work = torch.distributed.all_gather_into_tensor(
