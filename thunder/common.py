@@ -37,6 +37,7 @@ from thunder.core.proxies import (
 )
 import thunder.core.prims as prims
 import thunder.distributed as dist
+import thunder.torch as ltorch  # we need to import thunder.torch before the below for import ordering...
 from thunder.extend import Executor, get_default_executors, get_always_executors, OperatorExecutor, add_executor_lists
 import thunder.executors as executors
 from thunder.core.transforms import autocast
