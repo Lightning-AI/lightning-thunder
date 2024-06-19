@@ -2926,7 +2926,7 @@ to_opinfo = OpInfo(
     torch_reference=torch.Tensor.to,
     test_directives=(
         DecorateInfo(
-            custom_comparator(lambda a, b: assert_close(a, b.to(a.device))),
+            custom_comparator(partial(assert_close, check_device=False)),
             "test_vjp_correctness",
         ),
     ),
