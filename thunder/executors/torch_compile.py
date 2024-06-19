@@ -83,7 +83,8 @@ def make_compiled(
     # torch.compile executor"
     torch_trace = trace(inline_trace=False)(torch_interpreted_func, *sorted_unique_inputs)
     trace_callable = torch_trace.python_callable(include_decorators=False)
-    compiled_func = torch.compile(trace_callable, fullgraph=True)
+    # NOTE: DEBUG - restore fullgraph=True, once https://github.com/pytorch/pytorch/issues/128961 is fixed
+    compiled_func = torch.compile(trace_callable, fullgraph=False)
     # For each of `@torch.no_grad(), and `torch.autocast(device_type="cpu"|"cuda")` torch.compile
     # create caches with a guard for the wrapped function. Since the torch.compile caches are per code object, not
     # frame, all the dynamic copies of these context managers share the same code cache.
