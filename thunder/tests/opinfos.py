@@ -2924,6 +2924,12 @@ to_opinfo = OpInfo(
     ltorch.to,
     sample_input_generator=to_sample_generator,
     torch_reference=torch.Tensor.to,
+    test_directives=(
+        DecorateInfo(
+            custom_comparator(lambda a, b: assert_close(a, b.to(a.device))),
+            "test_vjp_correctness",
+        ),
+    ),
 )
 data_movement_ops.append(to_opinfo)
 
