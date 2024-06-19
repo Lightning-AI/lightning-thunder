@@ -5197,6 +5197,15 @@ else:
     ) -> None:
         utils.check(False, lambda: f"torch.distributed is not available")
 
+    def all_gather_(
+        output_tensor: TensorLike,
+        input_tensor: TensorLike,
+        /,
+        group: torch.distributed.ProcessGroup | None = None,
+        async_op: bool = False,
+    ) -> None:
+        utils.check(False, lambda: "torch.distributed is not available")
+
     # NOTE torch.distributed is not available
     def all_reduce(
         a: TensorLike,
@@ -5205,6 +5214,15 @@ else:
         async_op: bool = False,
     ) -> None:
         utils.check(False, lambda: f"torch.distributed is not available")
+
+    def all_reduce_(
+        a: TensorLike,
+        /,
+        op: DistributedReduceOpLike = torch.distributed.ReduceOp.SUM,
+        group: torch.distributed.ProcessGroup | None = None,
+        async_op: bool = False,
+    ) -> None:
+        utils.check(False, lambda: "torch.distributed is not available")
 
     def broadcast(
         a: TensorLike,
@@ -5221,6 +5239,15 @@ else:
         async_op: bool = False,
     ) -> None:
         utils.check(False, lambda: f"torch.distributed is not available")
+
+    def reduce_scatter_(
+        output: TensorLike,
+        input: TensorLike,
+        op: DistributedReduceOpLike | None = None,
+        group: torch.distributed.ProcessGroup | None = None,
+        async_op: bool = False,
+    ) -> None:
+        utils.check(False, lambda: "torch.distributed is not available")
 
 
 #
