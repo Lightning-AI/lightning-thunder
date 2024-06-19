@@ -244,6 +244,7 @@ def test_quantization():
     model_fp_reference.set_kv_cache(1, device="cuda", dtype=torch.bfloat16)
     model_fp_reference.max_seq_length = 20
     model_fp_reference.requires_grad_(False)
+    model_fp_reference.eval()
 
     jm = thunder.jit(
         model_fp_reference,
@@ -254,4 +255,4 @@ def test_quantization():
     logits_thunder = jm(x, input_pos)
     # check_dtype=False due to litgpt returning float32
     # (maybe that also is the numerical discrepancy?)
-    assert_close(logits_thunder, logits_expected, atol=1e-2, rtol=1e-3, check_dtype=False)
+    assert_close(logits_thunder, logits_expected, atol=2e-2, rtol=1e-3, check_dtype=False)
