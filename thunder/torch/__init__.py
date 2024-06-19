@@ -5165,6 +5165,29 @@ if torch.distributed.is_available():
 
         return dist_prims.reduce_scatter(a, op, group, async_op, dim=dim)
 
+    @torchsymbol(
+        torch.distributed.reduce_scatter_tensor,
+        is_method=False,
+        id="reduce_scatter_",
+        tags=(prims.OpTags.IN_PLACE,),
+    )
+    def reduce_scatter_(
+        output: TensorLike,
+        input: TensorLike,
+        op: DistributedReduceOpLike | None = None,
+        group: torch.distributed.ProcessGroup | None = None,
+        async_op: bool = False,
+    ) -> TensorLike:
+        utils.check(
+            not async_op,
+            lambda: f"`torch.distributed.reduce_scatter_tensor` with {async_op=} is not supported",
+            NotImplementedError,
+        )
+        op = to_thunder_distributed_reduce_op(op)
+        group = group if group is not None else torch.distributed.new_group()
+        out = dist_prims.reduce_scatter(input, op, group, async_op, dim=None, output_tensor=output)
+        return prims.copy_(out, output)
+
 else:
 
     def all_gather(

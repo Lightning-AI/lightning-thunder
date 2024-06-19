@@ -332,8 +332,8 @@ class CompileDDPTest(DataParallelTestCase):
 
             self.assertEqual(actual, expected)
 
-    @common_utils.parametrize("executor,dim", product(tuple(executors_map.keys()), (None, 0, 1)))
-    def test_reduce_scatter(self, executor, dim):
+    @common_utils.parametrize("executor,dim,inplace", product(tuple(executors_map.keys()), (None, 0, 1), (False, True)))
+    def test_reduce_scatter(self, executor, dim, inplace):
         _executor = executors_map[executor]
 
         # NOTE torch.distributed.all_gather is an inplace operation
@@ -388,13 +388,22 @@ class CompileDDPTest(DataParallelTestCase):
         process_group = c10d.new_group()
 
         # NOTE Preprocessing is disabled because we call thunder.torch operations directly
-        cfoo = thunder.jit(lc_foo, executors=_executor.executors_list())
+        func_to_jit = foo if inplace else lc_foo
+        cfoo = thunder.jit(func_to_jit, executors=_executor.executors_list())
 
         for op, async_op in product((None, torch.distributed.ReduceOp.SUM), (False, True)):
             expected = foo(a, b, op, process_group, async_op, dim=dim)
-            actual = cfoo(a, b, op, process_group, async_op, dim=dim)
 
-            self.assertEqual(actual, expected)
+            if not (async_op and inplace):
+                actual = cfoo(a, b, op, process_group, async_op, dim=dim)
+
+                self.assertEqual(actual, expected)
+            else:
+                with self.assertRaisesRegex(
+                    NotImplementedError,
+                    re.escape("`torch.distributed.reduce_scatter_tensor` with async_op=True is not supported"),
+                ):
+                    cfoo(a, b, op, process_group, async_op, dim)
 
     @common_utils.parametrize("executor,bucket_size_in_mb", product(tuple(executors_map.keys()), (0, 1000)))
     def test_ddp_grad_bucketing(self, executor, bucket_size_in_mb: int):
