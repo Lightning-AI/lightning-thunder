@@ -86,7 +86,8 @@ class InplaceOpWrapper:
         t = args[idx] + 1.0
         args[idx] = t
 
-        return self.torch_func(*args, **kwargs)
+        self.torch_func(*args, **kwargs)
+        return t
 
 
 @ops(_inplace_opinfos, supported_dtypes=(dtypes.float32,))
