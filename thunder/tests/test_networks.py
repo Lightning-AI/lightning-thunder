@@ -256,3 +256,10 @@ def test_quantization():
     # check_dtype=False due to litgpt returning float32
     # (maybe that also is the numerical discrepancy?)
     assert_close(logits_thunder, logits_expected, atol=2e-2, rtol=1e-3, check_dtype=False)
+
+    sd = {k: v.clone() for k, v in jm.state_dict().items()}
+    jm.load_original_state_dict(model_fp_reference.state_dict())
+    sd2 = {k: v.clone() for k, v in jm.state_dict().items()}
+    assert len(sd) == len(sd2)
+    for k, v in sd.items():
+        assert_close(v, sd2[k])
