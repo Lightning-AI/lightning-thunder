@@ -148,6 +148,12 @@ def broadcast_meta(
     return TensorProxy(like=a)
 
 
+# NOTE(crcrpar): Why `output_tensor`, not `output`? We cannot use `output`
+# [rank0]:E0619 08:52:42.515000 140083954114432 torch/testing/_internal/common_distributed.py:664]   File "/opt/pytorch/lightning-thunder/thunder/torch/__init__.py", line 5072, in reduce_scatter_
+# [rank0]:E0619 08:52:42.515000 140083954114432 torch/testing/_internal/common_distributed.py:664]     out = dist_prims.reduce_scatter(input, op, group, async_op, dim=None, output=output)
+# [rank0]:E0619 08:52:42.515000 140083954114432 torch/testing/_internal/common_distributed.py:664]   File "/opt/pytorch/lightning-thunder/thunder/core/symbol.py", line 271, in __call__
+# [rank0]:E0619 08:52:42.515000 140083954114432 torch/testing/_internal/common_distributed.py:664]     bsym = self.bind(*args, **kwargs, output=result, subsymbols=subsymbols)
+# [rank0]:E0619 08:52:42.515000 140083954114432 torch/testing/_internal/common_distributed.py:664] TypeError: thunder.core.symbol.Symbol.bind() got multiple values for keyword argument 'output'
 def reduce_scatter(
     a: TensorProxy,
     /,
@@ -155,12 +161,28 @@ def reduce_scatter(
     group: torch.distributed.ProcessGroup,
     do_async: Number,
     dim: int | None = None,
+    output_tensor: TensorProxy | None = None,
 ) -> TensorProxy:
     check_if_distributed_available()
     utils.check_type(a, TensorProxy)
     utils.check_type(op, DistributedReduceOps)
     utils.check_type(group, torch.distributed.ProcessGroup)
     utils.check(pytype(do_async) is bool, lambda: f"Expected {do_async=} to be a boolean value")
+
+    if output_tensor is not None:
+        utils.check_same_device(output_tensor, a)
+        utils.check_same_dtype(output_tensor, a)
+        utils.check(a.ndim == output_tensor.ndim, lambda: f"{output_tensor.ndim=} must be equal to {a.ndim=}")
+        utils.check(
+            output_tensor.numel * group.size() == a.numel,
+            lambda: f"{output_tensor.numel=} must be equal to {a.numel=} / {group.size()=}",
+        )
+
+        if dim is None:
+            for idx, (o_size, a_size) in enumerate(zip(output_tensor.shape, a.shape)):
+                if o_size != a_size:
+                    dim = idx
+                    break
 
     result_shape = list(a.shape)
     if dim is not None:
@@ -174,6 +196,12 @@ def reduce_scatter(
         result_shape[0] //= group.size()
         utils.check(
             a.shape[0] % group.size() == 0, lambda: f"Expected {a.shape[0]=} to be divisible by {group.size()=}"
+        )
+
+    if output_tensor is not None:
+        utils.check(
+            tuple(result_shape) == output_tensor.shape,
+            lambda: f"{output_tensor.shape=} does not match {result_shape=}",
         )
 
     if do_async:
