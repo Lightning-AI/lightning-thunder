@@ -453,6 +453,19 @@ def fsdp_transform_module(
     # Key to this dictionary is the original parameter from the user's Module.
     # Values are the copied and sharded parameter for the thunder module and meta-data related to sharding.
     shared_params = WeakTensorKeyDictionary()
+
+    # NOTE: Shared Parameters in Trace
+    # Shared parameters in PyTorch eager are parameters of module which have different name but share the underlying tensor.
+    # For shared parameter, we replace all occurence shared parameter with it's corresponding `base` parameter.
+    # In our implementation `base` parameter is the parameter and corresponding name which we see the first time while
+    # iterating our parameters (see below). We track subsequent parameter which share the underlying Tensor with this `base` parameter
+    # in `shared_params_name` dictionary.
+    # Then while, transforming the trace - `see FSDPTraceTransform.transform_traces` - we replace all the proxy of shared parameter
+    # with the corresponding proxy of base parameter in the computation trace.
+
+    # This is used to track the shared parameters when the transform is applied.
+    # key - parameter name, value - `base` parameter name.
+    shared_params_name: dict[str, str] = {}
     for module_name, _ in thunder_model._model.named_modules():
         submodule = thunder_model.get_submodule(module_name)
 
@@ -500,6 +513,8 @@ def fsdp_transform_module(
             # If there are shared params in the original user Module, we reuse the sharded copy created from the original parameter below.
             # This way we re-create parameter sharing in thunder's copy of the Module.
             if p in shared_params:
+                # Shared param names : current param - base param
+                shared_params_name[pn] = shared_params[p]["param_name"]
                 # Re-use the previous copy of this parameter.
                 thunder_model._overrides_parameters[pn] = shared_params[p]["param_copy"]
                 sharded_params[pn] = shared_params[p]["param_shard_meta"]
@@ -520,11 +535,13 @@ def fsdp_transform_module(
             shared_params[p] = {
                 "param_copy": thunder_model._overrides_parameters[pn],
                 "param_shard_meta": sharded_params[pn],
+                "param_name": pn,
             }
 
     early_transform_from_trace_to_fsdp_trace = FSDPTraceTransform(
         sharded_params=sharded_params,
         process_group=process_group,
+        shared_params_name=shared_params_name,
     )
     # add prologue + compute transform
     thunder_model = add_transform(thunder_model, early_transform=early_transform_from_trace_to_fsdp_trace)
