@@ -5951,6 +5951,52 @@ opinfos.extend(tensor_creation_ops)
 linear_algebra_ops = []
 
 
+def normalize_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    # input shape
+    cases = (
+        (4, 4),
+        (32, 32),
+        (16, 16, 16),
+        (4, 2, 4, 5),
+    )
+    for case in cases:
+        yield SampleInput(make(case), eps=1e-8)
+        yield SampleInput(make(case), p=0, eps=1e-8)
+        yield SampleInput(make(case), p=1, eps=1e-8)
+        yield SampleInput(make(case), p=4, eps=1e-8)
+        yield SampleInput(make(case), p=math.inf, eps=1e-8)
+
+
+normalize_opinfo = OpInfo(
+    ltorch.normalize,
+    sample_input_generator=normalize_sample_generator,
+    torch_reference=torch.nn.functional.normalize,
+    dtypes=(datatypes.floating, datatypes.complexfloating),
+    test_directives=(
+        # The low precision floating point types sometimes fail
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-3, rtol=1e-1)),
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16, datatypes.float16),
+            devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
+        ),
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-3, rtol=1e-3)),
+            "test_vjp_correctness",
+        ),
+        # TODO Investigate the low precision difference
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-1, rtol=1e-1)),
+            "test_phantom_grad_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16, datatypes.float16),
+            devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
+        ),
+    ),
+)
+linear_algebra_ops.append(normalize_opinfo)
+
+
 def matmul_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
