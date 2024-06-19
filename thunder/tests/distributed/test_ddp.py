@@ -1663,8 +1663,11 @@ def _test_fsdp_transformer_engine(input_data):
         te_model.fc1.weight.data = fc1_weight.clone()
         te_model.fc2.weight.data = fc2_weight.clone()
 
-        fsdp_model = FullyShardedDataParallel(te_model, auto_wrap_policy=always_wrap_policy)
+        import transformer_engine
 
+        fsdp_model = FullyShardedDataParallel(te_model, auto_wrap_policy=always_wrap_policy)
+        if thunder_fsdp_strategy == FSDPType.ZERO3:
+            transformer_engine.pytorch.distributed.prepare_te_modules_for_fsdp(fsdp_model)
         optim = torch.optim.SGD(te_model.parameters())
 
         for _ in range(n_iter):

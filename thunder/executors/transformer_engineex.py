@@ -21,7 +21,7 @@ from thunder.core.proxies import TensorProxy, CollectionProxy
 from thunder.core.symbol import Symbol
 from thunder.core.vjp_utils import disable_caching_split_forward_and_backward
 from thunder.extend import OperatorExecutor, register_executor
-from thunder.core.compile_data import get_compile_option
+from thunder.core.compile_data import get_compile_option, get_compile_data
 from thunder.core.langctxs import langctx, Languages
 
 
@@ -175,6 +175,17 @@ class TELinear(TransformerEngineBaseModule):
             # Required by `get_fp8_weights_scratchpad`
             self.fp8_weight_shapes.append(torch.Size((self.out_features, self.in_features)))
 
+        from thunder.distributed import FSDPType
+
+        compile_data = get_compile_data()
+        if (
+            getattr(compile_data.fn, "use_fsdp", False)
+            and getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO3
+        ):
+            self.pg = compile_data.process_group_for_ddp
+        else:
+            self.pg = None
+
     def forward(self, inp, weight, bias, is_first_microbatch: bool | None = None, is_grad_enabled: bool = False):
         # NOTE: Backward FP8 metadata sync
         # TransformerEngine v1.6 onwards, we control the sync and update of FP8 metadata for FP8 tensors
@@ -237,6 +248,7 @@ class TELinear(TransformerEngineBaseModule):
                 # ref: https://github.com/NVIDIA/TransformerEngine/blame/7c1828f80edc1405d4ef1a7780c9e0046beab5c7/transformer_engine/pytorch/module/linear.py#L84-L85
                 "ub_overlap_rs": False,
                 "ub_overlap_ag": False,
+                "fsdp_group": self.pg,
             }
 
             # Optimistic key value insertion for the sake of compatibility with main branch
