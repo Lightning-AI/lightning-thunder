@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from itertools import filterfalse
 from functools import partial
 
+import thunder
 import thunder.core.prims as prims
 from thunder.core.baseutils import BoundSymbolInterface
 from thunder.core.proxies import Proxy, variableify, Variable
@@ -12,7 +13,6 @@ from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, has_tags
 from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace
 from thunder.core.utils import ProxyDict, producers, check
-
 
 #
 # Common optimization and transform passes
@@ -338,9 +338,26 @@ class EarlyTransform(Transform, ABC):
     the computation trace will also update backward trace.
     """
 
-    @abstractmethod
     def transform_traces(self, prologue_trace: Trace, computation_trace: Trace, epilogue_trace: Trace | None, **kwargs):
+        # default to noop
+        return prologue_trace, computation_trace, epilogue_trace
+
+    def transform_module(self, model: thunder.ThunderModule):
+        """Transforms the ThunderModule. This is executed once on application of the transform"""
         pass
+
+    def transform_state_dict_for_submodule(
+        self, model: thunder.ThunderModule, submodule_name: str, state_dict: dict
+    ) -> dict:
+        """
+        Implement this to transform the state dict (mostly parameters and buffers) of a module, e.g. when loading
+        from a state dict of the original model.
+
+        Expected to return a state dict (for chaining or populating overrides).
+
+        Note that state dict keys do not include the submodule name as prefix.
+        """
+        return state_dict
 
 
 class AdditionalTransform(Transform, ABC):

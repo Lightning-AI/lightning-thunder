@@ -97,6 +97,30 @@ class ThunderModule(pytorch.nn.Module):
             remove_duplicate=remove_duplicate,
         )
 
+    def load_original_state_dict(state_dict):
+        # this loads the state dict incrementally to not exhaust memory
+        module_names = {n for n, _ in self.named_modules()}
+        sd_per_module = {}
+        for k, v in state_dict.items():
+            prefix, sep, _ = k.rpartition(".")
+            # not great but should not happen too often / deep
+            while prefix not in module_names:
+                prefix, sep, _ = prefix.rpartition(".")
+            sd_per_module[prefix][k[len(prefix) + len(sep) :]] = v
+
+        for submodule_name, sd_part in sd_per_module.items():
+            prefix = submodule_name + ("." if submodule_name else "")
+            for transform in fn_._lc_early_transforms:
+                sd_part = transform.transform_state_dict_for_submodule(self, submodule_name.sd_part)
+            for k, v in sd_part:
+                full_k = prefix + k
+                if k in model._overrides_parameters:
+                    model._overrides_parameters[full_k] = v
+                elif k in model._overrides_buffers:
+                    model._overrides_buffers[full_k] = v
+                else:
+                    raise NotImplementedError(f"don't know how to handle {full_k}")
+
     @contextmanager
     def no_sync(self):
         r"""Context manager to disable gradient synchronization in data parallel mode.

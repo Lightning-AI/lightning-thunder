@@ -204,3 +204,53 @@ def test_hf_bart_self_attn():
     tom = thunder.jit(model)
     thunder_result = tom(inp, None)
     assert_close(torch_result, thunder_result)
+
+
+@requiresCUDA
+def test_quantization():
+    from thunder.tests import litgpt_model
+    from lightning.fabric.plugins import BitsandbytesPrecision
+
+    config = litgpt_model.Config.from_name("llama2-like")
+    with torch.device("cuda"):
+        model_fp_reference = litgpt_model.GPT(config).to(torch.bfloat16)
+
+    import lightning as L
+
+    plugins = BitsandbytesPrecision("nf4", torch.bfloat16)
+    fabric = L.Fabric(devices=1, precision=None, plugins=plugins)
+    with fabric.init_module(empty_init=True):
+        model = litgpt_model.GPT(config)
+
+    with fabric.init_tensor():
+        # set the max_seq_length to limit the memory usage to what we need
+        model.max_seq_length = 20
+        # enable the kv cache
+        model.set_kv_cache(batch_size=1)
+    model.eval()
+    model.requires_grad_(False)
+    model = fabric.setup_module(model)
+
+    model.load_state_dict(model_fp_reference.state_dict())
+
+    x = torch.randint(1, 255, (1, 10), device="cuda")
+    input_pos = torch.arange(10, device="cuda")
+    logits_expected = model(x, input_pos)
+
+    from thunder.transforms.quantization import BitsAndBytesLinearQuant4bit, get_bitsandbytes_executor
+
+    bitsandbytes_executor = get_bitsandbytes_executor()
+
+    model_fp_reference.set_kv_cache(1, device="cuda", dtype=torch.bfloat16)
+    model_fp_reference.max_seq_length = 20
+    model_fp_reference.requires_grad_(False)
+
+    jm = thunder.jit(
+        model_fp_reference,
+        executors=(bitsandbytes_executor, *thunder.get_default_executors()),
+        early_transforms=[BitsAndBytesLinearQuant4bit()],
+    )
+
+    logits_thunder = jm(x, input_pos)
+
+    assert_close(logits_thunder, logits_expected, atol=1e-2, rtol=1e-3)
