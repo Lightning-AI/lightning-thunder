@@ -191,6 +191,8 @@ class torchsymbol:
                 _torch_to_thunder_function_map[torchfn] = mapping_fn
 
         if self.tags and prims.OpTags.IN_PLACE in self.tags:
+            if self.id is not None:
+                name = self.id
             _inplace_to_out_of_place[sym] = globals()[name[:-1]], -1
 
         return sym
@@ -5086,6 +5088,30 @@ if torch.distributed.is_available():
         group = group if group is not None else torch.distributed.new_group()
 
         return dist_prims.all_reduce(a, op, group, async_op)
+
+    @torchsymbol(
+        torch.distributed.all_reduce,
+        is_method=False,
+        id="all_reduce_",
+        tags=(prims.OpTags.IN_PLACE,),
+    )
+    def all_reduce_(
+        a: TensorLike,
+        /,
+        op: DistributedReduceOpLike = torch.distributed.ReduceOp.SUM,
+        group: torch.distributed.ProcessGroup | None = None,
+        async_op: bool = False,
+    ) -> TensorLike:
+        utils.check(
+            not async_op,
+            lambda: f"`torch.distributed.all_reduce` with {async_op=} is not supported",
+            NotImplementedError,
+        )
+        op = to_thunder_distributed_reduce_op(op)
+        group = group if group is not None else torch.distributed.new_group()
+
+        out = dist_prims.all_reduce(a, op, group, async_op, skip_clone=True)
+        return prims.copy_(out, a)
 
     @torchsymbol(
         is_method=False,
