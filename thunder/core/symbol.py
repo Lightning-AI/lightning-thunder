@@ -10,7 +10,7 @@ from types import ModuleType
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, List, Type, Tuple, TYPE_CHECKING
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Hashable, Iterable
 from collections.abc import Sequence
 
 import thunder.core.baseutils as baseutils
@@ -655,5 +655,5 @@ def has_tags(bsym: BoundSymbol, tags: set[OpTags]) -> bool:
 @dataclass(**baseutils.default_dataclass_params)
 class BoundSymbolRHS:
     sym: Symbol
-    args: tuple[typing.Hashable]
+    args: tuple[Hashable]
     kwargs: FrozenDict
