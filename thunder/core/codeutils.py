@@ -121,8 +121,21 @@ def to_printable(
         return x
 
     if is_collection(x):
+        if type(x) not in (
+            dict,
+            list,
+            str,
+            int,
+            bool,
+            tuple,
+            torch.dtype,
+            float,
+            dtypes.floating,
+            devices.Device,
+            torch.memory_format,
+        ):
+            return x
         flat, spec = tree_flatten(x)
-
         printables = []
         for f in flat:
             printables.append(to_printable(trace, f, import_ctx=import_ctx, object_ctx=object_ctx))
@@ -195,6 +208,20 @@ def prettyprint(
     if isinstance(x, ContextObject):
         return m(x.name)
     if is_collection(x):
+        if type(x) not in (
+            dict,
+            list,
+            str,
+            int,
+            bool,
+            tuple,
+            torch.dtype,
+            float,
+            dtypes.floating,
+            devices.Device,
+            torch.memory_format,
+        ):
+            return m(baseutils.print_base_printable(x))
         flat, spec = tree_flatten(x)
         printed = tuple(
             prettyprint(x, with_type=False, literals_as_underscores=literals_as_underscores, _quote_markers=True)
