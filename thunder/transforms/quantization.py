@@ -96,6 +96,8 @@ class BitsAndBytesLinearQuant4bit(EarlyTransform):
 
         compute_producers, compute_consumers = utils.producers_and_consumers(computation_trace)
 
+        # This is needed because having epilogues adds an additional return tuple
+        # TODO: unify after https://github.com/Lightning-AI/lightning-thunder/issues/628
         if epilogue_trace is None:
             prologue_to_epilogue_outputs = prologue_trace.output
             output_subindex = None
@@ -172,8 +174,8 @@ class BitsAndBytesLinearQuant4bit(EarlyTransform):
                 assert len(bsym.args) == 3  # torch.linear(input, weight, bias)
                 n = quantized_proxies[id(bsym.args[1])]
                 qs = self.quant_states[n]
+                # signature of the new symbol:
                 # bnb_matmul_nf4(x, qweight, bias, absmax, quant_map, blocksize, dtype, shape)
-                #  how to replace the _call_ctx(???)
                 new_args = (
                     *bsym.args[:3],
                     qs["proxy_absmax"],
@@ -189,6 +191,9 @@ class BitsAndBytesLinearQuant4bit(EarlyTransform):
                 )
 
                 new_computation_trace.bound_symbols.append(mm_bsym)
+                # we need the postprocess to set the internal state (call_ctx) because we do not bind / execute the new symbol to
+                # preserve the "meta"-info like source location, header, etc.
+                # TODO: switch to a better solution when it is there
                 bnb_matmul_nf4._bind_postprocess(mm_bsym)
             else:
                 new_computation_trace.bound_symbols.append(bsym.from_bsym())
