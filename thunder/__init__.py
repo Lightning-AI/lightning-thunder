@@ -39,6 +39,7 @@ from thunder.core.transform_common import (
     AdditionalTransform,
     PostOptimizationTransform,
     functionalize_inplace_ops,
+    check_inplace_to_views,
 )
 from thunder.common import (
     CompileData,
@@ -509,6 +510,7 @@ def jit(
 
             prologue_traces = [prologue_trc]
             computation_traces = [computation_trc]
+            check_inplace_to_views(computation_trc)
             if not compile_options.get("skip_inplace_functionalization", False):
                 computation_traces.extend(functionalize_inplace_ops(computation_trace=computation_trc))
                 computation_trc = computation_traces[-1]
