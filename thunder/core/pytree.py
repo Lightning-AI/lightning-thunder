@@ -29,6 +29,7 @@ def tree_flatten(args):
         torch.dtype,
         float,
         dtypes.floating,
+        dtypes.boolean_dtypes,
         devices.Device,
         torch.memory_format,
         NoneType,
