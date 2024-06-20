@@ -5,6 +5,7 @@ import torch
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 from thunder.core.baseutils import ProxyInterface
+from types import EllipsisType, NoneType
 
 # We need torch.Size to be treated the same way as a list or tuple
 # In PyTorch this is registered here:
@@ -30,11 +31,11 @@ def tree_flatten(args):
         dtypes.floating,
         devices.Device,
         torch.memory_format,
-        type(None),
+        NoneType,
         slice,
         complex,
         type,
-        ellipsis,
+        EllipsisType,
     } and not isinstance(args, ProxyInterface):
         raise TypeError(f"tree_flatten of type {type(args)} is not supported.")
     return optree.tree_flatten(args, none_is_leaf=True)
