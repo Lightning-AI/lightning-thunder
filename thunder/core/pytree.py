@@ -31,6 +31,9 @@ def tree_flatten(args):
         devices.Device,
         torch.memory_format,
         type(None),
+        slice,
+        complex,
+        type,
     } and not isinstance(args, ProxyInterface):
         raise TypeError(f"tree_flatten of type {type(args)} is not supported.")
     return optree.tree_flatten(args, none_is_leaf=True)
