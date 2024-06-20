@@ -275,6 +275,7 @@ class OpTags(Enum):
     DEVICE_SYNC_OP = auto()
     # Labels operations that should not be removed by the dead code elimination (DCE) pass
     DONT_DCE = auto()
+    IN_PLACE = auto()
 
 
 # TODO RC1 Document this function and describe the parts of a primitive

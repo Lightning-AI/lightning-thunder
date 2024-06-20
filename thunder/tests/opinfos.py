@@ -1278,16 +1278,10 @@ signbit_opinfo = OpInfo(
 elementwise_unary_ops.append(signbit_opinfo)
 
 
-def silu_error_generator(op, device, dtype=torch.float32, **kwargs):
-    a = make_tensor((), dtype=dtype, device=device)
-    yield (SampleInput(a, inplace=True), NotImplementedError, "Thunder only supports silu with inplace=False")
-
-
 silu_opinfo = OpInfo(
     ltorch.silu,
     dtypes=(datatypes.floating,),
     sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
-    error_input_generator=silu_error_generator,
     torch_reference=_elementwise_unary_torch(torch.nn.functional.silu),
     test_directives=(
         DecorateInfo(
@@ -1623,20 +1617,9 @@ reciprocal_opinfo = OpInfo(
 elementwise_unary_ops.append(reciprocal_opinfo)
 
 
-def relu_error_generator(op, device, dtype=torch.float32, **kwargs):
-    a = make_tensor((), dtype=dtype, device=device)
-    yield (SampleInput(a, inplace=True), NotImplementedError, "relu only supports inplace=False")
-
-
-def relu6_error_generator(op, device, dtype=torch.float32, **kwargs):
-    a = make_tensor((), dtype=dtype, device=device)
-    yield (SampleInput(a, inplace=True), NotImplementedError, "relu6 only supports inplace=False")
-
-
 relu_opinfo = OpInfo(
     ltorch.relu,
     sample_input_generator=elementwise_unary_generator,
-    error_input_generator=relu_error_generator,
     torch_reference=_elementwise_unary_torch(torch.relu),
     test_directives=(
         # PyTorch does not support bool and complex types
@@ -1665,7 +1648,6 @@ elementwise_unary_ops.append(relu_opinfo)
 relu6_opinfo = OpInfo(
     ltorch.relu6,
     sample_input_generator=elementwise_unary_generator,
-    error_input_generator=relu6_error_generator,
     torch_reference=_elementwise_unary_torch(torch.nn.functional.relu6),
     test_directives=(
         # PyTorch does not support bool for both CPU and CUDA relu6
@@ -1684,15 +1666,9 @@ relu6_opinfo = OpInfo(
 elementwise_unary_ops.append(relu6_opinfo)
 
 
-def hardswish_error_generator(op, device, dtype=torch.float32, **kwargs):
-    a = make_tensor((), dtype=dtype, device=device)
-    yield (SampleInput(a, inplace=True), NotImplementedError, "hardswish only supports inplace=False")
-
-
 hardswish_opinfo = OpInfo(
     ltorch.hardswish,
     sample_input_generator=elementwise_unary_generator,
-    error_input_generator=hardswish_error_generator,
     torch_reference=_elementwise_unary_torch(torch.nn.functional.hardswish),
     dtypes=(datatypes.floating,),
     test_directives=(
@@ -1713,16 +1689,10 @@ hardswish_opinfo = OpInfo(
 elementwise_unary_ops.append(hardswish_opinfo)
 
 
-def selu_error_generator(op, device, dtype=torch.float32, **kwargs):
-    a = make_tensor((), dtype=dtype, device=device)
-    yield (SampleInput(a, inplace=True), NotImplementedError, "selu only supports inplace=False")
-
-
 selu_opinfo = OpInfo(
     ltorch.selu,
     dtypes=(datatypes.floating,),
     sample_input_generator=elementwise_unary_generator,
-    error_input_generator=selu_error_generator,
     torch_reference=_elementwise_unary_torch(torch.selu),
     test_directives=(
         # Some versions of PyTorch do not support CPU float16 selu

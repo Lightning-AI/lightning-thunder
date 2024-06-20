@@ -2121,7 +2121,8 @@ def test_inplace(executor, device, _):
 
     for t in tests:
         cfn = thunder.jit(t)
-        with pytest.raises(RuntimeError, match="not supported"):
+        # Some ops of `tests` already have in-place supported, leading to broadcast error
+        with pytest.raises(RuntimeError, match="not supported|Attempting"):
             cfn(t1, t2)
         # Note: Python maps inplace operations on (immutuables) to
         #       out of place operations, NumberProxy does this, too.
