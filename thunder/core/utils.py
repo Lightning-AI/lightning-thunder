@@ -13,7 +13,7 @@ from typing_extensions import Self
 
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
-from thunder.core.proxies import Proxy, NumberProxy, TensorProxy, variableify
+from thunder.core.proxies import Proxy, NumberProxy, TensorProxy, variableify, CONSTRAINT
 from thunder.core.baseutils import *
 from thunder.core.codeutils import *
 from thunder.core.trace import TraceCtx
@@ -129,6 +129,22 @@ dtype_to_numbertype = dtypes.dtype_to_numbertype
 are_same_dtypes = dtypes.are_same_dtypes
 corresponding_real_dtype = dtypes.corresponding_real_dtype
 corresponding_complex_dtype = dtypes.corresponding_complex_dtype
+
+
+# This function resolves the CONSTRAINT tag from args, by looking at each Proxy instance in args:
+# TODO: we currently only considers NumberProxy could be statically constrained. This is likely going to be extended to other proxies in the future.
+def resolve_constraints(*args):
+    all_static = True
+    for arg in args:
+        if not isinstance(arg, Proxy):
+            continue
+        if not isinstance(arg, NumberProxy) or arg.is_dynamic():
+            return CONSTRAINT.DYNAMIC
+        if not arg.is_static_constrained():
+            all_static = False
+    if all_static:
+        return CONSTRAINT.STATIC
+    return CONSTRAINT.CONSTRAINABLE
 
 
 def higher_dtype(a, b):

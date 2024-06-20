@@ -567,14 +567,35 @@ class DictProxy(Proxy, dict):
         raise NotImplementedError("Calling setdefault on an input dict is not yet supported")
 
 
+# CONSTRAINT annotates NumberProxy as their get processed by interpreter.
+# A NumberProxy can be at one of the status:
+# - A DYNAMIC NumberProxy cannot be converted to a static number;
+# - A CONSTRAINABLE NumberProxy is treated as DYNAMIC by default, but it could be converted to STATIC by interpreter;
+# - A STATIC NumberProxy can be treated as a static number, but not necessarily so;
+#   The protocol here is that, if a NumberProxy instance is converted to static, we'll insert a guard logic in prologue trace to ensure the NumberProxy doesn't change at runtime.
+class CONSTRAINT(Enum):
+    DYNAMIC = auto()
+    CONSTRAINABLE = auto()
+    STATIC = auto()
+
+
 # NOTE NumberProxies are NOT Numbers
 # TODO Maybe NumberProxies should be Numbers?
 class NumberProxy(Proxy, NumberProxyInterface):
     def __init__(
-        self, name: str | None = None, value: Number | None = None, *, python_type: type, history: None | tuple = None
+        self,
+        name: str | None = None,
+        value: Number | None = None,
+        *,
+        python_type: type,
+        history: None | tuple = None,
+        constraint: None | CONSTRAINT = None,
     ):
         self.value = value
         self.python_type = python_type
+        if constraint is None:
+            constraint = CONSTRAINT.DYNAMIC
+        self.constraint = constraint
 
         Proxy.__init__(self, name, history=history)
 
@@ -588,6 +609,19 @@ class NumberProxy(Proxy, NumberProxyInterface):
 
     def known_value(self) -> bool:
         return self.value is not None
+
+    def make_static_constrained(self):
+        baseutils.check(self.constraint != CONSTRAINT.DYNAMIC, lambda: f"dynamic NumberProxy cannot be made static")
+        self.constraint = CONSTRAINT.STATIC
+
+    def make_constrainable(self):
+        self.constraint = CONSTRAINT.CONSTRAINABLE
+
+    def is_static_constrained(self) -> bool:
+        return self.constraint == CONSTRAINT.STATIC
+
+    def is_dynamic(self) -> bool:
+        return self.constraint == CONSTRAINT.DYNAMIC
 
     #
     # Elementwise unary operators
@@ -944,8 +978,8 @@ def pytype(x: Proxy) -> type | None:
 
 # TODO RC1 Update Proxy number inits to be value, /, *, name, history
 class ComplexProxy(NumberProxy):
-    def __init__(self, name=None, value=None, history: None | tuple = None):
-        NumberProxy.__init__(self, name=name, value=value, python_type=complex, history=history)
+    def __init__(self, name=None, value=None, history: None | tuple = None, constraint: None | CONSTRAINT = None):
+        NumberProxy.__init__(self, name=name, value=value, python_type=complex, history=history, constraint=constraint)
 
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
@@ -959,10 +993,18 @@ class ComplexProxy(NumberProxy):
 # TODO Review dtype conversions
 # TODO Review -9999 as the marker value for unknown values
 class IntegerProxy(NumberProxy):
-    def __init__(self, name: str | None = None, value=None, history: None | tuple = None):
+    def __init__(
+        self,
+        name: str | None = None,
+        value=None,
+        history: None | tuple = None,
+        constraint: None | CONSTRAINT = None,
+    ):
         # NOTE bools are also integers in Python
         python_type = bool if isinstance(value, bool) else int
-        NumberProxy.__init__(self, name=name, value=value, python_type=python_type, history=history)
+        NumberProxy.__init__(
+            self, name=name, value=value, python_type=python_type, history=history, constraint=constraint
+        )
 
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
@@ -975,8 +1017,8 @@ class IntegerProxy(NumberProxy):
 
     def __repr__(self):
         if self.python_type is bool:
-            return f"[IntegerProxy (bool type) name={self.name}, value={self.value}]"
-        return f"[IntegerProxy name={self.name}, value={self.value}]"
+            return f"[IntegerProxy (bool type) name={self.name}, value={self.value}, static={self.constraint}]"
+        return f"[IntegerProxy name={self.name}, value={self.value}, static={self.constraint}]"
 
     def __index__(self):
         return self.value
@@ -984,8 +1026,8 @@ class IntegerProxy(NumberProxy):
 
 # TODO Review dtype conversions
 class FloatProxy(NumberProxy):
-    def __init__(self, name=None, value=None, history: None | tuple = None):
-        NumberProxy.__init__(self, name=name, value=value, python_type=float, history=history)
+    def __init__(self, name=None, value=None, history: None | tuple = None, constraint: None | CONSTRAINT = None):
+        NumberProxy.__init__(self, name=name, value=value, python_type=float, history=history, constraint=constraint)
 
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
@@ -996,7 +1038,7 @@ class FloatProxy(NumberProxy):
         return f"float {value_str}"
 
     def __repr__(self):
-        return f"[FloatProxy name={self.name}, value={self.value}]"
+        return f"[FloatProxy name={self.name}, value={self.value}, static={self.constraint}]"
 
 
 class DistParallelType(Enum):
@@ -1565,9 +1607,9 @@ def futuretensorproxy(
     )
 
 
-def numberproxy(cls: type, value: Number | None) -> NumberProxy:
+def numberproxy(cls: type, value: Number | None, constraint: None | CONSTRAINT = None) -> NumberProxy:
     pcls = _cls_to_number_proxy_map[cls]
-    return pcls(value=value)
+    return pcls(value=value, constraint=constraint)
 
 
 # TODO RC1 Remove this function
