@@ -33,7 +33,14 @@ from thunder import functional as functional
 import thunder.core.prims as prims
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
-from thunder.core.transform_common import dce, EarlyTransform, AdditionalTransform, PostOptimizationTransform
+from thunder.core.transform_common import (
+    dce,
+    EarlyTransform,
+    AdditionalTransform,
+    PostOptimizationTransform,
+    functionalize_inplace_ops,
+    check_inplace_to_views,
+)
 from thunder.common import (
     CompileData,
     CompileStats,
@@ -503,6 +510,10 @@ def jit(
 
             prologue_traces = [prologue_trc]
             computation_traces = [computation_trc]
+            check_inplace_to_views(computation_trc)
+            if not compile_options.get("skip_inplace_functionalization", False):
+                computation_traces.extend(functionalize_inplace_ops(computation_trace=computation_trc))
+                computation_trc = computation_traces[-1]
 
             if epilogue_trc is not None:
                 epilogue_traces = [epilogue_trc]
@@ -693,6 +704,8 @@ def jit(
     if isinstance(fn, pytorch.nn.Module):
         fn_ = ThunderModule(fn, fn_)
         cd._thunder_module_map[id(fn)] = fn_
+        for transform in early_transforms:
+            transform.transform_module(fn_)
 
     # Sets compile options and statistics attributes
     cd._get_computation_and_inputs = get_computation_and_inputs

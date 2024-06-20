@@ -1,6 +1,6 @@
 ---
-name: Feature request
-about: Suggest an idea for this project
+name: Program Coverage
+about: Expand the programs / models Thunder can process
 title: ''
 labels: program-coverage
 assignees: ''
