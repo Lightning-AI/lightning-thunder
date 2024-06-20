@@ -1278,16 +1278,10 @@ signbit_opinfo = OpInfo(
 elementwise_unary_ops.append(signbit_opinfo)
 
 
-def silu_error_generator(op, device, dtype=torch.float32, **kwargs):
-    a = make_tensor((), dtype=dtype, device=device)
-    yield (SampleInput(a, inplace=True), NotImplementedError, "Thunder only supports silu with inplace=False")
-
-
 silu_opinfo = OpInfo(
     ltorch.silu,
     dtypes=(datatypes.floating,),
     sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
-    error_input_generator=silu_error_generator,
     torch_reference=_elementwise_unary_torch(torch.nn.functional.silu),
     test_directives=(
         DecorateInfo(
@@ -1623,20 +1617,9 @@ reciprocal_opinfo = OpInfo(
 elementwise_unary_ops.append(reciprocal_opinfo)
 
 
-def relu_error_generator(op, device, dtype=torch.float32, **kwargs):
-    a = make_tensor((), dtype=dtype, device=device)
-    yield (SampleInput(a, inplace=True), NotImplementedError, "relu only supports inplace=False")
-
-
-def relu6_error_generator(op, device, dtype=torch.float32, **kwargs):
-    a = make_tensor((), dtype=dtype, device=device)
-    yield (SampleInput(a, inplace=True), NotImplementedError, "relu6 only supports inplace=False")
-
-
 relu_opinfo = OpInfo(
     ltorch.relu,
     sample_input_generator=elementwise_unary_generator,
-    error_input_generator=relu_error_generator,
     torch_reference=_elementwise_unary_torch(torch.relu),
     test_directives=(
         # PyTorch does not support bool and complex types
@@ -1665,7 +1648,6 @@ elementwise_unary_ops.append(relu_opinfo)
 relu6_opinfo = OpInfo(
     ltorch.relu6,
     sample_input_generator=elementwise_unary_generator,
-    error_input_generator=relu6_error_generator,
     torch_reference=_elementwise_unary_torch(torch.nn.functional.relu6),
     test_directives=(
         # PyTorch does not support bool for both CPU and CUDA relu6
@@ -1684,15 +1666,9 @@ relu6_opinfo = OpInfo(
 elementwise_unary_ops.append(relu6_opinfo)
 
 
-def hardswish_error_generator(op, device, dtype=torch.float32, **kwargs):
-    a = make_tensor((), dtype=dtype, device=device)
-    yield (SampleInput(a, inplace=True), NotImplementedError, "hardswish only supports inplace=False")
-
-
 hardswish_opinfo = OpInfo(
     ltorch.hardswish,
     sample_input_generator=elementwise_unary_generator,
-    error_input_generator=hardswish_error_generator,
     torch_reference=_elementwise_unary_torch(torch.nn.functional.hardswish),
     dtypes=(datatypes.floating,),
     test_directives=(
@@ -1713,16 +1689,10 @@ hardswish_opinfo = OpInfo(
 elementwise_unary_ops.append(hardswish_opinfo)
 
 
-def selu_error_generator(op, device, dtype=torch.float32, **kwargs):
-    a = make_tensor((), dtype=dtype, device=device)
-    yield (SampleInput(a, inplace=True), NotImplementedError, "selu only supports inplace=False")
-
-
 selu_opinfo = OpInfo(
     ltorch.selu,
     dtypes=(datatypes.floating,),
     sample_input_generator=elementwise_unary_generator,
-    error_input_generator=selu_error_generator,
     torch_reference=_elementwise_unary_torch(torch.selu),
     test_directives=(
         # Some versions of PyTorch do not support CPU float16 selu
@@ -5949,6 +5919,52 @@ opinfos.extend(tensor_creation_ops)
 # Linear algebra OpInfos
 #
 linear_algebra_ops = []
+
+
+def normalize_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    # input shape
+    cases = (
+        (4, 4),
+        (32, 32),
+        (16, 16, 16),
+        (4, 2, 4, 5),
+    )
+    for case in cases:
+        yield SampleInput(make(case), eps=1e-8)
+        yield SampleInput(make(case), p=0, eps=1e-8)
+        yield SampleInput(make(case), p=1, eps=1e-8)
+        yield SampleInput(make(case), p=4, eps=1e-8)
+        yield SampleInput(make(case), p=math.inf, eps=1e-8)
+
+
+normalize_opinfo = OpInfo(
+    ltorch.normalize,
+    sample_input_generator=normalize_sample_generator,
+    torch_reference=torch.nn.functional.normalize,
+    dtypes=(datatypes.floating, datatypes.complexfloating),
+    test_directives=(
+        # The low precision floating point types sometimes fail
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-3, rtol=1e-1)),
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16, datatypes.float16),
+            devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
+        ),
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-3, rtol=1e-3)),
+            "test_vjp_correctness",
+        ),
+        # TODO Investigate the low precision difference
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-1, rtol=1e-1)),
+            "test_phantom_grad_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16, datatypes.float16),
+            devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
+        ),
+    ),
+)
+linear_algebra_ops.append(normalize_opinfo)
 
 
 def matmul_sample_generator(op, device, dtype, requires_grad, **kwargs):

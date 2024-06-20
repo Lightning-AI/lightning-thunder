@@ -89,8 +89,6 @@ def test_batch_norm_running_stats(executor, device, dtype):
         def __init__(self):
             super().__init__()
             self.dense1_bn = nn.BatchNorm3d(2, track_running_stats=True)
-            # To address the failure, use a workaround since `add_` is utilized in `nn.BatchNorm3d` when `num_batches_tracked` is not None.
-            self.dense1_bn.num_batches_tracked = None
 
         def forward(self, x):
             x = self.dense1_bn(x)
@@ -112,6 +110,9 @@ def test_batch_norm_running_stats(executor, device, dtype):
     assert_close(thunder_out, torch_out)
     assert_close(net.state_dict()["dense1_bn.running_mean"], torch_net.state_dict()["dense1_bn.running_mean"])
     assert_close(net.state_dict()["dense1_bn.running_var"], torch_net.state_dict()["dense1_bn.running_var"])
+    assert_close(
+        net.state_dict()["dense1_bn.num_batches_tracked"], torch_net.state_dict()["dense1_bn.num_batches_tracked"]
+    )
     assert_close(x.grad, x1.grad)
 
 

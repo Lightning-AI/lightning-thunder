@@ -33,7 +33,13 @@ from thunder import functional as functional
 import thunder.core.prims as prims
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
-from thunder.core.transform_common import dce, EarlyTransform, AdditionalTransform, PostOptimizationTransform
+from thunder.core.transform_common import (
+    dce,
+    EarlyTransform,
+    AdditionalTransform,
+    PostOptimizationTransform,
+    functionalize_inplace_ops,
+)
 from thunder.common import (
     CompileData,
     CompileStats,
@@ -503,6 +509,9 @@ def jit(
 
             prologue_traces = [prologue_trc]
             computation_traces = [computation_trc]
+            if not compile_options.get("skip_inplace_functionalization", False):
+                computation_traces.extend(functionalize_inplace_ops(computation_trace=computation_trc))
+                computation_trc = computation_traces[-1]
 
             if epilogue_trc is not None:
                 epilogue_traces = [epilogue_trc]
