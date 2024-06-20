@@ -1,8 +1,9 @@
 from __future__ import annotations
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
-from collections.abc import Callable
 
+import pytest
 import torch.testing
 
 from thunder.core import dtypes
@@ -122,3 +123,27 @@ def test_functionalization(op: OpInfo, device: str, dtype: dtypes.dtype, executo
             fw_extrace.bound_symbols,
         )
     )
+
+
+def test_invalid_cases():
+    import thunder
+
+    a = torch.randn((2, 2))
+
+    def f_with_reshape(a: torch.Tensor) -> torch.Tensor:
+        b = torch.reshape(a, (-1,))
+        b.exp_()
+        return b
+
+    jitted = thunder.jit(f_with_reshape)
+    with pytest.raises(NotImplementedError, match="in-place op to view tensors is not allowed but"):
+        jitted(a)
+
+    def f_with_contiguous(a: torch.Tensor) -> torch.Tensor:
+        b = a.contiguous()
+        b.exp_()
+        return b
+
+    jitted = thunder.jit(f_with_contiguous)
+    with pytest.raises(NotImplementedError, match="in-place op to `torch.Tensor.contiguous`"):
+        jitted(a)
