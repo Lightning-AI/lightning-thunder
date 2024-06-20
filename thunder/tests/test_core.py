@@ -2,6 +2,7 @@ import operator
 import traceback
 from functools import partial, reduce
 from itertools import product
+import dataclasses
 
 import pytest
 import torch
@@ -2750,3 +2751,47 @@ def test_grad_ctx():
     # `torch.no_grad` has no effect on thunder's autodiff which determines whether to compute grad based on `requires_grad=True`.
     # Thus when backward is called it computes grad for the input.
     assert x.grad is not None
+
+
+def test_dataclass_output():
+    @dataclasses.dataclass
+    class TestDataclass:
+        t: torch.Tensor
+        s: torch.Tensor
+        i: int
+        f: float
+
+    def foo(x):
+        return TestDataclass(x, x + 2, x.numel(), x.numel() / 2.0)
+
+    jfoo = thunder.jit(foo)
+
+    x = torch.randn(3, 3)
+    actual = jfoo(x)
+    expected = foo(x)
+
+    assert dataclasses.is_dataclass(actual)
+    assert isinstance(actual, TestDataclass)
+    torch.testing.assert_close(actual.t, expected.t)
+    torch.testing.assert_close(actual.s, expected.s)
+    torch.testing.assert_close(actual.i, expected.i)
+    torch.testing.assert_close(actual.f, expected.f)
+
+
+def test_dataclass_input():
+    @dataclasses.dataclass
+    class TestDataclass:
+        t: torch.Tensor
+        s: torch.Tensor
+
+    def foo(x):
+        return x.t + x.s
+
+    jfoo = thunder.jit(foo)
+
+    t = torch.randn(3, 3)
+    s = torch.randn(3, 3)
+    actual = jfoo(TestDataclass(t, s))
+    expected = foo(TestDataclass(t, s))
+
+    torch.testing.assert_close(actual, expected)
