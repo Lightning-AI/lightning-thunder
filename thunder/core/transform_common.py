@@ -388,6 +388,29 @@ class PostOptimizationTransform(Transform, ABC):
         pass
 
 
+def check_inplace_to_views(computation_trace: Trace) -> None:
+    """Error out if ``computation_trace`` has any in-place op of `torch.reshape`'s output."""
+    from thunder.core import utils
+    import thunder.torch as ltorch
+
+    producer_bsyms = producers(computation_trace)
+
+    bsym: BoundSymbol
+    for bsym in filter(lambda b: has_tags(b, {prims.OpTags.IN_PLACE}), computation_trace.bound_symbols):
+        for in_tensor in filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_args):
+            prod_bsym: BoundSymbol = producer_bsyms[in_tensor]
+            utils.check(
+                not has_tags(prod_bsym, {prims.OpTags.SHAPE_OP}),
+                lambda: f"in-place op to view tensors is not allowed but `{bsym.sym.id}` takes `{prod_bsym.sym.id}` output `{in_tensor}`",
+                NotImplementedError,
+            )
+            utils.check(
+                prod_bsym.sym != ltorch.contiguous,
+                lambda: f"in-place op to `torch.Tensor.contiguous` output is not allowed but `{bsym.sym.id}` takes `{prod_bsym.sym.id}` output `{in_tensor}`",
+                NotImplementedError,
+            )
+
+
 def functionalize_inplace_ops(computation_trace: Trace) -> list[Trace]:
     """Functionalize in-place ops in ``computation_trace``.
 
