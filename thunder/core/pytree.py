@@ -2,6 +2,9 @@ from functools import partial
 
 import optree
 import torch
+import thunder.core.dtypes as dtypes
+import thunder.core.devices as devices
+from thunder.core.baseutils import ProxyInterface
 
 # We need torch.Size to be treated the same way as a list or tuple
 # In PyTorch this is registered here:
@@ -13,7 +16,26 @@ optree.register_pytree_node(
     namespace=optree.registry.__GLOBAL_NAMESPACE,
 )
 
-tree_flatten = partial(optree.tree_flatten, none_is_leaf=True)
+
+def tree_flatten(args):
+    if type(args) not in {
+        dict,
+        list,
+        str,
+        int,
+        bool,
+        tuple,
+        torch.dtype,
+        float,
+        dtypes.floating,
+        devices.Device,
+        torch.memory_format,
+        type(None),
+    } and not isinstance(args, ProxyInterface):
+        raise TypeError(f"tree_flatten of type {type(args)} is not supported.")
+    return optree.tree_flatten(args, none_is_leaf=True)
+
+
 tree_map = partial(optree.tree_map, none_is_leaf=True)
 
 
