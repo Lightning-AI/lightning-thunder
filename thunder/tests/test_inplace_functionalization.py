@@ -8,7 +8,6 @@ import torch.testing
 
 from thunder.core import dtypes
 from thunder.core.prims import PrimIDs
-from thunder.tests.bf16 import device_supports_bf16
 from thunder.tests.framework import ops, requiresCUDA
 from thunder.tests.opinfos import opinfos, OpInfo, make_number, SampleInput
 from thunder.tests.make_tensor import make_tensor
@@ -169,7 +168,12 @@ def test_parse_resnet18(train: bool):
     jitted = thunder.jit(model)
     x = torch.randn((1, 3, 224, 224), device=device, dtype=dtype)
     if train:
-        # FIXME(crcrpar): Why...?
+        # FIXME(crcrpar): with RTX6000 Ada and CUDA 12.3, I see somewhat huge error:
+        # E   AssertionError: Tensor-likes are not close!
+        # E
+        # E   Mismatched elements: 913 / 1000 (91.3%)
+        # E   Greatest absolute difference: 0.000273287296295166 at index (0, 50) (up to 1e-05 allowed)
+        # E   Greatest relative difference: 0.4177769422531128 at index (0, 727) (up to 1.3e-06 allowed)
         with pytest.raises(AssertionError, match="Tensor-likes are not close!"):
             torch.testing.assert_close(jitted(x), ref_model(x))
     else:
