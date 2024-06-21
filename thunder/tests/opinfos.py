@@ -5931,11 +5931,14 @@ def normalize_sample_generator(op, device, dtype, requires_grad, **kwargs):
         (4, 2, 4, 5),
     )
     for case in cases:
-        yield SampleInput(make(case), eps=1e-8)
-        yield SampleInput(make(case), p=0, eps=1e-8)
-        yield SampleInput(make(case), p=1, eps=1e-8)
-        yield SampleInput(make(case), p=4, eps=1e-8)
-        yield SampleInput(make(case), p=math.inf, eps=1e-8)
+        input_tensor = make(case)
+        # avoid very small norm tensors, which can be unstable to normalize
+        input_tensor = input_tensor + 0.2 * torch.sign(input_tensor)
+        yield SampleInput(input_tensor, eps=1e-8)
+        yield SampleInput(input_tensor, p=0, eps=1e-8)
+        yield SampleInput(input_tensor, p=1, eps=1e-8)
+        yield SampleInput(input_tensor, p=4, eps=1e-8)
+        yield SampleInput(input_tensor, p=math.inf, eps=1e-8)
 
 
 normalize_opinfo = OpInfo(
