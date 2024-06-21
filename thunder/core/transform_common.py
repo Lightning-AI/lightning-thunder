@@ -395,12 +395,31 @@ def check_inplace_to_views(computation_trace: Trace) -> None:
 
     producer_bsyms = producers(computation_trace)
 
+    # note(crcrpar): Why not using :func:`~thunder.core.symbol.has_tags`?
+    # Because it looks into `.sym.tags` of the input bsym and its subsymbols,
+    # thus even `ltorch.batch_norm` is regarded as `prims.OpTags.IN_PLACE`.
+    def has_tag(bsym: BoundSymbol, tag: prims.OpTags) -> bool:
+        return bsym.sym.tags and tag in bsym.sym.tags
+
+    # note(crcrpar): Following ops would not look like a `prims.OpTags.SHAPE_OP`
+    # especially with respect to the relationship between the input and the output
+    # but some of their sub boundsymbols are. Therefore `thunder.core.symbol.gather_tags` gives it to them.
+    allowed_ltorch_ops = {
+        ltorch.batch_norm,
+        ltorch.avg_pool1d,
+        ltorch.avg_pool2d,
+        ltorch.avg_pool3d,
+        ltorch.max_pool1d,
+        ltorch.max_pool2d,
+        ltorch.max_pool3d,
+    }
+
     bsym: BoundSymbol
-    for bsym in filter(lambda b: has_tags(b, {prims.OpTags.IN_PLACE}), computation_trace.bound_symbols):
+    for bsym in filter(lambda b: has_tag(b, prims.OpTags.IN_PLACE), computation_trace.bound_symbols):
         for in_tensor in filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_args):
             prod_bsym: BoundSymbol = producer_bsyms[in_tensor]
             utils.check(
-                not has_tags(prod_bsym, {prims.OpTags.SHAPE_OP}),
+                not has_tags(prod_bsym, {prims.OpTags.SHAPE_OP}) or prod_bsym.sym in allowed_ltorch_ops,
                 lambda: f"in-place op to view tensors is not allowed but `{bsym.sym.id}` takes `{prod_bsym.sym.id}` output `{in_tensor}`",
                 NotImplementedError,
             )
