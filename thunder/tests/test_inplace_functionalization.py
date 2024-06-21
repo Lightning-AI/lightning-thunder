@@ -149,6 +149,13 @@ def test_invalid_cases():
         jitted(a)
 
 
+# TODO(crcrpar): Investigate the numerical accuracy when `train=True` and dtype is fp32.
+# with RTX6000 Ada and CUDA 12.3, I see somewhat huge error:
+# E   AssertionError: Tensor-likes are not close!
+# E
+# E   Mismatched elements: 913 / 1000 (91.3%)
+# E   Greatest absolute difference: 0.000273287296295166 at index (0, 50) (up to 1e-05 allowed)
+# E   Greatest relative difference: 0.4177769422531128 at index (0, 727) (up to 1.3e-06 allowed)
 @requiresCUDA
 @pytest.mark.parametrize("train", (False, True))
 def test_parse_resnet18(train: bool):
@@ -157,24 +164,15 @@ def test_parse_resnet18(train: bool):
     torchvision = pytest.importorskip("torchvision")
 
     device = torch.device("cuda")
-    dtype = torch.float32
-    model: nn.Module = torchvision.models.resnet18().to(device=device, dtype=dtype)
-    ref_model: nn.Module = torchvision.models.resnet18().to(device=device, dtype=dtype)
+    dtype = torch.float64 if train else torch.float32
+    with device:
+        model: nn.Module = torchvision.models.resnet18(weights=None).to(device=device, dtype=dtype)
+        ref_model: nn.Module = torchvision.models.resnet18(weights=None).to(device=device, dtype=dtype)
     if not train:
         model = model.eval()
         ref_model = ref_model.eval()
     ref_model.load_state_dict(model.state_dict())
 
     jitted = thunder.jit(model)
-    x = torch.randn((1, 3, 224, 224), device=device, dtype=dtype)
-    if train:
-        # FIXME(crcrpar): with RTX6000 Ada and CUDA 12.3, I see somewhat huge error:
-        # E   AssertionError: Tensor-likes are not close!
-        # E
-        # E   Mismatched elements: 913 / 1000 (91.3%)
-        # E   Greatest absolute difference: 0.000273287296295166 at index (0, 50) (up to 1e-05 allowed)
-        # E   Greatest relative difference: 0.4177769422531128 at index (0, 727) (up to 1.3e-06 allowed)
-        with pytest.raises(AssertionError, match="Tensor-likes are not close!"):
-            torch.testing.assert_close(jitted(x), ref_model(x))
-    else:
-        torch.testing.assert_close(jitted(x), ref_model(x))
+    x = make_tensor((1, 3, 224, 224), dtype=dtype, device=device)
+    torch.testing.assert_close(jitted(x), ref_model(x))
