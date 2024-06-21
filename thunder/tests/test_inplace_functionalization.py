@@ -8,7 +8,8 @@ import torch.testing
 
 from thunder.core import dtypes
 from thunder.core.prims import PrimIDs
-from thunder.tests.framework import ops
+from thunder.tests.bf16 import device_supports_bf16
+from thunder.tests.framework import ops, requiresCUDA
 from thunder.tests.opinfos import opinfos, OpInfo, make_number, SampleInput
 from thunder.tests.make_tensor import make_tensor
 from thunder.torch import _torch_to_thunder_function_map, _inplace_to_out_of_place
@@ -147,3 +148,17 @@ def test_invalid_cases():
     jitted = thunder.jit(f_with_contiguous)
     with pytest.raises(NotImplementedError, match="in-place op to `torch.Tensor.contiguous`"):
         jitted(a)
+
+
+@requiresCUDA
+def test_parse_resnet18():
+    import thunder
+
+    torchvision = pytest.importorskip("torchvision")
+
+    device = torch.device("cuda")
+    dtype = torch.bfloat16 if device_supports_bf16(device) else torch.float16
+    model: nn.Module = torchvision.models.resnet18().to(device=device, dtype=dtype)
+    jitted = thunder.jit(model)
+    x = torch.randn((1, 3, 224, 224), device=device, dtype=dtype)
+    jitted(x)
