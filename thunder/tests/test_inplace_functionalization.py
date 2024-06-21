@@ -159,6 +159,11 @@ def test_parse_resnet18():
     device = torch.device("cuda")
     dtype = torch.bfloat16 if device_supports_bf16(device) else torch.float16
     model: nn.Module = torchvision.models.resnet18().to(device=device, dtype=dtype)
+    ref_model: nn.Module = torchvision.models.resnet18().to(device=device, dtype=dtype)
+    ref_model.load_state_dict(model.state_dict())
+
     jitted = thunder.jit(model)
     x = torch.randn((1, 3, 224, 224), device=device, dtype=dtype)
-    jitted(x)
+    # FIXME(crcrpar): Why...?
+    with pytest.raises(AssertionError, match="Tensor-likes are not close!"):
+        torch.testing.assert_close(jitted(x), ref_model(x))
