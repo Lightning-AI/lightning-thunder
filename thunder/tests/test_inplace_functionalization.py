@@ -151,19 +151,26 @@ def test_invalid_cases():
 
 
 @requiresCUDA
-def test_parse_resnet18():
+@pytest.mark.parametrize("train", (False, True))
+def test_parse_resnet18(train: bool):
     import thunder
 
     torchvision = pytest.importorskip("torchvision")
 
     device = torch.device("cuda")
-    dtype = torch.bfloat16 if device_supports_bf16(device) else torch.float16
+    dtype = torch.float32
     model: nn.Module = torchvision.models.resnet18().to(device=device, dtype=dtype)
     ref_model: nn.Module = torchvision.models.resnet18().to(device=device, dtype=dtype)
+    if not train:
+        model = model.eval()
+        ref_model = ref_model.eval()
     ref_model.load_state_dict(model.state_dict())
 
     jitted = thunder.jit(model)
     x = torch.randn((1, 3, 224, 224), device=device, dtype=dtype)
-    # FIXME(crcrpar): Why...?
-    with pytest.raises(AssertionError, match="Tensor-likes are not close!"):
+    if train:
+        # FIXME(crcrpar): Why...?
+        with pytest.raises(AssertionError, match="Tensor-likes are not close!"):
+            torch.testing.assert_close(jitted(x), ref_model(x))
+    else:
         torch.testing.assert_close(jitted(x), ref_model(x))
