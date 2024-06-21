@@ -28,7 +28,7 @@ def tree_flatten(args):
         torch.dtype,
         float,
         dtypes.floating,
-        dtypes.boolean_dtypes,
+        dtypes.bool_,
         devices.Device,
         torch.memory_format,
         type(None),
@@ -36,7 +36,7 @@ def tree_flatten(args):
         complex,
         type,
         type(Ellipsis),
-    } and not isinstance(args, ProxyInterface):
+    } and not isinstance(args, (ProxyInterface)):
         raise TypeError(f"tree_flatten of type {type(args)} is not supported.")
     return optree.tree_flatten(args, none_is_leaf=True)
 
