@@ -136,8 +136,9 @@ def test_invalid_cases():
         return b
 
     jitted = thunder.jit(f_with_reshape)
-    with pytest.raises(NotImplementedError, match="in-place op to view tensors is not allowed but"):
+    with pytest.raises(NotImplementedError) as excinfo:
         jitted(a)
+    assert "in-place op of `torch.exp_` to `torch.reshape` output" in str(excinfo.value)
 
     def f_with_contiguous(a: torch.Tensor) -> torch.Tensor:
         b = a.contiguous()
@@ -145,8 +146,9 @@ def test_invalid_cases():
         return b
 
     jitted = thunder.jit(f_with_contiguous)
-    with pytest.raises(NotImplementedError, match="in-place op to `torch.Tensor.contiguous`"):
+    with pytest.raises(NotImplementedError) as excinfo:
         jitted(a)
+    assert "in-place op of `torch.exp_` to `torch.Tensor.contiguous` output" in str(excinfo.value)
 
 
 # TODO(crcrpar): Investigate the numerical accuracy when `train=True` and dtype is fp32.

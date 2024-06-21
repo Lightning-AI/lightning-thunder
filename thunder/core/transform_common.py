@@ -419,13 +419,8 @@ def check_inplace_to_views(computation_trace: Trace) -> None:
         for in_tensor in filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_args):
             prod_bsym: BoundSymbol = producer_bsyms[in_tensor]
             utils.check(
-                not has_tags(prod_bsym, {prims.OpTags.SHAPE_OP}) or prod_bsym.sym in allowed_ltorch_ops,
-                lambda: f"in-place op to view tensors is not allowed but `{bsym.sym.id}` takes `{prod_bsym.sym.id}` output `{in_tensor}`",
-                NotImplementedError,
-            )
-            utils.check(
-                prod_bsym.sym != ltorch.contiguous,
-                lambda: f"in-place op to `torch.Tensor.contiguous` output is not allowed but `{bsym.sym.id}` takes `{prod_bsym.sym.id}` output `{in_tensor}`",
+                prod_bsym.sym not in ltorch._syms_returning_runtime_dependently_views,
+                lambda: f"in-place op of `{bsym.sym.id}` to `{prod_bsym.sym.id}` output `{in_tensor}` is not supported",
                 NotImplementedError,
             )
 

@@ -5079,3 +5079,6 @@ _torch_to_thunder_complete_map = {
     **_torch_to_thunder_function_map,
     **{fn: fn for fn in _torch_noinline_functions},
 }
+
+
+_syms_returning_runtime_dependently_views = {reshape, contiguous, to}
