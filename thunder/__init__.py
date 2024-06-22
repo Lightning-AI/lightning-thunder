@@ -425,7 +425,7 @@ def jit(
                     ) = cache_entry
                     try:
                         cs.last_prologue_execution_start = time.time_ns()
-                        if epilogue:
+                        if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
                             inps, pro_to_epi = pro(*args, **kwargs)
                         else:
                             inps = pro(*args, **kwargs)
@@ -466,7 +466,7 @@ def jit(
                 ) = cache_entry
 
                 cs.last_prologue_execution_start = time.time_ns()
-                if epilogue:
+                if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
                     inps, pro_to_epi = pro(*args, **kwargs)
                 else:
                     inps = pro(*args, **kwargs)
@@ -552,7 +552,7 @@ def jit(
             cs.last_prologue_transformation_stop = time.time_ns()
 
             cs.last_prologue_execution_start = time.time_ns()
-            if epilogue:
+            if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
                 inps, pro_to_epi = pro(*args, **kwargs)
             else:
                 inps = pro(*args, **kwargs)

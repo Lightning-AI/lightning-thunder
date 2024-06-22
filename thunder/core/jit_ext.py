@@ -1275,7 +1275,7 @@ def get_parameter_or_buffer_or_submodule_name_and_root(provenance):
     return typ, name, mprovenance
 
 
-def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, kwargs, *, has_epilogue: bool):
+def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, kwargs):
     already_unpacked: dict[int, Proxy] = {}
     orig_modules: dict[int, Proxy] = {}
 
@@ -1523,10 +1523,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 else:
                     raise NotImplementedError(f"cache info of type {type(v).__name__}")
 
-        if has_epilogue:
-            prims.python_return((pro_to_comp, pro_to_epi))
-        else:
-            prims.python_return(pro_to_comp)
+        prims.python_return((pro_to_comp, pro_to_epi))
 
     return pro_to_comp, pro_to_epi
 
@@ -1692,9 +1689,7 @@ def thunder_general_jit(
     else:
         epilogue_trace = None
 
-    pro_to_comp_proxies, pro_to_epi_proxies = unpack_inputs(
-        ctx, prologue_trace, pro_to_comp, pro_to_epi, args, kwargs, has_epilogue=epilogue_trace is not None
-    )
+    pro_to_comp_proxies, pro_to_epi_proxies = unpack_inputs(ctx, prologue_trace, pro_to_comp, pro_to_epi, args, kwargs)
 
     proxy_order = {id(p): i for i, p in enumerate(pro_to_comp_proxies)}
     pro_to_comp = tuple(sorted(pro_to_comp, key=lambda v: proxy_order[id(v.proxy)]))

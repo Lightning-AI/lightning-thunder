@@ -210,7 +210,7 @@ class TransformForTensorParallel(EarlyTransform):
         prologue_producers, prologue_consumers = utils.producers_and_consumers(prologue_trace)
         pro_out_p: TensorProxy
         comp_inp_p: TensorProxy
-        for pro_out_p, comp_inp_p in zip(prologue_trace.output, computation_trace.args):
+        for pro_out_p, comp_inp_p in zip(prologue_trace.output[0], computation_trace.args):
             if pro_out_p.name not in self.chunked_param_name_to_layer_type:
                 continue
             bsym = prologue_producers[pro_out_p]
