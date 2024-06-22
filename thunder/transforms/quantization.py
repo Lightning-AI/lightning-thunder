@@ -96,16 +96,9 @@ class BitsAndBytesLinearQuant4bit(EarlyTransform):
 
         compute_producers, compute_consumers = utils.producers_and_consumers(computation_trace)
 
-        # This is needed because having epilogues adds an additional return tuple
-        # TODO: unify after https://github.com/Lightning-AI/lightning-thunder/issues/628
-        if epilogue_trace is None:
-            prologue_to_epilogue_outputs = prologue_trace.output
-            output_subindex = None
-        else:
-            prologue_to_epilogue_outputs = prologue_trace.output[0]
-            output_subindex = 0
+        proglogue_to_compute_outputs = prologue_trace.output[0]
 
-        output_idxes = {id(o): i for i, o in enumerate(prologue_to_epilogue_outputs)}
+        output_idxes = {id(o): i for i, o in enumerate(proglogue_to_compute_outputs)}
 
         computation_trace.push_scope([])
         quantized_proxies: dict[int, str] = {}  # id -> name
@@ -147,8 +140,8 @@ class BitsAndBytesLinearQuant4bit(EarlyTransform):
                     # get_param.sym = unpack_buffer/parameter as needed
                     new_bsyms.append(get_param.sym.bind(get_param.args[0], n_absmax, output=proxy_absmax))
                     new_bsyms.append(get_param.sym.bind(get_param.args[0], n_code, output=proxy_code))
-                    add_trace_output(prologue_trace, proxy_absmax, subindex=output_subindex)
-                    add_trace_output(prologue_trace, proxy_code, subindex=output_subindex)
+                    add_trace_output(prologue_trace, proxy_absmax, subindex=0)
+                    add_trace_output(prologue_trace, proxy_code, subindex=0)
                     new_compute_inputs.append(proxy_absmax)
                     new_compute_inputs.append(proxy_code)
                     qs["proxy_absmax"] = proxy_absmax
