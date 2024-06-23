@@ -8,7 +8,7 @@ import torch.testing
 
 from thunder.core import dtypes
 from thunder.core.prims import PrimIDs
-from thunder.tests.framework import ops, requiresCUDA
+from thunder.tests.framework import instantiate, ops, requiresCUDA, NOTHING
 from thunder.tests.opinfos import opinfos, OpInfo, make_number, SampleInput
 from thunder.tests.make_tensor import make_tensor
 from thunder.torch import _torch_to_thunder_function_map, _inplace_to_out_of_place
@@ -178,3 +178,55 @@ def test_parse_resnet18(train: bool):
     jitted = thunder.jit(model)
     x = make_tensor((1, 3, 224, 224), dtype=dtype, device=device)
     torch.testing.assert_close(jitted(x), ref_model(x))
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_inplace_to_views(executor, device, _):
+    import thunder
+
+    def f(a: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        c = torch.exp(a)
+        d = torch.tanh(b)
+
+        e = c.view(-1)
+        e += d.flatten()
+
+        d.div_(a)
+        return c, d, e
+
+    a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
+    a_, b_ = a.clone().detach(), b.clone().detach()
+
+    jittd_f = thunder.jit(f, executors=executor.executors_list())
+
+    c, d, e = jittd_f(a, b)
+    c_, d_, e_ = f(a_, b_)
+
+    torch.testing.assert_close((c, d, e), (c_, d_, e_))
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_error_of_inplace_to_views(executor, device, _):
+    import thunder
+
+    def f(a: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        c = torch.exp(a)
+        d = torch.tanh(b)
+
+        e = c.flatten()
+        e += d.flatten()
+
+        d.div_(a)
+        return c, d, e
+
+    a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
+    a_, b_ = a.clone().detach(), b.clone().detach()
+
+    jittd_f = thunder.jit(f, executors=executor.executors_list())
+
+    with pytest.raises(NotImplementedError, match="in-place op of `torch.Tensor.add_` to `torch.flatten` output"):
+        c, d, e = jittd_f(a, b)
