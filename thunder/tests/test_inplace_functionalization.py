@@ -8,7 +8,7 @@ import torch.testing
 
 from thunder.core import dtypes
 from thunder.core.prims import PrimIDs
-from thunder.tests.framework import ops, requiresCUDA
+from thunder.tests.framework import instantiate, ops, requiresCUDA, NOTHING
 from thunder.tests.opinfos import opinfos, OpInfo, make_number, SampleInput
 from thunder.tests.make_tensor import make_tensor
 from thunder.torch import _torch_to_thunder_function_map, _inplace_to_out_of_place
@@ -125,30 +125,6 @@ def test_functionalization(op: OpInfo, device: str, dtype: dtypes.dtype, executo
     )
 
 
-def test_invalid_cases():
-    import thunder
-
-    a = torch.randn((2, 2))
-
-    def f_with_reshape(a: torch.Tensor) -> torch.Tensor:
-        b = torch.reshape(a, (-1,))
-        b.exp_()
-        return b
-
-    jitted = thunder.jit(f_with_reshape)
-    with pytest.raises(NotImplementedError, match="in-place op to view tensors is not allowed but"):
-        jitted(a)
-
-    def f_with_contiguous(a: torch.Tensor) -> torch.Tensor:
-        b = a.contiguous()
-        b.exp_()
-        return b
-
-    jitted = thunder.jit(f_with_contiguous)
-    with pytest.raises(NotImplementedError, match="in-place op to `torch.Tensor.contiguous`"):
-        jitted(a)
-
-
 # TODO(crcrpar): Investigate the numerical accuracy when `train=True` and dtype is fp32.
 # with RTX6000 Ada and CUDA 12.3, I see somewhat huge error:
 # E   AssertionError: Tensor-likes are not close!
@@ -176,3 +152,87 @@ def test_parse_resnet18(train: bool):
     jitted = thunder.jit(model)
     x = make_tensor((1, 3, 224, 224), dtype=dtype, device=device)
     torch.testing.assert_close(jitted(x), ref_model(x))
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_inplace_to_views(executor, device, _):
+    import thunder
+
+    def f(a: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        c = torch.exp(a)
+        d = torch.tanh(b)
+
+        e = c.view(-1)
+        e += d.flatten()
+
+        d.div_(a)
+        return c, d, e
+
+    a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
+    a_, b_ = a.clone().detach(), b.clone().detach()
+
+    jittd_f = thunder.jit(f, executors=executor.executors_list())
+
+    c, d, e = jittd_f(a, b)
+    c_, d_, e_ = f(a_, b_)
+
+    torch.testing.assert_close((c, d, e), (c_, d_, e_))
+
+    def g(a: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        c = torch.exp(a)
+        d = torch.tanh(b)
+
+        e, _ = c.chunk(2)
+        e *= 1.5
+
+        d.div_(a)
+        return d, e
+
+    a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
+    a_, b_ = a.clone().detach(), b.clone().detach()
+
+    jittd_g = thunder.jit(g, executors=executor.executors_list())
+
+    d, e = jittd_g(a, b)
+    d_, e_ = g(a_, b_)
+
+    torch.testing.assert_close((d, e), (d_, e_))
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_error_of_inplace_to_views(executor, device, _):
+    import thunder
+
+    def f(a: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        c = torch.exp(a)
+        d = torch.tanh(b)
+
+        e = c.flatten()
+        e += d.flatten()
+
+        d.div_(a)
+        return c, d, e
+
+    a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
+    jittd_f = thunder.jit(f, executors=executor.executors_list())
+
+    with pytest.raises(NotImplementedError, match="in-place op of `torch.Tensor.add_` to `torch.flatten` output"):
+        _ = jittd_f(a, b)
+
+    def f(a: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        c = torch.exp(a)
+        d = torch.tanh(b)
+
+        e, _ = c.chunk(2)
+        e *= 1.5
+
+        d.div_(a)
+        return c, d, e
+
+    jittd_f = thunder.jit(f, executors=executor.executors_list())
+    with pytest.raises(NotImplementedError, match="in-place op of `torch.Tensor.mul_`"):
+        _ = jittd_f(a, b)
