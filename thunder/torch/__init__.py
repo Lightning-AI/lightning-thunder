@@ -5081,4 +5081,27 @@ _torch_to_thunder_complete_map = {
 }
 
 
-_syms_returning_runtime_dependently_views = {reshape, contiguous, to}
+# ref: https://pytorch.org/docs/stable/tensor_view.html
+_syms_returning_runtime_dependently_views = {reshape, contiguous, to, flatten}
+
+_syms_returning_views = {
+    diagonal,
+    expand,
+    expand_as,
+    movedim,
+    permute,
+    select,
+    squeeze,
+    transpose,
+    t,
+    real,
+    unflatten,
+    unfold,
+    unsqueeze,
+    view,
+    view_as,
+    unbind,
+    split,
+    tensor_split,
+    chunk,
+}
