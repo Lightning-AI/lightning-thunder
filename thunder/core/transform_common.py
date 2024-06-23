@@ -573,9 +573,6 @@ def functionalize_inplace_ops(
             new_bsyms.append(new_functional_bsym)
             bsym_inplace_to_functional[new_bsym] = new_functional_bsym
 
-            in_tensor = new_functional_bsym.flat_proxy_args[0]
-            prod_bsym: BoundSymbol = producer_map[in_tensor]
-
     functionalized_computation_trace = from_trace(computation_trace)
     functionalized_computation_trace.bound_symbols = new_bsyms
     functionalized_computation_trace.set_provenance(TraceProvenance("Functionalize in-place ops"))
