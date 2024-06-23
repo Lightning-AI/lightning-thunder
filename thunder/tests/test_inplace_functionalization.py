@@ -186,7 +186,7 @@ def test_parse_resnet18(train: bool):
 def test_inplace_to_views(executor, device, _):
     import thunder
 
-    def f(a: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def f(a: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         c = torch.exp(a)
         d = torch.tanh(b)
 
@@ -213,7 +213,7 @@ def test_inplace_to_views(executor, device, _):
 def test_error_of_inplace_to_views(executor, device, _):
     import thunder
 
-    def f(a: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def f(a: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         c = torch.exp(a)
         d = torch.tanh(b)
 
