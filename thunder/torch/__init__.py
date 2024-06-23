@@ -5082,9 +5082,9 @@ _torch_to_thunder_complete_map = {
 
 
 # ref: https://pytorch.org/docs/stable/tensor_view.html
-_syms_returning_runtime_dependently_views = {reshape, contiguous, to, flatten}
+_syms_returning_runtime_dependently_views: set[Symbol] = {reshape, contiguous, to, flatten}
 
-_syms_returning_views = {
+_syms_returning_views: set[Symbol] = {
     diagonal,
     expand,
     expand_as,
