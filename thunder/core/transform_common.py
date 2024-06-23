@@ -412,6 +412,8 @@ def check_inplace_to_views(computation_trace: Trace) -> dict[VariableInterface, 
     for bsym in filter(lambda b: has_tag(b, prims.OpTags.IN_PLACE), computation_trace.bound_symbols):
         in_tensor: TensorProxy = list(filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_args))[0]
 
+        if in_tensor in trace_args_set:
+            continue
         prod_bsym: BoundSymbol = producer_bsyms[in_tensor]
         orig_tensor = prod_bsym.flat_proxy_args[0]
         consumer_of_orig_tensor = consumers[orig_tensor]
