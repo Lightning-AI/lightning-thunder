@@ -1565,14 +1565,15 @@ def process_recorded_modifications(ctx, epilogue_trace):
                     name = ".".join(name + [k])
                     with tracectx(epilogue_trace):
                         bsym = prims.pack_buffer.bind(root_module_proxy, name, value.value, output=None)
-                        epilogue_trace.bound_symbols.append(bsym)
+                        assert epilogue_trace.bound_symbols[-1].sym == prims.python_return
+                        epilogue_trace.bound_symbols.insert(-1, bsym)
                 else:
                     raise NotImplementedError(f"Modifications {inst} on dicts are not supported")
         else:
             raise NotImplementedError(f"Modifications of {type(uvalue).__name__} objects are not supported")
 
 
-def bind_inputs(name, trace, input_vars, input_proxies):
+def bind_inputs(name, trace, input_proxies):
     # Unpacks inputs into the computation trace
     # TODO This currently does the unpacks at the end of the trace, then moves them to the beginning, there's
     #   almost certainly a more elegant way to do this
@@ -1585,7 +1586,7 @@ def bind_inputs(name, trace, input_vars, input_proxies):
     trace.bound_symbols = bsyms[-len(input_proxies) :] + bsyms[: -len(input_proxies)]
 
     si = SigInfo(name)
-    si.args = [(v.proxy.name, None) for v in input_vars]
+    si.args = [(p.name, None) for v in input_proxies]
     trace._siginfo = si
     trace.args = input_proxies
 
@@ -1655,7 +1656,9 @@ def thunder_general_jit(
     with general_jit_ctx(ctx):
         with tracectx(computation_trace):
             result = jfn(*args, **kwargs)
+        with tracectx(epilogue_trace):
             prims.python_return(result)
+        with tracectx(computation_trace):
             computation_trace.set_current_source_location(None, None)
             process_recorded_modifications(ctx, epilogue_trace)
             last_interpreter_log = jfn._last_interpreter_log
@@ -1674,29 +1677,21 @@ def thunder_general_jit(
             comp_to_epi.append(i)
         else:
             pro_to_epi.append(i)
-    comp_to_epi = tuple(comp_to_epi)
+
     comp_to_epi_proxies = tuple(v.proxy for v in comp_to_epi)
     pro_to_epi = tuple(pro_to_epi)
 
-    if epilogue_trace.bound_symbols:
-        with tracectx(computation_trace):
-            last = computation_trace.bound_symbols.pop(-1)
-            assert last.sym.id == prims.PrimIDs.RETURN
-            prims.python_return((result, comp_to_epi_proxies))
-
-        with tracectx(epilogue_trace):
-            prims.python_return(None)
-    else:
-        epilogue_trace = None
+    with tracectx(computation_trace):
+        prims.python_return(comp_to_epi_proxies)
 
     pro_to_comp_proxies, pro_to_epi_proxies = unpack_inputs(ctx, prologue_trace, pro_to_comp, pro_to_epi, args, kwargs)
 
     proxy_order = {id(p): i for i, p in enumerate(pro_to_comp_proxies)}
     pro_to_comp = tuple(sorted(pro_to_comp, key=lambda v: proxy_order[id(v.proxy)]))
 
-    bind_inputs("computation", computation_trace, pro_to_comp, pro_to_comp_proxies)
+    bind_inputs("computation", computation_trace, pro_to_comp_proxies)
     if epilogue_trace:
-        bind_inputs("epilogue", epilogue_trace, pro_to_epi + comp_to_epi, pro_to_epi_proxies + comp_to_epi_proxies)
+        bind_inputs("epilogue", epilogue_trace, pro_to_epi_proxies + comp_to_epi_proxies)
 
     # Returns a new swapmap dictionary which has the keys (ctx._proxy_swapmap.key() & variableify(proxies))
     def restrict_proxy_swapmap(proxies: tuple[Proxy]) -> dict[Variable, Proxy]:

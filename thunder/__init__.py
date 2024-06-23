@@ -560,6 +560,7 @@ def jit(
             cs.last_prologue_execution_stop = time.time_ns()
 
             cs.last_traces = computation_traces
+            cs.last_epilogue_traces = epilogue_traces
             backward_traces = []
             cs.last_backward_traces = backward_traces
             cs.last_interpreter_log = last_interpreter_log
@@ -652,6 +653,7 @@ def jit(
 
             cs.last_traces += extraces
             cs.last_prologue_traces = [prologue_trc] + prologue_traces
+            cs.last_epilogue_traces = epilogue_traces
             cs.last_prologue = pro
 
         return cache_entry, inps, pro_to_epi
@@ -689,8 +691,7 @@ def jit(
             result = data_for_autograd["output"]
 
         if cache_entry.epilogue_fn:
-            result, comp_to_epi = result
-            cache_entry.epilogue_fn(*pro_to_epi, *comp_to_epi)
+            result = cache_entry.epilogue_fn(*pro_to_epi, *result)
 
         cs.last_trace_host_execution_stop = time.time_ns()
         cs.last_computation_execution_stop = cs.last_trace_host_execution_stop
@@ -802,6 +803,18 @@ def last_prologue_traces(fn) -> TraceCtx:
     if cs.last_prologue_traces is None:
         raise TypeError(f"{fn} doesn't seem to have been called yet.")
     return cs.last_prologue_traces
+
+
+def last_epilogue_traces(fn) -> TraceCtx:
+    """Obtains the list of prologue traces that have been produced for the last run of the function and the selected prologue."""
+    cs = compile_stats(fn)
+    if cs is None:
+        raise TypeError(f"{fn} doesn't seem to be a thunder compiled function.")
+    if (
+        cs.last_prologue_traces is None
+    ):  # this is prologue on purpose because we might legitimately not have an epilogue trace
+        raise TypeError(f"{fn} doesn't seem to have been called yet.")
+    return cs.last_epilogue_traces
 
 
 def cache_option(fn) -> CACHE_OPTIONS:
