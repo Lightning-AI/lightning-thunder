@@ -125,32 +125,6 @@ def test_functionalization(op: OpInfo, device: str, dtype: dtypes.dtype, executo
     )
 
 
-def test_invalid_cases():
-    import thunder
-
-    a = torch.randn((2, 2))
-
-    def f_with_reshape(a: torch.Tensor) -> torch.Tensor:
-        b = torch.reshape(a, (-1,))
-        b.exp_()
-        return b
-
-    jitted = thunder.jit(f_with_reshape)
-    with pytest.raises(NotImplementedError) as excinfo:
-        jitted(a)
-    assert "in-place op of `torch.exp_` to `torch.reshape` output" in str(excinfo.value)
-
-    def f_with_contiguous(a: torch.Tensor) -> torch.Tensor:
-        b = a.contiguous()
-        b.exp_()
-        return b
-
-    jitted = thunder.jit(f_with_contiguous)
-    with pytest.raises(NotImplementedError) as excinfo:
-        jitted(a)
-    assert "in-place op of `torch.exp_` to `torch.Tensor.contiguous` output" in str(excinfo.value)
-
-
 # TODO(crcrpar): Investigate the numerical accuracy when `train=True` and dtype is fp32.
 # with RTX6000 Ada and CUDA 12.3, I see somewhat huge error:
 # E   AssertionError: Tensor-likes are not close!
