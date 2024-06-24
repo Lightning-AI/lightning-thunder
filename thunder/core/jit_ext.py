@@ -19,8 +19,6 @@ from enum import Enum, auto
 from io import StringIO
 import inspect
 import time
-import optree
-import dataclasses
 
 from thunder.core.compile_data import compile_data_and_stats, get_cache_option, get_compile_data
 import thunder.clang as clang
@@ -108,7 +106,7 @@ from thunder.common import CompileData, CompileStats
 from thunder.core.trace import TraceCtx, TraceResults
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.clang import _clang_fn_set
-from thunder.core.pytree import tree_map, tree_unflatten
+from thunder.core.pytree import tree_map
 from thunder.core.compile_data import compile_data_and_stats
 
 #
@@ -186,38 +184,6 @@ _uncopyable_types = {
 
 def is_uncopyable(val: Any, /) -> bool:
     return type(val) in _uncopyable_types
-
-
-DATACLASS_OPTREE_NAMESPACE = "thunder_dataclass"
-_registered_dataclasses = set()
-
-
-def tree_flatten_with_dataclass(tree):
-    def register_pytree_node_dataclass(cls):
-        _flatten = lambda obj: optree.tree_flatten(dataclasses.asdict(obj))
-        _unflatten = lambda spec, children: cls(**spec.unflatten(children))
-        optree.register_pytree_node(cls, _flatten, _unflatten, DATACLASS_OPTREE_NAMESPACE)
-        return cls
-
-    def _maybe_register_dataclass(t):
-        if dataclasses.is_dataclass(t) and t.__class__ not in _registered_dataclasses:
-            return True
-        return False
-
-    # `tree_flatten_with_dataclass` iterates over the tree and registers functions to flatten dataclass objects present in the `tree`.
-    # This is to facilitate peeking into the dataclass object to correctly get proxies when inspecting the BoundSymbols in the trace.
-    def dataclass_registry(t):
-        if _maybe_register_dataclass(t):
-            cls = t.__class__
-            register_pytree_node_dataclass(cls)
-            _registered_dataclasses.add(cls)
-        return t
-
-    # Register unseen dataclass instance, so that we can
-    # flatten them to gather any proxies from them.
-    tree = tree_map(dataclass_registry, tree)
-
-    return optree.tree_flatten(tree, none_is_leaf=True, namespace=DATACLASS_OPTREE_NAMESPACE)
 
 
 #
@@ -1686,27 +1652,15 @@ def thunder_general_jit(
         record_history=record_history,
     )
 
-    # NOTE: Computation trace will always return flat results
-    #       Epilogue trace takes care of unflattening the output to
-    #       the supported return types.
     with general_jit_ctx(ctx):
         with tracectx(computation_trace):
             result = jfn(*args, **kwargs)
-            result, result_spec = tree_flatten_with_dataclass(result)
-
             prims.python_return(result)
             computation_trace.set_current_source_location(None, None)
             process_recorded_modifications(ctx, epilogue_trace)
-
-            # Epilogue trace returns the result to user program.
-            with tracectx(epilogue_trace):
-                prims.python_return(result)
-
             last_interpreter_log = jfn._last_interpreter_log
 
     pro_to_comp, computation_intermediates = get_computation_inputs_and_intermediates(computation_trace)
-
-    # `epilogue_inputs` contains - result of the computation trace and user visible values which were tracked and will be modified by epilogue_trace.
     epilogue_inputs, _ = get_computation_inputs_and_intermediates(epilogue_trace)
 
     comp_to_epi = []
@@ -1724,10 +1678,16 @@ def thunder_general_jit(
     comp_to_epi_proxies = tuple(v.proxy for v in comp_to_epi)
     pro_to_epi = tuple(pro_to_epi)
 
-    with tracectx(computation_trace):
-        last = computation_trace.bound_symbols.pop(-1)
-        assert last.sym.id == prims.PrimIDs.RETURN
-        prims.python_return(comp_to_epi_proxies)
+    if epilogue_trace.bound_symbols:
+        with tracectx(computation_trace):
+            last = computation_trace.bound_symbols.pop(-1)
+            assert last.sym.id == prims.PrimIDs.RETURN
+            prims.python_return((result, comp_to_epi_proxies))
+
+        with tracectx(epilogue_trace):
+            prims.python_return(None)
+    else:
+        epilogue_trace = None
 
     pro_to_comp_proxies, pro_to_epi_proxies = unpack_inputs(ctx, prologue_trace, pro_to_comp, pro_to_epi, args, kwargs)
 
@@ -1757,12 +1717,5 @@ def thunder_general_jit(
         epilogue_trace = _apply_trace_proxy_rename(
             epilogue_trace, restrict_proxy_swapmap(pro_to_epi_proxies + comp_to_epi_proxies), "epilogue"
         )
-
-    # unflatten the output of the epilogue_trace - so that we match the expected return types.
-    with tracectx(epilogue_trace):
-        epilogue_return = epilogue_trace.bound_symbols.pop()
-        assert epilogue_return.sym.id == prims.PrimIDs.RETURN
-        return_sym = prims.python_return.bind((tree_unflatten(*epilogue_return.args, result_spec)), output=None)
-        epilogue_trace.bound_symbols.append(return_sym)
 
     return TraceResults(prologue_trace, computation_trace, epilogue_trace, last_interpreter_log)

@@ -2754,7 +2754,10 @@ def test_grad_ctx():
     assert x.grad is not None
 
 
-def test_dataclass_output():
+@pytest.mark.parametrize("requires_grad", (True, False))
+def test_dataclass_output(requires_grad):
+    # Test both `requires_grad={True, False}` as both have
+    # different code path.
     @dataclasses.dataclass
     class TestDataclass:
         t: torch.Tensor
@@ -2763,6 +2766,7 @@ def test_dataclass_output():
         f: float
 
     def foo(x):
+        # TestDataClass as the output and part of the nested output.
         return TestDataclass(x, x + 2, x.numel(), x.numel() / 2.0), (
             TestDataclass(x, x + 2, x.numel(), x.numel() / 2.0),
             {"x": x, "y": x + 3},
@@ -2770,8 +2774,11 @@ def test_dataclass_output():
 
     jfoo = thunder.jit(foo)
 
-    x = torch.randn(3, 3)
-    actual_container, actual_tuple = jfoo(x)
+    x = torch.randn(3, 3, requires_grad=requires_grad)
+    x_jit = x.detach().clone()
+    x_jit.requires_grad_(requires_grad)
+
+    actual_container, actual_tuple = jfoo(x_jit)
     expected_container, expected_tuple = foo(x)
 
     def _test_container(actual_container, expected_container):
@@ -2786,8 +2793,16 @@ def test_dataclass_output():
     _test_container(actual_tuple[0], expected_tuple[0])
     torch.testing.assert_close(actual_tuple[1], expected_tuple[1])
 
+    if requires_grad:
+        # Test computing grad
+        cotangent = torch.randn_like(expected_container.t)
+        (actual_container.t + actual_tuple[0].s).backward(cotangent)
+        (expected_container.t + expected_tuple[0].s).backward(cotangent)
+        torch.testing.assert_close(x.grad, x_jit.grad)
 
-def test_dataclass_input():
+
+@pytest.mark.parametrize("requires_grad", (True, False))
+def test_dataclass_input(requires_grad):
     @dataclasses.dataclass
     class TestDataclass:
         t: torch.Tensor
@@ -2798,8 +2813,8 @@ def test_dataclass_input():
 
     jfoo = thunder.jit(foo)
 
-    t = torch.randn(3, 3)
-    s = torch.randn(3, 3)
+    t = torch.randn(3, 3, requires_grad=requires_grad)
+    s = torch.randn(3, 3, requires_grad=requires_grad)
     actual = jfoo(TestDataclass(t, s))
     expected = foo(TestDataclass(t, s))
 
