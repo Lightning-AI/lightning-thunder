@@ -398,31 +398,6 @@ class FusionDefinitionWrapper:
     def __repr__(self):
         return f"FusionDefinitionWrapper({self.name})"
 
-    def last_inputs(self) -> str:
-        msg = "inputs = [\n"
-        for size, stride, dtype, device in self.last_inputs_meta:
-            # max linear index determines number of elements to generate
-            sz = 1
-            for szi, stri in zip(size, stride):
-                if szi == 0:
-                    sz = 0
-                    break
-                sz += (szi - 1) * stri
-            if dtype.is_floating_point:
-                msg += (
-                    f"    torch.randn(({sz},), dtype={dtype}, device='{device}')"
-                    f".as_strided({tuple(size)}, {tuple(stride)}),\n"
-                )
-            else:
-                upper_bound = 2 if dtype == torch.bool else 10
-                msg += (
-                    f"    torch.randint(0, {upper_bound}, ({sz},), dtype={dtype}, device='{device}')"
-                    f".as_strided({tuple(size())}, {tuple(stride())}),\n"
-                )
-        msg += "]"
-
-        return msg
-
 
 # Group bookend meta operations into separate regions
 # This function returns a List[Region] which changes the executor of meta regions to torchex

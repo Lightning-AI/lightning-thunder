@@ -9,6 +9,7 @@ from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import BoundSymbol
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.core.langctxs import resolve_language, LanguageContext, Languages
+from thunder.executors.nvfuserex_impl import FusionDefinitionWrapper
 import torch
 from warnings import warn
 
@@ -216,3 +217,36 @@ def get_fusion_symbols(trace: TraceCtx, warn_if_fusions_unavailable: bool = True
             fusions.append(bsym)
 
     return fusions
+
+
+def get_nvFuser_repro(fusion: FusionDefinitionWrapper, /) -> str:
+    msg = ""
+    msg += (
+        "import torch\nfrom nvfuser import FusionDefinition, DataType\n"
+        f"{fusion.last_used}"
+        "with FusionDefinition() as fd:\n"
+        f"    nvfuser_fusion_id{fusion.last_used.id()}(fd)\n\n"
+    )
+
+    msg += "inputs = [\n"
+    for size, stride, dtype, device in fusion.last_inputs_meta:
+        # max linear index determines number of elements to generate
+        sz = 1
+        for szi, stri in zip(size, stride):
+            if szi == 0:
+                sz = 0
+                break
+            sz += (szi - 1) * stri
+        if dtype.is_floating_point:
+            msg += (
+                f"    torch.randn(({sz},), dtype={dtype}, device='{device}')"
+                f".as_strided({tuple(size)}, {tuple(stride)}),\n"
+            )
+        else:
+            upper_bound = 2 if dtype == torch.bool else 10
+            msg += (
+                f"    torch.randint(0, {upper_bound}, ({sz},), dtype={dtype}, device='{device}')"
+                f".as_strided({tuple(size())}, {tuple(stride())}),\n"
+            )
+    msg += "]\n\n" "fd.execute(inputs)"
+    return msg
