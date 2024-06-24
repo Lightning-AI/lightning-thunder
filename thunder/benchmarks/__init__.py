@@ -2841,18 +2841,7 @@ class ResNet50Benchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     def fn(self) -> Callable:
         from thunder.tests.resnet import resnet50
 
-        # Thunder does not support inplace
-        def avoid_add_(m):
-            if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
-                m.num_batches_tracked = None
-
-        def avoid_relu_inplace(m):
-            if isinstance(m, torch.nn.modules.activation.ReLU):
-                m.inplace = False
-
         model = resnet50()
-        model.apply(avoid_add_)
-        model.apply(avoid_relu_inplace)
         model = model.to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
         return model
 

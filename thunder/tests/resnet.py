@@ -76,9 +76,7 @@ class BasicBlock(nn.Module):
         if self.downsample is not None:
             identity = self.downsample(x)
 
-        # Thunder: Inplace operators like __iadd__ are not supported
-        # out += identity
-        out = out + identity
+        out += identity
         out = self.relu(out)
 
         return out
@@ -136,9 +134,7 @@ class Bottleneck(nn.Module):
         if self.downsample is not None:
             identity = self.downsample(x)
 
-        # Thunder: Inplace operators like __iadd__ are not supported
-        # out += identity
-        out = out + identity
+        out += identity
         out = self.relu(out)
 
         return out
