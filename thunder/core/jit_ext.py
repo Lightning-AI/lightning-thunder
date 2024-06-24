@@ -1690,6 +1690,7 @@ def thunder_general_jit(
     pro_to_comp = tuple(sorted(pro_to_comp, key=lambda v: proxy_order[id(v.proxy)]))
 
     bind_inputs("computation", computation_trace, pro_to_comp_proxies)
+
     if epilogue_trace:
         l = len(epilogue_trace.bound_symbols)
         if l == 0:
@@ -1697,6 +1698,8 @@ def thunder_general_jit(
         elif l == 1:
             (r,) = epilogue_trace.bound_symbols
             assert r.sym == prims.python_return
+            assert computation_trace.bound_symbols[-1].sym == prims.python_return
+            computation_trace.bound_symbols[-1].args = r.args
             epilogue_trace = None
 
     if epilogue_trace:
