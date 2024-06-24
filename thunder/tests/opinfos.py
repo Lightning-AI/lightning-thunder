@@ -7632,6 +7632,12 @@ def scaled_dot_product_attention_reference_generator(op, device, dtype, requires
     q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
     yield SampleInput(q, k, v, None, 0.0, True)
 
+    # non-contiguous with stride 0 cases
+    q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
+    q_broadcast = torch.as_strided(q, size=q.shape, stride=(0, 0, 0, 1)) 
+    k_broadcast = torch.as_strided(k, size=k.shape, stride=(0, 0, 0, 1)) 
+    v_broadcast = torch.as_strided(v, size=v.shape, stride=(0, 0, 0, 1)) 
+    yield SampleInput(q_broadcast, k_broadcast, v_broadcast, None, 0.0, True)
 
 def scaled_dot_product_attention_sample_generator(op, device, dtype, requires_grad, **kwargs):
     """https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html"""
@@ -7831,7 +7837,6 @@ def grad_scaled_dot_product_attention_sample_generator(op, device, dtype, requir
         q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
         additive_attn_mask = make((N, n_head, L, S), dtype=q.dtype).tril()
         yield SampleInput(q, k, v, attn_mask := additive_attn_mask, is_causal=False)
-
 
 # NOTE When calculating the gradient in the backwards pass, the torch executor calls fused sdpa functions.
 # This opinfo test creates inputs that are valid for those functions.
