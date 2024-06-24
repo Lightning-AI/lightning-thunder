@@ -1111,17 +1111,11 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
 
     @property
     def device(self):
-        # conver to torch device
-        from thunder.torch import _thunder_to_torch_dtype_map
-
         return self._device
 
     @property
     def dtype(self):
-        from thunder.torch import _thunder_to_torch_dtype_map
-
-        print("hello")
-        return _thunder_to_torch_dtype_map[self._dtype]
+        return self._dtype
 
     @property
     def true_dtype(self):
