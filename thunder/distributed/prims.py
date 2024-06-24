@@ -2,17 +2,20 @@ from __future__ import annotations
 from enum import auto, Enum
 from numbers import Number
 from typing import TYPE_CHECKING
+from abc import ABC, abstractmethod
 
 import torch.distributed
 
 import thunder.core.utils as utils
 from thunder.core.prims import make_prim
 
-from thunder.core.proxies import DDPType, FutureTensorProxy, pytype, TensorProxy
+from thunder.core.proxies import DistParallelType, FutureTensorProxy, pytype, TensorProxy
 from thunder.core.transforms import register_augmented_forward, register_backward
+from thunder.distributed import get_skip_data_parallel_grad_sync
 
 if TYPE_CHECKING:
     from thunder.common import CompileData
+    from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
 
 
 class PrimIDs(Enum):
@@ -29,6 +32,9 @@ class PrimIDs(Enum):
     UPDATE_BUCKET_VIEW = auto()
     PACK_FOR_FSDP = auto()
     STASH_GRAD_FOR_FSDP = auto()
+
+    SYNCHRONIZE_TENSOR_PARALLEL_OUTPUT = auto()
+    SYNCHRONIZE_TENSOR_PARALLEL_INPUT = auto()
 
 
 # This enum describes what all_reduce (below) will actually do
@@ -58,15 +64,20 @@ def all_gather_meta(
     /,
     group: torch.distributed.ProcessGroup,
     do_async: Number,
+    dim: int | None = None,
 ) -> TensorProxy:
     check_if_distributed_available()
     utils.check_type(a, TensorProxy)
     utils.check_type(group, torch.distributed.ProcessGroup)
     utils.check(pytype(do_async) is bool, lambda: f"Expected {do_async=} to be a boolean value")
 
-    # PyTorch's all_gather_into_tensor supports also other modes of gathering
-    # but we only do concatenation on the first dimension for now
-    result_shape = a.shape[0] * group.size(), *a.shape[1:]
+    if dim is not None:
+        utils.check_type(dim, int)
+        utils.check(dim >= 0 and dim < a.ndim, lambda: f"dim must satisfy 0 <= {dim=} < {a.ndim=}")
+        result_shape = list(a.shape)
+        result_shape[dim] *= group.size()
+    else:
+        result_shape = a.shape[0] * group.size(), *a.shape[1:]
 
     if do_async:
         return FutureTensorProxy(shape=result_shape, like=a)
@@ -92,6 +103,7 @@ def all_reduce_meta(
     utils.check_type(op, DistributedReduceOps)
     utils.check_type(group, torch.distributed.ProcessGroup)
     utils.check(pytype(do_async) is bool, lambda: f"Expected {do_async=} to be a boolean value")
+    utils.check_type(skip_clone, bool)
 
     if do_async:
         return FutureTensorProxy(like=a)
@@ -120,6 +132,7 @@ def reduce_scatter(
     op: DistributedReduceOps,
     group: torch.distributed.ProcessGroup,
     do_async: Number,
+    dim: int | None = None,
 ) -> TensorProxy:
     check_if_distributed_available()
     utils.check_type(a, TensorProxy)
@@ -127,11 +140,19 @@ def reduce_scatter(
     utils.check_type(group, torch.distributed.ProcessGroup)
     utils.check(pytype(do_async) is bool, lambda: f"Expected {do_async=} to be a boolean value")
 
-    utils.check(a.shape[0] % group.size() == 0, lambda: f"Expected {a.shape[0]=} to be divisible by {group.size()=}")
-
-    # PyTorch's reduce_scatter_tensor supports also other modes of scattering
-    # but we only do splitting on the first dimension for now
-    result_shape = a.shape[0] // group.size(), *a.shape[1:]
+    result_shape = list(a.shape)
+    if dim is not None:
+        utils.check_type(dim, int)
+        utils.check(dim >= 0 and dim < a.ndim, lambda: f"dim must satisfy 0 <= {dim=} < {a.ndim=}")
+        utils.check(
+            a.shape[dim] % group.size() == 0, lambda: f"Expected {a.shape[dim]=} to be divisible by {group.size()=}"
+        )
+        result_shape[dim] //= group.size()
+    else:
+        result_shape[0] //= group.size()
+        utils.check(
+            a.shape[0] % group.size() == 0, lambda: f"Expected {a.shape[0]=} to be divisible by {group.size()=}"
+        )
 
     if do_async:
         return FutureTensorProxy(shape=result_shape, like=a)
@@ -148,20 +169,24 @@ def wait_meta(a: FutureTensorProxy, /) -> TensorProxy:
     return TensorProxy(like=a)
 
 
-def synchronize_meta(a: TensorProxy, /, group: torch.distributed.ProcessGroup) -> TensorProxy:
+def synchronize_meta(
+    a: TensorProxy,
+    /,
+    group: torch.distributed.ProcessGroup,
+) -> TensorProxy:
     utils.check_type(a, TensorProxy)
     utils.check_type(group, torch.distributed.ProcessGroup)
 
-    match a.ddp_type:
-        case DDPType.REPLICATED:
+    match a.distparallel_type:
+        case DistParallelType.REPLICATED:
             return TensorProxy(like=a)
-        case DDPType.FULLY_SHARDED:
+        case DistParallelType.FULLY_SHARDED:
             # Assuming that the sharding is done on the first dimension
             # See [FSDP Sharding] in distributed/__init__.py
             unsharded_shape = a.shape[0] * group.size(), *a.shape[1:]
-            return TensorProxy(shape=unsharded_shape, like=a, ddp_type=DDPType.REPLICATED)
+            return TensorProxy(shape=unsharded_shape, like=a, distparallel_type=DistParallelType.REPLICATED)
         case _:
-            utils.check(False, lambda: f"Proxy {a} has unexpected {a.ddp_type=}")
+            utils.check(False, lambda: f"Proxy {a} has unexpected {a.distparallel_type=}")
 
 
 def pack_meta(
@@ -266,6 +291,59 @@ def stash_grad_for_fsdp_meta(
     return TensorProxy(like=grad)
 
 
+# see [Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism](https://arxiv.org/abs/1909.08053)'s Code 1.
+def synchronize_tensor_parallel_output_meta(
+    t: TensorProxy,
+    group: torch.distributed.ProcessGroup,
+    layer_type: TensorParallelLayerType,
+) -> TensorProxy:
+    from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
+
+    utils.check_type(t, TensorProxy)
+    utils.check_type(group, torch.distributed.ProcessGroup)
+    utils.check_type(layer_type, TensorParallelLayerType)
+
+    supported_ops = (
+        TensorParallelLayerType.COLUMN_PARALLEL_EMBED,
+        TensorParallelLayerType.COLUMN_PARALLEL_LINEAR,
+        TensorParallelLayerType.ROW_PARALLEL_LINEAR,
+        TensorParallelLayerType.ROW_PARALLEL_EMBED,
+    )
+    utils.check(
+        layer_type in supported_ops,
+        lambda: f"Unsupported {layer_type=}, supported ones are {supported_ops=}",
+    )
+    result_shape = list(t.shape)
+    if layer_type in (TensorParallelLayerType.COLUMN_PARALLEL_LINEAR, TensorParallelLayerType.ROW_PARALLEL_EMBED):
+        result_shape[-1] *= group.size()
+    return TensorProxy(like=t, shape=result_shape)
+
+
+def synchronize_tensor_parallel_input_meta(
+    t: TensorProxy,
+    group: torch.distributed.ProcessGroup,
+    layer_type: TensorParallelLayerType,
+) -> TensorProxy:
+    from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
+
+    utils.check_type(t, TensorProxy)
+    utils.check_type(group, torch.distributed.ProcessGroup)
+    utils.check_type(layer_type, TensorParallelLayerType)
+
+    supported_ops = (
+        TensorParallelLayerType.COLUMN_PARALLEL_LINEAR,
+        TensorParallelLayerType.ROW_PARALLEL_LINEAR,
+    )
+    utils.check(
+        layer_type in supported_ops,
+        lambda: f"Unsupported {layer_type=}, supported ones are {supported_ops=}",
+    )
+    result_shape = list(t.shape)
+    if layer_type == TensorParallelLayerType.ROW_PARALLEL_LINEAR:
+        result_shape[-1] //= group.size()
+    return TensorProxy(like=t, shape=result_shape)
+
+
 all_gather = make_prim(PrimIDs.ALL_GATHER, "all_gather", meta=all_gather_meta)
 all_reduce = make_prim(PrimIDs.ALL_REDUCE, "all_reduce", meta=all_reduce_meta)
 broadcast = make_prim(PrimIDs.BROADCAST, "broadcast", meta=broadcast_meta)
@@ -282,44 +360,195 @@ stash_grad_for_fsdp = make_prim(
     "stash_grad_for_fsdp",
     meta=stash_grad_for_fsdp_meta,
 )
+synchronize_tensor_parallel_output = make_prim(
+    PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_OUTPUT,
+    "synchronize_tensor_parallel_output",
+    meta=synchronize_tensor_parallel_output_meta,
+)
+synchronize_tensor_parallel_input = make_prim(
+    PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_INPUT,
+    "synchronize_tensor_parallel_input",
+    meta=synchronize_tensor_parallel_input_meta,
+)
 
 
 @register_augmented_forward(PrimIDs.SYNCHRONIZE)
 def synchronize_augmented_forward_rule(
-    a: TensorProxy, group: torch.distributed.ProcessGroup
+    a: TensorProxy,
+    group: torch.distributed.ProcessGroup,
 ) -> tuple[TensorProxy, tuple]:
-    match a.ddp_type:
-        case DDPType.REPLICATED:
+    match a.distparallel_type:
+        case DistParallelType.REPLICATED:
             # Assuming that the input is a replicated tensor, so no need to do anything
             # in the forward pass
             return a, (
-                a.ddp_type,
+                a.distparallel_type,
                 group,
             )
-        case DDPType.FULLY_SHARDED:
+        case DistParallelType.FULLY_SHARDED:
             # Assuming that the sharding is done on the first dimension.
             # We do the communication on the side CUDA stream and wait is
             # immediately called on the result with the hope that the execution
             # passes would reorder the wait operation to be closer to the actual
             # usage of the tensor.
-            return all_gather(a, group, do_async=True).wait(), (
-                a.ddp_type,
+            return all_gather(a, group, True).wait(), (
+                a.distparallel_type,
                 group,
             )
         case _:
-            utils.check(False, lambda: f"Proxy {a} has unexpected {a.ddp_type=}")
+            utils.check(False, lambda: f"Proxy {a} has unexpected {a.distparallel_type=}")
 
 
 @register_backward(PrimIDs.SYNCHRONIZE)
 def synchronize_backward_rule(
-    ddp_type: DDPType, group: torch.distributed.ProcessGroup, grad: TensorProxy
+    distparallel_type: DistParallelType,
+    group: torch.distributed.ProcessGroup,
+    grad: TensorProxy,
 ) -> tuple[TensorProxy, None]:
+    if get_skip_data_parallel_grad_sync() and distparallel_type == DistParallelType.REPLICATED:
+        return grad, None
     preaverage_grad = grad / group.size()
-    match ddp_type:
-        case DDPType.REPLICATED:
+    match distparallel_type:
+        case DistParallelType.REPLICATED:
             synced_grad = all_reduce(preaverage_grad, DistributedReduceOps.SUM, group, do_async=True).wait()
-        case DDPType.FULLY_SHARDED:
+        case DistParallelType.FULLY_SHARDED:
             synced_grad = reduce_scatter(preaverage_grad, DistributedReduceOps.SUM, group, do_async=True).wait()
         case _:
-            utils.check(False, lambda: f"synchronize with unexpected {ddp_type=}")
+            utils.check(False, lambda: f"synchronize with unexpected {distparallel_type=}")
     return synced_grad, None
+
+
+class _TensorParallelOutputPostProcessFwdBwdInterface(ABC):
+
+    @staticmethod
+    @abstractmethod
+    def forward(t: TensorProxy, group: torch.distributed.ProcessGroup) -> TensorProxy: ...
+
+    @staticmethod
+    @abstractmethod
+    def backward(grad: TensorProxy, group: torch.distributed.ProcessGroup) -> TensorProxy: ...
+
+
+class FwdGatherBwdSplitAlongLastDim(_TensorParallelOutputPostProcessFwdBwdInterface):
+
+    @staticmethod
+    def forward(t: TensorProxy, group: torch.distributed.ProcessGroup) -> TensorProxy:
+        """Gather along last dim"""
+        import thunder.torch as ltorch
+
+        all_gathered = all_gather(t, group, True, 0).wait()
+        chunked = ltorch.chunk(all_gathered, group.size(), 0)
+        gathered = ltorch.cat(chunked, dim=-1)
+        return gathered
+
+    @staticmethod
+    def backward(grad: TensorProxy, group: torch.distributed.ProcessGroup) -> TensorProxy:
+        """Split along last dim"""
+        from torch.distributed import distributed_c10d as c10d
+        import thunder.torch as ltorch
+
+        local_grad = ltorch.chunk(grad, c10d.get_world_size(group), dim=grad.ndim - 1)[c10d.get_rank(group)]
+        return local_grad
+
+
+class FwdAllReduceBwdIdentity(_TensorParallelOutputPostProcessFwdBwdInterface):
+
+    @staticmethod
+    def forward(t: TensorProxy, group: torch.distributed.ProcessGroup) -> TensorProxy:
+        return all_reduce(t, DistributedReduceOps.SUM, group, do_async=True, skip_clone=True).wait()
+
+    @staticmethod
+    def backward(grad: TensorProxy, _: torch.distributed.ProcessGroup) -> TensorProxy:
+        return grad
+
+
+@register_augmented_forward(PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_OUTPUT)
+def synchronize_tensor_parallel_output_forward_rule(
+    t: TensorProxy,
+    group: torch.distributed.ProcessGroup,
+    layer_type: TensorParallelLayerType,
+) -> tuple[TensorProxy, tuple[torch.distributed.ProcessGroup, TensorParallelLayerType]]:
+    from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
+    import thunder.torch as ltorch
+
+    match layer_type:
+        case TensorParallelLayerType.COLUMN_PARALLEL_LINEAR:
+            return FwdGatherBwdSplitAlongLastDim.forward(t, group), (group, layer_type)
+        case TensorParallelLayerType.ROW_PARALLEL_LINEAR:
+            return FwdAllReduceBwdIdentity.forward(t, group), (group, layer_type)
+        case TensorParallelLayerType.COLUMN_PARALLEL_EMBED:
+            return FwdAllReduceBwdIdentity.forward(t, group), (group, layer_type)
+        case TensorParallelLayerType.ROW_PARALLEL_EMBED:
+            return FwdGatherBwdSplitAlongLastDim.forward(t, group), (group, layer_type)
+        case _:
+            utils.check(False, lambda: f"Invalid {layer_type=}")
+
+
+@register_backward(PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_OUTPUT)
+def synchronize_tensor_parallel_output_backward_rule(
+    group: torch.distributed.ProcessGroup,
+    layer_type: TensorParallelLayerType,
+    grad: TensorProxy,
+) -> tuple[TensorProxy, None, None]:
+    from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
+
+    match layer_type:
+        case TensorParallelLayerType.COLUMN_PARALLEL_LINEAR:
+            return FwdGatherBwdSplitAlongLastDim.backward(grad, group), None, None
+        case TensorParallelLayerType.ROW_PARALLEL_LINEAR:
+            return FwdAllReduceBwdIdentity.backward(grad, group), None, None
+        case TensorParallelLayerType.COLUMN_PARALLEL_EMBED:
+            return FwdAllReduceBwdIdentity.backward(grad, group), None, None
+        case TensorParallelLayerType.ROW_PARALLEL_EMBED:
+            return FwdGatherBwdSplitAlongLastDim.backward(grad, group), None, None
+        case _:
+            utils.check(False, lambda: f"Invalid {layer_type=}")
+
+
+@register_augmented_forward(PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_INPUT)
+def synchronize_tensor_parallel_input_forward_rule(
+    t: TensorProxy,
+    group: torch.distributed.ProcessGroup,
+    layer_type: TensorParallelLayerType,
+) -> tuple[TensorProxy, tuple[torch.distributed.ProcessGroup, TensorParallelLayerType]]:
+    from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
+    import thunder.torch as ltorch
+
+    match layer_type:
+        case TensorParallelLayerType.COLUMN_PARALLEL_LINEAR:
+            return t, (group, layer_type)
+        case TensorParallelLayerType.ROW_PARALLEL_LINEAR:
+            from torch.distributed import distributed_c10d as c10d
+            from thunder import clang
+
+            chunk_size = t.shape[t.ndim - 1] // group.size()
+            start_idx = chunk_size * c10d.get_rank(group)
+            return clang.slice_in_dim(t, start_idx, start_idx + chunk_size, dim=t.ndim - 1), (group, layer_type)
+        case _:
+            utils.check(False, lambda: f"Invalid {layer_type=}")
+
+
+@register_backward(PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_INPUT)
+def synchronize_tensor_parallel_input_backward_rule(
+    group: torch.distributed.ProcessGroup,
+    layer_type: TensorParallelLayerType,
+    grad: TensorProxy,
+) -> tuple[TensorProxy, None, None]:
+    from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
+
+    match layer_type:
+        case TensorParallelLayerType.COLUMN_PARALLEL_LINEAR:
+            return (
+                all_reduce(grad, DistributedReduceOps.SUM, group, do_async=True, skip_clone=True).wait(),
+                None,
+                None,
+            )
+        case TensorParallelLayerType.ROW_PARALLEL_LINEAR:
+            import thunder.torch as ltorch
+
+            all_gathered = all_gather(grad, group, True, 0).wait()
+            chunked = ltorch.chunk(all_gathered, group.size(), 0)
+            gathered_grad = ltorch.cat(chunked, dim=-1)
+            return gathered_grad, None, None
+        case _:
+            utils.check(False, lambda: f"Invalid {layer_type=}")

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import itertools
 import math
 import operator
@@ -7,7 +8,8 @@ from collections.abc import Sequence
 from enum import Enum
 from functools import partial, reduce, wraps
 from numbers import Number
-from typing import Any, Union, Optional, Tuple
+from typing import Any, overload
+from types import NoneType
 from collections.abc import Callable
 
 import opt_einsum
@@ -17,19 +19,28 @@ from thunder.torch.langctx import register_method, register_property
 
 import thunder.clang as clang
 import thunder.core.devices as devices
-from thunder.core.devices import to_device
+from thunder.core.devices import to_device, device_from_string
 import thunder.core.dtypes as dtypes
 from thunder.core.dtypes import to_torch_dtype, to_dtype, _thunder_to_torch_dtype_map, _torch_to_thunder_dtype_map
 import thunder.core.prims as prims
 import thunder.core.utils as utils
 import thunder.distributed.prims as dist_prims
 from thunder.core.langctxs import langctx, Languages
-from thunder.core.proxies import TensorProxy, FutureTensorProxy
+from thunder.core.proxies import (
+    FloatProxy,
+    IntegerProxy,
+    NumberProxy,
+    NumberLike,
+    TensorProxy,
+    FutureTensorProxy,
+    pyval,
+)
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
-from thunder.core.transforms import register_grad, put_grads
+from thunder.core.transforms import register_grad
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.baseutils import run_once
+
 
 __all__ = [
     "is_available",
@@ -37,7 +48,6 @@ __all__ = [
 
 # NOTE torch is a requirement
 import torch
-import torch.distributed as tdist
 
 import warnings
 
@@ -63,6 +73,9 @@ _torch_to_thunder_function_map: dict[Callable, Callable] = {}
 #
 # torch operation definitions
 #
+
+# in-place sym -> out-of-place (= functional) sym with index of `inplace` argument
+_inplace_to_out_of_place: dict[Callable, tuple[Callable, int]] = {}
 
 
 # A wrapper that executes the operations within the torch language context
@@ -114,8 +127,6 @@ class torchsymbol:
                     exception_type=AssertionError,
                 )
         else:
-            if not self.id.startswith("torch"):
-                warnings.warn("Given {self.id=} does not start with the namespace of `torch`")
             id = self.id
 
         if self.is_prim:
@@ -142,7 +153,18 @@ class torchsymbol:
             for torchfn in self.torchfns:
                 _torch_to_thunder_function_map[torchfn] = sym
 
+        if self.tags and prims.OpTags.IN_PLACE in self.tags:
+            _inplace_to_out_of_place[sym] = globals()[name[:-1]], -1
+
         return sym
+
+
+# This is function maps an implementation for `torch` operation without creating a Symbol.
+# So, the registered implementation will not show up in trace as a Symbol (but will get inlined).
+# This is helpful if we want to support a torch operation and bake it's output directly into the trace.
+# See `clone` and `torch.device` for example.
+def register_function(torchfn, thunderfn_impl):
+    _torch_to_thunder_function_map[torchfn] = thunderfn_impl
 
 
 #
@@ -173,7 +195,7 @@ def is_floating_point(a: TensorLike, /) -> bool:
 
 # Handles the size method
 def size(a: TensorLike, /, dim: None | int = None) -> int | Sequence[int]:
-    if dim:
+    if dim is not None:
         return a.shape[dim]
     return a.shape
 
@@ -194,6 +216,100 @@ def is_cuda(a: TensorLike, /) -> bool:
     return a.device.devicetype is devices.DeviceType.CUDA
 
 
+# is nested always returns False for now:
+# https://github.com/Lightning-AI/lightning-thunder/issues/93#issuecomment-2030416883
+@torchsymbol(torch.Tensor.is_nested, is_property=True, id="torch.is_nested")
+def is_nested(a: TensorLike, /) -> bool:
+    return False
+
+
+_torch_dtype_to_old_torch_typestring_map = {
+    torch.float32: "FloatTensor",
+    torch.float64: "DoubleTensor",
+    torch.float16: "HalfTensor",
+    torch.bfloat16: "BFloat16Tensor",
+    torch.uint8: "ByteTensor",
+    torch.int8: "CharTensor",
+    torch.int16: "ShortTensor",
+    torch.int32: "IntTensor",
+    torch.long: "LongTensor",
+    torch.bool: "BoolTensor",
+}
+
+_old_torch_typestring_to_torch_dtype_map = {v: k for k, v in _torch_dtype_to_old_torch_typestring_map.items()}
+
+
+def _device_and_dtype_to_old_torch_typestring(device: DeviceLike, dtype: dtypeLike) -> str:
+    torch_dtype = to_torch_dtype(dtype)
+    dtype_str = _torch_dtype_to_old_torch_typestring_map.get(torch_dtype)
+    devicetype_str: str = ""
+    if device.devicetype is not devices.DeviceType.CPU:
+        devicetype_str = f"{devices.devicetype_string(device.devicetype)}."
+    return f"torch.{devicetype_str}{dtype_str}"
+
+
+def _old_torch_typestring_to_devicetype_and_dtype(typestring: str) -> tuple[DeviceLike, dtypeLike]:
+
+    # Two cases:
+    #    - torch.DtypeTensor
+    #    - torch.device.DtypeTensor
+
+    _, *dev_and_dtype = typestring.split(".")
+    devicetype_str = "cpu"
+    dtype_str = ""
+
+    if len(dev_and_dtype) == 1:
+        # when devicetype_str is omitted, device type is CPU
+        (dtype_str,) = dev_and_dtype
+        dtype_str = _old_torch_typestring_to_torch_dtype_map[dtype_str]
+
+    if len(dev_and_dtype) == 2:
+        devicetype_str, dtype_str = dev_and_dtype
+        dtype_str = _old_torch_typestring_to_torch_dtype_map[dtype_str]
+
+    # Value error
+    # expected the string to split into one or two elements
+    # and devicetype_str should be either "cpu" or "cuda"
+    utils.check(
+        devicetype_str in ("cpu", "cuda") and 1 <= len(dev_and_dtype) <= 2,
+        lambda: f"type(): unrecognized torch typestring {typestring}",
+        exception_type=ValueError,
+    )
+
+    return devicetype_str, dtype_str
+
+
+@torchsymbol(torch.Tensor.type, is_method=True)
+def type(a: TensorLike, /, dtype: None | str | dtypeLike = None, non_blocking: bool = False) -> str | TensorLike:
+    utils.check(
+        not non_blocking,
+        lambda: f"type(): `non_blocking==True` is currently not supported.",
+        exception_type=NotImplementedError,
+    )
+
+    if dtype is None:
+        # returns the type of the input tensor in string
+        return _device_and_dtype_to_old_torch_typestring(a.device, a.dtype)
+
+    if isinstance(dtype, str):
+        devtype, dtype = _old_torch_typestring_to_devicetype_and_dtype(dtype)
+
+        if devtype == a.device.type:
+            # This handles two cases:
+            # 1. When a tensor is already on a CUDA device, and the device type string is CUDA. In this case the tensor remains on its current device.
+            # 2. When a tensor is on a CPU device and the device type string is omitted, the tensor remains on the CPU device.
+            dev = a.device
+        else:
+            dev = device_from_string(devtype)
+    else:
+        # dtype is assumed to be torch.dtype (e.g. torch.int32)
+        dev = a.device
+
+    return to(a, dev, dtype)
+
+
+register_method("type", type)
+
 #
 # Data movement and transformation operations
 #
@@ -202,7 +318,7 @@ def is_cuda(a: TensorLike, /) -> bool:
 # NOTE This handles a.float()
 #   It avoids using the name "float" to not collide with the builtin
 #   "float"
-def to_float(a: Number | TensorLike) -> Number | TensorLike:
+def to_float(a: NumberLike | TensorLike) -> Number | TensorLike:
     return clang.maybe_convert_to_dtype(a, dtypes.float32)
 
 
@@ -348,6 +464,11 @@ def type_as(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
     return to(a, b.true_dtype)
 
 
+@torchsymbol(torch.Tensor.long, is_method=True)
+def long(a: TensorLike, /, memory_format: torch.memory_format = torch.preserve_format) -> TensorLike:
+    return to(a, dtype=dtypes.int64, memory_format=memory_format)
+
+
 #
 # Tensor creation operations
 #
@@ -355,9 +476,9 @@ def type_as(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
 
 @torchsymbol(torch.arange)
 def arange(
-    start: Number,
+    start: NumberLike,
     end: None | Number = None,
-    step: Number = 1,
+    step: NumberLike = 1,
     *,
     device: None | DeviceLike = None,
     dtype: None | dtypeLike = None,
@@ -376,7 +497,7 @@ def arange(
 
 @torchsymbol(torch.full)
 def full(
-    shape: Sequence[int], fill_value: Number, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
+    shape: Sequence[int], fill_value: NumberLike, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
 ) -> TensorLike:
     if device is None:
         device = "cpu"
@@ -389,7 +510,7 @@ def full(
 
 @torchsymbol(torch.full_like)
 def full_like(
-    a: TensorLike, /, fill_value: Number, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
+    a: TensorLike, /, fill_value: NumberLike, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
 ) -> TensorLike:
     device = to_device(device)
     dtype = to_dtype(dtype)
@@ -424,11 +545,11 @@ def tensor(
         exception_type=NotImplementedError,
     )
     utils.check(
-        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.compile", NotImplementedError
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.jit", NotImplementedError
     )
-    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.compile", NotImplementedError)
+    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.jit", NotImplementedError)
 
-    if isinstance(seq_or_number, Number):
+    if isinstance(seq_or_number, (Number, NumberProxy)):
         return full((), seq_or_number, dtype=dtype, device=device)
 
     return clang.tensor_from_sequence(seq_or_number, dtype=dtype, device=device)
@@ -440,8 +561,8 @@ def tensor(
 @torchsymbol(is_method=False, id="torch.uniform")
 def uniform(
     shape: Sequence[int],
-    minval: Number = 0.0,
-    maxval: Number = 1.0,
+    minval: NumberLike = 0.0,
+    maxval: NumberLike = 1.0,
     *,
     device: DeviceLike,
     dtype: dtypeLike,
@@ -456,8 +577,8 @@ def uniform(
 def uniform_like(
     a: TensorLike,
     /,
-    minval: Number = 0.0,
-    maxval: Number = 1.0,
+    minval: NumberLike = 0.0,
+    maxval: NumberLike = 1.0,
     *,
     device: None | DeviceLike = None,
     dtype: None | dtypeLike = None,
@@ -495,8 +616,8 @@ def multinomial(
 @torchsymbol(is_method=False, id="torch.uniform_philox")
 def uniform_philox(
     shape: Sequence[int],
-    minval: Number = 0.0,
-    maxval: Number = 1.0,
+    minval: NumberLike = 0.0,
+    maxval: NumberLike = 1.0,
     *,
     device: DeviceLike,
     dtype: dtypeLike,
@@ -521,10 +642,10 @@ def randn(
     out: TensorLike = None,
 ):
     utils.check(
-        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.compile", NotImplementedError
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.jit", NotImplementedError
     )
     utils.check(layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError)
-    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.compile", NotImplementedError)
+    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.jit", NotImplementedError)
     # NOTE: Currently, we don't model randomness
     utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
     utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
@@ -554,14 +675,14 @@ def randn_like(
     memory_format: torch.memory_format = torch.preserve_format,
 ):
     utils.check(
-        not requires_grad, lambda: "requires_grad=True is not supported within thunder.compile", NotImplementedError
+        not requires_grad, lambda: "requires_grad=True is not supported within thunder.jit", NotImplementedError
     )
     utils.check(
         layout is None or layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError
     )
     utils.check(
         memory_format == torch.preserve_format,
-        lambda: "preserve_format!=torch.preserve_format is not supported within thunder.compile",
+        lambda: "preserve_format!=torch.preserve_format is not supported within thunder.jit",
         NotImplementedError,
     )
 
@@ -596,6 +717,46 @@ def zeros(*shape: int, device: None | DeviceLike = None, dtype: None | dtypeLike
 @torchsymbol(torch.zeros_like)
 def zeros_like(a: TensorLike, /, *, device: DeviceLike | None = None, dtype: dtypeLike | None = None) -> TensorLike:
     return full_like(a, 0, device=device, dtype=dtype)
+
+
+@torchsymbol(torch.empty)
+def empty(
+    *size: int,
+    device: None | DeviceLike = None,
+    dtype: None | dtypeLike = None,
+    out: None | TensorLike = None,
+    layout: torch.layout = torch.strided,
+    requires_grad: bool = False,
+    pin_memory: bool = False,
+    memory_format: torch.memory_format = torch.contiguous_format,
+) -> TensorLike:
+    size = utils.extract_shape_from_varargs(size)
+
+    utils.check(out is None, lambda: "empty(): out is not None which is currently unsupported", NotImplementedError)
+    utils.check(layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError)
+    utils.check(
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.jit", NotImplementedError
+    )
+    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.jit", NotImplementedError)
+    utils.check(
+        memory_format == torch.contiguous_format,
+        lambda: "Only torch.contiguous_format is supported",
+        NotImplementedError,
+    )
+
+    # For now we default to `float32`,
+    # however, we should add a default dtype or rely on `torch.get_default_dtype`.
+    if dtype is None:
+        dtype = torch.float
+    dtype = to_dtype(dtype)
+
+    # For now we default to "cpu",
+    # however, we should add a default device or rely on `torch.get_default_device`.
+    if device is None:
+        device = "cpu"
+    device = to_device(device)
+
+    return clang.empty(size, device=device, dtype=dtype)
 
 
 #
@@ -701,7 +862,11 @@ def flip(a: TensorLike, /, *dims: int) -> TensorLike:
     # PyTorch supports 0-dim inputs with len(dims) <= 1
     if a.ndim == 0 and isinstance(dims, Sequence) and len(dims) > 0:
         utils.check(
-            len(dims) == 1 and isinstance(dims[0], int) and dims[0] in (0, -1),
+            len(dims) == 1
+            and (
+                (isinstance(dims[0], (int, IntegerProxy)) and dims[0] in (0, -1))
+                or (isinstance(dims[0], NumberProxy) and pyval(dims[0]) in (0, -1))
+            ),
             lambda: f"Expected {dims=} to be a sequence of integers in range [-1, 0], and of length 1",
         )
         return clang.flip(a, ())
@@ -746,7 +911,7 @@ def movedim(a: TensorLike, /, source: int | Sequence[int], destination: int | Se
 
 
 @torchsymbol(torch.nn.functional.pad)
-def pad(a: TensorProxy, /, pad: tuple[int, ...], mode: str | None = "constant", value: Number | None = None):
+def pad(a: TensorProxy, /, pad: tuple[int, ...], mode: str | None = "constant", value: NumberLike | None = None):
     utils.check(mode == "constant", lambda: f"Mode arguments other than constant are not supported")
     utils.check(len(pad) % 2 == 0, lambda: f"Padding length must be divisible by 2")
     utils.check(
@@ -763,8 +928,15 @@ def pad(a: TensorProxy, /, pad: tuple[int, ...], mode: str | None = "constant", 
 
     if value is None:
         value = 0
+    a_typ = to_dtype(a, true_dtype=True)
+    # Note that this can be unsafe. This can happen, for example, if `a` is an
+    # integer tensor and `value` is a float. It can also be more subtle, where
+    # `a` is a lower-precision float than `value`.
+    if a_typ is not to_dtype(value, true_dtype=True):
+        warnings.warn("`value` and Tensor input are of different types. This " "may create numeric issues.")
+    v2 = clang.maybe_convert_to_dtype(value, a_typ)
 
-    return clang.pad(a, value, pad_config)
+    return clang.pad(a, v2, pad_config)
 
 
 @torchsymbol(torch.permute, is_method=True)
@@ -895,11 +1067,11 @@ def split(a: TensorProxy, size_or_sections: int | Sequence[int], /, dim=0) -> Te
 
     utils.check_type(
         size_or_sections,
-        (int, Sequence),
+        (int, IntegerProxy, Sequence),
     )
 
     # TODO: consider revising this to just call _split_indices
-    if isinstance(size_or_sections, int):
+    if isinstance(size_or_sections, (int, IntegerProxy)):
         target_length = size_or_sections
 
         # Short-circuits special-case of zero
@@ -960,7 +1132,7 @@ def squeeze(a: TensorLike, /, dim: None | int | Sequence[int] = None) -> TensorL
         for idx, l in enumerate(a.shape):
             if l == 1:
                 dims.append(idx)
-    elif isinstance(dim, int):
+    elif isinstance(dim, (int, NumberProxy)):
         dims = (dim,)
 
     # a.shape is being indexed below.
@@ -1017,7 +1189,7 @@ def tensor_split(a: TensorLike, /, indices_or_sections, dim=0):
     )
 
     # TODO: maybe revise _split_n to a call to _split_indices
-    if isinstance(indices_or_sections, Number):
+    if isinstance(indices_or_sections, (Number, NumberProxy)):
         return _split_n(a, indices_or_sections, dim)
 
     # NOTE: isinstance(indices_or_sections, Sequence)
@@ -1073,13 +1245,23 @@ def view_as(a: TensorLike, b: TensorLike, /) -> TensorLike:
 
 
 @torchsymbol(torch.abs, is_method=True)
-def abs(a: Number | TensorLike, /) -> Number | TensorLike:
+def abs(a: NumberLike | TensorLike, /) -> Number | TensorLike:
     return clang.abs(a)
 
 
+@torchsymbol(torch.Tensor.abs_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def abs_(a: NumberLike | TensorLike, /) -> Number | TensorLike:
+    return prims.copy_(abs(a), a)
+
+
 @torchsymbol(torch.acos, is_method=True)
-def acos(a: Number | TensorLike, /) -> Number | TensorLike:
+def acos(a: NumberLike | TensorLike, /) -> Number | TensorLike:
     return clang.acos(a)
+
+
+@torchsymbol(torch.Tensor.acos_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def acos_(a: TensorLike, /) -> TensorLike:
+    return prims.copy_(acos(a), a)
 
 
 @torchsymbol(torch.acosh, is_method=True)
@@ -1087,9 +1269,19 @@ def acosh(a):
     return clang.acosh(a)
 
 
+@torchsymbol(torch.Tensor.acosh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def acosh_(a):
+    return prims.copy_(acosh(a), a)
+
+
 @torchsymbol(torch.asin, is_method=True)
 def asin(a):
     return clang.asin(a)
+
+
+@torchsymbol(torch.Tensor.asin_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def asin_(a):
+    return prims.copy_(asin(a), a)
 
 
 @torchsymbol(torch.asinh, is_method=True)
@@ -1097,9 +1289,19 @@ def asinh(a):
     return clang.asinh(a)
 
 
+@torchsymbol(torch.Tensor.asinh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def asinh_(a):
+    return prims.copy_(asinh(a), a)
+
+
 @torchsymbol(torch.atan, is_method=True)
 def atan(a):
     return clang.atan(a)
+
+
+@torchsymbol(torch.Tensor.atan_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def atan_(a):
+    return prims.copy_(atan(a), a)
 
 
 @torchsymbol(torch.atanh, is_method=True)
@@ -1107,9 +1309,19 @@ def atanh(a):
     return clang.atanh(a)
 
 
+@torchsymbol(torch.Tensor.atanh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def atanh_(a):
+    return prims.copy_(atanh(a), a)
+
+
 @torchsymbol(torch.bitwise_not, is_method=True)
 def bitwise_not(a):
     return clang.bitwise_not(a)
+
+
+@torchsymbol(torch.Tensor.bitwise_not_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def bitwise_not_(a):
+    return prims.copy_(bitwise_not(a), a)
 
 
 @torchsymbol(torch.ceil, is_method=True)
@@ -1117,9 +1329,19 @@ def ceil(a):
     return clang.ceil(a)
 
 
+@torchsymbol(torch.Tensor.ceil_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def ceil_(a):
+    return prims.copy_(ceil(a), a)
+
+
 @torchsymbol(torch.cos, is_method=True)
 def cos(a):
     return clang.cos(a)
+
+
+@torchsymbol(torch.Tensor.cos_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def cos_(a):
+    return prims.copy_(cos(a), a)
 
 
 @torchsymbol(torch.cosh, is_method=True)
@@ -1127,9 +1349,19 @@ def cosh(a):
     return clang.cosh(a)
 
 
+@torchsymbol(torch.Tensor.cosh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def cosh_(a):
+    return prims.copy_(cosh(a), a)
+
+
 @torchsymbol(torch.digamma, torch.special.digamma, is_method=True)
 def digamma(a):
     return clang.digamma(a)
+
+
+@torchsymbol(torch.Tensor.digamma_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def digamma_(a):
+    return prims.copy_(digamma(a), a)
 
 
 @torchsymbol(torch.erf, is_method=True)
@@ -1137,9 +1369,19 @@ def erf(a):
     return clang.erf(a)
 
 
+@torchsymbol(torch.Tensor.erf_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def erf_(a):
+    return prims.copy_(erf(a), a)
+
+
 @torchsymbol(torch.erfc, is_method=True)
 def erfc(a):
     return clang.erfc(a)
+
+
+@torchsymbol(torch.Tensor.erfc_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def erfc_(a):
+    return prims.copy_(erfc(a), a)
 
 
 @torchsymbol(torch.erfinv, is_method=True)
@@ -1147,9 +1389,19 @@ def erfinv(a):
     return clang.erfinv(a)
 
 
+@torchsymbol(torch.Tensor.erfinv_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def erfinv_(a):
+    return prims.copy_(erfinv(a), a)
+
+
 @torchsymbol(torch.exp, is_method=True)
 def exp(a):
     return clang.exp(a)
+
+
+@torchsymbol(torch.Tensor.exp_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def exp_(a):
+    return prims.copy_(exp(a), a)
 
 
 @torchsymbol(torch.exp2, is_method=True)
@@ -1157,14 +1409,29 @@ def exp2(a):
     return clang.exp2(a)
 
 
+@torchsymbol(torch.Tensor.exp2_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def exp2_(a):
+    return prims.copy_(exp2(a), a)
+
+
 @torchsymbol(torch.expm1, is_method=True)
 def expm1(a):
     return clang.expm1(a)
 
 
+@torchsymbol(torch.Tensor.expm1_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def expm1_(a):
+    return prims.copy_(expm1(a), a)
+
+
 @torchsymbol(torch.floor, is_method=True)
 def floor(a):
     return clang.floor(a)
+
+
+@torchsymbol(torch.Tensor.floor_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def floor_(a):
+    return prims.copy_(floor(a), a)
 
 
 @torchsymbol(torch.isfinite, is_method=True)
@@ -1177,9 +1444,19 @@ def lgamma(a):
     return clang.lgamma(a)
 
 
+@torchsymbol(torch.Tensor.lgamma_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def lgamma_(a):
+    return prims.copy_(lgamma(a), a)
+
+
 @torchsymbol(torch.log, is_method=True)
 def log(a):
     return clang.log(a)
+
+
+@torchsymbol(torch.Tensor.log_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def log_(a):
+    return prims.copy_(log(a), a)
 
 
 @torchsymbol(torch.log10, is_method=True)
@@ -1187,14 +1464,29 @@ def log10(a):
     return clang.log10(a)
 
 
+@torchsymbol(torch.Tensor.log10_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def log10_(a):
+    return prims.copy_(log10(a), a)
+
+
 @torchsymbol(torch.log1p, is_method=True)
 def log1p(a):
     return clang.log1p(a)
 
 
+@torchsymbol(torch.Tensor.log1p_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def log1p_(a):
+    return prims.copy_(log1p(a), a)
+
+
 @torchsymbol(torch.log2, is_method=True)
 def log2(a):
     return clang.log2(a)
+
+
+@torchsymbol(torch.Tensor.log2_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def log2_(a):
+    return prims.copy_(log2(a), a)
 
 
 # TODO Move to special
@@ -1208,9 +1500,19 @@ def neg(a):
     return clang.neg(a)
 
 
+@torchsymbol(torch.Tensor.neg_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def neg_(a):
+    return prims.copy_(neg(a), a)
+
+
 @torchsymbol(torch.reciprocal, is_method=True)
 def reciprocal(a):
     return clang.reciprocal(a)
+
+
+@torchsymbol(torch.Tensor.reciprocal_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def reciprocal_(a):
+    return prims.copy_(reciprocal(a), a)
 
 
 @torchsymbol(torch.round, is_method=True)
@@ -1218,9 +1520,19 @@ def round(a):
     return clang.round(a)
 
 
+@torchsymbol(torch.Tensor.round_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def round_(a):
+    return prims.copy_(round(a), a)
+
+
 @torchsymbol(torch.rsqrt, is_method=True)
 def rsqrt(a):
     return clang.rsqrt(a)
+
+
+@torchsymbol(torch.Tensor.rsqrt_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def rsqrt_(a):
+    return prims.copy_(rsqrt(a), a)
 
 
 # TODO Complain about complex numbers like PyTorch does?
@@ -1228,6 +1540,11 @@ def rsqrt(a):
 @torchsymbol(torch.sign, is_method=True)
 def sign(a):
     return clang.sign(a)
+
+
+@torchsymbol(torch.Tensor.sign_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def sign_(a):
+    return prims.copy_(sign(a), a)
 
 
 @torchsymbol(torch.signbit, is_method=True)
@@ -1240,9 +1557,19 @@ def sin(a):
     return clang.sin(a)
 
 
+@torchsymbol(torch.Tensor.sin_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def sin_(a):
+    return prims.copy_(sin(a), a)
+
+
 @torchsymbol(torch.sinh, is_method=True)
 def sinh(a):
     return clang.sinh(a)
+
+
+@torchsymbol(torch.Tensor.sinh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def sinh_(a):
+    return prims.copy_(sinh(a), a)
 
 
 @torchsymbol(torch.sqrt, is_method=True)
@@ -1250,9 +1577,19 @@ def sqrt(a):
     return clang.sqrt(a)
 
 
+@torchsymbol(torch.Tensor.sqrt_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def sqrt_(a):
+    return prims.copy_(sqrt(a), a)
+
+
 @torchsymbol(torch.tan, is_method=True)
 def tan(a):
     return clang.tan(a)
+
+
+@torchsymbol(torch.Tensor.tan_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def tan_(a):
+    return prims.copy_(tan(a), a)
 
 
 @torchsymbol(torch.tanh, is_method=True)
@@ -1260,9 +1597,19 @@ def tanh(a):
     return clang.tanh(a)
 
 
+@torchsymbol(torch.Tensor.tanh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def tanh_(a):
+    return prims.copy_(tanh(a), a)
+
+
 @torchsymbol(torch.trunc, is_method=True)
 def trunc(a):
     return clang.trunc(a)
+
+
+@torchsymbol(torch.Tensor.trunc_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def trunc_(a):
+    return prims.copy_(trunc(a), a)
 
 
 @torchsymbol(torch.real, is_method=False)
@@ -1293,45 +1640,82 @@ def gelu(a: TensorProxy, /, *, approximate: str = "none") -> TensorLike:
 # TODO Should this use clamp? -- Would that propagate NaNs properly?
 @torchsymbol(torch.relu, torch.nn.functional.relu, id="torch.relu", is_method=True)
 def relu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
-    utils.check(not inplace, lambda: f"relu only supports inplace=False", exception_type=NotImplementedError)
 
-    return where(a > 0, a, 0)
+    out = where(a > 0, a, 0)
+    if inplace:
+        return prims.copy_(out, a)
+    return out
+
+
+_inplace_to_out_of_place[relu] = relu, 1
+
+
+@torchsymbol(torch.relu_, torch.nn.functional.relu_, id="torch.relu_", is_method=True)
+def relu_(
+    a: TensorLike,
+    /,
+) -> TensorLike:
+    return prims.copy_(relu(a, False), a)
+
+
+# The default value of `inplace` is False, so no need to tweak args/kwargs
+_inplace_to_out_of_place[relu_] = relu, -1
 
 
 # id=torch.relu because we ignore inplace argument in torch.nn.functional.relu
 @torchsymbol(torch.nn.functional.relu6, id="torch.relu6", is_method=False)
 def relu6(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
-    utils.check(not inplace, lambda: f"relu6 only supports inplace=False", exception_type=NotImplementedError)
-    return clamp(a, 0, 6)
+    out = clamp(a, 0, 6)
+    if inplace:
+        return prims.copy_(out, a)
+    return out
+
+
+_inplace_to_out_of_place[relu6] = relu6, 1
 
 
 @torchsymbol(torch.nn.functional.hardswish, id="torch.hardswish", is_method=False)
 def hardswish(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
-    utils.check(not inplace, lambda: f"hardswish only supports inplace=False", exception_type=NotImplementedError)
     utils.check(
         dtypes.is_float_dtype(a.dtype),
         lambda: f"hardswish only supports floating point dtypes, got {a.dtype}",
         exception_type=ValueError,
     )
-    return a * relu6(a + 3) / 6
+    out = a * relu6(a + 3) / 6
+    if inplace:
+        return prims.copy_(out, a)
+    return out
+
+
+_inplace_to_out_of_place[hardswish] = hardswish, 1
 
 
 # id=torch.selu because we ignore inplace argument in torch.nn.functional.selu
 @torchsymbol(torch.selu, torch.nn.functional.selu, id="torch.selu", is_method=False)
 def selu(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
-    utils.check(not inplace, lambda: f"selu only supports inplace=False", exception_type=NotImplementedError)
-
     alpha = 1.6732632423543772848170429916717
     scale = 1.0507009873554804934193349852946
 
     rhs = alpha * expm1(a)
 
-    return scale * where(a > 0, a, rhs)
+    out = scale * where(a > 0, a, rhs)
+    if inplace:
+        return prims.copy_(out, a)
+    return out
+
+
+_inplace_to_out_of_place[selu] = selu, 1
 
 
 @torchsymbol(torch.nn.functional.silu)
-def silu(a, /):
-    return clang.silu(a)
+def silu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
+    out = clang.silu(a)
+    if inplace:
+        return prims.copy_(out, a)
+    return out
+
+
+_inplace_to_out_of_place[silu] = silu, 1
 
 
 #
@@ -1341,7 +1725,7 @@ def silu(a, /):
 
 @torchsymbol(torch.add, is_method=True)
 def add(
-    a: Number | TensorLike, b: Number | TensorLike, /, *, alpha: None | Number | TensorLike = None
+    a: NumberLike | TensorLike, b: NumberLike | TensorLike, /, *, alpha: None | Number | TensorLike = None
 ) -> Number | TensorLike:
     if alpha is not None:
         b = b * alpha
@@ -1349,9 +1733,25 @@ def add(
     return clang.add(a, b)
 
 
+@torchsymbol(torch.Tensor.add_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def add_(
+    a: TensorLike,
+    b: NumberLike | TensorLike,
+    /,
+    *,
+    alpha: None | Number | TensorLike = None,
+) -> TensorLike:
+    return prims.copy_(add(a, b, alpha=alpha), a)
+
+
 @torchsymbol(torch.atan2, is_method=True)
 def atan2(a, b, /):
     return clang.atan2(a, b)
+
+
+@torchsymbol(torch.Tensor.atan2_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def atan2_(a, b, /):
+    return prims.copy_(atan2(a, b), a)
 
 
 @torchsymbol(torch.bitwise_and, is_method=True)
@@ -1359,9 +1759,19 @@ def bitwise_and(a, b, /):
     return clang.bitwise_and(a, b)
 
 
+@torchsymbol(torch.Tensor.bitwise_and_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def bitwise_and_(a, b, /):
+    return prims.copy_(bitwise_and(a, b), a)
+
+
 @torchsymbol(torch.bitwise_or, is_method=True)
 def bitwise_or(a, b, /):
     return clang.bitwise_or(a, b)
+
+
+@torchsymbol(torch.Tensor.bitwise_or_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def bitwise_or_(a, b, /):
+    return prims.copy_(bitwise_or(a, b), a)
 
 
 @torchsymbol(torch.bitwise_xor, is_method=True)
@@ -1369,12 +1779,52 @@ def bitwise_xor(a, b, /):
     return clang.bitwise_xor(a, b)
 
 
+@torchsymbol(torch.Tensor.bitwise_xor_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def bitwise_xor_(a, b, /):
+    return prims.copy_(bitwise_xor(a, b), a)
+
+
 @torchsymbol(torch.copysign, is_method=True)
 def copysign(a, b, /):
     return clang.copysign(a, b)
 
 
+@torchsymbol(torch.Tensor.copysign_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def copysign_(a, b, /):
+    return prims.copy_(copysign(a, b), a)
+
+
 # TODO Implement div
+@torchsymbol(torch.div, is_method=True)
+def div(
+    a: Number | TensorLike,
+    b: Number | TensorLike,
+    /,
+    *,
+    rounding_mode: None | str = None,
+    out: None | TensorLike = None,
+) -> Number | TensorLike:
+    utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
+
+    if rounding_mode is None:
+        return true_divide(a, b)
+    elif rounding_mode == "trunc":
+        return clang.trunc_divide(a, b)
+    elif rounding_mode == "floor":
+        return floor_divide(a, b)
+    else:
+        raise ValueError(f"div does not support the rounding_mode={rounding_mode} argument")
+
+
+@torchsymbol(torch.Tensor.div_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def div_(
+    a: TensorLike,
+    b: Number | TensorLike,
+    /,
+    *,
+    rounding_mode: None | str = None,
+) -> TensorLike:
+    return prims.copy_(div(a, b), a)
 
 
 @torchsymbol(torch.eq, is_method=True)
@@ -1382,9 +1832,19 @@ def eq(a, b, /):
     return clang.eq(a, b)
 
 
+@torchsymbol(torch.Tensor.eq_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def eq_(a, b, /):
+    return prims.copy_(eq(a, b), a)
+
+
 @torchsymbol(torch.floor_divide, is_method=True)
 def floor_divide(a, b, /):
     return clang.floor_divide(a, b)
+
+
+@torchsymbol(torch.Tensor.floor_divide_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def floor_divide_(a, b, /):
+    return prims.copy_(floor_divide(a, b), a)
 
 
 @torchsymbol(torch.fmod, is_method=True)
@@ -1392,9 +1852,19 @@ def fmod(a, b, /):
     return clang.fmod(a, b)
 
 
+@torchsymbol(torch.Tensor.fmod_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def fmod_(a, b, /):
+    return prims.copy_(fmod(a, b), a)
+
+
 @torchsymbol(torch.ge, is_method=True)
 def ge(a, b, /):
     return clang.ge(a, b)
+
+
+@torchsymbol(torch.Tensor.ge_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def ge_(a, b, /):
+    return prims.copy_(ge(a, b), a)
 
 
 @torchsymbol(torch.gt, is_method=True)
@@ -1402,9 +1872,19 @@ def gt(a, b, /):
     return clang.gt(a, b)
 
 
+@torchsymbol(torch.Tensor.gt_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def gt_(a, b, /):
+    return prims.copy_(gt(a, b), a)
+
+
 @torchsymbol(torch.logical_and, is_method=True)
 def logical_and(a, b, /):
     return clang.logical_and(a, b)
+
+
+@torchsymbol(torch.Tensor.logical_and_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def logical_and_(a, b, /):
+    return prims.copy_(logical_and(a, b), a)
 
 
 @torchsymbol(torch.logical_not, is_method=True)
@@ -1412,14 +1892,29 @@ def logical_not(a: TensorLike, /) -> TensorLike:
     return clang.logical_not(a)
 
 
+@torchsymbol(torch.Tensor.logical_not_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def logical_not_(a: TensorLike, /) -> TensorLike:
+    return prims.copy_(logical_not(a), a)
+
+
 @torchsymbol(torch.le, is_method=True)
 def le(a, b, /):
     return clang.le(a, b)
 
 
+@torchsymbol(torch.Tensor.le_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def le_(a, b, /):
+    return prims.copy_(le(a, b), a)
+
+
 @torchsymbol(torch.lt, is_method=True)
 def lt(a, b, /):
     return clang.lt(a, b)
+
+
+@torchsymbol(torch.Tensor.lt_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def lt_(a, b, /):
+    return prims.copy_(lt(a, b), a)
 
 
 @torchsymbol(torch.maximum, is_method=True)
@@ -1439,9 +1934,18 @@ def mod(a, b):
     return clang.mod(a, b)
 
 
+def mod_(a, b):
+    return prims.copy_(mod(a, b), a)
+
+
 @torchsymbol(torch.mul, is_method=True)
 def mul(a, b, /):
     return clang.mul(a, b)
+
+
+@torchsymbol(torch.Tensor.mul_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def mul_(a, b, /):
+    return prims.copy_(mul(a, b), a)
 
 
 @torchsymbol(torch.ne, is_method=True)
@@ -1449,15 +1953,27 @@ def ne(a, b, /):
     return clang.ne(a, b)
 
 
+@torchsymbol(torch.Tensor.ne_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def ne_(a, b, /):
+    return prims.copy_(ne(a, b), a)
+
+
 @torchsymbol(torch.nextafter, is_method=True)
 def nextafter(a, b, /):
     return clang.nextafter(a, b)
 
 
+@torchsymbol(torch.Tensor.nextafter_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def nextafter_(a, b, /):
+    return prims.copy_(nextafter(a, b), a)
+
+
 # TODO Extend to tensor x tensor
 @torchsymbol(torch.polygamma, torch.special.polygamma, is_method=True)
 def polygamma(n: int, a: TensorLike, /) -> TensorLike:
-    utils.check(isinstance(n, int), lambda: f"polygamma(n, a) expects the first argument to be an integer.")
+    utils.check(
+        isinstance(n, (int, NumberProxy)), lambda: f"polygamma(n, a) expects the first argument to be an integer."
+    )
     utils.check(n >= 0, lambda: f"polygamma(n, a) does not support negative {n=}.")
 
     # NOTE Use digamma for n == 0 case; otherwise zeta(1, a) returns math.inf
@@ -1470,14 +1986,29 @@ def polygamma(n: int, a: TensorLike, /) -> TensorLike:
     return sign * factorial_mul_zeta
 
 
+@torchsymbol(torch.Tensor.polygamma_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def polygamma_(n: int, a: TensorLike, /) -> TensorLike:
+    return prims.copy_(polygamma(n, a), a)
+
+
 @torchsymbol(torch.pow, is_method=True)
 def pow(a, b, /):
     return clang.pow(a, b)
 
 
+@torchsymbol(torch.Tensor.pow_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def pow_(a, b, /):
+    return prims.copy_(pow(a, b), a)
+
+
 @torchsymbol(torch.remainder, is_method=True)
 def remainder(a, b, /):
     return clang.remainder(a, b)
+
+
+@torchsymbol(torch.Tensor.remainder_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def remainder_(a, b, /):
+    return prims.copy_(remainder(a, b), a)
 
 
 @torchsymbol(torch.sub, is_method=True)
@@ -1488,9 +2019,19 @@ def sub(a, b, /, *, alpha=None):
     return clang.sub(a, b)
 
 
+@torchsymbol(torch.Tensor.sub_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def sub_(a, b, /, *, alpha=None):
+    return prims.copy_(sub(a, b, alpha=alpha), a)
+
+
 @torchsymbol(torch.true_divide, is_method=True)
-def true_divide(a: Number | TensorLike, b: Number | TensorLike, /) -> Number | TensorLike:
+def true_divide(a: NumberLike | TensorLike, b: NumberLike | TensorLike, /) -> Number | TensorLike:
     return clang.true_divide(a, b)
+
+
+@torchsymbol(torch.Tensor.true_divide_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def true_divide_(a: TensorLike, b: NumberLike | TensorLike, /) -> TensorLike:
+    return prims.copy_(true_divide(a, b))
 
 
 @torchsymbol(torch.special.zeta)
@@ -1527,9 +2068,19 @@ def addcmul(a: TensorLike, b: TensorLike, c: TensorLike, /, *, value: None | Num
     return addcmul_addcdiv_helper(a, b, c, add, mul, value=value)
 
 
+@torchsymbol(torch.Tensor.addcmul_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def addcmul_(a: TensorLike, b: TensorLike, c: TensorLike, /, *, value: None | Number = None) -> TensorLike:
+    return prims.copy_(addcmul(a, b, c, value=value), a)
+
+
 @torchsymbol(torch.addcdiv, is_method=True)
 def addcdiv(a: TensorLike, b: TensorLike, c: TensorLike, /, *, value: None | Number = None) -> TensorLike:
     return addcmul_addcdiv_helper(a, b, c, add, true_divide, value=value)
+
+
+@torchsymbol(torch.Tensor.addcdiv_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def addcdiv_(a: TensorLike, b: TensorLike, c: TensorLike, /, *, value: None | Number = None) -> TensorLike:
+    return prims.copy_(addcdiv(a, b, c, value=value), a)
 
 
 #
@@ -1572,6 +2123,13 @@ def clamp(
     return a
 
 
+@torchsymbol(torch.Tensor.clamp_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def clamp_(
+    a: TensorLike, /, min: None | Number | TensorLike = None, max: None | Number | TensorLike = None
+) -> TensorLike:
+    return prims.copy_(clamp(a, min, max), a)
+
+
 def _mask_tensor(a, mask, fill_value):
     utils.check(
         dtypes.is_boolean_dtype(mask.dtype), lambda: f"_mask_tensor: mask ({mask.dtype=}) must have a boolean dtype"
@@ -1590,9 +2148,14 @@ def _mask_tensor(a, mask, fill_value):
 #   value can be safely cast to a (for numbers, it checks that the actual number value can safely be cast)
 # NOTE We have chosen not to emulate PyTorch's odd type promotion behavior for this operation
 @torchsymbol(torch.masked_fill, is_method=True)
-def masked_fill(a: TensorLike, /, mask: TensorLike, value: Number | TensorLike) -> TensorLike:
+def masked_fill(a: TensorLike, /, mask: TensorLike, value: NumberLike | TensorLike) -> TensorLike:
     result = where(mask, value, a)
     return result
+
+
+@torchsymbol(torch.Tensor.masked_fill_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def masked_fill_(a: TensorLike, /, mask: TensorLike, value: NumberLike | TensorLike) -> TensorLike:
+    return prims.copy_(masked_fill(a, mask, value), a)
 
 
 # NOTE The key to understanding tril is that it generates a mask
@@ -1617,12 +2180,17 @@ def tril(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = Non
     return _mask_tensor(a, mask, fill_value)
 
 
+@torchsymbol(torch.Tensor.tril_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def tril_(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = None) -> TensorLike:
+    return prims.copy_(tril(a, diagonal, fill_value=fill_value), a)
+
+
 @torchsymbol(torch.where, is_method=True)
 def where(
     pred: TensorLike, a: None | Number | TensorLike = None, b: None | Number | TensorLike = None, /
 ) -> TensorLike:
     utils.check(
-        isinstance(a, (Number, TensorProxy)) and isinstance(b, (Number, TensorProxy)),
+        isinstance(a, (Number, NumberProxy, TensorProxy)) and isinstance(b, (Number, NumberProxy, TensorProxy)),
         lambda: f"torch.where() does not support only specifying a condition",
         exception_type=NotImplementedError,
     )
@@ -1732,7 +2300,7 @@ def _reduction_dtypes(
 
 
 def _reduction_dims(shape, dims: Sequence | None) -> tuple[int, ...]:
-    if isinstance(dims, int):
+    if isinstance(dims, (int, NumberProxy)):
         dims = (dims,)
     if dims is None or len(dims) == 0:
         return tuple(range(len(shape)))
@@ -1760,7 +2328,7 @@ def _reduction(
     # reduces over all dimensions if dim=() is passed
     if dims == () or dims == []:
         dims = None
-    if isinstance(dims, int):
+    if isinstance(dims, (int, IntegerProxy)):
         dims = (dims,)
 
     utils.check(
@@ -1769,9 +2337,9 @@ def _reduction(
     )
 
     if not accepts_dim_tuple:
-        assert dims is None or isinstance(dims, int)
+        assert dims is None or isinstance(dims, (int, IntegerProxy))
 
-    if isinstance(dims, int):
+    if isinstance(dims, (int, IntegerProxy)):
         dims = (dims,)
 
     dims = _reduction_dims(a.shape, dims)
@@ -1799,6 +2367,38 @@ def _reduction(
     return result
 
 
+@torchsymbol(torch.all, is_method=True, id="torch.all")
+def all_tensor(
+    a: TensorLike, /, dim: None | int | Sequence[int] = None, keepdim: bool = False, *, out: None | TensorLike = None
+) -> TensorLike:
+    # named as all_tensor to avoid confusion with python's built-in all function
+    utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
+    result = logical_not(any_tensor(logical_not(a), dim=dim, keepdim=keepdim))
+
+    # Pytorch's torch.all matches the behavior of NumPy in returning output of dtype bool for all supported dtypes except uint8.
+    # For uint8 the dtype of output is uint8 iteself (https://pytorch.org/docs/stable/generated/torch.all.html)
+    if a.dtype is dtypes.uint8:
+        result = to(result, dtype=dtypes.uint8)
+    return result
+
+
+@torchsymbol(torch.any, is_method=True, id="torch.any")
+def any_tensor(a: TensorLike, /, dim: None | int | Sequence[int] = None, keepdim: bool = False) -> TensorLike:
+    # named as any_tensor to avoid confusion with python's built-in any function
+    a_ = clang.maybe_convert_to_dtype(a, dtypes.bool8)
+    if isinstance(dim, Sequence) and len(dim) == 0:
+        # PyTorch returns a_.clone()
+        result = a_ | a_
+    else:
+        result = ne(sum(a_, dim=dim, keepdim=keepdim), False)
+
+    # Pytorch's torch.any matches the behavior of NumPy in returning output of dtype bool for all supported dtypes except uint8.
+    # For uint8 the dtype of output is uint8 iteself (https://pytorch.org/docs/stable/generated/torch.any.html)
+    if a.dtype is dtypes.uint8:
+        return prims.convert_element_type(result, dtypes.uint8)
+    return result
+
+
 @torchsymbol(torch.amax, is_method=True)
 def amax(a, /, dim=None, keepdim: bool = False):
     return _reduction(
@@ -1823,6 +2423,81 @@ def amin(a, /, dim=None, keepdim: bool = False):
         has_identity=False,
         output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
     )
+
+
+# NOTE: Using name `torch_max` to avoid conflict with Python's `max`
+@overload
+def torch_max(a: TensorLike, /) -> TensorLike: ...
+
+
+@overload
+def torch_max(a: TensorLike, /, dim: NumberLike, keepdim: bool = False) -> tuple[TensorLike, TensorLike]: ...
+
+
+@overload
+def torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike: ...
+
+
+@torchsymbol(torch.max, is_method=True, id="torch.max")
+def torch_max(
+    a, /, dim: NumberLike | TensorLike | None = None, keepdim: bool = False
+) -> TensorLike | tuple[TensorLike, TensorLike]:
+    utils.check_type(dim, (NumberLike, TensorLike, NoneType))
+    utils.check_type(
+        keepdim, (bool, IntegerProxy)
+    )  # `keepdim` can be a [IntegerProxy (bool type) name=keepdim, value=False]
+    if isinstance(dim, TensorLike):
+        # overload - torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike
+        # This overload corresponds to taking the elementwise max between tensors `a` and `b`.
+        utils.check(not keepdim, lambda: "keepdim=True is invalid for torch.max(a, b) overload.")
+        b = dim
+        return maximum(a, b)
+
+    if dim is None:
+        # overload - torch_max(a: TensorLike, /) -> TensorLike
+        # This overload corresponds to taking the max over the flattened tensor.
+        utils.check(not keepdim, lambda: "keepdim=True is invalid for torch.max(a) overload.")
+        dim = list(range(a.ndim))
+        return amax(a, dim, keepdim)
+
+    # overload - torch_max(a: TensorLike, /, dim: int | tuple[int], keepdim: bool = False) -> TensorLike, TensorLike
+    # This overload corresponds to taking the max along the specified dimension `dim`.
+    # NOTE: It returns first occurence of the maximum value along the dimension and it's corresponding index.
+    utils.check_type(dim, NumberLike)
+    max_vals = amax(a, dim, keepdim)
+    argmax_vals = argmax(a, dim, keepdim)
+    return max_vals, argmax_vals
+
+
+# Clone is unique in that it's not registered as a symbol; as such we add it to
+# the appropriate maps manually, instead of through the @torchsymbol decorator.
+# This means that clone will not appear in the trace; instead, this basically
+# just gets inlined into the code.
+def clone(a: TensorProxy, *, memory_format=torch.preserve_format) -> TensorProxy:
+    """
+    Produce a copy of a tensor as a distinct new tensor.
+
+    Note: the implementation currently creates an alias instead of a copy.
+    """
+    # Our implementation currently does not introduce a copy, and so nothing
+    # except preserve_format is feasible to support.
+    # If you're hitting this you could try commenting this check out; if your
+    # model does not actually rely on specified memory formats then it should
+    # be fine.
+    if memory_format is not torch.preserve_format:
+        raise NotImplementedError("only preserve_format is currently supported")
+    # This implementation just creates an alias instead of a copy. This may
+    # introduce problems; such problems would be fixable when we get to adding an
+    # SSA pass, but for now we do not expect that aliasing the tensor will
+    # introduce many problems.
+    return a
+
+
+# Because we do not use @torchsymbol, we need to manually register the
+# implementation.
+register_function(torch.clone, clone)
+register_function(torch.Tensor.clone, clone)
+register_method("clone", clone)
 
 
 @torchsymbol(torch.mean, is_method=True)
@@ -1930,6 +2605,11 @@ def cumsum(a: TensorLike, dim: int, *, dtype: None | dtypeLike = None) -> Tensor
         return TensorProxy(like=a, dtype=to_dtype(dtype))
 
 
+@torchsymbol(torch.Tensor.cumsum_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def cumsum_(a: TensorLike, dim: int, *, dtype: None | dtypeLike = None) -> TensorLike:
+    return prims.copy_(cumsum(a, dim, dtype=dtype), a)
+
+
 @torchsymbol(torch.var, is_method=True)
 def var(
     a: TensorProxy,
@@ -1937,7 +2617,7 @@ def var(
     dim=None,
     *,
     keepdim: bool = False,
-    correction: Number = 1,
+    correction: NumberLike = 1,
 ) -> TensorProxy:
     result = _reduction(
         a,
@@ -1958,7 +2638,7 @@ def var_mean(
     dim=None,
     *,
     keepdim: bool = False,
-    correction: Number = 1,
+    correction: NumberLike = 1,
 ) -> tuple[TensorProxy, TensorProxy]:
     result = _reduction(
         a,
@@ -2000,20 +2680,30 @@ def index_add(a: TensorLike, /, dim: int, index: TensorLike, source: TensorLike)
     return clang.index_add(a, index, source, dim)
 
 
+@torchsymbol(torch.Tensor.index_add_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def index_add_(a: TensorLike, /, dim: int, index: TensorLike, source: TensorLike) -> TensorLike:
+    return prims.copy_(index_add(a, dim, index, source), a)
+
+
 @torchsymbol(torch.index_select, is_method=True)
 def index_select(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
     return clang.take(a, index, dim)
 
 
-@torchsymbol(torch.gather)
+@torchsymbol(torch.gather, is_method=True)
 def gather(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
     return clang.gather(a, indices=index, dim=dim)
 
 
 # NOTE PyTorch's scatter_add has a parameter named 'src', not 'source'
-@torchsymbol(torch.scatter_add)
+@torchsymbol(torch.scatter_add, is_method=True)
 def scatter_add(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike) -> TensorLike:
     return clang.scatter_add(a, indices=index, value=src, dim=dim)
+
+
+@torchsymbol(torch.Tensor.scatter_add_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def scatter_add_(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike) -> TensorLike:
+    return prims.copy_(scatter_add(a, dim, index, src), a)
 
 
 @torchsymbol(torch.take_along_dim)
@@ -2026,6 +2716,17 @@ def index_put(
     a: TensorLike, /, indices: Sequence[TensorLike], values: TensorLike, accumulate: bool = False
 ) -> TensorLike:
     return clang.index_put(a, indices, values, accumulate)
+
+
+@torchsymbol(torch.Tensor.index_put_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def index_put_(
+    a: TensorLike,
+    /,
+    indices: Sequence[TensorLike],
+    values: TensorLike,
+    accumulate: bool = False,
+) -> TensorLike:
+    return prims.copy_(index_put(a, indices, values, accumulate), a)
 
 
 #
@@ -2602,6 +3303,39 @@ def _normalize(a: TensorProxy, /, norm_dims, eps: Number) -> tuple[TensorLike, T
     return out, mean, rstd
 
 
+@torchsymbol(torch.nn.functional.normalize, is_method=True)
+def normalize(
+    a: TensorProxy, /, p: float = 2.0, dim: int | Sequence[int] = 1, eps: float = 1e-12, out: None | TensorProxy = None
+) -> TensorProxy:
+    utils.check(
+        dtypes.is_float_dtype(a.dtype) or dtypes.is_complex_dtype(a.dtype),
+        lambda: f"normalize: Expected a floating point or complext tensor as input. Got {a.dtype}",
+        TypeError,
+    )
+    utils.check(out is None, lambda: "normalize: out is not None which is currently unsupported", NotImplementedError)
+    computation_dtype, result_dtype = _reduction_dtypes(a, REDUCTION_OUTPUT_TYPE_KIND.COMPLEX_TO_FLOAT, a.dtype)
+    if p == 0.0:
+        denom = sum(a != 0.0, dim=dim, keepdim=True)
+    elif p == float("inf"):
+        denom = amax(abs(a), dim=dim, keepdim=True)
+    elif p == -float("inf"):
+        denom = amin(abs(a), dim=dim, keepdim=True)
+    else:
+        dim = utils.canonicalize_dim(a.ndim, dim)
+        a_ = clang.maybe_convert_to_dtype(a, computation_dtype)
+        is_p_even = p % 2.0 == 0
+        if dtypes.is_complex_dtype(a.dtype) or not is_p_even:
+            a_ = abs(a_)
+        denom = a_**p
+        denom = sum(denom, dim=dim, keepdim=True)
+        denom = denom ** (1.0 / p)
+    denom = clamp(denom, min=eps)
+    denom = expand_as(denom, a)
+    denom = clang.maybe_convert_to_dtype(denom, result_dtype)
+    out = a / denom
+    return out
+
+
 # TODO: likely want to refactor these normalizations
 def _native_layer_norm(
     a: TensorProxy, /, normalized_shape, weight, bias, eps: Number
@@ -2657,7 +3391,7 @@ def layer_norm(
     normalized_shape: Sequence[int],
     weight: None | TensorLike = None,
     bias: None | TensorLike = None,
-    eps: Number = 1e-5,
+    eps: NumberLike = 1e-5,
 ) -> TensorLike:
     # Note [LayerNorm with parameter sharding]
     # Sharding messes up the normalized_shape argument, so we need to get the
@@ -2739,8 +3473,8 @@ def batch_norm(
     weight: None | TensorLike = None,
     bias: None | TensorLike = None,
     training: bool = False,
-    momentum: Number = 0.1,
-    eps: Number = 1e-5,
+    momentum: NumberLike = 0.1,
+    eps: NumberLike = 1e-5,
 ) -> TensorLike:
     # Validates inputs
     input_shape = tuple(a.shape)
@@ -2796,6 +3530,26 @@ def batch_norm(
 #
 # NN Operations
 #
+
+
+@torchsymbol(torch.baddbmm, is_method=True)
+def baddbmm(
+    a: TensorLike, b1: TensorLike, b2: TensorLike, *, beta: float = 1.0, alpha: float = 1.0, out: TensorLike = None
+) -> TensorLike:
+    utils.check(out is None, lambda: "Non-None out is not supported", NotImplementedError)
+
+    utils.check_same_dtype(a, b1, b2)
+    utils.check_same_device(a, b1, b2)
+    utils.check(b1.ndim == 3, lambda: f"batch1 must be a 3D tensor, found {b1.ndim} instead.")
+    utils.check(b2.ndim == 3, lambda: f"batch2 must be a 3D tensor, found {b2.ndim} instead.")
+
+    if a.dtype not in dtypes.inexact_dtypes:
+        utils.check_type(beta, int)
+        utils.check_type(alpha, int)
+
+    t0 = matmul(b1, b2)
+    t1 = alpha * t0
+    return t1 + (beta * a)
 
 
 # TODO bmm is more restrictive than matmul
@@ -2867,7 +3621,7 @@ def handle_nn_op_batch_dim(f):
 # A helper function to converts an interger to 1-len tuple.
 # It is used to handle arguments like stride/dilation/padding and similar.
 def int_to_seq(param):
-    if isinstance(param, int):
+    if isinstance(param, (int, NumberProxy)):
         return (param,)
     else:
         return param
@@ -2893,7 +3647,8 @@ def apply_padding_for_pool_ops(dim, a, padding, kernel_size, pad_value):
     padding = maybe_to_rank_len_sequence(padding, dim)
     kernel_size = maybe_to_rank_len_sequence(kernel_size, dim)
     utils.check(
-        len(padding) == dim and all(isinstance(p, int) and 0 <= p <= k // 2 for p, k in zip(padding, kernel_size)),
+        len(padding) == dim
+        and all(isinstance(p, (int, IntegerProxy)) and 0 <= p <= k // 2 for p, k in zip(padding, kernel_size)),
         lambda: f"Implied {padding=} (with dimensionality {dim}) should contain integers "
         f"between 0 and `kernel_size / 2` (with the implied {kernel_size=})",
     )
@@ -2939,7 +3694,7 @@ def _conv_helper(
                     len(dilation) == 1 or len(dilation) == dim, lambda: f"{len(dilation)=} has to be either 1 or {dim}"
                 )
                 utils.check(
-                    all(isinstance(d, int) and d >= 1 for d in dilation),
+                    all(isinstance(d, (int, IntegerProxy)) and d >= 1 for d in dilation),
                     lambda: f"{dilation=} has to be a Sequences of integers >= 1",
                 )
 
@@ -3011,7 +3766,7 @@ def _max_pool_helper(
 
     kernel_size = maybe_to_rank_len_sequence(kernel_size, dim)
     utils.check(
-        len(kernel_size) == dim and all(isinstance(k, int) and k > 0 for k in kernel_size),
+        len(kernel_size) == dim and all(isinstance(k, (int, IntegerProxy)) and k > 0 for k in kernel_size),
         lambda: f"Implied {kernel_size=} (with dimensionality {dim}) should either be a non-negative integer "
         f"or a sequence of non-negative integers of length {dim}",
     )
@@ -3064,7 +3819,7 @@ def _avg_pool_helper(
     padding: int | Sequence[int] = 0,
     ceil_mode: bool = False,
     count_include_pad: bool = True,
-    divisor_override: Number | None = None,
+    divisor_override: NumberLike | None = None,
 ) -> TensorProxy:
     utils.check(
         not ceil_mode,
@@ -3083,7 +3838,7 @@ def _avg_pool_helper(
 
     kernel_size = maybe_to_rank_len_sequence(kernel_size, dim)
     utils.check(
-        len(kernel_size) == dim and all(isinstance(k, int) and k > 0 for k in kernel_size),
+        len(kernel_size) == dim and all(isinstance(k, (int, IntegerProxy)) and k > 0 for k in kernel_size),
         lambda: f"Implied {kernel_size=} (with dimensionality {dim}) should either be a non-negative integer "
         f"or a sequence of non-negative integers of length {dim}",
     )
@@ -3109,7 +3864,7 @@ def _avg_pool_helper(
         divisor_override = kernel_numel
 
     utils.check(
-        isinstance(divisor_override, Number) and divisor_override > 0,
+        isinstance(divisor_override, (Number, NumberProxy)) and divisor_override > 0,
         lambda: f"{divisor_override=} should be a greater than 0 scalar",
     )
 
@@ -3131,7 +3886,7 @@ def avg_pool1d(
     padding: int | Sequence[int] = 0,
     ceil_mode: bool = False,
     count_include_pad: bool = True,
-    divisor_override: Number | None = None,
+    divisor_override: NumberLike | None = None,
 ) -> TensorProxy:
     return _avg_pool_helper(1, a, kernel_size, stride, padding, ceil_mode, count_include_pad, divisor_override)
 
@@ -3145,7 +3900,7 @@ def avg_pool2d(
     padding: int | Sequence[int] = 0,
     ceil_mode: bool = False,
     count_include_pad: bool = True,
-    divisor_override: Number | None = None,
+    divisor_override: NumberLike | None = None,
 ) -> TensorProxy:
     return _avg_pool_helper(2, a, kernel_size, stride, padding, ceil_mode, count_include_pad, divisor_override)
 
@@ -3159,9 +3914,66 @@ def avg_pool3d(
     padding: int | Sequence[int] = 0,
     ceil_mode: bool = False,
     count_include_pad: bool = True,
-    divisor_override: Number | None = None,
+    divisor_override: NumberLike | None = None,
 ) -> TensorProxy:
     return _avg_pool_helper(3, a, kernel_size, stride, padding, ceil_mode, count_include_pad, divisor_override)
+
+
+@torchsymbol(
+    torch.nn.functional.adaptive_avg_pool2d, id="torch.nn.functional.adaptive_avg_pool2d", is_method=False, is_prim=True
+)
+def adaptive_avg_pool2d(
+    a: TensorProxy,
+    /,
+    output_size: int | Sequence[int],
+) -> TensorProxy:
+    from thunder.core.baseutils import check_valid_shape, check_valid_length
+
+    utils.check_type(output_size, (int, IntegerProxy, Sequence))
+    if isinstance(output_size, Sequence):
+        utils.check(len(output_size) == 2, lambda: f"adaptive_avg_pool2d: output_size must be 2")
+        utils.check_types(output_size, (int, IntegerProxy))
+        check_valid_shape(output_size)
+    else:
+        check_valid_length(output_size)
+        output_size = (output_size, output_size)
+
+    utils.check_type(a, TensorProxy)
+    a_ndim = a.ndim
+    utils.check(
+        a_ndim == 3 or a_ndim == 4,
+        lambda: f"adaptive_avg_pool2d: Expected 3D or 4D tensor, but got {a.shape}",
+    )
+    for i in (-2, -1):
+        utils.check(
+            a.shape[i] > 0,
+            lambda: f"adaptive_avg_pool2d: Expected input to have non-zero size for non-batch dimensions, but input has sizes {a.shape} with dimension {i + a_ndim} being empty",
+        )
+    output_shape_ = a.shape[:-2] + tuple(output_size)
+    return TensorProxy(like=a, shape=output_shape_)
+
+
+@torchsymbol("adaptive_avg_pool2d_backward", id="adaptive_avg_pool2d_backward", is_prim=True)
+def adaptive_avg_pool2d_backward(g: TensorProxy, a: TensorProxy, /) -> TensorProxy:
+    # Followed the cuda implementation in Pytorch for adaptive_avg_pool2d_backward here
+    # short cut for empty tensor
+    if 0 in a.shape:
+        return TensorProxy(like=a)
+    utils.check_type(g, TensorProxy)
+    utils.check_type(a, TensorProxy)
+    utils.check_same_device(g, a)
+    utils.check_same_dtype(g, a)
+    grad_ndim = g.ndim
+    utils.check(
+        grad_ndim == 3 or grad_ndim == 4,
+        lambda: f"adaptive_avg_pool2d_backward: Expected 3D or 4D tensor, but got {g.shape}",
+    )
+    for i in range(1, grad_ndim):
+        utils.check(
+            g.shape[i] > 0,
+            lambda: f"adaptive_avg_pool2d_backward: Expected grad to have non-zero size for non-batch dimensions, but grad has sizes {g.shape} with dimension {i} being empty",
+        )
+    return TensorProxy(like=a)
 
 
 @torchsymbol(torch.max_pool1d, torch.nn.functional.max_pool1d, id="torch.nn.functional.max_pool1d", is_method=False)
@@ -3261,20 +4073,6 @@ def _dropout_helper(a, p):
     return result
 
 
-# TODO Add annotations, make not a prim
-# The backward decomposition of cross_entropy cannot be efficiently fused, so we have this cross_entropy_backward
-# primitive. Executors can override the primitive using internal implementations.
-# See issue "Cross_entropy is decomposed for backward but the decomposition is
-# not fusible currently"
-@torchsymbol("cross_entropy_backward", id="cross_entropy_backward", is_prim=True)
-def cross_entropy_backward(g, a, /, target, weight, reduction, ignore_index, label_smoothing):
-    return TensorProxy(like=g, shape=a.shape)
-
-
-# TODO (mruberry) -- I think this implementation gets the dtype of the output incorrect
-# TODO Revise this to consistently call other torch operations where possible
-# TODO -- Maybe cut this up into _cross_entropy_mean, _cross_entropy_sum, ...
-# TODO Add type annotations
 @torchsymbol(torch.nn.functional.cross_entropy)
 def cross_entropy(
     a: TensorLike,
@@ -3292,253 +4090,191 @@ def cross_entropy(
         lambda: f"Deprecated size_average={size_average} and reduce={reduce} is not supported!",
     )
 
-    utils.check(
-        a.ndim != 0,
-        lambda: f"Cross entropy expects its input to have one or more dimensions, but it had zero dimensions",
-    )
+    _cross_entropy_input_checks(a, target, weight, ignore_index, reduction, label_smoothing)
 
-    # NOTE label_smoothing < 0 will just be ignored.
-    utils.check(
-        label_smoothing <= 1.0,
-        lambda: f"Cross entropy's {label_smoothing=} must be less than or equal to 1.0",
-    )
+    # class dimension is either the first one if no batch dim present (i.e. a.shape[0]),
+    # or right next to it (i.e. a.shape[1]).
+    class_dim = 1 if a.ndim >= 2 else 0
 
-    # extract shape information
-    C_dim = 1 if a.ndim >= 2 else 0
-    N = a.shape[0] if a.ndim >= 2 else 1
-    C = a.shape[C_dim]
-    feature_size = int(a.numel() / N / C)
-
-    # Short-circuits if a is empty
+    # NOTE This short-circuit is subject to change and is placed ahead of other input checks to match PyTorch behavior.
+    # The expected behavior when the target and input have zero elements:
+    #   reduction = 'none' --- tensor([], shape) or tensor(0.)
+    #   reduction = 'sum'  --- tensor(0.)
+    #   reduction = 'mean' --- tensor(nan)
+    # Mean reduction on empty tensors produces NaN.
     if a.numel() == 0:
         if reduction == "none":
             output_shape = list(a.shape)
-            output_shape.pop(C_dim)
-            return zeros(output_shape, device=a.device, dtype=a.dtype)
-        elif reduction == "mean":
-            fill_value = float("nan")
+            output_shape.pop(class_dim)
+            return full(output_shape, 0.0, device=a.device, dtype=a.dtype)
         elif reduction == "sum":
-            fill_value = 0.0
-        else:
-            raise ValueError(f"Reduction argument {reduction} to cross_entropy is not supported")
-
-        return full([], fill_value, device=a.device, dtype=a.dtype)
-
-    if weight is not None:
-        utils.check(
-            weight.ndim == 1 and weight.numel() == C,
-            lambda: f"Expected {weight.shape=} to have one dimension and {C} elements",
-        )
-        bcast_weight = reshape(weight, [C] + [1 for i in range(2, a.ndim)])
-
-    log_softmax_a = log_softmax(a, C_dim)
-    out = -log_softmax_a
+            return full(result_shape := [], fill_value := 0.0, device=a.device, dtype=a.dtype)
+        elif reduction == "mean":
+            return full(result_shape := [], fill_value := float("nan"), device=a.device, dtype=a.dtype)
 
     if a.shape == target.shape:
-        utils.check(
-            utils.is_float_dtype(target.dtype),
-            lambda: f"expect float dtype for probability target, but got: {target.dtype}!",
-        )
-        utils.check(
-            ignore_index < 0,
-            lambda: f"ignore_index is not supported for probability target, set ignore_index < 0!",
-        )
-
-        if label_smoothing > 0.0:
-            target = target * (1 - label_smoothing) + label_smoothing / C
-
-        out = out * target
-
-        if weight is not None:
-            out = out * bcast_weight
-
-        if target.ndim == 1:
-            out = _reduction(
-                out,
-                prims.sum,
-                output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
-            )
-        else:
-            out = _reduction(
-                out,
-                prims.sum,
-                dims=C_dim,
-                output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
-            )
-
-        if reduction == "none":
-            return out
-        # TODO: duplicate this in probability target!
-        elif reduction == "sum":
-            # NOTE: do we need to promote dtype?!
-            return _reduction(
-                out,
-                prims.sum,
-                output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
-            )
-        elif reduction == "mean":
-            reduced_sum = _reduction(
-                out,
-                prims.sum,
-                output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
-            )
-            # NOTE: does it work with dynamic size?!
-            return reduced_sum / N * feature_size
-        else:
-            raise ValueError(f"reduction argument: {reduction} to cross_entropy is not supported")
+        return _cross_entropy_loss_probability_target(a, target, weight, ignore_index, reduction, label_smoothing)
+    elif label_smoothing != 0.0:
+        return _cross_entropy_loss_label_smoothing(a, target, weight, ignore_index, reduction, label_smoothing)
     else:
-        utils.check(
-            utils.is_integer_dtype(target.dtype),
-            lambda: f"expect integer dtype for class indices target, but got: {target.dtype}!",
-        )
-        no_C_shape = list(a.shape)
-        no_C_shape.pop(C_dim)
-        utils.check(
-            a.ndim == target.ndim + 1 and no_C_shape == list(target.shape),
-            lambda: f"Inconsistent shape input: {a.shape} / target: {a.shape} to cross_entropy!",
-        )
-
-        # nll_loss
-        if weight is not None:
-            out = out * bcast_weight
-
-        smooth_loss_no_sum = out
-        # TODO: swap reshape with unsqueeze when nvfuser support is added
-        # bcast_target = clang.unsqueeze(target, [C_dim])
-        bcast_target_shape = list(a.shape)
-        bcast_target_shape[C_dim] = 1
-        bcast_target = reshape(target, bcast_target_shape)
-
-        out = clang.take_along_axis(out, bcast_target, C_dim)
-
-        if label_smoothing > 0:
-            # smooth_loss shape [N, SPATIAL...]
-            smooth_loss = _reduction(
-                smooth_loss_no_sum,
-                prims.sum,
-                dims=[C_dim],
-                output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
-            )
-        # NOTE: [handling of 'ignore_index']
-        #       Semantically, I think we are doing the right thing here where we mask out the ignore_index entries on output from clang.take_along_axis. Because targets is expected to be within [0, C)
-        #       However, in Torch/ATen implementation, 'ignore_index' can be outside of the range, so is targets. So it could even prevent an out-of-bound error from NLLLoss. Which diverges from the behavior here.
-        #       Note that we can mimic that behavior by mask targets before take_along_axis, but that's going to add more operations here, which means more overhead. Let's not do that until we see real examples exploiting the behavior.
-        #       Alternatively, we can revisit the choice of numpy.take_along_axis.
-        #       jax.numpy.take_along_axis gives a 'mode' arg custom out-of-bound behavior. But that might be slightly tricky to handle for codegen.
-        if ignore_index >= 0:
-            # mask shape [N, 1, SPATIAL...]
-            mask = bcast_target == ignore_index
-            out = where(mask, 0, out)
-            if label_smoothing > 0:
-                # TODO: switch to squeeze
-                smooth_loss = where(reshape(mask, list(smooth_loss.shape)), 0, smooth_loss)
-
-        if reduction == "none":
-            # TODO: swap reshape with squeeze when nvfuser support is added
-            # return clang.squeeze(out, [C_dim])
-            out = reshape(out, target.shape)
-            if label_smoothing > 0:
-                ret = smooth_loss
-        # TODO: duplicate this in probability target!
-        elif reduction == "sum":
-            # NOTE: do we need to promote dtype?!
-            out = _reduction(
-                out,
-                prims.sum,
-                output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
-            )
-            if label_smoothing > 0:
-                ret = _reduction(
-                    smooth_loss,
-                    prims.sum,
-                    output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
-                )
-        elif reduction == "mean":
-            # NOTE: do we need to promote dtype?!
-            reduced_sum = _reduction(
-                out,
-                prims.sum,
-                output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
-            )
-            if label_smoothing > 0:
-                ret = _reduction(
-                    smooth_loss,
-                    prims.sum,
-                    output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
-                )
-            if weight is not None:
-                # NOTE: this seems unreasonably complicated. Am I missing something obvious?!
-                input_shape = list(a.shape)
-                expanded_weight = clang.expand(bcast_weight, input_shape)
-                # DEBUG!!! this gives segfaults
-                selected_weight = clang.take_along_axis(expanded_weight, bcast_target, C_dim)
-
-                if ignore_index >= 0:
-                    selected_weight = where(mask, 0, selected_weight)
-
-                bcast_weight_sum = _reduction(
-                    selected_weight,
-                    prims.sum,
-                    output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
-                )
-                out = reduced_sum / bcast_weight_sum
-                if label_smoothing > 0:
-                    ret = ret / bcast_weight_sum
-            elif ignore_index >= 0:
-                mask_sum = _reduction(
-                    mask,
-                    prims.sum,
-                    dtype=to_dtype(torch.float),
-                    output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
-                )
-                # NOTE: does the call numel here work with dynamic shape?!
-                out = reduced_sum / (target.numel() - mask_sum)
-                if label_smoothing > 0:
-                    ret = ret / (target.numel() - mask_sum)
-                elif target.ndim == 0:
-                    # NOTE: this is pytorch implementation details.
-                    # overwrite output to 0 when target hits ignore_index AND label_smoothing is missing.
-                    # https://github.com/pytorch/pytorch/pull/64572
-                    out = where((target == ignore_index), 0, out)
-            else:
-                out = reduced_sum / target.numel()
-                if label_smoothing > 0:
-                    ret = ret / target.numel()
-        else:
-            raise ValueError(f"Reduction argument: {reduction} to cross_entropy is not supported")
-
-        # TODO FIXME This is probably incorrect -- but somewhere above the dtype of out can disagree with PyTorch
-        out = out.to(a.dtype)
-
-        if label_smoothing > 0:
-            return out * (1 - label_smoothing) + (ret * (label_smoothing / C))
-        else:
-            return out
+        log_softmax_input = log_softmax(a, dim=class_dim)
+        return nll_loss(log_softmax_input, target, weight, ignore_index, reduction)
 
 
-# TODO The function cross_entropy_backward shouldn't be registered as a primitive operation (above), but as
-#   a composite operation
-def _cross_entropy_grad(
+def _cross_entropy_input_checks(
     a: TensorLike,
     /,
     target: TensorLike,
-    weight: None | TensorLike = None,
-    size_average: None | Any = None,
-    ignore_index: int = -100,
-    reduce: None | Any = None,
-    reduction: str = "mean",
-    label_smoothing: float = 0.0,
+    weight: None | TensorLike,
+    ignore_index: int,
+    reduction: str,
+    label_smoothing: float,
+):
+    utils.check(
+        reduction in ("none", "sum", "mean"),
+        lambda: f'Expected reduction string to be "none", "sum", or "mean", but it is {reduction}.',
+        exception_type=ValueError,
+    )
+
+    utils.check(
+        a.ndim >= 1,
+        lambda: f"Expected the input tensor to have more than 1 dimension, but it has {a.ndim} dimensions.",
+    )
+
+    utils.check(
+        label_smoothing >= 0.0 and label_smoothing <= 1.0,
+        lambda: f"Expected label_smoothing to be in [0, 1] range but got {label_smoothing}.",
+    )
+
+    # class dimension is either the first one if no batch dim present (i.e. a.shape[0]),
+    # or right next to it (i.e. a.shape[1]).
+    class_dim = 1 if a.ndim >= 2 else 0
+    num_class = a.shape[class_dim]
+
+    utils.check(
+        weight is None or (weight.ndim == 1 and weight.shape[0] == num_class),
+        lambda: f"Expected a 1D tensor with {num_class} elements for weight argument, \
+            but found a tensor with {weight.ndim} dimensions and {weight.shape[0]} elements.",
+    )
+
+    if a.shape != target.shape:
+        utils.check(
+            utils.is_integer_dtype(target.dtype),
+            lambda: f"Expected target to be a tensor with an integer dtype, but it has dtype {target.dtype}.",
+        )
+
+        utils.check(
+            a.ndim == target.ndim + 1,
+            lambda: f"Expected the input tensor to have {(target.ndim + 1)=} dimensions, but it has {a.ndim} dimensions.",
+        )
+
+        # target should match input in dims which do not correspond to the class dim, i.e.
+        # (input.shape[:class_dim] + input.shape[class_dim + 1:]) == target.shape <=> True
+        expected_target_shape = a.shape[:class_dim] + a.shape[class_dim + 1 :]
+
+        utils.check(
+            expected_target_shape == target.shape,
+            lambda: f"Expected the target tensor to have the same shape as the input tensor except for the class dimension \
+                {expected_target_shape}, but it has shape {target.shape}.",
+        )
+    else:
+        # target represents class probabilities and is the range [0.0, 1.0]
+        utils.check(
+            utils.is_float_dtype(target.dtype),
+            lambda: f"Expected the target to have float dtype when target contains class probabilities \
+                but it is {target.dtype}.",
+        )
+        utils.check(
+            ignore_index < 0,
+            lambda: "ignore_index argument is not supported when target contains class probabilities.",
+        )
+
+
+def _cross_entropy_loss_probability_target(
+    a: TensorLike,
+    /,
+    target: TensorLike,
+    weight: None | TensorLike,
+    ignore_index: int,
+    reduction: str,
+    label_smoothing: float,
 ) -> TensorLike:
-    fwd: TensorLike = cross_entropy(a, target, weight, size_average, ignore_index, reduce, reduction, label_smoothing)
+    # class dimension is either the first one if no batch dim present (i.e. a.shape[0]),
+    # or right next to it (i.e. a.shape[1]).
+    class_dim = 1 if a.ndim >= 2 else 0
+    num_class = a.shape[class_dim]
 
-    g: TensorLike = get_grad(fwd)
-    a_grad: TensorLike = cross_entropy_backward(g, a, target, weight, reduction, ignore_index, label_smoothing)
-    put_grad(a, a_grad)
+    if label_smoothing > 0.0:
+        target = (target * (1 - label_smoothing)) + (label_smoothing / num_class)
 
-    return fwd
+    out = log_softmax(a, dim=class_dim) * target
+
+    if weight is not None:
+        bcast_weight = reshape(weight, [num_class] + [1 for _ in range(2, a.ndim)])
+        out = out * bcast_weight
+
+    out = -out
+
+    if reduction == "none":
+        return sum(out, dim=class_dim)
+    elif reduction == "sum":
+        return sum(out)
+    elif reduction == "mean":
+        return sum(out) / (a.numel() // num_class)
 
 
-register_grad(cross_entropy, _cross_entropy_grad)
+def _cross_entropy_loss_label_smoothing(
+    a: TensorLike,
+    /,
+    target: TensorLike,
+    weight: None | TensorLike,
+    ignore_index: int,
+    reduction: str,
+    label_smoothing: int,
+) -> TensorLike:
+    # class dimension is either the first one if no batch dim present (i.e. a.shape[0]),
+    # or right next to it (i.e. a.shape[1]).
+    class_dim = 1 if a.ndim >= 2 else 0
+    num_class = a.shape[class_dim]
+
+    log_softmax_value = log_softmax(a, dim=class_dim)
+
+    if weight is not None:
+        bcast_weight = reshape(weight, [num_class] + [1 for _ in range(2, len(a.shape))])
+        out = -(log_softmax_value * bcast_weight)
+    else:
+        out = -log_softmax_value
+
+    smooth_loss = sum(out, dim=class_dim)
+
+    # Make target broadcastable with output, which has same shape as input tensor.
+    selected_target_mask = target != ignore_index
+    smooth_loss = where(selected_target_mask, smooth_loss, 0)
+
+    if reduction == "none":
+        ret = smooth_loss
+    elif reduction == "sum":
+        ret = sum(smooth_loss)
+    elif reduction == "mean":
+        reduced_sum = sum(out)
+        if weight is not None:
+            # Gather the weights for each target class.
+            # Mask the ignored target classes.
+            # Sum together all target weights.
+            # Make target broadcastable with output, which has same shape as input tensor.
+            expanded_weight = expand(bcast_weight, a.shape)
+            bcast_target = unsqueeze(target, class_dim)
+            selected_weight = take_along_dim(expanded_weight, bcast_target, class_dim)
+            selected_weight = where(selected_target_mask, squeeze(selected_weight), 0)
+            ret = reduced_sum / sum(selected_weight)
+        else:
+            # The weight tensor is none, so the total weight is the number of valid target elements not equal to
+            # ignore_index argument
+            ret = reduced_sum / sum(selected_target_mask)
+
+    nll_loss_value = nll_loss(log_softmax_value, target, weight, ignore_index, reduction)
+
+    return (nll_loss_value * (1.0 - label_smoothing)) + (ret * (label_smoothing / num_class))
 
 
 # TODO Is this a method?
@@ -3546,7 +4282,7 @@ register_grad(cross_entropy, _cross_entropy_grad)
 # NOTE The id must be explicitly specified so as not to resolve to torch.dropout
 #   (Using torch.nn.functional.dropout is just for readability as it's the documented operator)
 @torchsymbol(torch.nn.functional.dropout, id="torch.nn.functional.dropout")
-def dropout(a: TensorProxy, /, p: Number = 0.5, training: bool = True, inplace: bool = False) -> TensorProxy:
+def dropout(a: TensorProxy, /, p: NumberLike = 0.5, training: bool = True, inplace: bool = False) -> TensorProxy:
     if inplace:
         raise NotImplementedError("Only inplace=False is currently supported in dropout")
 
@@ -3567,7 +4303,13 @@ def dropout(a: TensorProxy, /, p: Number = 0.5, training: bool = True, inplace: 
     scale = 1 / (1 - p)
     dropout_mask = _dropout_helper(a, 1 - p)
 
-    return a * dropout_mask * scale
+    out = a * dropout_mask * scale
+    if inplace:
+        return prims.copy_(out, a)
+    return out
+
+
+_inplace_to_out_of_place[dropout] = dropout, 3
 
 
 @torchsymbol(torch.nn.functional.embedding, id="torch.nn.functional.embedding")
@@ -3689,7 +4431,7 @@ def _interpolate_scale_factor_helper(
     batch, channels, *spatial_dims = a.shape
     dim = len(spatial_dims)
 
-    if isinstance(scale_factor, float):
+    if isinstance(scale_factor, (float, FloatProxy)):
         utils.check(scale_factor > 0, lambda: f"{scale_factor=} is expected to be strictly positive")
         scale_factor = (scale_factor,) * dim
     else:
@@ -3697,7 +4439,7 @@ def _interpolate_scale_factor_helper(
             (
                 isinstance(scale_factor, Sequence)
                 and len(scale_factor) == dim
-                and all(isinstance(s, float) and s > 0 for s in scale_factor)
+                and all(isinstance(s, (float, FloatProxy)) and s > 0 for s in scale_factor)
             ),
             lambda: f"{scale_factor=} is expected to be a strictly positive floating point number or "
             f"a sequence of strictly positive floating point numbers of length {dim}",
@@ -3763,12 +4505,16 @@ def _interpolate_size_helper(
     batch, channels, *spatial_dims = a.shape
     dim = len(spatial_dims)
 
-    if isinstance(size, int):
+    if isinstance(size, (int, IntegerProxy)):
         utils.check(size > 0, lambda: f"{size=} is expected to be greater than zero")
         size = (size,) * dim
     else:
         utils.check(
-            (isinstance(size, Sequence) and len(size) == dim and all(isinstance(s, int) and s > 0 for s in size)),
+            (
+                isinstance(size, Sequence)
+                and len(size) == dim
+                and all(isinstance(s, (int, IntegerProxy)) and s > 0 for s in size)
+            ),
             lambda: f"{size=} is expected to be a greater than zero integer "
             f"or a sequence of strictly positive integers of length {dim}",
         )
@@ -3902,30 +4648,30 @@ def _nll_loss_helper(
         lambda: f"Expected the input tensor to have {(target.ndim + 1)=} dimensions, but it has {a.ndim} dimensions.",
     )
 
-    # channels dimension is either the first one if no batch dim present (i.e. a.shape[0]),
+    # class dimension is either the first one if no batch dim present (i.e. a.shape[0]),
     # or right next to it (i.e. a.shape[1]).
-    channels_dim = 1 if a.ndim >= 2 else 0
-    num_channels = a.shape[channels_dim]
-    # target should match input in dims which do not correspond to the channels dim, i.e.
-    # (input.shape[:channels_dim] + input.shape[channels_dim + 1:]) == target.shape <=> True
-    expected_target_shape = a.shape[:channels_dim] + a.shape[channels_dim + 1 :]
+    class_dim = 1 if a.ndim >= 2 else 0
+    num_class = a.shape[class_dim]
+    # target should match input in dims which do not correspond to the class dim, i.e.
+    # (input.shape[:class_dim] + input.shape[class_dim + 1:]) == target.shape <=> True
+    expected_target_shape = a.shape[:class_dim] + a.shape[class_dim + 1 :]
 
     utils.check(
         expected_target_shape == target.shape,
-        lambda: f"Expected the target tensor to have the same shape as the input tensor except for the channels dimension \
+        lambda: f"Expected the target tensor to have the same shape as the input tensor except for the class dimension \
             {expected_target_shape}, but it has shape {target.shape}.",
     )
 
     utils.check(
-        weight is None or (weight.ndim == 1 and weight.shape[0] == num_channels),
-        lambda: f"Expected a 1D tensor with {num_channels} elements for weight argument, \
+        weight is None or (weight.ndim == 1 and weight.shape[0] == num_class),
+        lambda: f"Expected a 1D tensor with {num_class} elements for weight argument, \
             but found a tensor with {weight.ndim} dimensions and {weight.shape[0]} elements.",
     )
 
     # NOTE: [Handling of 'ignore_index' parameter]
     # What does it mean to ignore an index?
     #   The 'ignore_index' parameter specifies a target value that does not contribute to input gradient.
-    # 'ignore_index' can be outside of the [0, num_channels) range, which can cause out-of-bounds errors when gathering
+    # 'ignore_index' can be outside of the [0, num_class) range, which can cause out-of-bounds errors when gathering
     # values from input tensor.
     #
     # What does ATen do?
@@ -3934,12 +4680,12 @@ def _nll_loss_helper(
     #
     # What do we do?
     #   We mask the ignore_index entries on the output tensor from take_along_axis because we expect the targets to be
-    # within [0, num_channels) range.
+    # within [0, num_class) range.
     #
     # Why do we like our approach better?
     #   Mimicking Aten behavior requires masking the target tensor before calling take_along_axis, which would add more
     # operations to the fusion. We should follow this approach until we see real examples where ignore_index is
-    # out-of-bounds of [0, num_channels) range.
+    # out-of-bounds of [0, num_class) range.
     #
     # What are the alternative options?
     #   We can add a `mode` parameter to take_along_axis that controls how to handle out-of-bounds indices.
@@ -3948,20 +4694,20 @@ def _nll_loss_helper(
     out = -a
 
     if weight is not None:
-        bcast_weight = reshape(weight, [num_channels] + [1 for _ in range(2, a.ndim)])
+        bcast_weight = reshape(weight, [num_class] + [1 for _ in range(2, a.ndim)])
         out = out * bcast_weight
 
     # Make target broadcastable with output, which has same shape as input tensor.
-    bcast_target = unsqueeze(target, channels_dim)
+    bcast_target = unsqueeze(target, class_dim)
 
-    out = take_along_dim(out, bcast_target, channels_dim)
+    out = take_along_dim(out, bcast_target, class_dim)
     selected_target_mask = bcast_target != ignore_index
     out = where(selected_target_mask, out, 0)
 
     # This section handles applying the reduction parameter to the output.
     # We return None for the total_weight when reduction is "none" or "sum" since it is unused in the backwards pass.
     if reduction == "none":
-        return squeeze(out, channels_dim), None
+        return squeeze(out, class_dim), None
     elif reduction == "sum":
         return sum(out), None
     elif reduction == "mean":
@@ -3971,7 +4717,7 @@ def _nll_loss_helper(
             # Mask the ignored target classes.
             # Sum together all target weights.
             expanded_weight = expand(bcast_weight, a.shape)
-            selected_weight = take_along_dim(expanded_weight, bcast_target, channels_dim)
+            selected_weight = take_along_dim(expanded_weight, bcast_target, class_dim)
             selected_weight = where(selected_target_mask, selected_weight, 0)
             bcast_weight_sum = sum(selected_weight)
             return (reduced_sum / bcast_weight_sum), bcast_weight_sum
@@ -4142,6 +4888,44 @@ def softmax(a: TensorLike, dim: int, dtype: None | dtypeLike = None, _stacklevel
     return _softmax(a, dim=dim, dtype=dtype)
 
 
+def torch_device(device_or_str: DeviceLike, /, index: int | None = None) -> devices.Device:
+    if isinstance(device_or_str, (devices.Device, torch.device)):
+        # PyTorch behavior:
+        # >>> torch.device(torch.device("cuda"), 0)
+        # TypeError: device(): argument 'type' (position 1) must be str, not torch.device
+        utils.check(index is None, lambda: f"device(): `index` is only allowed when `device` is a `str`.")
+        return to_device(device_or_str)
+
+    # NOTE: device_or_str is `str`
+    if index is not None:
+        # PyTorch behavior:
+        # >>> torch.device("cuda:0", 0)
+        # RuntimeError: type (string) must not include an index because index was passed explicitly: cuda:0
+        has_device_idx = len(device_or_str.split(":")) > 1
+        utils.check(
+            not has_device_idx,
+            lambda: f"device string must not include an index because index was passed explicitly: {device_or_str}",
+        )
+        if isinstance(index, NumberProxy):
+            index.make_static_constrained()
+            prims.sink(index)
+            index = index.value
+
+    return devices.Device(device_or_str, index)
+
+
+# We don't use @torchsymbol as we don't want `torch.device()` to appear in trace as a symbol.
+# Because of this, we need to manually register the implementation.
+register_function(torch.device, torch_device)
+
+
+def _set_grad_enabled_with_warning(enabled: bool) -> None:
+    warnings.warn("torch.enable_grad/torch.no_grad/torch._C._set_grad_enabled have no effect under thunder.jit")
+
+
+register_function(torch._C._set_grad_enabled, _set_grad_enabled_with_warning)
+
+
 #
 # Distributed operations
 #
@@ -4195,10 +4979,11 @@ if torch.distributed.is_available():
         a: TensorLike,
         group: torch.distributed.ProcessGroup | None = None,
         async_op: bool = False,
+        dim: int | None = None,
     ) -> TensorLike | FutureTensorLike:
         group = group if group is not None else torch.distributed.new_group()
 
-        return dist_prims.all_gather(a, group, async_op)
+        return dist_prims.all_gather(a, group, async_op, dim=dim)
 
     # NOTE torch.distributed.all_reduce is an inplace operation (although the underlying NCCL
     #   call does not need to be inplace). This, however, is modeled as an out-of-place functional
@@ -4246,11 +5031,12 @@ if torch.distributed.is_available():
         op: DistributedReduceOpLike | None = None,
         group: torch.distributed.ProcessGroup | None = None,
         async_op: bool = False,
+        dim: int | None = None,
     ) -> TensorLike | FutureTensorLike:
         op = to_thunder_distributed_reduce_op(op)
         group = group if group is not None else torch.distributed.new_group()
 
-        return dist_prims.reduce_scatter(a, op, group, async_op)
+        return dist_prims.reduce_scatter(a, op, group, async_op, dim=dim)
 
 else:
 
@@ -4296,4 +5082,30 @@ _torch_to_thunder_complete_map = {
     **_torch_to_thunder_dtype_map,
     **_torch_to_thunder_function_map,
     **{fn: fn for fn in _torch_noinline_functions},
+}
+
+
+# ref: https://pytorch.org/docs/stable/tensor_view.html
+_syms_returning_runtime_dependently_views: set[Symbol] = {reshape, contiguous, to, flatten}
+
+_syms_returning_views: set[Symbol] = {
+    diagonal,
+    expand,
+    expand_as,
+    movedim,
+    permute,
+    select,
+    squeeze,
+    transpose,
+    t,
+    real,
+    unflatten,
+    unfold,
+    unsqueeze,
+    view,
+    view_as,
+    unbind,
+    split,
+    tensor_split,
+    chunk,
 }

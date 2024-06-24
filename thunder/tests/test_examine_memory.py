@@ -71,8 +71,19 @@ def test_view_ops(executor, device: str, dtype: dtypes.dtype):
     bw_traces = thunder.last_backward_traces(cbar)
     bw_extrace = bw_traces[-1]
     max_mem_bw = get_alloc_memory(bw_extrace)
-    assert max_mem_bw[0] == 144
-    assert sum(max_mem_bw[1].values()) == get_return_memory(bw_extrace.bound_symbols[-1])  # 32
+
+    # NOTE: nvFuser is able to avoid the allocation of result2 and produce it as alias to result1.
+    if executor.name == "nvfuser":
+        assert max_mem_bw[0] == 128
+    else:
+        assert max_mem_bw[0] == 144
+
+    # NOTE: The get_return_memory method cannot distinguish wether the returned values come from an alias op.
+    # In this case, since nvFuser returns one tensor and it's reshaped alias it only allocates once (32/2).
+    if executor.name == "nvfuser":
+        assert sum(max_mem_bw[1].values()) == 16
+    else:
+        assert sum(max_mem_bw[1].values()) == get_return_memory(bw_extrace.bound_symbols[-1])  # 32
 
     def bar1(a, b, c):  # [4], [1,4,4], [4,1,4]
         a_1 = torch.unsqueeze(a, 0)  # [1,4]
@@ -150,7 +161,7 @@ def test_nanogpt_block(executor, device, dtype):
         expected_return_calculated_mem = get_return_memory(fw_extrace.bound_symbols[-1]) - 4 * 2 * 1024 * 768
         assert expected_return_calculated_mem == sum(fw_alloc_mem[1].values())
 
-        assert bw_alloc_mem[0] == 361783296
+        assert bw_alloc_mem[0] == 361881600
         assert sum(bw_alloc_mem[1].values()) == get_return_memory(bw_extrace.bound_symbols[-1])
     if isinstance(executor, TorchTestExecutor):
         assert fw_alloc_mem[0] == 362863616
