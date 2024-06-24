@@ -955,3 +955,18 @@ def test_cache_symbolic_values_constraints():
         jbar = thunder.jit(bar, cache="symbolic values")
         t = torch.randn(4, device="cpu")
         jbar(t)
+
+
+def test_cache_symbolic_values_torch_device():
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    def foo(dev, idx):
+        # NOTE dtype needs to be explicit, see issue: https://github.com/Lightning-AI/lightning-thunder/issues/621
+        return torch.ones(1, device=torch.device(dev, idx), dtype=torch.float32)
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+    expected = foo("cuda", 0)
+    actual = jfoo("cuda", 0)
+
+    assert_close(expected, actual)

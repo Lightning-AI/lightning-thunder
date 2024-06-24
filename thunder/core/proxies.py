@@ -612,6 +612,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
 
     def make_static_constrained(self):
         baseutils.check(self.constraint != CONSTRAINT.DYNAMIC, lambda: f"dynamic NumberProxy cannot be made static")
+        baseutils.check(self.value is not None, lambda: f"static NumberProxy needs to have value")
         self.constraint = CONSTRAINT.STATIC
 
     def make_constrainable(self):
