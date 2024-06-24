@@ -415,7 +415,12 @@ def check_inplace_to_views(computation_trace: Trace) -> dict[VariableInterface, 
         if in_tensor in trace_args_set:
             continue
         prod_bsym: BoundSymbol = producer_bsyms[in_tensor]
-        orig_tensor = prod_bsym.flat_proxy_args[0]
+
+        flat_tensor_proxy_args = tuple(filter(lambda p: isinstance(p, TensorProxy), prod_bsym.flat_args))
+        if not flat_tensor_proxy_args:
+            # assuming `prod_bsym` is a tensor factory method such as `torch.empty`, `torch.zeros`, and `torch.ones`
+            continue
+        orig_tensor = flat_tensor_proxy_args[0]
         consumer_of_orig_tensor = consumers[orig_tensor]
         # When the orig tensor is not used by consumers other than `prod_bsym`, it'd be safe.
         # Otherwise, we'd need to replace the use of ``orig_tensor`` with a view, unless the original
