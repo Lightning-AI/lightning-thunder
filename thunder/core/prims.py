@@ -63,6 +63,7 @@ def register_method(method_name: str, method: Callable, /) -> None:
 
 from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
 from thunder.core.proxies import (
+    CONSTRAINT,
     CollectionProxy,
     TensorProxy,
     NumberProxy,
@@ -260,6 +261,8 @@ class PrimIDs(Enum):
     # Memory access methods
     ITEM = auto()
     COPY_ = auto()
+    #
+    SINK = auto()
 
 
 class OpTags(Enum):
@@ -274,6 +277,7 @@ class OpTags(Enum):
     DEVICE_SYNC_OP = auto()
     # Labels operations that should not be removed by the dead code elimination (DCE) pass
     DONT_DCE = auto()
+    IN_PLACE = auto()
 
 
 # TODO RC1 Document this function and describe the parts of a primitive
@@ -1717,7 +1721,7 @@ def _convert_element_type_meta(a: Number | TensorProxy, /, dtype: type | dtypes.
         utils.check(utils.is_numbertype(dtype), lambda: f"Trying to convert a number to non-numbertype object {dtype}")
 
         if isinstance(a, NumberProxy):
-            return numberproxy(dtype, dtype(utils.get_numberlike_value(a)))
+            return numberproxy(dtype, dtype(utils.get_numberlike_value(a)), constraint=a.constraint)
 
         number_result = dtype(a)
         return number_result
@@ -1830,7 +1834,7 @@ def _elementwise_unary_meta_factory(
                     isinstance(a, NumberProxy),
                     lambda: f"Trying to call an elementwise unary operation {name} on a number, but the operation is not eagerly defined",
                 )
-                return numberproxy(output_type, None)
+                return numberproxy(output_type, None, a.constraint)
 
             # need to cast val to python_type in order to properly propagate output dtype.
             value = number_fn(typ(val))
@@ -1840,8 +1844,8 @@ def _elementwise_unary_meta_factory(
             )
 
             # Only returns a proxy if the input is a proxy
-            if isinstance(a, Proxy):
-                return numberproxy(type(value), value)
+            if isinstance(a, NumberProxy):
+                return numberproxy(type(value), value, a.constraint)
             return value
 
         # NOTE a is a TensorProxy
@@ -2246,12 +2250,12 @@ def _elementwise_binary_meta_factory(
                     isinstance(a, NumberProxy) or isinstance(b, NumberProxy),
                     lambda: f"Trying to call an elementwise binary operation {name} on two numbers, but the operation is not eagerly defined",
                 )
-                return numberproxy(numbertype, None)
+                return numberproxy(numbertype, None, constraint=utils.resolve_constraints(a, b))
 
             value = number_fn(aval, bval)
             # Only returns a NumberProxy if at least one input is a number proxy
             if isinstance(a, NumberProxy) or isinstance(b, NumberProxy):
-                return numberproxy(type(value), value)
+                return numberproxy(type(value), value, constraint=utils.resolve_constraints(a, b))
             return value
 
         else:
@@ -3886,3 +3890,11 @@ def copy__meta(
 
 
 copy_ = make_prim(PrimIDs.COPY_, "copy_", meta=copy__meta, tags=(OpTags.DONT_DCE,))
+
+
+def sink_meta(*args, **kwargs):
+    return
+
+
+# TODO do we want another tag to remove this after prologue is constructed?
+sink = make_prim(PrimIDs.SINK, "sink", meta=sink_meta, tags=(OpTags.DONT_DCE,))

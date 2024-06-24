@@ -33,7 +33,14 @@ from thunder import functional as functional
 import thunder.core.prims as prims
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
-from thunder.core.transform_common import dce, EarlyTransform, AdditionalTransform, PostOptimizationTransform
+from thunder.core.transform_common import (
+    dce,
+    EarlyTransform,
+    AdditionalTransform,
+    PostOptimizationTransform,
+    functionalize_inplace_ops,
+    check_inplace_to_views,
+)
 from thunder.common import (
     CompileData,
     CompileStats,
@@ -418,7 +425,7 @@ def jit(
                     ) = cache_entry
                     try:
                         cs.last_prologue_execution_start = time.time_ns()
-                        if epilogue:
+                        if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
                             inps, pro_to_epi = pro(*args, **kwargs)
                         else:
                             inps = pro(*args, **kwargs)
@@ -459,7 +466,7 @@ def jit(
                 ) = cache_entry
 
                 cs.last_prologue_execution_start = time.time_ns()
-                if epilogue:
+                if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
                     inps, pro_to_epi = pro(*args, **kwargs)
                 else:
                     inps = pro(*args, **kwargs)
@@ -503,6 +510,14 @@ def jit(
 
             prologue_traces = [prologue_trc]
             computation_traces = [computation_trc]
+            orig_to_view_swap_map = check_inplace_to_views(computation_trc)
+            if not compile_options.get("skip_inplace_functionalization", False):
+                computation_traces.extend(
+                    functionalize_inplace_ops(
+                        computation_trace=computation_trc, orig_to_view_swap_map=orig_to_view_swap_map
+                    )
+                )
+                computation_trc = computation_traces[-1]
 
             if epilogue_trc is not None:
                 epilogue_traces = [epilogue_trc]
@@ -541,7 +556,7 @@ def jit(
             cs.last_prologue_transformation_stop = time.time_ns()
 
             cs.last_prologue_execution_start = time.time_ns()
-            if epilogue:
+            if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
                 inps, pro_to_epi = pro(*args, **kwargs)
             else:
                 inps = pro(*args, **kwargs)
@@ -692,6 +707,8 @@ def jit(
     if isinstance(fn, pytorch.nn.Module):
         fn_ = ThunderModule(fn, fn_)
         cd._thunder_module_map[id(fn)] = fn_
+        for transform in early_transforms:
+            transform.transform_module(fn_)
 
     # Sets compile options and statistics attributes
     cd._get_computation_and_inputs = get_computation_and_inputs

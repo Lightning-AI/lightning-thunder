@@ -135,7 +135,6 @@ def to_printable(
 
     if is_collection(x):
         flat, spec = tree_flatten(x)
-
         printables = []
         for f in flat:
             printables.append(to_printable(trace, f, import_ctx=import_ctx, object_ctx=object_ctx))

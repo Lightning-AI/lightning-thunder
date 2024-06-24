@@ -809,7 +809,7 @@ def test_tom_overrides_proxy(device):
     "device",
     ("cpu", "cuda"),
 )
-def test_cache_symbolic_values(device):
+def test_cache_symbolic_values_basic(device):
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
 
@@ -905,3 +905,68 @@ def test_device_as_input(cache_option):
         with ctx:
             actual_device = jfoo(x, expected_device).device
             assert actual_device == expected_device
+
+
+def test_cache_symbolic_values_constraints():
+    def foo(scalar):
+        if scalar > 0:
+            return scalar
+        return 0
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+
+    expected = foo(1.5)
+    actual = jfoo(1.5)
+
+    assert_close(expected, actual)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    expected = foo(2.0)
+    actual = jfoo(2.0)
+
+    assert_close(expected, actual)
+    # even though we should be able to re-use the cache, we cannot do it now. Because constraints are propagated to inputs being static number.
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 0
+
+    expected = foo(1.5)
+    actual = jfoo(1.5)
+
+    assert_close(expected, actual)
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 1
+
+    expected = foo(-0.3)
+    actual = jfoo(-0.3)
+
+    assert_close(expected, actual)
+    assert thunder.cache_misses(jfoo) == 3
+    assert thunder.cache_hits(jfoo) == 1
+
+    def bar(t):
+        if t[0].item() > 5:
+            return t + 1.0
+        return t
+
+    with pytest.raises(
+        thunder.core.interpreter.InterpreterError, match="conversion to bool is not allowed on dynamic proxy"
+    ):
+        jbar = thunder.jit(bar, cache="symbolic values")
+        t = torch.randn(4, device="cpu")
+        jbar(t)
+
+
+def test_cache_symbolic_values_torch_device():
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    def foo(dev, idx):
+        # NOTE dtype needs to be explicit, see issue: https://github.com/Lightning-AI/lightning-thunder/issues/621
+        return torch.ones(1, device=torch.device(dev, idx), dtype=torch.float32)
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+    expected = foo("cuda", 0)
+    actual = jfoo("cuda", 0)
+
+    assert_close(expected, actual)

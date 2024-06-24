@@ -1278,16 +1278,10 @@ signbit_opinfo = OpInfo(
 elementwise_unary_ops.append(signbit_opinfo)
 
 
-def silu_error_generator(op, device, dtype=torch.float32, **kwargs):
-    a = make_tensor((), dtype=dtype, device=device)
-    yield (SampleInput(a, inplace=True), NotImplementedError, "Thunder only supports silu with inplace=False")
-
-
 silu_opinfo = OpInfo(
     ltorch.silu,
     dtypes=(datatypes.floating,),
     sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
-    error_input_generator=silu_error_generator,
     torch_reference=_elementwise_unary_torch(torch.nn.functional.silu),
     test_directives=(
         DecorateInfo(
@@ -1623,20 +1617,9 @@ reciprocal_opinfo = OpInfo(
 elementwise_unary_ops.append(reciprocal_opinfo)
 
 
-def relu_error_generator(op, device, dtype=torch.float32, **kwargs):
-    a = make_tensor((), dtype=dtype, device=device)
-    yield (SampleInput(a, inplace=True), NotImplementedError, "relu only supports inplace=False")
-
-
-def relu6_error_generator(op, device, dtype=torch.float32, **kwargs):
-    a = make_tensor((), dtype=dtype, device=device)
-    yield (SampleInput(a, inplace=True), NotImplementedError, "relu6 only supports inplace=False")
-
-
 relu_opinfo = OpInfo(
     ltorch.relu,
     sample_input_generator=elementwise_unary_generator,
-    error_input_generator=relu_error_generator,
     torch_reference=_elementwise_unary_torch(torch.relu),
     test_directives=(
         # PyTorch does not support bool and complex types
@@ -1665,7 +1648,6 @@ elementwise_unary_ops.append(relu_opinfo)
 relu6_opinfo = OpInfo(
     ltorch.relu6,
     sample_input_generator=elementwise_unary_generator,
-    error_input_generator=relu6_error_generator,
     torch_reference=_elementwise_unary_torch(torch.nn.functional.relu6),
     test_directives=(
         # PyTorch does not support bool for both CPU and CUDA relu6
@@ -1684,15 +1666,9 @@ relu6_opinfo = OpInfo(
 elementwise_unary_ops.append(relu6_opinfo)
 
 
-def hardswish_error_generator(op, device, dtype=torch.float32, **kwargs):
-    a = make_tensor((), dtype=dtype, device=device)
-    yield (SampleInput(a, inplace=True), NotImplementedError, "hardswish only supports inplace=False")
-
-
 hardswish_opinfo = OpInfo(
     ltorch.hardswish,
     sample_input_generator=elementwise_unary_generator,
-    error_input_generator=hardswish_error_generator,
     torch_reference=_elementwise_unary_torch(torch.nn.functional.hardswish),
     dtypes=(datatypes.floating,),
     test_directives=(
@@ -1713,16 +1689,10 @@ hardswish_opinfo = OpInfo(
 elementwise_unary_ops.append(hardswish_opinfo)
 
 
-def selu_error_generator(op, device, dtype=torch.float32, **kwargs):
-    a = make_tensor((), dtype=dtype, device=device)
-    yield (SampleInput(a, inplace=True), NotImplementedError, "selu only supports inplace=False")
-
-
 selu_opinfo = OpInfo(
     ltorch.selu,
     dtypes=(datatypes.floating,),
     sample_input_generator=elementwise_unary_generator,
-    error_input_generator=selu_error_generator,
     torch_reference=_elementwise_unary_torch(torch.selu),
     test_directives=(
         # Some versions of PyTorch do not support CPU float16 selu
@@ -5961,11 +5931,14 @@ def normalize_sample_generator(op, device, dtype, requires_grad, **kwargs):
         (4, 2, 4, 5),
     )
     for case in cases:
-        yield SampleInput(make(case), eps=1e-8)
-        yield SampleInput(make(case), p=0, eps=1e-8)
-        yield SampleInput(make(case), p=1, eps=1e-8)
-        yield SampleInput(make(case), p=4, eps=1e-8)
-        yield SampleInput(make(case), p=math.inf, eps=1e-8)
+        input_tensor = make(case)
+        # avoid very small norm tensors, which can be unstable to normalize
+        input_tensor = input_tensor + 0.2 * torch.sign(input_tensor)
+        yield SampleInput(input_tensor, eps=1e-8)
+        yield SampleInput(input_tensor, p=0, eps=1e-8)
+        yield SampleInput(input_tensor, p=1, eps=1e-8)
+        yield SampleInput(input_tensor, p=4, eps=1e-8)
+        yield SampleInput(input_tensor, p=math.inf, eps=1e-8)
 
 
 normalize_opinfo = OpInfo(
@@ -7907,15 +7880,6 @@ grad_sdpa_opinfo = OpInfo(
     # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention' with arguments from the 'CPU' backend.
     # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention_backward' with arguments from the 'CPU' backend
     devicetypes=(devices.DeviceType.CUDA,),
-    test_directives=(
-        DecorateInfo(
-            pytest.mark.skip(reason="https://github.com/Lightning-AI/lightning-thunder/issues/567"),
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.bfloat16, datatypes.float16, datatypes.float32),
-            devicetypes=(devices.DeviceType.CUDA,),
-            active_if=version_between(torch.__version__, min_ver="2.4.0a0", max_ver="2.4.0a99"),
-        ),
-    ),
 )
 nn_ops.append(grad_sdpa_opinfo)
 
