@@ -10,6 +10,7 @@ import functools
 from functools import partial
 import dis
 import linecache
+import dataclasses
 
 import torch
 
@@ -58,6 +59,17 @@ def is_simple_printable_collection(x: Any) -> bool:
     )
 
     return type(x) in simple_printable_collection_types
+
+
+def _generate_dataclass_class_name(x: object):
+    # x is an instance of a Dataclass.
+    # We generate a name for the Dataclass based on the package name and class name so that trace won't have problem
+    # if there are conflicting names.
+    assert dataclasses.is_dataclass(x)
+    name = (x.__class__.__module__ + "_" + x.__class__.__qualname__).replace(".", "_")
+    # Class could be a local class in which case it will have `<locals>` in it's module name.
+    name = name.replace(">", "_").replace("<", "_")
+    return name
 
 
 def is_printable(x: Any) -> tuple[bool, None | tuple[str, Any]]:
@@ -129,6 +141,12 @@ def to_printable(
 
         printable = tree_unflatten(printables, spec)
         return printable
+
+    if dataclasses.is_dataclass(x):
+        # Add `class` to the object_ctx so that we can reuse it during the trace execution.
+        object_ctx[_generate_dataclass_class_name(x)] = x.__class__
+        # Return the instance as printable object (as function `prettyprint` knows how to deal with it).
+        return x
 
     # NOTE In this case the object is not a collection, and
     #   it may require an import or additional context to print
@@ -214,6 +232,23 @@ def prettyprint(
         return m(f'devices.Device("{str(x)}")')
     if type(x) is type:
         return m(f"{baseutils.print_type(x, with_quotes=False)}")
+    if dataclasses.is_dataclass(x):
+        # For a dataclass instance of class
+        # class MyContainer:
+        #    int i
+        #    float f
+        # This will be represented in the trace as `packagename1_MyContainer(i=x, f=y)` where `x` and `y` could be concrete number
+        # or proxies.
+        #
+        # NOTE: The `class` packagename1_MyContainer will present in `import_ctx` and passed to the compiled function.
+        # This is taken care of by function `to_printable`.
+        name = _generate_dataclass_class_name(x)
+        instance_repr = str(x)
+        parens_idx = instance_repr.find("(")
+        call_repr = instance_repr[
+            parens_idx:
+        ]  # only keep the construction part of the repr (as we will use our generated name)
+        return m(f"{name + call_repr}")
 
     # Handles objects that this doesn't know how to serialize as a string
     return m(f"(object of type {print_type(type(x), with_quotes=False)})")

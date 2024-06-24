@@ -2,6 +2,7 @@ import operator
 import traceback
 from functools import partial, reduce
 from itertools import product
+import dataclasses
 
 import pytest
 import torch
@@ -2751,3 +2752,70 @@ def test_grad_ctx():
     # `torch.no_grad` has no effect on thunder's autodiff which determines whether to compute grad based on `requires_grad=True`.
     # Thus when backward is called it computes grad for the input.
     assert x.grad is not None
+
+
+@pytest.mark.parametrize("requires_grad", (True, False))
+def test_dataclass_output(requires_grad):
+    # Test both `requires_grad={True, False}` as both have
+    # different code path.
+    @dataclasses.dataclass
+    class TestDataclass:
+        t: torch.Tensor
+        s: torch.Tensor
+        i: int
+        f: float
+
+    def foo(x):
+        # TestDataClass as the output and part of the nested output.
+        return TestDataclass(x, x + 2, x.numel(), x.numel() / 2.0), (
+            TestDataclass(x, x + 2, x.numel(), x.numel() / 2.0),
+            {"x": x, "y": x + 3},
+        )
+
+    jfoo = thunder.jit(foo)
+
+    x = torch.randn(3, 3, requires_grad=requires_grad)
+    x_jit = x.detach().clone()
+    x_jit.requires_grad_(requires_grad)
+
+    actual_container, actual_tuple = jfoo(x_jit)
+    expected_container, expected_tuple = foo(x)
+
+    def _test_container(actual_container, expected_container):
+        assert dataclasses.is_dataclass(actual_container)
+        assert isinstance(actual_container, TestDataclass)
+        torch.testing.assert_close(actual_container.t, expected_container.t)
+        torch.testing.assert_close(actual_container.s, expected_container.s)
+        torch.testing.assert_close(actual_container.i, expected_container.i)
+        torch.testing.assert_close(actual_container.f, expected_container.f)
+
+    _test_container(actual_container, expected_container)
+    _test_container(actual_tuple[0], expected_tuple[0])
+    torch.testing.assert_close(actual_tuple[1], expected_tuple[1])
+
+    if requires_grad:
+        # Test computing grad
+        cotangent = torch.randn_like(expected_container.t)
+        (actual_container.t + actual_tuple[0].s).backward(cotangent)
+        (expected_container.t + expected_tuple[0].s).backward(cotangent)
+        torch.testing.assert_close(x.grad, x_jit.grad)
+
+
+@pytest.mark.parametrize("requires_grad", (True, False))
+def test_dataclass_input(requires_grad):
+    @dataclasses.dataclass
+    class TestDataclass:
+        t: torch.Tensor
+        s: torch.Tensor
+
+    def foo(x):
+        return x.t + x.s
+
+    jfoo = thunder.jit(foo)
+
+    t = torch.randn(3, 3, requires_grad=requires_grad)
+    s = torch.randn(3, 3, requires_grad=requires_grad)
+    actual = jfoo(TestDataclass(t, s))
+    expected = foo(TestDataclass(t, s))
+
+    torch.testing.assert_close(actual, expected)
