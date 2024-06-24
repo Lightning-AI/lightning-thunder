@@ -18,7 +18,7 @@ import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable, Positions
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
 from thunder.core.utils import FrozenDict, make_hashable
-from thunder.core.pytree import tree_flatten_with_dataclass, tree_unflatten, tree_map
+from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 from thunder.core.proxies import Proxy, NumberProxy, variableify, CollectionProxy
@@ -393,7 +393,7 @@ class BoundSymbol(BoundSymbolInterface):
             return self
 
         def swap(c):
-            flats, spec = tree_flatten_with_dataclass(c)
+            flats, spec = tree_flatten(c)
 
             swapped = []
             for fa in flats:
@@ -435,7 +435,7 @@ class BoundSymbol(BoundSymbolInterface):
 
     @functools.cached_property
     def flat_args_and_spec(self):
-        return tree_flatten_with_dataclass((self.args, self.kwargs))
+        return tree_flatten((self.args, self.kwargs))
 
     @functools.cached_property
     def flat_args(self):
@@ -461,7 +461,7 @@ class BoundSymbol(BoundSymbolInterface):
 
     @functools.cached_property
     def flat_outs_and_spec(self):
-        return tree_flatten_with_dataclass(self.output)
+        return tree_flatten(self.output)
 
     @functools.cached_property
     def flat_outs(self):

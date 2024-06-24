@@ -677,9 +677,8 @@ def jit(
             )
             result = data_for_autograd["output"]
 
-        if cache_entry.epilogue_fn:
-            result, comp_to_epi = result
-            cache_entry.epilogue_fn(*pro_to_epi, *comp_to_epi)
+        comp_to_epi = result
+        result = cache_entry.epilogue_fn(*pro_to_epi, *comp_to_epi)
 
         cs.last_trace_host_execution_stop = time.time_ns()
         cs.last_computation_execution_stop = cs.last_trace_host_execution_stop

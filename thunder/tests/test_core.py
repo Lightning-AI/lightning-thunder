@@ -2762,20 +2762,28 @@ def test_dataclass_output():
         f: float
 
     def foo(x):
-        return TestDataclass(x, x + 2, x.numel(), x.numel() / 2.0)
+        return TestDataclass(x, x + 2, x.numel(), x.numel() / 2.0), (
+            TestDataclass(x, x + 2, x.numel(), x.numel() / 2.0),
+            {"x": x, "y": x + 3},
+        )
 
     jfoo = thunder.jit(foo)
 
     x = torch.randn(3, 3)
-    actual = jfoo(x)
-    expected = foo(x)
+    actual_container, actual_tuple = jfoo(x)
+    expected_container, expected_tuple = foo(x)
 
-    assert dataclasses.is_dataclass(actual)
-    assert isinstance(actual, TestDataclass)
-    torch.testing.assert_close(actual.t, expected.t)
-    torch.testing.assert_close(actual.s, expected.s)
-    torch.testing.assert_close(actual.i, expected.i)
-    torch.testing.assert_close(actual.f, expected.f)
+    def _test_container(actual_container, expected_container):
+        assert dataclasses.is_dataclass(actual_container)
+        assert isinstance(actual_container, TestDataclass)
+        torch.testing.assert_close(actual_container.t, expected_container.t)
+        torch.testing.assert_close(actual_container.s, expected_container.s)
+        torch.testing.assert_close(actual_container.i, expected_container.i)
+        torch.testing.assert_close(actual_container.f, expected_container.f)
+
+    _test_container(actual_container, expected_container)
+    _test_container(actual_tuple[0], expected_tuple[0])
+    torch.testing.assert_close(actual_tuple[1], expected_tuple[1])
 
 
 def test_dataclass_input():
