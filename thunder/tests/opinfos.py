@@ -556,6 +556,15 @@ def _elementwise_unary_torch(op):
 #
 tensor_properties: list[OpInfo] = []
 
+is_complex_opinfo = OpInfo(
+    ltorch.is_complex,
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.is_complex),
+    dtypes=(datatypes.all_dtypes),
+)
+
+tensor_properties.append(is_complex_opinfo)
+
 
 def _is_cuda_torch(x: torch.Tensor) -> bool:
     return x.is_cuda
