@@ -211,6 +211,16 @@ def numel(a: TensorLike, /) -> int:
 register_method("numel", numel)
 
 
+@torchsymbol(torch.Tensor.is_complex, is_property=True, id="torch.is_complex")
+def is_complex(a: TensorLike, /) -> bool:
+    return dtypes.is_complex_dtype(a.dtype)
+
+
+_torch_to_thunder_function_map[torch.is_complex] = is_complex
+_torch_to_thunder_function_map[torch.Tensor.is_complex] = is_complex
+register_method("is_complex", is_complex)
+
+
 @torchsymbol(torch.Tensor.is_cuda, is_property=True, id="torch.is_cuda")
 def is_cuda(a: TensorLike, /) -> bool:
     return a.device.devicetype is devices.DeviceType.CUDA
