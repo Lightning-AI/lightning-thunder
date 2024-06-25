@@ -77,10 +77,9 @@ def grad_scaled_dot_product_attention_reference_generator(op, device, dtype, req
     yield SampleInput(q, k, v, bool_attn_mask, is_causal=False)
 
     # non-contiguous with stride 0 cases
-    # Possible bug in cudnn where 0-stride for seq len gives mismatches for Q and V.
     q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
     q_broadcast = torch.as_strided(q, size=q.shape, stride=(0, 0, E, 1))
-    k_broadcast = torch.as_strided(k, size=k.shape, stride=(0, 0, 0, 1))
+    k_broadcast = torch.as_strided(k, size=k.shape, stride=(0, 0, E, 1))
     v_broadcast = torch.as_strided(v, size=v.shape, stride=(0, 0, Ev, 1))
     yield SampleInput(q_broadcast, k_broadcast, v_broadcast, None, dropout_p=0.0, is_causal=True)
 
