@@ -244,6 +244,12 @@ def sort_allgathers(execution_trace):
                     if producers[node.bsym.flat_proxy_args[0]].sym.id == all_gather_prim_impl.id:
                         return len(order_in_trace)
                     return order_in_trace[node.bsym]
+                case unpack_for_fsdp_prim_impl.id:
+                    if producers[node.bsym.flat_proxy_args[0]].sym.id == wait_prim_impl.id:
+                        waitop = producers[node.bsym.flat_proxy_args[0]]
+                        if producers[waitop.flat_proxy_args[0]].sym.id == all_gather_prim_impl.id:
+                            return len(order_in_trace)
+                    return order_in_trace[node.bsym]
                 case all_gather_prim_impl.id:
                     return len(order_in_trace) + order_in_trace[node.bsym]
                 case _:
@@ -283,6 +289,7 @@ def sort_reduce_ops(execution_trace):
         reduce_scatter_prim_impl,
         all_reduce_prim_impl,
         all_gather_prim_impl,
+        pack_for_fsdp_prim_impl,
     )
     from thunder.core import utils
 
@@ -306,6 +313,16 @@ def sort_reduce_ops(execution_trace):
                 case reduce_scatter_prim_impl.id | all_reduce_prim_impl.id:
                     # Prefer larger communication ops over smaller ones
                     return -node.bsym.args[0].numel
+                case pack_for_fsdp_prim_impl.id:
+                    pack_consumer = consumers.get(node.bsym.flat_proxy_outs[0], None)
+                    check(
+                        pack_consumer is not None and len(pack_consumer) == 1,
+                        lambda: f"Pack operator should have one consumer",
+                    )
+                    # Prefer larger communication ops over smaller ones
+                    if pack_consumer[0].sym.id in (reduce_scatter_prim_impl.id, all_reduce_prim_impl.id):
+                        return -node.bsym.flat_proxy_outs[0].numel
+                    return order_in_trace[node.bsym]
                 case _:
                     # Prefer nodes that are earlier in the trace
                     return order_in_trace[node.bsym]

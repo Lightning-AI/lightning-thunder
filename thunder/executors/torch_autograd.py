@@ -233,8 +233,8 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
                 3,
                 compile_data.fn.bucketing_strategy != FSDPBucketingStrategy.NONE,
             )
-            bw_extrace = sort_reduce_ops(bw_extrace)
             bw_extrace = sort_allgathers(bw_extrace)
+            bw_extrace = sort_reduce_ops(bw_extrace)
             bw_extrace = limit_in_flight_allgathers(
                 bw_extrace,
                 3,
