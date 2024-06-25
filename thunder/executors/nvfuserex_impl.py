@@ -751,6 +751,10 @@ class nvFuserExecutor(FusionExecutor):
     # TODO Restore fusion logic here -- this just replaces supported operations in isolation at the moment
     def fusion_pass(self, trace: TraceCtx) -> TraceCtx:
         start_time_ns: int = time.time_ns()
+        # Replace uniform with uniform_philox and rng state operators for better rematerialization
+        from thunder.core.rematerialization import replace_uniform
+
+        trace = replace_uniform(trace)
 
         fusedtrace: TraceCtx = from_trace(trace)
 

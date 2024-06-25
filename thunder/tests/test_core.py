@@ -2,6 +2,7 @@ import operator
 import traceback
 from functools import partial, reduce
 from itertools import product
+import dataclasses
 
 import pytest
 import torch
@@ -1300,7 +1301,7 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
     def extract_bsyms(fn, args, ops):
         return [b for b in compile_bsyms(fn, args) if b.sym.name in ops]
 
-    # We want .rhs() for a * b and torch.mul() to hash and compare
+    # We want .rhs for a * b and torch.mul() to hash and compare
     # the same for writing the CSE pass.
     def mul_rhs(a, b):
         c = a + b
@@ -1309,8 +1310,8 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
         return c, d, e
 
     bsyms = extract_bsyms(mul_rhs, (a, b), ("mul",))
-    all_eq([hash(b.rhs()) for b in bsyms])
-    all_eq([b.rhs() for b in bsyms])
+    all_eq([hash(b.rhs) for b in bsyms])
+    all_eq([b.rhs for b in bsyms])
 
     # The current way BoundSymbols are compared treats args and kwargs the same,
     # so the same semantic call can be considered 'equal' if the arguments are
@@ -1321,8 +1322,8 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
         return c, d
 
     bsyms = extract_bsyms(mul_rhs_kwargs, (a, b), ("mul",))
-    all_eq([hash(b.rhs()) for b in bsyms])
-    all_eq([b.rhs() for b in bsyms])
+    all_eq([hash(b.rhs) for b in bsyms])
+    all_eq([b.rhs for b in bsyms])
 
     # Also make sure the symbols are the same.
     all_eq([b.sym for b in bsyms])
@@ -1335,8 +1336,8 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
         return a + b
 
     bsyms = extract_bsyms(same_kwargs, (device, dtype), ("full",))
-    all_eq([hash(b.rhs()) for b in bsyms])
-    all_eq([b.rhs() for b in bsyms])
+    all_eq([hash(b.rhs) for b in bsyms])
+    all_eq([b.rhs for b in bsyms])
 
     # The symbols should be the same.
     all_eq([b.sym for b in bsyms])
@@ -1350,8 +1351,8 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
         return a, b, c
 
     bsyms = extract_bsyms(diff_kwargs, (device, dtype), ("full",))
-    all_neq([hash(b.rhs()) for b in bsyms])
-    all_neq([b.rhs() for b in bsyms])
+    all_neq([hash(b.rhs) for b in bsyms])
+    all_neq([b.rhs for b in bsyms])
 
     # Assert that boundsymbols for different ops hash/compare differently.
     def different_ops(a, b):
@@ -1362,10 +1363,10 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
     c, d = extract_bsyms(different_ops, (a, b), ("add", "sub"))
     assert hash(c.sym) != hash(d.sym)
     assert hash(c) != hash(d)
-    assert hash(c.rhs()) != hash(d.rhs())
+    assert hash(c.rhs) != hash(d.rhs)
     assert c.sym != d.sym
     assert c != d
-    assert c.rhs() != d.rhs()
+    assert c.rhs != d.rhs
 
 
 # @instantiate(dtypes=NOTHING)
@@ -2121,7 +2122,8 @@ def test_inplace(executor, device, _):
 
     for t in tests:
         cfn = thunder.jit(t)
-        with pytest.raises(RuntimeError, match="not supported"):
+        # Some ops of `tests` already have in-place supported, leading to broadcast error
+        with pytest.raises(RuntimeError, match="not supported|Attempting"):
             cfn(t1, t2)
         # Note: Python maps inplace operations on (immutuables) to
         #       out of place operations, NumberProxy does this, too.
@@ -2726,3 +2728,94 @@ def test_torch_device():
     for inp, err in error_inputs:
         with pytest.raises(err):
             thunder.jit(foo_error)(inp)
+
+
+def test_grad_ctx():
+    @torch.enable_grad()
+    def foo1(x):
+        return x + 1
+
+    x = torch.randn(3, 3, requires_grad=True)
+    with pytest.warns(UserWarning, match="have no effect under thunder.jit"):
+        thunder.jit(foo1)(x).sum().backward()
+
+    assert x.grad is not None
+
+    @torch.no_grad()
+    def foo2(x):
+        return x + 1
+
+    x = torch.randn(3, 3, requires_grad=True)
+    with pytest.warns(UserWarning, match="have no effect under thunder.jit"):
+        thunder.jit(foo2)(x).sum().backward()
+
+    # `torch.no_grad` has no effect on thunder's autodiff which determines whether to compute grad based on `requires_grad=True`.
+    # Thus when backward is called it computes grad for the input.
+    assert x.grad is not None
+
+
+@pytest.mark.parametrize("requires_grad", (True, False))
+def test_dataclass_output(requires_grad):
+    # Test both `requires_grad={True, False}` as both have
+    # different code path.
+    @dataclasses.dataclass
+    class TestDataclass:
+        t: torch.Tensor
+        s: torch.Tensor
+        i: int
+        f: float
+
+    def foo(x):
+        # TestDataClass as the output and part of the nested output.
+        return TestDataclass(x, x + 2, x.numel(), x.numel() / 2.0), (
+            TestDataclass(x, x + 2, x.numel(), x.numel() / 2.0),
+            {"x": x, "y": x + 3},
+        )
+
+    jfoo = thunder.jit(foo)
+
+    x = torch.randn(3, 3, requires_grad=requires_grad)
+    x_jit = x.detach().clone()
+    x_jit.requires_grad_(requires_grad)
+
+    actual_container, actual_tuple = jfoo(x_jit)
+    expected_container, expected_tuple = foo(x)
+
+    def _test_container(actual_container, expected_container):
+        assert dataclasses.is_dataclass(actual_container)
+        assert isinstance(actual_container, TestDataclass)
+        torch.testing.assert_close(actual_container.t, expected_container.t)
+        torch.testing.assert_close(actual_container.s, expected_container.s)
+        torch.testing.assert_close(actual_container.i, expected_container.i)
+        torch.testing.assert_close(actual_container.f, expected_container.f)
+
+    _test_container(actual_container, expected_container)
+    _test_container(actual_tuple[0], expected_tuple[0])
+    torch.testing.assert_close(actual_tuple[1], expected_tuple[1])
+
+    if requires_grad:
+        # Test computing grad
+        cotangent = torch.randn_like(expected_container.t)
+        (actual_container.t + actual_tuple[0].s).backward(cotangent)
+        (expected_container.t + expected_tuple[0].s).backward(cotangent)
+        torch.testing.assert_close(x.grad, x_jit.grad)
+
+
+@pytest.mark.parametrize("requires_grad", (True, False))
+def test_dataclass_input(requires_grad):
+    @dataclasses.dataclass
+    class TestDataclass:
+        t: torch.Tensor
+        s: torch.Tensor
+
+    def foo(x):
+        return x.t + x.s
+
+    jfoo = thunder.jit(foo)
+
+    t = torch.randn(3, 3, requires_grad=requires_grad)
+    s = torch.randn(3, 3, requires_grad=requires_grad)
+    actual = jfoo(TestDataclass(t, s))
+    expected = foo(TestDataclass(t, s))
+
+    torch.testing.assert_close(actual, expected)
