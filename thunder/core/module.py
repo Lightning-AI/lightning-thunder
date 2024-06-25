@@ -43,7 +43,7 @@ class ThunderModule(pytorch.nn.Module):
         return self._model.get_buffer(name)
 
     def set_buffer(self, name, value):
-        p = self._overrides_buffers[name] = value
+        self._overrides_buffers[name] = value
 
     def get_parameter(self, name):
         p = self._overrides_parameters.get(name, self._null)
@@ -117,7 +117,7 @@ class ThunderModule(pytorch.nn.Module):
                 full_k = prefix + k
                 if k in self._overrides_parameters:
                     self._overrides_parameters[full_k] = v
-                elif k in model._overrides_buffers:
+                elif k in self._overrides_buffers:
                     self._overrides_buffers[full_k] = v
                 else:
                     raise NotImplementedError(f"don't know how to handle {full_k}")

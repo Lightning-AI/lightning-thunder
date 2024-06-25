@@ -970,3 +970,24 @@ def test_cache_symbolic_values_torch_device():
     actual = jfoo("cuda", 0)
 
     assert_close(expected, actual)
+
+
+def test_load_original_state_dict():
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.register_parameter("param", torch.nn.Parameter(torch.randn(3)))
+            self.register_buffer("buffer", torch.randn(3))
+
+        def forward(self, x):
+            return x
+
+    m = Model()
+
+    thunder_module = thunder.jit(Model())
+    thunder_module.load_original_state_dict(m.state_dict())
+
+    # Check the updated values
+    # We can't directly compare state_dict - https://github.com/Lightning-AI/lightning-thunder/issues/647
+    torch.testing.assert_close(thunder_module._overrides_parameters["param"], m.param)
+    torch.testing.assert_close(thunder_module._overrides_buffers["buffer"], m.buffer)
