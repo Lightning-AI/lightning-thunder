@@ -53,8 +53,8 @@ def test_make_callable_from_trace(executor, device: str, dtype: dtypes.dtype):
     def foo(a, b):
         return a + b
 
-    a = make_tensor((2, 2), device=device, dtype=torch.float32)
-    b = make_tensor((2, 2), device=device, dtype=torch.float32)
+    a = make_tensor((2, 2), device=device.type, dtype=torch.float32)
+    b = make_tensor((2, 2), device=device.type, dtype=torch.float32)
     traced_foo = thunder.trace(inline_trace=False)(foo, a, b)
     assert len(traced_foo.bound_symbols) == 4
     assert traced_foo.bound_symbols[-2].sym.name == "add"
@@ -95,9 +95,9 @@ def test_integer_isinstance_mimicry(executor, device: str, dtype: dtypes.dtype):
     traced_foo = executor.make_callable(foo)
 
     tdtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 1), device=device, dtype=tdtype)
-    b = make_tensor((2, 2), device=device, dtype=tdtype)
-    c = make_tensor((1, 2), device=device, dtype=tdtype)
+    a = make_tensor((2, 1), device=device.type, dtype=tdtype)
+    b = make_tensor((2, 2), device=device.type, dtype=tdtype)
+    c = make_tensor((1, 2), device=device.type, dtype=tdtype)
 
     thunder_result = traced_foo(a, b, c)
     torch_result = b + c
@@ -190,9 +190,9 @@ def test_crazy_collections_in_and_out(executor, device, dtype):
     traced_foo = executor.make_callable(foo)
     tdtype = ltorch.to_torch_dtype(dtype)
 
-    a = make_tensor((2,), device=device, dtype=tdtype)
-    b = make_tensor((2, 2, 2), device=device, dtype=tdtype)
-    c = make_tensor((2, 2), device=device, dtype=tdtype)
+    a = make_tensor((2,), device=device.type, dtype=tdtype)
+    b = make_tensor((2, 2, 2), device=device.type, dtype=tdtype)
+    c = make_tensor((2, 2), device=device.type, dtype=tdtype)
 
     args = ({"a": {"a": a}}, (b, c), (3, {"c": c}))
     kwargs = {"ka": b, "kb": 3.0, "kc": (a, 2)}
@@ -210,7 +210,7 @@ def test_nested_empty_tuple_unpack(executor, device, dtype):
     cfoo = executor.make_callable(foo)
     torch_dtype = ltorch.to_torch_dtype(dtype)
 
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    a = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
 
     inp = {
         0: (
@@ -235,7 +235,7 @@ def test_varargs(executor, device, dtype):
     traced_foo = executor.make_callable(foo)
     tdtype = ltorch.to_torch_dtype(dtype)
 
-    a = make_tensor((2,), device=device, dtype=tdtype)
+    a = make_tensor((2,), device=device.type, dtype=tdtype)
     packed = (a, a, a, a, a)
 
     thunder_result = traced_foo(*packed)
@@ -252,8 +252,8 @@ def test_kwargs(executor, device, dtype):
     traced_foo = executor.make_callable(foo)
     tdtype = ltorch.to_torch_dtype(dtype)
 
-    a = make_tensor((2,), device=device, dtype=tdtype)
-    b = make_tensor((2,), device=device, dtype=tdtype)
+    a = make_tensor((2,), device=device.type, dtype=tdtype)
+    b = make_tensor((2,), device=device.type, dtype=tdtype)
 
     thunder_result = traced_foo(a=a, b=b)
     torch_result = foo(a=a, b=b)
@@ -275,13 +275,13 @@ def test_varargs_and_kwargs(executor, device, dtype):
     traced_foo = executor.make_callable(foo)
     tdtype = ltorch.to_torch_dtype(dtype)
 
-    a = make_tensor((2,), device=device, dtype=tdtype)
-    b = make_tensor((2, 2, 2), device=device, dtype=tdtype)
-    c = make_tensor((2, 2), device=device, dtype=tdtype)
-    d = make_tensor((2,), device=device, dtype=tdtype)
-    e = make_tensor((2,), device=device, dtype=tdtype)
-    f = make_tensor((2,), device=device, dtype=tdtype)
-    g = make_tensor((2,), device=device, dtype=tdtype)
+    a = make_tensor((2,), device=device.type, dtype=tdtype)
+    b = make_tensor((2, 2, 2), device=device.type, dtype=tdtype)
+    c = make_tensor((2, 2), device=device.type, dtype=tdtype)
+    d = make_tensor((2,), device=device.type, dtype=tdtype)
+    e = make_tensor((2,), device=device.type, dtype=tdtype)
+    f = make_tensor((2,), device=device.type, dtype=tdtype)
+    g = make_tensor((2,), device=device.type, dtype=tdtype)
 
     thunder_result = traced_foo(a, b, c, d, e=e, f=f, g=g)
     torch_result = foo(a, b, c, d, e=e, f=f, g=g)
@@ -298,8 +298,8 @@ def test_no_return(executor, device, dtype):
     traced_foo = executor.make_callable(foo)
     tdtype = ltorch.to_torch_dtype(dtype)
 
-    a = make_tensor((2,), device=device, dtype=tdtype)
-    b = make_tensor((2, 2, 2), device=device, dtype=tdtype)
+    a = make_tensor((2,), device=device.type, dtype=tdtype)
+    b = make_tensor((2, 2, 2), device=device.type, dtype=tdtype)
 
     thunder_result = traced_foo(a, b=b)
     torch_result = foo(a, b)
@@ -328,8 +328,8 @@ def test_no_compute(executor, device, dtype):
     traced_foo = executor.make_callable(foo)
     tdtype = ltorch.to_torch_dtype(dtype)
 
-    a = make_tensor((2,), device=device, dtype=tdtype)
-    b = make_tensor((2, 2, 2), device=device, dtype=tdtype)
+    a = make_tensor((2,), device=device.type, dtype=tdtype)
+    b = make_tensor((2, 2, 2), device=device.type, dtype=tdtype)
 
     thunder_result = traced_foo(a, b=b)
     torch_result = foo(a, b)
@@ -369,7 +369,7 @@ def test_objects_in_and_out(executor, device, dtype):
 
 @instantiate(dtypes=(thunder.float32,))
 def test_devices_in_and_out(executor, device, dtype):
-    dev = thunder.devices.Device(device)
+    dev = device
 
     def foo(a, dev=dev):
         return a, dev
@@ -414,8 +414,8 @@ def test_partial_args(executor, device, dtype):
         return a + b
 
     torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    a = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
+    b = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
 
     pfoo = partial(foo, a)
 
@@ -436,7 +436,7 @@ def test_constant_creation(executor, device, dtype):
     cfoo = thunder.jit(foo, executors=executor.executors_list())
 
     torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    a = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
 
     lc_result = cfoo(a)
     python_result = py_foo(a)
@@ -540,11 +540,11 @@ def test_type_promotion_tensors(executor, device, _):
 
     traced_foo = executor.make_callable(foo)
 
-    b1 = make_tensor((2, 2), device=device, dtype=torch.bool)
-    i64 = make_tensor((2, 2), device=device, dtype=torch.int64)
-    bf16 = make_tensor((2, 2), device=device, dtype=torch.bfloat16)
-    f16 = make_tensor((2, 2), device=device, dtype=torch.float16)
-    f32 = make_tensor((2, 2), device=device, dtype=torch.float32)
+    b1 = make_tensor((2, 2), device=device.type, dtype=torch.bool)
+    i64 = make_tensor((2, 2), device=device.type, dtype=torch.int64)
+    bf16 = make_tensor((2, 2), device=device.type, dtype=torch.bfloat16)
+    f16 = make_tensor((2, 2), device=device.type, dtype=torch.float16)
+    f32 = make_tensor((2, 2), device=device.type, dtype=torch.float32)
 
     # float16 x float16 type promotion -- float16 result dtype
     result = traced_foo(f16, f16)
@@ -599,9 +599,9 @@ def test_type_promotion_numbers_and_tensors(executor, device, _):
 
     cfoo = executor.make_callable(foo)
 
-    f16 = make_tensor((2, 2), device=device, dtype=torch.float16)
-    f32 = make_tensor((2, 2), device=device, dtype=torch.float32)
-    i64 = make_tensor((2, 2), device=device, dtype=torch.int64)
+    f16 = make_tensor((2, 2), device=device.type, dtype=torch.float16)
+    f32 = make_tensor((2, 2), device=device.type, dtype=torch.float32)
+    i64 = make_tensor((2, 2), device=device.type, dtype=torch.int64)
 
     result = cfoo(5, f32, 2)
     assert result.dtype is torch.float32
@@ -623,8 +623,8 @@ def test_int_to_float_type_promotion(executor, device, _):
 
     cfoo = executor.make_callable(foo)
 
-    i64 = make_tensor((2, 2), device=device, dtype=torch.int64)
-    f16 = make_tensor((2, 2), device=device, dtype=torch.float16)
+    i64 = make_tensor((2, 2), device=device.type, dtype=torch.int64)
+    f16 = make_tensor((2, 2), device=device.type, dtype=torch.float16)
 
     # int64 x int64 -- float32 result dtype
     result = cfoo(i64, i64)
@@ -651,11 +651,11 @@ def test_int_to_float_type_promotion(executor, device, _):
 @instantiate(dtypes=(thunder.float32,))
 def test_static_caching(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    c = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    d = make_tensor((2, 1), device=device, dtype=torch_dtype)
-    e = make_tensor((2, 2), device=device, dtype=torch.bool)
+    a = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
+    b = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
+    c = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
+    d = make_tensor((2, 1), device=device.type, dtype=torch_dtype)
+    e = make_tensor((2, 2), device=device.type, dtype=torch.bool)
 
     for jit in (thunder.functional.jit, thunder.jit):
 
@@ -762,10 +762,10 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
     # assert cache_hits(cbar) == 2
 
     # Module tests
-    m = torch.nn.Linear(5, 5, device=device, dtype=torch_dtype)
+    m = torch.nn.Linear(5, 5, device=device.type, dtype=torch_dtype)
     cm = thunder.jit(m, cache_mode="constant values")
 
-    inp = make_tensor((5, 5), device=device, dtype=torch_dtype)
+    inp = make_tensor((5, 5), device=device.type, dtype=torch_dtype)
 
     result = cm(inp)
     torch_result = m(inp)
@@ -786,7 +786,7 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
     assert cache_hits(cm) == 1
 
     # Different input, same metadata -- cache hit
-    inp = make_tensor((5, 5), device=device, dtype=torch_dtype)
+    inp = make_tensor((5, 5), device=device.type, dtype=torch_dtype)
     result = cm(inp)
     torch_result = m(inp)
 
@@ -796,7 +796,7 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
     assert cache_hits(cm) == 2
 
     # Different input, different metadata -- cache miss
-    inp = make_tensor((6, 5), device=device, dtype=torch_dtype)
+    inp = make_tensor((6, 5), device=device.type, dtype=torch_dtype)
     result = cm(inp)
     torch_result = m(inp)
 
@@ -902,7 +902,7 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
 @instantiate(dtypes=(thunder.float32,))
 def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype):
     tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
-    make = partial(make_tensor, device=device, dtype=tdtype, requires_grad=False)
+    make = partial(make_tensor, device=device.type, dtype=tdtype, requires_grad=False)
 
     a = make((2, 2))
     b = make((2, 2))
@@ -969,7 +969,7 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
 @instantiate(dtypes=(thunder.float32,))
 def test_partial_results(executor: TestExecutor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    a = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
 
     def foo(a):
         a, b = torch.var_mean(a)
@@ -1134,7 +1134,7 @@ def test_normalized_args_prims_sum(executor, device: str, dtype: dtypes.dtype):
     # has its positional and keyword arguments normalized to the same form.
     # See issue "vmap of sum doesn't work when dims are passed as a keyword
     # argument"
-    a = make_tensor((2, 2), device=device, dtype=ltorch.to_torch_dtype(dtype))
+    a = make_tensor((2, 2), device=device.type, dtype=ltorch.to_torch_dtype(dtype))
 
     def func_dim_posarg(x):
         return prims.sum(x, (0, 1))
@@ -1185,7 +1185,7 @@ def test_bound_symbol_header(executor, device: str, dtype: dtypes.dtype):
     def foo(x):
         return clang.sin(x)
 
-    a = make_tensor((2, 2), device=device, dtype=ltorch.to_torch_dtype(dtype))
+    a = make_tensor((2, 2), device=device.type, dtype=ltorch.to_torch_dtype(dtype))
     trace = thunder.trace()(foo, a)
 
     assert len(trace.bound_symbols) == 3
@@ -1210,7 +1210,7 @@ def test_bound_symbol_header_context(executor, device: str, dtype: dtypes.dtype)
     def foo(x):
         return clang.sin(x)
 
-    a = make_tensor((2, 2), device=device, dtype=ltorch.to_torch_dtype(dtype))
+    a = make_tensor((2, 2), device=device.type, dtype=ltorch.to_torch_dtype(dtype))
 
     header = "Testing\nThis symbol's\nHeader"
     with bsym_header(header):
@@ -1234,7 +1234,7 @@ def test_argument_of_none(executor, device, dtype):
         return x + y
 
     tdtype = ltorch.to_torch_dtype(dtype)
-    a, b = (make_tensor((1,), device=device, dtype=tdtype) for _ in range(2))
+    a, b = (make_tensor((1,), device=device.type, dtype=tdtype) for _ in range(2))
     c = None
     trace = thunder.trace()(foo, a, b, c)
 
@@ -1251,7 +1251,7 @@ def test_torch_call_recording(executor, device: str, _):
     def func(a):
         return ltorch.dropout(a)
 
-    a = make_tensor((2, 3), device=device, dtype=torch.float32)
+    a = make_tensor((2, 3), device=device.type, dtype=torch.float32)
 
     torch_trace = thunder.trace()(func, a)
     assert len(torch_trace.bound_symbols) == 3
@@ -1285,8 +1285,8 @@ def all_neq(l):
 def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
 
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    a = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
+    b = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
 
     # Returns the bound symbols for a function and args.
     def compile_bsyms(fn, args):
@@ -1334,8 +1334,8 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
     # TODO: We also currently cannot assert that the right hand side of
     #       identical operators with kwargs are equal.
     def same_kwargs(device, dtype):
-        a = ltorch.full((2, 2), 5, device=device, dtype=dtype)
-        b = ltorch.full((2, 2), 5, device=device, dtype=dtype)
+        a = ltorch.full((2, 2), 5, device=device.type, dtype=dtype)
+        b = ltorch.full((2, 2), 5, device=device.type, dtype=dtype)
         return a + b
 
     # Assert the current behavior.
@@ -1351,9 +1351,9 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
     # We can, however, know when the number of kwargs are different,
     # or the args are different.
     def diff_kwargs(device, dtype):
-        a = ltorch.full((1, 2), 2, device=device, dtype=dtype)
-        b = ltorch.full((2, 3), 5, device=device, dtype=dtype)
-        c = ltorch.full((2, 3), 5, device=device)
+        a = ltorch.full((1, 2), 2, device=device.type, dtype=dtype)
+        b = ltorch.full((2, 3), 5, device=device.type, dtype=dtype)
+        c = ltorch.full((2, 3), 5, device=device.type)
         return a, b, c
 
     bsyms = extract_bsyms(diff_kwargs, (device, dtype), ("full",))
@@ -1388,7 +1388,7 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
 #         cos = tlang.cos(a)
 #         return ttorch.softmax(cos, 1) + a
 
-#     a = make_tensor((2, 3), device=device, dtype=torch.float32)
+#     a = make_tensor((2, 3), device=device.type, dtype=torch.float32)
 
 #     trace = thunder.make_trace(func, executor=executor)(a)
 #     assert len(trace.symbols) == 3
@@ -1422,8 +1422,8 @@ def test_nested_trace(executor, device, _):
         assert foo_trace.bound_symbols[-2].sym.name == "add"
         return clang.mul(a, b)
 
-    a = make_tensor((2, 2), device=device, dtype=torch.float32)
-    b = make_tensor((2, 2), device=device, dtype=torch.float32)
+    a = make_tensor((2, 2), device=device.type, dtype=torch.float32)
+    b = make_tensor((2, 2), device=device.type, dtype=torch.float32)
 
     bar_trace = thunder.trace()(bar, a, b)
     assert len(bar_trace.bound_symbols) == 4
@@ -1449,8 +1449,8 @@ def test_nested_trace_no_name_collision(executor, device, _):
         assert foo_trace.bound_symbols[-2].output.name != foo_trace.args[0].name
         return foo(a, b)
 
-    a = make_tensor((2, 2), device=device, dtype=torch.float32)
-    b = make_tensor((2, 2), device=device, dtype=torch.float32)
+    a = make_tensor((2, 2), device=device.type, dtype=torch.float32)
+    b = make_tensor((2, 2), device=device.type, dtype=torch.float32)
 
     thunder.trace()(bar, a, b)
 
@@ -1490,8 +1490,8 @@ def test_eval_trace(executor, device, _):
     def foo(a, b, *, c=5):
         return clang.mul(clang.add(a, b), c)
 
-    a = make_tensor((2, 2), device=device, dtype=torch.float32)
-    b = make_tensor((2, 2), device=device, dtype=torch.float32)
+    a = make_tensor((2, 2), device=device.type, dtype=torch.float32)
+    b = make_tensor((2, 2), device=device.type, dtype=torch.float32)
     c = 4.0
 
     # Test eval_trace() with eager proxy execution
@@ -1552,7 +1552,7 @@ def test_eval_trace_duplicate_output(executor, device, _):
     def foo1(a):
         return a, a
 
-    a = torch.ones((2, 2), device=device, dtype=torch.float32)
+    a = torch.ones((2, 2), device=device.type, dtype=torch.float32)
 
     foo_trace = thunder.trace()(foo1, a)
     assert len(foo_trace.bound_symbols) == 2
@@ -1602,8 +1602,8 @@ def test_transforms_identity(executor, device, _):
 
     nested_id_func = identity(identity(identity(func)))
 
-    a = make_tensor((2, 2), device=device, dtype=torch.float32)
-    b = make_tensor((2, 2), device=device, dtype=torch.float32)
+    a = make_tensor((2, 2), device=device.type, dtype=torch.float32)
+    b = make_tensor((2, 2), device=device.type, dtype=torch.float32)
     c = 4.0
 
     nested_id_trace = thunder.trace()(nested_id_func, a, b, c=c)
@@ -1673,8 +1673,8 @@ def test_transforms_vmap_axis_size(executor, device, _):
 #         c = tlang.sin(a)
 #         return tlang.mul(tlang.add(c, b), 1)
 
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
+#     a = torch.ones(2, 3, device=device.type, dtype=torch.float32)
+#     b = torch.ones(2, 3, device=device.type, dtype=torch.float32) * 2
 
 #     primals = (a, b)
 #     tangents = (a, b)
@@ -1699,10 +1699,10 @@ def test_transforms_vjp_1_2(executor, device, _):
         c = clang.asin(b)
         return b, c
 
-    a = make_tensor((2, 3), device=device, dtype=torch.float32)
+    a = make_tensor((2, 3), device=device.type, dtype=torch.float32)
 
-    g1 = make_tensor((2, 3), device=device, dtype=torch.float32)
-    g2 = make_tensor((2, 3), device=device, dtype=torch.float32)
+    g1 = make_tensor((2, 3), device=device.type, dtype=torch.float32)
+    g2 = make_tensor((2, 3), device=device.type, dtype=torch.float32)
 
     vjp_eager = executor.make_callable_legacy(vjp(func_1_2))
 
@@ -1748,12 +1748,12 @@ def test_transforms_vjp_2_2_kwarg(executor, device, _):
         d = clang.add(c, func(z))
         return c, d
 
-    x = make_tensor((2, 3), device=device, dtype=torch.float64)
-    y = make_tensor((2, 3), device=device, dtype=torch.float64)
-    z = make_tensor((2, 3), device=device, dtype=torch.float64)
+    x = make_tensor((2, 3), device=device.type, dtype=torch.float64)
+    y = make_tensor((2, 3), device=device.type, dtype=torch.float64)
+    z = make_tensor((2, 3), device=device.type, dtype=torch.float64)
 
-    g1 = make_tensor((2, 3), device=device, dtype=torch.float64)
-    g2 = make_tensor((2, 3), device=device, dtype=torch.float64)
+    g1 = make_tensor((2, 3), device=device.type, dtype=torch.float64)
+    g2 = make_tensor((2, 3), device=device.type, dtype=torch.float64)
 
     vjp_eager = executor.make_callable_legacy(vjp(func_2_2))
 
@@ -1812,9 +1812,9 @@ def test_transforms_vjp_2_1(executor, device, _):
         return c
 
     vjp_eager = executor.make_callable_legacy(vjp(func_2_1))
-    a = make_tensor((2, 3), device=device, dtype=torch.float32)
-    b = make_tensor((2, 3), device=device, dtype=torch.float32)
-    g1 = make_tensor((2, 3), device=device, dtype=torch.float32)
+    a = make_tensor((2, 3), device=device.type, dtype=torch.float32)
+    b = make_tensor((2, 3), device=device.type, dtype=torch.float32)
+    g1 = make_tensor((2, 3), device=device.type, dtype=torch.float32)
     primals = (a, b)
     cotangents = (g1,)
     out_p, grads = vjp_eager(primals, cotangents)
@@ -1853,7 +1853,7 @@ def test_transforms_vjp_2_1(executor, device, _):
 #         return prims.sum(a, tuple(range(a.ndim)))
 
 #     vjp_func = executor.make_callable(value_and_grad(func))
-#     a = make_tensor((2, 3), device=device, dtype=torch.float32)
+#     a = make_tensor((2, 3), device=device.type, dtype=torch.float32)
 #     single_out, (single_grad,) = vjp_func(a)
 
 #     aaa = torch.stack([a, a, a])
@@ -1878,8 +1878,8 @@ def test_transforms_vjp_2_1(executor, device, _):
 #         c = tlang.sin(a)
 #         return tlang.mul(tlang.add(c, b), 1)
 
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
+#     a = torch.ones(2, 3, device=device.type, dtype=torch.float32)
+#     b = torch.ones(2, 3, device=device.type, dtype=torch.float32) * 2
 
 #     args = (a, b)
 #     out = vmap_eager(func, args, executor=executor)
@@ -1906,8 +1906,8 @@ def test_transforms_inline_jvp_inline_vmap(executor, device, _):
         c = clang.sin(a)
         return clang.mul(clang.add(c, b), 1)
 
-    a = torch.ones(2, 3, device=device, dtype=torch.float32)
-    b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
+    a = torch.ones(2, 3, device=device.type, dtype=torch.float32)
+    b = torch.ones(2, 3, device=device.type, dtype=torch.float32) * 2
 
     args = (a, b)
     out_p, out_t = executor.make_callable(jvp(vmap(func)))(args, args)
@@ -1931,8 +1931,8 @@ def test_transforms_inline_vmap_inline_jvp(executor, device, _):
         c = clang.sin(a)
         return clang.mul(clang.add(c, b), 1)
 
-    a = torch.ones(2, 3, device=device, dtype=torch.float32)
-    b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
+    a = torch.ones(2, 3, device=device.type, dtype=torch.float32)
+    b = torch.ones(2, 3, device=device.type, dtype=torch.float32) * 2
 
     args = (a, b)
     out_p, out_t = executor.make_callable_legacy(vmap(jvp(func), out_dims=(0, 0)))(args, args)
@@ -1960,7 +1960,7 @@ def test_traceback():
     executors=(TorchExecutor,),
 )
 def test_torch_tensor_to_memory_format(executor: TestExecutor, device: str, _):
-    inp = torch.randn(2, 4, 5, 3, device=device, dtype=torch.float32)
+    inp = torch.randn(2, 4, 5, 3, device=device.type, dtype=torch.float32)
 
     def torch_to(a, memory_format):
         return a.to(memory_format=memory_format)
@@ -1980,7 +1980,7 @@ def test_torch_tensor_to_memory_format(executor: TestExecutor, device: str, _):
     executors=(TorchExecutor,),
 )
 def test_contiguous_and_stride_order(executor: TestExecutor, device: str, _):
-    inp = torch.randn(2, 4, 5, 3, device=device, dtype=torch.float32).permute(0, 3, 1, 2)
+    inp = torch.randn(2, 4, 5, 3, device=device.type, dtype=torch.float32).permute(0, 3, 1, 2)
 
     def foo(a, order):
         return clang.stride_order(a, order)
@@ -2010,7 +2010,7 @@ def test_contiguous_and_stride_order(executor: TestExecutor, device: str, _):
     cfn = executor.make_callable(channels_last_2d, disable_preprocessing=False)
 
     # Contiguous cases
-    a = torch.randn((4, 3, 2), device=device, dtype=torch.float32)
+    a = torch.randn((4, 3, 2), device=device.type, dtype=torch.float32)
     thunder_result = cfn(a, torch.contiguous_format)
     torch_result = channels_last_2d(a, torch.contiguous_format)
     assert_close(torch_result, thunder_result, check_stride=True)
@@ -2021,7 +2021,7 @@ def test_contiguous_and_stride_order(executor: TestExecutor, device: str, _):
     assert_close(torch_result, thunder_result, check_stride=True)
 
     # Channels last 2D cases
-    a = torch.randn((5, 4, 3, 2), device=device, dtype=torch.float32)
+    a = torch.randn((5, 4, 3, 2), device=device.type, dtype=torch.float32)
     thunder_result = cfn(a, torch.channels_last)
     torch_result = channels_last_2d(a, torch.channels_last)
     assert_close(torch_result, thunder_result, check_stride=True)
@@ -2032,7 +2032,7 @@ def test_contiguous_and_stride_order(executor: TestExecutor, device: str, _):
     assert_close(torch_result, thunder_result, check_stride=True)
 
     # Channels last 3D cases
-    a = torch.randn((5, 4, 3, 7, 2), device=device, dtype=torch.float32)
+    a = torch.randn((5, 4, 3, 7, 2), device=device.type, dtype=torch.float32)
     thunder_result = cfn(a, torch.channels_last_3d)
     torch_result = channels_last_2d(a, torch.channels_last_3d)
     assert_close(torch_result, thunder_result, check_stride=True)
@@ -2106,8 +2106,8 @@ def test_inplace(executor, device, _):
         s ^= o
         return s
 
-    t1 = make_tensor((2, 3), device=device, dtype=torch.float32)
-    t2 = make_tensor((1, 2), device=device, dtype=torch.float32)
+    t1 = make_tensor((2, 3), device=device.type, dtype=torch.float32)
+    t2 = make_tensor((1, 2), device=device.type, dtype=torch.float32)
 
     tests = (
         test_add,
@@ -2164,7 +2164,7 @@ def test_thunder_autocast_transform(executor, device, _):
     for func, should_autocast in ((f, True), (g, False), (h, False)):
         dtype = thunder.bfloat16 if device == "cpu" else thunder.float16
         torch_dtype = ltorch.to_torch_dtype(dtype)
-        x, y, z = (torch.randn((2, 2), device=device, dtype=torch.float32) for _ in range(3))
+        x, y, z = (torch.randn((2, 2), device=device.type, dtype=torch.float32) for _ in range(3))
         compiled = thunder.compile(
             autocast(func, dtype=dtype),
             executors_list=executor.executors_list(),
@@ -2177,7 +2177,7 @@ def test_thunder_autocast_transform(executor, device, _):
         assert out.dtype == (torch_dtype if should_autocast else torch.float32), traces[-1]
 
         # note(crcrpar): This test could be broken in the future as thunder autocast develops.
-        devicetype = torch.device(device).type
+        devicetype = torch.device(device.type).type
         with torch.autocast(device_type=devicetype, dtype=torch_dtype):
             torch_output = func(x, y, z)
         assert out.dtype == torch_output.dtype
@@ -2187,7 +2187,7 @@ def test_thunder_autocast_transform(executor, device, _):
 def test_torch_scaled_dot_product_attention_non_decomposed(executor, device, _):
     n_embd = 32
     B = 2
-    qkv = make_tensor(B, n_embd, 3 * n_embd, device=device, dtype=torch.float32)
+    qkv = make_tensor(B, n_embd, 3 * n_embd, device=device.type, dtype=torch.float32)
 
     def func(qkv):
         # Preprocessing doesn't support nonlocal variables yet, so
@@ -2222,7 +2222,7 @@ def test_no_passthrough_symbol(executor, device, _):
     def func(x):
         return x.type_as(x)
 
-    x = make_tensor((2, 2), device=device, dtype=torch.float32)
+    x = make_tensor((2, 2), device=device.type, dtype=torch.float32)
     compiled = executor.make_callable(func)
     out = compiled(x)
     assert out is x
@@ -2251,13 +2251,13 @@ def test_cse(executor, device, _):
         d = clang.uniform(z.shape, device=device, dtype=thunder.float16)
         return z, w, m, (a, b, c, d)
 
-    x, y = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
+    x, y = (make_tensor((2, 2), device=device.type, dtype=torch.float32) for _ in range(2))
     compiled_func = thunder.compile(
         func,
         disable_preprocessing=True,
         executors_list=executor.executors_list(),
     )
-    compiled_func(x, y, device)
+    compiled_func(x, y, device.type)
     traces = thunder.last_traces(compiled_func)
     flatten_dce_trace = [
         t for t in traces if t._provenance is not None and t._provenance.pss.startswith("Dead Code Elimination")
@@ -2300,8 +2300,8 @@ def test_preserve_weight_names(executor, device: str, dtype: dtypes.dtype):
             x = self.fc2(x)
             return x
 
-    model = MLP().to(device=device, dtype=ltorch.to_torch_dtype(dtype))
-    x = torch.randn(2, 3, device=device, dtype=ltorch.to_torch_dtype(dtype))
+    model = MLP().to(device=device.type, dtype=ltorch.to_torch_dtype(dtype))
+    x = torch.randn(2, 3, device=device.type, dtype=ltorch.to_torch_dtype(dtype))
 
     compiled = thunder.jit(model, executors=executor.executors_list())
     compiled(x)
@@ -2320,7 +2320,7 @@ def test_default_method(executor, device: str, dtype: dtypes.dtype):
     from thunder.core.proxies import TensorProxy
 
     torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    a = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
 
     with detached_trace():
         b = TensorProxy(
@@ -2350,8 +2350,8 @@ def test_default_method(executor, device: str, dtype: dtypes.dtype):
 #         c = tlang.sin(a)
 #         return tlang.mul(tlang.add(c, b), 1)
 
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
+#     a = torch.ones(2, 3, device=device.type, dtype=torch.float32)
+#     b = torch.ones(2, 3, device=device.type, dtype=torch.float32) * 2
 
 #     args = (a, b)
 #     out_p, out_t = thunder.make_traced(vmap(jvp(func), out_dims=(0, 0)), executor=executor)(args, args)
@@ -2375,8 +2375,8 @@ def test_default_method(executor, device: str, dtype: dtypes.dtype):
 #         c = tlang.sin(a)
 #         return tlang.mul(tlang.add(c, b), 1)
 
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
+#     a = torch.ones(2, 3, device=device.type, dtype=torch.float32)
+#     b = torch.ones(2, 3, device=device.type, dtype=torch.float32) * 2
 
 #     args = (a, b)
 #     out_p, out_t = thunder.make_traced(jvp(vmap(func, out_dims=(0, 0))), executor=executor)(args, args)
@@ -2396,8 +2396,8 @@ def test_default_method(executor, device: str, dtype: dtypes.dtype):
 #         c = tlang.sin(a)
 #         return tlang.mul(tlang.add(c, b), 1)
 
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
+#     a = torch.ones(2, 3, device=device.type, dtype=torch.float32)
+#     b = torch.ones(2, 3, device=device.type, dtype=torch.float32) * 2
 
 #     primals = (a, b)
 #     tangents = (a, b)
@@ -2418,8 +2418,8 @@ def test_default_method(executor, device: str, dtype: dtypes.dtype):
 #         c = tlang.sin(a)
 #         return tlang.mul(tlang.add(c, b), 1)
 
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
+#     a = torch.ones(2, 3, device=device.type, dtype=torch.float32)
+#     b = torch.ones(2, 3, device=device.type, dtype=torch.float32) * 2
 
 #     primals = (a, b)
 #     tangents = (a, b)
@@ -2441,7 +2441,7 @@ def test_default_method(executor, device: str, dtype: dtypes.dtype):
 #         assert a.ndim == 1
 #         return ttorch.sum(a)
 
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
+#     a = torch.ones(2, 3, device=device.type, dtype=torch.float32)
 
 #     out = thunder.make_traced(vmap(func, out_dims=0), executor="torch")(a)
 #     expected_out = torch.sum(a, dim=1)
@@ -2464,7 +2464,7 @@ def test_default_method(executor, device: str, dtype: dtypes.dtype):
 #         def func(a):
 #             return tlang.mul(a, scalar)
 
-#         a = make_tensor((2, 3), device=device, dtype=torch.float32)
+#         a = make_tensor((2, 3), device=device.type, dtype=torch.float32)
 
 #         primals = (a,)
 #         tangents = (a,)
@@ -2503,7 +2503,7 @@ def test_default_method(executor, device: str, dtype: dtypes.dtype):
 #         pytest.skip("'uniform' not implemented before nvfuser 0.0.3")
 
 #     thunder_uniform = executor.make_callable(tlang.uniform)
-#     uniform = partial(thunder_uniform, dtype=dtype, device=device)
+#     uniform = partial(thunder_uniform, dtype=dtype, device=device.type)
 
 #     # lo, hi, shape
 #     cases = (
@@ -2526,7 +2526,7 @@ def test_default_method(executor, device: str, dtype: dtypes.dtype):
 #             assert result.max() <= hi
 
 #     def foo():
-#         return tlang.uniform([2, 3, 4], 0.5, 1.0, dtype=dtype, device=device)
+#         return tlang.uniform([2, 3, 4], 0.5, 1.0, dtype=dtype, device=device.type)
 
 #     thunder_static_uniform = executor.make_callable(foo)
 #     result = thunder_static_uniform()
@@ -2550,7 +2550,7 @@ def test_default_method(executor, device: str, dtype: dtypes.dtype):
 #         e = d + 1.0
 #         return e
 
-#     a = make_tensor((2, 2), device=device, dtype=torch.float32)
+#     a = make_tensor((2, 2), device=device.type, dtype=torch.float32)
 #     trace = thunder.make_trace(foo, executor=executor)(a)
 #     code_str, _ = _fuse_region((), [trace.outputs], trace.symbols)
 
@@ -2564,7 +2564,7 @@ def test_default_method(executor, device: str, dtype: dtypes.dtype):
 #         e = d + 1.0
 #         return e, d
 
-#     a = make_tensor((2, 2), device=device, dtype=torch.float32)
+#     a = make_tensor((2, 2), device=device.type, dtype=torch.float32)
 #     trace = thunder.make_trace(foo, executor=executor)(a)
 #     code_str, _ = _fuse_region(_, [trace.outputs], trace.symbols, global_outputs=trace.outputs)
 #     # Same as above, but now the last del should be removed since the variable

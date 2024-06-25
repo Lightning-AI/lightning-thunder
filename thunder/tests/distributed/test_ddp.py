@@ -964,6 +964,7 @@ def init_per_process_distributed(
     init_method: str, devicetype: devices.DeviceType, world_size: int, rank: int
 ) -> tdist.ProcessGroup:
     backend: str
+    devicetype = devicetype.devicetype
     if devicetype is devices.DeviceType.CUDA:
         backend = "nccl"
     elif devicetype is devices.DeviceType.CPU:
@@ -1043,7 +1044,7 @@ def create_per_process_dataloader(
     sampler = tudata.SequentialSampler(dataset)
 
     collate_fn = None
-
+    devicetype = devicetype.devicetype
     if devicetype is not devices.DeviceType.CPU:
         assert devicetype is devices.DeviceType.CUDA, f"Unknown devicetype {devicetype}"
         device = torch.device("cuda", rank)
@@ -1143,7 +1144,8 @@ def _test_native_ddp_helper(input_data):
     tensor_shape = (2, 2)
     sample_seed = 3456
     num_epochs = 1
-    devicetype = devices.device_from_string(device).devicetype
+    # devicetype = devices.device_from_string(device).devicetype
+    devicetype = device
     torch_dtype = ltorch.to_torch_dtype(dtype)
 
     pg = init_per_process_distributed(init_method, devicetype, world_size, rank)
@@ -1159,7 +1161,7 @@ def _test_native_ddp_helper(input_data):
     )
 
     # Creates, compiles, and DDPs the model
-    model = SmallModel(device, torch_dtype)
+    model = SmallModel(device.type, torch_dtype)
     ddp_model = ddp(model)
     cmodel = thunder.jit(
         ddp_model,

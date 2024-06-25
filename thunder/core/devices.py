@@ -118,9 +118,12 @@ class Device(metaclass=DeviceMeta):
     #   converting Thunder devices to PyTorch devices
     def __repr__(self) -> str:
         if self.devicetype == DeviceType.CUDA:
-            return f"{devicetype_string(self.devicetype)}:{self.index}"
+            # PyTorch represents this by 'index'. Do we want that?
+            # e.g device(type='cuda', index=0)
+            return f"thunder.devices.Device(type='{devicetype_string(self.devicetype)}:{self.index}')"
         # note: self.devicetype == DeviceType.CPU, .META
-        return devicetype_string(self.devicetype)
+        # Do we support cpu:0 and such? or is device number only for CUDA?
+        return f"thunder.devices.Device(type='{devicetype_string(self.devicetype)}')"
 
     # NOTE Because devices are singleton object, this has the luxury of using "is"
     def __eq__(self, other: Device) -> bool:
@@ -146,14 +149,12 @@ def available_devices() -> tuple[Device]:
 
 
 def _device_from_string_helper(devicestr: str) -> tuple[DeviceType, None | int]:
-    if devicestr == "cpu":
+    if "cpu" in devicestr:
         return DeviceType.CPU, None
-
-    if devicestr == "cuda":
-        return DeviceType.CUDA, None
-
-    if devicestr == "meta":
+    if "meta" in devicestr:
         return DeviceType.META, None
+    if "cuda" in devicestr:
+        return DeviceType.CUDA, None
 
     devicetype, idx_str = devicestr.split(":")
     idx = int(idx_str)
@@ -185,4 +186,6 @@ def to_torch_device(x: None | str | torch.device | Device, /) -> None | torch.de
         return x
 
     baseutils.check_type(x, (Device, str))
-    return torch.device(str(x))
+    if isinstance(x, Device):
+        return torch.device(x.type)
+    return torch.device(x)

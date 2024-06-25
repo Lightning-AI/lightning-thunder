@@ -29,8 +29,8 @@ def test_prim_inplace_copy_fwd(executor, device, dtype):
     traced_nvfuser_foo = executor.make_callable(foo)
 
     tdtype = ttorch.to_torch_dtype(dtype)
-    a = make_tensor((4, 4), device=device, dtype=tdtype, requires_grad=False)
-    b = make_tensor((4, 4), device=device, dtype=tdtype, requires_grad=False)
+    a = make_tensor((4, 4), device=device.type, dtype=tdtype, requires_grad=False)
+    b = make_tensor((4, 4), device=device.type, dtype=tdtype, requires_grad=False)
     a1 = a.detach().clone()
     b1 = b.detach().clone()
     thunder_result = traced_nvfuser_foo(a, b)
@@ -64,8 +64,8 @@ def test_prim_inplace_copy_bwd(executor, device, dtype):
     traced_nvfuser_foo = executor.make_callable(foo)
 
     tdtype = ttorch.to_torch_dtype(dtype)
-    a = make_tensor((4, 4), device=device, dtype=tdtype, requires_grad=False)
-    b = make_tensor((4, 4), device=device, dtype=tdtype, requires_grad=True)
+    a = make_tensor((4, 4), device=device.type, dtype=tdtype, requires_grad=False)
+    b = make_tensor((4, 4), device=device.type, dtype=tdtype, requires_grad=True)
     a1 = a.detach().clone()
     b1 = b.detach().clone()
     b1.requires_grad_()
@@ -105,9 +105,9 @@ def test_batch_norm_running_stats(executor, device, dtype):
             return x
 
     tdtype = ttorch.to_torch_dtype(dtype)
-    make = partial(make_tensor, dtype=tdtype, device=device, requires_grad=True)
-    net = Net().train().to(device=device, dtype=tdtype)
-    torch_net = Net().train().to(device=device, dtype=tdtype)
+    make = partial(make_tensor, dtype=tdtype, device=device.type, requires_grad=True)
+    net = Net().train().to(device=device.type, dtype=tdtype)
+    torch_net = Net().train().to(device=device.type, dtype=tdtype)
     thunder_net = executor.make_callable(net)
     x = make((3, 2, 3, 4, 12))
     x1 = x.detach().clone()

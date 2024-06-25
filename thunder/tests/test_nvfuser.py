@@ -56,14 +56,14 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor: TestEx
 
     expected_vjp_func = executor.make_callable_legacy(value_and_grad(func))
 
-    a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
-    b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
+    a = make_tensor((2, 3), device=device.type, dtype=torch.float64, requires_grad=True)
+    b = make_tensor((2, 3), device=device.type, dtype=torch.float64, requires_grad=True)
     c = make_tensor(
         (
             2,
             3,
         ),
-        device=device,
+        device=device.type,
         dtype=torch.float64,
         requires_grad=True,
     )
@@ -93,7 +93,7 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor: TestEx
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_redundant_cast_basic(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    a = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
 
     def foo(a):
         b = a.to(torch.float16)
@@ -136,7 +136,7 @@ def test_redundant_cast_basic(executor, device: str, dtype: dtypes.dtype):
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_redundant_intermediate_consumers(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    a = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
 
     def foo(a):
         b = a.to(torch.float64)
@@ -166,8 +166,8 @@ def test_redundant_intermediate_consumers(executor, device: str, dtype: dtypes.d
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_redundant_cast_nvfusion(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    x = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    a = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
+    x = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
 
     def foo(a, x):
         b = a + 5
@@ -206,7 +206,7 @@ def test_redundant_cast_nvfusion(executor, device: str, dtype: dtypes.dtype):
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_redundant_no_op(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    a = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
 
     def foo(a):
         return a.to(torch.float32)
@@ -262,7 +262,7 @@ def test_cse_subsymbol_removal(executor, device, _):
         t4 = torch.where(t3 > t1, t1, t2)
         return t4
 
-    x = make_tensor(5, 5, dtype=torch.float16, device=device)
+    x = make_tensor(5, 5, dtype=torch.float16, device=device.type)
     compiled_func = thunder.functional.jit(func, executors=executor.executors_list())
     compiled_func(x)
 
@@ -295,10 +295,10 @@ def test_cse_subsymbol_redundant_args(executor, device, _):
         t4 = t1 + t3
         return t4
 
-    w = make_tensor(5, 5, dtype=torch.float16, device=device)
-    x = make_tensor(5, 5, dtype=torch.float16, device=device)
-    y = make_tensor(5, 5, dtype=torch.float16, device=device)
-    z = make_tensor(5, 5, dtype=torch.float16, device=device)
+    w = make_tensor(5, 5, dtype=torch.float16, device=device.type)
+    x = make_tensor(5, 5, dtype=torch.float16, device=device.type)
+    y = make_tensor(5, 5, dtype=torch.float16, device=device.type)
+    z = make_tensor(5, 5, dtype=torch.float16, device=device.type)
     compiled_func = thunder.functional.jit(func, executors=executor.executors_list())
     compiled_func(w, x, y, z)
 
@@ -337,8 +337,8 @@ def test_cse_rematerialization(executor, device, _):
     model = Transformer(gptconf)
     model.to(device)
 
-    x = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
-    y = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
+    x = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device.type)
+    y = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device.type)
     compiled_func = thunder.jit(
         model.eval(),
         disable_torch_autograd=True,
@@ -373,8 +373,8 @@ def test_cse_rematerialization(executor, device, _):
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_nvfuser_toposort_basic(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    a = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
+    b = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
 
     def foo(a, b):
         c = a + b
@@ -398,8 +398,8 @@ def test_nvfuser_toposort_basic(executor, device: str, dtype: dtypes.dtype):
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_nvfuser_toposort_independent(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    a = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
+    b = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
 
     def foo(a, b):
         c = a + b
@@ -425,8 +425,8 @@ def test_nvfuser_toposort_independent(executor, device: str, dtype: dtypes.dtype
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_nvfuser_toposort_dependent0(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    a = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
+    b = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
 
     def foo(a, b):
         c = a + b
@@ -452,8 +452,8 @@ def test_nvfuser_toposort_dependent0(executor, device: str, dtype: dtypes.dtype)
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_nvfuser_toposort_dependent1(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    a = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
+    b = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
 
     def foo(a, b):
         c = a + b
@@ -479,8 +479,8 @@ def test_nvfuser_toposort_dependent1(executor, device: str, dtype: dtypes.dtype)
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_nvfuser_toposort_dependent2(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    a = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
+    b = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
 
     def foo(a, b):
         c = a + b
@@ -506,8 +506,8 @@ def test_nvfuser_toposort_dependent2(executor, device: str, dtype: dtypes.dtype)
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_nvfuser_toposort_dependent3(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    a = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
+    b = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
 
     def foo(a, b):
         c = a + b
@@ -532,8 +532,8 @@ def test_nvfuser_toposort_dependent3(executor, device: str, dtype: dtypes.dtype)
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_nvfuser_toposort_dependent4(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    a = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
+    b = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
 
     def foo(a, b):
         c = a + b
@@ -559,8 +559,8 @@ def test_nvfuser_toposort_dependent4(executor, device: str, dtype: dtypes.dtype)
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_nvfuser_toposort_dependent5(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    b = make_tensor((2, 2), device=device, dtype=torch_dtype)
+    a = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
+    b = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
 
     def foo(a, b):
         c = a + b
@@ -597,8 +597,8 @@ def test_cse_issue1789(executor, device, _):
         t2 = s.transpose(0, 1)
         return v1 + v2, s1 + s2 + t1 + t2
 
-    x = make_tensor(2, 3, device=device, dtype=torch.float32)
-    s = make_tensor(1, 3, device=device, dtype=torch.float32)
+    x = make_tensor(2, 3, device=device.type, dtype=torch.float32)
+    s = make_tensor(1, 3, device=device.type, dtype=torch.float32)
     compiled_func = thunder.jit(func)
     compiled_func(x, s)
 
@@ -619,7 +619,7 @@ def test_cse_issue1789(executor, device, _):
     ),
 )
 def test_bookend_meta_optimization(executor, device, _):
-    a = torch.ones(2, 3, 5, device=device, dtype=torch.float32)
+    a = torch.ones(2, 3, 5, device=device.type, dtype=torch.float32)
 
     def subtest(fn, n):
         # Enable bookending so it gets tested.
@@ -841,7 +841,7 @@ def test_optimization_fuel(executor, device, _):
     nvfuserex.set_fuel(1)
 
     # Only the first compilation is fueled.
-    x = torch.ones(2, 3, device=device, dtype=torch.float32)
+    x = torch.ones(2, 3, device=device.type, dtype=torch.float32)
     cfn_with_fusion = thunder.jit(fn)
     cfn_with_fusion(x)
     assert get_num_fusions(cfn_with_fusion) == 1
@@ -863,14 +863,14 @@ def test_linear(executor, device: str, dtype: dtypes.dtype):
 
     m, n, k = 128, 64, 32
     torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = torch.randn((m, k), dtype=torch_dtype, device=device)
-    b = torch.randn((n, k), dtype=torch_dtype, device=device)
+    a = torch.randn((m, k), dtype=torch_dtype, device=device.type)
+    b = torch.randn((n, k), dtype=torch_dtype, device=device.type)
 
     for has_bias in [True, False]:
         bias = None
 
         if has_bias:
-            bias = torch.randn(n, dtype=torch_dtype, device=device)
+            bias = torch.randn(n, dtype=torch_dtype, device=device.type)
 
         compiled_func = thunder.jit(fn, executors_list=executor.executors_list(), nv_enable_linear=True)
 
@@ -891,8 +891,8 @@ def test_linear(executor, device: str, dtype: dtypes.dtype):
 def test_matmul(executor, device: str, dtype: dtypes.dtype):
     m, n, k = 128, 64, 32
     torch_dtype = ltorch.to_torch_dtype(dtype)
-    a = torch.randn((m, k), dtype=torch_dtype, device=device)
-    b = torch.randn((k, n), dtype=torch_dtype, device=device)
+    a = torch.randn((m, k), dtype=torch_dtype, device=device.type)
+    b = torch.randn((k, n), dtype=torch_dtype, device=device.type)
 
     def fn(a, b):
         return a.matmul(b)
