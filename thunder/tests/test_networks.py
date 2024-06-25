@@ -208,6 +208,11 @@ def test_hf_bart_self_attn():
 
 @requiresCUDA
 def test_quantization():
+    try:
+        import bitsandbytes
+    except (ImportError, RuntimeError):
+        pytest.skip("bitsandbytes not found")
+
     from thunder.tests import litgpt_model
     from lightning.fabric.plugins import BitsandbytesPrecision
 
