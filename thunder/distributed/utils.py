@@ -245,8 +245,7 @@ def sort_allgathers(execution_trace):
                         return len(order_in_trace)
                     return order_in_trace[node.bsym]
                 case all_gather_prim_impl.id:
-                    # return -node.bsym.args[0].numel # chose smaller first, max distance
-                    return len(order_in_trace) + order_in_trace[node.bsym]  # use the consumer order, min distance
+                    return len(order_in_trace) + order_in_trace[node.bsym]
                 case _:
                     # Prefer nodes that are earlier in the trace
                     return order_in_trace[node.bsym]
@@ -301,7 +300,7 @@ def sort_reduce_ops(execution_trace):
                     if producers[node.bsym.flat_proxy_args[0]].sym.id in (
                         reduce_scatter_prim_impl.id,
                         all_reduce_prim_impl.id,
-                    ):  # all_gather_prim_impl.id:
+                    ):
                         return len(order_in_trace)
                     return order_in_trace[node.bsym]
                 case reduce_scatter_prim_impl.id | all_reduce_prim_impl.id:

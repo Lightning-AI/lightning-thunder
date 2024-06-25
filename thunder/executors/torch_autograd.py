@@ -227,14 +227,12 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
             from thunder.distributed import FSDPBucketingStrategy
             from thunder.distributed.utils import limit_in_flight_allgathers
 
-            # fw_extrace = sort_communication_ops(fw_extrace)
             fw_extrace = sort_allgathers(fw_extrace)
             fw_extrace = limit_in_flight_allgathers(
                 fw_extrace,
                 3,
                 compile_data.fn.bucketing_strategy != FSDPBucketingStrategy.NONE,
             )
-            # bw_extrace = sort_communication_ops(bw_extrace)
             bw_extrace = sort_reduce_ops(bw_extrace)
             bw_extrace = sort_allgathers(bw_extrace)
             bw_extrace = limit_in_flight_allgathers(
@@ -248,7 +246,6 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
             from sys import maxsize as INT_MAX
 
             # sort the allgather+wait as consumer order just before consumer
-            # fw_extrace = sort_communication_ops(fw_extrace)
             fw_extrace = sort_allgathers(fw_extrace)
             # unlimited number of allgathers, i.e. allgathers are listed at the beginning of the trace in consumer order and wait stays just before wait
             fw_extrace = limit_in_flight_allgathers(
@@ -256,7 +253,6 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
                 INT_MAX,
                 compile_data.fn.bucketing_strategy != FSDPBucketingStrategy.NONE,
             )
-            # bw_extrace = sort_waits(bw_extrace)
             bw_extrace = sort_reduce_ops(bw_extrace)
     if getattr(compile_data.fn, "use_ddp", False):
         bw_extrace = sort_waits(bw_extrace)
