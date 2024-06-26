@@ -1152,7 +1152,7 @@ def test_update_forward_with_new_saved_for_backward_numberproxy(executor, device
 
     jfoo = thunder.jit(foo, cache="symbolic values")
 
-    t = make_tensor((5, 3), device=device, dtype=torch.float32)
+    t = make_tensor((5, 3), device=device.type, dtype=torch.float32)
     t_ref = t.detach()
     t.requires_grad_()
     t_ref.requires_grad_()

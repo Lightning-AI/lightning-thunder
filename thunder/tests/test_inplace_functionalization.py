@@ -203,7 +203,7 @@ def test_inplace_to_views(executor, device, _):
         d.div_(a)
         return c, d, e
 
-    a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
+    a, b = (make_tensor((2, 2), device=device.type, dtype=torch.float32) for _ in range(2))
     a_, b_ = a.clone().detach(), b.clone().detach()
 
     jittd_f = thunder.jit(f, executors=executor.executors_list())
@@ -223,7 +223,7 @@ def test_inplace_to_views(executor, device, _):
         d.div_(a)
         return d, e
 
-    a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
+    a, b = (make_tensor((2, 2), device=device.type, dtype=torch.float32) for _ in range(2))
     a_, b_ = a.clone().detach(), b.clone().detach()
 
     jittd_g = thunder.jit(g, executors=executor.executors_list())
@@ -243,7 +243,7 @@ def test_inplace_to_views(executor, device, _):
         d.div_(a)
         return c, d, e / 2.0
 
-    a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
+    a, b = (make_tensor((2, 2), device=device.type, dtype=torch.float32) for _ in range(2))
     a_, b_ = a.clone().detach(), b.clone().detach()
 
     jittd_h = thunder.jit(h, executors=executor.executors_list())
@@ -270,7 +270,7 @@ def test_error_of_inplace_to_views(executor, device, _):
         d.div_(a)
         return c, d, e
 
-    a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
+    a, b = (make_tensor((2, 2), device=device.type, dtype=torch.float32) for _ in range(2))
     jittd_f = thunder.jit(f, executors=executor.executors_list())
 
     with pytest.raises(NotImplementedError, match="in-place op of `torch.Tensor.add_` to `torch.flatten` output"):
