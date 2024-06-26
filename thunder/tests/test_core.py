@@ -50,7 +50,7 @@ def test_instantiate_and_pytest_parametrize(executor, device: str, dtype: dtypes
 
 
 @instantiate(dtypes=NOTHING)
-def test_make_callable_from_trace(executor, device: str, dtype: dtypes.dtype):
+def test_make_callable_from_trace(executor, device: thunder.devices.Device, dtype: dtypes.dtype):
     def foo(a, b):
         return a + b
 
@@ -85,7 +85,7 @@ def test_name_generation():
 
 
 @instantiate(dtypes=(thunder.float32,))
-def test_integer_isinstance_mimicry(executor, device: str, dtype: dtypes.dtype):
+def test_integer_isinstance_mimicry(executor, device: thunder.devices.Device, dtype: dtypes.dtype):
     # isinstance() works as expected
     def foo(a, b, c):
         if isinstance(a, int):
@@ -650,7 +650,7 @@ def test_int_to_float_type_promotion(executor, device, _):
 
 
 @instantiate(dtypes=(thunder.float32,))
-def test_static_caching(executor, device: str, dtype: dtypes.dtype):
+def test_static_caching(executor, device: thunder.devices.Device, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
     b = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
@@ -901,7 +901,7 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
 
 
 @instantiate(dtypes=(thunder.float32,))
-def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype):
+def test_bsym_toposort(executor: TestExecutor, device: thunder.devices.Device, dtype: dtypes.dtype):
     tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
     make = partial(make_tensor, device=device.type, dtype=tdtype, requires_grad=False)
 
@@ -968,7 +968,7 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
 # Verifies that using only some of the results of a function works as expected
 #   (the other results are dce'd)
 @instantiate(dtypes=(thunder.float32,))
-def test_partial_results(executor: TestExecutor, device: str, dtype: dtypes.dtype):
+def test_partial_results(executor: TestExecutor, device: thunder.devices.Device, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device.type, dtype=torch_dtype)
 
