@@ -12,7 +12,7 @@ from thunder.extend import FusionExecutor, register_executor
 from thunder.core import utils, prims
 from thunder.core.proxies import Proxy, Variable, unvariableify
 from thunder.core.symbol import BoundSymbol, Symbol
-from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
+from thunder.core.trace import TraceCtx, from_trace, TraceProvenance, get_tracectx, set_tracectx, reset_tracectx
 from thunder.executors.utils import Region
 from thunder.executors.data_dependent_partition import fuse_bound_symbols, Node
 
@@ -53,10 +53,12 @@ def build_cuda_graph(
     torch.cuda.synchronize()
     stream = torch.cuda.Stream()
     stream.wait_stream(torch.cuda.current_stream())
+
     with torch.cuda.stream(stream):
         static_inputs = tuple(get_static_buffer(arg) if not is_static else arg for arg, is_static in zip(args, static_args_mask))
         for _ in range(3):
             fn(*static_inputs)
+
     stream.synchronize()
     torch.cuda.current_stream().wait_stream(stream)
     torch.cuda.synchronize()
@@ -131,8 +133,6 @@ class CUDAGraphExecutor(FusionExecutor):
     def __init__(self, name: Hashable):
         super().__init__(name, version=torch.version.cuda)
 
-        self.clear_collection_names = set()
-
     def fuse(self, region: Region, fusion_counter: int, num_static_inputs: None | int = None) -> BoundSymbol:
         inputs = [unvariableify(inp) for inp in sorted(region.inputs, key=lambda var: var.proxy.name)]
         outputs = [unvariableify(out) for out in sorted(region.outputs, key=lambda var: var.proxy.name)]
@@ -150,16 +150,19 @@ class CUDAGraphExecutor(FusionExecutor):
         return fusion_bsym
 
     def can_fuse(self, bsym: BoundSymbol):
+        curr_tracectx = get_tracectx()
+        assert hasattr(curr_tracectx, "clear_collection_names")
+
         # Related to backward traces.
         # No CollectionProxies in fusions! {
         # Arguments of `clear_mutable_collection` should not be fused
         if bsym.sym.id == "clear_mutable_collection":
-            self.clear_collection_names.add(bsym.args[0].name)
+            curr_tracectx.clear_collection_names.add(bsym.args[0].name)
             return False
 
         # We let DEL to get fused, unless the deleted proxy is a CollectionProxy
         # consumed by the `clear_mutable_collection` symbol
-        if bsym.sym.id == prims.PrimIDs.DEL and bsym.args[0].name in self.clear_collection_names:
+        if bsym.sym.id == prims.PrimIDs.DEL and bsym.args[0].name in curr_tracectx.clear_collection_names:
             return False
         # }
 
@@ -195,6 +198,13 @@ class CUDAGraphExecutor(FusionExecutor):
 
             return _can_fuse_node(a) and _can_fuse_node(b)
 
+        fused_trace: TraceCtx = from_trace(trace)
+        # Tracking CollectionProxies that are being consumed
+        # by the `clear_collection_names`.
+        # We want to avoid them in the fusion regions!
+        fused_trace.clear_collection_names = set()
+        fused_trace_tok = set_tracectx(fused_trace)
+
         bound_symbols_groups = fuse_bound_symbols(trace, _should_fuse)
 
         producers, consumers = utils.producers_and_consumers(trace)
@@ -215,8 +225,9 @@ class CUDAGraphExecutor(FusionExecutor):
                 fusion_counter += 1
                 fused_bsyms.append(fusion_bsym)
 
-        fused_trace: TraceCtx = from_trace(trace)
         fused_trace.bound_symbols = fused_bsyms
+        delattr(fused_trace, "clear_collection_names")
+        reset_tracectx(fused_trace_tok)
 
         end_time_ns = time.time_ns()
         elapsed_time_ns = (end_time_ns - start_time_ns)
@@ -226,5 +237,5 @@ class CUDAGraphExecutor(FusionExecutor):
         return fused_trace
 
 
-cudagraphex = CUDAGraphExecutor(name="cudagraph")
+cudagraphex = CUDAGraphExecutor(name="cudagraphex")
 register_executor(cudagraphex)
