@@ -128,6 +128,7 @@ class Proxy(VariableInterface, ProxyInterface):
     @property
     def name(self) -> str:
         return self._name
+        # return f"{type(self).__name__} {self._name}"
 
     def replace_name(self, name: str | None = None):
         """Return a copy of this proxy with the given name."""
@@ -135,6 +136,7 @@ class Proxy(VariableInterface, ProxyInterface):
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__} {self.name}>"
+        # return f"{self.name}"
 
     def type_string(self) -> str:
         return "Any"
