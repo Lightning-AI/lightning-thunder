@@ -1,4 +1,3 @@
-import math
 import multiprocessing as mp
 import os
 import sys
@@ -22,6 +21,7 @@ from torch.distributed.fsdp.wrap import always_wrap_policy
 from torch.testing import assert_close, make_tensor
 
 import thunder
+import thunder.executors
 import thunder.torch as ltorch
 from thunder.core import devices
 from thunder.distributed import FSDPBucketingStrategy, FSDPType
@@ -30,7 +30,12 @@ from thunder.distributed import prims
 from thunder.tests.framework import TorchExecutor, nvFuserExecutor
 from thunder.tests.framework import instantiate
 
-from thunder.executors.transformer_engineex import transformer_engine_ex, TE_AVAILABLE
+from thunder.executors.transformer_engineex import (
+    transformer_engine_ex,
+    TE_AVAILABLE,
+    te_sync_fp8_meta_bwd,
+)
+
 
 is_fp8_supported: bool = False
 # This will be correctly updated below when TE Engine is installed
@@ -43,105 +48,14 @@ if TE_AVAILABLE:
 
     is_fp8_supported, fp8_support_reason = check_fp8_support()
 
-try:
-    import expecttest  # noqa: F401
-    import hypothesis  # noqa: F401
-except ImportError:
-    raise ImportError(
-        "Required packages of `expecttest` and/or `hypothesis` are missing. "
-        "Install them with `pip install expecttest hypothesis`"
-    )
-from torch.testing._internal import common_distributed, common_utils
+from thunder.tests.distributed.helper import ToyModel, DataParallelTestCase, new_gelu
+from torch.testing._internal import common_utils
 
 executors_map = {
     TorchExecutor.name: TorchExecutor,
 }
 if nvFuserExecutor is not None:
     executors_map[nvFuserExecutor.name] = nvFuserExecutor
-
-
-# Compile - DDP tests
-def new_gelu(x):
-    return 0.5 * x * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (x + 0.044715 * torch.pow(x, 3.0))))
-
-
-class ToyModel(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.net1 = nn.Linear(12, 12)
-        self.net2 = nn.Linear(12, 8)
-
-    def forward(self, x):
-        return self.net2(new_gelu(self.net1(x)))
-
-
-# note(crcrpar): How to write a test with `DDP`
-# Just add a method to :class:`CompileDDPTest`. The class is responsible for
-#     - calling `torch.distributed.init_process_group` with NCCL backend
-#     - setting rank to each process group / device
-# so what you'd need to do is to prepare a model and tensors, wrap the model with DDP, and
-# `thunder.jit` the original model or the DDP'd model, and do some computation and/or
-# examine the traces of the `thunder.jit`d.
-# If you force a test to be run with >2 GPUs for a test, you might want to inherit `CompileDDPTest`
-# and modify `world_size` to e.g. `max(torch.cuda.device_count(), 2)`.
-
-
-# note(crcrpar): Why inheriting `common_distributed.MultiProcessTestCase`?
-# When we're quite sure that we would only use `pytest` instead of `unittest`,
-# IIUC it's possible to run a test that is dependent on `DistributedDataParallel` and/or
-# `torch.distributed` by running the test file with [`torchrun`](https://pytorch.org/docs/stable/elastic/run.html),
-# but I don't think (a) it's quite intuitive to require `torchrun` explicitly to run a test and
-# (b) it's quite friendly to our CI as it's currently simply runs `pytest thunder/tests`.
-# I would say it's feasible to write a test with `torch.distributed` by using `torch.multiprocessing`,
-# but it would require us to make the function which defines the test logic picklable and would
-# lead to boilerplate test functions.
-# Ref: https://github.com/NVIDIA/apex/blob/7b2e71b0d4013f8e2f9f1c8dd21980ff1d76f1b6/apex/transformer/testing/distributed_test_base.py#L22
-class DataParallelTestCase(common_distributed.MultiProcessTestCase):
-    DISTRIBUTED_BACKEND = "nccl"
-
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-
-    def setUp(self) -> None:
-        super().setUp()
-        self._spawn_processes()
-
-    def tearDown(self) -> None:
-        torch.cuda.empty_cache()
-        super().tearDown()
-
-    # note(crcrpar): This means the world_size is up to two.
-    @property
-    def world_size(self) -> int:
-        return min(torch.cuda.device_count(), 2)
-
-    @property
-    def init_method(self):
-        return f"{common_utils.FILE_SCHEMA}{self.file_name}"
-
-    @classmethod
-    def _run(cls, rank, test_name, file_name, pipe):
-        self = cls(test_name)
-        self.rank = rank
-        self.file_name = file_name
-
-        torch.distributed.init_process_group(
-            init_method=self.init_method,
-            backend=self.DISTRIBUTED_BACKEND,
-            world_size=self.world_size,
-            rank=self.rank,
-        )
-
-        local_rank = self.rank % torch.cuda.device_count()
-        torch.cuda.set_device(local_rank)
-        os.environ["LOCAL_RANK"] = str(local_rank)
-
-        torch.distributed.barrier()
-        self.run_test(test_name, pipe)
-        torch.distributed.barrier()
-
-        torch.distributed.destroy_process_group()
-        sys.exit(0)
 
 
 @unittest.skipUnless(
@@ -281,8 +195,8 @@ class CompileDDPTest(DataParallelTestCase):
 
             self.assertEqual(actual, expected)
 
-    @common_utils.parametrize("executor", tuple(executors_map.keys()))
-    def test_all_gather(self, executor):
+    @common_utils.parametrize("executor,dim", product(tuple(executors_map.keys()), (None, 0, 1)))
+    def test_all_gather(self, executor, dim: int | None):
         _executor = executors_map[executor]
 
         # NOTE torch.distributed.all_gather is an inplace operation
@@ -291,9 +205,16 @@ class CompileDDPTest(DataParallelTestCase):
             b,
             process_group: torch.distributed.ProcessGroup,
             async_op: bool,
+            dim: int | None,
         ):
             c = a + b
-            d = torch.empty((c.shape[0] * process_group.size(), *c.shape[1:]), device=c.device, dtype=c.dtype)
+
+            result_shape = list(c.shape)
+            if dim is not None:
+                result_shape[dim] *= process_group.size()
+            else:
+                result_shape[0] *= process_group.size()
+            d = torch.empty(result_shape, device=c.device, dtype=c.dtype)
             handle = torch.distributed.all_gather_into_tensor(d, c, group=process_group, async_op=async_op)
 
             if async_op:
@@ -308,10 +229,11 @@ class CompileDDPTest(DataParallelTestCase):
             b,
             process_group: torch.distributed.ProcessGroup,
             async_op: bool,
+            dim: int | None,
         ):
             c = a + b
 
-            d = ltorch.all_gather(c, group=process_group, async_op=async_op)
+            d = ltorch.all_gather(c, group=process_group, async_op=async_op, dim=dim)
 
             if async_op:
                 d = prims.wait(d)
@@ -328,8 +250,8 @@ class CompileDDPTest(DataParallelTestCase):
         cfoo = thunder.jit(lc_foo, executors=_executor.executors_list())
 
         for async_op in (True, False):
-            expected = foo(a, b, process_group, async_op)
-            actual = cfoo(a, b, process_group, async_op)
+            expected = foo(a, b, process_group, async_op, dim)
+            actual = cfoo(a, b, process_group, async_op, dim)
 
             self.assertEqual(actual, expected)
 
@@ -391,8 +313,8 @@ class CompileDDPTest(DataParallelTestCase):
 
             self.assertEqual(actual, expected)
 
-    @common_utils.parametrize("executor", tuple(executors_map.keys()))
-    def test_reduce_scatter(self, executor):
+    @common_utils.parametrize("executor,dim", product(tuple(executors_map.keys()), (None, 0, 1)))
+    def test_reduce_scatter(self, executor, dim):
         _executor = executors_map[executor]
 
         # NOTE torch.distributed.all_gather is an inplace operation
@@ -402,9 +324,15 @@ class CompileDDPTest(DataParallelTestCase):
             op,
             process_group: torch.distributed.ProcessGroup,
             async_op: bool,
+            dim: int | None,
         ):
             c = a + b
-            d = torch.empty((c.shape[0] // process_group.size(), *c.shape[1:]), device=c.device, dtype=c.dtype)
+            result_shape = list(a.shape)
+            if dim is None:
+                result_shape[0] //= process_group.size()
+            else:
+                result_shape[dim] //= process_group.size()
+            d = torch.empty(result_shape, device=c.device, dtype=c.dtype)
             if op is not None:
                 handle = torch.distributed.reduce_scatter_tensor(d, c, op, group=process_group, async_op=async_op)
             else:
@@ -423,10 +351,11 @@ class CompileDDPTest(DataParallelTestCase):
             op,
             process_group: torch.distributed.ProcessGroup,
             async_op: bool,
+            dim: int | None,
         ):
             c = a + b
 
-            d = ltorch.reduce_scatter(c, op, group=process_group, async_op=async_op)
+            d = ltorch.reduce_scatter(c, op, group=process_group, async_op=async_op, dim=dim)
 
             if async_op:
                 d = prims.wait(d)
@@ -443,8 +372,8 @@ class CompileDDPTest(DataParallelTestCase):
         cfoo = thunder.jit(lc_foo, executors=_executor.executors_list())
 
         for op, async_op in product((None, torch.distributed.ReduceOp.SUM), (False, True)):
-            expected = foo(a, b, op, process_group, async_op)
-            actual = cfoo(a, b, op, process_group, async_op)
+            expected = foo(a, b, op, process_group, async_op, dim=dim)
+            actual = cfoo(a, b, op, process_group, async_op, dim=dim)
 
             self.assertEqual(actual, expected)
 
@@ -724,7 +653,7 @@ class CompileDDPTest(DataParallelTestCase):
 
     # TODO(crcrpar): Add torch compile to executors_list
     @common_utils.parametrize(
-        "executor,bucketing_strategy,fsdptype",
+        "executor,bucketing_strategy,fsdptype,apply_fsdp_first",
         product(
             tuple(executors_map.keys()),
             (
@@ -732,9 +661,10 @@ class CompileDDPTest(DataParallelTestCase):
                 FSDPBucketingStrategy.BLOCK,
             ),
             (FSDPType.ZERO2, FSDPType.ZERO3),
+            (True, False),
         ),
-        name_fn=lambda executor, bucketing_strategy, fsdptype: (
-            f"executor_{executor}_bucketing_{str(bucketing_strategy).split('.')[1].lower()}_{(str(fsdptype).lower().split('.')[1])}"
+        name_fn=lambda executor, bucketing_strategy, fsdptype, apply_fsdp_first: (
+            f"executor_{executor}_bucketing_{str(bucketing_strategy).split('.')[1].lower()}_{(str(fsdptype).lower().split('.')[1])}_{'jit_fsdp' if apply_fsdp_first else 'fsdp_jit'}"
         ),
     )
     def test_fsdp_grad_parity_with_without_bucketing(
@@ -742,6 +672,7 @@ class CompileDDPTest(DataParallelTestCase):
         executor,
         bucketing_strategy: FSDPBucketingStrategy,
         fsdptype: FSDPType,
+        apply_fsdp_first: bool,
     ):
         from thunder.distributed import fsdp
 
@@ -751,10 +682,18 @@ class CompileDDPTest(DataParallelTestCase):
         for strategy in (FSDPBucketingStrategy.NONE, bucketing_strategy):
             m = ToyModel()
             m.load_state_dict(initial_model_state)
-            cm = thunder.jit(
-                fsdp(m, device=device, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype),
-                executors=executors_map[executor].executors_list(),
-            )
+            if apply_fsdp_first:
+                cm = thunder.jit(
+                    fsdp(m, device=device, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype),
+                    executors=executors_map[executor].executors_list(),
+                )
+            else:
+                cm = fsdp(
+                    thunder.jit(m.to(device), executors=executors_map[executor].executors_list()),
+                    device=device,
+                    bucketing_strategy=bucketing_strategy,
+                    sharding_strategy=fsdptype,
+                )
             x = torch.ones((2, 12), device=device)
             loss = cm(x).mean()
             loss.backward()
@@ -777,6 +716,7 @@ class CompileDDPTest(DataParallelTestCase):
                             ex_trace.bound_symbols,
                         )
                     )
+                    self.assertGreater(len(pack_bsyms), 0)
                     has_pack_multiple_tensors = False
                     for bsym in pack_bsyms:
                         first_arg = bsym.args[0]
@@ -788,6 +728,55 @@ class CompileDDPTest(DataParallelTestCase):
                         self.assertTrue(has_pack_multiple_tensors, msg=f"{[bsym.args[0] for bsym in pack_bsyms]=}")
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
+    @common_utils.parametrize(
+        "bucketing_strategy,fsdptype",
+        product(
+            (
+                FSDPBucketingStrategy.NONE,
+                FSDPBucketingStrategy.BLOCK,
+            ),
+            (FSDPType.ZERO2, FSDPType.ZERO3),
+        ),
+        name_fn=lambda bucketing_strategy, fsdptype: (
+            f"bucketing_{str(bucketing_strategy).split('.')[1].lower()}_{(str(fsdptype).lower().split('.')[1])}"
+        ),
+    )
+    def test_fsdp_with_padding(
+        self,
+        bucketing_strategy: FSDPBucketingStrategy,
+        fsdptype: FSDPType,
+    ):
+
+        from thunder.core.prims import PrimIDs
+        from thunder.executors.torchex import pad_prim_impl
+        from thunder.executors.torchex import slice_prim_impl
+
+        class M(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.l1 = nn.Linear(4, 13)
+                self.l2 = nn.Linear(13, 1)
+
+            def forward(self, x):
+                return self.l2(new_gelu(self.l1(x)))
+
+        device = torch.device(f"cuda:{self.rank}")
+        m = M().to(device)
+        jitted = thunder.jit(fsdp(m, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype))
+
+        x = torch.randn(4, 4, device=device)
+        y = jitted(x)
+        y.mean().backward()
+
+        fw_extrace = thunder.last_traces(jitted)[-1]
+        fw_symids = [bsym.sym.id for bsym in fw_extrace.bound_symbols]
+        self.assertTrue(any(sym_id in {PrimIDs.SLICE, slice_prim_impl.id} for sym_id in fw_symids))
+
+        bw_trace = thunder.last_backward_traces(jitted)[0]
+        bw_symids = [bsym.sym.id for bsym in bw_trace.bound_symbols]
+        self.assertTrue(any(sym_id in {PrimIDs.PAD, pad_prim_impl.id} for sym_id in bw_symids))
+
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
     def test_fsdp_shard_unshard(self):
         from thunder.distributed import _shard_params, _unshard_params
 
@@ -797,6 +786,7 @@ class CompileDDPTest(DataParallelTestCase):
         model = torch.nn.Linear(3, 5, bias=False, device="meta")
         with pytest.raises(RuntimeError, match=r"parameter 'weight' \(5\) to be divisible by the world size \(2\)"):
             _shard_params(model, pg, device, None)
+        _shard_params(model, pg, device, None, allow_padding_for_fsdp=True)
 
         model = torch.nn.Linear(3, 4, bias=False, device="meta")
         weight = torch.arange(3 * 4, device="cpu", dtype=torch.float).view(4, 3)
@@ -953,6 +943,83 @@ class CompileDDPTest(DataParallelTestCase):
         # notice how we cannot do `model.no_sync()` because it's not a ThunderModule
         with thunder.ThunderModule.no_sync(model):
             fwd_loss(model, x)
+
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
+    def test_fsdp_weight_sharing(self):
+        # This test is to verify that weight sharing works with fsdp.
+        # NOTE: Currently we end up creating 2 copies of shared weight during execution.
+        #       This should be fixed and we should update this test to check for that.
+        device = torch.device("cuda", self.rank)
+
+        class Model(torch.nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.fc1 = torch.nn.Linear(16, 16, bias=False)
+                self.fc2 = torch.nn.Linear(16, 16, bias=False)
+
+            def forward(self, x):
+                return self.fc1(x) + self.fc2(x)
+
+        def _test_model_output_and_gradients(model, x, duplicate_all_gather):
+            output = model(x)
+            with device:
+                grad_output = torch.ones_like(output)
+            output.backward(grad_output)
+            expected_shape = (4, 16)
+
+            assert output.shape == expected_shape, f"{output.shape=} - {expected_shape=}"
+
+            # Verify that both params point to same grad tensor.
+            assert id(model.get_parameter("fc1.weight").grad) == id(model.get_parameter("fc2.weight").grad)
+
+            # Verify that we accumulate the gradients for the shared parameter.
+            gathered_grad_shape = (model.get_parameter("fc1.weight").shape[0] * self.world_size,) + model.get_parameter(
+                "fc1.weight"
+            ).shape[1:]
+            with device:
+                actual_grad_gathered = torch.empty(gathered_grad_shape)
+
+            tdist.all_gather_into_tensor(actual_grad_gathered, model.get_parameter("fc1.weight").grad)
+
+            # Based on the forward, grad for both params is `(grad_output.T @ x)`. Multiplying by 2 as the grad will be accumulated.
+            expected_grad = 2 * (grad_output.T @ x)
+            torch.testing.assert_close(actual_grad_gathered, expected_grad)
+
+            forward_exec_trace = thunder.last_traces(model)[-1]
+            gathered_params = set()
+            for bsym in forward_exec_trace.bound_symbols:
+                if bsym.sym.id in (
+                    thunder.distributed.prims.PrimIDs.ALL_GATHER,
+                    thunder.executors.torchex.all_gather_prim_impl.id,
+                ):
+                    gathered_params.add(bsym.args[0].name)
+
+            # Check trace to see we don't have duplicate AllGather for shared parameters.
+            if duplicate_all_gather:
+                # Both params are gathered.
+                assert "t_fc1_weight" in gathered_params and "t_fc2_weight" in gathered_params
+            else:
+                # Either of the param was gathered but not both.
+                assert ("t_fc1_weight" in gathered_params) ^ ("t_fc2_weight" in gathered_params)
+
+        with device:
+            jit_fsdp_model = Model()
+            fsdp_jit_model = Model()
+            x = torch.ones(4, 16)
+
+        # Check `jit(fsdp(model))` works
+        jit_fsdp_model.fc1.weight = jit_fsdp_model.fc2.weight
+
+        jit_fsdp_model = thunder.jit(thunder.distributed.fsdp(jit_fsdp_model), executors=["torch"])
+
+        _test_model_output_and_gradients(jit_fsdp_model, x, duplicate_all_gather=True)
+
+        # Check `fsdp(jit(model))` works
+        fsdp_jit_model.fc1.weight = fsdp_jit_model.fc2.weight
+
+        fsdp_jit_model = thunder.distributed.fsdp(thunder.jit(fsdp_jit_model, executors=["torch"]))
+
+        _test_model_output_and_gradients(fsdp_jit_model, x, duplicate_all_gather=False)
 
 
 common_utils.instantiate_parametrized_tests(CompileDDPTest)
@@ -1263,17 +1330,16 @@ def _test_native_fsdp_helper(input_data):
 
     original_weight_net1_shape = model.net1.weight.shape
 
-    fsdp_model = fsdp(model, bucketing_strategy=bucketing_strategy, device=device)
-
-    # Check that the model is sharded
-    sharded_weight_net1 = fsdp_model.net1.weight
-    assert sharded_weight_net1.shape != original_weight_net1_shape
-    assert sharded_weight_net1.shape == (1, 2)
-
-    cmodel = thunder.jit(
-        fsdp_model,
+    cmodel0 = thunder.jit(
+        model,
         executors=executor.executors_list(),
     )
+    cmodel = fsdp(cmodel0, bucketing_strategy=bucketing_strategy, device=device)
+
+    # Check that the model is sharded
+    sharded_weight_net1 = cmodel.get_parameter("net1.weight")
+    assert sharded_weight_net1.shape != original_weight_net1_shape
+    assert sharded_weight_net1.shape == (1, 2)
 
     comparison_exceptions = []
     for _ in range(num_epochs):
@@ -1498,24 +1564,22 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
             out = jit_model(x, y).sum()
             out.backward()
 
-        fwd_exec_trace = thunder.last_traces(jit_model)[-1]
         bwd_exec_trace = thunder.last_backward_traces(jit_model)[-1]
 
-        # Verify that the first te_linear in fwd_exec_trace is the
-        # last one in bwd_exec_tarce.
-        # We verify that by managing the `ctx` (CollectionProxy) output by `te_linear` which is
-        # passed to backward.
-        # As CollectionProxy don't implement __eq__, we verify them by name.
-        first_ctx_name = None
-        for bsym in fwd_exec_trace.bound_symbols:
-            if bsym.sym.name.startswith("te_linear"):
-                first_ctx_name = bsym.output[1].name
-                break
+        # Last symbol of the trace should be `return`
+        return_sym_idx = len(bwd_exec_trace.bound_symbols) - 1
+        assert thunder.core.prims.PrimIDs.RETURN == bwd_exec_trace.bound_symbols[return_sym_idx].sym.id
 
-        for bsym in reversed(bwd_exec_trace.bound_symbols):
-            if bsym.sym.name.startswith("te_functional"):
-                assert first_ctx_name == bsym.args[-1].name, (first_ctx_name, bsym.args[-1].name)
+        # Verify that the symbol to sync backward
+        # fp8 metadata is present in backward trace.
+        for idx, bsym in enumerate(bwd_exec_trace.bound_symbols):
+            if bsym.sym.id == te_sync_fp8_meta_bwd.id:
+                # Verify that `te_sync_fp8_meta_bwd` is before the last symbol of the trace
+                # which is `return`
+                assert idx < return_sym_idx
                 break
+        else:
+            raise RuntimeError("Backward sync symbol not found.")
     except Exception as e:
         sanity_exceptions.append(e)
 
@@ -1666,6 +1730,8 @@ def _test_fsdp_transformer_engine(input_data):
 @instantiate(
     dtypes=(thunder.float32,),
     num_devices=2,
+    # CPU broke around PyTorch 2.3.1, see PR #545
+    devicetypes=(devices.DeviceType.CUDA,),
     decorators=(pytest.mark.parametrize("bucket_size_in_mb", (0, 25)),),
 )
 @ddp_wrapper("test_native_ddp", _test_native_ddp_helper)

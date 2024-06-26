@@ -79,16 +79,22 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
     torch_result = gpt(idx)
 
     tom = executor.make_callable(gpt, use_cudagraphs=True, disable_torch_autograd=True)
-    thunder_result = tom(idx)
 
+    thunder_result = tom(idx)
     assert_close(torch_result, thunder_result)
+
+    # Check we really run CUDAGraphExecutor {
+    assert tom._lc_cd.use_cudagraphs == True
+
+    from thunder.cudagraphs import CUDAGraphExecutor
+
+    assert type(tom._lc_cs.last_executed) == CUDAGraphExecutor
+    # }
 
 
 @instantiate(dtypes=(thunder.float32,), devicetypes=(thunder.devices.DeviceType.CUDA,))
 @requiresCUDA
 def test_nanogpt_complete_cuda_graphs_autograd(executor, device, dtype):
-    pytest.skip("https://github.com/Lightning-AI/lightning-thunder/issues/1403")
-
     tdtype = ttorch.to_torch_dtype(dtype)
 
     # Creates a nanoGPT model with a smaller size than any of the default options for testing
@@ -198,3 +204,67 @@ def test_hf_bart_self_attn():
     tom = thunder.jit(model)
     thunder_result = tom(inp, None)
     assert_close(torch_result, thunder_result)
+
+
+@requiresCUDA
+def test_quantization():
+    try:
+        import bitsandbytes
+    except (ImportError, RuntimeError):
+        pytest.skip("bitsandbytes not found")
+
+    from thunder.tests import litgpt_model
+    from lightning.fabric.plugins import BitsandbytesPrecision
+
+    config = litgpt_model.Config.from_name("llama2-like")
+    with torch.device("cuda"):
+        model_fp_reference = litgpt_model.GPT(config).to(torch.bfloat16)
+
+    import lightning as L
+
+    plugins = BitsandbytesPrecision("nf4", torch.bfloat16)
+    fabric = L.Fabric(devices=1, precision=None, plugins=plugins)
+    with fabric.init_module(empty_init=True):
+        model = litgpt_model.GPT(config)
+
+    with fabric.init_tensor():
+        # set the max_seq_length to limit the memory usage to what we need
+        model.max_seq_length = 20
+        # enable the kv cache
+        model.set_kv_cache(batch_size=1)
+    model.eval()
+    model.requires_grad_(False)
+    model = fabric.setup_module(model)
+
+    model.load_state_dict(model_fp_reference.state_dict())
+
+    x = torch.randint(1, 255, (1, 10), device="cuda")
+    input_pos = torch.arange(10, device="cuda")
+    logits_expected = model(x, input_pos)
+
+    from thunder.transforms.quantization import BitsAndBytesLinearQuant4bit, get_bitsandbytes_executor
+
+    bitsandbytes_executor = get_bitsandbytes_executor()
+
+    model_fp_reference.set_kv_cache(1, device="cuda", dtype=torch.bfloat16)
+    model_fp_reference.max_seq_length = 20
+    model_fp_reference.requires_grad_(False)
+    model_fp_reference.eval()
+
+    jm = thunder.jit(
+        model_fp_reference,
+        executors=(bitsandbytes_executor,),
+        early_transforms=[BitsAndBytesLinearQuant4bit()],
+    )
+
+    logits_thunder = jm(x, input_pos)
+    # check_dtype=False due to litgpt returning float32
+    # (maybe that also is the numerical discrepancy?)
+    assert_close(logits_thunder, logits_expected, atol=2e-2, rtol=1e-3, check_dtype=False)
+
+    sd = {k: v.clone() for k, v in jm.state_dict().items()}
+    jm.load_original_state_dict(model_fp_reference.state_dict())
+    sd2 = {k: v.clone() for k, v in jm.state_dict().items()}
+    assert len(sd) == len(sd2)
+    for k, v in sd.items():
+        assert_close(v, sd2[k])

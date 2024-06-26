@@ -72,7 +72,7 @@ def resolve_method(id: Any, *args, **kwargs) -> None | Callable:
         # ctx.get_method throws an AttributeError when the context does not have the requested attribute, except
         # for the prims language context, which always throws a ValueError
         method: Callable = ctx.get_method(id, *args, **kwargs)
-    except (AttributeError, ValueError) as e:
+    except (AttributeError, ValueError):
         return None
     return method
 
