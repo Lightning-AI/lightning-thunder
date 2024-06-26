@@ -210,6 +210,26 @@ def test_inplace_to_views(executor, device, _):
 
     torch.testing.assert_close((d, e), (d_, e_))
 
+    def h(a: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        c = torch.exp(a)
+        d = torch.tanh(b)
+
+        e = c.view(-1)
+        e.add_(d.flatten())
+
+        d.div_(a)
+        return c, d, e / 2.0
+
+    a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
+    a_, b_ = a.clone().detach(), b.clone().detach()
+
+    jittd_h = thunder.jit(h, executors=executor.executors_list())
+
+    c, d, e = jittd_h(a, b)
+    c_, d_, e_ = h(a_, b_)
+
+    torch.testing.assert_close((c, d, e), (c_, d_, e_))
+
 
 @instantiate(
     dtypes=NOTHING,
