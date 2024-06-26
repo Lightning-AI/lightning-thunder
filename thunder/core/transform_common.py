@@ -505,7 +505,7 @@ def functionalize_inplace_ops(
                     reshape_bsym = prims.reshape.bind(view, unvariableify(var_orig).shape, output=view_of_orig_shape)
                     cur_orig_to_view_swap_map[var_orig] = view_of_orig_shape
                     bsyms.append(reshape_bsym)
-        new_bsym = bsym.from_bsym_swap_proxies(cur_orig_to_view_swap_map, skip_output=True)
+        new_bsym = new_bsym.from_bsym_swap_proxies(cur_orig_to_view_swap_map, skip_output=True)
 
         # in-place functionalizable ops has `prims.copy_` as the last subsymbol.
         if not is_functionalizable(new_bsym):
