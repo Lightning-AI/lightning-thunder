@@ -630,9 +630,7 @@ def jit(
                 extraces.append(computation_trc)
 
                 if backward_trc is not None:
-                    backward_trc = cudagraphex.fusion_pass(
-                        backward_trc, num_static_inputs=len(backward_trc.args[0][0])
-                    )
+                    backward_trc = cudagraphex.fusion_pass(backward_trc, num_static_inputs=len(backward_trc.args[0][0]))
                     backward_traces.append(backward_trc)
 
             comp = computation_trc.python_callable()

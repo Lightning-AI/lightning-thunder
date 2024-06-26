@@ -40,7 +40,7 @@ def to_arg_descriptor(*args):
 @lru_cache
 def build_cuda_graph(
     fn: Callable, args_descriptor: ArgsDescriptor, static_args_mask: tuple[bool, ...]
-    ) -> tuple[torch.cuda.CUDAGraph, Sequence[torch.Tensor | Any], Sequence[torch.Tensor | Any]]:
+) -> tuple[torch.cuda.CUDAGraph, Sequence[torch.Tensor | Any], Sequence[torch.Tensor | Any]]:
 
     def get_static_buffer(x):
         if isinstance(x, torch.Tensor):
@@ -55,7 +55,9 @@ def build_cuda_graph(
     stream.wait_stream(torch.cuda.current_stream())
 
     with torch.cuda.stream(stream):
-        static_inputs = tuple(get_static_buffer(arg) if not is_static else arg for arg, is_static in zip(args, static_args_mask))
+        static_inputs = tuple(
+            get_static_buffer(arg) if not is_static else arg for arg, is_static in zip(args, static_args_mask)
+        )
         for _ in range(3):
             fn(*static_inputs)
 
@@ -108,8 +110,7 @@ def make_callable(
     from inspect import Parameter, Signature
 
     region_fn_params = (
-        Parameter(getattr(param, "name", f"arg{i}"), Parameter.POSITIONAL_ONLY)
-        for i, param in enumerate(inputs)
+        Parameter(getattr(param, "name", f"arg{i}"), Parameter.POSITIONAL_ONLY) for i, param in enumerate(inputs)
     )
 
     region_fn_signature = Signature(region_fn_params)
@@ -143,7 +144,11 @@ class CUDAGraphExecutor(FusionExecutor):
 
         fusion_sym = Symbol(fusion_name, meta=None, is_fusion=True, executor=self)
         fusion_bsym = BoundSymbol(
-            fusion_sym, inputs, {}, outputs, region.bound_symbols,
+            fusion_sym,
+            inputs,
+            {},
+            outputs,
+            region.bound_symbols,
             _call_ctx={fusion_name: fusion_callable},
         )
 
@@ -230,7 +235,7 @@ class CUDAGraphExecutor(FusionExecutor):
         reset_tracectx(fused_trace_tok)
 
         end_time_ns = time.time_ns()
-        elapsed_time_ns = (end_time_ns - start_time_ns)
+        elapsed_time_ns = end_time_ns - start_time_ns
         elapsed_time_ms = elapsed_time_ns // 1000000
         fused_trace.set_provenance(TraceProvenance(f"CUDAGraph fusion (took {elapsed_time_ms} milliseconds)"))
 
