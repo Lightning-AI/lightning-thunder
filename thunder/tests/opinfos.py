@@ -7672,6 +7672,13 @@ def scaled_dot_product_attention_reference_generator(op, device, dtype, requires
     q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
     yield SampleInput(q, k, v, None, 0.0, True)
 
+    # non-contiguous with stride 0 cases
+    q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
+    q_broadcast = torch.as_strided(q, size=q.shape, stride=(0, 0, E, 1))
+    k_broadcast = torch.as_strided(k, size=k.shape, stride=(0, 0, E, 1))
+    v_broadcast = torch.as_strided(v, size=v.shape, stride=(0, 0, Ev, 1))
+    yield SampleInput(q_broadcast, k_broadcast, v_broadcast, None, 0.0, True)
+
 
 def scaled_dot_product_attention_sample_generator(op, device, dtype, requires_grad, **kwargs):
     """https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html"""
