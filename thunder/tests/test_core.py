@@ -2617,11 +2617,11 @@ def test_default_method(executor, device: str, dtype: dtypes.dtype):
 
 
 @instantiate(dtypes=(thunder.float32,), executors=(TorchExecutor,))
-def test_bound_symbol_source_location_context(executor, device: str, dtype: dtypes.dtype):
+def test_bound_symbol_source_location_context(executor, device: thunder.devices.Device, dtype: dtypes.dtype):
     def foo(x):
         return clang.sin(x)
 
-    a = make_tensor((2, 2), device=device, dtype=ltorch.to_torch_dtype(dtype))
+    a = make_tensor((2, 2), device=device.type, dtype=ltorch.to_torch_dtype(dtype))
 
     lineno = foo.__code__.co_firstlineno + 1
     jfn = thunder.jit(foo)
@@ -2636,14 +2636,14 @@ def test_bound_symbol_source_location_context(executor, device: str, dtype: dtyp
 
 
 @instantiate(dtypes=(thunder.float32,), executors=(TorchExecutor,))
-def test_refine_source_location(executor, device: str, dtype: dtypes.dtype):
+def test_refine_source_location(executor, device: thunder.devices.Device, dtype: dtypes.dtype):
     def foo_thunder(x):
         return thunder.torch.softmax(x, 0)
 
     def foo_torch(x):
         return torch.softmax(x, 0)
 
-    a = make_tensor((2, 2), device=device, dtype=ltorch.to_torch_dtype(dtype))
+    a = make_tensor((2, 2), device=device.type, dtype=ltorch.to_torch_dtype(dtype))
 
     jfn_thunder = thunder.jit(foo_thunder)
     jfn_thunder(a)
