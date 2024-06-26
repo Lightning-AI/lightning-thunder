@@ -28,8 +28,12 @@ def cudnn_version() -> LooseVersion | None:
 
 
 def required_cudnn_version() -> LooseVersion:
-    # Using 1.3.0 majorly because it works better with other libraries (e.g. torch) that also build on top of cudnn backend
-    return LooseVersion("1.3.0")
+    # History of versions:
+    # Using 1.3.0+ because it works better with other libraries (e.g. torch) that also build on top of cudnn
+    # Using 1.5.0+ because it handles exception with unsupported graphs better
+    # Using 1.5.1 because of a compatibility fix
+    # Using 1.5.2 to allow stride 0
+    return LooseVersion("1.5.2")
 
 
 def cudnn_available() -> bool:

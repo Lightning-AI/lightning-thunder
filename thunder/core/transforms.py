@@ -16,6 +16,7 @@ import inspect
 import time
 from collections import deque
 import os
+import dataclasses
 
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
@@ -33,7 +34,7 @@ from thunder.core.proxies import (
 )
 from thunder.core.baseutils import default_dataclass_params
 from thunder.core.compile_data import get_compile_data
-from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
+from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten, tree_flatten_with_dataclass
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol
 from thunder.core.trace import TraceCtx as Trace, tracectx
 from thunder.core.trace import VariableInterface as Variable
@@ -3292,6 +3293,8 @@ def backward_pass(forward_env, trace, init_cotangents):
             safe_map(put_grad, v, [None] * len(v))
         elif isinstance(v, Sequence) and isinstance(val, Sequence):
             safe_map_flat(put_grad, v, val)
+        elif dataclasses.is_dataclass(v) and dataclasses.is_dataclass(val):
+            safe_map_flat(put_grad, tree_flatten_with_dataclass(v), tree_flatten_with_dataclass(val))
         else:
             # Skip writing to constants
             pass
@@ -3632,7 +3635,8 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
         if torch_autograd:
             nonlocal output_spec
             flat_args, _ = tree_flatten((args, kwargs))
-            flat_output, output_spec = tree_flatten(result)
+            # The custom torch.autograd.Function only considers Tensors in the input/output (not ones that are nested inside python data structures)
+            flat_output, output_spec = tree_flatten_with_dataclass(result)
             flat_output = tuple(flat_output)
             # See Note [Grad forward output spec]
             for_autograd = TorchAutogradForwardData(

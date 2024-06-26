@@ -52,7 +52,7 @@ class FSDPTraceTransform(EarlyTransform):
         synchronized_parameters = []
         param_name_to_comp_trc_proxy = {}  # Track param_name to it's corresponding proxy in computation_trc.
         # todo: deal with epilogue output
-        for pro_out_p, comp_inp_p in zip(prologue_trace.output, computation_trace.args):
+        for pro_out_p, comp_inp_p in zip(prologue_trace.output[0], computation_trace.args):
             bsym = prologue_producers[pro_out_p]
             if bsym.sym == prims.unpack_parameter:
                 param_thunder_module, param_name = bsym.args
