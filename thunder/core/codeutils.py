@@ -245,18 +245,12 @@ def prettyprint(
         name = _generate_dataclass_class_name(x)
         call_repr_str = ""
         for k, v in x.__dict__.items():
+            # not sure if try/except is the best way to go about this
             try:
                 call_repr_str += f"{k}={v.name},"
             except:
                 call_repr_str += f"{k}={v},"
-                # pass
-        # instance_repr = str(x)
-        # parens_idx = instance_repr.find("(")
-        # call_repr = instance_repr[
-        #     parens_idx:
-        # ]  # only keep the construction part of the repr (as we will use our generated name)
         return m(f"{name}({call_repr_str})")
-        # return m(f"{name}(t=x)")
 
     # Handles objects that this doesn't know how to serialize as a string
     return m(f"(object of type {print_type(type(x), with_quotes=False)})")
