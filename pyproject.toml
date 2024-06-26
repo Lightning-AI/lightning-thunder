@@ -1,8 +1,6 @@
-[project]
-license = { file = "LICENSE" }
-
 [metadata]
 license_file = "LICENSE"
+license = { file = "LICENSE" }
 description-file = "README.md"
 
 [build-system]
