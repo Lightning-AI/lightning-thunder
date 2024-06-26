@@ -961,10 +961,10 @@ common_utils.instantiate_parametrized_tests(CompileDDPTest)
 # Configures PyTorch's default process group, must be called at the start of each
 #   distributed process
 def init_per_process_distributed(
-    init_method: str, devicetype: devices.DeviceType, world_size: int, rank: int
+    init_method: str, device: devices.Device, world_size: int, rank: int
 ) -> tdist.ProcessGroup:
     backend: str
-    devicetype = devicetype.devicetype
+    devicetype = device.devicetype
     if devicetype is devices.DeviceType.CUDA:
         backend = "nccl"
     elif devicetype is devices.DeviceType.CPU:
@@ -1038,19 +1038,19 @@ def create_per_process_dataloader(
     tensor_dtype: torch.dtype,
     sample_seed: int | None = None,
     *,
-    devicetype: devices.DeviceType,
+    device: devices.Device,
 ) -> tudata.DataLoader:
     dataset = PerProcessDataset(num_samples, tensor_shape, tensor_dtype, sample_seed=sample_seed)
     sampler = tudata.SequentialSampler(dataset)
 
     collate_fn = None
-    devicetype = devicetype.devicetype
+    devicetype = device.devicetype
     if devicetype is not devices.DeviceType.CPU:
         assert devicetype is devices.DeviceType.CUDA, f"Unknown devicetype {devicetype}"
-        device = torch.device("cuda", rank)
+        torch_device = torch.device("cuda", rank)
 
         def to_device(tensors: list[torch.Tensor]) -> list[torch.Tensor]:
-            return list([t.to(device) for t in tensors])
+            return list([t.to(torch_device) for t in tensors])
 
         collate_fn = to_device
 
@@ -1144,11 +1144,9 @@ def _test_native_ddp_helper(input_data):
     tensor_shape = (2, 2)
     sample_seed = 3456
     num_epochs = 1
-    # devicetype = devices.device_from_string(device).devicetype
-    devicetype = device
     torch_dtype = ltorch.to_torch_dtype(dtype)
 
-    pg = init_per_process_distributed(init_method, devicetype, world_size, rank)
+    pg = init_per_process_distributed(init_method, device, world_size, rank)
     tdist.barrier(pg)
 
     dataloader = create_per_process_dataloader(
@@ -1157,7 +1155,7 @@ def _test_native_ddp_helper(input_data):
         tensor_shape=tensor_shape,
         tensor_dtype=torch_dtype,
         sample_seed=sample_seed,
-        devicetype=devicetype,
+        device=device,
     )
 
     # Creates, compiles, and DDPs the model
@@ -1238,10 +1236,9 @@ def _test_native_fsdp_helper(input_data):
     tensor_shape = (2, 2)
     sample_seed = 3456
     num_epochs = 1
-    devicetype = devices.device_from_string(device).devicetype
     torch_dtype = ltorch.to_torch_dtype(dtype)
 
-    pg = init_per_process_distributed(init_method, devicetype, world_size, rank)
+    pg = init_per_process_distributed(init_method, device, world_size, rank)
     tdist.barrier(pg)
 
     def finalize_pg(pg):
@@ -1258,7 +1255,7 @@ def _test_native_fsdp_helper(input_data):
         tensor_shape=tensor_shape,
         tensor_dtype=torch_dtype,
         sample_seed=sample_seed,
-        devicetype=devicetype,
+        device=device,
     )
 
     # Creates, compiles, and FSDPs the model

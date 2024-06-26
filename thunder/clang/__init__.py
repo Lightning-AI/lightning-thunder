@@ -59,7 +59,6 @@ class clangop:
 @clangop()
 def check_tensor_shape_and_metadata(t: TensorProxy, /) -> None:
     return prims.check_tensor_shape_and_metadata(
-        # t, tuple(t.shape), str(t.device), dtypes.to_torch_dtype(t.dtype), t.requires_grad
         t,
         tuple(t.shape),
         t.device,

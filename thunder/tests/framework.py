@@ -264,20 +264,19 @@ def _instantiate_executor_test_template(
     dtype: datatypes.dtype,
     as_name: str | None = None,
 ) -> Callable:
-    devicetype: devices.DeviceType
+    devicetype: devices.Device | Sequence[devices.Device]
     device_str: str | list[str]
+    devicetype = device_or_devices
     if isinstance(device_or_devices, devices.Device):
-        _devicetype = device_or_devices.devicetype
-        devicetype = device_or_devices
+        devicetype_ = device_or_devices.devicetype
         device_str = str(device_or_devices)
     else:
-        _devicetype = device_or_devices[0].devicetype
-        devicetype = [device for device in device_or_devices]
+        devicetype_ = device_or_devices[0].devicetype
         device_str = []
         for device in device_or_devices:
             device_str.append(str(device))
 
-    devicetype_str = devices.devicetype_string(_devicetype)
+    devicetype_str = devices.devicetype_string(devicetype_)
     template_name = as_name if as_name is not None else template.__name__
     test_name = "_".join((template_name, executor.name, devicetype_str, str(dtype)))
 

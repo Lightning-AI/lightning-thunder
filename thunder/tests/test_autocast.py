@@ -21,7 +21,6 @@ def test_thunder_autocast_transform(executor, device, dtype):
 
     # TODO: Consider adding support for device specific dtypes in the test
     # instantiator.
-    print("autocast_transform", type(device), type(dtype))
     torch_device = torch.device(device.type)
     if torch_device.type == "cpu" and dtype == dtypes.float16:
         pytest.skip("float16 matmul is not supported on CPU.")
@@ -93,7 +92,6 @@ def test_no_autocast(executor, device, dtype):
     assert b1 is False
     assert b2 is False
 
-    print("hi! ", type(device), device)
     torch_device = torch.device(device.type)
     if torch_device.type == "cpu" and dtype == dtypes.float16:
         pytest.skip("float16 matmul is not supported on CPU.")

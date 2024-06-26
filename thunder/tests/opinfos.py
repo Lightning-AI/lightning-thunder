@@ -5290,7 +5290,7 @@ def full_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
 
 def full_error_generator(op, device, **kwargs):
-    err_msg = "Can't safely cast fill_value of numbertype <class 'complex'> to dtype float32"
+    err_msg = "Can't safely cast fill_value of numbertype <class 'complex'> to dtype thunder.dtypes.float32"
     yield (SampleInput((1, 2), 1j, device=device, dtype=torch.float), RuntimeError, err_msg)
 
 
@@ -5439,7 +5439,7 @@ def bernoulli_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
 
 def bernoulli_error_generator(op, device, **kwargs):
-    err_msg = "bernoulli only supports floating point dtypes, got int64"
+    err_msg = "bernoulli only supports floating point dtypes, got thunder.dtypes.int64"
     yield (SampleInput(torch.ones(3, 3, device=device, dtype=torch.long)), RuntimeError, err_msg)
 
     err_msg = "generator is not None which is currently unsupported"
@@ -5598,13 +5598,13 @@ def tensor_constructor_error_generator(op, device, **kwargs):
     err_msg = "Expected sequences of numbers, but found type <class 'list'>"
     yield (SampleInput([[1], [[6, 2]]]), ValueError, err_msg)
 
-    err_msg = "Can't safely cast sequence with numbertype <class 'float'> to dtype int32"
+    err_msg = "Can't safely cast sequence with numbertype <class 'float'> to dtype thunder.dtypes.int32"
     yield (SampleInput([[1, 2.0], [6, 2]], dtype=torch.int32), RuntimeError, err_msg)
 
-    err_msg = "Can't safely cast sequence with numbertype <class 'complex'> to dtype int32"
+    err_msg = "Can't safely cast sequence with numbertype <class 'complex'> to dtype thunder.dtypes.int32"
     yield (SampleInput([[1, 2j], [6, 2]], dtype=torch.int32), RuntimeError, err_msg)
 
-    err_msg = "Can't safely cast sequence with numbertype <class 'complex'> to dtype float64"
+    err_msg = "Can't safely cast sequence with numbertype <class 'complex'> to dtype thunder.dtypes.float64"
     yield (SampleInput([[1, 2j], [6, 2]], dtype=torch.float64), RuntimeError, err_msg)
 
 
