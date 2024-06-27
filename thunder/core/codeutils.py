@@ -243,13 +243,13 @@ def prettyprint(
         # NOTE: The `class` packagename1_MyContainer will present in `import_ctx` and passed to the compiled function.
         # This is taken care of by function `to_printable`.
         name = _generate_dataclass_class_name(x)
-        call_repr_str = ""
+        call_repr = []
         for k, v in x.__dict__.items():
-            # not sure if try/except is the best way to go about this
             try:
-                call_repr_str += f"{k}={v.name},"
+                call_repr.append(f"{k}={v.name},")
             except:
-                call_repr_str += f"{k}={v},"
+                call_repr.append(f"{k}={v},")
+        call_repr_str = "".join(call_repr)
         return m(f"{name}({call_repr_str})")
 
     # Handles objects that this doesn't know how to serialize as a string

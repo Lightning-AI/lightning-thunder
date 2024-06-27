@@ -134,7 +134,7 @@ class Proxy(VariableInterface, ProxyInterface):
         return self.__class__(name=name)
 
     def __repr__(self) -> str:
-        return f"<{type(self).__name__} {self.name}>"
+        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self.shape}>'
 
     def type_string(self) -> str:
         return "Any"
