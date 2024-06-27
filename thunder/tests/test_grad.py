@@ -1378,7 +1378,7 @@ def test_phantom_grad_unpack(executor, device: str, dtype: dtypes.dtype):
         a, b = tup
         return a * b
 
-    cfoo = thunder.compile(foo, disable_preprocessing=True)
+    cfoo = thunder.jit(foo)
     cfoo_grad = grad(cfoo)
 
     a = torch.randn((2, 2), requires_grad=True)
@@ -1394,7 +1394,7 @@ def test_phantom_grad_unpack(executor, device: str, dtype: dtypes.dtype):
         a, b = d["a"], d["b"]
         return a * b
 
-    cbar = thunder.compile(bar, disable_preprocessing=True)
+    cbar = thunder.jit(bar)
     cbar_grad = grad(cbar)
 
     a_grad, b_grad = cbar_grad({"a": a, "b": b})
