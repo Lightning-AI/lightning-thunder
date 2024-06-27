@@ -747,7 +747,7 @@ def _general_jit_isinstance_lookaside(obj: Any, cls: type | UnionType | tuple[ty
     uobj = unwrap(obj)
     ucls = unwrap(cls)
     if isinstance(uobj, TensorProxy):
-        res = issubclass(torch.Tensor, ucls)
+        res = issubclass(torch.Tensor, ucls) or isinstance(uobj, ucls)
     else:
         res = isinstance(uobj, ucls)
 

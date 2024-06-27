@@ -310,14 +310,17 @@ def to_dtype(x: Any, /, *, true_dtype: bool = False) -> None | dtype:
         return _numpy_to_thunder_dtype_map[x.dtype]
     if isinstance(x, np.dtype):
         return _numpy_to_thunder_dtype_map[x.type]
-    if isinstance(x, torch.Tensor):
-        return _torch_to_thunder_dtype_map[x.dtype]
     if isinstance(x, torch.dtype):
         return _torch_to_thunder_dtype_map[x]
     if isinstance(x, TensorProxyInterface):
         if true_dtype:
             return x.true_dtype
         return x.dtype
+    # This isinstance check should be after the TensorProxyInterface check
+    #   because inside Thunder's interpreter TensorProxyInterface is considered
+    #   to be a subclass of torch.Tensor
+    if isinstance(x, torch.Tensor):
+        return _torch_to_thunder_dtype_map[x.dtype]
     if isinstance(x, dtype):
         return x
     if isinstance(x, NumberProxyInterface):
