@@ -260,12 +260,16 @@ def horizontal_merge(graph, merge_func: Callable):
         # takes the first node in the stack.
         cur = visit_stack.pop(0)
         bsyms_in_group = []
+        indices_in_group = []
 
         def update_candidate(schedule_op):
             nonlocal bsyms_in_group
+            nonlocal indices_in_group
             nonlocal candidate_map
             nonlocal visit_stack
             bsyms_in_group += schedule_op.group_bsyms
+            indices_in_group += schedule_op.group_indices
+
             # iterate through candidate_map and update predicate for schedule_op.children
             for candidate in schedule_op.children:
                 remaining_dependencies = candidate_map.setdefault(candidate, len(candidate.parents))
@@ -284,7 +288,11 @@ def horizontal_merge(graph, merge_func: Callable):
             else:
                 index += 1
 
-        topo_order_groups.append(bsyms_in_group)
+        # Sort bsyms_in_group wrt trace index order.
+        # This is needed in cases when there is a horizontal op order
+        topo_order_groups.append(
+            [bsyms_in_group[i] for i in sorted(range(len(bsyms_in_group)), key=lambda i: indices_in_group[i])]
+        )
 
     return topo_order_groups
 
