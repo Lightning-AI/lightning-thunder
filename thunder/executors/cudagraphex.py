@@ -155,6 +155,8 @@ class CUDAGraphExecutor(FusionExecutor):
         return fusion_bsym
 
     def can_fuse(self, bsym: BoundSymbol):
+        from thunder.executors.torchex import connect_to_autograd_impl
+
         curr_tracectx = get_tracectx()
         assert hasattr(curr_tracectx, "clear_collection_names")
 
@@ -178,6 +180,7 @@ class CUDAGraphExecutor(FusionExecutor):
             prims.PrimIDs.UNPACK_EMPTY_DICT,
             prims.PrimIDs.UNPACK_SEQUENCE,
             prims.PrimIDs.RETURN,
+            connect_to_autograd_impl.id,
             # Data-dependent ops
             prims.PrimIDs.ITEM,
         }
