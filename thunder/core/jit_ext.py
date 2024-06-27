@@ -836,22 +836,6 @@ def _general_jit_bool_lookaside(wrapped_x: Any) -> bool | INTERPRETER_SIGNALS:
 _general_jit_lookaside_map[bool] = _general_jit_bool_lookaside
 
 
-def _torch_module_named_member_lookaside(model, get_member_func, prefix="", recurse=True, remove_duplicate=True):
-    memo = set()
-    modules = model.named_modules(prefix=prefix, remove_duplicate=remove_duplicate) if recurse else [(prefix, model)]
-    for module_prefix, module in modules:
-        members = get_member_func(module)
-        for k, v in members.items():
-            # We use name of the proxy as id.
-            id_v = v.name
-            if id_v is None or id_v in memo:
-                continue
-            if remove_duplicate:
-                memo.add(id_v)
-            name = module_prefix + ("." if module_prefix else "") + k
-            yield name, v
-
-
 def _get_torch_nn_module_named_members_lookaside(
     model: torch.nn.Module, named_member_method, get_member_method, *unwrapped_args, **unwrapped_kwargs
 ):
@@ -870,6 +854,7 @@ def _get_torch_nn_module_named_members_lookaside(
     # NOTE: If prefix was passed, these names will be qualified with prefix.
     member_names = {name for name, _ in named_member_method(*unwrapped_args, **unwrapped_kwargs)}
 
+    # NOTE: This will be interpreted.
     def _get_named_member_impl(members):
         for member in members:
             org_name = member
