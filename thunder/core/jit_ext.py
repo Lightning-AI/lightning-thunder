@@ -751,8 +751,9 @@ def _general_jit_isinstance_lookaside(obj: Any, cls: type | UnionType | tuple[ty
         # We represent `nn.Parameters` with `TensorProxy`,
         # so to support `isinstance(t, torch.nn.Parameter)`
         # we peek at the original python_type of the wrapped object.
-        # NOTE: ucls is type or tuple of types, so we check with `is` and `in` below.
-        if torch.nn.Parameter is ucls or torch.nn.Parameter in ucls:
+        if not isinstance(ucls, (tuple, list)):
+            ucls = (ucls,)
+        if torch.nn.Parameter in ucls:
             res = issubclass(obj.python_typ, ucls)
     else:
         res = isinstance(uobj, ucls)
