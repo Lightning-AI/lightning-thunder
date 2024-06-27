@@ -640,9 +640,8 @@ def transform_for_execution(
     return traces
 
 
-# Executes the trace with the given args and kwargs and returns the result,
-#   the callable executed, and the series of traces constructed to produce
-#   that callable from the trace
+# NOTE: Do not use this function and do not update it.
+# Use `thunder.jit` instead.
 def _execute_trace(
     trc: TraceCtx,
     *,
@@ -688,14 +687,16 @@ def _execute_trace(
 #   a helper to convert torch tensors to NumPy arrays on output?
 
 
+# NOTE: Do not use this function and do not update it.
+# Use `thunder.jit` instead.
 def _create_callable(
     cd: CompileData,
     cs: CompileStats,
-    *,
-    transforms: list[Callable] = [],
-    post_optimization_transforms: list[Callable] = [],
-    _using_grad_transform: bool = False,
 ) -> Callable:
+    transforms = []
+    post_optimization_transforms = []
+    _using_grad_transform = False
+
     @wraps(cd.fn)
     def _fn(*args, **kwargs) -> tuple[Any, list[TraceCtx]]:
         cs.last_trace_host_start = time.time_ns()

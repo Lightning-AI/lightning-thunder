@@ -1361,7 +1361,7 @@ def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype,
             op,
             device,
             dtype,
-            executor.make_callable_legacy(op.op),
+            executor.make_callable(op.op),
             op.torch_reference,
             sample,
             lambda a, b, **kwargs: comp(a, b, equal_nan=True, **kwargs),
@@ -1387,7 +1387,7 @@ def test_phantom_grad_unpack(executor, device: str, dtype: dtypes.dtype):
         a, b = tup
         return a * b
 
-    cfoo = thunder.compile(foo, disable_preprocessing=True)
+    cfoo = thunder.jit(foo)
     cfoo_grad = grad(cfoo)
 
     a = torch.randn((2, 2), requires_grad=True)
@@ -1403,7 +1403,7 @@ def test_phantom_grad_unpack(executor, device: str, dtype: dtypes.dtype):
         a, b = d["a"], d["b"]
         return a * b
 
-    cbar = thunder.compile(bar, disable_preprocessing=True)
+    cbar = thunder.jit(bar)
     cbar_grad = grad(cbar)
 
     a_grad, b_grad = cbar_grad({"a": a, "b": b})
