@@ -207,6 +207,10 @@ def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
     LooseVersion(cudnn.backend_version_string()) < LooseVersion("8.9.5"),
     reason="cuDNN is required to be at least `8.9.5`",
 )
+@pytest.mark.skipif(
+    version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"),
+    reason="https://github.com/pytorch/pytorch/issues/129579",
+)
 @pytest.mark.parametrize("may_cat_grad_qkv", (True, False), ids=("may-cat-grad-qkv", "never-cat-grad-qkv"))
 @pytest.mark.parametrize("dtype", grad_sdpa_cudnn_opinfo.dtypes(), ids=tuple(map(str, grad_sdpa_cudnn_opinfo.dtypes())))
 def test_vjp_correctness_cudnn_sdpa(dtype, may_cat_grad_qkv):
