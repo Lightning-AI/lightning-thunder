@@ -328,14 +328,11 @@ def transform_for_torch_autograd(computation_trc: TraceCtx, compile_data, compil
     # Update the forward trace with the correct backward function
     if any(bsym.sym.name == "connect_to_autograd_impl" for bsym in reversed(fw_extrace.bound_symbols)):
         assert fw_extrace.bound_symbols[-2].sym.name == "connect_to_autograd_impl"
-        backward_fn = bw_extrace.python_callable()
-        if compile_data.use_cudagraphs:
-            backward_fn = CUDAGraphExecutor(backward_fn, num_constant_args=len(bw_extrace.args[0][0]))
         fw_extrace.bound_symbols[-2] = replace(
             fw_extrace.bound_symbols[-2],
             kwargs={
                 **fw_extrace.bound_symbols[-2].kwargs,
-                "backward": backward_fn,
+                "backward": bw_extrace.python_callable(),
             },
         )
 
