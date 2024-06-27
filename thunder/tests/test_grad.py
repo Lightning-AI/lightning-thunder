@@ -541,12 +541,21 @@ def test_vjp_correctness_index_put_manual(op, device, dtype, executor, comp):
 
 # NOTE Scaled_Dot_Product_Efficient_Attention_Backward does not support fp64 dtypes
 # RuntimeError: Only fp32, half & bf16 supported at the moment
+@pytest.mark.skipif(
+    not version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"),
+    reason="https://github.com/pytorch/pytorch/issues/129579",
+)
 @ops(
     (get_opinfo("grad_forward_scaled_dot_product_attention"),),
     supported_dtypes=(dtypes.float16, dtypes.bfloat16),
     supported_devicetypes=(devices.DeviceType.CUDA,),
 )
 def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
+    if version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"):
+        raise pytest.skip(
+            "https://github.com/pytorch/pytorch/issues/129579",
+        )
+
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
         from thunder.executors.sdpaex import sdpa_ex
 
@@ -1352,7 +1361,7 @@ def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype,
             op,
             device,
             dtype,
-            executor.make_callable_legacy(op.op),
+            executor.make_callable(op.op),
             op.torch_reference,
             sample,
             lambda a, b, **kwargs: comp(a, b, equal_nan=True, **kwargs),
@@ -1378,7 +1387,7 @@ def test_phantom_grad_unpack(executor, device: str, dtype: dtypes.dtype):
         a, b = tup
         return a * b
 
-    cfoo = thunder.compile(foo, disable_preprocessing=True)
+    cfoo = thunder.jit(foo)
     cfoo_grad = grad(cfoo)
 
     a = torch.randn((2, 2), requires_grad=True)
@@ -1394,7 +1403,7 @@ def test_phantom_grad_unpack(executor, device: str, dtype: dtypes.dtype):
         a, b = d["a"], d["b"]
         return a * b
 
-    cbar = thunder.compile(bar, disable_preprocessing=True)
+    cbar = thunder.jit(bar)
     cbar_grad = grad(cbar)
 
     a_grad, b_grad = cbar_grad({"a": a, "b": b})
