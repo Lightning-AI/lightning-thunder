@@ -7783,6 +7783,13 @@ sdpa_opinfo = OpInfo(
             "test_vjp_correctness",
             dtypes=(datatypes.float64,),
         ),
+        DecorateInfo(
+            pytest.mark.skip(reason="https://github.com/pytorch/pytorch/issues/129579"),
+            "test_cudnn_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16, datatypes.float16, datatypes.float32),
+            devicetypes=(devices.DeviceType.CUDA,),
+            active_if=version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"),
+        ),
     ),
 )
 nn_ops.append(sdpa_opinfo)
