@@ -14,7 +14,6 @@ from thunder.core.options import (
 )
 from thunder.core.utils import check, is_collection
 from thunder.core.pytree import tree_flatten, tree_map
-from thunder.cudagraphs import CUDAGraphExecutor
 from thunder.core.compile_data import compile_data_and_stats
 import thunder.core.langctxs as langctxs
 from thunder.core.langctxs import set_langctx, reset_langctx, LanguageContext, resolve_language, Languages
@@ -670,10 +669,6 @@ def _execute_trace(
 
     # Constructs the Python callable
     c = extrace.python_callable()
-
-    # TODO RC1 Mark this option as experimental
-    if compile_data.use_cudagraphs:
-        c = CUDAGraphExecutor(c, num_constant_args=compile_data.num_constant_args)
 
     # Executes the operation
     result: Any = c(*args, **kwargs)
