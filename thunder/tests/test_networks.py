@@ -96,18 +96,7 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
     # }
 
 
-@instantiate(
-    dtypes=(thunder.float32,),
-    devicetypes=(thunder.devices.DeviceType.CUDA,),
-    decorators=(
-        # Should be fixed with https://github.com/Lightning-AI/lightning-thunder/pull/656
-        pytest.mark.xfail(
-            strict=True,
-            reason="Currently connect_to_torch_autograd is not composable with CUDAGraphExecutor",
-            raises=RuntimeError,
-        ),
-    ),
-)
+@instantiate(dtypes=(thunder.float32,), devicetypes=(thunder.devices.DeviceType.CUDA,))
 @requiresCUDA
 def test_nanogpt_complete_cuda_graphs_autograd(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
