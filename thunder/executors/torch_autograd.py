@@ -322,6 +322,7 @@ def transform_for_torch_autograd(computation_trc: TraceCtx, compile_data, compil
 
     if compile_data.use_cudagraphs:
         from thunder.executors.cudagraphex import cudagraphex
+
         bw_extrace = cudagraphex.fusion_pass(bw_extrace, num_static_inputs=len(bw_extrace.args[0][0]))
         bw_traces.append(bw_extrace)
 
