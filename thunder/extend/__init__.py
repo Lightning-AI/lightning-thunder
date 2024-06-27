@@ -74,7 +74,7 @@ class Executor:
         return self._implmap
 
     def __repr__(self) -> str:
-        return str(self.name)
+        return f"thunder.extend.OperatorExecutor('{str(self.name)}')"
 
     def __hash__(self) -> int:
         return hash(self.name)
