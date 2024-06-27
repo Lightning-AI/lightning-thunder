@@ -320,6 +320,11 @@ def transform_for_torch_autograd(computation_trc: TraceCtx, compile_data, compil
     bw_extrace._include_te_fp8_autocast = False
     bw_traces.append(bw_extrace)
 
+    if compile_data.use_cudagraphs:
+        from thunder.executors.cudagraphex import cudagraphex
+        bw_extrace = cudagraphex.fusion_pass(bw_extrace, num_static_inputs=len(bw_extrace.args[0][0]))
+        bw_traces.append(bw_extrace)
+
     for transform in compile_data.post_optimization_transforms:
         utils.check_type(transform, PostOptimizationTransform)
         bw_extrace = transform.transform_trace(bw_extrace, executors_list=compile_data.executors_list)
