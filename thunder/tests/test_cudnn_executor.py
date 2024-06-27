@@ -96,6 +96,15 @@ grad_sdpa_cudnn_opinfo = OpInfo(
         thunder.dtypes.bfloat16,
     ),
     devicetypes=(devices.DeviceType.CUDA,),
+    test_directives=(
+        DecorateInfo(
+            pytest.mark.skip(reason="https://github.com/pytorch/pytorch/issues/129579"),
+            "test_cudnn_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16, datatypes.float16, datatypes.float32),
+            devicetypes=(devices.DeviceType.CUDA,),
+            active_if=version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"),
+        ),
+    ),
 )
 
 
