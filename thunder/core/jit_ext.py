@@ -829,6 +829,51 @@ def _general_jit_bool_lookaside(wrapped_x: Any) -> bool | INTERPRETER_SIGNALS:
 
 _general_jit_lookaside_map[bool] = _general_jit_bool_lookaside
 
+
+def _torch_module_named_member_lookaside(model, get_member_func, prefix="", recurse=True, remove_duplicate=True):
+    memo = set()
+    modules = model.named_modules(prefix=prefix, remove_duplicate=remove_duplicate) if recurse else [(prefix, model)]
+    for module_prefix, module in modules:
+        members = get_member_func(module)
+        for k, v in members.items():
+            # We use name of the proxy as id.
+            id_v = v.name
+            if id_v is None or id_v in memo:
+                continue
+            if remove_duplicate:
+                memo.add(id_v)
+            name = module_prefix + ("." if module_prefix else "") + k
+            yield name, v
+
+
+@general_jit_lookaside(torch.nn.Module.named_parameters)
+def _general_jit_named_parameter_lookaside(obj: Any, *args, **kwargs):
+    model = unwrap(obj)
+    assert isinstance(model, torch.nn.Module)
+
+    # We already know how to deal with `model._parameters` via MODULE_MEMBER_DICT_ATTRS
+    def get_parameters(model):
+        return getattr(model, "_parameters")
+
+    return _interpret_call(
+        partial(_torch_module_named_member_lookaside, model=model, get_member_func=get_parameters), *args, **kwargs
+    )
+
+
+@general_jit_lookaside(torch.nn.Module.named_buffers)
+def _general_jit_named_buffer_lookaside(obj: Any, *args, **kwargs):
+    model = unwrap(obj)
+    assert isinstance(model, torch.nn.Module)
+
+    # We already know how to deal with `model._buffers` via MODULE_MEMBER_DICT_ATTRS
+    def get_buffers(model):
+        return getattr(model, "_buffers")
+
+    return _interpret_call(
+        partial(_torch_module_named_member_lookaside, model=model, get_member_func=get_buffers), *args, **kwargs
+    )
+
+
 # Adds proxy methods
 # NOTE These methods map to themselves, which prevents the interpreter from looking into them
 #   This is OK because these methods are written in a tracing-safe manner, and trying to

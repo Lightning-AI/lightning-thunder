@@ -991,3 +991,56 @@ def test_load_original_state_dict():
     # We can't directly compare state_dict - https://github.com/Lightning-AI/lightning-thunder/issues/647
     torch.testing.assert_close(thunder_module._overrides_parameters["param"], m.param)
     torch.testing.assert_close(thunder_module._overrides_buffers["buffer"], m.buffer)
+
+
+@pytest.mark.parametrize("prefix", ("", "foo"))
+@pytest.mark.parametrize("recurse", (True, False))
+@pytest.mark.parametrize(
+    "remove_duplicate",
+    (
+        pytest.param(
+            True,
+            marks=pytest.mark.xfail(
+                raises=(AssertionError), reason="Currently, we can't differentiate between shared buffers", strict=True
+            ),
+        ),
+        False,
+    ),
+)
+def test_named_params_and_named_buffers(prefix, recurse, remove_duplicate):
+
+    buffer_tensor = torch.tensor([1.0])
+
+    class SubMod(torch.nn.Module):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.register_buffer("buffer", buffer_tensor)
+            self.register_buffer("buffer2", buffer_tensor)
+
+        def forward(self, x):
+            return x
+
+    class MyModel(torch.nn.Module):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.fc1 = torch.nn.Linear(1, 1)
+            self.register_buffer("buffer", buffer_tensor)
+            self.sub_module = torch.nn.Sequential(
+                torch.nn.Linear(1, 1), SubMod(), torch.nn.Sequential(torch.nn.Linear(1, 1))
+            )
+
+        def forward(self):
+            names_params_buffers = []
+            for name, param in self.named_parameters(prefix=prefix, recurse=recurse, remove_duplicate=remove_duplicate):
+                names_params_buffers.append((name, param))
+            for name, buffer in self.named_buffers(prefix=prefix, recurse=recurse, remove_duplicate=remove_duplicate):
+                names_params_buffers.append((name, buffer))
+            return names_params_buffers
+
+    m = MyModel()
+    expected = dict(m())
+
+    jm = thunder.jit(m)
+    actual = dict(jm())
+
+    torch.testing.assert_close(actual, expected)
