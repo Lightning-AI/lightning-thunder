@@ -18,6 +18,7 @@ import thunder
 from thunder.core.interpreter import is_jitting, InterpreterError
 
 from thunder.tests import litgpt_model
+from thunder.tests.framework import version_between
 import thunder.clang as clang
 from thunder.core.options import INTERPRETATION_OPTIONS, CACHE_OPTIONS
 import thunder.torch as ltorch
@@ -684,6 +685,11 @@ def test_litgpt_variants(name, device):
         torch.testing.assert_close(param1.grad, param2.grad, rtol=1e-2, atol=1e-2)
 
 
+
+@pytest.mark.skipif(
+    version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"),
+    reason="https://github.com/pytorch/pytorch/issues/129579",
+)
 @skipif_not_pytorch_2_1
 @pytest.mark.parametrize(
     "name",
