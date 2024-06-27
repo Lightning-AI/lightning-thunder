@@ -997,17 +997,7 @@ def test_load_original_state_dict():
 @pytest.mark.parametrize("recurse", (True, False), ids=("recurse=True", "recurse=False"))
 @pytest.mark.parametrize(
     "remove_duplicate",
-    (
-        False,
-        pytest.param(
-            True,
-            marks=pytest.mark.xfail(
-                raises=(AssertionError),
-                reason="We can't differentiate between shared buffers and parameters",
-                strict=True,
-            ),
-        ),
-    ),
+    (False, True),
     ids=("remove_duplicate=False", "remove_duplicate=True"),
 )
 def test_named_params_and_named_buffers(prefix, recurse, remove_duplicate):
@@ -1045,5 +1035,53 @@ def test_named_params_and_named_buffers(prefix, recurse, remove_duplicate):
 
     jm = thunder.jit(m)
     actual = dict(jm())
+
+    torch.testing.assert_close(actual, expected)
+
+
+def test_isinstance_parameter():
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc = torch.nn.Linear(1, 1)
+
+        def forward(self, x):
+            weight = self.fc.weight
+
+            # Verify that `thunder.jit` correctly picks this branch.
+            if isinstance(weight, torch.nn.Parameter):
+                return x + 1
+
+            return x
+
+    m = Model()
+    x = torch.ones(
+        1,
+    )
+    expected = m(x)
+    actual = thunder.jit(m)(x)
+
+    torch.testing.assert_close(actual, expected)
+
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc = torch.nn.Linear(1, 1)
+
+        def forward(self, x):
+            weight = self.fc.weight
+
+            # Verify that `thunder.jit` correctly picks this branch.
+            if isinstance(weight, (torch.nn.Parameter, type(None))):
+                return x + 1
+
+            return x
+
+    m = Model()
+    x = torch.ones(
+        1,
+    )
+    expected = m(x)
+    actual = thunder.jit(m)(x)
 
     torch.testing.assert_close(actual, expected)

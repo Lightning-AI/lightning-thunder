@@ -748,6 +748,12 @@ def _general_jit_isinstance_lookaside(obj: Any, cls: type | UnionType | tuple[ty
     ucls = unwrap(cls)
     if isinstance(uobj, TensorProxy):
         res = issubclass(torch.Tensor, ucls)
+        # We represent `nn.Parameters` with `TensorProxy`,
+        # so to support `isinstance(t, torch.nn.Parameter)`
+        # we peek at the original python_type of the wrapped object.
+        # NOTE: ucls is type or tuple of types, so we check with `is` and `in` below.
+        if torch.nn.Parameter is ucls or torch.nn.Parameter in ucls:
+            res = issubclass(obj.python_typ, ucls)
     else:
         res = isinstance(uobj, ucls)
 
@@ -846,31 +852,56 @@ def _torch_module_named_member_lookaside(model, get_member_func, prefix="", recu
             yield name, v
 
 
-@general_jit_lookaside(torch.nn.Module.named_parameters)
-def _general_jit_named_parameter_lookaside(obj: Any, *args, **kwargs):
-    model = unwrap(obj)
+def _get_torch_nn_module_named_members_lookaside(
+    model: torch.nn.Module, named_member_method, get_member_method, *unwrapped_args, **unwrapped_kwargs
+):
     assert isinstance(model, torch.nn.Module)
 
-    # We already know how to deal with `model._parameters` via MODULE_MEMBER_DICT_ATTRS
-    def get_parameters(model):
-        return getattr(model, "_parameters")
+    # Get the value of `prefix` if it was passed.
+    prefix = ""
+    if len(unwrapped_args) > 1:  # as positional arg
+        prefix = unwrapped_args[1]
+    elif "prefix" in unwrapped_kwargs:  # as kwarg
+        prefix = unwrapped_kwargs["prefix"]
 
-    return _interpret_call(
-        partial(_torch_module_named_member_lookaside, model=model, get_member_func=get_parameters), *args, **kwargs
+    # Here we call the unwrapped model with unwrapped arguments
+    # to get the names of parameter or buffer that we are interested in.
+    # We then use these names in `_get_named_member_impl` to get the corresponding proxies.
+    # NOTE: If prefix was passed, these names will be qualified with prefix.
+    member_names = {name for name, _ in named_member_method(*unwrapped_args, **unwrapped_kwargs)}
+
+    def _get_named_member_impl(members):
+        for member in members:
+            org_name = member
+            if prefix:
+                # Undo prefix if it was passed to correctly get the corresponding
+                # parameter/buffer.
+                org_name = org_name.replace(prefix + ".", "")
+            b = get_member_method(org_name)
+            yield member, b
+
+    pr = ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[wrap_const(named_member_method).provenance])
+
+    return _interpret_call(_get_named_member_impl, wrap(member_names, provenance=pr))
+
+
+@general_jit_lookaside(torch.nn.Module.named_parameters)
+def _general_jit_named_parameters_lookaside(obj: Any, *args, **kwargs):
+    model = unwrap(obj)
+    unwrapped_args = tuple(unwrap(arg) for arg in args)
+    unwrapped_kwargs = {unwrap(k): unwrap(v) for k, v in kwargs.items()}
+    return _get_torch_nn_module_named_members_lookaside(
+        model, model.named_parameters, model.get_parameter, *unwrapped_args, **unwrapped_kwargs
     )
 
 
 @general_jit_lookaside(torch.nn.Module.named_buffers)
-def _general_jit_named_buffer_lookaside(obj: Any, *args, **kwargs):
+def _general_jit_named_buffers_lookaside(obj: Any, *args, **kwargs):
     model = unwrap(obj)
-    assert isinstance(model, torch.nn.Module)
-
-    # We already know how to deal with `model._buffers` via MODULE_MEMBER_DICT_ATTRS
-    def get_buffers(model):
-        return getattr(model, "_buffers")
-
-    return _interpret_call(
-        partial(_torch_module_named_member_lookaside, model=model, get_member_func=get_buffers), *args, **kwargs
+    unwrapped_args = tuple(unwrap(arg) for arg in args)
+    unwrapped_kwargs = {unwrap(k): unwrap(v) for k, v in kwargs.items()}
+    return _get_torch_nn_module_named_members_lookaside(
+        model, model.named_buffers, model.get_buffer, *unwrapped_args, **unwrapped_kwargs
     )
 
 
