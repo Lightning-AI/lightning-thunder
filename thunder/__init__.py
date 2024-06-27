@@ -71,7 +71,6 @@ from thunder.core.proxies import (
 from thunder.core.interpreter import print_interpreter_log, print_to_log
 from thunder.core.jit_ext import thunder_general_jit
 from thunder.executors.torch_autograd import transform_for_torch_autograd
-from thunder.cudagraphs import CUDAGraphExecutor
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
@@ -618,13 +617,17 @@ def jit(
                 computation_trc = transform.transform_trace(computation_trc, executors_list=cd.executors_list)
                 extraces.append(computation_trc)
 
-            comp = computation_trc.python_callable()
-
-            # TODO: using vanilla CUDAGraphExecutor is not safe unless the graph is always static!
-            # (fixme): inspect torch.cuda.make_graph_callables and/or use it instead!
-            # See https://github.com/Lightning-AI/lightning-thunder/issues/433
             if cd.use_cudagraphs:
-                comp = CUDAGraphExecutor(comp)
+                from thunder.executors.cudagraphex import cudagraphex
+
+                computation_trc = cudagraphex.fusion_pass(computation_trc)
+                extraces.append(computation_trc)
+
+                if backward_trc is not None:
+                    backward_trc = cudagraphex.fusion_pass(backward_trc, num_static_inputs=len(backward_trc.args[0][0]))
+                    backward_traces.append(backward_trc)
+
+            comp = computation_trc.python_callable()
 
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(

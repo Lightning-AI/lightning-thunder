@@ -64,6 +64,12 @@ def test_nanogpt_complete_autograd(executor, device, dtype):
     assert_close(torch_grads, thunder_grads, atol=1e-1, rtol=1e-1)
 
 
+def _there_is_cudagraph_sym(trace):
+    # So far check for a single CUDAGraph fusion
+    bsyms = [bsym for bsym in trace.bound_symbols if bsym.sym.name.startswith("CUDAGraph")]
+    return len(bsyms) == 1
+
+
 @instantiate(dtypes=(thunder.float32,), devicetypes=(thunder.devices.DeviceType.CUDA,))
 @requiresCUDA
 def test_nanogpt_complete_cudagraphs(executor, device, dtype):
@@ -75,20 +81,18 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
     config = nanogpt_model.GPTConfig(dropout=0, block_size=512, n_layer=6, n_head=6, n_embd=768)
     gpt = nanogpt_model.GPT(config).to(device=device, dtype=tdtype)
 
-    idx = make((4, 64), dtype=torch.int64, low=0, high=255)
-    torch_result = gpt(idx)
-
     tom = executor.make_callable(gpt, use_cudagraphs=True, disable_torch_autograd=True)
 
-    thunder_result = tom(idx)
-    assert_close(torch_result, thunder_result)
+    for _ in range(2):
+        idx = make((4, 64), dtype=torch.int64, low=0, high=255)
+        torch_result = gpt(idx)
+
+        thunder_result = tom(idx)
+        assert_close(torch_result, thunder_result)
 
     # Check we really run CUDAGraphExecutor {
     assert tom._lc_cd.use_cudagraphs == True
-
-    from thunder.cudagraphs import CUDAGraphExecutor
-
-    assert type(tom._lc_cs.last_executed) == CUDAGraphExecutor
+    assert _there_is_cudagraph_sym(thunder.last_traces(tom)[-1])
     # }
 
 
@@ -112,18 +116,27 @@ def test_nanogpt_complete_cuda_graphs_autograd(executor, device, dtype):
     # NOTE Sets dropout to zero for reproducibility
     config = nanogpt_model.GPTConfig(dropout=0, block_size=512, n_layer=6, n_head=6, n_embd=768)
     gpt = nanogpt_model.GPT(config).to(device=device, dtype=tdtype)
-
-    x = make_tensor((4, 64), dtype=torch.int64, low=0, high=255, device=device)
-    targets = make_tensor((4, 64), dtype=torch.int64, low=0, high=255, device=device)
-    torch_result = gpt(x, targets=targets)
-    torch_grads = torch.autograd.grad(torch_result[1], gpt.parameters())
-
     cmodel = executor.make_callable(gpt, use_cudagraphs=True)
-    thunder_result = cmodel(x, targets=targets)
-    thunder_grads = torch.autograd.grad(thunder_result[1], gpt.parameters())
 
-    assert_close(torch_result, thunder_result)
-    assert_close(torch_grads, thunder_grads)
+    # Multiple runs to test whether static buffers are properly updated
+    for i in range(3):
+        x = make_tensor((4, 64), dtype=torch.int64, low=0, high=255, device=device)
+        targets = make_tensor((4, 64), dtype=torch.int64, low=0, high=255, device=device)
+
+        torch_result = gpt(x, targets=targets)
+        torch_grads = torch.autograd.grad(torch_result[1], gpt.parameters())
+
+        thunder_result = cmodel(x, targets=targets)
+        thunder_grads = torch.autograd.grad(thunder_result[1], gpt.parameters())
+
+        assert_close(torch_result, thunder_result)
+        assert_close(torch_grads, thunder_grads)
+
+    # Check we really run CUDAGraphExecutor {
+    assert cmodel._lc_cd.use_cudagraphs == True
+    assert _there_is_cudagraph_sym(thunder.last_traces(cmodel)[-1])
+    assert _there_is_cudagraph_sym(thunder.last_backward_traces(cmodel)[-1])
+    # }
 
 
 @instantiate(dtypes=(thunder.float32,))
