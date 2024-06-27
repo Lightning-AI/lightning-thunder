@@ -5,15 +5,15 @@ from functools import reduce, wraps
 import itertools
 from itertools import chain
 from numbers import Number
-from typing import overload, Generic, Optional, TypeVar, TYPE_CHECKING
+from typing import Any, overload, Generic, Optional, TypeVar, TYPE_CHECKING
 from collections.abc import Callable
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Hashable, Iterable, Iterator, Sequence
 
 from typing_extensions import Self
 
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
-from thunder.core.proxies import Proxy, NumberProxy, TensorProxy, variableify
+from thunder.core.proxies import Proxy, NumberProxy, TensorProxy, variableify, CONSTRAINT
 from thunder.core.baseutils import *
 from thunder.core.codeutils import *
 from thunder.core.trace import TraceCtx
@@ -129,6 +129,22 @@ dtype_to_numbertype = dtypes.dtype_to_numbertype
 are_same_dtypes = dtypes.are_same_dtypes
 corresponding_real_dtype = dtypes.corresponding_real_dtype
 corresponding_complex_dtype = dtypes.corresponding_complex_dtype
+
+
+# This function resolves the CONSTRAINT tag from args, by looking at each Proxy instance in args:
+# TODO: we currently only considers NumberProxy could be statically constrained. This is likely going to be extended to other proxies in the future.
+def resolve_constraints(*args):
+    all_static = True
+    for arg in args:
+        if not isinstance(arg, Proxy):
+            continue
+        if not isinstance(arg, NumberProxy) or arg.is_dynamic():
+            return CONSTRAINT.DYNAMIC
+        if not arg.is_static_constrained():
+            all_static = False
+    if all_static:
+        return CONSTRAINT.STATIC
+    return CONSTRAINT.CONSTRAINABLE
 
 
 def higher_dtype(a, b):
@@ -765,6 +781,10 @@ class FrozenDict(_UserDictT[T, T1], Mapping[T, T1]):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
+
+        if not all([is_hashable(v) for _, v in self.data.items()]):
+            raise TypeError("FrozenDict cannot be created from dict containing unhashable types")
+
         self.data = MappingProxyType({**self.data})
 
     def __repr__(self) -> str:
@@ -1123,3 +1143,19 @@ def partition(pred, iterable):
     # partition(is_odd, range(10)) --> 0 2 4 6 8   and  1 3 5 7 9
     t1, t2 = itertools.tee(iterable)
     return itertools.filterfalse(pred, t1), filter(pred, t2)
+
+
+def is_hashable(a: Any, /) -> bool:
+    if isinstance(a, tuple):
+        return all([is_hashable(x) for x in a])
+    return isinstance(a, Hashable)
+
+
+def make_hashable(a: Any, /) -> tuple | FrozenDict:
+    if isinstance(a, Hashable) and not isinstance(a, tuple):
+        return a
+    if isinstance(a, Sequence):
+        return tuple(map(make_hashable, a))
+    if isinstance(a, dict):
+        return FrozenDict(map(lambda item: (item[0], make_hashable(item[1])), a.items()))
+    return id(a)

@@ -16,6 +16,7 @@ import inspect
 import time
 from collections import deque
 import os
+import dataclasses
 
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
@@ -33,7 +34,7 @@ from thunder.core.proxies import (
 )
 from thunder.core.baseutils import default_dataclass_params
 from thunder.core.compile_data import get_compile_data
-from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
+from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten, tree_flatten_with_dataclass
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol
 from thunder.core.trace import TraceCtx as Trace, tracectx
 from thunder.core.trace import VariableInterface as Variable
@@ -1356,6 +1357,39 @@ def _embedding_prim_grad(
 
 
 register_grad(pids.EMBEDDING, _embedding_prim_grad)
+
+
+def _maximum_grad(a: TensorProxy, b: TensorProxy, /):
+    fwd = prims.maximum(a, b)
+
+    g = get_grad(fwd)
+
+    # NOTE: NaN propagation if either `a` or `b` is a NaN, then both elements receive `g` as gradient.
+    # This is because comparison in presence of NaN is False (except for Not Equal which is always True).
+    # Eg. Here `a` = NaN and `b` = 42
+    # sub_g = where(NaN == 42 i.e. False, g / 2, g)  # sub_grad = g
+    # grad_a = where(NaN < 42 i.e. False, 0., sub_g)  # grad_a = sub_g = g
+    # grad_b = where(42 < NaN i.e. False, 0., sub_g)  # grad_b = sub_g = g
+    # NOTE: If `g` is `NaN` then it will be propagated as the gradient of max element between a and b
+    # and if both are equal, then as we evenly distributing the gradients, `NaN` will propagate through
+    # the gradients of both `a` and `b`.
+
+    # Compute sub-gradient if `a == b`
+    # NOTE: We evenly distribute the gradient where the values are equal.
+    sub_grad = prims.where(a == b, g / 2, g)
+
+    a_grad = prims.where(a < b, 0.0, sub_grad)
+    b_grad = prims.where(b < a, 0.0, sub_grad)
+
+    put_grad(a, a_grad)
+    put_grad(b, b_grad)
+    return fwd
+
+
+register_grad(pids.MAXIMUM, _maximum_grad)
+
+# This operation creates no grad associations
+register_grad(pids.ARGMAX, prims.argmax)
 
 #
 # Phantom grad transform helpers
@@ -3262,6 +3296,8 @@ def backward_pass(forward_env, trace, init_cotangents, *, flat_cotangents=False)
             safe_map(put_grad, v, [None] * len(v))
         elif isinstance(v, Sequence) and isinstance(val, Sequence):
             safe_map_flat(put_grad, v, val)
+        elif dataclasses.is_dataclass(v) and dataclasses.is_dataclass(val):
+            safe_map_flat(put_grad, tree_flatten_with_dataclass(v), tree_flatten_with_dataclass(val))
         else:
             # Skip writing to constants
             pass
@@ -3627,7 +3663,8 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
         if torch_autograd:
             nonlocal output_spec
             flat_args, _ = tree_flatten((args, kwargs))
-            flat_output, output_spec = tree_flatten(result)
+            # The custom torch.autograd.Function only considers Tensors in the input/output (not ones that are nested inside python data structures)
+            flat_output, output_spec = tree_flatten_with_dataclass(result)
             flat_tensor_output = tuple(out for out in flat_output if isinstance(out, TensorProxy))
             # See Note [Grad forward output spec]
             for_autograd = TorchAutogradForwardData(

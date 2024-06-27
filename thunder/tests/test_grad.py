@@ -223,7 +223,7 @@ def numerical_jvp(f):
     return jvp
 
 
-def check_jvp(f, *primals, executor, atol=None, rtol=None):
+def check_jvp(f, *primals, comp, executor):
     """Check that the Jacobian-vector product of a function is correct.
 
     Args:
@@ -239,8 +239,8 @@ def check_jvp(f, *primals, executor, atol=None, rtol=None):
     tangents = tree_map(make_tensor_like, primals)
     actual_p, actual_t = executor.make_callable_legacy(jvp(f))(primals, tangents)
     expected_p, expected_t = numerical_jvp(executor.make_callable_legacy(f))(primals, tangents)
-    torch.testing.assert_close(expected_p, actual_p, atol=atol, rtol=rtol)
-    torch.testing.assert_close(expected_t, actual_t, atol=atol, rtol=rtol)
+    comp(expected_p, actual_p)
+    comp(expected_t, actual_t)
 
 
 def _replace_none_with_zero(x, y):
@@ -282,7 +282,7 @@ def _dot(x, y):
     return sum([torch.dot(a.ravel().type(torch.float64), b.ravel().type(torch.float64)) for a, b in zip(x, y)])
 
 
-def check_vjp(f, *primals, executor="torch", atol=1e-5, rtol=1.3e-6):
+def check_vjp(f, *primals, comp, executor="torch"):
     """Check that the vector-Jacobian product of a function is correct.
 
     Args:
@@ -327,7 +327,7 @@ def check_vjp(f, *primals, executor="torch", atol=1e-5, rtol=1.3e-6):
     if J_u_v.isnan().any():
         # TODO: find a better way to handle NaNs in finite differences
         return  # skip this sample
-    torch.testing.assert_close(J_u_v, u_J_star_v, atol=atol, rtol=rtol, check_device=False)
+    comp(J_u_v, u_J_star_v)
 
 
 def _is_differentiable(x):
@@ -372,8 +372,8 @@ def _make_differentiable_wrapper(func, args):
     return wrapper, filtered_args
 
 
-def snippet_jvp_correctness(func, args, executor):
-    check_jvp(func, *args, executor=executor)
+def snippet_jvp_correctness(func, args, comp, executor):
+    check_jvp(func, *args, comp=comp, executor=executor)
 
 
 # TODO Use the given comparator
@@ -396,6 +396,7 @@ def test_jvp_correctness(op, device, dtype, executor, comp):
             dtype,
             filtered_op,
             filtered_args,
+            comp,
             executor,
         )
         if result is not None:
@@ -405,8 +406,8 @@ def test_jvp_correctness(op, device, dtype, executor, comp):
         raise pytest.skip("No differentiable inputs found")
 
 
-def snippet_vjp_correctness(func, args, executor):
-    check_vjp(func, *args, executor=executor)
+def snippet_vjp_correctness(func, args, comp, executor):
+    check_vjp(func, *args, comp=comp, executor=executor)
 
 
 # TODO Use the given comparator
@@ -442,6 +443,7 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
             dtype,
             filtered_op,
             filtered_args,
+            comp,
             executor,
         )
         if result is not None:
@@ -539,21 +541,12 @@ def test_vjp_correctness_index_put_manual(op, device, dtype, executor, comp):
 
 # NOTE Scaled_Dot_Product_Efficient_Attention_Backward does not support fp64 dtypes
 # RuntimeError: Only fp32, half & bf16 supported at the moment
-@pytest.mark.skipif(
-    not version_between(torch.__version__, min_ver="2.4.0a0", max_ver="2.4.0a99"),
-    reason="https://github.com/Lightning-AI/lightning-thunder/issues/567",
-)
 @ops(
     (get_opinfo("grad_forward_scaled_dot_product_attention"),),
     supported_dtypes=(dtypes.float16, dtypes.bfloat16),
     supported_devicetypes=(devices.DeviceType.CUDA,),
 )
 def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
-    if version_between(torch.__version__, min_ver="2.4.0a0", max_ver="2.4.0a99"):
-        raise pytest.skip(
-            "https://github.com/Lightning-AI/lightning-thunder/issues/567",
-        )
-
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
         from thunder.executors.sdpaex import sdpa_ex
 

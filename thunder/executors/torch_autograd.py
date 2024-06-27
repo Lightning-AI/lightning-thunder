@@ -14,6 +14,7 @@ from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import TraceCtx, tracectx, from_trace, set_tracectx, reset_tracectx
 from thunder.core.transform_common import replace_redundant_inputs, PostOptimizationTransform
+from thunder.cudagraphs import CUDAGraphExecutor
 
 if TYPE_CHECKING:
     from thunder.core.trace import VariableInterface
@@ -121,6 +122,9 @@ class ThunderFunction(torch.autograd.Function):
         # reference to the saved tensors in the context
         ctx.maybe_clear_saved_tensors()  # Delete the reference to all saved tensors in the context
         grads = ctx.compiled_backward([saved_tensors_list, ctx.saved_other], args)
+
+        if isinstance(ctx.compiled_backward, CUDAGraphExecutor):
+            saved_tensors_list.clear()
 
         # Inside the compiled backward we must clear the saved_tensors_list
         assert not saved_tensors_list, "saved_tensors_list must be empty after calling compiled_backward"

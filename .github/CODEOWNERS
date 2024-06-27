@@ -2,7 +2,7 @@
 
 # These owners will be the default owners for everything in the repo. Unless a later match takes precedence,
 # @global-owner1, @global-owner2, and @global-owner3 will be requested for review when someone opens a pull request.
-* @mruberry @lantiga @robieta @t-vi @carmocca
+* @mruberry @lantiga @t-vi @carmocca
 
 # CI/CD and configs
 /.azure/        @borda @lantiga @t-vi @carmocca

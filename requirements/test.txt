@@ -10,13 +10,14 @@ graphviz ==0.20.3
 fdm ==0.4.1
 expecttest ==0.2.1  # for test_ddp.py
 hypothesis ==6.103.0  # for test_ddp.py
-numpy  # for test_ops.py
+numpy >=1.23.0,<2  # for test_ops.py; not yet ready for numpy 2
 einops  # for test_einops.py
 litgpt==0.3.1  # for the model definition in tests and benchmarks
 absl-py # thunder/benchmarks/test_benchmark_litgpt.py
 pandas # thunder/benchmarks/test_benchmark_litgpt.py
 xlsxwriter # thunder/benchmarks/test_benchmark_litgpt.py
 jsonargparse # thunder/benchmarks/benchmark_litgpt.py
+bitsandbytes==0.42.0  # fixed version!
 
 # Installs JAX on Linux and MacOS
 jaxlib; sys_platform == 'linux' or sys_platform == 'darwin'  # required for jax, see https://github.com/google/jax#installation
