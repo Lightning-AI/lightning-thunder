@@ -13,7 +13,7 @@ from thunder.core.transforms import vjp
 from thunder.core.utils import flatten_func
 from thunder.tests.framework import instantiate, NOTHING, ops, requiresCUDA, run_snippet, TorchExecutor, version_between
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
-from thunder.tests.opinfos import get_opinfo, OpInfo
+from thunder.tests.opinfos import get_opinfo, OpInfo, DecorateInfo
 from thunder.tests.test_grad import _make_differentiable_wrapper
 
 cudnn = pytest.importorskip("cudnn")
@@ -76,6 +76,13 @@ def grad_scaled_dot_product_attention_reference_generator(op, device, dtype, req
     bool_attn_mask = make((1, n_head, L, S), dtype=torch.bool, low=1, high=1, requires_grad=False).tril()
     yield SampleInput(q, k, v, bool_attn_mask, is_causal=False)
 
+    # non-contiguous with stride 0 cases
+    q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
+    q_broadcast = torch.as_strided(q, size=q.shape, stride=(0, 0, E, 1))
+    k_broadcast = torch.as_strided(k, size=k.shape, stride=(0, 0, E, 1))
+    v_broadcast = torch.as_strided(v, size=v.shape, stride=(0, 0, Ev, 1))
+    yield SampleInput(q_broadcast, k_broadcast, v_broadcast, None, dropout_p=0.0, is_causal=True)
+
 
 grad_sdpa_cudnn_opinfo = OpInfo(
     thunder.torch.scaled_dot_product_attention,
@@ -89,6 +96,15 @@ grad_sdpa_cudnn_opinfo = OpInfo(
         thunder.dtypes.bfloat16,
     ),
     devicetypes=(devices.DeviceType.CUDA,),
+    test_directives=(
+        DecorateInfo(
+            pytest.mark.skip(reason="https://github.com/pytorch/pytorch/issues/129579"),
+            "test_cudnn_vs_torch_consistency",
+            dtypes=(dtypes.bfloat16, dtypes.float16, dtypes.float32),
+            devicetypes=(devices.DeviceType.CUDA,),
+            active_if=version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"),
+        ),
+    ),
 )
 
 
@@ -199,6 +215,10 @@ def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
 @pytest.mark.skipif(
     LooseVersion(cudnn.backend_version_string()) < LooseVersion("8.9.5"),
     reason="cuDNN is required to be at least `8.9.5`",
+)
+@pytest.mark.skipif(
+    version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"),
+    reason="https://github.com/pytorch/pytorch/issues/129579",
 )
 @pytest.mark.parametrize("may_cat_grad_qkv", (True, False), ids=("may-cat-grad-qkv", "never-cat-grad-qkv"))
 @pytest.mark.parametrize("dtype", grad_sdpa_cudnn_opinfo.dtypes(), ids=tuple(map(str, grad_sdpa_cudnn_opinfo.dtypes())))

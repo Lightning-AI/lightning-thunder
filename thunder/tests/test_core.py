@@ -2821,3 +2821,35 @@ def test_dataclass_input(requires_grad):
     expected = foo(TestDataclass(t, s))
 
     torch.testing.assert_close(actual, expected)
+
+
+@pytest.mark.filterwarnings("ignore:Please use `torch.vmap`")
+def test_custom_autograd_function():
+    from torch.autograd.gradcheck import GradcheckError
+    from torch.testing._internal.common_utils import gradcheck
+
+    class MyFunction(torch.autograd.Function):
+
+        @staticmethod
+        def forward(ctx, x: torch.Tensor) -> torch.Tensor:
+            return x * 2.0
+
+        # this is wrong on purpose.
+        @staticmethod
+        def backward(ctx, grad_output) -> torch.Tensor:
+            return grad_output
+
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+
+        def forward(self, x) -> torch.Tensor:
+            return MyFunction.apply(x)
+
+    x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
+    model = Model().to(dtype=torch.float64)
+    jitted = thunder.jit(model, skip_inplace_functionalization=True)
+
+    gradcheck(jitted, (x,))
+    with pytest.raises(GradcheckError):
+        gradcheck(model, (x,))

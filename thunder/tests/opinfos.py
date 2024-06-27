@@ -7672,6 +7672,13 @@ def scaled_dot_product_attention_reference_generator(op, device, dtype, requires
     q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
     yield SampleInput(q, k, v, None, 0.0, True)
 
+    # non-contiguous with stride 0 cases
+    q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
+    q_broadcast = torch.as_strided(q, size=q.shape, stride=(0, 0, E, 1))
+    k_broadcast = torch.as_strided(k, size=k.shape, stride=(0, 0, E, 1))
+    v_broadcast = torch.as_strided(v, size=v.shape, stride=(0, 0, Ev, 1))
+    yield SampleInput(q_broadcast, k_broadcast, v_broadcast, None, 0.0, True)
+
 
 def scaled_dot_product_attention_sample_generator(op, device, dtype, requires_grad, **kwargs):
     """https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html"""
@@ -7775,6 +7782,13 @@ sdpa_opinfo = OpInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
             dtypes=(datatypes.float64,),
+        ),
+        DecorateInfo(
+            pytest.mark.skip(reason="https://github.com/pytorch/pytorch/issues/129579"),
+            "test_cudnn_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16, datatypes.float16, datatypes.float32),
+            devicetypes=(devices.DeviceType.CUDA,),
+            active_if=version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"),
         ),
     ),
 )
@@ -7889,6 +7903,15 @@ grad_sdpa_opinfo = OpInfo(
     # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention' with arguments from the 'CPU' backend.
     # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention_backward' with arguments from the 'CPU' backend
     devicetypes=(devices.DeviceType.CUDA,),
+    test_directives=(
+        DecorateInfo(
+            pytest.mark.skip(reason="https://github.com/pytorch/pytorch/issues/129579"),
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16, datatypes.float16, datatypes.float32),
+            devicetypes=(devices.DeviceType.CUDA,),
+            active_if=version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"),
+        ),
+    ),
 )
 nn_ops.append(grad_sdpa_opinfo)
 
