@@ -4936,6 +4936,14 @@ def _set_grad_enabled_with_warning(enabled: bool) -> None:
 register_function(torch._C._set_grad_enabled, _set_grad_enabled_with_warning)
 
 
+def _unwrap_if_dead(tensor):
+    warnings.warn("torch._C._functorch.unwrap_if_dead have no effect under thunder.jit")
+    return tensor
+
+
+register_function(torch._C._functorch.unwrap_if_dead, _unwrap_if_dead)
+
+
 #
 # Distributed operations
 #
