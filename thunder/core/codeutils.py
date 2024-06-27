@@ -246,10 +246,10 @@ def prettyprint(
         call_repr = []
         for k, v in x.__dict__.items():
             try:
-                call_repr.append(f"{k}={v.name},")
+                call_repr.append(f"{k}={v.name}")
             except:
-                call_repr.append(f"{k}={v},")
-        call_repr_str = "".join(call_repr)
+                call_repr.append(f"{k}={v}")
+        call_repr_str = ",".join(call_repr)
         return m(f"{name}({call_repr_str})")
 
     # Handles objects that this doesn't know how to serialize as a string
