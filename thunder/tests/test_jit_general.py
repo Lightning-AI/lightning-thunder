@@ -993,19 +993,22 @@ def test_load_original_state_dict():
     torch.testing.assert_close(thunder_module._overrides_buffers["buffer"], m.buffer)
 
 
-@pytest.mark.parametrize("prefix", ("", "foo"))
-@pytest.mark.parametrize("recurse", (True, False))
+@pytest.mark.parametrize("prefix", ("", "foo"), ids=("prefix=", "prefix=foo"))
+@pytest.mark.parametrize("recurse", (True, False), ids=("recurse=True", "recurse=False"))
 @pytest.mark.parametrize(
     "remove_duplicate",
     (
+        False,
         pytest.param(
             True,
             marks=pytest.mark.xfail(
-                raises=(AssertionError), reason="Currently, we can't differentiate between shared buffers", strict=True
+                raises=(AssertionError),
+                reason="We can't differentiate between shared buffers and parameters",
+                strict=True,
             ),
         ),
-        False,
     ),
+    ids=("remove_duplicate=False", "remove_duplicate=True"),
 )
 def test_named_params_and_named_buffers(prefix, recurse, remove_duplicate):
 
@@ -1015,7 +1018,6 @@ def test_named_params_and_named_buffers(prefix, recurse, remove_duplicate):
         def __init__(self, *args, **kwargs) -> None:
             super().__init__(*args, **kwargs)
             self.register_buffer("buffer", buffer_tensor)
-            self.register_buffer("buffer2", buffer_tensor)
 
         def forward(self, x):
             return x
@@ -1025,6 +1027,7 @@ def test_named_params_and_named_buffers(prefix, recurse, remove_duplicate):
             super().__init__(*args, **kwargs)
             self.fc1 = torch.nn.Linear(1, 1)
             self.register_buffer("buffer", buffer_tensor)
+            self.register_buffer("buffer2", buffer_tensor)
             self.sub_module = torch.nn.Sequential(
                 torch.nn.Linear(1, 1), SubMod(), torch.nn.Sequential(torch.nn.Linear(1, 1))
             )
