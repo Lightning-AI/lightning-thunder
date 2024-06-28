@@ -279,7 +279,7 @@ def _instantiate_executor_test_template(
     devicetype = device_or_devices
     if isinstance(device_or_devices, devices.Device):
         devicetype_ = device_or_devices.devicetype
-        device_str = str(device_or_devices)
+        device_str = str(device_or_devices.type)
     else:
         devicetype_ = device_or_devices[0].devicetype
         device_str = []
