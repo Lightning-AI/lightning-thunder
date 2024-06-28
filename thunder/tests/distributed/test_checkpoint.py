@@ -178,17 +178,17 @@ class DistributedCheckpointTest(DataParallelTestCase):
         device = torch.device("cuda", self.rank)
         pg = c10d.new_group()
 
-        state_dict = MyModel(4).to(device=device.type).state_dict()
+        state_dict = MyModel(4).to(device=device).state_dict()
 
         # No sharding - full state dict
-        model = MyModel(4).to(device=device.type)
+        model = MyModel(4).to(device=device)
         options = StateDictOptions(full_state_dict=True, cpu_offload=False)
         load_model_state_dict(state_dict, model, options, self.rank)
         torch.testing.assert_close(model.state_dict(), state_dict)
 
         # cpu_offload=True is not relevant for this case
 
-        model = MyModel(4).to(device=device.type)
+        model = MyModel(4).to(device=device)
         options = StateDictOptions(full_state_dict=True, rank0_only=True)
         load_model_state_dict(state_dict, model, options, self.rank)
         if self.rank == 0:
@@ -204,7 +204,7 @@ class DistributedCheckpointTest(DataParallelTestCase):
 
         # Sharding - full state dict
         for kwargs in ({"cpu_offload": True}, {"cpu_offload": False}, {"rank0_only": True}):
-            model = MyModel(4).to(device=device.type)
+            model = MyModel(4).to(device=device)
             sharded_model = thunder.distributed.fsdp(model)
             options = StateDictOptions(full_state_dict=True, **kwargs)
             load_model_state_dict(state_dict, sharded_model, options, self.rank)
@@ -212,14 +212,14 @@ class DistributedCheckpointTest(DataParallelTestCase):
             torch.testing.assert_close(model.state_dict(), state_dict)
 
         # Create a sharded state_dict that can be loaded
-        model = MyModel(4).to(device=device.type)
+        model = MyModel(4).to(device=device)
         sharded_model_expected = thunder.distributed.fsdp(model)
         options = StateDictOptions(full_state_dict=False)
         sharded_state_dict = get_model_state_dict(sharded_model_expected, options, self.rank)
 
         # Sharding - sharded state dict
         for kwargs in ({"cpu_offload": True}, {"cpu_offload": False}, {"rank0_only": True}):
-            model = MyModel(4).to(device=device.type)
+            model = MyModel(4).to(device=device)
             sharded_model = thunder.distributed.fsdp(model)
             options = StateDictOptions(full_state_dict=False, **kwargs)
             load_model_state_dict(sharded_state_dict, sharded_model, options, self.rank)

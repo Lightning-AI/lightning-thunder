@@ -87,7 +87,7 @@ class TensorParallelTest(DataParallelTestCase):
                 return self.embed(x)
 
         device = torch.device(f"cuda:{self.rank}")
-        x = torch.randint(0, num_embeddings - 1, (16, 16), device.type)
+        x = torch.randint(0, num_embeddings - 1, (16, 16), device)
         x_ref = x.clone().detach()
 
         process_group = None
@@ -151,7 +151,7 @@ class TensorParallelTest(DataParallelTestCase):
                 return h
 
         device = torch.device("cuda", self.rank)
-        x = torch.randint(0, num_embeddings - 1, (16, 16), device=device.type)
+        x = torch.randint(0, num_embeddings - 1, (16, 16), device=device)
         x_ref = x.clone().detach()
 
         process_group = None
@@ -215,7 +215,7 @@ class TensorParallelTest(DataParallelTestCase):
         tp_mlp = row_parallel(tp_mlp, ParallelMLP.ROW_WISE)
 
         # See https://github.com/NVIDIA/NeMo/blob/95ca2f4/nemo/collections/nlp/modules/common/megatron/mlp.py#L221 for the input shape.
-        x_ref = torch.randn((sequence_length, batch_size, hidden_size), device=device.type, requires_grad=True)
+        x_ref = torch.randn((sequence_length, batch_size, hidden_size), device=device, requires_grad=True)
         x = x_ref.clone().detach().requires_grad_(True)
 
         expected = ref_mlp(x_ref)
@@ -269,7 +269,7 @@ class TensorParallelTest(DataParallelTestCase):
         mask = None
         input_pos = None
 
-        attention = CausalSelfAttention(config).to(device=device.type, dtype=dtype)
+        attention = CausalSelfAttention(config).to(device=device, dtype=dtype)
         # Temporarily use only torchex due to https://github.com/NVIDIA/Fuser/issues/2390
         tp_attention = thunder.jit(attention, executors=[thunder.executors.get_torch_executor()])
         tp_attention = column_parallel(tp_attention, ["attn"])

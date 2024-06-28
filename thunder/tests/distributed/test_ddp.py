@@ -115,8 +115,8 @@ class CompileDDPTest(DataParallelTestCase):
 
         cfunc = thunder.jit(func, executors=_executor.executors_list())
         device = f"cuda:{self.rank}"
-        a = make_tensor((2, 2), device=device.type, dtype=torch.float32)
-        b = make_tensor((2, 2), device=device.type, dtype=torch.float32)
+        a = make_tensor((2, 2), device=device, dtype=torch.float32)
+        b = make_tensor((2, 2), device=device, dtype=torch.float32)
         process_group = c10d.new_group()
         _ = cfunc(a, b, process_group)
         execution_trace = thunder.last_traces(cfunc)[-2]
@@ -182,8 +182,8 @@ class CompileDDPTest(DataParallelTestCase):
             return a, e
 
         device = f"cuda:{self.rank}"
-        a = make_tensor((2, 2), device=device.type, dtype=torch.float32)
-        b = make_tensor((2, 2), device=device.type, dtype=torch.float32)
+        a = make_tensor((2, 2), device=device, dtype=torch.float32)
+        b = make_tensor((2, 2), device=device, dtype=torch.float32)
         process_group = c10d.new_group()
 
         # NOTE Preprocessing is disabled because we call thunder.torch operations directly
@@ -242,8 +242,8 @@ class CompileDDPTest(DataParallelTestCase):
             return a, e
 
         device = f"cuda:{self.rank}"
-        a = make_tensor((2, 2), device=device.type, dtype=torch.float32)
-        b = make_tensor((2, 2), device=device.type, dtype=torch.float32)
+        a = make_tensor((2, 2), device=device, dtype=torch.float32)
+        b = make_tensor((2, 2), device=device, dtype=torch.float32)
         process_group = c10d.new_group()
 
         # NOTE Preprocessing is disabled because we call thunder.torch operations directly
@@ -300,8 +300,8 @@ class CompileDDPTest(DataParallelTestCase):
             return a, e
 
         device = f"cuda:{self.rank}"
-        a = make_tensor((2, 2), device=device.type, dtype=torch.float32)
-        b = make_tensor((2, 2), device=device.type, dtype=torch.float32)
+        a = make_tensor((2, 2), device=device, dtype=torch.float32)
+        b = make_tensor((2, 2), device=device, dtype=torch.float32)
         process_group = c10d.new_group()
 
         # NOTE Preprocessing is disabled because we call thunder.torch operations directly
@@ -364,8 +364,8 @@ class CompileDDPTest(DataParallelTestCase):
             return a, e
 
         device = f"cuda:{self.rank}"
-        a = make_tensor((4, 2), device=device.type, dtype=torch.float32)
-        b = make_tensor((4, 2), device=device.type, dtype=torch.float32)
+        a = make_tensor((4, 2), device=device, dtype=torch.float32)
+        b = make_tensor((4, 2), device=device, dtype=torch.float32)
         process_group = c10d.new_group()
 
         # NOTE Preprocessing is disabled because we call thunder.torch operations directly
@@ -417,11 +417,11 @@ class CompileDDPTest(DataParallelTestCase):
 
     def test_rematerialize_all_gather(self):
         device = torch.device("cuda", self.rank)
-        m = ToyModel().to(device.type)
+        m = ToyModel().to(device)
         cm = thunder.jit(
             fsdp(m, device=device, broadcast_from=0),
         )
-        x = torch.ones((2, 12), device=device.type)
+        x = torch.ones((2, 12), device=device)
         cm(x).mean().backward()
 
         fwd_trc = [
@@ -537,7 +537,7 @@ class CompileDDPTest(DataParallelTestCase):
         micro_batch_size = batch_size // num_micro_batch
         with torch.no_grad():
             dataloader = [
-                (torch.randn(batch_size, 12, device=device.type), torch.randn(batch_size, 8, device=device.type))
+                (torch.randn(batch_size, 12, device=device), torch.randn(batch_size, 8, device=device.type))
                 for _ in range(dataset_size)
             ]
 
@@ -584,7 +584,7 @@ class CompileDDPTest(DataParallelTestCase):
             jitted_model.load_state_dict(initial_state_dict)
 
             for iter_count, (x, y) in enumerate(dataloader):
-                loss = torch.zeros((), device=device.type)
+                loss = torch.zeros((), device=device)
                 with jitted_model.no_sync() if use_no_sync else nullcontext():
                     for i in range(num_micro_batch - 1):
                         cur_loss = run_fwd_bwd(
@@ -689,12 +689,12 @@ class CompileDDPTest(DataParallelTestCase):
                 )
             else:
                 cm = fsdp(
-                    thunder.jit(m.to(device.type), executors=executors_map[executor].executors_list()),
+                    thunder.jit(m.to(device), executors=executors_map[executor].executors_list()),
                     device=device,
                     bucketing_strategy=bucketing_strategy,
                     sharding_strategy=fsdptype,
                 )
-            x = torch.ones((2, 12), device=device.type)
+            x = torch.ones((2, 12), device=device)
             loss = cm(x).mean()
             loss.backward()
 
@@ -1028,16 +1028,17 @@ common_utils.instantiate_parametrized_tests(CompileDDPTest)
 # Configures PyTorch's default process group, must be called at the start of each
 #   distributed process
 def init_per_process_distributed(
-    init_method: str, device: devices.Device, world_size: int, rank: int
+    init_method: str, devicetype_or_device: devices.DeviceType | devices.Device, world_size: int, rank: int
 ) -> tdist.ProcessGroup:
     backend: str
-    devicetype = device.devicetype
-    if devicetype is devices.DeviceType.CUDA:
+    if isinstance(devicetype_or_device, devices.Device):
+        devicetype_or_device = devicetype_or_device.devicetype
+    if devicetype_or_device is devices.DeviceType.CUDA:
         backend = "nccl"
-    elif devicetype is devices.DeviceType.CPU:
+    elif devicetype_or_device is devices.DeviceType.CPU:
         backend = "gloo"
     else:
-        raise ValueError(f"Unknown devicetype {devicetype}")
+        raise ValueError(f"Unknown devicetype {devicetype_or_device}")
 
     tdist.init_process_group(init_method=init_method, backend=backend, world_size=world_size, rank=rank)
 
@@ -1214,6 +1215,7 @@ def _test_native_ddp_helper(input_data):
     torch_dtype = ltorch.to_torch_dtype(dtype)
 
     pg = init_per_process_distributed(init_method, device, world_size, rank)
+
     tdist.barrier(pg)
 
     dataloader = create_per_process_dataloader(
@@ -1384,9 +1386,8 @@ def _test_ddp_transformer_engine(input_data):
     # and verify that the weights have converged to same value and
     # fp8 meta state is same after `n_iter`.
     init_method, world_size, rank, executor, device, dtype, _unused_kwargs = input_data
-    devicetype = devices.device_from_string(device.type).devicetype
     _unused_dtype = ltorch.to_torch_dtype(dtype)
-    init_per_process_distributed(init_method, devicetype, world_size, rank)
+    init_per_process_distributed(init_method, device, world_size, rank)
 
     torch.cuda.set_device(rank)
 
@@ -1529,9 +1530,8 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
     from thunder.tests.llama2_model import Transformer, ModelArgs
 
     init_method, world_size, rank, executor, device, dtype, _unused_kwargs = input_data
-    devicetype = devices.device_from_string(device.type).devicetype
     _unused_dtype = ltorch.to_torch_dtype(dtype)
-    init_per_process_distributed(init_method, devicetype, world_size, rank)
+    init_per_process_distributed(init_method, device, world_size, rank)
 
     torch.cuda.set_device(rank)
     # data
@@ -1595,11 +1595,10 @@ def _test_fsdp_transformer_engine(input_data):
     # fp8 meta state is same after `n_iter`.
     init_method, world_size, rank, executor, device, _unused_dtype, kwargs = input_data
     thunder_fsdp_strategy = kwargs["thunder_fsdp_strategy"]
-    devicetype = devices.device_from_string(device.type).devicetype
 
     # Setting LOCAL_RANK is necessary for thunder.distributed.fsdp
     with unittest.mock.patch.dict(os.environ, {"LOCAL_RANK": str(rank)}):
-        init_per_process_distributed(init_method, devicetype, world_size, rank)
+        init_per_process_distributed(init_method, device, world_size, rank)
         torch.cuda.set_device(rank)
 
         dim = 256

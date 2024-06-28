@@ -408,8 +408,7 @@ class OpInfo:
         return self.reference_input_generator(self, torch_device, torch_dtype, requires_grad, **kwargs)
 
     def error_inputs(self, device: devices.Device, **kwargs):
-        torch_device = str(device.type)
-        return self.error_input_generator(self, torch_device, **kwargs)
+        return self.error_input_generator(self, device, **kwargs)
 
     # NOTE Today all benchmarks are generated with PyTorch, so Thunder objects,
     #   like dtypes, need to be translated into PyTorch objects
