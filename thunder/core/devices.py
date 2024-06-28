@@ -149,12 +149,14 @@ def available_devices() -> tuple[Device]:
 
 
 def _device_from_string_helper(devicestr: str) -> tuple[DeviceType, None | int]:
-    if "cpu" == devicestr:
+    if devicestr == "cpu":
         return DeviceType.CPU, None
-    if "meta" == devicestr:
-        return DeviceType.META, None
-    if "cuda" == devicestr:
+
+    if devicestr == "cuda":
         return DeviceType.CUDA, None
+
+    if devicestr == "meta":
+        return DeviceType.META, None
 
     devicetype, idx_str = devicestr.split(":")
     idx = int(idx_str)
