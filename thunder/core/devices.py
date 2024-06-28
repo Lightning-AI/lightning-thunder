@@ -192,5 +192,5 @@ def to_torch_device(x: None | str | torch.device | Device, /) -> None | torch.de
         if x.type == "cuda":
             return torch.device(f"{x.type}:{x.index}")
         else:
-            return torch.device(f"{x.type}")
+            return torch.device(x.type)
     return torch.device(x)
