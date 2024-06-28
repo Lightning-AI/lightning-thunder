@@ -392,20 +392,13 @@ class OpInfo:
         self, device: str | devices.Device, dtype: datatypes.dtype, *, requires_grad: bool = False, **kwargs
     ) -> Generator:
         torch_dtype = to_torch_dtype(dtype)
-        if isinstance(device, devices.Device):
-            torch_device = device.type
-        else:
-            torch_device = device
-        return self.sample_input_generator(self, torch_device, torch_dtype, requires_grad, **kwargs)
+        return self.sample_input_generator(self, device, torch_dtype, requires_grad, **kwargs)
 
     def reference_inputs(
         self, device: str | devices.Device, dtype: datatypes.dtype, *, requires_grad: bool = False, **kwargs
     ) -> Generator:
         torch_dtype = to_torch_dtype(dtype)
-        if isinstance(device, devices.Device):
-            device = device.type
-        torch_device = str(device)
-        return self.reference_input_generator(self, torch_device, torch_dtype, requires_grad, **kwargs)
+        return self.reference_input_generator(self, device, torch_dtype, requires_grad, **kwargs)
 
     def error_inputs(self, device: devices.Device, **kwargs):
         return self.error_input_generator(self, device, **kwargs)
@@ -414,8 +407,7 @@ class OpInfo:
     #   like dtypes, need to be translated into PyTorch objects
     def benchmarks(self, device: devices.Device, dtype: datatypes.dtype, *, requires_grad: bool = False, **kwargs):
         torch_dtype = to_torch_dtype(dtype)
-        torch_device = str(device.type)
-        return self.benchmark_generator(self, torch_device, dtype, requires_grad, **kwargs)
+        return self.benchmark_generator(self, device, dtype, requires_grad, **kwargs)
 
     def devicetypes(self):
         return set(self._devicetypes)
