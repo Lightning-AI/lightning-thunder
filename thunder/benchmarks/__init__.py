@@ -483,7 +483,7 @@ def _run_benchmark(
     devices: list[str] = benchmark.devices
     wait_for_computation_fn = lambda: None
     for device in devices:
-        device: thunder.core.devices.Device = thunder.core.devices.device_from_string(device)
+        device: thunder.core.devices.Device = thunder.core.devices.device_from_string(device.type)
         if device.devicetype is thunder.core.devices.DeviceType.CUDA:
             wait_for_computation_fn = wait_for_cuda_computation
             break
