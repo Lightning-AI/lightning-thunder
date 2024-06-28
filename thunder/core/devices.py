@@ -36,6 +36,8 @@ def _parse_device_info(
 ) -> tuple[DeviceType, None | int]:
     _index = None
 
+    if isinstance(string_or_devicetype, DeviceType):
+        string_or_devicetype = string_or_devicetype.type
     if isinstance(string_or_devicetype, str):
         _devicetype, _index = _device_from_string_helper(string_or_devicetype)
     else:
