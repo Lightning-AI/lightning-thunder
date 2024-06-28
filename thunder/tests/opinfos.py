@@ -392,7 +392,10 @@ class OpInfo:
         self, device: str | devices.Device, dtype: datatypes.dtype, *, requires_grad: bool = False, **kwargs
     ) -> Generator:
         torch_dtype = to_torch_dtype(dtype)
-        torch_device = str(device)
+        if isinstance(device, devices.Device):
+            torch_device = device.type
+        else:
+            torch_device = device
         return self.sample_input_generator(self, torch_device, torch_dtype, requires_grad, **kwargs)
 
     def reference_inputs(

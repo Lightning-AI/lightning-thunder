@@ -458,7 +458,7 @@ def cuda(
         device = to_device(device)
         utils.check(
             device.devicetype == devices.DeviceType.CUDA,
-            lambda: f"cuda(): Invalid device {device}, must be cuda device",
+            lambda: f"cuda(): Invalid device {device.type}, must be cuda device",
         )
 
     return to(a, device=device, memory_format=memory_format)
