@@ -20,19 +20,15 @@ class Model(torch.nn.Module):
 model = Model().to(device="cuda")
 x = torch.randn(4, dim, dim, device="cuda")
 
-# Transform for profiling with NVTX markers.
-# This transform adds NVTX markers to all the computation symbols in the execution trace.
-# It also marks the start and end of trace with cudaProfilerStart and cudaProfilerEnd to specify the capture range.
-from memory_profile_transform import MemoryProfileTransform
+from debug_transform import DebugTransform
 
-mem_profile_transform = MemoryProfileTransform()
 
-# import nvtx
-# profile = nvtx.Profile()
-# profile.enable()
-# jmodel = profile_as_post_opt_tfms(thunder.jit(model))
-# jmodel(x)
-torch.cuda.cudart().cudaProfilerStart()
+def callback(*args, bsym, **kwargs):
+    return f"Memory Allocated: {torch.cuda.memory_allocated()}"
+
+
+mem_profile_transform = DebugTransform(callback=callback)
+
 jmodel = thunder.jit(
     model,
     post_optimization_transforms=[
@@ -41,9 +37,9 @@ jmodel = thunder.jit(
 )
 o = jmodel(x)
 o.sum().backward()
-torch.cuda.cudart().cudaProfilerStop()
-# profile.disable()
+
 trace = thunder.last_traces(jmodel)[-1]
 bwd_trace = thunder.last_backward_traces(jmodel)[-1]
 
-print(bwd_trace)
+print(trace)
+# print(bwd_trace)

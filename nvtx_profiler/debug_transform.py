@@ -48,11 +48,15 @@ NON_COMPUTATION_PRIMS = (
 )
 
 
-def memory_checker_impl(bsym):
-    bsym.header = f"Memory Allocated: {torch.cuda.memory_allocated()}"
+def debug_impl(*args, bsym, callback, **kwargs):
+    output_str = callback(*args, bsym=bsym, **kwargs)
+    bsym.header = output_str
 
 
-class MemoryProfileTransform(thunder.core.transforms.PostOptimizationTransform):
+class DebugTransform(thunder.core.transforms.PostOptimizationTransform):
+    def __init__(self, callback):
+        self.callback = callback
+
     def __call__(self, trace: Trace, **kwargs) -> Trace:
         profile_trace = from_trace(trace)
         cnt = 1
@@ -71,10 +75,12 @@ class MemoryProfileTransform(thunder.core.transforms.PostOptimizationTransform):
             def bind_postprocess(bsym) -> None:
                 # This dict is then used by trace.python_ctx() to resolve the
                 # BoundSymbol to the actual function.
-                bsym._call_ctx = {f"memory_checker_{cnt}": partial(memory_checker_impl, bsym=bsym)}
+                bsym._call_ctx = {f"debug_{cnt}": partial(debug_impl, bsym=bsym, callback=self.callback)}
 
-            mem_sym = Symbol(f"memory_checker_{cnt}", lambda: None, is_prim=True, _bind_postprocess=bind_postprocess)
-            mem_bsym = mem_sym.bind(output=None)
+            mem_sym = Symbol(
+                f"debug_{cnt}", lambda *args, **kwargs: None, is_prim=True, _bind_postprocess=bind_postprocess
+            )
+            mem_bsym = mem_sym.bind(*bound_symbol.args, output=None, **bound_symbol.kwargs)
 
             profile_trace.bound_symbols.append(mem_bsym)
             profile_trace.bound_symbols.append(bound_symbol)
