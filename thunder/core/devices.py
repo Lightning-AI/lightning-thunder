@@ -149,11 +149,11 @@ def available_devices() -> tuple[Device]:
 
 
 def _device_from_string_helper(devicestr: str) -> tuple[DeviceType, None | int]:
-    if "cpu" in devicestr:
+    if "cpu" == devicestr:
         return DeviceType.CPU, None
-    if "meta" in devicestr:
+    if "meta" == devicestr:
         return DeviceType.META, None
-    if "cuda" in devicestr:
+    if "cuda" == devicestr:
         return DeviceType.CUDA, None
 
     devicetype, idx_str = devicestr.split(":")
@@ -177,6 +177,8 @@ def to_device(x: None | str | torch.device | Device, /) -> None | Device:
     if x is None or isinstance(x, Device):
         return x
 
+    if isinstance(x, Device):
+        x = x.type
     baseutils.check_type(x, (str, torch.device))
     return device_from_string(str(x))
 

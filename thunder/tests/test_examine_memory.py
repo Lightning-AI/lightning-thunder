@@ -141,7 +141,7 @@ def test_nanogpt_block(executor, device, dtype):
     make = partial(make_tensor, dtype=tdtype, device=device)
 
     config = nanogpt_model.GPTConfig(dropout=0)
-    block = nanogpt_model.Block(config).to(device=device, dtype=tdtype)
+    block = nanogpt_model.Block(config).to(device=device.type, dtype=tdtype)
     cblock = executor.make_callable(block)
 
     with runtime_allocated_memory(device):

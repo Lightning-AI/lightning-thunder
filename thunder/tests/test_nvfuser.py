@@ -342,7 +342,7 @@ def test_cse_rematerialization(executor, device, _):
     )
     gptconf = ModelArgs(**model_args)
     model = Transformer(gptconf)
-    model.to(device)
+    model.to(device.type)
 
     x = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device.type)
     y = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device.type)
