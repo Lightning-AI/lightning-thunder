@@ -492,12 +492,12 @@ def fsdp_transform_module(
             for n, p in module_copy.named_parameters(recurse=False, prefix=module_name):
                 if p.device != device:
                     thunder_model._overrides_parameters[n] = torch.nn.Parameter(
-                        p.to(device=device.type), requires_grad=p.requires_grad
+                        p.to(device=device), requires_grad=p.requires_grad
                     )
                     device_adjustments[n] = device
             for n, b in module_copy.named_buffers(recurse=False, prefix=module_name):
                 if b.device != device:
-                    thunder_model._overrides_buffers[n] = b.to(device=device.type)
+                    thunder_model._overrides_buffers[n] = b.to(device=device)
                     device_adjustments[n] = device
 
         # Broadcast parameters if requested
@@ -659,7 +659,7 @@ def _shard_params(
         else:
             # Move leftover params and buffers to device. This is at least required to broadcast.
             # Cannot `submodule.to(device)` because we don't want it to recurse
-            submodule._apply(partial(torch.Tensor.to, device=device.type), recurse=False)
+            submodule._apply(partial(torch.Tensor.to, device=device), recurse=False)
 
         # Broadcast parameters if requested
         if broadcast_from is not None:
@@ -736,7 +736,7 @@ def _unshard_params(module: torch.nn.Module, process_group: ProcessGroup, cpu_of
 
 def _materialize(module: torch.nn.Module, device: torch.device) -> None:
     """Materialize a module's direct children parameters by calling ``module.reset_parameters()``."""
-    module.to_empty(device=device.type, recurse=False)
+    module.to_empty(device=device, recurse=False)
     if not hasattr(module, "reset_parameters"):
         raise TypeError(
             f"Materialization requires that the `{type(module).__name__}.reset_parameters` method is implemented."
