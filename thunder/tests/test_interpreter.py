@@ -3214,3 +3214,19 @@ def test_litgpt(jit):
     result = jfn(*args, **kwargs)
 
     assert_close(result, fn(*args, **kwargs))
+
+
+def test_transformer_model_output():
+    pytest.importorskip("transformers")
+    from transformers.utils.generic import ModelOutput
+
+    def fn(x):
+        mo = ModelOutput(foo=x)
+        return mo["foo"]
+
+    x = torch.randn(3)
+    expected = fn(x)
+
+    actual = thunder.jit(fn)(x)
+
+    assert expected is actual
