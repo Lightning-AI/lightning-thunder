@@ -115,8 +115,8 @@ class CompileDDPTest(DataParallelTestCase):
 
         cfunc = thunder.jit(func, executors=_executor.executors_list())
         device = f"cuda:{self.rank}"
-        a = make_tensor((2, 2), device=device, dtype=torch.float32)
-        b = make_tensor((2, 2), device=device, dtype=torch.float32)
+        a = make_tensor((2, 2), device=device.type, dtype=torch.float32)
+        b = make_tensor((2, 2), device=device.type, dtype=torch.float32)
         process_group = c10d.new_group()
         _ = cfunc(a, b, process_group)
         execution_trace = thunder.last_traces(cfunc)[-2]
@@ -182,8 +182,8 @@ class CompileDDPTest(DataParallelTestCase):
             return a, e
 
         device = f"cuda:{self.rank}"
-        a = make_tensor((2, 2), device=device, dtype=torch.float32)
-        b = make_tensor((2, 2), device=device, dtype=torch.float32)
+        a = make_tensor((2, 2), device=device.type, dtype=torch.float32)
+        b = make_tensor((2, 2), device=device.type, dtype=torch.float32)
         process_group = c10d.new_group()
 
         # NOTE Preprocessing is disabled because we call thunder.torch operations directly
@@ -242,8 +242,8 @@ class CompileDDPTest(DataParallelTestCase):
             return a, e
 
         device = f"cuda:{self.rank}"
-        a = make_tensor((2, 2), device=device, dtype=torch.float32)
-        b = make_tensor((2, 2), device=device, dtype=torch.float32)
+        a = make_tensor((2, 2), device=device.type, dtype=torch.float32)
+        b = make_tensor((2, 2), device=device.type, dtype=torch.float32)
         process_group = c10d.new_group()
 
         # NOTE Preprocessing is disabled because we call thunder.torch operations directly
@@ -300,8 +300,8 @@ class CompileDDPTest(DataParallelTestCase):
             return a, e
 
         device = f"cuda:{self.rank}"
-        a = make_tensor((2, 2), device=device, dtype=torch.float32)
-        b = make_tensor((2, 2), device=device, dtype=torch.float32)
+        a = make_tensor((2, 2), device=device.type, dtype=torch.float32)
+        b = make_tensor((2, 2), device=device.type, dtype=torch.float32)
         process_group = c10d.new_group()
 
         # NOTE Preprocessing is disabled because we call thunder.torch operations directly
@@ -364,8 +364,8 @@ class CompileDDPTest(DataParallelTestCase):
             return a, e
 
         device = f"cuda:{self.rank}"
-        a = make_tensor((4, 2), device=device, dtype=torch.float32)
-        b = make_tensor((4, 2), device=device, dtype=torch.float32)
+        a = make_tensor((4, 2), device=device.type, dtype=torch.float32)
+        b = make_tensor((4, 2), device=device.type, dtype=torch.float32)
         process_group = c10d.new_group()
 
         # NOTE Preprocessing is disabled because we call thunder.torch operations directly
@@ -417,11 +417,11 @@ class CompileDDPTest(DataParallelTestCase):
 
     def test_rematerialize_all_gather(self):
         device = torch.device("cuda", self.rank)
-        m = ToyModel().to(device)
+        m = ToyModel().to(device.type)
         cm = thunder.jit(
             fsdp(m, device=device, broadcast_from=0),
         )
-        x = torch.ones((2, 12), device=device)
+        x = torch.ones((2, 12), device=device.type)
         cm(x).mean().backward()
 
         fwd_trc = [
@@ -537,7 +537,7 @@ class CompileDDPTest(DataParallelTestCase):
         micro_batch_size = batch_size // num_micro_batch
         with torch.no_grad():
             dataloader = [
-                (torch.randn(batch_size, 12, device=device), torch.randn(batch_size, 8, device=device))
+                (torch.randn(batch_size, 12, device=device.type), torch.randn(batch_size, 8, device=device.type))
                 for _ in range(dataset_size)
             ]
 
@@ -584,7 +584,7 @@ class CompileDDPTest(DataParallelTestCase):
             jitted_model.load_state_dict(initial_state_dict)
 
             for iter_count, (x, y) in enumerate(dataloader):
-                loss = torch.zeros((), device=device)
+                loss = torch.zeros((), device=device.type)
                 with jitted_model.no_sync() if use_no_sync else nullcontext():
                     for i in range(num_micro_batch - 1):
                         cur_loss = run_fwd_bwd(
@@ -689,12 +689,12 @@ class CompileDDPTest(DataParallelTestCase):
                 )
             else:
                 cm = fsdp(
-                    thunder.jit(m.to(device), executors=executors_map[executor].executors_list()),
+                    thunder.jit(m.to(device.type), executors=executors_map[executor].executors_list()),
                     device=device,
                     bucketing_strategy=bucketing_strategy,
                     sharding_strategy=fsdptype,
                 )
-            x = torch.ones((2, 12), device=device)
+            x = torch.ones((2, 12), device=device.type)
             loss = cm(x).mean()
             loss.backward()
 
@@ -1130,8 +1130,8 @@ def create_per_process_dataloader(
 class SmallModel(nn.Module):
     def __init__(self, device, dtype):
         super().__init__()
-        self.net1 = nn.Linear(2, 2, device=device, dtype=dtype)
-        self.net2 = nn.Linear(2, 2, device=device, dtype=dtype)
+        self.net1 = nn.Linear(2, 2, device=device.type, dtype=dtype)
+        self.net2 = nn.Linear(2, 2, device=device.type, dtype=dtype)
 
     def forward(self, x):
         return self.net2(new_gelu(self.net1(x)))
@@ -1551,9 +1551,9 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
     )
     gptconf = ModelArgs(**model_args)
     model = Transformer(gptconf)
-    model.to(device)
-    x = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
-    y = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
+    model.to(device.type)
+    x = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device.type)
+    y = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device.type)
     jit_model = thunder.jit(
         thunder.distributed.ddp(model), executors=(transformer_engine_ex,) + thunder.get_default_executors()
     )
