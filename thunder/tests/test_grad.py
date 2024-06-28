@@ -684,10 +684,10 @@ def test_requires_grad(executor, device, dtype):
 
     torch_dtype = ltorch.to_torch_dtype(dtype)
 
-    a = make_tensor((2, 2), device=device.type, dtype=torch_dtype, requires_grad=False)
-    b = make_tensor((2, 2), device=device.type, dtype=torch_dtype, requires_grad=False)
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype, requires_grad=False)
+    b = make_tensor((2, 2), device=device, dtype=torch_dtype, requires_grad=False)
 
-    ag = make_tensor((2, 2), device=device.type, dtype=torch_dtype, requires_grad=True)
+    ag = make_tensor((2, 2), device=device, dtype=torch_dtype, requires_grad=True)
 
     def foo(a, b):
         c = a + b
@@ -726,7 +726,7 @@ def test_convert_element_type_with_float(executor, device, _):
     # object has no attribute 'dtype'"
     from thunder.core.transforms import value_and_grad
 
-    a = make_tensor([5], dtype=torch.float32, device=device.type)
+    a = make_tensor([5], dtype=torch.float32, device=device)
 
     @value_and_grad
     def fn(t0):
@@ -962,9 +962,9 @@ def test_torch_autograd_function(executor, device, _):
 
     func = thunder.jit(func, executors=executor.executors_list(), disable_torch_autograd=False)
 
-    a = make_tensor((2, 3), device=device.type, dtype=torch.float64, requires_grad=True)
-    b = make_tensor((2, 3), device=device.type, dtype=torch.float64, requires_grad=True)
-    c = make_tensor((3,), device=device.type, dtype=torch.float64, requires_grad=True)
+    a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
+    b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
+    c = make_tensor((3,), device=device, dtype=torch.float64, requires_grad=True)
 
     assert torch.autograd.gradcheck(lambda a, b, c: func(a, b, c=c), (a, b, c))
 
@@ -980,7 +980,7 @@ def test_torch_autograd_function_single_input(executor, device, _):
 
     func = thunder.jit(func, executors=executor.executors_list(), disable_torch_autograd=False)
 
-    a = make_tensor((2, 3), device=device.type, dtype=torch.float64, requires_grad=True)
+    a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     assert torch.autograd.gradcheck(func, (a,))
 
 
@@ -1028,9 +1028,9 @@ def test_torch_autograd_crazy_collections_in_and_out(executor, device, dtype):
     cfoo = thunder.jit(foo)
     tdtype = ltorch.to_torch_dtype(dtype)
 
-    a = make_tensor((2,), device=device.type, dtype=tdtype, requires_grad=True)
-    b = make_tensor((2, 2, 2), device=device.type, dtype=tdtype, requires_grad=True)
-    c = make_tensor((2, 2), device=device.type, dtype=tdtype, requires_grad=True)
+    a = make_tensor((2,), device=device, dtype=tdtype, requires_grad=True)
+    b = make_tensor((2, 2, 2), device=device, dtype=tdtype, requires_grad=True)
+    c = make_tensor((2, 2), device=device, dtype=tdtype, requires_grad=True)
 
     args = ({"a": {"a": a}}, (b, c), (3, {"c": c}))
     kwargs = {"ka": b, "kb": 3.0, "kc": (a, 2)}
@@ -1050,8 +1050,8 @@ def test_torch_autograd_crazy_collections_in_and_out(executor, device, dtype):
 )
 def test_torch_autograd_module(executor, device, _):
     l = torch.nn.Linear(3, 4, bias=False, device=device.type)
-    a = make_tensor((2, 3), device=device.type, dtype=torch.float32, requires_grad=True)
-    g = make_tensor((2, 4), device=device.type, dtype=torch.float32)
+    a = make_tensor((2, 3), device=device, dtype=torch.float32, requires_grad=True)
+    g = make_tensor((2, 4), device=device, dtype=torch.float32)
 
     for cache_mode in ("constant values", "same input"):
         lc = executor.make_callable(
@@ -1076,8 +1076,8 @@ def test_torch_autograd_module_get_compile_stats(executor, device, _):
     from thunder import compile_stats
 
     l = torch.nn.Linear(3, 4, bias=False, device=device.type)
-    a = make_tensor((2, 3), device=device.type, dtype=torch.float32, requires_grad=True)
-    g = make_tensor((2, 4), device=device.type, dtype=torch.float32)
+    a = make_tensor((2, 3), device=device, dtype=torch.float32, requires_grad=True)
+    g = make_tensor((2, 4), device=device, dtype=torch.float32)
 
     lc = thunder.jit(
         l,
@@ -1109,8 +1109,8 @@ def test_torch_autograd_function_with_kwargs_static_caching(executor, device, _)
 
     func = thunder.jit(func, executors=executor.executors_list(), disable_torch_autograd=False)
 
-    a = make_tensor((2, 3), device=device.type, dtype=torch.float64, requires_grad=True)
-    b = make_tensor((2, 3), device=device.type, dtype=torch.float64, requires_grad=True)
+    a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
+    b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
 
     # First call func(a, b) to populate the cache
     func(a, b)
@@ -1135,9 +1135,9 @@ def test_forward_and_backward_from_trace(executor, device, _):
 
     expected_vjp_func = executor.make_callable_legacy(value_and_grad(func))
 
-    a = make_tensor((2, 3), device=device.type, dtype=torch.float64, requires_grad=True)
-    b = make_tensor((2, 3), device=device.type, dtype=torch.float64, requires_grad=True)
-    c = make_tensor((3,), device=device.type, dtype=torch.float64, requires_grad=True)
+    a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
+    b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
+    c = make_tensor((3,), device=device, dtype=torch.float64, requires_grad=True)
     trace = trace(inline_trace=False)(func, a, b, c=c)
     fw_trace, bw_trace = forward_and_backward_from_trace(trace)
     fw = executor.make_callable(fw_trace)
@@ -1161,7 +1161,7 @@ def test_update_forward_with_new_saved_for_backward_numberproxy(executor, device
 
     jfoo = thunder.jit(foo, cache="symbolic values")
 
-    t = make_tensor((5, 3), device=device.type, dtype=torch.float32)
+    t = make_tensor((5, 3), device=device, dtype=torch.float32)
     t_ref = t.detach()
     t.requires_grad_()
     t_ref.requires_grad_()
@@ -1203,9 +1203,9 @@ def test_torch_autograd_redundant_casts(executor, device, _):
 
     func = thunder.jit(func, executors=executor.executors_list(), disable_torch_autograd=False)
 
-    a = make_tensor((2, 3), device=device.type, dtype=torch.float16, requires_grad=True)
-    b = make_tensor((2, 3), device=device.type, dtype=torch.float16, requires_grad=True)
-    c = make_tensor((3,), device=device.type, dtype=torch.float16, requires_grad=True)
+    a = make_tensor((2, 3), device=device, dtype=torch.float16, requires_grad=True)
+    b = make_tensor((2, 3), device=device, dtype=torch.float16, requires_grad=True)
+    c = make_tensor((3,), device=device, dtype=torch.float16, requires_grad=True)
 
     # This would fail if we didn't update the backward with the new proxies
     func(a, b, c).sum().backward()
@@ -1223,8 +1223,8 @@ def test_torch_autograd_optional_args(executor, device, _):
     def func(a, b, c=None):
         return ltorch.sin(a) + ltorch.cos(b)
 
-    a = make_tensor((2, 3), device=device.type, dtype=torch.float16, requires_grad=True)
-    b = make_tensor((2, 3), device=device.type, dtype=torch.float16, requires_grad=True)
+    a = make_tensor((2, 3), device=device, dtype=torch.float16, requires_grad=True)
+    b = make_tensor((2, 3), device=device, dtype=torch.float16, requires_grad=True)
     func(a, b).sum().backward()
     func(a, b, object()).sum().backward()
 
@@ -1241,7 +1241,7 @@ def test_backward_none_propagation(executor, device, _):
     def func(a):
         return ltorch.split(a, 1)
 
-    a = make_tensor((2, 4), device=device.type, dtype=torch.float16)
+    a = make_tensor((2, 4), device=device, dtype=torch.float16)
     result = func((a,), (None, None))
     assert result[1][0] is None
 

@@ -61,7 +61,7 @@ def disable_rematerialization_in_nvfuser_fusion(func):
 @disable_rematerialization_in_nvfuser_fusion
 def test_find_producer_symbols(executor, device, _):
     # We will try to find a subgraph for rematerializing __c and __d
-    t0 = make_tensor(2, 2, dtype=torch.float32, device=device.type)
+    t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
     compiled_func = thunder.compile(func, disable_preprocessing=True)
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
@@ -110,7 +110,7 @@ def test_find_producer_symbols(executor, device, _):
     executors=(nvFuserExecutor,),
 )
 def test_apply_rematerialization_producer(executor, device, _):
-    t0 = make_tensor(2, 2, dtype=torch.float32, device=device.type)
+    t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
     compiled_func = thunder.compile(func, disable_preprocessing=True)
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
@@ -143,7 +143,7 @@ def test_apply_rematerialization_producer(executor, device, _):
 )
 @disable_rematerialization_in_nvfuser_fusion
 def test_apply_rematerialization_consumer(executor, device, _):
-    t0 = make_tensor(2, 2, dtype=torch.float32, device=device.type)
+    t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
     compiled_func = thunder.compile(func, disable_preprocessing=True)
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
@@ -198,7 +198,7 @@ def test_find_nvfuser_producer_consumer_pairs(executor, device, _):
             t0 = t4
         return t4
 
-    t0 = make_tensor(2, 2, dtype=torch.float32, device=device.type)
+    t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
     compiled_func = thunder.compile(func, disable_preprocessing=True)
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
@@ -250,7 +250,7 @@ def test_find_filtered_producer_consumer_pairs_multiple_consumers(executor, devi
         t4 = prims.add(t2, t1)  # second filtered consumer
         return t3, t4
 
-    t0 = make_tensor(2, 2, dtype=torch.float32, device=device.type)
+    t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
     compiled_func = executor.make_callable(func)
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
@@ -277,7 +277,7 @@ def test_find_filtered_producer_consumer_pairs_multiple_consumers(executor, devi
     executors=(nvFuserExecutor,),
 )
 def test_find_cut(executor, device, _):
-    t0 = make_tensor(2, 2, dtype=torch.float32, device=device.type)
+    t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
     compiled_func = thunder.compile(func, disable_preprocessing=True)
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
@@ -297,7 +297,7 @@ def test_find_cut(executor, device, _):
     executors=(nvFuserExecutor,),
 )
 def test_find_cut_dropout(executor, device, _):
-    t0 = make_tensor(2, 2, dtype=torch.float32, device=device.type)
+    t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
     from unittest.mock import patch, MagicMock
 
     # mock the replace_uniform transform to return the input trace
@@ -340,7 +340,7 @@ def test_rematerialization(executor, device, _):
             t0 = t4
         return t4
 
-    t0 = make_tensor(2, 2, dtype=torch.float32, device=device.type)
+    t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
 
     # Result with rematerialization and without rematerialization should match
     result_with_remat = thunder.compile(
