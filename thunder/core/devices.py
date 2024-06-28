@@ -189,5 +189,8 @@ def to_torch_device(x: None | str | torch.device | Device, /) -> None | torch.de
 
     baseutils.check_type(x, (Device, str))
     if isinstance(x, Device):
-        return torch.device(x.type)
+        if x.type == "cuda":
+            return torch.device(f"{x.type}:{x.index}")
+        else:
+            return torch.device(f"{x.type}")
     return torch.device(x)
