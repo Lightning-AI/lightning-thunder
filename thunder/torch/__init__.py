@@ -4545,7 +4545,7 @@ def interpolate(
     mode: str = "nearest",
     align_corners: bool = False,
     recompute_scale_factor: bool | None = None,
-    antialias: bool = False
+    antialias: bool = False,
 ) -> TensorLike:
     utils.check(
         mode == "nearest",
@@ -4555,12 +4555,9 @@ def interpolate(
 
     utils.check(a.ndim >= 3, lambda: f"Expected {a.ndim=} >= 3")
     utils.check(a.numel() > 0, lambda: f"Expected {a.numel=} to be greater than 0")
-    utils.check(align_corners == False,
-                lambda: f"'align_corners=True' is not yet supported.")
-    utils.check(recompute_scale_factors == False,
-                lambda: f"'recompute_scale_factors=True' is not yet supported.")
-    utils.check(antialias == False,
-                lambda: f"'antialias=True' is not yet supported.")
+    utils.check(align_corners == False, lambda: f"'align_corners=True' is not yet supported.")
+    utils.check(recompute_scale_factors == False, lambda: f"'recompute_scale_factors=True' is not yet supported.")
+    utils.check(antialias == False, lambda: f"'antialias=True' is not yet supported.")
 
     utils.check(
         (size is not None) ^ (scale_factor is not None),
