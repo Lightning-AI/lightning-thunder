@@ -158,6 +158,9 @@ def enable_grad(*tensors):
         eager_map(lambda t, org_r_grad: t.requires_grad_(org_r_grad), tensors, original_requires_grad)
 
 
+FP8_SHARD_INTERMEDIATE_ACTIVATIONS = "fp8_shard_intermediate_activation"
+
+
 class TELinear(TransformerEngineBaseModule):
     def __init__(self, in_features: int, out_features: int) -> None:
         super().__init__()
@@ -177,10 +180,19 @@ class TELinear(TransformerEngineBaseModule):
 
         from thunder.distributed import FSDPType
 
+        should_shard_intermediate_options = get_compile_option(
+            FP8_SHARD_INTERMEDIATE_ACTIVATIONS,
+            "transformer_engine_ex: Whether the intermediate activations should be sharded or not. Only applicable with FSDP Zero3, ignored otherwise.",
+        )
+        if should_shard_intermediate_options is None:
+            # Defaults to True
+            should_shard_intermediate_options = True
+
         compile_data = get_compile_data()
         if (
             getattr(compile_data.fn, "use_fsdp", False)
             and getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO3
+            and should_shard_intermediate_options
         ):
             self.pg = compile_data.process_group_for_ddp
         else:

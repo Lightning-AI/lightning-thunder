@@ -1596,6 +1596,7 @@ def _test_fsdp_transformer_engine(input_data):
     # fp8 meta state is same after `n_iter`.
     init_method, world_size, rank, executor, device, _unused_dtype, kwargs = input_data
     thunder_fsdp_strategy = kwargs["thunder_fsdp_strategy"]
+    intermediate_activation_sharding = kwargs["intermediate_activation_sharding"]
     devicetype = devices.device_from_string(device).devicetype
 
     # Setting LOCAL_RANK is necessary for thunder.distributed.fsdp
@@ -1636,6 +1637,7 @@ def _test_fsdp_transformer_engine(input_data):
                 transformer_engine_ex,
             ]
             + executor.executors_list(),
+            fp8_shard_intermediate_activation=intermediate_activation_sharding,
         )
 
         optim = torch.optim.SGD(thunder_model.parameters())
@@ -1666,7 +1668,7 @@ def _test_fsdp_transformer_engine(input_data):
         import transformer_engine
 
         fsdp_model = FullyShardedDataParallel(te_model, auto_wrap_policy=always_wrap_policy)
-        if thunder_fsdp_strategy == FSDPType.ZERO3:
+        if thunder_fsdp_strategy == FSDPType.ZERO3 and intermediate_activation_sharding:
             transformer_engine.pytorch.distributed.prepare_te_modules_for_fsdp(fsdp_model)
         optim = torch.optim.SGD(te_model.parameters())
 
@@ -1824,6 +1826,10 @@ def test_ddp_transformer_engine_llama_sanity(executor, devices, dtype):
                 FSDPType.ZERO3,
             ),
         ),
+        pytest.mark.parametrize(
+            "intermediate_activation_sharding",
+            (False, True),
+        ),
         pytest.mark.skipif(not TE_AVAILABLE, reason="TransformerEngine is not installed."),
         pytest.mark.skipif(not is_fp8_supported, reason=fp8_support_reason),
         # See NOTE: Setting `NVTE_TORCH_COMPILE`
@@ -1833,7 +1839,7 @@ def test_ddp_transformer_engine_llama_sanity(executor, devices, dtype):
     ),
 )
 @ddp_wrapper("test_fsdp_transformer_engine", _test_fsdp_transformer_engine)
-def test_fsdp_transformer_engine(executor, devices, dtype, thunder_fsdp_strategy):
+def test_fsdp_transformer_engine(executor, devices, dtype, thunder_fsdp_strategy, intermediate_activation_sharding):
     pass
 
 
