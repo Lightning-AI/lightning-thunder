@@ -229,7 +229,7 @@ def prettyprint(
     if isinstance(x, dtypes.dtype):
         return m(f"dtypes.{str(x)}")
     if isinstance(x, devices.Device):
-        return m(f'devices.Device("{str(x)}")')
+        return m(f'devices.Device("{str(x.type)}")')
     if type(x) is type:
         return m(f"{baseutils.print_type(x, with_quotes=False)}")
     if dataclasses.is_dataclass(x):

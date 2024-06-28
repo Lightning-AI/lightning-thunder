@@ -179,8 +179,6 @@ def to_device(x: None | str | torch.device | Device, /) -> None | Device:
     if x is None or isinstance(x, Device):
         return x
 
-    if isinstance(x, Device):
-        x = x.type
     baseutils.check_type(x, (str, torch.device))
     return device_from_string(str(x))
 

@@ -330,7 +330,7 @@ def assert_tensor_metadata_impl(
     if (
         type(t) in (torch.Tensor, torch.nn.Parameter)
         and tuple(t.shape) == shape
-        and str(t.device) == str(device.type)
+        and str(t.device) == device.type
         and t.dtype == dtype
         and t.requires_grad == requires_grad
     ):
