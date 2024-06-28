@@ -16,6 +16,7 @@ import inspect
 import time
 from collections import deque
 import os
+import dataclasses
 
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
@@ -33,7 +34,7 @@ from thunder.core.proxies import (
 )
 from thunder.core.baseutils import default_dataclass_params
 from thunder.core.compile_data import get_compile_data
-from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
+from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten, tree_flatten_with_dataclass
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol
 from thunder.core.trace import TraceCtx as Trace, tracectx
 from thunder.core.trace import VariableInterface as Variable
@@ -405,7 +406,7 @@ def add_transform(
     early_transform: EarlyTransform | None = None,
     disable_torch_autograd_support=False,
 ) -> Callable:
-    from thunder.common import _create_callable, CompileData, CompileStats
+    from thunder.common import CompileData
 
     cd: None | Any = getattr(cfn, "_lc_cd", None)
 
@@ -445,28 +446,13 @@ def add_transform(
             jfn._overrides_buffers = cfn._overrides_buffers
         return jfn
 
-    cs = getattr(cfn, "_lc_cs", None)
-    if cs is None:
-        cs = CompileStats()
-
-    transforms = cfn._lc_transforms + [transform]
-    potransforms = cfn._lc_post_optimization_transforms
-    using_grad_transform = cfn._using_grad_transform
-
-    ncfn = _create_callable(
-        cd,
-        cs,
-        transforms=transforms,
-        post_optimization_transforms=potransforms,
-        _using_grad_transform=using_grad_transform,
-    )
-    return ncfn
+    raise NotImplementedError("Using the non-jit functions was an experiment that is no longer supported.")
 
 
 # TODO Consider refactoring this with the above
 # Helper function to add a post-optimization transform
 def add_post_optimization_transform(cfn: Callable, transform: PostOptimizationTransform) -> Callable:
-    from thunder.common import _create_callable, CompileData, CompileStats
+    from thunder.common import CompileData
 
     cd: None | Any = getattr(cfn, "_lc_cd", None)
 
@@ -498,12 +484,7 @@ def add_post_optimization_transform(cfn: Callable, transform: PostOptimizationTr
             jfn._overrides_buffers = cfn._overrides_buffers
         return jfn
 
-    cs = CompileStats()
-    transforms = cfn._lc_transforms
-    potransforms = cfn._lc_post_optimization_transforms + [transform]
-
-    ncfn = _create_callable(cd, cs, transforms=transforms, post_optimization_transforms=potransforms)
-    return ncfn
+    raise NotImplementedError("Using the non-jit functions was an experiment that is no longer supported.")
 
 
 # The no-op transform. A trivial composable transform, only useful as an example.
@@ -3292,6 +3273,8 @@ def backward_pass(forward_env, trace, init_cotangents):
             safe_map(put_grad, v, [None] * len(v))
         elif isinstance(v, Sequence) and isinstance(val, Sequence):
             safe_map_flat(put_grad, v, val)
+        elif dataclasses.is_dataclass(v) and dataclasses.is_dataclass(val):
+            safe_map_flat(put_grad, tree_flatten_with_dataclass(v), tree_flatten_with_dataclass(val))
         else:
             # Skip writing to constants
             pass
@@ -3632,7 +3615,8 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
         if torch_autograd:
             nonlocal output_spec
             flat_args, _ = tree_flatten((args, kwargs))
-            flat_output, output_spec = tree_flatten(result)
+            # The custom torch.autograd.Function only considers Tensors in the input/output (not ones that are nested inside python data structures)
+            flat_output, output_spec = tree_flatten_with_dataclass(result)
             flat_output = tuple(flat_output)
             # See Note [Grad forward output spec]
             for_autograd = TorchAutogradForwardData(

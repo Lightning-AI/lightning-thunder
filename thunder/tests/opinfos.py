@@ -556,6 +556,15 @@ def _elementwise_unary_torch(op):
 #
 tensor_properties: list[OpInfo] = []
 
+is_complex_opinfo = OpInfo(
+    ltorch.is_complex,
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.is_complex),
+    dtypes=(datatypes.all_dtypes),
+)
+
+tensor_properties.append(is_complex_opinfo)
+
 
 def _is_cuda_torch(x: torch.Tensor) -> bool:
     return x.is_cuda
@@ -1278,16 +1287,10 @@ signbit_opinfo = OpInfo(
 elementwise_unary_ops.append(signbit_opinfo)
 
 
-def silu_error_generator(op, device, dtype=torch.float32, **kwargs):
-    a = make_tensor((), dtype=dtype, device=device)
-    yield (SampleInput(a, inplace=True), NotImplementedError, "Thunder only supports silu with inplace=False")
-
-
 silu_opinfo = OpInfo(
     ltorch.silu,
     dtypes=(datatypes.floating,),
     sample_input_generator=partial(elementwise_unary_generator, supports_numbers=False),
-    error_input_generator=silu_error_generator,
     torch_reference=_elementwise_unary_torch(torch.nn.functional.silu),
     test_directives=(
         DecorateInfo(
@@ -1623,20 +1626,9 @@ reciprocal_opinfo = OpInfo(
 elementwise_unary_ops.append(reciprocal_opinfo)
 
 
-def relu_error_generator(op, device, dtype=torch.float32, **kwargs):
-    a = make_tensor((), dtype=dtype, device=device)
-    yield (SampleInput(a, inplace=True), NotImplementedError, "relu only supports inplace=False")
-
-
-def relu6_error_generator(op, device, dtype=torch.float32, **kwargs):
-    a = make_tensor((), dtype=dtype, device=device)
-    yield (SampleInput(a, inplace=True), NotImplementedError, "relu6 only supports inplace=False")
-
-
 relu_opinfo = OpInfo(
     ltorch.relu,
     sample_input_generator=elementwise_unary_generator,
-    error_input_generator=relu_error_generator,
     torch_reference=_elementwise_unary_torch(torch.relu),
     test_directives=(
         # PyTorch does not support bool and complex types
@@ -1665,7 +1657,6 @@ elementwise_unary_ops.append(relu_opinfo)
 relu6_opinfo = OpInfo(
     ltorch.relu6,
     sample_input_generator=elementwise_unary_generator,
-    error_input_generator=relu6_error_generator,
     torch_reference=_elementwise_unary_torch(torch.nn.functional.relu6),
     test_directives=(
         # PyTorch does not support bool for both CPU and CUDA relu6
@@ -1684,15 +1675,9 @@ relu6_opinfo = OpInfo(
 elementwise_unary_ops.append(relu6_opinfo)
 
 
-def hardswish_error_generator(op, device, dtype=torch.float32, **kwargs):
-    a = make_tensor((), dtype=dtype, device=device)
-    yield (SampleInput(a, inplace=True), NotImplementedError, "hardswish only supports inplace=False")
-
-
 hardswish_opinfo = OpInfo(
     ltorch.hardswish,
     sample_input_generator=elementwise_unary_generator,
-    error_input_generator=hardswish_error_generator,
     torch_reference=_elementwise_unary_torch(torch.nn.functional.hardswish),
     dtypes=(datatypes.floating,),
     test_directives=(
@@ -1713,16 +1698,10 @@ hardswish_opinfo = OpInfo(
 elementwise_unary_ops.append(hardswish_opinfo)
 
 
-def selu_error_generator(op, device, dtype=torch.float32, **kwargs):
-    a = make_tensor((), dtype=dtype, device=device)
-    yield (SampleInput(a, inplace=True), NotImplementedError, "selu only supports inplace=False")
-
-
 selu_opinfo = OpInfo(
     ltorch.selu,
     dtypes=(datatypes.floating,),
     sample_input_generator=elementwise_unary_generator,
-    error_input_generator=selu_error_generator,
     torch_reference=_elementwise_unary_torch(torch.selu),
     test_directives=(
         # Some versions of PyTorch do not support CPU float16 selu
@@ -2924,6 +2903,12 @@ to_opinfo = OpInfo(
     ltorch.to,
     sample_input_generator=to_sample_generator,
     torch_reference=torch.Tensor.to,
+    test_directives=(
+        DecorateInfo(
+            custom_comparator(partial(assert_close, check_device=False)),
+            "test_vjp_correctness",
+        ),
+    ),
 )
 data_movement_ops.append(to_opinfo)
 
@@ -2987,6 +2972,12 @@ type_as_sample = OpInfo(
     ltorch.type_as,
     sample_input_generator=type_as_sample_generator,
     torch_reference=torch.Tensor.type_as,
+    test_directives=(
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-5, rtol=1e-5)),
+            "test_vjp_correctness",
+        ),
+    ),
 )
 data_movement_ops.append(type_as_sample)
 
@@ -5939,6 +5930,55 @@ opinfos.extend(tensor_creation_ops)
 linear_algebra_ops = []
 
 
+def normalize_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    # input shape
+    cases = (
+        (4, 4),
+        (32, 32),
+        (16, 16, 16),
+        (4, 2, 4, 5),
+    )
+    for case in cases:
+        input_tensor = make(case)
+        # avoid very small norm tensors, which can be unstable to normalize
+        input_tensor = input_tensor + 0.2 * torch.sign(input_tensor)
+        yield SampleInput(input_tensor, eps=1e-8)
+        yield SampleInput(input_tensor, p=0, eps=1e-8)
+        yield SampleInput(input_tensor, p=1, eps=1e-8)
+        yield SampleInput(input_tensor, p=4, eps=1e-8)
+        yield SampleInput(input_tensor, p=math.inf, eps=1e-8)
+
+
+normalize_opinfo = OpInfo(
+    ltorch.normalize,
+    sample_input_generator=normalize_sample_generator,
+    torch_reference=torch.nn.functional.normalize,
+    dtypes=(datatypes.floating, datatypes.complexfloating),
+    test_directives=(
+        # The low precision floating point types sometimes fail
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-3, rtol=1e-1)),
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16, datatypes.float16),
+            devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
+        ),
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-3, rtol=1e-3)),
+            "test_vjp_correctness",
+        ),
+        # TODO Investigate the low precision difference
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-1, rtol=1e-1)),
+            "test_phantom_grad_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16, datatypes.float16),
+            devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
+        ),
+    ),
+)
+linear_algebra_ops.append(normalize_opinfo)
+
+
 def matmul_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
@@ -7632,6 +7672,13 @@ def scaled_dot_product_attention_reference_generator(op, device, dtype, requires
     q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
     yield SampleInput(q, k, v, None, 0.0, True)
 
+    # non-contiguous with stride 0 cases
+    q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
+    q_broadcast = torch.as_strided(q, size=q.shape, stride=(0, 0, E, 1))
+    k_broadcast = torch.as_strided(k, size=k.shape, stride=(0, 0, E, 1))
+    v_broadcast = torch.as_strided(v, size=v.shape, stride=(0, 0, Ev, 1))
+    yield SampleInput(q_broadcast, k_broadcast, v_broadcast, None, 0.0, True)
+
 
 def scaled_dot_product_attention_sample_generator(op, device, dtype, requires_grad, **kwargs):
     """https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html"""
@@ -7735,6 +7782,13 @@ sdpa_opinfo = OpInfo(
             pytest.mark.xfail,
             "test_vjp_correctness",
             dtypes=(datatypes.float64,),
+        ),
+        DecorateInfo(
+            pytest.mark.skip(reason="https://github.com/pytorch/pytorch/issues/129579"),
+            "test_cudnn_vs_torch_consistency",
+            dtypes=(datatypes.bfloat16, datatypes.float16, datatypes.float32),
+            devicetypes=(devices.DeviceType.CUDA,),
+            active_if=version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"),
         ),
     ),
 )
@@ -7851,11 +7905,11 @@ grad_sdpa_opinfo = OpInfo(
     devicetypes=(devices.DeviceType.CUDA,),
     test_directives=(
         DecorateInfo(
-            pytest.mark.skip(reason="https://github.com/Lightning-AI/lightning-thunder/issues/567"),
+            pytest.mark.skip(reason="https://github.com/pytorch/pytorch/issues/129579"),
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.bfloat16, datatypes.float16, datatypes.float32),
             devicetypes=(devices.DeviceType.CUDA,),
-            active_if=version_between(torch.__version__, min_ver="2.4.0a0", max_ver="2.4.0a99"),
+            active_if=version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"),
         ),
     ),
 )

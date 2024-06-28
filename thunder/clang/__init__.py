@@ -1597,6 +1597,7 @@ def tan(a):
     )
 
 
+@clangop()
 def tanh(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.tanh, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT

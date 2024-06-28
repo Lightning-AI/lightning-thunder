@@ -33,7 +33,14 @@ from thunder import functional as functional
 import thunder.core.prims as prims
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
-from thunder.core.transform_common import dce, EarlyTransform, AdditionalTransform, PostOptimizationTransform
+from thunder.core.transform_common import (
+    dce,
+    EarlyTransform,
+    AdditionalTransform,
+    PostOptimizationTransform,
+    functionalize_inplace_ops,
+    check_inplace_to_views,
+)
 from thunder.common import (
     CompileData,
     CompileStats,
@@ -64,7 +71,6 @@ from thunder.core.proxies import (
 from thunder.core.interpreter import print_interpreter_log, print_to_log
 from thunder.core.jit_ext import thunder_general_jit
 from thunder.executors.torch_autograd import split_forward_backward, ThunderFunction
-from thunder.cudagraphs import CUDAGraphExecutor
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
@@ -418,7 +424,7 @@ def jit(
                     ) = cache_entry
                     try:
                         cs.last_prologue_execution_start = time.time_ns()
-                        if epilogue:
+                        if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
                             inps, pro_to_epi = pro(*args, **kwargs)
                         else:
                             inps = pro(*args, **kwargs)
@@ -459,7 +465,7 @@ def jit(
                 ) = cache_entry
 
                 cs.last_prologue_execution_start = time.time_ns()
-                if epilogue:
+                if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
                     inps, pro_to_epi = pro(*args, **kwargs)
                 else:
                     inps = pro(*args, **kwargs)
@@ -503,6 +509,14 @@ def jit(
 
             prologue_traces = [prologue_trc]
             computation_traces = [computation_trc]
+            orig_to_view_swap_map = check_inplace_to_views(computation_trc)
+            if not compile_options.get("skip_inplace_functionalization", False):
+                computation_traces.extend(
+                    functionalize_inplace_ops(
+                        computation_trace=computation_trc, orig_to_view_swap_map=orig_to_view_swap_map
+                    )
+                )
+                computation_trc = computation_traces[-1]
 
             if epilogue_trc is not None:
                 epilogue_traces = [epilogue_trc]
@@ -541,7 +555,7 @@ def jit(
             cs.last_prologue_transformation_stop = time.time_ns()
 
             cs.last_prologue_execution_start = time.time_ns()
-            if epilogue:
+            if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
                 inps, pro_to_epi = pro(*args, **kwargs)
             else:
                 inps = pro(*args, **kwargs)
@@ -609,20 +623,22 @@ def jit(
                     backward_trc = transform.transform_trace(backward_trc, executors_list=cd.executors_list)
                     backward_traces.append(backward_trc)
 
+            if cd.use_cudagraphs:
+                from thunder.executors.cudagraphex import cudagraphex
+
+                computation_trc = cudagraphex.fusion_pass(computation_trc)
+                extraces.append(computation_trc)
+
+                if backward_trc is not None:
+                    backward_trc = cudagraphex.fusion_pass(backward_trc, num_static_inputs=len(backward_trc.args[0][0]))
+                    backward_traces.append(backward_trc)
+
             comp = computation_trc.python_callable()
 
             if backward_trc is not None:
                 backward_fn = backward_trc.python_callable()
             else:
                 backward_fn = None
-
-            # TODO: using vanilla CUDAGraphExecutor is not safe unless the graph is always static!
-            # (fixme): inspect torch.cuda.make_graph_callables and/or use it instead!
-            # See https://github.com/Lightning-AI/lightning-thunder/issues/433
-            if cd.use_cudagraphs:
-                comp = CUDAGraphExecutor(comp)
-                if backward_fn is not None:
-                    backward_fn = CUDAGraphExecutor(backward_fn, num_constant_args=len(backward_trc.args[0][0]))
 
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(
@@ -693,6 +709,8 @@ def jit(
     if isinstance(fn, pytorch.nn.Module):
         fn_ = ThunderModule(fn, fn_)
         cd._thunder_module_map[id(fn)] = fn_
+        for transform in early_transforms:
+            transform.transform_module(fn_)
 
     # Sets compile options and statistics attributes
     cd._get_computation_and_inputs = get_computation_and_inputs
