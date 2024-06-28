@@ -23,8 +23,8 @@ x = torch.randn(4, dim, dim, device="cuda")
 from debug_transform import DebugTransform
 
 
-def callback(*args, bsym, **kwargs):
-    return f"Memory Allocated: {torch.cuda.memory_allocated()}"
+def callback(bsym, *args, **kwargs):
+    return f"Before: {bsym.sym.name} - Memory Allocated: {torch.cuda.memory_allocated()}"
 
 
 mem_profile_transform = DebugTransform(callback=callback)

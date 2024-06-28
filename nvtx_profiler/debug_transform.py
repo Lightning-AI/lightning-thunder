@@ -48,9 +48,8 @@ NON_COMPUTATION_PRIMS = (
 )
 
 
-def debug_impl(*args, bsym, callback, **kwargs):
-    output_str = callback(*args, bsym=bsym, **kwargs)
-    bsym.header = output_str
+def debug_impl(*args, computation_bsym, debug_bsym, callback, **kwargs):
+    debug_bsym.header = callback(computation_bsym, *args, **kwargs)
 
 
 class DebugTransform(thunder.core.transforms.PostOptimizationTransform):
@@ -72,17 +71,23 @@ class DebugTransform(thunder.core.transforms.PostOptimizationTransform):
                 profile_trace.bound_symbols.append(bound_symbol)
                 continue
 
+            debug_sym_name = f"debug_{cnt}"
+
             def bind_postprocess(bsym) -> None:
                 # This dict is then used by trace.python_ctx() to resolve the
                 # BoundSymbol to the actual function.
-                bsym._call_ctx = {f"debug_{cnt}": partial(debug_impl, bsym=bsym, callback=self.callback)}
+                bsym._call_ctx = {
+                    debug_sym_name: partial(
+                        debug_impl, computation_bsym=bound_symbol, debug_bsym=bsym, callback=self.callback
+                    )
+                }
 
-            mem_sym = Symbol(
-                f"debug_{cnt}", lambda *args, **kwargs: None, is_prim=True, _bind_postprocess=bind_postprocess
+            debug_sym = Symbol(
+                debug_sym_name, lambda *args, **kwargs: None, is_prim=True, _bind_postprocess=bind_postprocess
             )
-            mem_bsym = mem_sym.bind(*bound_symbol.args, output=None, **bound_symbol.kwargs)
+            debug_bsym = debug_sym.bind(*bound_symbol.args, output=None, **bound_symbol.kwargs)
 
-            profile_trace.bound_symbols.append(mem_bsym)
+            profile_trace.bound_symbols.append(debug_bsym)
             profile_trace.bound_symbols.append(bound_symbol)
             cnt += 1
 
