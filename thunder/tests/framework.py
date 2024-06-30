@@ -279,12 +279,12 @@ def _instantiate_executor_test_template(
     devicetype = device_or_devices
     if isinstance(device_or_devices, devices.Device):
         devicetype_ = device_or_devices.devicetype
-        device_str = str(device_or_devices.type)
+        device_str = device_or_devices.device_str()
     else:
         devicetype_ = device_or_devices[0].devicetype
         device_str = []
         for device in device_or_devices:
-            device_str.append(device.type)
+            device_str.append(device.device_str())
 
     devicetype_str = devices.devicetype_string(devicetype_)
     template_name = as_name if as_name is not None else template.__name__

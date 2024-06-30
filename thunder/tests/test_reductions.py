@@ -22,7 +22,7 @@ def test_torch_var(executor, device, dtype):
     traced_foo = executor.make_callable(foo)
 
     tdtype = ttorch.to_torch_dtype(dtype)
-    a = torch.testing.make_tensor((4, 4), device=device.type, dtype=tdtype)
+    a = torch.testing.make_tensor((4, 4), device=device.device_str(), dtype=tdtype)
 
     # Full reduction
     thunder_result = traced_foo(a, [0, 1])
@@ -50,7 +50,7 @@ def test_torch_var(executor, device, dtype):
 
     traced_foo = executor.make_callable(foo)
 
-    a = torch.testing.make_tensor((4, 4), device=device.type, dtype=tdtype)
+    a = torch.testing.make_tensor((4, 4), device=device.device_str(), dtype=tdtype)
 
     thunder_result = traced_foo(a)
     torch_result = torch.var(a, [0, 1], keepdim=True, correction=2)
@@ -65,7 +65,7 @@ def test_torch_mean(executor, device, dtype):
     traced_foo = executor.make_callable(foo)
 
     tdtype = ttorch.to_torch_dtype(dtype)
-    a = torch.testing.make_tensor((4, 4), device=device.type, dtype=tdtype)
+    a = torch.testing.make_tensor((4, 4), device=device.device_str(), dtype=tdtype)
 
     # Full reduction
     thunder_result = traced_foo(a, [0, 1])
@@ -91,7 +91,7 @@ def test_var_mean(executor, device, dtype):
     traced_foo = executor.make_callable(foo)
 
     tdtype = ttorch.to_torch_dtype(dtype)
-    a = torch.testing.make_tensor((4, 4), device=device.type, dtype=tdtype)
+    a = torch.testing.make_tensor((4, 4), device=device.device_str(), dtype=tdtype)
 
     # Full reduction
     thunder_result = traced_foo(a, [0, 1])
@@ -109,7 +109,7 @@ def test_var_mean(executor, device, dtype):
 
     traced_foo = executor.make_callable(foo)
 
-    a = torch.testing.make_tensor((4, 4), device=device.type, dtype=tdtype)
+    a = torch.testing.make_tensor((4, 4), device=device.device_str(), dtype=tdtype)
 
     thunder_result = traced_foo(a)
     torch_result = torch.var_mean(a, [0, 1], keepdim=True, correction=2)

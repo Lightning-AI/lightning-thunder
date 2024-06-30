@@ -1610,7 +1610,9 @@ _cls_to_number_proxy_map = {
 
 
 def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple = None) -> TensorProxy:
-    device = devices.device_from_string(t.device.type)
+    ### FIX!!!
+    device = devices.to_device(t.device)
+    # device = devices.device_from_string()
     dtype = dtypes.to_dtype(t.dtype)
     # See Note [DistributedDataParallel and distparallel_type]
     distparallel_type = getattr(t, "distparallel_type", None)

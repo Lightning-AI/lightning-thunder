@@ -87,7 +87,7 @@ class TensorParallelTest(DataParallelTestCase):
                 return self.embed(x)
 
         device = torch.device(f"cuda:{self.rank}")
-        x = torch.randint(0, num_embeddings - 1, (16, 16), device)
+        x = torch.randint(0, num_embeddings - 1, (16, 16), device=device)
         x_ref = x.clone().detach()
 
         process_group = None

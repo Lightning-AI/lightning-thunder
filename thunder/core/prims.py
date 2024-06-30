@@ -330,7 +330,7 @@ def assert_tensor_metadata_impl(
     if (
         type(t) in (torch.Tensor, torch.nn.Parameter)
         and tuple(t.shape) == shape
-        and str(t.device) == device.type
+        and str(t.device) == device.device_str()
         and t.dtype == dtype
         and t.requires_grad == requires_grad
     ):
@@ -467,12 +467,12 @@ def _collectify(x: Any, *, name: str | None = None) -> Any:
 # TODO RC1 Align with ASSERT_TENSOR_METADATA
 # NOTE The device is stored as a string for easier, more readable comparisons
 def _check_tensor_shape_and_metadata_meta(
-    t: TensorProxy, shape: tuple[int, ...], device: devices.Device, dtype: torch.dtype, requires_grad: bool
+    t: TensorProxy, shape: tuple[int, ...], device: str, dtype: torch.dtype, requires_grad: bool
 ) -> None:
     # Validates types
     baseutils.check_type(t, TensorProxy)
     baseutils.check_valid_shape(shape)
-    baseutils.check_type(device, devices.Device)
+    baseutils.check_type(device, str)
     baseutils.check_type(dtype, torch.dtype)
     baseutils.check_type(requires_grad, bool)
 

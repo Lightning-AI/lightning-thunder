@@ -114,7 +114,7 @@ def make_tensor(
         return low, high
 
     if isinstance(device, thunder.devices.Device):
-        device = device.type
+        device = device.device_str()
 
     if len(shape) == 1 and isinstance(shape[0], collections.abc.Sequence):
         shape = shape[0]  # type: ignore[assignment]

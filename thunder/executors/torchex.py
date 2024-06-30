@@ -132,7 +132,7 @@ def _to_transform(
 
 
 def _device_put_transform(a: TensorProxy, device: devices.Device) -> TensorProxy:
-    torch_device: str = device.type
+    torch_device: str = device.device_str()
     return to(a, torch_device)
 
 
