@@ -125,7 +125,6 @@ class Benchmark_litGPT:
         self.checkpoint_activations = checkpoint_activations
         self.micro_batch_size = micro_batch_size
         self.low_precision_mode = low_precision_mode
-        
 
         # Clarify benchmark assumptions
         if self.sharding_size is not None:
@@ -162,7 +161,7 @@ class Benchmark_litGPT:
                 print(
                     f"[WARNING] Bucketing mode is set to {self.bucketing_mode}. --fsdp_bucket_params will be ignored."
                 )
-        
+
         if "thunder" in self.compile and is_transformer_engine(self.low_precision_mode):
             self.compile += "_transformerengine"
 
@@ -201,7 +200,7 @@ class Benchmark_litGPT:
         print(f"Loading model with {self.config.__dict__}")
         self.model = self.init_model()
         print(f"Time to instantiate model: {time.perf_counter() - t0:.02f} seconds.")
-        
+
         # fp8-delayed-te precision for thunder is handled through compile
         if is_transformer_engine(low_precision_mode) and "thunder" not in self.compile:
             te_precision = TransformerEnginePrecision(weights_dtype=torch.bfloat16, replace_layers=True)
