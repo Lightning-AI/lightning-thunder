@@ -1128,8 +1128,8 @@ def create_per_process_dataloader(
 class SmallModel(nn.Module):
     def __init__(self, device, dtype):
         super().__init__()
-        self.net1 = nn.Linear(2, 2, device=device.device_str(), dtype=dtype)
-        self.net2 = nn.Linear(2, 2, device=device.device_str(), dtype=dtype)
+        self.net1 = nn.Linear(2, 2, device=device, dtype=dtype)
+        self.net2 = nn.Linear(2, 2, device=device, dtype=dtype)
 
     def forward(self, x):
         return self.net2(new_gelu(self.net1(x)))
@@ -1222,7 +1222,7 @@ def _test_native_ddp_helper(input_data):
         tensor_shape=tensor_shape,
         tensor_dtype=torch_dtype,
         sample_seed=sample_seed,
-        devicetype=device,
+        devicetype=torch_dtype,
     )
 
     # Creates, compiles, and DDPs the model
@@ -1323,7 +1323,7 @@ def _test_native_fsdp_helper(input_data):
         tensor_shape=tensor_shape,
         tensor_dtype=torch_dtype,
         sample_seed=sample_seed,
-        devicetype=device,
+        devicetype=devicetype,
     )
 
     # Creates, compiles, and FSDPs the model
@@ -1530,9 +1530,9 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
     from thunder.tests.llama2_model import Transformer, ModelArgs
 
     init_method, world_size, rank, executor, device, dtype, _unused_kwargs = input_data
-    _unused_dtype = ltorch.to_torch_dtype(dtype)
     devicetype = devices.device_from_string(device).devicetype
-    init_per_process_distributed(init_method, device, world_size, rank)
+    _unused_dtype = ltorch.to_torch_dtype(dtype)
+    init_per_process_distributed(init_method, devicetype, world_size, rank)
 
     torch.cuda.set_device(rank)
     # data
@@ -1552,7 +1552,7 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
     )
     gptconf = ModelArgs(**model_args)
     model = Transformer(gptconf)
-    model.to(device.type)
+    model.to(device)
     x = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
     y = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
     jit_model = thunder.jit(
