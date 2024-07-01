@@ -1826,6 +1826,8 @@ def test_ddp_transformer_engine_llama_sanity(executor, devices, dtype):
                 FSDPType.ZERO3,
             ),
         ),
+        # NOTE: `intermediate_activation_sharding` only works with `FSDP.Zero3`,
+        #       and should be skipped with FSDP.Zero2.
         pytest.mark.parametrize(
             "intermediate_activation_sharding",
             (False, True),

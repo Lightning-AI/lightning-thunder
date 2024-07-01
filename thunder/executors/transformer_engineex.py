@@ -23,6 +23,7 @@ from thunder.core.vjp_utils import disable_caching_split_forward_and_backward
 from thunder.extend import OperatorExecutor, register_executor
 from thunder.core.compile_data import get_compile_option, get_compile_data
 from thunder.core.langctxs import langctx, Languages
+from thunder.distributed import FSDPType
 
 
 __all__ = [
@@ -161,6 +162,29 @@ def enable_grad(*tensors):
 FP8_SHARD_INTERMEDIATE_ACTIVATIONS = "fp8_shard_intermediate_activation"
 
 
+def _should_shard_intermediate() -> bool:
+    compile_data = get_compile_data()
+
+    should_shard_intermediate_options: bool | None = get_compile_option(
+        FP8_SHARD_INTERMEDIATE_ACTIVATIONS,
+        "transformer_engine_ex: Whether the intermediate activations should be sharded or not. Only applicable with FSDP Zero3, ignored otherwise.",
+    )
+
+    if getattr(compile_data.fn, "use_fsdp", False):
+        if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO3 and should_shard_intermediate_options in (
+            True,
+            None,
+        ):  # If user didn't specify, we default to `intermediate_sharding=True`.
+            return True
+
+        if should_shard_intermediate_options:  # user passed `True` but FSDPType was not Zero3
+            warnings.warn(
+                f"transformer_engine_ex: {FP8_SHARD_INTERMEDIATE_ACTIVATIONS} is only applicable for FSDP Zero3"
+            )
+
+    return False
+
+
 class TELinear(TransformerEngineBaseModule):
     def __init__(self, in_features: int, out_features: int) -> None:
         super().__init__()
@@ -178,23 +202,9 @@ class TELinear(TransformerEngineBaseModule):
             # Required by `get_fp8_weights_scratchpad`
             self.fp8_weight_shapes.append(torch.Size((self.out_features, self.in_features)))
 
-        from thunder.distributed import FSDPType
-
-        should_shard_intermediate_options = get_compile_option(
-            FP8_SHARD_INTERMEDIATE_ACTIVATIONS,
-            "transformer_engine_ex: Whether the intermediate activations should be sharded or not. Only applicable with FSDP Zero3, ignored otherwise.",
-        )
-        if should_shard_intermediate_options is None:
-            # Defaults to True
-            should_shard_intermediate_options = True
-
-        compile_data = get_compile_data()
-        if (
-            getattr(compile_data.fn, "use_fsdp", False)
-            and getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO3
-            and should_shard_intermediate_options
-        ):
-            self.pg = compile_data.process_group_for_ddp
+        # This is available only v1.8 onwards
+        if _should_shard_intermediate() and TE_VERSION_1_8_PLUS:
+            self.pg = get_compile_data().process_group_for_ddp
         else:
             self.pg = None
 
