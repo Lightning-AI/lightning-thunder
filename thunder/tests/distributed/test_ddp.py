@@ -1222,7 +1222,7 @@ def _test_native_ddp_helper(input_data):
         tensor_shape=tensor_shape,
         tensor_dtype=torch_dtype,
         sample_seed=sample_seed,
-        devicetype=torch_dtype,
+        devicetype=devicetype,
     )
 
     # Creates, compiles, and DDPs the model
