@@ -1631,7 +1631,8 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
 def futuretensorproxy(
     t: torch.Tensor | TensorProxy | FutureTensorProxy, /, *, name: None | str, history: None | tuple = None
 ) -> FutureTensorProxy:
-    device = devices.device_from_string(str(t.device))
+    # device = devices.device_from_string(str(t.device))
+    device = devices.to_device(t.device)
     dtype = dtypes.to_dtype(t.dtype)
     # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
     return FutureTensorProxy(
