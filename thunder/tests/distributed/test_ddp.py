@@ -1385,7 +1385,7 @@ def _test_ddp_transformer_engine(input_data):
     # and verify that the weights have converged to same value and
     # fp8 meta state is same after `n_iter`.
     init_method, world_size, rank, executor, device, dtype, _unused_kwargs = input_data
-    devicetype = devices.device_from_string(device).devicetype
+    devicetype = devices.device_from_string(device.device_str()).devicetype
     _unused_dtype = ltorch.to_torch_dtype(dtype)
     init_per_process_distributed(init_method, devicetype, world_size, rank)
 
@@ -1530,7 +1530,7 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
     from thunder.tests.llama2_model import Transformer, ModelArgs
 
     init_method, world_size, rank, executor, device, dtype, _unused_kwargs = input_data
-    devicetype = devices.device_from_string(device).devicetype
+    devicetype = devices.device_from_string(device.device_str()).devicetype
     _unused_dtype = ltorch.to_torch_dtype(dtype)
     init_per_process_distributed(init_method, devicetype, world_size, rank)
 
@@ -1596,7 +1596,7 @@ def _test_fsdp_transformer_engine(input_data):
     # fp8 meta state is same after `n_iter`.
     init_method, world_size, rank, executor, device, _unused_dtype, kwargs = input_data
     thunder_fsdp_strategy = kwargs["thunder_fsdp_strategy"]
-    devicetype = devices.device_from_string(device).devicetype
+    devicetype = devices.device_from_string(device.device_str()).devicetype
 
     # Setting LOCAL_RANK is necessary for thunder.distributed.fsdp
     with unittest.mock.patch.dict(os.environ, {"LOCAL_RANK": str(rank)}):
