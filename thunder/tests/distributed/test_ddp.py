@@ -1028,7 +1028,7 @@ common_utils.instantiate_parametrized_tests(CompileDDPTest)
 # Configures PyTorch's default process group, must be called at the start of each
 #   distributed process
 def init_per_process_distributed(
-    init_method: str, devicetype_or_device: devices.DeviceType | devices.Device, world_size: int, rank: int
+    init_method: str, devicetype_or_device: devices.DeviceType, world_size: int, rank: int
 ) -> tdist.ProcessGroup:
     backend: str
     if isinstance(devicetype_or_device, devices.Device):
@@ -1106,19 +1106,18 @@ def create_per_process_dataloader(
     tensor_dtype: torch.dtype,
     sample_seed: int | None = None,
     *,
-    device: devices.Device,
+    devicetype: devices.DeviceType,
 ) -> tudata.DataLoader:
     dataset = PerProcessDataset(num_samples, tensor_shape, tensor_dtype, sample_seed=sample_seed)
     sampler = tudata.SequentialSampler(dataset)
 
     collate_fn = None
-    devicetype = device.devicetype
     if devicetype is not devices.DeviceType.CPU:
         assert devicetype is devices.DeviceType.CUDA, f"Unknown devicetype {devicetype}"
-        torch_device = torch.device("cuda", rank)
+        device = torch.device("cuda", rank)
 
         def to_device(tensors: list[torch.Tensor]) -> list[torch.Tensor]:
-            return list([t.to(torch_device) for t in tensors])
+            return list([t.to(device) for t in tensors])
 
         collate_fn = to_device
 
@@ -1212,9 +1211,10 @@ def _test_native_ddp_helper(input_data):
     tensor_shape = (2, 2)
     sample_seed = 3456
     num_epochs = 1
+    devicetype = devices.device_from_string(device.device_str()).devicetype
     torch_dtype = ltorch.to_torch_dtype(dtype)
 
-    pg = init_per_process_distributed(init_method, device, world_size, rank)
+    pg = init_per_process_distributed(init_method, devicetype, world_size, rank)
 
     tdist.barrier(pg)
 
@@ -1224,7 +1224,7 @@ def _test_native_ddp_helper(input_data):
         tensor_shape=tensor_shape,
         tensor_dtype=torch_dtype,
         sample_seed=sample_seed,
-        device=device,
+        devicetype=device,
     )
 
     # Creates, compiles, and DDPs the model
@@ -1305,9 +1305,10 @@ def _test_native_fsdp_helper(input_data):
     tensor_shape = (2, 2)
     sample_seed = 3456
     num_epochs = 1
+    devicetype = devices.device_from_string(device.device_str()).devicetype
     torch_dtype = ltorch.to_torch_dtype(dtype)
 
-    pg = init_per_process_distributed(init_method, device, world_size, rank)
+    pg = init_per_process_distributed(init_method, devicetype, world_size, rank)
     tdist.barrier(pg)
 
     def finalize_pg(pg):
@@ -1324,7 +1325,7 @@ def _test_native_fsdp_helper(input_data):
         tensor_shape=tensor_shape,
         tensor_dtype=torch_dtype,
         sample_seed=sample_seed,
-        device=device,
+        devicetype=device,
     )
 
     # Creates, compiles, and FSDPs the model
@@ -1386,8 +1387,9 @@ def _test_ddp_transformer_engine(input_data):
     # and verify that the weights have converged to same value and
     # fp8 meta state is same after `n_iter`.
     init_method, world_size, rank, executor, device, dtype, _unused_kwargs = input_data
+    devicetype = devices.device_from_string(device).devicetype
     _unused_dtype = ltorch.to_torch_dtype(dtype)
-    init_per_process_distributed(init_method, device, world_size, rank)
+    init_per_process_distributed(init_method, devicetype, world_size, rank)
 
     torch.cuda.set_device(rank)
 
@@ -1531,6 +1533,7 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
 
     init_method, world_size, rank, executor, device, dtype, _unused_kwargs = input_data
     _unused_dtype = ltorch.to_torch_dtype(dtype)
+    devicetype = devices.device_from_string(device).devicetype
     init_per_process_distributed(init_method, device, world_size, rank)
 
     torch.cuda.set_device(rank)
@@ -1595,10 +1598,11 @@ def _test_fsdp_transformer_engine(input_data):
     # fp8 meta state is same after `n_iter`.
     init_method, world_size, rank, executor, device, _unused_dtype, kwargs = input_data
     thunder_fsdp_strategy = kwargs["thunder_fsdp_strategy"]
+    devicetype = devices.device_from_string(device).devicetype
 
     # Setting LOCAL_RANK is necessary for thunder.distributed.fsdp
     with unittest.mock.patch.dict(os.environ, {"LOCAL_RANK": str(rank)}):
-        init_per_process_distributed(init_method, device, world_size, rank)
+        init_per_process_distributed(init_method, devicetype, world_size, rank)
         torch.cuda.set_device(rank)
 
         dim = 256
