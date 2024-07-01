@@ -311,7 +311,7 @@ def type(a: TensorLike, /, dtype: None | str | dtypeLike = None, non_blocking: b
             # 2. When a tensor is on a CPU device and the device type string is omitted, the tensor remains on the CPU device.
             dev = a.device
         else:
-            dev = device_from_string(devtype)
+            dev = to_device(devtype)
     else:
         # dtype is assumed to be torch.dtype (e.g. torch.int32)
         dev = a.device
