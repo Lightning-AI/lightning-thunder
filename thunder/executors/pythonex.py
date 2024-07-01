@@ -46,7 +46,7 @@ def _never_executable(*args, **kwargs) -> bool:
 # Unpacking primitives
 #
 def _check_tensor_shape_and_metadata_impl(
-    t: torch.Tensor, shape: tuple[int, ...], device: devices.Device, dtype: torch.dtype, requires_grad: bool
+    t: torch.Tensor, shape: tuple[int, ...], device: str, dtype: torch.dtype, requires_grad: bool
 ) -> None:
     assert isinstance(t, torch.Tensor), f"expected Tensor, got {type(t).__name__}"
     assert (
