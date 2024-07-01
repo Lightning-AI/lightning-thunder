@@ -304,7 +304,7 @@ class DecorateInfo:
         # Acquires devicetype
         devicetype_: devices.DeviceType
         if isinstance(device_or_devicetype, str):
-            devicetype_ = devices.device_from_string(device_or_devicetype).devicetype
+            devicetype_ = devices.to_device(device_or_devicetype).devicetype
         elif isinstance(device_or_devicetype, devices.Device):
             devicetype_ = device_or_devicetype.devicetype
         else:
