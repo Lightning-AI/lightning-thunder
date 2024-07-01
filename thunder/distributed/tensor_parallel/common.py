@@ -238,7 +238,7 @@ class TransformForTensorParallel(EarlyTransform):
                         if c.sym is prims.check_tensor_shape_and_metadata:
                             # TODO have a more principled way to update this?
                             a0, _, _, *a2pp = c.args
-                            c.args = (a0, tuple(new_shape), str(a0.device), *a2pp)
+                            c.args = (a0, tuple(new_shape), a0.device.device_str(), *a2pp)
 
         for bsym in prologue_trace.bound_symbols:
             if bsym.sym is prims.check_tensor_shape_and_metadata and prologue_producers[bsym.args[0]].sym in (
@@ -249,7 +249,7 @@ class TransformForTensorParallel(EarlyTransform):
                 assert param_thunder_module is thunder_module_proxy
                 if name not in self.chunked_param_name_to_layer_type:
                     a0, shape, _, *a2pp = bsym.args
-                    bsym.args = (a0, shape, str(a0.device), *a2pp)
+                    bsym.args = (a0, shape, a0.device, *a2pp)
 
         if len(modules_and_thunder_modules) != 1:
             raise NotImplementedError("cannot deal with modules other than the compiled module")
