@@ -1,5 +1,6 @@
 import torch
 import thunder
+import itertools
 
 dim = 4096
 
@@ -24,7 +25,17 @@ from debug_transform import DebugTransform
 
 
 def callback(bsym, *args, **kwargs):
-    return f"Before: {bsym.sym.name} - Memory Allocated: {torch.cuda.memory_allocated()}"
+    # String returned from the callback will be used in the header for debug_symbol.
+    input_strides = []
+    for arg in itertools.chain(args, kwargs.values()):
+        if isinstance(arg, torch.Tensor):
+            input_strides.append(arg.stride())
+
+    output_str = (
+        f"Input Strides: {[stride for stride in input_strides]}\n"
+        f"{bsym.sym.name} - Memory Allocated: {torch.cuda.memory_allocated()}"
+    )
+    return output_str
 
 
 mem_profile_transform = DebugTransform(callback=callback)
