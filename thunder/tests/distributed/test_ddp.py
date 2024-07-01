@@ -1028,17 +1028,15 @@ common_utils.instantiate_parametrized_tests(CompileDDPTest)
 # Configures PyTorch's default process group, must be called at the start of each
 #   distributed process
 def init_per_process_distributed(
-    init_method: str, devicetype_or_device: devices.DeviceType, world_size: int, rank: int
+    init_method: str, devicetype: devices.DeviceType, world_size: int, rank: int
 ) -> tdist.ProcessGroup:
     backend: str
-    if isinstance(devicetype_or_device, devices.Device):
-        devicetype_or_device = devicetype_or_device.devicetype
-    if devicetype_or_device is devices.DeviceType.CUDA:
+    if devicetype is devices.DeviceType.CUDA:
         backend = "nccl"
-    elif devicetype_or_device is devices.DeviceType.CPU:
+    elif devicetype is devices.DeviceType.CPU:
         backend = "gloo"
     else:
-        raise ValueError(f"Unknown devicetype {devicetype_or_device}")
+        raise ValueError(f"Unknown devicetype {devicetype}")
 
     tdist.init_process_group(init_method=init_method, backend=backend, world_size=world_size, rank=rank)
 
