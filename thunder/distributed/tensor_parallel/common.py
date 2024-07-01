@@ -249,7 +249,7 @@ class TransformForTensorParallel(EarlyTransform):
                 assert param_thunder_module is thunder_module_proxy
                 if name not in self.chunked_param_name_to_layer_type:
                     a0, shape, _, *a2pp = bsym.args
-                    bsym.args = (a0, shape, a0.device, *a2pp)
+                    bsym.args = (a0, shape, a0.device.device_str(), *a2pp)
 
         if len(modules_and_thunder_modules) != 1:
             raise NotImplementedError("cannot deal with modules other than the compiled module")
