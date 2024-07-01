@@ -1243,7 +1243,9 @@ def test_argument_of_none(executor, device, dtype):
     consumers = thunder.core.utils.consumers(trace)
     region_bsyms = trace.bound_symbols[:3]
     region = Region(producers, consumers, region_bsyms)
-    assert len(region.inputs) == 0 and sorted(str(v) for v in region.outputs) == ["t0"]
+    assert len(region.inputs) == 0 and sorted(str(v) for v in region.outputs) == [
+        '<TensorProxy(name="t0", dtype=thunder.dtypes.float32, shape=(1,)>'
+    ]
 
 
 # This test ensures that calls to torch functions are recorded in the trace

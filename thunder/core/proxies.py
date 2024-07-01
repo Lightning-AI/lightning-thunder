@@ -134,7 +134,7 @@ class Proxy(VariableInterface, ProxyInterface):
         return self.__class__(name=name)
 
     def __repr__(self) -> str:
-        return f"{self.name}"
+        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self.shape}>'
 
     def type_string(self) -> str:
         return "Any"
@@ -1610,7 +1610,7 @@ _cls_to_number_proxy_map = {
 
 
 def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple = None) -> TensorProxy:
-    device = devices.device_from_string(str(t.device))
+    device = devices.to_device(t.device)
     dtype = dtypes.to_dtype(t.dtype)
     # See Note [DistributedDataParallel and distparallel_type]
     distparallel_type = getattr(t, "distparallel_type", None)
@@ -1631,7 +1631,7 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
 def futuretensorproxy(
     t: torch.Tensor | TensorProxy | FutureTensorProxy, /, *, name: None | str, history: None | tuple = None
 ) -> FutureTensorProxy:
-    device = devices.device_from_string(str(t.device))
+    device = devices.to_device(t.device)
     dtype = dtypes.to_dtype(t.dtype)
     # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
     return FutureTensorProxy(
