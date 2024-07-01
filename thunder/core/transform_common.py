@@ -461,8 +461,8 @@ def functionalize_inplace_ops(
 
     In thunder, an in-place is an out-of-place or functional op followed by :func:`~thunder.core.prims.copy_`.
     This function replaces such in-place ops with out-of-place ops.
-    Note that functionalization is not applied, if any of an in-place op's arguments are
-    ``computation_trace.args`` or ``computation_trace.kwargs``.
+    If any of an in-place op's arguments are ``computation_trace.args`` or ``computation_trace.kwargs``,
+    the copy is moved to the end of the trace.
 
     For example, :func:`thunder.torch.add_` is represented as a :class:`thunder.core.symbol.BoundSymbol`
     whose `subsymbols` are :func:`thunder.torch.add` and :func:`thunder.core.prims.copy_`. This function
@@ -544,6 +544,7 @@ def functionalize_inplace_ops(
     swap_map.clear()
 
     new_bsyms: list[BoundSymbol] = []
+    copy_to_arg_bsyms: list[BoundSymbol] = []
     for bsym in intermediate_trace.bound_symbols:
         new_bsym = bsym.from_bsym_swap_proxies(swap_map)
 
@@ -555,33 +556,33 @@ def functionalize_inplace_ops(
         copy_return = copy_bsym.flat_proxy_outs[0]
         copy_from = copy_bsym.flat_proxy_args[0]
         copy_to = copy_bsym.flat_proxy_args[1]
+
         if copy_to in trace_args_set:
-            new_bsyms.append(new_bsym)
-        else:
-            swap_map[variableify(copy_return)] = copy_from
-            new_bsym.subsymbols = new_bsym.subsymbols[:-1]
-            new_bsym = new_bsym.from_bsym_swap_proxies(swap_map)
+            copy_to_arg_bsyms.append(copy_bsym)
+        swap_map[variableify(copy_return)] = copy_from
+        new_bsym.subsymbols = new_bsym.subsymbols[:-1]
+        new_bsym = new_bsym.from_bsym_swap_proxies(swap_map)
 
-            functional_sym: Symbol
-            optional_inplace_arg_index: int
-            functional_sym, optional_inplace_arg_index = thunder.torch._inplace_to_out_of_place[new_bsym.sym]
+        functional_sym: Symbol
+        optional_inplace_arg_index: int
+        functional_sym, optional_inplace_arg_index = thunder.torch._inplace_to_out_of_place[new_bsym.sym]
 
-            flat_args, flat_args_spec = tree_flatten((new_bsym.args, new_bsym.kwargs))
-            if optional_inplace_arg_index > -1:
-                flat_args[optional_inplace_arg_index] = False
-            args, kwargs = tree_unflatten(flat_args, flat_args_spec)
-            new_functional_bsym = functional_sym.bind(
-                *args,
-                **kwargs,
-                output=new_bsym.output,
-                subsymbols=new_bsym.subsymbols,
-                _call_ctx=new_bsym._call_ctx,
-            )
-            new_bsyms.append(new_functional_bsym)
-            bsym_inplace_to_functional[new_bsym] = new_functional_bsym
+        flat_args, flat_args_spec = tree_flatten((new_bsym.args, new_bsym.kwargs))
+        if optional_inplace_arg_index > -1:
+            flat_args[optional_inplace_arg_index] = False
+        args, kwargs = tree_unflatten(flat_args, flat_args_spec)
+        new_functional_bsym = functional_sym.bind(
+            *args,
+            **kwargs,
+            output=new_bsym.output,
+            subsymbols=new_bsym.subsymbols,
+            _call_ctx=new_bsym._call_ctx,
+        )
+        new_bsyms.append(new_functional_bsym)
+        bsym_inplace_to_functional[new_bsym] = new_functional_bsym
 
     functionalized_computation_trace = from_trace(computation_trace)
-    functionalized_computation_trace.bound_symbols = new_bsyms
+    functionalized_computation_trace.bound_symbols = new_bsyms[:-1] + copy_to_arg_bsyms + [new_bsyms[-1]]
     functionalized_computation_trace.set_provenance(TraceProvenance("Functionalize in-place ops"))
     # note(crcrpar): I kind of want to do the following two.
     # functionalized_computation_trace._provenance.swap_map = swap_map
