@@ -64,6 +64,12 @@ def test_nanogpt_complete_autograd(executor, device, dtype):
     assert_close(torch_grads, thunder_grads, atol=1e-1, rtol=1e-1)
 
 
+def _there_is_cudagraph_sym(trace):
+    # So far check for a single CUDAGraph fusion
+    bsyms = [bsym for bsym in trace.bound_symbols if bsym.sym.name.startswith("CUDAGraph")]
+    return len(bsyms) == 1
+
+
 @instantiate(dtypes=(thunder.float32,), devicetypes=(thunder.devices.DeviceType.CUDA,))
 @requiresCUDA
 def test_nanogpt_complete_cudagraphs(executor, device, dtype):
@@ -75,21 +81,36 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
     config = nanogpt_model.GPTConfig(dropout=0, block_size=512, n_layer=6, n_head=6, n_embd=768)
     gpt = nanogpt_model.GPT(config).to(device=device, dtype=tdtype)
 
-    idx = make((4, 64), dtype=torch.int64, low=0, high=255)
-    torch_result = gpt(idx)
-
     tom = executor.make_callable(gpt, use_cudagraphs=True, disable_torch_autograd=True)
 
-    thunder_result = tom(idx)
-    assert_close(torch_result, thunder_result)
+    # Checking graph cache stats
+    from thunder.executors.cudagraphex import build_cuda_graph
+
+    # Cache stats before test runs
+    build_graph_stats_old = build_cuda_graph.cache_info()
+
+    for _ in range(2):
+        idx = make((4, 64), dtype=torch.int64, low=0, high=255)
+        torch_result = gpt(idx)
+
+        thunder_result = tom(idx)
+        assert_close(torch_result, thunder_result)
+
+    # Cache stats after test runs
+    build_graph_stats_new = build_cuda_graph.cache_info()
+    # We ran only a single (forward) graph several times.
+    # Test that at most 1 cache miss happened after the runs.
+    assert (build_graph_stats_new.misses - build_graph_stats_old.misses) <= 1
 
     # Check we really run CUDAGraphExecutor {
     assert tom._lc_cd.use_cudagraphs == True
-
-    from thunder.cudagraphs import CUDAGraphExecutor
-
-    assert type(tom._lc_cs.last_executed) == CUDAGraphExecutor
+    assert _there_is_cudagraph_sym(thunder.last_traces(tom)[-1])
     # }
+
+    # Let's clear cache if run only in tests
+    # TODO: merge with the cache of the thunder.jit callable
+    if build_graph_stats_old.misses == 0:
+        build_cuda_graph.cache_clear()
 
 
 @instantiate(dtypes=(thunder.float32,), devicetypes=(thunder.devices.DeviceType.CUDA,))
@@ -101,18 +122,45 @@ def test_nanogpt_complete_cuda_graphs_autograd(executor, device, dtype):
     # NOTE Sets dropout to zero for reproducibility
     config = nanogpt_model.GPTConfig(dropout=0, block_size=512, n_layer=6, n_head=6, n_embd=768)
     gpt = nanogpt_model.GPT(config).to(device=device, dtype=tdtype)
-
-    x = make_tensor((4, 64), dtype=torch.int64, low=0, high=255, device=device)
-    targets = make_tensor((4, 64), dtype=torch.int64, low=0, high=255, device=device)
-    torch_result = gpt(x, targets=targets)
-    torch_grads = torch.autograd.grad(torch_result[1], gpt.parameters())
-
     cmodel = executor.make_callable(gpt, use_cudagraphs=True)
-    thunder_result = cmodel(x, targets=targets)
-    thunder_grads = torch.autograd.grad(thunder_result[1], gpt.parameters())
 
-    assert_close(torch_result, thunder_result)
-    assert_close(torch_grads, thunder_grads)
+    # Checking graph cache stats
+    from thunder.executors.cudagraphex import build_cuda_graph
+
+    # Cache stats before test runs
+    build_graph_stats_old = build_cuda_graph.cache_info()
+
+    # Multiple runs to test whether static buffers are properly updated
+    for i in range(3):
+        x = make_tensor((4, 64), dtype=torch.int64, low=0, high=255, device=device)
+        targets = make_tensor((4, 64), dtype=torch.int64, low=0, high=255, device=device)
+
+        torch_result = gpt(x, targets=targets)
+        torch_grads = torch.autograd.grad(torch_result[1], gpt.parameters())
+
+        thunder_result = cmodel(x, targets=targets)
+        thunder_grads = torch.autograd.grad(thunder_result[1], gpt.parameters())
+
+        assert_close(torch_result, thunder_result)
+        assert_close(torch_grads, thunder_grads)
+
+    # Cache stats after test runs
+    build_graph_stats_new = build_cuda_graph.cache_info()
+    # We ran only at most two (forward and backward) graphs several times.
+    # Test that at most 2 cache misses happened after the runs
+    # (at most one per each graph)
+    assert (build_graph_stats_new.misses - build_graph_stats_old.misses) <= 2
+
+    # Check we really run CUDAGraphExecutor {
+    assert cmodel._lc_cd.use_cudagraphs == True
+    assert _there_is_cudagraph_sym(thunder.last_traces(cmodel)[-1])
+    assert _there_is_cudagraph_sym(thunder.last_backward_traces(cmodel)[-1])
+    # }
+
+    # Let's clear cache if run only in tests
+    # TODO: merge with the cache of the thunder.jit callable
+    if build_graph_stats_old.misses == 0:
+        build_cuda_graph.cache_clear()
 
 
 @instantiate(dtypes=(thunder.float32,))
@@ -204,3 +252,67 @@ def test_hf_bart_self_attn():
     tom = thunder.jit(model)
     thunder_result = tom(inp, None)
     assert_close(torch_result, thunder_result)
+
+
+@requiresCUDA
+def test_quantization():
+    try:
+        import bitsandbytes
+    except (ImportError, RuntimeError):
+        pytest.skip("bitsandbytes not found")
+
+    from thunder.tests import litgpt_model
+    from lightning.fabric.plugins import BitsandbytesPrecision
+
+    config = litgpt_model.Config.from_name("llama2-like")
+    with torch.device("cuda"):
+        model_fp_reference = litgpt_model.GPT(config).to(torch.bfloat16)
+
+    import lightning as L
+
+    plugins = BitsandbytesPrecision("nf4", torch.bfloat16)
+    fabric = L.Fabric(devices=1, precision=None, plugins=plugins)
+    with fabric.init_module(empty_init=True):
+        model = litgpt_model.GPT(config)
+
+    with fabric.init_tensor():
+        # set the max_seq_length to limit the memory usage to what we need
+        model.max_seq_length = 20
+        # enable the kv cache
+        model.set_kv_cache(batch_size=1)
+    model.eval()
+    model.requires_grad_(False)
+    model = fabric.setup_module(model)
+
+    model.load_state_dict(model_fp_reference.state_dict())
+
+    x = torch.randint(1, 255, (1, 10), device="cuda")
+    input_pos = torch.arange(10, device="cuda")
+    logits_expected = model(x, input_pos)
+
+    from thunder.transforms.quantization import BitsAndBytesLinearQuant4bit, get_bitsandbytes_executor
+
+    bitsandbytes_executor = get_bitsandbytes_executor()
+
+    model_fp_reference.set_kv_cache(1, device="cuda", dtype=torch.bfloat16)
+    model_fp_reference.max_seq_length = 20
+    model_fp_reference.requires_grad_(False)
+    model_fp_reference.eval()
+
+    jm = thunder.jit(
+        model_fp_reference,
+        executors=(bitsandbytes_executor,),
+        early_transforms=[BitsAndBytesLinearQuant4bit()],
+    )
+
+    logits_thunder = jm(x, input_pos)
+    # check_dtype=False due to litgpt returning float32
+    # (maybe that also is the numerical discrepancy?)
+    assert_close(logits_thunder, logits_expected, atol=2e-2, rtol=1e-3, check_dtype=False)
+
+    sd = {k: v.clone() for k, v in jm.state_dict().items()}
+    jm.load_original_state_dict(model_fp_reference.state_dict())
+    sd2 = {k: v.clone() for k, v in jm.state_dict().items()}
+    assert len(sd) == len(sd2)
+    for k, v in sd.items():
+        assert_close(v, sd2[k])

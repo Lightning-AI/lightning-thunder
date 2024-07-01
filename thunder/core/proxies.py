@@ -5,6 +5,7 @@ from numbers import Number
 from typing import Type, Optional, Any, Tuple, List, Union
 from collections.abc import Callable
 from collections.abc import Sequence
+
 from functools import reduce, partial
 import operator
 import builtins
@@ -389,6 +390,10 @@ class StringProxy(Proxy, str):
     def __repr__(self) -> str:
         return f"<StringProxy '{self.value}'>"
 
+    def replace_name(self, name: str, /):
+        """Return a copy of this proxy with the given name."""
+        return StringProxy(self.value, name=name, history=self.history)
+
     def type_string(self) -> str:
         return "str"
 
@@ -562,14 +567,35 @@ class DictProxy(Proxy, dict):
         raise NotImplementedError("Calling setdefault on an input dict is not yet supported")
 
 
+# CONSTRAINT annotates NumberProxy as their get processed by interpreter.
+# A NumberProxy can be at one of the status:
+# - A DYNAMIC NumberProxy cannot be converted to a static number;
+# - A CONSTRAINABLE NumberProxy is treated as DYNAMIC by default, but it could be converted to STATIC by interpreter;
+# - A STATIC NumberProxy can be treated as a static number, but not necessarily so;
+#   The protocol here is that, if a NumberProxy instance is converted to static, we'll insert a guard logic in prologue trace to ensure the NumberProxy doesn't change at runtime.
+class CONSTRAINT(Enum):
+    DYNAMIC = auto()
+    CONSTRAINABLE = auto()
+    STATIC = auto()
+
+
 # NOTE NumberProxies are NOT Numbers
 # TODO Maybe NumberProxies should be Numbers?
 class NumberProxy(Proxy, NumberProxyInterface):
     def __init__(
-        self, name: str | None = None, value: Number | None = None, *, python_type: type, history: None | tuple = None
+        self,
+        name: str | None = None,
+        value: Number | None = None,
+        *,
+        python_type: type,
+        history: None | tuple = None,
+        constraint: None | CONSTRAINT = None,
     ):
         self.value = value
         self.python_type = python_type
+        if constraint is None:
+            constraint = CONSTRAINT.DYNAMIC
+        self.constraint = constraint
 
         Proxy.__init__(self, name, history=history)
 
@@ -583,6 +609,20 @@ class NumberProxy(Proxy, NumberProxyInterface):
 
     def known_value(self) -> bool:
         return self.value is not None
+
+    def make_static_constrained(self):
+        baseutils.check(self.constraint != CONSTRAINT.DYNAMIC, lambda: f"dynamic NumberProxy cannot be made static")
+        baseutils.check(self.value is not None, lambda: f"static NumberProxy needs to have value")
+        self.constraint = CONSTRAINT.STATIC
+
+    def make_constrainable(self):
+        self.constraint = CONSTRAINT.CONSTRAINABLE
+
+    def is_static_constrained(self) -> bool:
+        return self.constraint == CONSTRAINT.STATIC
+
+    def is_dynamic(self) -> bool:
+        return self.constraint == CONSTRAINT.DYNAMIC
 
     #
     # Elementwise unary operators
@@ -901,7 +941,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
 NumberLike = Number | NumberProxy
 
 
-def pyval(x: Number | str | AnyProxy) -> Number | str | any:
+def pyval(x: NumberLike | str | AnyProxy) -> Number | str | any:
     baseutils.check_type(x, (NumberProxy, Number, str, AnyProxy))
 
     if isinstance(x, AnyProxy):
@@ -939,8 +979,8 @@ def pytype(x: Proxy) -> type | None:
 
 # TODO RC1 Update Proxy number inits to be value, /, *, name, history
 class ComplexProxy(NumberProxy):
-    def __init__(self, name=None, value=None, history: None | tuple = None):
-        NumberProxy.__init__(self, name=name, value=value, python_type=complex, history=history)
+    def __init__(self, name=None, value=None, history: None | tuple = None, constraint: None | CONSTRAINT = None):
+        NumberProxy.__init__(self, name=name, value=value, python_type=complex, history=history, constraint=constraint)
 
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
@@ -954,10 +994,18 @@ class ComplexProxy(NumberProxy):
 # TODO Review dtype conversions
 # TODO Review -9999 as the marker value for unknown values
 class IntegerProxy(NumberProxy):
-    def __init__(self, name: str | None = None, value=None, history: None | tuple = None):
+    def __init__(
+        self,
+        name: str | None = None,
+        value=None,
+        history: None | tuple = None,
+        constraint: None | CONSTRAINT = None,
+    ):
         # NOTE bools are also integers in Python
         python_type = bool if isinstance(value, bool) else int
-        NumberProxy.__init__(self, name=name, value=value, python_type=python_type, history=history)
+        NumberProxy.__init__(
+            self, name=name, value=value, python_type=python_type, history=history, constraint=constraint
+        )
 
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
@@ -970,8 +1018,8 @@ class IntegerProxy(NumberProxy):
 
     def __repr__(self):
         if self.python_type is bool:
-            return f"[IntegerProxy (bool type) name={self.name}, value={self.value}]"
-        return f"[IntegerProxy name={self.name}, value={self.value}]"
+            return f"[IntegerProxy (bool type) name={self.name}, value={self.value}, static={self.constraint}]"
+        return f"[IntegerProxy name={self.name}, value={self.value}, static={self.constraint}]"
 
     def __index__(self):
         return self.value
@@ -979,8 +1027,8 @@ class IntegerProxy(NumberProxy):
 
 # TODO Review dtype conversions
 class FloatProxy(NumberProxy):
-    def __init__(self, name=None, value=None, history: None | tuple = None):
-        NumberProxy.__init__(self, name=name, value=value, python_type=float, history=history)
+    def __init__(self, name=None, value=None, history: None | tuple = None, constraint: None | CONSTRAINT = None):
+        NumberProxy.__init__(self, name=name, value=value, python_type=float, history=history, constraint=constraint)
 
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
@@ -991,13 +1039,16 @@ class FloatProxy(NumberProxy):
         return f"float {value_str}"
 
     def __repr__(self):
-        return f"[FloatProxy name={self.name}, value={self.value}]"
+        return f"[FloatProxy name={self.name}, value={self.value}, static={self.constraint}]"
 
 
-class DDPType(Enum):
+class DistParallelType(Enum):
     NONE = auto()
     REPLICATED = auto()
     FULLY_SHARDED = auto()
+    # Following two are for tensor parallelism
+    COLUMN_WISE = auto()
+    ROW_WISE = auto()
 
 
 def _infer_tensor_properties(
@@ -1006,14 +1057,14 @@ def _infer_tensor_properties(
     device: devices.Device | None = None,
     dtype: dtypes.dtype | None = None,
     requires_grad: bool | None = None,
-    ddp_type: DDPType | None = None,
+    distparallel_type: DistParallelType | None = None,
     thunder_fsdp_padding_size: int | None = None,
 ):
     _shape = None
     _device = None
     _dtype = None
     _requires_grad: None | bool = None
-    _ddp_type = DDPType.NONE
+    _dist_parallel_type = DistParallelType.NONE
     _thunder_fsdp_padding_size = None
 
     if like is not None:
@@ -1022,7 +1073,7 @@ def _infer_tensor_properties(
         _device = like.device
         _dtype = like.true_dtype
         _requires_grad = like.requires_grad
-        _ddp_type = getattr(like, "ddp_type", DDPType.NONE)
+        _dist_parallel_type = getattr(like, "distparallel_type", DistParallelType.NONE)
 
     if shape is not None:
         baseutils.check_valid_shape(shape)
@@ -1033,18 +1084,13 @@ def _infer_tensor_properties(
     _dtype = dtypes.numbertype_to_dtype(_dtype) if dtypes.is_numbertype(_dtype) else _dtype
     _requires_grad = requires_grad if requires_grad is not None else _requires_grad
     _requires_grad = False if not dtypes.is_inexact_dtype(_dtype) else _requires_grad
-    _ddp_type = ddp_type if ddp_type is not None else _ddp_type
+    _dist_parallel_type = distparallel_type if distparallel_type is not None else _dist_parallel_type
     _thunder_fsdp_padding_size = (
         thunder_fsdp_padding_size if thunder_fsdp_padding_size is not None else _thunder_fsdp_padding_size
     )
 
-    # Extracts actual values for shape
-    # TODO RC1 Enable this
-    if using_symbolic_values():
-        raise NotImplementedError(
-            f"Trying to construct a tensor proxy while using symbolic values, but this is not yet supported"
-        )
-
+    # dynamic shape not yet enabled, otherwise, the bake in should be guarded with if not using_symbolic_values():
+    # dynamic shape support is currently block by #471 https://github.com/Lightning-AI/lightning-thunder/issues/471
     _shape = tuple(pyval(x) for x in _shape)
 
     # Computes derived properties
@@ -1057,11 +1103,11 @@ def _infer_tensor_properties(
     baseutils.check_type(_device, devices.Device)
     baseutils.check_type(_dtype, dtypes.dtype)
     baseutils.check_type(_requires_grad, bool)
-    baseutils.check_type(_ddp_type, DDPType)
+    baseutils.check_type(_dist_parallel_type, DistParallelType)
     if isinstance(_thunder_fsdp_padding_size, int):
         baseutils.check(
-            _ddp_type == DDPType.FULLY_SHARDED,
-            lambda: f"{_ddp_type = } and {_thunder_fsdp_padding_size = } do not work",
+            _dist_parallel_type == DistParallelType.FULLY_SHARDED,
+            lambda: f"{_dist_parallel_type = } and {_thunder_fsdp_padding_size = } do not work",
         )
         baseutils.check(
             _thunder_fsdp_padding_size > 0,
@@ -1073,7 +1119,17 @@ def _infer_tensor_properties(
     _true_dtype = _dtype
     _dtype = dtypes.to_strong_dtype(_dtype)
 
-    return _shape, _device, _dtype, _true_dtype, _numel, _ndim, _requires_grad, _ddp_type, _thunder_fsdp_padding_size
+    return (
+        _shape,
+        _device,
+        _dtype,
+        _true_dtype,
+        _numel,
+        _ndim,
+        _requires_grad,
+        _dist_parallel_type,
+        _thunder_fsdp_padding_size,
+    )
 
 
 # NOTE A FutureTensorProxy is intentionally NOT a subclass of TensorProxy
@@ -1100,7 +1156,7 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
             self._numel,
             self._ndim,
             self._requires_grad,
-            _,  # ddp_type
+            _,  # distparallel_type
             _,  # thunder_fsdp_padding_size
         ) = _infer_tensor_properties(
             like,
@@ -1167,7 +1223,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         dtype: dtypes.dtype | None = None,
         requires_grad: bool | None = None,
         prefix: None | str = None,
-        ddp_type: DDPType | None = None,
+        distparallel_type: DistParallelType | None = None,
         history: None | tuple = None,
         thunder_fsdp_padding_size: int | None = None,
     ):
@@ -1181,9 +1237,11 @@ class TensorProxy(Proxy, TensorProxyInterface):
             self._numel,
             self._ndim,
             self._requires_grad,
-            self._ddp_type,
+            self._distparallel_type,
             self._thunder_fsdp_padding_size,
-        ) = _infer_tensor_properties(like, shape, device, dtype, requires_grad, ddp_type, thunder_fsdp_padding_size)
+        ) = _infer_tensor_properties(
+            like, shape, device, dtype, requires_grad, distparallel_type, thunder_fsdp_padding_size
+        )
 
     # NOTE The following properties DO NOT depend on the language context or record
     #   themselves into the trace, so they can be used when working with tensor proxies
@@ -1213,8 +1271,8 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return self._requires_grad
 
     @property
-    def ddp_type(self):
-        return self._ddp_type
+    def distparallel_type(self):
+        return self._distparallel_type
 
     @property
     def thunder_fsdp_padding_size(self):
@@ -1334,6 +1392,13 @@ class TensorProxy(Proxy, TensorProxyInterface):
         method = resolve_method("add", self, other)
         return method(self, other)
 
+    def __iadd__(self, other):
+        return self.add_(other)
+
+    def add_(self, other):
+        method = resolve_method("add_", self, other)
+        return method(self, other)
+
     def __radd__(self, other):
         method = resolve_method("add", other, self)
         return method(other, self)
@@ -1370,6 +1435,13 @@ class TensorProxy(Proxy, TensorProxyInterface):
         method = resolve_method("mul", self, other)
         return method(self, other)
 
+    def __imul__(self, other):
+        return self.mul_(other)
+
+    def mul_(self, other):
+        method = resolve_method("mul_", self, other)
+        return method(self, other)
+
     def __rmul__(self, other):
         method = resolve_method("mul", other, self)
         return method(other, self)
@@ -1378,12 +1450,26 @@ class TensorProxy(Proxy, TensorProxyInterface):
         method = resolve_method("pow", self, other)
         return method(self, other)
 
+    def __ipow__(self, other):
+        return self.pow_(other)
+
+    def pow_(self, other):
+        method = resolve_method("pow_", self, other)
+        return method(self, other)
+
     def __rpow__(self, other):
         method = resolve_method("pow", other, self)
         return method(other, self)
 
     def __sub__(self, other):
         method = resolve_method("sub", self, other)
+        return method(self, other)
+
+    def __isub__(self, other):
+        return self.sub_(other)
+
+    def sub_(self, other):
+        method = resolve_method("sub_", self, other)
         return method(self, other)
 
     def __rsub__(self, other):
@@ -1397,6 +1483,13 @@ class TensorProxy(Proxy, TensorProxyInterface):
     def __rtruediv__(self, other):
         method = resolve_method("true_divide", other, self)
         return method(other, self)
+
+    def __itruediv__(self, other):
+        return self.div_(other)
+
+    def div_(self, other, *, rounding_mode: str | None = None):
+        method = resolve_method("div_", self, other, rounding_mode=rounding_mode)
+        return method(self, other)
 
     #
     # Logical operations
@@ -1519,8 +1612,8 @@ _cls_to_number_proxy_map = {
 def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple = None) -> TensorProxy:
     device = devices.device_from_string(str(t.device))
     dtype = dtypes.to_dtype(t.dtype)
-    # See Note [DistributedDataParallel and ddp_type]
-    ddp_type = getattr(t, "ddp_type", None)
+    # See Note [DistributedDataParallel and distparallel_type]
+    distparallel_type = getattr(t, "distparallel_type", None)
     _thunder_fsdp_padding_size = getattr(t, "_thunder_fsdp_padding_size", None)
     # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
     return TensorProxy(
@@ -1529,7 +1622,7 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
         device=device,
         dtype=dtype,
         requires_grad=t.requires_grad,
-        ddp_type=ddp_type,
+        distparallel_type=distparallel_type,
         history=history,
         thunder_fsdp_padding_size=_thunder_fsdp_padding_size,
     )
@@ -1550,9 +1643,9 @@ def futuretensorproxy(
     )
 
 
-def numberproxy(cls: type, value: Number | None) -> NumberProxy:
+def numberproxy(cls: type, value: Number | None, constraint: None | CONSTRAINT = None) -> NumberProxy:
     pcls = _cls_to_number_proxy_map[cls]
-    return pcls(value=value)
+    return pcls(value=value, constraint=constraint)
 
 
 # TODO RC1 Remove this function

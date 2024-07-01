@@ -921,3 +921,29 @@ def test_matmul(executor, device: str, dtype: dtypes.dtype):
 
         assert len(fusions) == 1
         torch.testing.assert_close(out, torch.matmul(*sample.args))
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=(nvFuserExecutor,),
+)
+def test_rm_unused_inputs_of_nvfusion(executor, device, _):
+    import operator
+
+    def foo(t, ab):
+        return operator.getitem(t, ab)
+
+    t = make_tensor(5, 3, device=device, dtype=torch.float32)
+    ab = (slice(3, 1), slice(1, 2))
+    # enable bookend would remove the error and let you look at the trace without fusion.
+    jfoo = thunder.functional.jit(
+        foo,
+        interpretation="python interpreter",
+        cache="no caching",
+        disable_torch_autograd=True,
+        nv_enable_bookend=False,
+    )
+    out = jfoo(t, ab)
+    out_ref = foo(t, ab)
+
+    assert out.equal(out_ref)

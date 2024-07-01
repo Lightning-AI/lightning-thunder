@@ -7,6 +7,7 @@ from functools import lru_cache, partial, wraps
 import math
 from numbers import Number
 from typing import Any, Dict, Union, Optional
+from types import NoneType
 from collections.abc import Callable
 from collections.abc import Hashable
 from collections.abc import Sequence
@@ -15,6 +16,7 @@ import inspect
 import time
 from collections import deque
 import os
+import dataclasses
 
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
@@ -32,7 +34,7 @@ from thunder.core.proxies import (
 )
 from thunder.core.baseutils import default_dataclass_params
 from thunder.core.compile_data import get_compile_data
-from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
+from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten, tree_flatten_with_dataclass
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol
 from thunder.core.trace import TraceCtx as Trace, tracectx
 from thunder.core.trace import VariableInterface as Variable
@@ -59,7 +61,7 @@ from thunder.clang import (
     reciprocal,
     convolution,
 )
-from thunder.core.transform_common import dce
+from thunder.core.transform_common import dce, EarlyTransform, AdditionalTransform, PostOptimizationTransform
 from thunder.core.vjp_utils import make_aug_forward_and_backward
 from thunder.extend import Executor
 import thunder.torch as ltorch
@@ -400,16 +402,18 @@ def visitor_transform(trace_from: Trace, visit: Callable, *, provenance: None | 
 def add_transform(
     cfn: Callable,
     *,
-    transform: Callable | None = None,
-    early_transform: Callable | None = None,
+    transform: AdditionalTransform | None = None,
+    early_transform: EarlyTransform | None = None,
     disable_torch_autograd_support=False,
 ) -> Callable:
-    from thunder.common import _create_callable, CompileData, CompileStats
+    from thunder.common import CompileData
 
     cd: None | Any = getattr(cfn, "_lc_cd", None)
 
     utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
     utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
+    utils.check_type(transform, (NoneType, AdditionalTransform))
+    utils.check_type(early_transform, (NoneType, EarlyTransform))
 
     assert cd.using_jit or early_transform is None
     assert transform is not None or early_transform is not None
@@ -431,6 +435,7 @@ def add_transform(
             # cache, interpretation?
             early_transforms=early_transforms,
             additional_transforms=additional_transforms,
+            post_optimization_transforms=cfn._lc_post_optimization_transforms,
             disable_torch_autograd=cd.disable_torch_autograd_support or disable_torch_autograd_support,
             **cd.compile_options,
         )
@@ -441,65 +446,72 @@ def add_transform(
             jfn._overrides_buffers = cfn._overrides_buffers
         return jfn
 
-    cs = getattr(cfn, "_lc_cs", None)
-    if cs is None:
-        cs = CompileStats()
-
-    transforms = cfn._lc_transforms + [transform]
-    potransforms = cfn._lc_post_optimization_transforms
-    using_grad_transform = cfn._using_grad_transform
-
-    ncfn = _create_callable(
-        cd,
-        cs,
-        transforms=transforms,
-        post_optimization_transforms=potransforms,
-        _using_grad_transform=using_grad_transform,
-    )
-    return ncfn
+    raise NotImplementedError("Using the non-jit functions was an experiment that is no longer supported.")
 
 
 # TODO Consider refactoring this with the above
 # Helper function to add a post-optimization transform
-def add_post_optimization_transform(cfn: Callable, transform: Callable) -> Callable:
-    from thunder.common import _create_callable, CompileData, CompileStats
+def add_post_optimization_transform(cfn: Callable, transform: PostOptimizationTransform) -> Callable:
+    from thunder.common import CompileData
 
     cd: None | Any = getattr(cfn, "_lc_cd", None)
 
     utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
     utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
+    utils.check_type(transform, PostOptimizationTransform)
 
-    cs = CompileStats()
-    transforms = cfn._lc_transforms
-    potransforms = cfn._lc_post_optimization_transforms + [transform]
+    if cd.using_jit:
+        from thunder import jit
 
-    ncfn = _create_callable(cd, cs, transforms=transforms, post_optimization_transforms=potransforms)
-    return ncfn
+        post_optimization_transforms = cfn._lc_post_optimization_transforms[:]
+        post_optimization_transforms.append(transform)
+        jfn = jit(
+            cd.fn,
+            langctx=cd.langctx,
+            executors=cd.executors_list,
+            sharp_edges=cd.sharp_edges,
+            # cache, interpretation?
+            early_transforms=cfn._lc_early_transforms[:],
+            additional_transforms=cfn._lc_transforms[:],
+            post_optimization_transforms=post_optimization_transforms,
+            disable_torch_autograd=cd.disable_torch_autograd_support,
+            **cd.compile_options,
+        )
+        from thunder import ThunderModule
+
+        if isinstance(jfn, ThunderModule):
+            jfn._overrides_parameters = cfn._overrides_parameters
+            jfn._overrides_buffers = cfn._overrides_buffers
+        return jfn
+
+    raise NotImplementedError("Using the non-jit functions was an experiment that is no longer supported.")
 
 
 # The no-op transform. A trivial composable transform, only useful as an example.
-def _noop_transform(trace: Trace, **kwargs) -> Trace:
-    start_time_ns = time.time_ns()
-    noop_trace = from_trace(trace)
+class _NoopTransform(AdditionalTransform):
+    def transform_trace(self, trace: Trace, **kwargs) -> Trace:
+        start_time_ns = time.time_ns()
+        noop_trace = from_trace(trace)
 
-    tracectx_tok: Any
-    try:
-        tracectx_tok = set_tracectx(noop_trace)
-        prims.comment("This comment added by the no-op transform")
-    finally:
-        reset_tracectx(tracectx_tok)
+        tracectx_tok: Any
+        try:
+            tracectx_tok = set_tracectx(noop_trace)
+            prims.comment("This comment added by the no-op transform")
+        finally:
+            reset_tracectx(tracectx_tok)
 
-    noop_trace.bound_symbols.extend(trace.bound_symbols)
+        noop_trace.bound_symbols.extend(trace.bound_symbols)
 
-    end_time_ns = time.time_ns()
-    elapsed_time_ns = end_time_ns - start_time_ns
-    elapsed_time_millis = elapsed_time_ns // 1000000
-    noop_trace.set_provenance(TraceProvenance(f"No-op Transform (took {elapsed_time_millis} milliseconds)"))
+        end_time_ns = time.time_ns()
+        elapsed_time_ns = end_time_ns - start_time_ns
+        elapsed_time_millis = elapsed_time_ns // 1000000
+        noop_trace.set_provenance(TraceProvenance(f"No-op Transform (took {elapsed_time_millis} milliseconds)"))
 
-    return noop_trace
+        return noop_trace
 
 
 def noop(cfn: Callable) -> Callable:
+    _noop_transform = _NoopTransform()
     return add_transform(cfn, transform=_noop_transform)
 
 
@@ -1091,11 +1103,11 @@ register_grad(pids.DIV, _div_prim_grad)
 
 # Comparison operators -- these create no grad associations
 register_grad(pids.EQ, prims.eq)
-register_grad(pids.GE, prims.ge)
-register_grad(pids.LT, prims.lt)
 register_grad(pids.NE, prims.ne)
+register_grad(pids.GE, prims.ge)
 register_grad(pids.GT, prims.gt)
 register_grad(pids.LE, prims.le)
+register_grad(pids.LT, prims.lt)
 
 
 @torchctx
@@ -1326,6 +1338,39 @@ def _embedding_prim_grad(
 
 register_grad(pids.EMBEDDING, _embedding_prim_grad)
 
+
+def _maximum_grad(a: TensorProxy, b: TensorProxy, /):
+    fwd = prims.maximum(a, b)
+
+    g = get_grad(fwd)
+
+    # NOTE: NaN propagation if either `a` or `b` is a NaN, then both elements receive `g` as gradient.
+    # This is because comparison in presence of NaN is False (except for Not Equal which is always True).
+    # Eg. Here `a` = NaN and `b` = 42
+    # sub_g = where(NaN == 42 i.e. False, g / 2, g)  # sub_grad = g
+    # grad_a = where(NaN < 42 i.e. False, 0., sub_g)  # grad_a = sub_g = g
+    # grad_b = where(42 < NaN i.e. False, 0., sub_g)  # grad_b = sub_g = g
+    # NOTE: If `g` is `NaN` then it will be propagated as the gradient of max element between a and b
+    # and if both are equal, then as we evenly distributing the gradients, `NaN` will propagate through
+    # the gradients of both `a` and `b`.
+
+    # Compute sub-gradient if `a == b`
+    # NOTE: We evenly distribute the gradient where the values are equal.
+    sub_grad = prims.where(a == b, g / 2, g)
+
+    a_grad = prims.where(a < b, 0.0, sub_grad)
+    b_grad = prims.where(b < a, 0.0, sub_grad)
+
+    put_grad(a, a_grad)
+    put_grad(b, b_grad)
+    return fwd
+
+
+register_grad(pids.MAXIMUM, _maximum_grad)
+
+# This operation creates no grad associations
+register_grad(pids.ARGMAX, prims.argmax)
+
 #
 # Phantom grad transform helpers
 #
@@ -1363,18 +1408,20 @@ def grad(
 
         return grad_func
 
-    def _grad_transform(trc: Trace, *, executors_list: Sequence[Any]) -> Trace:
-        # Using trc.python_callable() makes it impossible to retrace the
-        # function because the python_callable uses python_ctx which replaces
-        # symbol occurrences with its symbol._call_ctx function
-        @wraps(trc.python_callable())
-        def python_callable(*args, **kwargs):
-            return eval_trace(trc, *args, **kwargs)
+    class _GradTransform(AdditionalTransform):
+        def transform_trace(self, trc: Trace, *, executors_list: Sequence[Any]) -> Trace:
+            # Using trc.python_callable() makes it impossible to retrace the
+            # function because the python_callable uses python_ctx which replaces
+            # symbol occurrences with its symbol._call_ctx function
+            @wraps(trc.python_callable())
+            def python_callable(*args, **kwargs):
+                return eval_trace(trc, *args, **kwargs)
 
-        gradtrc = construct_trace()(grad(python_callable), *trc.args, **trc.kwargs)
-        return gradtrc
+            gradtrc = construct_trace()(grad(python_callable), *trc.args, **trc.kwargs)
+            return gradtrc
 
     cfn._using_grad_transform = True
+    _grad_transform = _GradTransform()
     return add_transform(cfn, transform=_grad_transform, disable_torch_autograd_support=True)
 
 
@@ -3226,6 +3273,8 @@ def backward_pass(forward_env, trace, init_cotangents):
             safe_map(put_grad, v, [None] * len(v))
         elif isinstance(v, Sequence) and isinstance(val, Sequence):
             safe_map_flat(put_grad, v, val)
+        elif dataclasses.is_dataclass(v) and dataclasses.is_dataclass(val):
+            safe_map_flat(put_grad, tree_flatten_with_dataclass(v), tree_flatten_with_dataclass(val))
         else:
             # Skip writing to constants
             pass
@@ -3446,7 +3495,10 @@ def _update_forward_with_new_saved_for_backward(forward_trace: Trace, saved_for_
         saved_for_backward (Sequence[Variable]): Saved_for_backward to use to
             update the forward trace.
     """
-    saved_for_backward = tree_map(lambda x: x.value if isinstance(x, NumberProxy) else x, saved_for_backward)
+    forward_trace_producers = utils.producers(forward_trace)
+    saved_for_backward = tree_map(
+        lambda x: x.value if isinstance(x, NumberProxy) and x not in forward_trace_producers else x, saved_for_backward
+    )
     saved_tensors, saved_other = _split_saved_for_backward_into_tensors_and_other(saved_for_backward)
     assert forward_trace.bound_symbols[-1].sym.id == prims.PrimIDs.RETURN
     new_return = (forward_trace.output[0], (saved_tensors, saved_other))
@@ -3563,7 +3615,8 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
         if torch_autograd:
             nonlocal output_spec
             flat_args, _ = tree_flatten((args, kwargs))
-            flat_output, output_spec = tree_flatten(result)
+            # The custom torch.autograd.Function only considers Tensors in the input/output (not ones that are nested inside python data structures)
+            flat_output, output_spec = tree_flatten_with_dataclass(result)
             flat_output = tuple(flat_output)
             # See Note [Grad forward output spec]
             for_autograd = TorchAutogradForwardData(

@@ -10,14 +10,15 @@ from types import ModuleType
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, List, Type, Tuple, TYPE_CHECKING
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Hashable, Iterable
 from collections.abc import Sequence
 
 import thunder.core.baseutils as baseutils
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable, Positions
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
-from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
+from thunder.core.utils import FrozenDict, make_hashable
+from thunder.core.pytree import tree_flatten_with_dataclass, tree_unflatten, tree_map
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 from thunder.core.proxies import Proxy, NumberProxy, variableify, CollectionProxy
@@ -392,7 +393,7 @@ class BoundSymbol(BoundSymbolInterface):
             return self
 
         def swap(c):
-            flats, spec = tree_flatten(c)
+            flats, spec = tree_flatten_with_dataclass(c)
 
             swapped = []
             for fa in flats:
@@ -400,8 +401,7 @@ class BoundSymbol(BoundSymbolInterface):
                 if isinstance(fa, CollectionProxy):
                     fa.coll = tree_map(swap, fa.collection())
                 if isinstance(fa, Proxy):
-                    ovfa = variableify(fa)
-                    vfa = ovfa
+                    vfa = variableify(fa)
                     while vfa in swap_map:
                         baseutils.check(
                             vfa not in visited, lambda: f"Detected a cycle while swapping; the cycle includes {visited}"
@@ -435,7 +435,7 @@ class BoundSymbol(BoundSymbolInterface):
 
     @functools.cached_property
     def flat_args_and_spec(self):
-        return tree_flatten((self.args, self.kwargs))
+        return tree_flatten_with_dataclass((self.args, self.kwargs))
 
     @functools.cached_property
     def flat_args(self):
@@ -461,7 +461,7 @@ class BoundSymbol(BoundSymbolInterface):
 
     @functools.cached_property
     def flat_outs_and_spec(self):
-        return tree_flatten(self.output)
+        return tree_flatten_with_dataclass(self.output)
 
     @functools.cached_property
     def flat_outs(self):
@@ -525,8 +525,11 @@ class BoundSymbol(BoundSymbolInterface):
 
         return (self.sym, self._var_args, self._var_output) == (other.sym, other._var_args, other._var_output)
 
-    def rhs(self):
-        return BoundSymbolRHS(self)
+    @functools.cached_property
+    def rhs(self) -> BoundSymbolRHS:
+        hashable_args = make_hashable(self._var_args)
+        hashable_kwargs = make_hashable(self._var_kwargs)
+        return BoundSymbolRHS(self.sym, hashable_args, hashable_kwargs)
 
     # TODO Document contexts
     def import_ctx(self):
@@ -647,36 +650,10 @@ def has_tags(bsym: BoundSymbol, tags: set[OpTags]) -> bool:
     return not tags.isdisjoint(gather_tags(bsym))
 
 
-# NOTE: A wrapper class that hashes and equates only the right hand side of a BoundSymbol.
+# Wrapper class that hashes and equates only the right hand side of a BoundSymbol for CSE.
 # That is to say, its symbol, args, and kwargs, but not its output.
-# The intent is that this will be useful in writing a common subexpression elimination pass, beacuse
-# it will allow dictionary lookups to find equivalent BoundSymbols.
 @dataclass(**baseutils.default_dataclass_params)
 class BoundSymbolRHS:
-    parent: BoundSymbol
-    _hash: int | None = None
-
-    def _do_hash(self) -> int:
-        if self.parent.kwargs and len(self.parent.kwargs) > 0:
-            return id(self)
-        try:
-            return hash((self.parent.sym, self.parent._var_args))
-        except:
-            return id(self)
-
-    def __hash__(self) -> int:
-        if not self._hash:
-            h = self._do_hash()
-            object.__setattr__(self, "_hash", h)
-            return h
-        return self._hash
-
-    # TODO: Deal with kwargs, in __eq__ and __hash__, just like with BoundSymbol.
-    def __eq__(self, other: BoundSymbolRHS) -> bool:
-        if not isinstance(other, BoundSymbolRHS):
-            return False
-        if self.parent is other.parent:
-            return True
-        if len(self.parent.kwargs) > 0 or len(other.parent.kwargs) > 0:
-            return False
-        return (self.parent.sym, self.parent._var_args) == (other.parent.sym, other.parent._var_args)
+    sym: Symbol
+    args: tuple[Hashable]
+    kwargs: FrozenDict

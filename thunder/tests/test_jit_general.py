@@ -1,6 +1,7 @@
 from collections.abc import Iterable, Iterator, Sequence
 from functools import partial, wraps
 from itertools import product
+from contextlib import nullcontext
 
 import operator
 import sys
@@ -17,6 +18,7 @@ import thunder
 from thunder.core.interpreter import is_jitting, InterpreterError
 
 from thunder.tests import litgpt_model
+from thunder.tests.framework import version_between
 import thunder.clang as clang
 from thunder.core.options import INTERPRETATION_OPTIONS, CACHE_OPTIONS
 import thunder.torch as ltorch
@@ -24,7 +26,7 @@ import thunder.core.prims as prims
 from thunder import pytorch_executor, nvfuser_executor
 from thunder.executors.sdpaex import sdpa_ex
 from thunder.core.jit_ext import JITSharpEdgeError
-
+from thunder.core.transforms import PostOptimizationTransform
 
 #
 # Test suite for the general jit
@@ -341,6 +343,28 @@ def test_nn_module():
     expected = fn2(a)
     actual = jfn2(a)
     assert_close(expected, actual)
+
+
+def test_compile_within_jit():
+    def model(a, b, c):
+        return a @ b + c
+
+    def jit_me(a, b, c):
+        cfn = torch.compile(model)
+        return cfn(a, b, c)
+
+    jcfn = thunder.jit(jit_me)
+
+    x = torch.randn(2, 2)
+    y = torch.randn(2, 2)
+    z = torch.randn(2, 2)
+
+    with pytest.raises(NotImplementedError) as exc_info:
+        jcfn(x, y, z)
+
+    assert "Using torch.compile within a function to be JIT-compiled by Thunder is not supported." in str(
+        exc_info.value
+    )
 
 
 def test_add_numbers():
@@ -661,6 +685,10 @@ def test_litgpt_variants(name, device):
         torch.testing.assert_close(param1.grad, param2.grad, rtol=1e-2, atol=1e-2)
 
 
+@pytest.mark.skipif(
+    version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"),
+    reason="https://github.com/pytorch/pytorch/issues/129579",
+)
 @skipif_not_pytorch_2_1
 @pytest.mark.parametrize(
     "name",
@@ -780,3 +808,285 @@ def test_tom_overrides_proxy(device):
 
     for k, v in params_expected.items():
         assert v is params_actual[k]
+
+
+@pytest.mark.parametrize(
+    "device",
+    ("cpu", "cuda"),
+)
+def test_cache_symbolic_values_basic(device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    def foo(a, scalar):
+        return (a * scalar).sum(scalar)
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+
+    a = torch.randn((2, 2, 2), device=device)
+    b = 1
+
+    actual = jfoo(a, b)
+    expected = foo(a, b)
+
+    assert_close(actual, expected)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    b = 2
+
+    actual = jfoo(a, b)
+    expected = foo(a, b)
+
+    assert_close(actual, expected)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1
+
+
+def test_post_optimization_transform():
+    def foo(a, b, c):
+        return a * a + b * c
+
+    class MyTransform(PostOptimizationTransform):
+        def transform_trace(self, trace, executors_list=None):
+            # Transform that adds a comment before any `add` BoundSymbol.
+            commented_trace = thunder.core.trace.from_trace(trace)
+
+            bsyms = []
+            for bsym in trace.bound_symbols:
+                if bsym.sym.name == "add":
+                    op_name = bsym.sym.name
+                    comment_bsym = prims.comment.bind(f"Executing {op_name}", output=None)
+                    bsyms.append(comment_bsym)
+
+                bsyms.append(bsym)
+
+            commented_trace.bound_symbols = bsyms
+            return commented_trace
+
+    jfoo = thunder.jit(foo, post_optimization_transforms=[MyTransform()])
+
+    a = torch.randn(3, 3, requires_grad=True)
+    b = torch.randn(3, 3)
+    c = torch.randn(3, 3)
+    _ = jfoo(a, b, c)
+    exec_trc = thunder.last_traces(jfoo)[-1]
+
+    comment_bsyms = list(filter(lambda bsym: bsym.sym.id == thunder.prims.PrimIDs.COMMENT, exec_trc.bound_symbols))
+    assert any(map(lambda bsym: bsym.args[0].startswith("Executing"), comment_bsyms))
+
+    bwd_trc = thunder.last_backward_traces(jfoo)[-1]
+    comment_bsyms = list(filter(lambda bsym: bsym.sym.id == thunder.prims.PrimIDs.COMMENT, bwd_trc.bound_symbols))
+    assert any(map(lambda bsym: bsym.args[0].startswith("Executing"), comment_bsyms))
+
+
+@pytest.mark.parametrize(
+    "cache_option",
+    (
+        thunder.CACHE_OPTIONS.CONSTANT_VALUES,
+        thunder.CACHE_OPTIONS.SYMBOLIC_VALUES,
+        thunder.CACHE_OPTIONS.NO_CACHING,
+        thunder.CACHE_OPTIONS.SAME_INPUT,
+    ),
+)
+def test_device_as_input(cache_option):
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    x = torch.randn(3, 3)
+    devices_to_check = ("cuda:0", "cpu")
+
+    def foo(x, device):
+        return x.to(device)
+
+    ctx = nullcontext()
+    if cache_option is thunder.CACHE_OPTIONS.SAME_INPUT:
+        ctx = pytest.raises(NotImplementedError)
+
+    jfoo = thunder.jit(foo, cache=cache_option)
+
+    for device in devices_to_check:
+        expected_device = torch.device(device)
+        with ctx:
+            actual_device = jfoo(x, expected_device).device
+            assert actual_device == expected_device
+
+
+def test_cache_symbolic_values_constraints():
+    def foo(scalar):
+        if scalar > 0:
+            return scalar
+        return 0
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+
+    expected = foo(1.5)
+    actual = jfoo(1.5)
+
+    assert_close(expected, actual)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    expected = foo(2.0)
+    actual = jfoo(2.0)
+
+    assert_close(expected, actual)
+    # even though we should be able to re-use the cache, we cannot do it now. Because constraints are propagated to inputs being static number.
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 0
+
+    expected = foo(1.5)
+    actual = jfoo(1.5)
+
+    assert_close(expected, actual)
+    assert thunder.cache_misses(jfoo) == 2
+    assert thunder.cache_hits(jfoo) == 1
+
+    expected = foo(-0.3)
+    actual = jfoo(-0.3)
+
+    assert_close(expected, actual)
+    assert thunder.cache_misses(jfoo) == 3
+    assert thunder.cache_hits(jfoo) == 1
+
+    def bar(t):
+        if t[0].item() > 5:
+            return t + 1.0
+        return t
+
+    with pytest.raises(
+        thunder.core.interpreter.InterpreterError, match="conversion to bool is not allowed on dynamic proxy"
+    ):
+        jbar = thunder.jit(bar, cache="symbolic values")
+        t = torch.randn(4, device="cpu")
+        jbar(t)
+
+
+def test_cache_symbolic_values_torch_device():
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    def foo(dev, idx):
+        # NOTE dtype needs to be explicit, see issue: https://github.com/Lightning-AI/lightning-thunder/issues/621
+        return torch.ones(1, device=torch.device(dev, idx), dtype=torch.float32)
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+    expected = foo("cuda", 0)
+    actual = jfoo("cuda", 0)
+
+    assert_close(expected, actual)
+
+
+def test_load_original_state_dict():
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.register_parameter("param", torch.nn.Parameter(torch.randn(3)))
+            self.register_buffer("buffer", torch.randn(3))
+
+        def forward(self, x):
+            return x
+
+    m = Model()
+
+    thunder_module = thunder.jit(Model())
+    thunder_module.load_original_state_dict(m.state_dict())
+
+    # Check the updated values
+    # We can't directly compare state_dict - https://github.com/Lightning-AI/lightning-thunder/issues/647
+    torch.testing.assert_close(thunder_module._overrides_parameters["param"], m.param)
+    torch.testing.assert_close(thunder_module._overrides_buffers["buffer"], m.buffer)
+
+
+@pytest.mark.parametrize("prefix", ("", "foo"), ids=("prefix=", "prefix=foo"))
+@pytest.mark.parametrize("recurse", (True, False), ids=("recurse=True", "recurse=False"))
+@pytest.mark.parametrize(
+    "remove_duplicate",
+    (False, True),
+    ids=("remove_duplicate=False", "remove_duplicate=True"),
+)
+def test_named_params_and_named_buffers(prefix, recurse, remove_duplicate):
+
+    buffer_tensor = torch.tensor([1.0])
+
+    class SubMod(torch.nn.Module):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.register_buffer("buffer", buffer_tensor)
+
+        def forward(self, x):
+            return x
+
+    class MyModel(torch.nn.Module):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.fc1 = torch.nn.Linear(1, 1)
+            self.register_buffer("buffer", buffer_tensor)
+            self.register_buffer("buffer2", buffer_tensor)
+            self.sub_module = torch.nn.Sequential(
+                torch.nn.Linear(1, 1), SubMod(), torch.nn.Sequential(torch.nn.Linear(1, 1))
+            )
+
+        def forward(self):
+            names_params_buffers = []
+            for name, param in self.named_parameters(prefix=prefix, recurse=recurse, remove_duplicate=remove_duplicate):
+                names_params_buffers.append((name, param))
+            for name, buffer in self.named_buffers(prefix=prefix, recurse=recurse, remove_duplicate=remove_duplicate):
+                names_params_buffers.append((name, buffer))
+            return names_params_buffers
+
+    m = MyModel()
+    expected = dict(m())
+
+    jm = thunder.jit(m)
+    actual = dict(jm())
+
+    torch.testing.assert_close(actual, expected)
+
+
+def test_isinstance_parameter():
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc = torch.nn.Linear(1, 1)
+
+        def forward(self, x):
+            weight = self.fc.weight
+
+            # Verify that `thunder.jit` correctly picks this branch.
+            if isinstance(weight, torch.nn.Parameter):
+                return x + 1
+
+            return x
+
+    m = Model()
+    x = torch.ones(
+        1,
+    )
+    expected = m(x)
+    actual = thunder.jit(m)(x)
+
+    torch.testing.assert_close(actual, expected)
+
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc = torch.nn.Linear(1, 1)
+
+        def forward(self, x):
+            weight = self.fc.weight
+
+            # Verify that `thunder.jit` correctly picks this branch.
+            if isinstance(weight, (torch.nn.Parameter, type(None))):
+                return x + 1
+
+            return x
+
+    m = Model()
+    x = torch.ones(
+        1,
+    )
+    expected = m(x)
+    actual = thunder.jit(m)(x)
+
+    torch.testing.assert_close(actual, expected)

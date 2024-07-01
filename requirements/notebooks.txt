@@ -1,4 +1,5 @@
-ipython[all] ==8.24.0
+ipython[all] ==8.25.0
+numpy >=1.23.0,<2  # not yet ready for numpy 2
 
 cuda-python
 

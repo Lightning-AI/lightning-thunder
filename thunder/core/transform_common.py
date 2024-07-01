@@ -1,16 +1,23 @@
+from __future__ import annotations
 import time
-from typing import Any, Dict
+from typing import TYPE_CHECKING
+from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from itertools import filterfalse
 from functools import partial
 
+import thunder
 import thunder.core.prims as prims
 from thunder.core.baseutils import BoundSymbolInterface
-from thunder.core.proxies import Proxy, variableify, Variable
-from thunder.core.pytree import tree_flatten, tree_map
+from thunder.core.proxies import Proxy, variableify, Variable, TensorProxy, unvariableify
+from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, has_tags
-from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace
+from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace, tracectx
 from thunder.core.utils import ProxyDict, producers, check
+
+if TYPE_CHECKING:
+    from thunder.core.proxies import ProxyInterface
+    from thunder.core.symbol import Symbol, VariableInterface
 
 
 #
@@ -84,13 +91,18 @@ def _inplace_copy_sanity_check(extrace: Trace):
 # Runs a Dead Code Elimination (DCE) pass
 # NOTE Today we are only interested in computations that produce proxies, so this will eliminate operations
 #   that only produce non-proxy objects
-def dce(trace: Trace) -> Trace:
+# NOTE needed_proxies is an in/out argument, it takes an initial set of Variables you want to keep, and return
+#   all the needed proxies of the input trace
+def dce(trace: Trace, needed_proxies: None | set[Variable] = None) -> Trace:
     start_time_ns = time.time_ns()
 
     producer_map: ProxyDict = producers(trace)
 
     flat_trace_outputs, _ = tree_flatten(trace.output)
-    needed_proxies: set[Variable] = set(tuple(variableify(x) for x in flat_trace_outputs if isinstance(x, Proxy)))
+    if needed_proxies is None:
+        needed_proxies: set[Variable] = set(tuple(variableify(x) for x in flat_trace_outputs if isinstance(x, Proxy)))
+    else:
+        needed_proxies.update(tuple(variableify(x) for x in flat_trace_outputs if isinstance(x, Proxy)))
     dced = []
 
     bsym: BoundSymbol
@@ -217,11 +229,10 @@ def cse_single_bsym(
         swap_map=redundant_map,
         skip_inputs=False,
         skip_output=True,
-        skip_subsymbols=True,
     )
 
     # Skip appending this bsym to the new bound symbols due to its rhs being a common subexpression.
-    rhs = new_bsym.rhs()
+    rhs = new_bsym.rhs
     if (prior_bsym := rhs_to_bsym_map.get(rhs)) is not None and bsym._executor is prior_bsym._executor:
         for src, dst in zip(bsym.flat_outs, prior_bsym.flat_outs):
             # Detects (and avoids) aliasing
@@ -318,3 +329,261 @@ def cse(trace: Trace) -> Trace:
         TraceProvenance(f"Common Subexpression Elimination (took {elapsed_time_millis} milliseconds)")
     )
     return cse_trace
+
+
+# Base class for all types of Transform.
+class Transform:
+    pass
+
+
+# Below are the types of Transform that user can create and apply to the `jitted` function.
+class EarlyTransform(Transform, ABC):
+    """
+    EarlyTransform enables transforming prologue, computation and epilogue trace.
+    Note that the computation trace here is before the autograd transform, so any update to
+    the computation trace will also update backward trace.
+    """
+
+    def transform_traces(self, prologue_trace: Trace, computation_trace: Trace, epilogue_trace: Trace | None, **kwargs):
+        # default to noop
+        return prologue_trace, computation_trace, epilogue_trace
+
+    def transform_module(self, model: thunder.ThunderModule):
+        """Transforms the ThunderModule. This is executed once on application of the transform"""
+        pass
+
+    def transform_state_dict_for_submodule(
+        self, model: thunder.ThunderModule, submodule_name: str, state_dict: dict
+    ) -> dict:
+        """
+        Implement this to transform the state dict (mostly parameters and buffers) of a module, e.g. when loading
+        from a state dict of the original model.
+
+        Expected to return a state dict (for chaining or populating overrides).
+
+        Note that state dict keys do not include the submodule name as prefix.
+        """
+        return state_dict
+
+
+class AdditionalTransform(Transform, ABC):
+    """
+    AdditionalTransform enables transforming the computation trace before optimization pass.
+    Note that this transform is only applicable if autograd is disabled.
+    """
+
+    @abstractmethod
+    def transform_trace(self, computation_trace: Trace, **kwargs):
+        pass
+
+
+class PostOptimizationTransform(Transform, ABC):
+    """
+    PostOptimizationTransform EarlyTransform enables transforming computation trace after optimization pass.
+    Note that this transform will also be applied to the backward trace if the the autograd transform was enabled.
+    """
+
+    @abstractmethod
+    def transform_trace(self, computation_trace: Trace, **kwargs):
+        pass
+
+
+def check_inplace_to_views(computation_trace: Trace) -> dict[VariableInterface, TensorProxy]:
+    """Error out if in-place op that outputs of different number of elements from the input and the input has other consumers."""
+    from thunder.core import utils
+    import thunder.torch as ltorch
+
+    producer_bsyms = producers(computation_trace)
+    trace_args_set = ProxyDict()
+    for a in filter(
+        lambda a: isinstance(a, TensorProxy), tree_flatten((computation_trace.args, computation_trace.kwargs))[0]
+    ):
+        trace_args_set[a] = a
+
+    # note(crcrpar): Why not using :func:`~thunder.core.symbol.has_tags`?
+    # Because it looks into `.sym.tags` of the input bsym and its subsymbols,
+    # thus even `ltorch.batch_norm` is regarded as `prims.OpTags.IN_PLACE`.
+    def has_tag(bsym: BoundSymbol, tag: prims.OpTags) -> bool:
+        return bsym.sym.tags and tag in bsym.sym.tags
+
+    swap_map: dict[VariableInterface, TensorProxy] = {}
+    consumers = utils.consumers(computation_trace)
+    bsym: BoundSymbol
+    for bsym in filter(lambda b: has_tag(b, prims.OpTags.IN_PLACE), computation_trace.bound_symbols):
+        in_tensor: TensorProxy = list(filter(lambda p: isinstance(p, TensorProxy), bsym.flat_proxy_args))[0]
+
+        if in_tensor in trace_args_set:
+            continue
+        prod_bsym: BoundSymbol = producer_bsyms[in_tensor]
+
+        flat_tensor_proxy_args = tuple(filter(lambda p: isinstance(p, TensorProxy), prod_bsym.flat_args))
+        if not flat_tensor_proxy_args:
+            # assuming `prod_bsym` is a tensor factory method such as `torch.empty`, `torch.zeros`, and `torch.ones`
+            continue
+        orig_tensor = flat_tensor_proxy_args[0]
+        consumer_of_orig_tensor = consumers[orig_tensor]
+        # When the orig tensor is not used by consumers other than `prod_bsym`, it'd be safe.
+        # Otherwise, we'd need to replace the use of ``orig_tensor`` with a view, unless the original
+        # is an arg or a kwarg.
+        if len(consumer_of_orig_tensor) == 1:
+            continue
+
+        utils.check(
+            prod_bsym.sym not in ltorch._syms_returning_runtime_dependently_views,
+            lambda: (
+                f"in-place op of `{bsym.sym.id}` to `{prod_bsym.sym.id}` output `{in_tensor}` is not "
+                f"supported. It's unclear if the output of "
+                f"{tuple(s.id for s in ltorch._syms_returning_runtime_dependently_views)} is "
+                f"a copy, a view, or the input itself, as per https://pytorch.org/docs/stable/tensor_view.html"
+            ),
+            NotImplementedError,
+        )
+        if prod_bsym.sym not in ltorch._syms_returning_views:
+            continue
+
+        utils.check(
+            orig_tensor.numel == in_tensor.numel,
+            lambda: (
+                f"in-place op of `{bsym.sym.id}` to `{in_tensor}`, a view tensor of "
+                f"`{orig_tensor}` is not supported because {in_tensor.numel} != {orig_tensor.numel}"
+            ),
+            NotImplementedError,
+        )
+
+        swap_map[variableify(orig_tensor)] = in_tensor
+    return swap_map
+
+
+def functionalize_inplace_ops(
+    computation_trace: Trace, orig_to_view_swap_map: dict[VariableInterface, TensorProxy]
+) -> list[Trace]:
+    """Functionalize in-place ops in ``computation_trace``.
+
+    In thunder, an in-place is an out-of-place or functional op followed by :func:`~thunder.core.prims.copy_`.
+    This function replaces such in-place ops with out-of-place ops.
+    Note that functionalization is not applied, if any of an in-place op's arguments are
+    ``computation_trace.args`` or ``computation_trace.kwargs``.
+
+    For example, :func:`thunder.torch.add_` is represented as a :class:`thunder.core.symbol.BoundSymbol`
+    whose `subsymbols` are :func:`thunder.torch.add` and :func:`thunder.core.prims.copy_`. This function
+    replaces it with a :class:`~thunder.core.symbol.BoundSymbol` of :func:`~thunder.torch.add`.
+    """
+    import thunder.torch
+
+    def is_functionalizable(bsym: BoundSymbol) -> bool:
+        """Has `OpTags.IN_PLACE` and its args are NOT ``computation_trace.args`` nor ``computation_trace.kwargs``."""
+        return (
+            bsym.sym in thunder.torch._inplace_to_out_of_place
+            and bsym.subsymbols
+            and bsym.subsymbols[-1].sym.id == prims.PrimIDs.COPY_
+        )
+
+    if not any(is_functionalizable(bsym) for bsym in computation_trace.bound_symbols):
+        return []
+
+    # Step 1: return the tensors returned from `prims.copy_` as possible not the args for clarity.
+    bsym: BoundSymbol
+    swap_map: dict[VariableInterface, ProxyInterface] = {}
+    bsyms: list[BoundSymbol] = []
+    tensors_observed: set[VariableInterface] = set()
+    for bsym in computation_trace.bound_symbols:
+        new_bsym = bsym.from_bsym_swap_proxies(swap_map)
+
+        cur_orig_to_view_swap_map: dict[VariableInterface, TensorProxy] = {}
+        for t in filter(lambda p: isinstance(p, TensorProxy), new_bsym.flat_args):
+            if (var_t := variableify(t)) not in tensors_observed:
+                tensors_observed.add(var_t)
+            else:
+                if var_t in orig_to_view_swap_map:
+                    var_view_t = variableify(orig_to_view_swap_map[var_t])
+                    check(var_view_t in swap_map, lambda: f"{var_view_t} not in {swap_map}, {orig_to_view_swap_map = }")
+                    cur_orig_to_view_swap_map[var_t] = swap_map[var_view_t]
+        if cur_orig_to_view_swap_map:
+            with tracectx(computation_trace):
+                for var_orig, view in cur_orig_to_view_swap_map.items():
+                    view_of_orig_shape = prims.reshape.meta(view, unvariableify(var_orig).shape)
+                    reshape_bsym = prims.reshape.bind(view, unvariableify(var_orig).shape, output=view_of_orig_shape)
+                    cur_orig_to_view_swap_map[var_orig] = view_of_orig_shape
+                    bsyms.append(reshape_bsym)
+        new_bsym = new_bsym.from_bsym_swap_proxies(cur_orig_to_view_swap_map, skip_output=True)
+
+        # in-place functionalizable ops has `prims.copy_` as the last subsymbol.
+        if not is_functionalizable(new_bsym):
+            bsyms.append(new_bsym)
+            continue
+
+        copy_bsym = bsym.subsymbols[-1]
+        copy_out = copy_bsym.flat_proxy_outs[0]
+        copy_dst = copy_bsym.flat_proxy_args[1]
+        swap_map[variableify(copy_dst)] = copy_out
+        # make sure an in-place bsym returns `prims.copy_` output
+        new_bsym = new_bsym.from_bsym_swap_proxies(swap_map, skip_inputs=True, skip_subsymbols=True)
+        bsyms.append(new_bsym)
+
+    intermediate_trace = from_trace(computation_trace)
+    intermediate_trace.bound_symbols = bsyms
+    intermediate_trace.set_provenance(TraceProvenance("Intermediate trace of `functionalize_inplace_ops`"))
+
+    intermediate_trace.bound_symbols[-1] = intermediate_trace.bound_symbols[-1].from_bsym_swap_proxies(swap_map)
+    return_bsym = intermediate_trace.bound_symbols[-1]
+    for t in filter(lambda p: isinstance(p, TensorProxy), return_bsym.flat_args):
+        check(
+            (var_t := variableify(t)) not in swap_map,
+            lambda: f"{return_bsym.flat_args=}. `{t}` should have been replaced by `{swap_map[var_t]}`, {new_return_bsym=}",
+        )
+
+    # Step 2: Remove `prims.copy_` if it's the last one of `bsym.subsymbols`,
+    # unless `copy_to` is `computation_trace.args` or `computation_trace.kwargs`
+    producer_map = producers(intermediate_trace)
+    trace_args_set = ProxyDict()
+    for a in filter(
+        lambda a: isinstance(a, TensorProxy), tree_flatten((computation_trace.args, computation_trace.kwargs))[0]
+    ):
+        trace_args_set[a] = a
+    bsym_inplace_to_functional = {}
+    swap_map.clear()
+
+    new_bsyms: list[BoundSymbol] = []
+    for bsym in intermediate_trace.bound_symbols:
+        new_bsym = bsym.from_bsym_swap_proxies(swap_map)
+
+        if not is_functionalizable(new_bsym):
+            new_bsyms.append(new_bsym)
+            continue
+
+        copy_bsym = bsym.subsymbols[-1]
+        copy_return = copy_bsym.flat_proxy_outs[0]
+        copy_from = copy_bsym.flat_proxy_args[0]
+        copy_to = copy_bsym.flat_proxy_args[1]
+        if copy_to in trace_args_set:
+            new_bsyms.append(new_bsym)
+        else:
+            swap_map[variableify(copy_return)] = copy_from
+            new_bsym.subsymbols = new_bsym.subsymbols[:-1]
+            new_bsym = new_bsym.from_bsym_swap_proxies(swap_map)
+
+            functional_sym: Symbol
+            optional_inplace_arg_index: int
+            functional_sym, optional_inplace_arg_index = thunder.torch._inplace_to_out_of_place[new_bsym.sym]
+
+            flat_args, flat_args_spec = tree_flatten((new_bsym.args, new_bsym.kwargs))
+            if optional_inplace_arg_index > -1:
+                flat_args[optional_inplace_arg_index] = False
+            args, kwargs = tree_unflatten(flat_args, flat_args_spec)
+            new_functional_bsym = functional_sym.bind(
+                *args,
+                **kwargs,
+                output=new_bsym.output,
+                subsymbols=new_bsym.subsymbols,
+                _call_ctx=new_bsym._call_ctx,
+            )
+            new_bsyms.append(new_functional_bsym)
+            bsym_inplace_to_functional[new_bsym] = new_functional_bsym
+
+    functionalized_computation_trace = from_trace(computation_trace)
+    functionalized_computation_trace.bound_symbols = new_bsyms
+    functionalized_computation_trace.set_provenance(TraceProvenance("Functionalize in-place ops"))
+    # note(crcrpar): I kind of want to do the following two.
+    # functionalized_computation_trace._provenance.swap_map = swap_map
+    # functionalized_computation_trace._provenance.bsym_inplace_to_functional = bsym_inplace_to_functional
+    return [intermediate_trace, functionalized_computation_trace]

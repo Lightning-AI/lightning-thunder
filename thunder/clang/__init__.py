@@ -105,6 +105,11 @@ def check_string_value(s: str, value: str, /) -> None:
 
 
 @clangop()
+def check_slice_value(s: slice, value: slice, /) -> None:
+    return prims.check_slice_value(s, value)
+
+
+@clangop()
 def unpack_tuple(tup: tuple, /) -> tuple:
     return prims.unpack_tuple(tup)
 
@@ -1592,6 +1597,7 @@ def tan(a):
     )
 
 
+@clangop()
 def tanh(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.tanh, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.INT_TO_FLOAT

@@ -609,7 +609,7 @@ class InterpreterRuntimeCtx:
     def get_current_user_source_location(self) -> tuple[str, Positions]:
         for frame in reversed(self.frame_stack):
             modname = unwrap(frame.globals).get("__name__", "")
-            if modname not in ("thunder.core.interpreter", "thunder.core.jit_ext"):
+            if modname not in ("thunder.core.interpreter", "thunder.core.jit_ext", "thunder.torch"):
                 return frame.code.co_filename, frame.positions
         return None, None
 
@@ -2345,7 +2345,7 @@ class MappingValuesIterator:
         return self
 
     def __next__(self):
-        return self._mapping[next(self._key_iter)]
+        return dict.__getitem__(self._mapping, next(self._key_iter))
 
 
 class MappingValuesWrapper:
@@ -2369,7 +2369,7 @@ class MappingItemsIterator:
 
     def __next__(self):
         k = next(self._key_iter)
-        return k, self._mapping[k]
+        return k, dict.__getitem__(self._mapping, k)
 
 
 class MappingItemsWrapper:
