@@ -274,23 +274,23 @@ def _instantiate_executor_test_template(
     dtype: datatypes.dtype,
     as_name: str | None = None,
 ) -> Callable:
-    devicetype: devices.Device | Sequence[devices.Device]
+    devicetype: devices.DeviceType
     device_str: str | list[str]
     devicetype = device_or_devices
     if isinstance(device_or_devices, devices.Device):
-        devicetype_ = device_or_devices.devicetype
+        devicetype = device_or_devices.devicetype
         device_str = device_or_devices.device_str()
     else:
-        devicetype_ = device_or_devices[0].devicetype
+        devicetype = device_or_devices[0].devicetype
         device_str = []
         for device in device_or_devices:
             device_str.append(device.device_str())
 
-    devicetype_str = devices.devicetype_string(devicetype_)
+    devicetype_str = devices.devicetype_string(devicetype)
     template_name = as_name if as_name is not None else template.__name__
     test_name = "_".join((template_name, executor.name, devicetype_str, str(dtype)))
 
-    test = partial(template, executor, devicetype, dtype)
+    test = partial(template, executor, device_str, dtype)
 
     # Mimics the instantiated test
     # TODO Review this mimicry -- are there other attributes to mimic?

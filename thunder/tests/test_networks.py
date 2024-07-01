@@ -22,12 +22,12 @@ import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
 @instantiate(dtypes=(thunder.float32,))
 def test_nanogpt_complete(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
-    make = partial(make_tensor, dtype=torch.int64, device=device.device_str())
+    make = partial(make_tensor, dtype=torch.int64, device=device)
 
     # Creates a nanoGPT model with a smaller size than any of the default options for testing
     # NOTE Sets dropout to zero for reproducibility
     config = nanogpt_model.GPTConfig(dropout=0, block_size=512, n_layer=6, n_head=6, n_embd=768)
-    gpt = nanogpt_model.GPT(config).to(device=device.device_str(), dtype=tdtype)
+    gpt = nanogpt_model.GPT(config).to(device=device, dtype=tdtype)
 
     idx = make((4, 64), dtype=torch.int64, low=0, high=255)
     torch_result = gpt(idx)
@@ -49,10 +49,10 @@ def test_nanogpt_complete_autograd(executor, device, dtype):
     # Creates a nanoGPT model with a smaller size than any of the default options for testing
     # NOTE Sets dropout to zero for reproducibility
     config = nanogpt_model.GPTConfig(dropout=0, block_size=512, n_layer=6, n_head=6, n_embd=768)
-    gpt = nanogpt_model.GPT(config).to(device=device.device_str(), dtype=tdtype)
+    gpt = nanogpt_model.GPT(config).to(device=device, dtype=tdtype)
 
-    x = make_tensor((4, 64), dtype=torch.int64, low=0, high=255, device=device.device_str())
-    targets = make_tensor((4, 64), dtype=torch.int64, low=0, high=255, device=device.device_str())
+    x = make_tensor((4, 64), dtype=torch.int64, low=0, high=255, device=device)
+    targets = make_tensor((4, 64), dtype=torch.int64, low=0, high=255, device=device)
     torch_result = gpt(x, targets=targets)
     torch_grads = torch.autograd.grad(torch_result[1], gpt.parameters())
 
@@ -74,12 +74,12 @@ def _there_is_cudagraph_sym(trace):
 @requiresCUDA
 def test_nanogpt_complete_cudagraphs(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
-    make = partial(make_tensor, dtype=torch.int64, device=device.device_str())
+    make = partial(make_tensor, dtype=torch.int64, device=device)
 
     # Creates a nanoGPT model with a smaller size than any of the default options for testing
     # NOTE Sets dropout to zero for reproducibility
     config = nanogpt_model.GPTConfig(dropout=0, block_size=512, n_layer=6, n_head=6, n_embd=768)
-    gpt = nanogpt_model.GPT(config).to(device=device.device_str(), dtype=tdtype)
+    gpt = nanogpt_model.GPT(config).to(device=device, dtype=tdtype)
 
     tom = executor.make_callable(gpt, use_cudagraphs=True, disable_torch_autograd=True)
 
@@ -121,7 +121,7 @@ def test_nanogpt_complete_cuda_graphs_autograd(executor, device, dtype):
     # Creates a nanoGPT model with a smaller size than any of the default options for testing
     # NOTE Sets dropout to zero for reproducibility
     config = nanogpt_model.GPTConfig(dropout=0, block_size=512, n_layer=6, n_head=6, n_embd=768)
-    gpt = nanogpt_model.GPT(config).to(device=device.device_str(), dtype=tdtype)
+    gpt = nanogpt_model.GPT(config).to(device=device, dtype=tdtype)
     cmodel = executor.make_callable(gpt, use_cudagraphs=True)
 
     # Checking graph cache stats
@@ -132,8 +132,8 @@ def test_nanogpt_complete_cuda_graphs_autograd(executor, device, dtype):
 
     # Multiple runs to test whether static buffers are properly updated
     for i in range(3):
-        x = make_tensor((4, 64), dtype=torch.int64, low=0, high=255, device=device.device_str())
-        targets = make_tensor((4, 64), dtype=torch.int64, low=0, high=255, device=device.device_str())
+        x = make_tensor((4, 64), dtype=torch.int64, low=0, high=255, device=device)
+        targets = make_tensor((4, 64), dtype=torch.int64, low=0, high=255, device=device)
 
         torch_result = gpt(x, targets=targets)
         torch_grads = torch.autograd.grad(torch_result[1], gpt.parameters())
@@ -166,11 +166,11 @@ def test_nanogpt_complete_cuda_graphs_autograd(executor, device, dtype):
 @instantiate(dtypes=(thunder.float32,))
 def test_nanogpt_csa(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
-    make = partial(make_tensor, dtype=tdtype, device=device.device_str())
+    make = partial(make_tensor, dtype=tdtype, device=device)
 
     # NOTE: currently setting dropout to zero for reproducibility
     config = nanogpt_model.GPTConfig(dropout=0)
-    csa = nanogpt_model.CausalSelfAttention(config).to(device=device.device_str(), dtype=tdtype)
+    csa = nanogpt_model.CausalSelfAttention(config).to(device=device, dtype=tdtype)
 
     inp = make((2, config.block_size, config.n_embd))
     torch_result = csa(inp)
@@ -190,11 +190,11 @@ def test_nanogpt_csa(executor, device, dtype):
 @instantiate(dtypes=(thunder.float32,))
 def test_nanogpt_block(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
-    make = partial(make_tensor, dtype=tdtype, device=device.device_str())
+    make = partial(make_tensor, dtype=tdtype, device=device)
 
     # NOTE: currently setting dropout to zero for reproducibility
     config = nanogpt_model.GPTConfig(dropout=0)
-    block = nanogpt_model.Block(config).to(device=device.device_str(), dtype=tdtype)
+    block = nanogpt_model.Block(config).to(device=device, dtype=tdtype)
 
     inp = make((2, config.block_size, config.n_embd))
     torch_result = block(inp)
@@ -208,11 +208,11 @@ def test_nanogpt_block(executor, device, dtype):
 @instantiate(dtypes=(thunder.float32,))
 def test_nanogpt_mlp(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
-    make = partial(make_tensor, dtype=tdtype, device=device.device_str())
+    make = partial(make_tensor, dtype=tdtype, device=device)
 
     # NOTE: currently setting dropout to zero for reproducibility
     config = nanogpt_model.GPTConfig(dropout=0)
-    mlp = nanogpt_model.MLP(config).to(device=device.device_str(), dtype=tdtype)
+    mlp = nanogpt_model.MLP(config).to(device=device, dtype=tdtype)
 
     inp = make((2, config.n_embd))
     torch_result = mlp(inp)
@@ -226,7 +226,7 @@ def test_nanogpt_mlp(executor, device, dtype):
 @instantiate(dtypes=(thunder.float32,))
 def test_nanogpt_gelu(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
-    make = partial(make_tensor, dtype=tdtype, device=device.device_str())
+    make = partial(make_tensor, dtype=tdtype, device=device)
 
     def new_gelu(a):
         return 0.5 * a * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (a + 0.044715 * torch.pow(a, 3.0))))

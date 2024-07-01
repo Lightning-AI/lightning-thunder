@@ -75,10 +75,10 @@ def test_core_tensor_methods(executor, device, dtype):
     traced_foo = executor.make_callable(foo)
 
     tdtype = ttorch.to_torch_dtype(dtype)
-    a = make_tensor((4, 4), device=device.device_str(), dtype=tdtype)
-    b = make_tensor((2, 1, 4), device=device.device_str(), dtype=tdtype)
-    c = make_tensor((4, 1), device=device.device_str(), dtype=tdtype)
-    d = make_tensor((1, 1, 4), device=device.device_str(), dtype=tdtype)
+    a = make_tensor((4, 4), device=device, dtype=tdtype)
+    b = make_tensor((2, 1, 4), device=device, dtype=tdtype)
+    c = make_tensor((4, 1), device=device, dtype=tdtype)
+    d = make_tensor((1, 1, 4), device=device, dtype=tdtype)
 
     thunder_result = traced_foo(a, b, c, d)
     torch_result = a + b - c + (d - a)
@@ -95,7 +95,7 @@ def test_where(executor, device, dtype):
     torch_fn = torch.where
 
     shape = (5, 5)
-    make = partial(make_tensor, device=device.device_str())
+    make = partial(make_tensor, device=device)
     pred = make(shape, dtype=torch.bool)
 
     # int64 x float32

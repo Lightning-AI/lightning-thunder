@@ -342,10 +342,10 @@ def test_cse_rematerialization(executor, device, _):
     )
     gptconf = ModelArgs(**model_args)
     model = Transformer(gptconf)
-    model.to(device.device_str())
+    model.to(device)
 
-    x = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device.device_str())
-    y = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device.device_str())
+    x = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
+    y = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
     compiled_func = thunder.jit(
         model.eval(),
         disable_torch_autograd=True,
@@ -626,7 +626,7 @@ def test_cse_issue1789(executor, device, _):
     ),
 )
 def test_bookend_meta_optimization(executor, device, _):
-    a = torch.ones(2, 3, 5, device=device.device_str(), dtype=torch.float32)
+    a = torch.ones(2, 3, 5, device=device, dtype=torch.float32)
 
     def subtest(fn, n):
         # Enable bookending so it gets tested.
@@ -848,7 +848,7 @@ def test_optimization_fuel(executor, device, _):
     nvfuserex.set_fuel(1)
 
     # Only the first compilation is fueled.
-    x = torch.ones(2, 3, device=device.device_str(), dtype=torch.float32)
+    x = torch.ones(2, 3, device=device, dtype=torch.float32)
     cfn_with_fusion = thunder.jit(fn)
     cfn_with_fusion(x)
     assert get_num_fusions(cfn_with_fusion) == 1

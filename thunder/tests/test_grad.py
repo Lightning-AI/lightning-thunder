@@ -892,9 +892,9 @@ def test_make_aug_forward_and_backward(executor, device, _):
     def fun_bw(a, b, g):
         return {"a": g * b, "b": g * a}
 
-    x = torch.tensor(2.0, device=device.device_str())
-    y = torch.tensor(3.0, device=device.device_str())
-    v = torch.tensor(1.5, device=device.device_str())
+    x = torch.tensor(2.0, device=device)
+    y = torch.tensor(3.0, device=device)
+    v = torch.tensor(1.5, device=device)
 
     trace = thunder.trace()(fun, x, y)
     mul_bsym = trace.bound_symbols[2]
@@ -926,7 +926,7 @@ def test_make_aug_forward_and_backward_var_mean(executor, device, _):
     def fun(a):
         return var_mean(a, (0,), correction=1)
 
-    x = torch.tensor((2, 2), device=device.device_str(), dtype=torch.float32)
+    x = torch.tensor((2, 2), device=device, dtype=torch.float32)
 
     trace = thunder.trace()(fun, x)
     var_mean_bsym = trace.bound_symbols[-2]
@@ -1049,7 +1049,7 @@ def test_torch_autograd_crazy_collections_in_and_out(executor, device, dtype):
     dtypes=NOTHING,
 )
 def test_torch_autograd_module(executor, device, _):
-    l = torch.nn.Linear(3, 4, bias=False, device=device.device_str())
+    l = torch.nn.Linear(3, 4, bias=False, device=device)
     a = make_tensor((2, 3), device=device, dtype=torch.float32, requires_grad=True)
     g = make_tensor((2, 4), device=device, dtype=torch.float32)
 
@@ -1075,7 +1075,7 @@ def test_torch_autograd_module_get_compile_stats(executor, device, _):
     from thunder.core.trace import TraceCtx
     from thunder import compile_stats
 
-    l = torch.nn.Linear(3, 4, bias=False, device=device.device_str())
+    l = torch.nn.Linear(3, 4, bias=False, device=device)
     a = make_tensor((2, 3), device=device, dtype=torch.float32, requires_grad=True)
     g = make_tensor((2, 4), device=device, dtype=torch.float32)
 
@@ -1424,7 +1424,7 @@ def test_populate_grads_mlp(executor, device, dtype):
     # NOTE Currently setting dropout to zero for reproducibility, other settings taken from gpt2 config
     config = NanoGPTConfig(dropout=0, n_layer=12, n_head=12, n_embd=768)
 
-    bench = NanoGPTMLPBenchmark(config=config, requires_grad=True, device=device.device_str(), dtype=dtype)
+    bench = NanoGPTMLPBenchmark(config=config, requires_grad=True, device=device, dtype=dtype)
     model = bench.fn()
     (x,), kwargs = bench.make_batch()
 
@@ -1451,7 +1451,7 @@ def test_populate_grads_csa(executor, device, dtype):
     # NOTE Currently setting dropout to zero for reproducibility, other settings taken from gpt2 config
     config = NanoGPTConfig(dropout=0, n_layer=12, n_head=12, n_embd=768)
 
-    bench = NanoGPTCSABenchmark(config=config, requires_grad=True, device=device.device_str(), dtype=dtype)
+    bench = NanoGPTCSABenchmark(config=config, requires_grad=True, device=device, dtype=dtype)
     model = bench.fn()
     (x,), kwargs = bench.make_batch()
 
@@ -1478,7 +1478,7 @@ def test_populate_grads_block(executor, device, dtype):
     # NOTE Currently setting dropout to zero for reproducibility, other settings taken from gpt2 config
     config = NanoGPTConfig(dropout=0, n_layer=12, n_head=12, n_embd=768)
 
-    bench = NanoGPTBlockBenchmark(config=config, requires_grad=True, device=device.device_str(), dtype=dtype)
+    bench = NanoGPTBlockBenchmark(config=config, requires_grad=True, device=device, dtype=dtype)
     model = bench.fn()
     (x,), kwargs = bench.make_batch()
 
@@ -1506,7 +1506,7 @@ def test_populate_grads_nanogpt(executor, device, dtype):
         pytest.skip(
             "This test crashes its worked on Windows when run using pytest distributed (Windows fatal exception: access violation)"
         )
-    if IN_CI and torch.device(device.device_str()).type == "cpu":
+    if IN_CI and torch.device(device).type == "cpu":
         pytest.skip("Skipping the CPU version of this test in CI because it's very slow")
 
     from thunder.benchmarks import NanoGPTBenchmark, NanoGPTConfig
@@ -1514,7 +1514,7 @@ def test_populate_grads_nanogpt(executor, device, dtype):
     # NOTE Currently setting dropout to zero for reproducibility
     config = NanoGPTConfig(dropout=0, n_layer=2, n_head=1, n_embd=64)
 
-    bench = NanoGPTBenchmark(config=config, requires_grad=True, device=device.device_str(), dtype=dtype)
+    bench = NanoGPTBenchmark(config=config, requires_grad=True, device=device, dtype=dtype)
     model = bench.fn()
     (x, targets), kwargs = bench.make_batch()
 

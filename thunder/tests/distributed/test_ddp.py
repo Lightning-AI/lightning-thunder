@@ -537,7 +537,7 @@ class CompileDDPTest(DataParallelTestCase):
         micro_batch_size = batch_size // num_micro_batch
         with torch.no_grad():
             dataloader = [
-                (torch.randn(batch_size, 12, device=device), torch.randn(batch_size, 8, device=device.type))
+                (torch.randn(batch_size, 12, device=device), torch.randn(batch_size, 8, device=device))
                 for _ in range(dataset_size)
             ]
 
@@ -1131,8 +1131,8 @@ def create_per_process_dataloader(
 class SmallModel(nn.Module):
     def __init__(self, device, dtype):
         super().__init__()
-        self.net1 = nn.Linear(2, 2, device=device.type, dtype=dtype)
-        self.net2 = nn.Linear(2, 2, device=device.type, dtype=dtype)
+        self.net1 = nn.Linear(2, 2, device=device.device_str(), dtype=dtype)
+        self.net2 = nn.Linear(2, 2, device=device.device_str(), dtype=dtype)
 
     def forward(self, x):
         return self.net2(new_gelu(self.net1(x)))
@@ -1228,7 +1228,7 @@ def _test_native_ddp_helper(input_data):
     )
 
     # Creates, compiles, and DDPs the model
-    model = SmallModel(device.type, torch_dtype)
+    model = SmallModel(device, torch_dtype)
     ddp_model = ddp(model)
     cmodel = thunder.jit(
         ddp_model,
@@ -1552,8 +1552,8 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
     gptconf = ModelArgs(**model_args)
     model = Transformer(gptconf)
     model.to(device.type)
-    x = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device.type)
-    y = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device.type)
+    x = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
+    y = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
     jit_model = thunder.jit(
         thunder.distributed.ddp(model), executors=(transformer_engine_ex,) + thunder.get_default_executors()
     )
