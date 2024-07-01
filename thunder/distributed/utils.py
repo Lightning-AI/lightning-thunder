@@ -84,8 +84,9 @@ def sort_communication_ops(execution_trace):
                 case wait_prim_impl.id | unpack_for_fsdp_prim_impl.id:
                     return len(order_in_trace)
                 case reduce_scatter_prim_impl.id | all_reduce_prim_impl.id:
-                    # Prefer larger communication ops over smaller ones
-                    return -node.bsym.args[0].numel
+                    # We want to keep the `reduce` close to it's producer
+                    # (which is close to the original place in the trace).
+                    return order_in_trace[node.bsym]
                 case all_gather_prim_impl.id:
                     return len(order_in_trace) + order_in_trace[node.bsym]
                 case _:
