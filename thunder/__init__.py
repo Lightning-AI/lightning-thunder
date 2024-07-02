@@ -603,7 +603,7 @@ def jit(
                     computation_trc = transform.transform_trace(computation_trc, executors_list=cd.executors_list)
                     computation_traces.append(computation_trc)
                 cs.last_computation_transformation_stop = time.time_ns()
-
+                print(computation_trc)
                 with langctxs.langctx(cd.langctx):
                     extraces = transform_for_execution(
                         computation_trc,
@@ -634,6 +634,7 @@ def jit(
                     backward_traces.append(backward_trc)
 
             comp = computation_trc.python_callable()
+            print(computation_trc)
 
             if backward_trc is not None:
                 backward_fn = backward_trc.python_callable()

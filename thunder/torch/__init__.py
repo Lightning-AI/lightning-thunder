@@ -3930,6 +3930,147 @@ def avg_pool3d(
     return _avg_pool_helper(3, a, kernel_size, stride, padding, ceil_mode, count_include_pad, divisor_override)
 
 
+def create_symtype(cls, pytype, shape_env, val):
+    from torch._dynamo.source import ConstantSource
+    from torch import sym_int, SymBool, SymFloat, SymInt
+    from torch.fx.experimental.sym_node import to_node, SymNode, method_to_operator
+    from torch.fx.experimental.symbolic_shapes import ShapeEnv, DimDynamic
+
+    symbol = shape_env.create_symbol(
+        val,
+        source=ConstantSource(f"__testing_only{len(shape_env.var_to_val)}"),
+        dynamic_dim=DimDynamic.DUCK,
+        constraint_dim=None,
+    )
+    return cls(
+        SymNode(
+            symbol,
+            shape_env,
+            pytype,
+            hint=val,
+        )
+    )
+
+
+def convert_nontensor(shape_env, a):
+    from torch import sym_int, SymBool, SymFloat, SymInt
+    from thunder.core.proxies import IntegerProxy, FloatProxy
+
+    if isinstance(a, NumberProxy):
+        if a.value == None:
+            raise NotImplementedError("dynamic shape in thunder?")
+    if isinstance(a, IntegerProxy):
+        return create_symtype(SymInt, int, shape_env, a.value)
+    elif isinstance(a, FloatProxy):
+        return create_symtype(SymFloat, float, shape_env, a.value)
+    elif isinstance(a, float):
+        # return create_symtype(SymFloat, float, shape_env, a)
+        return a
+    elif isinstance(a, int):
+        # return create_symtype(SymInt, int, shape_env, a)
+        return a
+    else:
+        raise NotImplementedError(f"unknown type: {type(a)}")
+
+
+def get_fake_arg(inp, shape_env):
+    from thunder.executors.sdpaex import _convert_to_fake_tensor, _convert_to_meta_tensor
+
+    if isinstance(inp, TensorProxy):
+        return _convert_to_meta_tensor(inp)
+    elif isinstance(inp, (list, tuple)):
+        out_s = []
+        for s in inp:
+            out_s.append(get_fake_arg(s, shape_env))
+        return out_s
+    else:
+        # non tensor, non sequence
+        return convert_nontensor(shape_env, inp)
+
+
+def augmented_forward_adaptor(func, sym_op):
+    def wrapper(*args, **kwargs):
+        from thunder.core.transforms import VJPDual
+
+        # import pdb;pdb.set_trace()
+        out = sym_op(*args, **kwargs)
+        primal = out if isinstance(out, tuple) else (out,)
+        residuals = ({"inputs": (args, kwargs), "func": func},)
+        return VJPDual(primal, residuals)
+
+    return wrapper
+
+
+def backward_adaptor():
+    def wrapper(*args):
+        # import pdb;pdb.set_trace()
+        # assert kwargs=={}
+        saved_for_backward: dict = args[0]
+        grad_output = args[1:]
+        func = saved_for_backward["func"]
+        inps = saved_for_backward["inputs"]
+        inp_args = inps[0]
+        inp_kwargs = inps[1]
+
+        from thunder.executors.sdpaex import _convert_to_meta_tensor
+        from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
+        from torch.fx.experimental.symbolic_shapes import ShapeEnv
+
+        fake_inp_args = []
+        shape_env = ShapeEnv()  # what's shapeEnv?
+
+        # use a wrapper because the inputs of vjp can only be tuple of tensors or tensor
+        # TODO: what if one arg is tuple of tensor? replace the corresponding diff_args in the args with input diff_args in wrapper func(why it works now?)
+        def _make_differentiable_wrapper(func, *args, **kwargs):
+            from thunder.core.pytree import tree_flatten, tree_map
+
+            flat_args, _ = tree_flatten(args)
+            differentiable_args = tuple(a for a in flat_args if isinstance(a, FakeTensor))
+
+            def wrapper(*diff_args):
+                return func(*args, **kwargs)
+
+            # filtered_args = tuple(arg for i, arg in enumerate(args) if i in differentiable_args_idx)
+            return wrapper, differentiable_args
+
+        with FakeTensorMode() as mode:
+            for arg in inp_args:
+                fake_inp_args.append(get_fake_arg(arg, shape_env))
+            fake_inp_kwargs = {k: get_fake_arg(v, shape_env) for k, v in inp_kwargs.items()}
+
+            wrapped_func, diff_args = _make_differentiable_wrapper(func, *fake_inp_args, **fake_inp_kwargs)
+            _, fake_outs = torch.autograd.functional.vjp(
+                wrapped_func, diff_args, v=tree_map(_convert_to_meta_tensor, grad_output)
+            )
+
+        if isinstance(fake_outs, tuple):
+            return tuple(TensorProxy(like=g, shape=fake_out.shape) for fake_out, g in zip(fake_outs, grad_output))
+        return TensorProxy(like=grad_output, shape=fake_outs.shape)
+
+    return wrapper
+
+
+def meta_adaptor(func):
+    def wrapper(*args, **kwargs):
+        from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
+        from torch.fx.experimental.symbolic_shapes import ShapeEnv
+
+        fake_args = []
+        fake_kwargs = {}
+        shape_env = ShapeEnv()  # what's shapeEnv?
+
+        with FakeTensorMode() as mode:
+            for arg in args:
+                fake_args.append(get_fake_arg(arg, shape_env))
+            fake_kwargs = {k: get_fake_arg(v, shape_env) for k, v in kwargs.items()}
+            fake_outs = func(*fake_args, **fake_kwargs)
+        if isinstance(fake_outs, tuple):
+            return tuple(TensorProxy(like=args[0], shape=fake_out.shape) for fake_out in fake_outs)
+        return TensorProxy(like=args[0], shape=fake_outs.shape)
+
+    return wrapper
+
+
 @torchsymbol(
     torch.nn.functional.adaptive_avg_pool2d, id="torch.nn.functional.adaptive_avg_pool2d", is_method=False, is_prim=True
 )
