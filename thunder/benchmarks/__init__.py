@@ -25,6 +25,7 @@ from thunder.core.transforms import grad, clear_grads, populate_grads
 from thunder.executors.apex_entropyex import apex_ex, apex_available
 from thunder.executors.cudnn_layernormex import cudnn_layernorm_ex
 from thunder.executors.cudnnex import cudnn_ex, cudnn_available
+from thunder.executors.transformer_engineex import transformer_engine_ex, TE_AVAILABLE
 from thunder.executors.sdpaex import sdpa_ex
 from thunder.executors.torch_compile import torch_compile_cat_ex, torch_compile_ex
 from thunder.tests import nanogpt_model, hf_bart_self_attn, litgpt_model
@@ -748,6 +749,14 @@ if cudnn_available():
     def thunder_cudnn_layer_norm_nvfuser_executor(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
         return thunder.jit(fn, executors=[cudnn_layernorm_ex, thunder.nvfuser_executor])
+
+
+thunder_nvfuser_transformerengine_executor: None | Callable = None
+
+if TE_AVAILABLE:
+
+    def thunder_nvfuser_transformerengine_executor(fn: Callable):
+        return thunder.jit(fn, executors=[transformer_engine_ex, thunder.nvfuser_executor])
 
 
 def thunder_sdpa_executor(fn: Callable) -> Callable:
