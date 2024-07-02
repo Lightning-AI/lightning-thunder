@@ -116,7 +116,7 @@ class BitsAndBytesLinearQuant4bit(EarlyTransform):
             # check has args: tensor, shape, device, dtype, requires_grad
             proxy, _, _, _, requires_grad = check.args
             thunder_device = thunder.devices.to_device(param.device)
-            thunder_device_str = str(thunder_device)
+            thunder_device_str = thunder_device.device_str()
             check.args = (proxy, (*param.shape,), thunder_device_str, param.dtype, False)
 
             output_idx = output_idxes.get(id(get_param.output))

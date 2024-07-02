@@ -330,14 +330,14 @@ def assert_tensor_metadata_impl(
     if (
         type(t) in (torch.Tensor, torch.nn.Parameter)
         and tuple(t.shape) == shape
-        and str(t.device) == str(device)
+        and str(t.device) == device.device_str()
         and t.dtype == dtype
         and t.requires_grad == requires_grad
     ):
         return
 
     raise AssertionError(
-        f"Object had unexpected metadata. Expected type Tensor/nn.Parameter (without subclass), shape {shape}, device {str(device)}, dtype {dtype}, and {requires_grad=}, but found type {type(t)}, shape {tuple(t.shape)}, device {str(t.device)}, and requires_grad {t.requires_grad}"
+        f"Object had unexpected metadata. Expected type Tensor/nn.Parameter (without subclass), shape {shape}, device {str(device.device_str())}, dtype {dtype}, and {requires_grad=}, but found type {type(t)}, shape {tuple(t.shape)}, device {str(t.device)}, and requires_grad {t.requires_grad}"
     )
 
 
