@@ -66,8 +66,8 @@ def test_view_ops(executor, device: str, dtype: dtypes.dtype):
     fw_traces = thunder.last_traces(cbar)
     fwd_extrace = fw_traces[-1]
     max_mem_fwd = get_alloc_memory(fwd_extrace)
-    assert max_mem_fwd[0] == 144
-    assert sum(max_mem_fwd[1].values()) == get_return_memory(fwd_extrace.bound_symbols[-1])  # 144
+    assert max_mem_fwd[0] == 256
+    assert sum(max_mem_fwd[1].values()) == get_return_memory(fwd_extrace.bound_symbols[-1])  # 112
     bw_traces = thunder.last_backward_traces(cbar)
     bw_extrace = bw_traces[-1]
     max_mem_bw = get_alloc_memory(bw_extrace)
@@ -155,20 +155,15 @@ def test_nanogpt_block(executor, device, dtype):
     bw_alloc_mem = get_alloc_memory(bw_extrace)
 
     if isinstance(executor, nvFuserTestExecutor):
-        assert fw_alloc_mem[0] == 267426816
-        # t67 is the expand result of ln_2_weight, and they are both return values in trace
-        # but for calculation we assume they share memory, so expect to subtract the size of t67
-        expected_return_calculated_mem = get_return_memory(fw_extrace.bound_symbols[-1]) - 4 * 2 * 1024 * 768
+        assert fw_alloc_mem[0] == 393272320
+        expected_return_calculated_mem = get_return_memory(fw_extrace.bound_symbols[-1])
         assert expected_return_calculated_mem == sum(fw_alloc_mem[1].values())
 
-        assert bw_alloc_mem[0] == 361881600
+        assert bw_alloc_mem[0] == 412122112
         assert sum(bw_alloc_mem[1].values()) == get_return_memory(bw_extrace.bound_symbols[-1])
     if isinstance(executor, TorchTestExecutor):
         assert fw_alloc_mem[0] == 362863616
-        # same reason as above, expect to -t38+t37-t65-t67
-        expected_return_calculated_mem = (
-            get_return_memory(fw_extrace.bound_symbols[-1]) - 23 * 1024 * 1024 - 4 * 2 * 1024 * 768 * 2
-        )
+        expected_return_calculated_mem = get_return_memory(fw_extrace.bound_symbols[-1])
         assert expected_return_calculated_mem == sum(fw_alloc_mem[1].values())
         assert bw_alloc_mem[0] == 412109824
         assert sum(bw_alloc_mem[1].values()) == get_return_memory(bw_extrace.bound_symbols[-1])
