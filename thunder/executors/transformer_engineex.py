@@ -171,10 +171,7 @@ def _should_shard_intermediate() -> bool:
     )
 
     if getattr(compile_data.fn, "use_fsdp", False):
-        if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO3 and should_shard_intermediate_options in (
-            True,
-            None,
-        ):  # If user didn't specify, we default to `intermediate_sharding=True`.
+        if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO3 and should_shard_intermediate_options:
             return True
 
         if should_shard_intermediate_options:  # user passed `True` but FSDPType was not Zero3
