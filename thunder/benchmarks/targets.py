@@ -459,7 +459,6 @@ def test_open_llama_7b(benchmark, executor: Callable, compute_type: ComputeType)
 @parametrize_compute_type
 def test_llama_2_7b_hf(benchmark, executor: Callable, compute_type: ComputeType):
     cfg: LitGPTConfig = LitGPTConfig.from_name("Llama-2-7b-hf")
-    cfg.n_layer = 5
     b = LitGPTBenchmark(
         cfg, batchdims=(2,), device="cuda:0", dtype=torch.bfloat16, requires_grad=is_requires_grad(compute_type)
     )
