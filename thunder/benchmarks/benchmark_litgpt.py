@@ -391,7 +391,9 @@ class Benchmark_litGPT:
                 self.throughput = Throughput(window_size=self.max_iters - self.warmup_iter, world_size=world_size)
             except:
                 self.throughput = None
-                print(f"Model Flops/Throughput calculation failed for model {self.model_name}. Skipping throughput metric collection.")
+                print(
+                    f"Model Flops/Throughput calculation failed for model {self.model_name}. Skipping throughput metric collection."
+                )
 
         if self.skip_data_sync:
             data_sync_ctx = self.model.no_sync
@@ -453,7 +455,9 @@ class Benchmark_litGPT:
                             flops=self.perf_metrics["model_flops"],
                             batches=i,
                             samples=(i * self.micro_batch_size * self.gradient_accumulation_steps),
-                            lengths=(i * self.micro_batch_size * self.gradient_accumulation_steps * self.config.block_size),
+                            lengths=(
+                                i * self.micro_batch_size * self.gradient_accumulation_steps * self.config.block_size
+                            ),
                         )
 
         if global_rank in [0, None]:
