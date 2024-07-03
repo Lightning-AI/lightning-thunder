@@ -21,6 +21,7 @@ optree.register_pytree_node(
 
 
 def tree_flatten(args, namespace=""):
+    from types import FunctionType, BuiltinFunctionType
     if (
         type(args)
         not in {
@@ -47,6 +48,7 @@ def tree_flatten(args, namespace=""):
         }
         and not isinstance(args, (ProxyInterface))
         and not dataclasses.is_dataclass(args)
+        and not isinstance(args, (FunctionType, BuiltinFunctionType))
     ):
         raise TypeError(f"tree_flatten of type {type(args)} is not supported.")
     return optree.tree_flatten(args, none_is_leaf=True, namespace=namespace)
