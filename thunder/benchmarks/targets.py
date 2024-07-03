@@ -635,14 +635,10 @@ def backward_only(fn: Callable, *args, **kwargs):
         A tuple of the backward function and the setup function
         that returns the arguments for the backward function.
     """
-    result = None
-    forward_inputs = []
 
     # backward setup takes care of running the forward, saving the relevant context for backward
     # and returning the `grads` for output.
     def backward_setup():
-        nonlocal result
-        nonlocal forward_inputs
         result = fn(*args, **kwargs)
         result = thunder.core.utils.sequencify(result)
 
@@ -657,12 +653,10 @@ def backward_only(fn: Callable, *args, **kwargs):
             torch_dtype = thunder.torch.to_torch_dtype(dtype)
             torch_device = thunder.core.devices.to_torch_device(device)
             output_grads.append(make_tensor(shape, dtype=torch_dtype, device=torch_device, requires_grad=False))
-        return output_grads
+        return result, forward_inputs, output_grads
 
     # Actually do the backward pass.
-    def backward_fn(*output_grads):
-        nonlocal result
-        nonlocal forward_inputs
+    def backward_fn(result, forward_inputs, output_grads):
         for i in forward_inputs:
             i.grad = None
 
