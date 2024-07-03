@@ -137,6 +137,30 @@ class torchsymbol:
         else:
             sym = Symbol(name=fn.__name__, meta=_fn, id=id, is_prim=self.is_prim, tags=self.tags)
 
+        # NOTE: Autocast support
+        # In PyTorch eager, enabling autocast allows mixed inputs to operator like `linear`
+        # which expect dtypes to be same. This works in PyTorch eager, as dispatcher applies the
+        # conversion first and then passes the converted input to the operator.
+        # To mimick similar behavior, here we replace the `sym` for all operators which have
+        # autocast rule, to apply the conversion rule if autocast was enabled.
+        from thunder.core.transforms import _maybe_get_autocast_rule_for_symbol
+
+        autocast_impl: Callable | None = _maybe_get_autocast_rule_for_symbol(sym)
+
+        if autocast_impl is not None:
+            org_sym = sym
+
+            @wraps(sym)
+            def maybe_autocast(*args, **kwargs):
+                from thunder.core.compile_data import get_compile_data
+
+                cd = get_compile_data()
+                if getattr(cd, "is_autocast_enabled", False):
+                    return partial(autocast_impl, dtype=cd.autocast_thunder_dtype)(*args, **kwargs)
+                return org_sym(*args, **kwargs)
+
+            sym = maybe_autocast
+
         if self.is_method:
             method_name: str = self.method_name if self.method_name is not None else fn.__name__
             register_method(method_name, sym)

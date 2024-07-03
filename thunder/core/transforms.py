@@ -3772,6 +3772,10 @@ def autocast_scaled_dot_product_attention(
     return scaled_dot_product_attention(q, k, v, attn_mask, dropout_p, is_causal, scale=scale)
 
 
+def _maybe_get_autocast_rule_for_symbol(sym: Symbol):
+    return autocast_impls.get(sym.id)
+
+
 def autocast_symbol_mapper(bound_symbol: BoundSymbolInterface, dtype: dtypes.dtype):
     """Return the callable implementing the autocast rule for the symbol.
 
@@ -3781,7 +3785,7 @@ def autocast_symbol_mapper(bound_symbol: BoundSymbolInterface, dtype: dtypes.dty
     Returns:
         Callable: The callable implementing the autocast rule for the symbol.
     """
-    autocast_impl: Callable | None = autocast_impls.get(bound_symbol.sym.id)
+    autocast_impl: Callable | None = _maybe_get_autocast_rule_for_symbol(bound_symbol.sym)
     return bound_symbol.sym if autocast_impl is None else partial(autocast_impl, dtype=dtype)
 
 
