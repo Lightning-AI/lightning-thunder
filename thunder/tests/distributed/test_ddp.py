@@ -45,6 +45,7 @@ if TE_AVAILABLE:
     from transformer_engine.pytorch import fp8_autocast
     from transformer_engine.pytorch import Linear as TELinear
     from transformer_engine.pytorch.fp8 import check_fp8_support, FP8GlobalStateManager
+    import transformer_engine
 
     is_fp8_supported, fp8_support_reason = check_fp8_support()
 
@@ -1664,8 +1665,6 @@ def _test_fsdp_transformer_engine(input_data):
             te_model = TEModel()
         te_model.fc1.weight.data = fc1_weight.clone()
         te_model.fc2.weight.data = fc2_weight.clone()
-
-        import transformer_engine
 
         fsdp_model = FullyShardedDataParallel(te_model, auto_wrap_policy=always_wrap_policy)
         if thunder_fsdp_strategy == FSDPType.ZERO3 and intermediate_activation_sharding:
