@@ -16,7 +16,7 @@ import sys
 import traceback
 import weakref
 import torch
-from typing import Any, Literal, NamedTuple, TypedDict
+from typing import Any, Literal, TypedDict
 from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, Set, Sized
 import collections
 import operator
@@ -29,7 +29,6 @@ from types import (
     CodeType,
     CoroutineType,
     FrameType,
-    GetSetDescriptorType,
     FunctionType,
     MethodType,
     MethodDescriptorType,
@@ -180,7 +179,7 @@ class WrappedValue:
         self.has_item_tracking = True
 
     def register_proxy(self, proxy):
-        # note: the proxy is responsible for capturiing all the existing attributes/values
+        # note: the proxy is responsible for capturing all the existing attributes/values
         assert (
             self.original_value is self.nothing
         ), "cannot proxy multiple times, please file an issue to discuss your use-case"
@@ -272,7 +271,7 @@ def wrap(value: Any, /, *, provenance: ProvenanceRecord) -> WrappedValue:
         if cached is not None:
             potential_wrap = cached[0]()
             if potential_wrap is not None:
-                # Note: we want to cache mutuable objects to not run into trouble
+                # Note: we want to cache mutable objects to not run into trouble
                 #       with multiple accesses to the same.
                 #       As the cache only holds a weakref to the WrappedValue instance
                 #       one must persist WrappedValues once things are starting to be modified.
@@ -368,7 +367,7 @@ def populate_item_wrappers(l):
                 l.key_wrappers[k] = wk  # or have those from an iteration of the input?
         return
 
-    raise NotImplementedError(f"populate item wrapppers for {type(l.value)}")
+    raise NotImplementedError(f"populate item wrappers for {type(l.value)}")
 
 
 #
@@ -495,7 +494,7 @@ InterpreterLogItem = (
 # To the interpreter User Exceptions are part of its normal operations. So we usually
 # don't use Python's exception mechanism to handle these. Instead the
 # interpreter mimics CPython's implementation of exception handling by
-# defining analoguous structures (curexec and exception_stack) set by do_raise and returns
+# defining analogous structures (curexec and exception_stack) set by do_raise and returns
 # INTERPRETER_SIGNALS.EXCEPTION_RAISED when running things that raised exceptions.
 # Here in particular:
 # - Handlers are "inside the interpreter",
@@ -524,7 +523,7 @@ class InterpreterRuntimeCtx:
         self.exception_stack = [None]
         # ts.exc_info is the top of the stack (self.exception_stack[-1]).
         # Note that most of the time, we are changing the self.exception_stack[-1] instead of popping/pushing exceptions.
-        # `exception_stack[-1] = ...` is the equivalent of assiging ts.exc_info->exc_type/value/traceback.
+        # `exception_stack[-1] = ...` is the equivalent of assigning ts.exc_info->exc_type/value/traceback.
         # ts.exc_state is exc_info (the bottom-most element of the stack(?))
         # ts.curexc (in Python 3.10 as _type / _value / _traceback) is the exception currently being raised
 
@@ -613,7 +612,7 @@ class InterpreterRuntimeCtx:
                 return frame.code.co_filename, frame.positions
         return None, None
 
-    # TODO Instead of appending to both the log and and interpreted_instructions we could
+    # TODO Instead of appending to both the log and interpreted_instructions we could
     #   consider just appending to the log and then filtering to only instructions when
     #   interpreted_instructions is accessed
     def record_interpreted_instruction(self, inst: dis.Instruction, /) -> InterpreterRuntimeCtx:
@@ -1297,7 +1296,7 @@ def interpreter_needs_wrap(fn):
     return wrapping_wrapper
 
 
-# Calling a function as an opaque function makes the interpeter not trace into it
+# Calling a function as an opaque function makes the interpreter not trace into it
 @interpreter_needs_wrap
 def call_opaque(fn, /, *args, **kwargs):
     return fn(*args, **kwargs)
@@ -2003,7 +2002,7 @@ class SequenceIter:
         return res
 
 
-# wrapper-handling lookasides for sequences and mutuable sequences.
+# wrapper-handling lookasides for sequences and mutable sequences.
 # note:
 # - these are only for use when wrapping is enabled
 # - the methods (or the corresponding functions) will be registered
@@ -2011,7 +2010,7 @@ class SequenceIter:
 #   called with wrapped values also for self and self.value will point
 #   to the actual object...
 #
-# TODO: maybe make these generic for sequences / mutuable sequence
+# TODO: maybe make these generic for sequences / mutable sequence
 # https://docs.python.org/3/library/stdtypes.html#common-sequence-operations
 class SequenceWrapperMethods(WrappedValue):
     # NOTE! This is not actually a WrappedValue. However,
@@ -2345,7 +2344,7 @@ class MappingValuesIterator:
         return self
 
     def __next__(self):
-        return self._mapping[next(self._key_iter)]
+        return dict.__getitem__(self._mapping, next(self._key_iter))
 
 
 class MappingValuesWrapper:
@@ -2369,7 +2368,7 @@ class MappingItemsIterator:
 
     def __next__(self):
         k = next(self._key_iter)
-        return k, self._mapping[k]
+        return k, dict.__getitem__(self._mapping, k)
 
 
 class MappingItemsWrapper:
@@ -2700,8 +2699,8 @@ _default_lookaside_map: dict[Callable, Callable] = {
 }
 
 
-# While mutuable sequences (lists) are created empty in __new__ and populated in __init__,
-# immutuable sequences (tuples) are created with contents in __new__ and __init__ is a nop
+# While mutable sequences (lists) are created empty in __new__ and populated in __init__,
+# immutable sequences (tuples) are created with contents in __new__ and __init__ is a nop
 # (object.__init__, actually).
 def _tuple_new_provenance_tracking_lookaside(cls, iterable=(), /):
     new_tuple_type = cls.value
@@ -3950,7 +3949,7 @@ def _end_async_for_handler_3_10(
 
         assert len(stack) >= try_block.level + 3
         del stack[try_block.level + 3 :]
-        exc_type = frame.interpreter_stack.pop()  # we ignore that and asume == type(exc_value)
+        exc_type = frame.interpreter_stack.pop()  # we ignore that and assume == type(exc_value)
         exc_value = frame.interpreter_stack.pop()
         exc_traceback = frame.interpreter_stack.pop()
         if exc_value != None:
@@ -4205,11 +4204,11 @@ def _import_name_handler(
     fromlist = stack.pop()
     level = stack.pop()
 
-    # relative imports rely on the the current module's name (from the frame stac?)
+    # relative imports rely on the current module's name (from the frame stac?)
     # but that isn't available if we use impl, so we resolve it here.
     if level > 0:  # relative import
         # cannot do this in impl easily, but error handling?
-        # TODO: model this more after resove_name in CPython's Python/import.c
+        # TODO: model this more after resolve_name in CPython's Python/import.c
         def get_current_name(globals):
             package = globals.get("__package__")
             if package is None:
@@ -5218,7 +5217,7 @@ def _print_expr_handler(
 def _push_exc_info_handler(inst: dis.Instruction, /, stack: InterpreterStack, exception_stack: list, **kwargs) -> None:
     assert exception_stack
     top = stack.pop()
-    # CPython reads exc_info->exc_type/value/traceback, see RuntimeCtx inititalization of exception_stack for more info
+    # CPython reads exc_info->exc_type/value/traceback, see RuntimeCtx initialization of exception_stack for more info
     stack.append(exception_stack[-1])
     stack.append(top)
     assert isinstance(top, BaseException)
@@ -5869,7 +5868,7 @@ def _yield_value_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
 # (generator, async generator, coroutine), we define generic equivalents here
 # that take the interpreter frame and execute until the next yield point.
 # The way these functions work in Python is that objects are created and
-# retruned either on invocation (Python <=3.10) or by the RETURN_GENERATOR
+# returned either on invocation (Python <=3.10) or by the RETURN_GENERATOR
 # opcode (Python >= 3.11).
 def make_generator(
     frame: InterpreterFrame,
@@ -6482,7 +6481,7 @@ def _run_frame(
                             # NormalizeException ?
 
                             # CPython sets exc_info->exc_type/value/traceback here
-                            # see RuntimeCtx inititalization of exception_stack for more info
+                            # see RuntimeCtx initialization of exception_stack for more info
                             runtimectx.exception_stack[-1] = current_exception
                             with frame.interpreter_stack.set_cur_instruction(PseudoInst.EXCEPTION_HANDLER):
                                 frame.interpreter_stack.append(

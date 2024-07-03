@@ -1243,7 +1243,9 @@ def test_argument_of_none(executor, device, dtype):
     consumers = thunder.core.utils.consumers(trace)
     region_bsyms = trace.bound_symbols[:3]
     region = Region(producers, consumers, region_bsyms)
-    assert len(region.inputs) == 0 and sorted(str(v) for v in region.outputs) == ["t0"]
+    assert len(region.inputs) == 0 and sorted(str(v) for v in region.outputs) == [
+        '<TensorProxy(name="t0", dtype=thunder.dtypes.float32, shape=(1,))>'
+    ]
 
 
 # This test ensures that calls to torch functions are recorded in the trace
@@ -2851,3 +2853,21 @@ def test_custom_autograd_function():
     gradcheck(jitted, (x,))
     with pytest.raises(GradcheckError):
         gradcheck(model, (x,))
+
+
+def test_proxy_repr():
+    # Verify that we can call `__repr__` on different proxy subclasses.
+    t = thunder.core.trace.TraceCtx()
+    with thunder.core.trace.tracectx(t):
+        p = thunder.core.proxies.NumberProxy("number", 1, python_type=int)
+        c = thunder.core.proxies.CollectionProxy((1, 2), name="collection")
+        t = thunder.core.proxies.TensorProxy(
+            "tensor",
+            shape=(1,),
+            dtype=thunder.core.dtypes.float16,
+            device=thunder.core.devices.Device("cpu"),
+            requires_grad=True,
+        )
+        assert p.__repr__() == '<NumberProxy(name="number")>'
+        assert t.__repr__() == '<TensorProxy(name="tensor", dtype=thunder.dtypes.float16, shape=(1,))>'
+        assert c.__repr__() == '<CollectionProxy(name="collection")>'

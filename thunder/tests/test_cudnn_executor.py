@@ -13,7 +13,7 @@ from thunder.core.transforms import vjp
 from thunder.core.utils import flatten_func
 from thunder.tests.framework import instantiate, NOTHING, ops, requiresCUDA, run_snippet, TorchExecutor, version_between
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
-from thunder.tests.opinfos import get_opinfo, OpInfo
+from thunder.tests.opinfos import get_opinfo, OpInfo, DecorateInfo
 from thunder.tests.test_grad import _make_differentiable_wrapper
 
 cudnn = pytest.importorskip("cudnn")
@@ -96,6 +96,15 @@ grad_sdpa_cudnn_opinfo = OpInfo(
         thunder.dtypes.bfloat16,
     ),
     devicetypes=(devices.DeviceType.CUDA,),
+    test_directives=(
+        DecorateInfo(
+            pytest.mark.skip(reason="https://github.com/pytorch/pytorch/issues/129579"),
+            "test_cudnn_vs_torch_consistency",
+            dtypes=(dtypes.bfloat16, dtypes.float16, dtypes.float32),
+            devicetypes=(devices.DeviceType.CUDA,),
+            active_if=version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"),
+        ),
+    ),
 )
 
 
@@ -206,6 +215,10 @@ def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
 @pytest.mark.skipif(
     LooseVersion(cudnn.backend_version_string()) < LooseVersion("8.9.5"),
     reason="cuDNN is required to be at least `8.9.5`",
+)
+@pytest.mark.skipif(
+    version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"),
+    reason="https://github.com/pytorch/pytorch/issues/129579",
 )
 @pytest.mark.parametrize("may_cat_grad_qkv", (True, False), ids=("may-cat-grad-qkv", "never-cat-grad-qkv"))
 @pytest.mark.parametrize("dtype", grad_sdpa_cudnn_opinfo.dtypes(), ids=tuple(map(str, grad_sdpa_cudnn_opinfo.dtypes())))

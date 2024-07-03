@@ -11,7 +11,7 @@ import thunder
 import thunder.core.devices as devices
 from thunder.core import dtypes
 from thunder.core.prims import PrimIDs
-from thunder.tests.framework import instantiate, ops, requiresCUDA, NOTHING, TorchExecutor
+from thunder.tests.framework import instantiate, ops, requiresCUDA, NOTHING, TorchExecutor, nvFuserExecutor
 from thunder.tests.opinfos import opinfos, OpInfo, make_number, SampleInput
 from thunder.tests.make_tensor import make_tensor
 from thunder.torch import _torch_to_thunder_function_map, _inplace_to_out_of_place
@@ -250,6 +250,35 @@ def test_inplace_to_views(executor, device, _):
 
     c, d, e = jittd_h(a, b)
     c_, d_, e_ = h(a_, b_)
+
+    torch.testing.assert_close((c, d, e), (c_, d_, e_))
+
+
+@instantiate(
+    executors=(nvFuserExecutor,),
+    dtypes=(dtypes.float32,),
+)
+@requiresCUDA
+def test_inplace_to_args_with_nvfuser(executor, device, _):
+
+    def func(a: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        a += b
+        c = torch.exp(a)
+        d = torch.tanh(b)
+
+        e = c.view(-1)
+        e.add_(d.flatten())
+
+        d.div_(a)
+        return c, d, e / 2.0
+
+    a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
+    a_, b_ = a.clone().detach(), b.clone().detach()
+
+    jitted = executor.make_callable(func)
+
+    c, d, e = jitted(a, b)
+    c_, d_, e_ = func(a_, b_)
 
     torch.testing.assert_close((c, d, e), (c_, d_, e_))
 

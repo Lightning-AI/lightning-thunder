@@ -118,13 +118,20 @@ class Device(metaclass=DeviceMeta):
     #   converting Thunder devices to PyTorch devices
     def __repr__(self) -> str:
         if self.devicetype == DeviceType.CUDA:
-            return f"{devicetype_string(self.devicetype)}:{self.index}"
+            return f"thunder.devices.Device(type='{devicetype_string(self.devicetype)}:{self.index}')"
         # note: self.devicetype == DeviceType.CPU, .META
-        return devicetype_string(self.devicetype)
+        return f"thunder.devices.Device(type='{devicetype_string(self.devicetype)}')"
 
     # NOTE Because devices are singleton object, this has the luxury of using "is"
     def __eq__(self, other: Device) -> bool:
         return self is other
+
+    # NOTE this is needed when passing devices.Device to torch operators such as torch.testing.make_tensor
+    def device_str(self) -> str:
+        if self.devicetype == DeviceType.CUDA:
+            return f"{devicetype_string(self.devicetype)}:{self.index}"
+        # note: self.devicetype == DeviceType.CPU, .META
+        return devicetype_string(self.devicetype)
 
 
 cpu = Device(DeviceType.CPU, None)
@@ -185,4 +192,6 @@ def to_torch_device(x: None | str | torch.device | Device, /) -> None | torch.de
         return x
 
     baseutils.check_type(x, (Device, str))
-    return torch.device(str(x))
+    if isinstance(x, Device):
+        return torch.device(x.device_str())
+    return torch.device(x)

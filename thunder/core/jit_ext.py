@@ -748,6 +748,13 @@ def _general_jit_isinstance_lookaside(obj: Any, cls: type | UnionType | tuple[ty
     ucls = unwrap(cls)
     if isinstance(uobj, TensorProxy):
         res = issubclass(torch.Tensor, ucls)
+        # We represent `nn.Parameters` with `TensorProxy`,
+        # so to support `isinstance(t, torch.nn.Parameter)`
+        # we peek at the original python_type of the wrapped object.
+        if not isinstance(ucls, (tuple, list)):
+            ucls = (ucls,)
+        if torch.nn.Parameter in ucls:
+            res = issubclass(obj.python_typ, ucls)
     else:
         res = isinstance(uobj, ucls)
 
@@ -828,6 +835,61 @@ def _general_jit_bool_lookaside(wrapped_x: Any) -> bool | INTERPRETER_SIGNALS:
 
 
 _general_jit_lookaside_map[bool] = _general_jit_bool_lookaside
+
+
+def _get_torch_nn_module_named_members_lookaside(
+    model: torch.nn.Module, named_member_method, get_member_method, *unwrapped_args, **unwrapped_kwargs
+):
+    assert isinstance(model, torch.nn.Module)
+
+    # Get the value of `prefix` if it was passed.
+    prefix = ""
+    if len(unwrapped_args) > 1:  # as positional arg
+        prefix = unwrapped_args[1]
+    elif "prefix" in unwrapped_kwargs:  # as kwarg
+        prefix = unwrapped_kwargs["prefix"]
+
+    # Here we call the unwrapped model with unwrapped arguments
+    # to get the names of parameter or buffer that we are interested in.
+    # We then use these names in `_get_named_member_impl` to get the corresponding proxies.
+    # NOTE: If prefix was passed, these names will be qualified with prefix.
+    member_names = {name for name, _ in named_member_method(*unwrapped_args, **unwrapped_kwargs)}
+
+    # NOTE: This will be interpreted.
+    def _get_named_member_impl(members):
+        for member in members:
+            org_name = member
+            if prefix:
+                # Undo prefix if it was passed to correctly get the corresponding
+                # parameter/buffer.
+                org_name = org_name.replace(prefix + ".", "")
+            b = get_member_method(org_name)
+            yield member, b
+
+    pr = ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[wrap_const(named_member_method).provenance])
+
+    return _interpret_call(_get_named_member_impl, wrap(member_names, provenance=pr))
+
+
+@general_jit_lookaside(torch.nn.Module.named_parameters)
+def _general_jit_named_parameters_lookaside(obj: Any, *args, **kwargs):
+    model = unwrap(obj)
+    unwrapped_args = tuple(unwrap(arg) for arg in args)
+    unwrapped_kwargs = {unwrap(k): unwrap(v) for k, v in kwargs.items()}
+    return _get_torch_nn_module_named_members_lookaside(
+        model, model.named_parameters, model.get_parameter, *unwrapped_args, **unwrapped_kwargs
+    )
+
+
+@general_jit_lookaside(torch.nn.Module.named_buffers)
+def _general_jit_named_buffers_lookaside(obj: Any, *args, **kwargs):
+    model = unwrap(obj)
+    unwrapped_args = tuple(unwrap(arg) for arg in args)
+    unwrapped_kwargs = {unwrap(k): unwrap(v) for k, v in kwargs.items()}
+    return _get_torch_nn_module_named_members_lookaside(
+        model, model.named_buffers, model.get_buffer, *unwrapped_args, **unwrapped_kwargs
+    )
+
 
 # Adds proxy methods
 # NOTE These methods map to themselves, which prevents the interpreter from looking into them
