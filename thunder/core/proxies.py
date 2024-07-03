@@ -134,7 +134,9 @@ class Proxy(VariableInterface, ProxyInterface):
         return self.__class__(name=name)
 
     def __repr__(self) -> str:
-        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self.shape}>'
+        # All subclasses of Proxy will have `self.name`, so this generic implementation relies on that.
+        # To have a specific repr for a subclass, override the implementation for that subclass.
+        return f'<{type(self).__name__}(name="{self.name}")>'
 
     def type_string(self) -> str:
         return "Any"
@@ -1198,6 +1200,9 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
     def requires_grad(self):
         return self._requires_grad
 
+    def __repr__(self):
+        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self.shape})>'
+
     def type_string(self):
         return f"FUTURE {self.device} {self.dtype.shortname()}{list(self.shape)}"
 
@@ -1293,8 +1298,11 @@ class TensorProxy(Proxy, TensorProxyInterface):
         """Return a copy of this proxy with the given name."""
         return tensorproxy(self, name=name, history=self.history)
 
+    def __repr__(self):
+        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self.shape})>'
+
     def type_string(self):
-        return f"{self.device} {self.dtype.shortname()}{list(self.shape)}"
+        return f"{self.device.device_str()} {self.dtype.shortname()}{list(self.shape)}"
 
     # NOTE __getattr__ is overridden to support language-specific methods
     def __getattr__(self, attr: str, /):
