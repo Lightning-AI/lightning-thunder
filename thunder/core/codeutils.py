@@ -227,7 +227,7 @@ def prettyprint(
         unflattened_str = unflattened_str.replace(f"'{_quote_marker}", "")
         return unflattened_str
     if isinstance(x, dtypes.dtype):
-        return m(f"dtypes.{str(x)}")
+        return m(f"{str(x)}")
     if isinstance(x, devices.Device):
         return m(f'devices.Device("{x.device_str()}")')
     if type(x) is type:
