@@ -1453,9 +1453,9 @@ def _interpolate_checker(
     size: int | Sequence[int] | None = None,
     scale_factor: float | Sequence[float] | None = None,
     mode: str = "nearest",
-    align_corners = None,
-    recompute_scale_factor = None,
-    antialias = False,
+    align_corners=None,
+    recompute_scale_factor=None,
+    antialias=False,
 ) -> TensorLike:
     return 3 <= a.ndim and a.ndim <= 5
 
