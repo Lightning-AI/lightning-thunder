@@ -44,6 +44,7 @@ from types import (
 )
 
 from thunder.core.baseutils import Singleton, init_colors, extract_callable_name
+from thunder.core.codeutils import Positions
 
 
 #
@@ -605,6 +606,13 @@ class InterpreterRuntimeCtx:
             pf = self._pop_frame_stack()
             assert pf is frame, "Frame stack inconsistency"
 
+    def get_current_user_source_location(self) -> tuple[str, Positions]:
+        for frame in reversed(self.frame_stack):
+            modname = unwrap(frame.globals).get("__name__", "")
+            if modname not in ("thunder.core.interpreter", "thunder.core.jit_ext", "thunder.torch"):
+                return frame.code.co_filename, frame.positions
+        return None, None
+
     # TODO Instead of appending to both the log and and interpreted_instructions we could
     #   consider just appending to the log and then filtering to only instructions when
     #   interpreted_instructions is accessed
@@ -838,19 +846,6 @@ class PyTryBlock:
 
     def __repr__(self):
         return self.__str__()
-
-
-# Use dis.Positions in 3.11+ and make it up in <3.11
-if sys.version_info < (3, 11):
-
-    class Positions(NamedTuple):
-        lineno: int = None
-        end_lineno: int = None
-        col_offset: int = None
-        end_col_offset: int = None
-
-else:
-    Positions = dis.Positions
 
 
 def _positions_equal(p1: Positions | None, p2: Positions | None):
@@ -2350,7 +2345,7 @@ class MappingValuesIterator:
         return self
 
     def __next__(self):
-        return self._mapping[next(self._key_iter)]
+        return dict.__getitem__(self._mapping, next(self._key_iter))
 
 
 class MappingValuesWrapper:
@@ -2374,7 +2369,7 @@ class MappingItemsIterator:
 
     def __next__(self):
         k = next(self._key_iter)
-        return k, self._mapping[k]
+        return k, dict.__getitem__(self._mapping, k)
 
 
 class MappingItemsWrapper:

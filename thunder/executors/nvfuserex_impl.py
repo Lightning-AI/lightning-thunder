@@ -9,6 +9,7 @@ import time
 from copy import copy
 from itertools import chain, filterfalse
 from functools import partial
+import warnings
 
 from looseversion import LooseVersion
 import torch
@@ -157,7 +158,7 @@ def is_supported_tensor(a: TensorProxy, *, allow_low_precision_floats: bool = Tr
 
 
 def is_supported_tensor_or_number(a: TensorProxy | Number) -> bool:
-    if isinstance(a, Number):
+    if isinstance(a, (Number, NumberProxy)):
         return True
 
     return is_supported_tensor(a)
@@ -618,11 +619,14 @@ class nvFuserExecutor(FusionExecutor):
 
         return False
 
-    def _dce_bsyms(self, output, bsyms: list[BoundSymbol]) -> list[BoundSymbol]:
+    def _dce_bsyms(self, input_list, output, bsyms: list[BoundSymbol]) -> list[BoundSymbol]:
         trace = TraceCtx(None)
         trace.bound_symbols = bsyms
         bsyms.append(prims.python_return.bind(output, output=()))
-        trace = dce(trace)
+        needed_proxies: set[Variable] = set()
+        trace = dce(trace, needed_proxies)
+        # update the input_list by removing the unused inputs
+        input_list[:] = [x for x in input_list if variableify(x) in needed_proxies]
         return list(filter(lambda x: x.sym != prims.python_return, trace.bound_symbols))
 
     def fuse(self, region: Region, fusion_counter: int) -> BoundSymbol:
@@ -636,7 +640,7 @@ class nvFuserExecutor(FusionExecutor):
         for bsym in region.bound_symbols:
             flattened_bsyms.extend(self.flatten(bsym))
 
-        flattened_bsyms = self._dce_bsyms(sorted_unique_outputs, flattened_bsyms)
+        flattened_bsyms = self._dce_bsyms(sorted_unique_inputs, sorted_unique_outputs, flattened_bsyms)
 
         fusion_name = f"nvFusion{fusion_counter}"
         annotation = f"{fusion_name}: ({', '.join(bsym.sym.name for bsym in flattened_bsyms)})"
@@ -747,6 +751,10 @@ class nvFuserExecutor(FusionExecutor):
     # TODO Restore fusion logic here -- this just replaces supported operations in isolation at the moment
     def fusion_pass(self, trace: TraceCtx) -> TraceCtx:
         start_time_ns: int = time.time_ns()
+        # Replace uniform with uniform_philox and rng state operators for better rematerialization
+        from thunder.core.rematerialization import replace_uniform
+
+        trace = replace_uniform(trace)
 
         fusedtrace: TraceCtx = from_trace(trace)
 
@@ -1027,11 +1035,14 @@ def _uniform_philox_check(
     *,
     device: Device,
     dtype: dtypes.dtype,
-    seed: int | TensorProxy,
-    offset: int | TensorProxy,
+    seed: int | NumberProxy | TensorProxy,
+    offset: int | NumberProxy | TensorProxy,
 ) -> bool:
     return (
-        is_supported_device(device) and is_supported_dtype(dtype) and isinstance(seed, int) and isinstance(offset, int)
+        is_supported_device(device)
+        and is_supported_dtype(dtype)
+        and is_supported_tensor_or_number(seed)
+        and is_supported_tensor_or_number(offset)
     )
 
 
@@ -1875,7 +1886,9 @@ register_supported(PrimIDs.WHERE, where, _where_check)
 
 # TODO Checks that the dtype is supported by nvFuser
 def _reduction_check(a: TensorProxy, dims: Sequence[int]) -> bool:
-    return is_supported_tensor(a, allow_low_precision_floats=False)
+    return is_supported_tensor(a, allow_low_precision_floats=False) and not any(
+        isinstance(dim, NumberProxy) for dim in dims
+    )
 
 
 # TODO Review if this accepts empty dim sequences
@@ -2200,18 +2213,17 @@ def _linear_check(a: TensorProxy, b: TensorProxy, bias: TensorProxy | None) -> b
     if nv_version < LooseVersion("0.2.3"):
         return False
 
-    enable_linear: None | bool = get_compile_option("nv_enable_linear", "Enable nvFuser matmul.")
+    enable_linear: None | bool = get_compile_option("nv_enable_linear", "Enable nvFuser linear.")
     if not enable_linear:
         return False
     # Verify linear inputs and bias (optional) are supported tensors.
-    if not are_supported_tensors(a, b):
+    if not are_supported_tensors(a, b) or (bias is not None and not is_supported_tensor(bias)):
         return False
-    if bias is not None and not is_supported_tensor(bias):
-        return False
-
-    # nvFuser only supports 2D inputs in v0.2.3.
-    if not a.ndim == 2:
-        return False
+    if nv_version < LooseVersion("0.2.5"):
+        warnings.warn("nvFuser v0.2.3 has limited support for linear. Consider using v0.2.5 or above")
+        # nvFuser only supports 2D inputs in v0.2.3.
+        if not a.ndim == 2:
+            return False
     return True
 
 
@@ -2240,12 +2252,13 @@ def _matmul_check(
         return False
 
     enable_matmul: None | bool = get_compile_option("nv_enable_matmul", "Enable nvFuser matmul.")
-    if not enable_matmul:
+
+    if not enable_matmul or not are_supported_tensors(a, b):
         return False
-    if not are_supported_tensors(a, b):
-        return False
-    if not (a.ndim == b.ndim and a.ndim == 2):
-        return False
+    if nv_version < LooseVersion("0.2.4"):
+        warnings.warn("nvFuser v0.2.2 has limited support for matmuls. Consider using v0.2.4 or above")
+        if not (a.ndim == b.ndim and a.ndim == 2):
+            return False
     return True
 
 

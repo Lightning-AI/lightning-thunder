@@ -3,6 +3,7 @@ import math
 from typing import cast, List, Optional, Tuple, Union
 
 import torch
+import thunder
 
 # adapted from https://github.com/pytorch/pytorch/blob/master/torch/testing/_creation.py
 # Changes:
@@ -32,7 +33,7 @@ def _uniform_random(t: torch.Tensor, low: float, high: float):
 def make_tensor(
     *shape: int | torch.Size | list[int] | tuple[int, ...],
     dtype: torch.dtype,
-    device: str | torch.device,
+    device: str | torch.device | thunder.devices.Device,
     low: float | None = None,
     high: float | None = None,
     requires_grad: bool = False,
@@ -62,7 +63,7 @@ def make_tensor(
     Args:
         shape (Tuple[int, ...]): Single integer or a sequence of integers defining the shape of the output tensor.
         dtype (:class:`torch.dtype`): The data type of the returned tensor.
-        device (Union[str, torch.device]): The device of the returned tensor.
+        device (Union[str, torch.device, thunder.devices.Device]): The device of the returned tensor.
         low (Optional[Number]): Sets the lower limit (inclusive) of the given range. If a number is provided it is
             clamped to the least representable finite value of the given dtype. When ``None`` (default),
             this value is determined based on the :attr:`dtype` (see the table above). Default: ``None``.
@@ -112,14 +113,23 @@ def make_tensor(
 
         return low, high
 
+    if isinstance(device, thunder.devices.Device):
+        device = device.device_str()
+
     if len(shape) == 1 and isinstance(shape[0], collections.abc.Sequence):
         shape = shape[0]  # type: ignore[assignment]
     shape = cast(tuple[int, ...], tuple(shape))
 
     _integral_types = [torch.uint8, torch.int8, torch.int16, torch.int32, torch.int64]
+    _floating_8bit_types = [torch.float8_e4m3fn, torch.float8_e4m3fnuz, torch.float8_e5m2, torch.float8_e5m2fnuz]
     _floating_types = [torch.float16, torch.bfloat16, torch.float32, torch.float64]
     _complex_types = [torch.complex32, torch.complex64, torch.complex128]
-    if requires_grad and dtype not in _floating_types and dtype not in _complex_types:
+    if (
+        requires_grad
+        and dtype not in _floating_types
+        and dtype not in _floating_8bit_types
+        and dtype not in _complex_types
+    ):
         raise ValueError("make_tensor: requires_grad must be False for integral dtype")
 
     if dtype is torch.bool:
@@ -145,10 +155,10 @@ def make_tensor(
         if low == high:
             return torch.full(shape, low, device=device, dtype=dtype)
         result = torch.randint(low, high, shape, device=device, dtype=dtype)  # type: ignore[call-overload]
-    elif dtype in _floating_types:
+    elif dtype in _floating_types + _floating_8bit_types:
         ranges_floats = (torch.finfo(dtype).min, torch.finfo(dtype).max)
         m_low, m_high = _modify_low_high(low, high, ranges_floats[0], ranges_floats[1], -9, 9, dtype)
-        result = torch.empty(shape, device=device, dtype=dtype)
+        result = torch.empty(shape, device=device, dtype=dtype if dtype not in _floating_8bit_types else torch.float32)
         _uniform_random(result, m_low, m_high)
     elif dtype in _complex_types:
         float_dtype = complex_to_corresponding_float_type_map[dtype]
@@ -175,6 +185,8 @@ def make_tensor(
             replace_with = torch.tensor(1, device=device, dtype=dtype)
         elif dtype in _floating_types:
             replace_with = torch.tensor(torch.finfo(dtype).tiny, device=device, dtype=dtype)
+        elif dtype in _floating_8bit_types:
+            replace_with = torch.tensor(torch.finfo(dtype).tiny, device=device, dtype=torch.float32)
         else:  # dtype in _complex_types:
             float_dtype = complex_to_corresponding_float_type_map[dtype]
             float_eps = torch.tensor(torch.finfo(float_dtype).tiny, device=device, dtype=float_dtype)
@@ -183,6 +195,11 @@ def make_tensor(
 
     if dtype in _floating_types + _complex_types:
         result.requires_grad = requires_grad
+
+    # NOTE This is a workaround. There are so many not supported operations that,
+    # even creating the test tensors is hard.
+    if dtype in _floating_8bit_types:
+        result = result.to(dtype)
 
     return result
 

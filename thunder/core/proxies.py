@@ -5,6 +5,7 @@ from numbers import Number
 from typing import Type, Optional, Any, Tuple, List, Union
 from collections.abc import Callable
 from collections.abc import Sequence
+
 from functools import reduce, partial
 import operator
 import builtins
@@ -17,7 +18,7 @@ from thunder.core.interpreter import is_jitting
 from thunder.core.trace import VariableInterface, get_tracectx, TraceCtx
 from thunder.core.baseutils import ProxyInterface, NumberProxyInterface, TensorProxyInterface
 import thunder.core.baseutils as baseutils
-from thunder.core.langctxs import resolve_method, get_langctx, LanguageContext
+from thunder.core.langctxs import resolve_method, get_langctx
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
 
@@ -133,7 +134,9 @@ class Proxy(VariableInterface, ProxyInterface):
         return self.__class__(name=name)
 
     def __repr__(self) -> str:
-        return f"{self.name}"
+        # All subclasses of Proxy will have `self.name`, so this generic implementation relies on that.
+        # To have a specific repr for a subclass, override the implementation for that subclass.
+        return f'<{type(self).__name__}(name="{self.name}")>'
 
     def type_string(self) -> str:
         return "Any"
@@ -389,6 +392,10 @@ class StringProxy(Proxy, str):
     def __repr__(self) -> str:
         return f"<StringProxy '{self.value}'>"
 
+    def replace_name(self, name: str, /):
+        """Return a copy of this proxy with the given name."""
+        return StringProxy(self.value, name=name, history=self.history)
+
     def type_string(self) -> str:
         return "str"
 
@@ -562,14 +569,35 @@ class DictProxy(Proxy, dict):
         raise NotImplementedError("Calling setdefault on an input dict is not yet supported")
 
 
+# CONSTRAINT annotates NumberProxy as their get processed by interpreter.
+# A NumberProxy can be at one of the status:
+# - A DYNAMIC NumberProxy cannot be converted to a static number;
+# - A CONSTRAINABLE NumberProxy is treated as DYNAMIC by default, but it could be converted to STATIC by interpreter;
+# - A STATIC NumberProxy can be treated as a static number, but not necessarily so;
+#   The protocol here is that, if a NumberProxy instance is converted to static, we'll insert a guard logic in prologue trace to ensure the NumberProxy doesn't change at runtime.
+class CONSTRAINT(Enum):
+    DYNAMIC = auto()
+    CONSTRAINABLE = auto()
+    STATIC = auto()
+
+
 # NOTE NumberProxies are NOT Numbers
 # TODO Maybe NumberProxies should be Numbers?
 class NumberProxy(Proxy, NumberProxyInterface):
     def __init__(
-        self, name: str | None = None, value: Number | None = None, *, python_type: type, history: None | tuple = None
+        self,
+        name: str | None = None,
+        value: Number | None = None,
+        *,
+        python_type: type,
+        history: None | tuple = None,
+        constraint: None | CONSTRAINT = None,
     ):
         self.value = value
         self.python_type = python_type
+        if constraint is None:
+            constraint = CONSTRAINT.DYNAMIC
+        self.constraint = constraint
 
         Proxy.__init__(self, name, history=history)
 
@@ -584,6 +612,20 @@ class NumberProxy(Proxy, NumberProxyInterface):
     def known_value(self) -> bool:
         return self.value is not None
 
+    def make_static_constrained(self):
+        baseutils.check(self.constraint != CONSTRAINT.DYNAMIC, lambda: f"dynamic NumberProxy cannot be made static")
+        baseutils.check(self.value is not None, lambda: f"static NumberProxy needs to have value")
+        self.constraint = CONSTRAINT.STATIC
+
+    def make_constrainable(self):
+        self.constraint = CONSTRAINT.CONSTRAINABLE
+
+    def is_static_constrained(self) -> bool:
+        return self.constraint == CONSTRAINT.STATIC
+
+    def is_dynamic(self) -> bool:
+        return self.constraint == CONSTRAINT.DYNAMIC
+
     #
     # Elementwise unary operators
     #
@@ -591,21 +633,19 @@ class NumberProxy(Proxy, NumberProxyInterface):
     # name is the name of the operation in the number language context to perform
     # fn is the function to call if executing outside a language context
     @staticmethod
-    def _elementwise_unary_helper(a, name, fn):
-        trace: None | TraceCtx = get_tracectx()
-
-        langctx: None | LanguageContext
-        try:
-            langctx = get_langctx()
-        except LookupError as le:
-            langctx = None
+    def _elementwise_unary_helper(a, name, fn, type_promotion_kind=None):
 
         vala = pyval(a)
 
-        if trace is None:
-            # Outside of a trace context, operations on NumberProxies are executed by the
-            #   Python interpreter
-
+        trace: None | TraceCtx = get_tracectx()
+        lang: None | LangCtx = None
+        try:
+            lang = get_langctx()
+        except LookupError:
+            pass
+        if trace is None or lang is None:
+            # Outside of a trace or language context, operations on NumberProxies are
+            #   executed by the Python interpreter
             baseutils.check(
                 vala is not None,
                 lambda: f"Trying to {name} a number with an unknown value",
@@ -613,19 +653,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
             )
             return fn(vala)
 
-        if using_jit():
-            method: Callable = resolve_method(name, a)
-            return method(a)
-
-        # NOTE not using_jit
-        #   This is a legacy path to temporarily support developing older components, and will be removed
-        #   in the near future. It fallsback to executing the operation using the Python interpreter
-        #   if no method can be found.
-        try:
-            method = resolve_method(name, a)
-        except Exception as e:
-            return fn(vala)
-
+        method = resolve_method(name, a)
         return method(a)
 
     def __abs__(self):
@@ -661,30 +689,34 @@ class NumberProxy(Proxy, NumberProxyInterface):
     #
 
     @staticmethod
-    def _elementwise_binary_helper(a, b, name, fn):
-        baseutils.check_type(b, (Number, TensorProxy))
+    def _elementwise_binary_helper(a, b, name, fn, type_promotion_kind=None):
+        baseutils.check_type(b, (Number, NumberProxy, TensorProxy))
 
         vala = pyval(a)
         valb = pyval(b) if isinstance(b, NumberProxy) else b
 
         trace: None | TraceCtx = get_tracectx()
-        if trace is None:
+        lang: None | LangCtx = None
+        try:
+            lang = get_langctx()
+        except LookupError:
+            pass
+        if trace is None or lang is None:
             # Outside of a trace or language context, binary operations on NumberProxies are
             #   executed by the Python interpreter
+            baseutils.check(
+                vala is not None and valb is not None,
+                lambda: f"Trying to {name} numbers with unknown values",
+                exception_type=AssertionError,
+            )
             return fn(vala, valb)
 
         if is_jitting():
             fn: Callable = resolve_method(name, a, b)
             return fn(a, b)
 
-        # NOTE not using_jit
-        #   This is a legacy path to temporarily support developing older components, and will be removed
-        #   in the near future
-        if isinstance(b, TensorProxy):
-            tensor_fn = resolve_method(name, a, b)
-            return tensor_fn(a, b)
-
-        return fn(vala, valb)
+        method = resolve_method(name, a, b)
+        return method(a, b)
 
     def __add__(self, other):
         return self._elementwise_binary_helper(self, other, "add", operator.add)
@@ -749,30 +781,54 @@ class NumberProxy(Proxy, NumberProxyInterface):
     def __eq__(self, other):
         # NOTE This short-circuit allows queries like a == (), which is a valid comparison
         #   for a number in Python
-        if not isinstance(other, Number):
+        if not isinstance(other, (Number, NumberProxy)):
             return False
 
-        return self._elementwise_binary_helper(self, other, "eq", operator.eq)
+        from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
+
+        return self._elementwise_binary_helper(
+            self, other, "eq", operator.eq, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+        )
 
     def __ge__(self, other):
-        return self._elementwise_binary_helper(self, other, "ge", operator.ge)
+        from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
+
+        return self._elementwise_binary_helper(
+            self, other, "ge", operator.ge, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+        )
 
     def __gt__(self, other):
-        return self._elementwise_binary_helper(self, other, "gt", operator.gt)
+        from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
+
+        return self._elementwise_binary_helper(
+            self, other, "gt", operator.gt, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+        )
 
     def __le__(self, other):
-        return self._elementwise_binary_helper(self, other, "le", operator.le)
+        from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
+
+        return self._elementwise_binary_helper(
+            self, other, "le", operator.le, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+        )
 
     def __lt__(self, other):
-        return self._elementwise_binary_helper(self, other, "lt", operator.lt)
+        from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
+
+        return self._elementwise_binary_helper(
+            self, other, "lt", operator.lt, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+        )
 
     def __ne__(self, other):
         # NOTE This short-circuit allows queries like a != (), which is a valid comparison
         #   for a number in Python
-        if not isinstance(other, Number):
+        if not isinstance(other, (Number, NumberProxy)):
             return True
 
-        return self._elementwise_binary_helper(self, other, "ne", operator.ne)
+        from thunder.core.utils import ELEMENTWISE_TYPE_PROMOTION_KIND
+
+        return self._elementwise_binary_helper(
+            self, other, "ne", operator.ne, ELEMENTWISE_TYPE_PROMOTION_KIND.ALWAYS_BOOL
+        )
 
     # NOTE This is a bitwise or triggered by the | operator
     # See https://docs.python.org/3/reference/datamodel.html#object.__or__
@@ -884,8 +940,11 @@ class NumberProxy(Proxy, NumberProxyInterface):
         return NotImplemented
 
 
-def pyval(x: Number | str | AnyProxy) -> Number | str | any:
-    baseutils.check_type(x, (Number, str, AnyProxy))
+NumberLike = Number | NumberProxy
+
+
+def pyval(x: NumberLike | str | AnyProxy) -> Number | str | any:
+    baseutils.check_type(x, (NumberProxy, Number, str, AnyProxy))
 
     if isinstance(x, AnyProxy):
         return x._o
@@ -900,15 +959,15 @@ def pytype(x: Proxy) -> type | None:
     if isinstance(x, AnyProxy):
         return type(x._o)
 
-    if isinstance(x, complex):
+    if isinstance(x, (complex, ComplexProxy)):
         return complex
-    if isinstance(x, float):
+    if isinstance(x, (float, FloatProxy)):
         return float
     if isinstance(x, bool):
         return bool
     if isinstance(x, IntegerProxy) and x.python_type is bool:
         return bool
-    if isinstance(x, int):
+    if isinstance(x, (int, IntegerProxy)):
         return int
     if isinstance(x, str):
         return str
@@ -921,15 +980,9 @@ def pytype(x: Proxy) -> type | None:
 
 
 # TODO RC1 Update Proxy number inits to be value, /, *, name, history
-class ComplexProxy(NumberProxy, complex):
-    def __new__(cls, *, name=None, value, history: None | tuple = None):
-        if value is None:
-            value = complex(float("nan"), float("nan"))
-
-        return complex.__new__(cls, value)
-
-    def __init__(self, name=None, value=None, history: None | tuple = None):
-        NumberProxy.__init__(self, name=name, value=value, python_type=complex, history=history)
+class ComplexProxy(NumberProxy):
+    def __init__(self, name=None, value=None, history: None | tuple = None, constraint: None | CONSTRAINT = None):
+        NumberProxy.__init__(self, name=name, value=value, python_type=complex, history=history, constraint=constraint)
 
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
@@ -942,17 +995,19 @@ class ComplexProxy(NumberProxy, complex):
 
 # TODO Review dtype conversions
 # TODO Review -9999 as the marker value for unknown values
-class IntegerProxy(NumberProxy, int):
-    def __new__(cls, *, name: str | None = None, value: Number, history: None | tuple = None):
-        if value is None:
-            value = -9999
-
-        return int.__new__(cls, value)
-
-    def __init__(self, name: str | None = None, value=None, history: None | tuple = None):
+class IntegerProxy(NumberProxy):
+    def __init__(
+        self,
+        name: str | None = None,
+        value=None,
+        history: None | tuple = None,
+        constraint: None | CONSTRAINT = None,
+    ):
         # NOTE bools are also integers in Python
         python_type = bool if isinstance(value, bool) else int
-        NumberProxy.__init__(self, name=name, value=value, python_type=python_type, history=history)
+        NumberProxy.__init__(
+            self, name=name, value=value, python_type=python_type, history=history, constraint=constraint
+        )
 
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
@@ -965,20 +1020,17 @@ class IntegerProxy(NumberProxy, int):
 
     def __repr__(self):
         if self.python_type is bool:
-            return f"[IntegerProxy (bool type) name={self.name}, value={self.value}]"
-        return f"[IntegerProxy name={self.name}, value={self.value}]"
+            return f"[IntegerProxy (bool type) name={self.name}, value={self.value}, static={self.constraint}]"
+        return f"[IntegerProxy name={self.name}, value={self.value}, static={self.constraint}]"
+
+    def __index__(self):
+        return self.value
 
 
 # TODO Review dtype conversions
-class FloatProxy(NumberProxy, float):
-    def __new__(cls, *, name=None, value, history: None | tuple = None):
-        if value is None:
-            value = float("nan")
-
-        return float.__new__(cls, value)
-
-    def __init__(self, name=None, value=None, history: None | tuple = None):
-        NumberProxy.__init__(self, name=name, value=value, python_type=float, history=history)
+class FloatProxy(NumberProxy):
+    def __init__(self, name=None, value=None, history: None | tuple = None, constraint: None | CONSTRAINT = None):
+        NumberProxy.__init__(self, name=name, value=value, python_type=float, history=history, constraint=constraint)
 
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
@@ -989,13 +1041,16 @@ class FloatProxy(NumberProxy, float):
         return f"float {value_str}"
 
     def __repr__(self):
-        return f"[FloatProxy name={self.name}, value={self.value}]"
+        return f"[FloatProxy name={self.name}, value={self.value}, static={self.constraint}]"
 
 
-class DDPType(Enum):
+class DistParallelType(Enum):
     NONE = auto()
     REPLICATED = auto()
     FULLY_SHARDED = auto()
+    # Following two are for tensor parallelism
+    COLUMN_WISE = auto()
+    ROW_WISE = auto()
 
 
 def _infer_tensor_properties(
@@ -1004,13 +1059,15 @@ def _infer_tensor_properties(
     device: devices.Device | None = None,
     dtype: dtypes.dtype | None = None,
     requires_grad: bool | None = None,
-    ddp_type: DDPType | None = None,
+    distparallel_type: DistParallelType | None = None,
+    thunder_fsdp_padding_size: int | None = None,
 ):
     _shape = None
     _device = None
     _dtype = None
     _requires_grad: None | bool = None
-    _ddp_type = DDPType.NONE
+    _dist_parallel_type = DistParallelType.NONE
+    _thunder_fsdp_padding_size = None
 
     if like is not None:
         baseutils.check_type(like, (TensorProxy, FutureTensorProxy))
@@ -1018,7 +1075,7 @@ def _infer_tensor_properties(
         _device = like.device
         _dtype = like.true_dtype
         _requires_grad = like.requires_grad
-        _ddp_type = getattr(like, "ddp_type", DDPType.NONE)
+        _dist_parallel_type = getattr(like, "distparallel_type", DistParallelType.NONE)
 
     if shape is not None:
         baseutils.check_valid_shape(shape)
@@ -1029,15 +1086,13 @@ def _infer_tensor_properties(
     _dtype = dtypes.numbertype_to_dtype(_dtype) if dtypes.is_numbertype(_dtype) else _dtype
     _requires_grad = requires_grad if requires_grad is not None else _requires_grad
     _requires_grad = False if not dtypes.is_inexact_dtype(_dtype) else _requires_grad
-    _ddp_type = ddp_type if ddp_type is not None else _ddp_type
+    _dist_parallel_type = distparallel_type if distparallel_type is not None else _dist_parallel_type
+    _thunder_fsdp_padding_size = (
+        thunder_fsdp_padding_size if thunder_fsdp_padding_size is not None else _thunder_fsdp_padding_size
+    )
 
-    # Extracts actual values for shape
-    # TODO RC1 Enable this
-    if using_symbolic_values():
-        raise NotImplementedError(
-            f"Trying to construct a tensor proxy while using symbolic values, but this is not yet supported"
-        )
-
+    # dynamic shape not yet enabled, otherwise, the bake in should be guarded with if not using_symbolic_values():
+    # dynamic shape support is currently block by #471 https://github.com/Lightning-AI/lightning-thunder/issues/471
     _shape = tuple(pyval(x) for x in _shape)
 
     # Computes derived properties
@@ -1050,14 +1105,33 @@ def _infer_tensor_properties(
     baseutils.check_type(_device, devices.Device)
     baseutils.check_type(_dtype, dtypes.dtype)
     baseutils.check_type(_requires_grad, bool)
-    baseutils.check_type(_ddp_type, DDPType)
+    baseutils.check_type(_dist_parallel_type, DistParallelType)
+    if isinstance(_thunder_fsdp_padding_size, int):
+        baseutils.check(
+            _dist_parallel_type == DistParallelType.FULLY_SHARDED,
+            lambda: f"{_dist_parallel_type = } and {_thunder_fsdp_padding_size = } do not work",
+        )
+        baseutils.check(
+            _thunder_fsdp_padding_size > 0,
+            lambda: f"{_thunder_fsdp_padding_size=} expected to be > 0 or `None`",
+        )
 
     # NOTE for simplicity functions that want to reason about weak dtypes should explicitly request
     #   the true_dtype property
     _true_dtype = _dtype
     _dtype = dtypes.to_strong_dtype(_dtype)
 
-    return _shape, _device, _dtype, _true_dtype, _numel, _ndim, _requires_grad, _ddp_type
+    return (
+        _shape,
+        _device,
+        _dtype,
+        _true_dtype,
+        _numel,
+        _ndim,
+        _requires_grad,
+        _dist_parallel_type,
+        _thunder_fsdp_padding_size,
+    )
 
 
 # NOTE A FutureTensorProxy is intentionally NOT a subclass of TensorProxy
@@ -1084,7 +1158,8 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
             self._numel,
             self._ndim,
             self._requires_grad,
-            _,
+            _,  # distparallel_type
+            _,  # thunder_fsdp_padding_size
         ) = _infer_tensor_properties(
             like,
             shape,
@@ -1125,6 +1200,9 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
     def requires_grad(self):
         return self._requires_grad
 
+    def __repr__(self):
+        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self.shape})>'
+
     def type_string(self):
         return f"FUTURE {self.device} {self.dtype.shortname()}{list(self.shape)}"
 
@@ -1150,8 +1228,9 @@ class TensorProxy(Proxy, TensorProxyInterface):
         dtype: dtypes.dtype | None = None,
         requires_grad: bool | None = None,
         prefix: None | str = None,
-        ddp_type: DDPType | None = None,
+        distparallel_type: DistParallelType | None = None,
         history: None | tuple = None,
+        thunder_fsdp_padding_size: int | None = None,
     ):
         super().__init__(name, prefix=prefix, history=history)
 
@@ -1163,8 +1242,11 @@ class TensorProxy(Proxy, TensorProxyInterface):
             self._numel,
             self._ndim,
             self._requires_grad,
-            self._ddp_type,
-        ) = _infer_tensor_properties(like, shape, device, dtype, requires_grad, ddp_type)
+            self._distparallel_type,
+            self._thunder_fsdp_padding_size,
+        ) = _infer_tensor_properties(
+            like, shape, device, dtype, requires_grad, distparallel_type, thunder_fsdp_padding_size
+        )
 
     # NOTE The following properties DO NOT depend on the language context or record
     #   themselves into the trace, so they can be used when working with tensor proxies
@@ -1194,8 +1276,12 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return self._requires_grad
 
     @property
-    def ddp_type(self):
-        return self._ddp_type
+    def distparallel_type(self):
+        return self._distparallel_type
+
+    @property
+    def thunder_fsdp_padding_size(self):
+        return self._thunder_fsdp_padding_size
 
     # We need to implement `__len__` as
     # > In addition to bypassing any instance attributes in the
@@ -1211,6 +1297,9 @@ class TensorProxy(Proxy, TensorProxyInterface):
     def replace_name(self, name: str):
         """Return a copy of this proxy with the given name."""
         return tensorproxy(self, name=name, history=self.history)
+
+    def __repr__(self):
+        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self.shape})>'
 
     def type_string(self):
         return f"{self.device} {self.dtype.shortname()}{list(self.shape)}"
@@ -1311,6 +1400,13 @@ class TensorProxy(Proxy, TensorProxyInterface):
         method = resolve_method("add", self, other)
         return method(self, other)
 
+    def __iadd__(self, other):
+        return self.add_(other)
+
+    def add_(self, other):
+        method = resolve_method("add_", self, other)
+        return method(self, other)
+
     def __radd__(self, other):
         method = resolve_method("add", other, self)
         return method(other, self)
@@ -1347,6 +1443,13 @@ class TensorProxy(Proxy, TensorProxyInterface):
         method = resolve_method("mul", self, other)
         return method(self, other)
 
+    def __imul__(self, other):
+        return self.mul_(other)
+
+    def mul_(self, other):
+        method = resolve_method("mul_", self, other)
+        return method(self, other)
+
     def __rmul__(self, other):
         method = resolve_method("mul", other, self)
         return method(other, self)
@@ -1355,12 +1458,26 @@ class TensorProxy(Proxy, TensorProxyInterface):
         method = resolve_method("pow", self, other)
         return method(self, other)
 
+    def __ipow__(self, other):
+        return self.pow_(other)
+
+    def pow_(self, other):
+        method = resolve_method("pow_", self, other)
+        return method(self, other)
+
     def __rpow__(self, other):
         method = resolve_method("pow", other, self)
         return method(other, self)
 
     def __sub__(self, other):
         method = resolve_method("sub", self, other)
+        return method(self, other)
+
+    def __isub__(self, other):
+        return self.sub_(other)
+
+    def sub_(self, other):
+        method = resolve_method("sub_", self, other)
         return method(self, other)
 
     def __rsub__(self, other):
@@ -1374,6 +1491,13 @@ class TensorProxy(Proxy, TensorProxyInterface):
     def __rtruediv__(self, other):
         method = resolve_method("true_divide", other, self)
         return method(other, self)
+
+    def __itruediv__(self, other):
+        return self.div_(other)
+
+    def div_(self, other, *, rounding_mode: str | None = None):
+        method = resolve_method("div_", self, other, rounding_mode=rounding_mode)
+        return method(self, other)
 
     #
     # Logical operations
@@ -1494,10 +1618,11 @@ _cls_to_number_proxy_map = {
 
 
 def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple = None) -> TensorProxy:
-    device = devices.device_from_string(str(t.device))
+    device = devices.to_device(t.device)
     dtype = dtypes.to_dtype(t.dtype)
-    # See Note [DistributedDataParallel and ddp_type]
-    ddp_type = getattr(t, "ddp_type", None)
+    # See Note [DistributedDataParallel and distparallel_type]
+    distparallel_type = getattr(t, "distparallel_type", None)
+    _thunder_fsdp_padding_size = getattr(t, "_thunder_fsdp_padding_size", None)
     # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
     return TensorProxy(
         name,
@@ -1505,15 +1630,16 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
         device=device,
         dtype=dtype,
         requires_grad=t.requires_grad,
-        ddp_type=ddp_type,
+        distparallel_type=distparallel_type,
         history=history,
+        thunder_fsdp_padding_size=_thunder_fsdp_padding_size,
     )
 
 
 def futuretensorproxy(
     t: torch.Tensor | TensorProxy | FutureTensorProxy, /, *, name: None | str, history: None | tuple = None
 ) -> FutureTensorProxy:
-    device = devices.device_from_string(str(t.device))
+    device = devices.to_device(t.device)
     dtype = dtypes.to_dtype(t.dtype)
     # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
     return FutureTensorProxy(
@@ -1525,9 +1651,9 @@ def futuretensorproxy(
     )
 
 
-def numberproxy(cls: type, value: Number | None) -> NumberProxy:
+def numberproxy(cls: type, value: Number | None, constraint: None | CONSTRAINT = None) -> NumberProxy:
     pcls = _cls_to_number_proxy_map[cls]
-    return pcls(value=value)
+    return pcls(value=value, constraint=constraint)
 
 
 # TODO RC1 Remove this function

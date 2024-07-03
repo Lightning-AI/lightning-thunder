@@ -5,15 +5,15 @@ from functools import reduce, wraps
 import itertools
 from itertools import chain
 from numbers import Number
-from typing import overload, Generic, Optional, TypeVar, TYPE_CHECKING
+from typing import Any, overload, Generic, Optional, TypeVar, TYPE_CHECKING
 from collections.abc import Callable
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Hashable, Iterable, Iterator, Sequence
 
 from typing_extensions import Self
 
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
-from thunder.core.proxies import Proxy, NumberProxy, TensorProxy, variableify
+from thunder.core.proxies import Proxy, NumberProxy, TensorProxy, variableify, CONSTRAINT
 from thunder.core.baseutils import *
 from thunder.core.codeutils import *
 from thunder.core.trace import TraceCtx
@@ -131,6 +131,22 @@ corresponding_real_dtype = dtypes.corresponding_real_dtype
 corresponding_complex_dtype = dtypes.corresponding_complex_dtype
 
 
+# This function resolves the CONSTRAINT tag from args, by looking at each Proxy instance in args:
+# TODO: we currently only considers NumberProxy could be statically constrained. This is likely going to be extended to other proxies in the future.
+def resolve_constraints(*args):
+    all_static = True
+    for arg in args:
+        if not isinstance(arg, Proxy):
+            continue
+        if not isinstance(arg, NumberProxy) or arg.is_dynamic():
+            return CONSTRAINT.DYNAMIC
+        if not arg.is_static_constrained():
+            all_static = False
+    if all_static:
+        return CONSTRAINT.STATIC
+    return CONSTRAINT.CONSTRAINABLE
+
+
 def higher_dtype(a, b):
     for fn in (
         is_complex_dtype,
@@ -207,7 +223,7 @@ def check_same_dtype(*args):
     numbertype = None
     dtype = None
     for a in args:
-        if isinstance(a, Number):
+        if isinstance(a, (Number, NumberProxy)):
             typ = to_dtype(a)
             if numbertype is None:
                 numbertype = typ
@@ -396,6 +412,7 @@ class ELEMENTWISE_TYPE_PROMOTION_KIND(Enum):
     ALWAYS_BOOL = (3,)
     COMPLEX_TO_FLOAT = (4,)
     BOOL_TO_LONG = (5,)
+    NUMBER_TO_INT = (6,)
 
 
 # TODO: allow dtypes as arguments, too
@@ -447,12 +464,16 @@ def elementwise_type_promotion(*args, type_promotion_kind: ELEMENTWISE_TYPE_PROM
       COMPLEX_TO_FLOAT        : abs
       BOOL_TO_LONG            : pow
       ALWAYS_BOOL             : eq
+      NUMBER_TO_INT           : ceil, floor
     """
 
     # Type checks inputs
     check(len(args) > 0, lambda: f"Execpted one or more arguments for type promotion, but got {args=}")
+    all_number_type = True
     for a in args:
-        check_type(a, (TensorProxy, Number))
+        check_type(a, (TensorProxy, Number, NumberProxy))
+        if not isinstance(a, (Number, NumberProxy)):
+            all_number_type = False
 
     # Computes the promotion type
     extracted = tuple(to_dtype(x, true_dtype=True) for x in args)
@@ -474,6 +495,13 @@ def elementwise_type_promotion(*args, type_promotion_kind: ELEMENTWISE_TYPE_PROM
         return promotiontype, dtypes.corresponding_real_dtype(promotiontype)
 
     if type_promotion_kind is ELEMENTWISE_TYPE_PROMOTION_KIND.BOOL_TO_LONG and is_boolean_dtype(promotiontype):
+        return int, int
+
+    if (
+        type_promotion_kind is ELEMENTWISE_TYPE_PROMOTION_KIND.NUMBER_TO_INT
+        and is_float_dtype(promotiontype)
+        and all_number_type
+    ):
         return int, int
 
     # Falls through to DEFAULT
@@ -613,7 +641,7 @@ def validate_idx(rank: int, idx: int):
     """
 
     check(
-        isinstance(idx, int) and idx >= 0 and (idx < rank or idx == 0),
+        isinstance(idx, (int, NumberProxy)) and idx >= 0 and (idx < rank or idx == 0),
         lambda: f"Found invalid index {idx} for rank {rank}!",
     )
 
@@ -753,6 +781,10 @@ class FrozenDict(_UserDictT[T, T1], Mapping[T, T1]):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
+
+        if not all([is_hashable(v) for _, v in self.data.items()]):
+            raise TypeError("FrozenDict cannot be created from dict containing unhashable types")
+
         self.data = MappingProxyType({**self.data})
 
     def __repr__(self) -> str:
@@ -1111,3 +1143,19 @@ def partition(pred, iterable):
     # partition(is_odd, range(10)) --> 0 2 4 6 8   and  1 3 5 7 9
     t1, t2 = itertools.tee(iterable)
     return itertools.filterfalse(pred, t1), filter(pred, t2)
+
+
+def is_hashable(a: Any, /) -> bool:
+    if isinstance(a, tuple):
+        return all([is_hashable(x) for x in a])
+    return isinstance(a, Hashable)
+
+
+def make_hashable(a: Any, /) -> tuple | FrozenDict:
+    if isinstance(a, Hashable) and not isinstance(a, tuple):
+        return a
+    if isinstance(a, Sequence):
+        return tuple(map(make_hashable, a))
+    if isinstance(a, dict):
+        return FrozenDict(map(lambda item: (item[0], make_hashable(item[1])), a.items()))
+    return id(a)

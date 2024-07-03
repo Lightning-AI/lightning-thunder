@@ -1,5 +1,5 @@
 from types import CodeType, FunctionType, MethodType, EllipsisType
-from typing import List, Dict, Tuple, Set, Deque, Any
+from typing import List, Dict, Tuple, Set, Deque, Any, NamedTuple
 from numbers import Number
 from collections import deque
 from collections.abc import Mapping, Sequence, Iterable
@@ -9,6 +9,8 @@ import string
 import functools
 from functools import partial
 import dis
+import linecache
+import dataclasses
 
 import torch
 
@@ -57,6 +59,17 @@ def is_simple_printable_collection(x: Any) -> bool:
     )
 
     return type(x) in simple_printable_collection_types
+
+
+def _generate_dataclass_class_name(x: object):
+    # x is an instance of a Dataclass.
+    # We generate a name for the Dataclass based on the package name and class name so that trace won't have problem
+    # if there are conflicting names.
+    assert dataclasses.is_dataclass(x)
+    name = (x.__class__.__module__ + "_" + x.__class__.__qualname__).replace(".", "_")
+    # Class could be a local class in which case it will have `<locals>` in it's module name.
+    name = name.replace(">", "_").replace("<", "_")
+    return name
 
 
 def is_printable(x: Any) -> tuple[bool, None | tuple[str, Any]]:
@@ -122,13 +135,18 @@ def to_printable(
 
     if is_collection(x):
         flat, spec = tree_flatten(x)
-
         printables = []
         for f in flat:
             printables.append(to_printable(trace, f, import_ctx=import_ctx, object_ctx=object_ctx))
 
         printable = tree_unflatten(printables, spec)
         return printable
+
+    if dataclasses.is_dataclass(x):
+        # Add `class` to the object_ctx so that we can reuse it during the trace execution.
+        object_ctx[_generate_dataclass_class_name(x)] = x.__class__
+        # Return the instance as printable object (as function `prettyprint` knows how to deal with it).
+        return x
 
     # NOTE In this case the object is not a collection, and
     #   it may require an import or additional context to print
@@ -211,12 +229,52 @@ def prettyprint(
     if isinstance(x, dtypes.dtype):
         return m(f"dtypes.{str(x)}")
     if isinstance(x, devices.Device):
-        return m(f'devices.Device("{str(x)}")')
+        return m(f'devices.Device("{x.device_str()}")')
     if type(x) is type:
         return m(f"{baseutils.print_type(x, with_quotes=False)}")
+    if dataclasses.is_dataclass(x):
+        # For a dataclass instance of class
+        # class MyContainer:
+        #    int i
+        #    float f
+        # This will be represented in the trace as `packagename1_MyContainer(i=x, f=y)` where `x` and `y` could be concrete number
+        # or proxies.
+        #
+        # NOTE: The `class` packagename1_MyContainer will present in `import_ctx` and passed to the compiled function.
+        # This is taken care of by function `to_printable`.
+        name = _generate_dataclass_class_name(x)
+        call_repr = []
+        for k, v in x.__dict__.items():
+            try:
+                call_repr.append(f"{k}={v.name}")
+            except:
+                call_repr.append(f"{k}={v}")
+        call_repr_str = ",".join(call_repr)
+        return m(f"{name}({call_repr_str})")
 
     # Handles objects that this doesn't know how to serialize as a string
     return m(f"(object of type {print_type(type(x), with_quotes=False)})")
+
+
+# Use dis.Positions in 3.11+ and make it up in <3.11
+if sys.version_info < (3, 11):
+
+    class Positions(NamedTuple):
+        lineno: int = None
+        end_lineno: int = None
+        col_offset: int = None
+        end_col_offset: int = None
+
+else:
+    Positions = dis.Positions
+
+
+def get_source_line(filename: str, lineno: int) -> str:
+    ls = linecache.getlines(filename)
+    if lineno <= 0 or lineno > len(ls):
+        return ""
+    else:
+        return ls[lineno - 1].rstrip()
 
 
 # TODO Make this a frozen dataclass?

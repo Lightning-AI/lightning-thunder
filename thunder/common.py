@@ -1,15 +1,9 @@
 import dis
-from typing import Any, Optional
-from collections.abc import Generator
-from collections.abc import Callable
-from enum import Enum, auto
+from typing import Any
+from collections.abc import Callable, Generator, Hashable, Sequence
 from collections import deque, defaultdict
-from contextlib import contextmanager
 import time
-import warnings
-from collections.abc import Hashable, Sequence
 from functools import wraps
-import os
 from io import StringIO
 
 from thunder.core.options import (
@@ -20,7 +14,6 @@ from thunder.core.options import (
 )
 from thunder.core.utils import check, is_collection
 from thunder.core.pytree import tree_flatten, tree_map
-from thunder.cudagraphs import CUDAGraphExecutor
 from thunder.core.compile_data import compile_data_and_stats
 import thunder.core.langctxs as langctxs
 from thunder.core.langctxs import set_langctx, reset_langctx, LanguageContext, resolve_language, Languages
@@ -31,11 +24,19 @@ from thunder.core.trace import (
     set_tracectx,
     reset_tracectx,
 )
-from thunder.core.transform_common import dce, cse
-from thunder.core.proxies import is_proxyable, proxy, Proxy, CollectionProxy, TensorProxy, DDPType, FutureTensorProxy
+from thunder.core.transform_common import dce
+from thunder.core.proxies import (
+    is_proxyable,
+    proxy,
+    Proxy,
+    CollectionProxy,
+    TensorProxy,
+    DistParallelType,
+    FutureTensorProxy,
+)
 import thunder.core.prims as prims
 import thunder.distributed as dist
-import thunder.torch as ltorch
+import thunder.torch as ltorch  # we need to import thunder.torch before the below for import ordering...
 from thunder.extend import Executor, get_default_executors, get_always_executors, OperatorExecutor, add_executor_lists
 import thunder.executors as executors
 from thunder.core.transforms import autocast
@@ -53,6 +54,46 @@ import numpy as np
 # TODO RC1 Update last_executed to last_computation
 # TODO RC1 Review how autograd traces are presented
 class CompileStats:
+    """A class holding statistics and caches for a compiled function.
+
+    .. note::
+        It is highly recommended that some attributes such as :attr:`CompileStats.last_traces` and
+        :attr:`CompileStats.last_backward_traces` via :func:`thunder.last_traces` and
+        :func:`thunder.last_backward_traces`, respectively.
+        See :mod:`thunder` for more of such utility functions.
+
+    Attributes:
+        last_executed:
+        last_traces (Sequence[TraceCtx]):
+        last_prologue (TraceCtx):
+        last_prologue_traces (Sequence[TraceCtx]):
+        last_interpreted_instructions (Generator[dist.Instruction, None, None] | None):
+        last_interpreter_log (list[InterpreterLogItem] | None):
+        last_backward_traces (Sequence[TraceCtx]):
+        last_trace_host_start (int):
+        last_trace_host_stop (int):
+        last_trace_cache_start (int):
+        last_trace_cache_stop (int):
+        last_trace_tracing_start (int):
+        last_trace_tracing_stop (int):
+        last_trace_host_execution_start (int):
+        last_trace_host_execution_stop (int):
+        last_prologue_transformation_start (int):
+        last_prologue_transformation_stop (int):
+        last_prologue_execution_start (int):
+        last_prologue_execution_stop (int):
+        last_computation_transformation_start (int):
+        last_computation_transformation_stop (int):
+        last_computation_execution_start (int):
+        last_computation_execution_stop (int):
+        cache (dict):
+        interpreter_cashe (list):
+        calls (int):
+        cache_hits (int):
+        cache_misses (int):
+        last_compile_reasons (dict):
+    """
+
     def __init__(self):
         # Callables and traces
         self.last_executed = None
@@ -137,6 +178,11 @@ class CompileStats:
 #   like additional_param_names
 # TODO RC1 Rename this to CompileOptions
 class CompileData:
+    """A class holding data about the compiled object.
+
+    Data include statistics about how it's been called.
+    """
+
     def __init__(
         self,
         *,
@@ -513,7 +559,10 @@ def trace(
                 )
 
                 def ddp_sync(arg: Any | TensorProxy) -> Any | TensorProxy:
-                    if isinstance(arg, TensorProxy) and arg.ddp_type in (DDPType.REPLICATED, DDPType.FULLY_SHARDED):
+                    if isinstance(arg, TensorProxy) and arg.distparallel_type in (
+                        DistParallelType.REPLICATED,
+                        DistParallelType.FULLY_SHARDED,
+                    ):
                         return dist.prims.synchronize(arg, compile_data.process_group_for_ddp)
                     else:
                         return arg
@@ -591,9 +640,8 @@ def transform_for_execution(
     return traces
 
 
-# Executes the trace with the given args and kwargs and returns the result,
-#   the callable executed, and the series of traces constructed to produce
-#   that callable from the trace
+# NOTE: Do not use this function and do not update it.
+# Use `thunder.jit` instead.
 def _execute_trace(
     trc: TraceCtx,
     *,
@@ -616,15 +664,11 @@ def _execute_trace(
 
     # Applies post-optimization transforms
     for transform in post_optimization_transforms:
-        extrace = transform(extrace)
+        extrace = transform.transform_trace(extrace)
         extraces.append(extrace)
 
     # Constructs the Python callable
     c = extrace.python_callable()
-
-    # TODO RC1 Mark this option as experimental
-    if compile_data.use_cudagraphs:
-        c = CUDAGraphExecutor(c, num_constant_args=compile_data.num_constant_args)
 
     # Executes the operation
     result: Any = c(*args, **kwargs)
@@ -643,14 +687,16 @@ def _execute_trace(
 #   a helper to convert torch tensors to NumPy arrays on output?
 
 
+# NOTE: Do not use this function and do not update it.
+# Use `thunder.jit` instead.
 def _create_callable(
     cd: CompileData,
     cs: CompileStats,
-    *,
-    transforms: list[Callable] = [],
-    post_optimization_transforms: list[Callable] = [],
-    _using_grad_transform: bool = False,
 ) -> Callable:
+    transforms = []
+    post_optimization_transforms = []
+    _using_grad_transform = False
+
     @wraps(cd.fn)
     def _fn(*args, **kwargs) -> tuple[Any, list[TraceCtx]]:
         cs.last_trace_host_start = time.time_ns()
@@ -768,7 +814,7 @@ def _create_callable(
 
             # Applies transforms
             for transform in transforms:
-                trc = transform(trc, executors_list=cd.executors_list)
+                trc = transform.transform_trace(trc, executors_list=cd.executors_list)
                 traces.append(trc)
 
             #

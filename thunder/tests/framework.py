@@ -6,6 +6,7 @@ from functools import wraps, singledispatchmethod, partial
 from itertools import product
 from typing import List, Optional
 from collections.abc import Callable, Sequence, Iterable
+import packaging.version
 
 import pytest
 import torch
@@ -58,6 +59,15 @@ DISABLE_CUDA_TEST_INSTANTIATION: bool = (
     env_var_DISABLE_CUDA_TEST_INSTANTIATION == "true" or env_var_DISABLE_CUDA_TEST_INSTANTIATION == "1"
 )
 IS_WINDOWS = platform.system() == "Windows"
+
+
+def version_between(version: str, *, min_ver: str | None = None, max_ver: str | None = None):
+    v = packaging.version.parse(version)
+    if min_ver is not None and v < packaging.version.parse(min_ver):
+        return False
+    if max_ver is not None and v > packaging.version.parse(max_ver):
+        return False
+    return True
 
 
 # Filters the CPU devicetype when in CI, CUDA is available, and the environment variable
@@ -172,7 +182,7 @@ class nvFuserTestExecutor(TestExecutor):
     name = "nvfuser"
     supported_devicetypes = (devices.DeviceType.CUDA,)
     supported_dtypes = (
-        datatypes.floating,
+        *datatypes.float_math_dtypes,
         datatypes.bool8,
         datatypes.int32,
         datatypes.int64,
@@ -266,14 +276,15 @@ def _instantiate_executor_test_template(
 ) -> Callable:
     devicetype: devices.DeviceType
     device_str: str | list[str]
+    devicetype = device_or_devices
     if isinstance(device_or_devices, devices.Device):
         devicetype = device_or_devices.devicetype
-        device_str = str(device_or_devices)
+        device_str = device_or_devices.device_str()
     else:
         devicetype = device_or_devices[0].devicetype
         device_str = []
         for device in device_or_devices:
-            device_str.append(str(device))
+            device_str.append(device.device_str())
 
     devicetype_str = devices.devicetype_string(devicetype)
     template_name = as_name if as_name is not None else template.__name__
@@ -347,7 +358,9 @@ class ops:
         self.supported_devicetypes = set(filter_ci_devicetypes(self.supported_devicetypes))
 
         self.supported_dtypes = (
-            datatypes.resolve_dtypes(supported_dtypes) if supported_dtypes is not None else datatypes.all_dtypes
+            datatypes.resolve_dtypes(supported_dtypes)
+            if supported_dtypes is not None
+            else datatypes.all_dtypes - datatypes.float_8bit_dtypes
         )
 
         if supported_dtypes == NOTHING:

@@ -98,16 +98,19 @@ class ThunderFunction(torch.autograd.Function):
         assert not saved_tensors_list, "saved_tensors_list must be empty after calling compiled_backward"
         # TODO(crcrpar): Remove if-else once `dist_prims.stash_grad_for_fsdp` starts to return `None`
         # NOTE(crcrpar): In fsdp no-sync, unsharded gradients are attached and accumulated to their parameters as the attr of `_thunder_fsdp_unsharded_grad` in order to avoid shape mismatch of a param and its grad. When exiting the no_sync context, the accumulated, unsharded gradients are reduce-scattered into the attr of `grad` and `_thunder_fsdp_unsharded_grad` is removed.
-        if ctx.return_none_instead_of_grads:
-            return (None, None, None, None, None, *([None] * len(grads)))
-        return (None, None, None, None, None, *grads)
+        if not ctx.return_none_instead_of_grads:
+            return (None, None, None, None, None, *grads)
+        else:
+            n_grads = len(grads)
+            del grads
+            return (None, None, None, None, None, *([None] * n_grads))
 
 
 def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stats, /, *flat_args):
     from thunder.core.rematerialization import rematerialize_all_gather, rematerialize_forward_and_backward
     from thunder.core.transforms import forward_and_backward_from_trace
     from thunder.distributed.transforms import FSDPCommBucketing
-    from thunder.distributed.utils import sort_data_parallel_syncs, sort_waits, sort_waits_for_zero3
+    from thunder.distributed.utils import sort_data_parallel_syncs, sort_waits, sort_communication_ops
     from thunder.executors.passes import del_last_used, transform_for_execution
 
     utils.check(compile_data is not None, lambda: "`compile_data` is required")
@@ -158,7 +161,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     _fsdp_comm_bucketing: FSDPCommBucketing | None = None
     if getattr(compile_data.fn, "use_fsdp", False):
         _fsdp_comm_bucketing = FSDPCommBucketing(compile_data, computation_trc)
-        fw_trace = _fsdp_comm_bucketing.apply_bucketing_to_forward_trace(fw_trace, bw_trace.names)
+        fw_trace = _fsdp_comm_bucketing.apply_bucketing_to_forward_trace(fw_trace)
 
     # Now we can run the optimization passes on the forward trace
     # TODO Restore request for no rematerialization
@@ -193,10 +196,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
         skip_subsymbols=False,
     )
     bw_trace.bound_symbols = new_bsyms
-    if getattr(compile_data.fn, "use_ddp", False):
-        from thunder.distributed.transforms import optimize_allreduce_in_ddp_backward
 
-        bw_trace = optimize_allreduce_in_ddp_backward(bw_trace, compile_data)
     if getattr(compile_data.fn, "use_fsdp", False):
         bw_trace = _fsdp_comm_bucketing.apply_bucketing_to_backward_trace(bw_trace)
 
@@ -223,20 +223,31 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
             from thunder.distributed import FSDPBucketingStrategy
             from thunder.distributed.utils import limit_in_flight_allgathers
 
-            fw_extrace = sort_waits_for_zero3(fw_extrace)
+            fw_extrace = sort_communication_ops(fw_extrace)
             fw_extrace = limit_in_flight_allgathers(
                 fw_extrace,
                 3,
                 compile_data.fn.bucketing_strategy != FSDPBucketingStrategy.NONE,
             )
-            bw_extrace = sort_waits_for_zero3(bw_extrace)
+            bw_extrace = sort_communication_ops(bw_extrace)
             bw_extrace = limit_in_flight_allgathers(
                 bw_extrace,
                 3,
                 compile_data.fn.bucketing_strategy != FSDPBucketingStrategy.NONE,
             )
         if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO2:
-            fw_extrace = sort_waits(fw_extrace)
+            from thunder.distributed import FSDPBucketingStrategy
+            from thunder.distributed.utils import limit_in_flight_allgathers
+            from sys import maxsize as INT_MAX
+
+            # sort the allgather+wait as consumer order just before consumer
+            fw_extrace = sort_communication_ops(fw_extrace)
+            # unlimited number of allgathers, i.e. allgathers are listed at the beginning of the trace in consumer order and wait stays just before wait
+            fw_extrace = limit_in_flight_allgathers(
+                fw_extrace,
+                INT_MAX,
+                compile_data.fn.bucketing_strategy != FSDPBucketingStrategy.NONE,
+            )
             bw_extrace = sort_waits(bw_extrace)
     if getattr(compile_data.fn, "use_ddp", False):
         bw_extrace = sort_waits(bw_extrace)
@@ -251,7 +262,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     fw_extrace = del_last_used(fw_extrace)
     fw_traces.append(fw_extrace)
 
-    bw_extrace = del_last_used(bw_extrace, clear_collections=True)
+    bw_extrace = del_last_used(bw_extrace, clear_mutable_collections=True)
     bw_traces.append(bw_extrace)
 
     bw_trace = rename_bwd_trace_outputs(bw_extrace, fw_extrace)

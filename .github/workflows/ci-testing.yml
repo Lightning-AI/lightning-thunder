@@ -97,7 +97,11 @@ jobs:
       - name: Testing Distributed
         # run all found tests in given past as standalone
         if: matrix.python-version == '3.10' && runner.os == 'Linux'
-        run: bash scripts/run_standalone_tests.sh "thunder/tests/distributed"
+        run: |
+          pytest thunder/tests/distributed/ \
+            -v --datefmt="%Y%m%d-%H:%M:%S.%f" \
+            --random-order-seed=$GITHUB_RUN_ID \
+            --durations=250
 
       - name: Testing just a few
         if: matrix.python-version == '3.11'
