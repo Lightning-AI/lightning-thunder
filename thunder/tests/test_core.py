@@ -2907,4 +2907,4 @@ def test_dtype_in_trace():
     assert tr.bound_symbols[1].sym == ltorch.to
     (pystr,) = tr.bound_symbols[1].subsymbols[0].python(0)
 
-    assert "convert_element_type(x, thunder.dtypes.float16)" in pystr
+    assert "convert_element_type(x, dtypes.float16)" in pystr
