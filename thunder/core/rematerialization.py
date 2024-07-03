@@ -172,7 +172,7 @@ def apply_rematerialization_for_consumer(
     # construct recompute_trace
     recompute_trace = TraceCtx(None)
     recompute_trace.bound_symbols = list(recomputing_symbols)
-    recompute_trace.args=real_inp
+    recompute_trace.args = real_inp
 
     from thunder.core.prims import python_return
 
@@ -188,8 +188,10 @@ def apply_rematerialization_for_consumer(
     new_recompute_trace.names.update(all_names)
     with tracectx(new_recompute_trace):
         new_outs = eval_trace(recompute_trace, *real_inp)
-    replace_map = {variableify(old_out):new_out for old_out, new_out in utils.safe_zip(recompute_trace.output, new_outs)}
-    updated_consumer_subsymbols=[]
+    replace_map = {
+        variableify(old_out): new_out for old_out, new_out in utils.safe_zip(recompute_trace.output, new_outs)
+    }
+    updated_consumer_subsymbols = []
     [updated_consumer_subsymbols.append(bsym.from_bsym_swap_proxies(replace_map)) for bsym in consumer.subsymbols]
 
     all_names.update(new_recompute_trace.names)
@@ -573,7 +575,9 @@ def rematerialize(trace: TraceCtx) -> TraceCtx:
             external_producer_outputs += computed_cuts_for_producers.get(producer, tuple())
 
             updated_producer = apply_rematerialization_for_producer(external_producer_outputs, current_producer, cut)
-            updated_consumer = apply_rematerialization_for_consumer(current_producer, current_consumer, cut, record_names)
+            updated_consumer = apply_rematerialization_for_consumer(
+                current_producer, current_consumer, cut, record_names
+            )
             # As we replace bound symbols of the input trace with updated ones every iteration,
             # we should keep track of the map of `current` to `updated` as well as `producer`/`consumer`
             # to `updated` ones.

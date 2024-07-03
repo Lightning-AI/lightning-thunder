@@ -520,7 +520,7 @@ def trace(
     include_return_statement: bool = True,
     use_dce: bool = True,
     insert_ddp_syncs: bool = False,
-    exclude_names: None | Sequence[str] = None
+    exclude_names: None | Sequence[str] = None,
 ) -> Callable:
     @make_opaque
     def _trace(
