@@ -1302,7 +1302,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self.shape})>'
 
     def type_string(self):
-        return f"{self.device} {self.dtype.shortname()}{list(self.shape)}"
+        return f"{self.device.device_str()} {self.dtype.shortname()}{list(self.shape)}"
 
     # NOTE __getattr__ is overridden to support language-specific methods
     def __getattr__(self, attr: str, /):
