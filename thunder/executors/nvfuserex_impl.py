@@ -116,6 +116,8 @@ def getnv(x: Any, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
         return lc_to_nv_map[x]
     if isinstance(x, (Number, dtypes.dtype, type, Device)):
         return _define_constant(fd, x)
+    if isinstance(x, Sequence):
+        return tuple((getnv(i, fd, lc_to_nv_map) for i in x))
 
     utils.check(False, lambda: f"Cannot translate {x} of type {type(x)} to an nvFuser object")
 
@@ -1198,11 +1200,12 @@ def _reshape_check(a: TensorProxy, shape: list[int]) -> bool:
 
 def reshape(a: TensorProxy, shape: list[int], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nv_a = getnv(a, fd, lc_to_nv_map)
+    nv_shape = getnv(shape, fd, lc_to_nv_map)
 
     if nv_version < LooseVersion("0.0.22"):
-        return fd.ops.reshape(nv_a, a.shape, shape)
+        return fd.ops.reshape(nv_a, a.shape, nv_shape)
     else:
-        return fd.ops.reshape(nv_a, shape)
+        return fd.ops.reshape(nv_a, nv_shape)
 
 
 register_supported(PrimIDs.RESHAPE, reshape, _reshape_check)
