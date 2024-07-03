@@ -203,11 +203,11 @@ class Benchmark_litGPT:
         if is_transformer_engine(low_precision_mode) and "thunder" not in self.compile:
             te_precision = TransformerEnginePrecision(weights_dtype=torch.bfloat16, replace_layers=True)
             converted_model = te_precision.convert_module(self.model)
-            
+
             def call_model_with_fp8autocast(*args, **kwargs):
                 with te.fp8_autocast(enabled=True):
                     return converted_model(*args, **kwargs)
-            
+
             self.model.__call__ = call_model_with_fp8autocast
 
         # Setup the distributed algorithm choices
