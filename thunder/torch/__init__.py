@@ -147,8 +147,11 @@ class torchsymbol:
 
         autocast_impl: Callable | None = _maybe_get_autocast_rule_for_symbol(sym)
 
+        # `mapping_fn` is used to map `torch` -> `thunder.torch`
+        # If autocast is enabled - it will also take care of casting the inputs
+        # as per autocast rule else it will be just the symbol.
+        mapping_fn = sym
         if autocast_impl is not None:
-            org_sym = sym
 
             @wraps(sym)
             def maybe_autocast(*args, **kwargs):
@@ -157,26 +160,26 @@ class torchsymbol:
                 cd = get_compile_data()
                 if getattr(cd, "is_autocast_enabled", False):
                     return partial(autocast_impl, dtype=cd.autocast_thunder_dtype)(*args, **kwargs)
-                return org_sym(*args, **kwargs)
+                return sym(*args, **kwargs)
 
-            sym = maybe_autocast
+            mapping_fn = maybe_autocast
 
         if self.is_method:
             method_name: str = self.method_name if self.method_name is not None else fn.__name__
-            register_method(method_name, sym)
+            register_method(method_name, mapping_fn)
             torch_method: None | Callable = getattr(torch.Tensor, method_name, None)
             if torch_method is not None:
-                _torch_to_thunder_function_map[torch_method] = sym
+                _torch_to_thunder_function_map[torch_method] = mapping_fn
         elif self.is_property:
             method_name: str = self.method_name if self.method_name is not None else fn.__name__
-            register_property(method_name, sym)
+            register_property(method_name, mapping_fn)
             torch_property = getattr(torch.Tensor, method_name, None)
             if torch_property is not None:
-                _torch_to_thunder_function_map[torch_property] = sym
+                _torch_to_thunder_function_map[torch_property] = mapping_fn
 
         if self.torchfns is not None:
             for torchfn in self.torchfns:
-                _torch_to_thunder_function_map[torchfn] = sym
+                _torch_to_thunder_function_map[torchfn] = mapping_fn
 
         if self.tags and prims.OpTags.IN_PLACE in self.tags:
             _inplace_to_out_of_place[sym] = globals()[name[:-1]], -1
