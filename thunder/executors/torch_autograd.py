@@ -165,6 +165,9 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
 
     # Now we can run the optimization passes on the forward trace
     # TODO Restore request for no rematerialization
+
+    # rematerialization could change the names, the new names used in rematerialization need to be new
+    fw_trace.names.update(bw_trace.names)
     fw_extrace = transform_for_execution(
         fw_trace,
         executors_list=compile_data.executors_list,
@@ -202,6 +205,8 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
 
     # Now we can run the optimization passes on the backward trace
     # TODO Restore request for no rematerialization
+    # rematerialization could change the names, the new names used in rematerialization need to be new
+    bw_trace.names.update(fw_extrace.names)
     bw_extrace = transform_for_execution(
         bw_trace,
         executors_list=compile_data.executors_list,

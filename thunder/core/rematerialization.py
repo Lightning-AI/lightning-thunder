@@ -135,6 +135,7 @@ def apply_rematerialization_for_consumer(
     producer: BoundSymbolInterface,
     consumer: BoundSymbolInterface,
     cut: Sequence[ProxyInterface | str],
+    all_names: Sequence[str],
 ) -> BoundSymbolInterface:
     """Update the consumer node with the cut information.
 
@@ -165,8 +166,34 @@ def apply_rematerialization_for_consumer(
     trace = TraceCtx(None)
     trace.bound_symbols = (*producer.subsymbols, *consumer.subsymbols)
 
-    recomputing_symbols = utils.find_producer_symbols(trace, rematerialized_inputs, cut_inputs)
-    new_subsymbols = recomputing_symbols + tuple(consumer.subsymbols)
+    real_inp = []
+    recomputing_symbols = utils.find_producer_symbols(trace, rematerialized_inputs, cut_inputs, real_inputs=real_inp)
+
+    # construct recompute_trace
+    recompute_trace = TraceCtx(None)
+    recompute_trace.bound_symbols = list(recomputing_symbols)
+    recompute_trace.args=real_inp
+
+    from thunder.core.prims import python_return
+
+    tmp = tuple(x for x in rematerialized_inputs if x.name not in map(lambda x: x.name, real_inp))
+    returnop = python_return.bind(tmp, output=())
+    recompute_trace.bound_symbols.append(returnop)
+
+    from thunder.core.trace import tracectx
+    from thunder.core.transforms import eval_trace
+
+    # Construct new_recompute_trace without name collision
+    new_recompute_trace = TraceCtx(None)
+    new_recompute_trace.names.update(all_names)
+    with tracectx(new_recompute_trace):
+        new_outs = eval_trace(recompute_trace, *real_inp)
+    replace_map = {variableify(old_out):new_out for old_out, new_out in utils.safe_zip(recompute_trace.output, new_outs)}
+    updated_consumer_subsymbols=[]
+    [updated_consumer_subsymbols.append(bsym.from_bsym_swap_proxies(replace_map)) for bsym in consumer.subsymbols]
+
+    all_names.update(new_recompute_trace.names)
+    new_subsymbols = tuple(new_recompute_trace.bound_symbols) + tuple(updated_consumer_subsymbols)
 
     # Some recomputing_symbols might require producer's inputs, so we need to
     # add them to the consumer's inputs.
@@ -526,6 +553,7 @@ def rematerialize(trace: TraceCtx) -> TraceCtx:
     consumers = {consumer for _, consumer in pairs}
     new_bsyms = {bsym: bsym for bsym in producers | consumers}
     computed_cuts_for_producers = defaultdict(tuple)
+    record_names = set(trace.names)
     for i, (producer, consumer) in enumerate(pairs):
         current_producer = new_bsyms.get(producer, None) or producer
         current_consumer = new_bsyms.get(consumer, None) or consumer
@@ -545,7 +573,7 @@ def rematerialize(trace: TraceCtx) -> TraceCtx:
             external_producer_outputs += computed_cuts_for_producers.get(producer, tuple())
 
             updated_producer = apply_rematerialization_for_producer(external_producer_outputs, current_producer, cut)
-            updated_consumer = apply_rematerialization_for_consumer(current_producer, current_consumer, cut)
+            updated_consumer = apply_rematerialization_for_consumer(current_producer, current_consumer, cut, record_names)
             # As we replace bound symbols of the input trace with updated ones every iteration,
             # we should keep track of the map of `current` to `updated` as well as `producer`/`consumer`
             # to `updated` ones.
@@ -557,6 +585,8 @@ def rematerialize(trace: TraceCtx) -> TraceCtx:
 
     rematerialized_trace = from_trace(trace)
     rematerialized_trace.bound_symbols = tuple(new_bsyms.get(bsym, bsym) for bsym in trace.bound_symbols)
+    # update the namespace if the apply_rematerialization_for_consumer generates new names
+    rematerialized_trace.names.update(record_names)
 
     end_time_ns = time.time_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
