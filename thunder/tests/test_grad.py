@@ -547,6 +547,11 @@ def test_vjp_correctness_index_put_manual(op, device, dtype, executor, comp):
     supported_devicetypes=(devices.DeviceType.CUDA,),
 )
 def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
+    if version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"):
+        raise pytest.skip(
+            "https://github.com/Lightning-AI/lightning-thunder/issues/703",
+        )
+
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
         from thunder.executors.sdpaex import sdpa_ex
 
