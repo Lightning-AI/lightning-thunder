@@ -61,13 +61,11 @@ def _run_fwd_bwd_one_microbatch(
     input_ids: torch.Tensor,
     targets: torch.Tensor,
     gradient_accumulation_steps: int,
-    low_precision_mode: str,
     device: torch.device,
 ) -> torch.Tensor:
     input_ids = input_ids.to(device)
     targets = targets.to(device)
-    with te.fp8_autocast(enabled=is_transformer_engine(low_precision_mode)):
-        logits = model(input_ids)
+    logits = model(input_ids)
     logits = logits.reshape(-1, logits.size(-1))
     targets = targets.reshape(-1)
     loss = torch.nn.functional.cross_entropy(logits, targets, ignore_index=-1) / gradient_accumulation_steps
@@ -204,7 +202,13 @@ class Benchmark_litGPT:
         # fp8-delayed-te precision for thunder is handled through compile
         if is_transformer_engine(low_precision_mode) and "thunder" not in self.compile:
             te_precision = TransformerEnginePrecision(weights_dtype=torch.bfloat16, replace_layers=True)
-            self.model = te_precision.convert_module(self.model)
+            converted_model = te_precision.convert_module(self.model)
+            
+            def call_model_with_fp8autocast(*args, **kwargs):
+                with te.fp8_autocast(enabled=True):
+                    return converted_model(*args, **kwargs)
+            
+            self.model.__call__ = call_model_with_fp8autocast
 
         # Setup the distributed algorithm choices
         self.model = self.setup_distributed(self.model)
@@ -425,8 +429,7 @@ class Benchmark_litGPT:
                     input_ids, targets = next(self.train_data_iter)
                     input_ids = input_ids.to(self.device)
                     targets = targets.to(self.device)
-                    with te.fp8_autocast(enabled=is_transformer_engine(self.low_precision_mode)):
-                        logits = self.model(input_ids)
+                    logits = self.model(input_ids)
                     logits = logits.reshape(-1, logits.size(-1))
                     targets = targets.reshape(-1)
                     loss = (
@@ -438,8 +441,7 @@ class Benchmark_litGPT:
             input_ids, targets = next(self.train_data_iter)
             input_ids = input_ids.to(self.device)
             targets = targets.to(self.device)
-            with te.fp8_autocast(enabled=is_transformer_engine(self.low_precision_mode)):
-                logits = self.model(input_ids)
+            logits = self.model(input_ids)
             logits = logits.reshape(-1, logits.size(-1))
             targets = targets.reshape(-1)
             loss = (
