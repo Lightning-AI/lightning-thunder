@@ -541,10 +541,6 @@ def test_vjp_correctness_index_put_manual(op, device, dtype, executor, comp):
 
 # NOTE Scaled_Dot_Product_Efficient_Attention_Backward does not support fp64 dtypes
 # RuntimeError: Only fp32, half & bf16 supported at the moment
-@pytest.mark.skipif(
-    not version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"),
-    reason="https://github.com/pytorch/pytorch/issues/129579",
-)
 @ops(
     (get_opinfo("grad_forward_scaled_dot_product_attention"),),
     supported_dtypes=(dtypes.float16, dtypes.bfloat16),
@@ -553,7 +549,7 @@ def test_vjp_correctness_index_put_manual(op, device, dtype, executor, comp):
 def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
     if version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"):
         raise pytest.skip(
-            "https://github.com/pytorch/pytorch/issues/129579",
+            "https://github.com/Lightning-AI/lightning-thunder/issues/703",
         )
 
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
