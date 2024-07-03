@@ -2871,3 +2871,21 @@ def test_proxy_repr():
         assert p.__repr__() == '<NumberProxy(name="number")>'
         assert t.__repr__() == '<TensorProxy(name="tensor", dtype=thunder.dtypes.float16, shape=(1,))>'
         assert c.__repr__() == '<CollectionProxy(name="collection")>'
+
+
+def test_type_string():
+    def fn(x):
+        return 2 * x
+
+    jfn = thunder.jit(fn)
+
+    a = torch.randn(2, 2)
+
+    jfn(a)
+
+    tr = thunder.last_traces(jfn)[0]
+
+    assert tr.bound_symbols[1].sym == ltorch.mul
+    (pystr,) = tr.bound_symbols[1].python(0)
+
+    assert pystr == 'result = ltorch.mul(2, x)  # result: "cpu f32[2, 2]"'
