@@ -3759,12 +3759,12 @@ def autocast_scaled_dot_product_attention(
     query,
     key,
     value,
-    attn_mask,
-    dropout_p,
-    is_causal,
+    attn_mask=None,
+    dropout_p=0.0,
+    is_causal=False,
     *,
     dtype,
-    scale,
+    scale=None,
 ):
     from thunder.torch import scaled_dot_product_attention
 
