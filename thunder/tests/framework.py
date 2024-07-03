@@ -276,14 +276,15 @@ def _instantiate_executor_test_template(
 ) -> Callable:
     devicetype: devices.DeviceType
     device_str: str | list[str]
+    devicetype = device_or_devices
     if isinstance(device_or_devices, devices.Device):
         devicetype = device_or_devices.devicetype
-        device_str = str(device_or_devices)
+        device_str = device_or_devices.device_str()
     else:
         devicetype = device_or_devices[0].devicetype
         device_str = []
         for device in device_or_devices:
-            device_str.append(str(device))
+            device_str.append(device.device_str())
 
     devicetype_str = devices.devicetype_string(devicetype)
     template_name = as_name if as_name is not None else template.__name__

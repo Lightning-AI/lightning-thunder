@@ -61,7 +61,7 @@ class FSDPTraceTransform(EarlyTransform):
                     param_name_to_comp_trc_proxy[param_name] = comp_inp_p
                     old_shape, new_shape, new_torch_device = self.sharded_params[param_name]
                     thunder_device = devices.to_device(new_torch_device)
-                    thunder_device_str = str(thunder_device)
+                    thunder_device_str = thunder_device.device_str()
 
                     pro_out_p._distparallel_type = DistParallelType.FULLY_SHARDED
                     pro_out_p._shape = tuple(new_shape)

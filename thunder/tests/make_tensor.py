@@ -3,6 +3,7 @@ import math
 from typing import cast, List, Optional, Tuple, Union
 
 import torch
+import thunder
 
 # adapted from https://github.com/pytorch/pytorch/blob/master/torch/testing/_creation.py
 # Changes:
@@ -32,7 +33,7 @@ def _uniform_random(t: torch.Tensor, low: float, high: float):
 def make_tensor(
     *shape: int | torch.Size | list[int] | tuple[int, ...],
     dtype: torch.dtype,
-    device: str | torch.device,
+    device: str | torch.device | thunder.devices.Device,
     low: float | None = None,
     high: float | None = None,
     requires_grad: bool = False,
@@ -62,7 +63,7 @@ def make_tensor(
     Args:
         shape (Tuple[int, ...]): Single integer or a sequence of integers defining the shape of the output tensor.
         dtype (:class:`torch.dtype`): The data type of the returned tensor.
-        device (Union[str, torch.device]): The device of the returned tensor.
+        device (Union[str, torch.device, thunder.devices.Device]): The device of the returned tensor.
         low (Optional[Number]): Sets the lower limit (inclusive) of the given range. If a number is provided it is
             clamped to the least representable finite value of the given dtype. When ``None`` (default),
             this value is determined based on the :attr:`dtype` (see the table above). Default: ``None``.
@@ -111,6 +112,9 @@ def make_tensor(
             return math.ceil(low), math.ceil(high)
 
         return low, high
+
+    if isinstance(device, thunder.devices.Device):
+        device = device.device_str()
 
     if len(shape) == 1 and isinstance(shape[0], collections.abc.Sequence):
         shape = shape[0]  # type: ignore[assignment]

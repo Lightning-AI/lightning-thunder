@@ -1110,7 +1110,6 @@ def create_per_process_dataloader(
     sampler = tudata.SequentialSampler(dataset)
 
     collate_fn = None
-
     if devicetype is not devices.DeviceType.CPU:
         assert devicetype is devices.DeviceType.CUDA, f"Unknown devicetype {devicetype}"
         device = torch.device("cuda", rank)
@@ -1214,6 +1213,7 @@ def _test_native_ddp_helper(input_data):
     torch_dtype = ltorch.to_torch_dtype(dtype)
 
     pg = init_per_process_distributed(init_method, devicetype, world_size, rank)
+
     tdist.barrier(pg)
 
     dataloader = create_per_process_dataloader(
