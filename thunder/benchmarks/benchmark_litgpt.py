@@ -46,6 +46,19 @@ device = torch.device("cuda", local_rank)
 torch.cuda.set_device(device)
 
 
+def check_fp8_compute_capability() -> None:
+    device = torch.cuda.current_device()
+    compute_capability = torch.cuda.get_device_capability(device)
+    required_compute_capability = (8, 9)
+
+    if compute_capability < required_compute_capability:
+        raise RuntimeError(
+            f"Device compute capability {compute_capability} is insufficient. "
+            f"Compute capability {required_compute_capability} or higher is required for FP8 execution. "
+            "Please ensure you are using a compatible GPU and the correct driver version."
+        )
+
+
 def is_transformer_engine(low_precision_mode: str) -> bool:
     return low_precision_mode == "fp8-delayed-te"
 
@@ -195,6 +208,9 @@ class Benchmark_litGPT:
             raise ImportError(
                 "Selected benchmark config is for TransformerEngine but could not import the TransformerEngine library!"
             )
+        
+        if is_transformer_engine(low_precision_mode):
+            check_fp8_compute_capability()
 
         if "thunder" in self.compile and is_transformer_engine(self.low_precision_mode):
             self.compile += "_transformerengine"
