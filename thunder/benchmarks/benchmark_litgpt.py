@@ -185,12 +185,11 @@ class Benchmark_litGPT:
                     f"[WARNING] Bucketing mode is set to {self.bucketing_mode}. --fsdp_bucket_params will be ignored."
                 )
 
-        if not transformer_engine_available and is_transformer_engine(low_precision_mode):
-            raise ImportError(
-                "Selected benchmark config is for TransformerEngine but could not import the TransformerEngine library!"
-            )
-
         if is_transformer_engine(low_precision_mode):
+            if not transformer_engine_available:
+                raise ImportError(
+                    "Selected benchmark config is for TransformerEngine but could not import the TransformerEngine library!"
+                )
             check_fp8_compute_capability()
 
         if "thunder" in self.compile and is_transformer_engine(self.low_precision_mode):
