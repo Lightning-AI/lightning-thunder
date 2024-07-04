@@ -2,7 +2,8 @@ import os
 import time
 import warnings
 from typing import Any
-from contextlib import nullcontext
+from contextlib import nullcontext, AbstractContextManager
+import contextlib
 
 import torch
 import functools
@@ -43,6 +44,28 @@ def is_transformer_engine(low_precision_mode: str) -> bool:
     return low_precision_mode == "fp8-delayed-te"
 
 
+def get_context_manager(low_precision_mode: str, compile_mode: str) -> AbstractContextManager:
+    if is_transformer_engine(low_precision_mode) and "thunder" not in compile_mode:
+        @contextlib.contextmanager
+        def fp8_autocast_context():
+            with te.fp8_autocast(enabled=True):
+                yield
+        return fp8_autocast_context
+    else:
+        @contextlib.contextmanager
+        def null_context():
+            yield
+        return null_context
+
+
+def get_converted_model(low_precision_mode: str, compile_mode: str, model: Any) -> Any:
+    if is_transformer_engine(low_precision_mode) and "thunder" not in compile_mode:
+        te_precision = TransformerEnginePrecision(weights_dtype=torch.bfloat16, replace_layers=True)
+        return te_precision.convert_module(model)
+    else:
+        return model
+
+
 def configure_optimizers(model, weight_decay, learning_rate, betas, device_type):
     import inspect
 
@@ -62,10 +85,12 @@ def _run_fwd_bwd_one_microbatch(
     targets: torch.Tensor,
     gradient_accumulation_steps: int,
     device: torch.device,
+    ctx: AbstractContextManager,
 ) -> torch.Tensor:
     input_ids = input_ids.to(device)
     targets = targets.to(device)
-    logits = model(input_ids)
+    with ctx():
+        logits = model(input_ids)
     logits = logits.reshape(-1, logits.size(-1))
     targets = targets.reshape(-1)
     loss = torch.nn.functional.cross_entropy(logits, targets, ignore_index=-1) / gradient_accumulation_steps
@@ -123,6 +148,7 @@ class Benchmark_litGPT:
         self.checkpoint_activations = checkpoint_activations
         self.micro_batch_size = micro_batch_size
         self.low_precision_mode = low_precision_mode
+        self.context_manager = get_context_manager(low_precision_mode, compile)
 
         # Clarify benchmark assumptions
         if self.sharding_size is not None:
@@ -199,16 +225,7 @@ class Benchmark_litGPT:
         self.model = self.init_model()
         print(f"Time to instantiate model: {time.perf_counter() - t0:.02f} seconds.")
 
-        # fp8-delayed-te precision for thunder is handled through compile
-        if is_transformer_engine(low_precision_mode) and "thunder" not in self.compile:
-            te_precision = TransformerEnginePrecision(weights_dtype=torch.bfloat16, replace_layers=True)
-            converted_model = te_precision.convert_module(self.model)
-
-            def call_model_with_fp8autocast(*args, **kwargs):
-                with te.fp8_autocast(enabled=True):
-                    return converted_model(*args, **kwargs)
-
-            self.model.__call__ = call_model_with_fp8autocast
+        self.model = get_converted_model(low_precision_mode, self.compile, self.model)
 
         # Setup the distributed algorithm choices
         self.model = self.setup_distributed(self.model)
@@ -429,7 +446,8 @@ class Benchmark_litGPT:
                     input_ids, targets = next(self.train_data_iter)
                     input_ids = input_ids.to(self.device)
                     targets = targets.to(self.device)
-                    logits = self.model(input_ids)
+                    with self.context_manager():
+                        logits = self.model(input_ids)
                     logits = logits.reshape(-1, logits.size(-1))
                     targets = targets.reshape(-1)
                     loss = (
@@ -441,7 +459,8 @@ class Benchmark_litGPT:
             input_ids, targets = next(self.train_data_iter)
             input_ids = input_ids.to(self.device)
             targets = targets.to(self.device)
-            logits = self.model(input_ids)
+            with self.context_manager():
+                logits = self.model(input_ids)
             logits = logits.reshape(-1, logits.size(-1))
             targets = targets.reshape(-1)
             loss = (
