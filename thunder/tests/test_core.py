@@ -2854,6 +2854,32 @@ def test_custom_autograd_function():
     with pytest.raises(GradcheckError):
         gradcheck(model, (x,))
 
+    class MyLinear(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+            ctx.save_for_backward(x)
+            ctx.pretty_attr = 100
+            return torch.matmul(x, weight.t())
+
+        @staticmethod
+        def backward(ctx, grad_output):
+            (x,) = ctx.saved_tensors
+            return torch.matmul(grad_output, weight), torch.matmul(grad_output.t(), x)
+
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.l1 = torch.nn.Linear(2, 2, bias=False)
+
+        def forward(self, x):
+            return MyLinear.apply(x, self.l1.weight)
+
+    x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
+    model = Model().to(dtype=torch.float64)
+    jitted = thunder.jit(model, skip_inplace_functionalization=True)
+
+    gradcheck(jitted, (x,))
+
 
 def test_proxy_repr():
     # Verify that we can call `__repr__` on different proxy subclasses.
