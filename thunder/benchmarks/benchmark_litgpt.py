@@ -20,11 +20,16 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 
 import thunder
 from thunder.tests.litgpt_model import Config, GPT, Block
-import transformer_engine.pytorch as te
-
-from lightning.fabric.plugins.precision.transformer_engine import TransformerEnginePrecision
 from lightning.fabric.utilities.throughput import measure_flops
 from lightning.fabric.utilities import Throughput
+
+
+try:
+    import transformer_engine.pytorch as te
+    from lightning.fabric.plugins.precision.transformer_engine import TransformerEnginePrecision
+    transformer_engine_available = True
+except ImportError:
+    transformer_engine_available = False
 
 
 world_size = int(os.environ.get("WORLD_SIZE", 1))
@@ -184,6 +189,9 @@ class Benchmark_litGPT:
                 print(
                     f"[WARNING] Bucketing mode is set to {self.bucketing_mode}. --fsdp_bucket_params will be ignored."
                 )
+                
+        if not transformer_engine_available and is_transformer_engine(low_precision_mode):
+            raise ImportError("Selected benchmark config is for TransformerEngine but could not import the TransformerEngine library!")
 
         if "thunder" in self.compile and is_transformer_engine(self.low_precision_mode):
             self.compile += "_transformerengine"
