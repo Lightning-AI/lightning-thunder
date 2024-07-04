@@ -2,8 +2,7 @@ import os
 import time
 import warnings
 from typing import Any
-import contextlib
-from contextlib import nullcontext, AbstractContextManager
+from contextlib import nullcontext
 
 import torch
 import functools
@@ -63,27 +62,6 @@ def is_transformer_engine(low_precision_mode: str) -> bool:
     return low_precision_mode == "fp8-delayed-te"
 
 
-def get_context_manager(low_precision_mode: str, compile_mode: str) -> AbstractContextManager:
-    if is_transformer_engine(low_precision_mode) and "thunder" not in compile_mode:
-
-        @contextlib.contextmanager
-        def fp8_autocast_context():
-            with te.fp8_autocast(enabled=True):
-                yield
-
-        return fp8_autocast_context
-    else:
-        return nullcontext
-
-
-def get_converted_model(low_precision_mode: str, compile_mode: str, model: Any) -> Any:
-    if is_transformer_engine(low_precision_mode) and "thunder" not in compile_mode:
-        te_precision = TransformerEnginePrecision(weights_dtype=torch.bfloat16, replace_layers=True)
-        return te_precision.convert_module(model)
-    else:
-        return model
-
-
 def configure_optimizers(model, weight_decay, learning_rate, betas, device_type):
     import inspect
 
@@ -103,11 +81,14 @@ def _run_fwd_bwd_one_microbatch(
     targets: torch.Tensor,
     gradient_accumulation_steps: int,
     device: torch.device,
-    ctx: AbstractContextManager,
+    use_te_fp8_autocast: bool,
 ) -> torch.Tensor:
     input_ids = input_ids.to(device)
     targets = targets.to(device)
-    with ctx():
+    if use_te_fp8_autocast:
+        with te.fp8_autocast(enabled=True):
+            logits = model(input_ids)
+    else:
         logits = model(input_ids)
     logits = logits.reshape(-1, logits.size(-1))
     targets = targets.reshape(-1)
@@ -166,7 +147,7 @@ class Benchmark_litGPT:
         self.checkpoint_activations = checkpoint_activations
         self.micro_batch_size = micro_batch_size
         self.low_precision_mode = low_precision_mode
-        self.context_manager = get_context_manager(low_precision_mode, compile)
+        self.use_te_fp8_autocast = is_transformer_engine(low_precision_mode) and "thunder" not in compile
 
         # Clarify benchmark assumptions
         if self.sharding_size is not None:
@@ -251,7 +232,9 @@ class Benchmark_litGPT:
         self.model = self.init_model()
         print(f"Time to instantiate model: {time.perf_counter() - t0:.02f} seconds.")
 
-        self.model = get_converted_model(low_precision_mode, self.compile, self.model)
+        if self.use_te_fp8_autocast:
+            te_precision = TransformerEnginePrecision(weights_dtype=torch.bfloat16, replace_layers=True)
+            self.model =  te_precision.convert_module(self.model)
 
         # Setup the distributed algorithm choices
         self.model = self.setup_distributed(self.model)
@@ -472,7 +455,10 @@ class Benchmark_litGPT:
                     input_ids, targets = next(self.train_data_iter)
                     input_ids = input_ids.to(self.device)
                     targets = targets.to(self.device)
-                    with self.context_manager():
+                    if self.use_te_fp8_autocast:
+                        with te.fp8_autocast():
+                            logits = self.model(input_ids)
+                    else:
                         logits = self.model(input_ids)
                     logits = logits.reshape(-1, logits.size(-1))
                     targets = targets.reshape(-1)
@@ -485,7 +471,10 @@ class Benchmark_litGPT:
             input_ids, targets = next(self.train_data_iter)
             input_ids = input_ids.to(self.device)
             targets = targets.to(self.device)
-            with self.context_manager():
+            if self.use_te_fp8_autocast:
+                with te.fp8_autocast():
+                    logits = self.model(input_ids)
+            else:
                 logits = self.model(input_ids)
             logits = logits.reshape(-1, logits.size(-1))
             targets = targets.reshape(-1)
