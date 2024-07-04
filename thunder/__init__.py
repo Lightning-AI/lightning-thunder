@@ -394,7 +394,6 @@ def jit(
             cache_info.update(autocast_thunder_dtype=str(autocast_thunder_dtype))
 
         cache_info["is_autocast_enabled"] = is_autocast_enabled
-        cd.is_autocast_enabled = is_autocast_enabled
 
         is_ddp_enabled = getattr(fn, "use_ddp", False)
         is_fsdp_enabled = getattr(fn, "use_fsdp", False)
