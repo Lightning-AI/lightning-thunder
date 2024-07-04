@@ -157,7 +157,7 @@ def test_torch_compile_autocast():
 
 def test_autocast_mixed_dtype_inputs():
     def foo(x, w):
-        return torch.nn.functional.linear(x, w, bias=None)
+        return torch.nn.functional.linear(x, w)
 
     # Mixed input types.
     x, w = torch.randn(16, 16, dtype=torch.bfloat16), torch.randn(16, 16)

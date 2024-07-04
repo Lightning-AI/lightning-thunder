@@ -3716,6 +3716,9 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
 autocast_impls: dict[prims.PrimIDs, Callable] = {}
 
 
+# NOTE: Rules which are registered ltorch symbols should match the type signature
+#       of those symbols as we use this rule for translating from `torch` -> `thunder.torch`
+#       if autocast is enabled while jitting. See also `NOTE: torch.autocast support`.
 def register_autocast_rule(op):
     def decorator(func):
         autocast_impls[op] = func
@@ -3742,9 +3745,7 @@ def autocast_matmul_rule(a, b, dtype):
     return prims.matmul(*(maybe_downcast_to(dtype, (a, b))))
 
 
-@register_autocast_rule("torch.nn.functional.linear")
-@register_autocast_rule(prims.PrimIDs.LINEAR)
-def autocast_linear_rule(a, w, bias, dtype):
+def _linear_autocast_impl(a, w, bias, dtype):
     if bias is None:
         # Don't pass `bias` to maybe_downcast_to.
         downcast_args = maybe_downcast_to(dtype, (a, w)) + (bias,)
@@ -3752,6 +3753,16 @@ def autocast_linear_rule(a, w, bias, dtype):
         downcast_args = maybe_downcast_to(dtype, (a, w, bias))
 
     return prims.linear(*downcast_args)
+
+
+@register_autocast_rule("torch.nn.functional.linear")
+def autocast_ltorch_linear_rule(a, w, bias=None, *, dtype):
+    return _linear_autocast_impl(a, w, bias, dtype)
+
+
+@register_autocast_rule(prims.PrimIDs.LINEAR)
+def autocast_linear_rule(a, w, bias, dtype):
+    return _linear_autocast_impl(a, w, bias, dtype)
 
 
 @register_autocast_rule("torch.nn.functional.scaled_dot_product_attention")
