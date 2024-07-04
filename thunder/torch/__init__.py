@@ -137,7 +137,7 @@ class torchsymbol:
         else:
             sym = Symbol(name=fn.__name__, meta=_fn, id=id, is_prim=self.is_prim, tags=self.tags)
 
-        # NOTE: torch - autocast support
+        # NOTE: torch.autocast support
         # In PyTorch eager, enabling autocast allows mixed inputs to operator like `linear`
         # which expect dtypes to be same. This works in PyTorch eager, as dispatcher applies the
         # conversion first and then passes the converted input to the operator.
