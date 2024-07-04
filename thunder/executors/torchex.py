@@ -132,7 +132,7 @@ def _to_transform(
 
 
 def _device_put_transform(a: TensorProxy, device: devices.Device) -> TensorProxy:
-    torch_device: str = str(device)
+    torch_device: str = device.device_str()
     return to(a, torch_device)
 
 
@@ -1453,6 +1453,9 @@ def _interpolate_checker(
     size: int | Sequence[int] | None = None,
     scale_factor: float | Sequence[float] | None = None,
     mode: str = "nearest",
+    align_corners=None,
+    recompute_scale_factor=None,
+    antialias=False,
 ) -> TensorLike:
     return 3 <= a.ndim and a.ndim <= 5
 

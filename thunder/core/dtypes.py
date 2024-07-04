@@ -85,9 +85,7 @@ class dtype:
 
     # TODO Fix name printing
     def __repr__(self):
-        return (
-            f"{self._name}{8 * self._bytes}{f'_{self._variant}' if self._variant else ''}{'_' if self._is_weak else ''}"
-        )
+        return f"thunder.dtypes.{self._name}{8 * self._bytes}{f'_{self._variant}' if self._variant else ''}{'_' if self._is_weak else ''}"
 
     def __str__(self):
         return self.__repr__()

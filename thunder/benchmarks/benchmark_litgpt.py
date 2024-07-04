@@ -410,30 +410,37 @@ class Benchmark_litGPT:
         return train_dataloader
 
     def calculate_model_flops(self):
-        meta = torch.device("meta")
         device = self.device
-        self.device = meta
+        try:
+            meta = torch.device("meta")
+            self.device = meta
 
-        # calculate flops on a meta-device model because we only care about the shapes and
-        # because the flops calculator installs hooks on the model
-        meta_model = self.init_model()
+            # calculate flops on a meta-device model because we only care about the shapes and
+            # because the flops calculator installs hooks on the model
+            meta_model = self.init_model()
 
-        x = torch.randint(0, 1, (self.micro_batch_size, meta_model.config.block_size), device=meta)
-        model_fwd = lambda: meta_model(x)
-        model_loss = lambda y: torch.nn.functional.cross_entropy(
-            y.reshape(-1, y.size(-1)), x.reshape(-1), ignore_index=-1
-        )
-        self.perf_metrics["model_flops"] = measure_flops(meta_model, model_fwd, model_loss)
-
-        self.device = device
+            x = torch.randint(0, 1, (self.micro_batch_size, meta_model.config.block_size), device=meta)
+            model_fwd = lambda: meta_model(x)
+            model_loss = lambda y: torch.nn.functional.cross_entropy(
+                y.reshape(-1, y.size(-1)), x.reshape(-1), ignore_index=-1
+            )
+            self.perf_metrics["model_flops"] = measure_flops(meta_model, model_fwd, model_loss)
+        finally:
+            self.device = device
 
     def train(self):
         t0 = None
         if global_rank in [0, None]:
-            # Calculate the model FLOPs
-            self.calculate_model_flops()
-            # Setup throughput Collection
-            self.throughput = Throughput(window_size=self.max_iters - self.warmup_iter, world_size=world_size)
+            try:
+                # Calculate the model FLOPs
+                self.calculate_model_flops()
+                # Setup throughput Collection
+                self.throughput = Throughput(window_size=self.max_iters - self.warmup_iter, world_size=world_size)
+            except:
+                self.throughput = None
+                print(
+                    f"Model Flops/Throughput calculation failed for model {self.model_name}. Skipping throughput metric collection."
+                )
 
         if self.skip_data_sync:
             data_sync_ctx = self.model.no_sync
@@ -497,22 +504,26 @@ class Benchmark_litGPT:
                     f"iter {i}: loss {loss_item:.4f}, iter time: {(t1 - iter_t0) * 1000:.2f}ms, t: {input_ids.size(1)}"
                 )
                 if i >= self.warmup_iter:
-                    self.throughput.update(
-                        time=(t1 - t0),
-                        flops=self.perf_metrics["model_flops"],
-                        batches=i,
-                        samples=(i * self.micro_batch_size * self.gradient_accumulation_steps),
-                        lengths=(i * self.micro_batch_size * self.gradient_accumulation_steps * self.config.block_size),
-                    )
+                    if self.throughput:
+                        self.throughput.update(
+                            time=(t1 - t0),
+                            flops=self.perf_metrics["model_flops"],
+                            batches=i,
+                            samples=(i * self.micro_batch_size * self.gradient_accumulation_steps),
+                            lengths=(
+                                i * self.micro_batch_size * self.gradient_accumulation_steps * self.config.block_size
+                            ),
+                        )
 
         if global_rank in [0, None]:
             # print(f"Total time: {(t1 - t0):.2f}s")
             self.perf_metrics["average_iter_time"] = ((t1 - t0) * 1000) / (self.max_iters - self.warmup_iter)
 
     def add_perf_metrics(self):
-        metrics = self.throughput.compute()
-        self.perf_metrics["tokens_per_sec"] = metrics.get("items_per_sec", metrics["device/items_per_sec"])
-        self.perf_metrics["model_flop_per_sec"] = metrics.get("flops_per_sec", metrics["device/flops_per_sec"])
+        if self.throughput:
+            metrics = self.throughput.compute()
+            self.perf_metrics["tokens_per_sec"] = metrics.get("items_per_sec", metrics["device/items_per_sec"])
+            self.perf_metrics["model_flop_per_sec"] = metrics.get("flops_per_sec", metrics["device/flops_per_sec"])
         self.perf_metrics["memory_used_GB"] = torch.cuda.max_memory_allocated() / 1e9
 
     def add_model_info_to_metrics(self):

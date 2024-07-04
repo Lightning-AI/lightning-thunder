@@ -304,7 +304,7 @@ class DecorateInfo:
         # Acquires devicetype
         devicetype_: devices.DeviceType
         if isinstance(device_or_devicetype, str):
-            devicetype_ = devices.device_from_string(device_or_devicetype).devicetype
+            devicetype_ = devices.to_device(device_or_devicetype).devicetype
         elif isinstance(device_or_devicetype, devices.Device):
             devicetype_ = device_or_devicetype.devicetype
         else:
@@ -392,26 +392,22 @@ class OpInfo:
         self, device: str | devices.Device, dtype: datatypes.dtype, *, requires_grad: bool = False, **kwargs
     ) -> Generator:
         torch_dtype = to_torch_dtype(dtype)
-        torch_device = str(device)
-        return self.sample_input_generator(self, torch_device, torch_dtype, requires_grad, **kwargs)
+        return self.sample_input_generator(self, device, torch_dtype, requires_grad, **kwargs)
 
     def reference_inputs(
         self, device: str | devices.Device, dtype: datatypes.dtype, *, requires_grad: bool = False, **kwargs
     ) -> Generator:
         torch_dtype = to_torch_dtype(dtype)
-        torch_device = str(device)
-        return self.reference_input_generator(self, torch_device, torch_dtype, requires_grad, **kwargs)
+        return self.reference_input_generator(self, device, torch_dtype, requires_grad, **kwargs)
 
     def error_inputs(self, device: devices.Device, **kwargs):
-        torch_device = str(device)
-        return self.error_input_generator(self, torch_device, **kwargs)
+        return self.error_input_generator(self, device, **kwargs)
 
     # NOTE Today all benchmarks are generated with PyTorch, so Thunder objects,
     #   like dtypes, need to be translated into PyTorch objects
     def benchmarks(self, device: devices.Device, dtype: datatypes.dtype, *, requires_grad: bool = False, **kwargs):
         torch_dtype = to_torch_dtype(dtype)
-        torch_device = str(device)
-        return self.benchmark_generator(self, torch_device, dtype, requires_grad, **kwargs)
+        return self.benchmark_generator(self, device, dtype, requires_grad, **kwargs)
 
     def devicetypes(self):
         return set(self._devicetypes)
@@ -5565,7 +5561,7 @@ def full_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
 
 def full_error_generator(op, device, **kwargs):
-    err_msg = "Can't safely cast fill_value of numbertype <class 'complex'> to dtype float32"
+    err_msg = "Can't safely cast fill_value of numbertype <class 'complex'> to dtype thunder.dtypes.float32"
     yield (SampleInput((1, 2), 1j, device=device, dtype=torch.float), RuntimeError, err_msg)
 
 
@@ -5744,7 +5740,7 @@ def bernoulli_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
 
 def bernoulli_error_generator(op, device, **kwargs):
-    err_msg = "bernoulli only supports floating point dtypes, got int64"
+    err_msg = "bernoulli only supports floating point dtypes, got thunder.dtypes.int64"
     yield (SampleInput(torch.ones(3, 3, device=device, dtype=torch.long)), RuntimeError, err_msg)
 
     err_msg = "generator is not None which is currently unsupported"
@@ -5903,13 +5899,13 @@ def tensor_constructor_error_generator(op, device, **kwargs):
     err_msg = "Expected sequences of numbers, but found type <class 'list'>"
     yield (SampleInput([[1], [[6, 2]]]), ValueError, err_msg)
 
-    err_msg = "Can't safely cast sequence with numbertype <class 'float'> to dtype int32"
+    err_msg = "Can't safely cast sequence with numbertype <class 'float'> to dtype thunder.dtypes.int32"
     yield (SampleInput([[1, 2.0], [6, 2]], dtype=torch.int32), RuntimeError, err_msg)
 
-    err_msg = "Can't safely cast sequence with numbertype <class 'complex'> to dtype int32"
+    err_msg = "Can't safely cast sequence with numbertype <class 'complex'> to dtype thunder.dtypes.int32"
     yield (SampleInput([[1, 2j], [6, 2]], dtype=torch.int32), RuntimeError, err_msg)
 
-    err_msg = "Can't safely cast sequence with numbertype <class 'complex'> to dtype float64"
+    err_msg = "Can't safely cast sequence with numbertype <class 'complex'> to dtype thunder.dtypes.float64"
     yield (SampleInput([[1, 2j], [6, 2]], dtype=torch.float64), RuntimeError, err_msg)
 
 
@@ -7783,13 +7779,6 @@ sdpa_opinfo = OpInfo(
             "test_vjp_correctness",
             dtypes=(datatypes.float64,),
         ),
-        DecorateInfo(
-            pytest.mark.skip(reason="https://github.com/pytorch/pytorch/issues/129579"),
-            "test_cudnn_vs_torch_consistency",
-            dtypes=(datatypes.bfloat16, datatypes.float16, datatypes.float32),
-            devicetypes=(devices.DeviceType.CUDA,),
-            active_if=version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"),
-        ),
     ),
 )
 nn_ops.append(sdpa_opinfo)
@@ -7903,15 +7892,6 @@ grad_sdpa_opinfo = OpInfo(
     # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention' with arguments from the 'CPU' backend.
     # NOTE: NotImplementedError: Could not run 'aten::_scaled_dot_product_efficient_attention_backward' with arguments from the 'CPU' backend
     devicetypes=(devices.DeviceType.CUDA,),
-    test_directives=(
-        DecorateInfo(
-            pytest.mark.skip(reason="https://github.com/pytorch/pytorch/issues/129579"),
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.bfloat16, datatypes.float16, datatypes.float32),
-            devicetypes=(devices.DeviceType.CUDA,),
-            active_if=version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"),
-        ),
-    ),
 )
 nn_ops.append(grad_sdpa_opinfo)
 
