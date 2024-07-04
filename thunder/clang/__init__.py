@@ -600,9 +600,9 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
 
     _key = []
     for idx, x in enumerate(key):
-        # convert the advanced indexing key to None
+        # skip advanced indexing by converting this to [:]
         if isinstance(x, (list, TensorLike)):
-            x = None
+            x = slice(None, None, None)
             _key.append(x)
         else:
             _key.append(x)
@@ -723,16 +723,24 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
         lambda: f"Advanced indexing currently only supports keys that are ellipses, integer tensors or sequences, but got {key=}",
     )
 
+    def _to_tensorproxies(x: list, device: devices.DeviceType):
+        for idx, val in enumerate(x):
+            if isinstance(val, (NumberProxy)):
+                x[idx] = utils.get_numberlike_value(val)
+        if all(isinstance(i, int) for i in x):
+            x = tensor_from_sequence(x, dtype=dtypes.int64, device=device)
+        return x
+
     # convert list to 1D tensor
     # this handles both cases when key is list or a tuple that contains lists
     if isinstance(key, Sequence):
         if isinstance(key, list):
-            key = tensor_from_sequence(key, dtype=dtypes.int8, device=a.device)
+            key = tuple(_to_tensorproxies(key, a.device))
         else:
             key_ = []
             for x in key:
                 if isinstance(x, list):
-                    x = tensor_from_sequence(x, dtype=dtypes.int8, device=a.device)
+                    x = _to_tensorproxies(x, a.device)
                     key_.append(x)
                 elif isinstance(x, (EllipsisType, TensorLike)):
                     key_.append(x)
@@ -889,15 +897,11 @@ def getitem(a: TensorLike, /, key) -> TensorLike:
     if isinstance(key, TensorLike) or (isinstance(key, Sequence) and not isinstance(key, tuple)):
         return _advanced_indexing(a, key)
 
-    # a = _basic_indexing(a, key)
+    # perform basic indexing first
+    a = _basic_indexing(a, key)
+    if sig.advanced:
+        a = _advanced_indexing(a, key)
 
-    if not sig.advanced:
-        return _basic_indexing(a, key)
-
-    if isinstance(key, tuple):
-        for x in key:
-            if isinstance(x, TensorLike) or isinstance(x, Sequence):
-                return _advanced_indexing(a, key)
     return a
 
 

@@ -3595,6 +3595,19 @@ def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
     idx0 = make_idx(7, 9)
     yield SampleInput(a, (Ellipsis, idx0))
 
+    # this works
+    a = make((5, 5, 5))
+    yield SampleInput(a, ([1, 2], [1, 2]))
+    # this works
+    a = make((5, 5, 5))
+    yield SampleInput(a, (0, [1, 2], [1, 2]))
+    # this does not work
+    a = make((5, 5, 5))
+    yield SampleInput(a, (slice(1, 3, 1), [1, 2], [1, 2]))
+    # this does not work
+    a = make((5, 5, 5))
+    yield SampleInput(a, (None, [1, 2], [1, 2]))
+
 
 # NOTE getitem intentionally defines 3 references, since advanced indexing is probably
 #   the most complicated operation that any framework implements, and there's a good chance
@@ -3614,6 +3627,9 @@ getitem_opinfo = OpInfo(
         ),
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness", active_if=IS_WINDOWS),
         DecorateInfo(pytest.mark.xfail, "test_phantom_grad_vs_torch_consistency", active_if=IS_WINDOWS),
+        # TypeError: Using a non-tuple sequence for multidimensional indexing is not allowed; use `arr[array(seq)]`
+        # instead of `arr[seq]`. See https://github.com/google/jax/issues/4564 for more information.
+        DecorateInfo(pytest.mark.xfail, "test_core_vs_jax_consistency"),
     ),
 )
 shape_ops.append(getitem_opinfo)
