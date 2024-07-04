@@ -727,14 +727,14 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
     # this handles both cases when key is list or a tuple that contains lists
     if isinstance(key, Sequence):
         if isinstance(key, list):
-            key = tensor_from_sequence(key, dtype=dtypes.int32, device=a.device)
+            key = tensor_from_sequence(key, dtype=dtypes.int8, device=a.device)
         else:
             key_ = []
             for x in key:
                 if isinstance(x, list):
-                    x = tensor_from_sequence(x, dtype=dtypes.int32, device=a.device)
+                    x = tensor_from_sequence(x, dtype=dtypes.int8, device=a.device)
                     key_.append(x)
-                if isinstance(x, (EllipsisType, TensorLike)):
+                elif isinstance(x, (EllipsisType, TensorLike)):
                     key_.append(x)
                 # intentionally skip indices with basic indexing
             key = tuple(key_)
@@ -889,11 +889,15 @@ def getitem(a: TensorLike, /, key) -> TensorLike:
     if isinstance(key, TensorLike) or (isinstance(key, Sequence) and not isinstance(key, tuple)):
         return _advanced_indexing(a, key)
 
-    a = _basic_indexing(a, key)
+    # a = _basic_indexing(a, key)
 
-    if sig.advanced:
-        a = _advanced_indexing(a, key)
+    if not sig.advanced:
+        return _basic_indexing(a, key)
 
+    if isinstance(key, tuple):
+        for x in key:
+            if isinstance(x, TensorLike) or isinstance(x, Sequence):
+                return _advanced_indexing(a, key)
     return a
 
 
