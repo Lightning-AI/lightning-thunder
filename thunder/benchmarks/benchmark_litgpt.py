@@ -234,7 +234,7 @@ class Benchmark_litGPT:
 
         if self.use_te_fp8_autocast:
             te_precision = TransformerEnginePrecision(weights_dtype=torch.bfloat16, replace_layers=True)
-            self.model =  te_precision.convert_module(self.model)
+            self.model = te_precision.convert_module(self.model)
 
         # Setup the distributed algorithm choices
         self.model = self.setup_distributed(self.model)
