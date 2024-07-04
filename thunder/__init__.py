@@ -391,7 +391,7 @@ def jit(
                 autocast_cpu_dtype=str(autocast_cpu_dtype),
             )
             autocast_thunder_dtype = autocast_cpu_dtype if pytorch.is_autocast_cpu_enabled() else autocast_gpu_dtype
-            cd.autocast_thunder_dtype = autocast_thunder_dtype
+            cache_info.update(autocast_thunder_dtype=str(autocast_thunder_dtype))
 
         cache_info["is_autocast_enabled"] = is_autocast_enabled
         cd.is_autocast_enabled = is_autocast_enabled

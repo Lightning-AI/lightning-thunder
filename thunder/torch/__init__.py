@@ -41,6 +41,12 @@ from thunder.core.symbol import Symbol
 from thunder.core.transforms import register_grad
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.baseutils import run_once
+from thunder.core.transforms import (
+    _maybe_get_autocast_rule_for_symbol,
+    _get_downcast_dtype_from_str,
+    _check_valid_autocast_dtype,
+)
+import thunder
 
 
 __all__ = [
@@ -143,8 +149,6 @@ class torchsymbol:
         # conversion first and then passes the converted input to the operator.
         # To mimick similar behavior, here we replace the `sym` for all operators which have
         # autocast rule, to apply the conversion rule if autocast was enabled.
-        from thunder.core.transforms import _maybe_get_autocast_rule_for_symbol
-
         autocast_impl: Callable | None = _maybe_get_autocast_rule_for_symbol(sym)
 
         # `mapping_fn` is used to map `torch` -> `thunder.torch`
@@ -155,11 +159,16 @@ class torchsymbol:
 
             @wraps(sym)
             def maybe_autocast(*args, **kwargs):
-                from thunder.core.compile_data import get_compile_data
+                # Cache info may not be available in case of legacy `thunder.compile`
+                # which is still used for cases.
+                try:
+                    cache_info = thunder._get_cache_info()
+                except LookupError:
+                    cache_info = {}
 
-                cd = get_compile_data()
-                if getattr(cd, "is_autocast_enabled", False):
-                    return partial(autocast_impl, dtype=cd.autocast_thunder_dtype)(*args, **kwargs)
+                if cache_info.get("is_autocast_enabled", False):
+                    thunder_autocast_dtype = _get_downcast_dtype_from_str(cache_info["autocast_thunder_dtype"])
+                    return partial(autocast_impl, dtype=thunder_autocast_dtype)(*args, **kwargs)
                 return sym(*args, **kwargs)
 
             mapping_fn = maybe_autocast

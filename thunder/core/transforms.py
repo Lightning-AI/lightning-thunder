@@ -3727,6 +3727,21 @@ def register_autocast_rule(op):
     return decorator
 
 
+_allowed_downcast_types = {dtypes.float16, dtypes.bfloat16}
+_allowed_downcast_types_str_to_dtype_map = {str(dtype): dtype for dtype in _allowed_downcast_types}
+
+
+def _check_valid_autocast_dtype(dtype):
+    if dtype not in _allowed_downcast_types:
+        raise ValueError(
+            f"autocast: `dtype` is expected to be either `thunder.float16` or `thunder.bfloat16`, but {dtype}"
+        )
+
+
+def _get_downcast_dtype_from_str(str_dtype):
+    return _allowed_downcast_types_str_to_dtype_map[str_dtype]
+
+
 def maybe_downcast_to(dtype, args):
     allowed_downcast_types = (dtypes.float16, dtypes.bfloat16, dtypes.float32)
 
@@ -3814,8 +3829,7 @@ def autocast(func: Callable, dtype: dtypes.dtype):
 
     if not isinstance(dtype, dtypes.dtype):
         raise ValueError(f"`dtype` is expected to be `thunder.dtype.dtype` but {type(dtype)}")
-    if dtype not in {dtypes.float16, dtypes.bfloat16}:
-        raise ValueError(f"`dtype` is expected to be either `thunder.float16` or `thunder.bfloat16`, but {dtype}")
+    _check_valid_autocast_dtype(dtype)
 
     @wraps(func)
     def wrapper(*args, **kwargs):
