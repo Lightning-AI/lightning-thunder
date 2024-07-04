@@ -208,7 +208,7 @@ class Benchmark_litGPT:
             raise ImportError(
                 "Selected benchmark config is for TransformerEngine but could not import the TransformerEngine library!"
             )
-        
+
         if is_transformer_engine(low_precision_mode):
             check_fp8_compute_capability()
 
