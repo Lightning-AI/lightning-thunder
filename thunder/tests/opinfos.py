@@ -3595,16 +3595,16 @@ def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
     idx0 = make_idx(7, 9)
     yield SampleInput(a, (Ellipsis, idx0))
 
-    # this works
+    # both forward/backword works
     a = make((5, 5, 5))
     yield SampleInput(a, ([1, 2], [1, 2]))
-    # this works
+    # both forward/backword works
     a = make((5, 5, 5))
     yield SampleInput(a, (0, [1, 2], [1, 2]))
-    # this does not work
+    # backward does not work
     a = make((5, 5, 5))
     yield SampleInput(a, (slice(1, 3, 1), [1, 2], [1, 2]))
-    # this does not work
+    # backward does not work
     a = make((5, 5, 5))
     yield SampleInput(a, (None, [1, 2], [1, 2]))
 
