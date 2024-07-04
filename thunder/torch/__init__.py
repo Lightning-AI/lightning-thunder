@@ -41,6 +41,12 @@ from thunder.core.symbol import Symbol
 from thunder.core.transforms import register_grad
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.baseutils import run_once
+from thunder.core.transforms import (
+    _maybe_get_autocast_rule_for_symbol,
+    _get_downcast_dtype_from_str,
+    _check_valid_autocast_dtype,
+)
+import thunder
 
 
 __all__ = [
@@ -137,22 +143,52 @@ class torchsymbol:
         else:
             sym = Symbol(name=fn.__name__, meta=_fn, id=id, is_prim=self.is_prim, tags=self.tags)
 
+        # NOTE: torch.autocast support
+        # In PyTorch eager, enabling autocast allows mixed inputs to operator like `linear`
+        # which expect dtypes to be same. This works in PyTorch eager, as dispatcher applies the
+        # conversion first and then passes the converted input to the operator.
+        # To mimick similar behavior, here we replace the `sym` for all operators which have
+        # autocast rule, to apply the conversion rule if autocast was enabled.
+        autocast_impl: Callable | None = _maybe_get_autocast_rule_for_symbol(sym)
+
+        # `mapping_fn` is used to map `torch` -> `thunder.torch`
+        # If autocast is enabled - it will also take care of casting the inputs
+        # as per autocast rule else it will be just the symbol.
+        mapping_fn = sym
+        if autocast_impl is not None:
+
+            @wraps(sym)
+            def maybe_autocast(*args, **kwargs):
+                # Cache info may not be available in case of legacy `thunder.compile`
+                # which is still used for cases.
+                try:
+                    cache_info = thunder._get_cache_info()
+                except LookupError:
+                    cache_info = {}
+
+                if cache_info.get("is_autocast_enabled", False):
+                    thunder_autocast_dtype = _get_downcast_dtype_from_str(cache_info["autocast_thunder_dtype"])
+                    return partial(autocast_impl, dtype=thunder_autocast_dtype)(*args, **kwargs)
+                return sym(*args, **kwargs)
+
+            mapping_fn = maybe_autocast
+
         if self.is_method:
             method_name: str = self.method_name if self.method_name is not None else fn.__name__
-            register_method(method_name, sym)
+            register_method(method_name, mapping_fn)
             torch_method: None | Callable = getattr(torch.Tensor, method_name, None)
             if torch_method is not None:
-                _torch_to_thunder_function_map[torch_method] = sym
+                _torch_to_thunder_function_map[torch_method] = mapping_fn
         elif self.is_property:
             method_name: str = self.method_name if self.method_name is not None else fn.__name__
-            register_property(method_name, sym)
+            register_property(method_name, mapping_fn)
             torch_property = getattr(torch.Tensor, method_name, None)
             if torch_property is not None:
-                _torch_to_thunder_function_map[torch_property] = sym
+                _torch_to_thunder_function_map[torch_property] = mapping_fn
 
         if self.torchfns is not None:
             for torchfn in self.torchfns:
-                _torch_to_thunder_function_map[torchfn] = sym
+                _torch_to_thunder_function_map[torchfn] = mapping_fn
 
         if self.tags and prims.OpTags.IN_PLACE in self.tags:
             _inplace_to_out_of_place[sym] = globals()[name[:-1]], -1
