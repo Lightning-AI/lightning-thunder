@@ -2,8 +2,8 @@ import os
 import time
 import warnings
 from typing import Any
-from contextlib import nullcontext, AbstractContextManager
 import contextlib
+from contextlib import nullcontext, AbstractContextManager
 
 import torch
 import functools
@@ -52,10 +52,7 @@ def get_context_manager(low_precision_mode: str, compile_mode: str) -> AbstractC
                 yield
         return fp8_autocast_context
     else:
-        @contextlib.contextmanager
-        def null_context():
-            yield
-        return null_context
+        return nullcontext
 
 
 def get_converted_model(low_precision_mode: str, compile_mode: str, model: Any) -> Any:
