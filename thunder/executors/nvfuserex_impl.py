@@ -117,7 +117,7 @@ def getnv(x: Any, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     if isinstance(x, (Number, dtypes.dtype, type, Device)):
         return _define_constant(fd, x)
     if isinstance(x, Sequence):
-        return tuple((getnv(i, fd, lc_to_nv_map) for i in x))
+        return tuple(getnv(i, fd, lc_to_nv_map) for i in x)
 
     utils.check(False, lambda: f"Cannot translate {x} of type {type(x)} to an nvFuser object")
 
