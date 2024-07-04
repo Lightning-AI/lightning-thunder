@@ -2848,11 +2848,37 @@ def test_custom_autograd_function():
 
     x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
     model = Model().to(dtype=torch.float64)
-    jitted = thunder.jit(model, skip_inplace_functionalization=True)
+    jitted = thunder.jit(model)
 
     gradcheck(jitted, (x,))
     with pytest.raises(GradcheckError):
         gradcheck(model, (x,))
+
+    class MyLinear(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+            ctx.save_for_backward(x)
+            ctx.pretty_attr = 100
+            return torch.matmul(x, weight.t())
+
+        @staticmethod
+        def backward(ctx, grad_output):
+            (x,) = ctx.saved_tensors
+            return torch.matmul(grad_output, weight), torch.matmul(grad_output.t(), x)
+
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.l1 = torch.nn.Linear(2, 2, bias=False)
+
+        def forward(self, x):
+            return MyLinear.apply(x, self.l1.weight)
+
+    x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
+    model = Model().to(dtype=torch.float64)
+    jitted = thunder.jit(model)
+
+    gradcheck(jitted, (x,))
 
 
 def test_proxy_repr():
@@ -2889,3 +2915,22 @@ def test_type_string():
     (pystr,) = tr.bound_symbols[1].python(0)
 
     assert pystr == 'result = ltorch.mul(2, x)  # result: "cpu f32[2, 2]"'
+
+
+def test_dtype_in_trace():
+    def fn(x):
+        return x.to(torch.float16)
+
+    jfn = thunder.jit(fn)
+
+    x = torch.randn(
+        3,
+    )
+
+    jfn(x)
+
+    tr = thunder.last_traces(jfn)[0]
+    assert tr.bound_symbols[1].sym == ltorch.to
+    (pystr,) = tr.bound_symbols[1].subsymbols[0].python(0)
+
+    assert "convert_element_type(x, dtypes.float16)" in pystr
