@@ -891,6 +891,20 @@ def _general_jit_named_buffers_lookaside(obj: Any, *args, **kwargs):
     )
 
 
+@general_jit_lookaside(torch.autograd.function.Function.apply.__func__)
+def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwargs):
+
+    custom_autograd_function_cls = unwrap(obj)
+    custom_forward = custom_autograd_function_cls.forward
+    args_, kwargs_ = tree_map(unwrap, (args, kwargs))
+    ctx = torch.autograd.function.FunctionCtx()
+
+    pr = ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[wrap_const(custom_forward).provenance])
+    wrapped_ctx = wrap(ctx, provenance=pr)
+    args_, kwargs_ = tree_map(lambda a: wrap(a, provenance=pr), (args_, kwargs_))
+    return _interpret_call(custom_forward, wrapped_ctx, *args_, **kwargs_)
+
+
 # Adds proxy methods
 # NOTE These methods map to themselves, which prevents the interpreter from looking into them
 #   This is OK because these methods are written in a tracing-safe manner, and trying to
