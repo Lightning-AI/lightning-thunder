@@ -189,11 +189,7 @@ def test_te_with_autocast():
     assert any(bsym.sym.name.startswith("te_linear") for bsym in fwd_traces[-1].bound_symbols)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="Retain graph is not supported by TE"
-)
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="Retain graph is not supported by TE")
 @requiresCUDA
 def test_te_with_retain_graph():
     def foo(x, w):

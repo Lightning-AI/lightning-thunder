@@ -1,6 +1,7 @@
 from functools import partial
 from itertools import chain
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 from collections.abc import Callable
 from contextlib import contextmanager, nullcontext
 from collections import deque
@@ -334,16 +335,16 @@ def make_te_linear_meta(is_grad_enabled: bool = False):
             # It's not critical to model the exact shape and dtype of
             # saved_tensors since they are not used in Thunder's meta functions.
             saved_tensors = (
-                TensorProxy(like=a, shape=a.shape), # saved_inputmat
-                TensorProxy(like=a, shape=(a.shape[:-2] + (a.shape[-1], a.shape[-2]))), # saved_inputmat_t
-                TensorProxy(like=w, shape=w.shape), # weight
+                TensorProxy(like=a, shape=a.shape),  # saved_inputmat
+                TensorProxy(like=a, shape=(a.shape[:-2] + (a.shape[-1], a.shape[-2]))),  # saved_inputmat_t
+                TensorProxy(like=w, shape=w.shape),  # weight
                 # fuse_wgrad_accumulation is False
                 # https://github.com/Lightning-AI/lightning-thunder/blob/40da5bd5fabc30e99883d74b70c6a7d7fd61a828/thunder/executors/transformer_engineex.py#L224
-                None, # weight.main_grad if cpu_offloading and fuse_wgrad_accumulation else None,
+                None,  # weight.main_grad if cpu_offloading and fuse_wgrad_accumulation else None,
                 TensorProxy(like=w, shape=(w.shape[1], w.shape[0]), dtype=float8_e4m3fn),
                 TensorProxy(like=a, shape=(1,)),
                 # https://github.com/Lightning-AI/lightning-thunder/blob/40da5bd5fabc30e99883d74b70c6a7d7fd61a828/thunder/executors/transformer_engineex.py#L236
-                None, # skip_fp8_weight_update
+                None,  # skip_fp8_weight_update
             )
 
             return TensorProxy(like=a, shape=output_shape), saved_tensors, ctx_dict
@@ -365,7 +366,12 @@ def set_saved_tensors(ctx, saved_tensors):
 # Registers the backward function
 #
 def _te_functional_linear_backward_impl(
-    a_shape: tuple, w_shape: tuple, b_shape: tuple | None, ctx: Context, saved_tensors: Sequence[torch.Tensor], g: torch.Tensor,
+    a_shape: tuple,
+    w_shape: tuple,
+    b_shape: tuple | None,
+    ctx: Context,
+    saved_tensors: Sequence[torch.Tensor],
+    g: torch.Tensor,
 ) -> [torch.Tensor, torch.Tensor, None | torch.Tensor]:
     # See [NOTE] Enable grad within context
     # _Linear.backward depends on requires grad of `weight/ctx.saved_tensors[2]`.
@@ -384,7 +390,12 @@ def _te_functional_linear_backward_impl(
 
 
 def _te_functional_linear_backward_meta(
-    a_shape: tuple, w_shape: tuple, b_shape: tuple | None, ctx: Context, saved_tensors: Sequence[TensorProxy], g: TensorProxy,
+    a_shape: tuple,
+    w_shape: tuple,
+    b_shape: tuple | None,
+    ctx: Context,
+    saved_tensors: Sequence[TensorProxy],
+    g: TensorProxy,
 ) -> [TensorProxy, TensorProxy, None | TensorProxy]:
     return (
         TensorProxy(like=g, shape=a_shape),
