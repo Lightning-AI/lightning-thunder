@@ -153,3 +153,19 @@ def test_torch_compile_autocast():
     actual = cfn(a, b)
     expected = a + b
     torch.testing.assert_close(actual, expected)
+
+
+def test_autocast_mixed_dtype_inputs():
+    def foo(x, w):
+        return torch.nn.functional.linear(x, w)
+
+    # Mixed input types.
+    x, w = torch.randn(16, 16, dtype=torch.bfloat16), torch.randn(16, 16)
+
+    jfoo = thunder.jit(foo)
+
+    with torch.autocast("cpu", torch.bfloat16):
+        eager_out = foo(x, w)
+        jit_out = jfoo(x, w)
+
+    torch.testing.assert_close(eager_out, jit_out)
