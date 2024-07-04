@@ -2848,7 +2848,7 @@ def test_custom_autograd_function():
 
     x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
     model = Model().to(dtype=torch.float64)
-    jitted = thunder.jit(model, skip_inplace_functionalization=True)
+    jitted = thunder.jit(model)
 
     gradcheck(jitted, (x,))
     with pytest.raises(GradcheckError):
@@ -2876,7 +2876,7 @@ def test_custom_autograd_function():
 
     x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
     model = Model().to(dtype=torch.float64)
-    jitted = thunder.jit(model, skip_inplace_functionalization=True)
+    jitted = thunder.jit(model)
 
     gradcheck(jitted, (x,))
 
