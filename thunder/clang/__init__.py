@@ -514,7 +514,7 @@ def _get_indexing_signature(key: Any) -> IndexingSignature:
         return sig
 
     # TensorLike triggers advanced indexing.
-    if isinstance(key, TensorLike):
+    if isinstance(key, (TensorLike)):
         sig.advanced.append((None, None))
         return sig
 
@@ -598,7 +598,14 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
     if key is None or isinstance(key, (Number, NumberProxy, slice, EllipsisType)):
         key = (key,)
 
+    _key = []
     for idx, x in enumerate(key):
+        # convert the advanced indexing key to None
+        if isinstance(x, (list, TensorLike)):
+            x = None
+            _key.append(x)
+        else:
+            _key.append(x)
         if x is Ellipsis:
             utils.check(ellipsis_idx is None, lambda: f"Found two (or more) ellipses in key={key}")
             ellipsis_idx = idx
@@ -611,6 +618,7 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
                 unsqueeze_dims_post_ellipsis.append(idx)
         else:
             raise ValueError(f"Found unexpected value {x} in key={key}")
+    key = tuple(_key)
 
     utils.check(
         specified_slices <= len(a.shape),
@@ -714,6 +722,22 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
         isinstance(key, (TensorLike, Sequence)),
         lambda: f"Advanced indexing currently only supports keys that are ellipses, integer tensors or sequences, but got {key=}",
     )
+
+    # convert list to 1D tensor
+    # this handles both cases when key is list or a tuple that contains lists
+    if isinstance(key, Sequence):
+        if isinstance(key, list):
+            key = tensor_from_sequence(key, dtype=dtypes.int8, device=a.device)
+        else:
+            key_ = []
+            for key_idx, x in enumerate(key):
+                if isinstance(x, list):
+                    x = tensor_from_sequence(x, dtype=dtypes.int8, device=a.device)
+                if not isinstance(x, (EllipsisType, TensorLike)):
+                    # convert this into a tensor with all the indices from 0 to len(a.shape[key_idx])
+                    x = tensor_from_sequence(list(range(a.shape[key_idx])), dtype=dtypes.int8, device=a.device)
+                key_.append(x)
+            key = tuple(key_)
 
     if isinstance(key, (TensorLike)):
         key = utils.sequencify(key)
@@ -862,21 +886,26 @@ def getitem(a: TensorLike, /, key) -> TensorLike:
                 key = tuple(key[:key_idx]) + (slice(start, end),) + tuple(key[key_idx + 1 :])
                 return _basic_indexing(a, key)
 
-    utils.check(
-        not (len(sig.basic) > 0 and len(sig.advanced) > 0),
-        lambda: f"{key=} mixes basic and advanced indexing that is not currently supported",
-        NotImplementedError,
-    )
+    # utils.check(
+    #     not (len(sig.basic) > 0 and len(sig.advanced) > 0),
+    #     lambda: f"{key=} mixes basic and advanced indexing that is not currently supported",
+    #     NotImplementedError,
+    # )
 
     if isinstance(key, TensorLike) or (isinstance(key, Sequence) and not isinstance(key, tuple)):
         return _advanced_indexing(a, key)
 
-    if isinstance(key, tuple):
-        for x in key:
-            if isinstance(x, TensorLike) or isinstance(x, Sequence):
-                return _advanced_indexing(a, key)
+    # figure out a way to do advanced indexing first and then basic indexing
+    if sig.advanced:
+        a = _advanced_indexing(a, key)
+    # if isinstance(key, tuple):
+    #     for x in key:
+    #         if isinstance(x, TensorLike) or isinstance(x, Sequence):
+    #             a = _advanced_indexing(a, key)
 
-    return _basic_indexing(a, key)
+    if sig.basic:
+        a = _basic_indexing(a, key)
+    return a
 
 
 # Based on NumPy's https://numpy.org/doc/stable/reference/generated/numpy.moveaxis.html
