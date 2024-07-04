@@ -46,10 +46,12 @@ def is_transformer_engine(low_precision_mode: str) -> bool:
 
 def get_context_manager(low_precision_mode: str, compile_mode: str) -> AbstractContextManager:
     if is_transformer_engine(low_precision_mode) and "thunder" not in compile_mode:
+
         @contextlib.contextmanager
         def fp8_autocast_context():
             with te.fp8_autocast(enabled=True):
                 yield
+
         return fp8_autocast_context
     else:
         return nullcontext
