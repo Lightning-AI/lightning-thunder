@@ -4052,6 +4052,7 @@ def is_torch_operators(fn):
         return True
     return False
 
+
 def register_torch_op(torchfn, fn_meta):
     _fn = langctx(Languages.TORCH)(fn_meta)
     sym = Symbol(
@@ -4067,6 +4068,7 @@ def register_torch_op(torchfn, fn_meta):
     )
 
     from thunder.core.interpreter import interpreter_needs_wrap
+
     _general_jit_lookaside_map.update(
         {torchfn: ensure_recursive_proxies(interpreter_needs_wrap(record_source_loc_in_symbol_header(sym)))}
     )
@@ -4227,8 +4229,21 @@ def backward_adaptor():
             )
         # TODO: can outputs be non tensor?
         if isinstance(fake_outs, tuple):
-            return tuple(TensorProxy(like=g, shape=fake_out.shape, dtype=_torch_to_thunder_dtype_map[fake_out.dtype], requires_grad=fake_out.requires_grad) for fake_out, g in zip(fake_outs, grad_output))
-        return TensorProxy(like=grad_output, shape=fake_outs.shape, dtype=_torch_to_thunder_dtype_map[fake_outs.dtype], requires_grad=fake_outs.requires_grad)
+            return tuple(
+                TensorProxy(
+                    like=g,
+                    shape=fake_out.shape,
+                    dtype=_torch_to_thunder_dtype_map[fake_out.dtype],
+                    requires_grad=fake_out.requires_grad,
+                )
+                for fake_out, g in zip(fake_outs, grad_output)
+            )
+        return TensorProxy(
+            like=grad_output,
+            shape=fake_outs.shape,
+            dtype=_torch_to_thunder_dtype_map[fake_outs.dtype],
+            requires_grad=fake_outs.requires_grad,
+        )
 
     return wrapper
 
@@ -4246,8 +4261,21 @@ def meta_adaptor(torch_func):
             fake_outs = torch_func(*fake_args, **fake_kwargs)
         # TODO: converts the non tensor type fake outputs to thunder types
         if isinstance(fake_outs, tuple):
-            return tuple(TensorProxy(like=args[0], shape=fake_out.shape, dtype=_torch_to_thunder_dtype_map[fake_out.dtype], requires_grad=fake_out.requires_grad) for fake_out in fake_outs)
-        return TensorProxy(like=args[0], shape=fake_outs.shape, dtype=_torch_to_thunder_dtype_map[fake_outs.dtype], requires_grad=fake_outs.requires_grad)
+            return tuple(
+                TensorProxy(
+                    like=args[0],
+                    shape=fake_out.shape,
+                    dtype=_torch_to_thunder_dtype_map[fake_out.dtype],
+                    requires_grad=fake_out.requires_grad,
+                )
+                for fake_out in fake_outs
+            )
+        return TensorProxy(
+            like=args[0],
+            shape=fake_outs.shape,
+            dtype=_torch_to_thunder_dtype_map[fake_outs.dtype],
+            requires_grad=fake_outs.requires_grad,
+        )
 
     return wrapper
 

@@ -6471,6 +6471,7 @@ def _call_dispatch(
     # TODO: where to put this register? _torch_to_thunder_function_map is accessable only when lookaside_fn is _minimal_lookaside
     # if enable_fallback_to_torch:
     from thunder.torch import is_torch_operators
+
     if is_torch_operators(fn):
         from thunder.torch import meta_adaptor, register_torch_op
 
