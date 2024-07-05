@@ -765,41 +765,6 @@ def _general_jit_isinstance_lookaside(obj: Any, cls: type | UnionType | tuple[ty
     return wrap(res, provenance=pr)
 
 
-def _general_jit_TensorProxy_iter_lookaside(wrapped_tensor_proxy: WrappedValue):
-    tensor_proxy = unwrap(wrapped_tensor_proxy)
-    if not isinstance(tensor_proxy, TensorProxy):
-        return do_raise(
-            TypeError(f"iter(obj): lookaside expects obj of type TensorProxy, but got {type(tensor_proxy)=}")
-        )
-
-    if tensor_proxy.ndim == 0:
-        return do_raise(
-            TypeError("iteration over a 0-d tensor")
-        )
-    else:
-        iterable = thunder.torch.unbind(tensor_proxy)
-    res = iter(iterable)
-
-    provenance = ProvenanceRecord(
-        PseudoInst.LOOKASIDE,
-        inputs=[wrap_const(iter).provenance, wrapped_tensor_proxy.provenance]
-    )
-
-    return wrap(res, provenance=provenance)
-
-
-@general_jit_lookaside(iter)
-def _general_jit_iter_lookaside(obj, *sentinel):
-    if isinstance(unwrap(obj), TensorProxy):
-        if sentinel:
-            return do_raise(
-                TypeError("iter(obj, sentinel): obj must be callable")
-            )
-        return _general_jit_TensorProxy_iter_lookaside(obj)
-
-    return default_lookaside(iter)(obj, *sentinel)
-
-
 @general_jit_lookaside(collections.OrderedDict.__setitem__)
 def _general_jit_dict_setitem(d, key, value):
     dict_setitem_lookaside = default_lookaside(collections.OrderedDict.__setitem__)
