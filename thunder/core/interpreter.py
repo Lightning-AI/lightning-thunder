@@ -6466,91 +6466,15 @@ def _call_dispatch(
                 unbound_fn = wrap_const(unbound_fn)  # TODO!
                 return _interpret_call(unbound_fn, slf, *args, **kwargs)
 
-    def is_torch_operators(fn):
-        if not hasattr(fn, "__module__"):
-            return False
-        from thunder.torch import _torch_to_thunder_function_map
-
-        if fn not in _torch_to_thunder_function_map and fn.__module__ in ("torch", "torch.nn.functional"):
-            return True
-        return False
-
-    def register_torch_op(fn, fn_meta):
-        from thunder.core.langctxs import langctx, Languages
-        from thunder.core.symbol import Symbol
-        from thunder.torch import _torch_to_thunder_function_map
-
-        _fn = langctx(Languages.TORCH)(fn_meta)
-        sym = Symbol(
-            name=fn.__name__,
-            meta=_fn,
-            id=fn.__module__ + fn.__name__,
-        )
-        _torch_to_thunder_function_map[fn] = sym
-        from thunder.core.jit_ext import (
-            ensure_recursive_proxies,
-            record_source_loc_in_symbol_header,
-            _general_jit_lookaside_map,
-        )
-
-        _general_jit_lookaside_map.update(
-            {fn: ensure_recursive_proxies(interpreter_needs_wrap(record_source_loc_in_symbol_header(sym)))}
-        )
-        from thunder.executors.torchex import ex, _always_executable
-
-        # TODO: there are other logics in torchsymbol, find out if they are needed to replicate here
-        op = ex.register_operator(fn.__name__, module=eval(fn.__module__), meta=fn_meta)
-        ex.register_implementation(sym, op, checker=_always_executable)
-
-        from thunder.torch import augmented_forward_adaptor, backward_adaptor
-        from thunder.core.transforms import augmented_forward_impls, backward_impls
-
-        augmented_forward_impls[sym.id] = augmented_forward_adaptor(fn, op)
-
-        def _vjp_impl(residules, *gs) -> torch.Tensor:
-            assert isinstance(residules, dict)
-            inp_args = residules["inputs"][0]
-            inp_kwargs = residules["inputs"][1]
-            func = residules["func"]
-
-            def _make_differentiable_wrapper(func, *args):
-                from thunder.core.pytree import tree_flatten, tree_map
-
-                flat_args, _ = tree_flatten(args)
-                differentiable_args = tuple(a for a in flat_args if isinstance(a, torch.Tensor))
-                differentiable_args_idx = tuple(i for i, a in enumerate(flat_args) if isinstance(a, torch.Tensor))
-
-                # TODO: figure out why?
-                def wrapper(*diff_args):
-                    new_args = []
-                    idx = 0
-                    for i, a in enumerate(args):
-                        if i in differentiable_args_idx:
-                            new_args.append(diff_args[idx])
-                            idx = idx + 1
-                        else:
-                            new_args.append(a)
-                    return func(*new_args)
-
-                return wrapper, differentiable_args
-
-            from itertools import chain
-
-            wrapped_func, diff_args = _make_differentiable_wrapper(func, *chain(inp_args, inp_kwargs.values()))
-            _, outs = torch.autograd.functional.vjp(wrapped_func, diff_args, v=gs)
-
-            return outs
-
-        bwd_op = ex.register_operator(fn.__name__ + "_vjp", meta=backward_adaptor(), fn=_vjp_impl)
-        ex.register_implementation(bwd_op.id, bwd_op, checker=_always_executable)
-        backward_impls[sym.id] = bwd_op
-
+    # (2) Handles lookasides
+    # if enable auto fallback to torch ops, the torch operator is registered in _torch_to_thunder_function_map
+    # TODO: where to put this register? _torch_to_thunder_function_map is accessable only when lookaside_fn is _minimal_lookaside
+    # if enable_fallback_to_torch:
+    from thunder.torch import is_torch_operators
     if is_torch_operators(fn):
-        from thunder.torch import meta_adaptor
+        from thunder.torch import meta_adaptor, register_torch_op
 
         register_torch_op(fn, meta_adaptor(fn))
-
-    # (2) Handles lookasides
     lookaside_fn: INTERPRETER_SIGNALS | None | Callable = compilectx.lookaside(fn, *args, **kwargs)
     if lookaside_fn is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         # Happens with sharp edges, for example
