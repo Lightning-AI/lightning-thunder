@@ -163,7 +163,7 @@ def apply_rematerialization_for_consumer(
 
     # Construct a temporary Trace object with subsymbols from both the producer and the consumer.
     trace = TraceCtx(None)
-    trace.bound_symbols = (*producer.subsymbols, *consumer.subsymbols)
+    trace.bound_symbols = producer.subsymbols
 
     recomputing_symbols = utils.find_producer_symbols(trace, rematerialized_inputs, cut_inputs)
     new_subsymbols = recomputing_symbols + tuple(consumer.subsymbols)
