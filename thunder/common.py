@@ -520,7 +520,6 @@ def trace(
     include_return_statement: bool = True,
     use_dce: bool = True,
     insert_ddp_syncs: bool = False,
-    exclude_names: None | Sequence[str] = None,
 ) -> Callable:
     @make_opaque
     def _trace(
@@ -543,8 +542,6 @@ def trace(
                 return fn(*args, **kwargs)
 
             trace = TraceCtx(fn)
-            if not exclude_names is None:
-                trace.names.update(exclude_names)
             tracectx_tok = set_tracectx(trace)
 
             proxyargs, proxykwargs = args, kwargs
