@@ -186,7 +186,9 @@ def test_apply_rematerialization_consumer(executor, device, _):
     from dataclasses import replace
 
     # Both producer and consumer subsymbols contain `t3 = prims.exp(t2)`
-    consumer_with_duplicated_syms_as_producer = replace(consumer, args=tuple(a for a in consumer.args if a.name != "t3"))
+    consumer_with_duplicated_syms_as_producer = replace(
+        consumer, args=tuple(a for a in consumer.args if a.name != "t3")
+    )
     consumer_with_duplicated_syms_as_producer.subsymbols = (duplicated_sym[0], *consumer.subsymbols)
     new_consumer_case2 = apply_rematerialization_for_consumer(producer, consumer_with_duplicated_syms_as_producer, cut)
     # The new_consumer_case2 generated with duplicated subsymbols between producer and consumer is the same as the previous new_consumer
