@@ -4982,18 +4982,7 @@ def _set_grad_enabled_with_warning(enabled: bool) -> None:
 register_function(torch._C._set_grad_enabled, _set_grad_enabled_with_warning)
 
 
-@run_once
-def _warn_for_unwrap_if_dead():
-    warnings.warn(
-        "torch._C._functorch.unwrap_if_dead has no effect under thunder.jit. "
-        "`torch.autograd.Function.backward` is not respected by `thunder.jit`. "
-        "`thunder.jit` generates backward based on the forward"
-    )
-
-
 def _unwrap_if_dead(tensor):
-
-    _warn_for_unwrap_if_dead()
     return tensor
 
 
