@@ -161,7 +161,7 @@ def apply_rematerialization_for_consumer(
         filter(lambda x: x.name not in map(lambda x: x.name, new_consumer_args), consumer.args)
     )
 
-    # Construct a temporary Trace object with subsymbols from both the producer and the consumer.
+    # Construct a temporary Trace object with subsymbols from the producer.
     trace = TraceCtx(None)
     trace.bound_symbols = producer.subsymbols
 
