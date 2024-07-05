@@ -23,6 +23,7 @@ import time
 from thunder.core.compile_data import compile_data_and_stats, get_cache_option, get_compile_data
 import thunder.clang as clang
 import thunder.core.transforms
+from thunder.core.baseutils import run_once
 
 from types import (
     CellType,
@@ -891,8 +892,17 @@ def _general_jit_named_buffers_lookaside(obj: Any, *args, **kwargs):
     )
 
 
+@run_once
+def _warn_custom_autograd_function():
+    warnings.warn(
+        "Currently `backward` of custom `torch.autograd.function.Function` is ignored by `thunder.jit`. "
+        "`thunder.jit` generates backward based on the forward."
+    )
+
+
 @general_jit_lookaside(torch.autograd.function.Function.apply.__func__)
 def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwargs):
+    _warn_custom_autograd_function()
 
     custom_autograd_function_cls = unwrap(obj)
     custom_forward = custom_autograd_function_cls.forward
