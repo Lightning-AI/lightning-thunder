@@ -200,33 +200,28 @@ def test_core_vs_numpy_consistency(op: OpInfo, device: str, dtype: dtypes.dtype,
         if result is not None:
             return result
 
+
 def test_notimplemented_interpolate_align():
     def foo():
         t0 = torch.randn((22, 288, 15, 20), dtype=torch.float16)
-        t1 = torch.nn.functional.interpolate(
-            t0,
-            scale_factor=2.0,
-            mode='nearest',
-            align_corners=True
-        )
+        t1 = torch.nn.functional.interpolate(t0, scale_factor=2.0, mode="nearest", align_corners=True)
         return t1
+
     with pytest.raises(NotImplementedError, match="not yet support"):
         tfoo = thunder.jit(foo)
         tfoo()
 
+
 def test_notimplemented_interpolate_recompute_scale():
     def foo():
         t0 = torch.randn((22, 288, 15, 20), dtype=torch.float16)
-        t1 = torch.nn.functional.interpolate(
-            t0,
-            scale_factor=2.0,
-            mode='nearest',
-            recompute_scale_factor=True
-        )
+        t1 = torch.nn.functional.interpolate(t0, scale_factor=2.0, mode="nearest", recompute_scale_factor=True)
         return t1
+
     with pytest.raises(NotImplementedError, match="not yet support"):
         tfoo = thunder.jit(foo)
         tfoo()
+
 
 def test_notimplemented_interpolate_antialias():
     def foo():
@@ -234,10 +229,11 @@ def test_notimplemented_interpolate_antialias():
         t1 = torch.nn.functional.interpolate(
             t0,
             scale_factor=2.0,
-            mode='nearest',
+            mode="nearest",
             antialias=True,
         )
         return t1
+
     with pytest.raises(NotImplementedError, match="not yet support"):
         tfoo = thunder.jit(foo)
         tfoo()
