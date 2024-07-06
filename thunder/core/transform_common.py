@@ -454,6 +454,15 @@ def check_inplace_to_views(computation_trace: Trace) -> dict[VariableInterface, 
     return swap_map
 
 
+def is_functionalizable(bsym: BoundSymbol) -> bool:
+    """Has `OpTags.IN_PLACE` and its args are NOT ``computation_trace.args`` nor ``computation_trace.kwargs``."""
+    from thunder.torch import _inplace_to_out_of_place
+
+    return (
+        bsym.sym in _inplace_to_out_of_place and bsym.subsymbols and bsym.subsymbols[-1].sym.id == prims.PrimIDs.COPY_
+    )
+
+
 def functionalize_inplace_ops(
     computation_trace: Trace, orig_to_view_swap_map: dict[VariableInterface, TensorProxy]
 ) -> list[Trace]:
@@ -467,16 +476,15 @@ def functionalize_inplace_ops(
     For example, :func:`thunder.torch.add_` is represented as a :class:`thunder.core.symbol.BoundSymbol`
     whose `subsymbols` are :func:`thunder.torch.add` and :func:`thunder.core.prims.copy_`. This function
     replaces it with a :class:`~thunder.core.symbol.BoundSymbol` of :func:`~thunder.torch.add`.
-    """
-    import thunder.torch
 
-    def is_functionalizable(bsym: BoundSymbol) -> bool:
-        """Has `OpTags.IN_PLACE` and its args are NOT ``computation_trace.args`` nor ``computation_trace.kwargs``."""
-        return (
-            bsym.sym in thunder.torch._inplace_to_out_of_place
-            and bsym.subsymbols
-            and bsym.subsymbols[-1].sym.id == prims.PrimIDs.COPY_
-        )
+    .. note::
+
+        Currently if an arg of ``computation_trace`` is passed to multiple in-place ops,
+        the return values would be correct but the arg itself would not be correctly updated.
+        See https://github.com/Lightning-AI/lightning-thunder/issues/657#issuecomment-2208655632.
+
+    """
+    from thunder.torch import _inplace_to_out_of_place
 
     if not any(is_functionalizable(bsym) for bsym in computation_trace.bound_symbols):
         return []
@@ -507,7 +515,6 @@ def functionalize_inplace_ops(
                     bsyms.append(reshape_bsym)
         new_bsym = new_bsym.from_bsym_swap_proxies(cur_orig_to_view_swap_map, skip_output=True)
 
-        # in-place functionalizable ops has `prims.copy_` as the last subsymbol.
         if not is_functionalizable(new_bsym):
             bsyms.append(new_bsym)
             continue
@@ -529,12 +536,11 @@ def functionalize_inplace_ops(
     for t in filter(lambda p: isinstance(p, TensorProxy), return_bsym.flat_args):
         check(
             (var_t := variableify(t)) not in swap_map,
-            lambda: f"{return_bsym.flat_args=}. `{t}` should have been replaced by `{swap_map[var_t]}`, {new_return_bsym=}",
+            lambda: f"{return_bsym.flat_args=}. `{t}` should have been replaced by `{swap_map[var_t]}`",
         )
 
     # Step 2: Remove `prims.copy_` if it's the last one of `bsym.subsymbols`,
     # unless `copy_to` is `computation_trace.args` or `computation_trace.kwargs`
-    producer_map = producers(intermediate_trace)
     trace_args_set = ProxyDict()
     for a in filter(
         lambda a: isinstance(a, TensorProxy), tree_flatten((computation_trace.args, computation_trace.kwargs))[0]
@@ -565,7 +571,7 @@ def functionalize_inplace_ops(
 
         functional_sym: Symbol
         optional_inplace_arg_index: int
-        functional_sym, optional_inplace_arg_index = thunder.torch._inplace_to_out_of_place[new_bsym.sym]
+        functional_sym, optional_inplace_arg_index = _inplace_to_out_of_place[new_bsym.sym]
 
         flat_args, flat_args_spec = tree_flatten((new_bsym.args, new_bsym.kwargs))
         if optional_inplace_arg_index > -1:
