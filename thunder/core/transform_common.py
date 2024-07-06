@@ -463,6 +463,85 @@ def is_functionalizable(bsym: BoundSymbol) -> bool:
     )
 
 
+def collect_required_copy_bsyms_for_args(
+    trace: Trace,
+    removed_copy_bsyms: list[BoundSymbol],
+) -> tuple[list[BoundSymbol], dict[VariableInterface, TensorProxy]]:
+    from thunder.core.utils import find_producer_symbols
+    from thunder.torch import _syms_returning_views
+
+    flat_args = tuple(
+        filter(
+            lambda p: isinstance(p, TensorProxy),
+            tree_flatten((trace.args, trace.kwargs))[0],
+        )
+    )
+    trace_args_set = ProxyDict()
+    for a in flat_args:
+        trace_args_set[a] = a
+
+    copy_dst_to_copy_bsym: dict[VariableInterface, BoundSymbol] = {}
+    required_copy_bsyms: list[BoundSymbol] = []
+    unused_copy_bsyms: list[BoundSymbol] = []
+    inplace_args: list[TensorProxy] = []
+    copy_destinations: list[TensorProxy] = []
+    for idx, bsym in enumerate(removed_copy_bsyms):
+        if (copy_to := bsym.flat_proxy_args[1]) in trace_args_set:
+            required_copy_bsyms.append(bsym)
+            copy_dst_to_copy_bsym[variableify(copy_to)] = bsym
+            inplace_args.append(copy_to)
+        else:
+            unused_copy_bsyms.append(bsym)
+
+        copy_destinations.append(copy_to)
+
+    new_copy_dst_to_copy_bsym: dict[VariableInterface, BoundSymbol] = {}
+    additional_copy_bsyms: list[BoundSymbol] = []
+    swap_map: dict[VariableInterface, TensorProxy] = {}
+    for bsym in unused_copy_bsyms:
+        copy_return = bsym.flat_proxy_outs[0]
+        s_bsyms = find_producer_symbols(trace, (copy_return,), inplace_args)
+
+        if all(
+            (bsym.sym.tags and prims.OpTags.IN_PLACE in bsym.sym.tags) or bsym.sym in _syms_returning_views
+            for bsym in s_bsyms
+        ):
+            first_bsym: BoundSymbol = s_bsyms[0]
+            orig_args = tuple(
+                filter(
+                    lambda p: isinstance(p, TensorProxy) and p in trace_args_set,
+                    first_bsym.flat_args,
+                )
+            )
+            check(
+                orig_args and len(orig_args) == 1,
+                lambda: f"{orig_args = } found for {copy_return = }",
+            )
+
+            copy_src = bsym.flat_proxy_args[0]
+            new_copy_dst = orig_args[0]
+            with tracectx(trace):
+                new_copy_out: TensorProxy = prims.copy_.meta(copy_src, new_copy_dst)
+                new_copy_bsym = prims.copy_.bind(copy_src, new_copy_dst, output=new_copy_out)
+            swap_map[variableify(copy_src)] = new_copy_out
+            additional_copy_bsyms.append(new_copy_bsym)
+            new_copy_dst_to_copy_bsym[variableify(new_copy_dst)] = new_copy_bsym
+
+    narrowed_swap_map: dict[VariableInterface, TensorProxy] = {}
+    copy_bsyms = []
+    for var_t in copy_dst_to_copy_bsym:
+        if var_t in new_copy_dst_to_copy_bsym:
+            bsym = new_copy_dst_to_copy_bsym[var_t]
+            copy_bsyms.append(bsym)
+
+            var_t = variableify(bsym.flat_proxy_args[0])
+            narrowed_swap_map[var_t] = swap_map[var_t]
+        else:
+            copy_bsyms.append(copy_dst_to_copy_bsym[var_t])
+
+    return copy_bsyms, narrowed_swap_map
+
+
 def functionalize_inplace_ops(
     computation_trace: Trace, orig_to_view_swap_map: dict[VariableInterface, TensorProxy]
 ) -> list[Trace]:
@@ -541,16 +620,11 @@ def functionalize_inplace_ops(
 
     # Step 2: Remove `prims.copy_` if it's the last one of `bsym.subsymbols`,
     # unless `copy_to` is `computation_trace.args` or `computation_trace.kwargs`
-    trace_args_set = ProxyDict()
-    for a in filter(
-        lambda a: isinstance(a, TensorProxy), tree_flatten((computation_trace.args, computation_trace.kwargs))[0]
-    ):
-        trace_args_set[a] = a
     bsym_inplace_to_functional = {}
     swap_map.clear()
 
     new_bsyms: list[BoundSymbol] = []
-    copy_to_arg_bsyms: list[BoundSymbol] = []
+    removed_copy_bsyms: list[BoundSymbol] = []
     for bsym in intermediate_trace.bound_symbols:
         new_bsym = bsym.from_bsym_swap_proxies(swap_map)
 
@@ -561,10 +635,7 @@ def functionalize_inplace_ops(
         copy_bsym = bsym.subsymbols[-1]
         copy_return = copy_bsym.flat_proxy_outs[0]
         copy_from = copy_bsym.flat_proxy_args[0]
-        copy_to = copy_bsym.flat_proxy_args[1]
-
-        if copy_to in trace_args_set:
-            copy_to_arg_bsyms.append(copy_bsym)
+        removed_copy_bsyms.append(copy_bsym)
         swap_map[variableify(copy_return)] = copy_from
         new_bsym.subsymbols = new_bsym.subsymbols[:-1]
         new_bsym = new_bsym.from_bsym_swap_proxies(swap_map)
@@ -573,10 +644,12 @@ def functionalize_inplace_ops(
         optional_inplace_arg_index: int
         functional_sym, optional_inplace_arg_index = _inplace_to_out_of_place[new_bsym.sym]
 
-        flat_args, flat_args_spec = tree_flatten((new_bsym.args, new_bsym.kwargs))
+        args, kwargs = new_bsym.args, new_bsym.kwargs
         if optional_inplace_arg_index > -1:
+            # Update `inplace` from `True` to `False`. e.g. `relu(x, inplace=True)` -> `relu(x, inplace=False)`
+            flat_args, flat_args_spec = tree_flatten((args, kwargs))
             flat_args[optional_inplace_arg_index] = False
-        args, kwargs = tree_unflatten(flat_args, flat_args_spec)
+            args, kwargs = tree_unflatten(flat_args, flat_args_spec)
         new_functional_bsym = functional_sym.bind(
             *args,
             **kwargs,
@@ -587,8 +660,17 @@ def functionalize_inplace_ops(
         new_bsyms.append(new_functional_bsym)
         bsym_inplace_to_functional[new_bsym] = new_functional_bsym
 
+    required_copy_bsyms, swap_map_for_return = collect_required_copy_bsyms_for_args(
+        intermediate_trace,
+        removed_copy_bsyms,
+    )
     functionalized_computation_trace = from_trace(computation_trace)
-    functionalized_computation_trace.bound_symbols = new_bsyms[:-1] + copy_to_arg_bsyms + [new_bsyms[-1]]
+
+    return_bsym = new_bsyms[-1]
+    if swap_map_for_return:
+        return_bsym = return_bsym.from_bsym_swap_proxies(swap_map_for_return)
+
+    functionalized_computation_trace.bound_symbols = new_bsyms[:-1] + required_copy_bsyms + [return_bsym]
     functionalized_computation_trace.set_provenance(TraceProvenance("Functionalize in-place ops"))
     # note(crcrpar): I kind of want to do the following two.
     # functionalized_computation_trace._provenance.swap_map = swap_map
