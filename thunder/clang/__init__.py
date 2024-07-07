@@ -728,6 +728,8 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
     )
 
     def _to_tensorproxies(x: list, device: devices.DeviceType):
+        # convert list to tensor
+        # e.g. [1, 2] -> tensor.Tensor([1, 2])
         for idx, val in enumerate(x):
             if isinstance(val, (NumberProxy)):
                 x[idx] = utils.get_numberlike_value(val)
@@ -743,10 +745,15 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
     if isinstance(key, Sequence):
         if isinstance(key, list):
             key = _to_tensorproxies(key, a.device)
+            if isinstance(key, list):
+                # handle list of tensors
+                for ii, i in enumerate(key):
+                    advanced_keys.append((ii, i))
         else:
             key_ = []
             for key_idx, x in enumerate(key):
                 if isinstance(x, list):
+                    # is it possible to have list of tensors here?
                     x = _to_tensorproxies(x, a.device)
                     key_.append(x)
                     advanced_keys.append((key_idx, x))
