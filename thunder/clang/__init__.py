@@ -599,9 +599,13 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
         key = (key,)
 
     _key = []
+    # keeps track of keys that are not squeeze related
+    new_key = []
     for idx, x in enumerate(key):
-        # skip advanced indexing by converting this to [:]
+        if not isinstance(x, (NumberProxy, Number)):
+            new_key.append(x)
         if isinstance(x, (list, TensorLike)):
+            # skip advanced indexing by converting this to [:]
             x = slice(None, None, None)
             _key.append(x)
         else:
@@ -706,7 +710,7 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
     if len(squeeze_dims) > 0:
         result = prims.squeeze(result, tuple(squeeze_dims))
 
-    return result
+    return result, tuple(new_key)
 
 
 # TODO Add more advanced indexing support
@@ -731,24 +735,34 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
             x = tensor_from_sequence(x, dtype=dtypes.int64, device=device)
         return x
 
+    basic_keys = []  # (key index, key)
+    advanced_keys = []  # (key index, key)
+
     # convert list to 1D tensor
     # this handles both cases when key is list or a tuple that contains lists
     if isinstance(key, Sequence):
         if isinstance(key, list):
-            key = tuple(_to_tensorproxies(key, a.device))
+            key = _to_tensorproxies(key, a.device)
         else:
             key_ = []
-            for x in key:
+            for key_idx, x in enumerate(key):
                 if isinstance(x, list):
                     x = _to_tensorproxies(x, a.device)
                     key_.append(x)
+                    advanced_keys.append((key_idx, x))
                 elif isinstance(x, (EllipsisType, TensorLike)):
                     key_.append(x)
-                # intentionally skip indices with basic indexing
+                    if isinstance(x, TensorLike):
+                        advanced_keys.append((key_idx, x))
+                else:
+                    # basic indices
+                    key_.append(None)
+                    basic_keys.append((key_idx, None))
             key = tuple(key_)
 
     if isinstance(key, (TensorLike)):
         key = utils.sequencify(key)
+        advanced_keys.append((0, key[0]))
 
     # Validates (currently supported) inputs
     utils.check(len(key) > 0, lambda: f"Advanced indexing expected a non-empty sequence for a key, but got {key=}")
@@ -758,7 +772,7 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
         if x is Ellipsis:
             num_ellipses += 1
         utils.check(
-            isinstance(x, (EllipsisType, TensorLike)),
+            isinstance(x, (EllipsisType, TensorLike, type(None))),
             lambda: f"Advanced indexing currently only supports tensors as sequence elements (possibly with a starting ellipsis), but found an object of type {type(x)}",
         )
         if isinstance(x, TensorLike):
@@ -808,17 +822,42 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
     #   but actually generating those tensors seems expensive.
     flattened: TensorLike
     subtensor_shape: list[int]
+    # keeps track of the rest of the dimensions
+    remaining_shape: list[int]
     dim: int
     modified_key = list(key)
+    # calculates the output tensor shape
+    new_shape = []
 
+    permute_shape = []  # basic keys first followed by advanced keys
+    permute_key = []
+    for key_idx, key_val in basic_keys:
+        permute_shape.append(key_idx)
+        permute_key.append(key_val)
+    for key_idx, key_val in advanced_keys:
+        permute_shape.append(key_idx)
+        permute_key.append(key_val)
+
+    # transpose so that we have basic keys first
     if has_ellipsis:
         del modified_key[0]
+        permute_shape = [x + len(list(a.shape[: a.ndim - (seq_len - 1)])) - 1 for x in permute_shape]
+        permute_shape = list(range(a.ndim - (seq_len - 1))) + permute_shape
+        a = transpose(a, tuple(permute_shape))
+        key = tuple(permute_key)
+
         subtensor_shape = a.shape[a.ndim - (seq_len - 1) :]
+        remaining_shape = list(a.shape[: a.ndim - (seq_len - 1)])
         dim = -1
         flattened = flatten(a, a.ndim - (seq_len - 1), -1)
     else:
         # NOTE No ellipsis case
+        permute_shape = permute_shape + list(range(len(key), len(a.shape)))
+        a = transpose(a, tuple(permute_shape))
+        key = tuple(permute_key)
+
         subtensor_shape = a.shape[: len(key)]
+        remaining_shape = list(a.shape[len(key) :])
         dim = 0
         flattened = flatten(a, 0, seq_len - 1)
 
@@ -843,11 +882,34 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
     # A detail is that the first pairing is treated specially to initialize the loop variables.
     l = subtensor_shape[-1]
     flattened_idx = wrap_tensor(key[-1], l)
+    if len(flattened_idx.shape) > 0:
+        new_shape.append(flattened_idx.shape[0])
+
     accum: int = l
-    for k, l in zip(reversed(key[:-1]), reversed(subtensor_shape[:-1])):
-        wrapped = wrap_tensor(k, l)
-        flattened_idx = flattened_idx + wrapped * accum
-        accum *= l
+    for j, (k, l) in enumerate(zip(reversed(key[:-1]), reversed(subtensor_shape[:-1])), 2):
+        if k is not None:
+            wrapped = wrap_tensor(k, l)
+            flattened_idx = flattened_idx + wrapped * accum
+            if len(flattened_idx.shape) > 0:
+                # update flattened_idx
+                if new_shape:
+                    new_shape.pop()
+                new_shape.append(flattened_idx.shape[0])
+            accum *= l
+        else:
+            new_shape.append(l)
+            flattened_idx_ = empty([0], device=a.device, dtype=dtypes.int64)
+            for y in range(subtensor_shape[-j]):
+                flattened_idx_ = cat((flattened_idx_, flattened_idx + (accum * y)), dim=0)
+            accum *= l
+            flattened_idx = flattened_idx_
+
+    if has_ellipsis:
+        # fill from back
+        new_shape = remaining_shape + list(reversed(new_shape))
+    else:
+        # fill from front
+        new_shape = new_shape + remaining_shape
 
     res = take(flattened, flattened_idx, dim=dim)
 
@@ -855,6 +917,10 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
     # If all keys are 0-dim, this dim has to be squeezed.
     if all(k.ndim == 0 for k in modified_key if isinstance(k, TensorLike)):
         res = squeeze(res, (dim,))
+    res = reshape(res, tuple(new_shape))
+    # permute back to original shape
+    res = transpose(res, tuple(permute_shape[: len(new_shape)]))
+
     return res
 
 
@@ -892,13 +958,14 @@ def getitem(a: TensorLike, /, key) -> TensorLike:
                     end = start + 1
                 # 1-len Sequence -> a slice
                 key = tuple(key[:key_idx]) + (slice(start, end),) + tuple(key[key_idx + 1 :])
-                return _basic_indexing(a, key)
+                a, _ = _basic_indexing(a, key)
+                return a
 
     if isinstance(key, TensorLike) or (isinstance(key, Sequence) and not isinstance(key, tuple)):
         return _advanced_indexing(a, key)
 
     # perform basic indexing first
-    a = _basic_indexing(a, key)
+    a, key = _basic_indexing(a, key)
     if sig.advanced:
         a = _advanced_indexing(a, key)
 

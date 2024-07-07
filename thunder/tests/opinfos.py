@@ -3595,18 +3595,50 @@ def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
     idx0 = make_idx(7, 9)
     yield SampleInput(a, (Ellipsis, idx0))
 
-    # both forward/backword works
-    a = make((5, 5, 5))
-    yield SampleInput(a, ([1, 2], [1, 2]))
-    # both forward/backword works
-    a = make((5, 5, 5))
-    yield SampleInput(a, (0, [1, 2], [1, 2]))
-    # backward does not work
-    a = make((5, 5, 5))
-    yield SampleInput(a, (slice(1, 3, 1), [1, 2], [1, 2]))
-    # backward does not work
-    a = make((5, 5, 5))
-    yield SampleInput(a, (None, [1, 2], [1, 2]))
+    # list indexing
+    a = make((5, 4, 7))
+    yield SampleInput(a, ([1, 2]))
+
+    # list indexing into a tensor with no elements
+    a = make((5, 0, 7))
+    yield SampleInput(a, [1, 2])
+
+    # list indexing with tensor indexing
+    a = make((5, 4, 7))
+    idx = make_idx(5, 12)
+    yield SampleInput(a, (idx, [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]))
+
+    # list indexing with Ellipsis
+    a = make((5, 2, 9, 4, 7))
+    idx0 = make_idx(4, 8)
+    idx1 = make_idx(7, 1)
+    yield SampleInput(a, (Ellipsis, idx0, [0]))
+
+    # basic indexing and advanced indexing together
+    a = make((5, 5, 7))
+    yield SampleInput(a, (None, [1, 2]))
+    a = make((5, 5))
+    yield SampleInput(a, (slice(1, 4), [1, 2]))
+    yield SampleInput(a, (slice(None, None, None), [1, 2]))
+    a = make((5, 5))
+    yield SampleInput(a, (1, [1, 2]))
+
+    # Ellipsis, basic, and advanced indexing
+    a = make((5, 5, 7))
+    yield SampleInput(a, (Ellipsis, None, [1, 2]))
+    a = make((5, 5, 9, 5))
+    yield SampleInput(a, (Ellipsis, slice(1, 4), None, [1, 2]))
+    a = make((5, 5))
+    yield SampleInput(a, (Ellipsis, 1, [1, 2]))
+
+    # mixed order basic and advanced indexing
+    a = make((5, 5, 7))
+    yield SampleInput(a, ([1, 2], None))
+    a = make((5, 5))
+    yield SampleInput(a, ([1, 2], slice(1, 4)))
+    yield SampleInput(a, ([1, 2], slice(None, None, None)))
+    a = make((5, 5))
+    yield SampleInput(a, ([1, 2], 1))
 
 
 # NOTE getitem intentionally defines 3 references, since advanced indexing is probably
