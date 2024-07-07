@@ -337,3 +337,17 @@ def test_multiple_inplace_to_args(executor, device, _):
 
     torch.testing.assert_close(actual, expected)
     torch.testing.assert_close(x, x_ref)
+
+    def f_with_view(a):
+        b = a.view(-1)
+        return b.exp_().sin_().cos()
+
+    x = make_tensor((2, 2), device=device, dtype=torch.float32)
+    x_ref = x.clone().detach()
+    expected = f_with_view(x_ref)
+
+    jitted = executor.make_callable(f_with_view)
+    actual = jitted(x)
+
+    torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(x, x_ref)
