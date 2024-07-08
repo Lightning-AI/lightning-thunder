@@ -1302,7 +1302,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self.shape})>'
 
     def type_string(self):
-        return f"{self.device} {self.dtype.shortname()}{list(self.shape)}"
+        return f"{self.device.device_str()} {self.dtype.shortname()}{list(self.shape)}"
 
     # NOTE __getattr__ is overridden to support language-specific methods
     def __getattr__(self, attr: str, /):
@@ -1315,6 +1315,15 @@ class TensorProxy(Proxy, TensorProxyInterface):
             return partial(method_or_value, self)
 
         return method_or_value
+
+    def __iter__(self):
+        # NOTE: this implementation is equivalent to torch.Tensor.__iter__
+
+        if self.ndim == 0:
+            raise TypeError("iteration over a 0-dim tensor")
+
+        unbound_tuple = self.unbind(0)
+        return iter(unbound_tuple)
 
     #
     # Default attribute

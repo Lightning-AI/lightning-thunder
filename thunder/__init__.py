@@ -391,6 +391,7 @@ def jit(
                 autocast_cpu_dtype=str(autocast_cpu_dtype),
             )
             autocast_thunder_dtype = autocast_cpu_dtype if pytorch.is_autocast_cpu_enabled() else autocast_gpu_dtype
+            cache_info.update(autocast_thunder_dtype=str(autocast_thunder_dtype))
 
         cache_info["is_autocast_enabled"] = is_autocast_enabled
 
@@ -568,14 +569,6 @@ def jit(
 
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
-
-            if is_autocast_enabled:
-                from thunder.core.transforms import autocast
-
-                computation_trc = trace(compile_data=cd)(
-                    autocast(computation_trc.python_callable(), dtype=autocast_thunder_dtype), *inps
-                )
-                computation_traces.append(computation_trc)
 
             used_torch_autograd = False
             if not cd.disable_torch_autograd_support:
