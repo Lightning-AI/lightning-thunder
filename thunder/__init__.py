@@ -584,6 +584,7 @@ def jit(
                     # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
                     # by split_forward_backward
                     extraces = cs.last_traces
+                    used_torch_autograd = True
 
             if not used_torch_autograd:
                 ## EPILOGUE and TRANSFORMS should not mix...
