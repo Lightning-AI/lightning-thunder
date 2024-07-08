@@ -1211,6 +1211,30 @@ def _topk_prim_grad(
 register_grad(pids.TOPK, _topk_prim_grad)
 
 
+@torchctx
+def _sort_prim_grad(
+    a: TensorProxy, /, dim: None | int = None, descending: bool = False, stable: bool = False, *, out=None
+) -> (TensorProxy, TensorProxy):
+    dim = -1 if dim is None else dim
+    sorted_a, sort_idx = prims.sort(a, dim, descending, stable, out=out)
+
+    sorted_a_grad = get_grad(sorted_a)
+
+    if a.ndim != 0:
+        # TODO(nikitaved): replace with scatter once we have it.
+        # scatter_add uses atomic ops which are slow!
+        a_grad = ltorch.zeros_like(a)
+        a_grad = ltorch.scatter_add(a_grad, dim, sort_idx, sorted_a_grad)
+    else:
+        a_grad = sorted_a_grad
+    put_grad(a, a_grad)
+
+    return sorted_a, sort_idx
+
+
+register_grad(pids.SORT, _sort_prim_grad)
+
+
 # TODO Fix division by zero when n_elem_reduced == 0 or when mean.numel == 0
 #   by returning zeros_like(a) or similar.
 # TODO Fix grad when correction > n_elem_reduced.

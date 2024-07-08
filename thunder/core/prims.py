@@ -243,6 +243,8 @@ class PrimIDs(Enum):
     ARGMAX = auto()
     ARGMIN = auto()
     TOPK = auto()
+    # Sort and dim permutations prims
+    SORT = auto()
     # Scatter and gather prims (Experimental!)
     GATHER = auto()
     INDEX_ADD = auto()
@@ -3376,6 +3378,25 @@ def topk_meta(
 
 
 topk = make_prim(PrimIDs.TOPK, "topk", meta=topk_meta, tags=(OpTags.REDUCTION_OP,))
+
+
+def sort_meta(
+    a: TensorProxy, /, dim: int, descending: Number, sorted: Number, *, out: None | TensorProxy
+) -> (TensorProxy, TensorProxy):
+    utils.check(
+        out is None,
+        lambda: "Only `out` which is None is currently supported",
+    )
+
+    utils.check_type(a, TensorProxy)
+    utils.check_type(dim, (int, IntegerProxy))
+    utils.check(pytype(descending) is bool, lambda: f"Expected {descending=} to be a boolean type")
+    utils.check(pytype(sorted) is bool, lambda: f"Expected {sorted=} to be a boolean type")
+
+    return TensorProxy(like=a), TensorProxy(like=a, dtype=dtypes.int64)
+
+
+sort = make_prim(PrimIDs.SORT, "sort", meta=sort_meta)
 
 
 def transpose_meta(a: TensorProxy, /, permutation: tuple[int, ...]) -> TensorProxy:
