@@ -590,12 +590,6 @@ def functionalize_inplace_ops(
     whose `subsymbols` are :func:`thunder.torch.add` and :func:`thunder.core.prims.copy_`. This function
     replaces it with a :class:`~thunder.core.symbol.BoundSymbol` of :func:`~thunder.torch.add`.
 
-    .. note::
-
-        Currently if an arg of ``computation_trace`` is passed to multiple in-place ops,
-        the return values would be correct but the arg itself would not be correctly updated.
-        See https://github.com/Lightning-AI/lightning-thunder/issues/657#issuecomment-2208655632.
-
     """
     from thunder.torch import _inplace_to_out_of_place
 
