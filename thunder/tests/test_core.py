@@ -2848,7 +2848,7 @@ def test_custom_autograd_function():
 
     x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
     model = Model().to(dtype=torch.float64)
-    jitted = thunder.jit(model, skip_inplace_functionalization=True)
+    jitted = thunder.jit(model)
 
     gradcheck(jitted, (x,))
     with pytest.raises(GradcheckError):
@@ -2876,7 +2876,7 @@ def test_custom_autograd_function():
 
     x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
     model = Model().to(dtype=torch.float64)
-    jitted = thunder.jit(model, skip_inplace_functionalization=True)
+    jitted = thunder.jit(model)
 
     gradcheck(jitted, (x,))
 
@@ -2915,3 +2915,22 @@ def test_type_string():
     (pystr,) = tr.bound_symbols[1].python(0)
 
     assert pystr == 'result = ltorch.mul(2, x)  # result: "cpu f32[2, 2]"'
+
+
+def test_dtype_in_trace():
+    def fn(x):
+        return x.to(torch.float16)
+
+    jfn = thunder.jit(fn)
+
+    x = torch.randn(
+        3,
+    )
+
+    jfn(x)
+
+    tr = thunder.last_traces(jfn)[0]
+    assert tr.bound_symbols[1].sym == ltorch.to
+    (pystr,) = tr.bound_symbols[1].subsymbols[0].python(0)
+
+    assert "convert_element_type(x, dtypes.float16)" in pystr
