@@ -5462,13 +5462,6 @@ topk_opinfo = OpInfo(
     error_input_generator=topk_error_generator,
     torch_reference=torch.topk,
     dtypes=(datatypes.signedinteger, datatypes.unsignedinteger, datatypes.floating),
-    test_directives=(
-        DecorateInfo(
-            # See https://github.com/Lightning-AI/lightning-thunder/issues/120
-            pytest.mark.skip(reason="Cannot handle inputs/outputs which do not require grads"),
-            "test_vjp_correctness",
-        ),
-    ),
 )
 reduction_ops.append(topk_opinfo)
 
