@@ -2716,6 +2716,13 @@ def topk(
     return clang.topk(a, k, dim, largest, sorted, out=out)
 
 
+@torchsymbol(torch.sort, is_method=True)
+def sort(
+    a: TensorLike, /, dim: None | int = None, descending: bool = False, stable: bool = False, *, out=None
+) -> (TensorLike, TensorLike):
+    return clang.sort(a, dim, descending, stable, out=out)
+
+
 #
 # Scatter and gather-related operations
 #

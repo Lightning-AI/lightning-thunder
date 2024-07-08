@@ -1978,3 +1978,14 @@ def topk(
     dim = utils.canonicalize_dim(a.ndim, dim)
 
     return prims.topk(a, k, dim, bool(largest), bool(sorted), out=out)
+
+
+@clangop()
+def sort(
+    a: TensorLike, /, dim: None | int = None, descending: bool = False, stable: bool = False, *, out=None
+) -> (TensorProxy, TensorProxy):
+    if dim is None:
+        dim = a.ndim - 1 if a.ndim > 0 else 0
+    dim = utils.canonicalize_dim(a.ndim, dim)
+
+    return prims.sort(a, dim, descending, stable, out=out)
