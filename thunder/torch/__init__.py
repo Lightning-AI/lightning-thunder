@@ -2716,6 +2716,13 @@ def topk(
     return clang.topk(a, k, dim, largest, sorted, out=out)
 
 
+@torchsymbol(torch.sort, is_method=True)
+def sort(
+    a: TensorLike, /, dim: None | int = None, descending: bool = False, stable: bool = False, *, out=None
+) -> (TensorLike, TensorLike):
+    return clang.sort(a, dim, descending, stable, out=out)
+
+
 #
 # Scatter and gather-related operations
 #
@@ -4591,12 +4598,21 @@ def interpolate(
 
     utils.check(a.ndim >= 3, lambda: f"Expected {a.ndim=} >= 3")
     utils.check(a.numel() > 0, lambda: f"Expected {a.numel=} to be greater than 0")
-    utils.check(align_corners == None, lambda: f"'align_corners' is not yet supported.")
+    utils.check(
+        align_corners == None,
+        lambda: f"Thunder does not yet support 'align_corners'.",
+        exception_type=NotImplementedError,
+    )
     utils.check(
         recompute_scale_factor is None or recompute_scale_factor == False,
-        lambda: f"'recompute_scale_factor=True' is not yet supported.",
+        lambda: f"Thunder does not yet support 'recompute_scale_factor=True'.",
+        exception_type=NotImplementedError,
     )
-    utils.check(antialias == False, lambda: f"'antialias=True' is not yet supported.")
+    utils.check(
+        antialias == False,
+        lambda: f"Thunder does not yet support 'antialias=True'.",
+        exception_type=NotImplementedError,
+    )
 
     utils.check(
         (size is not None) ^ (scale_factor is not None),
