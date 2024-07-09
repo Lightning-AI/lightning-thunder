@@ -318,3 +318,36 @@ def test_error_of_inplace_to_views(executor, device, _):
     jittd_f = thunder.jit(f, executors=executor.executors_list())
     with pytest.raises(NotImplementedError, match="in-place op of `torch.Tensor.mul_`"):
         _ = jittd_f(a, b)
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_multiple_inplace_to_args(executor, device, _):
+
+    def f(a):
+        return a.exp_().sin_().cos()
+
+    x = make_tensor((2, 2), device=device, dtype=torch.float32)
+    x_ref = x.clone().detach()
+    expected = f(x_ref)
+
+    jitted = executor.make_callable(f)
+    actual = jitted(x)
+
+    torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(x, x_ref)
+
+    def f_with_view(a):
+        b = a.view(-1)
+        return b.exp_().sin_().cos()
+
+    x = make_tensor((2, 2), device=device, dtype=torch.float32)
+    x_ref = x.clone().detach()
+    expected = f_with_view(x_ref)
+
+    jitted = executor.make_callable(f_with_view)
+    actual = jitted(x)
+
+    torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(x, x_ref)
