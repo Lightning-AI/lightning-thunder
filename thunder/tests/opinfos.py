@@ -5415,8 +5415,29 @@ argmin_opinfo = OpInfo(
 reduction_ops.append(argmin_opinfo)
 
 
+def make_sort_stable_sample(shape, dim, dtype, device, requires_grad):
+    """
+    Creates stable samples at which sort is differentiable.
+
+    The following holds true for any sample `x` from this generator:
+    sort(x, ...).indices == sort(x + eps, ...).indices for eps in (0, 1).
+    """
+
+    make = partial(make_tensor, device=device, dtype=dtype)
+
+    noise = make(shape, low=0, high=1)
+    data = 2 * torch.arange(0, noise.numel(), device=noise.device).reshape(noise.shape).to(noise.dtype)
+    if data.ndim > 0 and data.shape[dim] > 0:
+        perm = torch.randperm(data.shape[dim], device=data.device)
+        data = data.index_select(dim, perm)
+
+    sample = data + noise
+    sample.requires_grad_(requires_grad)
+    return sample
+
+
 def topk_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    make = partial(make_sort_stable_sample, device=device, dtype=dtype, requires_grad=requires_grad)
 
     # shape, k, dim
     # NOTE: k = 0 is not consistent between the CPU and the CUDA PyTorch implementations,
@@ -5432,9 +5453,14 @@ def topk_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((4, 2, 5, 1), 1),
     )
 
-    for shape, *args in cases:
+    for shape, k, *dim in cases:
+        if not dim:
+            implied_dim = -1
+        else:
+            implied_dim = dim[0]
+
         for largest, sorted in itertools.product((True, False), repeat=2):
-            yield SampleInput(make(shape), *args, largest=largest, sorted=sorted)
+            yield SampleInput(make(shape, implied_dim), k, *dim, largest=largest, sorted=sorted)
 
 
 def topk_error_generator(op, device, **kwargs):
@@ -5453,11 +5479,6 @@ topk_opinfo = OpInfo(
     clang.topk,
     name="topk",
     supports_grad=True,
-    # Without the fixed seed this generator does not guarantee
-    # to produce inputs at which topk is differentiable
-    # (i.e. when topk(x, ...).indices == topk(x + dx, ...).indices).
-    # TODO: (@nikitaved): potentially modify these inputs to
-    # fix the issue.
     sample_input_generator=topk_sample_generator,
     error_input_generator=topk_error_generator,
     torch_reference=torch.topk,
@@ -5476,7 +5497,7 @@ dim_perm_ops = []
 
 
 def sort_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    make = partial(make_sort_stable_sample, device=device, dtype=dtype, requires_grad=requires_grad)
 
     # shape, dim
     cases = (
@@ -5497,18 +5518,13 @@ def sort_sample_generator(op, device, dtype, requires_grad, **kwargs):
             dim = -1
 
         for descending, stable in itertools.product((True, False), repeat=2):
-            yield SampleInput(make(shape), dim=dim, descending=descending, stable=stable)
+            yield SampleInput(make(shape, dim), dim=dim, descending=descending, stable=stable)
 
 
 sort_opinfo = OpInfo(
     clang.sort,
     name="sort",
     supports_grad=True,
-    # Without the fixed seed this generator does not guarantee
-    # to produce inputs at which sort is differentiable
-    # (i.e. when sort(x, ...).indices == sort(x + dx, ...).indices).
-    # TODO: (@nikitaved): potentially modify these inputs to
-    # fix the issue.
     sample_input_generator=sort_sample_generator,
     torch_reference=torch.sort,
     dtypes=(datatypes.bool8, datatypes.signedinteger, datatypes.unsignedinteger, datatypes.floating),
