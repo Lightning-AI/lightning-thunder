@@ -750,6 +750,7 @@ class CompileDDPTest(DataParallelTestCase):
     ):
 
         from thunder.core.prims import PrimIDs
+        from thunder.core.transforms import unwrap_one_level_of_subsymbols
         from thunder.executors.torchex import pad_prim_impl
         from thunder.executors.torchex import slice_prim_impl
 
@@ -771,10 +772,13 @@ class CompileDDPTest(DataParallelTestCase):
         y.mean().backward()
 
         fw_extrace = thunder.last_traces(jitted)[-1]
+        # When bookend is turned off, `slice` and `pad` may appear in nvFusion subsymbols.
+        fw_extrace = unwrap_one_level_of_subsymbols(fw_extrace)
         fw_symids = [bsym.sym.id for bsym in fw_extrace.bound_symbols]
         self.assertTrue(any(sym_id in {PrimIDs.SLICE, slice_prim_impl.id} for sym_id in fw_symids))
 
         bw_trace = thunder.last_backward_traces(jitted)[0]
+        bw_trace = unwrap_one_level_of_subsymbols(bw_trace)
         bw_symids = [bsym.sym.id for bsym in bw_trace.bound_symbols]
         self.assertTrue(any(sym_id in {PrimIDs.PAD, pad_prim_impl.id} for sym_id in bw_symids))
 
