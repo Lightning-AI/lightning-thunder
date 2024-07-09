@@ -1119,6 +1119,14 @@ argmin = _register_torch_operation("argmin")
 topk = _register_torch_operation("topk")
 
 
+#
+# Sort and dim permutations operations
+#
+
+
+sort = _register_torch_operation("sort")
+
+
 # NOTE The following transforms are necessary because thunder uses the parameter name 'dims' while PyTorch
 #   uses 'dim'
 def _amax_prim_transform(a: TensorProxy, /, dims: Sequence[int]) -> TensorProxy:
@@ -1193,6 +1201,29 @@ _register_implementation(ltorch.var_mean, var_mean, checker=_always_executable)
 _register_implementation(ltorch.argmax, argmax, checker=_always_executable)
 _register_implementation(ltorch.argmin, argmin, checker=_always_executable)
 _register_implementation(ltorch.topk, topk, checker=_always_executable, execution_transform=_topk_transform)
+
+
+#
+# Sort and dim permutations operations
+#
+
+
+# NOTE this transform translates number proxies to boolean values
+# and handles dim = None
+def _sort_transform(
+    a: TensorProxy, /, dim: int | None = None, descending: bool = False, stable: bool = False, *, out=None
+):
+    if dim is None:
+        dim = a.ndim - 1 if a.ndim > 0 else 0
+
+    # NOTE: args past `a` are passed as kwargs to avoid issues with multiple `torch.sort` overloadings
+    return sort(a, dim=dim, descending=bool(descending), stable=bool(stable), out=out)
+
+
+_register_implementation(prims.sort, checker=_always_executable, execution_transform=_sort_transform)
+
+_register_implementation(ltorch.sort, checker=_always_executable, execution_transform=_sort_transform)
+
 
 #
 # Scatter and gather operations
@@ -1453,6 +1484,9 @@ def _interpolate_checker(
     size: int | Sequence[int] | None = None,
     scale_factor: float | Sequence[float] | None = None,
     mode: str = "nearest",
+    align_corners=None,
+    recompute_scale_factor=None,
+    antialias=False,
 ) -> TensorLike:
     return 3 <= a.ndim and a.ndim <= 5
 

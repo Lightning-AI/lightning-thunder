@@ -19,9 +19,17 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 
 import thunder
 from thunder.tests.litgpt_model import Config, GPT, Block
-
 from lightning.fabric.utilities.throughput import measure_flops
 from lightning.fabric.utilities import Throughput
+
+
+try:
+    import transformer_engine.pytorch as te
+    from lightning.fabric.plugins.precision.transformer_engine import TransformerEnginePrecision
+
+    transformer_engine_available = True
+except ImportError:
+    transformer_engine_available = False
 
 
 world_size = int(os.environ.get("WORLD_SIZE", 1))
@@ -35,6 +43,23 @@ if world_size > 1:
     pg = torch_dist.distributed_c10d._get_default_group()
 device = torch.device("cuda", local_rank)
 torch.cuda.set_device(device)
+
+
+def check_fp8_compute_capability() -> None:
+    device = torch.cuda.current_device()
+    compute_capability = torch.cuda.get_device_capability(device)
+    required_compute_capability = (8, 9)
+
+    if compute_capability < required_compute_capability:
+        raise RuntimeError(
+            f"Device compute capability {compute_capability} is insufficient. "
+            f"Compute capability {required_compute_capability} or higher is required for FP8 execution. "
+            "Please ensure you are using a compatible GPU and the correct driver version."
+        )
+
+
+def is_transformer_engine(low_precision_mode: str) -> bool:
+    return low_precision_mode == "fp8-delayed-te"
 
 
 def configure_optimizers(model, weight_decay, learning_rate, betas, device_type):
@@ -56,10 +81,15 @@ def _run_fwd_bwd_one_microbatch(
     targets: torch.Tensor,
     gradient_accumulation_steps: int,
     device: torch.device,
+    use_te_fp8_autocast: bool,
 ) -> torch.Tensor:
     input_ids = input_ids.to(device)
     targets = targets.to(device)
-    logits = model(input_ids)
+    if use_te_fp8_autocast:
+        with te.fp8_autocast(enabled=True):
+            logits = model(input_ids)
+    else:
+        logits = model(input_ids)
     logits = logits.reshape(-1, logits.size(-1))
     targets = targets.reshape(-1)
     loss = torch.nn.functional.cross_entropy(logits, targets, ignore_index=-1) / gradient_accumulation_steps
@@ -87,6 +117,7 @@ class Benchmark_litGPT:
         profiler_start: int = 15,
         profiler_stop: int = 15,
         skip_data_sync: bool = False,
+        low_precision_mode: str = "none",
     ):
         seed = 1337
         torch.manual_seed(seed)
@@ -115,6 +146,8 @@ class Benchmark_litGPT:
         self.fsdp_bucket_params = fsdp_bucket_params
         self.checkpoint_activations = checkpoint_activations
         self.micro_batch_size = micro_batch_size
+        self.low_precision_mode = low_precision_mode
+        self.use_te_fp8_autocast = is_transformer_engine(low_precision_mode) and "thunder" not in compile
 
         # Clarify benchmark assumptions
         if self.sharding_size is not None:
@@ -152,6 +185,16 @@ class Benchmark_litGPT:
                     f"[WARNING] Bucketing mode is set to {self.bucketing_mode}. --fsdp_bucket_params will be ignored."
                 )
 
+        if is_transformer_engine(low_precision_mode):
+            if not transformer_engine_available:
+                raise ImportError(
+                    "Selected benchmark config is for TransformerEngine but could not import the TransformerEngine library!"
+                )
+            check_fp8_compute_capability()
+
+        if "thunder" in self.compile and is_transformer_engine(self.low_precision_mode):
+            self.compile += "_transformerengine"
+
         if global_batch_size is not None:
             self.global_batch_size = global_batch_size
         else:
@@ -187,6 +230,10 @@ class Benchmark_litGPT:
         print(f"Loading model with {self.config.__dict__}")
         self.model = self.init_model()
         print(f"Time to instantiate model: {time.perf_counter() - t0:.02f} seconds.")
+
+        if self.use_te_fp8_autocast:
+            te_precision = TransformerEnginePrecision(weights_dtype=torch.bfloat16, replace_layers=True)
+            self.model = te_precision.convert_module(self.model)
 
         # Setup the distributed algorithm choices
         self.model = self.setup_distributed(self.model)
@@ -414,7 +461,11 @@ class Benchmark_litGPT:
                     input_ids, targets = next(self.train_data_iter)
                     input_ids = input_ids.to(self.device)
                     targets = targets.to(self.device)
-                    logits = self.model(input_ids)
+                    if self.use_te_fp8_autocast:
+                        with te.fp8_autocast():
+                            logits = self.model(input_ids)
+                    else:
+                        logits = self.model(input_ids)
                     logits = logits.reshape(-1, logits.size(-1))
                     targets = targets.reshape(-1)
                     loss = (
@@ -426,7 +477,11 @@ class Benchmark_litGPT:
             input_ids, targets = next(self.train_data_iter)
             input_ids = input_ids.to(self.device)
             targets = targets.to(self.device)
-            logits = self.model(input_ids)
+            if self.use_te_fp8_autocast:
+                with te.fp8_autocast():
+                    logits = self.model(input_ids)
+            else:
+                logits = self.model(input_ids)
             logits = logits.reshape(-1, logits.size(-1))
             targets = targets.reshape(-1)
             loss = (
@@ -544,6 +599,7 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
             elif benchmark.distributed_mode == "ddp":
                 print(f"DDP Bucketing Size: {benchmark.ddp_bucket_size} MB")
             print(f"Compiler: {benchmark.compile}")
+            print(f"Low Precision Mode: {benchmark.low_precision_mode}")
             print(f"Average iter time: {benchmark.perf_metrics['average_iter_time']:.2f} ms")
             print(f"Memory used: {benchmark.perf_metrics['memory_used_GB']:.02f} GB")
             print(f"Tokens/s: {benchmark.perf_metrics['tokens_per_sec']:.02f}")

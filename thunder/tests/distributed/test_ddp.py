@@ -34,6 +34,7 @@ from thunder.executors.transformer_engineex import (
     transformer_engine_ex,
     TE_AVAILABLE,
     te_sync_fp8_meta_bwd,
+    TE_VERSION_1_8_PLUS,
 )
 
 
@@ -45,6 +46,7 @@ if TE_AVAILABLE:
     from transformer_engine.pytorch import fp8_autocast
     from transformer_engine.pytorch import Linear as TELinear
     from transformer_engine.pytorch.fp8 import check_fp8_support, FP8GlobalStateManager
+    import transformer_engine
 
     is_fp8_supported, fp8_support_reason = check_fp8_support()
 
@@ -748,6 +750,7 @@ class CompileDDPTest(DataParallelTestCase):
     ):
 
         from thunder.core.prims import PrimIDs
+        from thunder.core.transforms import unwrap_one_level_of_subsymbols
         from thunder.executors.torchex import pad_prim_impl
         from thunder.executors.torchex import slice_prim_impl
 
@@ -769,10 +772,13 @@ class CompileDDPTest(DataParallelTestCase):
         y.mean().backward()
 
         fw_extrace = thunder.last_traces(jitted)[-1]
+        # When bookend is turned off, `slice` and `pad` may appear in nvFusion subsymbols.
+        fw_extrace = unwrap_one_level_of_subsymbols(fw_extrace)
         fw_symids = [bsym.sym.id for bsym in fw_extrace.bound_symbols]
         self.assertTrue(any(sym_id in {PrimIDs.SLICE, slice_prim_impl.id} for sym_id in fw_symids))
 
         bw_trace = thunder.last_backward_traces(jitted)[0]
+        bw_trace = unwrap_one_level_of_subsymbols(bw_trace)
         bw_symids = [bsym.sym.id for bsym in bw_trace.bound_symbols]
         self.assertTrue(any(sym_id in {PrimIDs.PAD, pad_prim_impl.id} for sym_id in bw_symids))
 
@@ -1595,7 +1601,7 @@ def _test_fsdp_transformer_engine(input_data):
     # and verify that the weights have converged to same value and
     # fp8 meta state is same after `n_iter`.
     init_method, world_size, rank, executor, device, _unused_dtype, kwargs = input_data
-    thunder_fsdp_strategy = kwargs["thunder_fsdp_strategy"]
+    thunder_fsdp_strategy, intermediate_activation_sharding = kwargs["thunder_fsdp_strategy_and_intermediate_sharding"]
     devicetype = devices.device_from_string(device).devicetype
 
     # Setting LOCAL_RANK is necessary for thunder.distributed.fsdp
@@ -1636,6 +1642,7 @@ def _test_fsdp_transformer_engine(input_data):
                 transformer_engine_ex,
             ]
             + executor.executors_list(),
+            fp8_shard_intermediate_activation=intermediate_activation_sharding,
         )
 
         optim = torch.optim.SGD(thunder_model.parameters())
@@ -1664,7 +1671,8 @@ def _test_fsdp_transformer_engine(input_data):
         te_model.fc2.weight.data = fc2_weight.clone()
 
         fsdp_model = FullyShardedDataParallel(te_model, auto_wrap_policy=always_wrap_policy)
-
+        if intermediate_activation_sharding:
+            transformer_engine.pytorch.distributed.prepare_te_modules_for_fsdp(fsdp_model)
         optim = torch.optim.SGD(te_model.parameters())
 
         for _ in range(n_iter):
@@ -1815,10 +1823,12 @@ def test_ddp_transformer_engine_llama_sanity(executor, devices, dtype):
     decorators=(
         # NOTE: ddp_wrapper
         pytest.mark.parametrize(
-            "thunder_fsdp_strategy",
+            "thunder_fsdp_strategy_and_intermediate_sharding",
             (
-                FSDPType.ZERO2,
-                FSDPType.ZERO3,
+                (FSDPType.ZERO2, False),
+                (FSDPType.ZERO3, False),
+                # Intermediate sharding is only availabe TE v1.8 onwards
+                *(((FSDPType.ZERO3, True),) if TE_VERSION_1_8_PLUS else ()),
             ),
         ),
         pytest.mark.skipif(not TE_AVAILABLE, reason="TransformerEngine is not installed."),
@@ -1830,7 +1840,7 @@ def test_ddp_transformer_engine_llama_sanity(executor, devices, dtype):
     ),
 )
 @ddp_wrapper("test_fsdp_transformer_engine", _test_fsdp_transformer_engine)
-def test_fsdp_transformer_engine(executor, devices, dtype, thunder_fsdp_strategy):
+def test_fsdp_transformer_engine(executor, devices, dtype, thunder_fsdp_strategy_and_intermediate_sharding):
     pass
 
 

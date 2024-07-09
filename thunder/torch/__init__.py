@@ -41,6 +41,12 @@ from thunder.core.symbol import Symbol
 from thunder.core.transforms import register_grad
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.baseutils import run_once
+from thunder.core.transforms import (
+    _maybe_get_autocast_rule_for_symbol,
+    _get_downcast_dtype_from_str,
+    _check_valid_autocast_dtype,
+)
+import thunder
 
 
 __all__ = [
@@ -137,22 +143,52 @@ class torchsymbol:
         else:
             sym = Symbol(name=fn.__name__, meta=_fn, id=id, is_prim=self.is_prim, tags=self.tags)
 
+        # NOTE: torch.autocast support
+        # In PyTorch eager, enabling autocast allows mixed inputs to operator like `linear`
+        # which expect dtypes to be same. This works in PyTorch eager, as dispatcher applies the
+        # conversion first and then passes the converted input to the operator.
+        # To mimick similar behavior, here we replace the `sym` for all operators which have
+        # autocast rule, to apply the conversion rule if autocast was enabled.
+        autocast_impl: Callable | None = _maybe_get_autocast_rule_for_symbol(sym)
+
+        # `mapping_fn` is used to map `torch` -> `thunder.torch`
+        # If autocast is enabled - it will also take care of casting the inputs
+        # as per autocast rule else it will be just the symbol.
+        mapping_fn = sym
+        if autocast_impl is not None:
+
+            @wraps(sym)
+            def maybe_autocast(*args, **kwargs):
+                # Cache info may not be available in case of legacy `thunder.compile`
+                # which is still used for cases.
+                try:
+                    cache_info = thunder._get_cache_info()
+                except LookupError:
+                    cache_info = {}
+
+                if cache_info.get("is_autocast_enabled", False):
+                    thunder_autocast_dtype = _get_downcast_dtype_from_str(cache_info["autocast_thunder_dtype"])
+                    return partial(autocast_impl, dtype=thunder_autocast_dtype)(*args, **kwargs)
+                return sym(*args, **kwargs)
+
+            mapping_fn = maybe_autocast
+
         if self.is_method:
             method_name: str = self.method_name if self.method_name is not None else fn.__name__
-            register_method(method_name, sym)
+            register_method(method_name, mapping_fn)
             torch_method: None | Callable = getattr(torch.Tensor, method_name, None)
             if torch_method is not None:
-                _torch_to_thunder_function_map[torch_method] = sym
+                _torch_to_thunder_function_map[torch_method] = mapping_fn
         elif self.is_property:
             method_name: str = self.method_name if self.method_name is not None else fn.__name__
-            register_property(method_name, sym)
+            register_property(method_name, mapping_fn)
             torch_property = getattr(torch.Tensor, method_name, None)
             if torch_property is not None:
-                _torch_to_thunder_function_map[torch_property] = sym
+                _torch_to_thunder_function_map[torch_property] = mapping_fn
 
         if self.torchfns is not None:
             for torchfn in self.torchfns:
-                _torch_to_thunder_function_map[torchfn] = sym
+                _torch_to_thunder_function_map[torchfn] = mapping_fn
 
         if self.tags and prims.OpTags.IN_PLACE in self.tags:
             _inplace_to_out_of_place[sym] = globals()[name[:-1]], -1
@@ -2680,6 +2716,13 @@ def topk(
     return clang.topk(a, k, dim, largest, sorted, out=out)
 
 
+@torchsymbol(torch.sort, is_method=True)
+def sort(
+    a: TensorLike, /, dim: None | int = None, descending: bool = False, stable: bool = False, *, out=None
+) -> (TensorLike, TensorLike):
+    return clang.sort(a, dim, descending, stable, out=out)
+
+
 #
 # Scatter and gather-related operations
 #
@@ -4543,6 +4586,9 @@ def interpolate(
     size: None | int | Sequence[int] = None,
     scale_factor: float | Sequence[float] | None = None,
     mode: str = "nearest",
+    align_corners: bool | None = None,
+    recompute_scale_factor: bool | None = None,
+    antialias: bool = False,
 ) -> TensorLike:
     utils.check(
         mode == "nearest",
@@ -4552,6 +4598,21 @@ def interpolate(
 
     utils.check(a.ndim >= 3, lambda: f"Expected {a.ndim=} >= 3")
     utils.check(a.numel() > 0, lambda: f"Expected {a.numel=} to be greater than 0")
+    utils.check(
+        align_corners == None,
+        lambda: f"Thunder does not yet support 'align_corners'.",
+        exception_type=NotImplementedError,
+    )
+    utils.check(
+        recompute_scale_factor is None or recompute_scale_factor == False,
+        lambda: f"Thunder does not yet support 'recompute_scale_factor=True'.",
+        exception_type=NotImplementedError,
+    )
+    utils.check(
+        antialias == False,
+        lambda: f"Thunder does not yet support 'antialias=True'.",
+        exception_type=NotImplementedError,
+    )
 
     utils.check(
         (size is not None) ^ (scale_factor is not None),
@@ -4937,18 +4998,7 @@ def _set_grad_enabled_with_warning(enabled: bool) -> None:
 register_function(torch._C._set_grad_enabled, _set_grad_enabled_with_warning)
 
 
-@run_once
-def _warn_for_unwrap_if_dead():
-    warnings.warn(
-        "torch._C._functorch.unwrap_if_dead has no effect under thunder.jit. "
-        "`torch.autograd.Function.backward` is not respected by `thunder.jit`. "
-        "`thunder.jit` generates backward based on the forward"
-    )
-
-
 def _unwrap_if_dead(tensor):
-
-    _warn_for_unwrap_if_dead()
     return tensor
 
 

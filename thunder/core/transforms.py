@@ -1211,6 +1211,30 @@ def _topk_prim_grad(
 register_grad(pids.TOPK, _topk_prim_grad)
 
 
+@torchctx
+def _sort_prim_grad(
+    a: TensorProxy, /, dim: None | int = None, descending: bool = False, stable: bool = False, *, out=None
+) -> (TensorProxy, TensorProxy):
+    dim = -1 if dim is None else dim
+    sorted_a, sort_idx = prims.sort(a, dim, descending, stable, out=out)
+
+    sorted_a_grad = get_grad(sorted_a)
+
+    if a.ndim != 0:
+        # TODO(nikitaved): replace with scatter once we have it.
+        # scatter_add uses atomic ops which are slow!
+        a_grad = ltorch.zeros_like(a)
+        a_grad = ltorch.scatter_add(a_grad, dim, sort_idx, sorted_a_grad)
+    else:
+        a_grad = sorted_a_grad
+    put_grad(a, a_grad)
+
+    return sorted_a, sort_idx
+
+
+register_grad(pids.SORT, _sort_prim_grad)
+
+
 # TODO Fix division by zero when n_elem_reduced == 0 or when mean.numel == 0
 #   by returning zeros_like(a) or similar.
 # TODO Fix grad when correction > n_elem_reduced.
@@ -3716,12 +3740,30 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
 autocast_impls: dict[prims.PrimIDs, Callable] = {}
 
 
+# NOTE: Rules which are registered ltorch symbols should match the type signature
+#       of those symbols as we use this rule for translating from `torch` -> `thunder.torch`
+#       if autocast is enabled while jitting. See also `NOTE: torch.autocast support`.
 def register_autocast_rule(op):
     def decorator(func):
         autocast_impls[op] = func
         return func
 
     return decorator
+
+
+_allowed_downcast_types = {dtypes.float16, dtypes.bfloat16}
+_allowed_downcast_types_str_to_dtype_map = {str(dtype): dtype for dtype in _allowed_downcast_types}
+
+
+def _check_valid_autocast_dtype(dtype):
+    if dtype not in _allowed_downcast_types:
+        raise ValueError(
+            f"autocast: `dtype` is expected to be either `thunder.float16` or `thunder.bfloat16`, but {dtype}"
+        )
+
+
+def _get_downcast_dtype_from_str(str_dtype):
+    return _allowed_downcast_types_str_to_dtype_map[str_dtype]
 
 
 def maybe_downcast_to(dtype, args):
@@ -3742,9 +3784,7 @@ def autocast_matmul_rule(a, b, dtype):
     return prims.matmul(*(maybe_downcast_to(dtype, (a, b))))
 
 
-@register_autocast_rule("torch.nn.functional.linear")
-@register_autocast_rule(prims.PrimIDs.LINEAR)
-def autocast_linear_rule(a, w, bias, dtype):
+def _linear_autocast_impl(a, w, bias, dtype):
     if bias is None:
         # Don't pass `bias` to maybe_downcast_to.
         downcast_args = maybe_downcast_to(dtype, (a, w)) + (bias,)
@@ -3754,22 +3794,36 @@ def autocast_linear_rule(a, w, bias, dtype):
     return prims.linear(*downcast_args)
 
 
+@register_autocast_rule("torch.nn.functional.linear")
+def autocast_ltorch_linear_rule(a, w, bias=None, *, dtype):
+    return _linear_autocast_impl(a, w, bias, dtype)
+
+
+@register_autocast_rule(prims.PrimIDs.LINEAR)
+def autocast_linear_rule(a, w, bias, dtype):
+    return _linear_autocast_impl(a, w, bias, dtype)
+
+
 @register_autocast_rule("torch.nn.functional.scaled_dot_product_attention")
 def autocast_scaled_dot_product_attention(
     query,
     key,
     value,
-    attn_mask,
-    dropout_p,
-    is_causal,
+    attn_mask=None,
+    dropout_p=0.0,
+    is_causal=False,
     *,
     dtype,
-    scale,
+    scale=None,
 ):
     from thunder.torch import scaled_dot_product_attention
 
     q, k, v = maybe_downcast_to(dtype, (query, key, value))
     return scaled_dot_product_attention(q, k, v, attn_mask, dropout_p, is_causal, scale=scale)
+
+
+def _maybe_get_autocast_rule_for_symbol(sym: Symbol):
+    return autocast_impls.get(sym.id)
 
 
 def autocast_symbol_mapper(bound_symbol: BoundSymbolInterface, dtype: dtypes.dtype):
@@ -3781,7 +3835,7 @@ def autocast_symbol_mapper(bound_symbol: BoundSymbolInterface, dtype: dtypes.dty
     Returns:
         Callable: The callable implementing the autocast rule for the symbol.
     """
-    autocast_impl: Callable | None = autocast_impls.get(bound_symbol.sym.id)
+    autocast_impl: Callable | None = _maybe_get_autocast_rule_for_symbol(bound_symbol.sym)
     return bound_symbol.sym if autocast_impl is None else partial(autocast_impl, dtype=dtype)
 
 
@@ -3799,8 +3853,7 @@ def autocast(func: Callable, dtype: dtypes.dtype):
 
     if not isinstance(dtype, dtypes.dtype):
         raise ValueError(f"`dtype` is expected to be `thunder.dtype.dtype` but {type(dtype)}")
-    if dtype not in {dtypes.float16, dtypes.bfloat16}:
-        raise ValueError(f"`dtype` is expected to be either `thunder.float16` or `thunder.bfloat16`, but {dtype}")
+    _check_valid_autocast_dtype(dtype)
 
     @wraps(func)
     def wrapper(*args, **kwargs):
