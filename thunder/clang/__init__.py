@@ -705,6 +705,10 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
             # NOTE: this is redundant with the ValueError exception above
             raise ValueError(f"Found unexpected value {x} in key={key}")
 
+    # check if we can skip slice_prim
+    if all([x == 0 for x in start_indices]) and all([x == l for x, l in zip(end_indices, a.shape)]):
+        return a, tuple(new_key)
+
     result = prims.slice_prim(a, start_indices, end_indices, strides)
 
     if len(squeeze_dims) > 0:
@@ -850,8 +854,10 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
         del modified_key[0]
         permute_shape = [x + len(list(a.shape[: a.ndim - (seq_len - 1)])) - 1 for x in permute_shape]
         permute_shape = list(range(a.ndim - (seq_len - 1))) + permute_shape
-        a = transpose(a, tuple(permute_shape))
-        key = tuple(permute_key)
+        # check if we need to permute
+        if permute_shape != list(range(a.ndim)):
+            a = transpose(a, tuple(permute_shape))
+            key = tuple(permute_key)
 
         subtensor_shape = a.shape[a.ndim - (seq_len - 1) :]
         remaining_shape = list(a.shape[: a.ndim - (seq_len - 1)])
@@ -925,8 +931,10 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
     if all(k.ndim == 0 for k in modified_key if isinstance(k, TensorLike)):
         res = squeeze(res, (dim,))
     res = reshape(res, tuple(new_shape))
-    # permute back to original shape
-    res = transpose(res, tuple(permute_shape[: len(new_shape)]))
+    # check if we need to permute
+    if permute_shape != list(range(a.ndim)):
+        # permute back to original shape
+        res = transpose(res, tuple(permute_shape[: len(new_shape)]))
 
     return res
 
