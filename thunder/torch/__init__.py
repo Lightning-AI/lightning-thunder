@@ -4045,12 +4045,40 @@ def avg_pool3d(
 
 
 def is_torch_operators(fn):
-    m = getattr(fn, "__module__", None)
-    if m is None or not m.startswith("torch"):
-        return False
-    if fn not in _torch_to_thunder_function_map:
+    if (
+        hasattr(fn, "__module__")
+        and fn.__module__
+        and fn.__module__.startswith("torch")
+        and fn not in _torch_to_thunder_function_map
+    ):
         return True
     return False
+
+
+def _is_differentiable(arg):
+    from torch._subclasses.fake_tensor import FakeTensor
+
+    if isinstance(arg, (torch.Tensor, FakeTensor)):
+        return dtypes.is_inexact_dtype(to_dtype(arg.dtype)) and arg.requires_grad
+    if isinstance(arg, TensorProxy):
+        return dtypes.is_inexact_dtype(arg.dtype) and arg.requires_grad
+    return False
+
+
+def _make_differentiable_wrapper(func, *args, **kwargs):
+    from thunder.core.pytree import tree_flatten, tree_unflatten
+
+    flat_args, spec = tree_flatten((args, kwargs))
+    differentiable_args_idx = tuple(i for i, a in enumerate(flat_args) if _is_differentiable(a))
+    differentiable_args = tuple(arg for i, arg in enumerate(flat_args) if i in differentiable_args_idx)
+
+    def wrapper(*diff_args):
+        diff_args_iter = iter(diff_args)
+        full_args = [next(diff_args_iter) if i in differentiable_args_idx else arg for i, arg in enumerate(flat_args)]
+        full_args, full_kwargs = tree_unflatten(full_args, spec)
+        return func(*full_args, **full_kwargs)
+
+    return wrapper, differentiable_args
 
 
 def register_torch_op(torchfn, fn_meta):
@@ -4058,21 +4086,20 @@ def register_torch_op(torchfn, fn_meta):
     sym = Symbol(
         name=torchfn.__name__,
         meta=_fn,
-        id=torchfn.__module__ + torchfn.__name__,
+        id=f"{torchfn.__module__}.{torchfn.__name__}",
     )
     _torch_to_thunder_function_map[torchfn] = sym
+    from thunder.core.interpreter import interpreter_needs_wrap
     from thunder.core.jit_ext import (
+        _general_jit_lookaside_map,
         ensure_recursive_proxies,
         record_source_loc_in_symbol_header,
-        _general_jit_lookaside_map,
     )
-
-    from thunder.core.interpreter import interpreter_needs_wrap
 
     _general_jit_lookaside_map.update(
         {torchfn: ensure_recursive_proxies(interpreter_needs_wrap(record_source_loc_in_symbol_header(sym)))}
     )
-    from thunder.executors.torchex import ex, _always_executable
+    from thunder.executors.torchex import _always_executable, ex
 
     op = ex.register_operator(torchfn.__name__, module=eval(torchfn.__module__), meta=fn_meta)
     ex.register_implementation(sym, op, checker=_always_executable)
@@ -4087,30 +4114,7 @@ def register_torch_op(torchfn, fn_meta):
         inp_kwargs = residules["inputs"][1]
         func = residules["torch_func"]
 
-        def _make_differentiable_wrapper(func, *args):
-            from thunder.core.pytree import tree_flatten, tree_map
-
-            flat_args, _ = tree_flatten(args)
-            differentiable_args = tuple(a for a in flat_args if isinstance(a, torch.Tensor))
-            differentiable_args_idx = tuple(i for i, a in enumerate(flat_args) if isinstance(a, torch.Tensor))
-
-            # TODO: figure out why?
-            def wrapper(*diff_args):
-                new_args = []
-                idx = 0
-                for i, a in enumerate(args):
-                    if i in differentiable_args_idx:
-                        new_args.append(diff_args[idx])
-                        idx = idx + 1
-                    else:
-                        new_args.append(a)
-                return func(*new_args)
-
-            return wrapper, differentiable_args
-
-        from itertools import chain
-
-        wrapped_func, diff_args = _make_differentiable_wrapper(func, *chain(inp_args, inp_kwargs.values()))
+        wrapped_func, diff_args = _make_differentiable_wrapper(func, *inp_args, **inp_kwargs)
         _, outs = torch.autograd.functional.vjp(wrapped_func, diff_args, v=gs)
 
         return outs
@@ -4120,60 +4124,52 @@ def register_torch_op(torchfn, fn_meta):
     backward_impls[sym.id] = bwd_op
 
 
-def create_symtype(cls, pytype, shape_env, val):
-    from torch._dynamo.source import ConstantSource
-    from torch import sym_int, SymBool, SymFloat, SymInt
-    from torch.fx.experimental.sym_node import to_node, SymNode, method_to_operator
-    from torch.fx.experimental.symbolic_shapes import ShapeEnv, DimDynamic
-
-    symbol = shape_env.create_symbol(
-        val,
-        source=ConstantSource(f"__testing_only{len(shape_env.var_to_val)}"),
-        dynamic_dim=DimDynamic.DUCK,
-        constraint_dim=None,
-    )
-    return cls(
-        SymNode(
-            symbol,
-            shape_env,
-            pytype,
-            hint=val,
-        )
-    )
-
-
-def _convert_numbers_to_torchsym(shape_env, a):
-    from torch import sym_int, SymBool, SymFloat, SymInt
-    from thunder.core.proxies import IntegerProxy, FloatProxy
-
-    if isinstance(a, NumberProxy):
-        if a.value == None:
-            raise NotImplementedError("Unsupported for NumberProxy.value=None")
-    if isinstance(a, IntegerProxy):
-        return create_symtype(SymInt, int, shape_env, a.value)
-    elif isinstance(a, FloatProxy):
-        return create_symtype(SymFloat, float, shape_env, a.value)
-    elif isinstance(a, Number):
-        return a
-    else:
-        raise NotImplementedError(f"Unsupported type: {type(a)}")
-
-
-def _get_fake_arg(inp, shape_env):
-    from thunder.executors.sdpaex import _convert_to_fake_tensor, _convert_to_meta_tensor
+def _get_fake_arg(inp, fake_mode):
+    from thunder.core.devices import to_torch_device
 
     if inp is None:
         return inp
+    if isinstance(inp, NumberProxy):
+        if inp.value == None:
+            raise NotImplementedError("Unsupported for NumberProxy.value=None")
+        else:
+            return inp.value
+    elif isinstance(inp, TensorProxy):
+        return fake_mode.from_tensor(
+            torch.empty(
+                inp.shape,
+                dtype=_thunder_to_torch_dtype_map[inp.dtype],
+                requires_grad=inp.requires_grad,
+                device=to_torch_device(inp.device),
+            )
+        )
+    elif isinstance(inp, (torch.dtype, torch.device, torch.Size, str, bool, int, float, complex)):
+        return inp
+    elif isinstance(inp, devices.Device):
+        return to_torch_device(inp)
+    elif isinstance(inp, dtypes.dtype):
+        return to_torch_dtype(inp)
+    else:
+        raise NotImplementedError(f"Unsupported type: {type(inp)}")
 
-    if isinstance(inp, TensorProxy):
-        return _convert_to_meta_tensor(inp)
-    elif isinstance(inp, (list, tuple)):
-        out_s = []
-        for s in inp:
-            out_s.append(_get_fake_arg(s, shape_env))
-        return out_s
-    elif isinstance(inp, NumberLike):
-        return _convert_numbers_to_torchsym(shape_env, inp)
+
+def fake_type_to_thunder(inp):
+    from builtins import type
+
+    from thunder.core.proxies import _cls_to_number_proxy_map, numberproxy
+    from torch._subclasses.fake_tensor import FakeTensor
+
+    if inp is None:
+        return inp
+    if isinstance(inp, tuple(_cls_to_number_proxy_map.keys())):
+        return numberproxy(type(inp), inp)
+    elif isinstance(inp, FakeTensor):
+        return TensorProxy(
+            shape=inp.shape,
+            device=to_device(inp.device),
+            dtype=_torch_to_thunder_dtype_map[inp.dtype],
+            requires_grad=inp.requires_grad,
+        )
     else:
         raise NotImplementedError(f"Unsupported type: {type(inp)}")
 
@@ -4199,83 +4195,37 @@ def backward_adaptor():
         inp_args = inps[0]
         inp_kwargs = inps[1]
 
-        from thunder.executors.sdpaex import _convert_to_meta_tensor
-        from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
-        from torch.fx.experimental.symbolic_shapes import ShapeEnv
-
-        shape_env = ShapeEnv()  # what's shapeEnv?
-
-        # use a wrapper because the inputs of vjp can only be tuple of tensors or tensor
-        # TODO: what if one arg is tuple of tensor? replace the corresponding diff_args in the args with input diff_args in wrapper func(why it works now?)
-        def _make_differentiable_wrapper(func, *args, **kwargs):
-            from thunder.core.pytree import tree_flatten, tree_map
-
-            flat_args, _ = tree_flatten(args)
-            differentiable_args = tuple(a for a in flat_args if isinstance(a, FakeTensor))
-
-            def wrapper(*diff_args):
-                return func(*args, **kwargs)
-
-            # filtered_args = tuple(arg for i, arg in enumerate(args) if i in differentiable_args_idx)
-            return wrapper, differentiable_args
+        from thunder.core.pytree import tree_flatten, tree_unflatten
+        from torch._subclasses.fake_tensor import FakeTensorMode
 
         with FakeTensorMode() as mode:
-            fake_inp_args = (_get_fake_arg(arg, shape_env) for arg in inp_args)
-            fake_inp_kwargs = {k: _get_fake_arg(v, shape_env) for k, v in inp_kwargs.items()}
-
+            fake_inp_args, fake_inp_kwargs = tree_map(lambda x: _get_fake_arg(x, mode), (inp_args, inp_kwargs))
             wrapped_torch_func, diff_args = _make_differentiable_wrapper(torch_func, *fake_inp_args, **fake_inp_kwargs)
             _, fake_outs = torch.autograd.functional.vjp(
-                wrapped_torch_func, diff_args, v=tree_map(_convert_to_meta_tensor, grad_output)
+                wrapped_torch_func, diff_args, v=tree_map(lambda x: _get_fake_arg(x, mode), grad_output)
             )
-        # TODO: can outputs be non tensor?
-        if isinstance(fake_outs, tuple):
-            return tuple(
-                TensorProxy(
-                    like=g,
-                    shape=fake_out.shape,
-                    dtype=_torch_to_thunder_dtype_map[fake_out.dtype],
-                    requires_grad=fake_out.requires_grad,
-                )
-                for fake_out, g in zip(fake_outs, grad_output)
-            )
-        return TensorProxy(
-            like=grad_output,
-            shape=fake_outs.shape,
-            dtype=_torch_to_thunder_dtype_map[fake_outs.dtype],
-            requires_grad=fake_outs.requires_grad,
-        )
+        flat_fake_outs, spec_outs = tree_flatten(fake_outs)
+        outs = tuple(map(fake_type_to_thunder, flat_fake_outs))
+        if hasattr(spec_outs.type, "__module__") and spec_outs.type.__module__.startswith("torch.return_types"):
+            return outs
+        return tree_unflatten(outs, spec_outs)
 
     return wrapper
 
 
 def meta_adaptor(torch_func):
     def wrapper(*args, **kwargs):
-        from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
-        from torch.fx.experimental.symbolic_shapes import ShapeEnv
-
-        shape_env = ShapeEnv()  # what's shapeEnv?
+        from thunder.core.pytree import tree_flatten, tree_unflatten
+        from torch._subclasses.fake_tensor import FakeTensorMode
 
         with FakeTensorMode() as mode:
-            fake_args = (_get_fake_arg(arg, shape_env) for arg in args)
-            fake_kwargs = {k: _get_fake_arg(v, shape_env) for k, v in kwargs.items()}
+            fake_args, fake_kwargs = tree_map(lambda x: _get_fake_arg(x, mode), (args, kwargs))
             fake_outs = torch_func(*fake_args, **fake_kwargs)
-        # TODO: converts the non tensor type fake outputs to thunder types
-        if isinstance(fake_outs, tuple):
-            return tuple(
-                TensorProxy(
-                    like=args[0],
-                    shape=fake_out.shape,
-                    dtype=_torch_to_thunder_dtype_map[fake_out.dtype],
-                    requires_grad=fake_out.requires_grad,
-                )
-                for fake_out in fake_outs
-            )
-        return TensorProxy(
-            like=args[0],
-            shape=fake_outs.shape,
-            dtype=_torch_to_thunder_dtype_map[fake_outs.dtype],
-            requires_grad=fake_outs.requires_grad,
-        )
+        flat_fake_outs, spec_outs = tree_flatten(fake_outs)
+        outs = tuple(map(fake_type_to_thunder, flat_fake_outs))
+        if hasattr(spec_outs.type, "__module__") and spec_outs.type.__module__.startswith("torch.return_types"):
+            return outs
+        return tree_unflatten(outs, spec_outs)
 
     return wrapper
 
