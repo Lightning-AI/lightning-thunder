@@ -866,8 +866,10 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
     else:
         # NOTE No ellipsis case
         permute_shape = permute_shape + list(range(len(key), len(a.shape)))
-        a = transpose(a, tuple(permute_shape))
-        key = tuple(permute_key)
+        # check if we need to permute
+        if permute_shape != list(range(a.ndim)):
+            a = transpose(a, tuple(permute_shape))
+            key = tuple(permute_key)
 
         subtensor_shape = a.shape[: len(key)]
         remaining_shape = list(a.shape[len(key) :])
