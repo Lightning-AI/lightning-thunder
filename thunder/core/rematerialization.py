@@ -512,7 +512,7 @@ def rematerialize(trace: TraceCtx) -> TraceCtx:
         TraceCtx: Rematerialized trace and the list of
             rematerialized traces.
     """
-    start_time_ns = time.time_ns()
+    start_time_ns = time.perf_counter_ns()
 
     static_consumer_info = utils.consumers(trace)
 
@@ -558,7 +558,7 @@ def rematerialize(trace: TraceCtx) -> TraceCtx:
     rematerialized_trace = from_trace(trace)
     rematerialized_trace.bound_symbols = tuple(new_bsyms.get(bsym, bsym) for bsym in trace.bound_symbols)
 
-    end_time_ns = time.time_ns()
+    end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
 
@@ -655,7 +655,7 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
 
 def replace_uniform(trace: TraceCtx) -> TraceCtx:
     """For better rematerialization, replace the uniform operator with the stateless uniform_philox operator and manually update the RNG state."""
-    start_time_ns = time.time_ns()
+    start_time_ns = time.perf_counter_ns()
     from thunder.core.trace import VariableInterface
     from thunder.core.proxies import Proxy
     from thunder.core.devices import Device
@@ -687,7 +687,7 @@ def replace_uniform(trace: TraceCtx) -> TraceCtx:
 
     new_trace.bound_symbols = bound_symbols
 
-    end_time_ns = time.time_ns()
+    end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
     new_trace.set_provenance(

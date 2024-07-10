@@ -253,7 +253,7 @@ def _benchmark(
         args, kwargs = benchmark.make_batch()
         wait_for_computation()
         called_backward: bool = False
-        start: int = time.time_ns()
+        start: int = time.perf_counter_ns()
         result = fn(*args, **kwargs)
         if compile_backward:
             # NOTE In this case backward has been compiled, so nothing more to be done
@@ -273,9 +273,9 @@ def _benchmark(
                 grad_tensor.backward(torch.ones_like(grad_tensor))
                 called_backward = True
 
-        host_stop: int = time.time_ns()
+        host_stop: int = time.perf_counter_ns()
         wait_for_computation()
-        stop: int = time.time_ns()
+        stop: int = time.perf_counter_ns()
         if isinstance(fn, torch.nn.Module):
             clear_grads(fn)
 
@@ -497,7 +497,7 @@ def _run_benchmark(
     #   to finish its work just incase
     benchmark_fn = benchmark.fn()
     wait_for_computation_fn()
-    start_time: int = time.time_ns()
+    start_time: int = time.perf_counter_ns()
 
     assert not use_grad_transform or not compile_backward, "Can't set both use_grad_transform and compile_backward!"
     if use_grad_transform:
@@ -515,7 +515,7 @@ def _run_benchmark(
         benchmark_callable = constructor(benchmark_fn)
 
     wait_for_computation_fn()
-    stop_time: int = time.time_ns()
+    stop_time: int = time.perf_counter_ns()
     callable_construction_time: int = stop_time - start_time
     my_benchmark = partial(
         _benchmark,

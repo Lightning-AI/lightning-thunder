@@ -27,7 +27,7 @@ comment_symbols = {prims.PrimIDs.COMMENT, prims.PrimIDs.UNPACK_TRIVIAL}
 
 # Transforms a trace by determining which execution transforms to call given the list of executors in priority order
 def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: Sequence[Executor]) -> TraceCtx:
-    start_time_ns = time.time_ns()
+    start_time_ns = time.perf_counter_ns()
 
     swapmap: dict[Variable, Proxy] = {}
 
@@ -119,7 +119,7 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
 
     extrace.bound_symbols = bound_symbols
 
-    end_time_ns = time.time_ns()
+    end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
     extrace.set_provenance(
@@ -131,7 +131,7 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
 def transform_for_execution(trace: TraceCtx, executors_list: Sequence[Executor]) -> TraceCtx:
     import torch
 
-    start_time_ns = time.time_ns()
+    start_time_ns = time.perf_counter_ns()
 
     if torch.distributed.is_available():
         # Apply AllReduce bucketing if possible & needed
@@ -162,7 +162,7 @@ def transform_for_execution(trace: TraceCtx, executors_list: Sequence[Executor])
     # NOTE This occurs if a fusion executor declines to execute a symbol after running its fusion pass
     extrace = _transform_for_operator_executor_execution(extrace, get_always_executors())
 
-    end_time_ns = time.time_ns()
+    end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
 
@@ -219,7 +219,7 @@ def update_fusion_call_ctx(trace: TraceCtx) -> TraceCtx:
     Returns:
         (TraceCtx): transformed trace
     """
-    start_time_ns = time.time_ns()
+    start_time_ns = time.perf_counter_ns()
 
     new_trace = from_trace(trace)
     new_trace.bound_symbols = []
@@ -229,7 +229,7 @@ def update_fusion_call_ctx(trace: TraceCtx) -> TraceCtx:
         else:
             new_trace.bound_symbols.append(bsym)
 
-    end_time_ns = time.time_ns()
+    end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
     new_trace.set_provenance(TraceProvenance(f"Update Call Context (took {elapsed_time_millis} milliseconds)"))
@@ -247,7 +247,7 @@ def del_last_used(trace: TraceCtx, *, clear_mutable_collections=False) -> TraceC
     Returns:
         list: transformed trace
     """
-    start_time_ns = time.time_ns()
+    start_time_ns = time.perf_counter_ns()
 
     del_trace = from_trace(trace)
     bsyms = deque()
@@ -293,7 +293,7 @@ def del_last_used(trace: TraceCtx, *, clear_mutable_collections=False) -> TraceC
 
     del_trace.bound_symbols = list(bsyms)
 
-    end_time_ns = time.time_ns()
+    end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
 

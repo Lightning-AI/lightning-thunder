@@ -94,7 +94,7 @@ def _inplace_copy_sanity_check(extrace: Trace):
 # NOTE needed_proxies is an in/out argument, it takes an initial set of Variables you want to keep, and return
 #   all the needed proxies of the input trace
 def dce(trace: Trace, needed_proxies: None | set[Variable] = None) -> Trace:
-    start_time_ns = time.time_ns()
+    start_time_ns = time.perf_counter_ns()
 
     producer_map: ProxyDict = producers(trace)
 
@@ -151,7 +151,7 @@ def dce(trace: Trace, needed_proxies: None | set[Variable] = None) -> Trace:
     dcetrace = from_trace(trace)
     dcetrace.bound_symbols = list(reversed(dced))
 
-    end_time_ns = time.time_ns()
+    end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
     dcetrace.set_provenance(TraceProvenance(f"Dead Code Elimination (took {elapsed_time_millis} milliseconds)"))
@@ -303,7 +303,7 @@ def cse(trace: Trace) -> Trace:
     Returns:
         :class:`TraceCtx` with common subexpression eliminated.
     """
-    start_time_ns = time.time_ns()
+    start_time_ns = time.perf_counter_ns()
 
     cse_trace = from_trace(trace)
 
@@ -322,7 +322,7 @@ def cse(trace: Trace) -> Trace:
     new_bsyms = replace_redundant_inputs(redundant_map, cse_trace_bound_symbols)
     cse_trace.bound_symbols = new_bsyms
 
-    end_time_ns = time.time_ns()
+    end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
     cse_trace.set_provenance(
