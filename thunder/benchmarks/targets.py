@@ -433,7 +433,7 @@ def test_llama2_mlp_7b(benchmark, executor: Callable, compute_type: ComputeType)
 def test_llama2_causal_self_attention_7b(benchmark, executor: Callable, compute_type: ComputeType):
     bench: Benchmark = LitGPTCausalSelfAttentionBenchmark(
         config="Llama-2-7b-hf",
-        batchdims=(16,),
+        batchdims=(2,),
         device="cuda:0",
         dtype=thunder.bfloat16,
         requires_grad=is_requires_grad(compute_type),
