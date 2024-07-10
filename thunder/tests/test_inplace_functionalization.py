@@ -375,6 +375,7 @@ def test_multiple_inplace_to_multiple_args(executor, device, _):
     z_ref = z.clone().detach()
 
     if executor == nvFuserExecutor:
+        # ref: https://github.com/NVIDIA/Fuser/issues/2564
         with pytest.raises(ValueError, match="not enough values to unpack"):
             res = jitted(xs, ys, z)
     else:
