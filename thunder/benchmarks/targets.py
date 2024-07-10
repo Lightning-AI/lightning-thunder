@@ -22,7 +22,6 @@ from thunder.benchmarks import (
     NanoGPTBenchmark,
     NanoGPTBlockBenchmark,
     NanoGPTCrossEntropyBenchmark,
-    NanoGPTCSABenchmark,
     LitGPTGeluBenchmark,
     NanoGPTLayerNormBenchmark,
     thunder_apex_executor,
@@ -330,29 +329,6 @@ def test_litgpt_sdpa(benchmark, executor: Callable, bs, compute_type, config):
     bench: Benchmark = LitGPTSDPABenchmark(
         config=config,
         batchdims=(bs,),
-        device="cuda:0",
-        dtype=thunder.bfloat16,
-        requires_grad=is_requires_grad(compute_type),
-    )
-
-    args, kwargs = bench.make_batch()
-    fn = executor(bench.fn())
-
-    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
-
-
-# TODO: Upgrade this benchmark to use LitGPT and config, batch size parametrization
-# https://github.com/Lightning-AI/lightning-thunder/issues/743
-# NOTE The CSA module is linear -> sdpa -> dropout
-@pytest.mark.parametrize(
-    "executor,",
-    executors,
-    ids=executors_ids,
-)
-@parametrize_compute_type
-def test_nanogpt_csa(benchmark, executor: Callable, compute_type: ComputeType):
-    bench: Benchmark = NanoGPTCSABenchmark(
-        config="gpt2-xl",
         device="cuda:0",
         dtype=thunder.bfloat16,
         requires_grad=is_requires_grad(compute_type),
