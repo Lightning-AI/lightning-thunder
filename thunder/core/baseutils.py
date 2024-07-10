@@ -150,7 +150,7 @@ def check_valid_shape(shape: tuple[int, ...] | list[int]):
 # A somewhat hacky way to check if an object is a collection but not a string or
 #   tensor object
 def is_collection(x: Any) -> bool:
-    return isinstance(x, collections.abc.Collection) and not isinstance(x, (str, torch.Tensor, np.ndarray))
+    return isinstance(x, collections.abc.Collection) and not isinstance(x, (str, torch.Tensor, np.ndarray, torch.Size))
 
 
 def sequencify(x: Any) -> Sequence:
