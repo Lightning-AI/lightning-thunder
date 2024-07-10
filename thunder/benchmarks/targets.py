@@ -25,7 +25,6 @@ from thunder.benchmarks import (
     NanoGPTCSABenchmark,
     LitGPTGeluBenchmark,
     NanoGPTLayerNormBenchmark,
-    NanoGPTMLPBenchmark,
     thunder_apex_executor,
     thunder_apex_nvfuser_executor,
     thunder_cudnn_executor,
@@ -334,25 +333,6 @@ def test_litgpt_sdpa(benchmark, executor: Callable, bs, compute_type, config):
         device="cuda:0",
         dtype=thunder.bfloat16,
         requires_grad=is_requires_grad(compute_type),
-    )
-
-    args, kwargs = bench.make_batch()
-    fn = executor(bench.fn())
-
-    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
-
-
-# TODO: Upgrade this benchmark to use LitGPT and config, batch size parametrization
-# https://github.com/Lightning-AI/lightning-thunder/issues/742
-@pytest.mark.parametrize(
-    "executor,",
-    executors,
-    ids=executors_ids,
-)
-@parametrize_compute_type
-def test_nanogpt_mlp(benchmark, executor: Callable, compute_type: ComputeType):
-    bench: Benchmark = NanoGPTMLPBenchmark(
-        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type)
     )
 
     args, kwargs = bench.make_batch()
