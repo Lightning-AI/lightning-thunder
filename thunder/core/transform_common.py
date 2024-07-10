@@ -584,12 +584,82 @@ def functionalize_inplace_ops(
 
     In thunder, an in-place is an out-of-place or functional op followed by :func:`~thunder.core.prims.copy_`.
     This function replaces such in-place ops with out-of-place ops.
-    If any of an in-place op's arguments are ``computation_trace.args`` or ``computation_trace.kwargs``,
-    the copy is moved to the end of the trace.
 
-    For example, :func:`thunder.torch.add_` is represented as a :class:`thunder.core.symbol.BoundSymbol`
-    whose `subsymbols` are :func:`thunder.torch.add` and :func:`thunder.core.prims.copy_`. This function
-    replaces it with a :class:`~thunder.core.symbol.BoundSymbol` of :func:`~thunder.torch.add`.
+    This function returns an empty list if no in-place ops are found in ``computation_trace``.
+    If any are found, functionalization is done in two steps. The first step is to canonicalize the trace
+    by making sure that any operands of in-place ops have multiple consumers. The second step is to either
+    remove `prims.copy_` from the trace before collecting required ones. The required `prims.copy_`s are ones
+    whose destination is ``computation_trace``'s args/kwargs.
+
+    For the following ``f``, this function creates two traces below.
+    Let's take a look at what this functionalization generates for the following ``f``.
+
+    .. code-block:: python
+        :name: input-func
+
+        def f(x):
+            a = x.sin()
+            a.exp_()
+            return a.cos()
+
+    The initial trace generated is as follows. Notice that ``a`` is consumed by ``ltorch.exp_`` and ``ltorch.cos``.
+
+    .. code-block:: python
+        :name: initial-trace
+
+        def computation(x):
+          # x: "cpu f32[3]"
+          a = ltorch.sin(x)  # a: "cpu f32[3]"
+            # a = prims.sin(x)  # a: "cpu f32[3]"
+
+          t2 = ltorch.exp_(a)  # t2: "cpu f32[3]"
+            # t1 = ltorch.exp(a)  # t1: "cpu f32[3]"
+              # t1 = prims.exp(a)  # t1: "cpu f32[3]"
+            # t2 = prims.copy_(t1, a)  # t2: "cpu f32[3]"
+
+          t3 = ltorch.cos(a)  # t3: "cpu f32[3]"
+            # t3 = prims.cos(a)  # t3: "cpu f32[3]"
+          return t3
+
+    The output of the first step ("canonicalize") is as follows. Notice that now ``ltorch.cos`` takes
+    ``t2`` which is the return value of ``ltorch.exp_(a)``.
+
+    .. code-block:: python
+        :name: canonicalized-traces
+
+        # Constructed by Intermediate trace of `functionalize_inplace_ops`
+        def computation(x):
+          # x: "cpu f32[3]"
+          a = ltorch.sin(x)  # a: "cpu f32[3]"
+            # a = prims.sin(x)  # a: "cpu f32[3]"
+
+          t2 = ltorch.exp_(a)  # t2: "cpu f32[3]"
+            # t1 = ltorch.exp(a)  # t1: "cpu f32[3]"
+              # t1 = prims.exp(a)  # t1: "cpu f32[3]"
+            # t2 = prims.copy_(t1, a)  # t2: "cpu f32[3]"
+
+          t3 = ltorch.cos(t2)  # t3: "cpu f32[3]"
+            # t3 = prims.cos(t2)  # t3: "cpu f32[3]"
+          return t3
+
+    The functionalized trace is as follows. Notice that this trace has no ``prims.copy_``s.
+    Also ``ltorch.cos``' operand is updated to ``t1`` from ``t2``.
+
+    .. code-block:: python
+        :name: functionalized-traces
+
+        # Constructed by Functionalize in-place ops
+        def computation(x):
+          # x: "cpu f32[3]"
+          a = ltorch.sin(x)  # a: "cpu f32[3]"
+            # a = prims.sin(x)  # a: "cpu f32[3]"
+          t1 = ltorch.exp(a)  # t1: "cpu f32[3]"
+            # t1 = ltorch.exp(a)  # t1: "cpu f32[3]"
+              # t1 = prims.exp(a)  # t1: "cpu f32[3]"
+
+          t3 = ltorch.cos(t1)  # t3: "cpu f32[3]"
+            # t3 = prims.cos(t1)  # t3: "cpu f32[3]"
+          return t3
 
     """
     from thunder.torch import _inplace_to_out_of_place
