@@ -3499,6 +3499,9 @@ def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((5, 5), (slice(1, 3, 1), [-3])),
         ((2, 2, 2), (slice(None, None), (-1,), slice(None, None))),
         ((2, 2), (..., [-1])),
+        # check performance optimization regarding slice_prim
+        ((1, 5, 3), (slice(0, 2), slice(0, 5), slice(0, 4))),
+        ((4, 5, 3), (slice(0, 2, 2), slice(0, 5, 3), slice(0, 4, 2))),
         # This sample shows inconsistencies between PyTorch and Numpy
         # >>> t = torch.rand(2, 2, 2)
         # >>> n = np.random.rand(2, 2, 2)
@@ -3595,6 +3598,51 @@ def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
     idx0 = make_idx(7, 9)
     yield SampleInput(a, (Ellipsis, idx0))
 
+    # list indexing
+    a = make((5, 4, 7))
+    yield SampleInput(a, ([1, 2]))
+
+    # list indexing into a tensor with no elements
+    a = make((5, 0, 7))
+    yield SampleInput(a, [1, 2])
+
+    # list indexing with tensor indexing
+    a = make((5, 4, 7))
+    idx = make_idx(5, 12)
+    yield SampleInput(a, (idx, [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]))
+
+    # list indexing with Ellipsis
+    a = make((5, 2, 9, 4, 7))
+    idx0 = make_idx(4, 8)
+    idx1 = make_idx(7, 1)
+    yield SampleInput(a, (Ellipsis, idx0, [0]))
+
+    # basic indexing and advanced indexing together
+    a = make((5, 5, 7))
+    yield SampleInput(a, (None, [1, 2]))
+    a = make((5, 5))
+    yield SampleInput(a, (slice(1, 4), [1, 2]))
+    yield SampleInput(a, (slice(None, None, None), [1, 2]))
+    a = make((5, 5))
+    yield SampleInput(a, (1, [1, 2]))
+
+    # Ellipsis, basic, and advanced indexing
+    a = make((5, 5, 7))
+    yield SampleInput(a, (Ellipsis, None, [1, 2]))
+    a = make((5, 5, 9, 5))
+    yield SampleInput(a, (Ellipsis, slice(1, 4), None, [1, 2]))
+    a = make((5, 5))
+    yield SampleInput(a, (Ellipsis, 1, [1, 2]))
+
+    # mixed order basic and advanced indexing
+    a = make((5, 5, 7))
+    yield SampleInput(a, ([1, 2], None))
+    a = make((5, 5))
+    yield SampleInput(a, ([1, 2], slice(1, 4)))
+    yield SampleInput(a, ([1, 2], slice(None, None, None)))
+    a = make((5, 5))
+    yield SampleInput(a, ([1, 2], 1))
+
 
 # NOTE getitem intentionally defines 3 references, since advanced indexing is probably
 #   the most complicated operation that any framework implements, and there's a good chance
@@ -3614,6 +3662,9 @@ getitem_opinfo = OpInfo(
         ),
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness", active_if=IS_WINDOWS),
         DecorateInfo(pytest.mark.xfail, "test_phantom_grad_vs_torch_consistency", active_if=IS_WINDOWS),
+        # TypeError: Using a non-tuple sequence for multidimensional indexing is not allowed; use `arr[array(seq)]`
+        # instead of `arr[seq]`. See https://github.com/google/jax/issues/4564 for more information.
+        DecorateInfo(pytest.mark.xfail, "test_core_vs_jax_consistency"),
     ),
 )
 shape_ops.append(getitem_opinfo)
