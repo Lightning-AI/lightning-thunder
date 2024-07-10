@@ -326,7 +326,9 @@ def test_error_of_inplace_to_views(executor, device, _):
 def test_multiple_inplace_to_args(executor, device, _):
 
     def f(a):
-        return a.exp_().sin_().cos()
+        a.exp_()
+        a.sin_()
+        return a.cos()
 
     x = make_tensor((2, 2), device=device, dtype=torch.float32)
     x_ref = x.clone().detach()
@@ -351,3 +353,35 @@ def test_multiple_inplace_to_args(executor, device, _):
 
     torch.testing.assert_close(actual, expected)
     torch.testing.assert_close(x, x_ref)
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_multiple_inplace_to_multiple_args(executor, device, _):
+
+    def f(xs, ys, z):
+        for i in range(len(xs)):
+            ys[i].add_(xs[i].exp_().sin_())
+            z.add_(ys[i])
+        return z
+
+    jitted = executor.make_callable(f)
+    xs = [make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2)]
+    ys = [make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2)]
+    z = make_tensor((2, 2), device=device, dtype=torch.float32)
+    xs_ref = [x.clone().detach() for x in xs]
+    ys_ref = [x.clone().detach() for x in ys]
+    z_ref = z.clone().detach()
+
+    if executor == nvFuserExecutor:
+        with pytest.raises(ValueError, match="not enough values to unpack"):
+            res = jitted(xs, ys, z)
+    else:
+        res = jitted(xs, ys, z)
+        res_ref = f(xs_ref, ys_ref, z_ref)
+
+        torch.testing.assert_close(actual=res, expected=res_ref)
+        torch.testing.assert_close(actual=z, expected=z_ref)
+        torch.testing.assert_close(actual=xs, expected=xs_ref)
+        torch.testing.assert_close(actual=ys, expected=ys_ref)
