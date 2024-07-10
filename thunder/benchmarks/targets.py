@@ -1,6 +1,7 @@
 import os
 from collections.abc import Callable
 from enum import auto, Enum
+from typing import Sequence
 
 import pytest
 import torch
@@ -22,7 +23,7 @@ from thunder.benchmarks import (
     NanoGPTBlockBenchmark,
     NanoGPTCrossEntropyBenchmark,
     NanoGPTCSABenchmark,
-    NanoGPTGeLUBenchmark,
+    LitGPTGeluBenchmark,
     NanoGPTLayerNormBenchmark,
     NanoGPTMLPBenchmark,
     NanoGPTSDPABenchmark,
@@ -168,20 +169,61 @@ cudnn_layernorm_executors_ids = (
     "thunder+cudnn_layernorm+nvfuser",
 )
 
-#
-# nanogpt benchmarks
-#
+def get_unique_configs(config_options: Sequence[str]):
+    """
+    Get the unique configurations based on the given config options.
+
+    Args:
+        config_options: The sequence of configuration options that uniquely identify a LitGPT configuration.
+    """
+    config_names = list(sorted(c["name"] for c in configs)) if RUN_ALL_CONFIGS else IMPORTANT_CONFIGS
+    unique_config_names = {}
+    for config_name in config_names:
+        config = LitGPTConfig.from_name(config_name)
+        key = tuple(
+            getattr(config, k)
+            for k in config_options
+        )
+        if config_name in IMPORTANT_CONFIGS:
+            unique_config_names[key] = config_name
+        unique_config_names.setdefault(key, config_name)
+
+    config_names = list(sorted(unique_config_names.values()))
+    return config_names
 
 
+# There are many configurations but only the following parameters affect the gelu benchmark:
+# - gelu_approximate
+# - intermediate_size
+# - block_size
+# Let's select only the configurations that differ in these parameters
+def get_configs_for_gelu():
+    return get_unique_configs(("gelu_approximate", "intermediate_size", "block_size"))
+
+
+# Sample command to run this benchmark:
+# pytest thunder/benchmarks/targets.py -k "test_litgpt_gelu" --benchmark-group-by='param:config,param:bs'
 @pytest.mark.parametrize(
     "executor,",
     executors,
     ids=executors_ids,
 )
+@pytest.mark.parametrize(
+    "bs,",
+    (
+        1,
+        2,
+    ),
+    ids=("bs1", "bs2"),
+)
 @parametrize_compute_type
-def test_nanogpt_gelu(benchmark, executor: Callable, compute_type: ComputeType):
-    gelu_bench: Benchmark = NanoGPTGeLUBenchmark(
-        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type)
+@pytest.mark.parametrize(
+    "config,",
+    get_configs_for_gelu(),
+)
+def test_litgpt_gelu(benchmark, executor: Callable, bs: int, compute_type: ComputeType, config: str):
+    gelu_bench: Benchmark = LitGPTGeluBenchmark(
+        config=config, batchdims=(bs,), device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type)
     )
 
     args, kwargs = gelu_bench.make_batch()

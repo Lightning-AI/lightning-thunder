@@ -1160,11 +1160,11 @@ def _extract_nanogpt_config(config: str | NanoGPTConfig):
     return result
 
 
-class NanoGPTGeLUBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+class LitGPTGeluBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
             name="config",
-            description="The nanoGPT config (str, NanoGPTConfig) to use. String options are 'gpt2', 'gpt2-medium', 'gpt2-large', and 'gpt2-xl'. Default is 'gpt2-medium'. See the NanoGPT model for details.",
+            description="The LitGPT config (str, LitGPTConfig) to use. See the litgpt_model.py for details.",
         ),
         BenchmarkArg(
             name="batchdims",
@@ -1201,17 +1201,17 @@ class NanoGPTGeLUBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def __init__(
         self,
-        config: str | NanoGPTConfig = "gpt2-medium",
-        batchdims: Sequence[int] = (16,),
-        device: str = "cuda",
-        dtype: dtypes.dtype = thunder.float32,
-        requires_grad: bool = False,
+        config: str | LitGPTConfig,
+        batchdims: Sequence[int],
+        device: str,
+        dtype: dtypes.dtype ,
+        requires_grad: bool,
     ) -> None:
         super().__init__()
 
-        self.config = _extract_nanogpt_config(config)
+        self.config = LitGPTConfig.from_name(config) if not isinstance(config, LitGPTConfig) else config
         self.batchdims = batchdims
-        self.shape: Sequence[int] = batchdims + (self.config.seq_len, 4 * self.config.n_embd)
+        self.shape: Sequence[int] = batchdims + (self.config.block_size, self.config.intermediate_size)
         self.device: str = device
         self.dtype: dtypes.dtype = dtype
         self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
@@ -1224,7 +1224,7 @@ class NanoGPTGeLUBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def fn(self) -> Callable:
         def foo(a):
-            return torch.nn.functional.gelu(a, approximate="tanh")
+            return torch.nn.functional.gelu(a, approximate=self.config.gelu_approximate)
 
         return foo
 
