@@ -474,6 +474,8 @@ def test_llama_2_7b_hf(benchmark, executor: Callable, compute_type: ComputeType)
     benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
+# TODO: Upgrade this benchmark to use LitGPT and config, batch size parametrization
+# https://github.com/Lightning-AI/lightning-thunder/issues/742
 @pytest.mark.parametrize(
     "executor,",
     executors,
