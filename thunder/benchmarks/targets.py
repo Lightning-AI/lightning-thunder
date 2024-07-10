@@ -387,18 +387,6 @@ def test_nanogpt_gpt2xl(benchmark, executor: Callable, compute_type: ComputeType
 
 @pytest.mark.parametrize("executor,", (executors + cudnn_executors), ids=(executors_ids + cudnn_executors_ids))
 @parametrize_compute_type
-def test_open_llama_7b(benchmark, executor: Callable, compute_type: ComputeType):
-    cfg: LitGPTConfig = LitGPTConfig.from_name("open_llama_7b")
-    b = LitGPTBenchmark(cfg, device="cuda:0", dtype=torch.bfloat16, requires_grad=is_requires_grad(compute_type))
-
-    args, kwargs = b.make_batch()
-    fn = executor(b.fn())
-
-    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
-
-
-@pytest.mark.parametrize("executor,", (executors + cudnn_executors), ids=(executors_ids + cudnn_executors_ids))
-@parametrize_compute_type
 def test_llama_2_7b_hf(benchmark, executor: Callable, compute_type: ComputeType):
     cfg: LitGPTConfig = LitGPTConfig.from_name("Llama-2-7b-hf")
     b = LitGPTBenchmark(
