@@ -705,11 +705,16 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
             # NOTE: this is redundant with the ValueError exception above
             raise ValueError(f"Found unexpected value {x} in key={key}")
 
-    # check if we can skip slice_prim
-    if all([x == 0 for x in start_indices]) and all([x == l for x, l in zip(end_indices, a.shape)]):
-        return a, tuple(new_key)
-
-    result = prims.slice_prim(a, start_indices, end_indices, strides)
+    # performance optimization; check if we need slicing
+    if (
+        all([x == 0 for x in start_indices])
+        and all([x == l for x, l in zip(end_indices, a.shape)])
+        and all([x == 1 for x in strides])
+        and len(squeeze_dims) == 0
+    ):
+        result = a
+    else:
+        result = prims.slice_prim(a, start_indices, end_indices, strides)
 
     if len(squeeze_dims) > 0:
         result = prims.squeeze(result, tuple(squeeze_dims))

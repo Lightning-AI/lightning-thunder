@@ -3499,6 +3499,9 @@ def getitem_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((5, 5), (slice(1, 3, 1), [-3])),
         ((2, 2, 2), (slice(None, None), (-1,), slice(None, None))),
         ((2, 2), (..., [-1])),
+        # check performance optimization regarding slice_prim
+        ((1, 5, 3), (slice(0, 2), slice(0, 5), slice(0, 4))),
+        ((4, 5, 3), (slice(0, 2, 2), slice(0, 5, 3), slice(0, 4, 2))),
         # This sample shows inconsistencies between PyTorch and Numpy
         # >>> t = torch.rand(2, 2, 2)
         # >>> n = np.random.rand(2, 2, 2)
