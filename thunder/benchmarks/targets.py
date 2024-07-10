@@ -271,6 +271,8 @@ def test_nanogpt_cross_entropy(benchmark, executor: None | Callable, compute_typ
     benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
+# TODO: Upgrade this benchmark to use LitGPT and config, batch size parametrization
+# https://github.com/Lightning-AI/lightning-thunder/issues/740
 @pytest.mark.parametrize(
     "executor,",
     (executors + cudnn_layernorm_executors),
