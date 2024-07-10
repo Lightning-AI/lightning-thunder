@@ -26,7 +26,6 @@ from thunder.benchmarks import (
     LitGPTGeluBenchmark,
     NanoGPTLayerNormBenchmark,
     NanoGPTMLPBenchmark,
-    NanoGPTSDPABenchmark,
     thunder_apex_executor,
     thunder_apex_nvfuser_executor,
     thunder_cudnn_executor,
@@ -283,22 +282,6 @@ def test_nanogpt_layer_norm(benchmark, executor: None | Callable, compute_type: 
         pytest.skip("Executor is unavailable")
 
     bench: Benchmark = NanoGPTLayerNormBenchmark(
-        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type)
-    )
-
-    args, kwargs = bench.make_batch()
-    fn = executor(bench.fn())
-
-    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
-
-
-@pytest.mark.parametrize("executor,", (executors + cudnn_executors), ids=(executors_ids + cudnn_executors_ids))
-@parametrize_compute_type
-def test_nanogpt_sdpa(benchmark, executor: None | Callable, compute_type: ComputeType):
-    if executor is None:
-        pytest.skip("Executor is unavailable")
-
-    bench: Benchmark = NanoGPTSDPABenchmark(
         config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type)
     )
 
