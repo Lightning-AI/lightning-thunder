@@ -266,23 +266,6 @@ def test_nanogpt_sdpa(benchmark, executor: None | Callable, compute_type: Comput
     benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
-@pytest.mark.parametrize(
-    "executor,",
-    executors,
-    ids=executors_ids,
-)
-@parametrize_compute_type
-def test_llama2_7b_sdpa(benchmark, executor: Callable, compute_type: ComputeType):
-    bench: Benchmark = LitGPTSDPABenchmark(
-        config="Llama-2-7b-hf", device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type)
-    )
-
-    args, kwargs = bench.make_batch()
-    fn = executor(bench.fn())
-
-    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
-
-
 sdpa_executors = (
     torch_executor,
     torch_compile_executor,
