@@ -361,6 +361,8 @@ def test_nanogpt_mlp(benchmark, executor: Callable, compute_type: ComputeType):
     benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
+# TODO: Upgrade this benchmark to use LitGPT and config, batch size parametrization
+# https://github.com/Lightning-AI/lightning-thunder/issues/743
 # NOTE The CSA module is linear -> sdpa -> dropout
 @pytest.mark.parametrize(
     "executor,",
