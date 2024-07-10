@@ -524,6 +524,15 @@ def test_consistent_boundsymbol_collection_hard_printing():
         assert s0 == s1
 
 
+def test_to_printable_not_collection():
+    import numpy as np
+
+    inps = ("abc", torch.Size([2, 2]), torch.Tensor(1, 2), np.ndarray((2, 2)))
+    for inp in inps:
+        out = codeutils.to_printable(None, inp)
+        assert inp is out
+
+
 #
 # Type promotion tests
 #
