@@ -1204,7 +1204,7 @@ class LitGPTGeluBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         config: str | LitGPTConfig,
         batchdims: Sequence[int],
         device: str,
-        dtype: dtypes.dtype ,
+        dtype: dtypes.dtype,
         requires_grad: bool,
     ) -> None:
         super().__init__()

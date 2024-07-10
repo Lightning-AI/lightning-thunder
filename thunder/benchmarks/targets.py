@@ -1,7 +1,7 @@
 import os
 from collections.abc import Callable
 from enum import auto, Enum
-from typing import Sequence
+from collections.abc import Sequence
 
 import pytest
 import torch
@@ -165,6 +165,7 @@ cudnn_layernorm_executors_ids = (
     "thunder+cudnn_layernorm+nvfuser",
 )
 
+
 def get_unique_configs(config_options: Sequence[str]):
     """
     Get the unique configurations based on the given config options.
@@ -176,10 +177,7 @@ def get_unique_configs(config_options: Sequence[str]):
     unique_config_names = {}
     for config_name in config_names:
         config = LitGPTConfig.from_name(config_name)
-        key = tuple(
-            getattr(config, k)
-            for k in config_options
-        )
+        key = tuple(getattr(config, k) for k in config_options)
         if config_name in IMPORTANT_CONFIGS:
             unique_config_names[key] = config_name
         unique_config_names.setdefault(key, config_name)
@@ -219,7 +217,11 @@ def get_configs_for_gelu():
 )
 def test_litgpt_gelu(benchmark, executor: Callable, bs: int, compute_type: ComputeType, config: str):
     gelu_bench: Benchmark = LitGPTGeluBenchmark(
-        config=config, batchdims=(bs,), device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type)
+        config=config,
+        batchdims=(bs,),
+        device="cuda:0",
+        dtype=thunder.bfloat16,
+        requires_grad=is_requires_grad(compute_type),
     )
 
     args, kwargs = gelu_bench.make_batch()
