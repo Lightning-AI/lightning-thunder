@@ -487,16 +487,14 @@ def _get_prod_bsym_with_arg(
     first_tensor = _get_first_tensor_arg(prod_bsym)
     if first_tensor is None:
         return None
-    if first_tensor in trace_args:
-        if inplace_or_view(prod_bsym):
+
+    if inplace_or_view(prod_bsym):
+        if first_tensor in trace_args:
             return prod_bsym
         else:
-            return None
-    else:
-        if inplace_or_view(prod_bsym):
             return _get_prod_bsym_with_arg(first_tensor, producer_map, trace_args)
-        else:
-            return None
+    else:
+        return None
 
 
 def collect_required_copy_bsyms_for_args(
