@@ -1490,7 +1490,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(other, self)
 
     def __itruediv__(self, other):
-        method = resolve_method("div_", self, other, rounding_mode=rounding_mode)
+        method = resolve_method("div_", self, other, rounding_mode=None)
         return method(self, other)
 
     #
