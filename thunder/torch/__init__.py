@@ -5084,6 +5084,8 @@ if torch.distributed.is_available():
             lambda: f"`torch.distributed.all_gather_into_tensor` with {async_op=} is not supported",
             NotImplementedError,
         )
+        result_numel = input_tensor._numel * group.size()
+        utils.check(result_numel == output_tensor._numel, lambda: f"{output_tensor._numel=} should be {result_numel=}")
         group = group if group is not None else torch.distributed.new_group()
         out = dist_prims.all_gather(input_tensor, group, async_op, dim=None)
         return prims.copy_(out.view(output_tensor.shape), output_tensor)
@@ -5185,6 +5187,8 @@ if torch.distributed.is_available():
         )
         op = to_thunder_distributed_reduce_op(op)
         group = group if group is not None else torch.distributed.new_group()
+        result_numel = input._numel // group.size()
+        utils.check(result_numel == output._numel, lambda: f"{output._numel=} should be {result_numel=}")
         out = dist_prims.reduce_scatter(input, op, group, async_op, dim=None)
         return prims.copy_(out.view(output.shape), output)
 
