@@ -360,29 +360,49 @@ def test_multiple_inplace_to_args(executor, device, _):
 )
 def test_multiple_inplace_to_multiple_args(executor, device, _):
 
-    def f(xs, ys, z):
-        for i in range(len(xs)):
-            ys[i].add_(xs[i].exp_().sin_())
-            z.add_(ys[i])
-        return z
+    def single_tensor_adam(
+        params: list[torch.Tensor],
+        grads: list[torch.Tensor],
+        exp_avgs: list[torch.Tensor],
+        exp_avg_sqs: list[torch.Tensor],
+        state_steps: list[torch.Tensor],
+        *,
+        lr: float = 1e-3,
+        beta1: float = 0.9,
+        beta2: float = 0.999,
+        eps: float = 1e-8,
+    ) -> None:
+        for i, param in enumerate(params):
+            grad = grads[i]
+            exp_avg = exp_avgs[i]
+            exp_avg_sq = exp_avg_sqs[i]
+            step_t = state_steps[i]
 
-    jitted = executor.make_callable(f)
-    xs = [make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2)]
-    ys = [make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2)]
-    z = make_tensor((2, 2), device=device, dtype=torch.float32)
-    xs_ref = [x.clone().detach() for x in xs]
-    ys_ref = [x.clone().detach() for x in ys]
-    z_ref = z.clone().detach()
+            exp_avg.mul_(beta1).add_((1 - beta1) * grad)
+            exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
+
+            step_t.add_(1)
+            bias_correction2 = 1 - beta2**step_t
+            step_size = lr / (1 - beta1**step_t)
+            step_size_neg = step_size.neg()
+            denom = exp_avg_sq.sqrt() / (bias_correction2 * step_size_neg).add(eps / step_size_neg)
+            param.addcdiv_(exp_avg, denom)
+
+    shape = (4,)
+    tensors = [[make_tensor(shape, device=device, dtype=torch.float32, high=2, low=1)] for _ in range(4)]
+    state_steps = [torch.tensor(0, device=device)]
+
+    ref_tensors = [[t.clone().detach() for t in tensorlist] for tensorlist in tensors]
+    ref_state_steps = [torch.tensor(0, device=device)]
+    single_tensor_adam(*ref_tensors, state_steps=ref_state_steps)
+
+    jitted = executor.make_callable(single_tensor_adam)
+    params, grads, exp_avgs, exp_avg_sqs = tensors
 
     if executor == nvFuserExecutor:
         # ref: https://github.com/NVIDIA/Fuser/issues/2564
         with pytest.raises(ValueError, match="not enough values to unpack"):
-            res = jitted(xs, ys, z)
+            jitted(params, grads, exp_avgs, exp_avg_sqs, state_steps)
     else:
-        res = jitted(xs, ys, z)
-        res_ref = f(xs_ref, ys_ref, z_ref)
-
-        torch.testing.assert_close(actual=res, expected=res_ref)
-        torch.testing.assert_close(actual=z, expected=z_ref)
-        torch.testing.assert_close(actual=xs, expected=xs_ref)
-        torch.testing.assert_close(actual=ys, expected=ys_ref)
+        jitted(params, grads, exp_avgs, exp_avg_sqs, state_steps)
+        torch.testing.assert_close(actual=tensors + [state_steps], expected=ref_tensors + [ref_state_steps])
