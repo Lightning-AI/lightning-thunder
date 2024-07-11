@@ -358,7 +358,7 @@ def test_multiple_inplace_to_args(executor, device, _):
 @instantiate(
     dtypes=NOTHING,
 )
-def test_multiple_inplace_to_multiple_args(executor, device, _):
+def test_single_tensor_adam_like(executor, device, _):
 
     def single_tensor_adam(
         params: list[torch.Tensor],
@@ -367,10 +367,10 @@ def test_multiple_inplace_to_multiple_args(executor, device, _):
         exp_avg_sqs: list[torch.Tensor],
         state_steps: list[torch.Tensor],
         *,
-        lr: float = 1e-3,
+        lr: float = 1e-2,
         beta1: float = 0.9,
-        beta2: float = 0.999,
-        eps: float = 1e-8,
+        beta2: float = 0.9,
+        eps: float = 1e-5,
     ) -> None:
         for i, param in enumerate(params):
             grad = grads[i]
@@ -378,8 +378,8 @@ def test_multiple_inplace_to_multiple_args(executor, device, _):
             exp_avg_sq = exp_avg_sqs[i]
             step_t = state_steps[i]
 
-            exp_avg.mul_(beta1).add_((1 - beta1) * grad)
-            exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
+            exp_avg.mul_(beta1).add_(grad)
+            exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1)
 
             step_t.add_(1)
             bias_correction2 = 1 - beta2**step_t
@@ -389,20 +389,19 @@ def test_multiple_inplace_to_multiple_args(executor, device, _):
             param.addcdiv_(exp_avg, denom)
 
     shape = (4,)
-    tensors = [[make_tensor(shape, device=device, dtype=torch.float32, high=2, low=1)] for _ in range(4)]
-    state_steps = [torch.tensor(0, device=device)]
+    params = [make_tensor(shape, device=device, dtype=torch.float32, high=2, low=1) for _ in range(2)]
+    tensors = [
+        [make_tensor(shape, device=device, dtype=torch.float32, high=2, low=1) for _ in range(2)] for _ in range(3)
+    ]
+    tensors = [params] + tensors
+    state_steps = [torch.tensor(1, device=device) for _ in range(2)]
 
     ref_tensors = [[t.clone().detach() for t in tensorlist] for tensorlist in tensors]
-    ref_state_steps = [torch.tensor(0, device=device)]
+    ref_state_steps = [torch.tensor(1, device=device) for _ in range(2)]
     single_tensor_adam(*ref_tensors, state_steps=ref_state_steps)
 
     jitted = executor.make_callable(single_tensor_adam)
     params, grads, exp_avgs, exp_avg_sqs = tensors
 
-    if executor == nvFuserExecutor:
-        # ref: https://github.com/NVIDIA/Fuser/issues/2564
-        with pytest.raises(ValueError, match="not enough values to unpack"):
-            jitted(params, grads, exp_avgs, exp_avg_sqs, state_steps)
-    else:
-        jitted(params, grads, exp_avgs, exp_avg_sqs, state_steps)
-        torch.testing.assert_close(actual=tensors + [state_steps], expected=ref_tensors + [ref_state_steps])
+    jitted(params, grads, exp_avgs, exp_avg_sqs, state_steps)
+    torch.testing.assert_close(actual=tensors + [state_steps], expected=ref_tensors + [ref_state_steps])
