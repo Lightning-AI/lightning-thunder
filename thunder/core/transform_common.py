@@ -656,6 +656,7 @@ def functionalize_inplace_ops(
           # x: "cpu f32[3]"
           a = ltorch.sin(x)  # a: "cpu f32[3]"
             # a = prims.sin(x)  # a: "cpu f32[3]"
+
           t1 = ltorch.exp(a)  # t1: "cpu f32[3]"
             # t1 = ltorch.exp(a)  # t1: "cpu f32[3]"
               # t1 = prims.exp(a)  # t1: "cpu f32[3]"
@@ -685,12 +686,15 @@ def functionalize_inplace_ops(
           # x: "cpu f32[2, 2]"
           a = ltorch.view(x, -1)  # a: "cpu f32[4]"
             # a = ltorch.reshape(x, (-1,))  # a: "cpu f32[4]"
+
           t2 = ltorch.exp_(a)  # t2: "cpu f32[4]"
             # t1 = ltorch.exp(a)  # t1: "cpu f32[4]"
             # t2 = prims.copy_(t1, a)  # t2: "cpu f32[4]"
+
           t4 = ltorch.sin_(a)  # t4: "cpu f32[4]"
             # t3 = ltorch.sin(a)  # t3: "cpu f32[4]"
             # t4 = prims.copy_(t3, a)  # t4: "cpu f32[4]"
+
           t5 = ltorch.cos(a)  # t5: "cpu f32[4]"
             # t5 = prims.cos(a)  # t5: "cpu f32[4]"
           return t5
@@ -708,7 +712,6 @@ def functionalize_inplace_ops(
         # Constructed by Intermediate trace of `functionalize_inplace_ops`
         def computation(x):
           # x: "cpu f32[2, 2]"
-
           a = ltorch.view(x, -1)  # a: "cpu f32[4]"
             # a = ltorch.reshape(x, (-1,))  # a: "cpu f32[4]"
 
