@@ -1410,9 +1410,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(self, other)
 
     def __iadd__(self, other):
-        return self.add_(other)
-
-    def add_(self, other):
         method = resolve_method("add_", self, other)
         return method(self, other)
 
@@ -1453,9 +1450,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(self, other)
 
     def __imul__(self, other):
-        return self.mul_(other)
-
-    def mul_(self, other):
         method = resolve_method("mul_", self, other)
         return method(self, other)
 
@@ -1468,9 +1462,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(self, other)
 
     def __ipow__(self, other):
-        return self.pow_(other)
-
-    def pow_(self, other):
         method = resolve_method("pow_", self, other)
         return method(self, other)
 
@@ -1483,9 +1474,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(self, other)
 
     def __isub__(self, other):
-        return self.sub_(other)
-
-    def sub_(self, other):
         method = resolve_method("sub_", self, other)
         return method(self, other)
 
@@ -1502,9 +1490,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(other, self)
 
     def __itruediv__(self, other):
-        return self.div_(other)
-
-    def div_(self, other, *, rounding_mode: str | None = None):
         method = resolve_method("div_", self, other, rounding_mode=rounding_mode)
         return method(self, other)
 
