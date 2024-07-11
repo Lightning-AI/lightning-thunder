@@ -1052,16 +1052,10 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
         def is_from_torch(fn):
             return hasattr(fn, "__module__") and fn.__module__ and fn.__module__.startswith("torch")
 
-        if is_opaque(fn):
-            for a in args:
-                try:
-                    if a.value in thunder.dtypes.all_dtypes:
-                        a.value = thunder.dtypes.to_torch_dtype(a.value)
-                except:
-                    pass
-
         has_tensor_arg = False
         for a in args:
+            if is_opaque(fn) and isinstance(a.value, thunder.dtypes.dtype):
+                a.value = thunder.dtypes.to_torch_dtype(a.value)
             if isinstance(a.value, TensorProxy):
                 has_tensor_arg = True
                 break
