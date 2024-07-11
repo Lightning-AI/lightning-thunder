@@ -580,19 +580,22 @@ def collect_required_copy_bsyms_for_args(
 def functionalize_inplace_ops(
     computation_trace: Trace, orig_to_view_swap_map: dict[VariableInterface, TensorProxy]
 ) -> list[Trace]:
-    """Functionalize in-place ops in ``computation_trace``.
+    r"""Functionalize in-place ops in ``computation_trace``.
 
-    In thunder, an in-place is an out-of-place or functional op followed by :func:`~thunder.core.prims.copy_`.
-    This function replaces such in-place ops with out-of-place ops.
+    This function is skipped if kwarg of ``skip_inplace_functionalization=True`` is passed to :func:`thunder.jit`.
+
+    In thunder, an in-place is a pair of an out-of-place or functional op followed by :func:`thunder.core.prims.copy_`.
+    This function replaces in-place ops with out-of-place ops.
 
     This function returns an empty list if no in-place ops are found in ``computation_trace``.
     If any are found, functionalization is done in two steps. The first step is to canonicalize the trace
-    by making sure that any operands of in-place ops have multiple consumers. The second step is to either
-    remove `prims.copy_` from the trace before collecting required ones. The required `prims.copy_`s are ones
+    by making sure that any operands of in-place ops have only one consumer. The second step is to
+    remove ``prims.copy_`` from the trace then inserting required ``prims.copy_``\s. The required ``prims.copy_``\s are ones
     whose destination is ``computation_trace``'s args/kwargs.
 
-    For the following ``f``, this function creates two traces below.
-    Let's take a look at what this functionalization generates for the following ``f``.
+    Let's take a look at how the functionalization is working for the following ``f``. This function applies in-place ``exp`` to ``a`` which does not share
+    the storage of the argument ``x``, thus the functionalized trace would be
+    free from ``prims.copy_``.
 
     .. code-block:: python
         :name: input-func
@@ -602,7 +605,7 @@ def functionalize_inplace_ops(
             a.exp_()
             return a.cos()
 
-    The initial trace generated is as follows. Notice that ``a`` is consumed by ``ltorch.exp_`` and ``ltorch.cos``.
+    The input trace which is the first of many computation traces is as follows. Notice that ``a`` is consumed by not only ``ltorch.exp_`` but also ``ltorch.cos``.
 
     .. code-block:: python
         :name: initial-trace
@@ -621,7 +624,7 @@ def functionalize_inplace_ops(
             # t3 = prims.cos(a)  # t3: "cpu f32[3]"
           return t3
 
-    The output of the first step ("canonicalize") is as follows. Notice that now ``ltorch.cos`` takes
+    The output of the first step ("canonicalization") is as follows. Notice that now ``ltorch.cos`` takes
     ``t2`` which is the return value of ``ltorch.exp_(a)``.
 
     .. code-block:: python
@@ -642,8 +645,8 @@ def functionalize_inplace_ops(
             # t3 = prims.cos(t2)  # t3: "cpu f32[3]"
           return t3
 
-    The functionalized trace is as follows. Notice that this trace has no ``prims.copy_``s.
-    Also ``ltorch.cos``' operand is updated to ``t1`` from ``t2``.
+    The functionalized trace is as follows. Notice that this trace has no ``prims.copy_``\s
+    and the operand of ``ltorch.cos`` is updated to ``t1`` from ``t2``.
 
     .. code-block:: python
         :name: functionalized-traces
@@ -661,6 +664,85 @@ def functionalize_inplace_ops(
             # t3 = prims.cos(t1)  # t3: "cpu f32[3]"
           return t3
 
+    Another example to take a look at would be a function with one or more in-place ops to its argument(s) and/or their views.
+    The ``g`` defined below cannot be functionalized with appropriate ``prims.copy_`` to ``x`` because ``a`` shares its storage with ``x``.
+
+    .. code-block:: python
+        :name: input-func-with-multiple-inplace
+
+        def g(x):
+            a = x.view(-1)
+            a.exp_()
+            a.sin_()
+            return a.cos()
+
+    The input trace to this function is as follows.
+
+    .. code-block:: python
+        :name: input-trace-with-multiple-inplace
+
+        def computation(x):
+          # x: "cpu f32[2, 2]"
+          a = ltorch.view(x, -1)  # a: "cpu f32[4]"
+            # a = ltorch.reshape(x, (-1,))  # a: "cpu f32[4]"
+          t2 = ltorch.exp_(a)  # t2: "cpu f32[4]"
+            # t1 = ltorch.exp(a)  # t1: "cpu f32[4]"
+            # t2 = prims.copy_(t1, a)  # t2: "cpu f32[4]"
+          t4 = ltorch.sin_(a)  # t4: "cpu f32[4]"
+            # t3 = ltorch.sin(a)  # t3: "cpu f32[4]"
+            # t4 = prims.copy_(t3, a)  # t4: "cpu f32[4]"
+          t5 = ltorch.cos(a)  # t5: "cpu f32[4]"
+            # t5 = prims.cos(a)  # t5: "cpu f32[4]"
+          return t5
+
+    For ``g``, the copy from ``a.sin_()`` to ``x`` is critical. If it's missing,
+    the consumers of ``x`` including ``g`` itself would get broken.
+    Below are the outputs of this function. The top is "canonicalized" (see the change
+    of ``ltorch.sin_``'s operand).
+    The bottom is the functionalized trace. Since ``a`` has a different shape from ``x``,
+    there are ``prims.reshape(t3, (2, 2))`` and ``prims.copy_(t8, x)``.
+
+    .. code-block:: python
+        :name: functionalization-output-traces
+
+        # Constructed by Intermediate trace of `functionalize_inplace_ops`
+        def computation(x):
+          # x: "cpu f32[2, 2]"
+
+          a = ltorch.view(x, -1)  # a: "cpu f32[4]"
+            # a = ltorch.reshape(x, (-1,))  # a: "cpu f32[4]"
+
+          t2 = ltorch.exp_(a)  # t2: "cpu f32[4]"
+            # t1 = ltorch.exp(a)  # t1: "cpu f32[4]"
+
+          t4 = ltorch.sin_(t2)  # t4: "cpu f32[4]"
+            # t3 = ltorch.sin(t2)  # t3: "cpu f32[4]"
+            # t4 = prims.copy_(t3, t2)  # t4: "cpu f32[4]"
+
+          t5 = ltorch.cos(t4)  # t5: "cpu f32[4]"
+            # t5 = prims.cos(t4)  # t5: "cpu f32[4]"
+          return t5
+
+        # Constructed by Functionalize in-place ops
+        def computation(x):
+          # x: "cpu f32[2, 2]"
+
+          a = ltorch.view(x, -1)  # a: "cpu f32[4]"
+          t1 = ltorch.exp(a)  # t1: "cpu f32[4]"
+          t3 = ltorch.sin(t1)  # t3: "cpu f32[4]"
+          t5 = ltorch.cos(t3)  # t5: "cpu f32[4]"
+
+          t8 = prims.reshape(t3, (2, 2))  # t8: "cpu f32[2, 2]"
+          t9 = prims.copy_(t8, x)  # t9: "cpu f32[2, 2]"
+          return t5
+
+    .. seealso::
+
+        `PyTorch Docs - Tensor Views <https://pytorch.org/docs/stable/tensor_view.html>`_
+
+    Args:
+        computation_trace: A computation trace created by ``interpreter``.
+        orig_to_view_swap_map:
     """
     from thunder.torch import _inplace_to_out_of_place
 
