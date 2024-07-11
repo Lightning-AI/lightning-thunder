@@ -78,7 +78,6 @@ def all_gather_meta(
         result_shape[dim] *= group.size()
     else:
         result_shape = a.shape[0] * group.size(), *a.shape[1:]
-    result_shape = tuple(result_shape)
 
     if do_async:
         return FutureTensorProxy(shape=result_shape, like=a)
