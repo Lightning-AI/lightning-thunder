@@ -1073,7 +1073,7 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
             calling_opaque_torch_msg = (
                 f"Trying to call function {fn_name}, but it is not yet supported. "
                 "Please file an issue requesting support. "
-                "To find out which operations are not yet recongnized by `thunder.jit`, "
+                "To find out which operations are not yet recognized by `thunder.jit`, "
                 "please run `examine` as per:\n\n"
                 "from thunder.examine import examine\n"
                 "examine(<your thunder.jit callable argument>, ...)\n"
