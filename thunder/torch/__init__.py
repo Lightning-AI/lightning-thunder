@@ -5085,8 +5085,8 @@ if torch.distributed.is_available():
             NotImplementedError,
         )
         group = group if group is not None else torch.distributed.new_group()
-        out = dist_prims.all_gather(input_tensor, group, async_op, dim=None, output_tensor=output_tensor)
-        return prims.copy_(out, output_tensor)
+        out = dist_prims.all_gather(input_tensor, group, async_op, dim=None)
+        return prims.copy_(out.view(output_tensor.shape), output_tensor)
 
     # NOTE torch.distributed.all_reduce is an inplace operation (although the underlying NCCL
     #   call does not need to be inplace). This, however, is modeled as an out-of-place functional
@@ -5185,8 +5185,8 @@ if torch.distributed.is_available():
         )
         op = to_thunder_distributed_reduce_op(op)
         group = group if group is not None else torch.distributed.new_group()
-        out = dist_prims.reduce_scatter(input, op, group, async_op, dim=None, output_tensor=output)
-        return prims.copy_(out, output)
+        out = dist_prims.reduce_scatter(input, op, group, async_op, dim=None)
+        return prims.copy_(out.view(output.shape), output)
 
 else:
 
