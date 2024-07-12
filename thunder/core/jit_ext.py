@@ -917,14 +917,14 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
 
 @general_jit_lookaside(torch.finfo)
 def _general_jit_torch_finfo_lookaside(obj: Any):
+    thunder_dtype = unwrap(obj)
     try:
-        thunder_dtype = unwrap(obj)
         torch_dtype = thunder.dtypes.to_torch_dtype(thunder_dtype)
         res = torch.finfo(torch_dtype)
     except BaseException as e:
         return do_raise(e)
 
-    pr = ProvenanceRecord(PseudoInst.OPAQUE, inputs=[wrap_const(torch.finfo).provenance])
+    pr = ProvenanceRecord(PseudoInst.OPAQUE, inputs=[wrap_const(torch.finfo).provenance, obj.provenance])
     wrapped_res = wrap(res, provenance=pr)
     return wrapped_res
 
