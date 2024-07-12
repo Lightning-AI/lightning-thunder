@@ -16,7 +16,6 @@ import sys
 import traceback
 import weakref
 import torch
-import thunder
 from typing import Any, Literal, TypedDict
 from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, Set, Sized
 import collections
