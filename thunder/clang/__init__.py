@@ -1196,6 +1196,11 @@ def gather(a: TensorProxy, /, indices: TensorProxy, dim: int) -> TensorProxy:
     dim = utils.canonicalize_dim(a.ndim, dim)
     return prims.gather(a, indices, dim)
 
+@clangop()
+def scatter(a: TensorProxy, /, index: TensorProxy, src: TensorProxy | Number, dim: int) -> TensorProxy:
+    dim = utils.canonicalize_dim(a.ndim, dim)
+    return prims.scatter(a, index, src, dim)
+
 
 @clangop()
 def scatter_add(a: TensorProxy, /, indices: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:

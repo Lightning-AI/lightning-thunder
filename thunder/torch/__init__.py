@@ -2751,6 +2751,35 @@ def gather(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
     return clang.gather(a, indices=index, dim=dim)
 
 
+# NOTE: PyTorch uses `src` for torch.Tensor arguments and `value` for scalars
+# when referencing the source of the values
+@torchsymbol(torch.scatter)
+def scatter(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike | None = None, *, value: None | Number = None) -> TensorLike:
+    utils.check(
+        (src is not None) ^ (value is not None),
+        lambda: f"scatter: only one of the arguments (`src`, `value`) can be non-None",
+    )
+
+    if src is not None:
+        return clang.scatter(a, index, src, dim)
+    else:
+        return clang.scatter(a, index, value, dim)
+
+
+@torchsymbol(torch.Tensor.scatter_, tags=(prims.OpTags.IN_PLACE,))
+def scatter_(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike | Number, *, reduce: None | str = None):
+    utils.check(
+        reduce is None,
+        lambda: "scatter_: `reduce` argument other than None is not supported",
+        NotImplementedError
+    )
+
+    if src is None:
+        src = value
+
+    return prims.copy_(clang.scatter(a, index, src, dim), a)
+
+
 # NOTE PyTorch's scatter_add has a parameter named 'src', not 'source'
 @torchsymbol(torch.scatter_add, is_method=True)
 def scatter_add(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike) -> TensorLike:
