@@ -4051,17 +4051,22 @@ def is_torch_operators(fn):
         and fn.__module__.startswith("torch")
         and fn not in _torch_to_thunder_function_map
     ):
+        if fn.__module__ in ('torch._C._nn', 'torch', 'torch.nn.functional', 'torch._C._special'):
+            if hasattr(fn, '__name__') and fn.__name__.startswith('_'):
+                return False
+            return True
+        return False
+    if hasattr(fn, '__objclass__') and hasattr(fn.__objclass__, '__module__') and fn.__objclass__.__module__.startswith('torch._C'):
         return True
+
     return False
 
 
 def _is_differentiable(arg):
     from torch._subclasses.fake_tensor import FakeTensor
 
-    if isinstance(arg, (torch.Tensor, FakeTensor)):
-        return dtypes.is_inexact_dtype(to_dtype(arg.dtype)) and arg.requires_grad
-    if isinstance(arg, TensorProxy):
-        return dtypes.is_inexact_dtype(arg.dtype) and arg.requires_grad
+    if isinstance(arg, (torch.Tensor, FakeTensor, TensorProxy)):
+        return dtypes.is_inexact_dtype(to_dtype(arg.dtype))
     return False
 
 
@@ -4083,10 +4088,11 @@ def _make_differentiable_wrapper(func, *args, **kwargs):
 
 def register_torch_op(torchfn, fn_meta):
     _fn = langctx(Languages.TORCH)(fn_meta)
+    id_str = f"{torchfn.__module__}.{torchfn.__name__}" if hasattr(torchfn, "__module__") else f"{torchfn.__objclass__.__module__}.{torchfn.__qualname__}"
     sym = Symbol(
         name=torchfn.__name__,
         meta=_fn,
-        id=f"{torchfn.__module__}.{torchfn.__name__}",
+        id=id_str,
     )
     _torch_to_thunder_function_map[torchfn] = sym
     from thunder.core.interpreter import interpreter_needs_wrap
@@ -4100,8 +4106,10 @@ def register_torch_op(torchfn, fn_meta):
         {torchfn: ensure_recursive_proxies(interpreter_needs_wrap(record_source_loc_in_symbol_header(sym)))}
     )
     from thunder.executors.torchex import _always_executable, ex
-
-    op = ex.register_operator(torchfn.__name__, module=eval(torchfn.__module__), meta=fn_meta)
+    if hasattr(torchfn, "__module__"):
+        op = ex.register_operator(torchfn.__name__, module=eval(torchfn.__module__), meta=fn_meta)
+    else:
+        op = ex.register_operator(torchfn.__qualname__, module=eval(torchfn.__objclass__.__module__), meta=fn_meta)
     ex.register_implementation(sym, op, checker=_always_executable)
 
     from thunder.core.transforms import augmented_forward_impls, backward_impls
@@ -4150,6 +4158,7 @@ def _get_fake_arg(inp, fake_mode):
     elif isinstance(inp, dtypes.dtype):
         return to_torch_dtype(inp)
     else:
+        from builtins import type
         raise NotImplementedError(f"Unsupported type: {type(inp)}")
 
 
@@ -4170,6 +4179,10 @@ def fake_type_to_thunder(inp):
             dtype=_torch_to_thunder_dtype_map[inp.dtype],
             requires_grad=inp.requires_grad,
         )
+    elif isinstance(inp, torch.Size):
+        return tuple(inp)
+    elif isinstance(inp, (str, bool, int, float, complex)):
+        return inp
     else:
         raise NotImplementedError(f"Unsupported type: {type(inp)}")
 
@@ -4194,16 +4207,28 @@ def backward_adaptor():
         inps = saved_for_backward["inputs"]
         inp_args = inps[0]
         inp_kwargs = inps[1]
-
         from thunder.core.pytree import tree_flatten, tree_unflatten
+        from builtins import sum
+
+        num_grad_output = sum(tree_map(_is_differentiable, grad_output))
+        if num_grad_output == 0:
+            flat_args, spec = tree_flatten(inp_args)
+            return tree_unflatten(len(flat_args)*[None], spec)
+        if sum(map(_is_differentiable, tree_flatten(inp_kwargs)[0])) != 0:
+            raise NotImplementedError(f"Automatic registration fails for operator {torch_func} because there is keyword argument that requires gradient, please use manual registration.")
         from torch._subclasses.fake_tensor import FakeTensorMode
 
         with FakeTensorMode() as mode:
             fake_inp_args, fake_inp_kwargs = tree_map(lambda x: _get_fake_arg(x, mode), (inp_args, inp_kwargs))
             wrapped_torch_func, diff_args = _make_differentiable_wrapper(torch_func, *fake_inp_args, **fake_inp_kwargs)
-            _, fake_outs = torch.autograd.functional.vjp(
-                wrapped_torch_func, diff_args, v=tree_map(lambda x: _get_fake_arg(x, mode), grad_output)
-            )
+            try:
+                _, fake_outs = torch.autograd.functional.vjp(
+                    wrapped_torch_func, diff_args, v=tree_map(lambda x: _get_fake_arg(x, mode), grad_output)
+                )
+            except Exception as e:
+                msg = f"Exception encountered when doing automatic registration for {torch_func}, please use manual registration: {e}"
+                raise NotImplementedError(msg) from e
+
         flat_fake_outs, spec_outs = tree_flatten(fake_outs)
         outs = tuple(map(fake_type_to_thunder, flat_fake_outs))
         if hasattr(spec_outs.type, "__module__") and spec_outs.type.__module__.startswith("torch.return_types"):
@@ -4220,7 +4245,12 @@ def meta_adaptor(torch_func):
 
         with FakeTensorMode() as mode:
             fake_args, fake_kwargs = tree_map(lambda x: _get_fake_arg(x, mode), (args, kwargs))
-            fake_outs = torch_func(*fake_args, **fake_kwargs)
+            try:
+                fake_outs = torch_func(*fake_args, **fake_kwargs)
+            except Exception as e:
+                msg = f"Exception encountered when doing automatic registration for {torch_func}, please use manual registration: {e}"
+                raise NotImplementedError(msg) from e
+
         flat_fake_outs, spec_outs = tree_flatten(fake_outs)
         outs = tuple(map(fake_type_to_thunder, flat_fake_outs))
         if hasattr(spec_outs.type, "__module__") and spec_outs.type.__module__.startswith("torch.return_types"):
