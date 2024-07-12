@@ -1613,12 +1613,6 @@ def check_self(obj, potential_method):
 
 
 def plausibly_wrapper_of(wrapper, value):
-    # convert dtype if needed
-    if isinstance(value, thunder.dtypes.dtype):
-        if thunder.dtypes.to_torch_dtype(value) == wrapper.value:
-            return True
-        else:
-            False
     if wrapper.value is value or wrapper.original_value is value:
         return True
     if callable(value) or True:
