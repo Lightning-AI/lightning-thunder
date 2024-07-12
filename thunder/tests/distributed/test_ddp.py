@@ -262,17 +262,8 @@ class CompileDDPTest(DataParallelTestCase):
 
         for async_op in (True, False):
             expected = foo(a, b, process_group, async_op, dim)
-
-            if not (async_op and inplace):
-                actual = cfoo(a, b, process_group, async_op, dim)
-
-                self.assertEqual(actual, expected)
-            else:
-                with self.assertRaisesRegex(
-                    NotImplementedError,
-                    re.escape("`torch.distributed.all_gather_into_tensor` with async_op=True is not supported"),
-                ):
-                    cfoo(a, b, process_group, async_op, dim)
+            actual = cfoo(a, b, process_group, async_op, dim)
+            self.assertEqual(actual, expected)
 
     @common_utils.parametrize("executor", tuple(executors_map.keys()))
     def test_broadcast(self, executor):
@@ -393,17 +384,8 @@ class CompileDDPTest(DataParallelTestCase):
 
         for op, async_op in product((None, torch.distributed.ReduceOp.SUM), (False, True)):
             expected = foo(a, b, op, process_group, async_op, dim=dim)
-
-            if not (async_op and inplace):
-                actual = cfoo(a, b, op, process_group, async_op, dim=dim)
-
-                self.assertEqual(actual, expected)
-            else:
-                with self.assertRaisesRegex(
-                    NotImplementedError,
-                    re.escape("`torch.distributed.reduce_scatter_tensor` with async_op=True is not supported"),
-                ):
-                    cfoo(a, b, op, process_group, async_op, dim)
+            actual = cfoo(a, b, op, process_group, async_op, dim=dim)
+            self.assertEqual(actual, expected)
 
     @common_utils.parametrize("executor,bucket_size_in_mb", product(tuple(executors_map.keys()), (0, 1000)))
     def test_ddp_grad_bucketing(self, executor, bucket_size_in_mb: int):
