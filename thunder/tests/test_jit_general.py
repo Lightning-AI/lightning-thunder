@@ -1090,3 +1090,32 @@ def test_isinstance_parameter():
     actual = thunder.jit(m)(x)
 
     torch.testing.assert_close(actual, expected)
+
+
+@pytest.mark.parametrize(
+    "device",
+    ("cpu", "cuda"),
+)
+def test_cache_symbolic_values_reshape(device):
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    a = torch.randn((4, 8, 6), device=device)
+
+    def foo(t, batch_size):
+        return t.reshape(batch_size, -1).sum(-1)
+
+    jfoo = thunder.jit(foo, cache="symbolic values", nv_enable_bookend=False)
+    expected = foo(a, 32)
+    actual = jfoo(a, 32)
+
+    assert_close(expected, actual)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    expected = foo(a, 16)
+    actual = jfoo(a, 16)
+
+    assert_close(expected, actual)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1
