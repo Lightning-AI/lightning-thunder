@@ -915,19 +915,16 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     return _interpret_call(custom_forward, wrapped_ctx, *args_, **kwargs_)
 
 
-@run_once
-def _warn_custom_torch_info_function():
-    warnings.warn("`torch.finfo` is not implemented in Thunder. Calling `torch.finfo` directly.")
-
-
 @general_jit_lookaside(torch.finfo)
 def _general_jit_torch_finfo_lookaside(obj: Any):
-    _warn_custom_torch_info_function()
-    thunder_dtype = unwrap(obj)
-    torch_dtype = thunder.dtypes.to_torch_dtype(thunder_dtype)
-    res = torch.finfo(torch_dtype)
+    try:
+        thunder_dtype = unwrap(obj)
+        torch_dtype = thunder.dtypes.to_torch_dtype(thunder_dtype)
+        res = torch.finfo(torch_dtype)
+    except BaseException as e:
+        return do_raise(e)
 
-    pr = ProvenanceRecord(PseudoInst.OPAQUE, inputs=[wrap_const(res).provenance])
+    pr = ProvenanceRecord(PseudoInst.OPAQUE, inputs=[wrap_const(torch.finfo).provenance])
     wrapped_res = wrap(res, provenance=pr)
     return wrapped_res
 
