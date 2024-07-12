@@ -929,7 +929,7 @@ def _general_jit_torch_finfo_lookaside(obj: Any):
 
     pr = ProvenanceRecord(PseudoInst.OPAQUE, inputs=[wrap_const(res).provenance])
     wrapped_res = wrap(res, provenance=pr)
-    return wrapped_res 
+    return wrapped_res
 
 
 # Adds proxy methods
