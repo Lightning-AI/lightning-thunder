@@ -438,3 +438,25 @@ def test_single_tensor_adam_like(executor, device, _):
 
     jitted(params, grads, exp_avgs, exp_avg_sqs, state_steps)
     torch.testing.assert_close(actual=tensors + [state_steps], expected=ref_tensors + [ref_state_steps])
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_inplace_to_arg_return_value(executor, device, _):
+
+    def f(a, b):
+        c = a + b
+        b.mul_(c)
+        return b
+
+    a = make_tensor((2, 2), device=device, dtype=torch.float32)
+    b = make_tensor((2, 2), device=device, dtype=torch.float32)
+    a_, b_ = a.clone().detach(), b.clone().detach()
+
+    b__out = f(a_, b_)
+
+    jitted = executor.make_callable(f)
+    b_out = jitted(a, b)
+    torch.testing.assert_close(b_out, b__out)
+    assert b.data_ptr() == b_out.data_ptr()

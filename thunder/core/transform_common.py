@@ -500,7 +500,7 @@ def _get_prod_bsym_with_arg(
 def collect_required_copy_bsyms_for_args(
     trace: Trace,
     removed_copy_bsyms: list[tuple[int, BoundSymbol]],
-) -> list[BoundSymbol]:
+) -> tuple[list[BoundSymbol], dict[VariableInterface, TensorProxy]]:
 
     flat_args: tuple[TensorProxy, ...] = tuple(
         filter(lambda p: isinstance(p, TensorProxy), tree_flatten((trace.args, trace.kwargs))[0])
@@ -574,7 +574,11 @@ def collect_required_copy_bsyms_for_args(
             sorted_copy_bsyms.extend(bsym_or_list)
         else:
             sorted_copy_bsyms.append(bsym_or_list)
-    return sorted_copy_bsyms
+
+    swap_map_for_return: dict[VariableInterface, TensorProxy] = {}
+    for bsym in filter(lambda bsym: bsym.sym.id == prims.PrimIDs.COPY_, sorted_copy_bsyms):
+        swap_map_for_return[variableify(bsym.flat_proxy_args[0])] = bsym.flat_proxy_args[1]
+    return sorted_copy_bsyms, swap_map_for_return
 
 
 def functionalize_inplace_ops(
@@ -844,12 +848,13 @@ def functionalize_inplace_ops(
         new_bsyms.append(new_functional_bsym)
         bsym_inplace_to_functional[new_bsym] = new_functional_bsym
 
-    required_copy_bsyms = collect_required_copy_bsyms_for_args(
+    required_copy_bsyms, swap_map_for_return = collect_required_copy_bsyms_for_args(
         intermediate_trace,
         removed_copy_bsyms,
     )
     functionalized_computation_trace = from_trace(computation_trace)
-    functionalized_computation_trace.bound_symbols = new_bsyms[:-1] + required_copy_bsyms + new_bsyms[-1:]
+    return_bsym = new_bsyms[-1].from_bsym_swap_proxies(swap_map_for_return)
+    functionalized_computation_trace.bound_symbols = new_bsyms[:-1] + required_copy_bsyms + [return_bsym]
     functionalized_computation_trace.set_provenance(TraceProvenance("Functionalize in-place ops"))
     # note(crcrpar): I kind of want to do the following two.
     # functionalized_computation_trace._provenance.swap_map = swap_map
