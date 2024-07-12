@@ -16,6 +16,7 @@ import sys
 import traceback
 import weakref
 import torch
+import thunder
 from typing import Any, Literal, TypedDict
 from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, Set, Sized
 import collections
@@ -1612,6 +1613,12 @@ def check_self(obj, potential_method):
 
 
 def plausibly_wrapper_of(wrapper, value):
+    # convert dtype if needed
+    if isinstance(value, thunder.dtypes.dtype):
+        if thunder.dtypes.to_torch_dtype(value) == wrapper.value:
+            return True
+        else:
+            False
     if wrapper.value is value or wrapper.original_value is value:
         return True
     if callable(value) or True:
