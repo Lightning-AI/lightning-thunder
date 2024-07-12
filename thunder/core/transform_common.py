@@ -501,6 +501,7 @@ def collect_required_copy_bsyms_for_args(
     trace: Trace,
     removed_copy_bsyms: list[tuple[int, BoundSymbol]],
 ) -> tuple[list[BoundSymbol], dict[VariableInterface, TensorProxy]]:
+    """Identify required pairs of copy src and copy dst."""
 
     flat_args: tuple[TensorProxy, ...] = tuple(
         filter(lambda p: isinstance(p, TensorProxy), tree_flatten((trace.args, trace.kwargs))[0])
@@ -509,12 +510,12 @@ def collect_required_copy_bsyms_for_args(
     for i, a in enumerate(flat_args):
         trace_args_set[a] = i
 
-    dst_to_copy_bsym: dict[VariableInterface, tuple[int, BoundSymbol]] = {}
+    dst_to_copy_bsym: dict[VariableInterface, tuple[int, list[BoundSymbol]]] = {}
     unused_copy_bsyms: list[tuple[int, BoundSymbol]] = []
     for idx, copy_bsym in removed_copy_bsyms:
         if (copy_dst := copy_bsym.flat_proxy_args[1]) in trace_args_set:
             copy_src = _get_first_tensor_arg(copy_bsym)
-            dst_to_copy_bsym[variableify(copy_dst)] = idx, copy_bsym
+            dst_to_copy_bsym[variableify(copy_dst)] = idx, [copy_bsym]
         else:
             unused_copy_bsyms.append((idx, copy_bsym))
 
@@ -567,13 +568,10 @@ def collect_required_copy_bsyms_for_args(
             required_copy_bsyms[trace_args_set[unvariableify(var_t)]] = bsyms
 
     sorted_copy_bsyms: list[BoundSymbol] = []
-    for bsym_or_list in required_copy_bsyms:
-        if bsym_or_list is None:
+    for list_of_bsyms in required_copy_bsyms:
+        if list_of_bsyms is None:
             continue
-        if isinstance(bsym_or_list, list):
-            sorted_copy_bsyms.extend(bsym_or_list)
-        else:
-            sorted_copy_bsyms.append(bsym_or_list)
+        sorted_copy_bsyms.extend(list_of_bsyms)
 
     swap_map_for_return: dict[VariableInterface, TensorProxy] = {}
     for bsym in filter(lambda bsym: bsym.sym.id == prims.PrimIDs.COPY_, sorted_copy_bsyms):
@@ -812,6 +810,7 @@ def functionalize_inplace_ops(
     swap_map.clear()
 
     new_bsyms: list[BoundSymbol] = []
+    # NOTE(crcrpar): The first value of a tuple is an indicator of how the copy src is new.
     removed_copy_bsyms: list[tuple[int, BoundSymbol]] = []
     for idx, bsym in enumerate(intermediate_trace.bound_symbols):
         new_bsym = bsym.from_bsym_swap_proxies(swap_map)
