@@ -374,18 +374,13 @@ def test_multiple_inplace_to_multiple_args(executor, device, _):
     ys_ref = [x.clone().detach() for x in ys]
     z_ref = z.clone().detach()
 
-    if executor == nvFuserExecutor:
-        # ref: https://github.com/NVIDIA/Fuser/issues/2564
-        with pytest.raises(ValueError, match="not enough values to unpack"):
-            res = jitted(xs, ys, z)
-    else:
-        res = jitted(xs, ys, z)
-        res_ref = f(xs_ref, ys_ref, z_ref)
+    res = jitted(xs, ys, z)
+    res_ref = f(xs_ref, ys_ref, z_ref)
 
-        torch.testing.assert_close(actual=res, expected=res_ref)
-        torch.testing.assert_close(actual=z, expected=z_ref)
-        torch.testing.assert_close(actual=xs, expected=xs_ref)
-        torch.testing.assert_close(actual=ys, expected=ys_ref)
+    torch.testing.assert_close(actual=res, expected=res_ref)
+    torch.testing.assert_close(actual=z, expected=z_ref)
+    torch.testing.assert_close(actual=xs, expected=xs_ref)
+    torch.testing.assert_close(actual=ys, expected=ys_ref)
 
 
 @instantiate(
