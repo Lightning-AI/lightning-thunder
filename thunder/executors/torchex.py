@@ -2103,7 +2103,7 @@ if has_einops:
             return isinstance(input, TensorLike)
 
         def is_float_type(self, input):
-            return dtypes.is_float_dtype(input)
+            return dtypes.is_float_dtype(input.dtype)
 
     # We force the registration of the backend here to not use
     # the torch backend when diverting isinstance
