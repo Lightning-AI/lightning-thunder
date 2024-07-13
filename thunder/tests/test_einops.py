@@ -122,8 +122,6 @@ def test_reduce(device: str, dtype: torch.dtype):
         res_thunder = fc(input, expr, **kwargs)
         res_einops = f(input, expr, **kwargs)
 
-        print(f"res_thunder: {res_thunder}")
-        print(f"res_einops: {res_einops}")
         assert_close(res_thunder, res_einops)
 
 
