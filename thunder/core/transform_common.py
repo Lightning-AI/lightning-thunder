@@ -592,7 +592,8 @@ def functionalize_inplace_ops(
     This function returns an empty list if no in-place ops are found in ``computation_trace``.
     If any are found, functionalization is done in two steps. The first step is to canonicalize the trace
     by making sure that any operands of in-place ops have only one consumer. The second step is to
-    remove ``prims.copy_`` from the trace then inserting required ``prims.copy_``\s. The required ``prims.copy_``\s are ones
+    replace in-place ops with their out-of-place versions, i.e.,
+    to remove ``prims.copy_`` from the trace then inserting required ``prims.copy_``\s. The required ``prims.copy_``\s are ones
     whose destination is ``computation_trace``'s args/kwargs.
 
     Let's take a look at how the functionalization is working for the following ``f``. This function applies in-place ``exp`` to ``a`` which does not share
