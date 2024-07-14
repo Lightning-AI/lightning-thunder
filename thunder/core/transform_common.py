@@ -94,7 +94,7 @@ def _inplace_copy_sanity_check(extrace: Trace):
 # NOTE needed_proxies is an in/out argument, it takes an initial set of Variables you want to keep, and return
 #   all the needed proxies of the input trace
 def dce(trace: Trace, needed_proxies: None | set[Variable] = None) -> Trace:
-    start_time_ns = time.time_ns()
+    start_time_ns = time.perf_counter_ns()
 
     producer_map: ProxyDict = producers(trace)
 
@@ -151,7 +151,7 @@ def dce(trace: Trace, needed_proxies: None | set[Variable] = None) -> Trace:
     dcetrace = from_trace(trace)
     dcetrace.bound_symbols = list(reversed(dced))
 
-    end_time_ns = time.time_ns()
+    end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
     dcetrace.set_provenance(TraceProvenance(f"Dead Code Elimination (took {elapsed_time_millis} milliseconds)"))
@@ -303,7 +303,7 @@ def cse(trace: Trace) -> Trace:
     Returns:
         :class:`TraceCtx` with common subexpression eliminated.
     """
-    start_time_ns = time.time_ns()
+    start_time_ns = time.perf_counter_ns()
 
     cse_trace = from_trace(trace)
 
@@ -322,7 +322,7 @@ def cse(trace: Trace) -> Trace:
     new_bsyms = replace_redundant_inputs(redundant_map, cse_trace_bound_symbols)
     cse_trace.bound_symbols = new_bsyms
 
-    end_time_ns = time.time_ns()
+    end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
     cse_trace.set_provenance(
@@ -463,133 +463,291 @@ def is_functionalizable(bsym: BoundSymbol) -> bool:
     )
 
 
-def collect_required_copy_bsyms_for_args(
-    trace: Trace,
-    removed_copy_bsyms: list[BoundSymbol],
-) -> tuple[list[BoundSymbol], dict[VariableInterface, TensorProxy]]:
-    from thunder.core.utils import consumers as get_consumers
-    from thunder.core.utils import find_producer_symbols
+def _get_first_tensor_arg(bsym: BoundSymbol) -> TensorProxy | None:
+    tensor_args = list(filter(lambda p: isinstance(p, TensorProxy), bsym.flat_args))
+    if not tensor_args:
+        return None
+    return tensor_args[0]
+
+
+def _get_prod_bsym_with_arg(
+    t: TensorProxy,
+    producer_map: ProxyDict,
+    trace_args: ProxyDict,
+) -> BoundSymbol | None:
     from thunder.torch import _syms_returning_views
 
-    flat_args = tuple(
-        filter(
-            lambda p: isinstance(p, TensorProxy),
-            tree_flatten((trace.args, trace.kwargs))[0],
-        )
+    def inplace_or_view(bsym) -> bool:
+        sym = bsym.sym
+        return (sym.tags and prims.OpTags.IN_PLACE in sym.tags) or sym in _syms_returning_views
+
+    if t not in producer_map:
+        return None
+    prod_bsym: BoundSymbol = producer_map[t]
+    first_tensor = _get_first_tensor_arg(prod_bsym)
+    if first_tensor is None:
+        return None
+
+    if inplace_or_view(prod_bsym):
+        if first_tensor in trace_args:
+            return prod_bsym
+        else:
+            return _get_prod_bsym_with_arg(first_tensor, producer_map, trace_args)
+    else:
+        return None
+
+
+def collect_required_copy_bsyms_for_args(
+    trace: Trace,
+    removed_copy_bsyms: list[tuple[int, BoundSymbol]],
+) -> tuple[list[BoundSymbol], dict[VariableInterface, TensorProxy]]:
+    """Identify required pairs of copy src and copy dst."""
+
+    flat_args: tuple[TensorProxy, ...] = tuple(
+        filter(lambda p: isinstance(p, TensorProxy), tree_flatten((trace.args, trace.kwargs))[0])
     )
     trace_args_set = ProxyDict()
-    for a in flat_args:
-        trace_args_set[a] = a
+    for i, a in enumerate(flat_args):
+        trace_args_set[a] = i
 
-    copy_dst_to_copy_bsym: dict[VariableInterface, BoundSymbol] = {}
-    required_copy_bsyms: list[BoundSymbol] = []
-    unused_copy_bsyms: list[BoundSymbol] = []
-    inplace_args: list[TensorProxy] = []
-    copy_destinations: list[TensorProxy] = []
-    for idx, bsym in enumerate(removed_copy_bsyms):
-        if (copy_to := bsym.flat_proxy_args[1]) in trace_args_set:
-            required_copy_bsyms.append(bsym)
-            copy_dst_to_copy_bsym[variableify(copy_to)] = bsym
-            inplace_args.append(copy_to)
+    dst_to_copy_bsym: dict[VariableInterface, tuple[int, list[BoundSymbol]]] = {}
+    unused_copy_bsyms: list[tuple[int, BoundSymbol]] = []
+    for idx, copy_bsym in removed_copy_bsyms:
+        if (copy_dst := copy_bsym.flat_proxy_args[1]) in trace_args_set:
+            copy_src = _get_first_tensor_arg(copy_bsym)
+            dst_to_copy_bsym[variableify(copy_dst)] = idx, [copy_bsym]
         else:
-            unused_copy_bsyms.append(bsym)
+            unused_copy_bsyms.append((idx, copy_bsym))
 
-        copy_destinations.append(copy_to)
+    producer_map = producers(trace)
+    new_dst_to_copy_bsym: dict[VariableInterface, tuple[int, list[BoundSymbol]]] = {}
+    for idx, copy_bsym in unused_copy_bsyms:
+        copy_src = _get_first_tensor_arg(copy_bsym)
+        copy_dst: TensorProxy = copy_bsym.flat_proxy_args[1]
+        optional_prod_bsym = _get_prod_bsym_with_arg(copy_dst, producer_map, trace_args_set)
+        if optional_prod_bsym is None:
+            continue
 
-    consumers = get_consumers(trace)
-    view_args = []
-    for a in filter(lambda a: variableify(a) not in copy_dst_to_copy_bsym, flat_args):
-        first_consumer = consumers[a][0]
-        if first_consumer.sym in _syms_returning_views:
-            view_args.append(a)
-    stop_proxies = tuple(inplace_args + view_args)
+        new_copy_dst = _get_first_tensor_arg(optional_prod_bsym)
 
-    new_copy_dst_to_copy_bsyms: dict[VariableInterface, BoundSymbol] = {}
-    additional_copy_bsyms: list[BoundSymbol] = []
-    swap_map: dict[VariableInterface, TensorProxy] = {}
-    for bsym in unused_copy_bsyms:
-        copy_return = bsym.flat_proxy_outs[0]
+        new_bsyms: list[BoundSymbol] = []
+        reshaped_copy_src = copy_src
+        with tracectx(trace):
+            if copy_src.shape != new_copy_dst.shape:
+                dst_shape = new_copy_dst.shape
+                reshaped_copy_src = prims.reshape.meta(copy_src, dst_shape)
+                reshape_bsym = prims.reshape.bind(copy_src, dst_shape, output=reshaped_copy_src)
 
-        stop_proxies = flat_args if not inplace_args else inplace_args
-        s_bsyms = find_producer_symbols(trace, (copy_return,), stop_proxies)
+                new_bsyms.append(reshape_bsym)
+            new_copy_return = prims.copy_.meta(reshaped_copy_src, new_copy_dst)
+            new_copy_bsym = prims.copy_.bind(reshaped_copy_src, new_copy_dst, output=new_copy_return)
+            new_bsyms.append(new_copy_bsym)
 
-        first_bsym: BoundSymbol = s_bsyms[0]
-        if first_bsym.sym in _syms_returning_views:
-            if all(
-                (bsym.sym.tags and prims.OpTags.IN_PLACE in bsym.sym.tags) or bsym.sym in _syms_returning_views
-                for bsym in s_bsyms[1:]
-            ):
-                new_copy_dst: TensorProxy = list(filter(lambda p: isinstance(p, TensorProxy), first_bsym.flat_args))[0]
-                check(new_copy_dst in trace_args_set, lambda: f"{new_copy_dst=} not in {trace_args_set}")
-                copy_src: TensorProxy = bsym.flat_proxy_args[0]
+            if (var_t := variableify(new_copy_dst)) not in new_dst_to_copy_bsym:
+                new_dst_to_copy_bsym[var_t] = idx, new_bsyms
+            else:
+                cur_copy_bsym_idx, _ = new_dst_to_copy_bsym[var_t]
+                if cur_copy_bsym_idx < idx:
+                    new_dst_to_copy_bsym[var_t] = idx, new_bsyms
 
-                new_bsyms: list[BoundSymbol] = []
-                with tracectx(trace):
-                    reshaped_copy_src: TensorProxy = copy_src
-                    if copy_src.shape != new_copy_dst.shape:
-                        reshaped_copy_src = prims.reshape.meta(copy_src, new_copy_dst.shape)
-                        reshape_bsym = prims.reshape.bind(copy_src, new_copy_dst.shape, output=reshaped_copy_src)
-                        new_bsyms.append(reshape_bsym)
-                    new_copy_out: TensorProxy = prims.copy_.meta(reshaped_copy_src, new_copy_dst)
-                    new_copy_bsym = prims.copy_.bind(reshaped_copy_src, new_copy_dst, output=new_copy_out)
-                    new_bsyms.append(new_copy_bsym)
-                additional_copy_bsyms.extend(new_bsyms)
-                new_copy_dst_to_copy_bsyms[variableify(new_copy_dst)] = new_bsyms
-        elif all(
-            (bsym.sym.tags and prims.OpTags.IN_PLACE in bsym.sym.tags) or bsym.sym in _syms_returning_views
-            for bsym in s_bsyms
-        ):
-            orig_args = tuple(
-                filter(
-                    lambda p: isinstance(p, TensorProxy) and p in trace_args_set,
-                    first_bsym.flat_args,
-                )
-            )
-            check(
-                orig_args and len(orig_args) == 1,
-                lambda: f"{orig_args = } found for {copy_return = }",
-            )
-
-            copy_src = bsym.flat_proxy_args[0]
-            new_copy_dst = orig_args[0]
-            with tracectx(trace):
-                new_copy_out: TensorProxy = prims.copy_.meta(copy_src, new_copy_dst)
-                new_copy_bsym = prims.copy_.bind(copy_src, new_copy_dst, output=new_copy_out)
-            swap_map[variableify(copy_src)] = new_copy_out
-            additional_copy_bsyms.append(new_copy_bsym)
-            new_copy_dst_to_copy_bsyms[variableify(new_copy_dst)] = [new_copy_bsym]
-
-    narrowed_swap_map: dict[VariableInterface, TensorProxy] = {}
-    copy_bsyms = []
-    for var_t in copy_dst_to_copy_bsym:
-        if var_t in new_copy_dst_to_copy_bsyms:
-            bsyms = new_copy_dst_to_copy_bsyms[var_t]
-            copy_bsyms.extend(bsyms)
-            var_t = variableify(bsym.flat_proxy_args[0])
-            narrowed_swap_map[var_t] = swap_map[var_t]
+    required_copy_bsyms = [None for _ in range(len(flat_args))]
+    for var_t in dst_to_copy_bsym:
+        idx = trace_args_set[unvariableify(var_t)]
+        cur_copy_bsym_idx, cur_copy_bsym = dst_to_copy_bsym[var_t]
+        if var_t not in new_dst_to_copy_bsym:
+            required_copy_bsyms[idx] = cur_copy_bsym
         else:
-            copy_bsyms.append(copy_dst_to_copy_bsym[var_t])
-    for var_t in (variableify(a) for a in view_args):
-        if var_t not in copy_dst_to_copy_bsym and var_t in new_copy_dst_to_copy_bsyms:
-            copy_bsyms.extend(new_copy_dst_to_copy_bsyms[var_t])
+            new_copy_bsym_idx, new_copy_bsyms = new_dst_to_copy_bsym[var_t]
+            if cur_copy_bsym_idx < new_copy_bsym_idx:
+                required_copy_bsyms[idx] = new_copy_bsyms
+            else:
+                required_copy_bsyms[idx] = cur_copy_bsym
+    for var_t in new_dst_to_copy_bsym:
+        if var_t not in dst_to_copy_bsym:
+            _, bsyms = new_dst_to_copy_bsym[var_t]
+            required_copy_bsyms[trace_args_set[unvariableify(var_t)]] = bsyms
 
-    return copy_bsyms, narrowed_swap_map
+    sorted_copy_bsyms: list[BoundSymbol] = []
+    for list_of_bsyms in required_copy_bsyms:
+        if list_of_bsyms is None:
+            continue
+        sorted_copy_bsyms.extend(list_of_bsyms)
+
+    swap_map_for_return: dict[VariableInterface, TensorProxy] = {}
+    for bsym in filter(lambda bsym: bsym.sym.id == prims.PrimIDs.COPY_, sorted_copy_bsyms):
+        swap_map_for_return[variableify(bsym.flat_proxy_args[0])] = bsym.flat_proxy_args[1]
+    return sorted_copy_bsyms, swap_map_for_return
 
 
 def functionalize_inplace_ops(
     computation_trace: Trace, orig_to_view_swap_map: dict[VariableInterface, TensorProxy]
 ) -> list[Trace]:
-    """Functionalize in-place ops in ``computation_trace``.
+    r"""Functionalize in-place ops in ``computation_trace``.
 
-    In thunder, an in-place is an out-of-place or functional op followed by :func:`~thunder.core.prims.copy_`.
-    This function replaces such in-place ops with out-of-place ops.
-    If any of an in-place op's arguments are ``computation_trace.args`` or ``computation_trace.kwargs``,
-    the copy is moved to the end of the trace.
+    This function is skipped if kwarg of ``skip_inplace_functionalization=True`` is passed to :func:`thunder.jit`.
 
-    For example, :func:`thunder.torch.add_` is represented as a :class:`thunder.core.symbol.BoundSymbol`
-    whose `subsymbols` are :func:`thunder.torch.add` and :func:`thunder.core.prims.copy_`. This function
-    replaces it with a :class:`~thunder.core.symbol.BoundSymbol` of :func:`~thunder.torch.add`.
+    In thunder, an in-place is a pair of an out-of-place or functional op followed by :func:`thunder.core.prims.copy_`.
+    This function replaces in-place ops with out-of-place ops.
 
+    This function returns an empty list if no in-place ops are found in ``computation_trace``.
+    If any are found, functionalization is done in two steps. The first step is to canonicalize the trace
+    by making sure that any operands of in-place ops have only one consumer. The second step is to
+    remove ``prims.copy_`` from the trace then inserting required ``prims.copy_``\s. The required ``prims.copy_``\s are ones
+    whose destination is ``computation_trace``'s args/kwargs.
+
+    Let's take a look at how the functionalization is working for the following ``f``. This function applies in-place ``exp`` to ``a`` which does not share
+    the storage of the argument ``x``, thus the functionalized trace would be
+    free from ``prims.copy_``.
+
+    .. code-block:: python
+        :name: input-func
+
+        def f(x):
+            a = x.sin()
+            a.exp_()
+            return a.cos()
+
+    The input trace which is the first of many computation traces is as follows. Notice that ``a`` is consumed by not only ``ltorch.exp_`` but also ``ltorch.cos``.
+
+    .. code-block:: python
+        :name: initial-trace
+
+        def computation(x):
+          # x: "cpu f32[3]"
+          a = ltorch.sin(x)  # a: "cpu f32[3]"
+            # a = prims.sin(x)  # a: "cpu f32[3]"
+
+          t2 = ltorch.exp_(a)  # t2: "cpu f32[3]"
+            # t1 = ltorch.exp(a)  # t1: "cpu f32[3]"
+              # t1 = prims.exp(a)  # t1: "cpu f32[3]"
+            # t2 = prims.copy_(t1, a)  # t2: "cpu f32[3]"
+
+          t3 = ltorch.cos(a)  # t3: "cpu f32[3]"
+            # t3 = prims.cos(a)  # t3: "cpu f32[3]"
+          return t3
+
+    The output of the first step ("canonicalization") is as follows. Notice that now ``ltorch.cos`` takes
+    ``t2`` which is the return value of ``ltorch.exp_(a)``.
+
+    .. code-block:: python
+        :name: canonicalized-traces
+
+        # Constructed by Intermediate trace of `functionalize_inplace_ops`
+        def computation(x):
+          # x: "cpu f32[3]"
+          a = ltorch.sin(x)  # a: "cpu f32[3]"
+            # a = prims.sin(x)  # a: "cpu f32[3]"
+
+          t2 = ltorch.exp_(a)  # t2: "cpu f32[3]"
+            # t1 = ltorch.exp(a)  # t1: "cpu f32[3]"
+              # t1 = prims.exp(a)  # t1: "cpu f32[3]"
+            # t2 = prims.copy_(t1, a)  # t2: "cpu f32[3]"
+
+          t3 = ltorch.cos(t2)  # t3: "cpu f32[3]"
+            # t3 = prims.cos(t2)  # t3: "cpu f32[3]"
+          return t3
+
+    The functionalized trace is as follows. Notice that this trace has no ``prims.copy_``\s
+    and the operand of ``ltorch.cos`` is updated to ``t1`` from ``t2``.
+
+    .. code-block:: python
+        :name: functionalized-traces
+
+        # Constructed by Functionalize in-place ops
+        def computation(x):
+          # x: "cpu f32[3]"
+          a = ltorch.sin(x)  # a: "cpu f32[3]"
+            # a = prims.sin(x)  # a: "cpu f32[3]"
+
+          t1 = ltorch.exp(a)  # t1: "cpu f32[3]"
+            # t1 = ltorch.exp(a)  # t1: "cpu f32[3]"
+              # t1 = prims.exp(a)  # t1: "cpu f32[3]"
+
+          t3 = ltorch.cos(t1)  # t3: "cpu f32[3]"
+            # t3 = prims.cos(t1)  # t3: "cpu f32[3]"
+          return t3
+
+    Another example to take a look at would be a function with one or more in-place ops to its argument(s) and/or their views.
+    The ``g`` defined below cannot be functionalized with appropriate ``prims.copy_`` to ``x`` because ``a`` shares its storage with ``x``.
+
+    .. code-block:: python
+        :name: input-func-with-multiple-inplace
+
+        def g(x):
+            a = x.view(-1)
+            a.exp_()
+            a.sin_()
+            return a.cos()
+
+    The input trace to this function is as follows.
+
+    .. code-block:: python
+        :name: input-trace-with-multiple-inplace
+
+        def computation(x):
+          # x: "cpu f32[2, 2]"
+          a = ltorch.view(x, -1)  # a: "cpu f32[4]"
+            # a = ltorch.reshape(x, (-1,))  # a: "cpu f32[4]"
+
+          t2 = ltorch.exp_(a)  # t2: "cpu f32[4]"
+            # t1 = ltorch.exp(a)  # t1: "cpu f32[4]"
+            # t2 = prims.copy_(t1, a)  # t2: "cpu f32[4]"
+
+          t4 = ltorch.sin_(a)  # t4: "cpu f32[4]"
+            # t3 = ltorch.sin(a)  # t3: "cpu f32[4]"
+            # t4 = prims.copy_(t3, a)  # t4: "cpu f32[4]"
+
+          t5 = ltorch.cos(a)  # t5: "cpu f32[4]"
+            # t5 = prims.cos(a)  # t5: "cpu f32[4]"
+          return t5
+
+    For ``g``, the copy from ``a.sin_()`` to ``x`` is critical. If it's missing,
+    the consumers of ``x`` including ``g`` itself would get broken.
+    Below are the outputs of this function. The top is "canonicalized" (see the change
+    of ``ltorch.sin_``'s operand).
+    The bottom is the functionalized trace. Since ``a`` has a different shape from ``x``,
+    there are ``prims.reshape(t3, (2, 2))`` and ``prims.copy_(t8, x)``.
+
+    .. code-block:: python
+        :name: functionalization-output-traces
+
+        # Constructed by Intermediate trace of `functionalize_inplace_ops`
+        def computation(x):
+          # x: "cpu f32[2, 2]"
+          a = ltorch.view(x, -1)  # a: "cpu f32[4]"
+            # a = ltorch.reshape(x, (-1,))  # a: "cpu f32[4]"
+
+          t2 = ltorch.exp_(a)  # t2: "cpu f32[4]"
+            # t1 = ltorch.exp(a)  # t1: "cpu f32[4]"
+
+          t4 = ltorch.sin_(t2)  # t4: "cpu f32[4]"
+            # t3 = ltorch.sin(t2)  # t3: "cpu f32[4]"
+            # t4 = prims.copy_(t3, t2)  # t4: "cpu f32[4]"
+
+          t5 = ltorch.cos(t4)  # t5: "cpu f32[4]"
+            # t5 = prims.cos(t4)  # t5: "cpu f32[4]"
+          return t5
+
+        # Constructed by Functionalize in-place ops
+        def computation(x):
+          # x: "cpu f32[2, 2]"
+
+          a = ltorch.view(x, -1)  # a: "cpu f32[4]"
+          t1 = ltorch.exp(a)  # t1: "cpu f32[4]"
+          t3 = ltorch.sin(t1)  # t3: "cpu f32[4]"
+          t5 = ltorch.cos(t3)  # t5: "cpu f32[4]"
+
+          t8 = prims.reshape(t3, (2, 2))  # t8: "cpu f32[2, 2]"
+          t9 = prims.copy_(t8, x)  # t9: "cpu f32[2, 2]"
+          return t5
+
+    .. seealso::
+
+        `PyTorch Docs - Tensor Views <https://pytorch.org/docs/stable/tensor_view.html>`_
+
+    Args:
+        computation_trace: A computation trace created by ``interpreter``.
+        orig_to_view_swap_map:
     """
     from thunder.torch import _inplace_to_out_of_place
 
@@ -652,8 +810,9 @@ def functionalize_inplace_ops(
     swap_map.clear()
 
     new_bsyms: list[BoundSymbol] = []
-    removed_copy_bsyms: list[BoundSymbol] = []
-    for bsym in intermediate_trace.bound_symbols:
+    # NOTE(crcrpar): The first value of a tuple is an indicator of how the copy src is new.
+    removed_copy_bsyms: list[tuple[int, BoundSymbol]] = []
+    for idx, bsym in enumerate(intermediate_trace.bound_symbols):
         new_bsym = bsym.from_bsym_swap_proxies(swap_map)
 
         if not is_functionalizable(new_bsym):
@@ -663,7 +822,7 @@ def functionalize_inplace_ops(
         copy_bsym = bsym.subsymbols[-1]
         copy_return = copy_bsym.flat_proxy_outs[0]
         copy_from = copy_bsym.flat_proxy_args[0]
-        removed_copy_bsyms.append(copy_bsym)
+        removed_copy_bsyms.append((idx, copy_bsym))
         swap_map[variableify(copy_return)] = copy_from
         new_bsym.subsymbols = new_bsym.subsymbols[:-1]
         new_bsym = new_bsym.from_bsym_swap_proxies(swap_map)
@@ -693,11 +852,7 @@ def functionalize_inplace_ops(
         removed_copy_bsyms,
     )
     functionalized_computation_trace = from_trace(computation_trace)
-
-    return_bsym = new_bsyms[-1]
-    if swap_map_for_return:
-        return_bsym = return_bsym.from_bsym_swap_proxies(swap_map_for_return)
-
+    return_bsym = new_bsyms[-1].from_bsym_swap_proxies(swap_map_for_return)
     functionalized_computation_trace.bound_symbols = new_bsyms[:-1] + required_copy_bsyms + [return_bsym]
     functionalized_computation_trace.set_provenance(TraceProvenance("Functionalize in-place ops"))
     # note(crcrpar): I kind of want to do the following two.

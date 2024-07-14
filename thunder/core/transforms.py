@@ -490,7 +490,7 @@ def add_post_optimization_transform(cfn: Callable, transform: PostOptimizationTr
 # The no-op transform. A trivial composable transform, only useful as an example.
 class _NoopTransform(AdditionalTransform):
     def transform_trace(self, trace: Trace, **kwargs) -> Trace:
-        start_time_ns = time.time_ns()
+        start_time_ns = time.perf_counter_ns()
         noop_trace = from_trace(trace)
 
         tracectx_tok: Any
@@ -502,7 +502,7 @@ class _NoopTransform(AdditionalTransform):
 
         noop_trace.bound_symbols.extend(trace.bound_symbols)
 
-        end_time_ns = time.time_ns()
+        end_time_ns = time.perf_counter_ns()
         elapsed_time_ns = end_time_ns - start_time_ns
         elapsed_time_millis = elapsed_time_ns // 1000000
         noop_trace.set_provenance(TraceProvenance(f"No-op Transform (took {elapsed_time_millis} milliseconds)"))
@@ -518,7 +518,7 @@ def noop(cfn: Callable) -> Callable:
 # The comment fusions transform. Just adds a comment before and after each fusion.
 #   This is an example of a post-optimization transform.
 def _comment_fusions_transform(trace: Trace, **kwargs) -> Trace:
-    start_time_ns = time.time_ns()
+    start_time_ns = time.perf_counter_ns()
     commented_trace = from_trace(trace)
 
     nbsyms: list[BoundSymbol] = []
@@ -533,7 +533,7 @@ def _comment_fusions_transform(trace: Trace, **kwargs) -> Trace:
             nbsyms.append(bsym)
 
     commented_trace.bound_symbols = nbsyms
-    end_time_ns = time.time_ns()
+    end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
 

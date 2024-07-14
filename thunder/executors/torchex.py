@@ -1792,7 +1792,7 @@ if torch.distributed.is_available():
             result_shape[dim] *= group.size()
         else:
             result_shape[0] *= group.size()
-        out: torch.Tensor = torch.empty(result_shape, dtype=a.dtype, device=a.device)
+        out = torch.empty(result_shape, dtype=a.dtype, device=a.device)
         do_async: bool = bool(do_async)
 
         handle: None | torch.distributed.distributed_c10d.Work = torch.distributed.all_gather_into_tensor(

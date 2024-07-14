@@ -12,11 +12,11 @@ class Timer:
         self.end_time_ns = None
 
     def __enter__(self):
-        self.start_time_ns = time.time_ns()
+        self.start_time_ns = time.perf_counter_ns()
         return self
 
     def __exit__(self, *args):
-        self.end_time_ns = time.time_ns()
+        self.end_time_ns = time.perf_counter_ns()
 
     def get_elapsed_time_in_ms(self):
         elapsed_time_ns = self.end_time_ns - self.start_time_ns

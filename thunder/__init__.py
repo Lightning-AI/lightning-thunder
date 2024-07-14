@@ -408,7 +408,7 @@ def jit(
         # TODO RC1 Add module and function checks to prologue (make it a compile option)
 
         # Checks cache
-        cs.last_trace_cache_start = time.time_ns()
+        cs.last_trace_cache_start = time.perf_counter_ns()
         if (cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES) or (cd.cache_option is CACHE_OPTIONS.SYMBOLIC_VALUES):
             for cache_entry in reversed(cs.interpreter_cache):
                 with compile_data_and_stats(cd, cs):
@@ -424,18 +424,18 @@ def jit(
                         _return_none_instead_of_grads,
                     ) = cache_entry
                     try:
-                        cs.last_prologue_execution_start = time.time_ns()
+                        cs.last_prologue_execution_start = time.perf_counter_ns()
                         if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
                             inps, pro_to_epi = pro(*args, **kwargs)
                         else:
                             inps = pro(*args, **kwargs)
                             pro_to_epi = None
-                        cs.last_prologue_execution_stop = time.time_ns()
+                        cs.last_prologue_execution_stop = time.perf_counter_ns()
                     except Exception as _:
                         continue
 
-                    cs.last_trace_host_tracing_start = time.time_ns()
-                    cs.last_trace_host_tracing_stop = time.time_ns()
+                    cs.last_trace_host_tracing_start = time.perf_counter_ns()
+                    cs.last_trace_host_tracing_stop = time.perf_counter_ns()
 
                     # Updates cache statistics
                     cs.cache_hits += 1
@@ -465,16 +465,16 @@ def jit(
                     backward_traces,
                 ) = cache_entry
 
-                cs.last_prologue_execution_start = time.time_ns()
+                cs.last_prologue_execution_start = time.perf_counter_ns()
                 if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
                     inps, pro_to_epi = pro(*args, **kwargs)
                 else:
                     inps = pro(*args, **kwargs)
                     pro_to_epi = None
-                cs.last_prologue_execution_stop = time.time_ns()
+                cs.last_prologue_execution_stop = time.perf_counter_ns()
 
-                cs.last_trace_host_tracing_start = time.time_ns()
-                cs.last_trace_host_tracing_stop = time.time_ns()
+                cs.last_trace_host_tracing_start = time.perf_counter_ns()
+                cs.last_trace_host_tracing_stop = time.perf_counter_ns()
 
                 # Updates cache statistics
                 cs.cache_hits += 1
@@ -487,7 +487,7 @@ def jit(
                 return cache_entry, inps, pro_to_epi
 
         cs.cache_misses += 1
-        cs.last_trace_cache_stop = time.time_ns()
+        cs.last_trace_cache_stop = time.perf_counter_ns()
 
         # Resets use of compile flags
         cs.last_compile_reasons = defaultdict(list)
@@ -495,7 +495,7 @@ def jit(
         with compile_data_and_stats(cd, cs):
             # Acquires the trace OR inlines the trace into an existing trace and
             #   returns the (proxied) result of the operation
-            cs.last_trace_tracing_start = time.time_ns()
+            cs.last_trace_tracing_start = time.perf_counter_ns()
 
             with langctxs.langctx(cd.langctx):
                 prologue_trc: TraceCtx
@@ -524,10 +524,10 @@ def jit(
             else:
                 epilogue_traces = None
 
-            cs.last_trace_tracing_stop = time.time_ns()
+            cs.last_trace_tracing_stop = time.perf_counter_ns()
 
             # Makes the prologue callable
-            cs.last_prologue_transformation_start = time.time_ns()
+            cs.last_prologue_transformation_start = time.perf_counter_ns()
 
             transform: Callable
             for transform in early_transforms:
@@ -553,15 +553,15 @@ def jit(
             else:
                 epilogue = None
 
-            cs.last_prologue_transformation_stop = time.time_ns()
+            cs.last_prologue_transformation_stop = time.perf_counter_ns()
 
-            cs.last_prologue_execution_start = time.time_ns()
+            cs.last_prologue_execution_start = time.perf_counter_ns()
             if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
                 inps, pro_to_epi = pro(*args, **kwargs)
             else:
                 inps = pro(*args, **kwargs)
                 pro_to_epi = None
-            cs.last_prologue_execution_stop = time.time_ns()
+            cs.last_prologue_execution_stop = time.perf_counter_ns()
 
             cs.last_traces = computation_traces
             backward_traces = []
@@ -590,12 +590,12 @@ def jit(
             if backward_trc is None:
                 ## EPILOGUE and TRANSFORMS should not mix...
                 # applies transforms
-                cs.last_computation_transformation_start = time.time_ns()
+                cs.last_computation_transformation_start = time.perf_counter_ns()
                 for transform in additional_transforms:
                     thunder.core.utils.check_type(transform, AdditionalTransform)
                     computation_trc = transform.transform_trace(computation_trc, executors_list=cd.executors_list)
                     computation_traces.append(computation_trc)
-                cs.last_computation_transformation_stop = time.time_ns()
+                cs.last_computation_transformation_stop = time.perf_counter_ns()
 
                 with langctxs.langctx(cd.langctx):
                     extraces = transform_for_execution(
@@ -663,11 +663,11 @@ def jit(
             return fn(*args, **kwargs)
 
         # Updats call statistics
-        cs.last_trace_host_start = time.time_ns()
+        cs.last_trace_host_start = time.perf_counter_ns()
         cs.calls += 1
 
         cache_entry, inps, pro_to_epi = get_computation_and_inputs(*args, **kwargs)
-        cs.last_trace_host_execution_start = time.time_ns()
+        cs.last_trace_host_execution_start = time.perf_counter_ns()
 
         result = cache_entry.computation_fn(*inps)
 
@@ -690,12 +690,12 @@ def jit(
             result, comp_to_epi = result
             cache_entry.epilogue_fn(*pro_to_epi, *comp_to_epi)
 
-        cs.last_trace_host_execution_stop = time.time_ns()
+        cs.last_trace_host_execution_stop = time.perf_counter_ns()
         cs.last_computation_execution_stop = cs.last_trace_host_execution_stop
 
         cs.last_executed = cache_entry.computation_fn
-        cs.last_trace_cache_stop = time.time_ns()
-        cs.last_trace_host_stop = time.time_ns()
+        cs.last_trace_cache_stop = time.perf_counter_ns()
+        cs.last_trace_host_stop = time.perf_counter_ns()
 
         return result
 
