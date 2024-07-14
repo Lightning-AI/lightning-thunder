@@ -191,6 +191,8 @@ class torchsymbol:
                 _torch_to_thunder_function_map[torchfn] = mapping_fn
 
         if self.tags and prims.OpTags.IN_PLACE in self.tags:
+            if self.id is not None:
+                name = self.id
             _inplace_to_out_of_place[sym] = globals()[name[:-1]], -1
 
         return sym
@@ -5064,6 +5066,29 @@ if torch.distributed.is_available():
 
         return dist_prims.all_gather(a, group, async_op, dim=dim)
 
+    @torchsymbol(
+        torch.distributed.all_gather_into_tensor,
+        is_method=False,
+        id="all_gather_",
+        tags=(prims.OpTags.IN_PLACE, prims.OpTags.DONT_DCE),
+    )
+    def all_gather_(
+        output_tensor: TensorLike,
+        input_tensor: TensorLike,
+        /,
+        group: torch.distributed.ProcessGroup | None = None,
+        async_op: bool = False,
+    ) -> TensorLike:
+        result_numel = input_tensor._numel * group.size()
+        utils.check(result_numel == output_tensor._numel, lambda: f"{output_tensor._numel=} should be {result_numel=}")
+        group = group if group is not None else torch.distributed.new_group()
+        out_or_work = dist_prims.all_gather(input_tensor, group, async_op, dim=None)
+        if async_op:
+            out = dist_prims.wait(out_or_work)
+        else:
+            out = out_or_work
+        return prims.copy_(out.view(output_tensor.shape), output_tensor)
+
     # NOTE torch.distributed.all_reduce is an inplace operation (although the underlying NCCL
     #   call does not need to be inplace). This, however, is modeled as an out-of-place functional
     #   operation, hence the id "functional_all_reduce", and why we do not translate PyTorch
@@ -5086,6 +5111,30 @@ if torch.distributed.is_available():
         group = group if group is not None else torch.distributed.new_group()
 
         return dist_prims.all_reduce(a, op, group, async_op)
+
+    @torchsymbol(
+        torch.distributed.all_reduce,
+        is_method=False,
+        id="all_reduce_",
+        tags=(prims.OpTags.IN_PLACE,),
+    )
+    def all_reduce_(
+        a: TensorLike,
+        /,
+        op: DistributedReduceOpLike = torch.distributed.ReduceOp.SUM,
+        group: torch.distributed.ProcessGroup | None = None,
+        async_op: bool = False,
+    ) -> TensorLike:
+        utils.check(
+            not async_op,
+            lambda: f"`torch.distributed.all_reduce` with {async_op=} is not supported",
+            NotImplementedError,
+        )
+        op = to_thunder_distributed_reduce_op(op)
+        group = group if group is not None else torch.distributed.new_group()
+
+        out = dist_prims.all_reduce(a, op, group, async_op, skip_clone=True)
+        return prims.copy_(out, a)
 
     @torchsymbol(
         is_method=False,
@@ -5117,6 +5166,37 @@ if torch.distributed.is_available():
 
         return dist_prims.reduce_scatter(a, op, group, async_op, dim=dim)
 
+    @torchsymbol(
+        torch.distributed.reduce_scatter_tensor,
+        is_method=False,
+        id="reduce_scatter_",
+        tags=(prims.OpTags.IN_PLACE, prims.OpTags.DONT_DCE),
+    )
+    def reduce_scatter_(
+        output: TensorLike,
+        input: TensorLike,
+        op: DistributedReduceOpLike | None = None,
+        group: torch.distributed.ProcessGroup | None = None,
+        async_op: bool = False,
+    ) -> TensorLike:
+        op = to_thunder_distributed_reduce_op(op)
+        group = group if group is not None else torch.distributed.new_group()
+        result_numel = input._numel // group.size()
+        utils.check(result_numel == output._numel, lambda: f"{output._numel=} should be {result_numel=}")
+        out_or_work = dist_prims.reduce_scatter(input, op, group, async_op, dim=None)
+        if async_op:
+            out = dist_prims.wait(out_or_work)
+        else:
+            out = out_or_work
+        return prims.copy_(out.view(output.shape), output)
+
+    @torchsymbol(
+        is_method=True,
+        id="torch.Tensor.wait",
+    )
+    def wait(slf: TensorLike) -> TensorLike:
+        return slf
+
 else:
 
     def all_gather(
@@ -5126,6 +5206,15 @@ else:
     ) -> None:
         utils.check(False, lambda: f"torch.distributed is not available")
 
+    def all_gather_(
+        output_tensor: TensorLike,
+        input_tensor: TensorLike,
+        /,
+        group: torch.distributed.ProcessGroup | None = None,
+        async_op: bool = False,
+    ) -> None:
+        utils.check(False, lambda: "torch.distributed is not available")
+
     # NOTE torch.distributed is not available
     def all_reduce(
         a: TensorLike,
@@ -5134,6 +5223,15 @@ else:
         async_op: bool = False,
     ) -> None:
         utils.check(False, lambda: f"torch.distributed is not available")
+
+    def all_reduce_(
+        a: TensorLike,
+        /,
+        op: DistributedReduceOpLike = torch.distributed.ReduceOp.SUM,
+        group: torch.distributed.ProcessGroup | None = None,
+        async_op: bool = False,
+    ) -> None:
+        utils.check(False, lambda: "torch.distributed is not available")
 
     def broadcast(
         a: TensorLike,
@@ -5150,6 +5248,18 @@ else:
         async_op: bool = False,
     ) -> None:
         utils.check(False, lambda: f"torch.distributed is not available")
+
+    def reduce_scatter_(
+        output: TensorLike,
+        input: TensorLike,
+        op: DistributedReduceOpLike | None = None,
+        group: torch.distributed.ProcessGroup | None = None,
+        async_op: bool = False,
+    ) -> None:
+        utils.check(False, lambda: "torch.distributed is not available")
+
+    def wait(slf) -> None:
+        utils.check(False, lambda: "torch.distributed is not available")
 
 
 #
