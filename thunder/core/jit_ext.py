@@ -915,6 +915,14 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     return _interpret_call(custom_forward, wrapped_ctx, *args_, **kwargs_)
 
 
+@general_jit_lookaside(torch.finfo)
+@interpreter_needs_wrap
+def _general_jit_torch_finfo_lookaside(dtype: thunder.dtypes.dtype):
+    torch_dtype = thunder.dtypes.to_torch_dtype(dtype)
+    res = torch.finfo(torch_dtype)
+    return res
+
+
 # Adds proxy methods
 # NOTE These methods map to themselves, which prevents the interpreter from looking into them
 #   This is OK because these methods are written in a tracing-safe manner, and trying to
