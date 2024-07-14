@@ -3570,6 +3570,8 @@ def _call_handler(
     func_or_null = stack.pop_wrapped()
     if frame.call_shape_kwnames is not None:
         kwnames = frame.call_shape_kwnames
+        if len(kwnames) == 3:
+            print("")
         assert len(args) >= len(kwnames)
         kwargs = dict(zip(kwnames, args[-len(kwnames) :]))
         args = args[: -len(kwnames)]
@@ -6247,8 +6249,12 @@ def _setup_frame_and_run_python_function(
             p = p.replace(default=wrap_const(p.default))
         params.append(p)
     sig = sig.replace(parameters=params)
-    bound = sig.bind(*args, **kwargs)
-    bound.apply_defaults()
+    try:
+        bound = sig.bind(*args, **kwargs)
+        bound.apply_defaults()
+    except:
+        print("")
+        bound = None
 
     locals_dict: dict[str, Any] = dict(bound.arguments)
 

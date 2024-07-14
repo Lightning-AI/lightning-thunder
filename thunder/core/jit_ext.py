@@ -916,17 +916,11 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
 
 
 @general_jit_lookaside(torch.finfo)
-def _general_jit_torch_finfo_lookaside(obj: Any):
-    thunder_dtype = unwrap(obj)
-    try:
-        torch_dtype = thunder.dtypes.to_torch_dtype(thunder_dtype)
-        res = torch.finfo(torch_dtype)
-    except BaseException as e:
-        return do_raise(e)
-
-    pr = ProvenanceRecord(PseudoInst.OPAQUE, inputs=[wrap_const(torch.finfo).provenance, obj.provenance])
-    wrapped_res = wrap(res, provenance=pr)
-    return wrapped_res
+@interpreter_needs_wrap
+def _general_jit_torch_finfo_lookaside(dtype: thunder.dtypes.dtype):
+    torch_dtype = thunder.dtypes.to_torch_dtype(dtype)
+    res = torch.finfo(torch_dtype)
+    return res
 
 
 # Adds proxy methods

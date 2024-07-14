@@ -437,7 +437,7 @@ def test_binary_add_numbers():
 
 def test_finfo():
     def foo(a):
-        return torch.finfo(a.dtype).min
+        return torch.finfo(a.dtype)
 
     jfoo = thunder.jit(foo)
     a = torch.randn((2, 2), device="cpu")
@@ -445,7 +445,7 @@ def test_finfo():
     actual = jfoo(a)
     expected = foo(a)
 
-    assert_close(actual, expected)
+    assert actual == expected
 
 
 _test_add_global_global = 2

@@ -42,6 +42,7 @@ def tree_flatten(args, namespace=""):
             type,
             type(Ellipsis),
             torch.Size,
+            torch.finfo,
         }
         and not isinstance(args, (ProxyInterface))
         and not dataclasses.is_dataclass(args)
