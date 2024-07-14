@@ -5309,7 +5309,7 @@ def _reraise_handler_3_11(
 
 
 # https://docs.python.org/3.12/library/dis.html#opcode-RETURN_CONST
-@register_opcode_handler("RETURN_CONST")
+@register_opcode_handler("RETURN_CONST", min_ver=(3, 12))
 def _return_value_handler(
     inst: dis.Instruction, /, co: CodeType, stack: InterpreterStack, **kwargs
 ) -> int | None | INTERPRETER_SIGNALS:
