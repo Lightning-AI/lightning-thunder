@@ -1133,7 +1133,7 @@ class InterpreterFrame:
         if (3, 9) <= sys.version_info < (3, 11):
             if inst.starts_line is not None:
                 self.positions = Positions(inst.starts_line, inst.starts_line, 0, 999)
-        elif (3, 11) <= sys.version_info < (3, 12):
+        elif (3, 11) <= sys.version_info < (3, 13):
             if inst.positions is not None:
                 self.positions = inst.positions
         else:
@@ -3083,7 +3083,7 @@ def check_signal(val):
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-ASYNC_GEN_WRAP
-@register_opcode_handler("ASYNC_GEN_WRAP", min_ver=(3, 11))
+@register_opcode_handler("ASYNC_GEN_WRAP", min_ver=(3, 11), max_ver=(3, 11))
 def _async_gen_wrap_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
     # the next thing will be to yield the value, but we delegate this along with the wrapping to thunder_interpreter_async_generator
     pass
@@ -4240,7 +4240,7 @@ def _import_name_handler(
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-IMPORT_STAR
-@register_opcode_handler("IMPORT_STAR")
+@register_opcode_handler("IMPORT_STAR", max_ver=(3, 11))
 def _import_star_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
 ) -> None | INTERPRETER_SIGNALS:
@@ -4356,7 +4356,7 @@ def _jump_if_not_exc_match_handler(
 
 # https://docs.python.org/3.10/library/dis.html#opcode-JUMP_TRUE_OR_POP
 # https://docs.python.org/3.11/library/dis.html#opcode-JUMP_TRUE_OR_POP
-@register_opcode_handler("JUMP_IF_TRUE_OR_POP")
+@register_opcode_handler("JUMP_IF_TRUE_OR_POP", max_ver=(3, 11))
 def _jump_if_true_or_pop_handler(
     inst: dis.Instruction, /, inst_ptr: int, stack: InterpreterStack, **kwargs
 ) -> int | None | INTERPRETER_SIGNALS:
@@ -4378,9 +4378,9 @@ def _jump_if_true_or_pop_handler(
     return target
 
 
-# https://docs.python.org/3.10/library/dis.html#opcode-JUMP_FALSE_OR_POP
-# https://docs.python.org/3.11/library/dis.html#opcode-JUMP_FALSE_OR_POP
-@register_opcode_handler("JUMP_IF_FALSE_OR_POP")
+# https://docs.python.org/3.10/library/dis.html#opcode-JUMP_IF_FALSE_OR_POP
+# https://docs.python.org/3.11/library/dis.html#opcode-JUMP_IF_FALSE_OR_POP
+@register_opcode_handler("JUMP_IF_FALSE_OR_POP", max_ver=(3, 11))
 def _jump_if_false_or_pop_handler(
     inst: dis.Instruction, /, inst_ptr: int, stack: InterpreterStack, **kwargs
 ) -> int | None | INTERPRETER_SIGNALS:
@@ -4441,7 +4441,7 @@ def _list_extend_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LIST_TO_TUPLE
-@register_opcode_handler("LIST_TO_TUPLE")
+@register_opcode_handler("LIST_TO_TUPLE", max_ver=(3, 11))
 def _list_to_tuple_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
     tos = stack.pop_wrapped()
     assert wrapped_isinstance(tos, list)
@@ -4465,7 +4465,7 @@ def _load_assertion_handler(inst: dis.Instruction, /, stack: InterpreterStack, *
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_ATTR
-@register_opcode_handler("LOAD_ATTR")
+@register_opcode_handler("LOAD_ATTR", max_ver=(3, 11))
 def _load_attr_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, **kwargs
 ) -> None | INTERPRETER_SIGNALS:
@@ -4475,6 +4475,22 @@ def _load_attr_handler(
     name: WrappedValue = wrap_const(co.co_names[inst.arg])
 
     return check_and_append(stack, _interpret_call(getattr, a, name))
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-LOAD_ATTR
+@register_opcode_handler("LOAD_ATTR", min_ver=(3, 12))
+def _load_attr_handler_3_12(
+    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, **kwargs
+) -> None | INTERPRETER_SIGNALS:
+    assert type(inst.arg) is int
+    idx = inst.arg >> 1
+    load_method_like = inst.arg & 1
+    obj = stack.pop_wrapped()
+    name: WrappedValue = wrap_const(co.co_names[idx])
+    if not load_method_like:
+        return check_and_append(stack, _interpret_call(getattr, obj, name))
+    else:
+        return load_method_helper(obj, name, stack)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_BUILD_CLASS
@@ -4612,9 +4628,12 @@ def _load_method_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, **kwargs
 ) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
-    name = wrap_const(co.co_names[inst.arg])
     obj = stack.pop_wrapped()
+    name = wrap_const(co.co_names[inst.arg])
+    return load_method_helper(obj, name, stack)
 
+
+def load_method_helper(obj, name, stack):
     meth = _interpret_call(getattr, obj, name)
     if meth is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return meth
@@ -4939,7 +4958,7 @@ def _pop_except_handler_3_11(
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_BACKWARD_IF_FALSE
-@register_opcode_handler("POP_JUMP_BACKWARD_IF_FALSE", min_ver=(3, 11))
+@register_opcode_handler("POP_JUMP_BACKWARD_IF_FALSE", min_ver=(3, 11), max_ver=(3, 11))
 def _pop_jump_backward_if_false_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs
 ) -> int | None | INTERPRETER_SIGNALS:
@@ -4958,7 +4977,7 @@ def _pop_jump_backward_if_false_handler(
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_BACKWARD_IF_NONE
-@register_opcode_handler("POP_JUMP_BACKWARD_IF_NONE", min_ver=(3, 11))
+@register_opcode_handler("POP_JUMP_BACKWARD_IF_NONE", min_ver=(3, 11), max_ver=(3, 11))
 def _pop_jump_backward_if_none_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs
 ) -> int | None:
@@ -4973,7 +4992,7 @@ def _pop_jump_backward_if_none_handler(
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_BACKWARD_IF_NOT_NONE
-@register_opcode_handler("POP_JUMP_BACKWARD_IF_NOT_NONE", min_ver=(3, 11))
+@register_opcode_handler("POP_JUMP_BACKWARD_IF_NOT_NONE", min_ver=(3, 11), max_ver=(3, 11))
 def _pop_jump_backward_if_not_none_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs
 ) -> int | None:
@@ -4988,7 +5007,7 @@ def _pop_jump_backward_if_not_none_handler(
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_BACKWARD_IF_TRUE
-@register_opcode_handler("POP_JUMP_BACKWARD_IF_TRUE", min_ver=(3, 11))
+@register_opcode_handler("POP_JUMP_BACKWARD_IF_TRUE", min_ver=(3, 11), max_ver=(3, 11))
 def _pop_jump_backward_if_true_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs
 ) -> int | None | INTERPRETER_SIGNALS:
@@ -5007,7 +5026,7 @@ def _pop_jump_backward_if_true_handler(
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_FORWARD_IF_FALSE
-@register_opcode_handler("POP_JUMP_FORWARD_IF_FALSE", min_ver=(3, 11))
+@register_opcode_handler("POP_JUMP_FORWARD_IF_FALSE", min_ver=(3, 11), max_ver=(3, 11))
 def _pop_jump_forward_if_false_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs
 ) -> int | None | INTERPRETER_SIGNALS:
@@ -5026,7 +5045,7 @@ def _pop_jump_forward_if_false_handler(
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_FORWARD_IF_TRUE
-@register_opcode_handler("POP_JUMP_FORWARD_IF_TRUE", min_ver=(3, 11))
+@register_opcode_handler("POP_JUMP_FORWARD_IF_TRUE", min_ver=(3, 11), max_ver=(3, 11))
 def _pop_jump_forward_if_true_handler_3_11(
     inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs
 ) -> int | None | INTERPRETER_SIGNALS:
@@ -5045,7 +5064,7 @@ def _pop_jump_forward_if_true_handler_3_11(
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_FORWARD_IF_NONE
-@register_opcode_handler("POP_JUMP_FORWARD_IF_NONE", min_ver=(3, 11))
+@register_opcode_handler("POP_JUMP_FORWARD_IF_NONE", min_ver=(3, 11), max_ver=(3, 11))
 def _pop_jump_forward_if_none_handler_3_11(
     inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs
 ) -> int | None:
@@ -5059,7 +5078,7 @@ def _pop_jump_forward_if_none_handler_3_11(
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_FORWARD_IF_NOT_NONE
-@register_opcode_handler("POP_JUMP_FORWARD_IF_NOT_NONE", min_ver=(3, 11))
+@register_opcode_handler("POP_JUMP_FORWARD_IF_NOT_NONE", min_ver=(3, 11), max_ver=(3, 11))
 def _pop_jump_forward_if_none_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs
 ) -> int | None:
@@ -5191,7 +5210,7 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()) -> Literal[INTERPRETE
 
 
 # https://docs.python.org/3.11/library/dis.html#opcode-PRINT_EXPR
-@register_opcode_handler("PRINT_EXPR")
+@register_opcode_handler("PRINT_EXPR", max_ver=(3, 11))
 def _print_expr_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, frame: InterpreterFrame, **kwargs
 ) -> None | INTERPRETER_SIGNALS:
@@ -5287,6 +5306,20 @@ def _reraise_handler_3_11(
     assert isinstance(val, BaseException)
     runtimectx.curexc = val
     return INTERPRETER_SIGNALS.EXCEPTION_RAISED
+
+
+# https://docs.python.org/3.12/library/dis.html#opcode-RETURN_CONST
+@register_opcode_handler("RETURN_CONST")
+def _return_value_handler(
+    inst: dis.Instruction, /, co: CodeType, stack: InterpreterStack, **kwargs
+) -> int | None | INTERPRETER_SIGNALS:
+    assert type(inst.arg) is int
+
+    constant = co.co_consts[inst.arg]
+    constant = wrap_const(constant)
+    constant = const_callback(constant)
+    stack.append(constant)
+    return INTERPRETER_SIGNALS.RETURN_VALUE
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-RETURN_VALUE
@@ -5631,7 +5664,7 @@ def _unary_negative_handler(inst: dis.Instruction, /, stack: InterpreterStack, *
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNARY_POSITIVE
-@register_opcode_handler("UNARY_POSITIVE")
+@register_opcode_handler("UNARY_POSITIVE", max_ver=(3, 11))
 def _unary_positive_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     tos = stack.pop()
 
@@ -6312,7 +6345,7 @@ def _setup_frame_and_run_python_function(
         for i, (name, value) in enumerate(zip(code.co_freevars, closure)):
             local = freevar_callback(name, value, fn=wrapped_fn, idx=i)
             localsplus.append(local)
-    elif (3, 11) <= sys.version_info < (3, 12):
+    elif (3, 11) <= sys.version_info < (3, 13):
         assert len(code.co_varnames) == code.co_nlocals
         for n in code.co_varnames:
             local = locals_dict.get(n, Py_NULL())
