@@ -441,11 +441,18 @@ def test_finfo():
 
     jfoo = thunder.jit(foo)
     a = torch.randn((2, 2), device="cpu")
-
     actual = jfoo(a)
     expected = foo(a)
-
     assert actual == expected
+
+    def bar(a):
+        return torch.finfo(a.dtype).min
+
+    jbar = thunder.jit(bar)
+    a = torch.randn((2, 2), device="cpu")
+    actual = jbar(a)
+    expected = bar(a)
+    assert_close(actual, expected)
 
 
 _test_add_global_global = 2
