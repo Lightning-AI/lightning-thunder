@@ -3570,8 +3570,6 @@ def _call_handler(
     func_or_null = stack.pop_wrapped()
     if frame.call_shape_kwnames is not None:
         kwnames = frame.call_shape_kwnames
-        if len(kwnames) == 3:
-            print("")
         assert len(args) >= len(kwnames)
         kwargs = dict(zip(kwnames, args[-len(kwnames) :]))
         args = args[: -len(kwnames)]
