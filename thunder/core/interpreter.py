@@ -6249,12 +6249,8 @@ def _setup_frame_and_run_python_function(
             p = p.replace(default=wrap_const(p.default))
         params.append(p)
     sig = sig.replace(parameters=params)
-    try:
-        bound = sig.bind(*args, **kwargs)
-        bound.apply_defaults()
-    except:
-        print("")
-        bound = None
+    bound = sig.bind(*args, **kwargs)
+    bound.apply_defaults()
 
     locals_dict: dict[str, Any] = dict(bound.arguments)
 
