@@ -2754,11 +2754,18 @@ def gather(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
 # NOTE: PyTorch uses `src` for torch.Tensor arguments and `value` for scalars
 # when referencing the source of the values
 @torchsymbol(torch.scatter)
-def scatter(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike | None = None, *, value: None | Number = None, reduce: None | str = None) -> TensorLike:
+def scatter(
+    a: TensorLike,
+    /,
+    dim: int,
+    index: TensorLike,
+    src: TensorLike | None = None,
+    *,
+    value: None | Number = None,
+    reduce: None | str = None,
+) -> TensorLike:
     utils.check(
-        reduce is None,
-        lambda: "scatter: `reduce` argument other than None is not supported",
-        NotImplementedError
+        reduce is None, lambda: "scatter: `reduce` argument other than None is not supported", NotImplementedError
     )
 
     utils.check(
@@ -2773,11 +2780,18 @@ def scatter(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike | Non
 
 
 @torchsymbol(torch.Tensor.scatter_, tags=(prims.OpTags.IN_PLACE,))
-def scatter_(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike | None = None, *, value: None | Number = None, reduce: None | str = None) -> TensorLike:
+def scatter_(
+    a: TensorLike,
+    /,
+    dim: int,
+    index: TensorLike,
+    src: TensorLike | None = None,
+    *,
+    value: None | Number = None,
+    reduce: None | str = None,
+) -> TensorLike:
     utils.check(
-        reduce is None,
-        lambda: "scatter_: `reduce` argument other than None is not supported",
-        NotImplementedError
+        reduce is None, lambda: "scatter_: `reduce` argument other than None is not supported", NotImplementedError
     )
 
     utils.check(

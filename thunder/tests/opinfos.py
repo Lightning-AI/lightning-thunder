@@ -4908,9 +4908,9 @@ def scatter_sample_generator(op, device, dtype, requires_grad, **kwargs):
         for sample in scatter_add_sample_generator(op, device, dtype, requires_grad, **kwargs):
             # Scatter is non-deterministic with repeated indices.
             # The easiest way to make it deterministic is to make `src` a scalar tensor.
-            src = sample.kwargs['src']
+            src = sample.kwargs["src"]
             src = torch.ones_like(src)
-            sample.kwargs['src'] = src
+            sample.kwargs["src"] = src
             yield sample
     else:
         # In this case repeated indices will break finite difference checks
@@ -4925,7 +4925,7 @@ def scatter_sample_generator(op, device, dtype, requires_grad, **kwargs):
         # index[..., 0:a.shape[dim], ...] = randperm(a.shape[dim]).
         # It is not hard to see that such `index` turns I into the set with the desired properties.
         for sample in scatter_add_sample_generator(op, device, dtype, requires_grad, **kwargs):
-            dim = sample.kwargs['dim']
+            dim = sample.kwargs["dim"]
             a = sample.args[0]
             dim_canon = a.ndim + dim if dim < 0 else dim
 
@@ -4936,7 +4936,7 @@ def scatter_sample_generator(op, device, dtype, requires_grad, **kwargs):
                 n_reps_before *= d
 
             n_reps_after = 1
-            for d in a.shape[dim_canon + 1:]:
+            for d in a.shape[dim_canon + 1 :]:
                 n_reps_after *= d
 
             new_idx = torch.zeros((n_reps_before, scatter_dim_len, n_reps_after), dtype=torch.long, device=device)
@@ -4953,8 +4953,8 @@ def scatter_sample_generator(op, device, dtype, requires_grad, **kwargs):
     for scalar_src in (1, 1.0):
         for sample in scatter_add_sample_generator(op, device, dtype, requires_grad, **kwargs):
             # PyTorch uses `src` for Tensor inputs, and `value` for scalar inputs
-            del sample.kwargs['src']
-            sample.kwargs['value'] = scalar_src
+            del sample.kwargs["src"]
+            sample.kwargs["value"] = scalar_src
             yield sample
 
 

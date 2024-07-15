@@ -1263,11 +1263,18 @@ def _scatter_prim_transform(a: TensorProxy, /, index: TensorProxy, src: TensorPr
     return scatter(a, dim, index, src)
 
 
-def _scatter_transform(a: TensorProxy, /, dim: int, index: TensorProxy, src: TensorProxy | None = None, *, value: Number | None = None, reduce: None | str = None) -> TensorProxy:
+def _scatter_transform(
+    a: TensorProxy,
+    /,
+    dim: int,
+    index: TensorProxy,
+    src: TensorProxy | None = None,
+    *,
+    value: Number | None = None,
+    reduce: None | str = None,
+) -> TensorProxy:
     utils.check(
-        reduce is None,
-        lambda: "scatter: `reduce` argument other than None is not supported",
-        NotImplementedError
+        reduce is None, lambda: "scatter: `reduce` argument other than None is not supported", NotImplementedError
     )
 
     utils.check(
