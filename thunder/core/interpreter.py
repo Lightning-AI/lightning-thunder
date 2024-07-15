@@ -6467,9 +6467,7 @@ def _call_dispatch(
                 return _interpret_call(unbound_fn, slf, *args, **kwargs)
 
     # (2) Handles lookasides
-    # if enable auto fallback to torch ops, the torch operator is registered in _torch_to_thunder_function_map
-    # TODO: where to put this register? _torch_to_thunder_function_map is accessable only when lookaside_fn is _minimal_lookaside
-    # if enable_fallback_to_torch:
+    # Check if the torch operator is not registered in the _torch_to_thunder_function_map, fallback to automatic registration.
     from thunder.torch import is_torch_operators
 
     if is_torch_operators(fn):

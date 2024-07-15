@@ -24,6 +24,7 @@ def recover(disabled_op_list=None):
     try:
         yield
     finally:
+        _torch_to_thunder_function_map.clear()
         _torch_to_thunder_function_map.update(tmp_torch_to_thunder)
 
 
@@ -50,36 +51,36 @@ def test_fallback_exception(
                 thunder_result = tfn(*sample.args, **sample.kwargs)
 
 
-_fallback_opinfos = [
+_fallback_opinfos1 = [
     get_opinfo("embedding"),
-    get_opinfo("digamma"),
-    get_opinfo("is_complex"),
+    get_opinfo("type_as"),
     get_opinfo("conv2d"),
     get_opinfo("reshape"),
 ]
 
 
-@ops(_fallback_opinfos, supported_dtypes=(dtypes.float32,), supported_executors=(TorchExecutor,))
+@ops(_fallback_opinfos1, supported_dtypes=(dtypes.float32,), supported_executors=(TorchExecutor,))
 def test_fallback_forward(op, device, dtype, executor, comp):
-    with recover(_fallback_opinfos):
-        for sample in op.sample_inputs(device, dtype, requires_grad=True):
+    with recover(_fallback_opinfos1):
+        for sample in op.sample_inputs(device, dtype):
             comp = sample.comp if sample.comp is not None else comp
             tfn = thunder.jit(
                 op.torch_reference,
                 executors=executor.executors_list(),
             )
             thunder_result = tfn(*sample.args, **sample.kwargs)
-
             torch_result = op.torch_reference(*sample.args, **sample.kwargs)
             comp(thunder_result, torch_result)
+            fwd_trc = thunder.last_traces(tfn)[-1]
+            assert any(bsym.sym.name.endswith(op.name) and not bsym.subsymbols for bsym in fwd_trc.bound_symbols)
 
 
-_fallback_opinfos = [get_opinfo("embedding"), get_opinfo("digamma"), get_opinfo("conv2d"), get_opinfo("unfold")]
+_fallback_opinfos2 = [get_opinfo("embedding"), get_opinfo("conv2d"), get_opinfo("unfold"), get_opinfo("expand")]
 
 
-@ops(_fallback_opinfos, supported_dtypes=(dtypes.float32,), supported_executors=(TorchExecutor,))
+@ops(_fallback_opinfos2, supported_dtypes=(dtypes.float32,), supported_executors=(TorchExecutor,))
 def test_fallback_backward(op, device, dtype, executor, comp):
-    with recover(_fallback_opinfos):
+    with recover(_fallback_opinfos2):
         for sample in op.sample_inputs(device, dtype, requires_grad=True):
             comp = sample.comp if sample.comp is not None else comp
             tfn = thunder.jit(
