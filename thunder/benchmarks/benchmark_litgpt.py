@@ -215,6 +215,7 @@ class Benchmark_litGPT:
             warnings.warn(
                 "Activations checkpointing is configured, but Thunder does not support checkpointing. Checkpointing will be ignored."
             )
+            self.checkpoint_activations = False
         self.skip_data_sync = skip_data_sync
 
         # Profiling Args
