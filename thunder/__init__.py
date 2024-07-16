@@ -382,6 +382,9 @@ def jit(
         # this could be replaced by the respective querying in the prologues
         cache_info = _get_cache_info()
 
+        # default dtype (for factory functions)
+        cache_info["default_dtype"] = pytorch.get_default_dtype()
+
         # autocast related operations
         is_autocast_enabled = False
         if pytorch.is_autocast_enabled() or pytorch.is_autocast_cpu_enabled():

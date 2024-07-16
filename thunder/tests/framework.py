@@ -7,6 +7,7 @@ from itertools import product
 from typing import List, Optional
 from collections.abc import Callable, Sequence, Iterable
 import packaging.version
+import contextlib
 
 import pytest
 import torch
@@ -581,3 +582,13 @@ class custom_comparator:
 
     def __call__(self, test_template):
         return test_template
+
+
+@contextlib.contextmanager
+def set_default_dtype_ctx(dtype):
+    saved_dtype = torch.get_default_dtype()
+    torch.set_default_dtype(dtype)
+    try:
+        yield
+    finally:
+        torch.set_default_dtype(saved_dtype)

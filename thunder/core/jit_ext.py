@@ -1614,6 +1614,8 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                     clang.check_string_value(p, v)
                 elif isinstance(v, (int, bool, float)):
                     clang.check_number_type_and_value(p, v)
+                elif isinstance(v, torch.dtype):
+                    clang.check_literal_like(p, v)
                 else:
                     raise NotImplementedError(f"cache info of type {type(v).__name__}")
 
