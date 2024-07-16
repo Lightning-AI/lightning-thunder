@@ -4052,7 +4052,7 @@ def is_torch_operators(fn):
         and fn not in _torch_to_thunder_function_map
     ):
         if fn.__module__ in ("torch._C._nn", "torch", "torch.nn.functional", "torch._C._special"):
-            if hasattr(fn, "__name__") and fn.__name__.startswith("_"):
+            if hasattr(fn, "__name__") and (fn.__name__.startswith("_") or fn.__name__.endswith("_")):
                 return False
             return True
         return False
@@ -4061,6 +4061,8 @@ def is_torch_operators(fn):
         and hasattr(fn.__objclass__, "__module__")
         and fn.__objclass__.__module__.startswith("torch._C")
     ):
+        if hasattr(fn, "__name__") and (fn.__name__.startswith("_") or fn.__name__.endswith("_")):
+            return False
         return True
 
     return False
@@ -4254,6 +4256,9 @@ def meta_adaptor(torch_func):
     def wrapper(*args, **kwargs):
         from thunder.core.pytree import tree_flatten, tree_unflatten
         from torch._subclasses.fake_tensor import FakeTensorMode
+
+        if kwargs.get('inplace', False) == True:
+            raise NotImplementedError(f"{torch_func} has inplace=True, please use manual registration")
 
         with FakeTensorMode() as mode:
             fake_args, fake_kwargs = tree_map(lambda x: _get_fake_arg(x, mode), (args, kwargs))
