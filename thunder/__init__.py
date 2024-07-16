@@ -569,6 +569,14 @@ def jit(
             cs.last_interpreter_log = last_interpreter_log
             cs.last_interpreted_instructions = (i for i in last_interpreter_log if isinstance(i, dis.Instruction))
 
+            # note(crcrpar): deliberately apply sort_waits optionally as per
+            # https://github.com/Lightning-AI/lightning-thunder/blob/7a804e56d9cd695eb03a1fc8d178253d06e7548a/thunder/distributed/utils.py#L155-L159
+            if cd.disable_torch_autograd_support:
+                from thunder.distributed.utils import maybe_sort_waits
+
+                computation_trc = maybe_sort_waits(computation_trc)
+                computation_traces.append(computation_trc)
+
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
 

@@ -51,6 +51,12 @@ def sort_data_parallel_syncs(primal_trace):
         return primal_trace
 
 
+def has_wait_prims(trace: TraceCtx) -> bool:
+    from thunder.executors.torchex import wait_prim_impl
+
+    return any(bsym.sym.id == wait_prim_impl.id for bsym in trace.bound_symbols)
+
+
 def sort_communication_ops(execution_trace):
     """
     Sorts the wait_prim_impl nodes in the execution trace to be as far from the
@@ -71,7 +77,7 @@ def sort_communication_ops(execution_trace):
         unpack_for_fsdp_prim_impl,
     )
 
-    if not any(bsym.sym.id == wait_prim_impl.id for bsym in execution_trace.bound_symbols):
+    if not has_wait_prims(execution_trace):
         return execution_trace
 
     order_in_trace = {bsym: i for i, bsym in enumerate(execution_trace.bound_symbols)}
@@ -129,7 +135,7 @@ def sort_waits(execution_trace):
         all_gather_prim_impl,
     )
 
-    if not any(bsym.sym.id == wait_prim_impl.id for bsym in execution_trace.bound_symbols):
+    if not has_wait_prims(execution_trace):
         return execution_trace
 
     order_in_trace = {bsym: i for i, bsym in enumerate(execution_trace.bound_symbols)}
@@ -163,6 +169,14 @@ def sort_waits(execution_trace):
         selector=prefer_comm_over_other_over_wait,
     )
     return new_execution_trace
+
+
+def maybe_sort_waits(trace: TraceCtx) -> TraceCtx:
+    """Apply `sort_waits` to ``computation_trace`` aka forward and optional ``backward_trace``."""
+    if has_wait_prims(trace):
+        return sort_waits(trace)
+    else:
+        return trace
 
 
 def limit_in_flight_allgathers(
