@@ -4257,7 +4257,7 @@ def meta_adaptor(torch_func):
         from thunder.core.pytree import tree_flatten, tree_unflatten
         from torch._subclasses.fake_tensor import FakeTensorMode
 
-        if kwargs.get('inplace', False) == True:
+        if kwargs.get("inplace", False) == True:
             raise NotImplementedError(f"{torch_func} has inplace=True, please use manual registration")
 
         with FakeTensorMode() as mode:
