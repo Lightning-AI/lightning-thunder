@@ -554,6 +554,7 @@ def arange(
         device = "cpu"
 
     device = to_device(device)
+    # From torch docs - https://pytorch.org/docs/stable/generated/torch.arange.html
     # If any of start, end, or stop are floating-point, the dtype is inferred to be the default dtype, see get_default_dtype().
     # Otherwise, the dtype is inferred to be torch.int64.
     if dtype is None:  # infer the dtype
@@ -625,6 +626,9 @@ def tensor(
     utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.jit", NotImplementedError)
 
     if isinstance(seq_or_number, (Number, NumberProxy)):
+        # Infer dtype from value (as `full` will use default dtype if dtype=None).
+        if dtype is None:
+            dtype = dtypes.numbertype_to_dtype(dtypes.to_dtype(seq_or_number))
         return full((), seq_or_number, dtype=dtype, device=device)
 
     return clang.tensor_from_sequence(seq_or_number, dtype=dtype, device=device)

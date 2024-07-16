@@ -19,7 +19,15 @@ import thunder.tests.bf16
 import thunder.torch as ltorch
 
 import thunder.core.codeutils as codeutils
-from thunder.tests.framework import instantiate, NOTHING, TorchExecutor, nvFuserExecutor, requiresCUDA, TestExecutor
+from thunder.tests.framework import (
+    instantiate,
+    NOTHING,
+    TorchExecutor,
+    nvFuserExecutor,
+    requiresCUDA,
+    TestExecutor,
+    set_default_dtype_ctx,
+)
 import thunder.core.dtypes as dtypes
 import thunder.core.prims as prims
 from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, tracectx
@@ -2958,27 +2966,27 @@ def test_factory_functions_default_dtype():
     assert actual_dtype == thunder.dtypes.float32
 
     # Check with a different default dtype.
-    default_dtype = torch.get_default_dtype()
-    try:
-        torch.set_default_dtype(torch.float16)
+    with set_default_dtype_ctx(torch.float16):
         actual_dtype = jfn(x)
         assert actual_dtype == thunder.dtypes.float16
-    finally:
-        torch.set_default_dtype(default_dtype)
 
     assert thunder.cache_misses(jfn) == 2
 
 
 def test_change_default_dtype_in_jitted_fn():
+    default_dtype = torch.get_default_dtype()
+    try:
 
-    def fn(x):
-        torch.set_default_dtype(torch.float16)
-        o = torch.ones(x.shape)
-        return o.dtype
+        def fn(x):
+            torch.set_default_dtype(torch.float16)
+            o = torch.ones(x.shape)
+            return o.dtype
 
-    jfn = thunder.jit(fn)
-    with pytest.raises(RuntimeError, match="Default dtype is changed during the execution of jitted function"):
-        jfn(torch.randn(3, 3))
+        jfn = thunder.jit(fn)
+        with pytest.raises(RuntimeError, match="Default dtype is changed during the execution of jitted function"):
+            jfn(torch.randn(3, 3))
+    finally:
+        torch.set_default_dtype(default_dtype)
 
 
 def test_arange_default_dtype():
