@@ -172,8 +172,14 @@ def sort_waits(execution_trace):
 
 
 def maybe_sort_waits(trace: TraceCtx) -> TraceCtx:
-    """Apply `sort_waits` to ``computation_trace`` aka forward and optional ``backward_trace``."""
-    if has_wait_prims(trace):
+    """Apply ``sort_waits`` to ``trace`` if possible.
+
+    The condition to apply :func:`~thunder.distributed.utils.sort_waits` is that :mod:`torch.distributed`
+    is available and at least :func:`thunder.distributed.prims.wait` is in ``trace``.
+    """
+    from torch.distributed import is_available
+
+    if is_available() and has_wait_prims(trace):
         return sort_waits(trace)
     else:
         return trace
