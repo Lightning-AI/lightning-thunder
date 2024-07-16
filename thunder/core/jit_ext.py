@@ -765,8 +765,23 @@ def _general_jit_isinstance_lookaside(obj: Any, cls: type | UnionType | tuple[ty
     return wrap(res, provenance=pr)
 
 
-@register_general_jit_lookaside(collections.OrderedDict.__setitem__)
+# PyTorch >= 2.4 uses dict, <=2.3 uses OrderedDict
+@register_general_jit_lookaside(dict.__setitem__)
 def _general_jit_dict_setitem(d, key, value):
+    dict_setitem_lookaside = default_lookaside(dict.__setitem__)
+    assert dict_setitem_lookaside is not None
+
+    if d.provenance.ext_flag & EXT_FLAG_IS_MODULE_MEMBER_DICT:
+        ctx: GeneralJitCtx = get_general_jit_ctx()
+        if d.original_value is d.nothing:
+            ctx.proxify(d)
+        ctx._additional_outputs[d].append((PseudoInst.STORE_SUBSCR, d, key, value))
+
+    return dict_setitem_lookaside(d, key, value)
+
+
+@register_general_jit_lookaside(collections.OrderedDict.__setitem__)
+def _general_jit_ordered_dict_setitem(d, key, value):
     dict_setitem_lookaside = default_lookaside(collections.OrderedDict.__setitem__)
     assert dict_setitem_lookaside is not None
 
