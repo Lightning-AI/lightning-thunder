@@ -4661,6 +4661,34 @@ index_add_opinfo = OpInfo(
 shape_ops.append(index_add_opinfo)
 
 
+def index_copy_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    for sample in index_add_sample_generator(op, device, dtype, requires_grad, **kwargs):
+        # Only int64 index for now
+        if sample.kwargs["index"].dtype is torch.int32:
+            continue
+
+        dim = sample.kwargs["dim"]
+        canonicalized_dim = dim if dim >= 0 else dim + sample.args[0].ndim
+
+        # Only unique indices make the op differentiable
+        index = sample.kwargs["index"]
+        index = index.unique()
+
+        source = sample.kwargs["source"]
+        source = torch.narrow(source, canonicalized_dim, 0, len(index)).detach().clone().requires_grad_(requires_grad)
+
+        yield SampleInput(sample.args[0], index=index, source=source, dim=dim)
+
+
+index_copy_opinfo = OpInfo(
+    ltorch.index_copy,
+    supports_grad=True,
+    sample_input_generator=index_copy_sample_generator,
+    torch_reference=torch.index_copy,
+)
+shape_ops.append(index_copy_opinfo)
+
+
 # NOTE: index_put uses getitem in backward which currently doesn't support indices>1D and bool indices
 # Cases with indices>1D are only tested for forward
 # vjp test is disabled by setting values.requires_grad=False

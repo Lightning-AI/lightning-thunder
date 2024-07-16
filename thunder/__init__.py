@@ -232,19 +232,6 @@ def _get_cache_info():
     return _cache_info_ctx.get()
 
 
-def add_executor_lists(
-    exc_list: None | Sequence[Executor | str], other_exc_list: None | Sequence[Executor | str]
-) -> Sequence[Executor]:
-    new_exc_list = []
-    exc_list = resolve_executors(exc_list)
-    other_exc_list = resolve_executors(other_exc_list)
-    for exc in itertools.chain(exc_list, other_exc_list):
-        if not exc in new_exc_list:
-            new_exc_list.append(exc)
-
-    return new_exc_list
-
-
 @run_once
 def _recursive_jit_call_warning() -> None:
     warnings.warn(

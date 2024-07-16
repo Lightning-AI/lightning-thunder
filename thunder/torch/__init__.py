@@ -2764,6 +2764,16 @@ def index_add_(a: TensorLike, /, dim: int, index: TensorLike, source: TensorLike
     return prims.copy_(index_add(a, dim, index, source), a)
 
 
+@torchsymbol(torch.index_copy)
+def index_copy(a: TensorLike, /, dim: int, index: TensorLike, source: TensorLike) -> TensorLike:
+    return clang.index_copy(a, index, source, dim)
+
+
+@torchsymbol(torch.Tensor.index_copy_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def index_copy_(a: TensorLike, /, dim: int, index: TensorLike, source: TensorLike) -> TensorLike:
+    return prims.copy_(index_copy(a, dim, index, source), a)
+
+
 @torchsymbol(torch.index_select, is_method=True)
 def index_select(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
     return clang.take(a, index, dim)
