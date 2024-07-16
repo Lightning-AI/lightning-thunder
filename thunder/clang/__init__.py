@@ -1179,6 +1179,12 @@ def index_add(a: TensorProxy, indices: TensorProxy, value: TensorProxy, dim: int
 
 
 @clangop()
+def index_copy(a: TensorProxy, indices: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
+    dim = utils.canonicalize_dim(a.ndim, dim)
+    return prims.index_copy(a, indices, value, dim)
+
+
+@clangop()
 def take(a: TensorProxy, indices: TensorProxy, dim: int) -> TensorProxy:
     dim = utils.canonicalize_dim(a.ndim, dim)
     return prims.take(a, indices, dim)

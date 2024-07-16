@@ -892,6 +892,36 @@ register_grad(pids.SCATTER, _scatter_prim_grad)
 
 
 @torchctx
+def _index_copy_grad(a: TensorProxy, /, index: TensorProxy, src: TensorProxy, dim: int) -> TensorProxy:
+    fwd = prims.index_copy(a, index, src, dim)
+
+    grad = get_grad(fwd)
+
+    # a_grad = grad.index_fill(dim, index, 0)
+    # Unfortunately, we do not have `index_fill` for now
+    # TODO: replace with `index_fill`
+    grad_dim = utils.canonicalize_dim(grad.ndim, dim)
+    index_len = len(index)
+    index_unsqueeze_shape = [1] * grad.ndim
+    index_unsqueeze_shape[grad_dim] = index_len
+    index_expand_shape = list(grad.shape)
+    index_expand_shape[grad_dim] = index_len
+    a_grad = prims.scatter(grad, index.reshape(index_unsqueeze_shape).expand(*index_expand_shape), 0, dim)
+    put_grad(a, a_grad)
+
+    if src.ndim > 0:
+        src_grad = prims.take(grad, index, dim).expand_as(src)
+    else:
+        src_grad = prims.take(grad, index.squeeze(0))
+    put_grad(src, src_grad)
+
+    return fwd
+
+
+register_grad(pids.INDEX_COPY, _index_copy_grad)
+
+
+@torchctx
 def _scatter_add_prim_grad(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     utils.check(
         not value._requires_grad or value.shape == index.shape,
