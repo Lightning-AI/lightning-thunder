@@ -2754,7 +2754,7 @@ def sort(
 
 
 # NOTE PyTorch also has an alpha parameter
-@torchsymbol(torch.index_add)
+@torchsymbol(torch.index_add, is_method=True)
 def index_add(a: TensorLike, /, dim: int, index: TensorLike, source: TensorLike) -> TensorLike:
     return clang.index_add(a, index, source, dim)
 
@@ -2764,7 +2764,7 @@ def index_add_(a: TensorLike, /, dim: int, index: TensorLike, source: TensorLike
     return prims.copy_(index_add(a, dim, index, source), a)
 
 
-@torchsymbol(torch.index_copy)
+@torchsymbol(torch.index_copy, is_method=True)
 def index_copy(a: TensorLike, /, dim: int, index: TensorLike, source: TensorLike) -> TensorLike:
     return clang.index_copy(a, index, source, dim)
 
