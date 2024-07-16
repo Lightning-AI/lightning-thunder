@@ -1082,6 +1082,50 @@ def test_namedtuple_lookaside(jit):
     # }
 
 
+def test_tensor_proxy_iter_lookaside(jit):
+    t0 = torch.rand(3, 3)
+    t1 = torch.rand(0, 3)
+    t2 = torch.rand(())
+
+    for x in (t0, t1):
+
+        def f(x):
+            for i, xi in enumerate(x):
+                pass
+            return x
+
+        jf = jit(f)
+
+        assert f(x) is jf(x)
+
+        def f(x):
+            res = 0
+            for i, xi in enumerate(x):
+                res = xi
+            return res
+
+        jf = jit(f)
+
+        assert_close(jf(x), f(x))
+
+    with pytest.raises(TypeError, match="iteration over a 0-d tensor"):
+        jf(t2)
+
+    with pytest.raises(TypeError, match="iteration over a 0-d tensor"):
+        f(t2)
+
+    def f(x):
+        res = x
+        for xi in x:
+            res = res + xi.unsqueeze(0)
+        return res
+
+    jf = jit(f)
+
+    for x in (t0, t1):
+        assert_close(jf(x), f(x))
+
+
 def test_calling_methods(jit):
     jitting = False
 
@@ -3214,3 +3258,19 @@ def test_litgpt(jit):
     result = jfn(*args, **kwargs)
 
     assert_close(result, fn(*args, **kwargs))
+
+
+def test_transformer_model_output():
+    pytest.importorskip("transformers")
+    from transformers.utils.generic import ModelOutput
+
+    def fn(x):
+        mo = ModelOutput(foo=x)
+        return mo["foo"]
+
+    x = torch.randn(3)
+    expected = fn(x)
+
+    actual = thunder.jit(fn)(x)
+
+    assert expected is actual

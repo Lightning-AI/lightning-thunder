@@ -33,7 +33,14 @@ from thunder import functional as functional
 import thunder.core.prims as prims
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
-from thunder.core.transform_common import dce, EarlyTransform, AdditionalTransform, PostOptimizationTransform
+from thunder.core.transform_common import (
+    dce,
+    EarlyTransform,
+    AdditionalTransform,
+    PostOptimizationTransform,
+    functionalize_inplace_ops,
+    check_inplace_to_views,
+)
 from thunder.common import (
     CompileData,
     CompileStats,
@@ -64,7 +71,6 @@ from thunder.core.proxies import (
 from thunder.core.interpreter import print_interpreter_log, print_to_log
 from thunder.core.jit_ext import thunder_general_jit
 from thunder.executors.torch_autograd import split_forward_backward, ThunderFunction
-from thunder.cudagraphs import CUDAGraphExecutor
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
@@ -283,6 +289,14 @@ def jit(
 ) -> Callable:
     """Just-in-time compile a callable (function or model).
 
+    .. note::
+
+        Thunder's support of PyTorch in-place support is experimental.
+        Thunder functionalizes in-place ops and adds required tensor copies.
+        The functionalization can be turned off with the kwarg of ``skip_inplace_functionalization``.
+        See :func:`thunder.core.transform_common.functionalize_inplace_ops`
+        for the details.
+
     Args:
         fn: A :class:`~torch.nn.Module` or a function to compile.
     Keyword Args:
@@ -368,6 +382,9 @@ def jit(
         # this could be replaced by the respective querying in the prologues
         cache_info = _get_cache_info()
 
+        # default dtype (for factory functions)
+        cache_info["default_dtype"] = pytorch.get_default_dtype()
+
         # autocast related operations
         is_autocast_enabled = False
         if pytorch.is_autocast_enabled() or pytorch.is_autocast_cpu_enabled():
@@ -385,6 +402,7 @@ def jit(
                 autocast_cpu_dtype=str(autocast_cpu_dtype),
             )
             autocast_thunder_dtype = autocast_cpu_dtype if pytorch.is_autocast_cpu_enabled() else autocast_gpu_dtype
+            cache_info.update(autocast_thunder_dtype=str(autocast_thunder_dtype))
 
         cache_info["is_autocast_enabled"] = is_autocast_enabled
 
@@ -401,7 +419,7 @@ def jit(
         # TODO RC1 Add module and function checks to prologue (make it a compile option)
 
         # Checks cache
-        cs.last_trace_cache_start = time.time_ns()
+        cs.last_trace_cache_start = time.perf_counter_ns()
         if (cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES) or (cd.cache_option is CACHE_OPTIONS.SYMBOLIC_VALUES):
             for cache_entry in reversed(cs.interpreter_cache):
                 with compile_data_and_stats(cd, cs):
@@ -417,18 +435,18 @@ def jit(
                         _return_none_instead_of_grads,
                     ) = cache_entry
                     try:
-                        cs.last_prologue_execution_start = time.time_ns()
-                        if epilogue:
+                        cs.last_prologue_execution_start = time.perf_counter_ns()
+                        if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
                             inps, pro_to_epi = pro(*args, **kwargs)
                         else:
                             inps = pro(*args, **kwargs)
                             pro_to_epi = None
-                        cs.last_prologue_execution_stop = time.time_ns()
+                        cs.last_prologue_execution_stop = time.perf_counter_ns()
                     except Exception as _:
                         continue
 
-                    cs.last_trace_host_tracing_start = time.time_ns()
-                    cs.last_trace_host_tracing_stop = time.time_ns()
+                    cs.last_trace_host_tracing_start = time.perf_counter_ns()
+                    cs.last_trace_host_tracing_stop = time.perf_counter_ns()
 
                     # Updates cache statistics
                     cs.cache_hits += 1
@@ -458,16 +476,16 @@ def jit(
                     backward_traces,
                 ) = cache_entry
 
-                cs.last_prologue_execution_start = time.time_ns()
-                if epilogue:
+                cs.last_prologue_execution_start = time.perf_counter_ns()
+                if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
                     inps, pro_to_epi = pro(*args, **kwargs)
                 else:
                     inps = pro(*args, **kwargs)
                     pro_to_epi = None
-                cs.last_prologue_execution_stop = time.time_ns()
+                cs.last_prologue_execution_stop = time.perf_counter_ns()
 
-                cs.last_trace_host_tracing_start = time.time_ns()
-                cs.last_trace_host_tracing_stop = time.time_ns()
+                cs.last_trace_host_tracing_start = time.perf_counter_ns()
+                cs.last_trace_host_tracing_stop = time.perf_counter_ns()
 
                 # Updates cache statistics
                 cs.cache_hits += 1
@@ -480,7 +498,7 @@ def jit(
                 return cache_entry, inps, pro_to_epi
 
         cs.cache_misses += 1
-        cs.last_trace_cache_stop = time.time_ns()
+        cs.last_trace_cache_stop = time.perf_counter_ns()
 
         # Resets use of compile flags
         cs.last_compile_reasons = defaultdict(list)
@@ -488,7 +506,7 @@ def jit(
         with compile_data_and_stats(cd, cs):
             # Acquires the trace OR inlines the trace into an existing trace and
             #   returns the (proxied) result of the operation
-            cs.last_trace_tracing_start = time.time_ns()
+            cs.last_trace_tracing_start = time.perf_counter_ns()
 
             with langctxs.langctx(cd.langctx):
                 prologue_trc: TraceCtx
@@ -503,21 +521,29 @@ def jit(
 
             prologue_traces = [prologue_trc]
             computation_traces = [computation_trc]
+            orig_to_view_swap_map = check_inplace_to_views(computation_trc)
+            if not compile_options.get("skip_inplace_functionalization", False):
+                computation_traces.extend(
+                    functionalize_inplace_ops(
+                        computation_trace=computation_trc, orig_to_view_swap_map=orig_to_view_swap_map
+                    )
+                )
+                computation_trc = computation_traces[-1]
 
             if epilogue_trc is not None:
                 epilogue_traces = [epilogue_trc]
             else:
                 epilogue_traces = None
 
-            cs.last_trace_tracing_stop = time.time_ns()
+            cs.last_trace_tracing_stop = time.perf_counter_ns()
 
             # Makes the prologue callable
-            cs.last_prologue_transformation_start = time.time_ns()
+            cs.last_prologue_transformation_start = time.perf_counter_ns()
 
             transform: Callable
             for transform in early_transforms:
                 thunder.core.utils.check_type(transform, EarlyTransform)
-                prologue_trc, computation_trc, epilogue_trc = transform(
+                prologue_trc, computation_trc, epilogue_trc = transform.transform_traces(
                     prologue_trc, computation_trc, epilogue_trc, executors_list=cd.executors_list
                 )
                 prologue_traces.append(prologue_trc)
@@ -538,15 +564,15 @@ def jit(
             else:
                 epilogue = None
 
-            cs.last_prologue_transformation_stop = time.time_ns()
+            cs.last_prologue_transformation_stop = time.perf_counter_ns()
 
-            cs.last_prologue_execution_start = time.time_ns()
-            if epilogue:
+            cs.last_prologue_execution_start = time.perf_counter_ns()
+            if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
                 inps, pro_to_epi = pro(*args, **kwargs)
             else:
                 inps = pro(*args, **kwargs)
                 pro_to_epi = None
-            cs.last_prologue_execution_stop = time.time_ns()
+            cs.last_prologue_execution_stop = time.perf_counter_ns()
 
             cs.last_traces = computation_traces
             backward_traces = []
@@ -556,14 +582,6 @@ def jit(
 
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
-
-            if is_autocast_enabled:
-                from thunder.core.transforms import autocast
-
-                computation_trc = trace(compile_data=cd)(
-                    autocast(computation_trc.python_callable(), dtype=autocast_thunder_dtype), *inps
-                )
-                computation_traces.append(computation_trc)
 
             backward_trc = None
             if not cd.disable_torch_autograd_support:
@@ -583,12 +601,12 @@ def jit(
             if backward_trc is None:
                 ## EPILOGUE and TRANSFORMS should not mix...
                 # applies transforms
-                cs.last_computation_transformation_start = time.time_ns()
+                cs.last_computation_transformation_start = time.perf_counter_ns()
                 for transform in additional_transforms:
                     thunder.core.utils.check_type(transform, AdditionalTransform)
-                    computation_trc = transform(computation_trc, executors_list=cd.executors_list)
+                    computation_trc = transform.transform_trace(computation_trc, executors_list=cd.executors_list)
                     computation_traces.append(computation_trc)
-                cs.last_computation_transformation_stop = time.time_ns()
+                cs.last_computation_transformation_stop = time.perf_counter_ns()
 
                 with langctxs.langctx(cd.langctx):
                     extraces = transform_for_execution(
@@ -603,10 +621,20 @@ def jit(
             for transform in post_optimization_transforms:
                 # NOTE: `backward_trc` could be None.
                 thunder.core.utils.check_type(transform, PostOptimizationTransform)
-                computation_trc = transform(computation_trc, executors_list=cd.executors_list)
+                computation_trc = transform.transform_trace(computation_trc, executors_list=cd.executors_list)
                 extraces.append(computation_trc)
                 if backward_trc is not None:
-                    backward_trc = transform(backward_trc, executors_list=cd.executors_list)
+                    backward_trc = transform.transform_trace(backward_trc, executors_list=cd.executors_list)
+                    backward_traces.append(backward_trc)
+
+            if cd.use_cudagraphs:
+                from thunder.executors.cudagraphex import cudagraphex
+
+                computation_trc = cudagraphex.fusion_pass(computation_trc)
+                extraces.append(computation_trc)
+
+                if backward_trc is not None:
+                    backward_trc = cudagraphex.fusion_pass(backward_trc, num_static_inputs=len(backward_trc.args[0][0]))
                     backward_traces.append(backward_trc)
 
             comp = computation_trc.python_callable()
@@ -615,12 +643,6 @@ def jit(
                 backward_fn = backward_trc.python_callable()
             else:
                 backward_fn = None
-
-            # TODO: using vanilla CUDAGraphExecutor is not safe unless the graph is always static!
-            # (fixme): inspect torch.cuda.make_graph_callables and/or use it instead!
-            # See https://github.com/Lightning-AI/lightning-thunder/issues/433
-            if cd.use_cudagraphs:
-                comp = CUDAGraphExecutor(comp)
 
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(
@@ -652,11 +674,11 @@ def jit(
             return fn(*args, **kwargs)
 
         # Updats call statistics
-        cs.last_trace_host_start = time.time_ns()
+        cs.last_trace_host_start = time.perf_counter_ns()
         cs.calls += 1
 
         cache_entry, inps, pro_to_epi = get_computation_and_inputs(*args, **kwargs)
-        cs.last_trace_host_execution_start = time.time_ns()
+        cs.last_trace_host_execution_start = time.perf_counter_ns()
 
         result = cache_entry.computation_fn(*inps)
 
@@ -679,18 +701,20 @@ def jit(
             result, comp_to_epi = result
             cache_entry.epilogue_fn(*pro_to_epi, *comp_to_epi)
 
-        cs.last_trace_host_execution_stop = time.time_ns()
+        cs.last_trace_host_execution_stop = time.perf_counter_ns()
         cs.last_computation_execution_stop = cs.last_trace_host_execution_stop
 
         cs.last_executed = cache_entry.computation_fn
-        cs.last_trace_cache_stop = time.time_ns()
-        cs.last_trace_host_stop = time.time_ns()
+        cs.last_trace_cache_stop = time.perf_counter_ns()
+        cs.last_trace_host_stop = time.perf_counter_ns()
 
         return result
 
     if isinstance(fn, pytorch.nn.Module):
         fn_ = ThunderModule(fn, fn_)
         cd._thunder_module_map[id(fn)] = fn_
+        for transform in early_transforms:
+            transform.transform_module(fn_)
 
     # Sets compile options and statistics attributes
     cd._get_computation_and_inputs = get_computation_and_inputs

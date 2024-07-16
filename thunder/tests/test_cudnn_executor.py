@@ -11,7 +11,7 @@ import thunder.core.devices as devices
 from thunder import dtypes
 from thunder.core.transforms import vjp
 from thunder.core.utils import flatten_func
-from thunder.tests.framework import instantiate, NOTHING, ops, requiresCUDA, run_snippet, TorchExecutor
+from thunder.tests.framework import instantiate, NOTHING, ops, requiresCUDA, run_snippet, TorchExecutor, version_between
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import get_opinfo, OpInfo
 from thunder.tests.test_grad import _make_differentiable_wrapper
@@ -75,6 +75,13 @@ def grad_scaled_dot_product_attention_reference_generator(op, device, dtype, req
     q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
     bool_attn_mask = make((1, n_head, L, S), dtype=torch.bool, low=1, high=1, requires_grad=False).tril()
     yield SampleInput(q, k, v, bool_attn_mask, is_causal=False)
+
+    # non-contiguous with stride 0 cases
+    q, k, v = make(N, n_head, L, E), make(N, n_head, S, E), make(N, n_head, S, Ev)
+    q_broadcast = torch.as_strided(q, size=q.shape, stride=(0, 0, E, 1))
+    k_broadcast = torch.as_strided(k, size=k.shape, stride=(0, 0, E, 1))
+    v_broadcast = torch.as_strided(v, size=v.shape, stride=(0, 0, Ev, 1))
+    yield SampleInput(q_broadcast, k_broadcast, v_broadcast, None, dropout_p=0.0, is_causal=True)
 
 
 grad_sdpa_cudnn_opinfo = OpInfo(

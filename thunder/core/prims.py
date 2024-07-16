@@ -63,6 +63,7 @@ def register_method(method_name: str, method: Callable, /) -> None:
 
 from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
 from thunder.core.proxies import (
+    CONSTRAINT,
     CollectionProxy,
     TensorProxy,
     NumberProxy,
@@ -104,6 +105,7 @@ class PrimIDs(Enum):
     CHECK_NUMBER_TYPE_AND_VALUE = auto()
     CHECK_BOOL_CONVERSION = auto()
     CHECK_STRING_VALUE = auto()
+    CHECK_SLICE_VALUE = auto()
     CHECK_LEN = auto()
     ASSERT_COMPARE = auto()
     PYTHON_VARS = auto()
@@ -241,8 +243,11 @@ class PrimIDs(Enum):
     ARGMAX = auto()
     ARGMIN = auto()
     TOPK = auto()
+    # Sort and dim permutations prims
+    SORT = auto()
     # Scatter and gather prims (Experimental!)
     GATHER = auto()
+    SCATTER = auto()
     INDEX_ADD = auto()
     INDEX_PUT = auto()
     SCATTER_ADD = auto()
@@ -259,6 +264,8 @@ class PrimIDs(Enum):
     # Memory access methods
     ITEM = auto()
     COPY_ = auto()
+    #
+    SINK = auto()
 
 
 class OpTags(Enum):
@@ -273,6 +280,7 @@ class OpTags(Enum):
     DEVICE_SYNC_OP = auto()
     # Labels operations that should not be removed by the dead code elimination (DCE) pass
     DONT_DCE = auto()
+    IN_PLACE = auto()
 
 
 # TODO RC1 Document this function and describe the parts of a primitive
@@ -325,14 +333,14 @@ def assert_tensor_metadata_impl(
     if (
         type(t) in (torch.Tensor, torch.nn.Parameter)
         and tuple(t.shape) == shape
-        and str(t.device) == str(device)
+        and str(t.device) == device.device_str()
         and t.dtype == dtype
         and t.requires_grad == requires_grad
     ):
         return
 
     raise AssertionError(
-        f"Object had unexpected metadata. Expected type Tensor/nn.Parameter (without subclass), shape {shape}, device {str(device)}, dtype {dtype}, and {requires_grad=}, but found type {type(t)}, shape {tuple(t.shape)}, device {str(t.device)}, and requires_grad {t.requires_grad}"
+        f"Object had unexpected metadata. Expected type Tensor/nn.Parameter (without subclass), shape {shape}, device {str(device.device_str())}, dtype {dtype}, and {requires_grad=}, but found type {type(t)}, shape {tuple(t.shape)}, device {str(t.device)}, and requires_grad {t.requires_grad}"
     )
 
 
@@ -615,11 +623,25 @@ check_string_value = make_prim(
 )
 
 
+def _check_slice_value_meta(s: AnyProxy, value: slice) -> None:
+    baseutils.check_type(s, AnyProxy)
+    baseutils.check_type(value, slice)
+
+
+check_slice_value = make_prim(
+    PrimIDs.CHECK_SLICE_VALUE,
+    "check_slice_value",
+    meta=_check_slice_value_meta,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
 def unpack_trivial_impl(x: Any, /, *, name: str | None = None) -> Any:
     return x
 
 
 def unpack_trivial_meta(x: Any, /, *, name: str | None = None) -> Any:
+    utils.check(name is not None, lambda: "Expected name argmument to not be None")
     return _collectify(x, name=name)
 
 
@@ -1145,7 +1167,6 @@ def pack_buffer_printer(
 
 def pack_buffer_impl(o: Any, key: Any, v: Any) -> None:
     # o[key] = v
-    XXX
     return None
 
 
@@ -1703,7 +1724,7 @@ def _convert_element_type_meta(a: Number | TensorProxy, /, dtype: type | dtypes.
         utils.check(utils.is_numbertype(dtype), lambda: f"Trying to convert a number to non-numbertype object {dtype}")
 
         if isinstance(a, NumberProxy):
-            return numberproxy(dtype, dtype(utils.get_numberlike_value(a)))
+            return numberproxy(dtype, dtype(utils.get_numberlike_value(a)), constraint=a.constraint)
 
         number_result = dtype(a)
         return number_result
@@ -1816,7 +1837,7 @@ def _elementwise_unary_meta_factory(
                     isinstance(a, NumberProxy),
                     lambda: f"Trying to call an elementwise unary operation {name} on a number, but the operation is not eagerly defined",
                 )
-                return numberproxy(output_type, None)
+                return numberproxy(output_type, None, a.constraint)
 
             # need to cast val to python_type in order to properly propagate output dtype.
             value = number_fn(typ(val))
@@ -1826,8 +1847,8 @@ def _elementwise_unary_meta_factory(
             )
 
             # Only returns a proxy if the input is a proxy
-            if isinstance(a, Proxy):
-                return numberproxy(type(value), value)
+            if isinstance(a, NumberProxy):
+                return numberproxy(type(value), value, a.constraint)
             return value
 
         # NOTE a is a TensorProxy
@@ -2232,12 +2253,12 @@ def _elementwise_binary_meta_factory(
                     isinstance(a, NumberProxy) or isinstance(b, NumberProxy),
                     lambda: f"Trying to call an elementwise binary operation {name} on two numbers, but the operation is not eagerly defined",
                 )
-                return numberproxy(numbertype, None)
+                return numberproxy(numbertype, None, constraint=utils.resolve_constraints(a, b))
 
             value = number_fn(aval, bval)
             # Only returns a NumberProxy if at least one input is a number proxy
             if isinstance(a, NumberProxy) or isinstance(b, NumberProxy):
-                return numberproxy(type(value), value)
+                return numberproxy(type(value), value, constraint=utils.resolve_constraints(a, b))
             return value
 
         else:
@@ -3259,7 +3280,7 @@ def take_along_axis_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> Ten
     utils.check_type(index, TensorProxy)
     utils.check_type(dim, (int, IntegerProxy))
     utils.check_same_device(a, index)
-    utils.check(utils.is_integer_dtype(index.dtype), lambda: f"index dtype={dtype} was not an integer dtype")
+    utils.check(utils.is_integer_dtype(index.dtype), lambda: f"{index.dtype=} was not an integer dtype")
     utils.check(
         index.ndim == a.ndim, lambda: f"Expected index (rank={index.ndim}) to have the same rank as a (rank={a.ndim})"
     )
@@ -3333,6 +3354,30 @@ def scatter_add_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, 
 scatter_add = make_prim(PrimIDs.SCATTER_ADD, "scatter_add", meta=scatter_add_meta)
 
 
+def scatter_meta(a: TensorProxy, /, index: TensorProxy, src: TensorProxy | Number, dim: int) -> TensorProxy:
+    utils.check_type(src, (TensorProxy, Number, NumberProxy))
+
+    if isinstance(src, TensorProxy):
+        return scatter_add_meta(a, index, src, dim)
+
+    # scatter_add_meta reuse when `src` is a scalar,
+    # which is being replaced with a TensorProxy(like=a) and
+    # shape[dim] = index.shape[dim
+    utils.validate_idx(a.ndim, dim)
+    utils.check(
+        index.ndim == a.ndim, lambda: f"Expected index (rank={index.ndim}) to have the same rank as a (rank={a.ndim})"
+    )
+
+    dummy_src_shape = list(a.shape)
+    dummy_src_shape[dim] = index.shape[dim]
+    dummy_src = TensorProxy(like=a, shape=dummy_src_shape)
+
+    return scatter_add_meta(a, index, dummy_src, dim)
+
+
+scatter = make_prim(PrimIDs.SCATTER, "scatter", meta=scatter_meta)
+
+
 def topk_meta(
     a: TensorProxy, /, k: int, dim: int, largest: Number, sorted: Number, *, out: None | TensorProxy
 ) -> (TensorProxy, TensorProxy):
@@ -3358,6 +3403,25 @@ def topk_meta(
 
 
 topk = make_prim(PrimIDs.TOPK, "topk", meta=topk_meta, tags=(OpTags.REDUCTION_OP,))
+
+
+def sort_meta(
+    a: TensorProxy, /, dim: int, descending: Number, sorted: Number, *, out: None | TensorProxy
+) -> (TensorProxy, TensorProxy):
+    utils.check(
+        out is None,
+        lambda: "Only `out` which is None is currently supported",
+    )
+
+    utils.check_type(a, TensorProxy)
+    utils.check_type(dim, (int, IntegerProxy))
+    utils.check(pytype(descending) is bool, lambda: f"Expected {descending=} to be a boolean type")
+    utils.check(pytype(sorted) is bool, lambda: f"Expected {sorted=} to be a boolean type")
+
+    return TensorProxy(like=a), TensorProxy(like=a, dtype=dtypes.int64)
+
+
+sort = make_prim(PrimIDs.SORT, "sort", meta=sort_meta)
 
 
 def transpose_meta(a: TensorProxy, /, permutation: tuple[int, ...]) -> TensorProxy:
@@ -3872,3 +3936,11 @@ def copy__meta(
 
 
 copy_ = make_prim(PrimIDs.COPY_, "copy_", meta=copy__meta, tags=(OpTags.DONT_DCE,))
+
+
+def sink_meta(*args, **kwargs):
+    return
+
+
+# TODO do we want another tag to remove this after prologue is constructed?
+sink = make_prim(PrimIDs.SINK, "sink", meta=sink_meta, tags=(OpTags.DONT_DCE,))

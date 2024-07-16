@@ -365,10 +365,24 @@ def test_cse_rematerialization(executor, device, _):
     # fusion groups 1 and 6 correspond with the apply_rotary_emb function
     # Nvfuser with recomputation should use precomputed cos and sin values.
     assert len(fusion_bsyms[1].args) == len(fusion_bsyms[6].args)
-    assert fusion_bsyms[1].subsymbols[0].output.name == "freqs_cos"
-    assert fusion_bsyms[1].subsymbols[1].output.name == "freqs_sin"
-    assert fusion_bsyms[6].subsymbols[0].output.name == "freqs_cos"
-    assert fusion_bsyms[6].subsymbols[1].output.name == "freqs_sin"
+
+    # Below, we check that freqs_sin and tos1 (the latter being freqs_cos) are used
+    # in the same operation in both fusions.
+    (fusion1_freqs_sin_arg,) = (a for a in fusion_bsyms[1].args if a.name == "freqs_sin")
+    (fusion1_tos1_arg,) = (a for a in fusion_bsyms[1].args if a.name == "tos1")
+    (fusion6_freqs_sin_arg,) = (a for a in fusion_bsyms[6].args if a.name == "freqs_sin")
+    (fusion6_tos1_arg,) = (a for a in fusion_bsyms[6].args if a.name == "tos1")
+
+    (fusion1_freqs_sin_user,) = (s for s in fusion_bsyms[1].subsymbols if s.args[0] is fusion1_freqs_sin_arg)
+    (fusion6_freqs_sin_user,) = (s for s in fusion_bsyms[6].subsymbols if s.args[0] is fusion6_freqs_sin_arg)
+
+    assert fusion1_freqs_sin_user.sym is fusion6_freqs_sin_user.sym
+    assert fusion1_freqs_sin_user.args[1:] == fusion6_freqs_sin_user.args[1:]
+    (fusion1_tos1_user,) = (s for s in fusion_bsyms[1].subsymbols if s.args[0] is fusion1_tos1_arg)
+    (fusion6_tos1_user,) = (s for s in fusion_bsyms[6].subsymbols if s.args[0] is fusion1_tos1_arg)
+
+    assert fusion1_tos1_user.sym is fusion6_tos1_user.sym
+    assert fusion1_tos1_user.args[1:] == fusion6_tos1_user.args[1:]
 
 
 # Tests that two separated nvFuser regions can be merged when they don't depend
@@ -376,7 +390,7 @@ def test_cse_rematerialization(executor, device, _):
 # TODO Create a testing operator that can only be executed by PyTorch so that
 #   these tests don't rely on matmul not being executable by nvFuser
 # TODO Explicitly use the nvFuserExecutor in these tests
-#   (by creating executor.make_callable_with_info?)
+#   (by creating executor.make_callable?)
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_nvfuser_toposort_basic(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
@@ -921,3 +935,29 @@ def test_matmul(executor, device: str, dtype: dtypes.dtype):
 
         assert len(fusions) == 1
         torch.testing.assert_close(out, torch.matmul(*sample.args))
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=(nvFuserExecutor,),
+)
+def test_rm_unused_inputs_of_nvfusion(executor, device, _):
+    import operator
+
+    def foo(t, ab):
+        return operator.getitem(t, ab)
+
+    t = make_tensor(5, 3, device=device, dtype=torch.float32)
+    ab = (slice(3, 1), slice(1, 2))
+    # enable bookend would remove the error and let you look at the trace without fusion.
+    jfoo = thunder.functional.jit(
+        foo,
+        interpretation="python interpreter",
+        cache="no caching",
+        disable_torch_autograd=True,
+        nv_enable_bookend=False,
+    )
+    out = jfoo(t, ab)
+    out_ref = foo(t, ab)
+
+    assert out.equal(out_ref)

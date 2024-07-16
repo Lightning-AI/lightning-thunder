@@ -85,9 +85,7 @@ class dtype:
 
     # TODO Fix name printing
     def __repr__(self):
-        return (
-            f"{self._name}{8 * self._bytes}{f'_{self._variant}' if self._variant else ''}{'_' if self._is_weak else ''}"
-        )
+        return f"thunder.dtypes.{self._name}{8 * self._bytes}{f'_{self._variant}' if self._variant else ''}{'_' if self._is_weak else ''}"
 
     def __str__(self):
         return self.__repr__()
@@ -599,8 +597,8 @@ def to_torch_dtype(x: None | torch.dtype | dtype) -> None | torch.dtype:
 _thunder_to_numpy_dtype_map = {
     bool: np.bool_,
     int: np.int_,
-    float: np.float_,
-    complex: np.cfloat,
+    float: np.float64,
+    complex: np.complex128,
     bool8_: np.bool_,
     bool8: np.bool_,
     uint8_: np.uint8,

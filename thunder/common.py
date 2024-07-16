@@ -1,16 +1,9 @@
 import dis
-from typing import Any, Optional
-from collections.abc import Generator
-from collections.abc import Callable
-from collections.abc import Sequence
-from enum import Enum, auto
+from typing import Any
+from collections.abc import Callable, Generator, Hashable, Sequence
 from collections import deque, defaultdict
-from contextlib import contextmanager
 import time
-import warnings
-from collections.abc import Hashable, Sequence
 from functools import wraps
-import os
 from io import StringIO
 
 from thunder.core.options import (
@@ -21,7 +14,6 @@ from thunder.core.options import (
 )
 from thunder.core.utils import check, is_collection
 from thunder.core.pytree import tree_flatten, tree_map
-from thunder.cudagraphs import CUDAGraphExecutor
 from thunder.core.compile_data import compile_data_and_stats
 import thunder.core.langctxs as langctxs
 from thunder.core.langctxs import set_langctx, reset_langctx, LanguageContext, resolve_language, Languages
@@ -32,7 +24,7 @@ from thunder.core.trace import (
     set_tracectx,
     reset_tracectx,
 )
-from thunder.core.transform_common import dce, cse
+from thunder.core.transform_common import dce
 from thunder.core.proxies import (
     is_proxyable,
     proxy,
@@ -44,7 +36,7 @@ from thunder.core.proxies import (
 )
 import thunder.core.prims as prims
 import thunder.distributed as dist
-import thunder.torch as ltorch
+import thunder.torch as ltorch  # we need to import thunder.torch before the below for import ordering...
 from thunder.extend import Executor, get_default_executors, get_always_executors, OperatorExecutor, add_executor_lists
 import thunder.executors as executors
 from thunder.core.transforms import autocast
@@ -648,9 +640,8 @@ def transform_for_execution(
     return traces
 
 
-# Executes the trace with the given args and kwargs and returns the result,
-#   the callable executed, and the series of traces constructed to produce
-#   that callable from the trace
+# NOTE: Do not use this function and do not update it.
+# Use `thunder.jit` instead.
 def _execute_trace(
     trc: TraceCtx,
     *,
@@ -673,15 +664,11 @@ def _execute_trace(
 
     # Applies post-optimization transforms
     for transform in post_optimization_transforms:
-        extrace = transform(extrace)
+        extrace = transform.transform_trace(extrace)
         extraces.append(extrace)
 
     # Constructs the Python callable
     c = extrace.python_callable()
-
-    # TODO RC1 Mark this option as experimental
-    if compile_data.use_cudagraphs:
-        c = CUDAGraphExecutor(c, num_constant_args=compile_data.num_constant_args)
 
     # Executes the operation
     result: Any = c(*args, **kwargs)
@@ -700,17 +687,19 @@ def _execute_trace(
 #   a helper to convert torch tensors to NumPy arrays on output?
 
 
+# NOTE: Do not use this function and do not update it.
+# Use `thunder.jit` instead.
 def _create_callable(
     cd: CompileData,
     cs: CompileStats,
-    *,
-    transforms: list[Callable] = [],
-    post_optimization_transforms: list[Callable] = [],
-    _using_grad_transform: bool = False,
 ) -> Callable:
+    transforms = []
+    post_optimization_transforms = []
+    _using_grad_transform = False
+
     @wraps(cd.fn)
     def _fn(*args, **kwargs) -> tuple[Any, list[TraceCtx]]:
-        cs.last_trace_host_start = time.time_ns()
+        cs.last_trace_host_start = time.perf_counter_ns()
         cs.calls += 1
 
         # autocast related operations
@@ -740,17 +729,17 @@ def _create_callable(
 
         # Tries to lookup a callable in a cache
         # TODO Return the previous traces when caching
-        cs.last_trace_cache_start = time.time_ns()
+        cs.last_trace_cache_start = time.perf_counter_ns()
         if cd.cache_option is CACHE_OPTIONS.SAME_INPUT and cs.last_executed is not None:
             # TODO Update _last_traces?
             # Updates statistics before early termination
             cs.cache_hits += 1
-            cs.last_trace_cache_stop = time.time_ns()
+            cs.last_trace_cache_stop = time.perf_counter_ns()
             cs.last_trace_tracing_start = -1
             cs.last_trace_tracing_stop = -1
-            cs.last_trace_host_execution_start = time.time_ns()
+            cs.last_trace_host_execution_start = time.perf_counter_ns()
             result = cs.last_executed(*args, **kwargs)
-            cs.last_trace_host_execution_stop = time.time_ns()
+            cs.last_trace_host_execution_stop = time.perf_counter_ns()
             cs.last_trace_host_stop = cs.last_trace_host_execution_stop
             return result
         if cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES:
@@ -759,16 +748,16 @@ def _create_callable(
                 # Updates statistics before early termination
                 cs.cache_hits += 1
                 cs.last_executed = c
-                cs.last_trace_cache_stop = time.time_ns()
+                cs.last_trace_cache_stop = time.perf_counter_ns()
                 cs.last_trace_tracing_start = -1
                 cs.last_trace_tracing_stop = -1
-                cs.last_trace_host_execution_start = time.time_ns()
+                cs.last_trace_host_execution_start = time.perf_counter_ns()
                 result = c(*args, **kwargs)
-                cs.last_trace_host_execution_stop = time.time_ns()
+                cs.last_trace_host_execution_stop = time.perf_counter_ns()
                 cs.last_trace_host_stop = cs.last_trace_host_execution_stop
                 return result
         cs.cache_misses += 1
-        cs.last_trace_cache_stop = time.time_ns()
+        cs.last_trace_cache_stop = time.perf_counter_ns()
 
         # Applies the autocast transform if PyTorch's autocast behavior is enabled
         processed_function = cd.fn if not is_autocast_enabled else autocast(cd.fn, dtype=autocast_thunder_dtype)
@@ -802,9 +791,9 @@ def _create_callable(
 
             # Acquires the trace OR inlines the trace into an existing trace and
             #   returns the (proxied) result of the operation
-            cs.last_trace_tracing_start = time.time_ns()
+            cs.last_trace_tracing_start = time.perf_counter_ns()
             trc_or_result = trace(compile_data=cd)(processed_function, *args, **kwargs)
-            cs.last_trace_tracing_stop = time.time_ns()
+            cs.last_trace_tracing_stop = time.perf_counter_ns()
 
             # Checks for inlined transforms
             current_trace = get_tracectx()
@@ -825,14 +814,14 @@ def _create_callable(
 
             # Applies transforms
             for transform in transforms:
-                trc = transform(trc, executors_list=cd.executors_list)
+                trc = transform.transform_trace(trc, executors_list=cd.executors_list)
                 traces.append(trc)
 
             #
             # Executes the trace, then updates the CompiledData and possibly
             #   updates a cache
             #
-            cs.last_trace_host_execution_start = time.time_ns()
+            cs.last_trace_host_execution_start = time.perf_counter_ns()
             result, c, extraces = _execute_trace(
                 trc,
                 args=args,
@@ -840,7 +829,7 @@ def _create_callable(
                 compile_data=cd,
                 post_optimization_transforms=post_optimization_transforms,
             )
-            cs.last_trace_host_execution_stop = time.time_ns()
+            cs.last_trace_host_execution_stop = time.perf_counter_ns()
 
             traces.extend(extraces)
             cs.last_traces = traces
@@ -858,7 +847,7 @@ def _create_callable(
                     distributed_key=distributed_key,
                 )
 
-            cs.last_trace_host_stop = time.time_ns()
+            cs.last_trace_host_stop = time.perf_counter_ns()
             return result
 
     # NOTE is_module is False

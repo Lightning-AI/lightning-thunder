@@ -180,6 +180,20 @@ def test_apply_rematerialization_consumer(executor, device, _):
     # The rest of the subsymbols should be the same as in the original consumer
     assert tuple(new_consumer.subsymbols[2:]) == tuple(consumer.subsymbols)
 
+    # Test case when duplicated symbols appear in producer and consumer
+    duplicated_sym = [sym for sym in producer.subsymbols if sym.output.name == "t3"]
+    assert len(duplicated_sym) == 1
+    from dataclasses import replace
+
+    # Both producer and consumer subsymbols contain `t3 = prims.exp(t2)`
+    consumer_with_duplicated_syms_as_producer = replace(
+        consumer, args=tuple(a for a in consumer.args if a.name != "t3")
+    )
+    consumer_with_duplicated_syms_as_producer.subsymbols = (duplicated_sym[0], *consumer.subsymbols)
+    new_consumer_case2 = apply_rematerialization_for_consumer(producer, consumer_with_duplicated_syms_as_producer, cut)
+    # The new_consumer_case2 generated with duplicated subsymbols between producer and consumer is the same as the previous new_consumer
+    assert tuple(new_consumer.subsymbols) == tuple(new_consumer_case2.subsymbols)
+
 
 @instantiate(
     dtypes=NOTHING,
@@ -298,8 +312,14 @@ def test_find_cut(executor, device, _):
 )
 def test_find_cut_dropout(executor, device, _):
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
-    compiled_func = thunder.compile(func_with_dropout, disable_preprocessing=True)
-    _ = compiled_func(t0)
+    from unittest.mock import patch, MagicMock
+
+    # mock the replace_uniform transform to return the input trace
+    replace_uniform_mock = MagicMock(side_effect=lambda trc: trc)
+
+    with patch("thunder.core.rematerialization.replace_uniform", new=replace_uniform_mock):
+        compiled_func = thunder.compile(func_with_dropout, disable_preprocessing=True)
+        _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
     nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))

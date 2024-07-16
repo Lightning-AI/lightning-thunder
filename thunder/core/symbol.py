@@ -10,18 +10,18 @@ from types import ModuleType
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, List, Type, Tuple, TYPE_CHECKING
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Hashable, Iterable
 from collections.abc import Sequence
 
 import thunder.core.baseutils as baseutils
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable, Positions
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
-from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
+from thunder.core.utils import FrozenDict, make_hashable
+from thunder.core.pytree import tree_flatten_with_dataclass, tree_unflatten, tree_map
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 from thunder.core.proxies import Proxy, NumberProxy, variableify, CollectionProxy
-from thunder.core.utils import FrozenDict
 
 from thunder.core.trace import (
     get_tracectx,
@@ -393,7 +393,7 @@ class BoundSymbol(BoundSymbolInterface):
             return self
 
         def swap(c):
-            flats, spec = tree_flatten(c)
+            flats, spec = tree_flatten_with_dataclass(c)
 
             swapped = []
             for fa in flats:
@@ -401,8 +401,7 @@ class BoundSymbol(BoundSymbolInterface):
                 if isinstance(fa, CollectionProxy):
                     fa.coll = tree_map(swap, fa.collection())
                 if isinstance(fa, Proxy):
-                    ovfa = variableify(fa)
-                    vfa = ovfa
+                    vfa = variableify(fa)
                     while vfa in swap_map:
                         baseutils.check(
                             vfa not in visited, lambda: f"Detected a cycle while swapping; the cycle includes {visited}"
@@ -436,7 +435,7 @@ class BoundSymbol(BoundSymbolInterface):
 
     @functools.cached_property
     def flat_args_and_spec(self):
-        return tree_flatten((self.args, self.kwargs))
+        return tree_flatten_with_dataclass((self.args, self.kwargs))
 
     @functools.cached_property
     def flat_args(self):
@@ -462,7 +461,7 @@ class BoundSymbol(BoundSymbolInterface):
 
     @functools.cached_property
     def flat_outs_and_spec(self):
-        return tree_flatten(self.output)
+        return tree_flatten_with_dataclass(self.output)
 
     @functools.cached_property
     def flat_outs(self):
@@ -526,8 +525,11 @@ class BoundSymbol(BoundSymbolInterface):
 
         return (self.sym, self._var_args, self._var_output) == (other.sym, other._var_args, other._var_output)
 
-    def rhs(self):
-        return BoundSymbolRHS(self)
+    @functools.cached_property
+    def rhs(self) -> BoundSymbolRHS:
+        hashable_args = make_hashable(self._var_args)
+        hashable_kwargs = make_hashable(self._var_kwargs)
+        return BoundSymbolRHS(self.sym, hashable_args, hashable_kwargs)
 
     # TODO Document contexts
     def import_ctx(self):
@@ -650,35 +652,8 @@ def has_tags(bsym: BoundSymbol, tags: set[OpTags]) -> bool:
 
 # Wrapper class that hashes and equates only the right hand side of a BoundSymbol for CSE.
 # That is to say, its symbol, args, and kwargs, but not its output.
-@dataclass
+@dataclass(**baseutils.default_dataclass_params)
 class BoundSymbolRHS:
-    parent: BoundSymbol
-    _frozen_kwargs: FrozenDict
-
-    def __init__(self, parent: BoundSymbol) -> None:
-        self.parent = parent
-        self._frozen_kwargs = FrozenDict(parent._var_kwargs)
-
-    @functools.cached_property
-    def _hash(self) -> int:
-        # TODO: Find a better way to identify inputs by id instead of hash.
-        if self.parent.sym.name == "unpack_trivial":
-            return id(self)
-        try:
-            return hash((self.parent.sym, self.parent._var_args, self._frozen_kwargs))
-        except:
-            return id(self)
-
-    def __hash__(self) -> int:
-        return self._hash
-
-    def __eq__(self, other: BoundSymbolRHS) -> bool:
-        if not isinstance(other, BoundSymbolRHS):
-            return False
-        if self.parent is other.parent:
-            return True
-        return (self.parent.sym, self.parent._var_args, self._frozen_kwargs) == (
-            other.parent.sym,
-            other.parent._var_args,
-            other._frozen_kwargs,
-        )
+    sym: Symbol
+    args: tuple[Hashable]
+    kwargs: FrozenDict

@@ -20,7 +20,16 @@ from thunder.core.dtypes import is_exact_dtype, to_dtype as thunder_dtype
 from thunder.core.pytree import tree_map, tree_flatten
 from thunder.core.transforms import jvp, vjp, grad, check_bsym_for_vjp
 from thunder.core.utils import flatten_func
-from thunder.tests.framework import instantiate, NOTHING, ops, run_snippet, assert_closer, IN_CI, requiresCUDA
+from thunder.tests.framework import (
+    instantiate,
+    NOTHING,
+    ops,
+    run_snippet,
+    assert_closer,
+    IN_CI,
+    requiresCUDA,
+    version_between,
+)
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops, get_opinfo
 
@@ -63,6 +72,7 @@ vjp_op_force = {
     "cumsum",
     "mse_loss",
     "adaptive_avg_pool2d",
+    "max_pool2d",
 }
 
 
@@ -214,7 +224,7 @@ def numerical_jvp(f):
     return jvp
 
 
-def check_jvp(f, *primals, executor, atol=None, rtol=None):
+def check_jvp(f, *primals, comp, executor):
     """Check that the Jacobian-vector product of a function is correct.
 
     Args:
@@ -230,8 +240,8 @@ def check_jvp(f, *primals, executor, atol=None, rtol=None):
     tangents = tree_map(make_tensor_like, primals)
     actual_p, actual_t = executor.make_callable_legacy(jvp(f))(primals, tangents)
     expected_p, expected_t = numerical_jvp(executor.make_callable_legacy(f))(primals, tangents)
-    torch.testing.assert_close(expected_p, actual_p, atol=atol, rtol=rtol)
-    torch.testing.assert_close(expected_t, actual_t, atol=atol, rtol=rtol)
+    comp(expected_p, actual_p)
+    comp(expected_t, actual_t)
 
 
 def _replace_none_with_zero(x, y):
@@ -273,7 +283,7 @@ def _dot(x, y):
     return sum([torch.dot(a.ravel().type(torch.float64), b.ravel().type(torch.float64)) for a, b in zip(x, y)])
 
 
-def check_vjp(f, *primals, executor="torch", atol=1e-5, rtol=1.3e-6):
+def check_vjp(f, *primals, comp, executor="torch"):
     """Check that the vector-Jacobian product of a function is correct.
 
     Args:
@@ -318,7 +328,7 @@ def check_vjp(f, *primals, executor="torch", atol=1e-5, rtol=1.3e-6):
     if J_u_v.isnan().any():
         # TODO: find a better way to handle NaNs in finite differences
         return  # skip this sample
-    torch.testing.assert_close(J_u_v, u_J_star_v, atol=atol, rtol=rtol, check_device=False)
+    comp(J_u_v, u_J_star_v)
 
 
 def _is_differentiable(x):
@@ -363,8 +373,8 @@ def _make_differentiable_wrapper(func, args):
     return wrapper, filtered_args
 
 
-def snippet_jvp_correctness(func, args, executor):
-    check_jvp(func, *args, executor=executor)
+def snippet_jvp_correctness(func, args, comp, executor):
+    check_jvp(func, *args, comp=comp, executor=executor)
 
 
 # TODO Use the given comparator
@@ -387,6 +397,7 @@ def test_jvp_correctness(op, device, dtype, executor, comp):
             dtype,
             filtered_op,
             filtered_args,
+            comp,
             executor,
         )
         if result is not None:
@@ -396,8 +407,8 @@ def test_jvp_correctness(op, device, dtype, executor, comp):
         raise pytest.skip("No differentiable inputs found")
 
 
-def snippet_vjp_correctness(func, args, executor):
-    check_vjp(func, *args, executor=executor)
+def snippet_vjp_correctness(func, args, comp, executor):
+    check_vjp(func, *args, comp=comp, executor=executor)
 
 
 # TODO Use the given comparator
@@ -433,6 +444,7 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
             dtype,
             filtered_op,
             filtered_args,
+            comp,
             executor,
         )
         if result is not None:
@@ -536,6 +548,11 @@ def test_vjp_correctness_index_put_manual(op, device, dtype, executor, comp):
     supported_devicetypes=(devices.DeviceType.CUDA,),
 )
 def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
+    if version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"):
+        raise pytest.skip(
+            "https://github.com/Lightning-AI/lightning-thunder/issues/703",
+        )
+
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
         from thunder.executors.sdpaex import sdpa_ex
 
@@ -1134,6 +1151,41 @@ def test_forward_and_backward_from_trace(executor, device, _):
 @instantiate(
     dtypes=NOTHING,
 )
+def test_update_forward_with_new_saved_for_backward_numberproxy(executor, device, _):
+
+    def foo(t, ab):
+        return t * ab * 0.5
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+
+    t = make_tensor((5, 3), device=device, dtype=torch.float32)
+    t_ref = t.detach()
+    t.requires_grad_()
+    t_ref.requires_grad_()
+
+    out = jfoo(t, 1.5)
+    out_ref = foo(t_ref, 1.5)
+    torch.testing.assert_close(out, out_ref)
+
+    out.sum().backward()
+    out_ref.sum().backward()
+    torch.testing.assert_close(t.grad, t_ref.grad)
+
+    t.grad = None
+    t_ref.grad = None
+
+    out = jfoo(t, 2.7)
+    out_ref = foo(t_ref, 2.7)
+    torch.testing.assert_close(out, out_ref)
+
+    out.sum().backward()
+    out_ref.sum().backward()
+    torch.testing.assert_close(t.grad, t_ref.grad)
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
 def test_torch_autograd_redundant_casts(executor, device, _):
     # There was a bug where we would eliminate the redundant casts in forward
     # but backward wasn't updated with the new proxies. This test ensures that
@@ -1306,7 +1358,7 @@ def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype,
             op,
             device,
             dtype,
-            executor.make_callable_legacy(op.op),
+            executor.make_callable(op.op),
             op.torch_reference,
             sample,
             lambda a, b, **kwargs: comp(a, b, equal_nan=True, **kwargs),
@@ -1332,7 +1384,7 @@ def test_phantom_grad_unpack(executor, device: str, dtype: dtypes.dtype):
         a, b = tup
         return a * b
 
-    cfoo = thunder.compile(foo, disable_preprocessing=True)
+    cfoo = thunder.jit(foo)
     cfoo_grad = grad(cfoo)
 
     a = torch.randn((2, 2), requires_grad=True)
@@ -1348,7 +1400,7 @@ def test_phantom_grad_unpack(executor, device: str, dtype: dtypes.dtype):
         a, b = d["a"], d["b"]
         return a * b
 
-    cbar = thunder.compile(bar, disable_preprocessing=True)
+    cbar = thunder.jit(bar)
     cbar_grad = grad(cbar)
 
     a_grad, b_grad = cbar_grad({"a": a, "b": b})

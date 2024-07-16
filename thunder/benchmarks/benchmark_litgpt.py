@@ -1,5 +1,6 @@
 import os
 import time
+import warnings
 from typing import Any
 from contextlib import nullcontext
 
@@ -18,9 +19,17 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 
 import thunder
 from thunder.tests.litgpt_model import Config, GPT, Block
-
 from lightning.fabric.utilities.throughput import measure_flops
 from lightning.fabric.utilities import Throughput
+
+
+try:
+    import transformer_engine.pytorch as te
+    from lightning.fabric.plugins.precision.transformer_engine import TransformerEnginePrecision
+
+    transformer_engine_available = True
+except ImportError:
+    transformer_engine_available = False
 
 
 world_size = int(os.environ.get("WORLD_SIZE", 1))
@@ -34,6 +43,23 @@ if world_size > 1:
     pg = torch_dist.distributed_c10d._get_default_group()
 device = torch.device("cuda", local_rank)
 torch.cuda.set_device(device)
+
+
+def check_fp8_compute_capability() -> None:
+    device = torch.cuda.current_device()
+    compute_capability = torch.cuda.get_device_capability(device)
+    required_compute_capability = (8, 9)
+
+    if compute_capability < required_compute_capability:
+        raise RuntimeError(
+            f"Device compute capability {compute_capability} is insufficient. "
+            f"Compute capability {required_compute_capability} or higher is required for FP8 execution. "
+            "Please ensure you are using a compatible GPU and the correct driver version."
+        )
+
+
+def is_transformer_engine(low_precision_mode: str) -> bool:
+    return low_precision_mode == "fp8-delayed-te"
 
 
 def configure_optimizers(model, weight_decay, learning_rate, betas, device_type):
@@ -55,10 +81,15 @@ def _run_fwd_bwd_one_microbatch(
     targets: torch.Tensor,
     gradient_accumulation_steps: int,
     device: torch.device,
+    use_te_fp8_autocast: bool,
 ) -> torch.Tensor:
     input_ids = input_ids.to(device)
     targets = targets.to(device)
-    logits = model(input_ids)
+    if use_te_fp8_autocast:
+        with te.fp8_autocast(enabled=True):
+            logits = model(input_ids)
+    else:
+        logits = model(input_ids)
     logits = logits.reshape(-1, logits.size(-1))
     targets = targets.reshape(-1)
     loss = torch.nn.functional.cross_entropy(logits, targets, ignore_index=-1) / gradient_accumulation_steps
@@ -86,6 +117,7 @@ class Benchmark_litGPT:
         profiler_start: int = 15,
         profiler_stop: int = 15,
         skip_data_sync: bool = False,
+        low_precision_mode: str = "none",
     ):
         seed = 1337
         torch.manual_seed(seed)
@@ -114,6 +146,8 @@ class Benchmark_litGPT:
         self.fsdp_bucket_params = fsdp_bucket_params
         self.checkpoint_activations = checkpoint_activations
         self.micro_batch_size = micro_batch_size
+        self.low_precision_mode = low_precision_mode
+        self.use_te_fp8_autocast = is_transformer_engine(low_precision_mode) and "thunder" not in compile
 
         # Clarify benchmark assumptions
         if self.sharding_size is not None:
@@ -151,6 +185,16 @@ class Benchmark_litGPT:
                     f"[WARNING] Bucketing mode is set to {self.bucketing_mode}. --fsdp_bucket_params will be ignored."
                 )
 
+        if is_transformer_engine(low_precision_mode):
+            if not transformer_engine_available:
+                raise ImportError(
+                    "Selected benchmark config is for TransformerEngine but could not import the TransformerEngine library!"
+                )
+            check_fp8_compute_capability()
+
+        if "thunder" in self.compile and is_transformer_engine(self.low_precision_mode):
+            self.compile += "_transformerengine"
+
         if global_batch_size is not None:
             self.global_batch_size = global_batch_size
         else:
@@ -167,8 +211,11 @@ class Benchmark_litGPT:
                 self.global_batch_size % self.micro_batch_size * world_size == 0
             ), f"Global Batch Size {self.global_batch_size} should be a multiple Micro Batch Size {self.micro_batch_size} * World Size {world_size}."
 
-        if self.checkpoint_activations:
-            assert "thunder" not in self.compile, "Activations checkpointing is not supported for Thunder."
+        if self.checkpoint_activations and "thunder" in self.compile:
+            warnings.warn(
+                "Activations checkpointing is configured, but Thunder does not support checkpointing. Checkpointing will be ignored."
+            )
+            self.checkpoint_activations = False
         self.skip_data_sync = skip_data_sync
 
         # Profiling Args
@@ -184,6 +231,10 @@ class Benchmark_litGPT:
         print(f"Loading model with {self.config.__dict__}")
         self.model = self.init_model()
         print(f"Time to instantiate model: {time.perf_counter() - t0:.02f} seconds.")
+
+        if self.use_te_fp8_autocast:
+            te_precision = TransformerEnginePrecision(weights_dtype=torch.bfloat16, replace_layers=True)
+            self.model = te_precision.convert_module(self.model)
 
         # Setup the distributed algorithm choices
         self.model = self.setup_distributed(self.model)
@@ -360,30 +411,37 @@ class Benchmark_litGPT:
         return train_dataloader
 
     def calculate_model_flops(self):
-        meta = torch.device("meta")
         device = self.device
-        self.device = meta
+        try:
+            meta = torch.device("meta")
+            self.device = meta
 
-        # calculate flops on a meta-device model because we only care about the shapes and
-        # because the flops calculator installs hooks on the model
-        meta_model = self.init_model()
+            # calculate flops on a meta-device model because we only care about the shapes and
+            # because the flops calculator installs hooks on the model
+            meta_model = self.init_model()
 
-        x = torch.randint(0, 1, (self.micro_batch_size, meta_model.config.block_size), device=meta)
-        model_fwd = lambda: meta_model(x)
-        model_loss = lambda y: torch.nn.functional.cross_entropy(
-            y.reshape(-1, y.size(-1)), x.reshape(-1), ignore_index=-1
-        )
-        self.perf_metrics["model_flops"] = measure_flops(meta_model, model_fwd, model_loss)
-
-        self.device = device
+            x = torch.randint(0, 1, (self.micro_batch_size, meta_model.config.block_size), device=meta)
+            model_fwd = lambda: meta_model(x)
+            model_loss = lambda y: torch.nn.functional.cross_entropy(
+                y.reshape(-1, y.size(-1)), x.reshape(-1), ignore_index=-1
+            )
+            self.perf_metrics["model_flops"] = measure_flops(meta_model, model_fwd, model_loss)
+        finally:
+            self.device = device
 
     def train(self):
         t0 = None
         if global_rank in [0, None]:
-            # Calculate the model FLOPs
-            self.calculate_model_flops()
-            # Setup throughput Collection
-            self.throughput = Throughput(window_size=self.max_iters - self.warmup_iter, world_size=world_size)
+            try:
+                # Calculate the model FLOPs
+                self.calculate_model_flops()
+                # Setup throughput Collection
+                self.throughput = Throughput(window_size=self.max_iters - self.warmup_iter, world_size=world_size)
+            except:
+                self.throughput = None
+                print(
+                    f"Model Flops/Throughput calculation failed for model {self.model_name}. Skipping throughput metric collection."
+                )
 
         if self.skip_data_sync:
             data_sync_ctx = self.model.no_sync
@@ -404,7 +462,11 @@ class Benchmark_litGPT:
                     input_ids, targets = next(self.train_data_iter)
                     input_ids = input_ids.to(self.device)
                     targets = targets.to(self.device)
-                    logits = self.model(input_ids)
+                    if self.use_te_fp8_autocast:
+                        with te.fp8_autocast():
+                            logits = self.model(input_ids)
+                    else:
+                        logits = self.model(input_ids)
                     logits = logits.reshape(-1, logits.size(-1))
                     targets = targets.reshape(-1)
                     loss = (
@@ -416,7 +478,11 @@ class Benchmark_litGPT:
             input_ids, targets = next(self.train_data_iter)
             input_ids = input_ids.to(self.device)
             targets = targets.to(self.device)
-            logits = self.model(input_ids)
+            if self.use_te_fp8_autocast:
+                with te.fp8_autocast():
+                    logits = self.model(input_ids)
+            else:
+                logits = self.model(input_ids)
             logits = logits.reshape(-1, logits.size(-1))
             targets = targets.reshape(-1)
             loss = (
@@ -439,22 +505,26 @@ class Benchmark_litGPT:
                     f"iter {i}: loss {loss_item:.4f}, iter time: {(t1 - iter_t0) * 1000:.2f}ms, t: {input_ids.size(1)}"
                 )
                 if i >= self.warmup_iter:
-                    self.throughput.update(
-                        time=(t1 - t0),
-                        flops=self.perf_metrics["model_flops"],
-                        batches=i,
-                        samples=(i * self.micro_batch_size * self.gradient_accumulation_steps),
-                        lengths=(i * self.micro_batch_size * self.gradient_accumulation_steps * self.config.block_size),
-                    )
+                    if self.throughput:
+                        self.throughput.update(
+                            time=(t1 - t0),
+                            flops=self.perf_metrics["model_flops"],
+                            batches=i,
+                            samples=(i * self.micro_batch_size * self.gradient_accumulation_steps),
+                            lengths=(
+                                i * self.micro_batch_size * self.gradient_accumulation_steps * self.config.block_size
+                            ),
+                        )
 
         if global_rank in [0, None]:
             # print(f"Total time: {(t1 - t0):.2f}s")
             self.perf_metrics["average_iter_time"] = ((t1 - t0) * 1000) / (self.max_iters - self.warmup_iter)
 
     def add_perf_metrics(self):
-        metrics = self.throughput.compute()
-        self.perf_metrics["tokens_per_sec"] = metrics.get("items_per_sec", metrics["device/items_per_sec"])
-        self.perf_metrics["model_flop_per_sec"] = metrics.get("flops_per_sec", metrics["device/flops_per_sec"])
+        if self.throughput:
+            metrics = self.throughput.compute()
+            self.perf_metrics["tokens_per_sec"] = metrics.get("items_per_sec", metrics["device/items_per_sec"])
+            self.perf_metrics["model_flop_per_sec"] = metrics.get("flops_per_sec", metrics["device/flops_per_sec"])
         self.perf_metrics["memory_used_GB"] = torch.cuda.max_memory_allocated() / 1e9
 
     def add_model_info_to_metrics(self):
@@ -530,6 +600,7 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
             elif benchmark.distributed_mode == "ddp":
                 print(f"DDP Bucketing Size: {benchmark.ddp_bucket_size} MB")
             print(f"Compiler: {benchmark.compile}")
+            print(f"Low Precision Mode: {benchmark.low_precision_mode}")
             print(f"Average iter time: {benchmark.perf_metrics['average_iter_time']:.2f} ms")
             print(f"Memory used: {benchmark.perf_metrics['memory_used_GB']:.02f} GB")
             print(f"Tokens/s: {benchmark.perf_metrics['tokens_per_sec']:.02f}")

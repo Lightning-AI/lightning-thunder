@@ -129,6 +129,15 @@ check_string_value = ex.register_operator(
 ex.register_implementation(prims.check_string_value, check_string_value, checker=_always_executable)
 
 
+def _check_slice_value_impl(s: slice, value: slice) -> None:
+    utils.check(s == value, lambda: f"Expected '{s} to be equal to '{value}")
+
+
+check_slice_value = ex.register_operator("check_slice_value", like=prims.check_slice_value, fn=_check_slice_value_impl)
+
+ex.register_implementation(prims.check_slice_value, check_slice_value, checker=_always_executable)
+
+
 def _unpack_tuple_impl(tup: tuple, /) -> tuple:
     return tup
 
@@ -355,6 +364,14 @@ ex.register_implementation(prims.ne, ne, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.pow, pythonex_pow, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.sub, sub, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.div, div, checker=_elementwise_binary_checker)
+
+
+def _sink(*args, **kwargs):
+    return
+
+
+sink = ex.register_operator("sink", like=prims.sink, fn=_sink)
+ex.register_implementation(prims.sink, sink, checker=_always_executable)
 
 # TODO: Restore truediv once we find it...
 # ex.register_implementation(prims.truediv, truediv, checker=_elementwise_binary_checker)

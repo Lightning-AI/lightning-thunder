@@ -132,7 +132,7 @@ def _to_transform(
 
 
 def _device_put_transform(a: TensorProxy, device: devices.Device) -> TensorProxy:
-    torch_device: str = str(device)
+    torch_device: str = device.device_str()
     return to(a, torch_device)
 
 
@@ -836,7 +836,7 @@ _register_elementwise_unary_implementation(ltorch.relu, relu, checker=_elementwi
 _register_elementwise_unary_implementation(ltorch.relu6, relu6, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.hardswish, hardswish, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.selu, selu, checker=_elementwise_unary_with_inplace_checker)
-_register_elementwise_unary_implementation(ltorch.silu, silu)
+_register_elementwise_unary_implementation(ltorch.silu, silu, checker=_always_executable)
 
 #
 # Elementwise binary operations
@@ -1119,6 +1119,14 @@ argmin = _register_torch_operation("argmin")
 topk = _register_torch_operation("topk")
 
 
+#
+# Sort and dim permutations operations
+#
+
+
+sort = _register_torch_operation("sort")
+
+
 # NOTE The following transforms are necessary because thunder uses the parameter name 'dims' while PyTorch
 #   uses 'dim'
 def _amax_prim_transform(a: TensorProxy, /, dims: Sequence[int]) -> TensorProxy:
@@ -1194,6 +1202,29 @@ _register_implementation(ltorch.argmax, argmax, checker=_always_executable)
 _register_implementation(ltorch.argmin, argmin, checker=_always_executable)
 _register_implementation(ltorch.topk, topk, checker=_always_executable, execution_transform=_topk_transform)
 
+
+#
+# Sort and dim permutations operations
+#
+
+
+# NOTE this transform translates number proxies to boolean values
+# and handles dim = None
+def _sort_transform(
+    a: TensorProxy, /, dim: int | None = None, descending: bool = False, stable: bool = False, *, out=None
+):
+    if dim is None:
+        dim = a.ndim - 1 if a.ndim > 0 else 0
+
+    # NOTE: args past `a` are passed as kwargs to avoid issues with multiple `torch.sort` overloadings
+    return sort(a, dim=dim, descending=bool(descending), stable=bool(stable), out=out)
+
+
+_register_implementation(prims.sort, checker=_always_executable, execution_transform=_sort_transform)
+
+_register_implementation(ltorch.sort, checker=_always_executable, execution_transform=_sort_transform)
+
+
 #
 # Scatter and gather operations
 #
@@ -1201,6 +1232,7 @@ _register_implementation(ltorch.topk, topk, checker=_always_executable, executio
 gather = _register_torch_operation("gather")
 index_add = _register_torch_operation("index_add")
 index_put = _register_torch_operation("index_put")
+scatter = _register_torch_operation("scatter")
 scatter_add = _register_torch_operation("scatter_add")
 index_select = _register_torch_operation("index_select")
 take_along_dim = _register_torch_operation("take_along_dim")
@@ -1225,6 +1257,35 @@ def _gather_prim_transform(a: TensorProxy, /, index: TensorProxy, dim: int) -> T
 @langctx(Languages.TORCH)
 def _gather_transform(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
     return gather(a, dim, index)
+
+
+def _scatter_prim_transform(a: TensorProxy, /, index: TensorProxy, src: TensorProxy, dim: int) -> TensorProxy:
+    return scatter(a, dim, index, src)
+
+
+def _scatter_transform(
+    a: TensorProxy,
+    /,
+    dim: int,
+    index: TensorProxy,
+    src: TensorProxy | None = None,
+    *,
+    value: Number | None = None,
+    reduce: None | str = None,
+) -> TensorProxy:
+    utils.check(
+        reduce is None, lambda: "scatter: `reduce` argument other than None is not supported", NotImplementedError
+    )
+
+    utils.check(
+        (src is not None) ^ (value is not None),
+        lambda: "scatter: only one of the arguments ('src', 'value') can be non-None",
+    )
+
+    if src is not None:
+        return scatter(a, dim, index, src)
+    else:
+        return scatter(a, dim, index, value)
 
 
 # NOTE torch.compile has a compilation issue with scatter add in bfloat16,
@@ -1265,6 +1326,7 @@ def _take_along_axis_prim_transform(a: TensorProxy, /, index: TensorProxy, dim: 
 _register_implementation(prims.gather, checker=_always_executable, execution_transform=_gather_prim_transform)
 _register_implementation(prims.index_add, checker=_always_executable, execution_transform=_index_add_prim_transform)
 _register_implementation(prims.index_put, checker=_always_executable, execution_transform=_index_put_prim_transform)
+_register_implementation(prims.scatter, checker=_always_executable, execution_transform=_scatter_prim_transform)
 _register_implementation(prims.scatter_add, checker=_always_executable, execution_transform=_scatter_add_prim_transform)
 _register_implementation(prims.take, checker=_always_executable, execution_transform=_take_prim_transform)
 _register_implementation(
@@ -1275,6 +1337,7 @@ _register_implementation(ltorch.gather, checker=_always_executable, execution_tr
 _register_implementation(ltorch.index_add, index_add, checker=_always_executable)
 _register_implementation(ltorch.index_put, index_put, checker=_always_executable)
 _register_implementation(ltorch.index_select, index_select, checker=_always_executable)
+_register_implementation(ltorch.scatter, checker=_always_executable, execution_transform=_scatter_transform)
 _register_implementation(ltorch.scatter_add, checker=_always_executable, execution_transform=_scatter_add_transform)
 _register_implementation(ltorch.take_along_dim, take_along_dim, checker=_always_executable)
 
@@ -1306,6 +1369,7 @@ _register_implementation(ltorch.batch_norm, batch_norm, checker=_always_executab
 #
 
 bmm = _register_torch_operation("bmm")
+baddbmm = _register_torch_operation("baddbmm")
 convolution = _register_torch_operation("convolution")
 conv1d = _register_torch_operation("conv1d", module=torch.nn.functional)
 conv2d = _register_torch_operation("conv2d", module=torch.nn.functional)
@@ -1351,9 +1415,9 @@ def _max_pool_with_indices_helper(
 
     def pooling_output_shape(in_, kernel_, pad_, stride_, dilation_, ceil_mode_: bool):
         out_size = (
-            div_rtn(in_ + 2 * pad_ - dilation_ * (kernel_ - 1) - 1 + (stride - 1 if ceil_mode else 0), stride) + 1
+            div_rtn(in_ + 2 * pad_ - dilation_ * (kernel_ - 1) - 1 + (stride_ - 1 if ceil_mode else 0), stride_) + 1
         )
-        if ceil_mode and (out_size - 1) * stride >= in_ + pad_:
+        if ceil_mode and (out_size - 1) * stride_ >= in_ + pad_:
             out_size -= 1
         return out_size
 
@@ -1452,6 +1516,9 @@ def _interpolate_checker(
     size: int | Sequence[int] | None = None,
     scale_factor: float | Sequence[float] | None = None,
     mode: str = "nearest",
+    align_corners=None,
+    recompute_scale_factor=None,
+    antialias=False,
 ) -> TensorLike:
     return 3 <= a.ndim and a.ndim <= 5
 
@@ -1592,6 +1659,7 @@ _register_implementation(prims.embedding, embedding, checker=_always_executable)
 _register_implementation(prims.embedding_backward, embedding_backward, checker=_always_executable)
 _register_implementation(prims.linear, linear, checker=_always_executable)
 
+_register_implementation(ltorch.baddbmm, baddbmm, checker=_always_executable)
 _register_implementation(ltorch.bmm, bmm, checker=_always_executable)
 _register_implementation(ltorch.convolution, checker=_always_executable, execution_transform=_convolution_transform)
 _register_implementation(ltorch.conv1d, conv1d, checker=_always_executable)
@@ -1623,6 +1691,8 @@ def max_pool2d_bwd_wrapper(
     return_indices: bool = False,
     ceil_mode: bool = False,
 ) -> tuple[TensorProxy, TensorProxy] | TensorProxy:
+    if stride is None:
+        stride = kernel_size
     primals = max_pool2d_with_indices(a, kernel_size, stride, padding, dilation, ceil_mode)
 
     grad = get_grad(primals[0])
@@ -1756,7 +1826,7 @@ if torch.distributed.is_available():
             result_shape[dim] *= group.size()
         else:
             result_shape[0] *= group.size()
-        out: torch.Tensor = torch.empty(result_shape, dtype=a.dtype, device=a.device)
+        out = torch.empty(result_shape, dtype=a.dtype, device=a.device)
         do_async: bool = bool(do_async)
 
         handle: None | torch.distributed.distributed_c10d.Work = torch.distributed.all_gather_into_tensor(

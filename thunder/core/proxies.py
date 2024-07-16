@@ -134,7 +134,9 @@ class Proxy(VariableInterface, ProxyInterface):
         return self.__class__(name=name)
 
     def __repr__(self) -> str:
-        return f"{self.name}"
+        # All subclasses of Proxy will have `self.name`, so this generic implementation relies on that.
+        # To have a specific repr for a subclass, override the implementation for that subclass.
+        return f'<{type(self).__name__}(name="{self.name}")>'
 
     def type_string(self) -> str:
         return "Any"
@@ -567,14 +569,35 @@ class DictProxy(Proxy, dict):
         raise NotImplementedError("Calling setdefault on an input dict is not yet supported")
 
 
+# CONSTRAINT annotates NumberProxy as their get processed by interpreter.
+# A NumberProxy can be at one of the status:
+# - A DYNAMIC NumberProxy cannot be converted to a static number;
+# - A CONSTRAINABLE NumberProxy is treated as DYNAMIC by default, but it could be converted to STATIC by interpreter;
+# - A STATIC NumberProxy can be treated as a static number, but not necessarily so;
+#   The protocol here is that, if a NumberProxy instance is converted to static, we'll insert a guard logic in prologue trace to ensure the NumberProxy doesn't change at runtime.
+class CONSTRAINT(Enum):
+    DYNAMIC = auto()
+    CONSTRAINABLE = auto()
+    STATIC = auto()
+
+
 # NOTE NumberProxies are NOT Numbers
 # TODO Maybe NumberProxies should be Numbers?
 class NumberProxy(Proxy, NumberProxyInterface):
     def __init__(
-        self, name: str | None = None, value: Number | None = None, *, python_type: type, history: None | tuple = None
+        self,
+        name: str | None = None,
+        value: Number | None = None,
+        *,
+        python_type: type,
+        history: None | tuple = None,
+        constraint: None | CONSTRAINT = None,
     ):
         self.value = value
         self.python_type = python_type
+        if constraint is None:
+            constraint = CONSTRAINT.DYNAMIC
+        self.constraint = constraint
 
         Proxy.__init__(self, name, history=history)
 
@@ -588,6 +611,20 @@ class NumberProxy(Proxy, NumberProxyInterface):
 
     def known_value(self) -> bool:
         return self.value is not None
+
+    def make_static_constrained(self):
+        baseutils.check(self.constraint != CONSTRAINT.DYNAMIC, lambda: f"dynamic NumberProxy cannot be made static")
+        baseutils.check(self.value is not None, lambda: f"static NumberProxy needs to have value")
+        self.constraint = CONSTRAINT.STATIC
+
+    def make_constrainable(self):
+        self.constraint = CONSTRAINT.CONSTRAINABLE
+
+    def is_static_constrained(self) -> bool:
+        return self.constraint == CONSTRAINT.STATIC
+
+    def is_dynamic(self) -> bool:
+        return self.constraint == CONSTRAINT.DYNAMIC
 
     #
     # Elementwise unary operators
@@ -944,8 +981,8 @@ def pytype(x: Proxy) -> type | None:
 
 # TODO RC1 Update Proxy number inits to be value, /, *, name, history
 class ComplexProxy(NumberProxy):
-    def __init__(self, name=None, value=None, history: None | tuple = None):
-        NumberProxy.__init__(self, name=name, value=value, python_type=complex, history=history)
+    def __init__(self, name=None, value=None, history: None | tuple = None, constraint: None | CONSTRAINT = None):
+        NumberProxy.__init__(self, name=name, value=value, python_type=complex, history=history, constraint=constraint)
 
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
@@ -959,10 +996,18 @@ class ComplexProxy(NumberProxy):
 # TODO Review dtype conversions
 # TODO Review -9999 as the marker value for unknown values
 class IntegerProxy(NumberProxy):
-    def __init__(self, name: str | None = None, value=None, history: None | tuple = None):
+    def __init__(
+        self,
+        name: str | None = None,
+        value=None,
+        history: None | tuple = None,
+        constraint: None | CONSTRAINT = None,
+    ):
         # NOTE bools are also integers in Python
         python_type = bool if isinstance(value, bool) else int
-        NumberProxy.__init__(self, name=name, value=value, python_type=python_type, history=history)
+        NumberProxy.__init__(
+            self, name=name, value=value, python_type=python_type, history=history, constraint=constraint
+        )
 
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
@@ -975,8 +1020,8 @@ class IntegerProxy(NumberProxy):
 
     def __repr__(self):
         if self.python_type is bool:
-            return f"[IntegerProxy (bool type) name={self.name}, value={self.value}]"
-        return f"[IntegerProxy name={self.name}, value={self.value}]"
+            return f"[IntegerProxy (bool type) name={self.name}, value={self.value}, static={self.constraint}]"
+        return f"[IntegerProxy name={self.name}, value={self.value}, static={self.constraint}]"
 
     def __index__(self):
         return self.value
@@ -984,8 +1029,8 @@ class IntegerProxy(NumberProxy):
 
 # TODO Review dtype conversions
 class FloatProxy(NumberProxy):
-    def __init__(self, name=None, value=None, history: None | tuple = None):
-        NumberProxy.__init__(self, name=name, value=value, python_type=float, history=history)
+    def __init__(self, name=None, value=None, history: None | tuple = None, constraint: None | CONSTRAINT = None):
+        NumberProxy.__init__(self, name=name, value=value, python_type=float, history=history, constraint=constraint)
 
     def replace_name(self, name):
         """Return a copy of this proxy with the given name."""
@@ -996,7 +1041,7 @@ class FloatProxy(NumberProxy):
         return f"float {value_str}"
 
     def __repr__(self):
-        return f"[FloatProxy name={self.name}, value={self.value}]"
+        return f"[FloatProxy name={self.name}, value={self.value}, static={self.constraint}]"
 
 
 class DistParallelType(Enum):
@@ -1155,6 +1200,9 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
     def requires_grad(self):
         return self._requires_grad
 
+    def __repr__(self):
+        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self.shape})>'
+
     def type_string(self):
         return f"FUTURE {self.device} {self.dtype.shortname()}{list(self.shape)}"
 
@@ -1250,8 +1298,11 @@ class TensorProxy(Proxy, TensorProxyInterface):
         """Return a copy of this proxy with the given name."""
         return tensorproxy(self, name=name, history=self.history)
 
+    def __repr__(self):
+        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self.shape})>'
+
     def type_string(self):
-        return f"{self.device} {self.dtype.shortname()}{list(self.shape)}"
+        return f"{self.device.device_str()} {self.dtype.shortname()}{list(self.shape)}"
 
     # NOTE __getattr__ is overridden to support language-specific methods
     def __getattr__(self, attr: str, /):
@@ -1264,6 +1315,15 @@ class TensorProxy(Proxy, TensorProxyInterface):
             return partial(method_or_value, self)
 
         return method_or_value
+
+    def __iter__(self):
+        # NOTE: this implementation is equivalent to torch.Tensor.__iter__
+
+        if self.ndim == 0:
+            raise TypeError("iteration over a 0-dim tensor")
+
+        unbound_tuple = self.unbind(0)
+        return iter(unbound_tuple)
 
     #
     # Default attribute
@@ -1349,6 +1409,10 @@ class TensorProxy(Proxy, TensorProxyInterface):
         method = resolve_method("add", self, other)
         return method(self, other)
 
+    def __iadd__(self, other):
+        method = resolve_method("add_", self, other)
+        return method(self, other)
+
     def __radd__(self, other):
         method = resolve_method("add", other, self)
         return method(other, self)
@@ -1385,6 +1449,10 @@ class TensorProxy(Proxy, TensorProxyInterface):
         method = resolve_method("mul", self, other)
         return method(self, other)
 
+    def __imul__(self, other):
+        method = resolve_method("mul_", self, other)
+        return method(self, other)
+
     def __rmul__(self, other):
         method = resolve_method("mul", other, self)
         return method(other, self)
@@ -1393,12 +1461,20 @@ class TensorProxy(Proxy, TensorProxyInterface):
         method = resolve_method("pow", self, other)
         return method(self, other)
 
+    def __ipow__(self, other):
+        method = resolve_method("pow_", self, other)
+        return method(self, other)
+
     def __rpow__(self, other):
         method = resolve_method("pow", other, self)
         return method(other, self)
 
     def __sub__(self, other):
         method = resolve_method("sub", self, other)
+        return method(self, other)
+
+    def __isub__(self, other):
+        method = resolve_method("sub_", self, other)
         return method(self, other)
 
     def __rsub__(self, other):
@@ -1412,6 +1488,10 @@ class TensorProxy(Proxy, TensorProxyInterface):
     def __rtruediv__(self, other):
         method = resolve_method("true_divide", other, self)
         return method(other, self)
+
+    def __itruediv__(self, other):
+        method = resolve_method("div_", self, other, rounding_mode=None)
+        return method(self, other)
 
     #
     # Logical operations
@@ -1532,7 +1612,7 @@ _cls_to_number_proxy_map = {
 
 
 def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple = None) -> TensorProxy:
-    device = devices.device_from_string(str(t.device))
+    device = devices.to_device(t.device)
     dtype = dtypes.to_dtype(t.dtype)
     # See Note [DistributedDataParallel and distparallel_type]
     distparallel_type = getattr(t, "distparallel_type", None)
@@ -1553,7 +1633,7 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
 def futuretensorproxy(
     t: torch.Tensor | TensorProxy | FutureTensorProxy, /, *, name: None | str, history: None | tuple = None
 ) -> FutureTensorProxy:
-    device = devices.device_from_string(str(t.device))
+    device = devices.to_device(t.device)
     dtype = dtypes.to_dtype(t.dtype)
     # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
     return FutureTensorProxy(
@@ -1565,9 +1645,9 @@ def futuretensorproxy(
     )
 
 
-def numberproxy(cls: type, value: Number | None) -> NumberProxy:
+def numberproxy(cls: type, value: Number | None, constraint: None | CONSTRAINT = None) -> NumberProxy:
     pcls = _cls_to_number_proxy_map[cls]
-    return pcls(value=value)
+    return pcls(value=value, constraint=constraint)
 
 
 # TODO RC1 Remove this function

@@ -6,6 +6,8 @@ from functools import wraps, singledispatchmethod, partial
 from itertools import product
 from typing import List, Optional
 from collections.abc import Callable, Sequence, Iterable
+import packaging.version
+import contextlib
 
 import pytest
 import torch
@@ -58,6 +60,15 @@ DISABLE_CUDA_TEST_INSTANTIATION: bool = (
     env_var_DISABLE_CUDA_TEST_INSTANTIATION == "true" or env_var_DISABLE_CUDA_TEST_INSTANTIATION == "1"
 )
 IS_WINDOWS = platform.system() == "Windows"
+
+
+def version_between(version: str, *, min_ver: str | None = None, max_ver: str | None = None):
+    v = packaging.version.parse(version)
+    if min_ver is not None and v < packaging.version.parse(min_ver):
+        return False
+    if max_ver is not None and v > packaging.version.parse(max_ver):
+        return False
+    return True
 
 
 # Filters the CPU devicetype when in CI, CUDA is available, and the environment variable
@@ -159,13 +170,6 @@ class TestExecutor:
             traces = thunder.common.transform_for_execution(trace, executors_list=self.executors_list(), **kwargs)
         return traces[-1].python_callable()
 
-    # TODO Remove this
-    def make_callable_with_info(self, fn, **kwargs):
-        disable_preprocessing = kwargs.pop("disable_preprocessing", True)
-        return thunder.compile(
-            fn, executors_list=self.executors_list(), disable_preprocessing=disable_preprocessing, **kwargs
-        )
-
 
 # TODO Convert to singletons or just add to executor logic
 class nvFuserTestExecutor(TestExecutor):
@@ -266,14 +270,15 @@ def _instantiate_executor_test_template(
 ) -> Callable:
     devicetype: devices.DeviceType
     device_str: str | list[str]
+    devicetype = device_or_devices
     if isinstance(device_or_devices, devices.Device):
         devicetype = device_or_devices.devicetype
-        device_str = str(device_or_devices)
+        device_str = device_or_devices.device_str()
     else:
         devicetype = device_or_devices[0].devicetype
         device_str = []
         for device in device_or_devices:
-            device_str.append(str(device))
+            device_str.append(device.device_str())
 
     devicetype_str = devices.devicetype_string(devicetype)
     template_name = as_name if as_name is not None else template.__name__
@@ -570,3 +575,13 @@ class custom_comparator:
 
     def __call__(self, test_template):
         return test_template
+
+
+@contextlib.contextmanager
+def set_default_dtype_ctx(dtype):
+    saved_dtype = torch.get_default_dtype()
+    torch.set_default_dtype(dtype)
+    try:
+        yield
+    finally:
+        torch.set_default_dtype(saved_dtype)

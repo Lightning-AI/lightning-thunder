@@ -136,12 +136,26 @@ class ComputationTraceTransformVisitorForTensorParallel:
 
         new_out = new_bsym.sym(*new_bsym.args, **new_bsym.kwargs)
 
-        var_original_bsym_output = variableify(new_bsym.flat_proxy_outs[0])
         if pre_post_process is not None:
+            from thunder.core import utils
+
+            # This is because current support coverage are only `Linear` and `Embedding` that return one tensor.
+            utils.check(
+                len(new_bsym.flat_proxy_outs) == 1,
+                lambda: f"{len(new_bsym.flat_proxy_outs)=} expected to be 1",
+            )
+            var_original_bsym_output = variableify(new_bsym.flat_proxy_outs[0])
             processed_y = pre_post_process.postprocess(new_out, preprocess_artifacts)
             self.swap_map[var_original_bsym_output] = processed_y
         else:
-            self.swap_map[var_original_bsym_output] = new_out
+            from thunder.core.pytree import tree_flatten
+
+            for orig_o, new_o in zip(
+                new_bsym.flat_outs,
+                tree_flatten(new_out)[0],
+            ):
+                if isinstance(orig_o, TensorProxy) and isinstance(new_o, TensorProxy) and orig_o.name != new_o.name:
+                    self.swap_map[variableify(orig_o)] = new_o
 
         return VISIT_TYPE.REPLACE
 
@@ -175,7 +189,7 @@ class TransformForTensorParallel(EarlyTransform):
     @abstractmethod
     def distparallel_type(self) -> DistParallelType: ...
 
-    def __call__(
+    def transform_traces(
         self,
         prologue_trace: TraceCtx,
         computation_trace: TraceCtx,
@@ -196,7 +210,7 @@ class TransformForTensorParallel(EarlyTransform):
         prologue_producers, prologue_consumers = utils.producers_and_consumers(prologue_trace)
         pro_out_p: TensorProxy
         comp_inp_p: TensorProxy
-        for pro_out_p, comp_inp_p in zip(prologue_trace.output, computation_trace.args):
+        for pro_out_p, comp_inp_p in zip(prologue_trace.output[0], computation_trace.args):
             if pro_out_p.name not in self.chunked_param_name_to_layer_type:
                 continue
             bsym = prologue_producers[pro_out_p]
@@ -224,7 +238,7 @@ class TransformForTensorParallel(EarlyTransform):
                         if c.sym is prims.check_tensor_shape_and_metadata:
                             # TODO have a more principled way to update this?
                             a0, _, _, *a2pp = c.args
-                            c.args = (a0, tuple(new_shape), str(a0.device), *a2pp)
+                            c.args = (a0, tuple(new_shape), a0.device.device_str(), *a2pp)
 
         for bsym in prologue_trace.bound_symbols:
             if bsym.sym is prims.check_tensor_shape_and_metadata and prologue_producers[bsym.args[0]].sym in (
@@ -235,7 +249,7 @@ class TransformForTensorParallel(EarlyTransform):
                 assert param_thunder_module is thunder_module_proxy
                 if name not in self.chunked_param_name_to_layer_type:
                     a0, shape, _, *a2pp = bsym.args
-                    bsym.args = (a0, shape, str(a0.device), *a2pp)
+                    bsym.args = (a0, shape, a0.device.device_str(), *a2pp)
 
         if len(modules_and_thunder_modules) != 1:
             raise NotImplementedError("cannot deal with modules other than the compiled module")
