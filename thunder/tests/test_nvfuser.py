@@ -390,7 +390,7 @@ def test_cse_rematerialization(executor, device, _):
 # TODO Create a testing operator that can only be executed by PyTorch so that
 #   these tests don't rely on matmul not being executable by nvFuser
 # TODO Explicitly use the nvFuserExecutor in these tests
-#   (by creating executor.make_callable_with_info?)
+#   (by creating executor.make_callable?)
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_nvfuser_toposort_basic(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
