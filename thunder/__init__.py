@@ -289,6 +289,14 @@ def jit(
 ) -> Callable:
     """Just-in-time compile a callable (function or model).
 
+    .. note::
+
+        Thunder's support of PyTorch in-place support is experimental.
+        Thunder functionalizes in-place ops and adds required tensor copies.
+        The functionalization can be turned off with the kwarg of ``skip_inplace_functionalization``.
+        See :func:`thunder.core.transform_common.functionalize_inplace_ops`
+        for the details.
+
     Args:
         fn: A :class:`~torch.nn.Module` or a function to compile.
     Keyword Args:
@@ -373,6 +381,9 @@ def jit(
         # set up a record of things in the current environment that impact caching / prologues
         # this could be replaced by the respective querying in the prologues
         cache_info = _get_cache_info()
+
+        # default dtype (for factory functions)
+        cache_info["default_dtype"] = pytorch.get_default_dtype()
 
         # autocast related operations
         is_autocast_enabled = False

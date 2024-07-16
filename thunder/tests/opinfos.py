@@ -4900,6 +4900,73 @@ scatter_add_opinfo = OpInfo(
 shape_ops.append(scatter_add_opinfo)
 
 
+def scatter_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+
+    if not requires_grad:
+        # If not requires_grad, we allow repeated indices
+        for sample in scatter_add_sample_generator(op, device, dtype, requires_grad, **kwargs):
+            # Scatter is non-deterministic with repeated indices.
+            # The easiest way to make it deterministic is to make `src` a scalar tensor.
+            src = sample.kwargs["src"]
+            src = torch.ones_like(src)
+            sample.kwargs["src"] = src
+            yield sample
+    else:
+        # In this case repeated indices will break finite difference checks
+        # for the grad wrt `src` since it, just like in PyTorch, is implemented
+        # with the use of `gather`.
+        # To address that, we pick samples with a.shape == index.shape == src.shape.
+        # Moreover, if we define
+        # I = {(i_1, ..., i_{dim - 1}, index[i_1, ..., i_n], i_{dim + 1}, ..., i_n)}, then,
+        # to avoid issues with repated indices, I has to define the set of all valid
+        # indices (n-dim tuples) into `a`.
+        # We choose `index` such that
+        # index[..., 0:a.shape[dim], ...] = randperm(a.shape[dim]).
+        # It is not hard to see that such `index` turns I into the set with the desired properties.
+        for sample in scatter_add_sample_generator(op, device, dtype, requires_grad, **kwargs):
+            dim = sample.kwargs["dim"]
+            a = sample.args[0]
+            dim_canon = a.ndim + dim if dim < 0 else dim
+
+            scatter_dim_len = a.shape[dim]
+
+            n_reps_before = 1
+            for d in a.shape[:dim_canon]:
+                n_reps_before *= d
+
+            n_reps_after = 1
+            for d in a.shape[dim_canon + 1 :]:
+                n_reps_after *= d
+
+            new_idx = torch.zeros((n_reps_before, scatter_dim_len, n_reps_after), dtype=torch.long, device=device)
+            for before_dim in range(n_reps_before):
+                for after_dim in range(n_reps_after):
+                    new_idx[before_dim, :, after_dim] = torch.randperm(scatter_dim_len, device=device)
+            new_idx = new_idx.reshape(a.shape)
+
+            # NOTE: setting `src` = `a` turns `scatter` into a "randperm"-kind operation
+            src = a.detach().clone().requires_grad_(requires_grad)
+
+            yield SampleInput(a, dim, new_idx, src)
+
+    for scalar_src in (1, 1.0):
+        for sample in scatter_add_sample_generator(op, device, dtype, requires_grad, **kwargs):
+            # PyTorch uses `src` for Tensor inputs, and `value` for scalar inputs
+            del sample.kwargs["src"]
+            sample.kwargs["value"] = scalar_src
+            yield sample
+
+
+scatter_opinfo = OpInfo(
+    ltorch.scatter,
+    supports_grad=True,
+    sample_input_generator=scatter_sample_generator,
+    torch_reference=torch.scatter,
+)
+shape_ops.append(scatter_opinfo)
+
+
 def unsqueeze_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
@@ -7057,12 +7124,6 @@ avg_pool2d_opinfo = OpInfo(
             dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU,),
         ),
-        # Skipped because it is slow.
-        # TODO: remove once the grad tests are fast.
-        DecorateInfo(
-            pytest.mark.skip(reason="Slow test. Skipping for now."),
-            "test_vjp_correctness",
-        ),
     ),
 )
 nn_ops.append(avg_pool2d_opinfo)
@@ -7208,12 +7269,6 @@ max_pool2d_opinfo = OpInfo(
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU,),
-        ),
-        # Skipped because it is slow.
-        # TODO: remove once the grad tests are fast.
-        DecorateInfo(
-            pytest.mark.skip(reason="Slow test. Skipping for now."),
-            "test_vjp_correctness",
         ),
     ),
 )

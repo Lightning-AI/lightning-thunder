@@ -705,10 +705,6 @@ def test_litgpt_variants(name, device):
         torch.testing.assert_close(param1.grad, param2.grad, rtol=1e-2, atol=1e-2)
 
 
-@pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"),
-    reason="https://github.com/Lightning-AI/lightning-thunder/issues/669",
-)
 @skipif_not_pytorch_2_1
 @pytest.mark.parametrize(
     "name",

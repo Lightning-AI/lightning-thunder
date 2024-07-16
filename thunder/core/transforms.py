@@ -870,6 +870,28 @@ register_grad(pids.GATHER, _gather_prim_grad)
 
 
 @torchctx
+def _scatter_prim_grad(a: TensorProxy, /, index: TensorProxy, src: TensorProxy | Number, dim: int) -> TensorProxy:
+    fwd = prims.scatter(a, index, src, dim)
+
+    grad = get_grad(fwd)
+    a_grad = prims.scatter(grad, index, 0, dim)
+    put_grad(a, a_grad)
+
+    if isinstance(src, TensorProxy):
+        # NOTE: this is exactly what PyTorch is doing.
+        # As such, it has the very same limitations. I.e.
+        # the grad is not going to be correct unless the index list
+        # (..., index[...], ...) does not have repeated elements
+        src_grad = prims.gather(grad, index, dim)
+        put_grad(src, src_grad)
+
+    return fwd
+
+
+register_grad(pids.SCATTER, _scatter_prim_grad)
+
+
+@torchctx
 def _scatter_add_prim_grad(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     utils.check(
         not value._requires_grad or value.shape == index.shape,

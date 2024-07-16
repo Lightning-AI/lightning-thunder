@@ -247,6 +247,7 @@ class PrimIDs(Enum):
     SORT = auto()
     # Scatter and gather prims (Experimental!)
     GATHER = auto()
+    SCATTER = auto()
     INDEX_ADD = auto()
     INDEX_PUT = auto()
     SCATTER_ADD = auto()
@@ -3351,6 +3352,30 @@ def scatter_add_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, 
 
 
 scatter_add = make_prim(PrimIDs.SCATTER_ADD, "scatter_add", meta=scatter_add_meta)
+
+
+def scatter_meta(a: TensorProxy, /, index: TensorProxy, src: TensorProxy | Number, dim: int) -> TensorProxy:
+    utils.check_type(src, (TensorProxy, Number, NumberProxy))
+
+    if isinstance(src, TensorProxy):
+        return scatter_add_meta(a, index, src, dim)
+
+    # scatter_add_meta reuse when `src` is a scalar,
+    # which is being replaced with a TensorProxy(like=a) and
+    # shape[dim] = index.shape[dim
+    utils.validate_idx(a.ndim, dim)
+    utils.check(
+        index.ndim == a.ndim, lambda: f"Expected index (rank={index.ndim}) to have the same rank as a (rank={a.ndim})"
+    )
+
+    dummy_src_shape = list(a.shape)
+    dummy_src_shape[dim] = index.shape[dim]
+    dummy_src = TensorProxy(like=a, shape=dummy_src_shape)
+
+    return scatter_add_meta(a, index, dummy_src, dim)
+
+
+scatter = make_prim(PrimIDs.SCATTER, "scatter", meta=scatter_meta)
 
 
 def topk_meta(

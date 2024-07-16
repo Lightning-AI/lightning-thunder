@@ -85,6 +85,24 @@ _torch_to_thunder_function_map: dict[Callable, Callable] = {}
 _inplace_to_out_of_place: dict[Callable, tuple[Callable, int]] = {}
 
 
+# Helpers for factory functions to get default dtypes.
+def get_default_dtype():
+    # `thunder.jit` will create cache info and stash the default dtype
+    # observed at the beginning of jitting.
+    cache_info = thunder._get_cache_info()
+
+    # Currently, changing dtype during the jitted function is unsupported.
+    utils.check(
+        cache_info["default_dtype"] == torch.get_default_dtype(),
+        lambda: "Default dtype is changed during the execution of jitted function. This is currently unsupported.",
+    )
+    return torch.get_default_dtype()
+
+
+def maybe_get_default_dtype(dtype):
+    return dtype or get_default_dtype()
+
+
 # A wrapper that executes the operations within the torch language context
 # NOTE because this module defines the torch language context, a reference to itself
 #   is acquired by inspecting the __module__ attribute of the is_available function defined
@@ -536,6 +554,15 @@ def arange(
         device = "cpu"
 
     device = to_device(device)
+    # From torch docs - https://pytorch.org/docs/stable/generated/torch.arange.html
+    # If any of start, end, or stop are floating-point, the dtype is inferred to be the default dtype, see get_default_dtype().
+    # Otherwise, the dtype is inferred to be torch.int64.
+    if dtype is None:  # infer the dtype
+        if any(map(lambda x: isinstance(x, float), (start, end, step))):
+            dtype = maybe_get_default_dtype(dtype)
+        else:
+            dtype = torch.int64
+
     dtype = to_dtype(dtype)
 
     if end is None:
@@ -552,7 +579,7 @@ def full(
         device = "cpu"
 
     device = to_device(device)
-    dtype = to_dtype(dtype)
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
 
     return clang.full(shape, fill_value, device=device, dtype=dtype)
 
@@ -599,6 +626,9 @@ def tensor(
     utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.jit", NotImplementedError)
 
     if isinstance(seq_or_number, (Number, NumberProxy)):
+        # Infer dtype from value (as `full` will use default dtype if dtype=None).
+        if dtype is None:
+            dtype = dtypes.numbertype_to_dtype(dtypes.to_dtype(seq_or_number))
         return full((), seq_or_number, dtype=dtype, device=device)
 
     return clang.tensor_from_sequence(seq_or_number, dtype=dtype, device=device)
@@ -617,7 +647,7 @@ def uniform(
     dtype: dtypeLike,
 ) -> TensorLike:
     device = to_device(device)
-    dtype = to_dtype(dtype)
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
 
     return clang.uniform(shape, minval, maxval, device=device, dtype=dtype)
 
@@ -674,7 +704,7 @@ def uniform_philox(
     offset: int | TensorProxy,
 ) -> TensorLike:
     device = to_device(device)
-    dtype = to_dtype(dtype)
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
 
     return clang.uniform_philox(shape, minval, maxval, device=device, dtype=dtype, seed=seed, offset=offset)
 
@@ -702,12 +732,7 @@ def randn(
         device = "cpu"
     device = to_device(device)
 
-    # For now we default to `float32`,
-    # however, we should add a default dtype or
-    # rely on `torch.get_default_dtype`.
-    if dtype is None:
-        dtype = torch.float
-    dtype = to_dtype(dtype)
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
     shape = utils.extract_shape_from_varargs(shape)
     return prims.randn(shape, device=device, dtype=dtype)
 
@@ -795,9 +820,7 @@ def empty(
 
     # For now we default to `float32`,
     # however, we should add a default dtype or rely on `torch.get_default_dtype`.
-    if dtype is None:
-        dtype = torch.float
-    dtype = to_dtype(dtype)
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
 
     # For now we default to "cpu",
     # however, we should add a default device or rely on `torch.get_default_device`.
@@ -2749,6 +2772,60 @@ def index_select(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
 @torchsymbol(torch.gather, is_method=True)
 def gather(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
     return clang.gather(a, indices=index, dim=dim)
+
+
+# NOTE: PyTorch uses `src` for torch.Tensor arguments and `value` for scalars
+# when referencing the source of the values
+@torchsymbol(torch.scatter)
+def scatter(
+    a: TensorLike,
+    /,
+    dim: int,
+    index: TensorLike,
+    src: TensorLike | None = None,
+    *,
+    value: None | Number = None,
+    reduce: None | str = None,
+) -> TensorLike:
+    utils.check(
+        reduce is None, lambda: "scatter: `reduce` argument other than None is not supported", NotImplementedError
+    )
+
+    utils.check(
+        (src is not None) ^ (value is not None),
+        lambda: f"scatter: only one of the arguments (`src`, `value`) can be non-None",
+    )
+
+    if src is not None:
+        return clang.scatter(a, index, src, dim)
+    else:
+        return clang.scatter(a, index, value, dim)
+
+
+@torchsymbol(torch.Tensor.scatter_, tags=(prims.OpTags.IN_PLACE,))
+def scatter_(
+    a: TensorLike,
+    /,
+    dim: int,
+    index: TensorLike,
+    src: TensorLike | None = None,
+    *,
+    value: None | Number = None,
+    reduce: None | str = None,
+) -> TensorLike:
+    utils.check(
+        reduce is None, lambda: "scatter_: `reduce` argument other than None is not supported", NotImplementedError
+    )
+
+    utils.check(
+        (src is not None) ^ (value is not None),
+        lambda: f"scatter_: only one of the arguments (`src`, `value`) can be non-None",
+    )
+
+    if src is None:
+        src = value
+
+    return prims.copy_(clang.scatter(a, index, src, dim), a)
 
 
 # NOTE PyTorch's scatter_add has a parameter named 'src', not 'source'
