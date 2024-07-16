@@ -714,7 +714,7 @@ _general_jit_lookaside_map.update(
 )
 
 
-def general_jit_lookaside(diverted_fn):
+def register_general_jit_lookaside(diverted_fn):
     def lookaside_wrapper(lookaside):
         _general_jit_lookaside_map[diverted_fn] = lookaside
         return lookaside
@@ -724,7 +724,7 @@ def general_jit_lookaside(diverted_fn):
 
 # lookaside for getattr. We record the provenance of the attribute but for the core attribute getting, we
 # rely on the default JIT getattr lookaside (as returned from default_lookaside)
-@general_jit_lookaside(getattr)
+@register_general_jit_lookaside(getattr)
 def _general_jit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     getattr_lookaside = default_lookaside(getattr)
     assert getattr_lookaside is not None
@@ -743,7 +743,7 @@ def _general_jit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     return value
 
 
-@general_jit_lookaside(isinstance)
+@register_general_jit_lookaside(isinstance)
 def _general_jit_isinstance_lookaside(obj: Any, cls: type | UnionType | tuple[type | UnionType]):
     uobj = unwrap(obj)
     ucls = unwrap(cls)
@@ -765,7 +765,7 @@ def _general_jit_isinstance_lookaside(obj: Any, cls: type | UnionType | tuple[ty
     return wrap(res, provenance=pr)
 
 
-@general_jit_lookaside(collections.OrderedDict.__setitem__)
+@register_general_jit_lookaside(collections.OrderedDict.__setitem__)
 def _general_jit_dict_setitem(d, key, value):
     dict_setitem_lookaside = default_lookaside(collections.OrderedDict.__setitem__)
     assert dict_setitem_lookaside is not None
@@ -779,7 +779,7 @@ def _general_jit_dict_setitem(d, key, value):
     return dict_setitem_lookaside(d, key, value)
 
 
-@general_jit_lookaside(setattr)
+@register_general_jit_lookaside(setattr)
 def _general_jit_setattr_lookaside(obj: Any, name: str, value: Any):
     setattr_lookaside = default_lookaside(setattr)
     assert setattr_lookaside is not None
@@ -800,7 +800,7 @@ def _general_jit_setattr_lookaside(obj: Any, name: str, value: Any):
     return res
 
 
-@general_jit_lookaside(torch.compile)
+@register_general_jit_lookaside(torch.compile)
 def _jit_torch_compile_lookaside(*args, **kwargs):
     return do_raise(
         NotImplementedError(
@@ -872,7 +872,7 @@ def _get_torch_nn_module_named_members_lookaside(
     return _interpret_call(_get_named_member_impl, wrap(member_names, provenance=pr))
 
 
-@general_jit_lookaside(torch.nn.Module.named_parameters)
+@register_general_jit_lookaside(torch.nn.Module.named_parameters)
 def _general_jit_named_parameters_lookaside(obj: Any, *args, **kwargs):
     model = unwrap(obj)
     unwrapped_args = tuple(unwrap(arg) for arg in args)
@@ -882,7 +882,7 @@ def _general_jit_named_parameters_lookaside(obj: Any, *args, **kwargs):
     )
 
 
-@general_jit_lookaside(torch.nn.Module.named_buffers)
+@register_general_jit_lookaside(torch.nn.Module.named_buffers)
 def _general_jit_named_buffers_lookaside(obj: Any, *args, **kwargs):
     model = unwrap(obj)
     unwrapped_args = tuple(unwrap(arg) for arg in args)
@@ -900,7 +900,7 @@ def _warn_custom_autograd_function():
     )
 
 
-@general_jit_lookaside(torch.autograd.function.Function.apply.__func__)
+@register_general_jit_lookaside(torch.autograd.function.Function.apply.__func__)
 def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwargs):
     _warn_custom_autograd_function()
 
@@ -915,7 +915,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     return _interpret_call(custom_forward, wrapped_ctx, *args_, **kwargs_)
 
 
-@general_jit_lookaside(torch.finfo)
+@register_general_jit_lookaside(torch.finfo)
 @interpreter_needs_wrap
 def _general_jit_torch_finfo_lookaside(dtype: thunder.dtypes.dtype):
     torch_dtype = thunder.dtypes.to_torch_dtype(dtype)
