@@ -1415,9 +1415,9 @@ def _max_pool_with_indices_helper(
 
     def pooling_output_shape(in_, kernel_, pad_, stride_, dilation_, ceil_mode_: bool):
         out_size = (
-            div_rtn(in_ + 2 * pad_ - dilation_ * (kernel_ - 1) - 1 + (stride - 1 if ceil_mode else 0), stride) + 1
+            div_rtn(in_ + 2 * pad_ - dilation_ * (kernel_ - 1) - 1 + (stride_ - 1 if ceil_mode else 0), stride_) + 1
         )
-        if ceil_mode and (out_size - 1) * stride >= in_ + pad_:
+        if ceil_mode and (out_size - 1) * stride_ >= in_ + pad_:
             out_size -= 1
         return out_size
 
@@ -1691,6 +1691,8 @@ def max_pool2d_bwd_wrapper(
     return_indices: bool = False,
     ceil_mode: bool = False,
 ) -> tuple[TensorProxy, TensorProxy] | TensorProxy:
+    if stride is None:
+        stride = kernel_size
     primals = max_pool2d_with_indices(a, kernel_size, stride, padding, dilation, ceil_mode)
 
     grad = get_grad(primals[0])

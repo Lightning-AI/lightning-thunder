@@ -7124,12 +7124,6 @@ avg_pool2d_opinfo = OpInfo(
             dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU,),
         ),
-        # Skipped because it is slow.
-        # TODO: remove once the grad tests are fast.
-        DecorateInfo(
-            pytest.mark.skip(reason="Slow test. Skipping for now."),
-            "test_vjp_correctness",
-        ),
     ),
 )
 nn_ops.append(avg_pool2d_opinfo)
@@ -7275,12 +7269,6 @@ max_pool2d_opinfo = OpInfo(
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU,),
-        ),
-        # Skipped because it is slow.
-        # TODO: remove once the grad tests are fast.
-        DecorateInfo(
-            pytest.mark.skip(reason="Slow test. Skipping for now."),
-            "test_vjp_correctness",
         ),
     ),
 )
