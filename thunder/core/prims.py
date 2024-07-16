@@ -3624,7 +3624,7 @@ def linear_meta(a: TensorProxy, w: TensorProxy, bias: None | TensorProxy) -> Ten
     utils.check(isinstance(w, TensorProxy), lambda: f"w={w} was not a TensorProxy!")
 
     # Checks that required arguments are on the same device
-    utils.check(a.device == w.device, lambda: f"Expected a.device={a.device} and w.device={w.device} to be the same!")
+    utils.check_same_device(a, w)
 
     # Acquires the computation dtype and checks that a and w have the same dtype
     dtype = a.dtype
@@ -3684,7 +3684,7 @@ def matmul_meta(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
     if a.ndim < 1 or b.ndim < 1:
         raise NotImplementedError
 
-    utils.check(a.device == b.device, lambda: f"Expected a.device={a.device} and b.device={b.device} to be the same")
+    utils.check_same_device(a, b)
 
     utils.check(
         dtypes.are_same_dtypes(a, b), lambda: f"Expected a.dtype={a.dtype} and b.dtype={b.dtype} to be the same"
