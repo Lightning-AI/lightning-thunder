@@ -1310,7 +1310,7 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
 
     # Returns the bound symbols for a function and args.
     def compile_bsyms(fn, args):
-        fn = executor.make_callable_with_info(fn)
+        fn = executor.make_callable(fn)
         _ = fn(*args)
         traces = thunder.last_traces(fn)
         return traces[0].bound_symbols
@@ -2990,6 +2990,8 @@ def test_change_default_dtype_in_jitted_fn():
 
 
 def test_arange_default_dtype():
+    # If any of start, end, or stop are floating-point, the dtype is inferred to be the default dtype, see get_default_dtype().
+    # Otherwise, the dtype is inferred to be torch.int64.
     def fn():
         return torch.arange(start=1, end=2, step=0.5).dtype
 
