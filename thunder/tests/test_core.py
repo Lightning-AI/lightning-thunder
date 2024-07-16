@@ -2943,3 +2943,53 @@ def test_dtype_in_trace():
     (pystr,) = tr.bound_symbols[1].subsymbols[0].python(0)
 
     assert "convert_element_type(x, dtypes.float16)" in pystr
+
+
+def test_factory_functions_default_dtype():
+
+    def fn(x):
+        o = torch.ones(x.shape)
+        return o.dtype
+
+    x = torch.randn(3, 3)
+    jfn = thunder.jit(fn)
+    actual_dtype = jfn(x)
+
+    assert actual_dtype == thunder.dtypes.float32
+
+    # Check with a different default dtype.
+    default_dtype = torch.get_default_dtype()
+    try:
+        torch.set_default_dtype(torch.float16)
+        actual_dtype = jfn(x)
+        assert actual_dtype == thunder.dtypes.float16
+    finally:
+        torch.set_default_dtype(default_dtype)
+
+    assert thunder.cache_misses(jfn) == 2
+
+
+def test_change_default_dtype_in_jitted_fn():
+
+    def fn(x):
+        torch.set_default_dtype(torch.float16)
+        o = torch.ones(x.shape)
+        return o.dtype
+
+    jfn = thunder.jit(fn)
+    with pytest.raises(RuntimeError, match="Default dtype is changed during the execution of jitted function"):
+        jfn(torch.randn(3, 3))
+
+
+def test_arange_default_dtype():
+    def fn():
+        return torch.arange(start=1, end=2, step=0.5).dtype
+
+    jfn = thunder.jit(fn)
+    assert jfn() == thunder.dtypes.float32
+
+    def fn():
+        return torch.arange(start=1, end=3, step=1).dtype
+
+    jfn = thunder.jit(fn)
+    assert jfn() == thunder.dtypes.int64
