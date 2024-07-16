@@ -1231,6 +1231,7 @@ _register_implementation(ltorch.sort, checker=_always_executable, execution_tran
 
 gather = _register_torch_operation("gather")
 index_add = _register_torch_operation("index_add")
+index_copy = _register_torch_operation("index_copy")
 index_put = _register_torch_operation("index_put")
 scatter = _register_torch_operation("scatter")
 scatter_add = _register_torch_operation("scatter_add")
@@ -1241,6 +1242,11 @@ take_along_dim = _register_torch_operation("take_along_dim")
 # NOTE PyTorch has a different order for and names of the parameters
 def _index_add_prim_transform(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     return index_add(a, dim, index, value)
+
+
+# NOTE PyTorch has a different order for and names of the parameters
+def _index_copy_prim_transform(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
+    return index_copy(a, dim, index, value)
 
 
 def _index_put_prim_transform(
@@ -1325,6 +1331,7 @@ def _take_along_axis_prim_transform(a: TensorProxy, /, index: TensorProxy, dim: 
 
 _register_implementation(prims.gather, checker=_always_executable, execution_transform=_gather_prim_transform)
 _register_implementation(prims.index_add, checker=_always_executable, execution_transform=_index_add_prim_transform)
+_register_implementation(prims.index_copy, checker=_always_executable, execution_transform=_index_copy_prim_transform)
 _register_implementation(prims.index_put, checker=_always_executable, execution_transform=_index_put_prim_transform)
 _register_implementation(prims.scatter, checker=_always_executable, execution_transform=_scatter_prim_transform)
 _register_implementation(prims.scatter_add, checker=_always_executable, execution_transform=_scatter_add_prim_transform)
@@ -1335,6 +1342,7 @@ _register_implementation(
 
 _register_implementation(ltorch.gather, checker=_always_executable, execution_transform=_gather_transform)
 _register_implementation(ltorch.index_add, index_add, checker=_always_executable)
+_register_implementation(ltorch.index_copy, index_copy, checker=_always_executable)
 _register_implementation(ltorch.index_put, index_put, checker=_always_executable)
 _register_implementation(ltorch.index_select, index_select, checker=_always_executable)
 _register_implementation(ltorch.scatter, checker=_always_executable, execution_transform=_scatter_transform)

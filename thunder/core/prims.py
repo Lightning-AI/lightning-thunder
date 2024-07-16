@@ -249,6 +249,7 @@ class PrimIDs(Enum):
     GATHER = auto()
     SCATTER = auto()
     INDEX_ADD = auto()
+    INDEX_COPY = auto()
     INDEX_PUT = auto()
     SCATTER_ADD = auto()
     TAKE = auto()
@@ -3240,6 +3241,17 @@ def index_add_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, di
 
 
 index_add = make_prim(PrimIDs.INDEX_ADD, "index_add", meta=index_add_meta)
+
+
+def index_copy_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
+    utils.check(
+        dtypes.to_dtype(index) is dtypes.int64,
+        lambda: f"index_copy: only indices of type int64 are supported",
+    )
+    return index_add_meta(a, index, value, dim)
+
+
+index_copy = make_prim(PrimIDs.INDEX_COPY, "index_copy", meta=index_add_meta)
 
 
 def index_put_meta(
