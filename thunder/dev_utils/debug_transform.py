@@ -8,7 +8,9 @@ from thunder.dev_utils.utils import NON_COMPUTATION_PRIMS
 
 # NOTE: `computation_bsym, debug_bsym, callback` are mandatory keyword-only arguments.
 def debug_impl(*args, computation_bsym, debug_bsym, callback, **kwargs):
-    debug_bsym.header = callback(computation_bsym, *args, **kwargs)
+    output = callback(computation_bsym, *args, **kwargs)
+    thunder.core.utils.check_type(output, str)
+    debug_bsym.header = output
 
 
 class DebugTransform(thunder.core.transforms.PostOptimizationTransform):
@@ -19,12 +21,6 @@ class DebugTransform(thunder.core.transforms.PostOptimizationTransform):
         debug_trace = from_trace(trace)
         cnt = 1
         for bound_symbol in trace.bound_symbols:
-            # Synchronize and stop profiling at return.
-            if PrimIDs.RETURN == bound_symbol.sym.id:
-
-                debug_trace.bound_symbols.append(bound_symbol)
-                break
-
             if bound_symbol.sym.id in NON_COMPUTATION_PRIMS:
                 # Just append the symbol.
                 debug_trace.bound_symbols.append(bound_symbol)
@@ -42,6 +38,7 @@ class DebugTransform(thunder.core.transforms.PostOptimizationTransform):
                     )
                 }
 
+            # Create a new debug symbol for this bsym.
             debug_sym = Symbol(
                 debug_sym_name, lambda *args, **kwargs: None, is_prim=True, _bind_postprocess=bind_postprocess
             )
