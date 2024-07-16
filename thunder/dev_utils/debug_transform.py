@@ -6,6 +6,7 @@ from thunder.core.symbol import Symbol
 from thunder.dev_utils.utils import NON_COMPUTATION_PRIMS
 
 
+# NOTE: `computation_bsym, debug_bsym, callback` are mandatory keyword-only arguments.
 def debug_impl(*args, computation_bsym, debug_bsym, callback, **kwargs):
     debug_bsym.header = callback(computation_bsym, *args, **kwargs)
 
@@ -29,7 +30,8 @@ class DebugTransform(thunder.core.transforms.PostOptimizationTransform):
                 debug_trace.bound_symbols.append(bound_symbol)
                 continue
 
-            debug_sym_name = f"debug_{cnt}"
+            # we need unique name for each symbol.
+            debug_sym_name = f"debug_{bound_symbol.sym.name}_{cnt}"
 
             def bind_postprocess(bsym) -> None:
                 # This dict is then used by trace.python_ctx() to resolve the
