@@ -1,5 +1,4 @@
 from thunder.core.trace import TraceCtx as Trace, from_trace, TraceProvenance
-from thunder.core.prims import PrimIDs
 import thunder
 from functools import partial
 from thunder.core.symbol import Symbol
