@@ -170,13 +170,6 @@ class TestExecutor:
             traces = thunder.common.transform_for_execution(trace, executors_list=self.executors_list(), **kwargs)
         return traces[-1].python_callable()
 
-    # TODO Remove this
-    def make_callable_with_info(self, fn, **kwargs):
-        disable_preprocessing = kwargs.pop("disable_preprocessing", True)
-        return thunder.compile(
-            fn, executors_list=self.executors_list(), disable_preprocessing=disable_preprocessing, **kwargs
-        )
-
 
 # TODO Convert to singletons or just add to executor logic
 class nvFuserTestExecutor(TestExecutor):
