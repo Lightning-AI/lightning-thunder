@@ -2786,7 +2786,7 @@ def gather(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
 
 # NOTE: PyTorch uses `src` for torch.Tensor arguments and `value` for scalars
 # when referencing the source of the values
-@torchsymbol(torch.scatter)
+@torchsymbol(torch.scatter, is_method=True)
 def scatter(
     a: TensorLike,
     /,
@@ -2812,7 +2812,7 @@ def scatter(
         return clang.scatter(a, index, value, dim)
 
 
-@torchsymbol(torch.Tensor.scatter_, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.Tensor.scatter_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def scatter_(
     a: TensorLike,
     /,
