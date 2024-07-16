@@ -239,6 +239,8 @@ class Benchmark_litGPT:
         # Setup the distributed algorithm choices
         self.model = self.setup_distributed(self.model)
 
+        self.model = self.apply_distributed_transform(self.model)
+
         # Setup activations checkpointing
         if self.checkpoint_activations:
             self.setup_activation_checkpointing()
@@ -270,6 +272,25 @@ class Benchmark_litGPT:
             model = GPT(self.config)
         model.to(dtype=torch.bfloat16)
         return model
+
+    def apply_distributed_transform(self, model):
+        if "thunder" in self.compile and self.distributed_mode == "fsdp":
+            from thunder.distributed import fsdp, FSDPType, FSDPBucketingStrategy
+
+            sharding_strategy = {"zero2": FSDPType.ZERO2, "zero3": FSDPType.ZERO3}[self.shard_mode]
+            bucketing_strategy = {
+                "none": FSDPBucketingStrategy.NONE,
+                "block": FSDPBucketingStrategy.BLOCK,
+                "layer": FSDPBucketingStrategy.LAYER,
+            }[self.bucketing_mode]
+            return fsdp(
+                model,
+                broadcast_from=None,
+                sharding_strategy=sharding_strategy,
+                bucketing_strategy=bucketing_strategy,
+            )
+        else:
+            return model
 
     def setup_distributed(self, model):
         if self.distributed_mode == "none":

@@ -859,17 +859,16 @@ class get_default_thunder_fsdp_dynamic_strides_executor:
 
         def func(fn: Callable) -> Callable:
             torch.backends.cuda.matmul.allow_tf32 = True
-            return thunder.jit(
-                fsdp(
-                    fn,
-                    bucketing_strategy=self.bucketing_strategy,
-                    sharding_strategy=self.sharding_strategy,
+            return fsdp(
+                thunder.jit(
+                    executors=[
+                        sdpa_ex,
+                        torch_compile_cat_ex,
+                        thunder.nvfuser_executor,
+                    ],
                 ),
-                executors=[
-                    sdpa_ex,
-                    torch_compile_cat_ex,
-                    thunder.nvfuser_executor,
-                ],
+                bucketing_strategy=self.bucketing_strategy,
+                sharding_strategy=self.sharding_strategy,
             )
 
         return func
