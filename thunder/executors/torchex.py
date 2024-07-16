@@ -7,7 +7,7 @@ from functools import wraps, partial
 from inspect import signature
 from itertools import groupby
 from numbers import Number
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from collections.abc import Callable
 from collections.abc import Hashable, Sequence
 from collections.abc import Sequence
@@ -36,6 +36,7 @@ import thunder.core.utils as utils
 import thunder.torch as ltorch
 from thunder.torch import DeviceLike, dtypeLike, TensorLike
 
+from thunder.executors.torch_autograd import torch_autograd_function_meta, connect_to_torch_autograd, ThunderFunction
 from thunder.extend import OperatorExecutor, register_executor, add_always_executor
 
 from thunder.core.transforms import (
@@ -2151,3 +2152,31 @@ def _copy__impl(copy_from, copy_to):
 
 copy_ = ex.register_operator("copy_", meta=prims.copy_, tags=(prims.OpTags.DONT_DCE,), fn=_copy__impl)
 _register_implementation(prims.copy_, copy_, checker=_always_executable)
+
+
+@torch.enable_grad()
+def _torch_autograd_function_impl(
+    *,
+    backward: TraceCtx | Callable,
+    return_none_instead_of_grads: bool,
+    saved_tensors: Sequence[torch.Tensor],
+    saved_other: Sequence[Any],
+    flat_args: Sequence[torch.Tensor],
+    flat_output: Sequence[torch.Tensor],
+):
+    # Connect produced tensors with PyTorch's autograd graph
+    ThunderFunction.apply(
+        return_none_instead_of_grads,
+        backward,
+        saved_tensors,
+        saved_other,
+        flat_output,
+        *flat_args,
+    )
+    return flat_output
+
+
+connect_to_autograd_impl = ex.register_operator(
+    "connect_to_autograd_impl", meta=torch_autograd_function_meta, fn=_torch_autograd_function_impl
+)
+_register_implementation(connect_to_torch_autograd, connect_to_autograd_impl, checker=_always_executable)

@@ -3276,7 +3276,7 @@ def augmented_forward_pass(*args, trace: Trace, **kwargs):
 # TODO: Instead of using the environment dictionary, we could use the trace
 # symbols order (that should be deterministic) to retrieve the residuals needed
 # for the backward pass.
-def backward_pass(forward_env, trace, init_cotangents):
+def backward_pass(forward_env, trace, init_cotangents, *, flat_cotangents=False):
     """Backward pass for the VJP transform.
 
     The backward pass is a reverse mode automatic differentiation pass that
@@ -3286,6 +3286,9 @@ def backward_pass(forward_env, trace, init_cotangents):
         forward_env (Dict[str, Any]): Environment of the forward pass.
         trace (Trace): Trace of the function.
         init_cotangents (Tuple[Variable]): Initial cotangents.
+
+    Keyword Args:
+        flat_cotangents (bool): Whether the init_cotangents are flat or not.
 
     Returns:
         Tuple[Proxy, ...]: Tuple of the results of the backward pass for each input.
@@ -3325,9 +3328,17 @@ def backward_pass(forward_env, trace, init_cotangents):
             # Skip writing to constants
             pass
 
-    if isinstance(init_cotangents, Sequence) and len(init_cotangents) == 1 and not isinstance(trace.output, Sequence):
-        init_cotangents = init_cotangents[0]
-    safe_map_flat(put_grad, trace.output, init_cotangents)
+    if flat_cotangents:
+        trace_tensor_output = [x for x in tree_flatten(trace.output)[0] if isinstance(x, TensorProxy)]
+        safe_map_flat(put_grad, trace_tensor_output, init_cotangents)
+    else:
+        if (
+            isinstance(init_cotangents, Sequence)
+            and len(init_cotangents) == 1
+            and not isinstance(trace.output, Sequence)
+        ):
+            init_cotangents = init_cotangents[0]
+        safe_map_flat(put_grad, trace.output, init_cotangents)
 
     for symbol in reversed(list(iter_bound_symbols(trace.bound_symbols))):
         symbol_output = sequencify(symbol.output)
@@ -3541,14 +3552,31 @@ def _update_forward_with_new_saved_for_backward(forward_trace: Trace, saved_for_
         saved_for_backward (Sequence[Variable]): Saved_for_backward to use to
             update the forward trace.
     """
+    from thunder.executors.torchex import connect_to_autograd_impl
+
     forward_trace_producers = utils.producers(forward_trace)
     saved_for_backward = tree_map(
         lambda x: x.value if isinstance(x, NumberProxy) and x not in forward_trace_producers else x, saved_for_backward
     )
     saved_tensors, saved_other = _split_saved_for_backward_into_tensors_and_other(saved_for_backward)
-    assert forward_trace.bound_symbols[-1].sym.id == prims.PrimIDs.RETURN
-    new_return = (forward_trace.output[0], (saved_tensors, saved_other))
-    forward_trace.bound_symbols[-1] = replace(forward_trace.bound_symbols[-1], args=new_return)
+
+    if any(x.sym.id == connect_to_autograd_impl.id for x in reversed(forward_trace.bound_symbols)):
+        assert forward_trace.bound_symbols[-2].sym.id == connect_to_autograd_impl.id
+        forward_trace.bound_symbols[-2] = replace(
+            forward_trace.bound_symbols[-2],
+            kwargs={
+                **forward_trace.bound_symbols[-2].kwargs,
+                "saved_tensors": saved_tensors,
+                "saved_other": saved_other,
+            },
+        )
+        return
+
+    # TODO: Make augmented forward trace return the named tuple object directly instead of dict
+    if isinstance(forward_trace.output, Sequence) and len(forward_trace.output) == 2:
+        assert forward_trace.bound_symbols[-1].sym.id == prims.PrimIDs.RETURN
+        new_return = (forward_trace.output[0], (saved_tensors, saved_other))
+        forward_trace.bound_symbols[-1] = replace(forward_trace.bound_symbols[-1], args=new_return)
 
 
 def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_for_backward: Sequence[Variable]) -> None:
@@ -3595,7 +3623,7 @@ def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_fo
 # instead of the plain tuple or dict that we're using now.
 TorchAutogradForwardData = namedtuple(
     "TorchAutogradForwardData",
-    ["output", "flat_args", "flat_output"],
+    ["output", "flat_args", "flat_output", "flat_tensor_output"],
 )
 
 
@@ -3663,12 +3691,13 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
             flat_args, _ = tree_flatten((args, kwargs))
             # The custom torch.autograd.Function only considers Tensors in the input/output (not ones that are nested inside python data structures)
             flat_output, output_spec = tree_flatten_with_dataclass(result)
-            flat_output = tuple(flat_output)
+            flat_tensor_output = tuple(out for out in flat_output if isinstance(out, TensorProxy))
             # See Note [Grad forward output spec]
             for_autograd = TorchAutogradForwardData(
                 result,
                 flat_args,
                 flat_output,
+                flat_tensor_output,
             )._asdict()
             return (for_autograd, saved_for_backward)
         return result, saved_for_backward
@@ -3695,8 +3724,10 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
         with detached_trace():
             if torch_autograd:
                 # It's assumed that forward_trace.output[0] is a dict from TorchAutogradForwardData
-                flat_output = forward_trace.output[0]["flat_output"]
+                flat_output = forward_trace.output[0]["flat_tensor_output"]
                 cotangents = utils.sequencify(tree_map(lambda v: ones_like(v), flat_output))
+                # is_tensor_mask = [isinstance(out, TensorProxy) for out in forward_trace.output[0]["flat_output"]]
+                # cotangents = [cotangent if is_tensor else None for cotangent, is_tensor in utils.safe_zip(cotangents, is_tensor_mask)]
             else:
                 cotangents = utils.sequencify(tree_map(lambda v: ones_like(v), trace.output))
     finally:
@@ -3704,9 +3735,9 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
 
     def backward_fn(saved_for_backward, cotangents):
         env = reconstruct_forward_env_for_backward(trace, saved_for_backward)
-        if torch_autograd:
-            cotangents = tree_unflatten(cotangents, output_spec)
-        out = backward_pass(env, trace, cotangents)
+        # if torch_autograd:
+        #     cotangents = tree_unflatten(cotangents, output_spec)
+        out = backward_pass(env, trace, cotangents, flat_cotangents=torch_autograd)
         if torch_autograd:
             gkwargs = out[-1] if isinstance(out[-1], dict) else {}
             gargs = out[:-1] if isinstance(out[-1], dict) else out

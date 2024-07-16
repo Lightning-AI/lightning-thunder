@@ -14,6 +14,7 @@ from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
 from thunder.core.transform_common import dce
 from thunder.executors.passes import update_fusion_call_ctx
 from thunder.executors.utils import Region
+from thunder.executors.torch_autograd import connect_to_torch_autograd
 from thunder.extend import FusionExecutor, register_executor, ImplInfo
 
 _TORCH_GREATER_EQUAL_2_3 = compare_version("torch", operator.ge, "2.3.0", use_base_version=True)
@@ -225,4 +226,7 @@ torch_compile_cat_ex._implmap = {op: ImplInfo() for op in pytorch_ex.implmap if 
 
 torch_compile_ex = TorchCompileExecutor(name="torchcompile")
 register_executor(torch_compile_ex)
-torch_compile_ex._implmap = {op: ImplInfo() for op in pytorch_ex.implmap}
+unsupported_ops = {
+    connect_to_torch_autograd.id,
+}
+torch_compile_ex._implmap = {op: ImplInfo() for op in pytorch_ex.implmap if op not in unsupported_ops}

@@ -138,8 +138,21 @@ class CUDAGraphExecutor(FusionExecutor):
         inputs = [unvariableify(inp) for inp in sorted(region.inputs, key=lambda var: var.proxy.name)]
         outputs = [unvariableify(out) for out in sorted(region.outputs, key=lambda var: var.proxy.name)]
 
+        # Remove del operations from the fusion region if they are part of the
+        # output of the region. This is to avoid the case where the output tensor
+        # is deleted before the return statement.
+        bsyms = [
+            bsym
+            for bsym in region.bound_symbols
+            if bsym.sym.id != prims.PrimIDs.DEL
+            or not (
+                bsym.sym.id == prims.PrimIDs.DEL
+                and any(a in region.outputs for a in bsym.flat_variableified_proxy_args)
+            )
+        ]
+
         fusion_name = f"CUDAGraph{fusion_counter}"
-        fusion_callable: Callable = make_callable(f"{fusion_name}_fn", region.bound_symbols, inputs, outputs)
+        fusion_callable: Callable = make_callable(f"{fusion_name}_fn", bsyms, inputs, outputs)
         fusion_callable = CUDAGraphCallable(fusion_callable, num_static_inputs)
 
         fusion_sym = Symbol(fusion_name, meta=None, is_fusion=True, executor=self)
@@ -148,13 +161,15 @@ class CUDAGraphExecutor(FusionExecutor):
             inputs,
             {},
             outputs,
-            region.bound_symbols,
+            bsyms,
             _call_ctx={fusion_name: fusion_callable},
         )
 
         return fusion_bsym
 
     def can_fuse(self, bsym: BoundSymbol):
+        from thunder.executors.torchex import connect_to_autograd_impl
+
         curr_tracectx = get_tracectx()
         assert hasattr(curr_tracectx, "clear_collection_names")
 
@@ -178,6 +193,7 @@ class CUDAGraphExecutor(FusionExecutor):
             prims.PrimIDs.UNPACK_EMPTY_DICT,
             prims.PrimIDs.UNPACK_SEQUENCE,
             prims.PrimIDs.RETURN,
+            connect_to_autograd_impl.id,
             # Data-dependent ops
             prims.PrimIDs.ITEM,
         }

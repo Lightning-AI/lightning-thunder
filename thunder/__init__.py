@@ -70,7 +70,7 @@ from thunder.core.proxies import (
 )
 from thunder.core.interpreter import print_interpreter_log, print_to_log
 from thunder.core.jit_ext import thunder_general_jit
-from thunder.executors.torch_autograd import split_forward_backward, ThunderFunction
+from thunder.executors.torch_autograd import transform_for_torch_autograd
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
@@ -261,7 +261,6 @@ CacheEntry = namedtuple(
         "computation_traces",
         "epilogue_fn",
         "epilogue_traces",
-        "backward_fn",
         "backward_traces",
         "return_none_instead_of_grads",
     ],
@@ -374,6 +373,7 @@ def jit(
         compile_options=compile_options,
         executor_lookasides=executor_lookasides,
     )
+    cd.post_optimization_transforms = post_optimization_transforms
     cs = CompileStats()
 
     @_with_cache_info_ctx
@@ -414,7 +414,7 @@ def jit(
 
             no_grad_sync = get_skip_data_parallel_grad_sync()
         cache_info["no_grad_sync"] = no_grad_sync
-        return_none_instead_of_grads = is_fsdp_enabled and no_grad_sync
+        cd.return_none_instead_of_grads = is_fsdp_enabled and no_grad_sync
 
         # TODO RC1 Add module and function checks to prologue (make it a compile option)
 
@@ -430,7 +430,6 @@ def jit(
                         comp_traces,
                         epilogue,
                         epilogue_traces,
-                        backward_fn,
                         backward_traces,
                         _return_none_instead_of_grads,
                     ) = cache_entry
@@ -472,7 +471,6 @@ def jit(
                     comp_traces,
                     epilogue,
                     epilogue_traces,
-                    backward_fn,
                     backward_traces,
                 ) = cache_entry
 
@@ -583,7 +581,7 @@ def jit(
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
 
-            backward_trc = None
+            used_torch_autograd = False
             if not cd.disable_torch_autograd_support:
                 tensor_cls = (pytorch.Tensor, TensorProxy)
                 requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in inps)
@@ -593,12 +591,13 @@ def jit(
                     # transform_for_execution and various sorting of symbols,
                     # applying transform_for_execution after this would be
                     # breaking the order of operations
-                    computation_trc, backward_trc = split_forward_backward(computation_trc, cd, cs, *inps)
+                    computation_trc = transform_for_torch_autograd(computation_trc, cd, cs, *inps)
                     # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
                     # by split_forward_backward
                     extraces = cs.last_traces
+                    used_torch_autograd = True
 
-            if backward_trc is None:
+            if not used_torch_autograd:
                 ## EPILOGUE and TRANSFORMS should not mix...
                 # applies transforms
                 cs.last_computation_transformation_start = time.perf_counter_ns()
@@ -619,13 +618,9 @@ def jit(
                 thunder.core.transform_common._inplace_copy_sanity_check(computation_trc)
 
             for transform in post_optimization_transforms:
-                # NOTE: `backward_trc` could be None.
                 thunder.core.utils.check_type(transform, PostOptimizationTransform)
                 computation_trc = transform.transform_trace(computation_trc, executors_list=cd.executors_list)
                 extraces.append(computation_trc)
-                if backward_trc is not None:
-                    backward_trc = transform.transform_trace(backward_trc, executors_list=cd.executors_list)
-                    backward_traces.append(backward_trc)
 
             if cd.use_cudagraphs:
                 from thunder.executors.cudagraphex import cudagraphex
@@ -633,16 +628,7 @@ def jit(
                 computation_trc = cudagraphex.fusion_pass(computation_trc)
                 extraces.append(computation_trc)
 
-                if backward_trc is not None:
-                    backward_trc = cudagraphex.fusion_pass(backward_trc, num_static_inputs=len(backward_trc.args[0][0]))
-                    backward_traces.append(backward_trc)
-
             comp = computation_trc.python_callable()
-
-            if backward_trc is not None:
-                backward_fn = backward_trc.python_callable()
-            else:
-                backward_fn = None
 
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(
@@ -652,9 +638,8 @@ def jit(
                 extraces,
                 epilogue,
                 epilogue_traces,
-                backward_fn,
                 backward_traces,
-                return_none_instead_of_grads,
+                cd.return_none_instead_of_grads,
             )
             if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
                 cs.interpreter_cache.append(cache_entry)
@@ -681,21 +666,6 @@ def jit(
         cs.last_trace_host_execution_start = time.perf_counter_ns()
 
         result = cache_entry.computation_fn(*inps)
-
-        if cache_entry.backward_fn:
-            # Run the compiled forward function
-            data_for_autograd, (saved_tensors, saved_other) = result
-
-            # Connect produced tensors with PyTorch's autograd graph
-            ThunderFunction.apply(
-                cache_entry.return_none_instead_of_grads,
-                cache_entry.backward_fn,
-                saved_tensors,
-                saved_other,
-                data_for_autograd["flat_output"],
-                *data_for_autograd["flat_args"],
-            )
-            result = data_for_autograd["output"]
 
         if cache_entry.epilogue_fn:
             result, comp_to_epi = result
