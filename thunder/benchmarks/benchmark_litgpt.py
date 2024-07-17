@@ -120,6 +120,8 @@ class Benchmark_litGPT:
         profiler_stop: int = 15,
         skip_data_sync: bool = False,
         low_precision_mode: str = "none",
+        max_iters: int = 45,
+        warmup_iters: int = 25,
     ):
         seed = 1337
         torch.manual_seed(seed)
@@ -131,9 +133,9 @@ class Benchmark_litGPT:
         beta1 = 0.9
         beta2 = 0.95
 
-        self.max_iters = 45
-        self.warmup_iter = 25
-        assert self.max_iters > self.warmup_iter
+        self.max_iters = max_iters
+        self.warmup_iters = warmup_iters
+        assert self.max_iters > self.warmup_iters
 
         self.device = device
         self.model_name = model_name
@@ -438,7 +440,7 @@ class Benchmark_litGPT:
                 # Calculate the model FLOPs
                 self.calculate_model_flops()
                 # Setup throughput Collection
-                self.throughput = Throughput(window_size=self.max_iters - self.warmup_iter, world_size=world_size)
+                self.throughput = Throughput(window_size=self.max_iters - self.warmup_iters, world_size=world_size)
             except:
                 self.throughput = None
                 print(
@@ -452,7 +454,7 @@ class Benchmark_litGPT:
 
         for i in range(self.max_iters):
             iter_t0 = time.perf_counter()
-            if i == self.warmup_iter:  # warmup
+            if i == self.warmup_iters:  # warmup
                 t0 = iter_t0
 
             if self.nsys_enabled and i == self.profiler_start and global_rank in [0, None]:
@@ -506,7 +508,7 @@ class Benchmark_litGPT:
                 print(
                     f"iter {i}: loss {loss_item:.4f}, iter time: {(t1 - iter_t0) * 1000:.2f}ms, t: {input_ids.size(1)}"
                 )
-                if i >= self.warmup_iter:
+                if i >= self.warmup_iters:
                     if self.throughput:
                         self.throughput.update(
                             time=(t1 - t0),
@@ -520,7 +522,7 @@ class Benchmark_litGPT:
 
         if global_rank in [0, None]:
             # print(f"Total time: {(t1 - t0):.2f}s")
-            self.perf_metrics["average_iter_time"] = ((t1 - t0) * 1000) / (self.max_iters - self.warmup_iter)
+            self.perf_metrics["average_iter_time"] = ((t1 - t0) * 1000) / (self.max_iters - self.warmup_iters)
 
     def add_perf_metrics(self):
         if self.throughput:
