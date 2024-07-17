@@ -4145,6 +4145,7 @@ def register_torch_op(torchfn, fn_meta):
 
 def _get_fake_arg(inp, fake_mode):
     from thunder.core.devices import to_torch_device
+    from thunder.core.proxies import TupleProxy, ListProxy, DictProxy
 
     if inp is None:
         return inp
@@ -4162,6 +4163,8 @@ def _get_fake_arg(inp, fake_mode):
                 device=to_torch_device(inp.device),
             )
         )
+    elif isinstance(inp, (TupleProxy, ListProxy, DictProxy)):
+        return inp._value
     elif isinstance(inp, (torch.dtype, torch.device, torch.Size, str, bool, int, float, complex)):
         return inp
     elif isinstance(inp, devices.Device):
@@ -4193,6 +4196,10 @@ def fake_type_to_thunder(inp):
         )
     elif isinstance(inp, torch.Size):
         return tuple(inp)
+    elif isinstance(inp, torch.device):
+        return to_device(inp)
+    elif isinstance(inp, torch.dtype):
+        return _torch_to_thunder_dtype_map[inp]
     elif isinstance(inp, (str, bool, int, float, complex)):
         return inp
     else:
