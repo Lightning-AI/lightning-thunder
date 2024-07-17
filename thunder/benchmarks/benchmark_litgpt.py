@@ -1,3 +1,4 @@
+from datetime import timedelta
 import os
 import time
 import warnings
@@ -39,7 +40,8 @@ if world_size > 1:
     # Avoids the allocator thrashing issue in PyTorch NCCL backend.
     # See https://github.com/Lightning-AI/lightning-thunder/issues/420
     os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
-    torch_dist.init_process_group(backend="nccl")
+    os.environ["TORCH_NCCL_ASYNC_ERROR_HANDLING"] = "1"
+    torch_dist.init_process_group(backend="nccl", timeout=timedelta(minutes=5))
     pg = torch_dist.distributed_c10d._get_default_group()
 device = torch.device("cuda", local_rank)
 torch.cuda.set_device(device)
@@ -508,7 +510,7 @@ class Benchmark_litGPT:
                     if self.throughput:
                         self.throughput.update(
                             time=(t1 - t0),
-                            flops=self.perf_metrics["model_flops"],
+                            flops=self.perf_metrics.get("model_flops"),
                             batches=i,
                             samples=(i * self.micro_batch_size * self.gradient_accumulation_steps),
                             lengths=(
@@ -611,6 +613,7 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
         # Helps catch OutOfMemory Errors and post processing of errors
         if global_rank in [0, None]:
             print("An error occurred:", type(error).__name__, "–", error)
+        raise
 
     if global_rank in [0, None]:
         if return_metrics_as_json:
