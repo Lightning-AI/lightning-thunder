@@ -601,7 +601,7 @@ def jit(
                 from thunder.executors.passes import _transform_for_operator_executor_execution
                 from thunder.distributed.utils import maybe_sort_waits
 
-                with langctx.langctx(cd.langctx):
+                with langctxs.langctx(cd.langctx):
                     tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
                 is_transformed, tmp_comp_trc = maybe_sort_waits(tmp_comp_trc)
                 if is_transformed:
