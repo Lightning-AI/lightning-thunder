@@ -382,7 +382,7 @@ def test_devices_in_and_out(executor, device, dtype):
     x, y = lc_result
 
     assert x == 1
-    assert y == dev
+    assert y == thunder.devices.to_torch_device(dev)
 
 
 @instantiate(dtypes=(thunder.float32,))
