@@ -510,7 +510,7 @@ class Benchmark_litGPT:
                     if self.throughput:
                         self.throughput.update(
                             time=(t1 - t0),
-                            flops=self.perf_metrics.get("model_flops"),
+                            flops=self.perf_metrics["model_flops"],
                             batches=i,
                             samples=(i * self.micro_batch_size * self.gradient_accumulation_steps),
                             lengths=(
