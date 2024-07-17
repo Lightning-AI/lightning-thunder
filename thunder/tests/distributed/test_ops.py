@@ -324,7 +324,7 @@ class DistributedCollectiveOpTest(DistributedParallelTestCase):
             if bsym.sym.id in {all_gather_prim_impl.id, reduce_scatter_prim_impl.id}:
                 comm_idx = idx
             if bsym.sym.id == wait_prim_impl.id:
-                self.assertGreater(idx, comm_idx)
+                self.assertGreater(idx, comm_idx + 2)
 
 
 common_utils.instantiate_parametrized_tests(DistributedCollectiveOpTest)
