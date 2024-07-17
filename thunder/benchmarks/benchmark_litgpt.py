@@ -580,42 +580,35 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
     """
 
     benchmark = Benchmark_litGPT(**kwargs)
-    try:
-        benchmark.train()
+    benchmark.train()
 
-        if global_rank in [0, None]:
-            benchmark.add_perf_metrics()
+    if global_rank in [0, None]:
+        benchmark.add_perf_metrics()
 
-            print(
-                f"Model name: {benchmark.model_name}\nSeq Length: {benchmark.config.block_size}\nMicro BS: {benchmark.micro_batch_size}\nGlobal BS: {benchmark.global_batch_size}"
-            )
-            print(
-                f"Number of Layers: {benchmark.config.n_layer}\nNumber of parameters: {sum(p.numel() for p in benchmark.model.parameters() if p.requires_grad) / 1e9:.02f}B"
-            )
-            print(f"Distributed Mode: {benchmark.distributed_mode}")
-            if benchmark.distributed_mode == "fsdp":
-                print(f"Sharding Mode: {benchmark.shard_mode}\nBucketing: {benchmark.bucketing_mode}")
-                if benchmark.sharding_size is not None:
-                    print(
-                        f"Sharding Size: {benchmark.sharding_size}\nReplicate DP Groups: {int(world_size/benchmark.sharding_size)}"
-                    )
-                if benchmark.bucketing_mode == "size":
-                    print(f"Bucketing Number Params: {benchmark.fsdp_bucket_params}")
-            elif benchmark.distributed_mode == "ddp":
-                print(f"DDP Bucketing Size: {benchmark.ddp_bucket_size} MB")
-            print(f"Compiler: {benchmark.compile}")
-            print(f"Low Precision Mode: {benchmark.low_precision_mode}")
-            print(f"Average iter time: {benchmark.perf_metrics['average_iter_time']:.2f} ms")
-            print(f"Memory used: {benchmark.perf_metrics['memory_used_GB']:.02f} GB")
-            print(f"Tokens/s: {benchmark.perf_metrics['tokens_per_sec']:.02f}")
-            print(f"Tokens/s/GPU: {(benchmark.perf_metrics['tokens_per_sec']/world_size):.02f}")
-            print(f"TFLOP/s: {benchmark.perf_metrics['model_flop_per_sec'] / 1e12:.02f}")
-
-    except Exception as error:
-        # Helps catch OutOfMemory Errors and post processing of errors
-        if global_rank in [0, None]:
-            print("An error occurred:", type(error).__name__, "–", error)
-        raise
+        print(
+            f"Model name: {benchmark.model_name}\nSeq Length: {benchmark.config.block_size}\nMicro BS: {benchmark.micro_batch_size}\nGlobal BS: {benchmark.global_batch_size}"
+        )
+        print(
+            f"Number of Layers: {benchmark.config.n_layer}\nNumber of parameters: {sum(p.numel() for p in benchmark.model.parameters() if p.requires_grad) / 1e9:.02f}B"
+        )
+        print(f"Distributed Mode: {benchmark.distributed_mode}")
+        if benchmark.distributed_mode == "fsdp":
+            print(f"Sharding Mode: {benchmark.shard_mode}\nBucketing: {benchmark.bucketing_mode}")
+            if benchmark.sharding_size is not None:
+                print(
+                    f"Sharding Size: {benchmark.sharding_size}\nReplicate DP Groups: {int(world_size/benchmark.sharding_size)}"
+                )
+            if benchmark.bucketing_mode == "size":
+                print(f"Bucketing Number Params: {benchmark.fsdp_bucket_params}")
+        elif benchmark.distributed_mode == "ddp":
+            print(f"DDP Bucketing Size: {benchmark.ddp_bucket_size} MB")
+        print(f"Compiler: {benchmark.compile}")
+        print(f"Low Precision Mode: {benchmark.low_precision_mode}")
+        print(f"Average iter time: {benchmark.perf_metrics['average_iter_time']:.2f} ms")
+        print(f"Memory used: {benchmark.perf_metrics['memory_used_GB']:.02f} GB")
+        print(f"Tokens/s: {benchmark.perf_metrics['tokens_per_sec']:.02f}")
+        print(f"Tokens/s/GPU: {(benchmark.perf_metrics['tokens_per_sec']/world_size):.02f}")
+        print(f"TFLOP/s: {benchmark.perf_metrics['model_flop_per_sec'] / 1e12:.02f}")
 
     if global_rank in [0, None]:
         if return_metrics_as_json:
