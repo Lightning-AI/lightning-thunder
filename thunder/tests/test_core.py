@@ -2712,6 +2712,12 @@ def test_torch_device():
 
     _test(foo2, device_strs_and_idxs)
 
+    def foo2_1(dev_and_idx):
+        dev_type, idx = dev_and_idx
+        return torch.ones(3, 3, device=torch.device(type=dev_type, index=idx))
+
+    _test(foo2_1, device_strs_and_idxs)
+
     # Test with `torch.device` as input
     torch_devices = (torch.device("cpu"), torch.device("cuda"), torch.device("meta"))
 
