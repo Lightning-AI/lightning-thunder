@@ -569,14 +569,6 @@ def jit(
             cs.last_interpreter_log = last_interpreter_log
             cs.last_interpreted_instructions = (i for i in last_interpreter_log if isinstance(i, dis.Instruction))
 
-            # note(crcrpar): deliberately apply sort_waits optionally as per
-            # https://github.com/Lightning-AI/lightning-thunder/blob/7a804e56d9cd695eb03a1fc8d178253d06e7548a/thunder/distributed/utils.py#L155-L159
-            if cd.disable_torch_autograd_support:
-                from thunder.distributed.utils import maybe_sort_waits
-
-                computation_trc = maybe_sort_waits(computation_trc)
-                computation_traces.append(computation_trc)
-
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
 
@@ -605,11 +597,22 @@ def jit(
                     computation_traces.append(computation_trc)
                 cs.last_computation_transformation_stop = time.perf_counter_ns()
 
+                from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
+                from thunder.executors.passes import _transform_for_operator_executor_execution
+                from thunder.distributed.utils import maybe_sort_waits
+
+                computation_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
+                is_transformed, computation_trc = maybe_sort_waits(computation_trc)
+                if is_transformed:
+                    computation_traces.append(computation_trc)
+
                 with langctxs.langctx(cd.langctx):
                     extraces = transform_for_execution(
                         computation_trc,
                         executors_list=cd.executors_list,
+                        use_del_last_used=True,
                     )
+                computation_traces.append(computation_trc)
                 computation_trc = extraces[-1]
 
             if not compile_options.get("disable_inplace_copy_check", False):

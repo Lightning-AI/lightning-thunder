@@ -272,6 +272,60 @@ class DistributedCollectiveOpTest(DistributedParallelTestCase):
             actual = cfoo(a, b, op, process_group, async_op, dim=dim)
             self.assertEqual(actual, expected)
 
+    @common_utils.parametrize(
+        "executor,op",
+        product(tuple(executors_map.keys()), ("all_gather_into_tensor", "reduce_scatter_tensor")),
+    )
+    def test_native_collective_comms(self, executor, op):
+        from thunder.executors.torchex import all_gather_prim_impl, reduce_scatter_prim_impl, wait_prim_impl
+
+        device = f"cuda:{self.rank}"
+        shape = (4, 2)
+        output_shape = (8, 2) if op.startswith("all_gather") else (2, 2)
+
+        comm = getattr(torch.distributed, op)
+        _executor = executors_map[executor]
+
+        def foo(
+            a: torch.Tensor,
+            b: torch.Tensor,
+            output: torch.Tensor,
+            group: torch.distributed.ProcessGroup,
+        ):
+            c = a + b
+            handle = comm(output, c, group=group, async_op=True)
+            e = c + 1
+            handle.wait()
+            f = e * b
+            output *= 2
+            return f
+
+        group = torch.distributed.distributed_c10d._get_default_group()
+        jitted = _executor.make_callable(foo)
+        a = make_tensor(shape, device=device, dtype=torch.float32)
+        b = make_tensor(shape, device=device, dtype=torch.float32)
+        output = torch.empty(output_shape, device=device, dtype=torch.float32)
+        a_, b_, output_ = a.clone().detach(), b.clone().detach(), output.clone().detach()
+
+        f = jitted(a, b, output, group)
+        f_ = foo(a_, b_, output_, group)
+        torch.testing.assert_close(f, f_)
+        torch.testing.assert_close(output, output_)
+
+        traces = thunder.last_traces(jitted)
+        trace_with_waits_sorted = None
+        for t in traces:
+            if t._provenance is not None and t._provenance.pss == "Sort Waits":
+                trace_with_waits_sorted = t
+                break
+
+        comm_idx = len(t.bound_symbols)
+        for idx, bsym in enumerate(trace_with_waits_sorted.bound_symbols):
+            if bsym.sym.id in {all_gather_prim_impl.id, reduce_scatter_prim_impl.id}:
+                comm_idx = idx
+            if bsym.sym.id == wait_prim_impl.id:
+                self.assertGreater(idx, comm_idx)
+
 
 common_utils.instantiate_parametrized_tests(DistributedCollectiveOpTest)
 

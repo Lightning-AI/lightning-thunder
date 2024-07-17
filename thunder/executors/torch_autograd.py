@@ -256,8 +256,8 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     if (not use_ddp) and (not use_fsdp):
         from thunder.distributed.utils import maybe_sort_waits
 
-        fw_extrace = maybe_sort_waits(fw_extrace)
-        bw_extrace = maybe_sort_waits(bw_extrace)
+        _, fw_extrace = maybe_sort_waits(fw_extrace)
+        _, bw_extrace = maybe_sort_waits(bw_extrace)
 
     # Importing here to avoid cyclical dependencies in future.
     from thunder.executors.transformer_engineex import _transformer_engine_bwd_fp8_meta_sync, transformer_engine_ex
