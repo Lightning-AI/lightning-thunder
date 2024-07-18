@@ -6467,14 +6467,6 @@ def _call_dispatch(
                 return _interpret_call(unbound_fn, slf, *args, **kwargs)
 
     # (2) Handles lookasides
-    # Check if the torch operator is not registered in the _torch_to_thunder_function_map, fallback to automatic registration.
-    from thunder.torch import get_torch_fallback_operators_module
-
-    m = get_torch_fallback_operators_module(fn)
-    if m is not None:
-        from thunder.torch import meta_adaptor, register_torch_op
-
-        register_torch_op(fn, meta_adaptor(fn), m)
     lookaside_fn: INTERPRETER_SIGNALS | None | Callable = compilectx.lookaside(fn, *args, **kwargs)
     if lookaside_fn is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         # Happens with sharp edges, for example

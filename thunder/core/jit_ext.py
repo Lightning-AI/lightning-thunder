@@ -1051,6 +1051,17 @@ def recursively_proxy(*args, **kwargs):
 
 # TODO Document this function (with steps)
 def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
+    cd = get_compile_data()
+    enable_fallback_to_torch = cd.compile_options.get("enable_fallback_to_torch", True)
+    if enable_fallback_to_torch:
+        from thunder.torch import get_torch_fallback_operators_module
+
+        # Check if the torch operator is not registered in the _torch_to_thunder_function_map, fallback to automatic registration.
+        if (m := get_torch_fallback_operators_module(fn)) is not None:
+            from thunder.torch import meta_adaptor, register_torch_op
+
+            register_torch_op(fn, meta_adaptor(fn), m)
+
     # Identifies the lookaside
     lookaside: None | Callable
 

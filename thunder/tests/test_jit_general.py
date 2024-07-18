@@ -66,7 +66,7 @@ def test_jitting_through_opaque_torch_symbols_error():
     jno_error = thunder.jit(no_error)
     jno_error(x)
 
-    jshould_error = thunder.jit(should_error)
+    jshould_error = thunder.jit(should_error, enable_fallback_to_torch=False)
     with pytest.raises(NotImplementedError):
         jshould_error(x)
 
