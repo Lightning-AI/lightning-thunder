@@ -455,3 +455,29 @@ def test_inplace_to_arg_return_value(executor, device, _):
     b_out = jitted(a, b)
     torch.testing.assert_close(b_out, b__out)
     assert b.data_ptr() == b_out.data_ptr()
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_inplace_copy_on_fusion_inputs_issue_791(executor, device, _):
+
+    def f(x, y, idx, src):
+        x.index_copy_(0, idx, src)
+        z = x + 1
+        y.index_copy_(0, idx, src)
+        return z
+    
+    a = make_tensor((2, 2), device=device, dtype=torch.float32)
+    b = make_tensor((2, 2), device=device, dtype=torch.float32)
+    a_, b_ = a.clone().detach(), b.clone().detach()
+    idx = torch.arange(2).cuda()
+    src = make_tensor((2, 2), device=device, dtype=torch.float32)
+    
+    o_ = foo(a_, b_, idx, src)
+
+    jitted = executor.make_callable(f)
+    o = jitted(a, b, idx, src)
+    
+    assert(a.allclose(a_))
+    assert(b.allclose(b_))
+    assert(o.allclose(o_))
