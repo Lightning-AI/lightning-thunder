@@ -2969,12 +2969,12 @@ def test_factory_functions_default_dtype():
     jfn = thunder.jit(fn)
     actual_dtype = jfn(x)
 
-    assert actual_dtype == thunder.dtypes.float32
+    assert actual_dtype == torch.float32
 
     # Check with a different default dtype.
     with set_default_dtype_ctx(torch.float16):
         actual_dtype = jfn(x)
-        assert actual_dtype == thunder.dtypes.float16
+        assert actual_dtype == torch.float16
 
     assert thunder.cache_misses(jfn) == 2
 
@@ -3002,10 +3002,10 @@ def test_arange_default_dtype():
         return torch.arange(start=1, end=2, step=0.5).dtype
 
     jfn = thunder.jit(fn)
-    assert jfn() == thunder.dtypes.float32
+    assert jfn() == torch.float32
 
     def fn():
         return torch.arange(start=1, end=3, step=1).dtype
 
     jfn = thunder.jit(fn)
-    assert jfn() == thunder.dtypes.int64
+    assert jfn() == torch.int64
