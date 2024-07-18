@@ -470,10 +470,10 @@ def test_inplace_copy_on_fusion_inputs_issue_791(executor, device, _):
     a = make_tensor((2, 2), device=device, dtype=torch.float32)
     b = make_tensor((2, 2), device=device, dtype=torch.float32)
     a_, b_ = a.clone().detach(), b.clone().detach()
-    idx = torch.arange(2).cuda()
+    idx = torch.arange(2).to(device=device)
     src = make_tensor((2, 2), device=device, dtype=torch.float32)
     
-    o_ = foo(a_, b_, idx, src)
+    o_ = f(a_, b_, idx, src)
 
     jitted = executor.make_callable(f)
     o = jitted(a, b, idx, src)
