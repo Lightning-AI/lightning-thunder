@@ -172,26 +172,45 @@ def test_autocast_mixed_dtype_inputs():
 
 
 @pytest.mark.parametrize("dim", [1, 2, 3])
-def test_autocast_convolution(dim):
+@pytest.mark.parametrize("requires_grad", [False, True])
+def test_autocast_convolution(dim, requires_grad):
     conv_fn = getattr(torch.nn.functional, f"conv{dim}d")
 
     def foo(x, w, b=None):
         return conv_fn(x, w, b)
 
-    x = torch.randn(1, 2, *(dim * (8,)))
-    w = torch.randn(3, 2, *(dim * (4,)))
-    b = torch.randn(3)
+    x = torch.randn(1, 2, *(dim * (8,)), requires_grad=requires_grad)
+    w = torch.randn(3, 2, *(dim * (4,)), requires_grad=requires_grad)
+    b = torch.randn(3, requires_grad=requires_grad)
 
     jfoo = thunder.jit(foo)
 
-    with torch.autocast("cpu", torch.bfloat16):
+    with torch.autocast("cpu", torch.float16):
         eager_out = foo(x, w, b)
         jit_out = jfoo(x, w, b)
 
     torch.testing.assert_close(eager_out, jit_out)
 
-    with torch.autocast("cpu", torch.bfloat16):
+    if requires_grad:
+        go = torch.randn_like(eager_out)
+        eager_grads = torch.autograd.grad(eager_out, [x, w, b], go)
+        jit_grads = torch.autograd.grad(jit_out, [x, w, b], go)
+
+        for eg, jg in zip(eager_grads, jit_grads):
+            # TODO: tighten check?
+            torch.testing.assert_close(eg, jg, rtol=1e-1, atol=1e-1)
+
+    with torch.autocast("cpu", torch.float16):
         eager_out = foo(x, w)
         jit_out = jfoo(x, w)
 
     torch.testing.assert_close(eager_out, jit_out)
+
+    if requires_grad:
+        go = torch.randn_like(eager_out)
+        eager_grads = torch.autograd.grad(eager_out, [x, w], go)
+        jit_grads = torch.autograd.grad(jit_out, [x, w], go)
+
+        for eg, jg in zip(eager_grads, jit_grads):
+            # TODO: tighten check?
+            torch.testing.assert_close(eg, jg, rtol=1e-1, atol=1e-1)
