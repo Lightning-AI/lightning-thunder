@@ -564,3 +564,18 @@ def test_inplace_copy_on_fusion_inputs_issue_791(executor, device, _):
     assert a.allclose(a_)
     assert b.allclose(b_)
     assert o.allclose(o_)
+
+
+def test_error_out_func_with_alias_args():
+
+    @thunder.jit
+    def f_with_inplace(a, b):
+        return a.exp_() + b.tanh_()
+
+    a = torch.empty(
+        (),
+    )
+
+    with pytest.raises(NotImplementedError) as excinfo:
+        f_with_inplace(a, a)
+    assert "Thunder does not support a callable" in str(excinfo.value)
