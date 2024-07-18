@@ -714,7 +714,7 @@ def backward_only_setup_graph_on_each_invocation(fn: Callable, *args, **kwargs):
 
     The returned function should be called with the output of setup function.
 
-    NOTE: This forward graph will be setup on each invocation.
+    NOTE: The forward graph will be setup on each invocation.
 
     Args:
         fn: The forward function
