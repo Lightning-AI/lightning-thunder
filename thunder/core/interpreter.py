@@ -6238,41 +6238,83 @@ def _setup_frame_and_run_python_function(
 ):
     fn = unwrap(wrapped_fn)
 
-    # adjustments for "hidden" instructions (EXTENDED_ARGS, CACHE, ...)
-    # TODO: use the code object as the authorative source
-    sig = inspect.signature(fn, follow_wrapped=False)
-    params = []
-    for p in sig.parameters.values():
-        if p.default is not inspect._empty:
-            p = p.replace(default=wrap_const(p.default))
-        params.append(p)
-    sig = sig.replace(parameters=params)
-    bound = sig.bind(*args, **kwargs)
-    bound.apply_defaults()
-
-    locals_dict: dict[str, Any] = dict(bound.arguments)
-
-    if compilectx._with_provenance_tracking:
-        variable_args = [n for n, p in sig.parameters.items() if p.kind == p.VAR_POSITIONAL or p.kind == p.VAR_KEYWORD]
-        for name in variable_args:
-            val = locals_dict[name]
-            if isinstance(val, tuple):
-                val = wrap_args(val)
-            else:
-                assert isinstance(val, dict)
-                val = wrap_kwargs(val)
-            locals_dict[name] = val
-
     code: CodeType = extract_code(fn)
 
-    # Comprehensions:
-    #   CPython prefixes protected variables with a period. (Since it's not
-    #   legal syntax, so they cannot collide with user variable names.) However,
-    #   `inspect` helpfully renames them. We need to undo this to properly reflect
-    #   what is in the actual bytecode.
-    for name in code.co_varnames:
-        if name.startswith("."):
-            locals_dict[name] = locals_dict.pop(f"implicit{name[1:]}")
+    # adjustments for "hidden" instructions (EXTENDED_ARGS, CACHE, ...)
+    locals_dict: dict[str, Any] = {}
+    defaults = (*(wrap_const(v) for v in fn.__defaults__),) if fn.__defaults__ is not None else ()
+    kwdefaults = {k: wrap_const(v) for k, v in fn.__kwdefaults__.items()} if fn.__kwdefaults__ is not None else {}
+    has_varargs = (fn.__code__.co_flags & inspect.CO_VARARGS) > 0
+    has_varkwargs = (fn.__code__.co_flags & inspect.CO_VARKEYWORDS) > 0
+
+    unconsumed_kwargs = {**kwargs}
+    # WRAP DEFAULTS
+    if len(args) > code.co_argcount and not has_varargs:
+        return do_raise(TypeError(f"{fn}() takes {code.co_argcount} positional arguments, but {len(args)} were given"))
+
+    first_arg_with_defaults = code.co_argcount - len(defaults)
+    missing_args = []
+    pos_arguments_in_kwargs = []
+    for idx in range(code.co_argcount):
+        varname = code.co_varnames[idx]
+        if idx < len(args):
+            locals_dict[varname] = args[idx]
+            if varname in unconsumed_kwargs:
+                return do_raise(f"{fn}() got multiple values for argument '{varname}'")
+        elif idx >= code.co_posonlyargcount and varname in kwargs:
+            locals_dict[varname] = unconsumed_kwargs.pop(varname)
+        elif idx >= first_arg_with_defaults:
+            locals_dict[varname] = defaults[idx - first_arg_with_defaults]
+        elif code.co_varnames[idx] in kwargs:
+            pos_arguments_in_kwargs.append(varname)
+        else:
+            missing_args.append(varname)
+
+    if pos_arguments_in_kwargs:
+        return do_raise(
+            TypeError(
+                f"{fn}() got some positional-only arguments passed as keyword arguments: {', ' .join(pos_arguments_in_kwargs)}"
+            )
+        )
+
+    if missing_args:
+        # CPython has fancy 'a', 'b', and 'c' and argument vs. arguments
+        return do_raise(
+            TypeError(f"{fn}() is missing {len(missing_args)} required positional arguments: {', '.join(missing_args)}")
+        )
+
+    missing_kwargs = []
+    for idx in range(code.co_argcount, code.co_argcount + code.co_kwonlyargcount):
+        varname = code.co_varnames[idx]
+        if varname in unconsumed_kwargs:
+            locals_dict[varname] = unconsumed_kwargs.pop(varname)
+        elif varname in kwdefaults:
+            locals_dict[varname] = kwdefaults[varname]
+        else:
+            missing_kwargs.append(varname)
+
+    if missing_kwargs:
+        return do_raise(
+            TypeError(
+                f"{fn}() is missing {len(missing_kwargs)} required keyword-only arguments: {', '.join(missing_kwargs)}"
+            )
+        )
+
+    idx = code.co_argcount + code.co_kwonlyargcount
+    if has_varargs:
+        varargs = args[code.co_argcount :]
+        if compilectx._with_provenance_tracking:
+            varargs = wrap_args(varargs)
+        locals_dict[code.co_varnames[idx]] = varargs
+        idx += 1
+
+    if has_varkwargs:
+        if compilectx._with_provenance_tracking:
+            unconsumed_kwargs = wrap_kwargs(unconsumed_kwargs)
+        locals_dict[code.co_varnames[idx]] = unconsumed_kwargs
+    elif unconsumed_kwargs:
+
+        return do_raise(TypeError(f"{fn}() got unexpected keyword arguments: {',',join(unconsumed_kwargs)}"))
 
     # in Python 3.10: local vars is (var_names, co_cellvars, co_freevars), also the cellvars/freevars are set up on call
     # in Python 3.11+, these are not separated and cells will be set up by the MAKE_CELL instruction
