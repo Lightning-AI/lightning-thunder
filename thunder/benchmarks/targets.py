@@ -470,6 +470,7 @@ def test_llama_2_7b_hf_transformer_engine_only(benchmark, executor: Callable, co
         benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
     else:
         # We use `setup_graph_on_each_invocation` here to mitigate - https://github.com/Lightning-AI/lightning-thunder/issues/701
+        # Once #701 is fixed, we should remove this `if-else` and use `benchmark_for_compute_type` directly.
         with record_peak_allocated_memory(benchmark):
             backward_fn, backward_setup = backward_only(fn, *args, setup_graph_on_each_invocation=True, **kwargs)
             benchmark.pedantic(
@@ -477,11 +478,7 @@ def test_llama_2_7b_hf_transformer_engine_only(benchmark, executor: Callable, co
             )
 
 
-@pytest.mark.parametrize(
-    "executor,",
-    (executors + cudnn_executors),
-    ids=(executors_ids + cudnn_executors_ids),
-)
+@pytest.mark.parametrize("executor,", (executors + cudnn_executors), ids=(executors_ids + cudnn_executors_ids))
 @parametrize_compute_type
 def test_llama_2_7b_hf(benchmark, executor: Callable, compute_type: ComputeType):
     cfg: LitGPTConfig = LitGPTConfig.from_name("Llama-2-7b-hf")
