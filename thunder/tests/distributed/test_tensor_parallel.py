@@ -7,7 +7,7 @@ import torch.nn as nn
 import thunder
 from thunder.distributed import column_parallel, row_parallel
 import thunder.executors
-from thunder.tests.distributed.helper import ToyModel, DataParallelTestCase
+from thunder.tests.distributed.helper import ToyModel, DistributedParallelTestCase
 from thunder.tests.distributed.modules import ParallelMLP
 
 from torch.testing._internal import common_utils
@@ -20,7 +20,7 @@ _name_to_transform = {
 }
 
 
-class TensorParallelTest(DataParallelTestCase):
+class TensorParallelTest(DistributedParallelTestCase):
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     @common_utils.parametrize("name,bias", product(tuple(_name_to_transform.keys()), (True, False)))

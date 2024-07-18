@@ -234,19 +234,6 @@ def _get_cache_info():
     return _cache_info_ctx.get()
 
 
-def add_executor_lists(
-    exc_list: None | Sequence[Executor | str], other_exc_list: None | Sequence[Executor | str]
-) -> Sequence[Executor]:
-    new_exc_list = []
-    exc_list = resolve_executors(exc_list)
-    other_exc_list = resolve_executors(other_exc_list)
-    for exc in itertools.chain(exc_list, other_exc_list):
-        if not exc in new_exc_list:
-            new_exc_list.append(exc)
-
-    return new_exc_list
-
-
 @run_once
 def _recursive_jit_call_warning() -> None:
     warnings.warn(
@@ -290,6 +277,14 @@ def jit(
     **compile_options,  # TODO RC1 Make this explicit -- dict of options
 ) -> Callable:
     """Just-in-time compile a callable (function or model).
+
+    .. note::
+
+        Thunder's support of PyTorch in-place support is experimental.
+        Thunder functionalizes in-place ops and adds required tensor copies.
+        The functionalization can be turned off with the kwarg of ``skip_inplace_functionalization``.
+        See :func:`thunder.core.transform_common.functionalize_inplace_ops`
+        for the details.
 
     Args:
         fn: A :class:`~torch.nn.Module` or a function to compile.
@@ -375,6 +370,9 @@ def jit(
         # set up a record of things in the current environment that impact caching / prologues
         # this could be replaced by the respective querying in the prologues
         cache_info = _get_cache_info()
+
+        # default dtype (for factory functions)
+        cache_info["default_dtype"] = pytorch.get_default_dtype()
 
         # autocast related operations
         is_autocast_enabled = False
