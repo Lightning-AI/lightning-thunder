@@ -4044,28 +4044,18 @@ def avg_pool3d(
     return _avg_pool_helper(3, a, kernel_size, stride, padding, ceil_mode, count_include_pad, divisor_override)
 
 
-def is_torch_operators(fn):
-    if (
-        hasattr(fn, "__module__")
-        and fn.__module__
-        and fn.__module__.startswith("torch")
-        and fn not in _torch_to_thunder_function_map
-    ):
-        if fn.__module__ in ("torch._C._nn", "torch", "torch.nn.functional", "torch._C._special"):
-            if hasattr(fn, "__name__") and (fn.__name__.startswith("_") or fn.__name__.endswith("_")):
-                return False
-            return True
-        return False
-    if (
-        hasattr(fn, "__objclass__")
-        and hasattr(fn.__objclass__, "__module__")
-        and fn.__objclass__.__module__.startswith("torch._C")
-    ):
-        if hasattr(fn, "__name__") and (fn.__name__.startswith("_") or fn.__name__.endswith("_")):
-            return False
-        return True
-
-    return False
+_ignored_torch_names = torch.overrides.get_ignored_functions()
+_overridable_torch_ops = torch.overrides.get_overridable_functions()
+_torch_fallback_supported_module = [torch, torch.nn.functional, torch.Tensor, torch.special]
+def get_torch_fallback_operators_module(fn):
+    if fn in _ignored_torch_names: return None
+    if fn in _torch_to_thunder_function_map: return None
+    for m in _torch_fallback_supported_module:
+        if fn in _overridable_torch_ops[m]:
+            if hasattr(fn, '__name__') and fn.__name__.endswith('_'):
+                return None
+            return m
+    return None
 
 
 def _is_differentiable(arg):
@@ -4092,13 +4082,10 @@ def _make_differentiable_wrapper(func, *args, **kwargs):
     return wrapper, differentiable_args
 
 
-def register_torch_op(torchfn, fn_meta):
+def register_torch_op(torchfn, fn_meta, m):
+    id_str = f"{m.__name__}.{torchfn.__name__}"
+    warnings.warn(f"Automatically register the {torchfn} in Thunder ({id_str})")
     _fn = langctx(Languages.TORCH)(fn_meta)
-    id_str = (
-        f"{torchfn.__module__}.{torchfn.__name__}"
-        if hasattr(torchfn, "__module__")
-        else f"{torchfn.__objclass__.__module__}.{torchfn.__qualname__}"
-    )
     sym = Symbol(
         name=torchfn.__name__,
         meta=_fn,
@@ -4117,10 +4104,7 @@ def register_torch_op(torchfn, fn_meta):
     )
     from thunder.executors.torchex import _always_executable, ex
 
-    if hasattr(torchfn, "__module__"):
-        op = ex.register_operator(torchfn.__name__, module=eval(torchfn.__module__), meta=fn_meta)
-    else:
-        op = ex.register_operator(torchfn.__qualname__, module=eval(torchfn.__objclass__.__module__), meta=fn_meta)
+    op = ex.register_operator(torchfn.__name__, module=m, meta=fn_meta)
     ex.register_implementation(sym, op, checker=_always_executable)
 
     from thunder.core.transforms import augmented_forward_impls, backward_impls
