@@ -463,10 +463,12 @@ def test_inplace_to_arg_return_value(executor, device, _):
 def test_no_self_repeat_in_subsymbols(executor, device, _):
 
     def f(a, b, c):
+        a.add_(b, alpha=c)
         return a.add_(b, alpha=c)
 
     def functional_f(a, b, c):
-        return a.add(b, alpha=c)
+        d = a.add(b, alpha=c)
+        return d.add(b, alpha=c)
 
     a = make_tensor((2, 2), device=device, dtype=torch.float32)
     b = make_tensor((2, 2), device=device, dtype=torch.float32)
