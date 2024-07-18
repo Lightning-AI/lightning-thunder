@@ -169,3 +169,29 @@ def test_autocast_mixed_dtype_inputs():
         jit_out = jfoo(x, w)
 
     torch.testing.assert_close(eager_out, jit_out)
+
+
+@pytest.mark.parametrize("dim", [1, 2, 3])
+def test_autocast_convolution(dim):
+    conv_fn = getattr(torch.nn.functional, f"conv{dim}d")
+
+    def foo(x, w, b=None):
+        return conv_fn(x, w, b)
+
+    x = torch.randn(1, 2, *(dim * (8,)))
+    w = torch.randn(3, 2, *(dim * (4,)))
+    b = torch.randn(3)
+
+    jfoo = thunder.jit(foo)
+
+    with torch.autocast("cpu", torch.bfloat16):
+        eager_out = foo(x, w, b)
+        jit_out = jfoo(x, w, b)
+
+    torch.testing.assert_close(eager_out, jit_out)
+
+    with torch.autocast("cpu", torch.bfloat16):
+        eager_out = foo(x, w)
+        jit_out = jfoo(x, w)
+
+    torch.testing.assert_close(eager_out, jit_out)
