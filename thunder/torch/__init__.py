@@ -4047,12 +4047,16 @@ def avg_pool3d(
 _ignored_torch_names = torch.overrides.get_ignored_functions()
 _overridable_torch_ops = torch.overrides.get_overridable_functions()
 _torch_fallback_supported_module = [torch, torch.nn.functional, torch.Tensor, torch.special]
+
+
 def get_torch_fallback_operators_module(fn):
-    if fn in _ignored_torch_names: return None
-    if fn in _torch_to_thunder_function_map: return None
+    if fn in _ignored_torch_names:
+        return None
+    if fn in _torch_to_thunder_function_map:
+        return None
     for m in _torch_fallback_supported_module:
         if fn in _overridable_torch_ops[m]:
-            if hasattr(fn, '__name__') and fn.__name__.endswith('_'):
+            if hasattr(fn, "__name__") and fn.__name__.endswith("_"):
                 return None
             return m
     return None
