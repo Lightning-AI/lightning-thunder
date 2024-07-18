@@ -3818,7 +3818,6 @@ def _conv_helper(
     groups: int = 1,
     *,
     conv_function=clang.convolution,
-    **extra_kwargs,
 ) -> TensorProxy:
     # a, weight rank check
     utils.check(dim + 1 <= a.ndim <= dim + 2, lambda: f"{a.ndim=} should be either {dim + 1} or {dim + 2}")
@@ -3888,7 +3887,6 @@ def _conv_helper(
         False,  # transposed
         (0,) * dim,  # output_padding
         groups,
-        **extra_kwargs,
     )
     return res
 

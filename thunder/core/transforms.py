@@ -3882,7 +3882,15 @@ def autocast_ltorch_conv1d_rule(
     from thunder.torch import _conv_helper
 
     return _conv_helper(
-        1, a, weight, bias, stride, padding, dilation, groups, conv_function=_convolution_autocast_impl, dtype=dtype
+        1,
+        a,
+        weight,
+        bias,
+        stride,
+        padding,
+        dilation,
+        groups,
+        conv_function=partial(_convolution_autocast_impl, dtype=dtype),
     )
 
 
@@ -3902,7 +3910,15 @@ def autocast_ltorch_conv2d_rule(
     from thunder.torch import _conv_helper
 
     return _conv_helper(
-        2, a, weight, bias, stride, padding, dilation, groups, conv_function=_convolution_autocast_impl, dtype=dtype
+        2,
+        a,
+        weight,
+        bias,
+        stride,
+        padding,
+        dilation,
+        groups,
+        conv_function=partial(_convolution_autocast_impl, dtype=dtype),
     )
 
 
@@ -3922,7 +3938,15 @@ def autocast_ltorch_conv3d_rule(
     from thunder.torch import _conv_helper
 
     return _conv_helper(
-        3, a, weight, bias, stride, padding, dilation, groups, conv_function=_convolution_autocast_impl, dtype=dtype
+        3,
+        a,
+        weight,
+        bias,
+        stride,
+        padding,
+        dilation,
+        groups,
+        conv_function=partial(_convolution_autocast_impl, dtype=dtype),
     )
 
 
