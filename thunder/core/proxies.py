@@ -1152,6 +1152,7 @@ def _infer_tensor_properties(
     requires_grad: bool | None = None,
     distparallel_type: DistParallelType | None = None,
     thunder_fsdp_padding_size: int | None = None,
+    storage_data_ptr: int | None = None,
 ):
     _shape = None
     _device = None
@@ -1159,6 +1160,7 @@ def _infer_tensor_properties(
     _requires_grad: None | bool = None
     _dist_parallel_type = DistParallelType.NONE
     _thunder_fsdp_padding_size = None
+    _storage_data_ptr = None
 
     if like is not None:
         baseutils.check_type(like, (TensorProxy, FutureTensorProxy))
@@ -1181,6 +1183,7 @@ def _infer_tensor_properties(
     _thunder_fsdp_padding_size = (
         thunder_fsdp_padding_size if thunder_fsdp_padding_size is not None else _thunder_fsdp_padding_size
     )
+    _storage_data_ptr = storage_data_ptr if storage_data_ptr is not None else _storage_data_ptr
 
     # dynamic shape not yet enabled, otherwise, the bake in should be guarded with if not using_symbolic_values():
     # dynamic shape support is currently block by #471 https://github.com/Lightning-AI/lightning-thunder/issues/471
@@ -1222,6 +1225,7 @@ def _infer_tensor_properties(
         _requires_grad,
         _dist_parallel_type,
         _thunder_fsdp_padding_size,
+        _storage_data_ptr,
     )
 
 
@@ -1251,6 +1255,7 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
             self._requires_grad,
             _,  # distparallel_type
             _,  # thunder_fsdp_padding_size
+            _,  # storage_data_ptr
         ) = _infer_tensor_properties(
             like,
             shape,
@@ -1353,6 +1358,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         distparallel_type: DistParallelType | None = None,
         history: None | tuple = None,
         thunder_fsdp_padding_size: int | None = None,
+        storage_data_ptr: int | None = None,
     ):
         super().__init__(name, prefix=prefix, history=history)
 
@@ -1366,8 +1372,16 @@ class TensorProxy(Proxy, TensorProxyInterface):
             self._requires_grad,
             self._distparallel_type,
             self._thunder_fsdp_padding_size,
+            self._storage_data_ptr,
         ) = _infer_tensor_properties(
-            like, shape, device, dtype, requires_grad, distparallel_type, thunder_fsdp_padding_size
+            like,
+            shape,
+            device,
+            dtype,
+            requires_grad,
+            distparallel_type,
+            thunder_fsdp_padding_size,
+            storage_data_ptr,
         )
 
     # NOTE The following properties DO NOT depend on the language context or record
@@ -1404,6 +1418,10 @@ class TensorProxy(Proxy, TensorProxyInterface):
     @property
     def thunder_fsdp_padding_size(self):
         return self._thunder_fsdp_padding_size
+
+    @property
+    def storage_data_ptr(self):
+        return self._storage_data_ptr
 
     # We need to implement `__len__` as
     # > In addition to bypassing any instance attributes in the
@@ -1778,6 +1796,7 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
     # See Note [DistributedDataParallel and distparallel_type]
     distparallel_type = getattr(t, "distparallel_type", None)
     _thunder_fsdp_padding_size = getattr(t, "_thunder_fsdp_padding_size", None)
+    _storage_data_ptr = t.untyped_storage().data_ptr() if torch.is_tensor(t) else getattr(t, "_storage_data_ptr", None)
     # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
     return TensorProxy(
         name,
@@ -1788,6 +1807,7 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
         distparallel_type=distparallel_type,
         history=history,
         thunder_fsdp_padding_size=_thunder_fsdp_padding_size,
+        storage_data_ptr=_storage_data_ptr,
     )
 
 
