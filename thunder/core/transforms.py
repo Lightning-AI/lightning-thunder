@@ -3856,6 +3856,76 @@ def autocast_linear_rule(a, w, bias, dtype):
     return _linear_autocast_impl(a, w, bias, dtype)
 
 
+def _convolution_autocast_impl(a, w, bias, *other_args, dtype):
+    if bias is None:
+        # Don't pass `bias` to maybe_downcast_to.
+        downcast_args = maybe_downcast_to(dtype, (a, w)) + (bias,)
+    else:
+        downcast_args = maybe_downcast_to(dtype, (a, w, bias))
+
+    return prims.convolution(*downcast_args, *other_args)
+
+
+@register_autocast_rule("torch.nn.functional.conv1d")
+def autocast_ltorch_conv1d_rule(
+    a: TensorProxy,
+    /,
+    weight: TensorProxy,
+    bias: TensorProxy | None = None,
+    stride: int | Sequence[int] = 1,
+    padding: int | Sequence[int] | str = 0,
+    dilation: int = 1,
+    groups: int = 1,
+    *,
+    dtype,
+) -> TensorProxy:
+    from thunder.torch import _conv_helper
+
+    return _conv_helper(
+        1, a, weight, bias, stride, padding, dilation, groups, conv_function=_convolution_autocast_impl, dtype=dtype
+    )
+
+
+@register_autocast_rule("torch.nn.functional.conv2d")
+def autocast_ltorch_conv2d_rule(
+    a: TensorProxy,
+    /,
+    weight: TensorProxy,
+    bias: TensorProxy | None = None,
+    stride: int | Sequence[int] = 1,
+    padding: int | Sequence[int] | str = 0,
+    dilation: int = 1,
+    groups: int = 1,
+    *,
+    dtype,
+) -> TensorProxy:
+    from thunder.torch import _conv_helper
+
+    return _conv_helper(
+        2, a, weight, bias, stride, padding, dilation, groups, conv_function=_convolution_autocast_impl, dtype=dtype
+    )
+
+
+@register_autocast_rule("torch.nn.functional.conv3d")
+def autocast_ltorch_conv3d_rule(
+    a: TensorProxy,
+    /,
+    weight: TensorProxy,
+    bias: TensorProxy | None = None,
+    stride: int | Sequence[int] = 1,
+    padding: int | Sequence[int] | str = 0,
+    dilation: int = 1,
+    groups: int = 1,
+    *,
+    dtype,
+) -> TensorProxy:
+    from thunder.torch import _conv_helper
+
+    return _conv_helper(
+        3, a, weight, bias, stride, padding, dilation, groups, conv_function=_convolution_autocast_impl, dtype=dtype
+    )
+
+
 @register_autocast_rule("torch.nn.functional.scaled_dot_product_attention")
 def autocast_scaled_dot_product_attention(
     query,

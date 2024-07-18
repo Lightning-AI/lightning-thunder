@@ -3816,6 +3816,9 @@ def _conv_helper(
     padding: int | Sequence[int] | str = 0,
     dilation: int | Sequence[int] = 1,
     groups: int = 1,
+    *,
+    conv_function=clang.convolution,
+    **extra_kwargs,
 ) -> TensorProxy:
     # a, weight rank check
     utils.check(dim + 1 <= a.ndim <= dim + 2, lambda: f"{a.ndim=} should be either {dim + 1} or {dim + 2}")
@@ -3875,8 +3878,17 @@ def _conv_helper(
     padding, a = process_padding_str(int_to_seq(padding), stride, dilation, a)
     # }
 
-    res = clang.convolution(
-        a, weight, bias, stride, padding, dilation, False, (0,) * dim, groups  # transposed  # output_padding
+    res = conv_function(
+        a,
+        weight,
+        bias,
+        stride,
+        padding,
+        dilation,
+        False,  # transposed
+        (0,) * dim,  # output_padding
+        groups,
+        **extra_kwargs,
     )
     return res
 
