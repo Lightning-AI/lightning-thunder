@@ -179,9 +179,10 @@ def test_autocast_convolution(dim, requires_grad):
     def foo(x, w, b=None):
         return conv_fn(x, w, b)
 
-    x = torch.randn(1, 2, *(dim * (8,)), requires_grad=requires_grad)
-    w = torch.randn(3, 2, *(dim * (4,)), requires_grad=requires_grad)
-    b = torch.randn(3, requires_grad=requires_grad)
+    x = torch.rand(1, 2, *(dim * (8,)), requires_grad=requires_grad)
+    w = torch.rand(3, 2, *(dim * (4,)), requires_grad=requires_grad)
+    b = torch.rand(3, requires_grad=requires_grad)
+    go = torch.rand(1, 3, *(dim * (5,)))
 
     jfoo = thunder.jit(foo)
 
@@ -192,13 +193,11 @@ def test_autocast_convolution(dim, requires_grad):
     torch.testing.assert_close(eager_out, jit_out)
 
     if requires_grad:
-        go = torch.randn_like(eager_out)
         eager_grads = torch.autograd.grad(eager_out, [x, w, b], go)
         jit_grads = torch.autograd.grad(jit_out, [x, w, b], go)
 
         for eg, jg in zip(eager_grads, jit_grads):
-            # TODO: tighten check?
-            torch.testing.assert_close(eg, jg, rtol=1e-1, atol=1e-1)
+            torch.testing.assert_close(eg, jg, rtol=1e-2, atol=1e-2)
 
     with torch.autocast("cpu", torch.float16):
         eager_out = foo(x, w)
@@ -212,5 +211,4 @@ def test_autocast_convolution(dim, requires_grad):
         jit_grads = torch.autograd.grad(jit_out, [x, w], go)
 
         for eg, jg in zip(eager_grads, jit_grads):
-            # TODO: tighten check?
-            torch.testing.assert_close(eg, jg, rtol=1e-1, atol=1e-1)
+            torch.testing.assert_close(eg, jg, rtol=1e-2, atol=1e-2)
