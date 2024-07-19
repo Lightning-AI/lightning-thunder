@@ -171,6 +171,24 @@ def test_autocast_mixed_dtype_inputs():
     torch.testing.assert_close(eager_out, jit_out)
 
 
+def test_autocast_mixed_dtype_inputs_on_prims():
+    # Verify that the autocast rules are applied when
+    # directly using the prims.
+    # See - https://github.com/Lightning-AI/lightning-thunder/issues/725
+    def foo(x, w):
+        return thunder.prims.linear(x, w, None)
+
+    # Mixed input types.
+    x, w = torch.randn(16, 16, dtype=torch.bfloat16), torch.randn(16, 16)
+
+    jfoo = thunder.jit(foo)
+
+    with torch.autocast("cpu", torch.bfloat16):
+        jit_out = jfoo(x, w)
+
+    assert jit_out.dtype == torch.bfloat16
+
+
 @pytest.mark.parametrize("dim", [1, 2, 3])
 @pytest.mark.parametrize("requires_grad", [False, True])
 def test_autocast_convolution(dim, requires_grad):
