@@ -414,7 +414,7 @@ def jit(
                         backward_fn,
                         backward_traces,
                         _return_none_instead_of_grads,
-                        _vnilla_args,
+                        _vanilla_args,
                     ) = cache_entry
                     try:
                         cs.last_prologue_execution_start = time.perf_counter_ns()
@@ -525,7 +525,7 @@ def jit(
                         arg_to_idx[a] = i
 
                     vanilla_tensor_args = [
-                        arg_to_idx[bsym.flat_proxy_args[i]]
+                        arg_to_idx[bsym.flat_proxy_args[1]]
                         for bsym in filter(lambda b: b.sym.id == prims.PrimIDs.COPY_, computation_trc.bound_symbols)
                     ]
 
@@ -717,11 +717,9 @@ def jit(
         cs.last_trace_host_execution_start = time.perf_counter_ns()
 
         if cache_entry.vanilla_tensor_args:
-            import torch
-
             inp_to_data_ptr = {}
             for i, t in enumerate(inps):
-                if torch.is_tensor(t) and not t.is_sparse:
+                if pytorch.is_tensor(t) and not t.is_sparse:
                     inp_to_data_ptr[i] = t.untyped_storage().data_ptr()
 
             data_ptr_to_inps = {}
@@ -729,7 +727,11 @@ def jit(
                 if data_ptr not in data_ptr_to_inps:
                     data_ptr_to_inps[data_ptr] = [i]
                 else:
-                    check(i not in cache_entry.vanilla_tensor_args, lambda: f"{i}-th tensor input must not be alias")
+                    check(
+                        i not in cache_entry.vanilla_tensor_args,
+                        lambda: f"{i}-th tensor input must not be alias",
+                        NotImplementedError,
+                    )
                     data_ptr_to_inps[data_ptr].append(i)
 
         result = cache_entry.computation_fn(*inps)
