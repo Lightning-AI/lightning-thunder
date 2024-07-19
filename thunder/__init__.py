@@ -597,11 +597,24 @@ def jit(
                     computation_traces.append(computation_trc)
                 cs.last_computation_transformation_stop = time.perf_counter_ns()
 
+                from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
+                from thunder.executors.passes import _transform_for_operator_executor_execution
+                from thunder.distributed.utils import maybe_sort_waits
+
+                with langctxs.langctx(cd.langctx):
+                    tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
+                is_transformed, tmp_comp_trc = maybe_sort_waits(tmp_comp_trc)
+                if is_transformed:
+                    computation_trc = tmp_comp_trc
+                    computation_traces.append(computation_trc)
+
                 with langctxs.langctx(cd.langctx):
                     extraces = transform_for_execution(
                         computation_trc,
                         executors_list=cd.executors_list,
+                        use_del_last_used=True,
                     )
+                computation_traces.append(computation_trc)
                 computation_trc = extraces[-1]
 
             if not compile_options.get("disable_inplace_copy_check", False):

@@ -51,6 +51,12 @@ def sort_data_parallel_syncs(primal_trace):
         return primal_trace
 
 
+def has_wait_prims(trace: TraceCtx) -> bool:
+    from thunder.executors.torchex import wait_prim_impl
+
+    return any(bsym.sym.id == wait_prim_impl.id for bsym in trace.bound_symbols)
+
+
 def sort_communication_ops(execution_trace):
     """
     Sorts the wait_prim_impl nodes in the execution trace to be as far from the
@@ -71,7 +77,7 @@ def sort_communication_ops(execution_trace):
         unpack_for_fsdp_prim_impl,
     )
 
-    if not any(bsym.sym.id == wait_prim_impl.id for bsym in execution_trace.bound_symbols):
+    if not has_wait_prims(execution_trace):
         return execution_trace
 
     order_in_trace = {bsym: i for i, bsym in enumerate(execution_trace.bound_symbols)}
@@ -122,6 +128,7 @@ def sort_waits(execution_trace):
     Returns:
         TraceCtx: The sorted execution trace.
     """
+    from thunder.core import prims
     from thunder.executors.torchex import (
         wait_prim_impl,
         reduce_scatter_prim_impl,
@@ -129,7 +136,7 @@ def sort_waits(execution_trace):
         all_gather_prim_impl,
     )
 
-    if not any(bsym.sym.id == wait_prim_impl.id for bsym in execution_trace.bound_symbols):
+    if not has_wait_prims(execution_trace):
         return execution_trace
 
     order_in_trace = {bsym: i for i, bsym in enumerate(execution_trace.bound_symbols)}
@@ -144,6 +151,10 @@ def sort_waits(execution_trace):
                 case reduce_scatter_prim_impl.id | all_reduce_prim_impl.id | all_gather_prim_impl.id:
                     # Prefer larger communication ops over smaller ones
                     return -node.bsym.args[0].numel
+                # note(crcrpar): When a dist collective comm is applied on a func arg and the arg is not included in return,
+                # this sort could put `wait` after `return` stmt.
+                case prims.PrimIDs.RETURN | prims.python_return.id:
+                    return len(order_in_trace) + 1
                 case _:
                     # Prefer nodes that are earlier in the trace
                     return order_in_trace[node.bsym]
@@ -163,6 +174,23 @@ def sort_waits(execution_trace):
         selector=prefer_comm_over_other_over_wait,
     )
     return new_execution_trace
+
+
+def maybe_sort_waits(trace: TraceCtx) -> tuple[bool, TraceCtx]:
+    """Apply ``sort_waits`` to ``trace`` if possible.
+
+    The condition to apply :func:`~thunder.distributed.utils.sort_waits` is that :mod:`torch.distributed`
+    is available and at least :func:`thunder.distributed.prims.wait` is in ``trace``.
+    """
+    from torch.distributed import is_available
+    from thunder.core.trace import TraceProvenance
+
+    if is_available() and has_wait_prims(trace):
+        trace_with_waits_sorted = sort_waits(trace)
+        trace_with_waits_sorted.set_provenance(TraceProvenance("Sort Waits"))
+        return True, trace_with_waits_sorted
+    else:
+        return False, trace
 
 
 def limit_in_flight_allgathers(

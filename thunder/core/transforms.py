@@ -1,5 +1,5 @@
 from collections import namedtuple
-from contextlib import nullcontext
+from contextlib import nullcontext, contextmanager
 from dataclasses import dataclass, replace
 from enum import auto, Enum
 from itertools import chain, compress
@@ -18,6 +18,7 @@ from collections import deque
 import os
 import dataclasses
 
+import thunder
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
 import thunder.core.devices as devices
@@ -4007,3 +4008,59 @@ def autocast(func: Callable, dtype: dtypes.dtype):
         return eval_trace(trace, *args, **kwargs, symbol_mapper=partial(autocast_symbol_mapper, dtype=dtype))
 
     return wrapper
+
+
+# State to enable and disable autocast (while interpreter is generating the computation trace).
+_autocast_enabled = True
+
+
+def is_autocast_enabled():
+    return _autocast_enabled
+
+
+# NOTE: Disable Autocast
+# Once the autocast rule has been applied, we disable autocast as the autocast_rule usually converts the inputs
+# and calls the same symbol.
+# Without disabling autocast we will have infinite recursion.
+@contextmanager
+def disable_autocast():
+    global _autocast_enabled
+    default = _autocast_enabled
+    _autocast_enabled = False
+    try:
+        yield
+    finally:
+        _autocast_enabled = default
+
+
+def maybe_apply_autocast(sym):
+    # NOTE: torch.autocast support
+    # In PyTorch eager, enabling autocast allows mixed inputs to operator like `linear`
+    # which expect dtypes to be same. This works in PyTorch eager, as dispatcher applies the
+    # conversion first and then passes the converted input to the operator.
+    # To mimick similar behavior, here we replace the `sym` for all operators which have
+    # autocast rule, to apply the autocast conversion rule if autocast was enabled.
+
+    # Cache info may not be available in case of legacy `thunder.compile`
+    # which is still used for cases.
+    try:
+        cache_info = thunder._get_cache_info()
+    except LookupError:
+        cache_info = {}
+
+    if (
+        cache_info.get("is_autocast_enabled", False)  # If user has actually enabled autocast in their code
+        and is_autocast_enabled()  # we are not under `disable_autocast`
+        and (autocast_impl := _maybe_get_autocast_rule_for_symbol(sym)) is not None
+    ):  # symbol has autocast impl.
+
+        @wraps(sym)
+        def wrapper(*args, **kwargs):
+            # See NOTE: Disable Autocast
+            with disable_autocast():
+                thunder_autocast_dtype = _get_downcast_dtype_from_str(cache_info["autocast_thunder_dtype"])
+                return partial(autocast_impl, dtype=thunder_autocast_dtype)(*args, **kwargs)
+
+        return wrapper
+
+    return None
