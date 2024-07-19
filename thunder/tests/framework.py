@@ -232,10 +232,27 @@ class TorchCompileTestExecutor(TestExecutor):
         return torch.__version__
 
 
+class DynamoThunderTestExecutor(TestExecutor):
+    name = "DynamoThunder"
+    supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
+    supported_dtypes = (datatypes.dtype,)
+
+    def make_callable_legacy(self, fn, **kwargs):
+        raise RuntimeError("This test executor is not intended to be used directly in tests that require make_callable_legacy")
+
+    def make_callable(self, fn, **kwargs):
+        def backend(gm: torch.fx.GraphModule, _: list[torch.Tensor | torch.SymInt]) -> Callable:
+            gm.real_recompile()
+            return thunder.jit(gm, **kwargs)
+
+        return torch.compile(backend=backend)(fn)
+
+
 # TODO Refactor these executors into the actual executor (sub)modules
 TorchExecutor: TorchTestExecutor = TorchTestExecutor()
 TorchCompileCatExecutor: TorchCompileCatTestExecutor = TorchCompileCatTestExecutor()
 TorchCompileExecutor: TorchCompileTestExecutor = TorchCompileTestExecutor()
+DynamoThunderExecutor: DynamoThunderTestExecutor = DynamoThunderTestExecutor()
 nvFuserExecutor: None | nvFuserTestExecutor = None
 
 if NVFUSER_AVAILABLE:
