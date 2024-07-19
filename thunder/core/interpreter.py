@@ -6238,19 +6238,41 @@ def _setup_frame_and_run_python_function(
 ):
     fn = unwrap(wrapped_fn)
 
+    # We bind the provided args + kwargs to the function parameters.
+    # In the local var names (co_varnames), we will first have the
+    # positional (-only and positional-or-kw) args, then the keyword-only
+    # args, then optionally *args and optionally then **kwargs
+    # (of the signature). Here we populate locals_dict with those values.
+    # TODO: could populate localsplus directly instead of going through
+    #       locals_dict
+
     code: CodeType = extract_code(fn)
 
-    # adjustments for "hidden" instructions (EXTENDED_ARGS, CACHE, ...)
     locals_dict: dict[str, Any] = {}
     defaults = (*(wrap_const(v) for v in fn.__defaults__),) if fn.__defaults__ is not None else ()
     kwdefaults = {k: wrap_const(v) for k, v in fn.__kwdefaults__.items()} if fn.__kwdefaults__ is not None else {}
     has_varargs = (fn.__code__.co_flags & inspect.CO_VARARGS) > 0
     has_varkwargs = (fn.__code__.co_flags & inspect.CO_VARKEYWORDS) > 0
 
+    # for the function signature varargs, we just need keep track of the
+    # number of provided positional args in args, but to to pupulate the
+    # function signature varkwargs, we need to track
+    # which provided kwargs have been "consumed" by the signature.
+
     unconsumed_kwargs = {**kwargs}
-    # WRAP DEFAULTS
+
     if len(args) > code.co_argcount and not has_varargs:
         return do_raise(TypeError(f"{fn}() takes {code.co_argcount} positional arguments, but {len(args)} were given"))
+
+    # first we go over the function signatures positional (-only or kw-or-pos) args.
+    # They might come from various sources:
+    # - call-provided args
+    # - call-provided kwargs unless they are positional-only
+    # - function-provided default arguments (which are matched from the end of positional args)
+    # otherwise, we raise an appropriate error
+    #
+    # note that for positional only args, you can have a kwarg of the same
+    # name that will end up in the varkwargs
 
     first_arg_with_defaults = code.co_argcount - len(defaults)
     missing_args = []
@@ -6259,7 +6281,7 @@ def _setup_frame_and_run_python_function(
         varname = code.co_varnames[idx]
         if idx < len(args):
             locals_dict[varname] = args[idx]
-            if varname in unconsumed_kwargs:
+            if idx >= code.co_posonlyargcount and varname in unconsumed_kwargs:
                 return do_raise(f"{fn}() got multiple values for argument '{varname}'")
         elif idx >= code.co_posonlyargcount and varname in kwargs:
             locals_dict[varname] = unconsumed_kwargs.pop(varname)
@@ -6283,6 +6305,11 @@ def _setup_frame_and_run_python_function(
             TypeError(f"{fn}() is missing {len(missing_args)} required positional arguments: {', '.join(missing_args)}")
         )
 
+    # now we bind the function signature's kw-only args. These might come from
+    # - the call-provided kwargs
+    # - the function-provided default kwargs
+    # otherwise we raise an error at the end
+
     missing_kwargs = []
     for idx in range(code.co_argcount, code.co_argcount + code.co_kwonlyargcount):
         varname = code.co_varnames[idx]
@@ -6300,6 +6327,7 @@ def _setup_frame_and_run_python_function(
             )
         )
 
+    # now we handle varargs (which gets "excess" call args)...
     idx = code.co_argcount + code.co_kwonlyargcount
     if has_varargs:
         varargs = args[code.co_argcount :]
@@ -6308,6 +6336,7 @@ def _setup_frame_and_run_python_function(
         locals_dict[code.co_varnames[idx]] = varargs
         idx += 1
 
+    # ...and varkwargs which gets the unconsumed call-provided kwargs
     if has_varkwargs:
         if compilectx._with_provenance_tracking:
             unconsumed_kwargs = wrap_kwargs(unconsumed_kwargs)
@@ -6315,6 +6344,8 @@ def _setup_frame_and_run_python_function(
     elif unconsumed_kwargs:
 
         return do_raise(TypeError(f"{fn}() got unexpected keyword arguments: {',',join(unconsumed_kwargs)}"))
+
+    # And that's it! We have all local vars in locals_dict.
 
     # in Python 3.10: local vars is (var_names, co_cellvars, co_freevars), also the cellvars/freevars are set up on call
     # in Python 3.11+, these are not separated and cells will be set up by the MAKE_CELL instruction
@@ -6420,6 +6451,7 @@ def _run_frame(
                 stack.append(send_value)
 
         insts: tuple[dis.Instruction, ...] = tuple(dis.get_instructions(frame.code))
+        # adjustments for "hidden" instructions (EXTENDED_ARGS, CACHE, ...)
         inst_ptr_to_idx = {inst.offset // 2: idx for idx, inst in enumerate(insts)}
         max_inst_ptr = max(inst_ptr_to_idx.keys())
         while True:
