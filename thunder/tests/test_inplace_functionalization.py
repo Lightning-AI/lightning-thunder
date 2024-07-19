@@ -572,10 +572,21 @@ def test_error_out_func_with_alias_args():
     def f_with_inplace(a, b):
         return a.exp_() + b.tanh_()
 
-    a = torch.empty(
+    a = torch.ones(
+        (),
+    )
+    b = torch.zeros(
         (),
     )
 
     with pytest.raises(NotImplementedError) as excinfo:
         f_with_inplace(a, a)
-    assert "Thunder does not support a callable" in str(excinfo.value)
+    assert "th tensor input must not be alias" in str(excinfo.value)
+
+    # Make sure the cache changes accordingly
+    f_with_inplace(a, b)
+    with pytest.raises(NotImplementedError) as excinfo:
+        f_with_inplace(b, b)
+    assert "th tensor input must not be alias" in str(excinfo.value)
+
+    f_with_inplace(b, a)
