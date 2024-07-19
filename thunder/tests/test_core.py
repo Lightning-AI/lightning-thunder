@@ -390,7 +390,7 @@ def test_devices_in_and_out(executor, device, dtype):
     x, y = lc_result
 
     assert x == 1
-    assert y == dev
+    assert y == thunder.devices.to_torch_device(dev)
 
 
 @instantiate(dtypes=(thunder.float32,))
@@ -2712,6 +2712,12 @@ def test_torch_device():
 
     _test(foo2, device_strs_and_idxs)
 
+    def foo2_1(dev_and_idx):
+        dev_type, idx = dev_and_idx
+        return torch.ones(3, 3, device=torch.device(type=dev_type, index=idx))
+
+    _test(foo2_1, device_strs_and_idxs)
+
     # Test with `torch.device` as input
     torch_devices = (torch.device("cpu"), torch.device("cuda"), torch.device("meta"))
 
@@ -2963,12 +2969,13 @@ def test_factory_functions_default_dtype():
     jfn = thunder.jit(fn)
     actual_dtype = jfn(x)
 
-    assert actual_dtype == thunder.dtypes.float32
+    assert fn(x) == jfn(x)
+    assert actual_dtype == torch.float32
 
     # Check with a different default dtype.
     with set_default_dtype_ctx(torch.float16):
         actual_dtype = jfn(x)
-        assert actual_dtype == thunder.dtypes.float16
+        assert actual_dtype == torch.float16
 
     assert thunder.cache_misses(jfn) == 2
 
@@ -2996,10 +3003,12 @@ def test_arange_default_dtype():
         return torch.arange(start=1, end=2, step=0.5).dtype
 
     jfn = thunder.jit(fn)
-    assert jfn() == thunder.dtypes.float32
+    assert fn() == jfn()
+    assert jfn() == torch.float32
 
     def fn():
         return torch.arange(start=1, end=3, step=1).dtype
 
     jfn = thunder.jit(fn)
-    assert jfn() == thunder.dtypes.int64
+    assert fn() == jfn()
+    assert jfn() == torch.int64

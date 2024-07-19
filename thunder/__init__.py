@@ -47,6 +47,7 @@ from thunder.common import (
     _create_callable,
     trace,
     transform_for_execution,
+    transform_to_torch_types,
 )
 import thunder.extend as extend
 from thunder.extend import Executor, add_default_executor
@@ -76,6 +77,7 @@ from thunder.executors.torch_autograd import split_forward_backward, ThunderFunc
 import torch as pytorch
 
 import thunder.clang as clang
+from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 
 # Imports executors (to populate default executors and make them accessible)
 import thunder.executors.pythonex
@@ -624,6 +626,7 @@ def jit(
                     backward_trc = cudagraphex.fusion_pass(backward_trc, num_static_inputs=len(backward_trc.args[0][0]))
                     backward_traces.append(backward_trc)
 
+            computation_trc = transform_to_torch_types(computation_trc)
             comp = computation_trc.python_callable()
 
             if backward_trc is not None:

@@ -2786,7 +2786,7 @@ def gather(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
 
 # NOTE: PyTorch uses `src` for torch.Tensor arguments and `value` for scalars
 # when referencing the source of the values
-@torchsymbol(torch.scatter)
+@torchsymbol(torch.scatter, is_method=True)
 def scatter(
     a: TensorLike,
     /,
@@ -2812,7 +2812,7 @@ def scatter(
         return clang.scatter(a, index, value, dim)
 
 
-@torchsymbol(torch.Tensor.scatter_, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.Tensor.scatter_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def scatter_(
     a: TensorLike,
     /,
@@ -3816,6 +3816,8 @@ def _conv_helper(
     padding: int | Sequence[int] | str = 0,
     dilation: int | Sequence[int] = 1,
     groups: int = 1,
+    *,
+    conv_function=clang.convolution,
 ) -> TensorProxy:
     # a, weight rank check
     utils.check(dim + 1 <= a.ndim <= dim + 2, lambda: f"{a.ndim=} should be either {dim + 1} or {dim + 2}")
@@ -3875,8 +3877,16 @@ def _conv_helper(
     padding, a = process_padding_str(int_to_seq(padding), stride, dilation, a)
     # }
 
-    res = clang.convolution(
-        a, weight, bias, stride, padding, dilation, False, (0,) * dim, groups  # transposed  # output_padding
+    res = conv_function(
+        a,
+        weight,
+        bias,
+        stride,
+        padding,
+        dilation,
+        False,  # transposed
+        (0,) * dim,  # output_padding
+        groups,
     )
     return res
 
@@ -5049,30 +5059,30 @@ def softmax(a: TensorLike, dim: int, dtype: None | dtypeLike = None, _stacklevel
     return _softmax(a, dim=dim, dtype=dtype)
 
 
-def torch_device(device_or_str: DeviceLike, /, index: int | None = None) -> devices.Device:
-    if isinstance(device_or_str, (devices.Device, torch.device)):
+def torch_device(type: DeviceLike, index: int | None = None) -> devices.Device:
+    if isinstance(type, (devices.Device, torch.device)):
         # PyTorch behavior:
         # >>> torch.device(torch.device("cuda"), 0)
         # TypeError: device(): argument 'type' (position 1) must be str, not torch.device
         utils.check(index is None, lambda: f"device(): `index` is only allowed when `device` is a `str`.")
-        return to_device(device_or_str)
+        return to_device(type)
 
     # NOTE: device_or_str is `str`
     if index is not None:
         # PyTorch behavior:
         # >>> torch.device("cuda:0", 0)
         # RuntimeError: type (string) must not include an index because index was passed explicitly: cuda:0
-        has_device_idx = len(device_or_str.split(":")) > 1
+        has_device_idx = len(type.split(":")) > 1
         utils.check(
             not has_device_idx,
-            lambda: f"device string must not include an index because index was passed explicitly: {device_or_str}",
+            lambda: f"device string must not include an index because index was passed explicitly: {type}",
         )
         if isinstance(index, NumberProxy):
             index.make_static_constrained()
             prims.sink(index)
             index = index.value
 
-    return devices.Device(device_or_str, index)
+    return devices.Device(type, index)
 
 
 # We don't use @torchsymbol as we don't want `torch.device()` to appear in trace as a symbol.

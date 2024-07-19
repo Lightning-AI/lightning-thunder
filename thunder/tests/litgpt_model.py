@@ -157,8 +157,6 @@ class OverridenKVCache(nn.Module):
 
 import litgpt
 
-# override for operator workarounds
-litgpt.model.KVCache = OverridenKVCache
 # add the testing configurations
 litgpt.config.name_to_config.update(name_to_config)
 name_to_config.update(litgpt.config.name_to_config)
