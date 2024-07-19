@@ -572,21 +572,22 @@ def test_error_out_func_with_alias_args():
     def f_with_inplace(a, b):
         return a.exp_() + b.tanh_()
 
-    a = torch.ones(
-        (),
-    )
-    b = torch.zeros(
-        (),
-    )
+    a = torch.ones((1, 1))
+    b = torch.zeros((1, 1))
 
     with pytest.raises(NotImplementedError) as excinfo:
         f_with_inplace(a, a)
     assert "th tensor input must not be alias" in str(excinfo.value)
+    assert (thunder.cache_hits(f_with_inplace), thunder.cache_misses(f_with_inplace)) == (0, 1)
 
-    # Make sure the cache changes accordingly
-    f_with_inplace(a, b)
     with pytest.raises(NotImplementedError) as excinfo:
         f_with_inplace(b, b)
     assert "th tensor input must not be alias" in str(excinfo.value)
+    assert (thunder.cache_hits(f_with_inplace), thunder.cache_misses(f_with_inplace)) == (1, 1)
+
+    # Make sure the cache changes accordingly
+    f_with_inplace(a, b)
+    assert (thunder.cache_hits(f_with_inplace), thunder.cache_misses(f_with_inplace)) == (1, 2)
 
     f_with_inplace(b, a)
+    assert (thunder.cache_hits(f_with_inplace), thunder.cache_misses(f_with_inplace)) == (2, 2)

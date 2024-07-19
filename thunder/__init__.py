@@ -354,6 +354,11 @@ def jit(
     )
     cs = CompileStats()
 
+    def _num_alias_args_kwargs_cache(*args, **kwargs) -> int:
+        flat_args, _ = tree_flatten((args, kwargs))
+        tensor_args = tuple(filter(lambda t: pytorch.is_tensor(t), flat_args))
+        return len(tensor_args) - len({t.untyped_storage().data_ptr() for t in tensor_args if not t.is_sparse})
+
     @_with_cache_info_ctx
     def get_computation_and_inputs(*args, **kwargs):
         # set up a record of things in the current environment that impact caching / prologues
@@ -396,6 +401,7 @@ def jit(
             no_grad_sync = get_skip_data_parallel_grad_sync()
         cache_info["no_grad_sync"] = no_grad_sync
         return_none_instead_of_grads = is_fsdp_enabled and no_grad_sync
+        cache_info["num_alias_tensor_args"] = _num_alias_args_kwargs_cache(*args, **kwargs)
 
         # TODO RC1 Add module and function checks to prologue (make it a compile option)
 
