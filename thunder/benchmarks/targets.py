@@ -1,6 +1,7 @@
 import os
 from collections.abc import Callable
 from enum import auto, Enum
+from collections.abc import Sequence
 
 import pytest
 import torch
@@ -19,13 +20,9 @@ from thunder.benchmarks import (
     LitGPTSDPABenchmark,
     LlamaMLPBenchmark,
     NanoGPTBenchmark,
-    NanoGPTBlockBenchmark,
     NanoGPTCrossEntropyBenchmark,
-    NanoGPTCSABenchmark,
-    NanoGPTGeLUBenchmark,
+    LitGPTGeluBenchmark,
     NanoGPTLayerNormBenchmark,
-    NanoGPTMLPBenchmark,
-    NanoGPTSDPABenchmark,
     thunder_apex_executor,
     thunder_apex_nvfuser_executor,
     thunder_cudnn_executor,
@@ -172,20 +169,63 @@ cudnn_layernorm_executors_ids = (
 transformer_engine_executors = (thunder_nvfuser_transformerengine_executor,)
 transformer_engine_execuors_ids = ("thunder+nvfuser+transformerengine",)
 
-#
-# nanogpt benchmarks
-#
+
+def get_unique_configs(config_options: Sequence[str]):
+    """
+    Get the unique configurations based on the given config options.
+
+    Args:
+        config_options: The sequence of configuration options that uniquely identify a LitGPT configuration.
+    """
+    config_names = list(sorted(c["name"] for c in configs)) if RUN_ALL_CONFIGS else IMPORTANT_CONFIGS
+    unique_config_names = {}
+    for config_name in config_names:
+        config = LitGPTConfig.from_name(config_name)
+        key = tuple(getattr(config, k) for k in config_options)
+        if config_name in IMPORTANT_CONFIGS:
+            unique_config_names[key] = config_name
+        unique_config_names.setdefault(key, config_name)
+
+    config_names = list(sorted(unique_config_names.values()))
+    return config_names
 
 
+# There are many configurations but only the following parameters affect the gelu benchmark:
+# - gelu_approximate
+# - intermediate_size
+# - block_size
+# Let's select only the configurations that differ in these parameters
+def get_configs_for_gelu():
+    return get_unique_configs(("gelu_approximate", "intermediate_size", "block_size"))
+
+
+# Sample command to run this benchmark:
+# pytest thunder/benchmarks/targets.py -k "test_litgpt_gelu" --benchmark-group-by='param:config,param:bs'
 @pytest.mark.parametrize(
     "executor,",
     executors,
     ids=executors_ids,
 )
+@pytest.mark.parametrize(
+    "bs,",
+    (
+        1,
+        2,
+    ),
+    ids=("bs1", "bs2"),
+)
 @parametrize_compute_type
-def test_nanogpt_gelu(benchmark, executor: Callable, compute_type: ComputeType):
-    gelu_bench: Benchmark = NanoGPTGeLUBenchmark(
-        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type)
+@pytest.mark.parametrize(
+    "config,",
+    get_configs_for_gelu(),
+)
+def test_litgpt_gelu(benchmark, executor: Callable, bs: int, compute_type: ComputeType, config: str):
+    gelu_bench: Benchmark = LitGPTGeluBenchmark(
+        config=config,
+        batchdims=(bs,),
+        device="cuda:0",
+        dtype=thunder.bfloat16,
+        requires_grad=is_requires_grad(compute_type),
     )
 
     args, kwargs = gelu_bench.make_batch()
@@ -234,6 +274,8 @@ def test_nanogpt_cross_entropy(benchmark, executor: None | Callable, compute_typ
     benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
+# TODO: Upgrade this benchmark to use LitGPT and config, batch size parametrization
+# https://github.com/Lightning-AI/lightning-thunder/issues/740
 @pytest.mark.parametrize(
     "executor,",
     (executors + cudnn_layernorm_executors),
@@ -246,39 +288,6 @@ def test_nanogpt_layer_norm(benchmark, executor: None | Callable, compute_type: 
 
     bench: Benchmark = NanoGPTLayerNormBenchmark(
         config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type)
-    )
-
-    args, kwargs = bench.make_batch()
-    fn = executor(bench.fn())
-
-    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
-
-
-@pytest.mark.parametrize("executor,", (executors + cudnn_executors), ids=(executors_ids + cudnn_executors_ids))
-@parametrize_compute_type
-def test_nanogpt_sdpa(benchmark, executor: None | Callable, compute_type: ComputeType):
-    if executor is None:
-        pytest.skip("Executor is unavailable")
-
-    bench: Benchmark = NanoGPTSDPABenchmark(
-        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type)
-    )
-
-    args, kwargs = bench.make_batch()
-    fn = executor(bench.fn())
-
-    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
-
-
-@pytest.mark.parametrize(
-    "executor,",
-    executors,
-    ids=executors_ids,
-)
-@parametrize_compute_type
-def test_llama2_7b_sdpa(benchmark, executor: Callable, compute_type: ComputeType):
-    bench: Benchmark = LitGPTSDPABenchmark(
-        config="Llama-2-7b-hf", device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type)
     )
 
     args, kwargs = bench.make_batch()
@@ -302,7 +311,7 @@ sdpa_executors_ids = (
 
 
 # Sample command to run this benchmark:
-# pytest thunder/benchmarks/targets.py -k "test_litgpt_sdpa_grad" --benchmark-group-by='param:config,param:bs' --benchmark-columns='min,max,mean,stddev,median'
+# pytest thunder/benchmarks/targets.py -k "test_litgpt_sdpa" --benchmark-group-by='param:config,param:bs,param:compute_type'
 @pytest.mark.parametrize(
     "executor,",
     sdpa_executors,
@@ -328,62 +337,6 @@ def test_litgpt_sdpa(benchmark, executor: Callable, bs, compute_type, config):
         device="cuda:0",
         dtype=thunder.bfloat16,
         requires_grad=is_requires_grad(compute_type),
-    )
-
-    args, kwargs = bench.make_batch()
-    fn = executor(bench.fn())
-
-    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
-
-
-@pytest.mark.parametrize(
-    "executor,",
-    executors,
-    ids=executors_ids,
-)
-@parametrize_compute_type
-def test_nanogpt_mlp(benchmark, executor: Callable, compute_type: ComputeType):
-    bench: Benchmark = NanoGPTMLPBenchmark(
-        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type)
-    )
-
-    args, kwargs = bench.make_batch()
-    fn = executor(bench.fn())
-
-    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
-
-
-# NOTE The CSA module is linear -> sdpa -> dropout
-@pytest.mark.parametrize(
-    "executor,",
-    executors,
-    ids=executors_ids,
-)
-@parametrize_compute_type
-def test_nanogpt_csa(benchmark, executor: Callable, compute_type: ComputeType):
-    bench: Benchmark = NanoGPTCSABenchmark(
-        config="gpt2-xl",
-        device="cuda:0",
-        dtype=thunder.bfloat16,
-        requires_grad=is_requires_grad(compute_type),
-    )
-
-    args, kwargs = bench.make_batch()
-    fn = executor(bench.fn())
-
-    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
-
-
-# NOTE NanoGPT's block module is layernorm -> csa -> layernorm -> mlp
-@pytest.mark.parametrize(
-    "executor,",
-    executors,
-    ids=executors_ids,
-)
-@parametrize_compute_type
-def test_nanogpt_block(benchmark, executor: Callable, compute_type: ComputeType):
-    bench: Benchmark = NanoGPTBlockBenchmark(
-        config="gpt2-xl", device="cuda:0", dtype=thunder.bfloat16, requires_grad=is_requires_grad(compute_type)
     )
 
     args, kwargs = bench.make_batch()
@@ -438,18 +391,6 @@ def test_nanogpt_gpt2xl(benchmark, executor: Callable, compute_type: ComputeType
 #
 
 
-@pytest.mark.parametrize("executor,", (executors + cudnn_executors), ids=(executors_ids + cudnn_executors_ids))
-@parametrize_compute_type
-def test_open_llama_7b(benchmark, executor: Callable, compute_type: ComputeType):
-    cfg: LitGPTConfig = LitGPTConfig.from_name("open_llama_7b")
-    b = LitGPTBenchmark(cfg, device="cuda:0", dtype=torch.bfloat16, requires_grad=is_requires_grad(compute_type))
-
-    args, kwargs = b.make_batch()
-    fn = executor(b.fn())
-
-    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
-
-
 @pytest.mark.parametrize(
     "executor,",
     (transformer_engine_executors),
@@ -492,6 +433,8 @@ def test_llama_2_7b_hf(benchmark, executor: Callable, compute_type: ComputeType)
     benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
+# TODO: Upgrade this benchmark to use LitGPT and config, batch size parametrization
+# https://github.com/Lightning-AI/lightning-thunder/issues/742
 @pytest.mark.parametrize(
     "executor,",
     executors,
@@ -501,7 +444,7 @@ def test_llama_2_7b_hf(benchmark, executor: Callable, compute_type: ComputeType)
 def test_llama2_mlp_7b(benchmark, executor: Callable, compute_type: ComputeType):
     bench: Benchmark = LlamaMLPBenchmark(
         config="Llama-2-7b-hf",
-        batchdims=(16,),
+        batchdims=(2,),
         device="cuda:0",
         dtype=thunder.bfloat16,
         requires_grad=is_requires_grad(compute_type),
@@ -513,6 +456,8 @@ def test_llama2_mlp_7b(benchmark, executor: Callable, compute_type: ComputeType)
     benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
+# TODO: Upgrade this benchmark to use LitGPT and config, batch size parametrization
+# https://github.com/Lightning-AI/lightning-thunder/issues/743
 @pytest.mark.parametrize(
     "executor,",
     executors,
@@ -522,7 +467,7 @@ def test_llama2_mlp_7b(benchmark, executor: Callable, compute_type: ComputeType)
 def test_llama2_causal_self_attention_7b(benchmark, executor: Callable, compute_type: ComputeType):
     bench: Benchmark = LitGPTCausalSelfAttentionBenchmark(
         config="Llama-2-7b-hf",
-        batchdims=(16,),
+        batchdims=(2,),
         device="cuda:0",
         dtype=thunder.bfloat16,
         requires_grad=is_requires_grad(compute_type),

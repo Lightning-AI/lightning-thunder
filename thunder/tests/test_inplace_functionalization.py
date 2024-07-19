@@ -318,3 +318,140 @@ def test_error_of_inplace_to_views(executor, device, _):
     jittd_f = thunder.jit(f, executors=executor.executors_list())
     with pytest.raises(NotImplementedError, match="in-place op of `torch.Tensor.mul_`"):
         _ = jittd_f(a, b)
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_multiple_inplace_to_args(executor, device, _):
+
+    def f(a):
+        a.exp_()
+        a.sin_()
+        return a.cos()
+
+    x = make_tensor((2, 2), device=device, dtype=torch.float32)
+    x_ref = x.clone().detach()
+    expected = f(x_ref)
+
+    jitted = executor.make_callable(f)
+    actual = jitted(x)
+
+    torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(x, x_ref)
+
+    def f_with_view(a):
+        b = a.view(-1)
+        return b.exp_().sin_().cos()
+
+    x = make_tensor((2, 2), device=device, dtype=torch.float32)
+    x_ref = x.clone().detach()
+    expected = f_with_view(x_ref)
+
+    jitted = executor.make_callable(f_with_view)
+    actual = jitted(x)
+
+    torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(x, x_ref)
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_multiple_inplace_to_multiple_args(executor, device, _):
+
+    def f(xs, ys, z):
+        for i in range(len(xs)):
+            ys[i].add_(xs[i].exp_().sin_())
+            z.add_(ys[i])
+        return z
+
+    jitted = executor.make_callable(f)
+    xs = [make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2)]
+    ys = [make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2)]
+    z = make_tensor((2, 2), device=device, dtype=torch.float32)
+    xs_ref = [x.clone().detach() for x in xs]
+    ys_ref = [x.clone().detach() for x in ys]
+    z_ref = z.clone().detach()
+
+    res = jitted(xs, ys, z)
+    res_ref = f(xs_ref, ys_ref, z_ref)
+
+    torch.testing.assert_close(actual=res, expected=res_ref)
+    torch.testing.assert_close(actual=z, expected=z_ref)
+    torch.testing.assert_close(actual=xs, expected=xs_ref)
+    torch.testing.assert_close(actual=ys, expected=ys_ref)
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_single_tensor_adam_like(executor, device, _):
+
+    def single_tensor_adam(
+        params: list[torch.Tensor],
+        grads: list[torch.Tensor],
+        exp_avgs: list[torch.Tensor],
+        exp_avg_sqs: list[torch.Tensor],
+        state_steps: list[torch.Tensor],
+        *,
+        lr: float = 1e-2,
+        beta1: float = 0.9,
+        beta2: float = 0.9,
+        eps: float = 1e-5,
+    ) -> None:
+        for i, param in enumerate(params):
+            grad = grads[i]
+            exp_avg = exp_avgs[i]
+            exp_avg_sq = exp_avg_sqs[i]
+            step_t = state_steps[i]
+
+            exp_avg.mul_(beta1).add_(grad)
+            exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1)
+
+            step_t.add_(1)
+            bias_correction2 = 1 - beta2**step_t
+            step_size = lr / (1 - beta1**step_t)
+            step_size_neg = step_size.neg()
+            denom = exp_avg_sq.sqrt() / (bias_correction2 * step_size_neg).add(eps / step_size_neg)
+            param.addcdiv_(exp_avg, denom)
+
+    shape = (4,)
+    params = [make_tensor(shape, device=device, dtype=torch.float32, high=2, low=1) for _ in range(2)]
+    tensors = [
+        [make_tensor(shape, device=device, dtype=torch.float32, high=2, low=1) for _ in range(2)] for _ in range(3)
+    ]
+    tensors = [params] + tensors
+    state_steps = [torch.tensor(1, device=device) for _ in range(2)]
+
+    ref_tensors = [[t.clone().detach() for t in tensorlist] for tensorlist in tensors]
+    ref_state_steps = [torch.tensor(1, device=device) for _ in range(2)]
+    single_tensor_adam(*ref_tensors, state_steps=ref_state_steps)
+
+    jitted = executor.make_callable(single_tensor_adam)
+    params, grads, exp_avgs, exp_avg_sqs = tensors
+
+    jitted(params, grads, exp_avgs, exp_avg_sqs, state_steps)
+    torch.testing.assert_close(actual=tensors + [state_steps], expected=ref_tensors + [ref_state_steps])
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_inplace_to_arg_return_value(executor, device, _):
+
+    def f(a, b):
+        c = a + b
+        b.mul_(c)
+        return b
+
+    a = make_tensor((2, 2), device=device, dtype=torch.float32)
+    b = make_tensor((2, 2), device=device, dtype=torch.float32)
+    a_, b_ = a.clone().detach(), b.clone().detach()
+
+    b__out = f(a_, b_)
+
+    jitted = executor.make_callable(f)
+    b_out = jitted(a, b)
+    torch.testing.assert_close(b_out, b__out)
+    assert b.data_ptr() == b_out.data_ptr()

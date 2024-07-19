@@ -7,6 +7,7 @@ from itertools import product
 from typing import List, Optional
 from collections.abc import Callable, Sequence, Iterable
 import packaging.version
+import contextlib
 
 import pytest
 import torch
@@ -168,13 +169,6 @@ class TestExecutor:
         with detached_trace():
             traces = thunder.common.transform_for_execution(trace, executors_list=self.executors_list(), **kwargs)
         return traces[-1].python_callable()
-
-    # TODO Remove this
-    def make_callable_with_info(self, fn, **kwargs):
-        disable_preprocessing = kwargs.pop("disable_preprocessing", True)
-        return thunder.compile(
-            fn, executors_list=self.executors_list(), disable_preprocessing=disable_preprocessing, **kwargs
-        )
 
 
 # TODO Convert to singletons or just add to executor logic
@@ -581,3 +575,13 @@ class custom_comparator:
 
     def __call__(self, test_template):
         return test_template
+
+
+@contextlib.contextmanager
+def set_default_dtype_ctx(dtype):
+    saved_dtype = torch.get_default_dtype()
+    torch.set_default_dtype(dtype)
+    try:
+        yield
+    finally:
+        torch.set_default_dtype(saved_dtype)

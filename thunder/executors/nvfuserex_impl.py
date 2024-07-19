@@ -116,6 +116,8 @@ def getnv(x: Any, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
         return lc_to_nv_map[x]
     if isinstance(x, (Number, dtypes.dtype, type, Device)):
         return _define_constant(fd, x)
+    if isinstance(x, Sequence):
+        return tuple(getnv(i, fd, lc_to_nv_map) for i in x)
 
     utils.check(False, lambda: f"Cannot translate {x} of type {type(x)} to an nvFuser object")
 
@@ -667,7 +669,7 @@ class nvFuserExecutor(FusionExecutor):
             :class:`TraceCtx` with common subexpression eliminated.
         """
 
-        start_time_ns = time.time_ns()
+        start_time_ns = time.perf_counter_ns()
 
         cse_trace = from_trace(trace)
 
@@ -739,7 +741,7 @@ class nvFuserExecutor(FusionExecutor):
         trace_output = tree_map(map_redundant, return_bsym.args)
         cse_trace.bound_symbols[-1] = prims.python_return.bind(*trace_output, output=())
 
-        end_time_ns = time.time_ns()
+        end_time_ns = time.perf_counter_ns()
         elapsed_time_ns = end_time_ns - start_time_ns
         elapsed_time_millis = elapsed_time_ns // 1000000
 
@@ -750,7 +752,7 @@ class nvFuserExecutor(FusionExecutor):
 
     # TODO Restore fusion logic here -- this just replaces supported operations in isolation at the moment
     def fusion_pass(self, trace: TraceCtx) -> TraceCtx:
-        start_time_ns: int = time.time_ns()
+        start_time_ns: int = time.perf_counter_ns()
         # Replace uniform with uniform_philox and rng state operators for better rematerialization
         from thunder.core.rematerialization import replace_uniform
 
@@ -784,6 +786,22 @@ class nvFuserExecutor(FusionExecutor):
         #   (Used to name fusions like nvFusion0, nvFusion1, ...)
         fusion_counter: int = 0
         for bsyms in bound_symbol_groups:
+            # Related to in-place ops.
+            # prims.copy_ is a no-op for NVFuser in a sense that it does not
+            # generate nor runs any kernels.
+            # For that reason we should avoid fusing prims.copy_ unless
+            # it comes after other non-copy symbols in a fusion.
+            # See the following relevant issues:
+            # https://github.com/Lightning-AI/lightning-thunder/issues/789
+            # https://github.com/Lightning-AI/lightning-thunder/issues/791
+            # NOTE: filter all first "dangling" no-op copies
+            while len(bsyms) > 0 and bsyms[0].sym.id is prims.PrimIDs.COPY_:
+                fused_bsyms.append(bsyms[0])
+                bsyms = bsyms[1:]
+
+            if len(bsyms) == 0:
+                continue
+
             # TODO The following allows generating single node fusions, which
             #   may be suboptimal for real-world performance.
             #   Provide a mechanism to switch between "test" and "perf" modes
@@ -867,7 +885,7 @@ instantiated) this heuristic actually leads to worse code.
 
         fusedtrace = update_fusion_call_ctx(fusedtrace)
 
-        end_time_ns: int = time.time_ns()
+        end_time_ns: int = time.perf_counter_ns()
         elapsed_time_ns: int = end_time_ns - start_time_ns
         elapsed_time_millis: int = elapsed_time_ns // 1000000
         fusedtrace.set_provenance(TraceProvenance(f"Fusion (took {elapsed_time_millis} milliseconds)"))
@@ -1198,11 +1216,12 @@ def _reshape_check(a: TensorProxy, shape: list[int]) -> bool:
 
 def reshape(a: TensorProxy, shape: list[int], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nv_a = getnv(a, fd, lc_to_nv_map)
+    nv_shape = getnv(shape, fd, lc_to_nv_map)
 
     if nv_version < LooseVersion("0.0.22"):
-        return fd.ops.reshape(nv_a, a.shape, shape)
+        return fd.ops.reshape(nv_a, a.shape, nv_shape)
     else:
-        return fd.ops.reshape(nv_a, shape)
+        return fd.ops.reshape(nv_a, nv_shape)
 
 
 register_supported(PrimIDs.RESHAPE, reshape, _reshape_check)
@@ -2054,7 +2073,7 @@ register_supported(PrimIDs.COPY_, copy_, _copy__check)
 #   by other Symbols, like torch.to, which may be unflattened
 # TODO This could be extended to non-float conversions, like complex -> complex conversions
 def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
-    start_time_ns = time.time_ns()
+    start_time_ns = time.perf_counter_ns()
 
     rrctrace = from_trace(trace)
 
@@ -2202,7 +2221,7 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
 
     rrctrace.bound_symbols = nbsyms
 
-    end_time_ns = time.time_ns()
+    end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
     rrctrace.set_provenance(TraceProvenance(f"Remove redundant casts (took {elapsed_time_millis} milliseconds)"))

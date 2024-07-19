@@ -435,6 +435,26 @@ def test_binary_add_numbers():
         assert_close(actual, expected)
 
 
+def test_finfo():
+    def foo(a):
+        return torch.finfo(a.dtype)
+
+    jfoo = thunder.jit(foo)
+    a = torch.randn((2, 2), device="cpu")
+    actual = jfoo(a)
+    expected = foo(a)
+    assert actual == expected
+
+    def bar(a):
+        return torch.finfo(a.dtype).min
+
+    jbar = thunder.jit(bar)
+    a = torch.randn((2, 2), device="cpu")
+    actual = jbar(a)
+    expected = bar(a)
+    assert_close(actual, expected)
+
+
 _test_add_global_global = 2
 
 
@@ -685,10 +705,6 @@ def test_litgpt_variants(name, device):
         torch.testing.assert_close(param1.grad, param2.grad, rtol=1e-2, atol=1e-2)
 
 
-@pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"),
-    reason="https://github.com/pytorch/pytorch/issues/129579",
-)
 @skipif_not_pytorch_2_1
 @pytest.mark.parametrize(
     "name",
@@ -1090,3 +1106,32 @@ def test_isinstance_parameter():
     actual = thunder.jit(m)(x)
 
     torch.testing.assert_close(actual, expected)
+
+
+@pytest.mark.parametrize(
+    "device",
+    ("cpu", "cuda"),
+)
+def test_cache_symbolic_values_reshape(device):
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    a = torch.randn((4, 8, 6), device=device)
+
+    def foo(t, batch_size):
+        return t.reshape(batch_size, -1).sum(-1)
+
+    jfoo = thunder.jit(foo, cache="symbolic values", nv_enable_bookend=False)
+    expected = foo(a, 32)
+    actual = jfoo(a, 32)
+
+    assert_close(expected, actual)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    expected = foo(a, 16)
+    actual = jfoo(a, 16)
+
+    assert_close(expected, actual)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1

@@ -188,7 +188,7 @@ class CUDAGraphExecutor(FusionExecutor):
         return True
 
     def fusion_pass(self, trace: TraceCtx, num_static_inputs: None | int = None) -> TraceCtx:
-        start_time_ns: int = time.time_ns()
+        start_time_ns: int = time.perf_counter_ns()
 
         def _should_fuse(a: Node, b: Node):
             # TODO: modify the logic to be able to potentially better handle
@@ -234,7 +234,7 @@ class CUDAGraphExecutor(FusionExecutor):
         delattr(fused_trace, "clear_collection_names")
         reset_tracectx(fused_trace_tok)
 
-        end_time_ns = time.time_ns()
+        end_time_ns = time.perf_counter_ns()
         elapsed_time_ns = end_time_ns - start_time_ns
         elapsed_time_ms = elapsed_time_ns // 1000000
         fused_trace.set_provenance(TraceProvenance(f"CUDAGraph fusion (took {elapsed_time_ms} milliseconds)"))

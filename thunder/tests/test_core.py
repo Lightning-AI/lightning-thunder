@@ -19,7 +19,15 @@ import thunder.tests.bf16
 import thunder.torch as ltorch
 
 import thunder.core.codeutils as codeutils
-from thunder.tests.framework import instantiate, NOTHING, TorchExecutor, nvFuserExecutor, requiresCUDA, TestExecutor
+from thunder.tests.framework import (
+    instantiate,
+    NOTHING,
+    TorchExecutor,
+    nvFuserExecutor,
+    requiresCUDA,
+    TestExecutor,
+    set_default_dtype_ctx,
+)
 import thunder.core.dtypes as dtypes
 import thunder.core.prims as prims
 from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, tracectx
@@ -382,7 +390,7 @@ def test_devices_in_and_out(executor, device, dtype):
     x, y = lc_result
 
     assert x == 1
-    assert y == dev
+    assert y == thunder.devices.to_torch_device(dev)
 
 
 @instantiate(dtypes=(thunder.float32,))
@@ -522,6 +530,15 @@ def test_consistent_boundsymbol_collection_hard_printing():
         s0 = str(bsym)
         s1 = str(bsym)
         assert s0 == s1
+
+
+def test_to_printable_not_collection():
+    import numpy as np
+
+    inps = ("abc", torch.Size([2, 2]), torch.Tensor(1, 2), np.ndarray((2, 2)))
+    for inp in inps:
+        out = codeutils.to_printable(None, inp)
+        assert inp is out
 
 
 #
@@ -1244,7 +1261,7 @@ def test_argument_of_none(executor, device, dtype):
     region_bsyms = trace.bound_symbols[:3]
     region = Region(producers, consumers, region_bsyms)
     assert len(region.inputs) == 0 and sorted(str(v) for v in region.outputs) == [
-        '<TensorProxy(name="t0", dtype=thunder.dtypes.float32, shape=(1,)>'
+        '<TensorProxy(name="t0", dtype=thunder.dtypes.float32, shape=(1,))>'
     ]
 
 
@@ -1293,7 +1310,7 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
 
     # Returns the bound symbols for a function and args.
     def compile_bsyms(fn, args):
-        fn = executor.make_callable_with_info(fn)
+        fn = executor.make_callable(fn)
         _ = fn(*args)
         traces = thunder.last_traces(fn)
         return traces[0].bound_symbols
@@ -2695,6 +2712,12 @@ def test_torch_device():
 
     _test(foo2, device_strs_and_idxs)
 
+    def foo2_1(dev_and_idx):
+        dev_type, idx = dev_and_idx
+        return torch.ones(3, 3, device=torch.device(type=dev_type, index=idx))
+
+    _test(foo2_1, device_strs_and_idxs)
+
     # Test with `torch.device` as input
     torch_devices = (torch.device("cpu"), torch.device("cuda"), torch.device("meta"))
 
@@ -2848,8 +2871,144 @@ def test_custom_autograd_function():
 
     x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
     model = Model().to(dtype=torch.float64)
-    jitted = thunder.jit(model, skip_inplace_functionalization=True)
+    jitted = thunder.jit(model)
 
     gradcheck(jitted, (x,))
     with pytest.raises(GradcheckError):
         gradcheck(model, (x,))
+
+    class MyLinear(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+            ctx.save_for_backward(x)
+            ctx.pretty_attr = 100
+            return torch.matmul(x, weight.t())
+
+        @staticmethod
+        def backward(ctx, grad_output):
+            (x,) = ctx.saved_tensors
+            return torch.matmul(grad_output, weight), torch.matmul(grad_output.t(), x)
+
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.l1 = torch.nn.Linear(2, 2, bias=False)
+
+        def forward(self, x):
+            return MyLinear.apply(x, self.l1.weight)
+
+    x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
+    model = Model().to(dtype=torch.float64)
+    jitted = thunder.jit(model)
+
+    gradcheck(jitted, (x,))
+
+
+def test_proxy_repr():
+    # Verify that we can call `__repr__` on different proxy subclasses.
+    t = thunder.core.trace.TraceCtx()
+    with thunder.core.trace.tracectx(t):
+        p = thunder.core.proxies.NumberProxy("number", 1, python_type=int)
+        c = thunder.core.proxies.CollectionProxy((1, 2), name="collection")
+        t = thunder.core.proxies.TensorProxy(
+            "tensor",
+            shape=(1,),
+            dtype=thunder.core.dtypes.float16,
+            device=thunder.core.devices.Device("cpu"),
+            requires_grad=True,
+        )
+        assert p.__repr__() == '<NumberProxy(name="number")>'
+        assert t.__repr__() == '<TensorProxy(name="tensor", dtype=thunder.dtypes.float16, shape=(1,))>'
+        assert c.__repr__() == '<CollectionProxy(name="collection")>'
+
+
+def test_type_string():
+    def fn(x):
+        return 2 * x
+
+    jfn = thunder.jit(fn)
+
+    a = torch.randn(2, 2)
+
+    jfn(a)
+
+    tr = thunder.last_traces(jfn)[0]
+
+    assert tr.bound_symbols[1].sym == ltorch.mul
+    (pystr,) = tr.bound_symbols[1].python(0)
+
+    assert pystr == 'result = ltorch.mul(2, x)  # result: "cpu f32[2, 2]"'
+
+
+def test_dtype_in_trace():
+    def fn(x):
+        return x.to(torch.float16)
+
+    jfn = thunder.jit(fn)
+
+    x = torch.randn(
+        3,
+    )
+
+    jfn(x)
+
+    tr = thunder.last_traces(jfn)[0]
+    assert tr.bound_symbols[1].sym == ltorch.to
+    (pystr,) = tr.bound_symbols[1].subsymbols[0].python(0)
+
+    assert "convert_element_type(x, dtypes.float16)" in pystr
+
+
+def test_factory_functions_default_dtype():
+
+    def fn(x):
+        o = torch.ones(x.shape)
+        return o.dtype
+
+    x = torch.randn(3, 3)
+    jfn = thunder.jit(fn)
+    actual_dtype = jfn(x)
+
+    assert fn(x) == jfn(x)
+    assert actual_dtype == torch.float32
+
+    # Check with a different default dtype.
+    with set_default_dtype_ctx(torch.float16):
+        actual_dtype = jfn(x)
+        assert actual_dtype == torch.float16
+
+    assert thunder.cache_misses(jfn) == 2
+
+
+def test_change_default_dtype_in_jitted_fn():
+    default_dtype = torch.get_default_dtype()
+    try:
+
+        def fn(x):
+            torch.set_default_dtype(torch.float16)
+            o = torch.ones(x.shape)
+            return o.dtype
+
+        jfn = thunder.jit(fn)
+        with pytest.raises(RuntimeError, match="Default dtype is changed during the execution of jitted function"):
+            jfn(torch.randn(3, 3))
+    finally:
+        torch.set_default_dtype(default_dtype)
+
+
+def test_arange_default_dtype():
+    # If any of start, end, or stop are floating-point, the dtype is inferred to be the default dtype, see get_default_dtype().
+    # Otherwise, the dtype is inferred to be torch.int64.
+    def fn():
+        return torch.arange(start=1, end=2, step=0.5).dtype
+
+    jfn = thunder.jit(fn)
+    assert fn() == jfn()
+    assert jfn() == torch.float32
+
+    def fn():
+        return torch.arange(start=1, end=3, step=1).dtype
+
+    jfn = thunder.jit(fn)
+    assert fn() == jfn()
+    assert jfn() == torch.int64

@@ -134,7 +134,9 @@ class Proxy(VariableInterface, ProxyInterface):
         return self.__class__(name=name)
 
     def __repr__(self) -> str:
-        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self.shape}>'
+        # All subclasses of Proxy will have `self.name`, so this generic implementation relies on that.
+        # To have a specific repr for a subclass, override the implementation for that subclass.
+        return f'<{type(self).__name__}(name="{self.name}")>'
 
     def type_string(self) -> str:
         return "Any"
@@ -1198,6 +1200,9 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
     def requires_grad(self):
         return self._requires_grad
 
+    def __repr__(self):
+        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self.shape})>'
+
     def type_string(self):
         return f"FUTURE {self.device} {self.dtype.shortname()}{list(self.shape)}"
 
@@ -1293,8 +1298,11 @@ class TensorProxy(Proxy, TensorProxyInterface):
         """Return a copy of this proxy with the given name."""
         return tensorproxy(self, name=name, history=self.history)
 
+    def __repr__(self):
+        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self.shape})>'
+
     def type_string(self):
-        return f"{self.device} {self.dtype.shortname()}{list(self.shape)}"
+        return f"{self.device.device_str()} {self.dtype.shortname()}{list(self.shape)}"
 
     # NOTE __getattr__ is overridden to support language-specific methods
     def __getattr__(self, attr: str, /):
@@ -1307,6 +1315,15 @@ class TensorProxy(Proxy, TensorProxyInterface):
             return partial(method_or_value, self)
 
         return method_or_value
+
+    def __iter__(self):
+        # NOTE: this implementation is equivalent to torch.Tensor.__iter__
+
+        if self.ndim == 0:
+            raise TypeError("iteration over a 0-dim tensor")
+
+        unbound_tuple = self.unbind(0)
+        return iter(unbound_tuple)
 
     #
     # Default attribute
@@ -1393,9 +1410,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(self, other)
 
     def __iadd__(self, other):
-        return self.add_(other)
-
-    def add_(self, other):
         method = resolve_method("add_", self, other)
         return method(self, other)
 
@@ -1436,9 +1450,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(self, other)
 
     def __imul__(self, other):
-        return self.mul_(other)
-
-    def mul_(self, other):
         method = resolve_method("mul_", self, other)
         return method(self, other)
 
@@ -1451,9 +1462,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(self, other)
 
     def __ipow__(self, other):
-        return self.pow_(other)
-
-    def pow_(self, other):
         method = resolve_method("pow_", self, other)
         return method(self, other)
 
@@ -1466,9 +1474,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(self, other)
 
     def __isub__(self, other):
-        return self.sub_(other)
-
-    def sub_(self, other):
         method = resolve_method("sub_", self, other)
         return method(self, other)
 
@@ -1485,10 +1490,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(other, self)
 
     def __itruediv__(self, other):
-        return self.div_(other)
-
-    def div_(self, other, *, rounding_mode: str | None = None):
-        method = resolve_method("div_", self, other, rounding_mode=rounding_mode)
+        method = resolve_method("div_", self, other, rounding_mode=None)
         return method(self, other)
 
     #
