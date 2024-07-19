@@ -10,7 +10,6 @@ import thunder.torch as ltorch
 from thunder.core import dtypes
 from thunder.executors.torchex import no_autocast
 from thunder.tests.framework import instantiate, TorchExecutor
-import thunder.torch
 
 
 # TODO This test currently ignores the "should_autocast" argument enumerated in it
