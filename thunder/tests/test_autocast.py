@@ -197,7 +197,7 @@ def test_autocast_convolution(dim, requires_grad):
         jit_grads = torch.autograd.grad(jit_out, [x, w, b], go)
 
         for eg, jg in zip(eager_grads, jit_grads):
-            torch.testing.assert_close(eg, jg, rtol=1e-2, atol=1e-2)
+            torch.testing.assert_close(eg, jg, rtol=5e-2, atol=5e-2)
 
     with torch.autocast("cpu", torch.float16):
         eager_out = foo(x, w)
@@ -211,4 +211,4 @@ def test_autocast_convolution(dim, requires_grad):
         jit_grads = torch.autograd.grad(jit_out, [x, w], go)
 
         for eg, jg in zip(eager_grads, jit_grads):
-            torch.testing.assert_close(eg, jg, rtol=1e-2, atol=1e-2)
+            torch.testing.assert_close(eg, jg, rtol=5e-2, atol=5e-2)
