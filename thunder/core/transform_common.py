@@ -490,7 +490,7 @@ def _get_prod_bsym_with_arg(
 def collect_required_copy_bsyms_for_args(
     trace: Trace,
     removed_copy_bsyms: list[tuple[int, BoundSymbol]],
-) -> tuple[list[BoundSymbol], dict[VariableInterface, TensorProxy]]:
+) -> tuple[list[list[BoundSymbol]], dict[VariableInterface, TensorProxy]]:
     """Identify required pairs of copy src and copy dst."""
 
     flat_args: tuple[TensorProxy, ...] = tuple(
@@ -557,15 +557,20 @@ def collect_required_copy_bsyms_for_args(
             _, bsyms = new_dst_to_copy_bsym[var_t]
             required_copy_bsyms[trace_args_set[unvariableify(var_t)]] = bsyms
 
-    sorted_copy_bsyms: list[BoundSymbol] = []
+    sorted_copy_bsyms: list[list[BoundSymbol]] = []
     for list_of_bsyms in required_copy_bsyms:
         if list_of_bsyms is None:
             continue
-        sorted_copy_bsyms.extend(list_of_bsyms)
+        sorted_copy_bsyms.append(list_of_bsyms)
 
     swap_map_for_return: dict[VariableInterface, TensorProxy] = {}
-    for bsym in filter(lambda bsym: bsym.sym.id == prims.PrimIDs.COPY_, sorted_copy_bsyms):
-        swap_map_for_return[variableify(bsym.flat_proxy_args[0])] = bsym.flat_proxy_args[1]
+    for bsyms in sorted_copy_bsyms:
+        copy_bsym = bsyms[-1]
+        check(
+            copy_bsym.sym.id == prims.PrimIDs.COPY_,
+            lambda: f"{copy_bsym.sym.id = } but expected {prims.PrimIDs.COPY_}",
+        )
+        swap_map_for_return[variableify(copy_bsym.flat_proxy_args[0])] = copy_bsym.flat_proxy_args[1]
     return sorted_copy_bsyms, swap_map_for_return
 
 
@@ -844,14 +849,34 @@ def functionalize_inplace_ops(
         ):
             new_functional_bsym.subsymbols = new_functional_bsym.subsymbols[0].subsymbols
 
+    functionalized_computation_trace = from_trace(computation_trace)
+    functionalized_computation_trace.set_provenance(TraceProvenance("Functionalize in-place ops"))
     required_copy_bsyms, swap_map_for_return = collect_required_copy_bsyms_for_args(
         intermediate_trace,
         removed_copy_bsyms,
     )
-    functionalized_computation_trace = from_trace(computation_trace)
     return_bsym = new_bsyms[-1].from_bsym_swap_proxies(swap_map_for_return)
-    functionalized_computation_trace.bound_symbols = new_bsyms[:-1] + required_copy_bsyms + [return_bsym]
-    functionalized_computation_trace.set_provenance(TraceProvenance("Functionalize in-place ops"))
+
+    producer_map = producers(new_bsyms[:-1])
+    bsym_to_copy_bsyms: dict[BoundSymbol, list[BoundSymbol]] = {}
+    for bsyms in required_copy_bsyms:
+        check(len(bsyms) in (1, 2), lambda: f"{len(bsyms)=} must be either 1 or 2")
+        expected_sym_id = prims.PrimIDs.RESHAPE if len(bsyms) == 2 else prims.PrimIDs.COPY_
+        b = bsyms[0]
+        check(b.sym.id == expected_sym_id, lambda: f"{b.sym.id=} expected to be {expected_sym_id}")
+        key: TensorProxy = b.flat_proxy_args[0]
+        last_consumer = producer_map[key]
+        check(isinstance(last_consumer, BoundSymbol), lambda: f"{type(last_consumer) =  }")
+        bsym_to_copy_bsyms[last_consumer] = bsyms
+
+    functionalized_bsyms: list[BoundSymbol] = []
+    for bsym in new_bsyms[:-1]:
+        functionalized_bsyms.append(bsym)
+        if bsym in bsym_to_copy_bsyms:
+            functionalized_bsyms.extend(bsym_to_copy_bsyms[bsym])
+    functionalized_bsyms.append(return_bsym)
+
+    functionalized_computation_trace.bound_symbols = functionalized_bsyms
     # note(crcrpar): I kind of want to do the following two.
     # functionalized_computation_trace._provenance.swap_map = swap_map
     # functionalized_computation_trace._provenance.bsym_inplace_to_functional = bsym_inplace_to_functional
