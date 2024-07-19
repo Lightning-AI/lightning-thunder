@@ -4011,11 +4011,11 @@ def autocast(func: Callable, dtype: dtypes.dtype):
 
 
 # State to enable and disable autocast (while interpreter is generating the computation trace).
-autocast_enabled = True
+_autocast_enabled = True
 
 
 def is_autocast_enabled():
-    return autocast_enabled
+    return _autocast_enabled
 
 
 # NOTE: Disable Autocast
@@ -4024,13 +4024,13 @@ def is_autocast_enabled():
 # Without disabling autocast we will have infinite recursion.
 @contextmanager
 def disable_autocast():
-    global autocast_enabled
-    default = autocast_enabled
-    autocast_enabled = False
+    global _autocast_enabled
+    default = _autocast_enabled
+    _autocast_enabled = False
     try:
         yield
     finally:
-        autocast_enabled = default
+        _autocast_enabled = default
 
 
 def maybe_apply_autocast(sym):

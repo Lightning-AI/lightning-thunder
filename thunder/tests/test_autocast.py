@@ -10,6 +10,7 @@ import thunder.torch as ltorch
 from thunder.core import dtypes
 from thunder.executors.torchex import no_autocast
 from thunder.tests.framework import instantiate, TorchExecutor
+import thunder.torch
 
 
 # TODO This test currently ignores the "should_autocast" argument enumerated in it
@@ -187,6 +188,8 @@ def test_autocast_mixed_dtype_inputs_on_prims():
         jit_out = jfoo(x, w)
 
     assert jit_out.dtype == torch.bfloat16
+    exec_trace = thunder.last_traces(jfoo)[0]
+    assert any(bsym.sym.id == thunder.prims.PrimIDs.CONVERT_ELEMENT_TYPE for bsym in exec_trace.bound_symbols)
 
 
 @pytest.mark.parametrize("dim", [1, 2, 3])
