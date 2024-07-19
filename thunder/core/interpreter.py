@@ -6255,7 +6255,7 @@ def _setup_frame_and_run_python_function(
     has_varkwargs = (fn.__code__.co_flags & inspect.CO_VARKEYWORDS) > 0
 
     # for the function signature varargs, we just need keep track of the
-    # number of provided positional args in args, but to to pupulate the
+    # number of provided positional args in args, but to to populate the
     # function signature varkwargs, we need to track
     # which provided kwargs have been "consumed" by the signature.
 
