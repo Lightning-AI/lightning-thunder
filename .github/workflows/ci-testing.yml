@@ -31,6 +31,7 @@ jobs:
         requires: ["latest", "nightly"] # , 'oldest'
         include:
           - { os: "ubuntu-22.04", python-version: "3.11", requires: "latest" }
+          - { os: "ubuntu-22.04", python-version: "3.12", requires: "latest" }
 
     # Timeout: https://stackoverflow.com/a/59076067/4521646
     timeout-minutes: 35
@@ -104,7 +105,7 @@ jobs:
             --durations=250
 
       - name: Testing just a few
-        if: matrix.python-version == '3.11'
+        if: matrix.python-version == '3.11' || matrix.python-version == '3.12'
         #continue-on-error: true
         run: |
           python -m pytest \
