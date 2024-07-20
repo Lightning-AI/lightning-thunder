@@ -3692,9 +3692,18 @@ def _call_intrinsic_1_handler(
 ) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
     intrinsics_1 = {
+        # INTRINSIC_1_INVALID
+        "INTRINSIC_PRINT": _print_intrinsic,
         "INTRINSIC_LIST_TO_TUPLE": _list_to_tuple_intrinsic,
         "INTRINSIC_IMPORT_STAR": _import_star_intrinsic,
+        # INTRINSIC_STOPITERATION_ERROR
+        # INTRINSIC_ASYNC_GEN_WRAP
         "INTRINSIC_UNARY_POSITIVE": _unary_positive_intrinsic,
+        # INTRINSIC_TYPEVAR
+        # INTRINSIC_PARAMSPEC
+        # INTRINSIC_TYPEVARTUPLE
+        # INTRINSIC_SUBSCRIPT_GENERIC
+        # INTRINSIC_TYPEALIAS
     }
     intrinsic_name = dis._intrinsic_1_descs[inst.arg]
 
@@ -4560,7 +4569,7 @@ def _load_attr_handler(
     return check_and_append(stack, _interpret_call(getattr, a, name))
 
 
-# https://docs.python.org/3.10/library/dis.html#opcode-LOAD_ATTR
+# https://docs.python.org/3.12/library/dis.html#opcode-LOAD_ATTR
 @register_opcode_handler("LOAD_ATTR", min_ver=(3, 12))
 def _load_attr_handler_3_12(
     inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, **kwargs
@@ -4574,6 +4583,35 @@ def _load_attr_handler_3_12(
         return check_and_append(stack, _interpret_call(getattr, obj, name))
     else:
         return load_method_helper(obj, name, stack)
+
+
+# https://docs.python.org/3.12/library/dis.html#opcode-LOAD_ATTR
+@register_opcode_handler("LOAD_SUPER_ATTR", min_ver=(3, 12))
+def _load_super_attr_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, **kwargs
+) -> None | INTERPRETER_SIGNALS:
+    assert type(inst.arg) is int
+    idx = inst.arg >> 2
+    load_method_like = (inst.arg & 1) > 0
+    two_argument_super = (inst.arg & 2) > 0
+
+    _self = stack.pop_wrapped()
+    _cls = stack.pop_wrapped()
+    _super = stack.pop_wrapped()  # ???
+
+    if two_argument_super:
+        super_object = _interpret_call(_super, _cls, _self)
+    else:
+        super_object = _interpret_call(_super)
+
+    if super_object is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return super_object
+
+    name: WrappedValue = wrap_const(co.co_names[idx])
+    if not load_method_like:
+        return check_and_append(stack, _interpret_call(getattr, super_object, name))
+    else:
+        return load_method_helper(super_object, name, stack)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_BUILD_CLASS
@@ -5355,23 +5393,27 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()) -> Literal[INTERPRETE
     return INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
 
-# https://docs.python.org/3.11/library/dis.html#opcode-PRINT_EXPR
-@register_opcode_handler("PRINT_EXPR", max_ver=(3, 11))
-def _print_expr_handler(
-    inst: dis.Instruction, /, stack: InterpreterStack, frame: InterpreterFrame, **kwargs
-) -> None | INTERPRETER_SIGNALS:
-    def impl(tos):
+def _print_intrinsic(expr):
+    def impl(expr):
         # NOTE: There is no other way to obtain the display hook, other
         #       than writing a C extension, so we mangle.
         # NOTE: The display hook's return value is ignored by cpython.
         # NOTE: By default, type(sys.__displayhook__) is <class 'builtin_function_or_method'>.
         from sys import displayhook as __thunder_sys_displayhook
 
-        __thunder_sys_displayhook(tos)
-        return None
+        __thunder_sys_displayhook(expr)
 
-    tos = stack.pop()
-    val = _interpret_call_with_unwrapping(impl, tos)
+    return _interpret_call(impl, expr)
+
+
+# https://docs.python.org/3.11/library/dis.html#opcode-PRINT_EXPR
+@register_opcode_handler("PRINT_EXPR", max_ver=(3, 11))
+def _print_expr_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, frame: InterpreterFrame, **kwargs
+) -> None | INTERPRETER_SIGNALS:
+    expr = stack.pop_wrapped()
+
+    val = _print_intrinsic(expr)
     if val is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return val
     return None
