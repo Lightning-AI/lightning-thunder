@@ -2750,6 +2750,10 @@ def test_name_opcodes_and_print_expr(jit):
         jfn()
 
 
+@pytest.mark.skipif(
+    sys.version_info >= (3, 12),
+    reason="Python 3.12 code.InteractiveInterpreter().runsource does not use the displayhook as before",
+)
 def test_displayhook(jit):
     from contextlib import redirect_stdout
     import io

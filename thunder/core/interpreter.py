@@ -6713,7 +6713,7 @@ def _run_frame(
                 assert frame.inst_ptr <= max_inst_ptr
                 frame.inst_ptr += 1
             inst: dis.Instruction = insts[inst_ptr_to_idx[frame.inst_ptr]]
-
+            print("#############", len(frame.interpreter_stack), inst)
             # Updates the stack frame to the current position
             # TODO maybe also have inst_ptr?
             frame.nexti(inst)
@@ -6757,7 +6757,13 @@ def _run_frame(
                             frame.interpreter_stack.append(current_exception)
                         current_exception = None
                         skip_stack_effect_check = True
-                        interpretation_result = et_handler // 2
+                        if sys.version_info >= (3, 12):
+                            # yeah, this is *really* ugly to make interpretation_result stay relative... maybe introduce another signal
+                            interpretation_result = (
+                                et_handler // 2 - idx_to_next_inst_ptr[inst_ptr_to_idx[frame.inst_ptr]]
+                            )
+                        else:
+                            interpretation_result = et_handler // 2
                 else:
                     # This is Python 3.10-style unwinding
                     skip_stack_effect_check = True  # or only do this in ifs below?
