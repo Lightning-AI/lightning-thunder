@@ -34,6 +34,9 @@ def test_torch_compile_litgpt():
 @pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported")
 @requiresCUDA
 def test_torch_compile_cat_nvfuser_phi2_tanh():
+    if not torch.cuda.is_bf16_supported():
+        pytest.skip("Your CUDA device does not support bfloat16")
+
     device = torch.device("cuda")
     config = Config.from_name("phi-2", n_layer=1, gelu_approximate="tanh")
     with device:
