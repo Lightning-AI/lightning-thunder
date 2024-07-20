@@ -4502,7 +4502,7 @@ def _list_extend_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
 @register_opcode_handler("LIST_TO_TUPLE", max_ver=(3, 11))
 def _list_to_tuple_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
     tos = stack.pop_wrapped()
-    return check_and_append(_list_to_tuple_intrinsic(tos))
+    return check_and_append(stack, _list_to_tuple_intrinsic(tos))
 
 
 # https://docs.python.org/3.13/library/dis.html#opcode-LOAD_ASSERTION_ERROR
