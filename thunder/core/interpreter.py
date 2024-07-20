@@ -1561,7 +1561,10 @@ def _object_getattribute_lookaside(obj: Any, name: str):
 
             # if it is opaque, don't _interpret_call here, to avoid a wrap/unwrap dance
             if is_opaque(descr_get):
-                return descr_get(cls_var, uobj, objtype)
+                try:
+                    return descr_get(cls_var, uobj, objtype)
+                except Exception as e:
+                    return do_raise(e)
             result = _interpret_call_with_unwrapping(descr_get, cls_var, obj, objtype)
             return result
 
