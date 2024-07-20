@@ -3090,6 +3090,7 @@ def check_signal(val):
 @register_opcode_handler("ASYNC_GEN_WRAP", min_ver=(3, 11), max_ver=(3, 11))
 def _async_gen_wrap_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
     # the next thing will be to yield the value, but we delegate this along with the wrapping to thunder_interpreter_async_generator
+    # update the intrinsic for 3.12+, too
     pass
 
 
@@ -3685,6 +3686,45 @@ def _list_to_tuple_intrinsic(tos):
     return res
 
 
+def _stopiteration_error_intrinsic(exc):
+    runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
+    co_flags = runtimectx.frame_stack[-1].code.co_flags
+
+    assert wrapped_isinstance(exc, Exception)
+    # CPython 3.12 asserts whether frame->owner == FRAME_OWNED_BY_GENERATOR
+    assert co_flags & (inspect.CO_COROUTINE | inspect.CO_GENERATOR | inspect.CO_ASYNC_GENERATOR)
+
+    msg = None
+    if wrapped_isinstance(exc, StopIteration):
+        msg = "generator raised StopIteration"
+        if co_flags & inspect.CO_ASYNC_GENERATOR:
+            msg = "async generator raised StopIteration"
+        elif co_flags & inspect.CO_COROUTINE:
+            msg = "coroutine raised StopIteration"
+    elif (co_flags & inspect.CO_ASYNC_GENERATOR) and wrapped_isinstance(exc, StopAsyncIteration):
+        msg = "async generator raised StopAsyncIteration"
+
+    if msg:
+        compile_ctx: InterpreterCompileCtx = get_interpretercompilectx()
+        if compile_ctx._with_provenance_tracking:
+            msg = wrap_const(msg)
+
+        def impl(exc, msg):
+            error = RuntimeError(msg)
+            error.__cause__ = exc.value
+            return error
+
+        return _interpret_call(impl, exc, msg)
+
+    return exc
+
+
+def _async_gen_wrap_intrinsic(v):
+    # noop for now
+    # see ASYNC_GEN_WRAP opcode for 3.11
+    return v
+
+
 # https://docs.python.org/3.12/library/dis.html#opcode-CALL_INTRINSIC_1
 @register_opcode_handler("CALL_INTRINSIC_1", min_ver=(3, 12))
 def _call_intrinsic_1_handler(
@@ -3696,8 +3736,8 @@ def _call_intrinsic_1_handler(
         "INTRINSIC_PRINT": _print_intrinsic,
         "INTRINSIC_LIST_TO_TUPLE": _list_to_tuple_intrinsic,
         "INTRINSIC_IMPORT_STAR": _import_star_intrinsic,
-        # INTRINSIC_STOPITERATION_ERROR
-        # INTRINSIC_ASYNC_GEN_WRAP
+        "INTRINSIC_STOPITERATION_ERROR": _stopiteration_error_intrinsic,
+        "INTRINSIC_ASYNC_GEN_WRAP": _async_gen_wrap_intrinsic,
         "INTRINSIC_UNARY_POSITIVE": _unary_positive_intrinsic,
         # INTRINSIC_TYPEVAR
         # INTRINSIC_PARAMSPEC
@@ -4079,7 +4119,7 @@ def _end_for_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
 # https://docs.python.org/3.12/library/dis.html#opcode-END_SEND
 @register_opcode_handler("END_SEND", min_ver=(3, 12))
 def _end_send_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
-    stack.pop_wrapped()
+    del stack[-2]
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-EXTENDED_ARG
