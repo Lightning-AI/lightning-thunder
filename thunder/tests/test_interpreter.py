@@ -2119,7 +2119,13 @@ def test_list_to_tuple(jit):
     def ltt():
         return (*[1, 2, 3],)
 
-    assert any(i.opname == "LIST_TO_TUPLE" for i in dis.get_instructions(ltt))
+    if sys.version_info >= (3, 12):
+        assert any(
+            (i.opname == "CALL_INTRINSIC_1" and i.argrepr == "INTRINSIC_LIST_TO_TUPLE")
+            for i in dis.get_instructions(ltt)
+        )
+    else:
+        assert any(i.opname == "LIST_TO_TUPLE" for i in dis.get_instructions(ltt))
     assert jit(ltt)() == ltt()
 
 

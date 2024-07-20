@@ -1239,6 +1239,9 @@ class register_opcode_handler:
         ):
             assert self.name not in _default_opcode_handler_map, self.name
             assert self.name in dis.opmap, self.name
+            assert (
+                self.name.lower() in fn.__name__
+            ), f"opcode handler name mismatch {self.name.lower()} vs. {fn.__name__}"
             _default_opcode_handler_map[self.name] = fn
             return fn
         return _default_opcode_handler_map.get(self.name, fn)
@@ -3444,6 +3447,24 @@ def _inplace_xor_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
     return _binary_op_helper(stack, BINARY_OP.IXOR)
 
 
+# https://docs.python.org/3.12/library/dis.html#opcode-BINARY_SLICE
+@register_opcode_handler("BINARY_SLICE")
+def _binary_slice_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
+    end = stack.pop_wrapped()
+    start = stack.pop_wrapped()
+    container = stack.pop_wrapped()
+
+    def impl(container, start, end):
+        return container.__getitem__(slice(start, end))
+
+    res = _interpret_call(impl, container, start, end)
+
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return res
+
+    return check_and_append(stack, res)
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-BINARY_SUBSCR
 @register_opcode_handler("BINARY_SUBSCR")
 def _binary_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
@@ -4035,10 +4056,16 @@ def _end_async_for_handler_3_11(
         return INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
 
-# https://docs.python.org/3.11/library/dis.html#opcode-END_ASYNC_FOR
+# https://docs.python.org/3.11/library/dis.html#opcode-END_FOR
 @register_opcode_handler("END_FOR", min_ver=(3, 12))
 def _end_for_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
     stack.pop_wrapped()
+    stack.pop_wrapped()
+
+
+# https://docs.python.org/3.12/library/dis.html#opcode-END_SEND
+@register_opcode_handler("END_SEND", min_ver=(3, 12))
+def _end_send_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
     stack.pop_wrapped()
 
 
@@ -4507,7 +4534,7 @@ def _list_to_tuple_handler(inst: dis.Instruction, /, stack: InterpreterStack, **
 
 # https://docs.python.org/3.13/library/dis.html#opcode-LOAD_ASSERTION_ERROR
 @register_opcode_handler("LOAD_ASSERTION_ERROR")
-def _load_assertion_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
+def _load_assertion_error_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
     stack.append(wrap_const(AssertionError))
 
 
@@ -4613,8 +4640,11 @@ def _load_deref_handler(
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-LOAD_FAST
+# https://docs.python.org/3.12/library/dis.html#opcode-LOAD_FAST_CHECK
+# LOAD_FAST for Python <3.12 is LOAD_FAST_CHECK
+@register_opcode_handler("LOAD_FAST_CHECK", min_ver=(3, 12))
 @register_opcode_handler("LOAD_FAST")
-def _load_fast_handler(
+def _load_fast_check_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
 ) -> None | INTERPRETER_SIGNALS:
     assert isinstance(inst.arg, int)
@@ -4633,6 +4663,34 @@ def _load_fast_handler(
         assert isinstance(val, WrappedValue), f"unexpected value of type {type(val)}, {val}, {inst}"
 
     val = load_fast_callback(val, name)
+
+    return check_and_append(stack, val)
+
+
+# https://docs.python.org/3.12/library/dis.html#opcode-LOAD_FAST_AND_CLEAR
+@register_opcode_handler("LOAD_FAST_AND_CLEAR", min_ver=(3, 12))
+def _load_fast_and_clear_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
+) -> None | INTERPRETER_SIGNALS:
+    assert isinstance(inst.arg, int)
+    var_num: int = inst.arg
+    assert var_num >= 0 and var_num < len(frame.localsplus)
+
+    val: Any = frame.localsplus[var_num]
+    name: str = frame.get_localsplus_name(var_num)
+
+    # empty local variable slots are initialized to Py_NULL(), in this
+    # case we push Py_NULL (but wrapped)
+    if isinstance(val, Py_NULL):
+        val = wrap_const(Py_NULL())
+
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
+    if ctx._with_provenance_tracking:
+        assert isinstance(val, WrappedValue), f"unexpected value of type {type(val)}, {val}, {inst}"
+
+    val = load_fast_callback(val, name)
+    # clear the local variable
+    frame.localsplus[var_num] = Py_NULL()
 
     return check_and_append(stack, val)
 
@@ -5193,9 +5251,7 @@ def _pop_jump_if_true_handler(
 
 # https://docs.python.org/3.12/library/dis.html#opcode-POP_JUMP_IF_NONE
 @register_opcode_handler("POP_JUMP_IF_NONE", min_ver=(3, 12))
-def _pop_jump_forward_if_none_handler(
-    inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs
-) -> int | None:
+def _pop_jump_if_none_handler(inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs) -> int | None:
     assert isinstance(inst.arg, int)
 
     tos = stack.pop()
@@ -5208,7 +5264,7 @@ def _pop_jump_forward_if_none_handler(
 
 # https://docs.python.org/3.12/library/dis.html#opcode-POP_JUMP_IF_NOT_NONE
 @register_opcode_handler("POP_JUMP_IF_NOT_NONE", min_ver=(3, 12))
-def _pop_jump_forward_if_none_handler(
+def _pop_jump_if_not_none_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs
 ) -> int | None:
     assert isinstance(inst.arg, int)
@@ -5391,7 +5447,7 @@ def _reraise_handler_3_11(
 
 # https://docs.python.org/3.12/library/dis.html#opcode-RETURN_CONST
 @register_opcode_handler("RETURN_CONST", min_ver=(3, 12))
-def _return_value_handler(
+def _return_const_handler(
     inst: dis.Instruction, /, co: CodeType, stack: InterpreterStack, **kwargs
 ) -> int | None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
@@ -5686,6 +5742,20 @@ def _store_name_handler(
     return check_signal(_interpret_call(impl, frame.names, wrap_const(name), tos))
 
 
+# https://docs.python.org/3.12/library/dis.html#opcode-STORE_SLICE
+@register_opcode_handler("STORE_SLICE")
+def _store_slice_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
+    end = stack.pop_wrapped()
+    start = stack.pop_wrapped()
+    container = stack.pop_wrapped()
+    values = stack.pop_wrapped()
+
+    def impl(container, start, end, values):
+        return container.__setitem__(slice(start, end), values)
+
+    return _interpret_call_with_unwrapping(impl, container, start, end, values)
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-STORE_SUBSCR
 @register_opcode_handler("STORE_SUBSCR")
 def _store_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
@@ -5895,10 +5965,16 @@ def _send_handler(
     if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
         if isinstance(runtimectx.curexc, StopIteration):
-            stack.pop()  # remove generator
-            stack.append(runtimectx.curexc.value)
+            retval = runtimectx.curexc.value
             runtimectx.curexc = None
-            return inst_ptr + inst.arg + 1
+            if sys.version_info < (3, 12):
+                stack.pop()  # remove generator
+                stack.append(retval)
+                return inst_ptr + inst.arg + 1
+            else:
+                # Python 3.12 keeps the generator, returns relative jump
+                stack.append(retval)
+                return inst.arg
         else:
             return res  # propagate exception
 
