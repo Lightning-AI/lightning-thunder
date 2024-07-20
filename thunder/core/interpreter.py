@@ -3448,7 +3448,7 @@ def _inplace_xor_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
 
 
 # https://docs.python.org/3.12/library/dis.html#opcode-BINARY_SLICE
-@register_opcode_handler("BINARY_SLICE")
+@register_opcode_handler("BINARY_SLICE", min_ver=(3, 12))
 def _binary_slice_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     end = stack.pop_wrapped()
     start = stack.pop_wrapped()
@@ -5184,7 +5184,7 @@ def _pop_jump_forward_if_none_handler_3_11(
 
 # https://docs.python.org/3.11/library/dis.html#opcode-POP_JUMP_FORWARD_IF_NOT_NONE
 @register_opcode_handler("POP_JUMP_FORWARD_IF_NOT_NONE", min_ver=(3, 11), max_ver=(3, 11))
-def _pop_jump_forward_if_none_handler(
+def _pop_jump_forward_if_not_none_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs
 ) -> int | None:
     assert isinstance(inst.arg, int)
@@ -5743,7 +5743,7 @@ def _store_name_handler(
 
 
 # https://docs.python.org/3.12/library/dis.html#opcode-STORE_SLICE
-@register_opcode_handler("STORE_SLICE")
+@register_opcode_handler("STORE_SLICE", min_ver=(3, 12))
 def _store_slice_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
     end = stack.pop_wrapped()
     start = stack.pop_wrapped()
