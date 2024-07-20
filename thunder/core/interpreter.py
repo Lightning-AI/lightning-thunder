@@ -3691,7 +3691,11 @@ def _call_intrinsic_1_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
 ) -> None | INTERPRETER_SIGNALS:
     assert type(inst.arg) is int
-    intrinsics_1 = {"INTRINSIC_LIST_TO_TUPLE": _list_to_tuple_intrinsic}
+    intrinsics_1 = {
+        "INTRINSIC_LIST_TO_TUPLE": _list_to_tuple_intrinsic,
+        "INTRINSIC_IMPORT_STAR": _import_star_intrinsic,
+        "INTRINSIC_UNARY_POSITIVE": _unary_positive_intrinsic,
+    }
     intrinsic_name = dis._intrinsic_1_descs[inst.arg]
 
     tos = stack.pop_wrapped()
@@ -4318,34 +4322,19 @@ def _import_name_handler(
     return check_and_append(stack, _interpret_call_with_unwrapping(impl, module_name, fromlist, level))
 
 
-# https://docs.python.org/3.10/library/dis.html#opcode-IMPORT_STAR
-@register_opcode_handler("IMPORT_STAR", max_ver=(3, 11))
-def _import_star_handler(
-    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
-) -> None | INTERPRETER_SIGNALS:
-    # The module is actually imported from another instruction.
-    # This instruction can only be parsed at top level and modify globals,
-    # since localsplus is of fixed length/positions. It can't be parsed inside a function.
-
-    # `from operator import *` compiles as
-    #  0 LOAD_CONST    0 (0)
-    #  2 LOAD_CONST    1 (('*',))
-    #  4 IMPORT_NAME   0 (operator)
-    #  6 IMPORT_STAR
-
-    module = stack.pop()
-    assert isinstance(module, ModuleType)
+def _import_star_intrinsic(module):
+    assert wrapped_isinstance(module, ModuleType)
 
     # Get the locals of the current frame, not the frame created by interpreted impl() below.
-    _locals = _interpret_call_with_unwrapping(locals)
+    _locals = _interpret_call(locals)
     if _locals is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return _locals
-    assert isinstance(_locals, dict)
+    assert wrapped_isinstance(_locals, dict)
 
     # For every name in __all__ if present in the module, or every name in __dict__ not
     # starting with _ if __all__ is not present, add the name to the current locals() dict,
     # and produce the same exceptions as cpython would.
-    def impl():
+    def impl(module, _locals):
         skip_leading_underscores = False
         all_names = getattr(module, "__all__", None)
         if all_names is None:
@@ -4369,7 +4358,27 @@ def _import_star_handler(
                 continue
             _locals[name] = getattr(module, name)
 
-    res = _interpret_call_with_unwrapping(impl)
+    return _interpret_call(impl, module, _locals)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-IMPORT_STAR
+@register_opcode_handler("IMPORT_STAR", max_ver=(3, 11))
+def _import_star_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, co: CodeType, frame: InterpreterFrame, **kwargs
+) -> None | INTERPRETER_SIGNALS:
+    # The module is actually imported from another instruction.
+    # This instruction can only be parsed at top level and modify globals,
+    # since localsplus is of fixed length/positions. It can't be parsed inside a function.
+
+    # `from operator import *` compiles as
+    #  0 LOAD_CONST    0 (0)
+    #  2 LOAD_CONST    1 (('*',))
+    #  4 IMPORT_NAME   0 (operator)
+    #  6 IMPORT_STAR
+
+    module = stack.pop_wrapped()
+
+    res = _import_star_intrinsic(module)
     if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
 
@@ -5814,12 +5823,8 @@ def _unary_negative_handler(inst: dis.Instruction, /, stack: InterpreterStack, *
     return check_and_append(stack, _interpret_call_with_unwrapping(impl))
 
 
-# https://docs.python.org/3.10/library/dis.html#opcode-UNARY_POSITIVE
-@register_opcode_handler("UNARY_POSITIVE", max_ver=(3, 11))
-def _unary_positive_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
-    tos = stack.pop()
-
-    def impl():
+def _unary_positive_intrinsic(tos):
+    def impl(tos):
         if hasattr(tos, "__pos__"):
             result = tos.__pos__()
             if result is not NotImplemented:
@@ -5827,7 +5832,15 @@ def _unary_positive_handler(inst: dis.Instruction, /, stack: InterpreterStack, *
 
         raise TypeError(f"bad operand type for unary +: '{type(tos).__name__}'")
 
-    return check_and_append(stack, _interpret_call_with_unwrapping(impl))
+    return _interpret_call_with_unwrapping(impl, tos)
+
+
+# https://docs.python.org/3.10/library/dis.html#opcode-UNARY_POSITIVE
+@register_opcode_handler("UNARY_POSITIVE", max_ver=(3, 11))
+def _unary_positive_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
+    tos = stack.pop()
+    res = _unary_positive_intrinsic(tos)
+    return check_and_append(stack, res)
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNPACK_EX
