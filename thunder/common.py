@@ -44,6 +44,7 @@ from thunder.core.dtypes import to_dtype
 
 import torch as torch
 import numpy as np
+import thunder
 
 #
 # Datastructures for compiled functions
@@ -858,3 +859,20 @@ def _create_callable(
     _fn._using_grad_transform = _using_grad_transform
 
     return _fn
+
+
+def transform_to_torch_types(trace: TraceCtx):
+    # convert the thunder types to torch types if any
+    def map_to_torch(x: Any) -> Any:
+        if isinstance(x, thunder.dtypes.dtype):
+            return thunder.dtypes.to_torch_dtype(x)
+        elif isinstance(x, thunder.devices.Device):
+            return thunder.devices.to_torch_device(x)
+        return x
+
+    last = trace.bound_symbols[-1]
+    assert last.sym.id == prims.PrimIDs.RETURN
+    new_args = tree_map(map_to_torch, last.args)
+    new_bsym = prims.python_return.bind(*new_args, output=())
+    trace.bound_symbols[-1] = new_bsym
+    return trace

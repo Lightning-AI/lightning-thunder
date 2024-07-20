@@ -72,6 +72,7 @@ vjp_op_force = {
     "cumsum",
     "mse_loss",
     "adaptive_avg_pool2d",
+    "max_pool2d",
 }
 
 

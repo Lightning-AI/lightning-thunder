@@ -20,7 +20,7 @@ from thunder.distributed.checkpoint import (
     get_model_state_dict,
     _TORCH_GREATER_EQUAL_2_3,
 )
-from thunder.tests.distributed.helper import DataParallelTestCase
+from thunder.tests.distributed.helper import DistributedParallelTestCase
 
 
 class Submodule(torch.nn.Module):
@@ -96,7 +96,7 @@ def distributed_ckpt_to_regular(path):
     torch.cuda.is_available() and torch.distributed.is_available() and torch.distributed.is_nccl_available(),
     "Distributed checkpoint tests require CUDA and NCCL `torch.distributed` backend",
 )
-class DistributedCheckpointTest(DataParallelTestCase):
+class DistributedCheckpointTest(DistributedParallelTestCase):
     @property
     def tmp_path(self) -> Path:
         tmp_dir = tempfile.TemporaryDirectory()

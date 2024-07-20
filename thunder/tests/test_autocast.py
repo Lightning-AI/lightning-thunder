@@ -169,3 +169,66 @@ def test_autocast_mixed_dtype_inputs():
         jit_out = jfoo(x, w)
 
     torch.testing.assert_close(eager_out, jit_out)
+
+
+def test_autocast_mixed_dtype_inputs_on_prims():
+    # Verify that the autocast rules are applied when
+    # directly using the prims.
+    # See - https://github.com/Lightning-AI/lightning-thunder/issues/725
+    def foo(x, w):
+        return thunder.prims.linear(x, w, None)
+
+    # Mixed input types.
+    x, w = torch.randn(16, 16, dtype=torch.bfloat16), torch.randn(16, 16)
+
+    jfoo = thunder.jit(foo)
+
+    with torch.autocast("cpu", torch.bfloat16):
+        jit_out = jfoo(x, w)
+
+    assert jit_out.dtype == torch.bfloat16
+    exec_trace = thunder.last_traces(jfoo)[0]
+    assert any(bsym.sym.id == thunder.prims.PrimIDs.CONVERT_ELEMENT_TYPE for bsym in exec_trace.bound_symbols)
+
+
+@pytest.mark.parametrize("dim", [1, 2, 3])
+@pytest.mark.parametrize("requires_grad", [False, True])
+def test_autocast_convolution(dim, requires_grad):
+    conv_fn = getattr(torch.nn.functional, f"conv{dim}d")
+
+    def foo(x, w, b=None):
+        return conv_fn(x, w, b)
+
+    x = torch.rand(1, 2, *(dim * (8,)), requires_grad=requires_grad)
+    w = torch.rand(3, 2, *(dim * (4,)), requires_grad=requires_grad)
+    b = torch.rand(3, requires_grad=requires_grad)
+    go = torch.rand(1, 3, *(dim * (5,)))
+
+    jfoo = thunder.jit(foo)
+
+    with torch.autocast("cpu", torch.float16):
+        eager_out = foo(x, w, b)
+        jit_out = jfoo(x, w, b)
+
+    torch.testing.assert_close(eager_out, jit_out)
+
+    if requires_grad:
+        eager_grads = torch.autograd.grad(eager_out, [x, w, b], go)
+        jit_grads = torch.autograd.grad(jit_out, [x, w, b], go)
+
+        for eg, jg in zip(eager_grads, jit_grads):
+            torch.testing.assert_close(eg, jg, rtol=5e-2, atol=5e-2)
+
+    with torch.autocast("cpu", torch.float16):
+        eager_out = foo(x, w)
+        jit_out = jfoo(x, w)
+
+    torch.testing.assert_close(eager_out, jit_out)
+
+    if requires_grad:
+        go = torch.randn_like(eager_out)
+        eager_grads = torch.autograd.grad(eager_out, [x, w], go)
+        jit_grads = torch.autograd.grad(jit_out, [x, w], go)
+
+        for eg, jg in zip(eager_grads, jit_grads):
+            torch.testing.assert_close(eg, jg, rtol=5e-2, atol=5e-2)

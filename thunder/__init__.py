@@ -47,6 +47,7 @@ from thunder.common import (
     _create_callable,
     trace,
     transform_for_execution,
+    transform_to_torch_types,
 )
 import thunder.extend as extend
 from thunder.extend import Executor, add_default_executor
@@ -76,6 +77,7 @@ from thunder.executors.torch_autograd import split_forward_backward, ThunderFunc
 import torch as pytorch
 
 import thunder.clang as clang
+from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 
 # Imports executors (to populate default executors and make them accessible)
 import thunder.executors.pythonex
@@ -232,19 +234,6 @@ def _get_cache_info():
     return _cache_info_ctx.get()
 
 
-def add_executor_lists(
-    exc_list: None | Sequence[Executor | str], other_exc_list: None | Sequence[Executor | str]
-) -> Sequence[Executor]:
-    new_exc_list = []
-    exc_list = resolve_executors(exc_list)
-    other_exc_list = resolve_executors(other_exc_list)
-    for exc in itertools.chain(exc_list, other_exc_list):
-        if not exc in new_exc_list:
-            new_exc_list.append(exc)
-
-    return new_exc_list
-
-
 @run_once
 def _recursive_jit_call_warning() -> None:
     warnings.warn(
@@ -288,6 +277,14 @@ def jit(
     **compile_options,  # TODO RC1 Make this explicit -- dict of options
 ) -> Callable:
     """Just-in-time compile a callable (function or model).
+
+    .. note::
+
+        Thunder's support of PyTorch in-place support is experimental.
+        Thunder functionalizes in-place ops and adds required tensor copies.
+        The functionalization can be turned off with the kwarg of ``skip_inplace_functionalization``.
+        See :func:`thunder.core.transform_common.functionalize_inplace_ops`
+        for the details.
 
     Args:
         fn: A :class:`~torch.nn.Module` or a function to compile.
@@ -373,6 +370,9 @@ def jit(
         # set up a record of things in the current environment that impact caching / prologues
         # this could be replaced by the respective querying in the prologues
         cache_info = _get_cache_info()
+
+        # default dtype (for factory functions)
+        cache_info["default_dtype"] = pytorch.get_default_dtype()
 
         # autocast related operations
         is_autocast_enabled = False
@@ -597,11 +597,24 @@ def jit(
                     computation_traces.append(computation_trc)
                 cs.last_computation_transformation_stop = time.perf_counter_ns()
 
+                from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
+                from thunder.executors.passes import _transform_for_operator_executor_execution
+                from thunder.distributed.utils import maybe_sort_waits
+
+                with langctxs.langctx(cd.langctx):
+                    tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
+                is_transformed, tmp_comp_trc = maybe_sort_waits(tmp_comp_trc)
+                if is_transformed:
+                    computation_trc = tmp_comp_trc
+                    computation_traces.append(computation_trc)
+
                 with langctxs.langctx(cd.langctx):
                     extraces = transform_for_execution(
                         computation_trc,
                         executors_list=cd.executors_list,
+                        use_del_last_used=True,
                     )
+                computation_traces.append(computation_trc)
                 computation_trc = extraces[-1]
 
             if not compile_options.get("disable_inplace_copy_check", False):
@@ -626,6 +639,7 @@ def jit(
                     backward_trc = cudagraphex.fusion_pass(backward_trc, num_static_inputs=len(backward_trc.args[0][0]))
                     backward_traces.append(backward_trc)
 
+            computation_trc = transform_to_torch_types(computation_trc)
             comp = computation_trc.python_callable()
 
             if backward_trc is not None:

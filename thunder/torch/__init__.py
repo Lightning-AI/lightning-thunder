@@ -85,6 +85,24 @@ _torch_to_thunder_function_map: dict[Callable, Callable] = {}
 _inplace_to_out_of_place: dict[Callable, tuple[Callable, int]] = {}
 
 
+# Helpers for factory functions to get default dtypes.
+def get_default_dtype():
+    # `thunder.jit` will create cache info and stash the default dtype
+    # observed at the beginning of jitting.
+    cache_info = thunder._get_cache_info()
+
+    # Currently, changing dtype during the jitted function is unsupported.
+    utils.check(
+        cache_info["default_dtype"] == torch.get_default_dtype(),
+        lambda: "Default dtype is changed during the execution of jitted function. This is currently unsupported.",
+    )
+    return torch.get_default_dtype()
+
+
+def maybe_get_default_dtype(dtype):
+    return dtype or get_default_dtype()
+
+
 # A wrapper that executes the operations within the torch language context
 # NOTE because this module defines the torch language context, a reference to itself
 #   is acquired by inspecting the __module__ attribute of the is_available function defined
@@ -143,52 +161,22 @@ class torchsymbol:
         else:
             sym = Symbol(name=fn.__name__, meta=_fn, id=id, is_prim=self.is_prim, tags=self.tags)
 
-        # NOTE: torch.autocast support
-        # In PyTorch eager, enabling autocast allows mixed inputs to operator like `linear`
-        # which expect dtypes to be same. This works in PyTorch eager, as dispatcher applies the
-        # conversion first and then passes the converted input to the operator.
-        # To mimick similar behavior, here we replace the `sym` for all operators which have
-        # autocast rule, to apply the conversion rule if autocast was enabled.
-        autocast_impl: Callable | None = _maybe_get_autocast_rule_for_symbol(sym)
-
-        # `mapping_fn` is used to map `torch` -> `thunder.torch`
-        # If autocast is enabled - it will also take care of casting the inputs
-        # as per autocast rule else it will be just the symbol.
-        mapping_fn = sym
-        if autocast_impl is not None:
-
-            @wraps(sym)
-            def maybe_autocast(*args, **kwargs):
-                # Cache info may not be available in case of legacy `thunder.compile`
-                # which is still used for cases.
-                try:
-                    cache_info = thunder._get_cache_info()
-                except LookupError:
-                    cache_info = {}
-
-                if cache_info.get("is_autocast_enabled", False):
-                    thunder_autocast_dtype = _get_downcast_dtype_from_str(cache_info["autocast_thunder_dtype"])
-                    return partial(autocast_impl, dtype=thunder_autocast_dtype)(*args, **kwargs)
-                return sym(*args, **kwargs)
-
-            mapping_fn = maybe_autocast
-
         if self.is_method:
             method_name: str = self.method_name if self.method_name is not None else fn.__name__
-            register_method(method_name, mapping_fn)
+            register_method(method_name, sym)
             torch_method: None | Callable = getattr(torch.Tensor, method_name, None)
             if torch_method is not None:
-                _torch_to_thunder_function_map[torch_method] = mapping_fn
+                _torch_to_thunder_function_map[torch_method] = sym
         elif self.is_property:
             method_name: str = self.method_name if self.method_name is not None else fn.__name__
-            register_property(method_name, mapping_fn)
+            register_property(method_name, sym)
             torch_property = getattr(torch.Tensor, method_name, None)
             if torch_property is not None:
-                _torch_to_thunder_function_map[torch_property] = mapping_fn
+                _torch_to_thunder_function_map[torch_property] = sym
 
         if self.torchfns is not None:
             for torchfn in self.torchfns:
-                _torch_to_thunder_function_map[torchfn] = mapping_fn
+                _torch_to_thunder_function_map[torchfn] = sym
 
         if self.tags and prims.OpTags.IN_PLACE in self.tags:
             if self.id is not None:
@@ -536,6 +524,15 @@ def arange(
         device = "cpu"
 
     device = to_device(device)
+    # From torch docs - https://pytorch.org/docs/stable/generated/torch.arange.html
+    # If any of start, end, or stop are floating-point, the dtype is inferred to be the default dtype, see get_default_dtype().
+    # Otherwise, the dtype is inferred to be torch.int64.
+    if dtype is None:  # infer the dtype
+        if any(map(lambda x: isinstance(x, float), (start, end, step))):
+            dtype = maybe_get_default_dtype(dtype)
+        else:
+            dtype = torch.int64
+
     dtype = to_dtype(dtype)
 
     if end is None:
@@ -552,7 +549,7 @@ def full(
         device = "cpu"
 
     device = to_device(device)
-    dtype = to_dtype(dtype)
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
 
     return clang.full(shape, fill_value, device=device, dtype=dtype)
 
@@ -599,6 +596,9 @@ def tensor(
     utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.jit", NotImplementedError)
 
     if isinstance(seq_or_number, (Number, NumberProxy)):
+        # Infer dtype from value (as `full` will use default dtype if dtype=None).
+        if dtype is None:
+            dtype = dtypes.numbertype_to_dtype(dtypes.to_dtype(seq_or_number))
         return full((), seq_or_number, dtype=dtype, device=device)
 
     return clang.tensor_from_sequence(seq_or_number, dtype=dtype, device=device)
@@ -617,7 +617,7 @@ def uniform(
     dtype: dtypeLike,
 ) -> TensorLike:
     device = to_device(device)
-    dtype = to_dtype(dtype)
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
 
     return clang.uniform(shape, minval, maxval, device=device, dtype=dtype)
 
@@ -674,7 +674,7 @@ def uniform_philox(
     offset: int | TensorProxy,
 ) -> TensorLike:
     device = to_device(device)
-    dtype = to_dtype(dtype)
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
 
     return clang.uniform_philox(shape, minval, maxval, device=device, dtype=dtype, seed=seed, offset=offset)
 
@@ -702,12 +702,7 @@ def randn(
         device = "cpu"
     device = to_device(device)
 
-    # For now we default to `float32`,
-    # however, we should add a default dtype or
-    # rely on `torch.get_default_dtype`.
-    if dtype is None:
-        dtype = torch.float
-    dtype = to_dtype(dtype)
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
     shape = utils.extract_shape_from_varargs(shape)
     return prims.randn(shape, device=device, dtype=dtype)
 
@@ -795,9 +790,7 @@ def empty(
 
     # For now we default to `float32`,
     # however, we should add a default dtype or rely on `torch.get_default_dtype`.
-    if dtype is None:
-        dtype = torch.float
-    dtype = to_dtype(dtype)
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
 
     # For now we default to "cpu",
     # however, we should add a default device or rely on `torch.get_default_device`.
@@ -2731,7 +2724,7 @@ def sort(
 
 
 # NOTE PyTorch also has an alpha parameter
-@torchsymbol(torch.index_add)
+@torchsymbol(torch.index_add, is_method=True)
 def index_add(a: TensorLike, /, dim: int, index: TensorLike, source: TensorLike) -> TensorLike:
     return clang.index_add(a, index, source, dim)
 
@@ -2739,6 +2732,16 @@ def index_add(a: TensorLike, /, dim: int, index: TensorLike, source: TensorLike)
 @torchsymbol(torch.Tensor.index_add_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def index_add_(a: TensorLike, /, dim: int, index: TensorLike, source: TensorLike) -> TensorLike:
     return prims.copy_(index_add(a, dim, index, source), a)
+
+
+@torchsymbol(torch.index_copy, is_method=True)
+def index_copy(a: TensorLike, /, dim: int, index: TensorLike, source: TensorLike) -> TensorLike:
+    return clang.index_copy(a, index, source, dim)
+
+
+@torchsymbol(torch.Tensor.index_copy_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def index_copy_(a: TensorLike, /, dim: int, index: TensorLike, source: TensorLike) -> TensorLike:
+    return prims.copy_(index_copy(a, dim, index, source), a)
 
 
 @torchsymbol(torch.index_select, is_method=True)
@@ -2749,6 +2752,60 @@ def index_select(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
 @torchsymbol(torch.gather, is_method=True)
 def gather(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
     return clang.gather(a, indices=index, dim=dim)
+
+
+# NOTE: PyTorch uses `src` for torch.Tensor arguments and `value` for scalars
+# when referencing the source of the values
+@torchsymbol(torch.scatter, is_method=True)
+def scatter(
+    a: TensorLike,
+    /,
+    dim: int,
+    index: TensorLike,
+    src: TensorLike | None = None,
+    *,
+    value: None | Number = None,
+    reduce: None | str = None,
+) -> TensorLike:
+    utils.check(
+        reduce is None, lambda: "scatter: `reduce` argument other than None is not supported", NotImplementedError
+    )
+
+    utils.check(
+        (src is not None) ^ (value is not None),
+        lambda: f"scatter: only one of the arguments (`src`, `value`) can be non-None",
+    )
+
+    if src is not None:
+        return clang.scatter(a, index, src, dim)
+    else:
+        return clang.scatter(a, index, value, dim)
+
+
+@torchsymbol(torch.Tensor.scatter_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def scatter_(
+    a: TensorLike,
+    /,
+    dim: int,
+    index: TensorLike,
+    src: TensorLike | None = None,
+    *,
+    value: None | Number = None,
+    reduce: None | str = None,
+) -> TensorLike:
+    utils.check(
+        reduce is None, lambda: "scatter_: `reduce` argument other than None is not supported", NotImplementedError
+    )
+
+    utils.check(
+        (src is not None) ^ (value is not None),
+        lambda: f"scatter_: only one of the arguments (`src`, `value`) can be non-None",
+    )
+
+    if src is None:
+        src = value
+
+    return prims.copy_(clang.scatter(a, index, src, dim), a)
 
 
 # NOTE PyTorch's scatter_add has a parameter named 'src', not 'source'
@@ -3729,6 +3786,8 @@ def _conv_helper(
     padding: int | Sequence[int] | str = 0,
     dilation: int | Sequence[int] = 1,
     groups: int = 1,
+    *,
+    conv_function=clang.convolution,
 ) -> TensorProxy:
     # a, weight rank check
     utils.check(dim + 1 <= a.ndim <= dim + 2, lambda: f"{a.ndim=} should be either {dim + 1} or {dim + 2}")
@@ -3788,8 +3847,16 @@ def _conv_helper(
     padding, a = process_padding_str(int_to_seq(padding), stride, dilation, a)
     # }
 
-    res = clang.convolution(
-        a, weight, bias, stride, padding, dilation, False, (0,) * dim, groups  # transposed  # output_padding
+    res = conv_function(
+        a,
+        weight,
+        bias,
+        stride,
+        padding,
+        dilation,
+        False,  # transposed
+        (0,) * dim,  # output_padding
+        groups,
     )
     return res
 
@@ -4962,30 +5029,30 @@ def softmax(a: TensorLike, dim: int, dtype: None | dtypeLike = None, _stacklevel
     return _softmax(a, dim=dim, dtype=dtype)
 
 
-def torch_device(device_or_str: DeviceLike, /, index: int | None = None) -> devices.Device:
-    if isinstance(device_or_str, (devices.Device, torch.device)):
+def torch_device(type: DeviceLike, index: int | None = None) -> devices.Device:
+    if isinstance(type, (devices.Device, torch.device)):
         # PyTorch behavior:
         # >>> torch.device(torch.device("cuda"), 0)
         # TypeError: device(): argument 'type' (position 1) must be str, not torch.device
         utils.check(index is None, lambda: f"device(): `index` is only allowed when `device` is a `str`.")
-        return to_device(device_or_str)
+        return to_device(type)
 
     # NOTE: device_or_str is `str`
     if index is not None:
         # PyTorch behavior:
         # >>> torch.device("cuda:0", 0)
         # RuntimeError: type (string) must not include an index because index was passed explicitly: cuda:0
-        has_device_idx = len(device_or_str.split(":")) > 1
+        has_device_idx = len(type.split(":")) > 1
         utils.check(
             not has_device_idx,
-            lambda: f"device string must not include an index because index was passed explicitly: {device_or_str}",
+            lambda: f"device string must not include an index because index was passed explicitly: {type}",
         )
         if isinstance(index, NumberProxy):
             index.make_static_constrained()
             prims.sink(index)
             index = index.value
 
-    return devices.Device(device_or_str, index)
+    return devices.Device(type, index)
 
 
 # We don't use @torchsymbol as we don't want `torch.device()` to appear in trace as a symbol.

@@ -1,5 +1,5 @@
 from collections import namedtuple
-from contextlib import nullcontext
+from contextlib import nullcontext, contextmanager
 from dataclasses import dataclass, replace
 from enum import auto, Enum
 from itertools import chain, compress
@@ -18,6 +18,7 @@ from collections import deque
 import os
 import dataclasses
 
+import thunder
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
 import thunder.core.devices as devices
@@ -867,6 +868,58 @@ def _gather_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> TensorPro
 
 
 register_grad(pids.GATHER, _gather_prim_grad)
+
+
+@torchctx
+def _scatter_prim_grad(a: TensorProxy, /, index: TensorProxy, src: TensorProxy | Number, dim: int) -> TensorProxy:
+    fwd = prims.scatter(a, index, src, dim)
+
+    grad = get_grad(fwd)
+    a_grad = prims.scatter(grad, index, 0, dim)
+    put_grad(a, a_grad)
+
+    if isinstance(src, TensorProxy):
+        # NOTE: this is exactly what PyTorch is doing.
+        # As such, it has the very same limitations. I.e.
+        # the grad is not going to be correct unless the index list
+        # (..., index[...], ...) does not have repeated elements
+        src_grad = prims.gather(grad, index, dim)
+        put_grad(src, src_grad)
+
+    return fwd
+
+
+register_grad(pids.SCATTER, _scatter_prim_grad)
+
+
+@torchctx
+def _index_copy_grad(a: TensorProxy, /, index: TensorProxy, src: TensorProxy, dim: int) -> TensorProxy:
+    fwd = prims.index_copy(a, index, src, dim)
+
+    grad = get_grad(fwd)
+
+    # a_grad = grad.index_fill(dim, index, 0)
+    # Unfortunately, we do not have `index_fill` for now
+    # TODO: replace with `index_fill`
+    grad_dim = utils.canonicalize_dim(grad.ndim, dim)
+    index_len = len(index)
+    index_unsqueeze_shape = [1] * grad.ndim
+    index_unsqueeze_shape[grad_dim] = index_len
+    index_expand_shape = list(grad.shape)
+    index_expand_shape[grad_dim] = index_len
+    a_grad = prims.scatter(grad, index.reshape(index_unsqueeze_shape).expand(*index_expand_shape), 0, dim)
+    put_grad(a, a_grad)
+
+    if src.ndim > 0:
+        src_grad = prims.take(grad, index, dim).expand_as(src)
+    else:
+        src_grad = prims.take(grad, index.squeeze(0))
+    put_grad(src, src_grad)
+
+    return fwd
+
+
+register_grad(pids.INDEX_COPY, _index_copy_grad)
 
 
 @torchctx
@@ -3804,6 +3857,100 @@ def autocast_linear_rule(a, w, bias, dtype):
     return _linear_autocast_impl(a, w, bias, dtype)
 
 
+def _convolution_autocast_impl(a, w, bias, *other_args, dtype):
+    if bias is None:
+        # Don't pass `bias` to maybe_downcast_to.
+        downcast_args = maybe_downcast_to(dtype, (a, w)) + (bias,)
+    else:
+        downcast_args = maybe_downcast_to(dtype, (a, w, bias))
+
+    return prims.convolution(*downcast_args, *other_args)
+
+
+@register_autocast_rule("torch.nn.functional.conv1d")
+def autocast_ltorch_conv1d_rule(
+    a: TensorProxy,
+    /,
+    weight: TensorProxy,
+    bias: TensorProxy | None = None,
+    stride: int | Sequence[int] = 1,
+    padding: int | Sequence[int] | str = 0,
+    dilation: int = 1,
+    groups: int = 1,
+    *,
+    dtype,
+) -> TensorProxy:
+    from thunder.torch import _conv_helper
+
+    return _conv_helper(
+        1,
+        a,
+        weight,
+        bias,
+        stride,
+        padding,
+        dilation,
+        groups,
+        conv_function=partial(_convolution_autocast_impl, dtype=dtype),
+    )
+
+
+@register_autocast_rule("torch.nn.functional.conv2d")
+def autocast_ltorch_conv2d_rule(
+    a: TensorProxy,
+    /,
+    weight: TensorProxy,
+    bias: TensorProxy | None = None,
+    stride: int | Sequence[int] = 1,
+    padding: int | Sequence[int] | str = 0,
+    dilation: int = 1,
+    groups: int = 1,
+    *,
+    dtype,
+) -> TensorProxy:
+    from thunder.torch import _conv_helper
+
+    return _conv_helper(
+        2,
+        a,
+        weight,
+        bias,
+        stride,
+        padding,
+        dilation,
+        groups,
+        conv_function=partial(_convolution_autocast_impl, dtype=dtype),
+    )
+
+
+@register_autocast_rule("torch.nn.functional.conv3d")
+def autocast_ltorch_conv3d_rule(
+    a: TensorProxy,
+    /,
+    weight: TensorProxy,
+    bias: TensorProxy | None = None,
+    stride: int | Sequence[int] = 1,
+    padding: int | Sequence[int] | str = 0,
+    dilation: int = 1,
+    groups: int = 1,
+    *,
+    dtype,
+) -> TensorProxy:
+    from thunder.torch import _conv_helper
+
+    return _conv_helper(
+        3,
+        a,
+        weight,
+        bias,
+        stride,
+        padding,
+        dilation,
+        groups,
+        conv_function=partial(_convolution_autocast_impl, dtype=dtype),
+    )
+
+
 @register_autocast_rule("torch.nn.functional.scaled_dot_product_attention")
 def autocast_scaled_dot_product_attention(
     query,
@@ -3861,3 +4008,59 @@ def autocast(func: Callable, dtype: dtypes.dtype):
         return eval_trace(trace, *args, **kwargs, symbol_mapper=partial(autocast_symbol_mapper, dtype=dtype))
 
     return wrapper
+
+
+# State to enable and disable autocast (while interpreter is generating the computation trace).
+_autocast_enabled = True
+
+
+def is_autocast_enabled():
+    return _autocast_enabled
+
+
+# NOTE: Disable Autocast
+# Once the autocast rule has been applied, we disable autocast as the autocast_rule usually converts the inputs
+# and calls the same symbol.
+# Without disabling autocast we will have infinite recursion.
+@contextmanager
+def disable_autocast():
+    global _autocast_enabled
+    default = _autocast_enabled
+    _autocast_enabled = False
+    try:
+        yield
+    finally:
+        _autocast_enabled = default
+
+
+def maybe_apply_autocast(sym):
+    # NOTE: torch.autocast support
+    # In PyTorch eager, enabling autocast allows mixed inputs to operator like `linear`
+    # which expect dtypes to be same. This works in PyTorch eager, as dispatcher applies the
+    # conversion first and then passes the converted input to the operator.
+    # To mimick similar behavior, here we replace the `sym` for all operators which have
+    # autocast rule, to apply the autocast conversion rule if autocast was enabled.
+
+    # Cache info may not be available in case of legacy `thunder.compile`
+    # which is still used for cases.
+    try:
+        cache_info = thunder._get_cache_info()
+    except LookupError:
+        cache_info = {}
+
+    if (
+        cache_info.get("is_autocast_enabled", False)  # If user has actually enabled autocast in their code
+        and is_autocast_enabled()  # we are not under `disable_autocast`
+        and (autocast_impl := _maybe_get_autocast_rule_for_symbol(sym)) is not None
+    ):  # symbol has autocast impl.
+
+        @wraps(sym)
+        def wrapper(*args, **kwargs):
+            # See NOTE: Disable Autocast
+            with disable_autocast():
+                thunder_autocast_dtype = _get_downcast_dtype_from_str(cache_info["autocast_thunder_dtype"])
+                return partial(autocast_impl, dtype=thunder_autocast_dtype)(*args, **kwargs)
+
+        return wrapper
+
+    return None

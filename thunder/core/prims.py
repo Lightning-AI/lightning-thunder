@@ -247,7 +247,9 @@ class PrimIDs(Enum):
     SORT = auto()
     # Scatter and gather prims (Experimental!)
     GATHER = auto()
+    SCATTER = auto()
     INDEX_ADD = auto()
+    INDEX_COPY = auto()
     INDEX_PUT = auto()
     SCATTER_ADD = auto()
     TAKE = auto()
@@ -3241,6 +3243,17 @@ def index_add_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, di
 index_add = make_prim(PrimIDs.INDEX_ADD, "index_add", meta=index_add_meta)
 
 
+def index_copy_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
+    utils.check(
+        dtypes.to_dtype(index) is dtypes.int64,
+        lambda: f"index_copy: only indices of type int64 are supported",
+    )
+    return index_add_meta(a, index, value, dim)
+
+
+index_copy = make_prim(PrimIDs.INDEX_COPY, "index_copy", meta=index_add_meta)
+
+
 def index_put_meta(
     a: TensorProxy, /, indices: Sequence[TensorProxy], values: TensorProxy, accumulate: bool
 ) -> TensorProxy:
@@ -3351,6 +3364,30 @@ def scatter_add_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, 
 
 
 scatter_add = make_prim(PrimIDs.SCATTER_ADD, "scatter_add", meta=scatter_add_meta)
+
+
+def scatter_meta(a: TensorProxy, /, index: TensorProxy, src: TensorProxy | Number, dim: int) -> TensorProxy:
+    utils.check_type(src, (TensorProxy, Number, NumberProxy))
+
+    if isinstance(src, TensorProxy):
+        return scatter_add_meta(a, index, src, dim)
+
+    # scatter_add_meta reuse when `src` is a scalar,
+    # which is being replaced with a TensorProxy(like=a) and
+    # shape[dim] = index.shape[dim
+    utils.validate_idx(a.ndim, dim)
+    utils.check(
+        index.ndim == a.ndim, lambda: f"Expected index (rank={index.ndim}) to have the same rank as a (rank={a.ndim})"
+    )
+
+    dummy_src_shape = list(a.shape)
+    dummy_src_shape[dim] = index.shape[dim]
+    dummy_src = TensorProxy(like=a, shape=dummy_src_shape)
+
+    return scatter_add_meta(a, index, dummy_src, dim)
+
+
+scatter = make_prim(PrimIDs.SCATTER, "scatter", meta=scatter_meta)
 
 
 def topk_meta(
@@ -3599,7 +3636,7 @@ def linear_meta(a: TensorProxy, w: TensorProxy, bias: None | TensorProxy) -> Ten
     utils.check(isinstance(w, TensorProxy), lambda: f"w={w} was not a TensorProxy!")
 
     # Checks that required arguments are on the same device
-    utils.check(a.device == w.device, lambda: f"Expected a.device={a.device} and w.device={w.device} to be the same!")
+    utils.check_same_device(a, w)
 
     # Acquires the computation dtype and checks that a and w have the same dtype
     dtype = a.dtype
@@ -3659,7 +3696,7 @@ def matmul_meta(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
     if a.ndim < 1 or b.ndim < 1:
         raise NotImplementedError
 
-    utils.check(a.device == b.device, lambda: f"Expected a.device={a.device} and b.device={b.device} to be the same")
+    utils.check_same_device(a, b)
 
     utils.check(
         dtypes.are_same_dtypes(a, b), lambda: f"Expected a.dtype={a.dtype} and b.dtype={b.dtype} to be the same"

@@ -145,8 +145,8 @@ class OverridenKVCache(nn.Module):
             v = self.v.index_copy_(2, input_pos, v)
             return k, v
         # See issue: "Support more indexing operators (index_copy and index_add)"
-        k = self.k = torch.index_add(self.k, 2, input_pos, k)
-        v = self.v = torch.index_add(self.v, 2, input_pos, v)
+        k = self.k = self.k.index_copy_(2, input_pos, k)
+        v = self.v = self.v.index_copy_(2, input_pos, v)
         # THUNDER bug: cannot return self.k, self.v here (may be cuda graphs related - no minimum repro)
         return k, v
 
@@ -157,8 +157,6 @@ class OverridenKVCache(nn.Module):
 
 import litgpt
 
-# override for operator workarounds
-litgpt.model.KVCache = OverridenKVCache
 # add the testing configurations
 litgpt.config.name_to_config.update(name_to_config)
 name_to_config.update(litgpt.config.name_to_config)
