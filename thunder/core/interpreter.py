@@ -924,6 +924,7 @@ class PseudoInst(str, enum.Enum):
     SUPER = "SUPER"
     BUILTINS = "BUILTINS"
     STORE_SUBSCR = "STORE_SUBSCR"
+    LIST_TO_TUPLE = "LIST_TO_TUPLE"
 
 
 @dataclasses.dataclass
@@ -3648,6 +3649,38 @@ def _call_function_kw_handler(
     return check_and_append(stack, _interpret_call_with_unwrapping(func, *args, **fn_kwargs))
 
 
+def _list_to_tuple_intrinsic(tos):
+    assert wrapped_isinstance(tos, list)
+    populate_item_wrappers(tos)
+
+    res = tuple(unwrap(tos))
+
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
+    if ctx._with_provenance_tracking:
+        pr = ProvenanceRecord(PseudoInst.LIST_TO_TUPLE, inputs=[tos.provenance])
+        res = wrap(res, provenance=pr)
+        res.item_wrappers = tos.item_wrappers[:]
+
+    return res
+
+
+# https://docs.python.org/3.12/library/dis.html#opcode-CALL_INTRINSIC_1
+@register_opcode_handler("CALL_INTRINSIC_1", min_ver=(3, 12))
+def _call_intrinsic_1_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
+) -> None | INTERPRETER_SIGNALS:
+    assert type(inst.arg) is int
+    intrinsics_1 = {"INTRINSIC_LIST_TO_TUPLE": _list_to_tuple_intrinsic}
+    intrinsic_name = dis._intrinsic_1_descs[inst.arg]
+
+    tos = stack.pop_wrapped()
+    fn = intrinsics_1.get(intrinsic_name)
+    if fn is None:
+        raise NotImplementedError(f"CALL_INTRINSIC_1 {intrinsic_name}")
+    res = fn(tos)
+    return check_and_append(stack, res)
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-CALL_METHOD
 @register_opcode_handler("CALL_METHOD", max_ver=(3, 10))
 def _call_method_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
@@ -3727,12 +3760,18 @@ def _compare_op_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwa
         ">": lambda x, y: x > y,
         ">=": lambda x, y: x >= y,
     }
+
     b = stack.pop()
     a = stack.pop()
     assert type(inst.arg) is int
-    assert inst.arg < len(dis.cmp_op), f"{inst}, {dis.cmp_op}"
+    if sys.version_info >= (3, 12):
+        # this is not in the dis.dis page...
+        op_nr = inst.arg >> 4
+    else:
+        op_nr = inst.arg
+    assert op_nr < len(dis.cmp_op), f"{inst}, {dis.cmp_op}"
 
-    op = cmp_impls[dis.cmp_op[inst.arg]]
+    op = cmp_impls[dis.cmp_op[op_nr]]
     res: bool = op(unwrap(a), unwrap(b))
     stack.append(res)
 
@@ -3996,6 +4035,13 @@ def _end_async_for_handler_3_11(
         return INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
 
+# https://docs.python.org/3.11/library/dis.html#opcode-END_ASYNC_FOR
+@register_opcode_handler("END_FOR", min_ver=(3, 12))
+def _end_for_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
+    stack.pop_wrapped()
+    stack.pop_wrapped()
+
+
 # https://docs.python.org/3.10/library/dis.html#opcode-EXTENDED_ARG
 @register_opcode_handler("EXTENDED_ARG")
 def _extended_arg_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
@@ -4064,8 +4110,14 @@ def _for_iter_handler(
     if r is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         ctx = get_interpreterruntimectx()
         if isinstance(ctx.curexc, StopIteration):
-            stack.pop_wrapped()
-            return inst_ptr + delta + 1
+            if sys.version_info >= (3, 12):
+                # 3.12 uses jumps relative to the next instruction offset and does not pop here
+                #      instead it pushes a fake value?!
+                stack.append(Py_NULL())
+                return delta
+            else:
+                stack.pop_wrapped()
+                return inst_ptr + delta + 1
         return r
 
     stack.append(r)
@@ -4318,6 +4370,8 @@ def _jump_absolute_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) ->
 def _jump_forward_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) -> int:
     assert type(inst.arg) is int
     delta: int = inst.arg
+    if sys.version_info >= (3, 12):
+        return delta
     return inst_ptr + delta + 1
 
 
@@ -4326,6 +4380,8 @@ def _jump_forward_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) -> 
 def _jump_backward_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) -> int:
     assert type(inst.arg) is int
     delta: int = inst.arg
+    if sys.version_info >= (3, 12):
+        return -delta
     return inst_ptr - delta + 1
 
 
@@ -4334,6 +4390,8 @@ def _jump_backward_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) ->
 def _jump_backward_no_interrupt_handler(inst: dis.Instruction, /, inst_ptr: int, **kwargs) -> int:
     assert type(inst.arg) is int
     delta: int = inst.arg
+    if sys.version_info >= (3, 12):
+        return -delta
     return inst_ptr - delta + 1
 
 
@@ -4444,18 +4502,7 @@ def _list_extend_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
 @register_opcode_handler("LIST_TO_TUPLE", max_ver=(3, 11))
 def _list_to_tuple_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None:
     tos = stack.pop_wrapped()
-    assert wrapped_isinstance(tos, list)
-    populate_item_wrappers(tos)
-
-    res = tuple(unwrap(tos))
-
-    ctx: InterpreterCompileCtx = get_interpretercompilectx()
-    if ctx._with_provenance_tracking:
-        pr = ProvenanceRecord(inst, inputs=[tos.provenance])
-        res = wrap(res, provenance=pr)
-        res.item_wrappers = tos.item_wrappers[:]
-
-    stack.append(res)
+    return check_and_append(_list_to_tuple_intrinsic(tos))
 
 
 # https://docs.python.org/3.13/library/dis.html#opcode-LOAD_ASSERTION_ERROR
@@ -5092,6 +5139,7 @@ def _pop_jump_forward_if_none_handler(
 
 
 @register_opcode_handler("POP_JUMP_IF_FALSE", max_ver=(3, 10))
+@register_opcode_handler("POP_JUMP_IF_FALSE", min_ver=(3, 12))
 def _pop_jump_if_false_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
 ) -> int | None | INTERPRETER_SIGNALS:
@@ -5107,11 +5155,13 @@ def _pop_jump_if_false_handler(
     cnd: bool = ures
 
     if not cnd:
+        # note that inst.arg is relative for 3.12 and absolute for 3.10
         return inst.arg
     return None
 
 
 @register_opcode_handler("POP_JUMP_IF_TRUE", max_ver=(3, 10))
+@register_opcode_handler("POP_JUMP_IF_TRUE", min_ver=(3, 12))
 def _pop_jump_if_true_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
 ) -> int | None | INTERPRETER_SIGNALS:
@@ -5136,7 +5186,38 @@ def _pop_jump_if_true_handler(
             cnd = tmp
 
     if cnd:
+        # note that inst.arg is relative for 3.12 and absolute for 3.10
         return inst.arg
+    return None
+
+
+# https://docs.python.org/3.12/library/dis.html#opcode-POP_JUMP_IF_NONE
+@register_opcode_handler("POP_JUMP_IF_NONE", min_ver=(3, 12))
+def _pop_jump_forward_if_none_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs
+) -> int | None:
+    assert isinstance(inst.arg, int)
+
+    tos = stack.pop()
+    if tos is None:
+        # in 3.12 return is relative to the next opcode
+        return inst.arg
+
+    return None
+
+
+# https://docs.python.org/3.12/library/dis.html#opcode-POP_JUMP_IF_NOT_NONE
+@register_opcode_handler("POP_JUMP_IF_NOT_NONE", min_ver=(3, 12))
+def _pop_jump_forward_if_none_handler(
+    inst: dis.Instruction, /, stack: InterpreterStack, inst_ptr: int, **kwargs
+) -> int | None:
+    assert isinstance(inst.arg, int)
+
+    tos = stack.pop()
+    if tos is not None:
+        # in 3.12 return is relative to the next opcode
+        return inst.arg
+
     return None
 
 
@@ -6412,6 +6493,9 @@ def _run_frame(
 
         insts: tuple[dis.Instruction, ...] = tuple(dis.get_instructions(frame.code))
         inst_ptr_to_idx = {inst.offset // 2: idx for idx, inst in enumerate(insts)}
+        idx_to_next_inst_ptr = [inst.offset // 2 for inst in insts[1:]]
+        idx_to_next_inst_ptr.append(len(frame.code.co_code))
+
         max_inst_ptr = max(inst_ptr_to_idx.keys())
         while True:
             # we might have jumped or advanced to a "hidden" instruction such as cache,
@@ -6563,7 +6647,11 @@ def _run_frame(
                 frame.inst_ptr += 1
             else:
                 assert isinstance(interpretation_result, int), interpretation_result
-                frame.inst_ptr = interpretation_result
+                if sys.version_info >= (3, 12):
+                    # in Python >= 3.12 all jumps are relative to the next instruction
+                    frame.inst_ptr = idx_to_next_inst_ptr[inst_ptr_to_idx[frame.inst_ptr]] + interpretation_result
+                else:
+                    frame.inst_ptr = interpretation_result
 
             if not skip_stack_effect_check:  # the exception handling will change the stack wildly
                 # Verifies the handler had the expected stack effect (delta on stack sie)
