@@ -177,6 +177,47 @@ def _sync_grads(module: torch.nn.Module) -> None:
         )
 
 
+def ddp_transform_module(
+    thunder_model: ThunderModule,
+    *,
+    device = None,
+    broadcast_from=None,
+    bucket_size_in_mb: float = 25.0,
+) -> ThunderModule:
+    from thunder import compile_data as get_compile_data
+    from thunder.core.transforms import add_transform
+    from thunder.core.module import ThunderModule
+    from thunder.distributed.transforms.fsdp_v2 import DDPTraceTransform
+
+    process_group = copy_default_process_group()
+    utils.check(process_group is not None, lambda: "The default process group is None")
+    global_rank = tdist.get_rank(group=process_group)
+    world_size = tdist.get_world_size(group=process_group)
+    if device is None:
+        local_rank = int(os.environ["LOCAL_RANK"])
+        device = torch.device("cuda", local_rank)
+
+    cd = get_compile_data(thunder_model)
+    cd.use_ddp = True
+    orig_module: torch.nn.Module = cd.fn
+    utils.check(
+        isinstance(orig_module, torch.nn.Module) and not isinstance(orig_module, ThunderModule),
+        lambda: f"CompileData.fn expected to be `nn.Module` but {type(orig_module)}",
+    )
+    orig_module.use_ddp = True
+    orig_module.process_group_for_ddp = process_group
+
+    # will insert syncs for weights (grads automatically handled by inserting them in forward!)
+    early_transform_from_trace_to_ddp_trace = DDPTraceTransform(
+        process_group=process_group,
+    )
+
+    # add prologue + compute transform
+    thunder_model = add_transform(thunder_model, early_transform=early_transform_from_trace_to_ddp_trace)
+
+    return thunder_model
+
+
 # TODO Verify parameters are not partially initialized
 # TODO Handle buffers
 # TODO Improve initial broadcast logic
@@ -286,8 +327,16 @@ def ddp(
         tdist.is_available(),
         lambda: "ddp requires torch distributed to be available (but it's not)",
     )
-
+    from thunder.core.module import ThunderModule
     pg = copy_default_process_group()
+    with torch.no_grad():
+        for param in model.parameters():
+            tdist.broadcast(param, src=broadcast_from, group=pg, async_op=False)
+
+    if isinstance(model, ThunderModule):
+        return ddp_transform_module(model, device=None, broadcast_from=broadcast_from, bucket_size_in_mb=bucket_size_in_mb)
+    
+    
     utils.check(pg is not None, lambda: "The default process group is None")
     model.use_ddp = True
     model.process_group_for_ddp = pg
