@@ -1286,7 +1286,7 @@ def unfold(a: TensorProxy, /, dim: int, size: int, step: int) -> TensorProxy:
 @clangop()
 def cat(tensors: list[TensorProxy], dim: int):
     """Concatenates the given sequence of tensors in the given dimension."""
-    # Upcast to tensors only if we have more than 1 tensor.
+    # Upcast tensors only if we have more than 1 tensor.
     # NumPy and PyTorch support upcasting with mixed dtypes.
     if len(tensors) > 1:
         _, output_dtype = utils.elementwise_type_promotion(
