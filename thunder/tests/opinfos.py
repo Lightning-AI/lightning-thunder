@@ -3107,6 +3107,12 @@ def cat_sample_generator(op, device, dtype, requires_grad, **kwargs):
     b = make((1,)).expand((5,))
     yield SampleInput(a, b, dim=0)
 
+    # test upcasting. PyTorch has upcasting logic in cat.
+    if dtype != torch.float:
+        s1 = (1,)
+        s2 = (1,)
+        yield SampleInput(*[make(s1), make(s2, dtype=torch.float)], dim=0)
+
 
 def cat_error_generator(op, device, dtype=torch.float32, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype)
