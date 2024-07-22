@@ -2996,6 +2996,65 @@ def test_change_default_dtype_in_jitted_fn():
         torch.set_default_dtype(default_dtype)
 
 
+@requiresCUDA
+def test_factory_functions_default_device():
+
+    def fn(x):
+        o = torch.ones(x.shape)
+        return o.device
+
+    x = torch.randn(3, 3)
+    jfn = thunder.jit(fn)
+    actual_device = jfn(x)
+
+    assert fn(x) == jfn(x)
+    assert actual_device == torch.device("cpu")
+
+    # Check with a different default device.
+    org_device = torch.get_default_device()
+    torch.set_default_device("cuda")
+    try:
+        actual_device = jfn(x)
+        assert actual_device == fn(x)
+    finally:
+        torch.set_default_device(org_device)
+
+    assert thunder.cache_misses(jfn) == 2
+
+
+@requiresCUDA
+def test_change_default_device_in_jitted_fn():
+    default_device = torch.get_default_device()
+    try:
+
+        def fn(x):
+            torch.set_default_device("cuda")
+            o = torch.ones(x.shape)
+            return o.device
+
+        jfn = thunder.jit(fn)
+        with pytest.raises(RuntimeError, match="Default device is changed during the execution of jitted function"):
+            jfn(torch.randn(3, 3))
+    finally:
+        torch.set_default_device(default_device)
+
+
+@requiresCUDA
+def test_change_default_device_with_ctx():
+    def fn(x):
+        o = torch.ones(x.shape)
+        return o.device
+
+    x = torch.randn(
+        3,
+    )
+
+    with torch.device("cuda"):
+        jfn = thunder.jit(fn)
+        actual_device = jfn(x)
+        assert actual_device == fn(x)
+
+
 def test_arange_default_dtype():
     # If any of start, end, or stop are floating-point, the dtype is inferred to be the default dtype, see get_default_dtype().
     # Otherwise, the dtype is inferred to be torch.int64.
