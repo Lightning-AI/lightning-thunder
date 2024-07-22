@@ -3040,14 +3040,15 @@ def test_change_default_device_in_jitted_fn():
 
 
 @requiresCUDA
+@pytest.mark.xfail(
+    reason="When using device as context in PyTorch, it doesn't reflect in torch.get_default_device - see https://github.com/pytorch/pytorch/issues/131328"
+)
 def test_change_default_device_with_ctx():
     def fn(x):
         o = torch.ones(x.shape)
         return o.device
 
-    x = torch.randn(
-        3,
-    )
+    x = torch.randn(3)
 
     with torch.device("cuda"):
         jfn = thunder.jit(fn)
