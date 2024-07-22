@@ -374,6 +374,9 @@ def jit(
         # default dtype (for factory functions)
         cache_info["default_dtype"] = pytorch.get_default_dtype()
 
+        # default device (for factory functions)
+        cache_info["default_device"] = pytorch.get_default_device()
+
         # autocast related operations
         is_autocast_enabled = False
         if pytorch.is_autocast_enabled() or pytorch.is_autocast_cpu_enabled():
