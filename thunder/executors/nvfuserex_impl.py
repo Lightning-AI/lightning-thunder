@@ -1724,14 +1724,17 @@ def bitwise_xor(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionD
 register_supported(PrimIDs.BITWISE_XOR, bitwise_xor, _elementwise_binary_check)
 
 
-# TODO nvFuser's div operation is not equivalent to the div primitive
-#   (mruberry) I need to investigate if nvFuser exposes a truncation division operation
 def div(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
+    a_dtype = dtypes.to_dtype(a)
+    b_dtype = dtypes.to_dtype(b)
+
+    if dtypes.is_integer_dtype(a_dtype) and dtypes.is_integer_dtype(b_dtype):
+        return fd.ops.div(nva, nvb)
+
     # NOTE It's currently significantly faster for nvFuser to multiply the reciprocal than divide
-    # return fd.ops.div(nva, nvb)
     return fd.ops.mul(nva, fd.ops.reciprocal(nvb))
 
 
