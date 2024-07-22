@@ -447,8 +447,8 @@ def _get_and_update_rng_state_impl(seed, offset, device):
     # We follow the nvFuser way here. pytorch_new_offset = (nvfuser_offset + 1) * 4
     # See Note [Divide offset by 4] https://github.com/NVIDIA/Fuser/blob/729f36c/csrc/rng.cpp#L54
     new_offset = (offset + 1) * 4
-    seed_portion = torch.tensor([seed]).view(torch.uint8)
-    offset_portion = torch.tensor([new_offset]).view(torch.uint8)
+    seed_portion = torch.tensor([seed], device="cpu").view(torch.uint8)
+    offset_portion = torch.tensor([new_offset], device="cpu").view(torch.uint8)
     new_state = torch.cat([seed_portion, offset_portion])
     torch.cuda.set_rng_state(new_state, device)
     return seed, offset
