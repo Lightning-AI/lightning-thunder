@@ -6144,23 +6144,25 @@ linear_algebra_ops = []
 
 
 def normalize_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    def make(shape):
+        input_tensor = make_tensor(shape, device=device, dtype=dtype, requires_grad=requires_grad)
+        # avoid very small norm tensors, which can be unstable to normalize
+        input_tensor = input_tensor + 0.2 * torch.sign(input_tensor)
+        return input_tensor
+
     # input shape
-    cases = (
+    shapes = (
         (4, 4),
         (32, 32),
         (16, 16, 16),
         (4, 2, 4, 5),
     )
-    for case in cases:
-        input_tensor = make(case)
-        # avoid very small norm tensors, which can be unstable to normalize
-        input_tensor = input_tensor + 0.2 * torch.sign(input_tensor)
-        yield SampleInput(input_tensor, eps=1e-8)
-        yield SampleInput(input_tensor, p=0, eps=1e-8)
-        yield SampleInput(input_tensor, p=1, eps=1e-8)
-        yield SampleInput(input_tensor, p=4, eps=1e-8)
-        yield SampleInput(input_tensor, p=math.inf, eps=1e-8)
+    for shape in shapes:
+        yield SampleInput(make(shape), eps=1e-6)
+        yield SampleInput(make(shape), p=0, eps=1e-6)
+        yield SampleInput(make(shape), p=1, eps=1e-6)
+        yield SampleInput(make(shape), p=4, eps=1e-6)
+        yield SampleInput(make(shape), p=math.inf, eps=1e-6)
 
 
 normalize_opinfo = OpInfo(
