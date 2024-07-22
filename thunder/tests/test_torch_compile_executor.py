@@ -34,7 +34,7 @@ def test_torch_compile_litgpt():
 # Here we test that everything works as expected.
 @pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported")
 @requiresCUDA
-@pytest.mark.skipif(not device_supports_bf16(torch.device("cuda")))
+@pytest.mark.skipif(not device_supports_bf16(torch.device("cuda")), reason="bf16 is not supported")
 def test_torch_compile_cat_nvfuser_phi2_tanh():
     device = torch.device("cuda")
     config = Config.from_name("phi-2", n_layer=1, gelu_approximate="tanh")
