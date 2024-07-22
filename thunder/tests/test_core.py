@@ -3041,7 +3041,8 @@ def test_change_default_device_in_jitted_fn():
 
 @requiresCUDA
 @pytest.mark.xfail(
-    reason="When using device as context in PyTorch, it doesn't reflect in torch.get_default_device - see https://github.com/pytorch/pytorch/issues/131328"
+    reason="When using device as context in PyTorch, it doesn't reflect in torch.get_default_device - see https://github.com/pytorch/pytorch/issues/131328",
+    strict=True,
 )
 def test_change_default_device_with_ctx():
     def fn(x):
