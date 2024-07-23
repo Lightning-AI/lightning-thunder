@@ -296,18 +296,19 @@ def test_find_filtered_producer_consumer_pairs_multiple_consumers(executor, devi
 )
 def test_find_cut(executor, device, _):
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
-    compiled_func = thunder.compile(func, disable_preprocessing=True)
+    intial_trace = thunder.trace()(func, t0)
+    compiled_func = thunder.jit(intial_trace.python_callable())
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
     nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
-    assert len(nvfuser_symbols) == 3
+    assert len(nvfuser_symbols) == 2
 
-    producer = nvfuser_symbols[1]
-    consumer = nvfuser_symbols[2]
+    producer = nvfuser_symbols[0]
+    consumer = nvfuser_symbols[1]
     ext_external_producer_outputs = find_external_producer_outputs(utils.consumers(trace), (), producer, consumer)
     cut = find_cut(ext_external_producer_outputs, producer, consumer)
-    assert cut == ("t0", "t4")
+    assert cut == ("res", "t4")
 
 
 @instantiate(
