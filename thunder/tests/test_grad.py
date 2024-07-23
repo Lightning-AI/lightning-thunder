@@ -759,7 +759,8 @@ def test_convert_element_type_with_float(executor, device, _):
     def fn(t0):
         return t0 / 2
 
-    out, (grad,) = executor.make_callable_legacy(fn)(a)
+    initial_trace = thunder.trace()(fn, a)
+    out, (grad,) = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(a)
     torch.testing.assert_close(out, a / 2)
     torch.testing.assert_close(grad, torch.ones_like(a) / 2)
 
