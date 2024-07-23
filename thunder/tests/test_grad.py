@@ -548,6 +548,9 @@ def test_vjp_correctness_index_put_manual(op, device, dtype, executor, comp):
     supported_devicetypes=(devices.DeviceType.CUDA,),
 )
 def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
+    from thunder.common import CompileData
+    from thunder.core.compile_data import compile_data_and_stats
+
     if version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"):
         raise pytest.skip(
             "https://github.com/Lightning-AI/lightning-thunder/issues/703",
@@ -572,11 +575,27 @@ def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
-        actual_out, actual_grad = thunder.compile(
-            vjp(filtered_op),
-            disable_torch_autograd_support=True,
-            disable_preprocessing=True,
+        cd = CompileData(
+            fn=vjp(filtered_op),
             executors_list=[sdpa_ex, *executor.executors_list()],
+            disable_preprocessing=True,
+        )
+        with compile_data_and_stats(cd, None):
+            initial_trace = thunder.trace()(vjp(filtered_op), filtered_args, (v,))
+
+        from thunder.executors.sdpaex import sdpea_gradfwd, sdpea_bwd, sdpfa_gradfwd, sdpfa_bwd
+
+        # This is a workaround for the issue with python_ctx replacing symbols with their "call_ctx" values
+        initial_trace.python_ctx = lambda: {
+            "sdpaex_grad_forward_scaled_dot_product_efficient_attention": sdpea_gradfwd,
+            "sdpaex_scaled_dot_product_efficient_attention_backward": sdpea_bwd,
+            "sdpafx_grad_forward_scaled_dot_product_efficient_attention": sdpfa_gradfwd,
+            "sdpafx_scaled_dot_product_efficient_attention_backward": sdpfa_bwd,
+        }
+        actual_out, actual_grad = thunder.jit(
+            initial_trace.python_callable(),
+            disable_torch_autograd=True,
+            executors=[sdpa_ex, *executor.executors_list()],
         )(filtered_args, (v,))
         comp(actual_out, expect_out)
 
