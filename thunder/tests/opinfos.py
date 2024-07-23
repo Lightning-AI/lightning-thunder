@@ -5826,6 +5826,8 @@ def empty_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     for shape in cases:
         yield SampleInput(shape, device=device, dtype=dtype)
+        if len(shape) > 0:  # *() will lead to no shape being passed to `empty`.
+            yield SampleInput(*shape, device=device, dtype=dtype)
 
 
 def empty_error_generator(op, device, **kwargs):
