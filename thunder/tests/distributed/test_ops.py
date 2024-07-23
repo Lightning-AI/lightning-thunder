@@ -281,7 +281,11 @@ class DistributedCollectiveOpTest(DistributedParallelTestCase):
 
         device = f"cuda:{self.rank}"
         shape = (4, 2)
-        output_shape = (8, 2) if op.startswith("all_gather") else (2, 2)
+        group = torch.distributed.distributed_c10d._get_default_group()
+        if op.startswith("all_gather"):
+            output_shape = (shape[0] * group.size(), 2)
+        else:
+            output_shape = (shape[0] // group.size(), 2)
 
         comm = getattr(torch.distributed, op)
         _executor = executors_map[executor]
@@ -300,7 +304,6 @@ class DistributedCollectiveOpTest(DistributedParallelTestCase):
             output *= 2
             return f
 
-        group = torch.distributed.distributed_c10d._get_default_group()
         jitted = _executor.make_callable(foo)
         a = make_tensor(shape, device=device, dtype=torch.float32)
         b = make_tensor(shape, device=device, dtype=torch.float32)
