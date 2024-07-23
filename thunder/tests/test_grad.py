@@ -239,7 +239,9 @@ def check_jvp(f, *primals, comp, executor):
     """
     tangents = tree_map(make_tensor_like, primals)
     initial_trace_jvp_f = thunder.trace()(jvp(f), primals, tangents)
-    actual_p, actual_t = executor.make_callable(initial_trace_jvp_f.python_callable(), disable_torch_autograd=True)(primals, tangents)
+    actual_p, actual_t = executor.make_callable(initial_trace_jvp_f.python_callable(), disable_torch_autograd=True)(
+        primals, tangents
+    )
     expected_p, expected_t = numerical_jvp(executor.make_callable(f, disable_torch_autograd=True))(primals, tangents)
     comp(expected_p, actual_p)
     comp(expected_t, actual_t)
