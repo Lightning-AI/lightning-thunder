@@ -3831,6 +3831,11 @@ def maybe_downcast_to(dtype, args):
 
 
 @register_autocast_rule("torch.matmul")
+def autocast_torch_matmul_rule(a, b, dtype):
+    """Autocast rule for matmul"""
+    return ltorch.matmul(*(maybe_downcast_to(dtype, (a, b))))
+
+
 @register_autocast_rule(prims.PrimIDs.MATMUL)
 def autocast_matmul_rule(a, b, dtype):
     """Autocast rule for matmul"""
