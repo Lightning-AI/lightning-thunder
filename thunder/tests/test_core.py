@@ -1967,7 +1967,7 @@ def test_traceback():
     # this should actually be in excinfo.traceback[-1] but see
     # https://github.com/Lightning-AI/lightning-thunder/issues/844
     assert any(("torch.neg" in str(tb.statement)) for tb in excinfo.traceback)
-    assert any(("thunder.computation" in tb.path) for tb in excinfo.traceback)
+    assert any(("thunder.computation" in str(tb.path)) for tb in excinfo.traceback)
 
 
 @instantiate(
