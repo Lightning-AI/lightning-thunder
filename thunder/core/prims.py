@@ -3729,7 +3729,7 @@ def matmul_meta(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
 
     utils.check(
         utils.same_shape(a.shape[:-2], b.shape[:-2]),
-        lambda: f"Expected the batch dimensions of a ({a.shape[:-2],}) and the batch dimensions of b ({b.shape[:-2]}) to be the same",
+        lambda: f"Expected the batch dimensions of a {a.shape[:-2]} and the batch dimensions of b {b.shape[:-2]} to be the same",
     )
 
     utils.check(
