@@ -621,8 +621,9 @@ def test_vjp_correctness_zeta_manual(op, device, dtype, executor, comp):
 
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
-        actual_out, (grad_lhs, grad_rhs) = executor.make_callable_legacy(
-            vjp(flat_op), disable_torch_autograd_support=True
+        initial_trace = thunder.trace()(vjp(flat_op), flat_args, (v,))
+        actual_out, (grad_lhs, grad_rhs) = executor.make_callable(
+            initial_trace.python_callable(), disable_torch_autograd=True
         )(flat_args, (v,))
         assert grad_lhs is None, "grad_lhs should be None"
         comp(actual_out, out, equal_nan=True)
