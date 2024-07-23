@@ -644,7 +644,8 @@ def test_vjp_correctness_nll_loss_manual(op, device, dtype, executor, comp):
 
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
-        actual_out, grad_out = executor.make_callable_legacy(vjp(flat_op), disable_torch_autograd_support=True)(
+        initial_trace = thunder.trace()(vjp(flat_op), flat_args, (v,))
+        actual_out, grad_out = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(
             flat_args, (v,)
         )
 
@@ -666,7 +667,8 @@ def test_vjp_correctness_cross_entropy_manual(op, device, dtype, executor, comp)
 
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
-        actual_out, grad_out = executor.make_callable_legacy(vjp(flat_op), disable_torch_autograd_support=True)(
+        initial_trace = thunder.trace()(vjp(flat_op), flat_args, (v,))
+        actual_out, grad_out = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(
             flat_args, (v,)
         )
 
@@ -689,7 +691,8 @@ def test_vjp_correctness_einsum_manual(op, device, dtype, executor, comp):
 
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
-        actual_out, grads_out = executor.make_callable_legacy(vjp(flat_op), disable_torch_autograd_support=True)(
+        initial_trace = thunder.trace()(vjp(flat_op), flat_args, (v,))
+        actual_out, grads_out = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(
             flat_args, (v,)
         )
 
