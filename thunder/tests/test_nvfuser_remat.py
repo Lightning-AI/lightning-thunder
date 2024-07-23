@@ -216,7 +216,8 @@ def test_find_nvfuser_producer_consumer_pairs(executor, device, _):
         return t4
 
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
-    compiled_func = thunder.compile(func, disable_preprocessing=True)
+    initial_trace = thunder.trace()(func, t0)
+    compiled_func = thunder.jit(initial_trace.python_callable())
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
