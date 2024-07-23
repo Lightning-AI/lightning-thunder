@@ -62,13 +62,14 @@ def disable_rematerialization_in_nvfuser_fusion(func):
 def test_find_producer_symbols(executor, device, _):
     # We will try to find a subgraph for rematerializing __c and __d
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
-    compiled_func = thunder.compile(func, disable_preprocessing=True)
+    initial_trace = thunder.trace()(func, t0)
+    compiled_func = thunder.jit(initial_trace.python_callable())
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
     fusions = get_fusions(trace)
 
-    assert len(fusions) == 3
+    assert len(fusions) == 2
 
     # TODO Update this to use the fusions returned from get_fusions
     nvfuser_symbols = tuple(filter(lambda x: x.sym.is_fusion, trace.bound_symbols))
@@ -94,8 +95,8 @@ def test_find_producer_symbols(executor, device, _):
 
     # Get the producers of __c and __d
     # We should stop at __a, which is the input to the recomputed region
-    a_proxy = flattened_trace.bound_symbols[0].output.collection()[0]
-    assert a_proxy.name == "t0"
+    a_proxy = flattened_trace.bound_symbols[0].output
+    assert a_proxy.name == "res"
     stop_proxies = [a_proxy]
 
     recomputed_producers = utils.find_producer_symbols(flattened_trace, (c_proxy, d_proxy), stop_proxies)
