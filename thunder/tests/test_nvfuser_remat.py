@@ -323,23 +323,25 @@ def test_find_cut_dropout(executor, device, _):
     replace_uniform_mock = MagicMock(side_effect=lambda trc: trc)
 
     with patch("thunder.core.rematerialization.replace_uniform", new=replace_uniform_mock):
-        compiled_func = thunder.compile(func_with_dropout, disable_preprocessing=True)
+        intial_trace = thunder.trace()(func_with_dropout, t0)
+        compiled_func = thunder.jit(intial_trace.python_callable())
         _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
     nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
-    assert len(nvfuser_symbols) == 3
+    assert len(nvfuser_symbols) == 2
 
-    producer = nvfuser_symbols[1]
-    consumer = nvfuser_symbols[2]
+    producer = nvfuser_symbols[0]
+    consumer = nvfuser_symbols[1]
     ext_producer_outputs = find_external_producer_outputs(utils.consumers(trace), (), producer, consumer)
     cut = find_cut(ext_producer_outputs, producer, consumer)
     assert cut[0] == producer.args[0].name
-    # Note cut[1]/producer.output[0] is the boolean mask for dropout. It should
+    # Note cut[2]/producer.output[2] is the boolean mask for dropout. It should
     # be chosen over the float32 mask. See this issue: "The Recomputation
     # Algorithm on Dropout choses a float32 mask to save"
-    assert cut[1] == producer.output[0].name
-    assert cut[2] == producer.output[1].name
+    assert len(producer.output) == 3
+    assert cut[1] == producer.output[1].name
+    assert cut[2] == producer.output[2].name
 
 
 @instantiate(
