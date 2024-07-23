@@ -238,8 +238,9 @@ def check_jvp(f, *primals, comp, executor):
         AssertionError: If the Jacobian-vector product is not correct.
     """
     tangents = tree_map(make_tensor_like, primals)
-    actual_p, actual_t = executor.make_callable_legacy(jvp(f))(primals, tangents)
-    expected_p, expected_t = numerical_jvp(executor.make_callable_legacy(f))(primals, tangents)
+    initial_trace_jvp_f = thunder.trace()(jvp(f), primals, tangents)
+    actual_p, actual_t = executor.make_callable(initial_trace_jvp_f.python_callable(), disable_torch_autograd=True)(primals, tangents)
+    expected_p, expected_t = numerical_jvp(executor.make_callable(f, disable_torch_autograd=True))(primals, tangents)
     comp(expected_p, actual_p)
     comp(expected_t, actual_t)
 
