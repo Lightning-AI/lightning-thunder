@@ -238,6 +238,9 @@ def test_autocast_convolution(dim, requires_grad):
 @pytest.mark.parametrize("device", ("cpu", "cuda"))
 @pytest.mark.parametrize("b_dtype", (torch.float, torch.bfloat16))
 def test_autocast_torch_matmul(requires_grad, device, b_dtype):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("Skipping - CUDA is not available")
+
     def foo(a, b):
         output = torch.matmul(a, b)
         return output
