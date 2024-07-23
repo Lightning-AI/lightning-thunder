@@ -232,3 +232,27 @@ def test_autocast_convolution(dim, requires_grad):
 
         for eg, jg in zip(eager_grads, jit_grads):
             torch.testing.assert_close(eg, jg, rtol=5e-2, atol=5e-2)
+
+
+@pytest.mark.parametrize("requires_grad", [False, True])
+def test_autocast_torch_matmul(requires_grad):
+    def foo(a, b):
+        output = torch.matmul(a, b)
+        return output
+
+    a = torch.rand([3, 1, 2], dtype=torch.float, device="cpu", requires_grad=requires_grad)
+    b = torch.rand([2, 3], dtype=torch.bfloat16, device="cpu", requires_grad=requires_grad)
+
+    with torch.autocast("cpu", torch.bfloat16):
+        expected = foo(a, b)
+        actual = thunder.jit(foo)(a, b)
+
+    torch.testing.assert_close(actual, expected)
+
+    if requires_grad:
+        go = torch.randn_like(expected)
+        eager_grads = torch.autograd.grad(expected, [a, b], go)
+        jit_grads = torch.autograd.grad(actual, [a, b], go)
+
+        for eg, jg in zip(eager_grads, jit_grads):
+            torch.testing.assert_close(eg, jg, rtol=5e-3, atol=5e-3)
