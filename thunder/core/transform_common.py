@@ -828,7 +828,7 @@ def functionalize_inplace_ops(
     # NOTE(crcrpar): The first value of a tuple is an indicator of how the copy src is new.
     removed_copy_bsyms: list[tuple[int, BoundSymbol]] = []
     for idx, bsym in enumerate(intermediate_trace.bound_symbols):
-        new_bsym = bsym.from_bsym_swap_proxies(swap_map)
+        new_bsym = bsym.from_bsym_swap_proxies(swap_map, skip_output=True)
 
         if not is_functionalizable(new_bsym):
             new_bsyms.append(new_bsym)
