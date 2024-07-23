@@ -146,20 +146,21 @@ def test_apply_rematerialization_producer(executor, device, _):
 @disable_rematerialization_in_nvfuser_fusion
 def test_apply_rematerialization_consumer(executor, device, _):
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
-    compiled_func = thunder.compile(func, disable_preprocessing=True)
+    initial_trace = thunder.trace()(func, t0)
+    compiled_func = thunder.jit(initial_trace.python_callable())
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
     nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
-    assert len(nvfuser_symbols) == 3
+    assert len(nvfuser_symbols) == 2
 
     # Let's consider a pair of the first and the last nvFuser regions
     # We call them producer and consumer because the last region consumes some
     # outputs of the first region
-    producer = nvfuser_symbols[1]
-    consumer = nvfuser_symbols[2]
+    producer = nvfuser_symbols[0]
+    consumer = nvfuser_symbols[1]
 
-    cut = ("t0", "t4")
+    cut = ("res", "t4")
     assert cut[0] in map(lambda x: x.name, producer.args)
     assert cut[1] in map(lambda x: x.name, producer.output)
     assert cut[1] in map(lambda x: x.name, consumer.args)
