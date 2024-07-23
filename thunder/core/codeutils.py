@@ -225,10 +225,9 @@ def prettyprint(
         name = _generate_dataclass_class_name(x)
         call_repr = []
         for k, v in x.__dict__.items():
-            try:
-                call_repr.append(f"{k}={v.name}")
-            except:
-                call_repr.append(f"{k}={v}")
+            call_repr.append(
+                f"{k}={prettyprint(v, with_type=False, literals_as_underscores=literals_as_underscores, _quote_markers=False)}"
+            )
         call_repr_str = ",".join(call_repr)
         return m(f"{name}({call_repr_str})")
 
