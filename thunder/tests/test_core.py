@@ -2261,10 +2261,10 @@ def test_cse(executor, device, _):
         return z, w, m, (a, b, c, d)
 
     x, y = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
-    compiled_func = thunder.compile(
-        func,
-        disable_preprocessing=True,
-        executors_list=executor.executors_list(),
+    initial_trace = thunder.trace()(func, x, y, device)
+    compiled_func = thunder.jit(
+        initial_trace.python_callable(),
+        executors=executor.executors_list(),
     )
     compiled_func(x, y, device)
     traces = thunder.last_traces(compiled_func)
@@ -2280,7 +2280,7 @@ def test_cse(executor, device, _):
     assert len(flatten_cse_trace.bound_symbols) == len(flatten_dce_trace.bound_symbols) - 3
     assert len([bsym for bsym in flatten_cse_trace.bound_symbols if bsym.sym.id == prims.PrimIDs.UNIFORM]) == 4
 
-    assert [t.name for t in tree_flatten(flatten_cse_trace.output)[0]] == ["t4", "t4", "t6", "t7", "t8", "t9", "t10"]
+    assert [t.name for t in tree_flatten(flatten_cse_trace.output)[0]] == ["t4", "t4", "t6", "t14", "t15", "t16", "t17"]
 
 
 def test_symbol_flat_args():
