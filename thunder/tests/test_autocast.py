@@ -235,15 +235,17 @@ def test_autocast_convolution(dim, requires_grad):
 
 
 @pytest.mark.parametrize("requires_grad", [False, True])
-def test_autocast_torch_matmul(requires_grad):
+@pytest.mark.parametrize("device", ("cpu", "cuda"))
+@pytest.mark.parametrize("b_dtype", (torch.float, torch.bfloat16))
+def test_autocast_torch_matmul(requires_grad, device, b_dtype):
     def foo(a, b):
         output = torch.matmul(a, b)
         return output
 
-    a = torch.rand([3, 1, 2], dtype=torch.float, device="cpu", requires_grad=requires_grad)
-    b = torch.rand([2, 3], dtype=torch.bfloat16, device="cpu", requires_grad=requires_grad)
+    a = torch.rand([3, 1, 2], dtype=torch.float, device=device, requires_grad=requires_grad)
+    b = torch.rand([2, 3], dtype=b_dtype, device=device, requires_grad=requires_grad)
 
-    with torch.autocast("cpu", torch.bfloat16):
+    with torch.autocast(device, torch.bfloat16):
         expected = foo(a, b)
         actual = thunder.jit(foo)(a, b)
 
