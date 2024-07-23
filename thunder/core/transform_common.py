@@ -570,7 +570,8 @@ def canonicalize_bsym_args(
     bsyms: list[BoundSymbol] = []
     tensors_observed: set[VariableInterface] = set()
     for bsym in computation_trace.bound_symbols:
-        new_bsym = bsym.from_bsym_swap_proxies(swap_map)
+        # update args/kwargs so that any tensors are not consumed by multiple math / comm ops.
+        new_bsym = bsym.from_bsym_swap_proxies(swap_map, skip_output=True)
 
         cur_orig_to_view_swap_map: dict[VariableInterface, TensorProxy] = {}
         for t in filter(lambda p: isinstance(p, TensorProxy), new_bsym.flat_args):
@@ -590,17 +591,18 @@ def canonicalize_bsym_args(
                     bsyms.append(reshape_bsym)
         new_bsym = new_bsym.from_bsym_swap_proxies(cur_orig_to_view_swap_map, skip_output=True)
 
+        # non in-place bsyms would only need to update its outputs.
+        # but in-place bsyms would, as it needs to make sure they return `prims.copy_`'s return value.
         if not is_functionalizable(new_bsym):
             bsyms.append(new_bsym)
-            continue
-
-        copy_bsym = bsym.subsymbols[-1]
-        copy_out = copy_bsym.flat_proxy_outs[0]
-        copy_dst = copy_bsym.flat_proxy_args[1]
-        swap_map[variableify(copy_dst)] = copy_out
-        # make sure an in-place bsym returns `prims.copy_` output
-        new_bsym = new_bsym.from_bsym_swap_proxies(swap_map, skip_inputs=True, skip_subsymbols=True)
-        bsyms.append(new_bsym)
+        else:
+            copy_bsym = bsym.subsymbols[-1]
+            copy_out = copy_bsym.flat_proxy_outs[0]
+            copy_dst = copy_bsym.flat_proxy_args[1]
+            swap_map[variableify(copy_dst)] = copy_out
+            # make sure an in-place bsym returns `prims.copy_` output
+            new_bsym = new_bsym.from_bsym_swap_proxies(swap_map, skip_inputs=True, skip_subsymbols=True)
+            bsyms.append(new_bsym)
 
     intermediate_trace = from_trace(computation_trace)
     intermediate_trace.bound_symbols = bsyms
