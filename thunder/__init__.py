@@ -723,6 +723,8 @@ def jit(
         cs.last_trace_host_execution_start = time.perf_counter_ns()
 
         if cache_entry.vanilla_tensor_args:
+            tensor_arg_idx_set = set(cache_entry.vanilla_tensor_args)
+
             inp_to_data_ptr = {}
             for i, t in enumerate(inps):
                 if pytorch.is_tensor(t) and not t.is_sparse:
@@ -730,15 +732,20 @@ def jit(
 
             data_ptr_to_inps = {}
             for i, data_ptr in inp_to_data_ptr.items():
-                if data_ptr not in data_ptr_to_inps:
-                    data_ptr_to_inps[data_ptr] = [i]
+                if data_ptr in data_ptr_to_inps:
+                    data_ptr_to_inps[data_ptr].append(i)
                 else:
+                    data_ptr_to_inps[data_ptr] = [i]
+
+            args, _ = tree_flatten((cache_entry.computation_traces[-1].args, cache_entry.computation_traces[-1].kwargs))
+            args_cannot_be_alias = [args[i] for i in cache_entry.vanilla_tensor_args]
+            for indices in data_ptr_to_inps.values():
+                if len(indices) > 1:
                     check(
-                        i not in cache_entry.vanilla_tensor_args,
-                        lambda: f"{i}-th tensor input must not be alias",
+                        not (set(indices) & tensor_arg_idx_set),
+                        lambda: f"It seems that {indices} of {args_cannot_be_alias} share their storage and any of them are modified in-place",
                         NotImplementedError,
                     )
-                    data_ptr_to_inps[data_ptr].append(i)
 
         result = cache_entry.computation_fn(*inps)
 

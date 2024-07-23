@@ -575,14 +575,15 @@ def test_error_out_func_with_alias_args():
     a = torch.ones((1, 1))
     b = torch.zeros((1, 1))
 
+    msg = "share their storage and any of them are modified in-place"
     with pytest.raises(NotImplementedError) as excinfo:
         f_with_inplace(a, a)
-    assert "th tensor input must not be alias" in str(excinfo.value)
+    assert msg in str(excinfo.value)
     assert (thunder.cache_hits(f_with_inplace), thunder.cache_misses(f_with_inplace)) == (0, 1)
 
     with pytest.raises(NotImplementedError) as excinfo:
         f_with_inplace(b, b)
-    assert "th tensor input must not be alias" in str(excinfo.value)
+    assert msg in str(excinfo.value)
     assert (thunder.cache_hits(f_with_inplace), thunder.cache_misses(f_with_inplace)) == (1, 1)
 
     # Make sure the cache changes accordingly
