@@ -848,6 +848,12 @@ def functionalize_inplace_ops(
         new_bsyms.append(new_functional_bsym)
         bsym_inplace_to_functional[new_bsym] = new_functional_bsym
 
+        if (
+            len(new_functional_bsym.subsymbols) == 1
+            and new_functional_bsym.rhs == new_functional_bsym.subsymbols[0].rhs
+        ):
+            new_functional_bsym.subsymbols = new_functional_bsym.subsymbols[0].subsymbols
+
     required_copy_bsyms, swap_map_for_return = collect_required_copy_bsyms_for_args(
         intermediate_trace,
         removed_copy_bsyms,
