@@ -2678,6 +2678,25 @@ def _collections_namedtuple_lookaside(
     return namedtuple_type
 
 
+def _type_call_lookaside(wrapped_typ, *args, **kwargs):
+    typ = unwrap(wrapped_typ)
+    if not hasattr(typ, "__new__"):
+        raise NotImplementedError(
+            f"Don't know how to interpret a callable with type {type(typ)} without a __new__ method"
+        )
+    obj = _interpret_call(typ.__new__, wrapped_typ, *args, **kwargs)
+    if obj is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return obj
+
+    wrapped_init = _interpret_call(getattr, obj, wrap_const("__init__"))
+    assert not isinstance(wrapped_init, INTERPRETER_SIGNALS)
+    populate_attribute_wrapper(wrapped_init, "__self__", obj)
+    res = _interpret_call(wrapped_init, *args, **kwargs)
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return res
+    return obj
+
+
 _default_lookaside_map: dict[Callable, Callable] = {
     # Jit lookasides
     is_jitting: _is_jitting_lookaside,
@@ -2698,7 +2717,8 @@ _default_lookaside_map: dict[Callable, Callable] = {
     next: _next_lookaside,
     reversed: _reversed_lookaside,
     super: _super_lookaside,
-    type.__call__: _type_lookaside,
+    type: _type_lookaside,
+    type.__call__: _type_call_lookaside,
     isinstance: _isinstance_lookaside,
     functools.reduce: _functools_reduce_lookaside,
     operator.getitem: _getitem_lookaside,
@@ -6488,20 +6508,8 @@ def _call_dispatch(
 
     # (5) Handle types
     if isinstance(fn, type):
-        if not hasattr(fn, "__new__"):
-            raise NotImplementedError(
-                f"Don't know how to interpret a callable with type {type(fn)} without a __new__ method"
-            )
-        obj = _interpret_call(fn.__new__, wrapped_fn, *args, **kwargs)
-        if obj is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
-            return obj
-
-        wrapped_init = _interpret_call(getattr, obj, wrap_const("__init__"))
-        assert not isinstance(wrapped_init, INTERPRETER_SIGNALS)
-        populate_attribute_wrapper(wrapped_init, "__self__", obj)
-        res = _interpret_call(wrapped_init, *args, **kwargs)
-        if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
-            return res
+        tt = type(fn)  # could be type itself, or a metaclass
+        obj = _interpret_call(tt.__call__, wrapped_fn, *args, **kwargs)
         return obj
 
     # (6) Handles callable objects (with a dunder call method)

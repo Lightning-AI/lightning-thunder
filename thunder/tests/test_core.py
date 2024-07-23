@@ -2996,6 +2996,67 @@ def test_change_default_dtype_in_jitted_fn():
         torch.set_default_dtype(default_dtype)
 
 
+@requiresCUDA
+def test_factory_functions_default_device():
+
+    def fn(x):
+        o = torch.ones(x.shape)
+        return o.device
+
+    x = torch.randn(3, 3)
+    jfn = thunder.jit(fn)
+    actual_device = jfn(x)
+
+    assert fn(x) == jfn(x)
+    assert actual_device == torch.device("cpu")
+
+    # Check with a different default device.
+    org_device = torch.get_default_device()
+    torch.set_default_device("cuda")
+    try:
+        actual_device = jfn(x)
+        assert actual_device == fn(x)
+    finally:
+        torch.set_default_device(org_device)
+
+    assert thunder.cache_misses(jfn) == 2
+
+
+@requiresCUDA
+def test_change_default_device_in_jitted_fn():
+    default_device = torch.get_default_device()
+    try:
+
+        def fn(x):
+            torch.set_default_device("cuda")
+            o = torch.ones(x.shape)
+            return o.device
+
+        jfn = thunder.jit(fn)
+        with pytest.raises(RuntimeError, match="Default device is changed during the execution of jitted function"):
+            jfn(torch.randn(3, 3))
+    finally:
+        torch.set_default_device(default_device)
+
+
+@requiresCUDA
+@pytest.mark.xfail(
+    reason="When using device as context in PyTorch, it doesn't reflect in torch.get_default_device - see https://github.com/pytorch/pytorch/issues/131328",
+    strict=True,
+)
+def test_change_default_device_with_ctx():
+    def fn(x):
+        o = torch.ones(x.shape)
+        return o.device
+
+    x = torch.randn(3)
+
+    with torch.device("cuda"):
+        jfn = thunder.jit(fn)
+        actual_device = jfn(x)
+        assert actual_device == fn(x)
+
+
 def test_arange_default_dtype():
     # If any of start, end, or stop are floating-point, the dtype is inferred to be the default dtype, see get_default_dtype().
     # Otherwise, the dtype is inferred to be torch.int64.
@@ -3012,3 +3073,32 @@ def test_arange_default_dtype():
     jfn = thunder.jit(fn)
     assert fn() == jfn()
     assert jfn() == torch.int64
+
+
+def test_cat_mixed_dtypes():
+    # We add a special test here instead of a sample in OpInfo.
+    # When we add a mixed input sample in OpInfo, it will also be picked up for the test which
+    # computes numerical Jacobian vector product and compares it with analytical. The test will produce failures
+    # when run in precision lower than double (and we can't disable a sample based on tests).
+    # See comment - https://github.com/Lightning-AI/lightning-thunder/pull/819#issuecomment-2244761476
+    def fn(tensors):
+        return torch.cat(tensors, dim=0)
+
+    tensors = (torch.randn(3, requires_grad=True), torch.randn(3, dtype=torch.float16, requires_grad=True))
+    with torch.no_grad():
+        tensors_jit = tuple(t.detach().clone() for t in tensors)
+        for t in tensors_jit:
+            t.requires_grad_(True)
+
+    # Compare forward
+    jfn = thunder.jit(fn)
+    expected = fn(tensors)
+    actual = jfn(tensors_jit)
+    torch.testing.assert_close(actual, expected)
+
+    # Compare backward
+    cotangent = torch.randn_like(expected)
+    expected.backward(cotangent)
+    actual.backward(cotangent)
+
+    torch.testing.assert_close(tuple(t.grad for t in tensors), tuple(t.grad for t in tensors_jit))

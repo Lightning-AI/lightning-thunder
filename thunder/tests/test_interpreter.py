@@ -3270,7 +3270,7 @@ def test_litgpt(jit):
     assert_close(result, fn(*args, **kwargs))
 
 
-def test_transformer_model_output():
+def test_transformer_model_output(jit):
     pytest.importorskip("transformers")
     from transformers.utils.generic import ModelOutput
 
@@ -3284,3 +3284,15 @@ def test_transformer_model_output():
     actual = thunder.jit(fn)(x)
 
     assert expected is actual
+
+
+def test_metaclass(jit):
+    # thunder.core.devices.Device uses the singleton pattern
+    # implemented through metaclasses
+    def fn():
+        a = thunder.core.devices.Device("cpu")
+        b = thunder.core.devices.Device("cpu")
+        assert a is b
+
+    fn()
+    jit(fn)()
