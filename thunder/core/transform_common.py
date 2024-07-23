@@ -618,6 +618,32 @@ def canonicalize_bsym_args(
     return intermediate_trace
 
 
+def create_functional_bsym_from(inplace_bsym: BoundSymbol) -> BoundSymbol:
+    from thunder.torch import _inplace_to_out_of_place
+
+    functional_sym: Symbol
+    optional_inplace_arg_index: int
+    functional_sym, optional_inplace_arg_index = _inplace_to_out_of_place[inplace_bsym.sym]
+
+    args, kwargs = inplace_bsym.args, inplace_bsym.kwargs
+    if optional_inplace_arg_index > -1:
+        # Update `inplace` from `True` to `False`. e.g. `relu(x, inplace=True)` -> `relu(x, inplace=False)`
+        flat_args, flat_args_spec = tree_flatten((args, kwargs))
+        flat_args[optional_inplace_arg_index] = False
+        args, kwargs = tree_unflatten(flat_args, flat_args_spec)
+    functional_bsym = functional_sym.bind(
+        *args,
+        **kwargs,
+        output=inplace_bsym.output,
+        subsymbols=inplace_bsym.subsymbols,
+        _call_ctx=inplace_bsym._call_ctx,
+    )
+
+    if len(functional_bsym.subsymbols) == 1 and functional_bsym.rhs == functional_bsym.subsymbols[0].rhs:
+        functional_bsym.subsymbols = functional_bsym.subsymbols[0].subsymbols
+    return functional_bsym
+
+
 def functionalize_inplace_ops(
     computation_trace: Trace, orig_to_view_swap_map: dict[VariableInterface, TensorProxy]
 ) -> list[Trace]:
@@ -789,8 +815,6 @@ def functionalize_inplace_ops(
         computation_trace: A computation trace created by ``interpreter``.
         orig_to_view_swap_map:
     """
-    from thunder.torch import _inplace_to_out_of_place
-
     if not any(is_functionalizable(bsym) for bsym in computation_trace.bound_symbols):
         return []
 
@@ -798,7 +822,6 @@ def functionalize_inplace_ops(
     intermediate_trace = canonicalize_bsym_args(computation_trace, orig_to_view_swap_map)
     # Step 2: Remove `prims.copy_` if it's the last one of `bsym.subsymbols`,
     # unless `copy_to` is `computation_trace.args` or `computation_trace.kwargs`
-    bsym_inplace_to_functional = {}
     swap_map: dict[VariableInterface, TensorProxy] = {}
 
     new_bsyms: list[BoundSymbol] = []
@@ -819,31 +842,8 @@ def functionalize_inplace_ops(
         new_bsym.subsymbols = new_bsym.subsymbols[:-1]
         new_bsym = new_bsym.from_bsym_swap_proxies(swap_map)
 
-        functional_sym: Symbol
-        optional_inplace_arg_index: int
-        functional_sym, optional_inplace_arg_index = _inplace_to_out_of_place[new_bsym.sym]
-
-        args, kwargs = new_bsym.args, new_bsym.kwargs
-        if optional_inplace_arg_index > -1:
-            # Update `inplace` from `True` to `False`. e.g. `relu(x, inplace=True)` -> `relu(x, inplace=False)`
-            flat_args, flat_args_spec = tree_flatten((args, kwargs))
-            flat_args[optional_inplace_arg_index] = False
-            args, kwargs = tree_unflatten(flat_args, flat_args_spec)
-        new_functional_bsym = functional_sym.bind(
-            *args,
-            **kwargs,
-            output=new_bsym.output,
-            subsymbols=new_bsym.subsymbols,
-            _call_ctx=new_bsym._call_ctx,
-        )
-        new_bsyms.append(new_functional_bsym)
-        bsym_inplace_to_functional[new_bsym] = new_functional_bsym
-
-        if (
-            len(new_functional_bsym.subsymbols) == 1
-            and new_functional_bsym.rhs == new_functional_bsym.subsymbols[0].rhs
-        ):
-            new_functional_bsym.subsymbols = new_functional_bsym.subsymbols[0].subsymbols
+        functional_bsym = create_functional_bsym_from(new_bsym)
+        new_bsyms.append(functional_bsym)
 
     functionalized_computation_trace = from_trace(computation_trace)
     functionalized_computation_trace.set_provenance(TraceProvenance("Functionalize in-place ops"))
@@ -872,7 +872,4 @@ def functionalize_inplace_ops(
     functionalized_bsyms.append(new_bsyms[-1].from_bsym_swap_proxies(swap_map_for_return))
 
     functionalized_computation_trace.bound_symbols = functionalized_bsyms
-    # note(crcrpar): I kind of want to do the following two.
-    # functionalized_computation_trace._provenance.swap_map = swap_map
-    # functionalized_computation_trace._provenance.bsym_inplace_to_functional = bsym_inplace_to_functional
     return [intermediate_trace, functionalized_computation_trace]
