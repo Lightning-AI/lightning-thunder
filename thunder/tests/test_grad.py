@@ -1266,12 +1266,13 @@ def test_backward_none_propagation(executor, device, _):
     import thunder.torch as ltorch
     from thunder.core.transforms import vjp
 
-    @executor.make_callable_legacy
     @vjp
     def func(a):
         return ltorch.split(a, 1)
 
     a = make_tensor((2, 4), device=device, dtype=torch.float16)
+    initial_trace = thunder.trace()(func, (a,), (None, None))
+    func = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
     result = func((a,), (None, None))
     assert result[1][0] is None
 
