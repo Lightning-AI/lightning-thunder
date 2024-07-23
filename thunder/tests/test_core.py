@@ -3019,6 +3019,7 @@ def test_cat_mixed_dtypes():
     # When we add a mixed input sample in OpInfo, it will also be picked up for the test which
     # computes numerical Jacobian vector product and compares it with analytical. The test will produce failures
     # when run in precision lower than double (and we can't disable a sample based on tests).
+    # See comment - https://github.com/Lightning-AI/lightning-thunder/pull/819#issuecomment-2244761476
     def fn(tensors):
         return torch.cat(tensors, dim=0)
 
