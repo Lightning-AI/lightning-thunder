@@ -248,7 +248,9 @@ def test_vjp_correctness_cudnn_sdpa(dtype, may_cat_grad_qkv):
 
         from thunder.executors.cudnnex import cudnn_sdpa_fwd, cudnn_sdpa_bwd
 
-        # This is a workaround for the issue with python_ctx replacing symbols with their "call_ctx" values
+        # This is a workaround for the issue with python_ctx replacing symbols
+        # with their "call_ctx" values which are not traceable and accept only
+        # regular torch tensors
         initial_trace.python_ctx = lambda: {
             "cudnn_sdpa_fwd": cudnn_sdpa_fwd,
             "cudnn_sdpa_bwd": cudnn_sdpa_bwd,

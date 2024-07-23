@@ -585,7 +585,9 @@ def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
 
         from thunder.executors.sdpaex import sdpea_gradfwd, sdpea_bwd, sdpfa_gradfwd, sdpfa_bwd
 
-        # This is a workaround for the issue with python_ctx replacing symbols with their "call_ctx" values
+        # This is a workaround for the issue with python_ctx replacing symbols
+        # with their "call_ctx" values which are not traceable and accept only
+        # regular torch tensors
         initial_trace.python_ctx = lambda: {
             "sdpaex_grad_forward_scaled_dot_product_efficient_attention": sdpea_gradfwd,
             "sdpaex_scaled_dot_product_efficient_attention_backward": sdpea_bwd,
