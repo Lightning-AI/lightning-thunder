@@ -2179,13 +2179,8 @@ def test_thunder_autocast_transform(executor, device, _):
         dtype = thunder.bfloat16 if device == "cpu" else thunder.float16
         torch_dtype = ltorch.to_torch_dtype(dtype)
         x, y, z = (torch.randn((2, 2), device=device, dtype=torch.float32) for _ in range(3))
-        compiled = thunder.compile(
-            autocast(func, dtype=dtype),
-            executors_list=executor.executors_list(),
-            # NOTE(crcrpar): preprocessing needs to be disabled as this transform would introduce
-            # nonlocals that are not supported.
-            disable_preprocessing=True,
-        )
+        initial_trace = thunder.trace()(autocast(func, dtype=dtype), x, y, z)
+        compiled = thunder.jit(initial_trace.python_callable(), executors=executor.executors_list())
         out = compiled(x, y, z)
         traces = thunder.last_traces(compiled)
         assert out.dtype == (torch_dtype if should_autocast else torch.float32), traces[-1]
