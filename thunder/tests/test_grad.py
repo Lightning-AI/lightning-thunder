@@ -313,12 +313,13 @@ def check_vjp(f, *primals, comp, executor="torch"):
     make = partial(make_tensor_like, low=0, high=1)
 
     u = tree_map(make, primals)
-    outs_p, J_u = numerical_jvp(executor.make_callable_legacy(f, disable_torch_autograd_support=True))(primals, u)
+    outs_p, J_u = numerical_jvp(executor.make_callable(f, disable_torch_autograd=True))(primals, u)
 
     multiple_results = isinstance(outs_p, Sequence)
 
     v = tree_map(make, outs_p)
-    _, J_star_v = executor.make_callable_legacy(vjp(f), disable_torch_autograd_support=True)(primals, v)
+    initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
+    _, J_star_v = executor.make_callable(initial_trace_vjp_f.python_callable(), disable_torch_autograd=True)(primals, v)
 
     if not multiple_results:
         v = (v,)
