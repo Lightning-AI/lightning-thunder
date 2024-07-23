@@ -364,17 +364,10 @@ def test_rematerialization(executor, device, _):
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
 
     # Result with rematerialization and without rematerialization should match
-    result_with_remat = thunder.compile(
-        func,
-        disable_preprocessing=True,
-        use_rematerialization=True,
-    )(t0)
+    initial_trace = thunder.trace()(func, t0)
+    result_with_remat = thunder.jit(initial_trace.python_callable())(t0)
     assert not isinstance(result_with_remat, Exception)
 
-    result_without_remat = thunder.compile(
-        func,
-        disable_preprocessing=True,
-        use_rematerialization=False,
-    )(t0)
+    result_without_remat = disable_rematerialization_in_nvfuser_fusion(thunder.jit(initial_trace.python_callable()))(t0)
 
     torch.testing.assert_close(result_with_remat, result_without_remat)
