@@ -3737,6 +3737,7 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
     flat_saves, _ = tree_flatten(saved_for_backward)
 
     def backward_fn(saved_for_backward, cotangents):
+        # trace converts all saved_for_backward into proxy, we want to restore number scalars afterwards.
         flat_saves_proxified, saves_spec = tree_flatten(saved_for_backward)
         flat_filtered = [
             proxified if isinstance(entry, Proxy) else entry
@@ -3756,7 +3757,6 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
             out = tree_flatten(out)[0]
         return out
 
-    print("-- saved for backward ", saved_for_backward)
     backward_trace = construct_trace(rename_proxies=False)(backward_fn, saved_for_backward, cotangents)
 
     # We are done with constructing the forward and backward passes at this
