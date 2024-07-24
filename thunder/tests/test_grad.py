@@ -1633,10 +1633,10 @@ def test_grad_transform_saved_for_backward_proxy():
     torch.autograd.backward(out, torch.rand_like(out), retain_graph=True)
     dynamic_trace = thunder.last_backward_traces(dynamic_jit)[-1]
     # dynamic trace should save `c` as proxy for backward
-    assert(any(map(lambda x: isinstance(x, Proxy), tree_flatten(dynamic_trace.args[0])[0])))
+    assert any(map(lambda x: isinstance(x, Proxy), tree_flatten(dynamic_trace.args[0])[0]))
 
     out = static_jit(a, c)
     torch.autograd.backward(out, torch.rand_like(out), retain_graph=True)
     static_trace = thunder.last_backward_traces(static_jit)[-1]
     # static trace should bake `c` as scalar number, so it won't show up in backward as proxy
-    assert(not any(map(lambda x: isinstance(x, Proxy), tree_flatten(static_trace.args[0])[0])))
+    assert not any(map(lambda x: isinstance(x, Proxy), tree_flatten(static_trace.args[0])[0]))
