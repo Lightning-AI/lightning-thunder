@@ -1615,3 +1615,24 @@ def test_make_forward_backward_symbol_caching_with_executor():
 
     # This should call the core implementation.
     thunder.jit(foo)(a)
+
+def test_grad_transform_saved_for_backward_proxy():
+
+    def foo(a, c):
+        return a * c
+
+    a = make_tensor((2, 2), device=device, dtype=torch_dtype, requires_grad=False)
+    c = 2.0
+    
+    dynamic_jit = thunder.jit(foo, cache="symbolic values")
+    static_jit = thunder.jit(foo)
+
+    dynamic_jit(a, c)
+    dynamic_trace = thunder.last_backward_traces(dynamic_jit)[-1]
+    # dynamic trace should save `c` as proxy for backward
+    assert(any(map(tree_map(dynamic_trace[-1].args[0]), lambda x : isinstance(x, Proxy))))
+
+    static_jit(a, c)
+    static_trace = thunder.last_backward_traces(static_jit)[-1]
+    # static trace should bake `c` as scalar number, so it won't show up in backward as proxy
+    assert(not any(map(tree_map(static_trace[-1].args[0]), lambda x : isinstance(x, Proxy))))
