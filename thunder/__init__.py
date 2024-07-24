@@ -513,11 +513,11 @@ def jit(
 
             prologue_traces = [prologue_trc]
             computation_traces = [computation_trc]
-            orig_to_view_swap_map = check_inplace_to_views(computation_trc)
+            base_to_view_swapmap = check_inplace_to_views(computation_trc)
             if not compile_options.get("skip_inplace_functionalization", False):
                 computation_traces.extend(
                     functionalize_inplace_ops(
-                        computation_trace=computation_trc, orig_to_view_swap_map=orig_to_view_swap_map
+                        computation_trace=computation_trc, orig_to_view_swap_map=base_to_view_swapmap
                     )
                 )
                 computation_trc = computation_traces[-1]
