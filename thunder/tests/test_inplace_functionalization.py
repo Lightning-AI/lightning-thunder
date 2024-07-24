@@ -460,6 +460,35 @@ def test_inplace_to_arg_return_value(executor, device, _):
 @instantiate(
     dtypes=NOTHING,
 )
+def test_no_self_repeat_in_subsymbols(executor, device, _):
+
+    def f(a, b, c):
+        a.add_(b, alpha=c)
+        return a.add_(b, alpha=c)
+
+    def functional_f(a, b, c):
+        d = a.add(b, alpha=c)
+        return d.add(b, alpha=c)
+
+    a = make_tensor((2, 2), device=device, dtype=torch.float32)
+    b = make_tensor((2, 2), device=device, dtype=torch.float32)
+    c = make_tensor((1,), device=device, dtype=torch.float32)
+
+    a_out_ref = executor.make_callable(functional_f)(a, b, c)
+
+    jitted = executor.make_callable(f)
+    a_out = jitted(a, b, c)
+    torch.testing.assert_close(a_out, a_out_ref)
+
+    traces = thunder.last_traces(jitted)
+    for t in filter(lambda t: t._provenance is not None and "Functionalize in-place ops" in t._provenance.pss, traces):
+        for bsym in filter(lambda b: b.subsymbols, t.bound_symbols):
+            assert bsym.rhs != bsym.subsymbols[0].rhs, bsym
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
 def test_inplace_copy_on_fusion_inputs_issue_791(executor, device, _):
 
     def f(x, y, idx, src):
