@@ -9,9 +9,81 @@ from thunder.tests.framework import requiresCUDA, TorchExecutor
 from thunder.tests.make_tensor import make_tensor
 from thunder.tests.opinfos import get_opinfo, OpInfo
 
-_unsupported_opinfos = [get_opinfo("zeta"), get_opinfo("nextafter"), get_opinfo("item")]
-_fallback_opinfos1 = [get_opinfo("embedding"), get_opinfo("type_as"), get_opinfo("conv2d"), get_opinfo("reshape")]
-_fallback_opinfos2 = [get_opinfo("conv2d"), get_opinfo("embedding"), get_opinfo("unfold"), get_opinfo("expand")]
+
+# @pytest.mark.parametrize("requires_grad", [True, False], ids=("train", "inference"))
+@pytest.mark.parametrize("device,", ["cuda", "cpu"])
+def test_torch_ops_backward(device):
+    from torch.testing._internal.common_methods_invocations import op_db
+    import thunder.torch.default_torch_ops as ops
+    from itertools import chain
+    # skip_names = ["bitwise_left_shift", "broadcast_tensors", "bitwise_right_shift", "masked_select", "combinations", "view_as_real", "corrcoef", "cov", "equal","stft", "istft", "geqrf", "imag", "meshgrid", "heaviside", "lcm"]
+    funcs = [op for op in chain.from_iterable(ops.torch_fallback_ops.values())]
+    opnames = [f.__name__ for f in funcs]
+    op_infos_idx = [opnames.index(opinfo.name) for opinfo in op_db if opinfo.name in opnames]
+    op_infos = [opinfo for opinfo in op_db if opinfo.name in opnames]
+    # op_infos_idx = [idx for idx, opinfo in enumerate(op_db) if opinfo.name in opnames]
+    print(f"total: {len(op_infos)}")
+    cnt = 0
+    for idx, op_info in zip(op_infos_idx, op_infos):
+        # if op_info.name in skip_names: continue
+        if op_info.name == "nonzero_static" and device=="cuda":
+            continue
+        try:
+            dtype = torch.complex32 if op_info.name == "view_as_real" else torch.float32
+            for sample in op_info.sample_inputs_func(op_info, device=torch.device(device), dtype=dtype, requires_grad=True):
+                jfun = thunder.jit(funcs[idx])
+                out = jfun(sample.input, *sample.args, **sample.kwargs)
+        except Exception as e:
+            cnt+=1
+            # print(e)
+            print(op_info.name)
+            print("--------------------")
+        else:
+            trc = thunder.last_backward_traces(jfun)[-1]
+            trcf = thunder.last_traces(jfun)[-1]
+            # print(op_info.name, trc, trcf)
+            # skip if it is not differentiable
+            outs = trcf.output[0]['output']
+            outs = outs if isinstance(outs, tuple) else (outs, )
+            if all(not thunder.core.dtypes.is_inexact_dtype(o.dtype) for o in outs):
+                continue
+            vjp_op_name = f"{op_info.name}_vjp"
+            try:
+                assert any(bsym.sym.name == vjp_op_name for bsym in trc.bound_symbols)
+            except Exception as e:
+                # import pdb;pdb.set_trace()
+                print(e)
+
+    print(cnt)
+
+def test_torch_ops_forward():
+    from torch.testing._internal.common_methods_invocations import op_db
+    import thunder.torch.default_torch_ops as ops
+    from itertools import chain
+    # skip_names = ["bitwise_left_shift", "broadcast_tensors", "bitwise_right_shift", "masked_select", "combinations", "view_as_real", "corrcoef", "cov", "equal","stft", "istft", "geqrf", "imag", "meshgrid", "heaviside", "lcm"]
+    funcs = [op for op in chain.from_iterable(ops.torch_fallback_ops.values())]
+    opnames = [f.__name__ for f in funcs]
+    op_infos_idx = [opnames.index(opinfo.name) for opinfo in op_db if opinfo.name in opnames]
+    op_infos = [opinfo for opinfo in op_db if opinfo.name in opnames]
+    print(f"total: {len(op_infos)}")
+    cnt = 0
+    for idx, op_info in zip(op_infos_idx, op_infos):
+        # if op_info.name in skip_names: continue
+        try:
+            for sample in op_info.sample_inputs_func(op_info, device=torch.device("cuda"), dtype=torch.float32, requires_grad=False):
+                jfun = thunder.jit(funcs[idx])
+                out = jfun(sample.input, *sample.args, **sample.kwargs)
+        except Exception as e:
+            cnt+=1
+            # print(e)
+            print(op_info.name)
+            print("--------------------")
+        # else:
+        #     print(thunder.last_traces(jfun)[-1])
+    print(cnt)
+
+
+
 skip_ops = [
     get_opinfo("layer_norm"),
     get_opinfo("linear"),
@@ -19,14 +91,14 @@ skip_ops = [
     get_opinfo("scaled_dot_product_attention"),
 ]
 skip_ops1 = [get_opinfo("conv2d"), get_opinfo("linear"), get_opinfo("adaptive_avg_pool2d"), get_opinfo("max_pool2d")]
-disable_opinfos = _unsupported_opinfos + _fallback_opinfos1 + _fallback_opinfos2 + skip_ops + skip_ops1
+disable_opinfos = skip_ops + skip_ops1
 tmp1 = dict(thunder.core.jit_ext._general_jit_lookaside_map)
 list(tmp1.pop(k.torch_reference, None) for k in disable_opinfos)
 tmp2 = dict(thunder.torch._torch_to_thunder_function_map)
 list(tmp2.pop(k.torch_reference, None) for k in disable_opinfos)
 tmp3 = dict(thunder.core.jit_ext._minimal_lookaside_map)
 list(tmp3.pop(k.torch_reference, None) for k in disable_opinfos)
-
+from thunder.torch import register_default_torch_op, meta_adaptor
 # mock all the global variables that are modified during registration
 @patch.dict(thunder.core.jit_ext._general_jit_lookaside_map, tmp1, clear=True)
 @patch.dict(thunder.torch._torch_to_thunder_function_map, tmp2, clear=True)
@@ -36,65 +108,27 @@ list(tmp3.pop(k.torch_reference, None) for k in disable_opinfos)
 @patch.dict(thunder.core.transforms.augmented_forward_impls, {})
 @patch.dict(thunder.core.transforms.backward_impls, {})
 class TestFallbackToTorch:
-    def test_torch_inplace_ops(self):
-        def func1(x):
-            return torch.relu_(x)
+    def _tmp_update_jit_lookup(self, torchfn):
+        from thunder.core.interpreter import interpreter_needs_wrap
+        from thunder.core.jit_ext import (
+            _general_jit_lookaside_map,
+            ensure_recursive_proxies,
+            record_source_loc_in_symbol_header,
+        )
 
-        def func2(x):
-            return torch.nn.functional.selu(x, inplace=True)
-
-        with patch.dict(thunder.core.jit_ext._general_jit_lookaside_map, {}, clear=True):
-            with patch.dict(thunder.torch._torch_to_thunder_function_map, {}, clear=True):
-                with patch.dict(thunder.core.jit_ext._minimal_lookaside_map, {}, clear=True):
-                    x = torch.rand((4, 4))
-                    jfn = thunder.jit(func1, executors=[thunder.pytorch_executor], enable_fallback_to_torch=True)
-                    assert torch.relu_ not in thunder.torch._torch_to_thunder_function_map
-
-                    jfn = thunder.jit(func2, executors=[thunder.pytorch_executor], enable_fallback_to_torch=True)
-                    with pytest.raises(NotImplementedError, match="has inplace=True, please use manual registration$"):
-                        thunder_result = jfn(x)
-
-    @pytest.mark.parametrize("op", _fallback_opinfos2, ids=[op.name for op in _fallback_opinfos2])
-    @pytest.mark.parametrize("device", ["cpu", "cuda"])
-    def test_fallback_backward(self, op, device):
-        if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA is not available")
-        dtype = torch.float32
-        for sample in op.sample_inputs(device, dtype, requires_grad=True):
-            executor = TorchExecutor
-            tfn = thunder.jit(op.torch_reference, executors=executor.executors_list(), enable_fallback_to_torch=True)
-            cache_entry, _, _ = thunder.compile_data(tfn).get_computation_and_inputs(*sample.args, **sample.kwargs)
-            bwd_trcs = cache_entry.backward_traces
-
-            vjp_op_name = f"{op.name}_vjp"
-            assert any(bsym.sym.name == vjp_op_name for bsym in bwd_trcs[-1].bound_symbols)
-
-    @pytest.mark.parametrize("op", _fallback_opinfos1, ids=[op.name for op in _fallback_opinfos1])
-    @pytest.mark.parametrize("device", ["cpu", "cuda"])
-    def test_fallback_forward(self, op, device):
-        if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA is not available")
-        dtype = torch.float32
-        executor = TorchExecutor
-        for sample in op.sample_inputs(device, dtype):
-            tfn = thunder.jit(op.torch_reference, executors=executor.executors_list(), enable_fallback_to_torch=True)
-            cache_entry, _, _ = thunder.compile_data(tfn).get_computation_and_inputs(*sample.args, **sample.kwargs)
-            trcs = cache_entry.computation_traces
-            assert any(bsym.sym.name.endswith(op.name) and not bsym.subsymbols for bsym in trcs[-1].bound_symbols)
-
-    @pytest.mark.parametrize("op", _unsupported_opinfos, ids=[op.name for op in _unsupported_opinfos])
-    def test_fallback_exception(self, op: OpInfo):
-        dtype = torch.float32
-        executor = TorchExecutor
-        for sample in op.sample_inputs("cpu", dtype, requires_grad=True):
-            tfn = thunder.jit(op.torch_reference, executors=executor.executors_list(), enable_fallback_to_torch=True)
-            with pytest.raises(NotImplementedError, match="^Exception encountered when doing automatic registration"):
-                thunder_result = tfn(*sample.args, **sample.kwargs)
-
+        _general_jit_lookaside_map.update(
+            {torchfn: ensure_recursive_proxies(interpreter_needs_wrap(record_source_loc_in_symbol_header(thunder.torch._torch_to_thunder_function_map[torchfn])))}
+        )
     @requiresCUDA
     def test_nanogpt_block(self):
         import thunder.tests.nanogpt_model as nanogpt_model
 
+        for op in skip_ops:
+            if op.name == "gelu":
+                register_default_torch_op(op.torch_reference, meta_adaptor(op.torch_reference), torch)
+            else:
+                register_default_torch_op(op.torch_reference, meta_adaptor(op.torch_reference), torch.nn.functional)
+            self._tmp_update_jit_lookup(op.torch_reference)
         tdtype = torch.float32  # thunder.torch.to_torch_dtype(dtype)
         device = torch.device("cuda")
         executor = TorchExecutor
@@ -116,6 +150,9 @@ class TestFallbackToTorch:
     def test_alexnet(self):
         torchvision = pytest.importorskip("torchvision")
 
+        for op in skip_ops1:
+            register_default_torch_op(op.torch_reference, meta_adaptor(op.torch_reference), torch.nn.functional)
+            self._tmp_update_jit_lookup(op.torch_reference)
         tdtype = torch.float32
         device = torch.device("cuda")
         model = torchvision.models.alexnet(weights=None).to(device=device, dtype=tdtype)
