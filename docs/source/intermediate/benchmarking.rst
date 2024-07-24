@@ -18,7 +18,7 @@ Before starting, you need to install Thunder and the devel packages with::
 LitGPT benchmarks
 =================
 
-The esiest way to run a single benchmark in Thunder is by running an instance of the LitGPT end-to-end training script that can be found in ``thunder/benchmarks/benchmark_litgpt.py``. 
+The esiest way to run a single benchmark in Thunder is by running an instance of the LitGPT end-to-end training script that can be found in ``thunder/benchmarks/benchmark_litgpt.py``.
 
 To run a benchmark all we need is the following command::
 
@@ -58,7 +58,7 @@ Compile options
 With the ``--compile`` option, you can test:
 
 - torch.compile by specifying ``inductor``
-- torch eager mode by specifying ``eager``, or 
+- torch eager mode by specifying ``eager``, or
 - Thunder by specifying ``thunder``
 
 To customize Thunder executors, in addition to nvFuser, you can append the any combination of the following to the string with an underscore:
@@ -80,7 +80,7 @@ PyTest benchmarks
 =================
 
 If instead of running an e2e training benchamrk you want to be more specific, Thunder has you covered with the PyTest based benchmarks (more specifically `pytest-benchmark <https://pytest-benchmark.readthedocs.io/en/latest/>`__).
-These benchamrks are defined in two parts, the implementation is in ``thunder/benchmarks/__init__.py`` and the hook for PyTest is in ``thunder/benchmarks/targets.py``. 
+These benchamrks are defined in two parts, the implementation is in ``thunder/benchmarks/__init__.py`` and the hook for PyTest is in ``thunder/benchmarks/targets.py``.
 In the next section you'll see more of the details, but for now let's start by listing all the available benchmarks with::
 
   pytest thunder/benchmarks/targets.py --collect-only
@@ -93,7 +93,7 @@ However, more realistically you'd want to filter and run just specific benchmark
 
   pytest thunder/benchmarks/targets.py -k 'nanogpt_gpt2 and not torch.compile and not xl and not inference' --benchmark-group-by='param:compute_type'
 
-This example will select the benchmarks run them and print the results grouped the results by compute type(forward and backward in this case) thanks to the ``--benchmark-group-by`` flag. 
+This example will select the benchmarks run them and print the results grouped the results by compute type(forward and backward in this case) thanks to the ``--benchmark-group-by`` flag.
 The output will look something like this(it's pretty wide so it looks a bit wierd on narrow windows)::
 
   ------------------------------------------------------------------- benchmark 'compute_type=ComputeType.TRAINING_BACKWARD': 2 tests ---------------------------------------------------------------
@@ -148,13 +148,13 @@ As stated before, you need to create a class that inherits from ``thunder.benchm
     @property
     def name(cls) -> str:
       return "foo_bench"
-    
+
     @classmethod
     @property
     def description(cls) -> str:
       return "Benchmark for foo function"
 
-.. note:: The ``name`` should be short, distinct, and a valid filename like "nanogpt" or "llamba-block" and 
+.. note:: The ``name`` should be short, distinct, and a valid filename like "nanogpt" or "llamba-block" and
     the ``description`` should be a short sentence describing the benchmark like "NanoGPT's LayerNorm module forward".
 
 The next step is to declare a list of accepted arguments from this benchmark as a property of the class and a class method that returns those arguments::
@@ -209,10 +209,10 @@ If your benchmark doesn't need any futher steps you'd be done here howerver, con
         return self.layer(x)
 
     foo = FooNetwork().to(device=self.device, self.dtype).requires_grad_()
-    
+
     return foo
 
-Now this is just half of the test, what about the backward pass? In this case, you'll need to implement a ``postprocess_for_backward()`` method to take care of that::  
+Now this is just half of the test, what about the backward pass? In this case, you'll need to implement a ``postprocess_for_backward()`` method to take care of that::
 
   def postprocess_for_backward(self, out: torch.Tensor) -> torch.Tensor | None:
     # Check if backward it's needed at all
@@ -223,7 +223,7 @@ Now this is just half of the test, what about the backward pass? In this case, y
     loss = torch.nn.functional.mse_loss(logits, targets)
     return loss
 
-.. note:: This method will be given the output of fn(), and if it returns a torch.Tensor t that requires grad then the benchmark will call t.backward(torch.randn_like(t)). 
+.. note:: This method will be given the output of fn(), and if it returns a torch.Tensor t that requires grad then the benchmark will call t.backward(torch.randn_like(t)).
   By default, postprocess_for_backward() returns the output of fn(), or the first element of the output of fn() if fn() returns a Sequence.
 
 
@@ -231,7 +231,7 @@ Declaring a test function and its parametrization
 -------------------------------------------------
 
 Now that your benchmarking class is ready you have nowhere to call it. To address this issue, let's write a ``test_`` prefixed function in ``thunder/benchmarks/targets.py`` that will use the newly created ``FooBenchmark`` class::
-  
+
   def test_foo(benchamrk):
     bench: Benchmark = FooBenchmark(
         device='cuda',
@@ -249,7 +249,7 @@ Great! You are ready to benchmark ``foo()``! But what if you want to test it wit
         torch_executor,
         torch_compile_executor,
         thunder_executor,
-    ), 
+    ),
     ids = ("torch", "torch.compile", "thunder"))
   def test_foo(benchamrk, executor):
     bench: Benchmark = FooBenchmark(
@@ -268,7 +268,7 @@ Benchmarking forward and backward separately
 --------------------------------------------
 
 As seen earlier, it's possible to write benchmarks for models and not just standalone functions. What if you want to benchmark forward and backward pass separately? It's possible by tweaking the ``test_`` function you just declared in ``thunder/benchmarks/targets.py`` like so::
-  
+
   #[...previous parametrization omitted here...]
   @parametrize_compute_type
   def test_foo(benchamrk, compute_type:ComputeType):
