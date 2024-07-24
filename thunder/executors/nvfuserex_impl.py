@@ -389,11 +389,7 @@ class FusionDefinitionWrapper:
         self.last_used = fd
 
         # Set device if set in one of the "factory" methods like full, iota, or uniform
-        kwargs = (
-            {"device": fd._selected_device}
-            if hasattr(fd, "_selected_device")
-            else {}
-        )
+        kwargs = {"device": fd._selected_device} if hasattr(fd, "_selected_device") else {}
         with add_markers(self.name):
             return fd.execute(args, **kwargs)
 
@@ -1280,9 +1276,7 @@ register_supported(PrimIDs.TRANSPOSE, transpose, _transpose_check)
 
 
 # TODO Check that the tensor dtype is supported by nvFuser -- extract to tensor_supported()?
-def _elementwise_unary_check(
-    a: Number | TensorProxy
-) -> bool:
+def _elementwise_unary_check(a: Number | TensorProxy) -> bool:
     return is_supported_tensor_or_number(a)
 
 
