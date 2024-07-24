@@ -47,6 +47,7 @@ def tree_flatten(args, namespace=""):
             torch.finfo,
             dtypes.signedinteger,
             torch._subclasses.fake_tensor.FakeTensor,
+            torch.device,
         }
         and not isinstance(args, (ProxyInterface))
         and not dataclasses.is_dataclass(args)
