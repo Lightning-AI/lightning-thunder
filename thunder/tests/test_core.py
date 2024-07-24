@@ -3022,6 +3022,12 @@ def test_factory_functions_default_device():
         assert actual_device == fn(x)
     finally:
         torch.set_default_device(org_device)
+        # hard clean for https://github.com/Lightning-AI/lightning-thunder/issues/844
+        try:
+            torch._GLOBAL_DEVICE_CONTEXT.device_context.__exit__(None, None, None)
+            del torch._GLOBAL_DEVICE_CONTEXT.device_context
+        except Exception:
+            pass
 
     assert thunder.cache_misses(jfn) == 2
 
@@ -3041,6 +3047,12 @@ def test_change_default_device_in_jitted_fn():
             jfn(torch.randn(3, 3))
     finally:
         torch.set_default_device(default_device)
+        # hard clean for https://github.com/Lightning-AI/lightning-thunder/issues/844
+        try:
+            torch._GLOBAL_DEVICE_CONTEXT.device_context.__exit__(None, None, None)
+            del torch._GLOBAL_DEVICE_CONTEXT.device_context
+        except Exception:
+            pass
 
 
 @requiresCUDA
