@@ -255,7 +255,7 @@ def test_autocast_torch_matmul(requires_grad, device, b_dtype):
     torch.testing.assert_close(actual, expected)
 
     if requires_grad:
-        go = torch.randn_like(expected)
+        go = torch.ones_like(expected) / expected.numel()
         eager_grads = torch.autograd.grad(expected, [a, b], go)
         jit_grads = torch.autograd.grad(actual, [a, b], go)
 

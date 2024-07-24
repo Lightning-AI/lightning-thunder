@@ -44,7 +44,7 @@ def build_cuda_graph(
 
     def get_static_buffer(x):
         if isinstance(x, torch.Tensor):
-            return torch.empty_like(x)
+            return torch.empty_like(x).copy_(x)
         return x
 
     args = args_descriptor.args

@@ -136,6 +136,7 @@ def test_get_all_executors_includes_all_native_executors():
         "torchcompile_cat",
         "python",
         "transformer_engine",
+        "cudagraphex",
     }
     if package_available("triton"):
         # `triton` maybe installed on a system without GPU.
