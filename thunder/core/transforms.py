@@ -3743,8 +3743,8 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
             proxified if isinstance(entry, Proxy) else entry
             for proxified, entry in zip(flat_saves_proxified, flat_saves)
         ]
-        saved_for_backward = tree_unflatten(flat_filtered, saves_spec)
-        env = reconstruct_forward_env_for_backward(trace, saved_for_backward)
+        unproxiefied_saved_for_backward = tree_unflatten(flat_filtered, saves_spec)
+        env = reconstruct_forward_env_for_backward(trace, unproxiefied_saved_for_backward)
 
         if torch_autograd:
             cotangents = tree_unflatten(cotangents, output_spec)
