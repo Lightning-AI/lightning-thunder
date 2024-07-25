@@ -24,12 +24,12 @@ __all__ = [
 
 
 @dataclass(frozen=True)
-class FSDPTraceTransform(EarlyTransform):
+class FSDPTraceTransform(Transform):
     sharded_params: dict[str, Any]
     process_group: ProcessGroup
     shared_params_name: dict[str, str]
 
-    def transform_traces(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
+    def transform_traces_early(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
         from thunder.distributed import prims as dist_prims
 
         prologue_producers, prologue_consumers = utils.producers_and_consumers(prologue_trace)

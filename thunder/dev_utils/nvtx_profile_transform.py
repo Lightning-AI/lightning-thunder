@@ -39,8 +39,8 @@ nvtx_push = nvtx_profiler_ex.register_operator("nvtx_range_push", meta=lambda ms
 nvtx_pop = nvtx_profiler_ex.register_operator("nvtx_range_pop", meta=lambda: None, fn=nvtx_pop_impl)
 
 
-class NvtxProfileTransform(thunder.core.transforms.PostOptimizationTransform):
-    def transform_trace(self, trace: Trace, **kwargs) -> Trace:
+class NvtxProfileTransform(thunder.core.transforms.Transform):
+    def transform_trace_post_optimization(self, trace: Trace, **kwargs) -> Trace:
         with Timer() as timer:
             profile_trace = from_trace(trace)
 

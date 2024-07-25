@@ -161,7 +161,7 @@ class ComputationTraceTransformVisitorForTensorParallel:
 
 
 @dataclass
-class TransformForTensorParallel(EarlyTransform):
+class TransformForTensorParallel(Transform):
     rank: int
     world_size: int
     compile_data: CompileData
@@ -189,7 +189,7 @@ class TransformForTensorParallel(EarlyTransform):
     @abstractmethod
     def distparallel_type(self) -> DistParallelType: ...
 
-    def transform_traces(
+    def transform_traces_early(
         self,
         prologue_trace: TraceCtx,
         computation_trace: TraceCtx,

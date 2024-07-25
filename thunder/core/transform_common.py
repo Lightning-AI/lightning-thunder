@@ -331,20 +331,16 @@ def cse(trace: Trace) -> Trace:
     return cse_trace
 
 
-# Base class for all types of Transform.
-class Transform:
-    pass
-
-
-# Below are the types of Transform that user can create and apply to the `jitted` function.
-class EarlyTransform(Transform, ABC):
-    """
-    EarlyTransform enables transforming prologue, computation and epilogue trace.
-    Note that the computation trace here is before the autograd transform, so any update to
-    the computation trace will also update backward trace.
-    """
-
-    def transform_traces(self, prologue_trace: Trace, computation_trace: Trace, epilogue_trace: Trace | None, **kwargs):
+# The transform class, at different points in the processing, the methods are executed. Typically, a subset of them is implemented.
+class Transform(ABC):
+    def transform_traces_early(
+        self, prologue_trace: Trace, computation_trace: Trace, epilogue_trace: Trace | None, **kwargs
+    ):
+        """
+        transform_traces_early enables transforming prologue, computation and epilogue trace.
+        Note that the computation trace here is before the autograd transform, so any update to
+        the computation trace will also update backward trace.
+        """
         # default to noop
         return prologue_trace, computation_trace, epilogue_trace
 
@@ -365,27 +361,21 @@ class EarlyTransform(Transform, ABC):
         """
         return state_dict
 
+    def transform_trace_additionally(self, computation_trace: Trace, **kwargs):
+        """
+        transform_trace_additionally enables transforming the computation trace before optimization pass.
+        Note that this transform is only applicable if autograd is disabled.
 
-class AdditionalTransform(Transform, ABC):
-    """
-    AdditionalTransform enables transforming the computation trace before optimization pass.
-    Note that this transform is only applicable if autograd is disabled.
-    """
+        Please don't use this method in new implementations, we are working on removing it. Use transform_traces_early instead.
+        """
+        return computation_trace
 
-    @abstractmethod
-    def transform_trace(self, computation_trace: Trace, **kwargs):
-        pass
-
-
-class PostOptimizationTransform(Transform, ABC):
-    """
-    PostOptimizationTransform EarlyTransform enables transforming computation trace after optimization pass.
-    Note that this transform will also be applied to the backward trace if the the autograd transform was enabled.
-    """
-
-    @abstractmethod
-    def transform_trace(self, computation_trace: Trace, **kwargs):
-        pass
+    def transform_trace_post_optimization(self, computation_trace: Trace, **kwargs):
+        """
+        transform_trace_post_optimization enables transforming computation trace after optimization pass.
+        Note that this transform will also be applied to the backward trace if the the autograd transform was enabled.
+        """
+        return computation_trace
 
 
 def check_inplace_to_views(computation_trace: Trace) -> dict[VariableInterface, TensorProxy]:
