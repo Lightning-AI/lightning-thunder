@@ -116,11 +116,23 @@ class ThunderModule(pytorch.nn.Module):
             for k, v in sd_part.items():
                 full_k = prefix + k
                 if k in self._overrides_parameters:
-                    with pytorch.no_grad():
-                        self._overrides_parameters[full_k].copy_(v)
+                    p = self._overrides_parameters[full_k]
+                    if p.dtype == v.dtype and p.shape == v.shape:
+                        with pytorch.no_grad():
+                            p.copy_(v)
+                    else:
+                        with pytorch.no_grad():
+                            self._overrides_parameters[full_k] = pytorch.nn.Parameter(
+                                v.to(p.device), requires_grad=p.requires_grad
+                            )
+
                 elif k in self._overrides_buffers:
-                    with pytorch.no_grad():
-                        self._overrides_buffers[full_k].copy_(v)
+                    if p.dtype == v.dtype and p.shape == v.shape:
+                        with pytorch.no_grad():
+                            self._overrides_buffers[full_k].copy_(v)
+                    else:
+                        with pytorch.no_grad():
+                            self._overrides_parameters[full_k] = v.to(p.device).requires_grad_(p.requires_grad)
                 else:
                     raise NotImplementedError(f"don't know how to handle {full_k}")
 
