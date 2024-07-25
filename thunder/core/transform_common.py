@@ -816,6 +816,7 @@ def functionalize_inplace_ops(
     for var_copy_from, copy_bsyms in copy_from_to_copy_bsyms.items():
         copy_from = unvariableify(var_copy_from)
         key_bsym: BoundSymbol = producer_map[copy_from]
+        # Make sure `copy_from` has no consumers other than `prims.return`.
         if copy_from in consumer_map:
             consumer_bsyms = list(filter(lambda bsym: bsym.sym.id != prims.PrimIDs.RETURN, consumer_map[copy_from]))
             if consumer_bsyms:
