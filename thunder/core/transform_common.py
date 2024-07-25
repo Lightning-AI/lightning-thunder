@@ -830,7 +830,8 @@ def functionalize_inplace_ops(
             copy_from_to_copy_bsyms[variableify(copy_from_for_copy_bsyms)] = copy_bsyms
 
     # For nvfuser to be comfortably create fusion regions, we put each `prims.copy_` after the last
-    # use of `copy_from`.
+    # use of `copy_from`. We don't take the return value of `prims.copy_` because it's already
+    # obviated by the functionalization above.
     consumer_map = consumers(new_bsyms)
     producer_map = producers(new_bsyms)
     bsym_to_copy_bsyms: dict[BoundSymbol, list[BoundSymbol]] = defaultdict(list)
