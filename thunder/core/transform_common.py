@@ -3,6 +3,7 @@ import time
 from typing import TYPE_CHECKING
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from collections import defaultdict
 from itertools import filterfalse
 from functools import partial
 
@@ -13,7 +14,7 @@ from thunder.core.proxies import Proxy, variableify, Variable, TensorProxy, unva
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, has_tags
 from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace, tracectx
-from thunder.core.utils import ProxyDict, producers, check
+from thunder.core.utils import ProxyDict, producers, check, consumers
 
 if TYPE_CHECKING:
     from thunder.core.proxies import ProxyInterface
@@ -548,10 +549,7 @@ def canonicalize_bsym_args(
 def create_functional_bsym_from(inplace_bsym: BoundSymbol) -> BoundSymbol:
     from thunder.torch import _inplace_to_out_of_place
 
-    functional_sym: Symbol
-    optional_inplace_arg_index: int
     functional_sym, optional_inplace_arg_index = _inplace_to_out_of_place[inplace_bsym.sym]
-
     args, kwargs = inplace_bsym.args, inplace_bsym.kwargs
     if optional_inplace_arg_index > -1:
         # Update `inplace` from `True` to `False`. e.g. `relu(x, inplace=True)` -> `relu(x, inplace=False)`
@@ -565,7 +563,6 @@ def create_functional_bsym_from(inplace_bsym: BoundSymbol) -> BoundSymbol:
         subsymbols=inplace_bsym.subsymbols,
         _call_ctx=inplace_bsym._call_ctx,
     )
-
     if len(functional_bsym.subsymbols) == 1 and functional_bsym.rhs == functional_bsym.subsymbols[0].rhs:
         functional_bsym.subsymbols = functional_bsym.subsymbols[0].subsymbols
     return functional_bsym
@@ -761,11 +758,10 @@ def functionalize_inplace_ops(
     for a in flat_args:
         arg_to_copy_bsyms[a] = None
     producer_map = producers(intermediate_trace)
-    bsym_to_copy_bsyms: dict[BoundSymbol, list[BoundSymbol]] = {}
+    copy_from_to_copy_bsyms: dict[VariableInterface, list[BoundSymbol]] = {}
 
     new_bsyms: list[BoundSymbol] = []
-    # NOTE(crcrpar): The first value of a tuple is an indicator of how the copy src is new.
-    for idx, bsym in enumerate(intermediate_trace.bound_symbols):
+    for bsym in intermediate_trace.bound_symbols:
         new_bsym = bsym.from_bsym_swap_proxies(swap_map, skip_output=True)
 
         if not is_functionalizable(new_bsym):
@@ -785,7 +781,7 @@ def functionalize_inplace_ops(
         arg_copy_dst: TensorProxy
         copy_bsyms: list[BoundSymbol] = []
         if (copy_to := copy_bsym.flat_proxy_args[1]) in arg_to_copy_bsyms:
-            copy_bsyms = [copy_bsym]
+            copy_bsyms.append(copy_bsym)
             arg_copy_dst = copy_to
         elif (optional_prod_bsym := _get_prod_bsym_with_arg(copy_to, producer_map, arg_to_copy_bsyms)) is not None:
             new_copy_to = _get_first_tensor_arg(optional_prod_bsym)
@@ -807,10 +803,28 @@ def functionalize_inplace_ops(
                 copy_bsyms.append(new_copy_bsym)
         if copy_bsyms:
             if arg_copy_dst in arg_to_copy_bsyms and (value := arg_to_copy_bsyms[arg_copy_dst]) is not None:
-                prev_functional_bsym, _ = value
-                del bsym_to_copy_bsyms[prev_functional_bsym]
+                prev_functional_bsym, prev_copy_bsyms = value
+                prev_copy_from = _get_first_tensor_arg(prev_copy_bsyms[0])
+                del copy_from_to_copy_bsyms[variableify(prev_copy_from)]
             arg_to_copy_bsyms[arg_copy_dst] = functional_bsym, copy_bsyms
-            bsym_to_copy_bsyms[functional_bsym] = copy_bsyms
+            copy_from_for_copy_bsyms = _get_first_tensor_arg(copy_bsyms[0])
+            copy_from_to_copy_bsyms[variableify(copy_from_for_copy_bsyms)] = copy_bsyms
+
+    consumer_map = consumers(new_bsyms)
+    producer_map = producers(new_bsyms)
+    bsym_to_copy_bsyms: dict[BoundSymbol, list[BoundSymbol]] = defaultdict(list)
+    for var_copy_from, copy_bsyms in copy_from_to_copy_bsyms.items():
+        copy_from = unvariableify(var_copy_from)
+        key_bsym: BoundSymbol = producer_map[copy_from]
+        if copy_from in consumer_map:
+            consumer_bsyms = list(filter(lambda bsym: bsym.sym.id != prims.PrimIDs.RETURN, consumer_map[copy_from]))
+            if consumer_bsyms:
+                check(
+                    all(bsym.sym.id != prims.PrimIDs.COPY_ for bsym in consumer_bsyms),
+                    lambda: f"Unexpected `prims.copy_` found in {[bsym.sym for bsym in consumer_bsyms]} for {var_copy_from}",
+                )
+                key_bsym = consumer_bsyms[-1]
+        bsym_to_copy_bsyms[key_bsym].extend(copy_bsyms)
 
     functionalized_computation_trace = from_trace(computation_trace)
     functionalized_computation_trace.set_provenance(TraceProvenance("Functionalize in-place ops"))
