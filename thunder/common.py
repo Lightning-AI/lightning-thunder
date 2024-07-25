@@ -664,7 +664,7 @@ def _execute_trace(
     extrace = extraces[-1]
 
     # Applies post-optimization transforms
-    for transform in ransforms:
+    for transform in transforms:
         extrace = transform.transform_trace_post_optimization(extrace)
         extraces.append(extrace)
 
