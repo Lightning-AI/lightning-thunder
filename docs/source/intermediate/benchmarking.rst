@@ -35,22 +35,25 @@ All the command line options can be queried by passing ``--help`` as argument or
 The output from this end-to-end benchmark will look something like this::
 
   Time to instantiate model: 0.12 seconds.
-  iter 0: loss 10.5625, iter time: 62938.98ms, t: 4096
+  iter 0: loss 10.5000, iter time: 73490.96ms, t: 4096
   ...
-  iter 44: loss 4.6562, iter time: 829.17ms, t: 4096
+  iter 44: loss 4.6250, iter time: 385.25ms, t: 4096
   Model name: Llama-2-7b-hf
   Seq Length: 4096
   Micro BS: 1
   Global BS: 1
   Number of Layers: 32
-  Number of parameters: 3.50B
+  Number of parameters: 6.74B
   Distributed Mode: none
   Compiler: thunder
-  Average iter time: 811.19 ms
-  Memory used: 33.42 GB
-  Tokens/s: 5046.46
-  Tokens/s/GPU: 5046.46
-  TFLOP/s: 118.27
+  Low Precision Mode: none
+  Average iter time: 383.11 ms
+  Memory used: 64.22 GB
+  Tokens/s: 10690.01
+  Tokens/s/GPU: 10690.01
+  TFLOP/s: 492.65
+
+.. note:: Beware the memory footprint of certain models! In this example, running ``Llama-2-7b-hf`` on H100 with default Thunder compile option requires upwards of ~65GB of memory. Pro tip: you can always play with the ``--n_layers`` option to run reduced versions of the model that can fit in memory.
 
 Compile options
 ---------------
