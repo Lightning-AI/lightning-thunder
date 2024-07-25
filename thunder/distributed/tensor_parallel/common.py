@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from thunder.core.proxies import DistParallelType
 from thunder.core.proxies import TensorProxy
-from thunder.core.transform_common import EarlyTransform
+from thunder.core.transform_common import Transform
 
 if TYPE_CHECKING:
     from typing import Any

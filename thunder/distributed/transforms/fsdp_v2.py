@@ -11,7 +11,7 @@ from thunder.core.proxies import DistParallelType
 from thunder.core.trace import from_trace
 from thunder.core.trace import tracectx
 from thunder.core.trace import TraceProvenance
-from thunder.core.transform_common import EarlyTransform
+from thunder.core.transform_common import Transform
 
 if TYPE_CHECKING:
     from typing import Any
