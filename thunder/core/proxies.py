@@ -1235,7 +1235,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         distparallel_type: DistParallelType | None = None,
         history: None | tuple = None,
         thunder_fsdp_padding_size: int | None = None,
-        views: None | TensorProxy | list[TensorProxy] = None,
+        base_tensor: TensorProxy | None = None,
     ):
         super().__init__(name, prefix=prefix, history=history)
 
