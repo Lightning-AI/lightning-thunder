@@ -5489,7 +5489,7 @@ def backward_adaptor(torch_func):
             return tree_unflatten(len(flat_args) * [None], spec)
         if sum(map(_is_differentiable, tree_flatten(inp_kwargs)[0])) != 0:
             raise NotImplementedError(
-                f"Automatic registration fails for operator {torch_func} because there is keyword argument that requires gradient, please use manual registration."
+                f"Exception encountered when doing automatic registration for {torch_func} because there is keyword argument that requires gradient, please use manual registration."
             )
         from torch._subclasses.fake_tensor import FakeTensorMode
 

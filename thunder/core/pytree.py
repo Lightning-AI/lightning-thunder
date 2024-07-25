@@ -51,13 +51,7 @@ def tree_flatten(args, namespace=""):
         }
         and not isinstance(args, (ProxyInterface))
         and not dataclasses.is_dataclass(args)
-        and not isinstance(args, (FunctionType, BuiltinFunctionType))
         and not type(args).__module__.startswith("torch.return_types")
-        and not (
-            hasattr(args, "__objclass__")
-            and hasattr(args.__objclass__, "__module__")
-            and args.__objclass__.__module__.startswith("torch._C")
-        )
     ):
         raise TypeError(f"tree_flatten of type {type(args)} is not supported.")
     return optree.tree_flatten(args, none_is_leaf=True, namespace=namespace)
