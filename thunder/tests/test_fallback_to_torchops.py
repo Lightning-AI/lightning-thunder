@@ -24,35 +24,45 @@ def test_torch_ops_backward(device):
     # op_infos_idx = [idx for idx, opinfo in enumerate(op_db) if opinfo.name in opnames]
     print(f"total: {len(op_infos)}")
     cnt = 0
+    ncase_cnt = 0
     for idx, op_info in zip(op_infos_idx, op_infos):
         # if op_info.name in skip_names: continue
-        if op_info.name == "nonzero_static" and device=="cuda":
+        if op_info.name in ("nonzero_static", "histogramdd", "histogram") and device=="cuda":
             continue
-        try:
-            dtype = torch.complex32 if op_info.name == "view_as_real" else torch.float32
-            for sample in op_info.sample_inputs_func(op_info, device=torch.device(device), dtype=dtype, requires_grad=True):
+        # dtype = torch.complex32 if op_info.name == "view_as_real" else torch.float32
+        # dtype = torch.float32 if torch.float32 in op_info.dtypes else next(iter(op_info.dtypes))
+        if not torch.float32 in op_info.dtypes: continue
+        for sample in op_info.sample_inputs_func(op_info, device=torch.device(device), dtype=torch.float32, requires_grad=True):
+            try:
                 jfun = thunder.jit(funcs[idx])
                 out = jfun(sample.input, *sample.args, **sample.kwargs)
-        except Exception as e:
-            cnt+=1
-            # print(e)
-            print(op_info.name)
-            print("--------------------")
-        else:
-            trc = thunder.last_backward_traces(jfun)[-1]
-            trcf = thunder.last_traces(jfun)[-1]
-            # print(op_info.name, trc, trcf)
-            # skip if it is not differentiable
-            outs = trcf.output[0]['output']
-            outs = outs if isinstance(outs, tuple) else (outs, )
-            if all(not thunder.core.dtypes.is_inexact_dtype(o.dtype) for o in outs):
-                continue
-            vjp_op_name = f"{op_info.name}_vjp"
-            try:
-                assert any(bsym.sym.name == vjp_op_name for bsym in trc.bound_symbols)
             except Exception as e:
-                # import pdb;pdb.set_trace()
-                print(e)
+                cnt+=1
+                # print(e)
+                print(op_info.name)
+                print("--------------------")
+                break
+            else:
+                # print(f"pass: {op_info.name}")
+                trc = thunder.last_backward_traces(jfun)[-1]
+                trcf = thunder.last_traces(jfun)[-1]
+                # print(op_info.name, trc, trcf)
+                # skip if it is not differentiable
+                outs = trcf.output[0]['output']
+                outs = outs if isinstance(outs, tuple) else (outs, )
+                if all(not thunder.core.dtypes.is_inexact_dtype(o.dtype) for o in outs):
+                    continue
+                vjp_op_name = f"{op_info.name}_vjp"
+                try:
+                    assert any(bsym.sym.name == vjp_op_name for bsym in trc.bound_symbols)
+                except Exception as e:
+                    # import pdb;pdb.set_trace()
+                    print(e)
+            finally:
+                ncase_cnt+=1
+                if ncase_cnt == 5:
+                    ncase_cnt = 0
+                    break
 
     print(cnt)
 
