@@ -18,7 +18,7 @@ Before starting, you need to install Thunder and the devel packages with::
 LitGPT benchmarks
 =================
 
-The esiest way to run a single benchmark in Thunder is by running an instance of the LitGPT end-to-end training script that can be found in ``thunder/benchmarks/benchmark_litgpt.py``.
+The easiest way to run a single benchmark in Thunder is by running an instance of the LitGPT end-to-end training script that can be found in ``thunder/benchmarks/benchmark_litgpt.py``.
 
 To run a benchmark all we need is the following command::
 
@@ -82,8 +82,8 @@ and if you are testing ``torch.compile`` then it will look something like this::
 pytest benchmarks
 =================
 
-If instead of running an e2e training benchamrk you want to be more specific, Thunder has you covered with the pytest based benchmarks (more specifically `pytest-benchmark <https://pytest-benchmark.readthedocs.io/en/latest/>`__).
-These benchamrks are defined in two parts, the implementation is in ``thunder/benchmarks/__init__.py`` and the hook for pytest is in ``thunder/benchmarks/targets.py``.
+If instead of running an e2e training benchmark you want to be more specific, Thunder has you covered with the pytest based benchmarks (more specifically `pytest-benchmark <https://pytest-benchmark.readthedocs.io/en/latest/>`__).
+These benchmarks are defined in two parts, the implementation is in ``thunder/benchmarks/__init__.py`` and the hook for pytest is in ``thunder/benchmarks/targets.py``.
 In the next section you'll see more of the details, but for now let's start by listing all the available benchmarks with::
 
   pytest thunder/benchmarks/targets.py --collect-only
@@ -97,7 +97,7 @@ However, more realistically you'd want to filter and run just specific benchmark
   pytest thunder/benchmarks/targets.py -k 'nanogpt_gpt2 and not torch.compile and not xl and not inference' --benchmark-group-by='param:compute_type'
 
 This example will select the benchmarks run them and print the results grouped the results by compute type(forward and backward in this case) thanks to the ``--benchmark-group-by`` flag.
-The output will look something like this(it's pretty wide so it looks a bit wierd on narrow windows)::
+The output will look something like this(it's pretty wide so it looks a bit weird on narrow windows)::
 
   ------------------------------------------------------------------- benchmark 'compute_type=ComputeType.TRAINING_BACKWARD': 2 tests ---------------------------------------------------------------
   Name (time in ms)                           Min                Max               Mean            StdDev             Median               IQR            Outliers      OPS        Rounds  Iterations
@@ -181,7 +181,7 @@ Now that the arguments are setup, the ``__init__()`` method must be implemented:
 
 .. note:: ``__init__()`` should call ``super()`` and it can accept additional optional parameters, like parameters with default values or kwargs other than the ``BenchmarkArg``, but these parameters must be after the benchmark arg parameters.
 
-Next, you'll want to create the data for your benchamrk. To do so, you must implement a ``make_batch()`` method that prepares a valid input for the benchamrk, possibly modified by the initialization arguments::
+Next, you'll want to create the data for your benchmark. To do so, you must implement a ``make_batch()`` method that prepares a valid input for the benchmark, possibly modified by the initialization arguments::
 
       def make_batch(self) -> tuple[list, dict]:
           make = partial(make_tensor, device=self.device, dtype=self.dtype)
@@ -195,7 +195,7 @@ Now comes the best part, the ``fn()`` method, which should return the callable t
 
           return foo
 
-If your benchmark doesn't need any futher steps you'd be done here howerver, consider the case where you want to benchmark a model, then you ``fn()`` method would look something like::
+If your benchmark doesn't need any further steps you'd be done here however, consider the case where you want to benchmark a model, then you ``fn()`` method would look something like::
 
       def fn(self) -> Callable:
           class FooNetwork(torch.nn.Module):
@@ -263,12 +263,12 @@ As seen earlier, it's possible to write benchmarks for models and not just stand
 
   #[...previous parametrization omitted here...]
   @parametrize_compute_type
-  def test_foo(benchamrk, executor, compute_type: ComputeType):
+  def test_foo(benchmark, executor, compute_type: ComputeType):
       bench: Benchmark = FooBenchmark(device="cuda", dtype=thunder.bfloat16)
 
       args, kwargs = bench.make_batch()
       fn = executor(bench.fn())
 
-      benchmark_for_compute_type(compute_type, benchamrk, fn, *args, **kwargs)
+      benchmark_for_compute_type(compute_type, benchmark, fn, *args, **kwargs)
 
 And that's as simple as that! Just add the decorator ``@parametrize_compute_type`` after your parametrization, add the ``compute_type`` argument, and use ``benchmark_for_compute_type`` to call the benchmark function.
