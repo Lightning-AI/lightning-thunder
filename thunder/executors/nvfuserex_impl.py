@@ -52,7 +52,6 @@ from nvfuser import DataType, FusionDefinition
 
 nvTensor = nvfuser._C.Tensor
 nvNumber = nvfuser._C.Scalar
-nv_version: LooseVersion = LooseVersion(nvfuser.version())
 
 #
 # Helper functions
@@ -99,10 +98,7 @@ def _define_constant(fd: FusionDefinition, constant: Any) -> Any:
     if isinstance(constant, Number):
         val = pyval(constant)
         nvdtype = lcdtype_to_nvdtype(type(val))
-        if nv_version >= LooseVersion("0.0.14"):
-            return fd.define_scalar(constant, nvdtype)
-        else:
-            return fd.define_constant(constant, nvdtype)
+        return fd.define_scalar(constant, nvdtype)
     if isinstance(constant, (dtypes.dtype, type)):
         return lcdtype_to_nvdtype(constant)
     if isinstance(constant, Device):
@@ -233,16 +229,9 @@ def create_fd(
                 utils.check_type(y, tuple)
                 symbolic_shape, contiguity, stride_order, dtype = y
                 nvdtype = lcdtype_to_nvdtype(dtypes.to_dtype(dtype))
-                if nv_version >= LooseVersion("0.1.3"):
-                    nv = fd.define_tensor(
-                        shape=symbolic_shape, contiguity=contiguity, dtype=nvdtype, stride_order=stride_order
-                    )
-                elif nv_version >= LooseVersion("0.0.17"):
-                    nv = fd.define_tensor(shape=symbolic_shape, contiguity=contiguity, dtype=nvdtype)
-                elif nv_version >= LooseVersion("0.0.9"):
-                    nv = fd.define_tensor(symbolic_sizes=symbolic_shape, contiguity=contiguity, dtype=nvdtype)
-                else:
-                    nv = fd.define_tensor(symbolic_sizes=symbolic_shape, contiguous=contiguity, dtype=nvdtype)
+                nv = fd.define_tensor(
+                    shape=symbolic_shape, contiguity=contiguity, dtype=nvdtype, stride_order=stride_order
+                )
             elif isinstance(x, TupleProxy):
                 # TODO: discuss the contract here on baked in number from a tuple
                 # TODO: validate x is a tuple of int
@@ -328,14 +317,9 @@ def compute_contiguity(
     Returns:
         Tuple[Tuple[bool, ...], Tuple[int, ...]]: The contiguity and stride_order
     """
-    if nv_version >= LooseVersion("0.1.1"):
-        from nvfuser import compute_tensor_descriptor as nv_compute_td
+    from nvfuser import compute_tensor_descriptor as nv_compute_td
 
-        return tuple(tuple(x) for x in nv_compute_td(shape, stride))
-    else:
-        from nvfuser import compute_contiguity as nv_compute_contiguity
-
-        return tuple(nv_compute_contiguity(shape, stride)), tuple(range(len(shape) - 1, -1, -1))
+    return tuple(tuple(x) for x in nv_compute_td(shape, stride))
 
 
 @lru_cache(maxsize=2048)
@@ -405,11 +389,7 @@ class FusionDefinitionWrapper:
         self.last_used = fd
 
         # Set device if set in one of the "factory" methods like full, iota, or uniform
-        kwargs = (
-            {"device": fd._selected_device}
-            if nv_version >= LooseVersion("0.0.13") and hasattr(fd, "_selected_device")
-            else {}
-        )
+        kwargs = {"device": fd._selected_device} if hasattr(fd, "_selected_device") else {}
         with add_markers(self.name):
             return fd.execute(args, **kwargs)
 
@@ -562,13 +542,12 @@ class nvFuserExecutor(FusionExecutor):
          * When the LOCAL_RANK environment variable is set for ddp or fsdp, a
          separate fusion cache is saved for each device.
         """
-        if nv_version >= LooseVersion("0.1.4"):
-            from nvfuser import enable_automatic_serialization, disable_automatic_serialization
+        from nvfuser import enable_automatic_serialization, disable_automatic_serialization
 
-            if save_cache:
-                enable_automatic_serialization()
-            else:
-                disable_automatic_serialization()
+        if save_cache:
+            enable_automatic_serialization()
+        else:
+            disable_automatic_serialization()
 
     def get_fuel(self, amount: int = 1, /) -> bool:
         if self._optimization_fuel is FUEL_LEVEL.UNLIMITED:
@@ -1003,9 +982,6 @@ register_supported(PrimIDs.IOTA, iota, _iota_check)
 def _uniform_check(
     shape: Sequence[int], minval: Number, maxval: Number, *, device: Device, dtype: dtypes.dtype
 ) -> bool:
-    if nv_version < LooseVersion("0.0.3"):
-        return False
-
     return is_supported_device(device) and is_supported_dtype(dtype)
 
 
@@ -1110,9 +1086,6 @@ register_supported(PrimIDs.BROADCAST_IN_DIM, broadcast_in_dim, _broadcast_in_dim
 
 
 def _cat_check(tensors: list[TensorProxy], dim: int) -> bool:
-    if nv_version < LooseVersion("0.1.7"):
-        return False
-
     # Validates tensors and concatenated dimension lengths
     for t in tensors:
         if not is_supported_tensor(t):
@@ -1132,9 +1105,6 @@ register_supported(PrimIDs.CAT, cat, _cat_check)
 
 
 def _stride_order_check(a: TensorProxy, order: Sequence[int]) -> bool:
-    if nv_version < LooseVersion("0.0.20"):
-        return False
-
     return is_supported_tensor(a)
 
 
@@ -1149,12 +1119,6 @@ register_supported(PrimIDs.STRIDE_ORDER, stride_order, _stride_order_check)
 
 # NOTE nvFuser does not support dilation > 0
 def _pad_check(a: TensorProxy, padding_value: Number, padding_config: tuple[int, int, int]) -> bool:
-    if a.numel == 0 and nv_version < LooseVersion("0.0.21"):
-        return False
-
-    if nv_version < LooseVersion("0.0.6"):
-        return False
-
     if not is_supported_tensor(a):
         return False
 
@@ -1202,10 +1166,7 @@ def reshape(a: TensorProxy, shape: list[int], *, fd: FusionDefinition, lc_to_nv_
     nv_a = getnv(a, fd, lc_to_nv_map)
     nv_shape = getnv(shape, fd, lc_to_nv_map)
 
-    if nv_version < LooseVersion("0.0.22"):
-        return fd.ops.reshape(nv_a, a.shape, nv_shape)
-    else:
-        return fd.ops.reshape(nv_a, nv_shape)
+    return fd.ops.reshape(nv_a, nv_shape)
 
 
 register_supported(PrimIDs.RESHAPE, reshape, _reshape_check)
@@ -1215,9 +1176,6 @@ register_supported(PrimIDs.RESHAPE, reshape, _reshape_check)
 def _slice_check(
     a: TensorProxy, start_indices: Sequence[int], end_indices: Sequence[int], strides: Sequence[int] | None = None
 ) -> bool:
-    if nv_version < LooseVersion("0.0.6"):
-        return False
-
     if not is_supported_tensor(a):
         return False
 
@@ -1256,10 +1214,7 @@ def _squeeze_check(a: TensorProxy, /, dims: Sequence[int]) -> bool:
 def squeeze(a: TensorProxy, /, dims: Sequence[int], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
-    if nv_version >= LooseVersion("0.1.5"):
-        return fd.ops.squeeze(nva, dims)
-    else:
-        return fd.ops.squeeze(nva, a.shape, dims)
+    return fd.ops.squeeze(nva, dims)
 
 
 register_supported(PrimIDs.SQUEEZE, squeeze, _squeeze_check)
@@ -1305,10 +1260,8 @@ register_supported(PrimIDs.TRANSPOSE, transpose, _transpose_check)
 
 
 # TODO Check that the tensor dtype is supported by nvFuser -- extract to tensor_supported()?
-def _elementwise_unary_check(
-    a: Number | TensorProxy, /, *, version_required: LooseVersion = LooseVersion("0.0.0")
-) -> bool:
-    return is_supported_tensor_or_number(a) and nv_version > version_required
+def _elementwise_unary_check(a: Number | TensorProxy) -> bool:
+    return is_supported_tensor_or_number(a)
 
 
 # NOTE nv_abs to avoid a name conflict with the builin abs
@@ -1997,9 +1950,6 @@ def _var_mean_check(
     *,
     correction: None | int = None,
 ) -> bool:
-    if nv_version < LooseVersion("0.0.7"):
-        return False
-
     if not is_supported_tensor(a, allow_low_precision_floats=False):
         return False
 
@@ -2216,20 +2166,12 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
 
 
 def _linear_check(a: TensorProxy, b: TensorProxy, bias: TensorProxy | None) -> bool:
-    if nv_version < LooseVersion("0.2.3"):
-        return False
-
     enable_linear: None | bool = get_compile_option("nv_enable_linear", "Enable nvFuser linear.")
     if not enable_linear:
         return False
     # Verify linear inputs and bias (optional) are supported tensors.
     if not are_supported_tensors(a, b) or (bias is not None and not is_supported_tensor(bias)):
         return False
-    if nv_version < LooseVersion("0.2.5"):
-        warnings.warn("nvFuser v0.2.3 has limited support for linear. Consider using v0.2.5 or above")
-        # nvFuser only supports 2D inputs in v0.2.3.
-        if not a.ndim == 2:
-            return False
     return True
 
 
@@ -2254,17 +2196,10 @@ def _matmul_check(
     a: TensorProxy,
     b: TensorProxy,
 ) -> bool:
-    if nv_version < LooseVersion("0.2.2"):
-        return False
-
     enable_matmul: None | bool = get_compile_option("nv_enable_matmul", "Enable nvFuser matmul.")
 
     if not enable_matmul or not are_supported_tensors(a, b):
         return False
-    if nv_version < LooseVersion("0.2.4"):
-        warnings.warn("nvFuser v0.2.2 has limited support for matmuls. Consider using v0.2.4 or above")
-        if not (a.ndim == b.ndim and a.ndim == 2):
-            return False
     return True
 
 
