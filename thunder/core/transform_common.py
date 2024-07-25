@@ -762,22 +762,41 @@ def functionalize_inplace_ops(
 
     new_bsyms: list[BoundSymbol] = []
     for bsym in intermediate_trace.bound_symbols:
+        # `new_bsym` is new in the sense that its args/kwargs do not use a tensor proxy
+        # returned from `prims.copy_`, at this point.
         new_bsym = bsym.from_bsym_swap_proxies(swap_map, skip_output=True)
 
         if not is_functionalizable(new_bsym):
             new_bsyms.append(new_bsym)
             continue
 
+        # If `bsym` is functionalizable, i.e., its last subsymbol is `prims.copy_`,
+        # this transform creates a semantically equivalent functional bsym that's different from
+        # `new_bsym` / `bsym` in
+        #     - does not have `prims.copy_` as one of its subsymbols
+        #     - Output tensor is `copy_from` i.e., the output of last subsymbol
+
+        # We use `bsym.subsymbols[-1]` instead of `new_bsym.subsymbols[-1]` because the latter
+        # would be modified using `swap_map`, i.e., the signature could be broken.
         copy_bsym = bsym.subsymbols[-1]
         copy_return = copy_bsym.flat_proxy_outs[0]
         copy_from = copy_bsym.flat_proxy_args[0]
         swap_map[variableify(copy_return)] = copy_from
 
+        # The last subsymbol is `prims.copy_`, so the new_bsym shouldn't have it.
         new_bsym.subsymbols = new_bsym.subsymbols[:-1]
         new_bsym = new_bsym.from_bsym_swap_proxies(swap_map)
         functional_bsym = create_functional_bsym_from(new_bsym)
         new_bsyms.append(functional_bsym)
 
+        # If trace's arguments and/or their views are consumed by an in-place op,
+        # we'd have to have pairs of `prims.copy_` and auxiliary `prims.reshape` in the functionalized trace
+        # in order to preserve the semantics of the original trace.
+        #
+        # If the modified operand is a function input, we just reuse the copy bsym removed above.
+        # If the modified operand is a view of a function input, we'd need to create a new copy bsym.
+        # We might have to create an auxiliary reshape bsym as well
+        # if the shape of the source is different from the function input tensor.
         arg_copy_dst: TensorProxy
         copy_bsyms: list[BoundSymbol] = []
         if (copy_to := copy_bsym.flat_proxy_args[1]) in arg_to_copy_bsyms:
@@ -810,6 +829,8 @@ def functionalize_inplace_ops(
             copy_from_for_copy_bsyms = _get_first_tensor_arg(copy_bsyms[0])
             copy_from_to_copy_bsyms[variableify(copy_from_for_copy_bsyms)] = copy_bsyms
 
+    # For nvfuser to be comfortably create fusion regions, we put each `prims.copy_` after the last
+    # use of `copy_from`.
     consumer_map = consumers(new_bsyms)
     producer_map = producers(new_bsyms)
     bsym_to_copy_bsyms: dict[BoundSymbol, list[BoundSymbol]] = defaultdict(list)
