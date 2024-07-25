@@ -535,7 +535,7 @@ def jit(
                     prologue_trc, computation_trc, epilogue_trc = (
                         new_prologue_trc,
                         new_computation_trc,
-                        new_prologue_trc,
+                        new_epilogue_trc,
                     )
                     prologue_traces.append(prologue_trc)
                     computation_traces.append(computation_trc)
