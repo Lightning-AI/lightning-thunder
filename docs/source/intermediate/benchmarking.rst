@@ -83,7 +83,7 @@ pytest benchmarks
 =================
 
 If instead of running an e2e training benchamrk you want to be more specific, Thunder has you covered with the pytest based benchmarks (more specifically `pytest-benchmark <https://pytest-benchmark.readthedocs.io/en/latest/>`__).
-These benchamrks are defined in two parts, the implementation is in ``thunder/benchmarks/__init__.py`` and the hook for pytest is in ``thunder/benchmarks/targets.py``. 
+These benchamrks are defined in two parts, the implementation is in ``thunder/benchmarks/__init__.py`` and the hook for pytest is in ``thunder/benchmarks/targets.py``.
 In the next section you'll see more of the details, but for now let's start by listing all the available benchmarks with::
 
   pytest thunder/benchmarks/targets.py --collect-only
