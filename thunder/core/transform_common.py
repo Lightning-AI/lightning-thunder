@@ -333,11 +333,11 @@ def cse(trace: Trace) -> Trace:
 
 # The transform class, at different points in the processing, the methods are executed. Typically, a subset of them is implemented.
 class Transform(ABC):
-    def transform_traces_early(
+    def transform_traces_pre_prologue(
         self, prologue_trace: Trace, computation_trace: Trace, epilogue_trace: Trace | None, **kwargs
     ):
         """
-        transform_traces_early enables transforming prologue, computation and epilogue trace.
+        transform_traces_pre_prologue enables transforming prologue, computation and epilogue trace.
         Note that the computation trace here is before the autograd transform, so any update to
         the computation trace will also update backward trace.
         """
@@ -366,7 +366,7 @@ class Transform(ABC):
         transform_trace_additionally enables transforming the computation trace before optimization pass.
         Note that this transform is only applicable if autograd is disabled.
 
-        Please don't use this method in new implementations, we are working on removing it. Use transform_traces_early instead.
+        Please don't use this method in new implementations, we are working on removing it. Use transform_traces_pre_prologue instead.
         """
         return computation_trace
 

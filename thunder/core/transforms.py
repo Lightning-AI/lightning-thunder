@@ -441,9 +441,11 @@ def add_transform(
 
 # The no-op transform. A trivial composable transform, only useful as an example.
 class _NoopTransform(Transform):
-    def transform_trace_additionally(self, trace: Trace, **kwargs) -> Trace:
+    def transform_trace_pre_prologue(
+        self, prologue_trace: Trace, computation_trace: Trace, epilogue_trace: Trace | None, **kwargs
+    ) -> Trace:
         start_time_ns = time.perf_counter_ns()
-        noop_trace = from_trace(trace)
+        noop_trace = from_trace(computation_trace)
 
         tracectx_tok: Any
         try:
@@ -452,14 +454,14 @@ class _NoopTransform(Transform):
         finally:
             reset_tracectx(tracectx_tok)
 
-        noop_trace.bound_symbols.extend(trace.bound_symbols)
+        noop_trace.bound_symbols.extend(computation_trace.bound_symbols)
 
         end_time_ns = time.perf_counter_ns()
         elapsed_time_ns = end_time_ns - start_time_ns
         elapsed_time_millis = elapsed_time_ns // 1000000
         noop_trace.set_provenance(TraceProvenance(f"No-op Transform (took {elapsed_time_millis} milliseconds)"))
 
-        return noop_trace
+        return prologue_trace, noop_trace, computation_trace
 
 
 def noop(cfn: Callable) -> Callable:

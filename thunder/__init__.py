@@ -523,10 +523,10 @@ def jit(
             transform: Transform
             for transform in transforms:
                 thunder.core.utils.check_type(transform, Transform)
-                new_prologue_trc, new_computation_trc, new_epilogue_trc = transform.transform_traces_early(
+                new_prologue_trc, new_computation_trc, new_epilogue_trc = transform.transform_traces_pre_prologue(
                     prologue_trc, computation_trc, epilogue_trc, executors_list=cd.executors_list
                 )
-                # if the transform did anything in the transform_traces_early step
+                # if the transform did anything in the transform_traces_pre_prologue step
                 if (
                     new_prologue_trc is not prologue_trc
                     or new_computation_trc is not computation_trc
