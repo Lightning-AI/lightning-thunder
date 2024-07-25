@@ -7022,6 +7022,7 @@ convolution_opinfo = OpInfo(
             dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU,),
         ),
+        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness", active_if=IS_WINDOWS),
         DecorateInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
