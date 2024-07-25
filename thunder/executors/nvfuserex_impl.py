@@ -786,22 +786,6 @@ class nvFuserExecutor(FusionExecutor):
         #   (Used to name fusions like nvFusion0, nvFusion1, ...)
         fusion_counter: int = 0
         for bsyms in bound_symbol_groups:
-            # Related to in-place ops.
-            # prims.copy_ is a no-op for NVFuser in a sense that it does not
-            # generate nor runs any kernels.
-            # For that reason we should avoid fusing prims.copy_ unless
-            # it comes after other non-copy symbols in a fusion.
-            # See the following relevant issues:
-            # https://github.com/Lightning-AI/lightning-thunder/issues/789
-            # https://github.com/Lightning-AI/lightning-thunder/issues/791
-            # NOTE: filter all first "dangling" no-op copies
-            while len(bsyms) > 0 and bsyms[0].sym.id is prims.PrimIDs.COPY_:
-                fused_bsyms.append(bsyms[0])
-                bsyms = bsyms[1:]
-
-            if len(bsyms) == 0:
-                continue
-
             # TODO The following allows generating single node fusions, which
             #   may be suboptimal for real-world performance.
             #   Provide a mechanism to switch between "test" and "perf" modes
