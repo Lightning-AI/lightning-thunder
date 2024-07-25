@@ -9,7 +9,6 @@ from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import BoundSymbol
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.core.langctxs import resolve_language, LanguageContext, Languages
-from thunder.executors.nvfuserex_impl import FusionDefinitionWrapper
 import torch
 from warnings import warn
 
