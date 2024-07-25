@@ -5387,12 +5387,16 @@ def register_default_torch_op(torchfn, fn_meta, m):
         assert isinstance(residules, dict)
         inp_args = residules["inputs"][0]
         inp_kwargs = residules["inputs"][1]
-        func = residules["torch_func"]
 
-        wrapped_func, diff_args = _make_differentiable_wrapper(func, *inp_args, **inp_kwargs)
+        wrapped_func, diff_args = _make_differentiable_wrapper(torchfn, *inp_args, **inp_kwargs)
         _, outs = torch.autograd.functional.vjp(wrapped_func, diff_args, v=gs)
 
-        return outs
+        from thunder.core.pytree import tree_unflatten, tree_flatten
+        flat_inp_args, inp_spec = tree_flatten(inp_args)
+        iter_out = iter(outs if isinstance(outs, Sequence) else (outs,))
+        outs = tuple(next(iter_out) if _is_differentiable(arg) else None for arg in flat_inp_args)
+        return tree_unflatten(outs, inp_spec)
+
 
     bwd_op = ex.register_operator(torchfn.__name__ + "_vjp", meta=backward_adaptor(), fn=_vjp_impl)
     ex.register_implementation(bwd_op.id, bwd_op, checker=_always_executable)
@@ -5484,9 +5488,8 @@ def backward_adaptor():
         inp_kwargs = inps[1]
         from thunder.core.pytree import tree_flatten, tree_unflatten
         from builtins import sum
-
+        flat_args, spec = tree_flatten(inp_args)
         if sum(tree_map(_is_differentiable, grad_output)) == 0:
-            flat_args, spec = tree_flatten(inp_args)
             return tree_unflatten(len(flat_args) * [None], spec)
         if sum(map(_is_differentiable, tree_flatten(inp_kwargs)[0])) != 0:
             raise NotImplementedError(
@@ -5504,16 +5507,16 @@ def backward_adaptor():
             except Exception as e:
                 msg = f"Exception encountered when doing automatic registration for {torch_func}, please use manual registration: {e}"
                 raise NotImplementedError(msg) from e
-        # TODO: check if the output is not differentiable, return None
-        # if sum(tree_map(_is_differentiable, fake_out)) == 0:
+        # check if all the outputs are not differentiable, return None
+        # differential_outs = tree_map(_is_differentiable, fake_out)
+        # differential_outs = differential_outs if isinstance(differential_outs, Sequence) else (differential_outs,)
+        # if sum(differential_outs)==0:
         #     return tree_unflatten(len(flat_args) * [None], spec)
-        
-        # TODO: handled wrong, should use the spec of the input args
-        flat_fake_vjps, spec_vjps = tree_flatten(fake_vjp)
-        outs = tuple(map(_fake_type_to_thunder, flat_fake_vjps))
-        if hasattr(spec_vjps.type, "__module__") and spec_vjps.type.__module__.startswith("torch.return_types"):
-            return outs
-        return tree_unflatten(outs, spec_vjps)
+
+        out_vjp = tree_map(_fake_type_to_thunder, fake_vjp)
+        iter_out_vjp = iter(out_vjp if isinstance(out_vjp, Sequence) else (out_vjp,))
+        fake_vjp = tuple(next(iter_out_vjp) if _is_differentiable(arg) else None for arg in flat_args)
+        return tree_unflatten(fake_vjp, spec)
 
     return wrapper
 
