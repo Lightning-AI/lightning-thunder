@@ -729,15 +729,20 @@ def jit(
     if isinstance(fn, pytorch.nn.Module):
         fn_ = ThunderModule(fn, fn_)
         cd._thunder_module_map[id(fn)] = fn_
-        for transform in transforms:
-            transform.transform_module(fn_)
 
     # Sets compile options and statistics attributes
     cd._get_computation_and_inputs = get_computation_and_inputs
     fn_._lc_cd = cd
     fn_._lc_cs = cs
-    # todo: move to compile data
-    fn_._lc_transforms = transforms[:]
+
+    if isinstance(fn, pytorch.nn.Module):
+        fn_._lc_transforms = []
+        for transform in transforms:
+            transform.transform_module(fn_)
+            fn_._lc_transforms.append(transform)
+    else:
+        # todo: move to compile data
+        fn_._lc_transforms = transforms[:]
 
     return fn_
 
