@@ -5383,12 +5383,10 @@ def register_default_torch_op(torchfn, fn_meta, m):
 
     from thunder.core.transforms import augmented_forward_impls, backward_impls
 
-    augmented_forward_impls[sym.id] = augmented_forward_adaptor(torchfn, op)
+    augmented_forward_impls[sym.id] = augmented_forward_adaptor(op)
 
     def _vjp_impl(residules, *gs) -> torch.Tensor:
-        assert isinstance(residules, dict)
-        inp_args = residules["inputs"][0]
-        inp_kwargs = residules["inputs"][1]
+        inp_args, inp_kwargs = residules
 
         wrapped_func, diff_args = _make_differentiable_wrapper(torchfn, *inp_args, **inp_kwargs)
         _, outs = torch.autograd.functional.vjp(wrapped_func, diff_args, v=gs)
@@ -5400,7 +5398,7 @@ def register_default_torch_op(torchfn, fn_meta, m):
         outs = tuple(next(iter_out) if _is_differentiable(arg) else None for arg in flat_inp_args)
         return tree_unflatten(outs, inp_spec)
 
-    bwd_op = ex.register_operator(torchfn.__name__ + "_vjp", meta=backward_adaptor(), fn=_vjp_impl)
+    bwd_op = ex.register_operator(torchfn.__name__ + "_vjp", meta=backward_adaptor(torchfn), fn=_vjp_impl)
     ex.register_implementation(bwd_op.id, bwd_op, checker=_always_executable)
     backward_impls[sym.id] = bwd_op
 
@@ -5468,26 +5466,21 @@ def _fake_type_to_thunder(inp):
         raise NotImplementedError(f"Unsupported type: {type(inp)}")
 
 
-def augmented_forward_adaptor(torch_func, sym_op):
+def augmented_forward_adaptor(sym_op):
     def wrapper(*args, **kwargs):
         from thunder.core.transforms import VJPDual
 
         out = sym_op(*args, **kwargs)
         primal = out if isinstance(out, tuple) else (out,)
-        residuals = ({"inputs": (args, kwargs), "torch_func": torch_func},)
+        residuals = ((args, kwargs),)
         return VJPDual(primal, residuals)
 
     return wrapper
 
 
-def backward_adaptor():
-    def wrapper(*args):
-        saved_for_backward: dict = args[0]
-        grad_output = args[1:]
-        torch_func = saved_for_backward["torch_func"]
-        inps = saved_for_backward["inputs"]
-        inp_args = inps[0]
-        inp_kwargs = inps[1]
+def backward_adaptor(torch_func):
+    def wrapper(saved_for_backward, *grad_output):
+        inp_args, inp_kwargs = saved_for_backward
         from thunder.core.pytree import tree_flatten, tree_unflatten
         from builtins import sum
 
@@ -5504,17 +5497,12 @@ def backward_adaptor():
             fake_inp_args, fake_inp_kwargs = tree_map(lambda x: _get_fake_arg(x, mode), (inp_args, inp_kwargs))
             wrapped_torch_func, diff_args = _make_differentiable_wrapper(torch_func, *fake_inp_args, **fake_inp_kwargs)
             try:
-                fake_out, fake_vjp = torch.autograd.functional.vjp(
+                _, fake_vjp = torch.autograd.functional.vjp(
                     wrapped_torch_func, diff_args, v=tree_map(lambda x: _get_fake_arg(x, mode), grad_output)
                 )
             except Exception as e:
-                msg = f"Exception encountered when doing automatic registration for {torch_func}, please use manual registration: {e}"
+                msg = f"Exception encountered when doing automatic registration for {torch_func}, please use manual registration: {repr(e)}"
                 raise NotImplementedError(msg) from e
-        # check if all the outputs are not differentiable, return None
-        # differential_outs = tree_map(_is_differentiable, fake_out)
-        # differential_outs = differential_outs if isinstance(differential_outs, Sequence) else (differential_outs,)
-        # if sum(differential_outs)==0:
-        #     return tree_unflatten(len(flat_args) * [None], spec)
 
         out_vjp = tree_map(_fake_type_to_thunder, fake_vjp)
         iter_out_vjp = iter(out_vjp if isinstance(out_vjp, Sequence) else (out_vjp,))
@@ -5537,7 +5525,7 @@ def meta_adaptor(torch_func):
             try:
                 fake_outs = torch_func(*fake_args, **fake_kwargs)
             except Exception as e:
-                msg = f"Exception encountered when doing automatic registration for {torch_func.__name__}, please use manual registration: {e}"
+                msg = f"Exception encountered when doing automatic registration for {torch_func.__name__}, please use manual registration: {repr(e)}"
                 raise NotImplementedError(msg) from e
 
         flat_fake_outs, spec_outs = tree_flatten(fake_outs)

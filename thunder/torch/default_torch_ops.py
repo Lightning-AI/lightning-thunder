@@ -28,7 +28,6 @@ torch_fallback_ops = {
         torch.atleast_1d,
         torch.atleast_2d,
         torch.atleast_3d,
-        torch.batch_norm,
         torch.batch_norm_backward_elemt,
         torch.batch_norm_backward_reduce,
         torch.batch_norm_elemt,

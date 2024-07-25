@@ -10,6 +10,7 @@ from thunder.tests.make_tensor import make_tensor
 from thunder.tests.opinfos import get_opinfo, OpInfo
 
 
+@requiresCUDA
 # @pytest.mark.parametrize("requires_grad", [True, False], ids=("train", "inference"))
 @pytest.mark.parametrize("device,", ["cuda", "cpu"])
 def test_torch_ops_backward(device):
@@ -71,6 +72,7 @@ def test_torch_ops_backward(device):
     print(cnt)
 
 
+@requiresCUDA
 def test_torch_ops_forward():
     from torch.testing._internal.common_methods_invocations import op_db
     import thunder.torch.default_torch_ops as ops
