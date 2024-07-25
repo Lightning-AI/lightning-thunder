@@ -76,11 +76,11 @@ and if you are testing ``torch.compile`` then it will look something like this::
 
   python thunder/benchmarks/benchmark_litgpt.py --model_name Llama-2-7b-hf  --compile inductor
 
-PyTest benchmarks
+pytest benchmarks
 =================
 
-If instead of running an e2e training benchamrk you want to be more specific, Thunder has you covered with the PyTest based benchmarks (more specifically `pytest-benchmark <https://pytest-benchmark.readthedocs.io/en/latest/>`__).
-These benchamrks are defined in two parts, the implementation is in ``thunder/benchmarks/__init__.py`` and the hook for PyTest is in ``thunder/benchmarks/targets.py``.
+If instead of running an e2e training benchamrk you want to be more specific, Thunder has you covered with the pytest based benchmarks (more specifically `pytest-benchmark <https://pytest-benchmark.readthedocs.io/en/latest/>`__).
+These benchamrks are defined in two parts, the implementation is in ``thunder/benchmarks/__init__.py`` and the hook for pytest is in ``thunder/benchmarks/targets.py``. 
 In the next section you'll see more of the details, but for now let's start by listing all the available benchmarks with::
 
   pytest thunder/benchmarks/targets.py --collect-only
@@ -113,7 +113,7 @@ The output will look something like this(it's pretty wide so it looks a bit wier
   OPS: Operations Per Second, computed as 1 / Mean
   ================================================================ 4 passed, 598 deselected in 113.92s (0:01:53) ====================================================================================
 
-Comparing PyTest runs
+Comparing pytest runs
 ---------------------
 
 Another tool at your disposal is the comparison offered by ``pytest-benchmark``::
