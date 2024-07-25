@@ -227,7 +227,9 @@ def get_nvFuser_repro(trace: TraceCtx, fusion_name: str, /) -> str:
         assert False, f"Unable to find fusion '{fusion_name}' in trace. Available fusions are: {available_fusions}."
 
     if fusion.last_used is None:
-        assert False, "Fusion definition needs to be executed to record the inputs. You must execute the trace first before querying the repro."
+        assert (
+            False
+        ), "Fusion definition needs to be executed to record the inputs. You must execute the trace first before querying the repro."
 
     msg = ""
     msg += (
