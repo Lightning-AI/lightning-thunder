@@ -144,84 +144,78 @@ As stated before, you need to create a class that inherits from ``thunder.benchm
   from thunder.benchmarks import Benchmark, BenchmarkArg
 
   class FooBenchmark(Benchmark):
-    @classmethod
-    @property
-    def name(cls) -> str:
-      return "foo_bench"
+      @classmethod
+      @property
+      def name(cls) -> str:
+          return "foo_bench"
 
-    @classmethod
-    @property
-    def description(cls) -> str:
-      return "Benchmark for foo function"
+      @classmethod
+      @property
+      def description(cls) -> str:
+          return "Benchmark for foo function"
 
 .. note:: The ``name`` should be short, distinct, and a valid filename like "nanogpt" or "llamba-block" and
     the ``description`` should be a short sentence describing the benchmark like "NanoGPT's LayerNorm module forward".
 
 The next step is to declare a list of accepted arguments from this benchmark as a property of the class and a class method that returns those arguments::
 
-    _args = (
-      BenchmarkArg(
-        name="device",
-        description="A string representing the device. Default is 'cuda'."
-      ),
-      BenchmarkArg(
-        name="dtype",
-        description="The dtype of the tensors. Default is thunder.float32."
-      ),
-    )
+      _args = (
+          BenchmarkArg(name="device", description="A string representing the device. Default is 'cuda'."),
+          BenchmarkArg(name="dtype", description="The dtype of the tensors. Default is thunder.float32."),
+      )
 
-    @classmethod
-    @property
-    def args(cls) -> tuple[BenchmarkArg, ...]:
-      return cls._args
+      @classmethod
+      @property
+      def args(cls) -> tuple[BenchmarkArg, ...]:
+          return cls._args
 
 Now that the arguments are setup, the ``__init__()`` method must be implemented::
 
-    def __init__(self, device='cuda', dtype=thunder.float32):
-      super().__init__(self)
-      self.device: str = device
-      self.dtype: dtypes.dtype = dtype
+      def __init__(self, device="cuda", dtype=thunder.float32):
+          super().__init__(self)
+          self.device: str = device
+          self.dtype: dtypes.dtype = dtype
 
 .. note:: ``__init__()`` should call ``super()`` and it can accept additional optional parameters, like parameters with default values or kwargs other than the ``BenchmarkArg``, but these parameters must be after the benchmark arg parameters.
 
 Next, you'll want to create the data for your benchamrk. To do so, you must implement a ``make_batch()`` method that prepares a valid input for the benchamrk, possibly modified by the initialization arguments::
 
-    def make_batch(self) -> tuple[list, dict]:
-       make = partial(make_tensor, device=self.device, dtype=self.dtype)
-       return (make(10, 10), ), {}
+      def make_batch(self) -> tuple[list, dict]:
+          make = partial(make_tensor, device=self.device, dtype=self.dtype)
+          return (make(10, 10),), {}
 
 Now comes the best part, the ``fn()`` method, which should return the callable that will be benchmarked. The return callable should accept the output of ``make_batch()`` ::
 
-    def fn(self) -> Callable:
-      def foo(a):
-        return a+a
-      return foo
+      def fn(self) -> Callable:
+          def foo(a):
+              return a + a
+
+          return foo
 
 If your benchmark doesn't need any futher steps you'd be done here howerver, consider the case where you want to benchmark a model, then you ``fn()`` method would look something like::
 
-  def fn(self) -> Callable:
-    class FooNetwork(torch.nn.Module):
-      def __init__(self):
-        super().__init__()
-        self.layer = torch.nn.Linear(10, 10)
+      def fn(self) -> Callable:
+          class FooNetwork(torch.nn.Module):
+              def __init__(self):
+                  super().__init__()
+                  self.layer = torch.nn.Linear(10, 10)
 
-      def forward(self, x):
-        return self.layer(x)
+              def forward(self, x):
+                  return self.layer(x)
 
-    foo = FooNetwork().to(device=self.device, self.dtype).requires_grad_()
-
-    return foo
+          foo = FooNetwork().to(device=self.device, dtype=self.dtype).requires_grad_()
+          return foo
 
 Now this is just half of the test, what about the backward pass? In this case, you'll need to implement a ``postprocess_for_backward()`` method to take care of that::
 
-  def postprocess_for_backward(self, out: torch.Tensor) -> torch.Tensor | None:
-    # Check if backward it's needed at all
-    if not self.requires_grad:
-      return
+      def postprocess_for_backward(self, out: torch.Tensor) -> torch.Tensor | None:
+          # Check if backward it's needed at all
+          if not self.requires_grad:
+              return
 
-    targets = make_tensor_like(out)  # fake targets
-    loss = torch.nn.functional.mse_loss(logits, targets)
-    return loss
+          targets = make_tensor_like(out)  # fake targets
+          loss = torch.nn.functional.mse_loss(out, targets)
+          return loss
 
 .. note:: This method will be given the output of fn(), and if it returns a torch.Tensor t that requires grad then the benchmark will call t.backward(torch.randn_like(t)).
   By default, postprocess_for_backward() returns the output of fn(), or the first element of the output of fn() if fn() returns a Sequence.
@@ -232,35 +226,30 @@ Declaring a test function and its parametrization
 
 Now that your benchmarking class is ready you have nowhere to call it. To address this issue, let's write a ``test_`` prefixed function in ``thunder/benchmarks/targets.py`` that will use the newly created ``FooBenchmark`` class::
 
-  def test_foo(benchamrk):
-    bench: Benchmark = FooBenchmark(
-        device='cuda',
-        dtype=thunder.bfloat16
-    )
+  def test_foo(benchmark):
+      bench: Benchmark = FooBenchmark(device="cuda", dtype=thunder.bfloat16)
 
-    args, kwargs = bench.make_batch()
-    benchmark(bench.fn(), *args, **kwargs)
+      args, kwargs = bench.make_batch()
+      benchmark(bench.fn(), *args, **kwargs)
 
 Great! You are ready to benchmark ``foo()``! But what if you want to test it with different Thunder executors? Here comes parametrization to help. To parametrize the function all it's needed it's the use of the ``@pytest.mark.parametrize`` decorator as following::
 
   @pytest.mark.parametrize(
-    "executor",
-    (
-        torch_executor,
-        torch_compile_executor,
-        thunder_executor,
-    ),
-    ids = ("torch", "torch.compile", "thunder"))
-  def test_foo(benchamrk, executor):
-    bench: Benchmark = FooBenchmark(
-        device='cuda',
-        dtype=thunder.bfloat16
-    )
+      "executor",
+      (
+          torch_executor,
+          torch_compile_executor,
+          thunder_executor,
+      ),
+      ids=("torch", "torch.compile", "thunder"),
+  )
+  def test_foo(benchmark, executor):
+      bench: Benchmark = FooBenchmark(device="cuda", dtype=thunder.bfloat16)
 
-    args, kwargs = bench.make_batch()
-    fn = executor(bench.fn())
+      args, kwargs = bench.make_batch()
+      fn = executor(bench.fn())
 
-    benchmark(fn, *args, **kwargs)
+      benchmark(fn, *args, **kwargs)
 
 Here you go, now you are ready to start benchmarking! For more information about the parametrization syntax you can `get a look here <https://docs.pytest.org/en/8.2.x/how-to/parametrize.html>`_.
 
@@ -271,15 +260,12 @@ As seen earlier, it's possible to write benchmarks for models and not just stand
 
   #[...previous parametrization omitted here...]
   @parametrize_compute_type
-  def test_foo(benchamrk, compute_type:ComputeType):
-  bench: Benchmark = FooBenchmark(
-      device='cuda',
-      dtype=thunder.bfloat16
-  )
+  def test_foo(benchamrk, executor, compute_type: ComputeType):
+      bench: Benchmark = FooBenchmark(device="cuda", dtype=thunder.bfloat16)
 
-  args, kwargs = bench.make_batch()
-  fn = executor(bench.fn())
+      args, kwargs = bench.make_batch()
+      fn = executor(bench.fn())
 
-  benchmark_for_compute_type(compute_type, benchamrk, fn, *args, **kwargs)
+      benchmark_for_compute_type(compute_type, benchamrk, fn, *args, **kwargs)
 
 And that's as simple as that! Just add the decorator ``@parametrize_compute_type`` after your parametrization, add the ``compute_type`` argument, and use ``benchmark_for_compute_type`` to call the benchmark function.
