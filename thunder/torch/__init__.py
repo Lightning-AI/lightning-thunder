@@ -5335,6 +5335,7 @@ else:
 # the automic fallback torch operators
 #
 
+
 def _is_differentiable(arg):
     from torch._subclasses.fake_tensor import FakeTensor
 
@@ -5361,6 +5362,7 @@ def _make_differentiable_wrapper(func, *args, **kwargs):
 
 def register_default_torch_ops():
     from thunder.torch import default_torch_ops
+
     for m, fns in default_torch_ops.torch_fallback_ops.items():
         for fn in fns:
             register_default_torch_op(fn, meta_adaptor(fn), m)
@@ -5392,11 +5394,11 @@ def register_default_torch_op(torchfn, fn_meta, m):
         _, outs = torch.autograd.functional.vjp(wrapped_func, diff_args, v=gs)
 
         from thunder.core.pytree import tree_unflatten, tree_flatten
+
         flat_inp_args, inp_spec = tree_flatten(inp_args)
         iter_out = iter(outs if isinstance(outs, Sequence) else (outs,))
         outs = tuple(next(iter_out) if _is_differentiable(arg) else None for arg in flat_inp_args)
         return tree_unflatten(outs, inp_spec)
-
 
     bwd_op = ex.register_operator(torchfn.__name__ + "_vjp", meta=backward_adaptor(), fn=_vjp_impl)
     ex.register_implementation(bwd_op.id, bwd_op, checker=_always_executable)
@@ -5488,6 +5490,7 @@ def backward_adaptor():
         inp_kwargs = inps[1]
         from thunder.core.pytree import tree_flatten, tree_unflatten
         from builtins import sum
+
         flat_args, spec = tree_flatten(inp_args)
         if sum(tree_map(_is_differentiable, grad_output)) == 0:
             return tree_unflatten(len(flat_args) * [None], spec)

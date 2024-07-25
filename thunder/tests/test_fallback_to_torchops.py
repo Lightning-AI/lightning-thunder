@@ -16,6 +16,7 @@ def test_torch_ops_backward(device):
     from torch.testing._internal.common_methods_invocations import op_db
     import thunder.torch.default_torch_ops as ops
     from itertools import chain
+
     # skip_names = ["bitwise_left_shift", "broadcast_tensors", "bitwise_right_shift", "masked_select", "combinations", "view_as_real", "corrcoef", "cov", "equal","stft", "istft", "geqrf", "imag", "meshgrid", "heaviside", "lcm"]
     funcs = [op for op in chain.from_iterable(ops.torch_fallback_ops.values())]
     opnames = [f.__name__ for f in funcs]
@@ -27,17 +28,20 @@ def test_torch_ops_backward(device):
     ncase_cnt = 0
     for idx, op_info in zip(op_infos_idx, op_infos):
         # if op_info.name in skip_names: continue
-        if op_info.name in ("nonzero_static", "histogramdd", "histogram") and device=="cuda":
+        if op_info.name in ("nonzero_static", "histogramdd", "histogram") and device == "cuda":
             continue
         # dtype = torch.complex32 if op_info.name == "view_as_real" else torch.float32
         # dtype = torch.float32 if torch.float32 in op_info.dtypes else next(iter(op_info.dtypes))
-        if not torch.float32 in op_info.dtypes: continue
-        for sample in op_info.sample_inputs_func(op_info, device=torch.device(device), dtype=torch.float32, requires_grad=True):
+        if not torch.float32 in op_info.dtypes:
+            continue
+        for sample in op_info.sample_inputs_func(
+            op_info, device=torch.device(device), dtype=torch.float32, requires_grad=True
+        ):
             try:
                 jfun = thunder.jit(funcs[idx])
                 out = jfun(sample.input, *sample.args, **sample.kwargs)
             except Exception as e:
-                cnt+=1
+                cnt += 1
                 # print(e)
                 print(op_info.name)
                 print("--------------------")
@@ -48,8 +52,8 @@ def test_torch_ops_backward(device):
                 trcf = thunder.last_traces(jfun)[-1]
                 # print(op_info.name, trc, trcf)
                 # skip if it is not differentiable
-                outs = trcf.output[0]['output']
-                outs = outs if isinstance(outs, tuple) else (outs, )
+                outs = trcf.output[0]["output"]
+                outs = outs if isinstance(outs, tuple) else (outs,)
                 if all(not thunder.core.dtypes.is_inexact_dtype(o.dtype) for o in outs):
                     continue
                 vjp_op_name = f"{op_info.name}_vjp"
@@ -59,17 +63,19 @@ def test_torch_ops_backward(device):
                     # import pdb;pdb.set_trace()
                     print(e)
             finally:
-                ncase_cnt+=1
+                ncase_cnt += 1
                 if ncase_cnt == 5:
                     ncase_cnt = 0
                     break
 
     print(cnt)
 
+
 def test_torch_ops_forward():
     from torch.testing._internal.common_methods_invocations import op_db
     import thunder.torch.default_torch_ops as ops
     from itertools import chain
+
     # skip_names = ["bitwise_left_shift", "broadcast_tensors", "bitwise_right_shift", "masked_select", "combinations", "view_as_real", "corrcoef", "cov", "equal","stft", "istft", "geqrf", "imag", "meshgrid", "heaviside", "lcm"]
     funcs = [op for op in chain.from_iterable(ops.torch_fallback_ops.values())]
     opnames = [f.__name__ for f in funcs]
@@ -80,18 +86,19 @@ def test_torch_ops_forward():
     for idx, op_info in zip(op_infos_idx, op_infos):
         # if op_info.name in skip_names: continue
         try:
-            for sample in op_info.sample_inputs_func(op_info, device=torch.device("cuda"), dtype=torch.float32, requires_grad=False):
+            for sample in op_info.sample_inputs_func(
+                op_info, device=torch.device("cuda"), dtype=torch.float32, requires_grad=False
+            ):
                 jfun = thunder.jit(funcs[idx])
                 out = jfun(sample.input, *sample.args, **sample.kwargs)
         except Exception as e:
-            cnt+=1
+            cnt += 1
             # print(e)
             print(op_info.name)
             print("--------------------")
         # else:
         #     print(thunder.last_traces(jfun)[-1])
     print(cnt)
-
 
 
 skip_ops = [
@@ -109,6 +116,8 @@ list(tmp2.pop(k.torch_reference, None) for k in disable_opinfos)
 tmp3 = dict(thunder.core.jit_ext._minimal_lookaside_map)
 list(tmp3.pop(k.torch_reference, None) for k in disable_opinfos)
 from thunder.torch import register_default_torch_op, meta_adaptor
+
+
 # mock all the global variables that are modified during registration
 @patch.dict(thunder.core.jit_ext._general_jit_lookaside_map, tmp1, clear=True)
 @patch.dict(thunder.torch._torch_to_thunder_function_map, tmp2, clear=True)
@@ -127,8 +136,15 @@ class TestFallbackToTorch:
         )
 
         _general_jit_lookaside_map.update(
-            {torchfn: ensure_recursive_proxies(interpreter_needs_wrap(record_source_loc_in_symbol_header(thunder.torch._torch_to_thunder_function_map[torchfn])))}
+            {
+                torchfn: ensure_recursive_proxies(
+                    interpreter_needs_wrap(
+                        record_source_loc_in_symbol_header(thunder.torch._torch_to_thunder_function_map[torchfn])
+                    )
+                )
+            }
         )
+
     @requiresCUDA
     def test_nanogpt_block(self):
         import thunder.tests.nanogpt_model as nanogpt_model
