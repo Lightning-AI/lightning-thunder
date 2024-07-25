@@ -219,7 +219,14 @@ def get_fusion_symbols(trace: TraceCtx, warn_if_fusions_unavailable: bool = True
     return fusions
 
 
-def get_nvFuser_repro(fusion: FusionDefinitionWrapper, /) -> str:
+def get_nvFuser_repro(trace: TraceCtx, fusion_name: str, /) -> str:
+    """
+    Helper function to get the repro of a specific nvFusion segment.
+    """
+    if (fusion := trace.python_ctx().get(fusion_name, None)) is None:
+        available_fusions = [name for name, _ in get_fusions(trace)]
+        assert False, f"Unable to find fusion '{fusion_name}' in trace. Available fusions are: {available_fusions}."
+
     msg = ""
     msg += (
         "import torch\nfrom nvfuser import FusionDefinition, DataType\n"
