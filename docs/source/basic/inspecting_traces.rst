@@ -189,6 +189,39 @@ which prints::
     }
   }
 
+Moreover, if you are just interested in running a specific nvFuser segment, Thunder offers an handy helper fuction. The ``get_nvFuser_repro()`` function takes a trace and a fusion name as input and returns it's repro script::
+
+  from thunder.examine import get_nvFuser_repro
+
+  print(get_nvFuser_repro(traces[2], "nvFusion0"))
+
+This will print the following::
+
+  import torch
+  from nvfuser import FusionDefinition, DataType
+
+  def nvfuser_fusion_id0(fd : FusionDefinition) -> None :
+      T0 = fd.define_tensor(shape=[-1, -1], contiguity=[True, True], dtype=DataType.Float, is_cpu=False, stride_order=[1, 0])
+      T1 = fd.define_tensor(shape=[-1, -1], contiguity=[True, True], dtype=DataType.Float, is_cpu=False, stride_order=[1, 0])
+      T2 = fd.ops.add(T0, T1)
+      T3 = fd.ops.mul(T2, T1)
+      fd.add_output(T3)
+      fd.add_output(T2)
+
+  with FusionDefinition() as fd:
+      nvfuser_fusion_id0(fd)
+
+  inputs = [
+      torch.randn((4,), dtype=torch.float32, device='cuda:0').as_strided((2, 2), (2, 1)),
+      torch.randn((4,), dtype=torch.float32, device='cuda:0').as_strided((2, 2), (2, 1)),
+  ]
+
+  fd.execute(inputs)
+
+Which you can copy and run as a standalone Python script.
+
+.. note:: ``get_nvFuser_repro()`` only works if the jitted function has been run before because nvFuser needs to execute a fusion definition to understand its inputs.
+
 Finally, ``traces[3]`` is the result of a lifetime analysis pass, which deletes tensor intermediates when they're no longer needed, freeing memory::
 
   # Constructed by Delete Last Used (took 0 milliseconds)
