@@ -649,7 +649,7 @@ def _execute_trace(
     args,
     kwargs,
     compile_data: CompileData,
-    post_optimization_transforms: list[Callable] = [],
+    transforms: list[Callable] = [],
 ) -> tuple[Any, Callable, list[TraceCtx]]:
     # Transforms the trace for execution
     # TODO Add the capability to recover from pass failures
@@ -664,8 +664,8 @@ def _execute_trace(
     extrace = extraces[-1]
 
     # Applies post-optimization transforms
-    for transform in post_optimization_transforms:
-        extrace = transform.transform_trace(extrace)
+    for transform in ransforms:
+        extrace = transform.transform_trace_post_optimization(extrace)
         extraces.append(extrace)
 
     # Constructs the Python callable
@@ -695,7 +695,7 @@ def _create_callable(
     cs: CompileStats,
 ) -> Callable:
     transforms = []
-    post_optimization_transforms = []
+    transforms = []
     _using_grad_transform = False
 
     @wraps(cd.fn)
@@ -828,7 +828,7 @@ def _create_callable(
                 args=args,
                 kwargs=kwargs,
                 compile_data=cd,
-                post_optimization_transforms=post_optimization_transforms,
+                transforms=transforms,
             )
             cs.last_trace_host_execution_stop = time.perf_counter_ns()
 
@@ -855,7 +855,6 @@ def _create_callable(
     _fn._lc_cd = cd
     _fn._lc_cs = cs
     _fn._lc_transforms = transforms
-    _fn._lc_post_optimization_transforms = post_optimization_transforms
     _fn._using_grad_transform = _using_grad_transform
 
     return _fn

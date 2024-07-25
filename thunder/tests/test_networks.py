@@ -330,7 +330,7 @@ def test_quantization():
     jm = thunder.jit(
         model_fp_reference,
         executors=(bitsandbytes_executor,),
-        early_transforms=[BitsAndBytesLinearQuant4bit()],
+        transforms=[BitsAndBytesLinearQuant4bit()],
     )
 
     logits_thunder = jm(x, input_pos)
