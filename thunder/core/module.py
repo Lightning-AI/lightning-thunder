@@ -100,7 +100,7 @@ class ThunderModule(pytorch.nn.Module):
 
     def load_original_state_dict(self, state_dict):
         # this loads the state dict incrementally to not exhaust memory
-        module_names = {n for n, _ in self.named_modules()}
+        module_names = {n for n, _ in self._model.named_modules()}
         sd_per_module = collections.defaultdict(dict)
         for k, v in state_dict.items():
             prefix, sep, _ = k.rpartition(".")
@@ -115,7 +115,7 @@ class ThunderModule(pytorch.nn.Module):
                 sd_part = transform.transform_state_dict_for_submodule(self, submodule_name, sd_part)
             for k, v in sd_part.items():
                 full_k = prefix + k
-                if k in self._overrides_parameters:
+                if full_k in self._overrides_parameters:
                     p = self._overrides_parameters[full_k]
                     if p.dtype == v.dtype and p.shape == v.shape:
                         with pytorch.no_grad():
@@ -126,7 +126,7 @@ class ThunderModule(pytorch.nn.Module):
                                 v.to(p.device), requires_grad=p.requires_grad
                             )
 
-                elif k in self._overrides_buffers:
+                elif full_k in self._overrides_buffers:
                     if p.dtype == v.dtype and p.shape == v.shape:
                         with pytorch.no_grad():
                             self._overrides_buffers[full_k].copy_(v)
