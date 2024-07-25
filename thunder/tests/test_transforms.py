@@ -108,3 +108,59 @@ def test_materialization():
         assert_close(b2, b)
 
     assert_close(actual, expected, rtol=1e-2, atol=1e-2)
+
+
+@requiresCUDA
+def test_quantization_on_meta():
+    from thunder.transforms import MaterializationTransform
+    from thunder.transforms.quantization import BitsAndBytesLinearQuant4bit, get_bitsandbytes_executor
+
+    bitsandbytes_executor = get_bitsandbytes_executor()
+
+    config = litgpt_model.Config.from_name("llama2-like")
+    with torch.device("cuda"):
+        ref_m = litgpt_model.GPT(config).to(torch.bfloat16).eval().requires_grad_(False)
+    with torch.device("meta"):
+        m = litgpt_model.GPT(config).to(torch.bfloat16).eval().requires_grad_(False)
+
+    ref_m.set_kv_cache(1, device="cuda", dtype=torch.bfloat16)
+    ref_m.max_seq_length = 20
+
+    # the kvcache is not in the state dict, so it must be cuda to start
+    m.set_kv_cache(1, device="cuda", dtype=torch.bfloat16)
+    m.max_seq_length = 20
+    m.cos, m.sin = ref_m.cos.clone(), ref_m.sin.clone()
+
+    for p in m.parameters():
+        p.__thunder_device = torch.device("cuda")
+
+    init_from_sd = MaterializationTransform.init_from_original_state_dict(ref_m.state_dict())
+
+    jm_ref = thunder.jit(
+        ref_m,
+        executors=(bitsandbytes_executor,),
+        transforms=[BitsAndBytesLinearQuant4bit()],
+    )
+    jm = thunder.jit(
+        m,
+        executors=(bitsandbytes_executor,),
+        transforms=[
+            BitsAndBytesLinearQuant4bit(),
+            MaterializationTransform("cuda", init=init_from_sd),
+        ],
+    )
+
+    x = torch.randint(1, 255, (1, 10), device="cuda")
+    input_pos = torch.arange(10, device="cuda")
+
+    expected = jm_ref(x, input_pos)
+    actual = jm(x, input_pos)
+
+    for n, p in jm_ref.named_parameters():
+        p2 = jm.get_parameter(n)
+        assert_close(p, p2)
+    for n, b in jm_ref.named_buffers():
+        b2 = jm.get_buffer(n)
+        assert_close(b2, b)
+
+    assert_close(actual, expected, rtol=1e-2, atol=1e-2)
