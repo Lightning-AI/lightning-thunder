@@ -31,7 +31,7 @@ def test_nvtx_transform():
 
     jmodel = thunder.jit(
         model,
-        post_optimization_transforms=[
+        transforms=[
             nvtx_profile_transform,
         ],
     )

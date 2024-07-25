@@ -12,11 +12,11 @@ def debug_impl(*args, computation_bsym, debug_bsym, callback, **kwargs):
     debug_bsym.header = output
 
 
-class DebugTransform(thunder.core.transforms.PostOptimizationTransform):
+class DebugTransform(thunder.core.transforms.Transform):
     def __init__(self, callback):
         self.callback = callback
 
-    def transform_trace(self, trace: Trace, **kwargs) -> Trace:
+    def transform_trace_post_optimization(self, trace: Trace, **kwargs) -> Trace:
         debug_trace = from_trace(trace)
         cnt = 1
         for bound_symbol in trace.bound_symbols:
