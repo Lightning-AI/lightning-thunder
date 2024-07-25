@@ -26,7 +26,7 @@ import thunder.core.prims as prims
 from thunder import pytorch_executor, nvfuser_executor
 from thunder.executors.sdpaex import sdpa_ex
 from thunder.core.jit_ext import JITSharpEdgeError
-from thunder.core.transforms import PostOptimizationTransform
+from thunder.core.transforms import Transform
 
 #
 # Test suite for the general jit
