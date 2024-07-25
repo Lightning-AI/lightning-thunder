@@ -111,7 +111,7 @@ class ThunderModule(pytorch.nn.Module):
 
         for submodule_name, sd_part in sd_per_module.items():
             prefix = submodule_name + ("." if submodule_name else "")
-            for transform in self._lc_early_transforms:
+            for transform in self._lc_transforms:
                 sd_part = transform.transform_state_dict_for_submodule(self, submodule_name, sd_part)
             for k, v in sd_part.items():
                 full_k = prefix + k

@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 
 import thunder
-from thunder.core.transform_common import EarlyTransform
+from thunder.core.transform_common import Transform
 from thunder.core import utils
 from thunder.core import prims
 import torch
@@ -44,7 +44,7 @@ def get_bitsandbytes_executor():
     return bitsandbytes_executor
 
 
-class BitsAndBytesLinearQuant4bit(EarlyTransform):
+class BitsAndBytesLinearQuant4bit(Transform):
     def __init__(self):
         self.quant_states = {}
         self.quantized_submodule_names = set()
@@ -88,7 +88,7 @@ class BitsAndBytesLinearQuant4bit(EarlyTransform):
 
         return state_dict
 
-    def transform_traces(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
+    def transform_traces_pre_prologue(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
         tm = self.thunder_module
         from thunder.core.trace import tracectx
 

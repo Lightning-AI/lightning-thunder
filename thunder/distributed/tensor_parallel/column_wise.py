@@ -277,7 +277,7 @@ def column_parallel(
 
     colwise_thunder_module = add_transform(
         thunder_module,
-        early_transform=TransformForColumnWiseParallel(
+        transform=TransformForColumnWiseParallel(
             rank=rank,
             world_size=world_size,
             compile_data=get_compile_data(thunder_module),
