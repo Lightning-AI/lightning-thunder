@@ -89,7 +89,7 @@ To run all the available benchmarks, it's as simple as calling::
 
   pytest thunder/benchmarks/targets.py
 
-However, more realistically you'd want to filter and run just specific benchmarks. To do so, you can use `the filter syntax <https://docs.pytest.org/en/8.2.x/how-to/usage.html#select-tests>`_ along with the `-k` option::
+However, more realistically you'd want to filter and run just specific benchmarks. To do so, you can use `the filter syntax <https://docs.pytest.org/en/stable/how-to/usage.html#specifying-which-tests-to-run>`_ along with the `-k` option::
 
   pytest thunder/benchmarks/targets.py -k 'nanogpt_gpt2 and not torch.compile and not xl and not inference' --benchmark-group-by='param:compute_type'
 
