@@ -44,6 +44,7 @@ from thunder.core.dtypes import to_dtype
 
 import torch as torch
 import numpy as np
+import thunder
 
 #
 # Datastructures for compiled functions
@@ -648,7 +649,7 @@ def _execute_trace(
     args,
     kwargs,
     compile_data: CompileData,
-    post_optimization_transforms: list[Callable] = [],
+    transforms: list[Callable] = [],
 ) -> tuple[Any, Callable, list[TraceCtx]]:
     # Transforms the trace for execution
     # TODO Add the capability to recover from pass failures
@@ -663,8 +664,8 @@ def _execute_trace(
     extrace = extraces[-1]
 
     # Applies post-optimization transforms
-    for transform in post_optimization_transforms:
-        extrace = transform.transform_trace(extrace)
+    for transform in transforms:
+        extrace = transform.transform_trace_post_optimization(extrace)
         extraces.append(extrace)
 
     # Constructs the Python callable
@@ -694,12 +695,12 @@ def _create_callable(
     cs: CompileStats,
 ) -> Callable:
     transforms = []
-    post_optimization_transforms = []
+    transforms = []
     _using_grad_transform = False
 
     @wraps(cd.fn)
     def _fn(*args, **kwargs) -> tuple[Any, list[TraceCtx]]:
-        cs.last_trace_host_start = time.time_ns()
+        cs.last_trace_host_start = time.perf_counter_ns()
         cs.calls += 1
 
         # autocast related operations
@@ -729,17 +730,17 @@ def _create_callable(
 
         # Tries to lookup a callable in a cache
         # TODO Return the previous traces when caching
-        cs.last_trace_cache_start = time.time_ns()
+        cs.last_trace_cache_start = time.perf_counter_ns()
         if cd.cache_option is CACHE_OPTIONS.SAME_INPUT and cs.last_executed is not None:
             # TODO Update _last_traces?
             # Updates statistics before early termination
             cs.cache_hits += 1
-            cs.last_trace_cache_stop = time.time_ns()
+            cs.last_trace_cache_stop = time.perf_counter_ns()
             cs.last_trace_tracing_start = -1
             cs.last_trace_tracing_stop = -1
-            cs.last_trace_host_execution_start = time.time_ns()
+            cs.last_trace_host_execution_start = time.perf_counter_ns()
             result = cs.last_executed(*args, **kwargs)
-            cs.last_trace_host_execution_stop = time.time_ns()
+            cs.last_trace_host_execution_stop = time.perf_counter_ns()
             cs.last_trace_host_stop = cs.last_trace_host_execution_stop
             return result
         if cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES:
@@ -748,16 +749,16 @@ def _create_callable(
                 # Updates statistics before early termination
                 cs.cache_hits += 1
                 cs.last_executed = c
-                cs.last_trace_cache_stop = time.time_ns()
+                cs.last_trace_cache_stop = time.perf_counter_ns()
                 cs.last_trace_tracing_start = -1
                 cs.last_trace_tracing_stop = -1
-                cs.last_trace_host_execution_start = time.time_ns()
+                cs.last_trace_host_execution_start = time.perf_counter_ns()
                 result = c(*args, **kwargs)
-                cs.last_trace_host_execution_stop = time.time_ns()
+                cs.last_trace_host_execution_stop = time.perf_counter_ns()
                 cs.last_trace_host_stop = cs.last_trace_host_execution_stop
                 return result
         cs.cache_misses += 1
-        cs.last_trace_cache_stop = time.time_ns()
+        cs.last_trace_cache_stop = time.perf_counter_ns()
 
         # Applies the autocast transform if PyTorch's autocast behavior is enabled
         processed_function = cd.fn if not is_autocast_enabled else autocast(cd.fn, dtype=autocast_thunder_dtype)
@@ -791,9 +792,9 @@ def _create_callable(
 
             # Acquires the trace OR inlines the trace into an existing trace and
             #   returns the (proxied) result of the operation
-            cs.last_trace_tracing_start = time.time_ns()
+            cs.last_trace_tracing_start = time.perf_counter_ns()
             trc_or_result = trace(compile_data=cd)(processed_function, *args, **kwargs)
-            cs.last_trace_tracing_stop = time.time_ns()
+            cs.last_trace_tracing_stop = time.perf_counter_ns()
 
             # Checks for inlined transforms
             current_trace = get_tracectx()
@@ -821,15 +822,15 @@ def _create_callable(
             # Executes the trace, then updates the CompiledData and possibly
             #   updates a cache
             #
-            cs.last_trace_host_execution_start = time.time_ns()
+            cs.last_trace_host_execution_start = time.perf_counter_ns()
             result, c, extraces = _execute_trace(
                 trc,
                 args=args,
                 kwargs=kwargs,
                 compile_data=cd,
-                post_optimization_transforms=post_optimization_transforms,
+                transforms=transforms,
             )
-            cs.last_trace_host_execution_stop = time.time_ns()
+            cs.last_trace_host_execution_stop = time.perf_counter_ns()
 
             traces.extend(extraces)
             cs.last_traces = traces
@@ -847,14 +848,30 @@ def _create_callable(
                     distributed_key=distributed_key,
                 )
 
-            cs.last_trace_host_stop = time.time_ns()
+            cs.last_trace_host_stop = time.perf_counter_ns()
             return result
 
     # NOTE is_module is False
     _fn._lc_cd = cd
     _fn._lc_cs = cs
     _fn._lc_transforms = transforms
-    _fn._lc_post_optimization_transforms = post_optimization_transforms
     _fn._using_grad_transform = _using_grad_transform
 
     return _fn
+
+
+def transform_to_torch_types(trace: TraceCtx):
+    # convert the thunder types to torch types if any
+    def map_to_torch(x: Any) -> Any:
+        if isinstance(x, thunder.dtypes.dtype):
+            return thunder.dtypes.to_torch_dtype(x)
+        elif isinstance(x, thunder.devices.Device):
+            return thunder.devices.to_torch_device(x)
+        return x
+
+    last = trace.bound_symbols[-1]
+    assert last.sym.id == prims.PrimIDs.RETURN
+    new_args = tree_map(map_to_torch, last.args)
+    new_bsym = prims.python_return.bind(*new_args, output=())
+    trace.bound_symbols[-1] = new_bsym
+    return trace

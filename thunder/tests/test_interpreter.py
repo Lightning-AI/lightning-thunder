@@ -1082,6 +1082,50 @@ def test_namedtuple_lookaside(jit):
     # }
 
 
+def test_tensor_proxy_iter_lookaside(jit):
+    t0 = torch.rand(3, 3)
+    t1 = torch.rand(0, 3)
+    t2 = torch.rand(())
+
+    for x in (t0, t1):
+
+        def f(x):
+            for i, xi in enumerate(x):
+                pass
+            return x
+
+        jf = jit(f)
+
+        assert f(x) is jf(x)
+
+        def f(x):
+            res = 0
+            for i, xi in enumerate(x):
+                res = xi
+            return res
+
+        jf = jit(f)
+
+        assert_close(jf(x), f(x))
+
+    with pytest.raises(TypeError, match="iteration over a 0-d tensor"):
+        jf(t2)
+
+    with pytest.raises(TypeError, match="iteration over a 0-d tensor"):
+        f(t2)
+
+    def f(x):
+        res = x
+        for xi in x:
+            res = res + xi.unsqueeze(0)
+        return res
+
+    jf = jit(f)
+
+    for x in (t0, t1):
+        assert_close(jf(x), f(x))
+
+
 def test_calling_methods(jit):
     jitting = False
 
@@ -2075,7 +2119,13 @@ def test_list_to_tuple(jit):
     def ltt():
         return (*[1, 2, 3],)
 
-    assert any(i.opname == "LIST_TO_TUPLE" for i in dis.get_instructions(ltt))
+    if sys.version_info >= (3, 12):
+        assert any(
+            (i.opname == "CALL_INTRINSIC_1" and i.argrepr == "INTRINSIC_LIST_TO_TUPLE")
+            for i in dis.get_instructions(ltt)
+        )
+    else:
+        assert any(i.opname == "LIST_TO_TUPLE" for i in dis.get_instructions(ltt))
     assert jit(ltt)() == ltt()
 
 
@@ -2700,6 +2750,10 @@ def test_name_opcodes_and_print_expr(jit):
         jfn()
 
 
+@pytest.mark.skipif(
+    sys.version_info >= (3, 12),
+    reason="Python 3.12 code.InteractiveInterpreter().runsource does not use the displayhook as before",
+)
 def test_displayhook(jit):
     from contextlib import redirect_stdout
     import io
@@ -3216,7 +3270,7 @@ def test_litgpt(jit):
     assert_close(result, fn(*args, **kwargs))
 
 
-def test_transformer_model_output():
+def test_transformer_model_output(jit):
     pytest.importorskip("transformers")
     from transformers.utils.generic import ModelOutput
 
@@ -3230,3 +3284,15 @@ def test_transformer_model_output():
     actual = thunder.jit(fn)(x)
 
     assert expected is actual
+
+
+def test_metaclass(jit):
+    # thunder.core.devices.Device uses the singleton pattern
+    # implemented through metaclasses
+    def fn():
+        a = thunder.core.devices.Device("cpu")
+        b = thunder.core.devices.Device("cpu")
+        assert a is b
+
+    fn()
+    jit(fn)()

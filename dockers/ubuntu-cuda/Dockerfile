@@ -86,7 +86,8 @@ RUN if [ "${TORCH_INSTALL}" == "source" ]; then \
             CUDNN_PACKAGE_NAME="${CUDNN_VERSION}-1" && \
             apt upgrade -y --allow-downgrades --allow-change-held-packages && \
             apt install -y libcudnn9-cuda-${CUDA_VERSION_M}=${CUDNN_PACKAGE_NAME} \
-                           libcudnn9-dev-cuda-${CUDA_VERSION_M}=${CUDNN_PACKAGE_NAME}; \
+                           libcudnn9-dev-cuda-${CUDA_VERSION_M}=${CUDNN_PACKAGE_NAME} \
+                           nlohmann-json3-dev ; \
         else \
             CUDA_VERSION_MM=${CUDA_VERSION%.*} && \
             # There are some test failures from cuDNN 12.1, so 'upgrade' requests for 12.1 to 12.2. \
@@ -94,7 +95,8 @@ RUN if [ "${TORCH_INSTALL}" == "source" ]; then \
             CUDNN_PACKAGE_NAME="${CUDNN_VERSION}-1+cuda${CUDA_VERSION_MM}" && \
             apt upgrade -y --allow-downgrades --allow-change-held-packages && \
             apt install -y libcudnn8=${CUDNN_PACKAGE_NAME} \
-                           libcudnn8-dev=${CUDNN_PACKAGE_NAME}; \
+                           libcudnn8-dev=${CUDNN_PACKAGE_NAME} \
+                           nlohmann-json3-dev ; \
         fi && \
         rm -rf /root/.cache && \
         rm -rf /var/lib/apt/lists/*; \

@@ -136,7 +136,7 @@ class TorchCompileExecutor(FusionExecutor):
         return fusion_bsym
 
     def fusion_pass(self, trace: TraceCtx) -> TraceCtx:
-        start_time_ns: int = time.time_ns()
+        start_time_ns: int = time.perf_counter_ns()
 
         fusedtrace: TraceCtx = from_trace(trace)
 
@@ -179,7 +179,7 @@ class TorchCompileExecutor(FusionExecutor):
         fusedtrace = dce(fusedtrace)
         fusedtrace = update_fusion_call_ctx(fusedtrace)
 
-        end_time_ns: int = time.time_ns()
+        end_time_ns: int = time.perf_counter_ns()
         elapsed_time_ns: int = end_time_ns - start_time_ns
         elapsed_time_millis: int = elapsed_time_ns // 1000000
         fusedtrace.set_provenance(TraceProvenance(f"Fusion (took {elapsed_time_millis} milliseconds)"))

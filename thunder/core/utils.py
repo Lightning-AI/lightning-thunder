@@ -666,7 +666,8 @@ def check_no_duplicates(dims: Sequence):
 # TODO: improve device handling by canonicalizing devices and expressing them per langctx
 # TODO: should the comparison between devices be ==?
 def check_same_device(*args):
-    devices = tuple(x.device for x in args if isinstance(x, TensorProxyInterface))
+    devices = tuple(x.device for x in args if isinstance(x, TensorProxyInterface) and x.device.type != "meta")
+
     if len(devices) > 1:
         device = devices[0]
         for otherdevice in devices[1:]:

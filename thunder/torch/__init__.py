@@ -85,6 +85,41 @@ _torch_to_thunder_function_map: dict[Callable, Callable] = {}
 _inplace_to_out_of_place: dict[Callable, tuple[Callable, int]] = {}
 
 
+# Helpers for factory functions to get default dtype and device.
+def get_default_dtype():
+    # `thunder.jit` will create cache info and stash the default dtype
+    # observed at the beginning of jitting.
+    cache_info = thunder._get_cache_info()
+
+    # Currently, changing dtype during the jitted function is unsupported.
+    utils.check(
+        cache_info["default_dtype"] == torch.get_default_dtype(),
+        lambda: "Default dtype is changed during the execution of jitted function. This is currently unsupported.",
+    )
+    return torch.get_default_dtype()
+
+
+def maybe_get_default_dtype(dtype):
+    return dtype or get_default_dtype()
+
+
+def get_default_device():
+    # `thunder.jit` will create cache info and stash the default device
+    # observed at the beginning of jitting.
+    cache_info = thunder._get_cache_info()
+
+    # Currently, changing device during the jitted function is unsupported.
+    utils.check(
+        cache_info["default_device"] == torch.get_default_device(),
+        lambda: "Default device is changed during the execution of jitted function. This is currently unsupported.",
+    )
+    return torch.get_default_device()
+
+
+def maybe_get_default_device(device):
+    return device or get_default_device()
+
+
 # A wrapper that executes the operations within the torch language context
 # NOTE because this module defines the torch language context, a reference to itself
 #   is acquired by inspecting the __module__ attribute of the is_available function defined
@@ -143,54 +178,26 @@ class torchsymbol:
         else:
             sym = Symbol(name=fn.__name__, meta=_fn, id=id, is_prim=self.is_prim, tags=self.tags)
 
-        # NOTE: torch.autocast support
-        # In PyTorch eager, enabling autocast allows mixed inputs to operator like `linear`
-        # which expect dtypes to be same. This works in PyTorch eager, as dispatcher applies the
-        # conversion first and then passes the converted input to the operator.
-        # To mimick similar behavior, here we replace the `sym` for all operators which have
-        # autocast rule, to apply the conversion rule if autocast was enabled.
-        autocast_impl: Callable | None = _maybe_get_autocast_rule_for_symbol(sym)
-
-        # `mapping_fn` is used to map `torch` -> `thunder.torch`
-        # If autocast is enabled - it will also take care of casting the inputs
-        # as per autocast rule else it will be just the symbol.
-        mapping_fn = sym
-        if autocast_impl is not None:
-
-            @wraps(sym)
-            def maybe_autocast(*args, **kwargs):
-                # Cache info may not be available in case of legacy `thunder.compile`
-                # which is still used for cases.
-                try:
-                    cache_info = thunder._get_cache_info()
-                except LookupError:
-                    cache_info = {}
-
-                if cache_info.get("is_autocast_enabled", False):
-                    thunder_autocast_dtype = _get_downcast_dtype_from_str(cache_info["autocast_thunder_dtype"])
-                    return partial(autocast_impl, dtype=thunder_autocast_dtype)(*args, **kwargs)
-                return sym(*args, **kwargs)
-
-            mapping_fn = maybe_autocast
-
         if self.is_method:
             method_name: str = self.method_name if self.method_name is not None else fn.__name__
-            register_method(method_name, mapping_fn)
+            register_method(method_name, sym)
             torch_method: None | Callable = getattr(torch.Tensor, method_name, None)
             if torch_method is not None:
-                _torch_to_thunder_function_map[torch_method] = mapping_fn
+                _torch_to_thunder_function_map[torch_method] = sym
         elif self.is_property:
             method_name: str = self.method_name if self.method_name is not None else fn.__name__
-            register_property(method_name, mapping_fn)
+            register_property(method_name, sym)
             torch_property = getattr(torch.Tensor, method_name, None)
             if torch_property is not None:
-                _torch_to_thunder_function_map[torch_property] = mapping_fn
+                _torch_to_thunder_function_map[torch_property] = sym
 
         if self.torchfns is not None:
             for torchfn in self.torchfns:
-                _torch_to_thunder_function_map[torchfn] = mapping_fn
+                _torch_to_thunder_function_map[torchfn] = sym
 
         if self.tags and prims.OpTags.IN_PLACE in self.tags:
+            if self.id is not None:
+                name = self.id
             _inplace_to_out_of_place[sym] = globals()[name[:-1]], -1
 
         return sym
@@ -530,10 +537,17 @@ def arange(
     device: None | DeviceLike = None,
     dtype: None | dtypeLike = None,
 ) -> TensorLike:
-    if device is None:
-        device = "cpu"
-
+    device = maybe_get_default_device(device)
     device = to_device(device)
+    # From torch docs - https://pytorch.org/docs/stable/generated/torch.arange.html
+    # If any of start, end, or stop are floating-point, the dtype is inferred to be the default dtype, see get_default_dtype().
+    # Otherwise, the dtype is inferred to be torch.int64.
+    if dtype is None:  # infer the dtype
+        if any(map(lambda x: isinstance(x, float), (start, end, step))):
+            dtype = maybe_get_default_dtype(dtype)
+        else:
+            dtype = torch.int64
+
     dtype = to_dtype(dtype)
 
     if end is None:
@@ -546,12 +560,8 @@ def arange(
 def full(
     shape: Sequence[int], fill_value: NumberLike, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
 ) -> TensorLike:
-    if device is None:
-        device = "cpu"
-
-    device = to_device(device)
-    dtype = to_dtype(dtype)
-
+    device = to_device(maybe_get_default_device(device))
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
     return clang.full(shape, fill_value, device=device, dtype=dtype)
 
 
@@ -597,6 +607,9 @@ def tensor(
     utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.jit", NotImplementedError)
 
     if isinstance(seq_or_number, (Number, NumberProxy)):
+        # Infer dtype from value (as `full` will use default dtype if dtype=None).
+        if dtype is None:
+            dtype = dtypes.numbertype_to_dtype(dtypes.to_dtype(seq_or_number))
         return full((), seq_or_number, dtype=dtype, device=device)
 
     return clang.tensor_from_sequence(seq_or_number, dtype=dtype, device=device)
@@ -614,8 +627,8 @@ def uniform(
     device: DeviceLike,
     dtype: dtypeLike,
 ) -> TensorLike:
-    device = to_device(device)
-    dtype = to_dtype(dtype)
+    device = to_device(maybe_get_default_device(device))
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
 
     return clang.uniform(shape, minval, maxval, device=device, dtype=dtype)
 
@@ -671,8 +684,8 @@ def uniform_philox(
     seed: int | TensorProxy,
     offset: int | TensorProxy,
 ) -> TensorLike:
-    device = to_device(device)
-    dtype = to_dtype(dtype)
+    device = to_device(maybe_get_default_device(device))
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
 
     return clang.uniform_philox(shape, minval, maxval, device=device, dtype=dtype, seed=seed, offset=offset)
 
@@ -696,16 +709,9 @@ def randn(
     # NOTE: Currently, we don't model randomness
     utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
     utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
-    if device is None:
-        device = "cpu"
-    device = to_device(device)
 
-    # For now we default to `float32`,
-    # however, we should add a default dtype or
-    # rely on `torch.get_default_dtype`.
-    if dtype is None:
-        dtype = torch.float
-    dtype = to_dtype(dtype)
+    device = to_device(maybe_get_default_device(device))
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
     shape = utils.extract_shape_from_varargs(shape)
     return prims.randn(shape, device=device, dtype=dtype)
 
@@ -791,17 +797,8 @@ def empty(
         NotImplementedError,
     )
 
-    # For now we default to `float32`,
-    # however, we should add a default dtype or rely on `torch.get_default_dtype`.
-    if dtype is None:
-        dtype = torch.float
-    dtype = to_dtype(dtype)
-
-    # For now we default to "cpu",
-    # however, we should add a default device or rely on `torch.get_default_device`.
-    if device is None:
-        device = "cpu"
-    device = to_device(device)
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
+    device = to_device(maybe_get_default_device(device))
 
     return clang.empty(size, device=device, dtype=dtype)
 
@@ -2716,13 +2713,20 @@ def topk(
     return clang.topk(a, k, dim, largest, sorted, out=out)
 
 
+@torchsymbol(torch.sort, is_method=True)
+def sort(
+    a: TensorLike, /, dim: None | int = None, descending: bool = False, stable: bool = False, *, out=None
+) -> (TensorLike, TensorLike):
+    return clang.sort(a, dim, descending, stable, out=out)
+
+
 #
 # Scatter and gather-related operations
 #
 
 
 # NOTE PyTorch also has an alpha parameter
-@torchsymbol(torch.index_add)
+@torchsymbol(torch.index_add, is_method=True)
 def index_add(a: TensorLike, /, dim: int, index: TensorLike, source: TensorLike) -> TensorLike:
     return clang.index_add(a, index, source, dim)
 
@@ -2730,6 +2734,16 @@ def index_add(a: TensorLike, /, dim: int, index: TensorLike, source: TensorLike)
 @torchsymbol(torch.Tensor.index_add_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def index_add_(a: TensorLike, /, dim: int, index: TensorLike, source: TensorLike) -> TensorLike:
     return prims.copy_(index_add(a, dim, index, source), a)
+
+
+@torchsymbol(torch.index_copy, is_method=True)
+def index_copy(a: TensorLike, /, dim: int, index: TensorLike, source: TensorLike) -> TensorLike:
+    return clang.index_copy(a, index, source, dim)
+
+
+@torchsymbol(torch.Tensor.index_copy_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def index_copy_(a: TensorLike, /, dim: int, index: TensorLike, source: TensorLike) -> TensorLike:
+    return prims.copy_(index_copy(a, dim, index, source), a)
 
 
 @torchsymbol(torch.index_select, is_method=True)
@@ -2740,6 +2754,60 @@ def index_select(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
 @torchsymbol(torch.gather, is_method=True)
 def gather(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
     return clang.gather(a, indices=index, dim=dim)
+
+
+# NOTE: PyTorch uses `src` for torch.Tensor arguments and `value` for scalars
+# when referencing the source of the values
+@torchsymbol(torch.scatter, is_method=True)
+def scatter(
+    a: TensorLike,
+    /,
+    dim: int,
+    index: TensorLike,
+    src: TensorLike | None = None,
+    *,
+    value: None | Number = None,
+    reduce: None | str = None,
+) -> TensorLike:
+    utils.check(
+        reduce is None, lambda: "scatter: `reduce` argument other than None is not supported", NotImplementedError
+    )
+
+    utils.check(
+        (src is not None) ^ (value is not None),
+        lambda: f"scatter: only one of the arguments (`src`, `value`) can be non-None",
+    )
+
+    if src is not None:
+        return clang.scatter(a, index, src, dim)
+    else:
+        return clang.scatter(a, index, value, dim)
+
+
+@torchsymbol(torch.Tensor.scatter_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def scatter_(
+    a: TensorLike,
+    /,
+    dim: int,
+    index: TensorLike,
+    src: TensorLike | None = None,
+    *,
+    value: None | Number = None,
+    reduce: None | str = None,
+) -> TensorLike:
+    utils.check(
+        reduce is None, lambda: "scatter_: `reduce` argument other than None is not supported", NotImplementedError
+    )
+
+    utils.check(
+        (src is not None) ^ (value is not None),
+        lambda: f"scatter_: only one of the arguments (`src`, `value`) can be non-None",
+    )
+
+    if src is None:
+        src = value
+
+    return prims.copy_(clang.scatter(a, index, src, dim), a)
 
 
 # NOTE PyTorch's scatter_add has a parameter named 'src', not 'source'
@@ -3720,6 +3788,8 @@ def _conv_helper(
     padding: int | Sequence[int] | str = 0,
     dilation: int | Sequence[int] = 1,
     groups: int = 1,
+    *,
+    conv_function=clang.convolution,
 ) -> TensorProxy:
     # a, weight rank check
     utils.check(dim + 1 <= a.ndim <= dim + 2, lambda: f"{a.ndim=} should be either {dim + 1} or {dim + 2}")
@@ -3779,8 +3849,16 @@ def _conv_helper(
     padding, a = process_padding_str(int_to_seq(padding), stride, dilation, a)
     # }
 
-    res = clang.convolution(
-        a, weight, bias, stride, padding, dilation, False, (0,) * dim, groups  # transposed  # output_padding
+    res = conv_function(
+        a,
+        weight,
+        bias,
+        stride,
+        padding,
+        dilation,
+        False,  # transposed
+        (0,) * dim,  # output_padding
+        groups,
     )
     return res
 
@@ -4591,12 +4669,21 @@ def interpolate(
 
     utils.check(a.ndim >= 3, lambda: f"Expected {a.ndim=} >= 3")
     utils.check(a.numel() > 0, lambda: f"Expected {a.numel=} to be greater than 0")
-    utils.check(align_corners == None, lambda: f"'align_corners' is not yet supported.")
+    utils.check(
+        align_corners == None,
+        lambda: f"Thunder does not yet support 'align_corners'.",
+        exception_type=NotImplementedError,
+    )
     utils.check(
         recompute_scale_factor is None or recompute_scale_factor == False,
-        lambda: f"'recompute_scale_factor=True' is not yet supported.",
+        lambda: f"Thunder does not yet support 'recompute_scale_factor=True'.",
+        exception_type=NotImplementedError,
     )
-    utils.check(antialias == False, lambda: f"'antialias=True' is not yet supported.")
+    utils.check(
+        antialias == False,
+        lambda: f"Thunder does not yet support 'antialias=True'.",
+        exception_type=NotImplementedError,
+    )
 
     utils.check(
         (size is not None) ^ (scale_factor is not None),
@@ -4944,30 +5031,30 @@ def softmax(a: TensorLike, dim: int, dtype: None | dtypeLike = None, _stacklevel
     return _softmax(a, dim=dim, dtype=dtype)
 
 
-def torch_device(device_or_str: DeviceLike, /, index: int | None = None) -> devices.Device:
-    if isinstance(device_or_str, (devices.Device, torch.device)):
+def torch_device(type: DeviceLike, index: int | None = None) -> devices.Device:
+    if isinstance(type, (devices.Device, torch.device)):
         # PyTorch behavior:
         # >>> torch.device(torch.device("cuda"), 0)
         # TypeError: device(): argument 'type' (position 1) must be str, not torch.device
         utils.check(index is None, lambda: f"device(): `index` is only allowed when `device` is a `str`.")
-        return to_device(device_or_str)
+        return to_device(type)
 
     # NOTE: device_or_str is `str`
     if index is not None:
         # PyTorch behavior:
         # >>> torch.device("cuda:0", 0)
         # RuntimeError: type (string) must not include an index because index was passed explicitly: cuda:0
-        has_device_idx = len(device_or_str.split(":")) > 1
+        has_device_idx = len(type.split(":")) > 1
         utils.check(
             not has_device_idx,
-            lambda: f"device string must not include an index because index was passed explicitly: {device_or_str}",
+            lambda: f"device string must not include an index because index was passed explicitly: {type}",
         )
         if isinstance(index, NumberProxy):
             index.make_static_constrained()
             prims.sink(index)
             index = index.value
 
-    return devices.Device(device_or_str, index)
+    return devices.Device(type, index)
 
 
 # We don't use @torchsymbol as we don't want `torch.device()` to appear in trace as a symbol.
@@ -4982,18 +5069,7 @@ def _set_grad_enabled_with_warning(enabled: bool) -> None:
 register_function(torch._C._set_grad_enabled, _set_grad_enabled_with_warning)
 
 
-@run_once
-def _warn_for_unwrap_if_dead():
-    warnings.warn(
-        "torch._C._functorch.unwrap_if_dead has no effect under thunder.jit. "
-        "`torch.autograd.Function.backward` is not respected by `thunder.jit`. "
-        "`thunder.jit` generates backward based on the forward"
-    )
-
-
 def _unwrap_if_dead(tensor):
-
-    _warn_for_unwrap_if_dead()
     return tensor
 
 
@@ -5059,6 +5135,29 @@ if torch.distributed.is_available():
 
         return dist_prims.all_gather(a, group, async_op, dim=dim)
 
+    @torchsymbol(
+        torch.distributed.all_gather_into_tensor,
+        is_method=False,
+        id="all_gather_",
+        tags=(prims.OpTags.IN_PLACE, prims.OpTags.DONT_DCE),
+    )
+    def all_gather_(
+        output_tensor: TensorLike,
+        input_tensor: TensorLike,
+        /,
+        group: torch.distributed.ProcessGroup | None = None,
+        async_op: bool = False,
+    ) -> TensorLike:
+        result_numel = input_tensor._numel * group.size()
+        utils.check(result_numel == output_tensor._numel, lambda: f"{output_tensor._numel=} should be {result_numel=}")
+        group = group if group is not None else torch.distributed.new_group()
+        out_or_work = dist_prims.all_gather(input_tensor, group, async_op, dim=None)
+        if async_op:
+            out = dist_prims.wait(out_or_work)
+        else:
+            out = out_or_work
+        return prims.copy_(out.view(output_tensor.shape), output_tensor)
+
     # NOTE torch.distributed.all_reduce is an inplace operation (although the underlying NCCL
     #   call does not need to be inplace). This, however, is modeled as an out-of-place functional
     #   operation, hence the id "functional_all_reduce", and why we do not translate PyTorch
@@ -5081,6 +5180,30 @@ if torch.distributed.is_available():
         group = group if group is not None else torch.distributed.new_group()
 
         return dist_prims.all_reduce(a, op, group, async_op)
+
+    @torchsymbol(
+        torch.distributed.all_reduce,
+        is_method=False,
+        id="all_reduce_",
+        tags=(prims.OpTags.IN_PLACE,),
+    )
+    def all_reduce_(
+        a: TensorLike,
+        /,
+        op: DistributedReduceOpLike = torch.distributed.ReduceOp.SUM,
+        group: torch.distributed.ProcessGroup | None = None,
+        async_op: bool = False,
+    ) -> TensorLike:
+        utils.check(
+            not async_op,
+            lambda: f"`torch.distributed.all_reduce` with {async_op=} is not supported",
+            NotImplementedError,
+        )
+        op = to_thunder_distributed_reduce_op(op)
+        group = group if group is not None else torch.distributed.new_group()
+
+        out = dist_prims.all_reduce(a, op, group, async_op, skip_clone=True)
+        return prims.copy_(out, a)
 
     @torchsymbol(
         is_method=False,
@@ -5112,6 +5235,37 @@ if torch.distributed.is_available():
 
         return dist_prims.reduce_scatter(a, op, group, async_op, dim=dim)
 
+    @torchsymbol(
+        torch.distributed.reduce_scatter_tensor,
+        is_method=False,
+        id="reduce_scatter_",
+        tags=(prims.OpTags.IN_PLACE, prims.OpTags.DONT_DCE),
+    )
+    def reduce_scatter_(
+        output: TensorLike,
+        input: TensorLike,
+        op: DistributedReduceOpLike | None = None,
+        group: torch.distributed.ProcessGroup | None = None,
+        async_op: bool = False,
+    ) -> TensorLike:
+        op = to_thunder_distributed_reduce_op(op)
+        group = group if group is not None else torch.distributed.new_group()
+        result_numel = input._numel // group.size()
+        utils.check(result_numel == output._numel, lambda: f"{output._numel=} should be {result_numel=}")
+        out_or_work = dist_prims.reduce_scatter(input, op, group, async_op, dim=None)
+        if async_op:
+            out = dist_prims.wait(out_or_work)
+        else:
+            out = out_or_work
+        return prims.copy_(out.view(output.shape), output)
+
+    @torchsymbol(
+        is_method=True,
+        id="torch.Tensor.wait",
+    )
+    def wait(slf: TensorLike) -> TensorLike:
+        return slf
+
 else:
 
     def all_gather(
@@ -5121,6 +5275,15 @@ else:
     ) -> None:
         utils.check(False, lambda: f"torch.distributed is not available")
 
+    def all_gather_(
+        output_tensor: TensorLike,
+        input_tensor: TensorLike,
+        /,
+        group: torch.distributed.ProcessGroup | None = None,
+        async_op: bool = False,
+    ) -> None:
+        utils.check(False, lambda: "torch.distributed is not available")
+
     # NOTE torch.distributed is not available
     def all_reduce(
         a: TensorLike,
@@ -5129,6 +5292,15 @@ else:
         async_op: bool = False,
     ) -> None:
         utils.check(False, lambda: f"torch.distributed is not available")
+
+    def all_reduce_(
+        a: TensorLike,
+        /,
+        op: DistributedReduceOpLike = torch.distributed.ReduceOp.SUM,
+        group: torch.distributed.ProcessGroup | None = None,
+        async_op: bool = False,
+    ) -> None:
+        utils.check(False, lambda: "torch.distributed is not available")
 
     def broadcast(
         a: TensorLike,
@@ -5145,6 +5317,18 @@ else:
         async_op: bool = False,
     ) -> None:
         utils.check(False, lambda: f"torch.distributed is not available")
+
+    def reduce_scatter_(
+        output: TensorLike,
+        input: TensorLike,
+        op: DistributedReduceOpLike | None = None,
+        group: torch.distributed.ProcessGroup | None = None,
+        async_op: bool = False,
+    ) -> None:
+        utils.check(False, lambda: "torch.distributed is not available")
+
+    def wait(slf) -> None:
+        utils.check(False, lambda: "torch.distributed is not available")
 
 
 #

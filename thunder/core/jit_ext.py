@@ -23,6 +23,7 @@ import time
 from thunder.core.compile_data import compile_data_and_stats, get_cache_option, get_compile_data
 import thunder.clang as clang
 import thunder.core.transforms
+from thunder.core.baseutils import run_once
 
 from types import (
     CellType,
@@ -713,7 +714,7 @@ _general_jit_lookaside_map.update(
 )
 
 
-def general_jit_lookaside(diverted_fn):
+def register_general_jit_lookaside(diverted_fn):
     def lookaside_wrapper(lookaside):
         _general_jit_lookaside_map[diverted_fn] = lookaside
         return lookaside
@@ -723,7 +724,7 @@ def general_jit_lookaside(diverted_fn):
 
 # lookaside for getattr. We record the provenance of the attribute but for the core attribute getting, we
 # rely on the default JIT getattr lookaside (as returned from default_lookaside)
-@general_jit_lookaside(getattr)
+@register_general_jit_lookaside(getattr)
 def _general_jit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     getattr_lookaside = default_lookaside(getattr)
     assert getattr_lookaside is not None
@@ -742,7 +743,7 @@ def _general_jit_getattr_lookaside(obj: Any, name: str, *maybe_default: Any):
     return value
 
 
-@general_jit_lookaside(isinstance)
+@register_general_jit_lookaside(isinstance)
 def _general_jit_isinstance_lookaside(obj: Any, cls: type | UnionType | tuple[type | UnionType]):
     uobj = unwrap(obj)
     ucls = unwrap(cls)
@@ -764,8 +765,23 @@ def _general_jit_isinstance_lookaside(obj: Any, cls: type | UnionType | tuple[ty
     return wrap(res, provenance=pr)
 
 
-@general_jit_lookaside(collections.OrderedDict.__setitem__)
+# PyTorch >= 2.4 uses dict, <=2.3 uses OrderedDict
+@register_general_jit_lookaside(dict.__setitem__)
 def _general_jit_dict_setitem(d, key, value):
+    dict_setitem_lookaside = default_lookaside(dict.__setitem__)
+    assert dict_setitem_lookaside is not None
+
+    if d.provenance.ext_flag & EXT_FLAG_IS_MODULE_MEMBER_DICT:
+        ctx: GeneralJitCtx = get_general_jit_ctx()
+        if d.original_value is d.nothing:
+            ctx.proxify(d)
+        ctx._additional_outputs[d].append((PseudoInst.STORE_SUBSCR, d, key, value))
+
+    return dict_setitem_lookaside(d, key, value)
+
+
+@register_general_jit_lookaside(collections.OrderedDict.__setitem__)
+def _general_jit_ordered_dict_setitem(d, key, value):
     dict_setitem_lookaside = default_lookaside(collections.OrderedDict.__setitem__)
     assert dict_setitem_lookaside is not None
 
@@ -778,7 +794,7 @@ def _general_jit_dict_setitem(d, key, value):
     return dict_setitem_lookaside(d, key, value)
 
 
-@general_jit_lookaside(setattr)
+@register_general_jit_lookaside(setattr)
 def _general_jit_setattr_lookaside(obj: Any, name: str, value: Any):
     setattr_lookaside = default_lookaside(setattr)
     assert setattr_lookaside is not None
@@ -799,7 +815,7 @@ def _general_jit_setattr_lookaside(obj: Any, name: str, value: Any):
     return res
 
 
-@general_jit_lookaside(torch.compile)
+@register_general_jit_lookaside(torch.compile)
 def _jit_torch_compile_lookaside(*args, **kwargs):
     return do_raise(
         NotImplementedError(
@@ -871,7 +887,7 @@ def _get_torch_nn_module_named_members_lookaside(
     return _interpret_call(_get_named_member_impl, wrap(member_names, provenance=pr))
 
 
-@general_jit_lookaside(torch.nn.Module.named_parameters)
+@register_general_jit_lookaside(torch.nn.Module.named_parameters)
 def _general_jit_named_parameters_lookaside(obj: Any, *args, **kwargs):
     model = unwrap(obj)
     unwrapped_args = tuple(unwrap(arg) for arg in args)
@@ -881,7 +897,7 @@ def _general_jit_named_parameters_lookaside(obj: Any, *args, **kwargs):
     )
 
 
-@general_jit_lookaside(torch.nn.Module.named_buffers)
+@register_general_jit_lookaside(torch.nn.Module.named_buffers)
 def _general_jit_named_buffers_lookaside(obj: Any, *args, **kwargs):
     model = unwrap(obj)
     unwrapped_args = tuple(unwrap(arg) for arg in args)
@@ -891,8 +907,17 @@ def _general_jit_named_buffers_lookaside(obj: Any, *args, **kwargs):
     )
 
 
-@general_jit_lookaside(torch.autograd.function.Function.apply.__func__)
+@run_once
+def _warn_custom_autograd_function():
+    warnings.warn(
+        "Currently `backward` of custom `torch.autograd.function.Function` is ignored by `thunder.jit`. "
+        "`thunder.jit` generates backward based on the forward."
+    )
+
+
+@register_general_jit_lookaside(torch.autograd.function.Function.apply.__func__)
 def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwargs):
+    _warn_custom_autograd_function()
 
     custom_autograd_function_cls = unwrap(obj)
     custom_forward = custom_autograd_function_cls.forward
@@ -903,6 +928,14 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     wrapped_ctx = wrap(ctx, provenance=pr)
     args_, kwargs_ = tree_map(lambda a: wrap(a, provenance=pr), (args_, kwargs_))
     return _interpret_call(custom_forward, wrapped_ctx, *args_, **kwargs_)
+
+
+@register_general_jit_lookaside(torch.finfo)
+@interpreter_needs_wrap
+def _general_jit_torch_finfo_lookaside(dtype: thunder.dtypes.dtype):
+    torch_dtype = thunder.dtypes.to_torch_dtype(dtype)
+    res = torch.finfo(torch_dtype)
+    return res
 
 
 # Adds proxy methods
@@ -1063,7 +1096,7 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
             calling_opaque_torch_msg = (
                 f"Trying to call function {fn_name}, but it is not yet supported. "
                 "Please file an issue requesting support. "
-                "To find out which operations are not yet recongnized by `thunder.jit`, "
+                "To find out which operations are not yet recognized by `thunder.jit`, "
                 "please run `examine` as per:\n\n"
                 "from thunder.examine import examine\n"
                 "examine(<your thunder.jit callable argument>, ...)\n"
@@ -1596,6 +1629,8 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                     clang.check_string_value(p, v)
                 elif isinstance(v, (int, bool, float)):
                     clang.check_number_type_and_value(p, v)
+                elif isinstance(v, (torch.dtype, torch.device)):
+                    clang.check_literal_like(p, v)
                 else:
                     raise NotImplementedError(f"cache info of type {type(v).__name__}")
 

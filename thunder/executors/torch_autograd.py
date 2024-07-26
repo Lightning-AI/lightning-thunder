@@ -217,7 +217,8 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     # For performance we need the wait_prim_impl nodes in the execution trace to be as far from the
     # communication ops as possible. But it causes the all_gather_prim_impl nodes gathered at the start of
     # backward trace and increases the peak allocated memory
-    if getattr(compile_data.fn, "use_fsdp", False):
+    use_fsdp: bool = getattr(compile_data.fn, "use_fsdp", False)
+    if use_fsdp:
         assert hasattr(compile_data.fn, "sharding_strategy")
         if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO3:
             from thunder.distributed import FSDPBucketingStrategy
@@ -249,8 +250,14 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
                 compile_data.fn.bucketing_strategy != FSDPBucketingStrategy.NONE,
             )
             bw_extrace = sort_waits(bw_extrace)
-    if getattr(compile_data.fn, "use_ddp", False):
+    use_ddp: bool = getattr(compile_data.fn, "use_ddp", False)
+    if use_ddp:
         bw_extrace = sort_waits(bw_extrace)
+    if (not use_ddp) and (not use_fsdp):
+        from thunder.distributed.utils import maybe_sort_waits
+
+        _, fw_extrace = maybe_sort_waits(fw_extrace)
+        _, bw_extrace = maybe_sort_waits(bw_extrace)
 
     # Importing here to avoid cyclical dependencies in future.
     from thunder.executors.transformer_engineex import _transformer_engine_bwd_fp8_meta_sync, transformer_engine_ex

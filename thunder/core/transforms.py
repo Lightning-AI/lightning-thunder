@@ -1,5 +1,5 @@
 from collections import namedtuple
-from contextlib import nullcontext
+from contextlib import nullcontext, contextmanager
 from dataclasses import dataclass, replace
 from enum import auto, Enum
 from itertools import chain, compress
@@ -18,6 +18,7 @@ from collections import deque
 import os
 import dataclasses
 
+import thunder
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
 import thunder.core.devices as devices
@@ -61,7 +62,7 @@ from thunder.clang import (
     reciprocal,
     convolution,
 )
-from thunder.core.transform_common import dce, EarlyTransform, AdditionalTransform, PostOptimizationTransform
+from thunder.core.transform_common import dce, Transform
 from thunder.core.vjp_utils import make_aug_forward_and_backward
 from thunder.extend import Executor
 import thunder.torch as ltorch
@@ -402,8 +403,7 @@ def visitor_transform(trace_from: Trace, visit: Callable, *, provenance: None | 
 def add_transform(
     cfn: Callable,
     *,
-    transform: AdditionalTransform | None = None,
-    early_transform: EarlyTransform | None = None,
+    transform: Transform,
     disable_torch_autograd_support=False,
 ) -> Callable:
     from thunder.common import CompileData
@@ -412,86 +412,40 @@ def add_transform(
 
     utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
     utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
-    utils.check_type(transform, (NoneType, AdditionalTransform))
-    utils.check_type(early_transform, (NoneType, EarlyTransform))
+    utils.check_type(transform, Transform)
 
-    assert cd.using_jit or early_transform is None
-    assert transform is not None or early_transform is not None
+    assert cd.using_jit
 
-    if cd.using_jit:
-        from thunder import jit
+    from thunder import jit
 
-        early_transforms = cfn._lc_early_transforms[:]
-        additional_transforms = cfn._lc_transforms[:]
-        if early_transform is not None:
-            early_transforms.append(early_transform)
-        if transform is not None:
-            additional_transforms.append(transform)
-        jfn = jit(
-            cd.fn,
-            langctx=cd.langctx,
-            executors=cd.executors_list,
-            sharp_edges=cd.sharp_edges,
-            # cache, interpretation?
-            early_transforms=early_transforms,
-            additional_transforms=additional_transforms,
-            post_optimization_transforms=cfn._lc_post_optimization_transforms,
-            disable_torch_autograd=cd.disable_torch_autograd_support or disable_torch_autograd_support,
-            **cd.compile_options,
-        )
-        from thunder import ThunderModule
+    # todo: move _lc_transforms to compile_data
+    transforms = cfn._lc_transforms[:]
+    transforms.append(transform)
+    jfn = jit(
+        cd.fn,
+        langctx=cd.langctx,
+        executors=cd.executors_list,
+        sharp_edges=cd.sharp_edges,
+        # cache, interpretation?
+        transforms=transforms,
+        disable_torch_autograd=cd.disable_torch_autograd_support or disable_torch_autograd_support,
+        **cd.compile_options,
+    )
+    from thunder import ThunderModule
 
-        if isinstance(jfn, ThunderModule):
-            jfn._overrides_parameters = cfn._overrides_parameters
-            jfn._overrides_buffers = cfn._overrides_buffers
-        return jfn
-
-    raise NotImplementedError("Using the non-jit functions was an experiment that is no longer supported.")
-
-
-# TODO Consider refactoring this with the above
-# Helper function to add a post-optimization transform
-def add_post_optimization_transform(cfn: Callable, transform: PostOptimizationTransform) -> Callable:
-    from thunder.common import CompileData
-
-    cd: None | Any = getattr(cfn, "_lc_cd", None)
-
-    utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
-    utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
-    utils.check_type(transform, PostOptimizationTransform)
-
-    if cd.using_jit:
-        from thunder import jit
-
-        post_optimization_transforms = cfn._lc_post_optimization_transforms[:]
-        post_optimization_transforms.append(transform)
-        jfn = jit(
-            cd.fn,
-            langctx=cd.langctx,
-            executors=cd.executors_list,
-            sharp_edges=cd.sharp_edges,
-            # cache, interpretation?
-            early_transforms=cfn._lc_early_transforms[:],
-            additional_transforms=cfn._lc_transforms[:],
-            post_optimization_transforms=post_optimization_transforms,
-            disable_torch_autograd=cd.disable_torch_autograd_support,
-            **cd.compile_options,
-        )
-        from thunder import ThunderModule
-
-        if isinstance(jfn, ThunderModule):
-            jfn._overrides_parameters = cfn._overrides_parameters
-            jfn._overrides_buffers = cfn._overrides_buffers
-        return jfn
-
-    raise NotImplementedError("Using the non-jit functions was an experiment that is no longer supported.")
+    if isinstance(jfn, ThunderModule):
+        jfn._overrides_parameters = cfn._overrides_parameters
+        jfn._overrides_buffers = cfn._overrides_buffers
+    return jfn
 
 
 # The no-op transform. A trivial composable transform, only useful as an example.
-class _NoopTransform(AdditionalTransform):
-    def transform_trace(self, trace: Trace, **kwargs) -> Trace:
-        start_time_ns = time.time_ns()
-        noop_trace = from_trace(trace)
+class _NoopTransform(Transform):
+    def transform_trace_pre_prologue(
+        self, prologue_trace: Trace, computation_trace: Trace, epilogue_trace: Trace | None, **kwargs
+    ) -> Trace:
+        start_time_ns = time.perf_counter_ns()
+        noop_trace = from_trace(computation_trace)
 
         tracectx_tok: Any
         try:
@@ -500,14 +454,14 @@ class _NoopTransform(AdditionalTransform):
         finally:
             reset_tracectx(tracectx_tok)
 
-        noop_trace.bound_symbols.extend(trace.bound_symbols)
+        noop_trace.bound_symbols.extend(computation_trace.bound_symbols)
 
-        end_time_ns = time.time_ns()
+        end_time_ns = time.perf_counter_ns()
         elapsed_time_ns = end_time_ns - start_time_ns
         elapsed_time_millis = elapsed_time_ns // 1000000
         noop_trace.set_provenance(TraceProvenance(f"No-op Transform (took {elapsed_time_millis} milliseconds)"))
 
-        return noop_trace
+        return prologue_trace, noop_trace, computation_trace
 
 
 def noop(cfn: Callable) -> Callable:
@@ -517,33 +471,34 @@ def noop(cfn: Callable) -> Callable:
 
 # The comment fusions transform. Just adds a comment before and after each fusion.
 #   This is an example of a post-optimization transform.
-def _comment_fusions_transform(trace: Trace, **kwargs) -> Trace:
-    start_time_ns = time.time_ns()
-    commented_trace = from_trace(trace)
+class _CommentFusionsTransform(Transform):
+    def transform_trace_post_optimization(trace: Trace, **kwargs) -> Trace:
+        start_time_ns = time.perf_counter_ns()
+        commented_trace = from_trace(trace)
 
-    nbsyms: list[BoundSymbol] = []
-    for bsym in trace.bound_symbols:
-        if bsym.sym.is_fusion:
-            fusion_name = bsym.sym.name
-            pre_comment_bsym = prims.comment.bind(f"Before {fusion_name}", output=None)
-            post_comment_bsym = prims.comment.bind(f"After {fusion_name}", output=None)
+        nbsyms: list[BoundSymbol] = []
+        for bsym in trace.bound_symbols:
+            if bsym.sym.is_fusion:
+                fusion_name = bsym.sym.name
+                pre_comment_bsym = prims.comment.bind(f"Before {fusion_name}", output=None)
+                post_comment_bsym = prims.comment.bind(f"After {fusion_name}", output=None)
 
-            nbsyms.extend([pre_comment_bsym, bsym, post_comment_bsym])
-        else:
-            nbsyms.append(bsym)
+                nbsyms.extend([pre_comment_bsym, bsym, post_comment_bsym])
+            else:
+                nbsyms.append(bsym)
 
-    commented_trace.bound_symbols = nbsyms
-    end_time_ns = time.time_ns()
-    elapsed_time_ns = end_time_ns - start_time_ns
-    elapsed_time_millis = elapsed_time_ns // 1000000
+        commented_trace.bound_symbols = nbsyms
+        end_time_ns = time.perf_counter_ns()
+        elapsed_time_ns = end_time_ns - start_time_ns
+        elapsed_time_millis = elapsed_time_ns // 1000000
 
-    commented_trace.set_provenance(TraceProvenance(f"Comment Fusions (took {elapsed_time_millis} milliseconds)"))
+        commented_trace.set_provenance(TraceProvenance(f"Comment Fusions (took {elapsed_time_millis} milliseconds)"))
 
-    return commented_trace
+        return commented_trace
 
 
 def comment_fusions(cfn: Callable) -> Callable:
-    return add_post_optimization_transform(cfn, _comment_fusions_transform)
+    return add_ransform(cfn, _CommentFusionsTransform)
 
 
 #
@@ -867,6 +822,58 @@ def _gather_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> TensorPro
 
 
 register_grad(pids.GATHER, _gather_prim_grad)
+
+
+@torchctx
+def _scatter_prim_grad(a: TensorProxy, /, index: TensorProxy, src: TensorProxy | Number, dim: int) -> TensorProxy:
+    fwd = prims.scatter(a, index, src, dim)
+
+    grad = get_grad(fwd)
+    a_grad = prims.scatter(grad, index, 0, dim)
+    put_grad(a, a_grad)
+
+    if isinstance(src, TensorProxy):
+        # NOTE: this is exactly what PyTorch is doing.
+        # As such, it has the very same limitations. I.e.
+        # the grad is not going to be correct unless the index list
+        # (..., index[...], ...) does not have repeated elements
+        src_grad = prims.gather(grad, index, dim)
+        put_grad(src, src_grad)
+
+    return fwd
+
+
+register_grad(pids.SCATTER, _scatter_prim_grad)
+
+
+@torchctx
+def _index_copy_grad(a: TensorProxy, /, index: TensorProxy, src: TensorProxy, dim: int) -> TensorProxy:
+    fwd = prims.index_copy(a, index, src, dim)
+
+    grad = get_grad(fwd)
+
+    # a_grad = grad.index_fill(dim, index, 0)
+    # Unfortunately, we do not have `index_fill` for now
+    # TODO: replace with `index_fill`
+    grad_dim = utils.canonicalize_dim(grad.ndim, dim)
+    index_len = len(index)
+    index_unsqueeze_shape = [1] * grad.ndim
+    index_unsqueeze_shape[grad_dim] = index_len
+    index_expand_shape = list(grad.shape)
+    index_expand_shape[grad_dim] = index_len
+    a_grad = prims.scatter(grad, index.reshape(index_unsqueeze_shape).expand(*index_expand_shape), 0, dim)
+    put_grad(a, a_grad)
+
+    if src.ndim > 0:
+        src_grad = prims.take(grad, index, dim).expand_as(src)
+    else:
+        src_grad = prims.take(grad, index.squeeze(0))
+    put_grad(src, src_grad)
+
+    return fwd
+
+
+register_grad(pids.INDEX_COPY, _index_copy_grad)
 
 
 @torchctx
@@ -1211,6 +1218,30 @@ def _topk_prim_grad(
 register_grad(pids.TOPK, _topk_prim_grad)
 
 
+@torchctx
+def _sort_prim_grad(
+    a: TensorProxy, /, dim: None | int = None, descending: bool = False, stable: bool = False, *, out=None
+) -> (TensorProxy, TensorProxy):
+    dim = -1 if dim is None else dim
+    sorted_a, sort_idx = prims.sort(a, dim, descending, stable, out=out)
+
+    sorted_a_grad = get_grad(sorted_a)
+
+    if a.ndim != 0:
+        # TODO(nikitaved): replace with scatter once we have it.
+        # scatter_add uses atomic ops which are slow!
+        a_grad = ltorch.zeros_like(a)
+        a_grad = ltorch.scatter_add(a_grad, dim, sort_idx, sorted_a_grad)
+    else:
+        a_grad = sorted_a_grad
+    put_grad(a, a_grad)
+
+    return sorted_a, sort_idx
+
+
+register_grad(pids.SORT, _sort_prim_grad)
+
+
 # TODO Fix division by zero when n_elem_reduced == 0 or when mean.numel == 0
 #   by returning zeros_like(a) or similar.
 # TODO Fix grad when correction > n_elem_reduced.
@@ -1408,8 +1439,8 @@ def grad(
 
         return grad_func
 
-    class _GradTransform(AdditionalTransform):
-        def transform_trace(self, trc: Trace, *, executors_list: Sequence[Any]) -> Trace:
+    class _GradTransform(Transform):
+        def transform_trace_additionally(self, trc: Trace, *, executors_list: Sequence[Any]) -> Trace:
             # Using trc.python_callable() makes it impossible to retrace the
             # function because the python_callable uses python_ctx which replaces
             # symbol occurrences with its symbol._call_ctx function
@@ -3656,8 +3687,19 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
     finally:
         reset_tracectx(tracectx_token)
 
+    saved_for_backward = forward_trace.output[1]
+    flat_saves, _ = tree_flatten(saved_for_backward)
+
     def backward_fn(saved_for_backward, cotangents):
+        # trace converts all saved_for_backward into proxy, we want to restore number scalars afterwards.
+        flat_saves_proxified, saves_spec = tree_flatten(saved_for_backward)
+        flat_filtered = [
+            proxified if isinstance(entry, Proxy) else entry
+            for proxified, entry in zip(flat_saves_proxified, flat_saves)
+        ]
+        saved_for_backward = tree_unflatten(flat_filtered, saves_spec)
         env = reconstruct_forward_env_for_backward(trace, saved_for_backward)
+
         if torch_autograd:
             cotangents = tree_unflatten(cotangents, output_spec)
         out = backward_pass(env, trace, cotangents)
@@ -3669,7 +3711,6 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
             out = tree_flatten(out)[0]
         return out
 
-    saved_for_backward = forward_trace.output[1]
     backward_trace = construct_trace(rename_proxies=False)(backward_fn, saved_for_backward, cotangents)
 
     # We are done with constructing the forward and backward passes at this
@@ -3754,6 +3795,11 @@ def maybe_downcast_to(dtype, args):
 
 
 @register_autocast_rule("torch.matmul")
+def autocast_torch_matmul_rule(a, b, dtype):
+    """Autocast rule for matmul"""
+    return ltorch.matmul(*(maybe_downcast_to(dtype, (a, b))))
+
+
 @register_autocast_rule(prims.PrimIDs.MATMUL)
 def autocast_matmul_rule(a, b, dtype):
     """Autocast rule for matmul"""
@@ -3778,6 +3824,100 @@ def autocast_ltorch_linear_rule(a, w, bias=None, *, dtype):
 @register_autocast_rule(prims.PrimIDs.LINEAR)
 def autocast_linear_rule(a, w, bias, dtype):
     return _linear_autocast_impl(a, w, bias, dtype)
+
+
+def _convolution_autocast_impl(a, w, bias, *other_args, dtype):
+    if bias is None:
+        # Don't pass `bias` to maybe_downcast_to.
+        downcast_args = maybe_downcast_to(dtype, (a, w)) + (bias,)
+    else:
+        downcast_args = maybe_downcast_to(dtype, (a, w, bias))
+
+    return prims.convolution(*downcast_args, *other_args)
+
+
+@register_autocast_rule("torch.nn.functional.conv1d")
+def autocast_ltorch_conv1d_rule(
+    a: TensorProxy,
+    /,
+    weight: TensorProxy,
+    bias: TensorProxy | None = None,
+    stride: int | Sequence[int] = 1,
+    padding: int | Sequence[int] | str = 0,
+    dilation: int = 1,
+    groups: int = 1,
+    *,
+    dtype,
+) -> TensorProxy:
+    from thunder.torch import _conv_helper
+
+    return _conv_helper(
+        1,
+        a,
+        weight,
+        bias,
+        stride,
+        padding,
+        dilation,
+        groups,
+        conv_function=partial(_convolution_autocast_impl, dtype=dtype),
+    )
+
+
+@register_autocast_rule("torch.nn.functional.conv2d")
+def autocast_ltorch_conv2d_rule(
+    a: TensorProxy,
+    /,
+    weight: TensorProxy,
+    bias: TensorProxy | None = None,
+    stride: int | Sequence[int] = 1,
+    padding: int | Sequence[int] | str = 0,
+    dilation: int = 1,
+    groups: int = 1,
+    *,
+    dtype,
+) -> TensorProxy:
+    from thunder.torch import _conv_helper
+
+    return _conv_helper(
+        2,
+        a,
+        weight,
+        bias,
+        stride,
+        padding,
+        dilation,
+        groups,
+        conv_function=partial(_convolution_autocast_impl, dtype=dtype),
+    )
+
+
+@register_autocast_rule("torch.nn.functional.conv3d")
+def autocast_ltorch_conv3d_rule(
+    a: TensorProxy,
+    /,
+    weight: TensorProxy,
+    bias: TensorProxy | None = None,
+    stride: int | Sequence[int] = 1,
+    padding: int | Sequence[int] | str = 0,
+    dilation: int = 1,
+    groups: int = 1,
+    *,
+    dtype,
+) -> TensorProxy:
+    from thunder.torch import _conv_helper
+
+    return _conv_helper(
+        3,
+        a,
+        weight,
+        bias,
+        stride,
+        padding,
+        dilation,
+        groups,
+        conv_function=partial(_convolution_autocast_impl, dtype=dtype),
+    )
 
 
 @register_autocast_rule("torch.nn.functional.scaled_dot_product_attention")
@@ -3837,3 +3977,59 @@ def autocast(func: Callable, dtype: dtypes.dtype):
         return eval_trace(trace, *args, **kwargs, symbol_mapper=partial(autocast_symbol_mapper, dtype=dtype))
 
     return wrapper
+
+
+# State to enable and disable autocast (while interpreter is generating the computation trace).
+_autocast_enabled = True
+
+
+def is_autocast_enabled():
+    return _autocast_enabled
+
+
+# NOTE: Disable Autocast
+# Once the autocast rule has been applied, we disable autocast as the autocast_rule usually converts the inputs
+# and calls the same symbol.
+# Without disabling autocast we will have infinite recursion.
+@contextmanager
+def disable_autocast():
+    global _autocast_enabled
+    default = _autocast_enabled
+    _autocast_enabled = False
+    try:
+        yield
+    finally:
+        _autocast_enabled = default
+
+
+def maybe_apply_autocast(sym):
+    # NOTE: torch.autocast support
+    # In PyTorch eager, enabling autocast allows mixed inputs to operator like `linear`
+    # which expect dtypes to be same. This works in PyTorch eager, as dispatcher applies the
+    # conversion first and then passes the converted input to the operator.
+    # To mimick similar behavior, here we replace the `sym` for all operators which have
+    # autocast rule, to apply the autocast conversion rule if autocast was enabled.
+
+    # Cache info may not be available in case of legacy `thunder.compile`
+    # which is still used for cases.
+    try:
+        cache_info = thunder._get_cache_info()
+    except LookupError:
+        cache_info = {}
+
+    if (
+        cache_info.get("is_autocast_enabled", False)  # If user has actually enabled autocast in their code
+        and is_autocast_enabled()  # we are not under `disable_autocast`
+        and (autocast_impl := _maybe_get_autocast_rule_for_symbol(sym)) is not None
+    ):  # symbol has autocast impl.
+
+        @wraps(sym)
+        def wrapper(*args, **kwargs):
+            # See NOTE: Disable Autocast
+            with disable_autocast():
+                thunder_autocast_dtype = _get_downcast_dtype_from_str(cache_info["autocast_thunder_dtype"])
+                return partial(autocast_impl, dtype=thunder_autocast_dtype)(*args, **kwargs)
+
+        return wrapper
+
+    return None

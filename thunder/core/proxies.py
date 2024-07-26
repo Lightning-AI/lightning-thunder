@@ -1316,6 +1316,15 @@ class TensorProxy(Proxy, TensorProxyInterface):
 
         return method_or_value
 
+    def __iter__(self):
+        # NOTE: this implementation is equivalent to torch.Tensor.__iter__
+
+        if self.ndim == 0:
+            raise TypeError("iteration over a 0-dim tensor")
+
+        unbound_tuple = self.unbind(0)
+        return iter(unbound_tuple)
+
     #
     # Default attribute
     #
@@ -1401,9 +1410,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(self, other)
 
     def __iadd__(self, other):
-        return self.add_(other)
-
-    def add_(self, other):
         method = resolve_method("add_", self, other)
         return method(self, other)
 
@@ -1444,9 +1450,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(self, other)
 
     def __imul__(self, other):
-        return self.mul_(other)
-
-    def mul_(self, other):
         method = resolve_method("mul_", self, other)
         return method(self, other)
 
@@ -1459,9 +1462,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(self, other)
 
     def __ipow__(self, other):
-        return self.pow_(other)
-
-    def pow_(self, other):
         method = resolve_method("pow_", self, other)
         return method(self, other)
 
@@ -1474,9 +1474,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(self, other)
 
     def __isub__(self, other):
-        return self.sub_(other)
-
-    def sub_(self, other):
         method = resolve_method("sub_", self, other)
         return method(self, other)
 
@@ -1493,10 +1490,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(other, self)
 
     def __itruediv__(self, other):
-        return self.div_(other)
-
-    def div_(self, other, *, rounding_mode: str | None = None):
-        method = resolve_method("div_", self, other, rounding_mode=rounding_mode)
+        method = resolve_method("div_", self, other, rounding_mode=None)
         return method(self, other)
 
     #
@@ -1618,7 +1612,11 @@ _cls_to_number_proxy_map = {
 
 
 def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple = None) -> TensorProxy:
-    device = devices.to_device(t.device)
+    if hasattr(t, "__thunder_device"):
+        torch_device = t.__thunder_device
+    else:
+        torch_device = t.device
+    device = devices.to_device(torch_device)
     dtype = dtypes.to_dtype(t.dtype)
     # See Note [DistributedDataParallel and distparallel_type]
     distparallel_type = getattr(t, "distparallel_type", None)
@@ -1639,7 +1637,11 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
 def futuretensorproxy(
     t: torch.Tensor | TensorProxy | FutureTensorProxy, /, *, name: None | str, history: None | tuple = None
 ) -> FutureTensorProxy:
-    device = devices.to_device(t.device)
+    if hasattr(t, "__thunder_device"):
+        torch_device = t.__thunder_device
+    else:
+        torch_device = t.device
+    device = devices.to_device(torch_device)
     dtype = dtypes.to_dtype(t.dtype)
     # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
     return FutureTensorProxy(

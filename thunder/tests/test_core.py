@@ -19,7 +19,15 @@ import thunder.tests.bf16
 import thunder.torch as ltorch
 
 import thunder.core.codeutils as codeutils
-from thunder.tests.framework import instantiate, NOTHING, TorchExecutor, nvFuserExecutor, requiresCUDA, TestExecutor
+from thunder.tests.framework import (
+    instantiate,
+    NOTHING,
+    TorchExecutor,
+    nvFuserExecutor,
+    requiresCUDA,
+    TestExecutor,
+    set_default_dtype_ctx,
+)
 import thunder.core.dtypes as dtypes
 import thunder.core.prims as prims
 from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, tracectx
@@ -382,7 +390,7 @@ def test_devices_in_and_out(executor, device, dtype):
     x, y = lc_result
 
     assert x == 1
-    assert y == dev
+    assert y == thunder.devices.to_torch_device(dev)
 
 
 @instantiate(dtypes=(thunder.float32,))
@@ -522,6 +530,15 @@ def test_consistent_boundsymbol_collection_hard_printing():
         s0 = str(bsym)
         s1 = str(bsym)
         assert s0 == s1
+
+
+def test_to_printable_not_collection():
+    import numpy as np
+
+    inps = ("abc", torch.Size([2, 2]), torch.Tensor(1, 2), np.ndarray((2, 2)))
+    for inp in inps:
+        out = codeutils.to_printable(None, inp)
+        assert inp is out
 
 
 #
@@ -1293,7 +1310,7 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
 
     # Returns the bound symbols for a function and args.
     def compile_bsyms(fn, args):
-        fn = executor.make_callable_with_info(fn)
+        fn = executor.make_callable(fn)
         _ = fn(*args)
         traces = thunder.last_traces(fn)
         return traces[0].bound_symbols
@@ -1947,8 +1964,10 @@ def test_traceback():
     with pytest.raises(RuntimeError) as excinfo:
         compiled_f(a)
     assert "on a bool tensor" in str(excinfo.value)
-    assert "torch.neg" in str(excinfo.traceback[-1].statement)
-    assert "thunder.computation" in excinfo.traceback[-1].path
+    # this should actually be in excinfo.traceback[-1] but see
+    # https://github.com/Lightning-AI/lightning-thunder/issues/844
+    assert any(("torch.neg" in str(tb.statement)) for tb in excinfo.traceback)
+    assert any(("thunder.computation" in str(tb.path)) for tb in excinfo.traceback)
 
 
 @instantiate(
@@ -2695,6 +2714,12 @@ def test_torch_device():
 
     _test(foo2, device_strs_and_idxs)
 
+    def foo2_1(dev_and_idx):
+        dev_type, idx = dev_and_idx
+        return torch.ones(3, 3, device=torch.device(type=dev_type, index=idx))
+
+    _test(foo2_1, device_strs_and_idxs)
+
     # Test with `torch.device` as input
     torch_devices = (torch.device("cpu"), torch.device("cuda"), torch.device("meta"))
 
@@ -2766,11 +2791,12 @@ def test_dataclass_output(requires_grad):
         s: torch.Tensor
         i: int
         f: float
+        g: tuple
 
     def foo(x):
         # TestDataClass as the output and part of the nested output.
-        return TestDataclass(x, x + 2, x.numel(), x.numel() / 2.0), (
-            TestDataclass(x, x + 2, x.numel(), x.numel() / 2.0),
+        return TestDataclass(x, x + 2, x.numel(), x.numel() / 2.0, (x,)), (
+            TestDataclass(x, x + 2, x.numel(), x.numel() / 2.0, (x)),
             {"x": x, "y": x + 3},
         )
 
@@ -2790,6 +2816,7 @@ def test_dataclass_output(requires_grad):
         torch.testing.assert_close(actual_container.s, expected_container.s)
         torch.testing.assert_close(actual_container.i, expected_container.i)
         torch.testing.assert_close(actual_container.f, expected_container.f)
+        torch.testing.assert_close(actual_container.g[0], expected_container.g[0])
 
     _test_container(actual_container, expected_container)
     _test_container(actual_tuple[0], expected_tuple[0])
@@ -2934,3 +2961,160 @@ def test_dtype_in_trace():
     (pystr,) = tr.bound_symbols[1].subsymbols[0].python(0)
 
     assert "convert_element_type(x, dtypes.float16)" in pystr
+
+
+def test_factory_functions_default_dtype():
+
+    def fn(x):
+        o = torch.ones(x.shape)
+        return o.dtype
+
+    x = torch.randn(3, 3)
+    jfn = thunder.jit(fn)
+    actual_dtype = jfn(x)
+
+    assert fn(x) == jfn(x)
+    assert actual_dtype == torch.float32
+
+    # Check with a different default dtype.
+    with set_default_dtype_ctx(torch.float16):
+        actual_dtype = jfn(x)
+        assert actual_dtype == torch.float16
+
+    assert thunder.cache_misses(jfn) == 2
+
+
+def test_change_default_dtype_in_jitted_fn():
+    default_dtype = torch.get_default_dtype()
+    try:
+
+        def fn(x):
+            torch.set_default_dtype(torch.float16)
+            o = torch.ones(x.shape)
+            return o.dtype
+
+        jfn = thunder.jit(fn)
+        with pytest.raises(RuntimeError, match="Default dtype is changed during the execution of jitted function"):
+            jfn(torch.randn(3, 3))
+    finally:
+        torch.set_default_dtype(default_dtype)
+
+
+@requiresCUDA
+def test_factory_functions_default_device():
+
+    def fn(x):
+        o = torch.ones(x.shape)
+        return o.device
+
+    x = torch.randn(3, 3)
+    jfn = thunder.jit(fn)
+    actual_device = jfn(x)
+
+    assert fn(x) == jfn(x)
+    assert actual_device == torch.device("cpu")
+
+    # Check with a different default device.
+    org_device = torch.get_default_device()
+    torch.set_default_device("cuda")
+    try:
+        actual_device = jfn(x)
+        assert actual_device == fn(x)
+    finally:
+        torch.set_default_device(org_device)
+        # hard clean for https://github.com/Lightning-AI/lightning-thunder/issues/844
+        try:
+            torch._GLOBAL_DEVICE_CONTEXT.device_context.__exit__(None, None, None)
+            del torch._GLOBAL_DEVICE_CONTEXT.device_context
+        except Exception:
+            pass
+
+    assert thunder.cache_misses(jfn) == 2
+
+
+@requiresCUDA
+def test_change_default_device_in_jitted_fn():
+    default_device = torch.get_default_device()
+    try:
+
+        def fn(x):
+            torch.set_default_device("cuda")
+            o = torch.ones(x.shape)
+            return o.device
+
+        jfn = thunder.jit(fn)
+        with pytest.raises(RuntimeError, match="Default device is changed during the execution of jitted function"):
+            jfn(torch.randn(3, 3))
+    finally:
+        torch.set_default_device(default_device)
+        # hard clean for https://github.com/Lightning-AI/lightning-thunder/issues/844
+        try:
+            torch._GLOBAL_DEVICE_CONTEXT.device_context.__exit__(None, None, None)
+            del torch._GLOBAL_DEVICE_CONTEXT.device_context
+        except Exception:
+            pass
+
+
+@requiresCUDA
+@pytest.mark.xfail(
+    reason="When using device as context in PyTorch, it doesn't reflect in torch.get_default_device - see https://github.com/pytorch/pytorch/issues/131328",
+    strict=True,
+)
+def test_change_default_device_with_ctx():
+    def fn(x):
+        o = torch.ones(x.shape)
+        return o.device
+
+    x = torch.randn(3)
+
+    with torch.device("cuda"):
+        jfn = thunder.jit(fn)
+        actual_device = jfn(x)
+        assert actual_device == fn(x)
+
+
+def test_arange_default_dtype():
+    # If any of start, end, or stop are floating-point, the dtype is inferred to be the default dtype, see get_default_dtype().
+    # Otherwise, the dtype is inferred to be torch.int64.
+    def fn():
+        return torch.arange(start=1, end=2, step=0.5).dtype
+
+    jfn = thunder.jit(fn)
+    assert fn() == jfn()
+    assert jfn() == torch.float32
+
+    def fn():
+        return torch.arange(start=1, end=3, step=1).dtype
+
+    jfn = thunder.jit(fn)
+    assert fn() == jfn()
+    assert jfn() == torch.int64
+
+
+def test_cat_mixed_dtypes():
+    # We add a special test here instead of a sample in OpInfo.
+    # When we add a mixed input sample in OpInfo, it will also be picked up for the test which
+    # computes numerical Jacobian vector product and compares it with analytical. The test will produce failures
+    # when run in precision lower than double (and we can't disable a sample based on tests).
+    # See comment - https://github.com/Lightning-AI/lightning-thunder/pull/819#issuecomment-2244761476
+    def fn(tensors):
+        return torch.cat(tensors, dim=0)
+
+    tensors = (torch.randn(3, requires_grad=True), torch.randn(3, dtype=torch.float16, requires_grad=True))
+    with torch.no_grad():
+        tensors_jit = tuple(t.detach().clone() for t in tensors)
+        for t in tensors_jit:
+            t.requires_grad_(True)
+
+    # Compare forward
+    jfn = thunder.jit(fn)
+    expected = fn(tensors)
+    actual = jfn(tensors_jit)
+    torch.testing.assert_close(actual, expected)
+
+    # Compare backward
+    cotangent = torch.randn_like(expected)
+    expected.backward(cotangent)
+    actual.backward(cotangent)
+
+    torch.testing.assert_close(tuple(t.grad for t in tensors), tuple(t.grad for t in tensors_jit))

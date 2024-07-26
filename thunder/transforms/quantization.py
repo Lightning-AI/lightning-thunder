@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 
 import thunder
-from thunder.core.transform_common import EarlyTransform
+from thunder.core.transform_common import Transform
 from thunder.core import utils
 from thunder.core import prims
 import torch
@@ -44,7 +44,7 @@ def get_bitsandbytes_executor():
     return bitsandbytes_executor
 
 
-class BitsAndBytesLinearQuant4bit(EarlyTransform):
+class BitsAndBytesLinearQuant4bit(Transform):
     def __init__(self):
         self.quant_states = {}
         self.quantized_submodule_names = set()
@@ -57,11 +57,20 @@ class BitsAndBytesLinearQuant4bit(EarlyTransform):
             self.quantized_submodule_names.add(name)
             weight_name = f"{name}.weight"
             w = tm.get_parameter(weight_name)
-            # device!, double quant support
-            qw, qs = bitsandbytes.functional.quantize_4bit(w.to("cuda"), quant_type="nf4")
-            tm._overrides_parameters[weight_name] = qw
-            tm._overrides_parameters[f"{weight_name}.absmax"] = qs.absmax
-            tm._overrides_parameters[f"{weight_name}.code"] = qs.code
+            # TODO: double quant support
+
+            if w.device.type == "meta":
+                w_work = torch.zeros_like(w, device="cuda")
+            elif w.device.type != "cuda":
+                with torch.no_grad():
+                    w_work = w.to("cuda")
+            else:
+                w_work = w
+
+            qw, qs = bitsandbytes.functional.quantize_4bit(w_work, quant_type="nf4")
+            tm._overrides_parameters[weight_name] = qw.to(w.device)
+            tm._overrides_parameters[f"{weight_name}.absmax"] = qs.absmax.to(w.device)
+            tm._overrides_parameters[f"{weight_name}.code"] = qs.code.to(w.device)
             self.quant_states[weight_name] = {"dtype": qs.dtype, "shape": qs.shape, "blocksize": qs.blocksize}
 
         for n, submodule in model._model.named_modules():
@@ -78,17 +87,25 @@ class BitsAndBytesLinearQuant4bit(EarlyTransform):
         assert w.dtype == qs_dict["dtype"]
         assert w.shape == qs_dict["shape"]
 
-        qw, qs = bitsandbytes.functional.quantize_4bit(w.to("cuda"), block_size=qs_dict["blocksize"], quant_type="nf4")
+        if w.device.type == "meta":
+            w_work = torch.zeros_like(w, device="cuda")
+        elif w.device.type != "cuda":
+            with torch.no_grad():
+                w_work = w.to("cuda")
+        else:
+            w_work = w
+
+        qw, qs = bitsandbytes.functional.quantize_4bit(w_work, blocksize=qs_dict["blocksize"], quant_type="nf4")
 
         # double quant support...
         state_dict = state_dict.copy()
-        state_dict[weight_name] = qw
-        state_dict[f"{weight_name}.absmax"] = qs.absmax
-        state_dict[f"{weight_name}.code"] = qs.code
+        state_dict["weight"] = qw.to(w.device)
+        state_dict["weight.absmax"] = qs.absmax.to(w.device)
+        state_dict["weight.code"] = qs.code.to(w.device)
 
         return state_dict
 
-    def transform_traces(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
+    def transform_traces_pre_prologue(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
         tm = self.thunder_module
         from thunder.core.trace import tracectx
 
