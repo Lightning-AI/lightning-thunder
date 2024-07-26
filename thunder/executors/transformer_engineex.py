@@ -57,7 +57,7 @@ if TE_AVAILABLE:
 
     TE_VERSION_1_6_PLUS = LooseVersion(version("transformer_engine")) > LooseVersion("1.6")
     TE_VERSION_1_8_PLUS = LooseVersion(version("transformer_engine")) > LooseVersion("1.8")
-    if not TE_VERSION_1_6_PLUS:
+    if not TE_VERSION_1_8_PLUS:
         warnings.warn(
             f"Installed version of transformer_engine {version('transformer_engine')} is not supported, please upgrade. `transformer_engine_ex` will not be used."
         )
