@@ -354,7 +354,7 @@ def jit(
     )
     cs = CompileStats()
 
-    def _alias_tensor_of_args_kwargs(*args, **kwargs) -> int:
+    def _alias_tensor_of_args_kwargs_dict(*args, **kwargs) -> dict[int, list[int]]:
         flat_args, _ = tree_flatten((args, kwargs))
         data_ptr_to_tensor_group_index = {}
         tensor_group_index_to_tensor_indices = defaultdict(list)
@@ -365,14 +365,19 @@ def jit(
                     data_ptr_to_tensor_group_index[data_ptr] = len(data_ptr_to_tensor_group_index)
                 tgi = data_ptr_to_tensor_group_index[data_ptr]
                 tensor_group_index_to_tensor_indices[tgi].append(idx)
+        return tensor_group_index_to_tensor_indices
+
+    def _alias_tensor_of_args_kwargs(*args, **kwargs) -> str:
+        """If no aliases found, empty string, otherwise, aliases are comma separated, groups are hyphen separated."""
 
         alias_indices = []
-        for k, v in tensor_group_index_to_tensor_indices.items():
+        for k, v in _alias_tensor_of_args_kwargs_dict(*args, **kwargs).items():
             if len(v) > 1:
-                alias_indices.extend(v)
+                s = ",".join(f"{i}" for i in v)
+                alias_indices.append(s)
         if not alias_indices:
             return ""
-        return ",".join(f"{i}" for i in alias_indices)
+        return "-".join(alias_indices)
 
     @_with_cache_info_ctx
     def get_computation_and_inputs(*args, **kwargs):
@@ -533,9 +538,16 @@ def jit(
             vanilla_tensor_args: set[int] | None = None
             if not compile_options.get("skip_inplace_functionalization", False):
                 orig_len = len(computation_traces)
+                alias_tensor_indices = []
+                if alias_tensor_indices_str := cache_info["alias_tensor_indices"]:
+                    alias_tensor_indices: list[list[int]] = [
+                        [int(i) for i in s.split(",")] for s in alias_tensor_indices_str.split("-")
+                    ]
                 computation_traces.extend(
                     functionalize_inplace_ops(
-                        computation_trace=computation_trc, orig_to_view_swap_map=orig_to_view_swap_map
+                        computation_trace=computation_trc,
+                        orig_to_view_swap_map=orig_to_view_swap_map,
+                        alias_tensor_indices=alias_tensor_indices,
                     )
                 )
                 computation_trc = computation_traces[-1]
@@ -550,11 +562,16 @@ def jit(
                             continue
                         arg_to_idx[a] = i
 
-                    vanilla_tensor_args: set[int] = {
-                        arg_to_idx[bsym.flat_proxy_args[1]]
-                        for bsym in filter(lambda b: b.sym.id == prims.PrimIDs.COPY_, computation_trc.bound_symbols)
-                        if bsym.flat_proxy_args[1] in arg_to_idx
-                    }
+                    tensor_indices: int = []
+                    tensor_args_consumed_by_inplace_grouped_by_numel: dict[int, list[TensorProxy]] = defaultdict(list)
+                    for bsym in filter(lambda b: b.sym.id == prims.PrimIDs.COPY_, computation_trc.bound_symbols):
+                        t = bsym.flat_proxy_args[1]
+                        index = arg_to_idx[t]
+                        numel = t.numel
+                        tensor_args_consumed_by_inplace_grouped_by_numel[numel].append(index)
+                        tensor_indices.append(index)
+                    if len(tensor_args_consumed_by_inplace_grouped_by_numel) > 1:
+                        vanilla_tensor_args = set(tensor_indices)
 
             if epilogue_trc is not None:
                 epilogue_traces = [epilogue_trc]
@@ -746,6 +763,7 @@ def jit(
         if cache_entry.vanilla_tensor_args:
 
             if alias_tensor_indices_str := _alias_tensor_of_args_kwargs(*inps):
+                alias_tensor_indices = alias_tensor_indices_str
                 alias_tensor_indices = {int(i) for i in alias_tensor_indices_str.split(",")}
                 vanilla_tensor_args = cache_entry.vanilla_tensor_args
                 check(

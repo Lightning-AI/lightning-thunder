@@ -489,6 +489,13 @@ def _get_prod_bsym_with_arg(
         return None
 
 
+def use_only_one_tensor_for_aliases(
+    computation_trace: Trace,
+    alias_tensor_indices: list[list[int]],
+) -> Trace:
+    return computation_trace
+
+
 def canonicalize_bsym_args(
     computation_trace: Trace,
     orig_to_view_swap_map: dict[VariableInterface, TensorProxy],
@@ -570,7 +577,9 @@ def create_functional_bsym_from(inplace_bsym: BoundSymbol) -> BoundSymbol:
 
 
 def functionalize_inplace_ops(
-    computation_trace: Trace, orig_to_view_swap_map: dict[VariableInterface, TensorProxy]
+    computation_trace: Trace,
+    orig_to_view_swap_map: dict[VariableInterface, TensorProxy],
+    alias_tensor_indices: list[list[int]],
 ) -> list[Trace]:
     r"""Functionalize in-place ops in ``computation_trace``.
 
@@ -583,10 +592,11 @@ def functionalize_inplace_ops(
     If any are found, functionalization is done in two steps. The first step is to canonicalize the trace
     by making sure that any operands of in-place ops have only one consumer. The second step is to
     replace in-place ops with their out-of-place versions, i.e.,
-    to remove ``prims.copy_`` from the trace then inserting required ``prims.copy_``\s. The required ``prims.copy_``\s are ones
-    whose destination is ``computation_trace``'s args/kwargs.
+    to remove ``prims.copy_`` from the trace then inserting required ``prims.copy_``\s.
+    The required ``prims.copy_``\s are ones whose destination is ``computation_trace``'s args/kwargs.
 
-    Let's take a look at how the functionalization is working for the following ``f``. This function applies in-place ``exp`` to ``a`` which does not share
+    Let's take a look at how the functionalization is working for the following ``f``.
+    This function applies in-place ``exp`` to ``a`` which does not share
     the storage of the argument ``x``, thus the functionalized trace would be
     free from ``prims.copy_``.
 
@@ -598,7 +608,8 @@ def functionalize_inplace_ops(
             a.exp_()
             return a.cos()
 
-    The input trace which is the first of many computation traces is as follows. Notice that ``a`` is consumed by not only ``ltorch.exp_`` but also ``ltorch.cos``.
+    The input trace which is the first of many computation traces is as follows. Notice that ``a`` is
+    consumed by not only ``ltorch.exp_`` but also ``ltorch.cos``.
 
     .. code-block:: python
         :name: initial-trace
@@ -658,8 +669,10 @@ def functionalize_inplace_ops(
             # t3 = prims.cos(t1)  # t3: "cpu f32[3]"
           return t3
 
-    Another example to take a look at would be a function with one or more in-place ops to its argument(s) and/or their views.
-    The ``g`` defined below cannot be functionalized with appropriate ``prims.copy_`` to ``x`` because ``a`` shares its storage with ``x``.
+    Another example to take a look at would be a function with one or more in-place ops to
+    its argument(s) and/or their views.
+    The ``g`` defined below cannot be functionalized with appropriate ``prims.copy_`` to ``x`` because ``a`` shares
+    its storage with ``x``.
 
     .. code-block:: python
         :name: input-func-with-multiple-inplace
@@ -745,8 +758,39 @@ def functionalize_inplace_ops(
     if not any(is_functionalizable(bsym) for bsym in computation_trace.bound_symbols):
         return []
 
+    # Step 0:
+    no_implicit_alias_trace = computation_trace
+    if alias_tensor_indices:
+        bsyms: list[BoundSymbol] = []
+        flat_args, _ = tree_flatten((computation_trace.args, computation_trace.kwargs))
+        swap_map_for_aliases: dict[VariableInterface, TensorProxy] = {}
+        arg_to_optional_bsyms: dict[VariableInterface, BoundSymbol] = {}
+        for indices in alias_tensor_indices:
+            arg = flat_args[indices[0]]
+            for idx in indices[1:]:
+                arg_to_replace = flat_args[idx]
+                reshaped_arg = arg
+                if arg_to_replace.shape != arg.shape:
+                    with tracectx(computation_trace):
+                        reshaped_arg = prims.reshape.meta(arg, arg_to_replace.shape)
+                        arg_to_optional_bsyms[variableify(arg_to_replace)] = prims.reshape.bind(
+                            arg,
+                            arg_to_replace.shape,
+                            output=reshaped_arg,
+                        )
+                swap_map_for_aliases[variableify(arg_to_replace)] = reshaped_arg
+        for bsym in computation_trace.bound_symbols:
+            for arg in filter(lambda p: isinstance(p, TensorProxy), bsym.flat_args):
+                if v_arg := variableify(arg) in arg_to_optional_bsyms:
+                    bsyms.append(arg_to_optional_bsyms[v_arg])
+            bsyms.append(bsym.from_bsym_swap_proxies(swap_map_for_aliases, skip_output=True))
+        no_implicit_alias_trace = from_trace(computation_trace)
+        no_implicit_alias_trace.bound_symbols = bsyms
+        no_implicit_alias_trace.set_provenance(TraceProvenance("clarify alias"))
+
     # Step 1: make sure each tensor is consumed only once.
-    intermediate_trace = canonicalize_bsym_args(computation_trace, orig_to_view_swap_map)
+    intermediate_trace = canonicalize_bsym_args(no_implicit_alias_trace, orig_to_view_swap_map)
+
     # Step 2: Remove `prims.copy_` if it's the last one of `bsym.subsymbols`,
     # unless `copy_to` is `computation_trace.args` or `computation_trace.kwargs`
     swap_map: dict[VariableInterface, TensorProxy] = {}
@@ -949,7 +993,9 @@ def functionalize_inplace_ops(
     functionalized_bsyms.append(new_bsyms[-1].from_bsym_swap_proxies(swap_map_for_return))
 
     functionalized_computation_trace.bound_symbols = functionalized_bsyms
-    return [intermediate_trace, functionalized_computation_trace]
+    if not alias_tensor_indices:
+        return [intermediate_trace, functionalized_computation_trace]
+    return [no_implicit_alias_trace, intermediate_trace, functionalized_computation_trace]
 
 
 def order_proxies(bsyms: Sequence[BoundSymbol]) -> dict[str, int]:
