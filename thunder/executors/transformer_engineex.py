@@ -373,7 +373,7 @@ def make_te_linear_meta(is_grad_enabled: bool = False):
                 # fuse_wgrad_accumulation is False
                 # https://github.com/Lightning-AI/lightning-thunder/blob/40da5bd5fabc30e99883d74b70c6a7d7fd61a828/thunder/executors/transformer_engineex.py#L224
                 None,  # weight.main_grad if cpu_offloading and fuse_wgrad_accumulation else None,
-                TensorProxy(like=a, shape=(1,)), # scaling_fwd
+                TensorProxy(like=a, shape=(1,)),  # scaling_fwd
             )
 
             return TensorProxy(like=a, shape=output_shape), saved_tensors, ctx_dict
