@@ -354,10 +354,25 @@ def jit(
     )
     cs = CompileStats()
 
-    def _num_alias_args_kwargs_cache(*args, **kwargs) -> int:
+    def _alias_tensor_of_args_kwargs(*args, **kwargs) -> int:
         flat_args, _ = tree_flatten((args, kwargs))
-        tensor_args = tuple(filter(lambda t: pytorch.is_tensor(t), flat_args))
-        return len(tensor_args) - len({t.untyped_storage().data_ptr() for t in tensor_args if not t.is_sparse})
+        data_ptr_to_tensor_group_index = {}
+        tensor_group_index_to_tensor_indices = defaultdict(list)
+        for idx, t in enumerate(flat_args):
+            if pytorch.is_tensor(t) and (not t.is_meta):
+                data_ptr = t.untyped_storage().data_ptr()
+                if data_ptr not in data_ptr_to_tensor_group_index:
+                    data_ptr_to_tensor_group_index[data_ptr] = len(data_ptr_to_tensor_group_index)
+                tgi = data_ptr_to_tensor_group_index[data_ptr]
+                tensor_group_index_to_tensor_indices[tgi].append(idx)
+
+        alias_indices = []
+        for k, v in tensor_group_index_to_tensor_indices.items():
+            if len(v) > 1:
+                alias_indices.extend(v)
+        if not alias_indices:
+            return ""
+        return ",".join(f"{i}" for i in alias_indices)
 
     @_with_cache_info_ctx
     def get_computation_and_inputs(*args, **kwargs):
@@ -401,7 +416,12 @@ def jit(
             no_grad_sync = get_skip_data_parallel_grad_sync()
         cache_info["no_grad_sync"] = no_grad_sync
         return_none_instead_of_grads = is_fsdp_enabled and no_grad_sync
-        cache_info["num_alias_tensor_args"] = _num_alias_args_kwargs_cache(*args, **kwargs)
+
+        # NOTE(crcrpar): If a callable is free from in-place ops whose operand is args and/or their views
+        # alaises wouldn't matter, thus it'd be better to nullify this entry in such cases.
+        # It however would require the functionalized computation trace to interact with `cache_info`,
+        # which seems to break the consistency of cache_info, leading to a failure in cache_info check.
+        cache_info["alias_tensor_indices"] = _alias_tensor_of_args_kwargs(*args, **kwargs)
 
         # TODO RC1 Add module and function checks to prologue (make it a compile option)
 
@@ -510,7 +530,7 @@ def jit(
             prologue_traces = [prologue_trc]
             computation_traces = [computation_trc]
             orig_to_view_swap_map = check_inplace_to_views(computation_trc)
-            vanilla_tensor_args = None
+            vanilla_tensor_args: set[int] | None = None
             if not compile_options.get("skip_inplace_functionalization", False):
                 orig_len = len(computation_traces)
                 computation_traces.extend(
@@ -530,10 +550,11 @@ def jit(
                             continue
                         arg_to_idx[a] = i
 
-                    vanilla_tensor_args = [
+                    vanilla_tensor_args: set[int] = {
                         arg_to_idx[bsym.flat_proxy_args[1]]
                         for bsym in filter(lambda b: b.sym.id == prims.PrimIDs.COPY_, computation_trc.bound_symbols)
-                    ]
+                        if bsym.flat_proxy_args[1] in arg_to_idx
+                    }
 
             if epilogue_trc is not None:
                 epilogue_traces = [epilogue_trc]
@@ -723,29 +744,15 @@ def jit(
         cs.last_trace_host_execution_start = time.perf_counter_ns()
 
         if cache_entry.vanilla_tensor_args:
-            tensor_arg_idx_set = set(cache_entry.vanilla_tensor_args)
 
-            inp_to_data_ptr = {}
-            for i, t in enumerate(inps):
-                if pytorch.is_tensor(t) and not t.is_sparse:
-                    inp_to_data_ptr[i] = t.untyped_storage().data_ptr()
-
-            data_ptr_to_inps = {}
-            for i, data_ptr in inp_to_data_ptr.items():
-                if data_ptr in data_ptr_to_inps:
-                    data_ptr_to_inps[data_ptr].append(i)
-                else:
-                    data_ptr_to_inps[data_ptr] = [i]
-
-            args, _ = tree_flatten((cache_entry.computation_traces[-1].args, cache_entry.computation_traces[-1].kwargs))
-            args_cannot_be_alias = [args[i] for i in cache_entry.vanilla_tensor_args]
-            for indices in data_ptr_to_inps.values():
-                if len(indices) > 1:
-                    check(
-                        not (set(indices) & tensor_arg_idx_set),
-                        lambda: f"It seems that {indices} of {args_cannot_be_alias} share their storage and any of them are modified in-place",
-                        NotImplementedError,
-                    )
+            if alias_tensor_indices_str := _alias_tensor_of_args_kwargs(*inps):
+                alias_tensor_indices = {int(i) for i in alias_tensor_indices_str.split(",")}
+                vanilla_tensor_args = cache_entry.vanilla_tensor_args
+                check(
+                    not vanilla_tensor_args & alias_tensor_indices,
+                    lambda: f"It seems that {vanilla_tensor_args} are {alias_tensor_indices=} share their storage and some of them are modified in-place",
+                    NotImplementedError,
+                )
 
         result = cache_entry.computation_fn(*inps)
 
