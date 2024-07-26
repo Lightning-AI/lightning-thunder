@@ -225,6 +225,10 @@ def cse_single_bsym(
     if bsym.sym.id in NON_FUNCTIONAL_OPS:
         return bsym
 
+    # the unpack_trivial all have no rhs
+    if bsym.sym == thunder.core.prims.unpack_trivial:
+        return bsym
+
     # We can replace any redundant `bsym.args` and `bsym.kwargs` if it is available in the current context.
     new_bsym = bsym.from_bsym_swap_proxies(
         swap_map=redundant_map,
