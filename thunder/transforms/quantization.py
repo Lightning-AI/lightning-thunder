@@ -71,7 +71,7 @@ class BitsAndBytesLinearQuant4bit(Transform):
             tm._overrides_parameters[weight_name] = qw.to(w.device)
             tm._overrides_parameters[f"{weight_name}.absmax"] = qs.absmax.to(w.device)
             tm._overrides_parameters[f"{weight_name}.code"] = qs.code.to(w.device)
-            self.quant_states[weight_name] = {"dtype": qs.dtype, "shape": qs.shape, "blocksize": qs.blocksize}
+            self.quant_states[weight_name] = {"dtype": qs.dtype, "shape": tuple(qs.shape), "blocksize": qs.blocksize}
 
         for n, submodule in model._model.named_modules():
             if isinstance(submodule, torch.nn.Linear):
