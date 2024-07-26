@@ -164,3 +164,33 @@ def test_quantization_on_meta():
         assert_close(b2, b)
 
     assert_close(actual, expected, rtol=1e-2, atol=1e-2)
+
+
+def test_nvfuser_cse():
+    with torch.device("cuda"):
+        mlp = (
+            torch.nn.Sequential(
+                torch.nn.Linear(512, 1024),
+                torch.nn.GELU(),
+                torch.nn.Linear(1024, 512),
+            )
+            .eval()
+            .requires_grad_(False)
+        )
+        inp = torch.randn(1, 512)
+
+    from thunder.transforms.quantization import BitsAndBytesLinearQuant4bit, get_bitsandbytes_executor
+    from thunder.executors.nvfuserex import nvfuserex
+
+    bitsandbytes_executor = get_bitsandbytes_executor()
+
+    jm = thunder.jit(
+        mlp,
+        executors=(bitsandbytes_executor, nvfuserex),
+        transforms=[BitsAndBytesLinearQuant4bit()],
+    )
+
+    actual = jm(inp)
+    expected = mlp(inp)
+
+    assert_close(actual, expected, atol=1e-1, rtol=1e-1)
