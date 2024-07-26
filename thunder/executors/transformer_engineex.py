@@ -362,20 +362,18 @@ def make_te_linear_meta(is_grad_enabled: bool = False):
             global LINEAR_CALLS_COUNTER
             ctx_dict = AnyProxy(object(), name=f"ctx_te_{LINEAR_CALLS_COUNTER}")
 
-            # https://github.com/NVIDIA/TransformerEngine/blob/56e0b351d0b7db6e622d3aa3eac6c6a1bf1ce4ab/transformer_engine/pytorch/module/linear.py#L332-L339
+            # https://github.com/NVIDIA/TransformerEngine/blob/37280ecd5e9c6087d18fbe2e668f2ec7761ada3d/transformer_engine/pytorch/module/linear.py#L323-L330
             # It's not critical to model the exact shape and dtype of
             # saved_tensors since they are not used in Thunder's meta functions.
             saved_tensors = (
                 TensorProxy(like=a, shape=a.shape),  # saved_inputmat
                 TensorProxy(like=a, shape=(a.shape[:-2] + (a.shape[-1], a.shape[-2]))),  # saved_inputmat_t
                 TensorProxy(like=w, shape=w.shape),  # weight
+                TensorProxy(like=w, shape=(w.shape[1], w.shape[0]), dtype=float8_e4m3fn),  # weight_fp8
                 # fuse_wgrad_accumulation is False
                 # https://github.com/Lightning-AI/lightning-thunder/blob/40da5bd5fabc30e99883d74b70c6a7d7fd61a828/thunder/executors/transformer_engineex.py#L224
                 None,  # weight.main_grad if cpu_offloading and fuse_wgrad_accumulation else None,
-                TensorProxy(like=w, shape=(w.shape[1], w.shape[0]), dtype=float8_e4m3fn),
-                TensorProxy(like=a, shape=(1,)),
-                # https://github.com/Lightning-AI/lightning-thunder/blob/40da5bd5fabc30e99883d74b70c6a7d7fd61a828/thunder/executors/transformer_engineex.py#L236
-                None,  # skip_fp8_weight_update
+                TensorProxy(like=a, shape=(1,)), # scaling_fwd
             )
 
             return TensorProxy(like=a, shape=output_shape), saved_tensors, ctx_dict
