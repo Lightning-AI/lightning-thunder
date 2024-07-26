@@ -868,6 +868,9 @@ def functionalize_inplace_ops(
                         with tracectx(intermediate_trace):
                             new_t = prims.reshape.meta(copy_from, base.shape)
                             reshape_bsym = prims.reshape.bind(copy_from, base.shape, output=new_t)
+                            reshape_bsym.header = (
+                                f"`{new_t.name}` replaces `{base.name}` due to in-place op into `{copy_to.name}`"
+                            )
                         new_bsyms.append(reshape_bsym)
                     swap_map[variableify(base)] = new_t
                 for v in views_to_replace:
@@ -879,6 +882,9 @@ def functionalize_inplace_ops(
                             with tracectx(intermediate_trace):
                                 new_t = prims.reshape.meta(copy_from, v.shape)
                                 reshape_bsym = prims.reshape.bind(copy_from, v.shape, output=new_t)
+                                reshape_bsym.header = (
+                                    f"`{new_t.name}` replaces `{v.name}` due to in-place op into `{copy_to.name}`"
+                                )
                             new_bsyms.append(reshape_bsym)
                         swap_map[variableify(v)] = new_t
                 bsym_to_trigger_inplace_propagation[functional_bsym] = (copy_to, base, views_to_replace)
