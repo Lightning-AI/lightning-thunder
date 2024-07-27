@@ -208,12 +208,12 @@ def ddp_transform_module(
     orig_module.process_group_for_ddp = process_group
 
     # will insert syncs for weights (grads automatically handled by inserting them in forward!)
-    early_transform_from_trace_to_ddp_trace = DDPTraceTransform(
+    transform_from_trace_to_ddp_trace = DDPTraceTransform(
         process_group=process_group,
     )
 
     # add prologue + compute transform
-    thunder_model = add_transform(thunder_model, early_transform=early_transform_from_trace_to_ddp_trace)
+    thunder_model = add_transform(thunder_model, transform=transform_from_trace_to_ddp_trace)
 
     return thunder_model
 

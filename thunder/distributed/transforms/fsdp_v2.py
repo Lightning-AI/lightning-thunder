@@ -16,6 +16,7 @@ from thunder.core.transform_common import Transform
 if TYPE_CHECKING:
     from typing import Any
     from torch.distributed import ProcessGroup
+    from thunder.core.trace import TraceCtx
 
 
 __all__ = [
@@ -23,7 +24,7 @@ __all__ = [
 ]
 
 @dataclass(frozen=True)
-class DDPTraceTransform(EarlyTransform):
+class DDPTraceTransform(Transform):
     process_group: ProcessGroup
 
     def transform_traces(self, prologue_trace: TraceCtx, computation_trace: TraceCtx, epilogue_trace: TraceCtx, **kwargs):
