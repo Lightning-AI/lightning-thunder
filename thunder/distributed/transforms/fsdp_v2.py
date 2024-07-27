@@ -91,7 +91,7 @@ class FSDPTraceTransform(Transform):
                     bsym.args = (a0, shape, thunder_device_str, *a2pp)
 
         proxies_to_replace = {id(bsym.args[0]): bsym.output for bsym in new_scope}
-
+ 
         # See NOTE: Shared Parameters in Trace
         for param_name, base_param in self.shared_params_name.items():
             param_proxy = param_name_to_comp_trc_proxy[param_name]

@@ -21,8 +21,10 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class DDPTraceTransform(Transform):
     process_group: ProcessGroup
+    replicated_params: dict[str, Any]
+    shared_params_name: dict[str, str]
 
-    def transform_traces(self, prologue_trace: TraceCtx, computation_trace: TraceCtx, epilogue_trace: TraceCtx, **kwargs):
+    def transform_traces_pre_prologue(self, prologue_trace: TraceCtx, computation_trace: TraceCtx, epilogue_trace: TraceCtx, **kwargs):
         from thunder.distributed import prims as dist_prims
 
         prologue_producers, prologue_consumers = utils.producers_and_consumers(prologue_trace)
@@ -51,55 +53,42 @@ class DDPTraceTransform(Transform):
             if bsym.sym == prims.unpack_parameter:
                 param_thunder_module, param_name = bsym.args
                 assert param_thunder_module is thunder_module_proxy
-                if True: # param_name in self.sharded_params:
+                if param_name in self.replicated_params:
                     param_name_to_comp_trc_proxy[param_name] = comp_inp_p
                     #thunder_device = devices.to_device(new_torch_device)
                     #thunder_device_str = thunder_device.device_str()
-
                     pro_out_p._distparallel_type = DistParallelType.REPLICATED
                     #pro_out_p._shape = tuple(new_shape)
                     #pro_out_p._device = thunder_device
                     if comp_inp_p is not pro_out_p:
-                        #comp_inp_p._distparallel_type = DistParallelType.FULLY_SHARDED
+                        comp_inp_p._distparallel_type = DistParallelType.REPLICATED
                         #comp_inp_p._shape = tuple(new_shape)
                         #comp_inp_p._device = thunder_device
-                        raise NotImplementedError("Expected comp_inp_p to be pro_out_p")
                     with tracectx(computation_trace):
                         # we will produce a new trace with syncs before using the weights
                         # then, the backward sync will be automatically handled by thunder (inserting all_reduce for the gradients)
                         # then, the augmented forward pass will remove the synchronizes from the forward (as expected)
-
                         synchronized_parameters.append(dist_prims.synchronize(comp_inp_p, self.process_group))
-                    
-                    # not needed for ddp, params are not sharded
-                    """for c in prologue_consumers[pro_out_p]:
-                        if c.sym is prims.check_tensor_shape_and_metadata:
-                            # TODO have a more principled way to update this?
-                            a0, _, _, *a2pp = c.args
-                            c.args = (a0, tuple(new_shape), thunder_device_str, *a2pp)"""
-        
-
         new_scope = computation_trace.pop_scope()
         # new_scope contains the new sync prims
         # map of param -> synced param
         proxies_to_replace = {id(bsym.args[0]): bsym.output for bsym in new_scope}
 
         # See NOTE: Shared Parameters in Trace
-        # TODO: handle shared params
-        """for param_name, base_param in self.shared_params_name.items():
+        for param_name, base_param in self.shared_params_name.items():
             param_proxy = param_name_to_comp_trc_proxy[param_name]
             base_param_proxy = param_name_to_comp_trc_proxy[base_param]
-            allgather_base_param_proxy = proxies_to_replace[id(base_param_proxy)]
+            synced_base_param_proxy = proxies_to_replace[id(base_param_proxy)]
             # Update `proxies_to_replace` so we replace all usage of `param_proxy`
-            # with the output of `AllGather` on `base_param_proxy`.
-            proxies_to_replace[id(param_proxy)] = allgather_base_param_proxy"""
+            # with the output of the synced param on `base_param_proxy`.
+            proxies_to_replace[id(param_proxy)] = synced_base_param_proxy
 
         new_computation_trace = from_trace(computation_trace)
         for idx, bsym in enumerate(computation_trace.bound_symbols):
             if bsym.sym != prims.unpack_trivial:
                 break
-            new_computation_trace.bound_symbols.append(bsym.from_bsym())
-        # insert the new scope ops after unpack_trivial (why?)
+            new_computation_trace.bound_symbols.append(bsym.from_bsym(args=bsym.args))
+        
         new_computation_trace.bound_symbols += new_scope
         for bsym in computation_trace.bound_symbols[idx:]:
             # replace param by synced_param

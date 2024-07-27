@@ -17,25 +17,19 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-
-class SimpleLinearModel(nn.Module):
-    def __init__(self):
-        super(SimpleLinearModel, self).__init__()
-        self.linear = nn.Linear(100, 100)
-
-    def forward(self, x):
-        return self.linear(x)
-
 dist.init_process_group('nccl')
 rank = dist.get_rank()
 world_size = dist.get_world_size()
 local_rank = int(os.getenv('LOCAL_RANK', 0))
 set_seed(local_rank)
-
-model = SimpleLinearModel().to(local_rank)
+model = torch.nn.Sequential(
+   torch.nn.Linear(100, 100, bias=False),
+   torch.nn.Linear(100, 100, bias=False),
+).to(local_rank)
+model[1].weight = model[0].weight
 
 ddp_model = thunder.distributed.ddp(thunder.jit(model))
-ddp_model = DDP(model)
+#ddp_model = DDP(model)
 
 criterion = nn.MSELoss()
 optimizer = optim.SGD(ddp_model.parameters(), lr=0.01)
@@ -51,6 +45,12 @@ for step in range(10):
     outputs = ddp_model(inputs)
     loss = criterion(outputs, targets)
     loss.backward()
+    if step == 0 and rank == 0 and isinstance(ddp_model, thunder.ThunderModule):
+        tr = thunder.last_traces(ddp_model)[-1]
+        print(tr)
+        tr2 = thunder.last_backward_traces(ddp_model)[-1]
+        print(tr2)
+        print(thunder.last_prologue_traces(ddp_model)[-1])
     optimizer.step()
 
     if rank == 0:
