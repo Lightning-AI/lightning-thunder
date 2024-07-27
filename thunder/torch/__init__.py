@@ -85,7 +85,7 @@ _torch_to_thunder_function_map: dict[Callable, Callable] = {}
 _inplace_to_out_of_place: dict[Callable, tuple[Callable, int]] = {}
 
 
-# Helpers for factory functions to get default dtypes.
+# Helpers for factory functions to get default dtype and device.
 def get_default_dtype():
     # `thunder.jit` will create cache info and stash the default dtype
     # observed at the beginning of jitting.
@@ -101,6 +101,23 @@ def get_default_dtype():
 
 def maybe_get_default_dtype(dtype):
     return dtype or get_default_dtype()
+
+
+def get_default_device():
+    # `thunder.jit` will create cache info and stash the default device
+    # observed at the beginning of jitting.
+    cache_info = thunder._get_cache_info()
+
+    # Currently, changing device during the jitted function is unsupported.
+    utils.check(
+        cache_info["default_device"] == torch.get_default_device(),
+        lambda: "Default device is changed during the execution of jitted function. This is currently unsupported.",
+    )
+    return torch.get_default_device()
+
+
+def maybe_get_default_device(device):
+    return device or get_default_device()
 
 
 # A wrapper that executes the operations within the torch language context
@@ -520,9 +537,7 @@ def arange(
     device: None | DeviceLike = None,
     dtype: None | dtypeLike = None,
 ) -> TensorLike:
-    if device is None:
-        device = "cpu"
-
+    device = maybe_get_default_device(device)
     device = to_device(device)
     # From torch docs - https://pytorch.org/docs/stable/generated/torch.arange.html
     # If any of start, end, or stop are floating-point, the dtype is inferred to be the default dtype, see get_default_dtype().
@@ -545,12 +560,8 @@ def arange(
 def full(
     shape: Sequence[int], fill_value: NumberLike, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
 ) -> TensorLike:
-    if device is None:
-        device = "cpu"
-
-    device = to_device(device)
+    device = to_device(maybe_get_default_device(device))
     dtype = to_dtype(maybe_get_default_dtype(dtype))
-
     return clang.full(shape, fill_value, device=device, dtype=dtype)
 
 
@@ -616,7 +627,7 @@ def uniform(
     device: DeviceLike,
     dtype: dtypeLike,
 ) -> TensorLike:
-    device = to_device(device)
+    device = to_device(maybe_get_default_device(device))
     dtype = to_dtype(maybe_get_default_dtype(dtype))
 
     return clang.uniform(shape, minval, maxval, device=device, dtype=dtype)
@@ -673,7 +684,7 @@ def uniform_philox(
     seed: int | TensorProxy,
     offset: int | TensorProxy,
 ) -> TensorLike:
-    device = to_device(device)
+    device = to_device(maybe_get_default_device(device))
     dtype = to_dtype(maybe_get_default_dtype(dtype))
 
     return clang.uniform_philox(shape, minval, maxval, device=device, dtype=dtype, seed=seed, offset=offset)
@@ -698,10 +709,8 @@ def randn(
     # NOTE: Currently, we don't model randomness
     utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
     utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
-    if device is None:
-        device = "cpu"
-    device = to_device(device)
 
+    device = to_device(maybe_get_default_device(device))
     dtype = to_dtype(maybe_get_default_dtype(dtype))
     shape = utils.extract_shape_from_varargs(shape)
     return prims.randn(shape, device=device, dtype=dtype)
@@ -788,15 +797,8 @@ def empty(
         NotImplementedError,
     )
 
-    # For now we default to `float32`,
-    # however, we should add a default dtype or rely on `torch.get_default_dtype`.
     dtype = to_dtype(maybe_get_default_dtype(dtype))
-
-    # For now we default to "cpu",
-    # however, we should add a default device or rely on `torch.get_default_device`.
-    if device is None:
-        device = "cpu"
-    device = to_device(device)
+    device = to_device(maybe_get_default_device(device))
 
     return clang.empty(size, device=device, dtype=dtype)
 

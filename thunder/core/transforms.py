@@ -62,7 +62,7 @@ from thunder.clang import (
     reciprocal,
     convolution,
 )
-from thunder.core.transform_common import dce, EarlyTransform, AdditionalTransform, PostOptimizationTransform
+from thunder.core.transform_common import dce, Transform
 from thunder.core.vjp_utils import make_aug_forward_and_backward
 from thunder.extend import Executor
 import thunder.torch as ltorch
@@ -403,8 +403,7 @@ def visitor_transform(trace_from: Trace, visit: Callable, *, provenance: None | 
 def add_transform(
     cfn: Callable,
     *,
-    transform: AdditionalTransform | None = None,
-    early_transform: EarlyTransform | None = None,
+    transform: Transform,
     disable_torch_autograd_support=False,
 ) -> Callable:
     from thunder.common import CompileData
@@ -413,86 +412,40 @@ def add_transform(
 
     utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
     utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
-    utils.check_type(transform, (NoneType, AdditionalTransform))
-    utils.check_type(early_transform, (NoneType, EarlyTransform))
+    utils.check_type(transform, Transform)
 
-    assert cd.using_jit or early_transform is None
-    assert transform is not None or early_transform is not None
+    assert cd.using_jit
 
-    if cd.using_jit:
-        from thunder import jit
+    from thunder import jit
 
-        early_transforms = cfn._lc_early_transforms[:]
-        additional_transforms = cfn._lc_transforms[:]
-        if early_transform is not None:
-            early_transforms.append(early_transform)
-        if transform is not None:
-            additional_transforms.append(transform)
-        jfn = jit(
-            cd.fn,
-            langctx=cd.langctx,
-            executors=cd.executors_list,
-            sharp_edges=cd.sharp_edges,
-            # cache, interpretation?
-            early_transforms=early_transforms,
-            additional_transforms=additional_transforms,
-            post_optimization_transforms=cfn._lc_post_optimization_transforms,
-            disable_torch_autograd=cd.disable_torch_autograd_support or disable_torch_autograd_support,
-            **cd.compile_options,
-        )
-        from thunder import ThunderModule
+    # todo: move _lc_transforms to compile_data
+    transforms = cfn._lc_transforms[:]
+    transforms.append(transform)
+    jfn = jit(
+        cd.fn,
+        langctx=cd.langctx,
+        executors=cd.executors_list,
+        sharp_edges=cd.sharp_edges,
+        # cache, interpretation?
+        transforms=transforms,
+        disable_torch_autograd=cd.disable_torch_autograd_support or disable_torch_autograd_support,
+        **cd.compile_options,
+    )
+    from thunder import ThunderModule
 
-        if isinstance(jfn, ThunderModule):
-            jfn._overrides_parameters = cfn._overrides_parameters
-            jfn._overrides_buffers = cfn._overrides_buffers
-        return jfn
-
-    raise NotImplementedError("Using the non-jit functions was an experiment that is no longer supported.")
-
-
-# TODO Consider refactoring this with the above
-# Helper function to add a post-optimization transform
-def add_post_optimization_transform(cfn: Callable, transform: PostOptimizationTransform) -> Callable:
-    from thunder.common import CompileData
-
-    cd: None | Any = getattr(cfn, "_lc_cd", None)
-
-    utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
-    utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
-    utils.check_type(transform, PostOptimizationTransform)
-
-    if cd.using_jit:
-        from thunder import jit
-
-        post_optimization_transforms = cfn._lc_post_optimization_transforms[:]
-        post_optimization_transforms.append(transform)
-        jfn = jit(
-            cd.fn,
-            langctx=cd.langctx,
-            executors=cd.executors_list,
-            sharp_edges=cd.sharp_edges,
-            # cache, interpretation?
-            early_transforms=cfn._lc_early_transforms[:],
-            additional_transforms=cfn._lc_transforms[:],
-            post_optimization_transforms=post_optimization_transforms,
-            disable_torch_autograd=cd.disable_torch_autograd_support,
-            **cd.compile_options,
-        )
-        from thunder import ThunderModule
-
-        if isinstance(jfn, ThunderModule):
-            jfn._overrides_parameters = cfn._overrides_parameters
-            jfn._overrides_buffers = cfn._overrides_buffers
-        return jfn
-
-    raise NotImplementedError("Using the non-jit functions was an experiment that is no longer supported.")
+    if isinstance(jfn, ThunderModule):
+        jfn._overrides_parameters = cfn._overrides_parameters
+        jfn._overrides_buffers = cfn._overrides_buffers
+    return jfn
 
 
 # The no-op transform. A trivial composable transform, only useful as an example.
-class _NoopTransform(AdditionalTransform):
-    def transform_trace(self, trace: Trace, **kwargs) -> Trace:
+class _NoopTransform(Transform):
+    def transform_trace_pre_prologue(
+        self, prologue_trace: Trace, computation_trace: Trace, epilogue_trace: Trace | None, **kwargs
+    ) -> Trace:
         start_time_ns = time.perf_counter_ns()
-        noop_trace = from_trace(trace)
+        noop_trace = from_trace(computation_trace)
 
         tracectx_tok: Any
         try:
@@ -501,14 +454,14 @@ class _NoopTransform(AdditionalTransform):
         finally:
             reset_tracectx(tracectx_tok)
 
-        noop_trace.bound_symbols.extend(trace.bound_symbols)
+        noop_trace.bound_symbols.extend(computation_trace.bound_symbols)
 
         end_time_ns = time.perf_counter_ns()
         elapsed_time_ns = end_time_ns - start_time_ns
         elapsed_time_millis = elapsed_time_ns // 1000000
         noop_trace.set_provenance(TraceProvenance(f"No-op Transform (took {elapsed_time_millis} milliseconds)"))
 
-        return noop_trace
+        return prologue_trace, noop_trace, computation_trace
 
 
 def noop(cfn: Callable) -> Callable:
@@ -518,33 +471,34 @@ def noop(cfn: Callable) -> Callable:
 
 # The comment fusions transform. Just adds a comment before and after each fusion.
 #   This is an example of a post-optimization transform.
-def _comment_fusions_transform(trace: Trace, **kwargs) -> Trace:
-    start_time_ns = time.perf_counter_ns()
-    commented_trace = from_trace(trace)
+class _CommentFusionsTransform(Transform):
+    def transform_trace_post_optimization(trace: Trace, **kwargs) -> Trace:
+        start_time_ns = time.perf_counter_ns()
+        commented_trace = from_trace(trace)
 
-    nbsyms: list[BoundSymbol] = []
-    for bsym in trace.bound_symbols:
-        if bsym.sym.is_fusion:
-            fusion_name = bsym.sym.name
-            pre_comment_bsym = prims.comment.bind(f"Before {fusion_name}", output=None)
-            post_comment_bsym = prims.comment.bind(f"After {fusion_name}", output=None)
+        nbsyms: list[BoundSymbol] = []
+        for bsym in trace.bound_symbols:
+            if bsym.sym.is_fusion:
+                fusion_name = bsym.sym.name
+                pre_comment_bsym = prims.comment.bind(f"Before {fusion_name}", output=None)
+                post_comment_bsym = prims.comment.bind(f"After {fusion_name}", output=None)
 
-            nbsyms.extend([pre_comment_bsym, bsym, post_comment_bsym])
-        else:
-            nbsyms.append(bsym)
+                nbsyms.extend([pre_comment_bsym, bsym, post_comment_bsym])
+            else:
+                nbsyms.append(bsym)
 
-    commented_trace.bound_symbols = nbsyms
-    end_time_ns = time.perf_counter_ns()
-    elapsed_time_ns = end_time_ns - start_time_ns
-    elapsed_time_millis = elapsed_time_ns // 1000000
+        commented_trace.bound_symbols = nbsyms
+        end_time_ns = time.perf_counter_ns()
+        elapsed_time_ns = end_time_ns - start_time_ns
+        elapsed_time_millis = elapsed_time_ns // 1000000
 
-    commented_trace.set_provenance(TraceProvenance(f"Comment Fusions (took {elapsed_time_millis} milliseconds)"))
+        commented_trace.set_provenance(TraceProvenance(f"Comment Fusions (took {elapsed_time_millis} milliseconds)"))
 
-    return commented_trace
+        return commented_trace
 
 
 def comment_fusions(cfn: Callable) -> Callable:
-    return add_post_optimization_transform(cfn, _comment_fusions_transform)
+    return add_ransform(cfn, _CommentFusionsTransform)
 
 
 #
@@ -1485,8 +1439,8 @@ def grad(
 
         return grad_func
 
-    class _GradTransform(AdditionalTransform):
-        def transform_trace(self, trc: Trace, *, executors_list: Sequence[Any]) -> Trace:
+    class _GradTransform(Transform):
+        def transform_trace_additionally(self, trc: Trace, *, executors_list: Sequence[Any]) -> Trace:
             # Using trc.python_callable() makes it impossible to retrace the
             # function because the python_callable uses python_ctx which replaces
             # symbol occurrences with its symbol._call_ctx function
@@ -3733,8 +3687,19 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
     finally:
         reset_tracectx(tracectx_token)
 
+    saved_for_backward = forward_trace.output[1]
+    flat_saves, _ = tree_flatten(saved_for_backward)
+
     def backward_fn(saved_for_backward, cotangents):
+        # trace converts all saved_for_backward into proxy, we want to restore number scalars afterwards.
+        flat_saves_proxified, saves_spec = tree_flatten(saved_for_backward)
+        flat_filtered = [
+            proxified if isinstance(entry, Proxy) else entry
+            for proxified, entry in zip(flat_saves_proxified, flat_saves)
+        ]
+        saved_for_backward = tree_unflatten(flat_filtered, saves_spec)
         env = reconstruct_forward_env_for_backward(trace, saved_for_backward)
+
         if torch_autograd:
             cotangents = tree_unflatten(cotangents, output_spec)
         out = backward_pass(env, trace, cotangents)
@@ -3746,7 +3711,6 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
             out = tree_flatten(out)[0]
         return out
 
-    saved_for_backward = forward_trace.output[1]
     backward_trace = construct_trace(rename_proxies=False)(backward_fn, saved_for_backward, cotangents)
 
     # We are done with constructing the forward and backward passes at this
@@ -3831,6 +3795,11 @@ def maybe_downcast_to(dtype, args):
 
 
 @register_autocast_rule("torch.matmul")
+def autocast_torch_matmul_rule(a, b, dtype):
+    """Autocast rule for matmul"""
+    return ltorch.matmul(*(maybe_downcast_to(dtype, (a, b))))
+
+
 @register_autocast_rule(prims.PrimIDs.MATMUL)
 def autocast_matmul_rule(a, b, dtype):
     """Autocast rule for matmul"""

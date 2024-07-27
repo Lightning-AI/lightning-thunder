@@ -587,13 +587,13 @@ def fsdp_transform_module(
                 "param_name": pn,
             }
 
-    early_transform_from_trace_to_fsdp_trace = FSDPTraceTransform(
+    transform_from_trace_to_fsdp_trace = FSDPTraceTransform(
         sharded_params=sharded_params,
         process_group=process_group,
         shared_params_name=shared_params_name,
     )
     # add prologue + compute transform
-    thunder_model = add_transform(thunder_model, early_transform=early_transform_from_trace_to_fsdp_trace)
+    thunder_model = add_transform(thunder_model, transform=transform_from_trace_to_fsdp_trace)
 
     return thunder_model
 

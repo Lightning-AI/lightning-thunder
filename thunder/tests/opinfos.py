@@ -5826,6 +5826,8 @@ def empty_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     for shape in cases:
         yield SampleInput(shape, device=device, dtype=dtype)
+        if len(shape) > 0:  # *() will lead to no shape being passed to `empty`.
+            yield SampleInput(*shape, device=device, dtype=dtype)
 
 
 def empty_error_generator(op, device, **kwargs):
@@ -6144,23 +6146,49 @@ linear_algebra_ops = []
 
 
 def normalize_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    def make(shape, p=2.0, dim=1, min_scalar_norm=0.3):
+        t = make_tensor(shape, device=device, dtype=torch.double)
+        t = t / t.numel()
+
+        # avoid values close to zero
+        t = torch.where(t.abs() >= min_scalar_norm, t, min_scalar_norm)
+
+        # pre-normalize for general stability
+        t = torch.nn.functional.normalize(t, p=p, dim=dim)
+
+        # stabilize for inf norms
+        # idea: make max/min element larger/smaller
+        # to guarantee stable argmax/argmin for finite-diff
+        # grad checks
+        if p == math.inf or p == -math.inf:
+            if p == math.inf:
+                op = torch.argmax
+                delta = +min_scalar_norm / 2
+            else:
+                op = torch.argmin
+                delta = -min_scalar_norm / 2
+
+            idx = op(t, dim=dim, keepdim=True).expand_as(t)
+            delta = torch.tensor(delta, device=device, dtype=torch.double).expand_as(t)
+            t.scatter_add_(dim=dim, index=idx, src=delta)
+
+        return t.to(dtype).requires_grad_(requires_grad)
+
     # input shape
-    cases = (
+    shapes = (
         (4, 4),
-        (32, 32),
-        (16, 16, 16),
+        (32, 8),
+        (16, 10, 16),
         (4, 2, 4, 5),
     )
-    for case in cases:
-        input_tensor = make(case)
-        # avoid very small norm tensors, which can be unstable to normalize
-        input_tensor = input_tensor + 0.2 * torch.sign(input_tensor)
-        yield SampleInput(input_tensor, eps=1e-8)
-        yield SampleInput(input_tensor, p=0, eps=1e-8)
-        yield SampleInput(input_tensor, p=1, eps=1e-8)
-        yield SampleInput(input_tensor, p=4, eps=1e-8)
-        yield SampleInput(input_tensor, p=math.inf, eps=1e-8)
+
+    # TODO: add samples with negative `p`
+    for shape in shapes:
+        yield SampleInput(make(shape), eps=1e-6)
+        yield SampleInput(make(shape, p=0), p=0, eps=1e-6)
+        yield SampleInput(make(shape, p=1), p=1, eps=1e-6)
+        yield SampleInput(make(shape, p=4), p=4, eps=1e-6)
+        yield SampleInput(make(shape, p=math.inf), p=math.inf, eps=1e-6)
 
 
 normalize_opinfo = OpInfo(
@@ -6168,23 +6196,19 @@ normalize_opinfo = OpInfo(
     sample_input_generator=normalize_sample_generator,
     torch_reference=torch.nn.functional.normalize,
     dtypes=(datatypes.floating, datatypes.complexfloating),
+    supports_grad=True,
     test_directives=(
-        # The low precision floating point types sometimes fail
-        DecorateInfo(
-            custom_comparator(partial(assert_close, atol=1e-3, rtol=1e-1)),
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.bfloat16, datatypes.float16),
-            devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
-        ),
-        DecorateInfo(
-            custom_comparator(partial(assert_close, atol=1e-3, rtol=1e-3)),
-            "test_vjp_correctness",
-        ),
         # TODO Investigate the low precision difference
         DecorateInfo(
             custom_comparator(partial(assert_close, atol=1e-1, rtol=1e-1)),
             "test_phantom_grad_vs_torch_consistency",
-            dtypes=(datatypes.bfloat16, datatypes.float16),
+            dtypes=(datatypes.bfloat16,),
+            devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
+        ),
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-2, rtol=1e-2)),
+            "test_phantom_grad_vs_torch_consistency",
+            dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU, devices.DeviceType.CUDA),
         ),
     ),
@@ -6998,6 +7022,7 @@ convolution_opinfo = OpInfo(
             dtypes=(datatypes.float16,),
             devicetypes=(devices.DeviceType.CPU,),
         ),
+        DecorateInfo(pytest.mark.xfail, "test_vjp_correctness", active_if=IS_WINDOWS),
         DecorateInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
