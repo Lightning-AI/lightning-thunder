@@ -187,7 +187,7 @@ def ddp_transform_module(
     from thunder import compile_data as get_compile_data
     from thunder.core.transforms import add_transform
     from thunder.core.module import ThunderModule
-    from thunder.distributed.transforms.fsdp_v2 import DDPTraceTransform
+    from thunder.distributed.transforms.ddp_v2 import DDPTraceTransform
 
     process_group = copy_default_process_group()
     utils.check(process_group is not None, lambda: "The default process group is None")
@@ -335,7 +335,6 @@ def ddp(
 
     if isinstance(model, ThunderModule):
         return ddp_transform_module(model, device=None, broadcast_from=broadcast_from, bucket_size_in_mb=bucket_size_in_mb)
-    
     
     utils.check(pg is not None, lambda: "The default process group is None")
     model.use_ddp = True
