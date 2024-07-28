@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -24,7 +23,9 @@ class DDPTraceTransform(Transform):
     replicated_params: dict[str, Any]
     shared_params_name: dict[str, str]
 
-    def transform_traces_pre_prologue(self, prologue_trace: TraceCtx, computation_trace: TraceCtx, epilogue_trace: TraceCtx, **kwargs):
+    def transform_traces_pre_prologue(
+        self, prologue_trace: TraceCtx, computation_trace: TraceCtx, epilogue_trace: TraceCtx, **kwargs
+    ):
         from thunder.distributed import prims as dist_prims
 
         prologue_producers, prologue_consumers = utils.producers_and_consumers(prologue_trace)
@@ -86,7 +87,7 @@ class DDPTraceTransform(Transform):
             if bsym.sym != prims.unpack_trivial:
                 break
             new_computation_trace.bound_symbols.append(bsym.from_bsym(args=bsym.args))
-        
+
         new_computation_trace.bound_symbols += new_scope
         for bsym in computation_trace.bound_symbols[idx:]:
             # replace param by synced_param
@@ -94,6 +95,5 @@ class DDPTraceTransform(Transform):
             new_computation_trace.bound_symbols.append(bsym.from_bsym(args=new_args))
 
         new_computation_trace.set_provenance(TraceProvenance("ddp pass"))
-        
+
         return prologue_trace, new_computation_trace, epilogue_trace
-        
