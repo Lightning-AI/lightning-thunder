@@ -57,26 +57,30 @@ from torch.testing._internal import common_utils
 class DDPTest(DistributedParallelTestCase):
     # Reference issue "Add an example of DDP(compile(model)) to tests"
     def test_ddp_compile_module(self):
-        model = ToyModel().to(self.rank)
-        ddp_model = DDP(thunder.jit(model, device_ids=[self.rank]))
-
-        loss_fn = nn.MSELoss()
-        optimizer = torch.optim.SGD(ddp_model.parameters(), lr=0.001)
-
+        # Asserts that DDPing a jitted model yields the same results as raw torch DDP.
+        initial_model_state = ToyModel().state_dict()
+        ddp_fns = [
+            lambda model: DDP(thunder.jit(model)),
+            lambda model: ddp(thunder.jit(model)),
+        ]
         x, labels = torch.randn(20, 12).to(self.rank), torch.randn(20, 8).to(self.rank)
-
-        init_loss, last_loss = None, None
-        for i in range(3):
-            optimizer.zero_grad()
-            outputs = ddp_model(x)
-            loss = loss_fn(outputs, labels)
-            loss.backward()
-            optimizer.step()
-            if i == 0:
-                init_loss = loss.detach().item()
-            if i == 2:
-                last_loss = loss.detach().item()
-        assert init_loss > last_loss
+        def _get_last_loss(fn):
+            model = ToyModel().to(self.rank)
+            model.load_state_dict(initial_model_state)
+            ddp_model = fn(model)
+            loss_fn = nn.MSELoss()
+            optimizer = torch.optim.SGD(ddp_model.parameters(), lr=0.001)
+            for i in range(3):
+                optimizer.zero_grad()
+                outputs = ddp_model(x)
+                loss = loss_fn(outputs, labels)
+                loss.backward()
+                optimizer.step()
+            return loss
+        raw_ddp_loss = _get_last_loss(lambda model: DDP(model))
+        for fn in ddp_fns:
+            loss = _get_last_loss(fn)
+            self.assertEqual(loss, raw_ddp_loss)
 
     # Reference issue "[tracker] Support DistributedDataParallel"
     def test_compile_ddp_module(self):
