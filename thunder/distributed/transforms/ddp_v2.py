@@ -55,22 +55,20 @@ class DDPTraceTransform(Transform):
                 assert param_thunder_module is thunder_module_proxy
                 if param_name in self.replicated_params:
                     param_name_to_comp_trc_proxy[param_name] = comp_inp_p
-                    #thunder_device = devices.to_device(new_torch_device)
-                    #thunder_device_str = thunder_device.device_str()
+                    shape, torch_device = self.replicated_params[param_name]
+                    thunder_device = devices.to_device(torch_device)
                     pro_out_p._distparallel_type = DistParallelType.REPLICATED
-                    #pro_out_p._shape = tuple(new_shape)
-                    #pro_out_p._device = thunder_device
+                    pro_out_p._device = thunder_device
                     if comp_inp_p is not pro_out_p:
                         comp_inp_p._distparallel_type = DistParallelType.REPLICATED
-                        #comp_inp_p._shape = tuple(new_shape)
-                        #comp_inp_p._device = thunder_device
+                        comp_inp_p._device = thunder_device
                     with tracectx(computation_trace):
                         # we will produce a new trace with syncs before using the weights
                         # then, the backward sync will be automatically handled by thunder (inserting all_reduce for the gradients)
                         # then, the augmented forward pass will remove the synchronizes from the forward (as expected)
                         synchronized_parameters.append(dist_prims.synchronize(comp_inp_p, self.process_group))
-        new_scope = computation_trace.pop_scope()
         # new_scope contains the new sync prims
+        new_scope = computation_trace.pop_scope()
         # map of param -> synced param
         proxies_to_replace = {id(bsym.args[0]): bsym.output for bsym in new_scope}
 

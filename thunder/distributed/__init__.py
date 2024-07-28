@@ -176,10 +176,15 @@ def _sync_grads(module: torch.nn.Module) -> None:
             "No op since neither `use_ddp` nor `use_fsdp` set. Have you applied either `thunder.distributed.ddp` or `thunder.distributed.fsdp`?"
         )
 
+# When the user calls ddp(jitted_module), this function does the following
+# - Marks the original function with appropiate attributes (use_ddp...)
+# - Broadcasts parameters if necessary
+# - It then registers a transform (callback that runs before prologue is executed) that transforms the
+#   prologue and compute trace, that insert syncs (and grad syncs for the backward, handled by thunder automatically.)
+
 def ddp_transform_module(
     thunder_model: ThunderModule,
     *,
-    device = None,
     broadcast_from=None,
     bucket_size_in_mb: float = 25.0,
 ) -> ThunderModule:
@@ -190,10 +195,6 @@ def ddp_transform_module(
 
     process_group = copy_default_process_group()
     utils.check(process_group is not None, lambda: "The default process group is None")
-    if device is None:
-        local_rank = int(os.environ["LOCAL_RANK"])
-        device = torch.device("cuda", local_rank)
-
     cd = get_compile_data(thunder_model)
     cd.use_ddp = True
     orig_module: torch.nn.Module = cd.fn
@@ -203,10 +204,9 @@ def ddp_transform_module(
     )
     orig_module.use_ddp = True
     orig_module.process_group_for_ddp = process_group
+    orig_module.bucket_size_in_mb = bucket_size_in_mb
 
-    # modify module
     replicated_params = {}
-    device_adjustments = {}
     # We use `shared_params` dictionary to track the shared parameters.
     # Key to this dictionary is the original parameter from the user's Module.
     # Values are the copied and sharded parameter for the thunder module and meta-data related to sharding.
@@ -248,28 +248,26 @@ def ddp_transform_module(
                 replicated_params[pn] = shared_params[p]["param_meta"]
                 continue
 
-            # if we don't have an override or it is just the original, do create a copy
-            if thunder_model._overrides_parameters.get(pn, p) is p:
-                thunder_model._overrides_parameters[pn] = copy.copy(p)
+            thunder_model._overrides_parameters[pn] = copy.copy(p)
             # we collect shapes and devices because we do not know if other transforms also change it...
             shape = thunder_model._overrides_parameters[pn].shape
             replicated_params[pn] = (shape, thunder_model._overrides_parameters[pn].device)
 
-            # Track the original param and it's corresponding copied shard and metadata.
+            # Track param information
             shared_params[p] = {
                 "param_copy": thunder_model._overrides_parameters[pn],
                 "param_meta": replicated_params[pn],
                 "param_name": pn,
             }
             
-    # will insert syncs for weights (grads automatically handled by inserting them in forward!)
+    # will insert syncs for parameters (and gradient syncs in the backward pass, this is handled by thunder)
+    # usually, other transforms will remove the forward syncs (they are usually in ddp)
     transform_from_trace_to_ddp_trace = DDPTraceTransform(
         process_group=process_group,
         replicated_params=replicated_params,
         shared_params_name=shared_params_name
     )
 
-    # add prologue + compute transform
     thunder_model = add_transform(thunder_model, transform=transform_from_trace_to_ddp_trace)
 
     return thunder_model
@@ -385,14 +383,10 @@ def ddp(
         lambda: "ddp requires torch distributed to be available (but it's not)",
     )
     from thunder.core.module import ThunderModule
-    pg = copy_default_process_group()
-    with torch.no_grad():
-        for param in model.parameters():
-            tdist.broadcast(param, src=broadcast_from, group=pg, async_op=False)
-
     if isinstance(model, ThunderModule):
-        return ddp_transform_module(model, device=None, broadcast_from=broadcast_from, bucket_size_in_mb=bucket_size_in_mb)
+        return ddp_transform_module(model, broadcast_from=broadcast_from, bucket_size_in_mb=bucket_size_in_mb)
     
+    pg = copy_default_process_group()
     utils.check(pg is not None, lambda: "The default process group is None")
     model.use_ddp = True
     model.process_group_for_ddp = pg
