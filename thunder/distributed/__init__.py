@@ -176,11 +176,13 @@ def _sync_grads(module: torch.nn.Module) -> None:
             "No op since neither `use_ddp` nor `use_fsdp` set. Have you applied either `thunder.distributed.ddp` or `thunder.distributed.fsdp`?"
         )
 
+
 # When the user calls ddp(jitted_module), this function does the following
 # - Marks the original function with appropiate attributes (use_ddp...)
 # - Broadcasts parameters if necessary
 # - It then registers a transform (callback that runs before prologue is executed) that transforms the
 #   prologue and compute trace, that insert syncs (and grad syncs for the backward, handled by thunder automatically.)
+
 
 def ddp_transform_module(
     thunder_model: ThunderModule,
@@ -259,13 +261,11 @@ def ddp_transform_module(
                 "param_meta": replicated_params[pn],
                 "param_name": pn,
             }
-            
+
     # will insert syncs for parameters (and gradient syncs in the backward pass, this is handled by thunder)
     # usually, other transforms will remove the forward syncs (they are usually in ddp)
     transform_from_trace_to_ddp_trace = DDPTraceTransform(
-        process_group=process_group,
-        replicated_params=replicated_params,
-        shared_params_name=shared_params_name
+        process_group=process_group, replicated_params=replicated_params, shared_params_name=shared_params_name
     )
 
     thunder_model = add_transform(thunder_model, transform=transform_from_trace_to_ddp_trace)
@@ -383,9 +383,10 @@ def ddp(
         lambda: "ddp requires torch distributed to be available (but it's not)",
     )
     from thunder.core.module import ThunderModule
+
     if isinstance(model, ThunderModule):
         return ddp_transform_module(model, broadcast_from=broadcast_from, bucket_size_in_mb=bucket_size_in_mb)
-    
+
     pg = copy_default_process_group()
     utils.check(pg is not None, lambda: "The default process group is None")
     model.use_ddp = True
@@ -400,7 +401,7 @@ def ddp(
     device = first_param.device
     devicetype = device.type
     deviceindex = device.index
-    
+
     for name, param in named_params:
         utils.check(
             param.device.type == devicetype,
