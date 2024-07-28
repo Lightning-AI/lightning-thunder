@@ -64,6 +64,7 @@ class DDPTest(DistributedParallelTestCase):
             lambda model: ddp(thunder.jit(model)),
         ]
         x, labels = torch.randn(20, 12).to(self.rank), torch.randn(20, 8).to(self.rank)
+
         def _get_last_loss(fn):
             model = ToyModel().to(self.rank)
             model.load_state_dict(initial_model_state)
@@ -77,6 +78,7 @@ class DDPTest(DistributedParallelTestCase):
                 loss.backward()
                 optimizer.step()
             return loss
+
         raw_ddp_loss = _get_last_loss(lambda model: DDP(model))
         for fn in ddp_fns:
             loss = _get_last_loss(fn)
