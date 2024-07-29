@@ -166,6 +166,7 @@ def test_quantization_on_meta():
     assert_close(actual, expected, rtol=1e-2, atol=1e-2)
 
 
+@requiresCUDA
 def test_nvfuser_cse():
     with torch.device("cuda"):
         mlp = (
