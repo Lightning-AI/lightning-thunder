@@ -129,9 +129,20 @@ class Proxy(VariableInterface, ProxyInterface):
     def name(self) -> str:
         return self._name
 
+    def replace(self, **changes):
+        """returns a copy replacing **changes. Note that the copy will use the current tracectx"""
+        if type(self) != Proxy:
+            raise NotImplementedError(f"replace is not implemented for {type(self)}")
+        kwargs = dict(
+            name=self.name,
+            history=self.history,
+        )
+        kwargs.update(changes)
+        return Proxy(**kwargs)
+
     def replace_name(self, name: str | None = None):
         """Return a copy of this proxy with the given name."""
-        return self.__class__(name=name)
+        return self.replace(name=name)
 
     def __repr__(self) -> str:
         # All subclasses of Proxy will have `self.name`, so this generic implementation relies on that.
@@ -373,9 +384,14 @@ class AnyProxy(Proxy):
     def type_string(self) -> str:
         return str(type(self._o))
 
-    def replace_name(self, name: str, /):
-        """Return a copy of this proxy with the given name."""
-        return AnyProxy(self._o, name=name, history=self.history)
+    def replace(self, **changes):
+        """returns a copy replacing **changes. Note that the copy will use the current tracectx"""
+        kwargs = dict(
+            name=self.name,
+            history=self.history,
+        )
+        kwargs.update(changes)
+        return AnyProxy(self._o, **kwargs)
 
 
 class StringProxy(Proxy, str):
@@ -392,9 +408,14 @@ class StringProxy(Proxy, str):
     def __repr__(self) -> str:
         return f"<StringProxy '{self.value}'>"
 
-    def replace_name(self, name: str, /):
-        """Return a copy of this proxy with the given name."""
-        return StringProxy(self.value, name=name, history=self.history)
+    def replace(self, **changes):
+        """returns a copy replacing **changes. Note that the copy will use the current tracectx"""
+        kwargs = dict(
+            name=self.name,
+            history=self.history,
+        )
+        kwargs.update(changes)
+        return StringProxy(self.value, **kwargs)
 
     def type_string(self) -> str:
         return "str"
@@ -439,9 +460,14 @@ class TupleProxy(Proxy, tuple):
     def type_string(self) -> str:
         return "tuple"
 
-    def replace_name(self, name: str, /):
-        """Return a copy of this proxy with the given name."""
-        return TupleProxy(self._value, name=name, history=self.history)
+    def replace(self, **changes):
+        """returns a copy replacing **changes. Note that the copy will use the current tracectx"""
+        kwargs = dict(
+            name=self.name,
+            history=self.history,
+        )
+        kwargs.update(changes)
+        return TupleProxy(self._value, **kwargs)
 
     def __add__(self, other):
         if not isinstance(other, tuple):
@@ -474,9 +500,14 @@ class ListProxy(Proxy, list):
     def type_string(self, /) -> str:
         return "list"
 
-    def replace_name(self, name: str, /):
-        """Return a copy of this proxy with the given name."""
-        return ListProxy(self._value, name=name, history=self.history)
+    def replace(self, **changes):
+        """returns a copy replacing **changes. Note that the copy will use the current tracectx"""
+        kwargs = dict(
+            name=self.name,
+            history=self.history,
+        )
+        kwargs.update(changes)
+        return ListProxy(self._value, **kwargs)
 
     def __add__(self, other, /):
         if not isinstance(other, list):
@@ -525,9 +556,14 @@ class DictProxy(Proxy, dict):
     def type_string(self, /) -> str:
         return "dict"
 
-    def replace_name(self, name: str, /):
-        """Return a copy of this proxy with the given name."""
-        return DictProxy(self._value, name=name, history=self.history)
+    def replace(self, **changes):
+        """returns a copy replacing **changes. Note that the copy will use the current tracectx"""
+        kwargs = dict(
+            name=self.name,
+            history=self.history,
+        )
+        kwargs.update(changes)
+        return DictProxy(self._value, **kwargs)
 
     def __add__(self, other, /):
         return self._value + other
@@ -605,9 +641,19 @@ class NumberProxy(Proxy, NumberProxyInterface):
     def __hash__(self) -> int:
         return hash(self.value)
 
-    def replace_name(self, name: str, /):
-        """Return a copy of this proxy with the given name."""
-        return self.__class__(name=name, value=self.value, python_type=self.python_type)
+    def replace(self, **changes):
+        """returns a copy replacing **changes. Note that the copy will use the current tracectx"""
+        kwargs = dict(
+            name=self.name,
+            history=self.history,
+            value=self.value,
+            python_type=self.python_type,
+            constraint=self.constraint,
+            __class__=self.__class__,
+        )
+        kwargs.update(changes)
+        cls = kwargs.pop("__class__")
+        return cls(**kwargs)
 
     def known_value(self) -> bool:
         return self.value is not None
@@ -984,9 +1030,18 @@ class ComplexProxy(NumberProxy):
     def __init__(self, name=None, value=None, history: None | tuple = None, constraint: None | CONSTRAINT = None):
         NumberProxy.__init__(self, name=name, value=value, python_type=complex, history=history, constraint=constraint)
 
-    def replace_name(self, name):
-        """Return a copy of this proxy with the given name."""
-        return ComplexProxy(name=name, value=self.value)
+    def replace(self, **changes):
+        """returns a copy replacing **changes. Note that the copy will use the current tracectx"""
+        kwargs = dict(
+            name=self.name,
+            history=self.history,
+            value=self.value,
+            constraint=self.constraint,
+            __class__=self.__class__,
+        )
+        kwargs.update(changes)
+        cls = kwargs.pop("__class__")
+        return cls(**kwargs)
 
     def type_string(self):
         value_str = f"{self.value}" if self.value is not None else "?"
@@ -1009,9 +1064,18 @@ class IntegerProxy(NumberProxy):
             self, name=name, value=value, python_type=python_type, history=history, constraint=constraint
         )
 
-    def replace_name(self, name):
-        """Return a copy of this proxy with the given name."""
-        return IntegerProxy(name=name, value=self.value)
+    def replace(self, **changes):
+        """returns a copy replacing **changes. Note that the copy will use the current tracectx"""
+        kwargs = dict(
+            name=self.name,
+            history=self.history,
+            value=self.value,
+            constraint=self.constraint,
+            __class__=self.__class__,
+        )
+        kwargs.update(changes)
+        cls = kwargs.pop("__class__")
+        return cls(**kwargs)
 
     def type_string(self):
         value_str = f"{self.value}" if self.value is not None else "?"
@@ -1032,9 +1096,18 @@ class FloatProxy(NumberProxy):
     def __init__(self, name=None, value=None, history: None | tuple = None, constraint: None | CONSTRAINT = None):
         NumberProxy.__init__(self, name=name, value=value, python_type=float, history=history, constraint=constraint)
 
-    def replace_name(self, name):
-        """Return a copy of this proxy with the given name."""
-        return FloatProxy(name=name, value=self.value)
+    def replace(self, **changes):
+        """returns a copy replacing **changes. Note that the copy will use the current tracectx"""
+        kwargs = dict(
+            name=self.name,
+            history=self.history,
+            value=self.value,
+            constraint=self.constraint,
+            __class__=self.__class__,
+        )
+        kwargs.update(changes)
+        cls = kwargs.pop("__class__")
+        return cls(**kwargs)
 
     def type_string(self):
         value_str = f"{self.value}" if self.value is not None else "?"
@@ -1211,9 +1284,35 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
 
         return wait(self)
 
-    def replace_name(self, name: str):
-        """Return a copy of this proxy with the given name."""
-        return futuretensorproxy(self, name=name, history=self.history)
+    def replace(self, **changes):
+        """returns a copy replacing **changes. Note that the copy will use the current tracectx"""
+
+        (
+            shape,
+            device,
+            dtype,
+            true_dtype,
+            numel,
+            ndim,
+            requires_grad,
+            _,  # distparallel_type
+            _,  # thunder_fsdp_padding_size
+        ) = _infer_tensor_properties(
+            changes.get("like"),
+            changes.get("shape", self._shape),
+            changes.get("device", self._device),
+            changes.get("dtype", self._dtype),
+            False,
+        )
+        name = changes.get("name", self.name)
+        history = changes.get("history", self.history)
+        return FutureTensorProxy(
+            name=name,
+            shape=shape,
+            device=device,
+            dtype=dtype,
+            history=history,
+        )
 
 
 # TODO RC1 Review dunders -- any remaining?
@@ -1293,10 +1392,40 @@ class TensorProxy(Proxy, TensorProxyInterface):
         fn = resolve_method("len", self)
         return fn(self)
 
-    # TODO RC1 Review this with other changes
-    def replace_name(self, name: str):
-        """Return a copy of this proxy with the given name."""
-        return tensorproxy(self, name=name, history=self.history)
+    def replace(self, **changes):
+        """returns a copy replacing **changes. Note that the copy will use the current tracectx"""
+
+        (
+            shape,
+            device,
+            dtype,
+            true_dtype,
+            numel,
+            ndim,
+            requires_grad,
+            distparallel_type,
+            thunder_fsdp_padding_size,
+        ) = _infer_tensor_properties(
+            changes.get("like"),
+            changes.get("shape", self._shape),
+            changes.get("device", self._device),
+            changes.get("dtype", self._dtype),
+            changes.get("requires_grad", self._requires_grad),
+            changes.get("distparallel_type", self._distparallel_type),
+            changes.get("thunder_fsdp_padding_size", self._thunder_fsdp_padding_size),
+        )
+        name = changes.get("name", self.name)
+        history = changes.get("history", self.history)
+        return TensorProxy(
+            name=name,
+            shape=shape,
+            device=device,
+            dtype=dtype,
+            requires_grad=requires_grad,
+            distparallel_type=distparallel_type,
+            thunder_fsdp_padding_size=thunder_fsdp_padding_size,
+            history=history,
+        )
 
     def __repr__(self):
         return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self.shape})>'
