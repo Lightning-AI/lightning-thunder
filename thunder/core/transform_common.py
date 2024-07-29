@@ -420,7 +420,7 @@ def check_inplace_to_views(computation_trace: Trace) -> dict[VariableInterface, 
         if len(consumer_of_orig_tensor) == 1:
             continue
 
-        utils.check(
+        check(
             prod_bsym.sym not in ltorch._syms_returning_runtime_dependently_views,
             lambda: (
                 f"in-place op of `{bsym.sym.id}` to `{prod_bsym.sym.id}` output `{in_tensor}` is not "
@@ -433,7 +433,7 @@ def check_inplace_to_views(computation_trace: Trace) -> dict[VariableInterface, 
         if prod_bsym.sym not in ltorch._syms_returning_views:
             continue
 
-        utils.check(
+        check(
             orig_tensor.numel == in_tensor.numel,
             lambda: (
                 f"in-place op of `{bsym.sym.id}` to `{in_tensor}`, a view tensor of "
@@ -531,8 +531,7 @@ def replace_args_with_alias_map(
         }:
             bsyms.append(bsym.from_bsym_swap_proxies(swap_map_for_aliases, skip_output=True))
             bsyms[-1].header = (
-                f"{list(replaced_args_map.keys())} are replaced by {list(replaced_args_map.values())} "
-                "because they are an alias"
+                f"Aliases of {list(replaced_args_map.keys())} are replaced by {list(replaced_args_map.values())} respectively"
             )
         else:
             bsyms.append(bsym)
@@ -546,10 +545,11 @@ def replace_args_with_alias_map(
 def canonicalize_bsym_args(
     computation_trace: Trace,
     orig_to_view_swap_map: dict[VariableInterface, TensorProxy],
-) -> Trace:
+) -> tuple[Trace, dict[BoundSymbol, dict[VariableInterface, TensorProxy]]]:
     """Avoid ``TensorProxy`` being consumed by more than one mathematical ops and/or distributed comms."""
     bsym: BoundSymbol
-    swap_map: dict[VariableInterface, ProxyInterface] = {}
+    swap_map: dict[VariableInterface, TensorProxy] = {}
+    reverse_swap_map: dict[BoundSymbol, dict[VariableInterface, TensorProxy]] = {}
     bsyms: list[BoundSymbol] = []
     tensors_observed: set[VariableInterface] = set()
     for bsym in computation_trace.bound_symbols:
@@ -557,11 +557,15 @@ def canonicalize_bsym_args(
         new_bsym = bsym.from_bsym_swap_proxies(swap_map, skip_output=True)
         if swap_map:
             if replaced_args_map := {
-                x.name: swap_map[variableify(x)].name
+                variableify(x): swap_map[variableify(x)]
                 for x in filter(lambda p: isinstance(p, TensorProxy), bsym.flat_args)
                 if variableify(x) in swap_map
             }:
                 new_bsym.header = f"{list(replaced_args_map.keys())} are replaced by {list(replaced_args_map.values())}"
+                if bsym.header.startswith("Aliases of"):
+                    reverse_swap_map[new_bsym] = {
+                        variableify(v): unvariableify(k) for k, v in replaced_args_map.items()
+                    }
 
         cur_orig_to_view_swap_map: dict[VariableInterface, TensorProxy] = {}
         for t in filter(lambda p: isinstance(p, TensorProxy), new_bsym.flat_args):
@@ -609,7 +613,7 @@ def canonicalize_bsym_args(
             (var_t := variableify(t)) not in swap_map,
             lambda: f"{return_bsym.flat_args=}. `{t}` should have been replaced by `{swap_map[var_t]}`",
         )
-    return intermediate_trace
+    return intermediate_trace, reverse_swap_map
 
 
 def create_functional_bsym_from(inplace_bsym: BoundSymbol) -> BoundSymbol:
@@ -820,7 +824,9 @@ def functionalize_inplace_ops(
     no_implicit_alias_trace, swap_map_for_aliases = replace_args_with_alias_map(computation_trace, alias_tensor_indices)
 
     # Step 1: make sure each tensor is consumed only once.
-    intermediate_trace = canonicalize_bsym_args(no_implicit_alias_trace, orig_to_view_swap_map)
+    intermediate_trace, reverse_swap_map_for_canonicalization = canonicalize_bsym_args(
+        no_implicit_alias_trace, orig_to_view_swap_map
+    )
 
     # Step 2: Remove `prims.copy_` if it's the last one of `bsym.subsymbols`,
     # unless `copy_to` is `computation_trace.args` or `computation_trace.kwargs`
@@ -883,6 +889,17 @@ def functionalize_inplace_ops(
         new_bsym = new_bsym.from_bsym_swap_proxies(swap_map)
         functional_bsym = create_functional_bsym_from(new_bsym)
         new_bsyms.append(functional_bsym)
+
+        if (
+            (swap_map_from_canonicalization := reverse_swap_map_for_canonicalization.get(bsym, None))
+            and swap_map_from_canonicalization is not None
+            and (var_copy_to := variableify(copy_to)) in swap_map_from_canonicalization
+        ):
+            check(
+                copy_to.shape == copy_from.shape,
+                lambda: f"In-place op to an alias whose number of elements is different from the base is not supported",
+            )
+            swap_map[var_copy_to] = copy_from
 
         # If trace's arguments and/or their views are consumed by an in-place op,
         # we'd have to have pairs of `prims.copy_` and auxiliary `prims.reshape` in the functionalized trace
