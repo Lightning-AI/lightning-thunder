@@ -35,7 +35,9 @@ import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 from thunder.core.transform_common import (
     dce,
-    Transform,
+    EarlyTransform,
+    AdditionalTransform,
+    PostOptimizationTransform,
     functionalize_inplace_ops,
     check_inplace_to_views,
 )
@@ -117,6 +119,7 @@ __all__ = [
     # TODO Extend this
     # TODO Add device aliases
     # TODO Add executor aliases
+    "fa3_executor"
     "cudnn_executor",
     "sdpa_executor",
     "nvfuser_executor",
@@ -171,12 +174,13 @@ get_all_executors = extend.get_all_executors
 get_default_executors = extend.get_default_executors
 get_always_executors = extend.get_always_executors
 
+fa3_executor: None | extend.Executor = extend.get_executor("fa3")
 cudnn_executor: None | extend.Executor = extend.get_executor("cudnn")
 sdpa_executor: None | extend.Executor = extend.get_executor("sdpa")
 nvfuser_executor: None | extend.Executor = extend.get_executor("nvfuser")
 pytorch_executor: None | extend.Executor = extend.get_executor("torch")
 
-# Default executor list is [cudnn -> sdpa -> nvfuser -> torch -> python]
+# Default executor list is [fa3 -> cudnn -> sdpa -> nvfuser -> torch -> python]
 # Note that add_default_executor inserts executor at start of list, hence the reverse order below.
 if nvfuser_executor:
     add_default_executor(nvfuser_executor)
@@ -186,6 +190,9 @@ if sdpa_executor:
 
 if cudnn_executor:
     add_default_executor(cudnn_executor)
+
+if fa3_executor:
+    add_default_executor(fa3_executor)
 
 #
 # Promoted debugging functions
@@ -268,7 +275,9 @@ def jit(
     interpretation: None | INTERPRETATION_OPTIONS | str = None,
     cache: None | CACHE_OPTIONS | str = None,
     disable_torch_autograd: bool = False,  # TODO Revisit this UX for RC1
-    transforms: list[Transform] | None = None,
+    early_transforms: list[EarlyTransform] | None = None,
+    additional_transforms: list[AdditionalTransform] | None = None,
+    post_optimization_transforms: list[PostOptimizationTransform] | None = None,
     record_history: bool = False,
     **compile_options,  # TODO RC1 Make this explicit -- dict of options
 ) -> Callable:
@@ -296,7 +305,9 @@ def jit(
                - ``"same input"`` - don't check, but just assume that a cached function works if it exists.
         interpretation: (deprecated: don't use this, use the thunder.functional.jit entry point to get the functional jit)
 
-        transforms: List of transforms to be applied. It should be an instance :class:`thunder.core.transforms.Transform`. Default: ``None``
+        early_transforms: List of transforms to be applied to prologue, computation, and epilogue traces before executing the prologue. It should be an instance :class:`thunder.core.transforms.EarlyTransform`. Default: ``None``
+        transforms: List of transforms to be applied to the computation trace. It should be an instance :class:`thunder.core.transforms.AdditionalTransform`. Default: ``None``
+        post_optimization_transforms: List of transforms to be applied to the optimized computation traces i.e. forward and backward traces. It should be an instance :class:`thunder.core.transforms.PostOptimizationTransform`. Default: ``None``
     """
 
     if "executors_list" in compile_options:
@@ -314,8 +325,14 @@ def jit(
     elif interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
         interpreter = _general_frontend
 
-    if transforms is None:
-        transforms = []
+    if early_transforms is None:
+        early_transforms = []
+
+    if additional_transforms is None:
+        additional_transforms = []
+
+    if post_optimization_transforms is None:
+        post_optimization_transforms = []
 
     # Resolve names of executors
     executors = resolve_executors(executors)
@@ -520,27 +537,16 @@ def jit(
             # Makes the prologue callable
             cs.last_prologue_transformation_start = time.perf_counter_ns()
 
-            transform: Transform
-            for transform in transforms:
-                thunder.core.utils.check_type(transform, Transform)
-                new_prologue_trc, new_computation_trc, new_epilogue_trc = transform.transform_traces_pre_prologue(
+            transform: Callable
+            for transform in early_transforms:
+                thunder.core.utils.check_type(transform, EarlyTransform)
+                prologue_trc, computation_trc, epilogue_trc = transform.transform_traces(
                     prologue_trc, computation_trc, epilogue_trc, executors_list=cd.executors_list
                 )
-                # if the transform did anything in the transform_traces_pre_prologue step
-                if (
-                    new_prologue_trc is not prologue_trc
-                    or new_computation_trc is not computation_trc
-                    or new_epilogue_trc is not epilogue_trc
-                ):
-                    prologue_trc, computation_trc, epilogue_trc = (
-                        new_prologue_trc,
-                        new_computation_trc,
-                        new_epilogue_trc,
-                    )
-                    prologue_traces.append(prologue_trc)
-                    computation_traces.append(computation_trc)
-                    if epilogue_trc is not None:
-                        epilogue_traces.append(epilogue_trc)
+                prologue_traces.append(prologue_trc)
+                computation_traces.append(computation_trc)
+                if epilogue_trc is not None:
+                    epilogue_traces.append(epilogue_trc)
 
             prologue_traces += transform_for_execution(
                 prologue_trc,
@@ -593,14 +599,10 @@ def jit(
                 ## EPILOGUE and TRANSFORMS should not mix...
                 # applies transforms
                 cs.last_computation_transformation_start = time.perf_counter_ns()
-                for transform in transforms:
-                    new_computation_trc = transform.transform_trace_additionally(
-                        computation_trc, executors_list=cd.executors_list
-                    )
-                    if new_computation_trc is not computation_trc:
-                        # todo: deprecation
-                        computation_trc = new_computation_trc
-                        computation_traces.append(computation_trc)
+                for transform in additional_transforms:
+                    thunder.core.utils.check_type(transform, AdditionalTransform)
+                    computation_trc = transform.transform_trace(computation_trc, executors_list=cd.executors_list)
+                    computation_traces.append(computation_trc)
                 cs.last_computation_transformation_stop = time.perf_counter_ns()
 
                 from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
@@ -626,21 +628,14 @@ def jit(
             if not compile_options.get("disable_inplace_copy_check", False):
                 thunder.core.transform_common._inplace_copy_sanity_check(computation_trc)
 
-            for transform in transforms:
+            for transform in post_optimization_transforms:
                 # NOTE: `backward_trc` could be None.
-                new_computation_trc = transform.transform_trace_post_optimization(
-                    computation_trc, executors_list=cd.executors_list
-                )
-                if new_computation_trc is not computation_trc:
-                    computation_trc = new_computation_trc
-                    extraces.append(computation_trc)
+                thunder.core.utils.check_type(transform, PostOptimizationTransform)
+                computation_trc = transform.transform_trace(computation_trc, executors_list=cd.executors_list)
+                extraces.append(computation_trc)
                 if backward_trc is not None:
-                    new_backward_trc = transform.transform_trace_post_optimization(
-                        backward_trc, executors_list=cd.executors_list
-                    )
-                    if new_backward_trc is not backward_trc:
-                        backward_trc = new_backward_trc
-                        backward_traces.append(backward_trc)
+                    backward_trc = transform.transform_trace(backward_trc, executors_list=cd.executors_list)
+                    backward_traces.append(backward_trc)
 
             if cd.use_cudagraphs:
                 from thunder.executors.cudagraphex import cudagraphex
@@ -729,20 +724,16 @@ def jit(
     if isinstance(fn, pytorch.nn.Module):
         fn_ = ThunderModule(fn, fn_)
         cd._thunder_module_map[id(fn)] = fn_
+        for transform in early_transforms:
+            transform.transform_module(fn_)
 
     # Sets compile options and statistics attributes
     cd._get_computation_and_inputs = get_computation_and_inputs
     fn_._lc_cd = cd
     fn_._lc_cs = cs
-
-    if isinstance(fn, pytorch.nn.Module):
-        fn_._lc_transforms = []
-        for transform in transforms:
-            transform.transform_module(fn_)
-            fn_._lc_transforms.append(transform)
-    else:
-        # todo: move to compile data
-        fn_._lc_transforms = transforms[:]
+    fn_._lc_early_transforms = early_transforms[:]  ## transforms
+    fn_._lc_transforms = additional_transforms[:]  ## transforms
+    fn_._lc_post_optimization_transforms = post_optimization_transforms[:]  ## post_optimization_transforms
 
     return fn_
 
