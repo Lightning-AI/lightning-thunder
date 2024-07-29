@@ -48,8 +48,6 @@ def get_bitsandbytes_executor():
 
 def trace_with_replaced_proxy_metadata(trace: TraceCtx, proxy_replacement_metadata) -> TraceCtx:
     t = TraceCtx(trace.fn, prologue=trace.prologue)
-    t.args = trace.args
-    t.kwargs = trace.kwargs
 
     proxymap: dict[str, thunder.Proxy] = {}
 
@@ -78,6 +76,8 @@ def trace_with_replaced_proxy_metadata(trace: TraceCtx, proxy_replacement_metada
             )
         )
 
+    t.args = tree_map(map_proxy, trace.args)
+    t.kwargs = tree_map(map_proxy, trace.kwargs)
     t._siginfo = trace._siginfo
     return t
 
@@ -221,20 +221,34 @@ class BitsAndBytesLinearQuant4bit(Transform):
 
         prologue_trace.bound_symbols[-1:-1] = new_bsyms
 
-        new_computation_trace = thunder.core.trace.from_trace(computation_trace)
+        computation_proxy_map = {
+            csym.name: dict(
+                shape=psym.shape,
+                dtype=psym.dtype,
+            )
+            for psym, csym in zip(prologue_trace.bound_symbols[-1].args[0][0], computation_trace.args)
+            if psym.shape != csym.shape or psym.dtype != csym.dtype
+        }
+
+        new_computation_trace = trace_with_replaced_proxy_metadata(computation_trace, computation_proxy_map)
+        bound_symbols = new_computation_trace.bound_symbols
+        new_computation_trace.bound_symbols = []
+
         new_computation_trace.args = (*new_computation_trace.args, *new_compute_inputs)
         new_computation_trace._siginfo.args = [(a.name, None) for a in new_computation_trace.args]
 
         with tracectx(new_computation_trace):
-            new_bindings = [thunder.core.prims.unpack_trivial.bind(i, output=i, name=i.name) for i in new_compute_inputs]
+            new_bindings = [
+                thunder.core.prims.unpack_trivial.bind(i, output=i, name=i.name) for i in new_compute_inputs
+            ]
 
-        for idx, bsym in enumerate(computation_trace.bound_symbols):
+        for idx, bsym in enumerate(bound_symbols):
             if bsym.sym != prims.unpack_trivial:
                 break
             new_computation_trace.bound_symbols.append(bsym.from_bsym())
         new_computation_trace.bound_symbols += new_bindings
-        proxies_to_replace = {}
-        for bsym in computation_trace.bound_symbols[idx:]:
+
+        for bsym in bound_symbols[idx:]:
             if bsym.sym == thunder.torch.linear and bsym.args[1].name in quantized_proxies:
                 assert len(bsym.args) == 3  # torch.linear(input, weight, bias)
                 n = quantized_proxies[bsym.args[1].name]
