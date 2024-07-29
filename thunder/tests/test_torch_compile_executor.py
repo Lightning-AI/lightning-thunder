@@ -6,6 +6,7 @@ import thunder
 from thunder.executors.torch_compile import supported_ops, torch_compile_ex, torch_compile_cat_ex
 from thunder.executors.torchex import ex as pytorch_ex
 from thunder.executors.nvfuserex import nvfuserex
+from thunder.tests.bf16 import device_supports_bf16
 from thunder.tests.litgpt_model import GPT, Config
 from thunder.tests.framework import requiresCUDA
 
@@ -33,6 +34,7 @@ def test_torch_compile_litgpt():
 # Here we test that everything works as expected.
 @pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported")
 @requiresCUDA
+@pytest.mark.skipif(not device_supports_bf16(torch.device("cuda")), reason="bf16 is not supported")
 def test_torch_compile_cat_nvfuser_phi2_tanh():
     device = torch.device("cuda")
     config = Config.from_name("phi-2", n_layer=1, gelu_approximate="tanh")

@@ -20,8 +20,7 @@ from thunder.core.transforms import (
 )
 from thunder.extend import OperatorExecutor, register_executor
 
-from typing import Tuple
-from enum import auto, Enum
+from enum import Enum
 
 sdpa_ex: OperatorExecutor = OperatorExecutor("sdpa", version="0.1")
 register_executor(sdpa_ex)
@@ -161,7 +160,7 @@ def _input_dtype_check_fused_scaled_dot_product_attention(
     key: TensorLike,
     value: TensorLike,
     attn_mask: None | TensorLike,
-    supported_dtypes: tuple[dtypes.dtype],
+    supported_dtypes: tuple[dtypes.dtype, ...],
 ):
     utils.check(
         query.dtype in supported_dtypes,
@@ -253,7 +252,7 @@ def _grad_forward_scaled_dot_product_flash_attention_meta(
     is_causal: bool = False,
     *,
     scale: None | float = None,
-) -> (TensorProxy, TensorProxy, TensorProxy, TensorProxy, int, int, TensorProxy, TensorProxy, TensorProxy):
+) -> tuple[TensorProxy, TensorProxy, TensorProxy, TensorProxy, int, int, TensorProxy, TensorProxy, TensorProxy]:
     # Reference metadata:
     # https://github.com/pytorch/pytorch/blob/main/torch/_meta_registrations.py
     # * query (batch_size, num_heads, query_seq_len, E)
@@ -297,7 +296,7 @@ def _grad_forward_scaled_dot_product_flash_attention_impl(
     dropout_p: float = 0.0,
     is_causal: bool = False,
     scale: None | float = None,
-) -> (torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int, int, torch.Tensor, torch.Tensor, torch.Tensor):
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int, int, torch.Tensor, torch.Tensor, torch.Tensor]:
     primal, *remaining_args = torch.ops.aten._scaled_dot_product_flash_attention(
         _sdpa_pad_head_dimension(_sdpa_enforce_input_tensor_contiguity(query)),
         _sdpa_pad_head_dimension(_sdpa_enforce_input_tensor_contiguity(key)),
@@ -334,7 +333,7 @@ def _scaled_dot_product_efficient_attention_backward_meta(
     is_causal: bool = False,
     *,
     scale: None | float = None,
-) -> (TensorProxy, TensorProxy, TensorProxy, None | TensorProxy):
+) -> tuple[TensorProxy, TensorProxy, TensorProxy, None | TensorProxy]:
     # FP64 is not supported by aten memory efficient implementation
     supported_dtypes = (dtypes.float32, dtypes.float16, dtypes.bfloat16)
     _input_dtype_check_fused_scaled_dot_product_attention(query, key, value, attn_mask, supported_dtypes)
@@ -366,7 +365,7 @@ def _scaled_dot_product_efficient_attention_backward_impl(
     dropout_p: float,
     is_causal: bool,
     scale: None | float,
-) -> (torch.Tensor, torch.Tensor, torch.Tensor, None | torch.Tensor):
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, None | torch.Tensor]:
     grad_input_mask = [a.requires_grad for a in (query, key, value)]
     if attn_mask is None:
         grad_input_mask.append(False)
@@ -418,7 +417,7 @@ def _scaled_dot_product_flash_attention_backward_meta(
     philox_offset: TensorLike,
     *,
     scale: None | float = None,
-) -> (TensorProxy, TensorProxy, TensorProxy):
+) -> tuple[TensorProxy, TensorProxy, TensorProxy]:
     # FP64 is not supported by aten memory efficient implementation
     supported_dtypes = (dtypes.float16, dtypes.bfloat16)
     _input_dtype_check_fused_scaled_dot_product_attention(query, key, value, attn_mask := None, supported_dtypes)
@@ -450,7 +449,7 @@ def _scaled_dot_product_flash_attention_backward_impl(
     philox_seed: torch.Tensor,
     philox_offset: torch.Tensor,
     scale: None | float,
-) -> (torch.Tensor, torch.Tensor, torch.Tensor):
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     grads = torch.ops.aten._scaled_dot_product_flash_attention_backward(
         _sdpa_pad_head_dimension(grad_out),
         _sdpa_pad_head_dimension(_sdpa_enforce_input_tensor_contiguity(query)),

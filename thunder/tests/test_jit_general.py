@@ -26,7 +26,7 @@ import thunder.core.prims as prims
 from thunder import pytorch_executor, nvfuser_executor
 from thunder.executors.sdpaex import sdpa_ex
 from thunder.core.jit_ext import JITSharpEdgeError
-from thunder.core.transforms import PostOptimizationTransform
+from thunder.core.transforms import Transform
 
 #
 # Test suite for the general jit
@@ -863,8 +863,8 @@ def test_post_optimization_transform():
     def foo(a, b, c):
         return a * a + b * c
 
-    class MyTransform(PostOptimizationTransform):
-        def transform_trace(self, trace, executors_list=None):
+    class MyTransform(Transform):
+        def transform_trace_post_optimization(self, trace, executors_list=None):
             # Transform that adds a comment before any `add` BoundSymbol.
             commented_trace = thunder.core.trace.from_trace(trace)
 
@@ -880,7 +880,7 @@ def test_post_optimization_transform():
             commented_trace.bound_symbols = bsyms
             return commented_trace
 
-    jfoo = thunder.jit(foo, post_optimization_transforms=[MyTransform()])
+    jfoo = thunder.jit(foo, transforms=[MyTransform()])
 
     a = torch.randn(3, 3, requires_grad=True)
     b = torch.randn(3, 3)

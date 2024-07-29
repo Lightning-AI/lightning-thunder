@@ -100,7 +100,7 @@ class ThunderModule(pytorch.nn.Module):
 
     def load_original_state_dict(self, state_dict):
         # this loads the state dict incrementally to not exhaust memory
-        module_names = {n for n, _ in self.named_modules()}
+        module_names = {n for n, _ in self._model.named_modules()}
         sd_per_module = collections.defaultdict(dict)
         for k, v in state_dict.items():
             prefix, sep, _ = k.rpartition(".")
@@ -111,14 +111,28 @@ class ThunderModule(pytorch.nn.Module):
 
         for submodule_name, sd_part in sd_per_module.items():
             prefix = submodule_name + ("." if submodule_name else "")
-            for transform in self._lc_early_transforms:
+            for transform in self._lc_transforms:
                 sd_part = transform.transform_state_dict_for_submodule(self, submodule_name, sd_part)
             for k, v in sd_part.items():
                 full_k = prefix + k
-                if k in self._overrides_parameters:
-                    self._overrides_parameters[full_k] = v
-                elif k in self._overrides_buffers:
-                    self._overrides_buffers[full_k] = v
+                if full_k in self._overrides_parameters:
+                    p = self._overrides_parameters[full_k]
+                    if p.dtype == v.dtype and p.shape == v.shape:
+                        with pytorch.no_grad():
+                            p.copy_(v)
+                    else:
+                        with pytorch.no_grad():
+                            self._overrides_parameters[full_k] = pytorch.nn.Parameter(
+                                v.to(p.device), requires_grad=p.requires_grad
+                            )
+
+                elif full_k in self._overrides_buffers:
+                    if p.dtype == v.dtype and p.shape == v.shape:
+                        with pytorch.no_grad():
+                            self._overrides_buffers[full_k].copy_(v)
+                    else:
+                        with pytorch.no_grad():
+                            self._overrides_parameters[full_k] = v.to(p.device).requires_grad_(p.requires_grad)
                 else:
                     raise NotImplementedError(f"don't know how to handle {full_k}")
 
@@ -172,9 +186,11 @@ class ThunderModule(pytorch.nn.Module):
         return getattr(self._model, name)
 
     def state_dict(self, *args: Any, **kwargs: Any) -> Any:
+        # this is broken for transformed modules!!!
         return self._model.state_dict(*args, **kwargs)
 
     def load_state_dict(self, *args: Any, **kwargs: Any) -> Any:
+        # this is broken for transformed modules!!!
         return self._model.load_state_dict(*args, **kwargs)
 
 
