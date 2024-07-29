@@ -218,7 +218,7 @@ def get_fusion_symbols(trace: TraceCtx, warn_if_fusions_unavailable: bool = True
     return fusions
 
 
-def get_nvFuser_repro(trace: TraceCtx, fusion_name: str, /) -> str:
+def get_nvfuser_repro(trace: TraceCtx, fusion_name: str, /) -> str:
     """
     Helper function to get the repro of a specific nvFusion segment.
     """
