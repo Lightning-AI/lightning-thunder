@@ -7,11 +7,12 @@ from thunder.executors.fa3ex import fa3_ex
 from thunder.tests.framework import requiresCUDA
 
 # flash attn 3
-try: 
-	from flash_attn_interface import _flash_attn_forward, _flash_attn_backward, flash_attn_func
-	HAS_FA3 = True
+try:
+    from flash_attn_interface import _flash_attn_forward, _flash_attn_backward, flash_attn_func
+
+    HAS_FA3 = True
 except:
-	HAS_FA3 = False
+    HAS_FA3 = False
 
 
 @pytest.mark.parametrize("device,", ["cuda"])
@@ -19,7 +20,7 @@ except:
 def test_sdpa(device: str, dtype: torch.dtype):
 
     if not HAS_FA3:
-        pytest.skip('fa3 not built')
+        pytest.skip("fa3 not built")
 
     batch = 10
     seq_len = 128
@@ -43,6 +44,4 @@ def test_sdpa(device: str, dtype: torch.dtype):
 
     # Verifies sdpa was called
     extrace = thunder.last_traces(cfn)[-1]
-    assert any(
-        bsym.sym.name == "fa3_fwd" for bsym in extrace.bound_symbols
-    )
+    assert any(bsym.sym.name == "fa3_fwd" for bsym in extrace.bound_symbols)

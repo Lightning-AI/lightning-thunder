@@ -119,8 +119,7 @@ __all__ = [
     # TODO Extend this
     # TODO Add device aliases
     # TODO Add executor aliases
-    "fa3_executor"
-    "cudnn_executor",
+    "fa3_executor" "cudnn_executor",
     "sdpa_executor",
     "nvfuser_executor",
     "pytorch_executor",
