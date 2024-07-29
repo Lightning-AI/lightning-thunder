@@ -58,23 +58,29 @@ def trace_with_replaced_proxy_metadata(trace: TraceCtx, proxy_replacement_metada
 
     def create_proxy(p):
         if isinstance(p, thunder.Proxy):
+            if p.name in proxymap:  # happens with subsymbols
+                return p
             with thunder.core.trace.tracectx(t):
                 np = p.replace(**proxy_replacement_metadata.get(p.name, {}))
                 proxymap[p.name] = np
                 return np
         return p
 
-    for bsym in trace.bound_symbols:
-        new_args = tree_map(map_proxy, bsym.args)
-        new_kwargs = tree_map(map_proxy, bsym.kwargs)
-        new_output = tree_map(create_proxy, bsym.output)
-        t.bound_symbols.append(
-            bsym.from_bsym(
+    def process_bound_symbols(src_bound_symbols, target_bound_symbols):
+        for bsym in src_bound_symbols:
+            new_args = tree_map(map_proxy, bsym.args)
+            new_kwargs = tree_map(map_proxy, bsym.kwargs)
+            new_output = tree_map(create_proxy, bsym.output)
+            new_bsym = bsym.from_bsym(
                 output=new_output,
                 args=new_args,
                 kwargs=new_kwargs,
             )
-        )
+            target_bound_symbols.bound_symbols.append(new_bsym)
+            if len(bsym.subsymbols) > 0:
+                process_bound_symbols(bsym.subsymbols, new_bsym.subsymbols)
+
+    process_bound_symbols(trace.bound_symbols, t.bound_symbols)
 
     t.args = tree_map(map_proxy, trace.args)
     t.kwargs = tree_map(map_proxy, trace.kwargs)
