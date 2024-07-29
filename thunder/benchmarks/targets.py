@@ -399,7 +399,7 @@ def test_nanogpt_gpt2xl(benchmark, executor: Callable, compute_type: ComputeType
 @parametrize_compute_type
 def test_llama_2_7b_hf_transformer_engine_only(benchmark, executor: Callable, compute_type: ComputeType):
     cfg: LitGPTConfig = LitGPTConfig.from_name("Llama-2-7b-hf")
-
+    cfg.n_layer = 15
     b = LitGPTBenchmark(
         cfg, batchdims=(2,), device="cuda:0", dtype=torch.bfloat16, requires_grad=is_requires_grad(compute_type)
     )
