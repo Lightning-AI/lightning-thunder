@@ -5332,11 +5332,11 @@ else:
 
 
 #
-# the automic fallback torch operators
+# The automatically registered torch operators
 #
 
 
-def _is_differentiable(arg):
+def _is_differentiable(arg: Any):
     from torch._subclasses.fake_tensor import FakeTensor
 
     if isinstance(arg, (torch.Tensor, FakeTensor, TensorProxy)):
@@ -5344,7 +5344,7 @@ def _is_differentiable(arg):
     return False
 
 
-def _make_differentiable_wrapper(func, *args, **kwargs):
+def _make_differentiable_wrapper(func: Callable, *args, **kwargs):
     from thunder.core.pytree import tree_flatten, tree_unflatten
 
     flat_args, spec = tree_flatten((args, kwargs))
@@ -5363,12 +5363,12 @@ def _make_differentiable_wrapper(func, *args, **kwargs):
 def register_default_torch_ops():
     from thunder.torch import default_torch_ops
 
-    for m, fns in default_torch_ops.torch_fallback_ops.items():
+    for m, fns in default_torch_ops.torch_auto_registered_ops.items():
         for fn in fns:
             register_default_torch_op(fn, meta_adaptor(fn), m)
 
 
-def register_default_torch_op(torchfn, fn_meta, m):
+def register_default_torch_op(torchfn: Callable, fn_meta: Callable, m):
     _fn = langctx(Languages.TORCH)(fn_meta)
     sym = Symbol(
         name=torchfn.__name__,
@@ -5403,7 +5403,7 @@ def register_default_torch_op(torchfn, fn_meta, m):
     backward_impls[sym.id] = bwd_op
 
 
-def _get_fake_arg(inp, fake_mode):
+def _get_fake_arg(inp: Any, fake_mode):
     from thunder.core.devices import to_torch_device
     from thunder.core.proxies import TupleProxy, ListProxy, DictProxy
 
@@ -5437,7 +5437,7 @@ def _get_fake_arg(inp, fake_mode):
         raise NotImplementedError(f"Unsupported type: {type(inp)}")
 
 
-def _fake_type_to_thunder(inp):
+def _fake_type_to_thunder(inp: Any):
     from builtins import type
 
     from thunder.core.proxies import _cls_to_number_proxy_map, numberproxy
@@ -5466,7 +5466,7 @@ def _fake_type_to_thunder(inp):
         raise NotImplementedError(f"Unsupported type: {type(inp)}")
 
 
-def augmented_forward_adaptor(sym_op):
+def augmented_forward_adaptor(sym_op: Callable):
     def wrapper(*args, **kwargs):
         from thunder.core.transforms import VJPDual
 
@@ -5478,7 +5478,7 @@ def augmented_forward_adaptor(sym_op):
     return wrapper
 
 
-def backward_adaptor(torch_func):
+def backward_adaptor(torch_func: Callable):
     def wrapper(saved_for_backward, *grad_output):
         inp_args, inp_kwargs = saved_for_backward
         from thunder.core.pytree import tree_flatten, tree_unflatten
@@ -5512,7 +5512,7 @@ def backward_adaptor(torch_func):
     return wrapper
 
 
-def meta_adaptor(torch_func):
+def meta_adaptor(torch_func: Callable):
     def wrapper(*args, **kwargs):
         from thunder.core.pytree import tree_flatten, tree_unflatten
         from torch._subclasses.fake_tensor import FakeTensorMode

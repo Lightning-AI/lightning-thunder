@@ -14,69 +14,84 @@ from thunder.tests.test_einops import skipIfNoCUDA
 @skipIfNoCUDA
 @pytest.mark.parametrize("requires_grad", [True, False], ids=("train", "inference"))
 @pytest.mark.parametrize("device,", ["cuda", "cpu"])
-def test_torch_ops_backward(device, requires_grad):
-    from itertools import chain
+def test_torch_ops_trace(device, requires_grad):
+    from itertools import islice
 
     import thunder.torch.default_torch_ops as ops
     from torch.testing._internal.common_methods_invocations import op_db
 
     name2func = {}
-    [name2func.setdefault(v.__name__, v) for v in ops.torch_fallback_ops[torch]]
-    [name2func.setdefault(f"nn.functional.{v.__name__}", v) for v in ops.torch_fallback_ops[torch.nn.functional]]
+    [name2func.setdefault(v.__name__, v) for v in ops.torch_auto_registered_ops[torch]]
+    [name2func.setdefault(f"nn.functional.{v.__name__}", v) for v in ops.torch_auto_registered_ops[torch.nn.functional]]
+    # Use the sample input from torch.xx to test torch.tensor.xx
+    [name2func.setdefault(f"Tensor.{v.__name__}", v) for v in ops.torch_auto_registered_ops[torch.Tensor]]
     print(f"auto reg ops: {len(name2func)}")
-    # [name2func.setdefault(f"Tensor.{v.__name__}", v) for v in ops.torch_fallback_ops[torch.Tensor]]
     op_infos = [opinfo for opinfo in op_db if opinfo.name in name2func.keys()]
-    total = len(op_infos)
+    total = 0
     cnt = 0
+    suc = 0
     for op_info in op_infos:
         if device == "cuda" and torch.float32 not in op_info.dtypesIfCUDA:
-            total -= 1
             continue
         if device == "cpu" and not torch.float32 in op_info.dtypes:
-            total -= 1
             continue
 
         # No cuda backend support
         if op_info.name in ("nonzero_static",) and device == "cuda":
             continue
+        # RuntimeError: Calling torch.linalg.cholesky on a CPU tensor requires compiling PyTorch with LAPACK.
+        if op_info.name in ("cholesky",) and device == "cpu":
+            continue
         # (t6, t7, t8, t9, t10, t11) = torch.histogramdd(t_0, (1, 1, 1, 1, 1), weight=None, density=False)
         # ValueError: not enough values to unpack (expected 6, got 2)
         if op_info.name == "histogramdd" and device == "cpu" and not requires_grad:
             continue
-        for sample in op_info.sample_inputs_func(
-            op_info, device=torch.device(device), dtype=torch.float32, requires_grad=requires_grad
-        ):
-            if op_info.name == "searchsorted" and (requires_grad and not sample.input.requires_grad):
+        if op_info.name == "searchsorted" and (requires_grad and not sample.input.requires_grad):
+            continue
+        funcs = [name2func[op_info.name], name2func.get(f"Tensor.{op_info.name}", None)]
+        for func in funcs:
+            if func is None:
                 continue
-            try:
-                jfun = thunder.jit(name2func[op_info.name])
-                out = jfun(sample.input, *sample.args, **sample.kwargs)
-            except Exception as e:
-                cnt += 1
-                assert isinstance(e, NotImplementedError)
-                assert str(e).startswith(f"Exception encountered when doing automatic registration") or str(
-                    e
-                ).startswith(f"Unsupported type:")
-                # print(e)
-                # print(f"unsupported: {op_info.name}")
-                # print("--------------------")
-                break
-            else:
-                if requires_grad:
-                    trc = thunder.last_backward_traces(jfun)[-1]
-                    trcf = thunder.last_traces(jfun)[-1]
-                    # skip if it is not differentiable
-                    outs = trcf.output[0]["output"]
-                    outs = outs if isinstance(outs, tuple) else (outs,)
-                    if all(not thunder.core.dtypes.is_inexact_dtype(o.dtype) for o in outs):
-                        continue
-                    vjp_op_name = f"{op_info.name.split('.')[-1]}_vjp"
-                    if op_info.name == "mm":
-                        assert any(bsym.sym.name.endswith(vjp_op_name) for bsym in trc.bound_symbols)
+            total += 1
+            # It takes too long, test only the first 5 sample inputs
+            gen = islice(
+                op_info.sample_inputs_func(
+                    op_info, device=torch.device(device), dtype=torch.float32, requires_grad=requires_grad
+                ),
+                5,
+            )
+            for sample in gen:
+                try:
+                    jfun = thunder.jit(func)
+                    out = jfun(sample.input, *sample.args, **sample.kwargs)
+                except Exception as e:
+                    cnt += 1
+                    assert isinstance(e, NotImplementedError)
+                    assert str(e).startswith(f"Exception encountered when doing automatic registration") or str(
+                        e
+                    ).startswith(f"Unsupported type:")
+                    break
+                else:
+                    if requires_grad:
+                        trc = thunder.last_backward_traces(jfun)[-1]
+                        fwd_trc = thunder.last_traces(jfun)[-1]
+                        # skip if it is not differentiable
+                        outs = fwd_trc.output[0]["output"]
+                        outs = outs if isinstance(outs, tuple) else (outs,)
+                        if all(not thunder.core.dtypes.is_inexact_dtype(o.dtype) for o in outs):
+                            continue
+                        vjp_op_name = f"{op_info.name.split('.')[-1]}_vjp"
+                        if op_info.name == "mm":
+                            assert any(bsym.sym.name.endswith(vjp_op_name) for bsym in trc.bound_symbols)
+                        else:
+                            assert any(bsym.sym.name == vjp_op_name for bsym in trc.bound_symbols)
                     else:
-                        assert any(bsym.sym.name == vjp_op_name for bsym in trc.bound_symbols)
+                        fwd_trc = thunder.last_traces(jfun)[-1]
+                        assert any(bsym.sym.name.endswith(op_info.name.split('.')[-1]) and not bsym.subsymbols for bsym in fwd_trc.bound_symbols)
+            else:
+                suc += 1
 
-    print(f"needs manual registeration: {cnt}, total: {total}")
+    print(f"total number of ops with sample input: {total}, success: {suc}, needs manual registeration: {cnt}")
 
 
 # Replace manual registration of some operations with automatic registration for network test cases
@@ -146,7 +161,7 @@ class TestFallbackToTorch:
 
         config = nanogpt_model.GPTConfig(dropout=0)
         model = nanogpt_model.Block(config).to(device=device, dtype=tdtype)
-        jitted = executor.make_callable(model, enable_fallback_to_torch=True)
+        jitted = executor.make_callable(model)
 
         x = make((2, config.block_size, config.n_embd))
 
@@ -169,7 +184,7 @@ class TestFallbackToTorch:
         model = model.train()
 
         executor = TorchExecutor
-        jitted = executor.make_callable(model, enable_fallback_to_torch=True)
+        jitted = executor.make_callable(model)
         x = make_tensor((1, 3, 224, 224), dtype=tdtype, device=device)
 
         cache_entry, _, _ = thunder.compile_data(jitted).get_computation_and_inputs(x)

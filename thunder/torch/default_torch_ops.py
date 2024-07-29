@@ -1,6 +1,6 @@
 import torch
 
-torch_fallback_ops = {
+torch_auto_registered_ops = {
     torch: [
         torch.lobpcg,
         torch.unravel_index,
