@@ -1594,7 +1594,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
     with tracectx(prologue_trace):
         for n, l in (("args", len(args)), ("kwargs", len(kwargs))):
             output = Proxy(name=n)
-            bsym = prims.unpack_trivial.bind(output, output=output)
+            bsym = prims.unpack_trivial.bind(output, output=output, name=n)
             prologue_trace.bound_symbols.append(bsym)
             bsym = prims.check_len.bind(output, l, output=None)
             prologue_trace.bound_symbols.append(bsym)
