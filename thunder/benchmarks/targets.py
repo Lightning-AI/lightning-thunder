@@ -429,6 +429,8 @@ def test_nanogpt_block(benchmark, executor: Callable, compute_type: ComputeType)
     args, kwargs = bench.make_batch()
     fn = executor(bench.fn())
     benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
+    print(thunder.last_traces(fn)[-1])
+    print(thunder.last_backward_traces(fn)[-1])
 
 
 # TODO Fix torch.compiles bfloat16 atomic add issue with this benchmark -- why does thunder trigger it but regular torch.compile does not
