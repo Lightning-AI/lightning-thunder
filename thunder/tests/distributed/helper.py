@@ -112,7 +112,9 @@ class DistributedParallelTestCase(common_distributed.MultiProcessTestCase):
         return f"{common_utils.FILE_SCHEMA}{self.file_name}"
 
     @classmethod
-    def _run(cls, rank, test_name, file_name, pipe):
+    def _run(cls, rank, test_name, file_name, pipe, *, fake_pg=False):
+        assert not fake_pg, "Not yet supported here..."
+
         self = cls(test_name)
         self.rank = rank
         self.file_name = file_name
