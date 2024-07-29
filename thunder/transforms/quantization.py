@@ -71,12 +71,8 @@ def trace_with_replaced_proxy_metadata(trace: TraceCtx, proxy_replacement_metada
             new_args = tree_map(map_proxy, bsym.args)
             new_kwargs = tree_map(map_proxy, bsym.kwargs)
             new_output = tree_map(create_proxy, bsym.output)
-            new_bsym = bsym.from_bsym(
-                output=new_output,
-                args=new_args,
-                kwargs=new_kwargs,
-            )
-            target_bound_symbols.bound_symbols.append(new_bsym)
+            new_bsym = bsym.from_bsym(output=new_output, args=new_args, kwargs=new_kwargs, subsymbols=[])
+            target_bound_symbols.append(new_bsym)
             if len(bsym.subsymbols) > 0:
                 process_bound_symbols(bsym.subsymbols, new_bsym.subsymbols)
 
