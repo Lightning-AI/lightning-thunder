@@ -496,6 +496,53 @@ def use_only_one_tensor_for_aliases(
     return computation_trace
 
 
+def replace_args_with_alias_map(
+    computation_trace: Trace,
+    alias_tensor_indices: list[list[int]],
+) -> tuple[Trace, dict[VariableInterface, TensorProxy]]:
+    if not alias_tensor_indices:
+        return computation_trace, {}
+    bsyms: list[BoundSymbol] = []
+    flat_args, _ = tree_flatten((computation_trace.args, computation_trace.kwargs))
+    swap_map_for_aliases: dict[VariableInterface, TensorProxy] = {}
+    arg_to_optional_bsyms: dict[VariableInterface, BoundSymbol] = {}
+    for indices in alias_tensor_indices:
+        arg = flat_args[indices[0]]
+        for idx in indices[1:]:
+            arg_to_replace = flat_args[idx]
+            reshaped_arg = arg
+            if arg_to_replace.shape != arg.shape:
+                with tracectx(computation_trace):
+                    reshaped_arg = prims.reshape.meta(arg, arg_to_replace.shape)
+                    arg_to_optional_bsyms[variableify(arg_to_replace)] = prims.reshape.bind(
+                        arg,
+                        arg_to_replace.shape,
+                        output=reshaped_arg,
+                    )
+            swap_map_for_aliases[variableify(arg_to_replace)] = reshaped_arg
+    for bsym in computation_trace.bound_symbols:
+        for arg in filter(lambda p: isinstance(p, TensorProxy), bsym.flat_args):
+            if v_arg := variableify(arg) in arg_to_optional_bsyms:
+                bsyms.append(arg_to_optional_bsyms[v_arg])
+        if replaced_args_map := {
+            x.name: swap_map_for_aliases[variableify(x)].name
+            for x in filter(lambda p: isinstance(p, TensorProxy), bsym.flat_args)
+            if variableify(x) in swap_map_for_aliases
+        }:
+            bsyms.append(bsym.from_bsym_swap_proxies(swap_map_for_aliases, skip_output=True))
+            bsyms[-1].header = (
+                f"{list(replaced_args_map.keys())} are replaced by {list(replaced_args_map.values())} "
+                "because they are an alias"
+            )
+        else:
+            bsyms.append(bsym)
+    no_implicit_alias_trace = from_trace(computation_trace)
+    no_implicit_alias_trace.bound_symbols = bsyms
+    str_map = {unvariableify(k).name: v.name for k, v in swap_map_for_aliases.items()}
+    no_implicit_alias_trace.set_provenance(TraceProvenance(f"Duplicate alias args using {str_map}"))
+    return no_implicit_alias_trace, swap_map_for_aliases
+
+
 def canonicalize_bsym_args(
     computation_trace: Trace,
     orig_to_view_swap_map: dict[VariableInterface, TensorProxy],
@@ -508,6 +555,13 @@ def canonicalize_bsym_args(
     for bsym in computation_trace.bound_symbols:
         # update args/kwargs so that any tensors are not consumed by multiple math / comm ops.
         new_bsym = bsym.from_bsym_swap_proxies(swap_map, skip_output=True)
+        if swap_map:
+            if replaced_args_map := {
+                x.name: swap_map[variableify(x)].name
+                for x in filter(lambda p: isinstance(p, TensorProxy), bsym.flat_args)
+                if variableify(x) in swap_map
+            }:
+                new_bsym.header = f"{list(replaced_args_map.keys())} are replaced by {list(replaced_args_map.values())}"
 
         cur_orig_to_view_swap_map: dict[VariableInterface, TensorProxy] = {}
         for t in filter(lambda p: isinstance(p, TensorProxy), new_bsym.flat_args):
@@ -525,7 +579,7 @@ def canonicalize_bsym_args(
                     reshape_bsym = prims.reshape.bind(view, unvariableify(var_orig).shape, output=view_of_orig_shape)
                     cur_orig_to_view_swap_map[var_orig] = view_of_orig_shape
                     bsyms.append(reshape_bsym)
-        new_bsym = new_bsym.from_bsym_swap_proxies(cur_orig_to_view_swap_map, skip_output=True)
+            new_bsym = new_bsym.from_bsym_swap_proxies(cur_orig_to_view_swap_map, skip_output=True)
 
         # non in-place bsyms would only need to update its outputs.
         # but in-place bsyms would, as it needs to make sure they return `prims.copy_`'s return value.
@@ -539,6 +593,10 @@ def canonicalize_bsym_args(
             # make sure an in-place bsym returns `prims.copy_` output
             new_bsym = new_bsym.from_bsym_swap_proxies(swap_map, skip_inputs=True, skip_subsymbols=True)
             bsyms.append(new_bsym)
+        if cur_orig_to_view_swap_map:
+            bsyms[-1].header = (
+                f"Replace {[unvariableify(k) for k in cur_orig_to_view_swap_map]} with {[list(cur_orig_to_view_swap_map.values())]}"
+            )
 
     intermediate_trace = from_trace(computation_trace)
     intermediate_trace.bound_symbols = bsyms
@@ -759,34 +817,7 @@ def functionalize_inplace_ops(
         return []
 
     # Step 0:
-    no_implicit_alias_trace = computation_trace
-    if alias_tensor_indices:
-        bsyms: list[BoundSymbol] = []
-        flat_args, _ = tree_flatten((computation_trace.args, computation_trace.kwargs))
-        swap_map_for_aliases: dict[VariableInterface, TensorProxy] = {}
-        arg_to_optional_bsyms: dict[VariableInterface, BoundSymbol] = {}
-        for indices in alias_tensor_indices:
-            arg = flat_args[indices[0]]
-            for idx in indices[1:]:
-                arg_to_replace = flat_args[idx]
-                reshaped_arg = arg
-                if arg_to_replace.shape != arg.shape:
-                    with tracectx(computation_trace):
-                        reshaped_arg = prims.reshape.meta(arg, arg_to_replace.shape)
-                        arg_to_optional_bsyms[variableify(arg_to_replace)] = prims.reshape.bind(
-                            arg,
-                            arg_to_replace.shape,
-                            output=reshaped_arg,
-                        )
-                swap_map_for_aliases[variableify(arg_to_replace)] = reshaped_arg
-        for bsym in computation_trace.bound_symbols:
-            for arg in filter(lambda p: isinstance(p, TensorProxy), bsym.flat_args):
-                if v_arg := variableify(arg) in arg_to_optional_bsyms:
-                    bsyms.append(arg_to_optional_bsyms[v_arg])
-            bsyms.append(bsym.from_bsym_swap_proxies(swap_map_for_aliases, skip_output=True))
-        no_implicit_alias_trace = from_trace(computation_trace)
-        no_implicit_alias_trace.bound_symbols = bsyms
-        no_implicit_alias_trace.set_provenance(TraceProvenance("clarify alias"))
+    no_implicit_alias_trace, swap_map_for_aliases = replace_args_with_alias_map(computation_trace, alias_tensor_indices)
 
     # Step 1: make sure each tensor is consumed only once.
     intermediate_trace = canonicalize_bsym_args(no_implicit_alias_trace, orig_to_view_swap_map)
@@ -908,10 +939,7 @@ def functionalize_inplace_ops(
                 if [bsym for bsym in consumer_map_of_intermediate_trace[base] if bsym_to_idx[bsym] > idx]:
                     check(
                         copy_from.numel == base.numel,
-                        lambda: (
-                            f"Fail to propagate the in-place change of `{copy_from.name}` to `{base.name}` "
-                            f"because of the different number of elements: {copy_from.numel} and {base.numel}"
-                        ),
+                        lambda: f"{new_bsym=}, {copy_from=}, {base=}\n{consumers_of_base=}",
                     )
                     new_t: TensorProxy = copy_from
                     if copy_from.shape != base.shape:
@@ -993,7 +1021,7 @@ def functionalize_inplace_ops(
     functionalized_bsyms.append(new_bsyms[-1].from_bsym_swap_proxies(swap_map_for_return))
 
     functionalized_computation_trace.bound_symbols = functionalized_bsyms
-    if not alias_tensor_indices:
+    if not swap_map_for_aliases:
         return [intermediate_trace, functionalized_computation_trace]
     return [no_implicit_alias_trace, intermediate_trace, functionalized_computation_trace]
 
