@@ -6639,7 +6639,7 @@ def _setup_frame_and_run_python_function(
         locals_dict[code.co_varnames[idx]] = unconsumed_kwargs
     elif unconsumed_kwargs:
 
-        return do_raise(TypeError(f"{fn}() got unexpected keyword arguments: {',',join(unconsumed_kwargs)}"))
+        return do_raise(TypeError(f"{fn}() got unexpected keyword arguments: {','.join(unconsumed_kwargs)}"))
 
     # And that's it! We have all local vars in locals_dict.
 
