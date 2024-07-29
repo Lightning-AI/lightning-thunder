@@ -385,7 +385,7 @@ class AnyProxy(Proxy):
         return str(type(self._o))
 
     def replace(self, **changes):
-       r"""returns a copy replacing \**changes. Note that the copy will use the current tracectx"""
+        r"""returns a copy replacing \**changes. Note that the copy will use the current tracectx"""
         kwargs = dict(
             name=self.name,
             history=self.history,
@@ -409,7 +409,7 @@ class StringProxy(Proxy, str):
         return f"<StringProxy '{self.value}'>"
 
     def replace(self, **changes):
-       r"""returns a copy replacing \**changes. Note that the copy will use the current tracectx"""
+        r"""returns a copy replacing \**changes. Note that the copy will use the current tracectx"""
         kwargs = dict(
             name=self.name,
             history=self.history,
@@ -461,7 +461,7 @@ class TupleProxy(Proxy, tuple):
         return "tuple"
 
     def replace(self, **changes):
-       r"""returns a copy replacing \**changes. Note that the copy will use the current tracectx"""
+        r"""returns a copy replacing \**changes. Note that the copy will use the current tracectx"""
         kwargs = dict(
             name=self.name,
             history=self.history,
@@ -501,7 +501,7 @@ class ListProxy(Proxy, list):
         return "list"
 
     def replace(self, **changes):
-       r"""returns a copy replacing \**changes. Note that the copy will use the current tracectx"""
+        r"""returns a copy replacing \**changes. Note that the copy will use the current tracectx"""
         kwargs = dict(
             name=self.name,
             history=self.history,
@@ -557,7 +557,7 @@ class DictProxy(Proxy, dict):
         return "dict"
 
     def replace(self, **changes):
-       r"""returns a copy replacing \**changes. Note that the copy will use the current tracectx"""
+        r"""returns a copy replacing \**changes. Note that the copy will use the current tracectx"""
         kwargs = dict(
             name=self.name,
             history=self.history,
@@ -642,7 +642,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
         return hash(self.value)
 
     def replace(self, **changes):
-       r"""returns a copy replacing \**changes. Note that the copy will use the current tracectx"""
+        r"""returns a copy replacing \**changes. Note that the copy will use the current tracectx"""
         kwargs = dict(
             name=self.name,
             history=self.history,
@@ -1031,7 +1031,7 @@ class ComplexProxy(NumberProxy):
         NumberProxy.__init__(self, name=name, value=value, python_type=complex, history=history, constraint=constraint)
 
     def replace(self, **changes):
-       r"""returns a copy replacing \**changes. Note that the copy will use the current tracectx"""
+        r"""returns a copy replacing \**changes. Note that the copy will use the current tracectx"""
         kwargs = dict(
             name=self.name,
             history=self.history,
@@ -1065,7 +1065,7 @@ class IntegerProxy(NumberProxy):
         )
 
     def replace(self, **changes):
-       r"""returns a copy replacing \**changes. Note that the copy will use the current tracectx"""
+        r"""returns a copy replacing \**changes. Note that the copy will use the current tracectx"""
         kwargs = dict(
             name=self.name,
             history=self.history,
@@ -1097,7 +1097,7 @@ class FloatProxy(NumberProxy):
         NumberProxy.__init__(self, name=name, value=value, python_type=float, history=history, constraint=constraint)
 
     def replace(self, **changes):
-       r"""returns a copy replacing \**changes. Note that the copy will use the current tracectx"""
+        r"""returns a copy replacing \**changes. Note that the copy will use the current tracectx"""
         kwargs = dict(
             name=self.name,
             history=self.history,
@@ -1285,7 +1285,7 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
         return wait(self)
 
     def replace(self, **changes):
-       r"""returns a copy replacing \**changes. Note that the copy will use the current tracectx"""
+        r"""returns a copy replacing \**changes. Note that the copy will use the current tracectx"""
 
         (
             shape,
@@ -1393,7 +1393,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return fn(self)
 
     def replace(self, **changes):
-       r"""returns a copy replacing \**changes. Note that the copy will use the current tracectx"""
+        r"""returns a copy replacing \**changes. Note that the copy will use the current tracectx"""
 
         (
             shape,
