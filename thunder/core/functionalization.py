@@ -727,13 +727,6 @@ def functionalize_inplace_ops(
     .. code-block:: python
 
         # Constructed by Duplicate alias args using {'b': 'a'}
-        import thunder
-        import thunder.torch as ltorch
-        import torch
-        from thunder.executors.torchex import no_autocast
-
-        @torch.no_grad()
-        @no_autocast
         def computation(a, b):
           # a: "cpu f32[2, 2]"
           # b: "cpu f32[2, 2]"
@@ -758,13 +751,6 @@ def functionalize_inplace_ops(
     .. code-block:: python
 
         # Constructed by Intermediate trace of `functionalize_inplace_ops`
-        import thunder
-        import thunder.torch as ltorch
-        import torch
-        from thunder.executors.torchex import no_autocast
-
-        @torch.no_grad()
-        @no_autocast
         def computation(a, b):
           # a: "cpu f32[2, 2]"
           # b: "cpu f32[2, 2]"
@@ -788,14 +774,6 @@ def functionalize_inplace_ops(
     .. code-block:: python
 
         # Constructed by Functionalize in-place ops
-        import thunder
-        import thunder.core.prims as prims
-        import thunder.torch as ltorch
-        import torch
-        from thunder.executors.torchex import no_autocast
-
-        @torch.no_grad()
-        @no_autocast
         def computation(a, b):
           # a: "cpu f32[2, 2]"
           # b: "cpu f32[2, 2]"
