@@ -30,7 +30,7 @@ def fa3_fwd_impl(
     q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, causal: bool = False, softmax_scale: float | None = None
 ):
     if not HAS_FA3:
-        return None, None
+        raise Exception('fa3 not built, cannot use fa3 executor') # checker should fail before getting here
 
     if softmax_scale is None:
         softmax_scale = q.shape[-1] ** (-0.5)
@@ -64,11 +64,8 @@ def fa3_bwd_impl(
     softmax_scale: None | float = None,
 ):
     if not HAS_FA3:
-        return (
-            None,
-            None,
-            None,
-        )
+        raise Exception('fa3 not built, cannot use fa3 executor') # checker should fail before getting here
+
     dq, dk, dv = torch.empty_like(q), torch.empty_like(k), torch.empty_like(v)
     if softmax_scale is None:
         softmax_scale = q.shape[-1] ** (-0.5)
@@ -99,12 +96,14 @@ fa3_bwd = fa3_ex.register_operator("fa3_bwd", meta=fa3_bwd_meta, fn=fa3_bwd_impl
 def fa3_checker(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None):
     if not HAS_FA3:
         return False
+    if query.dtype != thunder.dtypes.float16 or key.dtype != thunder.dtypes.float16 or value.dtype != thunder.dtypes.float16:
+        return False
     if attn_mask is not None or dropout_p != 0.0:
         return False
     return query.device.type == "cuda" and key.device == query.device and value.device == query.device
 
 
-def fa3_transform(
+def fa3_execution_transform(
     q: thunder.TensorProxy,
     k: thunder.TensorProxy,
     v: thunder.TensorProxy,
@@ -117,7 +116,7 @@ def fa3_transform(
     return out
 
 
-def fa3_transform_bwd(
+def fa3_grad_transform(
     q: thunder.TensorProxy,
     k: thunder.TensorProxy,
     v: thunder.TensorProxy,
@@ -148,6 +147,6 @@ def fa3_transform_bwd(
 fa3_ex.register_implementation(
     thunder.torch.scaled_dot_product_attention,
     checker=fa3_checker,
-    execution_transform=fa3_transform,
-    grad_transform=fa3_transform_bwd,
+    execution_transform=fa3_execution_transform,
+    grad_transform=fa3_grad_transform,
 )
