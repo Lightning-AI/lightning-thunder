@@ -2104,6 +2104,7 @@ _register_implementation(prims.item, item, checker=_always_executable)
 
 
 has_einops = importlib.util.find_spec("einops") is not None
+has_einops &= importlib.util.find_spec("einops._backends") is not None
 if has_einops:
     import einops
     from einops._backends import TorchBackend
