@@ -111,10 +111,7 @@ def test_functionalization(op: OpInfo, device: str, dtype: dtypes.dtype, executo
 
     is_polygamma = op.name == "polygamma_"
     inplace_op = InplaceOpWrapper(op.torch_reference, is_polygamma, False)
-    jitted_inplace_op = thunder.jit(
-        InplaceOpWrapper(op.torch_reference, is_polygamma, True),
-        executors=executor.executors_list(),
-    )
+    jitted_inplace_op = executor.make_callable(InplaceOpWrapper(op.torch_reference, is_polygamma, True))
     sample: SampleInput
     for idx, sample in enumerate(op.sample_inputs(device, dtype)):
         if idx > 0:
@@ -214,9 +211,9 @@ def test_inplace_to_views(executor, device, _):
     a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
     a_, b_ = a.clone().detach(), b.clone().detach()
 
-    jittd_f = thunder.jit(f, executors=executor.executors_list())
+    jitted_f = executor.make_callable(f)
 
-    c, d, e = jittd_f(a, b)
+    c, d, e = jitted_f(a, b)
     c_, d_, e_ = f(a_, b_)
 
     torch.testing.assert_close((c, d, e), (c_, d_, e_))
@@ -234,9 +231,9 @@ def test_inplace_to_views(executor, device, _):
     a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
     a_, b_ = a.clone().detach(), b.clone().detach()
 
-    jittd_g = thunder.jit(g, executors=executor.executors_list())
+    jitted_g = executor.make_callable(g)
 
-    d, e = jittd_g(a, b)
+    d, e = jitted_g(a, b)
     d_, e_ = g(a_, b_)
 
     torch.testing.assert_close((d, e), (d_, e_))
@@ -254,9 +251,9 @@ def test_inplace_to_views(executor, device, _):
     a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
     a_, b_ = a.clone().detach(), b.clone().detach()
 
-    jittd_h = thunder.jit(h, executors=executor.executors_list())
+    jitted_h = executor.make_callable(h)
 
-    c, d, e = jittd_h(a, b)
+    c, d, e = jitted_h(a, b)
     c_, d_, e_ = h(a_, b_)
 
     torch.testing.assert_close((c, d, e), (c_, d_, e_))
@@ -308,10 +305,10 @@ def test_error_of_inplace_to_views(executor, device, _):
         return c, d, e
 
     a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
-    jittd_f = thunder.jit(f, executors=executor.executors_list())
+    jitted_f = executor.make_callable(f)
 
     with pytest.raises(NotImplementedError, match="in-place op of `torch.Tensor.add_` to `torch.flatten` output"):
-        _ = jittd_f(a, b)
+        _ = jitted_f(a, b)
 
     def f(a: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         c = torch.exp(a)
@@ -323,9 +320,9 @@ def test_error_of_inplace_to_views(executor, device, _):
         d.div_(a)
         return c, d, e
 
-    jittd_f = thunder.jit(f, executors=executor.executors_list())
+    jitted_f = executor.make_callable(f)
     with pytest.raises(NotImplementedError, match="in-place op of `torch.Tensor.mul_`"):
-        _ = jittd_f(a, b)
+        _ = jitted_f(a, b)
 
 
 @instantiate(
