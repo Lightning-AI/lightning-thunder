@@ -30,7 +30,7 @@ def nvfuser_version() -> LooseVersion | None:
 
 
 def required_nvfuser_version() -> LooseVersion:
-    return LooseVersion("0.0.1")
+    return LooseVersion("0.2.8")
 
 
 def nvfuser_available() -> bool:

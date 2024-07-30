@@ -2677,8 +2677,7 @@ class HuggingFaceSelfAttnBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta)
         return bart_model
 
 
-# TODO this benchmark doesn't seem to be called by any target and is almost the same
-# as benchmarks/nvfuser_benchmarks.py::GPTBlockBenchmark
+# TODO this benchmark doesn't seem to be called by any target
 class GPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(

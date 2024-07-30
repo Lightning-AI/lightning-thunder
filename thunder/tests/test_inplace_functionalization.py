@@ -358,6 +358,59 @@ def test_multiple_inplace_to_args(executor, device, _):
 @instantiate(
     dtypes=NOTHING,
 )
+def test_multiple_views_before_inplace_to_base(executor, device, _):
+
+    # ref: https://github.com/pytorch/pytorch/blob/29e2e2a/test/test_functionalization.py#L159-L169
+    def f(x):
+        y = x.view(-1)
+        z = x.view(-1)
+        x.add_(1)
+        # y should have been updated.
+        y2 = y + 1
+        # z should have been updated too.
+        z2 = z + 1
+        return z2
+
+    x = make_tensor((2, 2), device=device, dtype=torch.float32)
+    x_ref = x.clone().detach()
+    expected = f(x_ref)
+
+    jitted = executor.make_callable(f)
+    actual = jitted(x)
+
+    torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(x, x_ref)
+
+    # TODO(crcrpar): Need to improve the logic of identifying required copies and/or
+    # relationshipt of views and in-place ops.
+    # The case above seems to work only because thunder preserves `prims.copy_` for
+    # in-place ops whose operand is arg or view of arg.
+    def f(x):
+        x = x.add(1)
+        y = x.view(-1)
+        z = x.view(-1)
+        x.add_(1)
+        # y should have been updated.
+        y2 = y + 1
+        # z should have been updated too.
+        z2 = z + 1
+        return z2
+
+    x = make_tensor((2, 2), device=device, dtype=torch.float32)
+    x_ref = x.clone().detach()
+    expected = f(x_ref)
+
+    jitted = executor.make_callable(f)
+    actual = jitted(x)
+
+    with pytest.raises(AssertionError):
+        torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(x, x_ref)
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
 def test_multiple_inplace_to_multiple_args(executor, device, _):
 
     def f(xs, ys, z):
@@ -484,3 +537,30 @@ def test_no_self_repeat_in_subsymbols(executor, device, _):
     for t in filter(lambda t: t._provenance is not None and "Functionalize in-place ops" in t._provenance.pss, traces):
         for bsym in filter(lambda b: b.subsymbols, t.bound_symbols):
             assert bsym.rhs != bsym.subsymbols[0].rhs, bsym
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_inplace_copy_on_fusion_inputs_issue_791(executor, device, _):
+
+    def f(x, y, idx, src):
+        x.index_copy_(0, idx, src)
+        z = x + 1
+        y.index_copy_(0, idx, src)
+        return z
+
+    a = make_tensor((2, 2), device=device, dtype=torch.float32)
+    b = make_tensor((2, 2), device=device, dtype=torch.float32)
+    a_, b_ = a.clone().detach(), b.clone().detach()
+    idx = torch.arange(2).to(device=device)
+    src = make_tensor((2, 2), device=device, dtype=torch.float32)
+
+    o_ = f(a_, b_, idx, src)
+
+    jitted = executor.make_callable(f)
+    o = jitted(a, b, idx, src)
+
+    assert a.allclose(a_)
+    assert b.allclose(b_)
+    assert o.allclose(o_)
