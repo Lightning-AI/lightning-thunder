@@ -282,7 +282,7 @@ def jit(
         Thunder's support of PyTorch in-place support is experimental.
         Thunder functionalizes in-place ops and adds required tensor copies.
         The functionalization can be turned off with the kwarg of ``skip_inplace_functionalization``.
-        See :func:`thunder.core.transform_common.functionalize_inplace_ops`
+        See :func:`thunder.core.functionalization.functionalize_inplace_ops`
         for the details.
 
     Args:
