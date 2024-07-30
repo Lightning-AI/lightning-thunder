@@ -498,7 +498,7 @@ class _CommentFusionsTransform(Transform):
 
 
 def comment_fusions(cfn: Callable) -> Callable:
-    return add_ransform(cfn, _CommentFusionsTransform)
+    return add_transform(cfn, _CommentFusionsTransform)
 
 
 #
