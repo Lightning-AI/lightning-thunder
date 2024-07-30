@@ -66,9 +66,8 @@ class DDPTraceTransform(Transform):
                     with tracectx(computation_trace):
                         # we will produce a new trace with syncs before using the weights
                         # then, the backward sync will be automatically handled by thunder (inserting all_reduce for the gradients)
-                        # then, the augmented forward pass will remove the synchronizes from the forward (as expected)
+                        # then, syncs will be removed from the forward pass (as expected, since they are not needed)
                         synchronized_parameters.append(dist_prims.synchronize(comp_inp_p, self.process_group))
-        # new_scope contains the new sync prims
         new_scope = computation_trace.pop_scope()
         # map of param -> synced param
         proxies_to_replace = {id(bsym.args[0]): bsym.output for bsym in new_scope}

@@ -220,7 +220,7 @@ def ddp_transform_module(
     # In our implementation `base` parameter is the parameter and corresponding name which we see the first time while
     # iterating our parameters (see below). We track subsequent parameter which share the underlying Tensor with this `base` parameter
     # in `shared_params_name` dictionary.
-    # Then while, transforming the trace - `see FSDPTraceTransform.transform_traces` - we replace all the proxy of shared parameter
+    # Then while, transforming the trace - `see DDPTraceTransform.transform_traces` - we replace all the proxy of shared parameter
     # with the corresponding proxy of base parameter in the computation trace.
 
     # This is used to track the shared parameters when the transform is applied.
@@ -263,7 +263,7 @@ def ddp_transform_module(
             }
 
     # will insert syncs for parameters (and gradient syncs in the backward pass, this is handled by thunder)
-    # usually, other transforms will remove the forward syncs (they are usually in ddp)
+    # usually, other transforms will remove the forward syncs inserted by this transform.
     transform_from_trace_to_ddp_trace = DDPTraceTransform(
         process_group=process_group, replicated_params=replicated_params, shared_params_name=shared_params_name
     )

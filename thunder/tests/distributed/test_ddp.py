@@ -219,7 +219,7 @@ class DDPTest(DistributedParallelTestCase):
             def forward(self, x):
                 return self.fc1(x) + self.fc2(x)
 
-        def _test_model_output_and_gradients(model, x, duplicate_all_gather):
+        def _test_model_output_and_gradients(model, x):
             output = model(x)
             with device:
                 grad_output = torch.ones_like(output)
