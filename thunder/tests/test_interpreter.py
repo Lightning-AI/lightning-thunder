@@ -3308,10 +3308,6 @@ def test_incorrect_args():
 
 
 def test_class_setattr():
-    import torch
-    import thunder
-    import contextlib
-
     class A:
         FOO = False
 
