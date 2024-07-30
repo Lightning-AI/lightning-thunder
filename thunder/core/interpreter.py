@@ -1655,9 +1655,13 @@ def _setattr_lookaside(obj: Any, name: str, value: Any):
     uobj = unwrap(obj)
     uname = unwrap(name)
     uvalue = unwrap(value)
-    compilectx: InterpreterCompileCtx = get_interpretercompilectx()
+    typ = type(uobj)
 
-    res = _interpret_call(lambda o, n, v: o.__setattr__(n, v), obj, name, value)
+    compilectx: InterpreterCompileCtx = get_interpretercompilectx()
+    if compilectx._with_provenance_tracking:
+        typ = wrap_const(typ)
+
+    res = _interpret_call(lambda typ, o, n, v: typ.__setattr__(o, n, v), typ, obj, name, value)
     if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
 
