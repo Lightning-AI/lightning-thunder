@@ -633,9 +633,23 @@ def create_functional_bsym_from(inplace_bsym: BoundSymbol) -> BoundSymbol:
         subsymbols=inplace_bsym.subsymbols,
         _call_ctx=inplace_bsym._call_ctx,
     )
+    if functional_bsym.subsymbols[-1].sym.id == prims.PrimIDs.COPY_:
+        functional_bsym.subsymbols = functional_bsym.subsymbols[:-1]
     if len(functional_bsym.subsymbols) == 1 and functional_bsym.rhs == functional_bsym.subsymbols[0].rhs:
         functional_bsym.subsymbols = functional_bsym.subsymbols[0].subsymbols
     return functional_bsym
+
+
+def needs_replace_of_sibling_views(
+    copy_to: TensorProxy,
+    bsym: BoundSymbol,
+    reverse_swap_map_for_canonicalization: dict[BoundSymbol, dict[VariableInterface, TensorProxy]],
+) -> bool:
+    return (
+        (swap_map_from_canonicalization := reverse_swap_map_for_canonicalization.get(bsym, None))
+        and swap_map_from_canonicalization is not None
+        and (var_copy_to := variableify(copy_to)) in swap_map_from_canonicalization
+    )
 
 
 def apply_functionalization_to_canonicalized_trace(
@@ -695,21 +709,16 @@ def apply_functionalization_to_canonicalized_trace(
         swap_map[variableify(copy_return)] = copy_from
 
         # The last subsymbol is `prims.copy_`, so the new_bsym shouldn't have it.
-        new_bsym.subsymbols = new_bsym.subsymbols[:-1]
         new_bsym = new_bsym.from_bsym_swap_proxies(swap_map)
         functional_bsym = create_functional_bsym_from(new_bsym)
         new_bsyms.append(functional_bsym)
 
-        if (
-            (swap_map_from_canonicalization := reverse_swap_map_for_canonicalization.get(bsym, None))
-            and swap_map_from_canonicalization is not None
-            and (var_copy_to := variableify(copy_to)) in swap_map_from_canonicalization
-        ):
+        if needs_replace_of_sibling_views(copy_to, bsym, reverse_swap_map_for_canonicalization):
             check(
                 copy_to.shape == copy_from.shape,
                 lambda: f"In-place op to an alias whose number of elements is different from the base is not supported",
             )
-            swap_map[var_copy_to] = copy_from
+            swap_map[variableify(copy_to)] = copy_from
 
         # If trace's arguments and/or their views are consumed by an in-place op,
         # we'd have to have pairs of `prims.copy_` and auxiliary `prims.reshape` in the functionalized trace
