@@ -36,8 +36,10 @@ import thunder.core.devices as devices
 from thunder.core.transform_common import (
     dce,
     Transform,
-    functionalize_inplace_ops,
+)
+from thunder.core.functionalization import (
     check_inplace_to_views,
+    functionalize_inplace_ops,
 )
 from thunder.common import (
     CompileData,
