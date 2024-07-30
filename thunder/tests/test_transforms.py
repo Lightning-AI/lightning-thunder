@@ -195,3 +195,15 @@ def test_nvfuser_cse():
     expected = mlp(inp)
 
     assert_close(actual, expected, atol=1e-1, rtol=1e-1)
+
+    cache_info, comp_inps, _ = thunder.compile_data(jm).get_computation_and_inputs(inp)
+    for t, comp_proxy, prologue_proxy in zip(
+        comp_inps, cache_info.computation_traces[-1].args, cache_info.prologue_traces[-1].bound_symbols[-1].args[0][0]
+    ):
+        # this needs relaxing for dynamic shapes
+        assert comp_proxy.shape == t.shape, f"{comp_proxy} does not match {t.shape=}"
+        assert prologue_proxy.shape == t.shape
+        assert comp_proxy.device == thunder.core.devices.to_device(t.device)
+        assert prologue_proxy.device == thunder.core.devices.to_device(t.device)
+        assert comp_proxy.dtype == thunder.core.dtypes.to_dtype(t.dtype)
+        assert prologue_proxy.dtype == thunder.core.dtypes.to_dtype(t.dtype)
