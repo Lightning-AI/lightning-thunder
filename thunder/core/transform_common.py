@@ -3,9 +3,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Sequence
 from collections import defaultdict
-from itertools import filterfalse
 from functools import partial
-from itertools import product
 from itertools import filterfalse
 from typing import TYPE_CHECKING
 import time

@@ -1798,7 +1798,7 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
     _thunder_fsdp_padding_size = getattr(t, "_thunder_fsdp_padding_size", None)
     _storage_data_ptr = (
         t.untyped_storage().data_ptr()
-        if torch.is_tensor(t) and not t.is_sparse
+        if torch.is_tensor(t) and t.layout == torch.strided
         else getattr(t, "_storage_data_ptr", None)
     )
     # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
