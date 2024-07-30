@@ -9,26 +9,21 @@ from itertools import chain
 from types import ModuleType
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, List, Type, Tuple, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 from collections.abc import Callable, Hashable, Iterable
 from collections.abc import Sequence
 
 import thunder.core.baseutils as baseutils
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable, Positions
-from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
+from thunder.core.baseutils import BoundSymbolInterface
 from thunder.core.utils import FrozenDict, make_hashable
 from thunder.core.pytree import tree_flatten_with_dataclass, tree_unflatten, tree_map
-import thunder.core.dtypes as dtypes
-import thunder.core.devices as devices
-from thunder.core.proxies import Proxy, NumberProxy, variableify, CollectionProxy
+from thunder.core.proxies import Proxy, variableify, CollectionProxy
 
 from thunder.core.trace import (
     get_tracectx,
-    maybe_reset_trace,
-    maybe_start_trace,
     VariableInterface,
-    wrap_in_trace_variable,
 )
 
 #

@@ -1,20 +1,18 @@
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Any
 from collections.abc import Callable
 from collections.abc import Sequence
 from collections import deque
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from itertools import chain
-from functools import partial
 import time
 
-from thunder.core.trace import TraceCtx, from_trace, TraceProvenance, VariableInterface
-import thunder.core.dtypes as dtypes
+from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
 import thunder.core.utils as cutils
 from thunder.core.utils import ProxyDict, check, safe_map_flat
 from thunder.core.symbol import BoundSymbol
-from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
+from thunder.core.pytree import tree_flatten
 import thunder.core.prims as prims
-from thunder.core.proxies import Proxy, variableify, unvariableify, Variable, CollectionProxy
+from thunder.core.proxies import Proxy, variableify, Variable, CollectionProxy
 import thunder.core.transforms as transforms
 from thunder.core.transform_common import dce
 from thunder.core.trace import get_tracectx

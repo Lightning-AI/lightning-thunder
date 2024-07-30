@@ -18,8 +18,8 @@ assert (
 triton_ex: OperatorExecutor = OperatorExecutor("triton", version=triton_version)
 register_executor(triton_ex)
 
-import triton  # noqa: E402
-import triton.language as tl  # noqa: E402
+import triton
+import triton.language as tl
 
 # Temporarily borrowed from https://github.com/openai/triton
 FORWARD_NUM_STAGES = 1
@@ -89,7 +89,7 @@ def _class_indices_forward(
         m_prev = m_curr
         logit_ptrs += BLOCK
     logit_ptrs = logit_start_ptrs + cols
-    output_ptrs = PROBS + row * N + cols
+    PROBS + row * N + cols
     WRIT_PROBS = PROBS + row * N + cols
     if LABEL_SMOOTHING:
         sum_total = 0.0
@@ -194,7 +194,7 @@ def _class_probs_forward(
         m_prev = m_curr
         logit_ptrs += BLOCK
     logit_ptrs = logit_start_ptrs + cols
-    output_ptrs = PROBS + row * N + cols
+    PROBS + row * N + cols
     WRIT_PROBS = PROBS + row * N + cols
 
     sum_total = 0.0

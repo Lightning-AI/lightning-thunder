@@ -1,11 +1,8 @@
 import math
-from dataclasses import dataclass
 from functools import partial
 
 import pytest
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from torch.testing import assert_close, make_tensor
 
 import thunder
@@ -103,7 +100,7 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
     assert (build_graph_stats_new.misses - build_graph_stats_old.misses) <= 1
 
     # Check we really run CUDAGraphExecutor {
-    assert tom._lc_cd.use_cudagraphs == True
+    assert tom._lc_cd.use_cudagraphs is True
     assert _there_is_cudagraph_sym(thunder.last_traces(tom)[-1])
     # }
 
@@ -152,7 +149,7 @@ def test_nanogpt_complete_cuda_graphs_autograd(executor, device, dtype):
     assert (build_graph_stats_new.misses - build_graph_stats_old.misses) <= 2
 
     # Check we really run CUDAGraphExecutor {
-    assert cmodel._lc_cd.use_cudagraphs == True
+    assert cmodel._lc_cd.use_cudagraphs is True
     assert _there_is_cudagraph_sym(thunder.last_traces(cmodel)[-1])
     assert _there_is_cudagraph_sym(thunder.last_backward_traces(cmodel)[-1])
     # }

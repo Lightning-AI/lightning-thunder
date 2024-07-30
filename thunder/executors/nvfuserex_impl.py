@@ -1,21 +1,16 @@
 from dataclasses import dataclass, replace
 from functools import partial, lru_cache
 from numbers import Number
-from typing import Union, List, Any, Optional, Dict, Set, Tuple, Type
-from types import NoneType
+from typing import Any
 from collections.abc import Callable, Mapping, Hashable, Sequence
 import os
 import time
 from copy import copy
 from itertools import chain, filterfalse
-from functools import partial
-import warnings
 
-from looseversion import LooseVersion
 import torch
 
 import thunder.core.dtypes as dtypes
-import thunder.torch as ltorch
 from thunder.core import prims, utils
 from thunder.core.baseutils import BoundSymbolInterface
 from thunder.core.prims import PrimIDs
@@ -29,21 +24,19 @@ from thunder.core.proxies import (
     Variable,
     pyval,
 )
-from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
+from thunder.core.pytree import tree_map
 from thunder.core.rematerialization import rematerialize
-from thunder.core.utils import OrderedSet, check, check_same_dtype
+from thunder.core.utils import check, check_same_dtype
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
-from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, Symbol, has_tags
+from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, has_tags
 from thunder.core.devices import Device, DeviceType
-import thunder.core.codeutils as codeutils
-from thunder.core.codeutils import Printable
-from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs, NON_FUNCTIONAL_OPS
+from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs
 from thunder.core.profile import add_markers
 from thunder.core.compile_data import get_compile_option
 
 from thunder.executors.utils import Region
 from thunder.executors.passes import update_fusion_call_ctx
-from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor, add_default_executor
+from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor
 
 # NOTE This impl file is here because nvFuser may not be available, so it's imported conditionally
 #   by nvfuserex.py when nvFuser is available.
@@ -667,7 +660,7 @@ class nvFuserExecutor(FusionExecutor):
             return x
 
         for bsym in trace.bound_symbols:
-            if bsym.sym.is_fusion != True:
+            if bsym.sym.is_fusion is not True:
                 new_bsyms[bsym] = cse_single_bsym(redundant_map, trace_rhs_to_bsym_map, bsym)
                 continue
 
@@ -830,7 +823,7 @@ instantiated) this heuristic actually leads to worse code.
                     break
             utils.check(
                 return_idx != -1,
-                lambda: f"Return operator does not exist in bound symbols",
+                lambda: "Return operator does not exist in bound symbols",
             )
             fused_bsyms.append(fused_bsyms.pop(return_idx))
 
@@ -2028,7 +2021,7 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
         if len(bsym.args) == 2:
             a, dtyp = bsym.args
         elif len(bsym.args) == 1:
-            utils.check(len(bsym.kwargs) == 1, lambda: f"Expected two arguments for convert element type")
+            utils.check(len(bsym.kwargs) == 1, lambda: "Expected two arguments for convert element type")
             (a,) = bsym.args
             dtyp = bsym.kwargs["dtype"]
         else:
@@ -2120,7 +2113,7 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
             nbsyms.append(nbsym)
             utils.check(
                 nbsym.subsymbols is None or len(nbsym.subsymbols) == 0,
-                lambda: f"Expected no subsymbols when creating a new BoundSymbol in the remove redundant casts pass",
+                lambda: "Expected no subsymbols when creating a new BoundSymbol in the remove redundant casts pass",
                 exception_type=AssertionError,
             )
 

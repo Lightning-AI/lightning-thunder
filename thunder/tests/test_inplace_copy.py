@@ -42,14 +42,14 @@ def test_prim_inplace_copy_bwd(executor, device, dtype):
     def torch_foo(x, y):
         z = x * y
         z = z * x
-        o = x.copy_(z)
+        x.copy_(z)
         p = y * y
         return p
 
     def foo(x, y):
         z = x * y
         z = z * x
-        o = thunder.core.prims.copy_(z, x)
+        thunder.core.prims.copy_(z, x)
         p = y * y
         return p
 

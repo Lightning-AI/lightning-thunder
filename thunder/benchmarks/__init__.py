@@ -613,19 +613,19 @@ def run_multiprocess_benchmark(
 
     assert (
         torch.distributed.is_available()
-    ), f"Trying to run a distributed benchmark, but torch.distributed is not available"
+    ), "Trying to run a distributed benchmark, but torch.distributed is not available"
 
     # Ensures the benchmark is running on a single CUDA device (which is overridden later)
     assert (
         len(benchmark.devices) == 1
         and Devices.device_from_string(benchmark.devices[0]).devicetype == Devices.DeviceType.CUDA
-    ), f"Distributed benchmarking currently only supports benchmarks that run on a single CUDA device"
+    ), "Distributed benchmarking currently only supports benchmarks that run on a single CUDA device"
 
     # Ensures the benchmark returns a module (because ddp is only supported on modules)
     benchmark_fn = benchmark.fn()
     assert isinstance(
         benchmark_fn, torch.nn.Module
-    ), f"Distributed benchmarking currently only supports module benchmarks"
+    ), "Distributed benchmarking currently only supports module benchmarks"
 
     # Validates world size
     assert (

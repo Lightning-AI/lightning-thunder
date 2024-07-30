@@ -592,7 +592,7 @@ def fsdp(
     """
     import thunder
 
-    utils.check(isinstance(sharding_strategy, FSDPType), lambda: f"FSDPType.ZERO2 and FSDPType.ZERO3 are supported.")
+    utils.check(isinstance(sharding_strategy, FSDPType), lambda: "FSDPType.ZERO2 and FSDPType.ZERO3 are supported.")
     utils.check(
         tdist.is_available(),
         lambda: "fsdp requires torch distributed to be available (but it's not)",

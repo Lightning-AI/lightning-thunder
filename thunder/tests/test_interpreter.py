@@ -1,7 +1,6 @@
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Sequence
 from contextlib import redirect_stdout
 from functools import partial, wraps
-from itertools import product
 
 import io
 import sys
@@ -273,14 +272,14 @@ def test_dunder_bool_instance(jit):
     bx = bool(x)
     jitting = True
     jbx = jit(bool)(x)
-    assert bx == jbx == False
+    assert bx == jbx is False
 
     x.__bool__ = lambda: True  # dunder methods use class attribute, not instance attribute.
     jitting = False
     bx = bool(x)
     jitting = True
     jbx = jit(bool)(x)
-    assert bx == jbx == False
+    assert bx == jbx is False
 
 
 def test_function_call(jit):
@@ -389,7 +388,7 @@ def test_build_map_dict_merge(jit):
     thunder_result = jfoo(*args, **kwargs)
     python_result = foo(*args, **kwargs)
 
-    with pytest.raises(KeyError, match="got multiple values for keyword argument") as excinfo:
+    with pytest.raises(KeyError, match="got multiple values for keyword argument"):
         d = {"a": 3, "b": 4}
         mergefail = lambda **kwargs: addall(**kwargs, **d)
         jfail = jit(mergefail)
@@ -492,9 +491,9 @@ def test_delete_deref(jit):
     args = (4, 3)
 
     with pytest.raises(NameError, match="'value'"):
-        python_result = foo(*args)
+        foo(*args)
     with pytest.raises(NameError, match="'value'"):
-        thunder_result = jfoo(*args)
+        jfoo(*args)
 
 
 def test_locals_globals(jit):
@@ -543,7 +542,7 @@ def test_exception_traceback(jit):
     args = (4,)
 
     with pytest.raises(ValueError) as excinfo:
-        thunder_result = jfoo(*args)
+        jfoo(*args)
 
     tb_string = "".join(str(tbe) for tbe in excinfo.traceback)
     assert "in foo\n" in tb_string
@@ -623,9 +622,9 @@ def test_bare_except(jit):
             assert is_jitting_with_raise() == jitting
             return True
 
-    assert bare_except() == True
+    assert bare_except() is True
     jitting = True
-    assert jit(bare_except)() == True
+    assert jit(bare_except)() is True
 
 
 def test_trivial_try_finally(jit):
@@ -635,7 +634,7 @@ def test_trivial_try_finally(jit):
         finally:
             return True
 
-    assert jit(trivial_try_finally)() == True
+    assert jit(trivial_try_finally)() is True
 
 
 def test_try_finally(jit):
@@ -648,7 +647,7 @@ def test_try_finally(jit):
         finally:
             return var
 
-    assert jit(try_finally)() == True
+    assert jit(try_finally)() is True
 
 
 def test_match_exception(jit):
@@ -659,7 +658,7 @@ def test_match_exception(jit):
         except error_set:
             return True
 
-    assert jit(match_exception)() == True
+    assert jit(match_exception)() is True
 
 
 def test_match_as(jit):
@@ -735,7 +734,7 @@ def test_nested_try_except(jit):
                 pass
             return True
 
-    assert jit(nested_try_except)() == True
+    assert jit(nested_try_except)() is True
 
 
 def test_inner_nested_try_except(jit):
@@ -749,7 +748,7 @@ def test_inner_nested_try_except(jit):
             return False
         return True
 
-    assert jit(inner_nested_try_except)() == True
+    assert jit(inner_nested_try_except)() is True
 
 
 def test_cross_function_exceptions(jit):
@@ -773,14 +772,14 @@ def test_cross_function_exceptions(jit):
             return True
 
     jitting = False
-    assert cross_function_exceptions() == True
+    assert cross_function_exceptions() is True
     jitting = True
-    assert jit(cross_function_exceptions)() == True
+    assert jit(cross_function_exceptions)() is True
 
 
 def test_walrus_operator(jit):
     def foo(a, b):
-        c = (a := b)
+        c = (_a := b)
         return c
 
     if "DUP_TOP" in dis.opmap.keys():
@@ -1420,7 +1419,6 @@ def test_import(jit):
     assert jfoo(2, 7) == foo(2, 7)
 
     def foo(a):
-        import torch.nn as nn
         from torch.nn.functional import relu
 
         return relu(a)
@@ -1471,7 +1469,7 @@ def test_locals_lookaside(jit):
 
             # Deletions in localsplus are deleted in locals
             del l
-            assert not "l" in locals().keys(), locals()
+            assert "l" not in locals().keys(), locals()
 
             # The objects stored in variables are the same as those in locals
             b = object()
@@ -1698,7 +1696,7 @@ def test_len_lookaside(jit):
 
     o = mycls(-1)
 
-    with pytest.raises(ValueError, match="__len__\(\) should return >= 0"):
+    with pytest.raises(ValueError, match=r"__len__\(\) should return >= 0"):
         jfoo(o)
 
     o = mycls(0.42)
@@ -2007,12 +2005,12 @@ def test_iter_lookaside_types_jitting(jit):
         return iter(lambda: sentinel, sentinel)
 
     jitting = False
-    sres = type(seqiter())
-    cres = type(calliter())
+    type(seqiter())
+    type(calliter())
 
     jitting = True
-    jsres = type(jit(seqiter)())
-    jcres = type(jit(calliter)())
+    type(jit(seqiter)())
+    type(jit(calliter)())
 
     # assert sres is jsres
     # assert cres is jcres
@@ -2166,7 +2164,7 @@ def test_use_of_deleted_raises_correctly(jit):
         b = a
         del b
         assert a == 5
-        c = b + a
+        b + a
         return a
 
     jfoo = jit(foo)
@@ -2180,7 +2178,7 @@ def test_delete_fast(jit):
         b = a
         del b
         assert a == 5
-        c = b + a
+        b + a
         return a
 
     jfoo = jit(foo)
@@ -2976,7 +2974,7 @@ def test_super(jit):
 
     def bar():
         b = B()
-        c = C()
+        C()
         super(b, C)
 
     with pytest.raises(TypeError) as exc_expected:

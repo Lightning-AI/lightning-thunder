@@ -17,8 +17,7 @@ from thunder.core.trace import get_tracectx
 from thunder.core.symbol import Symbol, BoundSymbol
 import thunder.core.devices as devices
 import thunder.core.prims as prims
-from thunder.core.proxies import TensorProxy, CollectionProxy
-from thunder.core.symbol import Symbol
+from thunder.core.proxies import CollectionProxy
 from thunder.core.vjp_utils import disable_caching_split_forward_and_backward
 from thunder.extend import OperatorExecutor, register_executor
 from thunder.core.compile_data import get_compile_option, get_compile_data

@@ -1,7 +1,7 @@
 from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
-from abc import ABC, abstractmethod
+from abc import ABC
 from collections.abc import Sequence
 from collections import defaultdict
 from itertools import filterfalse
@@ -18,7 +18,7 @@ from thunder.core.utils import ProxyDict, producers, check, consumers
 
 if TYPE_CHECKING:
     from thunder.core.proxies import ProxyInterface
-    from thunder.core.symbol import Symbol, VariableInterface
+    from thunder.core.symbol import VariableInterface
 
 
 #
@@ -215,8 +215,8 @@ def cse_single_bsym(
     bsym: BoundSymbolInterface,
 ) -> BoundSymbolInterface:
     check(
-        bsym.sym.is_fusion != True,
-        lambda: f"Expected bound symbol not to be a fusion in _cse_single_bsym",
+        bsym.sym.is_fusion is not True,
+        lambda: "Expected bound symbol not to be a fusion in _cse_single_bsym",
         exception_type=AssertionError,
     )
 

@@ -1,10 +1,8 @@
 from typing import Any
 
 import torch
-import numpy as np
 import random
 
-from lightning_utilities.core.imports import package_available
 from looseversion import LooseVersion
 
 
@@ -71,15 +69,12 @@ def _get_cudnn_handle(query_device):
 # WARNING: cudnn executor is experimental. Tests that use cudnn might fail.\n
 # Issue for tracking support: https://github.com/Lightning-AI/lightning-thunder/issues/880~
 
-from dataclasses import dataclass
-from functools import lru_cache
-from typing import Union, Dict
 
 from thunder.core.langctxs import langctx
 import thunder.core.dtypes as dtypes
 from thunder.torch import TensorLike
 from thunder.core.compile_data import get_compile_option
-from thunder.core.proxies import Proxy, TensorProxy
+from thunder.core.proxies import TensorProxy
 
 
 from thunder.core.transforms import (
@@ -250,7 +245,7 @@ def _cudnn_sdpa_forward_meta(
     scale: float | None = None,
 ) -> tuple[TensorProxy, TensorProxy, TensorProxy, TensorProxy]:
     batch_size, num_heads, query_seq_len, E = query.shape
-    key_seq_len = key.shape[-2]
+    key.shape[-2]
     Ev = value.shape[-1]
 
     return (
@@ -412,11 +407,11 @@ def _cudnn_sdpa_checker(
     # Please turn on cudnn API logging for helpful messages that mention why the graph is not supported.
     # For cudnn backend logging, refer https://docs.nvidia.com/deeplearning/cudnn/latest/reference/troubleshooting.html
     # For cudnn frontend logging, refer https://github.com/NVIDIA/cudnn-frontend?tab=readme-ov-file#debugging
-    except cudnn.cudnnGraphNotSupportedError as ex:
+    except cudnn.cudnnGraphNotSupportedError:
         return False
     # Otherwise just raise the error.
     # These errors can be due to internal cudnn bugs, or user error.
-    except Exception as e:
+    except Exception:
         raise
 
     return True

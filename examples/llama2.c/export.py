@@ -49,7 +49,6 @@ def quantize_q80(w, group_size):
     i.e. symmetric quantization into int8, range [-127,127]
     """
     assert w.numel() % group_size == 0
-    ori_shape = w.shape
     w = w.float() # convert to float32
     w = w.reshape(-1, group_size)
     # find the max in each group

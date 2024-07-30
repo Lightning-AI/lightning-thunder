@@ -1,13 +1,13 @@
 from enum import auto, Enum
 from numbers import Number
-from functools import reduce, wraps
+from functools import reduce
 import operator
 import builtins
 import math
 from types import NoneType
-from typing import Union, Type, Any, List, Dict, Tuple, Optional
+from typing import Any
 from collections.abc import Callable
-from collections.abc import Callable, Hashable, Sequence
+from collections.abc import Hashable, Sequence
 
 import torch
 
@@ -63,11 +63,9 @@ def register_method(method_name: str, method: Callable, /) -> None:
 
 from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
 from thunder.core.proxies import (
-    CONSTRAINT,
     CollectionProxy,
     TensorProxy,
     NumberProxy,
-    is_proxyable,
     proxy,
     numberproxy,
     pytype,
@@ -84,9 +82,8 @@ import thunder.core.utils as utils
 import thunder.core.baseutils as baseutils
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
-from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
-from thunder.core.trace import get_tracectx
-from thunder.core.langctxs import langctx, LanguageContext, register_langctx, Languages
+from thunder.core.pytree import tree_flatten
+from thunder.core.langctxs import LanguageContext, register_langctx, Languages
 
 #
 # Primitives and helpers for defining them
@@ -2728,7 +2725,7 @@ def _get_and_update_rng_state_meta(
         utils.check_type(offset, (IntegerProxy, int))
     utils.check(
         device.devicetype is devices.DeviceType.CUDA,
-        lambda: f"get_and_update_rng_state is supported for CUDA only",
+        lambda: "get_and_update_rng_state is supported for CUDA only",
         exception_type=NotImplementedError,
     )
     return numberproxy(int, None), numberproxy(int, None)
@@ -2903,7 +2900,7 @@ def _multinomial_meta(
 
     utils.check(
         input.numel != 0,
-        lambda: f"Expected probability weights to be non-empty",
+        lambda: "Expected probability weights to be non-empty",
     )
     utils.check(
         0 < input.ndim <= 2,
@@ -3258,7 +3255,7 @@ index_add = make_prim(PrimIDs.INDEX_ADD, "index_add", meta=index_add_meta)
 def index_copy_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     utils.check(
         dtypes.to_dtype(index) is dtypes.int64,
-        lambda: f"index_copy: only indices of type int64 are supported",
+        lambda: "index_copy: only indices of type int64 are supported",
     )
     return index_add_meta(a, index, value, dim)
 
@@ -3574,7 +3571,7 @@ def _argmin_argmax_meta(a: TensorProxy, /, dim: int | None) -> TensorProxy:
     utils.check_type(dim, (int, IntegerProxy, NoneType))
 
     if a.numel == 0:
-        utils.check(dim is not None, lambda: f"Expected reduction dim to be specified for a.numel() == 0.")
+        utils.check(dim is not None, lambda: "Expected reduction dim to be specified for a.numel() == 0.")
 
     if dim is not None and a.ndim > 0:
         utils.check(a.shape[dim], lambda: f"Expected reduction dim {dim} to have non-zero size.")

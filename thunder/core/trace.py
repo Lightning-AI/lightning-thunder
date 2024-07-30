@@ -1,21 +1,14 @@
 import os
 from contextvars import ContextVar
 from contextlib import contextmanager
-from typing import Optional, Any, Tuple, Type, Dict, List, Union
+from typing import Any
 from collections.abc import Callable
-from collections.abc import Sequence, Hashable
-import string
-from numbers import Number
-import inspect
-import functools
 from types import ModuleType
 
 import thunder
 import thunder.core.codeutils as codeutils
 import thunder.core.baseutils as baseutils
 from thunder.core.baseutils import ProxyInterface, BoundSymbolInterface
-import thunder.core.devices as devices
-from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.codeutils import ContextObject, get_source_line, Positions
 
 
@@ -326,7 +319,7 @@ class TraceCtx:
 
             # ... and from the signature
             if self._siginfo is None and self.fn is None:
-                signature_str = f"# No signature available"
+                signature_str = "# No signature available"
             else:
                 si = self.siginfo()
                 signature_str = si.prettyprint(trace=self, import_ctx=import_ctx, object_ctx=object_ctx)

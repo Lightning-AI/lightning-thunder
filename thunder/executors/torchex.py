@@ -1,22 +1,14 @@
 from __future__ import annotations
 import operator
 import importlib
-from dataclasses import replace
-from contextlib import ContextDecorator
-from functools import wraps, partial
-from inspect import signature
-from itertools import groupby
+from functools import partial
 from numbers import Number
 from typing import TYPE_CHECKING
 from collections.abc import Callable
 from collections.abc import Hashable, Sequence
-from collections.abc import Sequence
 from types import ModuleType
-from enum import Enum, auto
 
 import torch
-import math
-from looseversion import LooseVersion
 
 from thunder.core.langctxs import langctx, Languages
 import thunder.core.dtypes as dtypes
@@ -24,11 +16,8 @@ from thunder.core.dtypes import to_torch_dtype, to_dtype
 import thunder.core.devices as devices
 from thunder.core.devices import to_torch_device, to_device
 import thunder.core.prims as prims
-from thunder.core.prims import PrimIDs
-from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, from_trace
-from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy, variableify, pytype
-from thunder.core.pytree import tree_flatten, tree_unflatten
-from thunder.core.symbol import Symbol, BoundSymbol
+from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy, pytype
+from thunder.core.symbol import Symbol
 from thunder.distributed.prims import DistributedReduceOps
 import thunder.distributed.prims as dist_prims
 import thunder.core.utils as utils
@@ -1429,7 +1418,7 @@ def _max_pool_with_indices_helper(
         dilation_ = get_maybe_ith_entry("dilation", dilation, i)
         utils.check(
             kernel_ is not None and stride_ is not None and pad_ is not None and dilation_ is not None,
-            lambda: f"max_pool argument extraction failed.",
+            lambda: "max_pool argument extraction failed.",
         )
         out_sizes.append(pooling_output_shape(in_, kernel_, pad_, stride_, dilation_, ceil_mode))
 

@@ -85,10 +85,13 @@ line_length = 120
 line-length = 120
 # Always generate Python 3.10-compatible code.
 target-version = "py310"
-# Enable Pyflakes `E` and `F` codes by default.
+
+[tool.ruff.lint]
 select = [
     "E", "W",  # see: https://pypi.org/project/pycodestyle
     "F",  # see: https://pypi.org/project/pyflakes
+    "RUF100",  # yesqa
+#    "UP",  # pyupgrade
 #    "D",  # see: https://pypi.org/project/pydocstyle
 #    "N",  # see: https://pypi.org/project/pep8-naming
 ]
@@ -99,36 +102,36 @@ select = [
 #    "SIM",  # see: https://pypi.org/project/flake8-simplify
 #]
 ignore = [
+    "E402",  # todo: Module level import not at top of file
+    "E721",  # todo: Use `is` and `is not` for type comparisons, or `isinstance()` for isinstance checks
+    "E722",  # todo: Do not use bare `except`
     "E731",  # Do not assign a lambda expression, use a def
     "E501",  # todo: Line too long (235 > 120 characters)
-]
-# Exclude a variety of commonly ignored directories.
-exclude = [
-    ".eggs",
-    ".git",
-    ".mypy_cache",
-    ".ruff_cache",
-    "__pypackages__",
-    "_build",
-    "build",
-    "dist",
-    "docs"
+    "F401",  # todo: Add unused import
+    "F405",  # todo: `xxx` may be undefined, or defined from star imports
+    "F601",  # todo: Dictionary key literal `"a"` repeated
+    "E741",  # todo: Ambiguous variable name
+    "F811",  # todo: Redefinition of unused
+    "F821",  # todo: Undefined name
+    "F822",  # todo: Undefined name
+    "F841",  # todo: Remove assignment to unused variable
+    "F842",  # todo: Local variable `xxx` is annotated but never used
 ]
 ignore-init-module-imports = true
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 "setup.py" = ["D100", "SIM115"]
 "__about__.py" = ["D100"]
 "__init__.py" = ["D100"]
 
-[tool.ruff.pydocstyle]
+[tool.ruff.lint.pydocstyle]
 # Use Google-style docstrings.
 convention = "google"
 
 #[tool.ruff.pycodestyle]
 #ignore-overlong-task-comments = true
 
-[tool.ruff.mccabe]
+[tool.ruff.lint.mccabe]
 # Unlike Flake8, default to a complexity level of 10.
 max-complexity = 10
 

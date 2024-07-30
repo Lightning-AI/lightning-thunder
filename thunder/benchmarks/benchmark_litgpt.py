@@ -2,7 +2,6 @@ from datetime import timedelta
 import os
 import time
 import warnings
-from typing import Any
 from contextlib import nullcontext
 
 import torch
@@ -10,7 +9,6 @@ import functools
 from torch.utils.data import DataLoader, IterableDataset
 import torch.distributed as torch_dist
 from torch.distributed.device_mesh import init_device_mesh
-import warnings
 
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     apply_activation_checkpointing,

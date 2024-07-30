@@ -797,7 +797,7 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
                 lambda: f"Advanced indexing currently only supports zero or one-dimensional integer tensors, but found a tensor with dtype {x.dtype} and {x.ndim} dimensions",
             )
 
-    utils.check(num_ellipses <= 1, lambda: f"Found two or more ellipses in an advanced indexing key")
+    utils.check(num_ellipses <= 1, lambda: "Found two or more ellipses in an advanced indexing key")
 
     # NOTE When the key has an ellipsis it can be longer than the number of dimensions in a
     #   (in this case the ellipsis matches no dimensions)
@@ -811,7 +811,7 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
     has_ellipsis: bool = num_ellipses > 0
     utils.check(
         not has_ellipsis or key[0] is Ellipsis,
-        lambda: f"Advanced indexing currently only supports ellipses as the first sequence element",
+        lambda: "Advanced indexing currently only supports ellipses as the first sequence element",
     )
 
     # The following models two advanced indexing cases:
@@ -1008,8 +1008,8 @@ def movedim(a: TensorLike, /, source: int | Sequence[int], destination: int | Se
     # Verifies that dims are uniquely specified
     # NOTE This must be done after canonicalization, since canonicalization resolves different ways of specifying the same dim
     src_set = set(src)
-    utils.check(len(src_set) == len(src), lambda: f"Found at least one source dimension specified multiple times")
-    utils.check(len(set(dst)) == len(dst), lambda: f"Found at least one destination dimension specified multiple times")
+    utils.check(len(src_set) == len(src), lambda: "Found at least one source dimension specified multiple times")
+    utils.check(len(set(dst)) == len(dst), lambda: "Found at least one destination dimension specified multiple times")
 
     # Constructs a permutation that moves the dimensions as requested
     # NOTE Essentially move_dim specifies a partial permutation, where dimensions not explicitly specified as moving
@@ -1306,7 +1306,7 @@ def cat(tensors: list[TensorProxy], dim: int):
 def stack(tensors: list[TensorProxy], dim: int):
     """Concatenates the given sequence of tensors in a new (the given) dimension."""
     shapes = tuple(t.shape for t in tensors)
-    utils.check(shapes, lambda: f"list of tensors cannot be empty")
+    utils.check(shapes, lambda: "list of tensors cannot be empty")
     for i, s in enumerate(shapes[1:], start=1):
         utils.check(
             s == shapes[0], lambda: f"tensors must be of the same shape, tensor at {i} is {s} instead of {shapes[0]}"
@@ -1376,7 +1376,7 @@ def matrix_transpose(a: TensorProxy) -> TensorProxy:
         mT_scalar_warning()
         return a
     elif a.ndim == 1:
-        raise RuntimeError(f"tensor.mT is only supported on matrices or batches of matrices. Got 1-D tensor.")
+        raise RuntimeError("tensor.mT is only supported on matrices or batches of matrices. Got 1-D tensor.")
 
     dim0, dim1 = -2, -1
     dim0, dim1 = utils.canonicalize_dims(a.ndim, (dim0, dim1))
@@ -1832,7 +1832,7 @@ def bitwise_xor(a, b):
 def copysign(a, b):
     utils.check(
         not dtypes.is_complex_dtype(dtypes.to_dtype(a)) and not dtypes.is_complex_dtype(dtypes.to_dtype(b)),
-        lambda: f"copysign is not defined for complex dtypes",
+        lambda: "copysign is not defined for complex dtypes",
     )
 
     computation_dtype, result_dtype = utils.elementwise_type_promotion(
@@ -1926,7 +1926,7 @@ def floor_divide(a: TensorProxy | Number, b: TensorProxy | Number) -> TensorProx
         a, b, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
     )
 
-    utils.check(not dtypes.is_complex_dtype(computation_dtype), lambda: f"Complex floor division is not supported")
+    utils.check(not dtypes.is_complex_dtype(computation_dtype), lambda: "Complex floor division is not supported")
 
     if dtypes.is_float_dtype(computation_dtype):
         return _floor_divide_float(a, b)

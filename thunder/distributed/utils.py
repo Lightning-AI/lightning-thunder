@@ -223,7 +223,7 @@ def limit_in_flight_allgathers(
                 pack_consumer = consumers.get(bsym.flat_proxy_outs[0], None)
                 check(
                     pack_consumer is not None and len(pack_consumer) == 1,
-                    lambda: f"Pack operator should have one consumer",
+                    lambda: "Pack operator should have one consumer",
                 )
                 # skip the pack operator corresponds to allgather
                 if pack_consumer[0].sym.id != all_gather_prim_impl.id:
@@ -246,7 +246,7 @@ def limit_in_flight_allgathers(
                             wait_consumer is not None
                             and len(wait_consumer) == 1
                             and wait_consumer[0].sym.id == unpack_for_fsdp_prim_impl.id,
-                            lambda: f"The consumer of wait operator should be unpack operator",
+                            lambda: "The consumer of wait operator should be unpack operator",
                         )
                         unpack_bsyms.append(wait_consumer[0])
                 bound_symbols.append(bsym)

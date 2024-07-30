@@ -1,5 +1,4 @@
 from functools import partial
-from typing import Any
 
 import pytest
 import torch
@@ -11,7 +10,7 @@ import thunder.core.devices as devices
 from thunder import dtypes
 from thunder.core.transforms import vjp
 from thunder.core.utils import flatten_func
-from thunder.tests.framework import instantiate, NOTHING, ops, requiresCUDA, run_snippet, TorchExecutor, version_between
+from thunder.tests.framework import ops, requiresCUDA, run_snippet, TorchExecutor
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import get_opinfo, OpInfo
 from thunder.tests.test_grad import _make_differentiable_wrapper
@@ -32,7 +31,6 @@ def _maybe_xfail() -> None:
 # These reference inputs are currently used by cudnnex
 def grad_scaled_dot_product_attention_reference_generator(op, device, dtype, requires_grad, **kwargs):
     """https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html"""
-    from thunder.executors.sdpaex import SpdaBackend
     from thunder.tests.opinfos import SampleInput
 
     # TODO: cudnnex seems to produce large mismatches against reference when tensor initialized from the wider default range of [-9,9]

@@ -1,47 +1,27 @@
 import thunder
 import math
-from typing import Any, Optional, Dict, Tuple, Literal
+from typing import Any, Optional, Literal
 import builtins
 import collections
-from collections.abc import ValuesView, Iterable, Iterator
 from collections.abc import Callable, Sequence
 import weakref
 import random
-from functools import partial, wraps, reduce
-import linecache
-import operator
-import copy
+from functools import wraps
 import contextvars
 from contextlib import contextmanager
 import dis
 import warnings
-from enum import Enum, auto
-from io import StringIO
-import inspect
-import time
 
-from thunder.core.compile_data import compile_data_and_stats, get_cache_option, get_compile_data
+from thunder.core.compile_data import get_cache_option, get_compile_data
 import thunder.clang as clang
 import thunder.core.transforms
 from thunder.core.baseutils import run_once
 
 from types import (
-    CellType,
-    ClassMethodDescriptorType,
-    CodeType,
-    CoroutineType,
-    FrameType,
-    FunctionType,
-    MethodType,
-    MethodDescriptorType,
-    ModuleType,
     NoneType,
-    BuiltinFunctionType,
     BuiltinMethodType,
     MethodDescriptorType,
-    MethodWrapperType,
     WrapperDescriptorType,
-    TracebackType,
     CellType,
     ModuleType,
     CodeType,
@@ -59,32 +39,23 @@ from thunder.core.proxies import (
     Proxy,
     AnyProxy,
     NumberProxy,
-    StringProxy,
     TensorProxy,
-    FutureTensorProxy,
-    make_proxy_name,
     Variable,
     variableify,
     unvariableify,
     is_proxy_name_available,
 )
-from thunder.core.trace import set_tracectx, reset_tracectx, tracectx, from_trace
+from thunder.core.trace import tracectx, from_trace
 from thunder.core.interpreter import (
-    InterpreterLogItem,
     interpret,
     _interpret_call,
-    CapsuleType,
     default_callbacks,
     INTERPRETER_CALLBACKS,
     INTERPRETER_SIGNALS,
-    default_opcode_interpreter,
-    _default_lookaside_map,
     default_lookaside,
     do_raise,
     get_interpreterruntimectx,
-    InterpreterRuntimeCtx,
     is_opaque,
-    Py_NULL,
     member_descriptor,
     WrappedValue,
     unwrap,
@@ -94,21 +65,15 @@ from thunder.core.interpreter import (
     ProvenanceRecord,
     interpreter_needs_wrap,
 )
-from thunder.core.langctxs import set_langctx, reset_langctx, Languages, resolve_language
-from thunder.core.baseutils import extract_callable_name
-from thunder.core.codeutils import get_siginfo, SigInfo
+from thunder.core.codeutils import SigInfo
 import thunder.core.prims as prims
-from thunder.common import transform_for_execution
 from thunder.core.options import CACHE_OPTIONS, SHARP_EDGES_OPTIONS
-from thunder.core.symbol import Symbol, BoundSymbol, is_traceable
+from thunder.core.symbol import Symbol, is_traceable
 
-from thunder.extend import Executor
-from thunder.common import CompileData, CompileStats
 from thunder.core.trace import TraceCtx, TraceResults
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.clang import _clang_fn_set
 from thunder.core.pytree import tree_map
-from thunder.core.compile_data import compile_data_and_stats
 
 #
 # jit_ext.py implements extensions of thunder's interpreter
@@ -800,7 +765,7 @@ def _general_jit_setattr_lookaside(obj: Any, name: str, value: Any):
     assert setattr_lookaside is not None
 
     uobj = unwrap(obj)
-    uname = unwrap(name)
+    unwrap(name)
     if isinstance(uobj, torch.nn.Module):
         # 1) modify the inner thing
         # 2) divert the actual setattr...
@@ -1237,7 +1202,7 @@ def _general_jit_wrap_callback(value):
         value.provenance.ext_flag |= EXT_FLAG_IS_MODULE
     elif isinstance(uvalue, torch.Tensor):
         # we always want to proxy torch.Tensor, even const
-        p = ctx.proxify(value)
+        ctx.proxify(value)
     elif value.provenance.inst is PseudoInst.CONSTANT:
         value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
     elif callable(uvalue):
@@ -1253,7 +1218,7 @@ def _general_jit_wrap_callback(value):
             value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
             value.provenance.ext_flag |= EXT_FLAG_IS_CONSTRAINABLE_INPUT
             # we follow the caching mechanisms of the eager_unpack_interpreter
-            p = ctx.proxify(value)
+            ctx.proxify(value)
         else:
             return _general_jit_sharp_edge(
                 f"We are using a (non-const) value of type {type(uvalue).__name__}, which is not identified as an input.",
@@ -1519,7 +1484,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             fn = provenance.inputs[0]
             args = provenance.inputs[1]
             if fn.inst != PseudoInst.CONSTANT:
-                raise NotImplementedError(f"unpacking from nonconstant opaque function")
+                raise NotImplementedError("unpacking from nonconstant opaque function")
             if fn.value.__name__ == "__getitem__":
                 idx, obj = args.inputs
                 # This should be solved in the JIT...
@@ -1727,7 +1692,7 @@ def thunder_general_jit(
     # TODO: move into wrap_callback or so
     if isinstance(fn, torch.nn.parallel.DistributedDataParallel):
         raise NotImplementedError(
-            f"jitting DistributedDataParallel modules is not supported compile the module and then wrap in DDP"
+            "jitting DistributedDataParallel modules is not supported compile the module and then wrap in DDP"
         )
 
     co: CACHE_OPTIONS = get_cache_option()

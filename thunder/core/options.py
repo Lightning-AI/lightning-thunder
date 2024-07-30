@@ -175,11 +175,11 @@ def resolve_sharp_edges_option(x: Any, /) -> SHARP_EDGES_OPTIONS:
 
         if seo is SHARP_EDGES_OPTIONS.WARN:
             warnings.warn(
-                f"The 'warn' sharp edges option is experimental and still in development. It may not work as expected."
+                "The 'warn' sharp edges option is experimental and still in development. It may not work as expected."
             )
         if seo is SHARP_EDGES_OPTIONS.ERROR:
             warnings.warn(
-                f"The 'error' sharp edges option is experimental and still in development. It may not work as expected."
+                "The 'error' sharp edges option is experimental and still in development. It may not work as expected."
             )
 
     return seo

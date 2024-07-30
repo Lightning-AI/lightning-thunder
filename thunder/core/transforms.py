@@ -6,22 +6,17 @@ from itertools import chain, compress
 from functools import lru_cache, partial, wraps
 import math
 from numbers import Number
-from typing import Any, Dict, Union, Optional
-from types import NoneType
+from typing import Any
 from collections.abc import Callable
-from collections.abc import Hashable
 from collections.abc import Sequence
 import copy
 import inspect
 import time
-from collections import deque
-import os
 import dataclasses
 
 import thunder
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
-import thunder.core.devices as devices
 from thunder.core.devices import cpu, Device
 from thunder.core.proxies import (
     NumberProxy,
@@ -29,17 +24,14 @@ from thunder.core.proxies import (
     TensorProxy,
     FloatProxy,
     variableify,
-    unvariableify,
-    CollectionProxy,
     FutureTensorProxy,
 )
-from thunder.core.baseutils import default_dataclass_params
 from thunder.core.compile_data import get_compile_data
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten, tree_flatten_with_dataclass
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol
-from thunder.core.trace import TraceCtx as Trace, tracectx
+from thunder.core.trace import TraceCtx as Trace
 from thunder.core.trace import VariableInterface as Variable
-from thunder.core.trace import detached_trace, get_tracectx, set_tracectx, reset_tracectx, from_trace, TraceProvenance
+from thunder.core.trace import detached_trace, set_tracectx, reset_tracectx, from_trace, TraceProvenance
 from thunder.core.utils import (
     check,
     flatten_func,
@@ -68,7 +60,6 @@ from thunder.extend import Executor
 import thunder.torch as ltorch
 
 import torch
-from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
 import numpy as np
 
 
@@ -103,10 +94,10 @@ class Node:
         return str(self.bsym)
 
     def __hash__(self) -> int:
-        utils.check(False, lambda: f"Trying to hash a Node. Hash its bsym instead.")
+        utils.check(False, lambda: "Trying to hash a Node. Hash its bsym instead.")
 
     def __eq__(self, other) -> bool:
-        utils.check(False, lambda: f"Trying to compare Nodes for equality. Compare their bsyms' instead.")
+        utils.check(False, lambda: "Trying to compare Nodes for equality. Compare their bsyms' instead.")
 
 
 # TODO Think about how to model nodes likes comments -- maybe comments should be associated with
@@ -137,7 +128,7 @@ def bsym_list_to_dag(
         if bsym.sym.id is prims.PrimIDs.RETURN:
             utils.check(
                 return_node is None,
-                lambda: f"Found multiple RETURN nodes while converting a list of bound symbols to a dag",
+                lambda: "Found multiple RETURN nodes while converting a list of bound symbols to a dag",
             )
             return_node = node
 
@@ -410,7 +401,7 @@ def add_transform(
 
     cd: None | Any = getattr(cfn, "_lc_cd", None)
 
-    utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
+    utils.check(cd is not None, lambda: "Can only transform compiled thunder functions")
     utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
     utils.check_type(transform, Transform)
 
@@ -880,7 +871,7 @@ register_grad(pids.INDEX_COPY, _index_copy_grad)
 def _scatter_add_prim_grad(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     utils.check(
         not value._requires_grad or value.shape == index.shape,
-        lambda: f"The gradient for the value Tensor is implemented only when value.shape == index.shape. "
+        lambda: "The gradient for the value Tensor is implemented only when value.shape == index.shape. "
         "value shape is {value.shape} while index shape is {index.shape}",
     )
 

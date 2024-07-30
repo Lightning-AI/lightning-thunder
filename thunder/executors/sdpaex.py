@@ -80,7 +80,7 @@ def _attention_mask_memory_efficient_helper(attn_mask: None | torch.Tensor, quer
     # When a boolean mask is used, it needs to be converted to an additive mask where zero'd elements are filled
     # with a very negative value that should become ~0 after softmax
     if attn_mask.dtype == torch.bool:
-        attn_mask = torch.masked_fill(torch.zeros_like(attn_mask, dtype=query.dtype), attn_mask == False, -math.inf)
+        attn_mask = torch.masked_fill(torch.zeros_like(attn_mask, dtype=query.dtype), attn_mask is False, -math.inf)
 
     # Expand the number of heads in attention mask to match query, key, and value tensors.
     num_heads = query.shape[1]
@@ -91,12 +91,12 @@ def _attention_mask_memory_efficient_helper(attn_mask: None | torch.Tensor, quer
 
     utils.check(
         head_dim > 0,
-        lambda: f"Expected head dimension to be greater than 0.",
+        lambda: "Expected head dimension to be greater than 0.",
     )
 
     utils.check(
         key_seq_len > 0,
-        lambda: f"Expected key-value sequence length to be greater than 0.",
+        lambda: "Expected key-value sequence length to be greater than 0.",
     )
 
     # Pad and slice attention mask to ensure correct alignment.
@@ -200,7 +200,7 @@ def _grad_forward_scaled_dot_product_efficient_attention_meta(
     _input_shape_check_fused_scaled_dot_product_attention(query, key, value, attn_mask)
 
     batch_size, num_heads, query_seq_len, E = query.shape
-    key_seq_len = key.shape[-2]
+    key.shape[-2]
     Ev = value.shape[-1]
     logsumexp_dim = math.ceil(query_seq_len / 32) * 32
 

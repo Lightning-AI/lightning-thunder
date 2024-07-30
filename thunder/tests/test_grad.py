@@ -1,5 +1,4 @@
 from collections.abc import Sequence
-import itertools
 from functools import partial
 from typing import Any
 
@@ -13,7 +12,6 @@ import torch
 import thunder
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
-import thunder.clang as clang
 
 from thunder import torch as ltorch
 from thunder.core.dtypes import is_exact_dtype, to_dtype as thunder_dtype
@@ -1000,7 +998,7 @@ def test_torch_autograd_crazy_collections_in_and_out(executor, device, dtype):
         g = e + f
         h = f + ka + kb
         # NOTE The following computation is intentionally unused
-        i = ka + ka  # noqa
+        i = ka + ka
         j = kc[0] + kc[1]
 
         d["j"] = j
@@ -1069,7 +1067,6 @@ def test_torch_autograd_module(executor, device, _):
     dtypes=NOTHING,
 )
 def test_torch_autograd_module_get_compile_stats(executor, device, _):
-    from thunder.core.trace import TraceCtx
     from thunder import compile_stats
 
     l = torch.nn.Linear(3, 4, bias=False, device=device)
@@ -1190,7 +1187,6 @@ def test_torch_autograd_redundant_casts(executor, device, _):
     # There was a bug where we would eliminate the redundant casts in forward
     # but backward wasn't updated with the new proxies. This test ensures that
     # we don't regress.
-    from thunder.core.prims import convert_element_type
     import thunder.torch as ltorch
 
     def func(a, b, c):
@@ -1374,7 +1370,7 @@ def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype,
 
 
 from torch.testing import assert_close
-from thunder.core.transforms import populate_grads, clear_grads, extract_grads, put_grad, put_grads, get_grad
+from thunder.core.transforms import populate_grads, clear_grads, extract_grads, put_grad, get_grad
 
 
 @instantiate(dtypes=(thunder.float32,))
@@ -1540,7 +1536,6 @@ def test_too_few_results_from_backward():
     from thunder.core.prims import make_prim
     from thunder.core.transforms import register_augmented_forward, register_backward
     from thunder.core.proxies import TensorProxy
-    from thunder.core import codeutils
 
     def myadd_meta(a, b):
         return TensorProxy(like=a)
@@ -1553,7 +1548,7 @@ def test_too_few_results_from_backward():
 
     myex = thunder.extend.OperatorExecutor("myex", version="0.1")
     thunder.extend.register_executor(myex)
-    myadd_op = myex.register_operator("myadd", like=myadd_meta, fn=lambda a, b: a + b)
+    myex.register_operator("myadd", like=myadd_meta, fn=lambda a, b: a + b)
 
     @register_augmented_forward("myadd")
     def myadd_augmented_fw(a, b):
@@ -1574,7 +1569,7 @@ def test_too_few_results_from_backward():
     b = torch.tensor(1.0, requires_grad=True)
 
     with pytest.raises(RuntimeError, match=r"Backward for myadd returned 1 value\(s\), but expected 2"):
-        fw_out = cfunc(a, b)
+        cfunc(a, b)
 
     thunder.extend.deregister_executor(myex)
 

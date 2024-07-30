@@ -1,6 +1,4 @@
-from functools import partial
 from typing import Any
-from collections.abc import Callable
 
 import torch
 
@@ -8,9 +6,8 @@ from lightning_utilities.core.imports import package_available
 
 import thunder.torch as ltorch
 from thunder.core.proxies import TensorProxy
-from thunder.core.symbol import Symbol
 from thunder.core.utils import check, same_shape
-from thunder.core.transforms import get_grad, put_grad, put_grads, mean_backward, restore_reduced_dims
+from thunder.core.transforms import get_grad, put_grad, mean_backward, restore_reduced_dims
 
 from thunder.extend import OperatorExecutor, register_executor
 

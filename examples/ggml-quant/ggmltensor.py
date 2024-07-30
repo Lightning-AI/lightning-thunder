@@ -310,7 +310,7 @@ def merge_attention_weights(qq, info_q, qk, info_k, qv, info_v):
     typ_k, shape_k = info_k
     typ_v, shape_v = info_v
 
-    num_blocks = qq.shape[0]
+    qq.shape[0]
     assert qq.shape[1] == GGML_BLOCK_SIZES[typ_q]
     assert shape_q[0] % GGML_ELEMENTS_PER_BLOCK[typ_q] == 0
     qq_swizzled = (
@@ -320,8 +320,8 @@ def merge_attention_weights(qq, info_q, qk, info_k, qv, info_v):
         qk.view(-1, 64, 2, shape_k[0] // GGML_ELEMENTS_PER_BLOCK[typ_k], qk.shape[1]).transpose(1, 2).reshape(*qk.shape)
     )
 
-    dqq2 = dequantize(qq_swizzled, typ_q, shape_q)
-    dqk2 = dequantize(qk_swizzled, typ_k, shape_k)
+    dequantize(qq_swizzled, typ_q, shape_q)
+    dequantize(qk_swizzled, typ_k, shape_k)
 
     assert shape_k[0] % GGML_ELEMENTS_PER_BLOCK[typ_k] == 0
     assert shape_v[0] % GGML_ELEMENTS_PER_BLOCK[typ_v] == 0

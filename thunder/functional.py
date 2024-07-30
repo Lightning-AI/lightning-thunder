@@ -50,7 +50,7 @@ import torch as pytorch
 
 def _eager_validate_tensor(p: TensorProxy, /, *, co: CACHE_OPTIONS) -> tuple[list, list]:
     if co is CACHE_OPTIONS.SYMBOLIC_VALUES:
-        raise NotImplementedError(f"Trying to unpack a number with symbolic values, but this is not supported yet")
+        raise NotImplementedError("Trying to unpack a number with symbolic values, but this is not supported yet")
 
     if co is CACHE_OPTIONS.CONSTANT_VALUES:
         clang.check_tensor_shape_and_metadata(p)
@@ -84,7 +84,7 @@ def _eager_unpack_literal_like(x: Any, /, name: None | str, *, co: CACHE_OPTIONS
 
 def _eager_validate_none(p: AnyProxy, /, *, co: CACHE_OPTIONS) -> tuple[list, list]:
     if co is CACHE_OPTIONS.SYMBOLIC_VALUES:
-        raise NotImplementedError(f"Trying to unpack a None with symbolic values, but this is not supported yet")
+        raise NotImplementedError("Trying to unpack a None with symbolic values, but this is not supported yet")
 
     if co is CACHE_OPTIONS.CONSTANT_VALUES:
         clang.check_none(p)
@@ -100,7 +100,7 @@ def _eager_unpack_none(n: None, /, name: None | str, *, co: CACHE_OPTIONS) -> tu
 
 def _eager_validate_number(p: NumberProxy, /, *, co: CACHE_OPTIONS):
     if co is CACHE_OPTIONS.SYMBOLIC_VALUES:
-        raise NotImplementedError(f"Trying to unpack a number with symbolic values, but this is not supported yet")
+        raise NotImplementedError("Trying to unpack a number with symbolic values, but this is not supported yet")
 
     # When not using symbolic values, numbers are compile-time constants, so an actual
     #   Python number is used when interpreting the function, and no number is passed
@@ -120,7 +120,7 @@ def _eager_unpack_number(num: Number, /, name: None | str, *, co: CACHE_OPTIONS)
 
 def _eager_validate_string(p: StringProxy, /, *, co: CACHE_OPTIONS) -> tuple[list, list]:
     if co is CACHE_OPTIONS.SYMBOLIC_VALUES:
-        raise NotImplementedError(f"Trying to unpack a string with symbolic values, but this is not supported yet")
+        raise NotImplementedError("Trying to unpack a string with symbolic values, but this is not supported yet")
 
     # When not using symbolic values, strings are compile-time constants, so an actual
     #   Python string is used when interpreting the function, and no string is passed

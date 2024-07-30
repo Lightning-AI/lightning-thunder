@@ -366,7 +366,7 @@ def test_multiple_views_before_inplace_to_base(executor, device, _):
         z = x.view(-1)
         x.add_(1)
         # y should have been updated.
-        y2 = y + 1
+        y + 1
         # z should have been updated too.
         z2 = z + 1
         return z2
@@ -391,7 +391,7 @@ def test_multiple_views_before_inplace_to_base(executor, device, _):
         z = x.view(-1)
         x.add_(1)
         # y should have been updated.
-        y2 = y + 1
+        y + 1
         # z should have been updated too.
         z2 = z + 1
         return z2

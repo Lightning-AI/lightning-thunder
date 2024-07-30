@@ -1,8 +1,6 @@
 """
 Sample from the trained model with PyTorch
 """
-import os
-import pickle
 from contextlib import nullcontext
 from functools import partial
 

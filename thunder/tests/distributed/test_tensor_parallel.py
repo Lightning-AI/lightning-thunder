@@ -280,7 +280,7 @@ class TensorParallelTest(DistributedParallelTestCase):
         sin = make_tensor(sin_shape, device=device, dtype=dtype, requires_grad=True)
 
         # TODO(crcrpar): add numeircal check
-        y = tp_attention(x, cos, sin, mask, input_pos)
+        tp_attention(x, cos, sin, mask, input_pos)
         tp_syncs = {PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_INPUT, PrimIDs.SYNCHRONIZE_TENSOR_PARALLEL_OUTPUT}
         fwd_traces_with_tensor_parallel_syncs = list(
             filter(

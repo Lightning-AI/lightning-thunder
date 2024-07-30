@@ -1,7 +1,6 @@
 import os
 import unittest
 from itertools import product
-from collections.abc import Callable
 
 import pytest
 import torch
@@ -21,7 +20,6 @@ from thunder.executors.transformer_engineex import (
     transformer_engine_ex,
     TE_AVAILABLE,
     te_sync_fp8_meta_bwd,
-    TE_VERSION_1_8_PLUS,
 )
 
 
@@ -33,7 +31,6 @@ if TE_AVAILABLE:
     from transformer_engine.pytorch import fp8_autocast
     from transformer_engine.pytorch import Linear as TELinear
     from transformer_engine.pytorch.fp8 import check_fp8_support, FP8GlobalStateManager
-    import transformer_engine
 
     is_fp8_supported, fp8_support_reason = check_fp8_support()
 
@@ -87,7 +84,7 @@ class DDPTest(DistributedParallelTestCase):
         ):
             cm = thunder.jit(DDP(model, device_ids=[self.rank]))
             x = torch.randn(20, 12).to(self.rank)
-            outputs = cm(x)
+            cm(x)
 
     @common_utils.parametrize("executor,bucket_size_in_mb", product(tuple(executors_map.keys()), (0, 1000)))
     def test_ddp_grad_bucketing(self, executor, bucket_size_in_mb: int):
@@ -141,7 +138,6 @@ class DDPTest(DistributedParallelTestCase):
         # If they are different, it'd be impossible to keep replicas identical.
         from thunder.common import CACHE_OPTIONS
         from thunder.distributed import ddp
-        from thunder.distributed import get_skip_data_parallel_grad_sync
 
         def get_model_and_optimizer(device):
             m = ToyModel().to(device)

@@ -1,11 +1,9 @@
-import sys
 import os
 from enum import Enum
-from functools import reduce, wraps
+from functools import reduce
 import itertools
-from itertools import chain
 from numbers import Number
-from typing import Any, overload, Generic, Optional, TypeVar, TYPE_CHECKING
+from typing import Any, overload, Generic, TypeVar, TYPE_CHECKING
 from collections.abc import Callable
 from collections.abc import Hashable, Iterable, Iterator, Sequence
 
@@ -14,8 +12,8 @@ from typing_extensions import Self
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 from thunder.core.proxies import Proxy, NumberProxy, TensorProxy, variableify, CONSTRAINT
-from thunder.core.baseutils import *
-from thunder.core.codeutils import *
+from thunder.core.baseutils import *  # noqa: F403
+from thunder.core.codeutils import *  # noqa: F403
 from thunder.core.trace import TraceCtx
 import thunder.core.prims as prims
 
@@ -1120,7 +1118,7 @@ def get_symbols_to_last_used_variables(symbols, ignore):
     def _mark_last_use(symbol, variable):
         if variable in ignore:
             return
-        if not variable in variable_to_last_symbol:
+        if variable not in variable_to_last_symbol:
             variable_to_last_symbol[variable] = symbol
             symbol_to_last_variables.setdefault(symbol, []).append(variable)
 

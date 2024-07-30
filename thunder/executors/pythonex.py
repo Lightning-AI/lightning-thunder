@@ -1,24 +1,17 @@
-from typing import List, Any, Dict, Tuple, Union, Type
-from collections.abc import Callable
-from collections.abc import Hashable
+from typing import Any
 from collections.abc import Sequence, Collection, MutableSet, MutableMapping, MutableSequence
 from numbers import Number
 import math
 import operator
 import builtins
-import cmath
-from types import ModuleType
 import platform
 
 import torch
 
 import thunder.core.prims as prims
-from thunder.core.prims import PrimIDs
 from thunder.core.proxies import NumberProxy, NumberLike, TensorProxy, CollectionProxy
-from thunder.core.symbol import Symbol, BoundSymbol
 from thunder.core import baseutils
 import thunder.core.dtypes as dtypes
-import thunder.core.devices as devices
 import thunder.core.utils as utils
 
 from thunder.extend import OperatorExecutor, register_executor, add_always_executor

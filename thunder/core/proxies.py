@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import auto, Enum
 from numbers import Number
-from typing import Type, Optional, Any, Tuple, List, Union
+from typing import Any
 from collections.abc import Callable
 from collections.abc import Sequence
 
@@ -13,7 +13,6 @@ import math
 
 import torch
 
-from thunder.core.compile_data import using_symbolic_values, using_jit
 from thunder.core.interpreter import is_jitting
 from thunder.core.trace import VariableInterface, get_tracectx, TraceCtx
 from thunder.core.baseutils import ProxyInterface, NumberProxyInterface, TensorProxyInterface
@@ -613,8 +612,8 @@ class NumberProxy(Proxy, NumberProxyInterface):
         return self.value is not None
 
     def make_static_constrained(self):
-        baseutils.check(self.constraint != CONSTRAINT.DYNAMIC, lambda: f"dynamic NumberProxy cannot be made static")
-        baseutils.check(self.value is not None, lambda: f"static NumberProxy needs to have value")
+        baseutils.check(self.constraint != CONSTRAINT.DYNAMIC, lambda: "dynamic NumberProxy cannot be made static")
+        baseutils.check(self.value is not None, lambda: "static NumberProxy needs to have value")
         self.constraint = CONSTRAINT.STATIC
 
     def make_constrainable(self):

@@ -1,19 +1,8 @@
 from __future__ import annotations
 
-from enum import Enum, auto
-from typing import List, Set, Dict, Optional
-from collections.abc import Callable
-from itertools import chain
-from collections.abc import Sequence
 
-import torch
-from looseversion import LooseVersion
-
-import thunder.core.utils as utils
 from thunder.core.symbol import BoundSymbol
-from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
-from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
-from thunder.core.proxies import Variable, variableify, Proxy, unvariableify
+from thunder.core.proxies import variableify, Proxy, unvariableify
 from thunder.core.prims import PrimIDs
 
 # TODO Make these tags
@@ -71,7 +60,7 @@ class Region:
                     break
 
     def __repr__(self) -> str:
-        s = f"[Region:"
+        s = "[Region:"
 
         for bsym in self.bound_symbols:
             s += f"\n{str(bsym)}"

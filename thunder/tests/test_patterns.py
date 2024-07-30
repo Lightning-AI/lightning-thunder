@@ -1,11 +1,9 @@
 from numbers import Number
 
-import pytest
 import torch
-from torch.testing import assert_close, make_tensor
 
 import thunder
-from thunder.core.patterns import Pattern, bind_names, numbered_ancestors
+from thunder.core.patterns import Pattern, bind_names
 from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import BoundSymbol
 
@@ -424,7 +422,7 @@ def test_context():
         if bsym.sym.name == "sub":
             bn = bind_names(bsym)
             a = match_ctx["a"]
-            b = match_ctx["b"]
+            match_ctx["b"]
             add_out = match_ctx["first_add_result"]
             if bn.a is add_out and bn.b is a:
                 return True, {}

@@ -15,9 +15,8 @@ import re
 import sys
 import traceback
 import weakref
-import torch
 from typing import Any, Literal, TypedDict
-from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, Set, Sized
+from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, Sized
 import collections
 import operator
 
@@ -25,13 +24,11 @@ from io import StringIO
 
 from types import (
     CellType,
-    ClassMethodDescriptorType,
     CodeType,
     CoroutineType,
     FrameType,
     FunctionType,
     MethodType,
-    MethodDescriptorType,
     ModuleType,
     NoneType,
     BuiltinFunctionType,
@@ -895,7 +892,7 @@ def get_python_tb(tb: list | TracebackType | None) -> list:
         return tb
 
     res = []
-    while tb != None:
+    while tb is not None:
         res.append(PythonFrameWrapper(tb.tb_frame))
         tb = tb.tb_next
     return res
@@ -970,7 +967,6 @@ class ProvenanceRecord:
             nonlocal counter
             inputs = [recurse_str(i) for i in self.inputs]
             inputs_str = ", ".join(inputs)
-            i = counter
             counter += 1
             l = f"  i{counter} = {self.inst}({inputs_str})"
             if self.output_idx != 0 or self.output_key is not None:
@@ -1557,7 +1553,7 @@ def _object_getattribute_lookaside(obj: Any, name: str):
         assert cls_var is not null
         if lookup_descriptor_field("__set__") is not null or lookup_descriptor_field("__delete__") is not null:
             assert callable(descr_get)
-            compilectx = get_interpretercompilectx()
+            get_interpretercompilectx()
 
             # if it is opaque, don't _interpret_call here, to avoid a wrap/unwrap dance
             if is_opaque(descr_get):
@@ -1654,7 +1650,7 @@ def wrap_attribute(plain_result, obj, name):
 def _setattr_lookaside(obj: Any, name: str, value: Any):
     uobj = unwrap(obj)
     uname = unwrap(name)
-    uvalue = unwrap(value)
+    unwrap(value)
     typ = type(uobj)
 
     compilectx: InterpreterCompileCtx = get_interpretercompilectx()
@@ -2236,7 +2232,7 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
 
     def __iadd__(self, iterable, /):
         self.track_items()
-        res = _interpret_call(list.extend, self, iterable)
+        _interpret_call(list.extend, self, iterable)
         return self
 
     def __imul__(self, n, /):
@@ -2269,7 +2265,7 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
             return do_raise(IndexError(f"pop on empty {type(uself)}"))
 
         if uindex < -len(uself) or uindex >= len(uself):
-            return do_raise(IndexError(f"pop index out of range"))
+            return do_raise(IndexError("pop index out of range"))
 
         res = _interpret_call(lambda l, i: l[i], self, index)
 
@@ -2468,9 +2464,9 @@ class MutMappingWrapperMethods(WrappedValue):
         assert self.item_wrappers is not None
 
         if last is Py_NULL():
-            last_d = {}
+            pass
         else:
-            last_d = {"last": last.value}
+            pass
 
         try:
             uk, uv = self.value.popitem(last=last)
@@ -3126,7 +3122,7 @@ def _async_gen_wrap_handler(inst: dis.Instruction, /, stack: InterpreterStack, *
 def _before_async_with_handler(
     inst: dis.Instruction, /, stack: InterpreterStack, **kwargs
 ) -> None | INTERPRETER_SIGNALS:
-    runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
+    get_interpreterruntimectx()
 
     mgr = stack.pop()
 
@@ -3157,7 +3153,7 @@ def _before_async_with_handler(
 # https://docs.python.org/3.11/library/dis.html#opcode-BEFORE_WITH
 @register_opcode_handler("BEFORE_WITH", min_ver=(3, 11))
 def _before_with_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kwargs) -> None | INTERPRETER_SIGNALS:
-    runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
+    get_interpreterruntimectx()
 
     mgr = stack.pop()
 
@@ -4089,10 +4085,10 @@ def _end_async_for_handler_3_10(
 
         assert len(stack) >= try_block.level + 3
         del stack[try_block.level + 3 :]
-        exc_type = frame.interpreter_stack.pop()  # we ignore that and assume == type(exc_value)
+        frame.interpreter_stack.pop()  # we ignore that and assume == type(exc_value)
         exc_value = frame.interpreter_stack.pop()
         exc_traceback = frame.interpreter_stack.pop()
-        if exc_value != None:
+        if exc_value is not None:
             exc_value.__traceback__ = exc_traceback
         assert runtimectx.exception_stack
         # CPython sets exc_info->exc_type/value/traceback
@@ -4188,7 +4184,7 @@ def _format_value_handler(inst: dis.Instruction, /, stack: InterpreterStack, **k
         elif _case == FVC_REPR:
             value = repr(value)
         else:
-            assert _case == FVC_ASCII, f"Unknown FVC_MASK in FORMAT_VALUE"
+            assert _case == FVC_ASCII, "Unknown FVC_MASK in FORMAT_VALUE"
             value = ascii(value)
 
         formatted: str = format(value, fmt_spec) if fmt_spec is not None else format(value)
@@ -5013,7 +5009,7 @@ def _match_class_impl(kw_names, typ, subject, count) -> tuple | None:
         match_self = True
         match_args = ()
 
-    if not type(match_args) is tuple:
+    if type(match_args) is not tuple:
         raise TypeError(f"{typ.__name__}.__match_args__ must be a tuple (got {type(match_args)})")
 
     allowed = 1 if match_self else len(match_args)
@@ -5158,9 +5154,9 @@ def _pop_except_handler_3_10(
     assert try_block.typ == PyTryBlock.EXCEPT_HANDLER_TYPE
     assert try_block.level + 3 <= len(stack) <= try_block.level + 4
     assert exception_stack
-    exc_type = stack.pop()
+    stack.pop()
     exc_value = stack.pop()
-    exc_traceback = stack.pop()
+    stack.pop()
     # we assume that type and traceback are set on exc_value already (check?)
     # CPython sets exc_info->exc_type/value/traceback, see RuntimeCtx inititalization of exception_stack for more info
     exception_stack[-1] = exc_value
@@ -5407,7 +5403,7 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()) -> Literal[INTERPRETE
         # Re-raise
         assert runtimectx.exception_stack
         value = runtimectx.exception_stack[0]
-        if value == None:
+        if value is None:
             return do_raise(RuntimeError("No active exception to reraise"))
         assert isinstance(value, BaseException)
         # check for cause being PY_NULL? Python does not do this, but it would seem to be a bug
@@ -5452,7 +5448,7 @@ def do_raise(exc: Any = Py_NULL(), cause: Any = Py_NULL()) -> Literal[INTERPRETE
         elif cause is None:
             fixed_cause = None
         else:
-            return do_raise(TypeError(f"exception causes must derive from BaseException"))
+            return do_raise(TypeError("exception causes must derive from BaseException"))
 
         value.__cause__ = fixed_cause
 
@@ -5533,7 +5529,7 @@ def _reraise_handler_3_10(
     if inst.arg != 0:
         frame.lasti = try_stack[-1].handler
 
-    exc = stack.pop()
+    stack.pop()
     val = stack.pop()
     tb = stack.pop()
     assert isinstance(val, BaseException)
@@ -5839,7 +5835,7 @@ def _store_fast_handler(
     assert type(inst.arg) is int
     var_num: int = inst.arg
 
-    name: str = co.co_varnames[var_num]
+    co.co_varnames[var_num]
     frame.localsplus[var_num] = tos
 
 
@@ -6706,10 +6702,9 @@ def _setup_frame_and_run_python_function(
 
     if compilectx._with_provenance_tracking:
         frame_globals = wrap_attribute(wrapped_fn.value.__globals__, wrapped_fn, wrap_const("__globals__"))
-        frame_builtins = wrap(builtins_dict, provenance=ProvenanceRecord(inst=PseudoInst.BUILTINS, inputs=[]))
+        wrap(builtins_dict, provenance=ProvenanceRecord(inst=PseudoInst.BUILTINS, inputs=[]))
     else:
         frame_globals = fn.__globals__
-        frame_builtins = builtins_dict
 
     # Creates the current ready to run stack frame for the current function
     frame = InterpreterFrame(
@@ -6827,10 +6822,10 @@ def _run_frame(
                             assert len(frame.interpreter_stack) >= try_block.level + 3
                             with frame.interpreter_stack.set_cur_instruction(PseudoInst.EXCEPTION_HANDLER):
                                 del frame.interpreter_stack[try_block.level + 3 :]
-                                exc_type = frame.interpreter_stack.pop()  # we ignore that and assume == type(exc_value)
+                                frame.interpreter_stack.pop()  # we ignore that and assume == type(exc_value)
                                 exc_value = frame.interpreter_stack.pop()
                                 exc_traceback = frame.interpreter_stack.pop()
-                            if exc_value != None:
+                            if exc_value is not None:
                                 exc_value.__traceback__ = exc_traceback
                             assert runtimectx.exception_stack
                             # CPython sets exc_info->exc_type/value/traceback

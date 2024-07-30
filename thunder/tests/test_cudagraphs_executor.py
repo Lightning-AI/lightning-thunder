@@ -1,10 +1,6 @@
-import pytest
-
 import torch
-from torch.testing import assert_close
 
 import thunder
-from thunder.executors.cudagraphex import cudagraphex
 from thunder.tests.framework import requiresCUDA
 
 

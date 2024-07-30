@@ -36,8 +36,7 @@ from thunder.core.proxies import (
 )
 import thunder.core.prims as prims
 import thunder.distributed as dist
-import thunder.torch as ltorch  # we need to import thunder.torch before the below for import ordering...
-from thunder.extend import Executor, get_default_executors, get_always_executors, OperatorExecutor, add_executor_lists
+from thunder.extend import Executor, get_default_executors, get_always_executors, add_executor_lists
 import thunder.executors as executors
 from thunder.core.transforms import autocast
 from thunder.core.dtypes import to_dtype
@@ -800,7 +799,7 @@ def _create_callable(
             current_trace = get_tracectx()
             check(
                 current_trace is None or len(transforms) == 0,
-                lambda: f"Inlining transformed traces is not yet supported",
+                lambda: "Inlining transformed traces is not yet supported",
                 exception_type=NotImplementedError,
             )
 

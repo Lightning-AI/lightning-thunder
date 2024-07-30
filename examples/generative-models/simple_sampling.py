@@ -6,7 +6,6 @@ import os
 from typing import List
 
 import numpy as np
-import torch
 from einops import rearrange
 
 from omegaconf import OmegaConf
@@ -26,7 +25,7 @@ def load_model_from_config(config, ckpt):
     if ckpt.endswith("ckpt"):
         pl_sd = torch.load(ckpt, map_location="cpu")
         if "global_step" in pl_sd:
-            global_step = pl_sd["global_step"]
+            pl_sd["global_step"]
             print(f"Global Step: {pl_sd['global_step']}")
         sd = pl_sd["state_dict"]
     elif ckpt.endswith("safetensors"):
@@ -101,7 +100,6 @@ def init_sampling():
     num_rows, num_cols = 1, 1
 
     steps = 40  # 40 ## 1...1000
-    discretization = "EDMDiscretization"
 
     discretization_config = {
         "target": "sgm.modules.diffusionmodules.discretizer.EDMDiscretization",

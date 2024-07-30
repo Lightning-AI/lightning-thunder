@@ -4,7 +4,6 @@ import sys
 import platform
 from functools import wraps, singledispatchmethod, partial
 from itertools import product
-from typing import List, Optional
 from collections.abc import Callable, Sequence, Iterable
 import packaging.version
 import contextlib
@@ -14,10 +13,9 @@ import torch
 from torch._dynamo import is_inductor_supported
 from torch.testing import assert_close
 
-from looseversion import LooseVersion
 from lightning_utilities.core.imports import package_available
 
-from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
+from thunder.core.pytree import tree_flatten, tree_map
 import thunder.core.dtypes as datatypes
 import thunder.core.devices as devices
 import thunder.executors as executors
@@ -163,7 +161,6 @@ class TestExecutor:
 
     @make_callable.register
     def make_callable_from_trace(self, trace: TraceCtx, **kwargs):
-        executors = thunder.executors
         # transform_for_execution doesn't work without a set trace
         # So we use detached_trace to get the tracectx and then use it
         with detached_trace():

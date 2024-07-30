@@ -1,6 +1,6 @@
 import collections.abc
 import math
-from typing import cast, List, Optional, Tuple, Union
+from typing import cast
 
 import torch
 import thunder

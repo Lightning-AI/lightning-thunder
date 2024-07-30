@@ -469,7 +469,6 @@ def synchronize_tensor_parallel_output_forward_rule(
     layer_type: TensorParallelLayerType,
 ) -> tuple[TensorProxy, tuple[torch.distributed.ProcessGroup, TensorParallelLayerType]]:
     from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
-    import thunder.torch as ltorch
 
     match layer_type:
         case TensorParallelLayerType.COLUMN_PARALLEL_LINEAR:
@@ -512,7 +511,6 @@ def synchronize_tensor_parallel_input_forward_rule(
     layer_type: TensorParallelLayerType,
 ) -> tuple[TensorProxy, tuple[torch.distributed.ProcessGroup, TensorParallelLayerType]]:
     from thunder.distributed.tensor_parallel.common import TensorParallelLayerType
-    import thunder.torch as ltorch
 
     match layer_type:
         case TensorParallelLayerType.COLUMN_PARALLEL_LINEAR:

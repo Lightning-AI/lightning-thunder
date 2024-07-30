@@ -16,10 +16,7 @@ if package_available("cudnn"):
 # WARNING: cudnn layernorm executor is experimental. Tests that use cudnn might fail.
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Union, Dict
 
-import thunder.core.dtypes as dtypes
-from thunder.core.proxies import TensorProxy
 
 from thunder.executors.cudnnex import torch_to_cudnn_dtype
 

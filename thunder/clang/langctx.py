@@ -1,5 +1,4 @@
-from typing import Any
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 
 from thunder.core.langctxs import LanguageContext, register_langctx, Languages, resolve_language
 from thunder.core.pytree import tree_flatten

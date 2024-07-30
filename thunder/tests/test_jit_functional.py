@@ -1,19 +1,14 @@
-from collections.abc import Iterable, Iterator, Sequence
-from functools import partial, wraps
-from itertools import product
+from functools import partial
 import random
 import math
 
-import sys
-import dis
-from collections.abc import Callable
 
 import pytest
 import torch
 from torch.testing import assert_close
 
 import thunder
-from thunder.core.jit_ext import minimal_thunder_jit, ThunderSharpEdgeError
+from thunder.core.jit_ext import ThunderSharpEdgeError
 import thunder.clang as clang
 import thunder.core.prims as prims
 
@@ -1341,8 +1336,8 @@ def test_dict_items():
 
     jfoo = thunder.functional.jit(foo)
 
-    a = torch.randn((2, 2))
-    b = torch.randn((2, 2))
+    torch.randn((2, 2))
+    torch.randn((2, 2))
 
     d = {0: 1, 2: 3, 4: 5}
 
@@ -1361,8 +1356,8 @@ def test_dict_keys():
 
     jfoo = thunder.functional.jit(foo)
 
-    a = torch.randn((2, 2))
-    b = torch.randn((2, 2))
+    torch.randn((2, 2))
+    torch.randn((2, 2))
 
     d = {0: 1, 2: 3, 4: 5}
 
@@ -1381,8 +1376,8 @@ def test_dict_values():
 
     jfoo = thunder.functional.jit(foo)
 
-    a = torch.randn((2, 2))
-    b = torch.randn((2, 2))
+    torch.randn((2, 2))
+    torch.randn((2, 2))
 
     d = {0: 1, 2: 3, 4: 5}
 
@@ -2445,7 +2440,7 @@ def test_store_global_sharp_edge():
 
 def test_calling_globals_sharp_edge():
     def foo():
-        g = globals()
+        globals()
 
     jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
@@ -2455,7 +2450,7 @@ def test_calling_globals_sharp_edge():
 
 def test_calling_vars_sharp_edge():
     def foo():
-        g = vars()
+        vars()
 
     jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
@@ -2475,7 +2470,7 @@ def test_calling_locals_sharp_edge():
 
 def test_accessing_globals_through_function_sharp_edge():
     def foo():
-        x = foo.__globals__
+        pass
 
     jfoo = thunder.functional.jit(foo, sharp_edges="error")
 
@@ -2485,7 +2480,7 @@ def test_accessing_globals_through_function_sharp_edge():
 
 def test_calling_input_sharp_edge():
     def foo():
-        inp = input()
+        input()
 
     jfoo = thunder.functional.jit(foo, sharp_edges="error")
 

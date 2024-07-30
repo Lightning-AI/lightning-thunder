@@ -7,7 +7,6 @@ import glob
 import json
 import os
 import random
-from typing import List
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 

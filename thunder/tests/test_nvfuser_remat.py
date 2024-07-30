@@ -1,4 +1,3 @@
-import pytest
 from functools import partial, wraps
 
 import torch

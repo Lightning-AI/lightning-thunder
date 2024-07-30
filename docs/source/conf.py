@@ -62,9 +62,9 @@ github_user = "Lightning-AI"
 github_repo = project
 
 linkcheck_ignore = [
-    rf"https://github.com/Lightning-AI/lightning-thunder(/.*|\.git)",
-    rf"https://github.com/Lightning-AI/.*/blob/.*#.*",  # github anchors are tricky
-    rf"https://github.com/pytorch/.*/blob/.*#.*",  # github anchors are tricky
+    r"https://github.com/Lightning-AI/lightning-thunder(/.*|\.git)",
+    r"https://github.com/Lightning-AI/.*/blob/.*#.*",  # github anchors are tricky
+    r"https://github.com/pytorch/.*/blob/.*#.*",  # github anchors are tricky
 ]
 
 # -- Project documents -------------------------------------------------------
@@ -414,5 +414,3 @@ import torch
 
 """
 coverage_skip_undoc_in_source = True
-
-import thunder  # noqa: E402 # making the docs build happy

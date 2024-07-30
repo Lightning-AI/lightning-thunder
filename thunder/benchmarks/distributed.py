@@ -61,7 +61,7 @@ class ResultFormatter:
         self.median_bench = median_bench
         self.median_bench_time = median_bench_time
 
-        total_backward_calls: int = sum(stat.called_backward for stat in self.benchmark_stats) // self.world_size
+        sum(stat.called_backward for stat in self.benchmark_stats) // self.world_size
         total_bench_time = sum(stat.total_time for stat in self.benchmark_stats)
         self.avg_bench_time = total_bench_time / len(self.benchmark_stats)
         initialization_estimate_ns: float = (avg_total_warmup_time - self.avg_bench_time) * len(self.warmup_stats)

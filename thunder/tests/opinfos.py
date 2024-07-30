@@ -5,7 +5,7 @@ from collections import namedtuple
 from collections.abc import Sequence
 from functools import partial, wraps
 from numbers import Number
-from typing import Union, Optional, Tuple, Any
+from typing import Any
 from collections.abc import Callable
 from collections.abc import Generator, Iterable
 
@@ -27,9 +27,8 @@ import thunder.executors as executors
 import thunder.torch as ltorch
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
-from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator, IS_WINDOWS, version_between
+from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator, IS_WINDOWS
 from thunder.tests.make_tensor import make_tensor
-import thunder.extend as extend
 import thunder.tests.bf16
 
 #
@@ -406,7 +405,7 @@ class OpInfo:
     # NOTE Today all benchmarks are generated with PyTorch, so Thunder objects,
     #   like dtypes, need to be translated into PyTorch objects
     def benchmarks(self, device: devices.Device, dtype: datatypes.dtype, *, requires_grad: bool = False, **kwargs):
-        torch_dtype = to_torch_dtype(dtype)
+        to_torch_dtype(dtype)
         return self.benchmark_generator(self, device, dtype, requires_grad, **kwargs)
 
     def devicetypes(self):
@@ -3901,10 +3900,10 @@ def unflatten_error_generator(op, device, dtype=torch.float32, **kwargs):
     input_tensor = make(4, 4)
     yield (SampleInput(input_tensor, 0, ()), RuntimeError, r"unflatten\(\) sizes must be non-empty")
 
-    err_msg = rf"Attempting to reshape a.shape=(.*?) to shape=(.*?), but a.numel=.* is different from the number of elements in shape, .*"
+    err_msg = r"Attempting to reshape a.shape=(.*?) to shape=(.*?), but a.numel=.* is different from the number of elements in shape, .*"
     yield (SampleInput(input_tensor, 1, (2, 3)), RuntimeError, err_msg)
 
-    err_msg = rf"Trying to reshape, but can't infer how to reshape (.*?) to (.*?)"
+    err_msg = r"Trying to reshape, but can't infer how to reshape (.*?) to (.*?)"
     yield (SampleInput(input_tensor, 0, (-1, 3)), RuntimeError, err_msg)
 
     dim = 3
@@ -4811,7 +4810,7 @@ def gather_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make_index = partial(make_tensor, device=device, dtype=torch.long, requires_grad=False)
 
     for shape_a, dim, shape_b in take_along_axis_cases:
-        canonicalized_dim = dim if dim >= 0 else dim + len(shape_a)
+        dim if dim >= 0 else dim + len(shape_a)
         a = make(shape_a)
         b = make_index(shape_b, low=0, high=shape_a[dim])
         yield SampleInput(a, index=b, dim=dim)
@@ -4929,7 +4928,7 @@ shape_ops.append(scatter_add_opinfo)
 
 
 def scatter_sample_generator(op, device, dtype, requires_grad, **kwargs):
-    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
 
     if not requires_grad:
         # If not requires_grad, we allow repeated indices
@@ -5173,7 +5172,7 @@ def max_sample_generator(op, device, dtype, requires_grad, **kwargs):
         # This overload corresponds to taking the elementwise max between tensors `a` and `b`.
         yield SampleInput(make(shape), make(shape))
 
-        if not (dtype is torch.bool):  # argmax is not supported on `bool`
+        if dtype is not torch.bool:  # argmax is not supported on `bool`
             # overload: torch_max(a: TensorLike, /, dim: int | tuple[int], keepdim: bool = False) -> TensorLike, TensorLike
             # This overload corresponds to taking the max along the specified dimension `dim`.
             # It returns first occurence of the maximum value along the dimension and it's corresponding index.
@@ -6704,7 +6703,7 @@ def convolution_1d_error_generator(op, device, dtype=torch.float32, **kwargs):
             # before convolution fallback only if they are integers.
             # To trigger the right exeption, this wrontly typed scalar
             # is passed as a sequence.
-            yield param, (1.0,), f"should be integers"
+            yield param, (1.0,), "should be integers"
             yield param, (-1), f"should be (.*?) at least {min_val_map[param]}"
 
     for param, param_val, err_msg in incorrect_seq_gen():
@@ -7412,10 +7411,10 @@ def group_norm_error_generator(op, device, **kwargs):
     yield (
         SampleInput(make((1,)), 1),
         RuntimeError,
-        f"a.ndim=1 should be at least 2",
+        "a.ndim=1 should be at least 2",
     )
-    yield (SampleInput(make((1, 1)), 0), RuntimeError, f"num_groups=(.*?) should be greater than 0")
-    yield (SampleInput(make((1, 1)), 2), RuntimeError, f"num_channels=(.*?) should be divisible by num_groups")
+    yield (SampleInput(make((1, 1)), 0), RuntimeError, "num_groups=(.*?) should be greater than 0")
+    yield (SampleInput(make((1, 1)), 2), RuntimeError, "num_channels=(.*?) should be divisible by num_groups")
     for param in ("weight", "bias"):
         yield (
             SampleInput(make((1, 1)), 1, **{param: make((1, 1))}),
@@ -8248,7 +8247,7 @@ def cross_entropy_error_generator(op, device, dtype=torch.float32, **kwargs):
     )
 
     # input tensor has 0 dimensions
-    scalar_input = make(scalar_shape := ())
+    scalar_input = make(_scalar_shape := ())
     yield (
         SampleInput(scalar_input, valid_target),
         RuntimeError,
@@ -8437,7 +8436,7 @@ def nll_loss_error_generator(op, device, dtype=torch.float32, **kwargs):
     )
 
     # input tensor has 0 dimensions
-    scalar_input = make(scalar_shape := ())
+    scalar_input = make(_scalar_shape := ())
     yield (
         SampleInput(scalar_input, valid_target),
         RuntimeError,
@@ -8532,7 +8531,7 @@ def mse_loss_sample_generator(op, device, dtype, requires_grad, **kwards):
     for shape, reduction_str in itertools.product(shapes, reduction_options):
         input_shape, target_shape = shape
 
-        C = input_shape[1] if len(input_shape) >= 2 else input_shape[0]
+        input_shape[1] if len(input_shape) >= 2 else input_shape[0]
         yield SampleInput(
             make(input_shape, low=0.0, high=1.0, dtype=dtype, requires_grad=True),
             make(target_shape, low=0.0, high=1.0, dtype=dtype, requires_grad=True),
@@ -8635,52 +8634,52 @@ def interpolate_sample_generator(op, device, dtype, requires_grad, **kwargs):
 def interpolate_error_generator(op, device, dtype=torch.float32, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype)
 
-    yield (SampleInput(make(1, 1), scale_factor=2.0), RuntimeError, f"Expected (.*?)ndim(.*?) >= 3")
-    yield (SampleInput(make(1, 1, 0), scale_factor=2.0), RuntimeError, f"Expected (.*?)numel(.*?) to be greater than 0")
+    yield (SampleInput(make(1, 1), scale_factor=2.0), RuntimeError, "Expected (.*?)ndim(.*?) >= 3")
+    yield (SampleInput(make(1, 1, 0), scale_factor=2.0), RuntimeError, "Expected (.*?)numel(.*?) to be greater than 0")
 
-    yield (SampleInput(make(1, 1, 1)), RuntimeError, f"Only one of `size` or `scale_factor` has to be specified")
+    yield (SampleInput(make(1, 1, 1)), RuntimeError, "Only one of `size` or `scale_factor` has to be specified")
     yield (
         SampleInput(make(1, 1, 1), size=(2,), scale_factor=2.0),
         RuntimeError,
-        f"Only one of `size` or `scale_factor` has to be specified",
+        "Only one of `size` or `scale_factor` has to be specified",
     )
 
-    yield (SampleInput(make(1, 1, 1), size=0), RuntimeError, f"size(.*?) is expected to be greater than zero")
+    yield (SampleInput(make(1, 1, 1), size=0), RuntimeError, "size(.*?) is expected to be greater than zero")
     yield (
         SampleInput(make(1, 1, 1), size=2.0),
         RuntimeError,
-        f"size(.*?) is expected to be a greater than zero integer",
+        "size(.*?) is expected to be a greater than zero integer",
     )
     yield (
         SampleInput(make(1, 1, 1), size=(2, 2)),
         RuntimeError,
-        f"size(.*?) is expected to be (.*?) a sequence (.*?) of length 1",
+        "size(.*?) is expected to be (.*?) a sequence (.*?) of length 1",
     )
     yield (
         SampleInput(make(1, 1, 1, 1), size=(2.0, 2)),
         RuntimeError,
-        f"size(.*?) is expected to be (.*?) a sequence of strictly positive integers",
+        "size(.*?) is expected to be (.*?) a sequence of strictly positive integers",
     )
 
     yield (
         SampleInput(make(1, 1, 1), scale_factor=0.0),
         RuntimeError,
-        f"scale_factor(.*?) is expected to be strictly positive",
+        "scale_factor(.*?) is expected to be strictly positive",
     )
     yield (
         SampleInput(make(1, 1, 1), scale_factor=2),
         RuntimeError,
-        f"scale_factor(.*?) is expected to be a strictly positive floating point number",
+        "scale_factor(.*?) is expected to be a strictly positive floating point number",
     )
     yield (
         SampleInput(make(1, 1, 1), scale_factor=(2.0, 2.0)),
         RuntimeError,
-        f"scale_factor(.*?) is expected to be (.*?) a sequence (.*?) of length 1",
+        "scale_factor(.*?) is expected to be (.*?) a sequence (.*?) of length 1",
     )
     yield (
         SampleInput(make(1, 1, 1, 1), scale_factor=(2.0, 2)),
         RuntimeError,
-        f"scale_factor(.*?) is expected to be (.*?) a sequence of strictly positive floating point numbers",
+        "scale_factor(.*?) is expected to be (.*?) a sequence of strictly positive floating point numbers",
     )
 
 

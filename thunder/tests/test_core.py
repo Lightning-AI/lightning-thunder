@@ -1,18 +1,13 @@
 import operator
-import traceback
 from functools import partial, reduce
-from itertools import product
 import dataclasses
 
 import pytest
 import torch
-from looseversion import LooseVersion
 from torch.testing import assert_close, make_tensor
-from types import FunctionType
 
 import thunder
-from thunder import last_traces, cache_option, cache_hits, cache_misses
-import thunder.examine as examine
+from thunder import cache_option, cache_hits, cache_misses
 import thunder.clang as clang
 import thunder.core.proxies as proxies
 import thunder.tests.bf16
@@ -174,7 +169,7 @@ def test_crazy_collections_in_and_out(executor, device, dtype):
         g = e + f
         h = f + ka + kb
         # NOTE The following line is intentionally not returned
-        i = ka + ka  # noqa
+        i = ka + ka
         j = kc[0] + kc[1]
 
         d["j"] = j
@@ -301,7 +296,7 @@ def test_varargs_and_kwargs(executor, device, dtype):
 @instantiate(dtypes=(thunder.float32,))
 def test_no_return(executor, device, dtype):
     def foo(a, b):
-        c = a + b  # noqa
+        c = a + b
         pass
 
     traced_foo = executor.make_callable(foo)
@@ -967,7 +962,7 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
     a = make((4, 3, 2, 3))
 
     cbar = executor.make_callable(bar)
-    expected = cbar(a, (12, -1))
+    cbar(a, (12, -1))
     traces = thunder.last_traces(cbar)
     trc = traces[0]
 
@@ -1126,7 +1121,7 @@ def test_detached_trace(executor, device: str, _):
     # This test ensures that the detached_trace context manager works as expected.
     #   It should be possible to enter a detached trace, and then exit it, and
     #   the trace should be restored to its original state.
-    from thunder.core.trace import set_tracectx, get_tracectx, TraceCtx, reset_tracectx, detached_trace
+    from thunder.core.trace import get_tracectx, TraceCtx, reset_tracectx, detached_trace
 
     try:
         new_trace = TraceCtx(None)
@@ -1497,7 +1492,7 @@ def test_eval_trace(executor, device, _):
     #   and that all the symbols in the trace are properly evaluated.
 
     from thunder.core.transforms import eval_trace
-    from thunder.core.trace import TraceCtx, reset_tracectx, set_tracectx, maybe_start_trace
+    from thunder.core.trace import TraceCtx, set_tracectx
     from thunder.core.proxies import TensorProxy
 
     def foo(a, b, *, c=5):
@@ -1905,7 +1900,7 @@ def test_transforms_vjp_2_1(executor, device, _):
 )
 def test_transforms_inline_jvp_inline_vmap(executor, device, _):
     pytest.xfail("AttributeError: 'NoneType' object has no attribute 'mul'")
-    from thunder.core.transforms import vmap, jvp, inline
+    from thunder.core.transforms import vmap, jvp
 
     if executor == nvFuserExecutor:
         # Couldn't find metadata for 1.0 of type <class 'float'>
@@ -2651,7 +2646,7 @@ def test_bound_symbol_source_location_context(executor, device: str, dtype: dtyp
     trace = thunder.last_traces(jfn)[0]
 
     assert len(trace.bound_symbols) == 3
-    sin_symbol = trace.bound_symbols[1]
+    trace.bound_symbols[1]
     assert str(trace).count("return clang.sin(x)") == 1
     assert str(trace).count(f"# {__file__}:{lineno}") == 1
 
@@ -2678,7 +2673,7 @@ def test_refine_source_location(executor, device: str, dtype: dtypes.dtype):
     assert str(trace_thunder).count("return _softmax(a, dim=dim, dtype=dtype)") == 0
     assert str(trace_thunder).count("return thunder.torch.softmax(x, 0)") == 1
     # torch.softmax should be traced as usual
-    assert str(trace_torch).count(f"return torch.softmax(x, 0)") == 1
+    assert str(trace_torch).count("return torch.softmax(x, 0)") == 1
 
 
 def test_torch_device():

@@ -10,10 +10,10 @@ import dis
 import sys
 import collections.abc
 from numbers import Number
-from typing import Any, Type, Union, Optional, Tuple, List
+from typing import Any
 from collections.abc import Callable
 from collections.abc import Sequence
-from types import MappingProxyType, ModuleType, CodeType, EllipsisType, FunctionType, MethodType
+from types import MappingProxyType, CodeType, EllipsisType, FunctionType, MethodType
 import re
 import inspect
 

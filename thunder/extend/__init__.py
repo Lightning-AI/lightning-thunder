@@ -478,7 +478,7 @@ def add_executor_lists(
     exc_list = resolve_executors(exc_list)
     other_exc_list = resolve_executors(other_exc_list)
     for exc in itertools.chain(exc_list, other_exc_list):
-        if not exc in new_exc_list:
+        if exc not in new_exc_list:
             new_exc_list.append(exc)
 
     return new_exc_list

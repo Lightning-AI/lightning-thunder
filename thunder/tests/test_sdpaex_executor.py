@@ -136,7 +136,6 @@ def snippet_torch_consistency(op, torch_op, sample):
 @pytest.mark.parametrize("device,", ["cuda"])
 @requiresCUDA
 def test_sdpa_torch_consistency(device: str, dtype: torch.dtype):
-    from thunder.executors.sdpaex import _scaled_dot_product_attention_checker
 
     # Enable math and memory-efficient sdpa options for Volta and prior devices
     torch_device = torch.device(device)

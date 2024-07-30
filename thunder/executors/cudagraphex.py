@@ -6,11 +6,9 @@ from typing import Any
 
 import torch
 
-from thunder import trace
-from thunder.core.transforms import eval_trace
 from thunder.extend import FusionExecutor, register_executor
 from thunder.core import utils, prims
-from thunder.core.proxies import Proxy, Variable, unvariableify
+from thunder.core.proxies import Proxy, unvariableify
 from thunder.core.symbol import BoundSymbol, Symbol
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance, get_tracectx, set_tracectx, reset_tracectx
 from thunder.executors.utils import Region

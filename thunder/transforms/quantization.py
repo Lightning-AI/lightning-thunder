@@ -7,7 +7,6 @@ from thunder.core import prims
 import torch
 
 from .utils import (
-    get_orig_and_thunder_module_proxies_from_prologue,
     get_checks,
     add_trace_output,
 )
@@ -163,7 +162,7 @@ class BitsAndBytesLinearQuant4bit(Transform):
                     new_compute_inputs.append(proxy_code)
                     qs["proxy_absmax"] = proxy_absmax
                     qs["proxy_code"] = proxy_code
-                compute_input = computation_trace.args[output_idx]
+                computation_trace.args[output_idx]
 
         prologue_trace.bound_symbols[-1:-1] = new_bsyms
 
@@ -180,7 +179,6 @@ class BitsAndBytesLinearQuant4bit(Transform):
                 break
             new_computation_trace.bound_symbols.append(bsym.from_bsym())
         new_computation_trace.bound_symbols += new_bindings
-        proxies_to_replace = {}
         for bsym in computation_trace.bound_symbols[idx:]:
             if bsym.sym == thunder.torch.linear and id(bsym.args[1]) in quantized_proxies:
                 assert len(bsym.args) == 3  # torch.linear(input, weight, bias)
