@@ -61,6 +61,7 @@ from thunder.core.proxies import (
     AnyProxy,
     NumberProxy,
     StringProxy,
+    tensorproxy,
     TensorProxy,
     FutureTensorProxy,
     make_proxy_name,
@@ -559,7 +560,7 @@ class GeneralJitCtx(MinimalCtx):
     def add_constraint(self, constraint):
         self._constraints.append(constraint)
 
-    def proxify(self, value: WrappedValue) -> Any:
+    def proxify(self, value: WrappedValue, grad: WrappedValue | None = None) -> Any:
         assert isinstance(value, WrappedValue)
         uvalue = value.value
         # Sequence / dict is not registered as Proxy
@@ -586,7 +587,7 @@ class GeneralJitCtx(MinimalCtx):
             else:
                 name = None
 
-            p = proxy(uvalue, name=name, history=value.provenance)
+            p = tensorproxy(uvalue, grad=grad, name=name, history=value.provenance)
 
             # TensorProxy attributes should be considered derived quantities, so we flag TensorProxies here
             value.provenance.ext_flag |= EXT_FLAG_IS_TENSOR_PROXY
@@ -1250,7 +1251,13 @@ def _general_jit_wrap_callback(value):
         value.provenance.ext_flag |= EXT_FLAG_IS_MODULE
     elif isinstance(uvalue, torch.Tensor):
         # we always want to proxy torch.Tensor, even const
-        p = ctx.proxify(value)
+        grad_proxy = None
+        if uvalue.grad is not None:
+            attr_pr = ProvenanceRecord(inst=PseudoInst.CONSTANT, inputs=[], value="grad")
+            grad_pr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[value.provenance, attr_pr])
+            grad = WrappedValue(uvalue.grad, provenance=grad_pr)
+            grad_proxy = ctx.proxify(grad)
+        p = ctx.proxify(value, grad=grad_proxy)
     elif value.provenance.inst is PseudoInst.CONSTANT:
         value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
     elif callable(uvalue):
@@ -1576,7 +1583,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             raise NotImplementedError(f"unpacking from OPAQUE {fn.value} {provenance}")
 
         def from_provenance(provenance, *, new_output=False):
-            if hasattr(provenance, "proxy"):
+            if getattr(provenance, "proxy", None) is not None:
                 return provenance.proxy  # bind?
 
             inst = provenance.inst
@@ -1638,9 +1645,11 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
     pro_to_comp = tuple(sorted((unpack(v) for v in pro_to_comp_inps), key=lambda x: param_ordering[id(x)][1]))
 
     with tracectx(prologue_trace):
-        for prim, *args in ctx._constraints:
-            for a in args:
+        for prim, *args in reversed(ctx._constraints):
+            for i, a in enumerate(args):
                 if isinstance(a, Proxy):
+                    # a may have been assigned a different proxy when unpacking other inputs, e.g. its gradient
+                    a.history.proxy = None
                     unpack(a)
             prim(*args)
 
