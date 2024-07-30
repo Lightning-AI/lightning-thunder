@@ -561,7 +561,9 @@ def canonicalize_bsym_args(
                 for x in filter(lambda p: isinstance(p, TensorProxy), bsym.flat_args)
                 if variableify(x) in swap_map
             }:
-                new_bsym.header = f"{list(replaced_args_map.keys())} are replaced by {list(replaced_args_map.values())}"
+                keys = [unvariableify(k).name for k in replaced_args_map.keys()]
+                values = [v.name for v in replaced_args_map.values()]
+                new_bsym.header = f"{keys} are replaced by {values}"
                 if bsym.header.startswith("Aliases of"):
                     reverse_swap_map[new_bsym] = {
                         variableify(v): unvariableify(k) for k, v in replaced_args_map.items()
@@ -641,14 +643,14 @@ def create_functional_bsym_from(inplace_bsym: BoundSymbol) -> BoundSymbol:
 
 
 def needs_replace_of_sibling_views(
-    copy_to: TensorProxy,
+    var_copy_to: VariableInterface,
     bsym: BoundSymbol,
     reverse_swap_map_for_canonicalization: dict[BoundSymbol, dict[VariableInterface, TensorProxy]],
 ) -> bool:
     return (
         (swap_map_from_canonicalization := reverse_swap_map_for_canonicalization.get(bsym, None))
         and swap_map_from_canonicalization is not None
-        and (var_copy_to := variableify(copy_to)) in swap_map_from_canonicalization
+        and var_copy_to in swap_map_from_canonicalization
     )
 
 
@@ -713,7 +715,36 @@ def apply_functionalization_to_canonicalized_trace(
         functional_bsym = create_functional_bsym_from(new_bsym)
         new_bsyms.append(functional_bsym)
 
-        if needs_replace_of_sibling_views(copy_to, bsym, reverse_swap_map_for_canonicalization):
+        var_copy_to = variableify(copy_to)
+        if needs_replace_of_sibling_views(var_copy_to, bsym, reverse_swap_map_for_canonicalization):
+            # A simple functionalization would transform a function that has `t1 = a.exp_` and `t3 = a.sin_` into
+            # another function that has `t0 = torch.exp(a)` and `t2 = torch.sin(t0)`, which is wrong without
+            # the value copy from `t2` into `t0` when `t0` is consumed by another as their original lines
+            # modifies `a` directly.
+            #
+            # e.g.)
+            # .. code:: python
+            #
+            #     t1 = a.exp_()
+            #     t3 = a.sin_()
+            #     t4 = t1 + t3
+            #
+            # .. code:: python
+            #
+            #    t0 = torch.exp(a)
+            #    t2 = torch.sin(t0)
+            #    t4 = t0 + t2
+            #    copy_(from=t2, to=a)
+            #
+            # but with the following `swap_map` update the trace would be
+            #
+            # .. code:: python
+            #
+            #    t0 = torch.exp(a)
+            #    t2 = torch.sin(t0)
+            #    t4 = t2 + t2
+            #    copy_(from=t2, to=a)
+            #
             check(
                 copy_to.shape == copy_from.shape,
                 lambda: f"In-place op to an alias whose number of elements is different from the base is not supported",
@@ -866,11 +897,24 @@ def functionalize_inplace_ops(
     This function replaces in-place ops with out-of-place ops.
 
     This function returns an empty list if no in-place ops are found in ``computation_trace``.
-    If any are found, functionalization is done in two steps. The first step is to canonicalize the trace
-    by making sure that any operands of in-place ops have only one consumer. The second step is to
-    replace in-place ops with their out-of-place versions, i.e.,
-    to remove ``prims.copy_`` from the trace then inserting required ``prims.copy_``\s.
-    The required ``prims.copy_``\s are ones whose destination is ``computation_trace``'s args/kwargs.
+    If any are found, functionalization has two steps and another optional step.
+    The optional step chimes in if ``alias_tensor_indices`` are not null. This step is to consolidate
+    the use of aliases accordingly to ``alias_tensor_indices`` which is a list of lists of indices where
+    each list represents the group of tensors of the same underlying storage.
+    The second step is to canonicalize the trace by making sure that any operands of in-place ops have
+    only one consumer.
+    The final step is to replace in-place ops with their out-of-place versions, i.e.,
+    to remove ``prims.copy_`` from the trace as much as possible.
+    This step also inserts the required ``prims.copy_``\s right after its destination's last use.
+    The inserted ``prims.copy_``\s are ones whose destination is ``computation_trace``'s args/kwargs.
+
+
+    .. seealso::
+
+        `PyTorch Docs - Tensor Views <https://pytorch.org/docs/stable/tensor_view.html>`_
+
+        `PyTorch Docs - torch.func.functionalization <https://pytorch.org/docs/main/generated/torch.func.functionalize.html>`_
+
 
     Let's take a look at how the functionalization is working for the following ``f``.
     This function applies in-place ``exp`` to ``a`` which does not share
@@ -892,17 +936,16 @@ def functionalize_inplace_ops(
         :name: initial-trace
 
         def computation(x):
-          # x: "cpu f32[3]"
-          a = ltorch.sin(x)  # a: "cpu f32[3]"
-            # a = prims.sin(x)  # a: "cpu f32[3]"
+          # x: "cpu f32[2, 2]"
+          a = ltorch.sin(x)  # a: "cpu f32[2, 2]"
+            # a = prims.sin(x)  # a: "cpu f32[2, 2]"
 
-          t2 = ltorch.exp_(a)  # t2: "cpu f32[3]"
-            # t1 = ltorch.exp(a)  # t1: "cpu f32[3]"
-              # t1 = prims.exp(a)  # t1: "cpu f32[3]"
-            # t2 = prims.copy_(t1, a)  # t2: "cpu f32[3]"
+          t2 = ltorch.exp_(a)  # t2: "cpu f32[2, 2]"
+            # t1 = ltorch.exp(a)  # t1: "cpu f32[2, 2]"
+            # t2 = prims.copy_(t1, a)  # t2: "cpu f32[2, 2]"
 
-          t3 = ltorch.cos(a)  # t3: "cpu f32[3]"
-            # t3 = prims.cos(a)  # t3: "cpu f32[3]"
+          t3 = ltorch.cos(a)  # t3: "cpu f32[2, 2]"
+            # t3 = prims.cos(a)  # t3: "cpu f32[2, 2]"
           return t3
 
     The output of the first step ("canonicalization") is as follows. Notice that now ``ltorch.cos`` takes
@@ -913,17 +956,18 @@ def functionalize_inplace_ops(
 
         # Constructed by Intermediate trace of `functionalize_inplace_ops`
         def computation(x):
-          # x: "cpu f32[3]"
-          a = ltorch.sin(x)  # a: "cpu f32[3]"
-            # a = prims.sin(x)  # a: "cpu f32[3]"
+          # x: "cpu f32[2, 2]"
+          a = ltorch.sin(x)  # a: "cpu f32[2, 2]"
+            # a = prims.sin(x)  # a: "cpu f32[2, 2]"
 
-          t2 = ltorch.exp_(a)  # t2: "cpu f32[3]"
-            # t1 = ltorch.exp(a)  # t1: "cpu f32[3]"
-              # t1 = prims.exp(a)  # t1: "cpu f32[3]"
-            # t2 = prims.copy_(t1, a)  # t2: "cpu f32[3]"
+          t2 = ltorch.exp_(a)  # t2: "cpu f32[2, 2]"
+            # t1 = ltorch.exp(a)  # t1: "cpu f32[2, 2]"
+              # t1 = prims.exp(a)  # t1: "cpu f32[2, 2]"
+            # t2 = prims.copy_(t1, a)  # t2: "cpu f32[2, 2]"
 
-          t3 = ltorch.cos(t2)  # t3: "cpu f32[3]"
-            # t3 = prims.cos(t2)  # t3: "cpu f32[3]"
+          # ['a'] are replaced by ['t2']
+          t3 = ltorch.cos(t2)  # t3: "cpu f32[2, 2]"
+            # t3 = prims.cos(t2)  # t3: "cpu f32[2, 2]"
           return t3
 
     The functionalized trace is as follows. Notice that this trace has no ``prims.copy_``\s
@@ -934,17 +978,17 @@ def functionalize_inplace_ops(
 
         # Constructed by Functionalize in-place ops
         def computation(x):
-          # x: "cpu f32[3]"
-          a = ltorch.sin(x)  # a: "cpu f32[3]"
-            # a = prims.sin(x)  # a: "cpu f32[3]"
+          # x: "cpu f32[2, 2]"
+          a = ltorch.sin(x)  # a: "cpu f32[2, 2]"
+            # a = prims.sin(x)  # a: "cpu f32[2, 2]"
+          t1 = ltorch.exp(a)  # t1: "cpu f32[2, 2]"
+            # t1 = prims.exp(a)  # t1: "cpu f32[2, 2]"
 
-          t1 = ltorch.exp(a)  # t1: "cpu f32[3]"
-            # t1 = ltorch.exp(a)  # t1: "cpu f32[3]"
-              # t1 = prims.exp(a)  # t1: "cpu f32[3]"
-
-          t3 = ltorch.cos(t1)  # t3: "cpu f32[3]"
-            # t3 = prims.cos(t1)  # t3: "cpu f32[3]"
+          # ['a'] are replaced by ['t2']
+          t3 = ltorch.cos(t1)  # t3: "cpu f32[2, 2]"
+            # t3 = prims.cos(t1)  # t3: "cpu f32[2, 2]"
           return t3
+
 
     Another example to take a look at would be a function with one or more in-place ops to
     its argument(s) and/or their views.
@@ -967,6 +1011,7 @@ def functionalize_inplace_ops(
 
         def computation(x):
           # x: "cpu f32[2, 2]"
+
           a = ltorch.view(x, -1)  # a: "cpu f32[4]"
             # a = ltorch.reshape(x, (-1,))  # a: "cpu f32[4]"
 
@@ -1000,35 +1045,150 @@ def functionalize_inplace_ops(
 
           t2 = ltorch.exp_(a)  # t2: "cpu f32[4]"
             # t1 = ltorch.exp(a)  # t1: "cpu f32[4]"
+            # t2 = prims.copy_(t1, a)  # t2: "cpu f32[4]"
 
+          # ['a'] are replaced by ['t2']
           t4 = ltorch.sin_(t2)  # t4: "cpu f32[4]"
             # t3 = ltorch.sin(t2)  # t3: "cpu f32[4]"
             # t4 = prims.copy_(t3, t2)  # t4: "cpu f32[4]"
 
+          # ['a'] are replaced by ['t4']
           t5 = ltorch.cos(t4)  # t5: "cpu f32[4]"
             # t5 = prims.cos(t4)  # t5: "cpu f32[4]"
           return t5
+
 
         # Constructed by Functionalize in-place ops
         def computation(x):
           # x: "cpu f32[2, 2]"
 
           a = ltorch.view(x, -1)  # a: "cpu f32[4]"
+            # a = ltorch.reshape(x, (-1,))  # a: "cpu f32[4]"
+              # a = prims.reshape(x, (4,))  # a: "cpu f32[4]"
           t1 = ltorch.exp(a)  # t1: "cpu f32[4]"
+            # t1 = prims.exp(a)  # t1: "cpu f32[4]"
           t3 = ltorch.sin(t1)  # t3: "cpu f32[4]"
-          t5 = ltorch.cos(t3)  # t5: "cpu f32[4]"
+            # t3 = prims.sin(t1)  # t3: "cpu f32[4]"
 
+          # ['a'] are replaced by ['t4']
+          t5 = ltorch.cos(t3)  # t5: "cpu f32[4]"
+            # t5 = prims.cos(t3)  # t5: "cpu f32[4]"
           t8 = prims.reshape(t3, (2, 2))  # t8: "cpu f32[2, 2]"
           t9 = prims.copy_(t8, x)  # t9: "cpu f32[2, 2]"
+
           return t5
 
-    .. seealso::
 
-        `PyTorch Docs - Tensor Views <https://pytorch.org/docs/stable/tensor_view.html>`_
+    Last but not least, let's see what would happen when we pass one tensor to the two args of ``f``
+    as in the following snippet:
+
+    .. code-block:: python
+
+        @thunder.jit
+        def f(a, b):
+            return a.exp_() + b.exp_()
+
+        a = torch.randn((2, 2))
+        y = f(a, a)
+
+    The expected result would be ``2 * a.exp().exp()`` because the both of addition's operands share
+    the same storage and the right-hand side operand is the result of ``a.exp()_.exp()_``. ``a`` is
+    supposed to be the result of ``a.exp().exp()``.
+    Since arguments are aliases, the optional first step is called and its output is as follows:
+
+    .. code-block:: python
+
+        # Constructed by Duplicate alias args using {'b': 'a'}
+        import thunder
+        import thunder.torch as ltorch
+        import torch
+        from thunder.executors.torchex import no_autocast
+
+        @torch.no_grad()
+        @no_autocast
+        def computation(a, b):
+          # a: "cpu f32[2, 2]"
+          # b: "cpu f32[2, 2]"
+
+          # inplace_and_aliases.py:6:         def f(a, b): return a.exp_() + b.exp_()
+          t1 = ltorch.exp_(a)  # t1: "cpu f32[2, 2]"
+            # t0 = ltorch.exp(a)  # t0: "cpu f32[2, 2]"
+              # t0 = prims.exp(a)  # t0: "cpu f32[2, 2]"
+            # t1 = prims.copy_(t0, a)  # t1: "cpu f32[2, 2]"
+          # Aliases of ['b'] are replaced by ['a'] respectively
+          t3 = ltorch.exp_(a)  # t3: "cpu f32[2, 2]"
+            # t2 = ltorch.exp(a)  # t2: "cpu f32[2, 2]"
+              # t2 = prims.exp(a)  # t2: "cpu f32[2, 2]"
+            # t3 = prims.copy_(t2, a)  # t3: "cpu f32[2, 2]"
+          result = ltorch.add(t1, t3, alpha=None)  # result: "cpu f32[2, 2]"
+            # result = prims.add(t1, t3)  # result: "cpu f32[2, 2]"
+          return result
+
+    As the header says, ``ltorch.exp_`` takes ``a`` instead of ``b`` based on the alias info.
+    This trace is canonicalized into:
+
+    .. code-block:: python
+
+        # Constructed by Intermediate trace of `functionalize_inplace_ops`
+        import thunder
+        import thunder.torch as ltorch
+        import torch
+        from thunder.executors.torchex import no_autocast
+
+        @torch.no_grad()
+        @no_autocast
+        def computation(a, b):
+          # a: "cpu f32[2, 2]"
+          # b: "cpu f32[2, 2]"
+
+          # inplace_and_aliases.py:6:         def f(a, b): return a.exp_() + b.exp_()
+          t1 = ltorch.exp_(a)  # t1: "cpu f32[2, 2]"
+            # t0 = ltorch.exp(a)  # t0: "cpu f32[2, 2]"
+              # t0 = prims.exp(a)  # t0: "cpu f32[2, 2]"
+            # t1 = prims.copy_(t0, a)  # t1: "cpu f32[2, 2]"
+          # ['a'] are replaced by ['t1']
+          t3 = ltorch.exp_(t1)  # t3: "cpu f32[2, 2]"
+            # t2 = ltorch.exp(t1)  # t2: "cpu f32[2, 2]"
+              # t2 = prims.exp(t1)  # t2: "cpu f32[2, 2]"
+            # t3 = prims.copy_(t2, t1)  # t3: "cpu f32[2, 2]"
+          result = ltorch.add(t1, t3, alpha=None)  # result: "cpu f32[2, 2]"
+            # result = prims.add(t1, t3)  # result: "cpu f32[2, 2]"
+          return result
+
+    Then the functionalized trace is:
+
+    .. code-block:: python
+
+        # Constructed by Functionalize in-place ops
+        import thunder
+        import thunder.core.prims as prims
+        import thunder.torch as ltorch
+        import torch
+        from thunder.executors.torchex import no_autocast
+
+        @torch.no_grad()
+        @no_autocast
+        def computation(a, b):
+          # a: "cpu f32[2, 2]"
+          # b: "cpu f32[2, 2]"
+          t0 = ltorch.exp(a)  # t0: "cpu f32[2, 2]"
+            # t0 = prims.exp(a)  # t0: "cpu f32[2, 2]"
+          t2 = ltorch.exp(t0)  # t2: "cpu f32[2, 2]"
+            # t2 = prims.exp(t0)  # t2: "cpu f32[2, 2]"
+
+          # inplace_and_aliases.py:6:         def f(a, b): return a.exp_() + b.exp_()
+          result = ltorch.add(t2, t2, alpha=None)  # result: "cpu f32[2, 2]"
+            # result = prims.add(t2, t2)  # result: "cpu f32[2, 2]"
+          t5 = prims.copy_(t2, a)  # t5: "cpu f32[2, 2]"
+
+          return result
 
     Args:
         computation_trace: A computation trace created by ``interpreter``.
         orig_to_view_swap_map:
+        alias_tensor_indices: Nested list of integers. Each int represents the index of
+            ``tree_flatten((computation_trace.args, computation_trace.kwargs))`` and each list
+            represents the group of args that have the same :func:`torch.Tensor.data_ptr`.
     """
 
     if not any(is_functionalizable(bsym) for bsym in computation_trace.bound_symbols):
