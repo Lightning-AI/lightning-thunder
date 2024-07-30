@@ -87,7 +87,10 @@ def test_torch_ops_trace(device, requires_grad):
                             assert any(bsym.sym.name == vjp_op_name for bsym in trc.bound_symbols)
                     else:
                         fwd_trc = thunder.last_traces(jfun)[-1]
-                        assert any(bsym.sym.name.endswith(op_info.name.split('.')[-1]) and not bsym.subsymbols for bsym in fwd_trc.bound_symbols)
+                        assert any(
+                            bsym.sym.name.endswith(op_info.name.split(".")[-1]) and not bsym.subsymbols
+                            for bsym in fwd_trc.bound_symbols
+                        )
             else:
                 suc += 1
 
