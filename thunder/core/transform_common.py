@@ -778,6 +778,9 @@ def functionalize_inplace_ops(
             views = list(filter(lambda p: isinstance(p, TensorProxy), new_bsym.flat_outs))
             base = _get_first_tensor_arg(new_bsym)
             var_base = variableify(base)
+            if (orig_base := view_to_base.get(var_base, None)) is not None:
+                base = orig_base
+                var_base = variableify(base)
             for v in views:
                 view_to_base[variableify(v)] = base
             base_to_views[var_base].extend(views)
@@ -861,7 +864,10 @@ def functionalize_inplace_ops(
                 if [bsym for bsym in consumer_map_of_intermediate_trace[base] if bsym_to_idx[bsym] > idx]:
                     check(
                         copy_from.numel == base.numel,
-                        lambda: f"{new_bsym=}, {copy_from=}, {base=}\n{consumers_of_base=}",
+                        lambda: (
+                            f"Fail to propagate the in-place change of `{copy_from.name}` to `{base.name}` "
+                            f"because of the different number of elements: {copy_from.numel} and {base.numel}"
+                        ),
                     )
                     new_t: TensorProxy = copy_from
                     if copy_from.shape != base.shape:
@@ -877,6 +883,13 @@ def functionalize_inplace_ops(
                     if v in consumer_map_of_intermediate_trace and [
                         bsym for bsym in consumer_map_of_intermediate_trace[v] if bsym_to_idx[bsym] > idx
                     ]:
+                        check(
+                            copy_from.numel == v.numel,
+                            lambda: (
+                                f"Fail to propagate the in-place change of `{copy_from.name}` to `{v.name}` "
+                                f"because of the different number of elements: {copy_from.numel} and {v.numel}"
+                            ),
+                        )
                         new_t: TensorProxy = copy_from
                         if copy_from.shape != v.shape:
                             with tracectx(intermediate_trace):

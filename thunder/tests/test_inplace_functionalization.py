@@ -402,6 +402,24 @@ def test_multiple_views_before_inplace_to_base(executor, device, _):
     torch.testing.assert_close(actual, expected)
     torch.testing.assert_close(x, x_ref)
 
+    # ref: https://github.com/Lightning-AI/lightning-thunder/pull/869#issuecomment-2257738623
+    def f(x):
+        x = x.add(1)
+        z = x.view(-1)[::2]  # Note that basic slicing is used here which also produces a view
+        x.add_(1)
+        # z should have been updated
+        z2 = z + 1
+        return z2
+
+    x = make_tensor((2, 2), device=device, dtype=torch.float32)
+
+    jitted = executor.make_callable(f)
+    with pytest.raises(
+        RuntimeError,
+        match="Fail to propagate the in-place change of `t3` to `z` because of the different number of elements: 4 and 2",
+    ):
+        jitted(x)
+
 
 @instantiate(
     dtypes=NOTHING,
