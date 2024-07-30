@@ -659,7 +659,11 @@ def _fused_sdp_choice(
             mem_efficient_sdp_enabled,
         )
 
-        sdp_params = SDPAParams(fake_query, fake_key, fake_value, fake_attn_mask, dropout_p, is_causal)
+        args = []
+        if hasattr(SDPAParams, "enable_gqa"):
+            args.append(False)
+
+        sdp_params = SDPAParams(fake_query, fake_key, fake_value, fake_attn_mask, dropout_p, is_causal, *args)
 
         enable_debug: None | bool = get_compile_option(
             "sdpa_debug", "Enables sdpa backend warning messages when a specific kernel is unavailable."
