@@ -205,6 +205,78 @@ class DDPTest(DistributedParallelTestCase):
         with thunder.ThunderModule.no_sync(model):
             fwd_loss(model, x)
 
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
+    def test_fsdp_weight_sharing(self):
+        # This test is to verify that weight sharing works with ddp.
+        device = torch.device("cuda", self.rank)
+
+        class Model(torch.nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.fc1 = torch.nn.Linear(16, 16, bias=False)
+                self.fc2 = torch.nn.Linear(16, 16, bias=False)
+
+            def forward(self, x):
+                return self.fc1(x) + self.fc2(x)
+
+        def _test_model_output_and_gradients(model, x, duplicate_all_gather):
+            output = model(x)
+            with device:
+                grad_output = torch.ones_like(output)
+            output.backward(grad_output)
+            expected_shape = (4, 16)
+
+            assert output.shape == expected_shape, f"{output.shape=} - {expected_shape=}"
+
+            # Verify that both params point to same grad tensor.
+            assert id(model.get_parameter("fc1.weight").grad) == id(model.get_parameter("fc2.weight").grad)
+
+            # Verify that we accumulate the gradients for the shared parameter.
+            actual_grad = model.get_parameter("fc1.weight").grad
+            # Based on the forward, grad for both params is `(grad_output.T @ x)`. Multiplying by 2 as the grad will be accumulated.
+            expected_grad = 2 * (grad_output.T @ x)
+            torch.testing.assert_close(actual_grad, expected_grad)
+
+            forward_exec_trace = thunder.last_traces(model)[-1]
+            n_synced_params_forward = 0
+            for bsym in forward_exec_trace.bound_symbols:
+                if bsym.sym.id in (thunder.distributed.prims.PrimIDs.SYNCHRONIZE,):
+                    n_synced_params_forward += 1
+            assert (
+                n_synced_params_forward == 0
+            )  # Assert that no params were synced on forward (they should be removed by later transforms)
+
+            backward_exec_trace = thunder.last_backward_traces(model)[-1]
+            allreduced_grads = 0
+            for bsym in backward_exec_trace.bound_symbols:
+                if bsym.sym.id in (
+                    thunder.distributed.prims.PrimIDs.ALL_REDUCE,
+                    thunder.executors.torchex.all_reduce_prim_impl.id,
+                ):
+                    allreduced_grads += 1
+
+            # The expected behaviour is that the gradients were accumulated (since both weights are the same) and then allreduced, so only one allreduce
+            assert allreduced_grads == 1
+
+        with device:
+            jit_ddp_model = Model()
+            ddp_jit_model = Model()
+            x = torch.ones(4, 16)
+
+        # Check `jit(ddp(model))` works
+        jit_ddp_model.fc1.weight = jit_ddp_model.fc2.weight
+
+        jit_ddp_model = thunder.jit(thunder.distributed.ddp(jit_ddp_model), executors=["torch"])
+
+        _test_model_output_and_gradients(jit_ddp_model, x)
+
+        # Check `ddp(jit(model))` works
+        ddp_jit_model.fc1.weight = ddp_jit_model.fc2.weight
+
+        ddp_jit_model = thunder.distributed.ddp(thunder.jit(ddp_jit_model, executors=["torch"]))
+
+        _test_model_output_and_gradients(ddp_jit_model, x)
+
 
 common_utils.instantiate_parametrized_tests(DDPTest)
 
@@ -529,7 +601,7 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
     ),
 )
 @distributed_wrapper("test_native_ddp", _test_native_ddp_helper)
-def test_native_ddp(executor, devices, dtype, bucket_size_in_mb):
+def test_native_ddp(executor, devices, dtype, bucket_size_in_mb, jit_first):
     pass
 
 
