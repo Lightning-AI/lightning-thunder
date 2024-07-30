@@ -214,7 +214,7 @@ common_utils.instantiate_parametrized_tests(DDPTest)
 def _test_native_ddp_helper(input_data):
     init_method, world_size, rank, executor, device, dtype, kwargs = input_data
     bucket_size_in_mb = kwargs.get("bucket_size_in_mb", 0)
-
+    jit_first = kwargs.get("jit_first", False)
     num_samples = 2
     tensor_shape = (2, 2)
     sample_seed = 3456
@@ -237,11 +237,13 @@ def _test_native_ddp_helper(input_data):
 
     # Creates, compiles, and DDPs the model
     model = SmallModel(device, torch_dtype)
-    ddp_model = ddp(model)
-    cmodel = thunder.jit(
-        ddp_model,
-        executors=executor.executors_list(),
-    )
+    if jit_first:
+        cmodel = ddp(thunder.jit(model, executors=executor.executors_list()))
+    else:
+        cmodel = thunder.jit(
+            ddp(model),
+            executors=executor.executors_list(),
+        )
 
     comparison_exceptions = []
     for _ in range(num_epochs):
@@ -521,7 +523,10 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
     num_devices=2,
     # CPU broke around PyTorch 2.3.1, see PR #545
     devicetypes=(devices.DeviceType.CUDA,),
-    decorators=(pytest.mark.parametrize("bucket_size_in_mb", (0, 25)),),
+    decorators=(
+        pytest.mark.parametrize("bucket_size_in_mb", (0, 25)),
+        pytest.mark.parametrize("jit_first", (True, False)),
+    ),
 )
 @distributed_wrapper("test_native_ddp", _test_native_ddp_helper)
 def test_native_ddp(executor, devices, dtype, bucket_size_in_mb):
