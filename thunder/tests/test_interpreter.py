@@ -3296,3 +3296,28 @@ def test_metaclass(jit):
 
     fn()
     jit(fn)()
+
+
+def test_incorrect_args():
+    def fn(x):
+        return x
+
+    jfn = thunder.jit(fn)
+    with pytest.raises(TypeError, match="got unexpected keyword arguments: incorrect_arg"):
+        jfn(3, incorrect_arg=3)
+
+
+def test_class_setattr():
+    class A:
+        FOO = False
+
+        @classmethod
+        def set_something(cls):
+            cls.FOO = True
+
+    def foo():
+        A.set_something()
+
+    jfoo = thunder.jit(foo)
+    jfoo()
+    assert A.FOO

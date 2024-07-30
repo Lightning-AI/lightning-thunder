@@ -168,7 +168,9 @@ class BitsAndBytesLinearQuant4bit(Transform):
         prologue_trace.bound_symbols[-1:-1] = new_bsyms
 
         with tracectx(computation_trace):
-            new_bindings = [thunder.core.prims.unpack_trivial.bind(i, output=i) for i in new_compute_inputs]
+            new_bindings = [
+                thunder.core.prims.unpack_trivial.bind(i, output=i, name=i.name) for i in new_compute_inputs
+            ]
 
         new_computation_trace = thunder.core.trace.from_trace(computation_trace)
         new_computation_trace.args = (*new_computation_trace.args, *new_compute_inputs)

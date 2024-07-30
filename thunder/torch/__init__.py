@@ -5296,7 +5296,7 @@ else:
     def all_reduce_(
         a: TensorLike,
         /,
-        op: DistributedReduceOpLike = torch.distributed.ReduceOp.SUM,
+        op: DistributedReduceOpLike = "torch.distributed.ReduceOp.SUM",
         group: torch.distributed.ProcessGroup | None = None,
         async_op: bool = False,
     ) -> None:

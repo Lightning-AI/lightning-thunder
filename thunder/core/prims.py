@@ -666,6 +666,10 @@ def unpack_trivial_printer(
 
 # Removes the inputs from unpack_trivial, so it appears to have no input
 def _unpack_trivial_bind_postprocess(bsym: BoundSymbol) -> None:
+    utils.check(
+        bsym.kwargs["name"] is not None,
+        lambda: "Expected name keyword argument not to be None for unpack_trivial.bind().",
+    )
     bsym.args = ()
 
 
@@ -706,13 +710,17 @@ def unpack_function_obj_printer(
     return s
 
 
+def _unpack_function_obj_bind_postprocess(bsym: BoundSymbol) -> None:
+    bsym.args = ()
+
+
 unpack_function_obj = make_prim(
     PrimIDs.UNPACK_FUNCTION_OBJ,
     "unpack_function_obj",
     meta=unpack_function_obj_meta,
     python_printer=unpack_function_obj_printer,
     python_impl=unpack_function_obj_impl,
-    _bind_postprocess=_unpack_trivial_bind_postprocess,
+    _bind_postprocess=_unpack_function_obj_bind_postprocess,
 )
 
 
@@ -780,13 +788,17 @@ def unpack_cache_info_printer(
     return s
 
 
+def _unpack_cache_info_bind_postprocess(bsym: BoundSymbol) -> None:
+    bsym.args = ()
+
+
 unpack_cache_info = make_prim(
     PrimIDs.UNPACK_CACHE_INFO,
     "unpack_cache_info",
     meta=unpack_cache_info_meta,
     python_printer=unpack_cache_info_printer,
     python_impl=unpack_cache_info_impl,
-    _bind_postprocess=_unpack_trivial_bind_postprocess,
+    _bind_postprocess=_unpack_cache_info_bind_postprocess,
 )
 
 
@@ -1508,7 +1520,7 @@ def unpack(x: Any) -> Any:
             return unpack_dict(x)
         baseutils.check(False, lambda: f"unpack encountered an unsupported collection type {type(coll)}")
 
-    return unpack_trivial(x)
+    return unpack_trivial(x, name=x.name)
 
 
 #
