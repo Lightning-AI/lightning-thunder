@@ -117,7 +117,6 @@ __all__ = [
     # TODO Extend this
     # TODO Add device aliases
     # TODO Add executor aliases
-    "fa3_executor",
     "cudnn_executor",
     "sdpa_executor",
     "nvfuser_executor",
@@ -172,13 +171,12 @@ get_all_executors = extend.get_all_executors
 get_default_executors = extend.get_default_executors
 get_always_executors = extend.get_always_executors
 
-fa3_executor: None | extend.Executor = extend.get_executor("fa3")
 cudnn_executor: None | extend.Executor = extend.get_executor("cudnn")
 sdpa_executor: None | extend.Executor = extend.get_executor("sdpa")
 nvfuser_executor: None | extend.Executor = extend.get_executor("nvfuser")
 pytorch_executor: None | extend.Executor = extend.get_executor("torch")
 
-# Default executor list is [fa3 -> cudnn -> sdpa -> nvfuser -> torch -> python]
+# Default executor list is [cudnn -> sdpa -> nvfuser -> torch -> python]
 # Note that add_default_executor inserts executor at start of list, hence the reverse order below.
 if nvfuser_executor:
     add_default_executor(nvfuser_executor)
@@ -188,9 +186,6 @@ if sdpa_executor:
 
 if cudnn_executor:
     add_default_executor(cudnn_executor)
-
-if fa3_executor:
-    add_default_executor(fa3_executor)
 
 #
 # Promoted debugging functions
