@@ -47,6 +47,7 @@ def test_fa3(device: str, dtype: torch.dtype):
     extrace = thunder.last_traces(cfn)[-1]
     assert any(bsym.sym.name == "fa3_fwd" for bsym in extrace.bound_symbols)
 
+
 # verify that checker is correctly returning False on invalid fa3 use cases
 def test_checker():
 
@@ -58,7 +59,7 @@ def test_checker():
     num_heads = 4
     dim_per_head = 32
 
-    device = 'cuda'
+    device = "cuda"
     dtype = torch.float16
     attn_mask = None
     dropout_p = 0.0
@@ -69,7 +70,9 @@ def test_checker():
         value = torch.randn([batch, seq_len, num_heads, dim_per_head], device=device, dtype=dtype)
 
         def fn(query, key, value, attn_mask=None, dropout_p=0.0):
-            return torch.nn.functional.scaled_dot_product_attention(query, key, value, attn_mask=attn_mask, dropout_p=0.0)
+            return torch.nn.functional.scaled_dot_product_attention(
+                query, key, value, attn_mask=attn_mask, dropout_p=0.0
+            )
 
         cfn = thunder.jit(fn, executors=[fa3_ex])
 
@@ -79,7 +82,12 @@ def test_checker():
         extrace = thunder.last_traces(cfn)[-1]
         assert not any(bsym.sym.name == "fa3_fwd" for bsym in extrace.bound_symbols)
 
-    check('cpu', dtype, attn_mask, dropout_p)
+    check("cpu", dtype, attn_mask, dropout_p)
     check(device, torch.bfloat16, attn_mask, dropout_p)
-    check(device, dtype, torch.randn([batch, seq_len, num_heads, num_heads], device='cuda', dtype=torch.float16), dropout_p)
+    check(
+        device,
+        dtype,
+        torch.randn([batch, seq_len, num_heads, num_heads], device="cuda", dtype=torch.float16),
+        dropout_p,
+    )
     check(device, dtype, attn_mask, 0.5)
