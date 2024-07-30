@@ -250,6 +250,10 @@ def _del_last_used(bound_symbols, flattened_final_output, *, clear_mutable_colle
             bsyms.appendleft(bsym)
             continue
 
+        if bsym.sym.id == prims.PrimIDs.DEL:
+            # we will skip old dels and generate new ones
+            continue
+
         to_del = []
         for x in chain(bsym.flat_proxy_outs, bsym.flat_proxy_args):
             if x in handled:
