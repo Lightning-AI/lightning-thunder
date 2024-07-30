@@ -618,13 +618,27 @@ def jit(
                     extraces = transform_for_execution(
                         computation_trc,
                         executors_list=cd.executors_list,
-                        use_del_last_used=True,
+                        use_del_last_used=False,
                     )
                 computation_traces.append(computation_trc)
                 computation_trc = extraces[-1]
 
+            if cd.use_cudagraphs:
+                from thunder.executors.cudagraphex import cudagraphex
+
+                computation_trc = cudagraphex.fusion_pass(computation_trc)
+                extraces.append(computation_trc)
+
+                if backward_trc is not None:
+                    backward_trc = cudagraphex.fusion_pass(backward_trc, num_static_inputs=len(backward_trc.args[0][0]))
+                    backward_traces.append(backward_trc)
+
+            if backward_trc is None:
+                computation_trc = thunder.executors.passes.del_last_used(computation_trc)
+
             if not compile_options.get("disable_inplace_copy_check", False):
                 thunder.core.transform_common._inplace_copy_sanity_check(computation_trc)
+                extraces.append(computation_trc)
 
             for transform in transforms:
                 # NOTE: `backward_trc` could be None.
@@ -641,16 +655,6 @@ def jit(
                     if new_backward_trc is not backward_trc:
                         backward_trc = new_backward_trc
                         backward_traces.append(backward_trc)
-
-            if cd.use_cudagraphs:
-                from thunder.executors.cudagraphex import cudagraphex
-
-                computation_trc = cudagraphex.fusion_pass(computation_trc)
-                extraces.append(computation_trc)
-
-                if backward_trc is not None:
-                    backward_trc = cudagraphex.fusion_pass(backward_trc, num_static_inputs=len(backward_trc.args[0][0]))
-                    backward_traces.append(backward_trc)
 
             computation_trc = transform_to_torch_types(computation_trc)
             comp = computation_trc.python_callable()

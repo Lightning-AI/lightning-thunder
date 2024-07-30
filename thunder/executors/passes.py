@@ -236,33 +236,16 @@ def update_fusion_call_ctx(trace: TraceCtx) -> TraceCtx:
     return new_trace
 
 
-# TODO Review deleting non-proxies
-def del_last_used(trace: TraceCtx, *, clear_mutable_collections=False) -> TraceCtx:
-    """Mark last used intermediates to be deleted. This lets the Python garbage collector free
-        unused tensor memory.
-
-    Args:
-        trace: trace to be transformed
-        clear_mutable_collections: whether to clear collections
-    Returns:
-        list: transformed trace
-    """
-    start_time_ns = time.perf_counter_ns()
-
-    del_trace = from_trace(trace)
+def _del_last_used(bound_symbols, flattened_final_output, *, clear_mutable_collections=False):
     bsyms = deque()
-
-    outs = cutils.sequencify(trace.output)
-    flat_outs, _ = tree_flatten(outs)
-
     # TODO Replace with ProxySet (which does not exist at the time of this writing)
     handled = ProxyDict()
-    for out in flat_outs:
+    for out in flattened_final_output:
         if isinstance(out, Proxy):
             handled[out] = None
 
     bsym: BoundSymbol
-    for bsym in reversed(trace.bound_symbols):
+    for bsym in reversed(bound_symbols):
         if bsym.sym.id in comment_symbols:
             bsyms.appendleft(bsym)
             continue
@@ -291,7 +274,30 @@ def del_last_used(trace: TraceCtx, *, clear_mutable_collections=False) -> TraceC
 
         bsyms.appendleft(bsym)
 
-    del_trace.bound_symbols = list(bsyms)
+    return list(bsyms)
+
+
+# TODO Review deleting non-proxies
+def del_last_used(trace: TraceCtx, *, clear_mutable_collections=False) -> TraceCtx:
+    """Mark last used intermediates to be deleted. This lets the Python garbage collector free
+        unused tensor memory.
+
+    Args:
+        trace: trace to be transformed
+        clear_mutable_collections: whether to clear collections
+    Returns:
+        list: transformed trace
+    """
+    start_time_ns = time.perf_counter_ns()
+
+    del_trace = from_trace(trace)
+
+    outs = cutils.sequencify(trace.output)
+    flat_outs, _ = tree_flatten(outs)
+
+    del_trace.bound_symbols = _del_last_used(
+        trace.bound_symbols, flat_outs, clear_mutable_collections=clear_mutable_collections
+    )
 
     end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
