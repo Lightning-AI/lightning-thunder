@@ -1,12 +1,16 @@
 from __future__ import annotations
 from collections import defaultdict
+from typing import TYPE_CHECKING
 
 import thunder.core.prims as prims
-from thunder.core.proxies import Proxy, variableify, Variable, TensorProxy, unvariableify
+from thunder.core.proxies import variableify, TensorProxy, unvariableify
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace, tracectx
 from thunder.core.utils import ProxyDict, producers, check, consumers
+
+if TYPE_CHECKING:
+    from thunder.core.trace import VariableInterface
 
 
 __all__ = [
@@ -434,7 +438,7 @@ def apply_functionalization_to_canonicalized_trace(
                 if [bsym for bsym in consumer_map_of_intermediate_trace[base] if bsym_to_idx[bsym] > idx]:
                     check(
                         copy_from.numel == base.numel,
-                        lambda: f"{new_bsym=}, {copy_from=}, {base=}\n{consumers_of_base=}",
+                        lambda: f"{new_bsym=}, {copy_from=}, {base=}",
                     )
                     new_t: TensorProxy = copy_from
                     if copy_from.shape != base.shape:
