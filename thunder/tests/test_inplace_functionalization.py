@@ -594,7 +594,7 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
 
     # copied from https://github.com/Lightning-AI/lightning-thunder/issues/738
     def f(a, b):
-        return a.exp_() + b.tanh_()
+        return a.exp_() + b.tanh_(), a
 
     jitted_f = executor.make_callable(f)
 
@@ -602,29 +602,30 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     b = make_tensor(shape, device=device, dtype=torch_dtype)
     a_ref, b_ref = a.clone().detach(), b.clone().detach()
 
-    res_of_a = jitted_f(a, a)
-    ref_res_of_a = f(a_ref, a_ref)
+    res_of_a, a_out = jitted_f(a, a)
+    ref_res_of_a, ref_a_out = f(a_ref, a_ref)
     assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (0, 1)
     torch.testing.assert_close(res_of_a, ref_res_of_a)
     torch.testing.assert_close(a, a_ref)
+    assert a_out.data_ptr() == a.data_ptr()
 
     a = make_tensor_like(a)
     a_ref = a.clone().detach()
-    res_of_a_and_b = jitted_f(a, b)
-    ref_res_of_a_and_b = f(a_ref, b_ref)
+    res_of_a_and_b, _ = jitted_f(a, b)
+    ref_res_of_a_and_b, _ = f(a_ref, b_ref)
     assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (0, 2)
     torch.testing.assert_close(res_of_a_and_b, ref_res_of_a_and_b)
 
-    res_of_b = jitted_f(b, b)
-    ref_res_of_b = f(b_ref, b_ref)
+    res_of_b, _ = jitted_f(b, b)
+    ref_res_of_b, _ = f(b_ref, b_ref)
     assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (1, 2)
     torch.testing.assert_close(res_of_b, ref_res_of_b)
     torch.testing.assert_close(b, b_ref)
 
     b = make_tensor_like(b)
     b_ref = b.clone().detach()
-    res_of_b_and_a = jitted_f(b, a)
-    ref_res_of_b_and_a = f(b_ref, a_ref)
+    res_of_b_and_a, _ = jitted_f(b, a)
+    ref_res_of_b_and_a, _ = f(b_ref, a_ref)
     assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (2, 2)
     torch.testing.assert_close(res_of_b_and_a, ref_res_of_b_and_a)
 
