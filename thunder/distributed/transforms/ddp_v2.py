@@ -18,7 +18,6 @@ import torch.distributed as tdist
 import copy
 
 if TYPE_CHECKING:
-    from typing import Any
     from torch.distributed import ProcessGroup
     from thunder.core.trace import TraceCtx
 
@@ -29,8 +28,8 @@ class DDPTransform(Transform):
     bucket_size_in_mb: float
     broadcast_from: int | None
 
-    replicated_params: dict[str, torch.nn.Parameter] = None
-    shared_params_name: dict[str, str] = None
+    replicated_params: dict[str, torch.nn.Parameter] | None = None
+    shared_params_name: dict[str, str] | None = None
 
     def transform_module(self, model: ThunderModule):
         """Transforms the ThunderModule. This is executed once on application of the transform"""
