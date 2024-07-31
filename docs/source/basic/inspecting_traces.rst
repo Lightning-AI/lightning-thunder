@@ -189,7 +189,7 @@ which prints::
     }
   }
 
-Moreover, if you are just interested in running a specific nvFuser region without Thunder, you can use an handy helper function. The ``get_nvfuser_repro()`` function takes a trace and a fusion name as input and returns it's repro script::
+Moreover, if you are just interested in running a specific nvFuser region without Thunder, you can use a handy helper function. The ``get_nvfuser_repro()`` function takes a trace and a fusion name as input and returns it's repro script::
 
   from thunder.examine import get_nvfuser_repro
   ...
