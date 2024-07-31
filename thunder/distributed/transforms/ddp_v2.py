@@ -26,10 +26,10 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class DDPTraceTransform(Transform):
     process_group: ProcessGroup
-    bucket_size_in_mb = 25
-    broadcast_from = None
+    bucket_size_in_mb: float
+    broadcast_from: int | None
 
-    replicated_params: dict[str, Any] = None
+    replicated_params: dict[str, torch.nn.Parameter] = None
     shared_params_name: dict[str, str] = None
 
     def transform_module(self, model: ThunderModule):
