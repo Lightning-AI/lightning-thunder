@@ -296,14 +296,14 @@ def ddp(
     from thunder.core.module import ThunderModule
 
     if isinstance(model, ThunderModule):
-        from thunder.distributed.transforms.ddp_v2 import DDPTraceTransform
+        from thunder.distributed.transforms.ddp_v2 import DDPTransform
         from thunder.core.transforms import add_transform
 
         process_group = copy_default_process_group()
 
         # will insert syncs for parameters (and gradient syncs in the backward pass, this is handled by thunder)
         # usually, other transforms will remove the forward syncs inserted by this transform.
-        transform_from_trace_to_ddp_trace = DDPTraceTransform(
+        transform_from_trace_to_ddp_trace = DDPTransform(
             process_group=process_group, bucket_size_in_mb=bucket_size_in_mb, broadcast_from=broadcast_from
         )
         model_new = add_transform(model, transform=transform_from_trace_to_ddp_trace)

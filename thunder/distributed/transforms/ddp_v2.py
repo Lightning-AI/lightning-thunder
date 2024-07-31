@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class DDPTraceTransform(Transform):
+class DDPTransform(Transform):
     process_group: ProcessGroup
     bucket_size_in_mb: float
     broadcast_from: int | None
