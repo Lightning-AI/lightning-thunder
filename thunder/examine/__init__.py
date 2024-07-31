@@ -243,10 +243,14 @@ def get_nvfuser_repro(trace: TraceCtx, fusion_name: str, /) -> str:
         raise RuntimeError(f"Unable to find fusion '{fusion_name}' in trace.")
 
     if fusion.last_used is None:
-        raise RuntimeError("Fusion definition needs to be executed to record the inputs. You must execute the fusion first before you can query the repro.")
+        raise RuntimeError(
+            "Fusion definition needs to be executed to record the inputs. You must execute the fusion first before you can query the repro."
+        )
 
     if fusion.last_inputs is None:
-        raise RuntimeError("Fusion definition inputs need to be recorded. Use compile option 'nv_store_fusion_inputs=True' while tracing.")
+        raise RuntimeError(
+            "Fusion definition inputs need to be recorded. Use compile option 'nv_store_fusion_inputs=True' while tracing."
+        )
 
     fd = fusion.last_used
     return fd.getReproString(fusion.last_inputs)
