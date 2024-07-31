@@ -24,8 +24,8 @@ class Node:
         self.stop = stop
         self.group_bsyms = group_bsyms
         self.group_indices = group_indices
-        self.parents: set[Node] = set()
-        self.children: set[Node] = set()
+        self.parents: utils.OrderedSet[Node] = utils.OrderedSet()
+        self.children: utils.OrderedSet[Node] = utils.OrderedSet()
 
     def __repr__(self) -> str:
         s = f"node ID {self.ID} : "

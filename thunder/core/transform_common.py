@@ -4,14 +4,14 @@ from typing import TYPE_CHECKING
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from collections import defaultdict
-from itertools import filterfalse
+from itertools import filterfalse, chain
 from functools import partial
 
 import thunder
 import thunder.core.prims as prims
 from thunder.core.baseutils import BoundSymbolInterface
 from thunder.core.proxies import Proxy, variableify, Variable, TensorProxy, unvariableify
-from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
+from thunder.core.pytree import tree_flatten, tree_iter, tree_map, tree_unflatten
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, has_tags
 from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace, tracectx
 from thunder.core.utils import ProxyDict, producers, check, consumers
@@ -864,3 +864,59 @@ def functionalize_inplace_ops(
 
     functionalized_computation_trace.bound_symbols = functionalized_bsyms
     return [intermediate_trace, functionalized_computation_trace]
+
+
+def order_proxies(bsyms: Sequence[BoundSymbol]) -> dict[str, int]:
+    """computes a canonical ordering of proxies in the bound symbols based on the order of appearance
+    note that it would not cover unused inputs when applied to traces.bound_symbols
+    """
+    counter = 0
+    proxy_order: dict[str, int] = {}  # names to order
+
+    def process_bound_symbols(bound_symbols):
+        nonlocal counter
+        for bsym in bound_symbols:
+            if len(bsym.subsymbols) > 0:
+                process_bound_symbols(bsym.subsymbols)
+            for p in tree_iter((bsym.args, bsym.kwargs, bsym.output)):  # should kwargs be sorted by name?
+                if isinstance(p, thunder.Proxy) and p.name not in proxy_order:
+                    counter += 1
+                    proxy_order[p.name] = counter
+
+    process_bound_symbols(bsyms)
+
+    return proxy_order
+
+
+def canonicalize_proxies(bsyms: Sequence[BoundSymbol]) -> Sequence[BoundSymbol]:
+    output = []
+    counter = 0
+
+    proxymap: dict[str, thunder.Proxy] = {}
+
+    def map_proxy(p):
+        nonlocal counter
+        if isinstance(p, thunder.Proxy):
+            if p.name in proxymap:
+                return proxymap[p.name]
+            np = p.replace(name=f"p{counter}")
+            counter += 1
+            proxymap[p.name] = np
+            return np
+        return p
+
+    def process_bound_symbols(src_bound_symbols, target_bound_symbols):
+        for bsym in src_bound_symbols:
+            new_subsymbols = []
+            if len(bsym.subsymbols) > 0:
+                process_bound_symbols(bsym.subsymbols, new_subsymbols)
+            new_args = tree_map(map_proxy, bsym.args)
+            new_kwargs = tree_map(map_proxy, bsym.kwargs)  # should this be sorted by key word?
+            new_output = tree_map(map_proxy, bsym.output)
+            new_bsym = bsym.from_bsym(output=new_output, args=new_args, kwargs=new_kwargs, subsymbols=new_subsymbols)
+            target_bound_symbols.append(new_bsym)
+
+    with thunder.core.trace.tracectx(thunder.TraceCtx()):
+        process_bound_symbols(bsyms, output)
+
+    return output

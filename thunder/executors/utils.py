@@ -15,6 +15,7 @@ from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
 from thunder.core.proxies import Variable, variableify, Proxy, unvariableify
 from thunder.core.prims import PrimIDs
+from thunder.core.transform_common import order_proxies
 
 # TODO Make these tags
 comment_symbols = {
@@ -51,15 +52,15 @@ class Region:
             # Updates what this region consumes, skipping symbols that never consume anything
             consumes.update(variableify(x) for x in bsym.flat_args if isinstance(x, Proxy))
 
-        self.inputs = set()
-        self.outputs = set()
+        inputs = set()
+        outputs = set()
 
         # Inputs are things which this consumes which are produced before it
         for x in consumes:
             x = unvariableify(x)
 
             if producers[x] not in self.bound_symbols:
-                self.inputs.add(variableify(x))
+                inputs.add(variableify(x))
 
         # Outputs are things this produces that are consumed after it
         for x in produces:
@@ -67,8 +68,12 @@ class Region:
             consumed_by = consumers.get(x, ())
             for bsym in consumed_by:
                 if bsym not in self.bound_symbols:
-                    self.outputs.add(variableify(x))
+                    outputs.add(variableify(x))
                     break
+
+        proxy_order = order_proxies(self.bound_symbols)
+        self.inputs = utils.OrderedSet(sorted(inputs, key=lambda p: proxy_order[p.proxy.name]))
+        self.outputs = utils.OrderedSet(sorted(outputs, key=lambda p: proxy_order[p.proxy.name]))
 
     def __repr__(self) -> str:
         s = f"[Region:"

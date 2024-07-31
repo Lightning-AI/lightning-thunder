@@ -3060,3 +3060,35 @@ def test_cat_mixed_dtypes():
     actual.backward(cotangent)
 
     torch.testing.assert_close(tuple(t.grad for t in tensors), tuple(t.grad for t in tensors_jit))
+
+
+@requiresCUDA
+def test_bound_symbol_sort_stability():
+    class LlamaMLPLike(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fc_1 = torch.nn.Linear(32, 32)
+            self.fc_2 = torch.nn.Linear(32, 32)
+            self.proj = torch.nn.Linear(32, 32)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            x_fc_1 = self.fc_1(x)
+            x_fc_2 = self.fc_2(x)
+            x = torch.nn.functional.silu(x_fc_1) * x_fc_2
+            return self.proj(x)
+
+    with torch.device("cuda"):
+        mlp = torch.nn.Sequential(*[LlamaMLPLike() for _ in range(16)]).requires_grad_(False)
+    j = thunder.jit(mlp)
+    j(torch.randn(32, 32, device="cuda"))
+    lt = thunder.last_traces(j)[-1]
+    assert all(
+        (i % 2 + 1 == i_2)
+        for i, i_2 in enumerate(
+            [
+                int(s.args[1].name.split("_")[-2])
+                for s in lt.bound_symbols
+                if s.sym.name == "linear" and "fc" in s.args[1].name
+            ]
+        )
+    )
