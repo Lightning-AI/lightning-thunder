@@ -645,3 +645,30 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (1, 2)
     jitted_f(b, b)
     assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (2, 2)
+
+    def f(a, b, c):
+        d = a.exp_()
+        e = b.tanh_()
+        f = c.cosh_()
+        return d + e + f
+
+    a = make_tensor(shape, device=device, dtype=torch_dtype)
+    a_expected = a.exp().tanh().cosh()
+
+    jitted_f = executor.make_callable(f)
+    out = jitted_f(a, a, a)
+
+    torch.testing.assert_close(a, a_expected)
+    torch.testing.assert_close(out, 3 * a_expected)
+
+    a, b = make_tensor_like(a), make_tensor_like(a)
+    a_ref, b_ref = a.clone().detach(), b.clone().detach()
+    out, out_ref = jitted_f(a, b, b), f(a_ref, b_ref, b_ref)
+    torch.testing.assert_close(out, out_ref)
+    torch.testing.assert_close((a, b), (a_ref, b_ref))
+
+    a, b = make_tensor_like(a), make_tensor_like(a)
+    a_ref, b_ref = a.clone().detach(), b.clone().detach()
+    out, out_ref = jitted_f(a, b, a), f(a_ref, b_ref, a_ref)
+    torch.testing.assert_close(out, out_ref)
+    torch.testing.assert_close((a, b), (a_ref, b_ref))
