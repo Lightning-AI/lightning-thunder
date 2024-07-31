@@ -5519,6 +5519,8 @@ def meta_adaptor(torch_func: Callable):
 
         if kwargs.get("inplace", False):
             raise NotImplementedError(f"{torch_func} has inplace=True, please use manual registration")
+        if kwargs.get("out", None) is not None:
+            raise NotImplementedError(f"{torch_func} specifies 'out' argument, please use manual registration")
 
         with FakeTensorMode() as mode:
             fake_args, fake_kwargs = tree_map(lambda x: _get_fake_arg(x, mode), (args, kwargs))

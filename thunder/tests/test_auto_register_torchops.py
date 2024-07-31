@@ -34,16 +34,11 @@ def test_torch_ops_trace(device, requires_grad):
             continue
         if device == "cpu" and not torch.float32 in op_info.dtypes:
             continue
-
         # No cuda backend support
         if op_info.name in ("nonzero_static",) and device == "cuda":
             continue
         # RuntimeError: Calling torch.linalg.cholesky on a CPU tensor requires compiling PyTorch with LAPACK.
-        if op_info.name in ("cholesky",) and device == "cpu":
-            continue
-        # (t6, t7, t8, t9, t10, t11) = torch.histogramdd(t_0, (1, 1, 1, 1, 1), weight=None, density=False)
-        # ValueError: not enough values to unpack (expected 6, got 2)
-        if op_info.name == "histogramdd" and device == "cpu" and not requires_grad:
+        if op_info.name in ("cholesky", "svd") and device == "cpu":
             continue
         if op_info.name == "searchsorted" and (requires_grad and not sample.input.requires_grad):
             continue

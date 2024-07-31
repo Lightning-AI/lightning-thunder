@@ -139,7 +139,6 @@ torch_auto_registered_ops = {
         torch.hinge_embedding_loss,
         torch.histc,
         torch.histogram,
-        torch.histogramdd,
         torch.hsmm,
         torch.hsplit,
         torch.hspmm,
