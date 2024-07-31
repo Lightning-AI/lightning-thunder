@@ -18,13 +18,11 @@ class DebugTransform(thunder.core.transforms.Transform):
     def __init__(
         self,
         *,
-        pre_callback: Callable[[tuple[BoundSymbol, ...]], str] | None,
-        post_callback: Callable[[tuple[BoundSymbol, ...]], str] | None,
-        guard: Callable[[], bool] | None = None,
+        pre_callback: Callable[[tuple[BoundSymbol, ...]], str] | None = None,
+        post_callback: Callable[[tuple[BoundSymbol, ...]], str] | None = None,
     ):
         self.pre_callback = pre_callback
         self.post_callback = post_callback
-        self.guard = guard if guard is not None else lambda _: True
 
     def transform_trace_post_optimization(self, trace: TraceCtx, **kwargs) -> TraceCtx:
         start_time_ns = time.perf_counter_ns()
@@ -39,8 +37,7 @@ class DebugTransform(thunder.core.transforms.Transform):
                 new_bsyms.append(bsym)
                 continue
 
-            if self.guard(bsym) and self.pre_callback is not None:
-
+            if self.pre_callback is not None:
                 def _pre_call_ctx(bsym, *args, **kwargs):
                     out = self.pre_callback(bsym, *args, **kwargs)
                     thunder.core.utils.check_type(out, str)
@@ -52,8 +49,7 @@ class DebugTransform(thunder.core.transforms.Transform):
 
             new_bsyms.append(bsym)
 
-            if self.guard(bsym) and self.post_callback is not None:
-
+            if self.post_callback is not None:
                 def _post_call_ctx(bsym, *args, **kwargs):
                     out = self.post_callback(bsym, *args, **kwargs)
                     thunder.core.utils.check_type(out, str)
