@@ -218,6 +218,24 @@ def get_fusion_symbols(trace: TraceCtx, warn_if_fusions_unavailable: bool = True
     return fusions
 
 
+def get_nvfuser_fusion_definition(
+    trace: TraceCtx, name: str, warn_if_fusion_unavailable: bool = True
+) -> FusionDefinitionWrapper | None:
+    """
+    Return the fusion definition for the symbol with the provided name if found.
+    """
+    if warn_if_fusion_unavailable and warn_fusions():
+        return None
+
+    for bsym in trace.bound_symbols:
+        if bsym.sym.is_fusion and bsym.sym.name == name:
+            _, fusion_ctx, _ = bsym.gather_ctxs()
+            if (fusion_definition := fusion_ctx.get(name, None)) is not None:
+                return fusion_definition
+
+    return None
+
+
 def get_nvfuser_repro(trace: TraceCtx, fusion_name: str, /) -> str:
     """
     Helper function to get the repro of a specific nvFusion segment.
