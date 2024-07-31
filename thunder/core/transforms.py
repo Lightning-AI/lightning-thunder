@@ -472,7 +472,7 @@ def noop(cfn: Callable) -> Callable:
 # The comment fusions transform. Just adds a comment before and after each fusion.
 #   This is an example of a post-optimization transform.
 class _CommentFusionsTransform(Transform):
-    def transform_trace_post_optimization(trace: Trace, **kwargs) -> Trace:
+    def transform_trace_post_optimization(self, trace: Trace, **kwargs) -> Trace:
         start_time_ns = time.perf_counter_ns()
         commented_trace = from_trace(trace)
 
