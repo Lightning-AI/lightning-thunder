@@ -1,12 +1,12 @@
 from __future__ import annotations
+import time
+from typing import TYPE_CHECKING
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Sequence
 from collections import defaultdict
-from functools import partial
 from itertools import filterfalse
-from typing import TYPE_CHECKING
-import time
+from functools import partial
 
 import thunder
 import thunder.core.prims as prims
@@ -745,7 +745,6 @@ def functionalize_inplace_ops(
 
     # Step 1: make sure each tensor is consumed only once.
     intermediate_trace = canonicalize_bsym_args(computation_trace, orig_to_view_swap_map)
-
     # Step 2: Remove `prims.copy_` if it's the last one of `bsym.subsymbols`,
     # unless `copy_to` is `computation_trace.args` or `computation_trace.kwargs`
     swap_map: dict[VariableInterface, TensorProxy] = {}
