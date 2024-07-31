@@ -25,8 +25,7 @@ def test_torch_ops_trace(device, requires_grad):
     [name2func.setdefault(f"nn.functional.{v.__name__}", v) for v in ops.torch_auto_registered_ops[torch.nn.functional]]
     # Use the sample input from torch.xx to test torch.tensor.xx
     [name2func.setdefault(f"Tensor.{v.__name__}", v) for v in ops.torch_auto_registered_ops[torch.Tensor]]
-    print(f"auto reg ops: {len(name2func)}")
-    op_infos = [opinfo for opinfo in op_db if opinfo.name in name2func.keys()]
+    op_infos = [opinfo for opinfo in op_db if opinfo.name in name2func]
     total = 0
     cnt = 0
     suc = 0
@@ -94,7 +93,6 @@ def test_torch_ops_trace(device, requires_grad):
             else:
                 suc += 1
 
-    print(f"total number of ops with sample input: {total}, success: {suc}, needs manual registeration: {cnt}")
 
 
 # Replace manual registration of some operations with automatic registration for network test cases

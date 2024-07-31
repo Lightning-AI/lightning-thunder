@@ -5336,7 +5336,7 @@ else:
 #
 
 
-def _is_differentiable(arg: Any):
+def _is_differentiable(arg: Any) -> bool:
     from torch._subclasses.fake_tensor import FakeTensor
 
     if isinstance(arg, (torch.Tensor, FakeTensor, TensorProxy)):
@@ -5517,7 +5517,7 @@ def meta_adaptor(torch_func: Callable):
         from thunder.core.pytree import tree_flatten, tree_unflatten
         from torch._subclasses.fake_tensor import FakeTensorMode
 
-        if kwargs.get("inplace", False) == True:
+        if kwargs.get("inplace", False):
             raise NotImplementedError(f"{torch_func} has inplace=True, please use manual registration")
 
         with FakeTensorMode() as mode:
