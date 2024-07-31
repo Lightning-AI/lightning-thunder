@@ -189,17 +189,25 @@ which prints::
     }
   }
 
-Moreover, if you are just interested in running a specific nvFuser segment, Thunder offers an handy helper function. The ``get_nvFuser_repro()`` function takes a trace and a fusion name as input and returns it's repro script::
+Moreover, if you are just interested in running a specific nvFuser region without Thunder, you can use an handy helper function. The ``get_nvfuser_repro()`` function takes a trace and a fusion name as input and returns it's repro script::
 
-  from thunder.examine import get_nvFuser_repro
-
-  print(get_nvFuser_repro(traces[2], "nvFusion0"))
+  from thunder.examine import get_nvfuser_repro
+  ...
+  # To print the repro you need to pass the compile option 'nv_store_fusion_inputs=True'
+  jitted_foo = thunder.jit(foo, nv_store_fusion_inputs=True)
+  ...
+  print(get_nvfuser_repro(traces[2], "nvFusion0"))
 
 This will print the following::
 
+  # CUDA devices:
+  #  0: NVIDIA H100 80GB
+  # torch version: 2.3.1+cu121
+  # cuda version: 12.1
+  # nvfuser version: 0.2.8
   import torch
   from nvfuser import FusionDefinition, DataType
-
+  
   def nvfuser_fusion_id0(fd : FusionDefinition) -> None :
       T0 = fd.define_tensor(shape=[-1, -1], contiguity=[True, True], dtype=DataType.Float, is_cpu=False, stride_order=[1, 0])
       T1 = fd.define_tensor(shape=[-1, -1], contiguity=[True, True], dtype=DataType.Float, is_cpu=False, stride_order=[1, 0])
@@ -207,20 +215,19 @@ This will print the following::
       T3 = fd.ops.mul(T2, T1)
       fd.add_output(T3)
       fd.add_output(T2)
-
+  
   with FusionDefinition() as fd:
       nvfuser_fusion_id0(fd)
-
+  
   inputs = [
       torch.randn((4,), dtype=torch.float32, device='cuda:0').as_strided((2, 2), (2, 1)),
       torch.randn((4,), dtype=torch.float32, device='cuda:0').as_strided((2, 2), (2, 1)),
   ]
-
   fd.execute(inputs)
 
 Which you can copy and run as a standalone Python script.
 
-.. note:: ``get_nvFuser_repro()`` only works if the jitted function has been run before because nvFuser needs to execute a fusion definition to understand its inputs.
+.. note:: ``get_nvfuser_repro()`` only works if the jitted function has been compiled with the 'nv_store_fusion_inputs=True' flag and it has been executed. The flag is needed to record the input shapes needed to create the repro.
 
 Finally, ``traces[3]`` is the result of a lifetime analysis pass, which deletes tensor intermediates when they're no longer needed, freeing memory::
 
