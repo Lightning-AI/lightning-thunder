@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from thunder.core.trace import TraceCtx
 
 
-@dataclass(frozen=True)
+@dataclass
 class DDPTraceTransform(Transform):
     process_group: ProcessGroup
     bucket_size_in_mb: float
