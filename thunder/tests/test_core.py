@@ -3060,3 +3060,20 @@ def test_cat_mixed_dtypes():
     actual.backward(cotangent)
 
     torch.testing.assert_close(tuple(t.grad for t in tensors), tuple(t.grad for t in tensors_jit))
+
+
+def test_reshape_noop_prims():
+
+    def fn(x: torch.Tensor, y: torch.Tensor):
+        x_view = x.view(-1, 5)
+        y_view = y.view(-1)
+        return x_view + 3, y_view + 2
+
+    t = torch.randn(8, 5, requires_grad=True)
+    labels = torch.tensor([2, 4, 2, 3, 1, 0, 4, 4])
+
+    jfn = thunder.jit(fn)
+    actual = jfn(t, labels)
+    expected = fn(t, labels)
+
+    torch.testing.assert_close(actual, expected)
