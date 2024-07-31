@@ -1135,3 +1135,63 @@ def test_cache_symbolic_values_reshape(device):
     assert_close(expected, actual)
     assert thunder.cache_misses(jfoo) == 1
     assert thunder.cache_hits(jfoo) == 1
+
+
+@pytest.mark.filterwarnings("ignore:Please use `torch.vmap`")
+def test_custom_autograd_function():
+    from torch.autograd.gradcheck import GradcheckError
+    from torch.testing._internal.common_utils import gradcheck
+
+    class MyFunction(torch.autograd.Function):
+
+        @staticmethod
+        def forward(ctx, x: torch.Tensor) -> torch.Tensor:
+            return x * 2.0
+
+        # this is wrong on purpose.
+        @staticmethod
+        def backward(ctx, grad_output) -> torch.Tensor:
+            return grad_output
+
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+
+        def forward(self, x) -> torch.Tensor:
+            return MyFunction.apply(x)
+
+    x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
+    model = Model().to(dtype=torch.float64)
+    jitted = thunder.jit(model)
+
+    gradcheck(jitted, (x,))
+    with pytest.raises(GradcheckError):
+        gradcheck(model, (x,))
+
+    class MyLinear(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, x: torch.Tensor, weight: torch.Tensor, shape: tuple) -> torch.Tensor:
+            ctx.shape = shape
+            ctx.save_for_backward(x, weight)
+            ctx.pretty_attr = 100
+            return torch.matmul(x, weight.t())
+
+        @staticmethod
+        def backward(ctx, grad_output):
+            (x, weight) = ctx.saved_tensors
+            assert weight.shape == ctx.shape  # really bogus, just to use ctx.shape
+            return torch.matmul(grad_output, weight), torch.matmul(grad_output.t(), x)
+
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.l1 = torch.nn.Linear(2, 2, bias=False)
+
+        def forward(self, x):
+            return MyLinear.apply(x, self.l1.weight, self.l1.weight.shape)
+
+    x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
+    model = Model().to(dtype=torch.float64)
+    jitted = thunder.jit(model)
+
+    gradcheck(jitted, (x,))
