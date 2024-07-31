@@ -94,7 +94,6 @@ def test_torch_ops_trace(device, requires_grad):
                 suc += 1
 
 
-
 # Replace manual registration of some operations with automatic registration for network test cases
 skip_ops_nanogpt = [
     get_opinfo("layer_norm"),
