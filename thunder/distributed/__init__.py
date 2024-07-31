@@ -300,7 +300,7 @@ def ddp(
         from thunder.core.transforms import add_transform
 
         process_group = copy_default_process_group()
-
+        utils.check(process_group is not None, lambda: "The default process group is None")
         # will insert syncs for parameters (and gradient syncs in the backward pass, this is handled by thunder)
         # usually, other transforms will remove the forward syncs inserted by this transform.
         transform_from_trace_to_ddp_trace = DDPTransform(

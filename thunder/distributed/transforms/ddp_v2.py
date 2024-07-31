@@ -37,10 +37,10 @@ class DDPTransform(Transform):
         from thunder import compile_data as get_compile_data
         from thunder.core.module import ThunderModule
 
-        process_group = copy_default_process_group()
-        utils.check(process_group is not None, lambda: "The default process group is None")
+        process_group = self.process_group
         cd = get_compile_data(model)
         cd.use_ddp = True
+        cd.process_group_for_ddp = process_group
         orig_module: torch.nn.Module = cd.fn
         utils.check(
             isinstance(orig_module, torch.nn.Module) and not isinstance(orig_module, ThunderModule),
