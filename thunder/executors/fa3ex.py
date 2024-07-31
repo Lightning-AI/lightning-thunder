@@ -1,9 +1,13 @@
 import torch
 
-# flash attn 3
+'''
+Currently we rely on the user / container to build fa3 following the install instructions 
+from https://github.com/Dao-AILab/flash-attention?tab=readme-ov-file#flashattention-3-beta-release. 
+fa3 is currently only built for sm90+ (hopper), so HAS_FA3 can only be True if and only if the device 
+is hopper and fa3 has been built
+'''
 try:
     from flash_attn_interface import _flash_attn_forward, _flash_attn_backward, flash_attn_func
-
     HAS_FA3 = True
 except:
     HAS_FA3 = False
@@ -34,6 +38,7 @@ def fa3_fwd_impl(
 
     if softmax_scale is None:
         softmax_scale = q.shape[-1] ** (-0.5)
+    q, k, v = [x.contiguous() for x in (q, k, v)]
     out, q, k, v, out_padded, softmax_lse, S_dmask = _flash_attn_forward(q, k, v, softmax_scale, causal)
     return out, softmax_lse
 
@@ -66,6 +71,8 @@ def fa3_bwd_impl(
     if not HAS_FA3:
         raise Exception("fa3 not built, cannot use fa3 executor")  # checker should fail before getting here
 
+    dout, q, k, v, out = [x.contiguous() for x in (dout, q, k, v, out)]
+
     dq, dk, dv = torch.empty_like(q), torch.empty_like(k), torch.empty_like(v)
     if softmax_scale is None:
         softmax_scale = q.shape[-1] ** (-0.5)
@@ -94,16 +101,26 @@ fa3_bwd = fa3_ex.register_operator("fa3_bwd", meta=fa3_bwd_meta, fn=fa3_bwd_impl
 
 
 def fa3_checker(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None):
+    # fa3 needs to be built (implicitly also device check)
     if not HAS_FA3:
         return False
+
+    # fa3 currently only supports headdim 64, 128, 256 for now
+    if not (query.shape[3] in (64, 128, 256,) and key.shape[3] in (64, 128, 256,) and value.shape[3] in (64, 128, 256,)):
+        return False
+
+    # fa3 currently only supports fp16 for now
     if (
         query.dtype != thunder.dtypes.float16
         or key.dtype != thunder.dtypes.float16
         or value.dtype != thunder.dtypes.float16
     ):
         return False
+
+    # fa3 currently doesn't support attn_mask or dropout
     if attn_mask is not None or dropout_p != 0.0:
         return False
+
     return query.device.type == "cuda" and key.device == query.device and value.device == query.device
 
 
