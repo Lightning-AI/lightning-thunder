@@ -733,6 +733,9 @@ class _OrderedSet(Generic[T, T1], Iterable[T]):
         if c in self.d:
             del self.d[c]
 
+    def issubset(self, other):
+        return all((e in other) for e in self)
+
     def union(self, *others: "Sequence[_OrderedSet]") -> Self:
         return self.__class__(itertools.chain(self, *others))
 
