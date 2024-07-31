@@ -5537,6 +5537,19 @@ def meta_adaptor(torch_func: Callable):
     return wrapper
 
 
+def check_overlap_ops():
+    from thunder.torch import default_torch_ops
+
+    for m, fns in default_torch_ops.torch_auto_registered_ops.items():
+        for fn in fns:
+            if fn in _torch_to_thunder_function_map:
+                raise RuntimeError(
+                    f"{m.__name__}.{fn.__name__} is already registered in _torch_to_thunder_function_map, please remove it from default_torch_ops.py"
+                )
+
+
+# Verify that there is no overlap between automatically registered operations and manually registered operations.
+check_overlap_ops()
 register_default_torch_ops()
 
 

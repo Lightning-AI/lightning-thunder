@@ -21,8 +21,6 @@ optree.register_pytree_node(
 
 
 def tree_flatten(args, namespace=""):
-    from types import FunctionType, BuiltinFunctionType
-
     if (
         type(args)
         not in {

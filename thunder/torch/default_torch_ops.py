@@ -401,7 +401,6 @@ torch_auto_registered_ops = {
     ],
     torch.Tensor: [
         torch.Tensor.positive,
-        torch.Tensor.pow,
         torch.Tensor.absolute,
         torch.Tensor.addbmm,
         torch.Tensor.addmm,
