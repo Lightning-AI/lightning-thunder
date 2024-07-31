@@ -184,95 +184,6 @@ def _sync_grads(module: torch.nn.Module) -> None:
 #   prologue and compute trace, that insert syncs (and grad syncs for the backward, handled by thunder automatically.)
 
 
-def ddp_transform_module(
-    thunder_model: ThunderModule,
-    *,
-    broadcast_from=None,
-    bucket_size_in_mb: float = 25.0,
-) -> ThunderModule:
-    from thunder import compile_data as get_compile_data
-    from thunder.core.transforms import add_transform
-    from thunder.core.module import ThunderModule
-    from thunder.distributed.transforms.ddp_v2 import DDPTraceTransform
-
-    process_group = copy_default_process_group()
-    utils.check(process_group is not None, lambda: "The default process group is None")
-    cd = get_compile_data(thunder_model)
-    cd.use_ddp = True
-    orig_module: torch.nn.Module = cd.fn
-    utils.check(
-        isinstance(orig_module, torch.nn.Module) and not isinstance(orig_module, ThunderModule),
-        lambda: f"CompileData.fn expected to be `nn.Module` but {type(orig_module)}",
-    )
-    orig_module.use_ddp = True
-    orig_module.process_group_for_ddp = process_group
-    orig_module.bucket_size_in_mb = bucket_size_in_mb
-
-    replicated_params = {}
-    # We use `shared_params` dictionary to track the shared parameters.
-    # Key to this dictionary is the original parameter from the user's Module.
-    # Values are the copied and sharded parameter for the thunder module and meta-data related to sharding.
-    shared_params = WeakTensorKeyDictionary()
-
-    # NOTE: Shared Parameters in Trace
-    # Shared parameters in PyTorch eager are parameters of module which have different name but share the underlying tensor.
-    # For shared parameter, we replace all occurence shared parameter with it's corresponding `base` parameter.
-    # In our implementation `base` parameter is the parameter and corresponding name which we see the first time while
-    # iterating our parameters (see below). We track subsequent parameter which share the underlying Tensor with this `base` parameter
-    # in `shared_params_name` dictionary.
-    # Then while, transforming the trace - `see DDPTraceTransform.transform_traces` - we replace all the proxy of shared parameter
-    # with the corresponding proxy of base parameter in the computation trace.
-
-    # This is used to track the shared parameters when the transform is applied.
-    # key - parameter name, value - `base` parameter name.
-    shared_params_name: dict[str, str] = {}
-    for module_name, _ in thunder_model._model.named_modules():
-        submodule = thunder_model.get_submodule(module_name)
-        # Since we are doing no sharding, we do not need to materialize the params
-
-        # Broadcast parameters if requested
-        if broadcast_from is not None:
-            for pn, _ in submodule.named_parameters(recurse=False, prefix=module_name):
-                tdist.broadcast(
-                    thunder_model.get_parameter(pn), src=broadcast_from, group=process_group, async_op=False
-                )
-            for pn, _ in submodule.named_buffers(recurse=False, prefix=module_name):
-                tdist.broadcast(thunder_model.get_buffer(pn), src=broadcast_from, group=process_group, async_op=False)
-
-        for pn, p in submodule.named_parameters(recurse=False, prefix=module_name):
-            # If there are shared params in the original user Module, we reuse the sharded copy created from the original parameter below.
-            # This way we re-create parameter sharing in thunder's copy of the Module.
-            if p in shared_params:
-                # Shared param names : current param - base param
-                shared_params_name[pn] = shared_params[p]["param_name"]
-                # Re-use the previous copy of this parameter.
-                thunder_model._overrides_parameters[pn] = shared_params[p]["param_copy"]
-                replicated_params[pn] = shared_params[p]["param_meta"]
-                continue
-
-            thunder_model._overrides_parameters[pn] = copy.copy(p)
-            # we collect shapes and devices because we do not know if other transforms also change it...
-            shape = thunder_model._overrides_parameters[pn].shape
-            replicated_params[pn] = (shape, thunder_model._overrides_parameters[pn].device)
-
-            # Track param information
-            shared_params[p] = {
-                "param_copy": thunder_model._overrides_parameters[pn],
-                "param_meta": replicated_params[pn],
-                "param_name": pn,
-            }
-
-    # will insert syncs for parameters (and gradient syncs in the backward pass, this is handled by thunder)
-    # usually, other transforms will remove the forward syncs inserted by this transform.
-    transform_from_trace_to_ddp_trace = DDPTraceTransform(
-        process_group=process_group, replicated_params=replicated_params, shared_params_name=shared_params_name
-    )
-
-    thunder_model = add_transform(thunder_model, transform=transform_from_trace_to_ddp_trace)
-
-    return thunder_model
-
-
 # TODO Verify parameters are not partially initialized
 # TODO Handle buffers
 # TODO Improve initial broadcast logic
@@ -385,7 +296,18 @@ def ddp(
     from thunder.core.module import ThunderModule
 
     if isinstance(model, ThunderModule):
-        return ddp_transform_module(model, broadcast_from=broadcast_from, bucket_size_in_mb=bucket_size_in_mb)
+        from thunder.distributed.transforms.ddp_v2 import DDPTraceTransform
+        from thunder.core.transforms import add_transform
+
+        process_group = copy_default_process_group()
+
+        # will insert syncs for parameters (and gradient syncs in the backward pass, this is handled by thunder)
+        # usually, other transforms will remove the forward syncs inserted by this transform.
+        transform_from_trace_to_ddp_trace = DDPTraceTransform(
+            process_group=process_group, bucket_size_in_mb=bucket_size_in_mb, broadcast_from=broadcast_from
+        )
+        model_new = add_transform(model, transform=transform_from_trace_to_ddp_trace)
+        return model_new
 
     pg = copy_default_process_group()
     utils.check(pg is not None, lambda: "The default process group is None")

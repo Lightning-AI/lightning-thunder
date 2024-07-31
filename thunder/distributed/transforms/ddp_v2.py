@@ -10,6 +10,12 @@ from thunder.core.trace import from_trace
 from thunder.core.trace import tracectx
 from thunder.core.trace import TraceProvenance
 from thunder.core.transform_common import Transform
+from thunder.core.module import ThunderModule
+from thunder.distributed import copy_default_process_group
+import torch
+from torch.utils.weak import WeakTensorKeyDictionary
+import torch.distributed as tdist
+import copy
 
 if TYPE_CHECKING:
     from typing import Any
@@ -20,12 +26,91 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class DDPTraceTransform(Transform):
     process_group: ProcessGroup
-    replicated_params: dict[str, Any]
-    shared_params_name: dict[str, str]
+    bucket_size_in_mb = 25
+    broadcast_from = None
+
+    replicated_params: dict[str, Any] = None
+    shared_params_name: dict[str, str] = None
+
+    def transform_module(self, model: ThunderModule):
+        """Transforms the ThunderModule. This is executed once on application of the transform"""
+        from thunder import compile_data as get_compile_data
+        from thunder.core.module import ThunderModule
+
+        process_group = copy_default_process_group()
+        utils.check(process_group is not None, lambda: "The default process group is None")
+        cd = get_compile_data(model)
+        cd.use_ddp = True
+        orig_module: torch.nn.Module = cd.fn
+        utils.check(
+            isinstance(orig_module, torch.nn.Module) and not isinstance(orig_module, ThunderModule),
+            lambda: f"CompileData.fn expected to be `nn.Module` but {type(orig_module)}",
+        )
+        orig_module.use_ddp = True
+        orig_module.process_group_for_ddp = process_group
+        orig_module.bucket_size_in_mb = self.bucket_size_in_mb
+
+        replicated_params = {}
+        # We use `shared_params` dictionary to track the shared parameters.
+        # Key to this dictionary is the original parameter from the user's Module.
+        # Values are the copied and sharded parameter for the thunder module and meta-data related to sharding.
+        shared_params = WeakTensorKeyDictionary()
+
+        # NOTE: Shared Parameters in Trace
+        # Shared parameters in PyTorch eager are parameters of module which have different name but share the underlying tensor.
+        # For shared parameter, we replace all occurence shared parameter with it's corresponding `base` parameter.
+        # In our implementation `base` parameter is the parameter and corresponding name which we see the first time while
+        # iterating our parameters (see below). We track subsequent parameter which share the underlying Tensor with this `base` parameter
+        # in `shared_params_name` dictionary.
+        # Then while, transforming the trace - `see DDPTraceTransform.transform_traces` - we replace all the proxy of shared parameter
+        # with the corresponding proxy of base parameter in the computation trace.
+
+        # This is used to track the shared parameters when the transform is applied.
+        # key - parameter name, value - `base` parameter name.
+        shared_params_name: dict[str, str] = {}
+        for module_name, _ in model._model.named_modules():
+            submodule = model.get_submodule(module_name)
+            # Since we are doing no sharding, we do not need to materialize the params
+
+            # Broadcast parameters if requested
+            if broadcast_from := self.broadcast_from is not None:
+                for pn, _ in submodule.named_parameters(recurse=False, prefix=module_name):
+                    tdist.broadcast(model.get_parameter(pn), src=broadcast_from, group=process_group, async_op=False)
+                for pn, _ in submodule.named_buffers(recurse=False, prefix=module_name):
+                    tdist.broadcast(model.get_buffer(pn), src=broadcast_from, group=process_group, async_op=False)
+
+            for pn, p in submodule.named_parameters(recurse=False, prefix=module_name):
+                # If there are shared params in the original user Module, we reuse the sharded copy created from the original parameter below.
+                # This way we re-create parameter sharing in thunder's copy of the Module.
+                if p in shared_params:
+                    # Shared param names : current param - base param
+                    shared_params_name[pn] = shared_params[p]["param_name"]
+                    # Re-use the previous copy of this parameter.
+                    model._overrides_parameters[pn] = shared_params[p]["param_copy"]
+                    replicated_params[pn] = shared_params[p]["param_meta"]
+                    continue
+
+                model._overrides_parameters[pn] = copy.copy(p)
+                # we collect shapes and devices because we do not know if other transforms also change it...
+                shape = model._overrides_parameters[pn].shape
+                replicated_params[pn] = (shape, model._overrides_parameters[pn].device)
+
+                # Track param information
+                shared_params[p] = {
+                    "param_copy": model._overrides_parameters[pn],
+                    "param_meta": replicated_params[pn],
+                    "param_name": pn,
+                }
+        self.shared_params_name = shared_params_name
+        self.replicated_params = replicated_params
 
     def transform_traces_pre_prologue(
         self, prologue_trace: TraceCtx, computation_trace: TraceCtx, epilogue_trace: TraceCtx, **kwargs
     ):
+        assert (
+            self.replicated_params is not None and self.shared_params_name is not None
+        ), "expected transform_module to have run"
+
         from thunder.distributed import prims as dist_prims
 
         prologue_producers, prologue_consumers = utils.producers_and_consumers(prologue_trace)
