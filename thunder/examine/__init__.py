@@ -9,7 +9,6 @@ from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import BoundSymbol
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.core.langctxs import resolve_language, LanguageContext, Languages
-from thunder.executors.nvfuserex_impl import FusionDefinitionWrapper
 import torch
 from warnings import warn
 
@@ -219,9 +218,7 @@ def get_fusion_symbols(trace: TraceCtx, warn_if_fusions_unavailable: bool = True
     return fusions
 
 
-def get_nvfuser_fusion_definition(
-    trace: TraceCtx, name: str, warn_if_fusion_unavailable: bool = True
-) -> FusionDefinitionWrapper | None:
+def get_nvfuser_fusion_definition(trace: TraceCtx, name: str, warn_if_fusion_unavailable: bool = True):
     """
     Return the fusion definition for the symbol with the provided name if found.
     """
