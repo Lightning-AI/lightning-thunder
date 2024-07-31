@@ -206,7 +206,7 @@ class DDPTest(DistributedParallelTestCase):
             fwd_loss(model, x)
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
-    def test_fsdp_weight_sharing(self):
+    def test_ddp_weight_sharing(self):
         # This test is to verify that weight sharing works with ddp.
         device = torch.device("cuda", self.rank)
 
