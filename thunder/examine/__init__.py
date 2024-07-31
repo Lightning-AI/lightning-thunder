@@ -240,42 +240,16 @@ def get_nvfuser_repro(trace: TraceCtx, fusion_name: str, /) -> str:
     """
     Helper function to get the repro of a specific nvFusion segment.
     """
-    if (fusion := trace.python_ctx().get(fusion_name, None)) is None:
-        available_fusions = [name for name, _ in get_fusions(trace)]
-        assert False, f"Unable to find fusion '{fusion_name}' in trace. Available fusions are: {available_fusions}."
+    fusion = get_nvfuser_fusion_definition(trace, fusion_name)
+    if fusion is None:
+        assert False, f"Unable to find fusion '{fusion_name}' in trace."
 
     if fusion.last_used is None:
-        assert (
-            False
-        ), "Fusion definition needs to be executed to record the inputs. You must execute the trace first before querying the repro."
+        assert False, "Fusion definition needs to be executed to record the inputs. You must execute the fusion first before you can query the repro."
 
-    msg = ""
-    msg += (
-        "import torch\nfrom nvfuser import FusionDefinition, DataType\n"
-        f"{fusion.last_used}"
-        "with FusionDefinition() as fd:\n"
-        f"    nvfuser_fusion_id{fusion.last_used.id()}(fd)\n\n"
-    )
+    if fusion.last_inputs is None:
+        assert False, "Fusion definition inputs need to be recorded. Use compile option 'nv_store_fusion_inputs=True' while tracing."
 
-    msg += "inputs = [\n"
-    for size, stride, dtype, device in fusion.last_inputs_meta:
-        # max linear index determines number of elements to generate
-        sz = 1
-        for szi, stri in zip(size, stride):
-            if szi == 0:
-                sz = 0
-                break
-            sz += (szi - 1) * stri
-        if dtype.is_floating_point:
-            msg += (
-                f"    torch.randn(({sz},), dtype={dtype}, device='{device}')"
-                f".as_strided({tuple(size)}, {tuple(stride)}),\n"
-            )
-        else:
-            upper_bound = 2 if dtype == torch.bool else 10
-            msg += (
-                f"    torch.randint(0, {upper_bound}, ({sz},), dtype={dtype}, device='{device}')"
-                f".as_strided({tuple(size())}, {tuple(stride())}),\n"
-            )
-    msg += "]\n\n" "fd.execute(inputs)"
-    return msg
+    fd = fusion.last_used
+    return fd.getReproString(fusion.last_inputs)
+
