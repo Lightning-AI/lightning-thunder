@@ -485,7 +485,7 @@ def create_fusion_definition_wrapper(
     # These properties are distinct from the inputs and outputs to the trace itself, which
     #   may contain duplicates and whose order must be preserved.
     store_inputs: None | bool = get_compile_option(
-        "nv_store_fusion_inputs", "Enable nvFuser store fusion inputs for repro."
+        "nv_store_fusion_inputs", "Allow nvFuser to store fusion inputs for repro."
     )
 
     tensor_indices = []
