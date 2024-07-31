@@ -484,7 +484,9 @@ def create_fusion_definition_wrapper(
     #   objects is captured by names in the trace.
     # These properties are distinct from the inputs and outputs to the trace itself, which
     #   may contain duplicates and whose order must be preserved.
-    store_inputs: None | bool = get_compile_option("nv_store_fusion_inputs", "Enable nvFuser store fusion inputs for repro.")
+    store_inputs: None | bool = get_compile_option(
+        "nv_store_fusion_inputs", "Enable nvFuser store fusion inputs for repro."
+    )
 
     tensor_indices = []
     for idx, x in enumerate(sorted_unique_inputs):

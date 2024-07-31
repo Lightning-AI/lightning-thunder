@@ -38,6 +38,7 @@ class DebugTransform(thunder.core.transforms.Transform):
                 continue
 
             if self.pre_callback is not None:
+
                 def _pre_call_ctx(bsym, *args, **kwargs):
                     out = self.pre_callback(bsym, *args, **kwargs)
                     thunder.core.utils.check_type(out, str)
@@ -50,6 +51,7 @@ class DebugTransform(thunder.core.transforms.Transform):
             new_bsyms.append(bsym)
 
             if self.post_callback is not None:
+
                 def _post_call_ctx(bsym, *args, **kwargs):
                     out = self.post_callback(bsym, *args, **kwargs)
                     thunder.core.utils.check_type(out, str)
