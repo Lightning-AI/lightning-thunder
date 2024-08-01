@@ -3,6 +3,7 @@ import traceback
 from functools import partial, reduce
 from itertools import product
 import dataclasses
+import re
 
 import pytest
 import torch
@@ -3092,3 +3093,12 @@ def test_bound_symbol_sort_stability():
             ]
         )
     )
+
+    fusions = examine.get_fusion_symbols(lt)
+
+    no_number = partial(re.sub, "nvFusion\d+", "nvFusion")
+    fusions = [no_number(str(thunder.core.transform_common.canonicalize_proxies([f])[0])) for f in fusions]
+
+    f0 = fusions[0]
+    for f in fusions[1:]:
+        assert f0 == f
