@@ -187,7 +187,10 @@ class ThunderModule(pytorch.nn.Module):
 
     def state_dict(self, *args: Any, **kwargs: Any) -> Any:
         # this is broken for transformed modules!!!
-        return self._model.state_dict(*args, **kwargs)
+        state_dict = self._model.state_dict(*args, **kwargs)
+        for transform in self._lc_transforms:
+            state_dict = transform.transform_state_dict(state_dict)
+        return state_dict
 
     def load_state_dict(self, *args: Any, **kwargs: Any) -> Any:
         # this is broken for transformed modules!!!

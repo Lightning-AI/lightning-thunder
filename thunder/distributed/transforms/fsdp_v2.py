@@ -20,6 +20,8 @@ from thunder.core.transform_common import Transform
 
 if TYPE_CHECKING:
     from typing import Any
+    from torch import Tensor
+    from torch.nn import Parameter
     from torch.distributed import ProcessGroup
     from thunder.core.symbol import BoundSymbol
     from thunder.core.trace import VariableInterface
@@ -62,6 +64,7 @@ class FSDPTraceTransform(Transform):
     sharded_params: dict[str, Any]
     process_group: ProcessGroup
     shared_params_name: dict[str, str]
+    disable_cpu_offloading: bool = False
 
     def transform_traces_pre_prologue(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
         from thunder.distributed import prims as dist_prims
@@ -166,3 +169,26 @@ class FSDPTraceTransform(Transform):
                 provenance="fsdp pass with unpadding",
             )
         return prologue_trace, new_computation_trace, epilogue_trace
+
+    def transform_state_dict(
+        self,
+        state_dict: dict[str, Parameter | Tensor],
+    ) -> dict[str, Parameter | Tensor]:
+        from thunder.executors.torchex import _all_gather_prim_impl
+        import torch
+
+        for name, param_or_buffer in state_dict.items():
+            if not torch.is_tensor(param_or_buffer):
+                continue
+            unsharded_param_or_buffer = _all_gather_prim_impl(
+                param_or_buffer, group=self.process_group, do_async=False, dim=0
+            )
+            if (padding := getattr(param_or_buffer, "_thunder_fsdp_padding_size", None)) is not None:
+                unsharded_param_or_buffer = unsharded_param_or_buffer.narrow(
+                    0, 0, unsharded_param_or_buffer.size(0) - padding
+                )
+                if not self.disable_cpu_offloading:
+                    state_dict[name] = unsharded_param_or_buffer.cpu()
+                else:
+                    state_dict[name] = unsharded_param_or_buffer
+        return state_dict

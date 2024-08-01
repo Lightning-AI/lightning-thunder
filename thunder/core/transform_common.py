@@ -20,6 +20,8 @@ from thunder.core.utils import ProxyDict, producers, check, consumers
 if TYPE_CHECKING:
     from thunder.core.proxies import ProxyInterface
     from thunder.core.symbol import Symbol, VariableInterface
+    from torch import Tensor
+    from torch.nn import Parameter
 
 
 #
@@ -361,6 +363,12 @@ class Transform(ABC):
 
         Note that state dict keys do not include the submodule name as prefix.
         """
+        return state_dict
+
+    def transform_state_dict(
+        self,
+        state_dict: dict[str, Parameter | Tensor],
+    ) -> dict[str, Parameter | Tensor]:
         return state_dict
 
     def transform_trace_additionally(self, computation_trace: Trace, **kwargs):
