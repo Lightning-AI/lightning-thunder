@@ -92,7 +92,9 @@ def fa3_bwd_impl(
         softmax_scale,
         causal,
     )
-    dq = dq[..., : dout.shape[-1]]  # We could have padded the head dimension (from https://github.com/Dao-AILab/flash-attention/blob/main/hopper/flash_attn_interface.py#L179)
+    dq = dq[
+        ..., : dout.shape[-1]
+    ]  # We could have padded the head dimension (from https://github.com/Dao-AILab/flash-attention/blob/main/hopper/flash_attn_interface.py#L179)
     dk = dk[..., : dout.shape[-1]]
     dv = dv[..., : dout.shape[-1]]
     grads = (dq, dk, dv)
