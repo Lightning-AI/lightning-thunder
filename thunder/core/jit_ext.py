@@ -1052,19 +1052,22 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
 
     ctx: GeneralJitCtx = get_general_jit_ctx()
 
-    if (executor_lookaside := ctx._executor_lookasides.get(fn, None)) is not None:
-        lookaside = executor_lookaside
-    elif isinstance(fn, Symbol) or fn in _clang_fn_set:
-        # Performs symbol lookasides
-        # NOTE Symbols "lookaside" to themselves; this just prevents their internals from being jitted
-        # NOTE clang operations are not symbols, but we still prevent their internals from being jitted
-        recursively_proxy(*args, **kwargs)
-        lookaside = interpreter_needs_wrap(record_source_loc_in_symbol_header(fn))
-    elif (general_jit_lookaside := _general_jit_lookaside_map.get(fn, None)) is not None:
-        lookaside = general_jit_lookaside
-    else:
-        # Falls through to the interpreter's default lookaside
-        lookaside = default_lookaside(fn, *args, **kwargs)
+    if thunder.core.utils.is_hashable(fn):  # see issue #889
+        if (executor_lookaside := ctx._executor_lookasides.get(fn, None)) is not None:
+            lookaside = executor_lookaside
+        elif isinstance(fn, Symbol) or fn in _clang_fn_set:
+            # Performs symbol lookasides
+            # NOTE Symbols "lookaside" to themselves; this just prevents their internals from being jitted
+            # NOTE clang operations are not symbols, but we still prevent their internals from being jitted
+            recursively_proxy(*args, **kwargs)
+            lookaside = interpreter_needs_wrap(record_source_loc_in_symbol_header(fn))
+        elif (general_jit_lookaside := _general_jit_lookaside_map.get(fn, None)) is not None:
+            lookaside = general_jit_lookaside
+        else:
+            # Falls through to the interpreter's default lookaside
+            lookaside = default_lookaside(fn, *args, **kwargs)
+    else:  # non-hashable
+        lookaside = None
 
     if lookaside is None:
 
