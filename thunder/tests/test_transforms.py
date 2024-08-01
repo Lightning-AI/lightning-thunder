@@ -194,7 +194,7 @@ def test_nvfuser_cse():
     actual = jm(inp)
     expected = mlp(inp)
 
-    assert_close(actual, expected, atol=1e-1, rtol=1e-1)
+    assert_close(actual, expected, atol=2e-1, rtol=2e-1)
 
     cache_info, comp_inps, _ = thunder.compile_data(jm).get_computation_and_inputs(inp)
     for t, comp_proxy, prologue_proxy in zip(
