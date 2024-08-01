@@ -1644,7 +1644,14 @@ def wrap_attribute(plain_result, obj, name):
     pr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[obj.provenance, name.provenance])
     result = wrap(plain_result, provenance=pr)
 
-    obj.attribute_wrappers[name.value] = result
+    # we want to avoid reference cycles (note that Python also does this)
+    # see https://github.com/Lightning-AI/lightning-thunder/issues/886 for
+    # discussion
+    if not (
+        isinstance(plain_result, (MethodType, BuiltinMethodType, MethodWrapperType))
+        and plain_result.__self__ is obj.value
+    ):
+        obj.attribute_wrappers[name.value] = result
 
     check_self(obj, result)
 
