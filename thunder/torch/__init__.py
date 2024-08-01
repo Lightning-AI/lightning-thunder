@@ -5366,7 +5366,7 @@ def register_default_torch_ops():
     for m, fns in default_torch_ops.torch_auto_registered_ops.items():
         for fn in fns:
             # Ensure no inplace op in the list
-            assert not fn.__name__.endswith('_')
+            assert not fn.__name__.endswith("_")
             register_default_torch_op(fn, meta_adaptor(fn), m)
 
 
