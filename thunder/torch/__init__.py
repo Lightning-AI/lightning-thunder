@@ -1,4 +1,5 @@
 from __future__ import annotations
+import builtins
 import itertools
 import math
 import operator
@@ -35,8 +36,12 @@ from thunder.core.proxies import (
     TensorProxy,
     FutureTensorProxy,
     pyval,
+    TupleProxy,
+    ListProxy,
+    DictProxy,
+    numberproxy,
 )
-from thunder.core.pytree import tree_map
+from thunder.core.pytree import tree_map, tree_flatten, tree_unflatten
 from thunder.core.symbol import Symbol
 from thunder.core.transforms import register_grad
 from thunder.core.prims import get_grad, put_grad
@@ -5345,8 +5350,6 @@ def _is_differentiable(arg: Any) -> bool:
 
 
 def _make_differentiable_wrapper(func: Callable, *args, **kwargs):
-    from thunder.core.pytree import tree_flatten, tree_unflatten
-
     flat_args, spec = tree_flatten((args, kwargs))
     differentiable_args_idx = tuple(i for i, a in enumerate(flat_args) if _is_differentiable(a))
     differentiable_args = tuple(arg for i, arg in enumerate(flat_args) if i in differentiable_args_idx)
@@ -5387,28 +5390,15 @@ def register_default_torch_op(torchfn: Callable, fn_meta: Callable, m):
 
     augmented_forward_impls[sym.id] = augmented_forward_adaptor(op)
 
-    def _vjp_impl(residules, *gs) -> torch.Tensor:
-        inp_args, inp_kwargs = residules
+    def _vjp_impl_wrapper(residules, *gs):
+        return _vjp_impl(torchfn, residules, *gs)
 
-        wrapped_func, diff_args = _make_differentiable_wrapper(torchfn, *inp_args, **inp_kwargs)
-        _, vjp_outs = torch.autograd.functional.vjp(wrapped_func, diff_args, v=gs)
-
-        from thunder.core.pytree import tree_unflatten, tree_flatten
-
-        flat_inp_args, inp_spec = tree_flatten(inp_args)
-        iter_vjp_out = iter(vjp_outs if isinstance(vjp_outs, Sequence) else (vjp_outs,))
-        vjp_outs = tuple(next(iter_vjp_out) if _is_differentiable(arg) else None for arg in flat_inp_args)
-        return tree_unflatten(vjp_outs, inp_spec)
-
-    bwd_op = ex.register_operator(torchfn.__name__ + "_vjp", meta=backward_adaptor(torchfn), fn=_vjp_impl)
+    bwd_op = ex.register_operator(torchfn.__name__ + "_vjp", meta=backward_adaptor(torchfn), fn=_vjp_impl_wrapper)
     ex.register_implementation(bwd_op.id, bwd_op, checker=_always_executable)
     backward_impls[sym.id] = bwd_op
 
 
 def _get_fake_arg(inp: Any, fake_mode):
-    from thunder.core.devices import to_torch_device
-    from thunder.core.proxies import TupleProxy, ListProxy, DictProxy
-
     if inp is None:
         return inp
     if isinstance(inp, NumberProxy):
@@ -5422,7 +5412,7 @@ def _get_fake_arg(inp: Any, fake_mode):
                 inp.shape,
                 dtype=_thunder_to_torch_dtype_map[inp.dtype],
                 requires_grad=inp.requires_grad,
-                device=to_torch_device(inp.device),
+                device=devices.to_torch_device(inp.device),
             )
         )
     elif isinstance(inp, (TupleProxy, ListProxy, DictProxy)):
@@ -5430,25 +5420,21 @@ def _get_fake_arg(inp: Any, fake_mode):
     elif isinstance(inp, (torch.dtype, torch.device, torch.Size, torch.memory_format, str, bool, int, float, complex)):
         return inp
     elif isinstance(inp, devices.Device):
-        return to_torch_device(inp)
+        return devices.to_torch_device(inp)
     elif isinstance(inp, dtypes.dtype):
         return to_torch_dtype(inp)
     else:
-        from builtins import type
-
-        raise NotImplementedError(f"Unsupported type: {type(inp)}")
+        raise NotImplementedError(f"Unsupported type: {builtins.type(inp)}")
 
 
 def _fake_type_to_thunder(inp: Any):
-    from builtins import type
-
-    from thunder.core.proxies import _cls_to_number_proxy_map, numberproxy
+    from thunder.core.proxies import _cls_to_number_proxy_map
     from torch._subclasses.fake_tensor import FakeTensor
 
     if inp is None:
         return inp
     if isinstance(inp, tuple(_cls_to_number_proxy_map.keys())):
-        return numberproxy(type(inp), inp)
+        return numberproxy(builtins.type(inp), inp)
     elif isinstance(inp, FakeTensor):
         return TensorProxy(
             shape=inp.shape,
@@ -5465,7 +5451,7 @@ def _fake_type_to_thunder(inp: Any):
     elif isinstance(inp, (str, bool, int, float, complex)):
         return inp
     else:
-        raise NotImplementedError(f"Unsupported type: {type(inp)}")
+        raise NotImplementedError(f"Unsupported type: {builtins.type(inp)}")
 
 
 def augmented_forward_adaptor(sym_op: Callable):
@@ -5483,8 +5469,6 @@ def augmented_forward_adaptor(sym_op: Callable):
 def backward_adaptor(torch_func: Callable):
     def wrapper(saved_for_backward, *grad_output):
         inp_args, inp_kwargs = saved_for_backward
-        from thunder.core.pytree import tree_flatten, tree_unflatten
-
         flat_args, spec = tree_flatten(inp_args)
         if not any(map(_is_differentiable, grad_output)):
             return tree_unflatten(len(flat_args) * [None], spec)
@@ -5513,9 +5497,19 @@ def backward_adaptor(torch_func: Callable):
     return wrapper
 
 
+def _vjp_impl(torchfn, residules, *gs):
+        inp_args, inp_kwargs = residules
+
+        wrapped_func, diff_args = _make_differentiable_wrapper(torchfn, *inp_args, **inp_kwargs)
+        _, vjp_outs = torch.autograd.functional.vjp(wrapped_func, diff_args, v=gs)
+        flat_inp_args, inp_spec = tree_flatten(inp_args)
+        iter_vjp_out = iter(vjp_outs if isinstance(vjp_outs, Sequence) else (vjp_outs,))
+        vjp_outs = tuple(next(iter_vjp_out) if _is_differentiable(arg) else None for arg in flat_inp_args)
+        return tree_unflatten(vjp_outs, inp_spec)
+
+
 def meta_adaptor(torch_func: Callable):
     def wrapper(*args, **kwargs):
-        from thunder.core.pytree import tree_flatten, tree_unflatten
         from torch._subclasses.fake_tensor import FakeTensorMode
 
         if kwargs.get("inplace", False):
