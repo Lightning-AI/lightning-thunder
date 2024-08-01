@@ -37,11 +37,6 @@ def test_torch_ops_trace(device, requires_grad):
         # No cuda backend support
         if op_info.name in ("nonzero_static",) and device == "cuda":
             continue
-        # RuntimeError: Calling torch.linalg.cholesky on a CPU tensor requires compiling PyTorch with LAPACK.
-        if op_info.name in ("cholesky", "svd") and device == "cpu":
-            continue
-        if op_info.name == "searchsorted" and (requires_grad and not sample.input.requires_grad):
-            continue
         funcs = [name2func[op_info.name], name2func.get(f"Tensor.{op_info.name}", None)]
         for func in funcs:
             if func is None:

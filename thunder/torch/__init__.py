@@ -5365,6 +5365,8 @@ def register_default_torch_ops():
 
     for m, fns in default_torch_ops.torch_auto_registered_ops.items():
         for fn in fns:
+            # Ensure no inplace op in the list
+            assert not fn.__name__.endswith('_')
             register_default_torch_op(fn, meta_adaptor(fn), m)
 
 
@@ -5389,14 +5391,14 @@ def register_default_torch_op(torchfn: Callable, fn_meta: Callable, m):
         inp_args, inp_kwargs = residules
 
         wrapped_func, diff_args = _make_differentiable_wrapper(torchfn, *inp_args, **inp_kwargs)
-        _, outs = torch.autograd.functional.vjp(wrapped_func, diff_args, v=gs)
+        _, vjp_outs = torch.autograd.functional.vjp(wrapped_func, diff_args, v=gs)
 
         from thunder.core.pytree import tree_unflatten, tree_flatten
 
         flat_inp_args, inp_spec = tree_flatten(inp_args)
-        iter_out = iter(outs if isinstance(outs, Sequence) else (outs,))
-        outs = tuple(next(iter_out) if _is_differentiable(arg) else None for arg in flat_inp_args)
-        return tree_unflatten(outs, inp_spec)
+        iter_vjp_out = iter(vjp_outs if isinstance(vjp_outs, Sequence) else (vjp_outs,))
+        vjp_outs = tuple(next(iter_vjp_out) if _is_differentiable(arg) else None for arg in flat_inp_args)
+        return tree_unflatten(vjp_outs, inp_spec)
 
     bwd_op = ex.register_operator(torchfn.__name__ + "_vjp", meta=backward_adaptor(torchfn), fn=_vjp_impl)
     ex.register_implementation(bwd_op.id, bwd_op, checker=_always_executable)
@@ -5482,12 +5484,11 @@ def backward_adaptor(torch_func: Callable):
     def wrapper(saved_for_backward, *grad_output):
         inp_args, inp_kwargs = saved_for_backward
         from thunder.core.pytree import tree_flatten, tree_unflatten
-        from builtins import sum
 
         flat_args, spec = tree_flatten(inp_args)
-        if sum(tree_map(_is_differentiable, grad_output)) == 0:
+        if not any(map(_is_differentiable, grad_output)):
             return tree_unflatten(len(flat_args) * [None], spec)
-        if sum(map(_is_differentiable, tree_flatten(inp_kwargs)[0])) != 0:
+        if any(map(_is_differentiable, tree_flatten(inp_kwargs)[0])):
             raise NotImplementedError(
                 f"Exception encountered when doing automatic registration for {torch_func} because there is keyword argument that requires gradient, please use manual registration."
             )
