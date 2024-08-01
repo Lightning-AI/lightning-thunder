@@ -169,6 +169,12 @@ class CUDAGraphExecutor(FusionExecutor):
             curr_tracectx.clear_collection_names.add(bsym.args[0].name)
             return False
 
+        # We let DEL to get fused (but should not see them much), unless the deleted proxy is a CollectionProxy
+        # consumed by the `clear_mutable_collection` symbol
+        if bsym.sym.id == prims.PrimIDs.DEL and bsym.args[0].name in curr_tracectx.clear_collection_names:
+            return False
+        # }
+
         do_not_fuse_sym_set = {
             # Skip the very beginning and the very end of the trace
             prims.PrimIDs.UNPACK_TRIVIAL,
