@@ -2,6 +2,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from collections.abc import Sequence
 from collections import defaultdict
 from itertools import filterfalse
