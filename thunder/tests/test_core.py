@@ -3096,7 +3096,7 @@ def test_bound_symbol_sort_stability():
 
     fusions = examine.get_fusion_symbols(lt)
 
-    no_number = partial(re.sub, "nvFusion\d+", "nvFusion")
+    no_number = partial(re.sub, r"nvFusion\d+", "nvFusion")
     fusions = [no_number(str(thunder.core.transform_common.canonicalize_proxies([f])[0])) for f in fusions]
 
     f0 = fusions[0]
