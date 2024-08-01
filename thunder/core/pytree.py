@@ -60,6 +60,8 @@ def tree_flatten(args, namespace=""):
 # while generating the split functions.
 tree_map = partial(optree.tree_map, none_is_leaf=True, namespace=OPTREE_NAMESPACE)
 
+tree_iter = partial(optree.tree_iter, none_is_leaf=True, namespace=OPTREE_NAMESPACE)
+
 
 def tree_unflatten(values, spec):
     return optree.tree_unflatten(spec, values)

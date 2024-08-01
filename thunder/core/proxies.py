@@ -1367,7 +1367,13 @@ class TensorProxy(Proxy, TensorProxyInterface):
             self._distparallel_type,
             self._thunder_fsdp_padding_size,
         ) = _infer_tensor_properties(
-            like, shape, device, dtype, requires_grad, distparallel_type, thunder_fsdp_padding_size
+            like,
+            shape,
+            device,
+            dtype,
+            requires_grad,
+            distparallel_type,
+            thunder_fsdp_padding_size,
         )
 
     # NOTE The following properties DO NOT depend on the language context or record

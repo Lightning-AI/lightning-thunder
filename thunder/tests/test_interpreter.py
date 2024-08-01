@@ -6,6 +6,7 @@ from itertools import product
 import io
 import sys
 import dis
+import weakref
 from collections.abc import Callable
 
 import pytest
@@ -3321,3 +3322,29 @@ def test_class_setattr():
     jfoo = thunder.jit(foo)
     jfoo()
     assert A.FOO
+
+
+def test_freeing_of_tensors():
+    # this guards against ref cycles preventing reeing of tensors
+    # see https://github.com/Lightning-AI/lightning-thunder/issues/886
+
+    l = []
+
+    def bar(x):
+        return x + 1
+
+    jbar = thunder.jit(bar)
+
+    def foo(i):
+        def on_finalize():
+            l.append(f"free {i}")
+
+        c = torch.randn(4, 4)
+        weakref.finalize(c, on_finalize)
+        return jbar(c)
+
+    for i in range(3):
+        l.append(f"run {i}")
+        foo(i)
+
+    assert l == ["run 0", "free 0", "run 1", "free 1", "run 2", "free 2"]

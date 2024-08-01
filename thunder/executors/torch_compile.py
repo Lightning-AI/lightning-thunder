@@ -119,8 +119,8 @@ class TorchCompileExecutor(FusionExecutor):
         def keyfn(x: Variable) -> str:
             return x.proxy.name
 
-        sorted_unique_inputs: list[Proxy] = list(unvariableify(x) for x in sorted(region.inputs, key=keyfn))
-        sorted_unique_outputs: list[Proxy] = list(unvariableify(x) for x in sorted(region.outputs, key=keyfn))
+        sorted_unique_inputs: list[Proxy] = [unvariableify(x) for x in region.inputs]
+        sorted_unique_outputs: list[Proxy] = [unvariableify(x) for x in region.outputs]
 
         compiled: Callable = make_compiled(region.bound_symbols, sorted_unique_inputs, sorted_unique_outputs)
 
