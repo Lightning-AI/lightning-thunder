@@ -135,8 +135,8 @@ class CUDAGraphExecutor(FusionExecutor):
         super().__init__(name, version=torch.version.cuda)
 
     def fuse(self, region: Region, fusion_counter: int, num_static_inputs: None | int = None) -> BoundSymbol:
-        inputs = [unvariableify(inp) for inp in sorted(region.inputs, key=lambda var: var.proxy.name)]
-        outputs = [unvariableify(out) for out in sorted(region.outputs, key=lambda var: var.proxy.name)]
+        inputs = [unvariableify(inp) for inp in region.inputs]
+        outputs = [unvariableify(out) for out in region.outputs]
 
         fusion_name = f"CUDAGraph{fusion_counter}"
         fusion_callable: Callable = make_callable(f"{fusion_name}_fn", region.bound_symbols, inputs, outputs)

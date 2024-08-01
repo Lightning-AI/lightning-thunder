@@ -611,11 +611,8 @@ class nvFuserExecutor(FusionExecutor):
         return list(filter(lambda x: x.sym != prims.python_return, trace.bound_symbols))
 
     def fuse(self, region: Region, fusion_counter: int) -> BoundSymbol:
-        def keyfn(x: Variable) -> str:
-            return x.proxy.name
-
-        sorted_unique_inputs: list[Proxy] = list(unvariableify(x) for x in sorted(region.inputs, key=keyfn))
-        sorted_unique_outputs: list[Proxy] = list(unvariableify(x) for x in sorted(region.outputs, key=keyfn))
+        sorted_unique_inputs: list[Proxy] = [unvariableify(x) for x in region.inputs]
+        sorted_unique_outputs: list[Proxy] = [unvariableify(x) for x in region.outputs]
 
         flattened_bsyms: list[BoundSymbol] = []
         for bsym in region.bound_symbols:
