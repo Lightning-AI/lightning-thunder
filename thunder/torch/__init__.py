@@ -5370,8 +5370,8 @@ def register_default_torch_ops():
         for fn in fns:
             # Ensure no inplace op in the list
             utils.check(
-                fn.__name__.endswith("_"),
-                lambda: f"Automatic registration does not support in-place op of {fn.__name__}, please manually register it",
+                not fn.__name__.endswith("_"),
+                lambda: f"Automatic registration does not support in-place op of {m.__name__}.{fn.__name__}, please manually register it",
             )
             register_default_torch_op(fn, meta_adaptor(fn), m)
 
