@@ -460,6 +460,8 @@ def resolve_executors(executors: None | Sequence[Executor | str]) -> tuple[Execu
                 resolved_executors.append(ex)
         elif e is None:
             raise ValueError(f"The executor list cannot contain None. Executor list: {executors}")
+        elif not isinstance(e, Executor):
+            raise ValueError(f"An object of type {type(e)} is not a valid Executor. Executor list: {executors}")
         else:
             resolved_executors.append(e)
 
