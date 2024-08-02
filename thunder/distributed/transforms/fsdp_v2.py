@@ -31,7 +31,7 @@ __all__ = [
 
 
 @dataclass
-class VisitorTransform:
+class FSDPParamUnpaddingVisitor:
     prod_bsym_to_unsharded_and_padding: dict[BoundSymbol, tuple[TensorProxy, int]]
     swap_map: dict[VariableInterface, TensorProxy] = field(init=False, default_factory=dict)
 
