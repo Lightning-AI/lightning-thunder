@@ -37,7 +37,7 @@ def fa3_fwd_impl(
     if not HAS_FA3:
         raise Exception("fa3 not built, cannot use fa3 executor")  # checker should fail before getting here
 
-    # According to https://github.com/Dao-AILab/flash-attention?tab=readme-ov-file#how-to-use-flashattention, softmax_scale is
+    # According to https://github.com/Dao-AILab/flash-attention/blob/5018ac6/README.md?plain=1, softmax_scale is
     # the scaling of QK^T before applying softmax. Default to 1 / sqrt(headdim).
     if softmax_scale is None:
         softmax_scale = q.shape[-1] ** (-0.5)
@@ -94,7 +94,7 @@ def fa3_bwd_impl(
     )
     dq = dq[
         ..., : dout.shape[-1]
-    ]  # We could have padded the head dimension (from https://github.com/Dao-AILab/flash-attention/blob/main/hopper/flash_attn_interface.py#L179)
+    ]  # We could have padded the head dimension (from https://github.com/Dao-AILab/flash-attention/blob/5018ac6/hopper/flash_attn_interface.py#L179)
     dk = dk[..., : dout.shape[-1]]
     dv = dv[..., : dout.shape[-1]]
     grads = (dq, dk, dv)

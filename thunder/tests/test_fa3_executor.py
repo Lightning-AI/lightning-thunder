@@ -15,18 +15,17 @@ except:
     HAS_FA3 = False
 
 
-@pytest.mark.parametrize("device,", ["cuda"])
-@pytest.mark.parametrize("dtype", [torch.float16], ids=("float16"))
 @requiresCUDA
-def test_fa3(device: str, dtype: torch.dtype):
-
+def test_fa3():
     if not HAS_FA3:
         pytest.skip("fa3 not built")
 
-    batch = 10
+    batch = 4
     seq_len = 128
-    num_heads = 4
-    dim_per_head = 32
+    num_heads = 6
+    dim_per_head = 64
+    device = 'cuda'
+    dtype = torch.float16
 
     query = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda", dtype=dtype)
     key = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda", dtype=dtype)
