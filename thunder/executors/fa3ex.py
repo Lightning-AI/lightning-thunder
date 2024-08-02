@@ -1,11 +1,8 @@
-import torch
+# Currently we rely on the user / container to build fa3 following the install instructions
+# from https://github.com/Dao-AILab/flash-attention?tab=readme-ov-file#flashattention-3-beta-release.
+# fa3 is currently only built for sm90+ (hopper), so HAS_FA3 can only be True if and only if the device
+# is hopper and fa3 has been built
 
-"""
-Currently we rely on the user / container to build fa3 following the install instructions
-from https://github.com/Dao-AILab/flash-attention?tab=readme-ov-file#flashattention-3-beta-release.
-fa3 is currently only built for sm90+ (hopper), so HAS_FA3 can only be True if and only if the device
-is hopper and fa3 has been built
-"""
 try:
     from flash_attn_interface import _flash_attn_forward, _flash_attn_backward, flash_attn_func
 
@@ -13,6 +10,7 @@ try:
 except:
     HAS_FA3 = False
 
+import torch
 import thunder
 from thunder.core.transforms import get_grad, put_grads
 from thunder.extend import OperatorExecutor, register_executor
