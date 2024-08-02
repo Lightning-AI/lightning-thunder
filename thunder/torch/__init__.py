@@ -4114,6 +4114,7 @@ def _adaptive_avg_pool2d_grad(
 
     return primals
 
+
 register_grad(adaptive_avg_pool2d, _adaptive_avg_pool2d_grad)
 
 
