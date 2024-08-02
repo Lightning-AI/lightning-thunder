@@ -19,6 +19,7 @@ def test_torch_ops_trace(device, requires_grad):
 
     import thunder.torch.default_torch_ops as ops
     from torch.testing._internal.common_methods_invocations import op_db
+    from torch.testing._internal.common_device_type import skipCPUIfNoLapack
 
     name2func = {}
     [name2func.setdefault(v.__name__, v) for v in ops.torch_auto_registered_ops[torch]]
@@ -36,6 +37,8 @@ def test_torch_ops_trace(device, requires_grad):
             continue
         # No cuda backend support
         if op_info.name in ("nonzero_static",) and device == "cuda":
+            continue
+        if device == "cpu" and not torch._C.has_lapack and skipCPUIfNoLapack in op_info.decorators:
             continue
         funcs = [name2func[op_info.name], name2func.get(f"Tensor.{op_info.name}", None)]
         for func in funcs:
