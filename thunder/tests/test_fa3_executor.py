@@ -17,6 +17,7 @@ except:
 import math
 from einops import rearrange, repeat
 
+
 # helper function for test_fa3_accuracy
 def attention_ref(
     q,
@@ -107,6 +108,7 @@ def attention_ref(
         output.masked_fill_(rearrange(~query_padding_mask, "b s -> b s 1 1"), 0.0)
     return output.to(dtype=dtype_og), attention.to(dtype=dtype_og)
 
+
 # verify that fa3 kernel is accurate
 @requiresCUDA
 def test_fa3_accuracy():
@@ -123,7 +125,7 @@ def test_fa3_accuracy():
     q = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda", dtype=dtype, requires_grad=True)
     k = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda", dtype=dtype, requires_grad=True)
     v = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda", dtype=dtype, requires_grad=True)
-    
+
     def fn(query, key, value):
         return torch.nn.functional.scaled_dot_product_attention(query, key, value)
 
@@ -132,7 +134,13 @@ def test_fa3_accuracy():
     # Verifies the result is close to PyTorch
     out = cfn(q, k, v)
     out_ref = attention_ref(q, k, v)[0]
-    out_pt = attention_ref(q, k, v, upcast=False, reorder_ops=True,)[0]
+    out_pt = attention_ref(
+        q,
+        k,
+        v,
+        upcast=False,
+        reorder_ops=True,
+    )[0]
 
     g = torch.randn_like(out)
     do_o = (g.float() * out.float()).sum(-1)
@@ -142,6 +150,7 @@ def test_fa3_accuracy():
     assert (dq - dq_ref).abs().max().item() <= 2 * (dq_pt - dq_ref).abs().max().item() + 3e-5
     assert (dk - dk_ref).abs().max().item() <= 2 * (dk_pt - dk_ref).abs().max().item() + 3e-5
     assert (dv - dv_ref).abs().max().item() <= 2 * (dv_pt - dv_ref).abs().max().item() + 3e-5
+
 
 # verify that fa3 kernel is properly being called when used in a valid trace
 @requiresCUDA
@@ -171,7 +180,7 @@ def test_fa3_used():
     extrace = thunder.last_traces(cfn)[-1]
     assert any(bsym.sym.name == "fa3_fwd" for bsym in extrace.bound_symbols)
 
-    '''
+    """
     loss = thunder_result.sum()
     loss.backward()
 
@@ -179,7 +188,8 @@ def test_fa3_used():
     extrace = thunder.last_traces(cfn)[-1]
     print(f'symbols: {[bsym.sym.name for bsym in extrace.bound_symbols]}')
     assert any(bsym.sym.name == "fa3_bwd" for bsym in extrace.bound_symbols)
-    '''
+    """
+
 
 # verify that checker is correctly returning False on invalid fa3 use cases
 @requiresCUDA

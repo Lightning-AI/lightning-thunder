@@ -110,7 +110,7 @@ def fa3_checker(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=Fals
 
     # fa3 bwd currently only supports headdim 64, 128 for now. fa3 fwd supports headdim 64, 128, 256, but since there
     # is currently no way in thunder to differentiate between fwd+bwd and fwd use cases only from the checker perspective,
-    # we are disabling headdim 256 in general and we'll revisit adding it back for fwd only in the future. 
+    # we are disabling headdim 256 in general and we'll revisit adding it back for fwd only in the future.
     if not (
         query.shape[3]
         in (
