@@ -456,7 +456,7 @@ def build_callable(fn_name: str, python_str: str, file_name: str, ctx: dict) -> 
     try:
         code: CodeType = compile(python_str, program_name, mode="exec")
         exec(code, ctx)
-        _callable: Callable = ctx[fn_name] # Grab from globals()
+        _callable: Callable = ctx[fn_name]  # Grab from globals()
         return _callable
     except Exception as e:
         print("Encountered an exception while trying to compile the following program:")
