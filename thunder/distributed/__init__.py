@@ -441,6 +441,7 @@ def fsdp_transform_module(
     broadcast_from: int | None = None,
     sharding_strategy: FSDPType = FSDPType.ZERO2,
     bucketing_strategy: FSDPBucketingStrategy = FSDPBucketingStrategy.NONE,
+    keep_state_dict_on_device: bool = False,
 ) -> ThunderModule:
     from thunder import compile_data as get_compile_data
     from thunder.core.transforms import add_transform
@@ -564,6 +565,7 @@ def fsdp_transform_module(
         sharded_params=sharded_params,
         process_group=process_group,
         shared_params_name=shared_params_name,
+        keep_state_dict_on_device=keep_state_dict_on_device,
     )
     # add prologue + compute transform
     thunder_model = add_transform(thunder_model, transform=transform_from_trace_to_fsdp_trace)
@@ -578,6 +580,7 @@ def fsdp(
     broadcast_from: int | None = None,
     sharding_strategy: FSDPType = FSDPType.ZERO2,
     bucketing_strategy: FSDPBucketingStrategy = FSDPBucketingStrategy.NONE,
+    keep_state_dict_on_device: bool = False,
 ) -> torch.nn.Module:
     """Convert ``model`` into Fully Sharded Data Parallel.
 
@@ -627,6 +630,7 @@ def fsdp(
             broadcast_from=broadcast_from,
             sharding_strategy=sharding_strategy,
             bucketing_strategy=bucketing_strategy,
+            keep_state_dict_on_device=keep_state_dict_on_device,
         )
 
     process_group = copy_default_process_group()

@@ -367,6 +367,7 @@ class Transform(ABC):
 
     def transform_state_dict(
         self,
+        model: thunder.ThunderModule,
         state_dict: dict[str, Parameter | Tensor],
     ) -> dict[str, Parameter | Tensor]:
         return state_dict
