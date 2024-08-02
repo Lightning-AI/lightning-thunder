@@ -2,25 +2,59 @@
 
 from __future__ import annotations
 from dataclasses import dataclass
+from dataclasses import field
 from typing import TYPE_CHECKING
 
 from thunder.core import devices
 from thunder.core import prims
 from thunder.core import utils
 from thunder.core.proxies import DistParallelType
+from thunder.core.proxies import TensorProxy
+from thunder.core.proxies import variableify, unvariableify
 from thunder.core.trace import from_trace
 from thunder.core.trace import tracectx
 from thunder.core.trace import TraceProvenance
+from thunder.core.transforms import VISIT_TYPE
+from thunder.core.transforms import visitor_transform
 from thunder.core.transform_common import Transform
 
 if TYPE_CHECKING:
     from typing import Any
     from torch.distributed import ProcessGroup
+    from thunder.core.symbol import BoundSymbol
+    from thunder.core.trace import VariableInterface
 
 
 __all__ = [
     "FSDPTraceTransform",
 ]
+
+
+@dataclass
+class FSDPParamUnpaddingVisitor:
+    prod_bsym_to_unsharded_and_padding: dict[BoundSymbol, tuple[TensorProxy, int]]
+    swap_map: dict[VariableInterface, TensorProxy] = field(init=False, default_factory=dict)
+
+    def __call__(self, bsym: BoundSymbol) -> VISIT_TYPE:
+        import thunder.torch as ltorch
+        from thunder.core.trace import get_tracectx
+
+        if bsym.sym.id in {prims.PrimIDs.UNPACK_TRIVIAL, prims.PrimIDs.UNPACK_SEQUENCE}:
+            return VISIT_TYPE.NO_OP
+
+        if bsym in self.prod_bsym_to_unsharded_and_padding:
+            padded_tensor, padding_size = self.prod_bsym_to_unsharded_and_padding[bsym]
+            out = bsym.flat_proxy_outs[0]
+            utils.check(out.name == padded_tensor.name, lambda: f"{out.name=}, {padded_tensor.name=}")
+            unpadded_tensor = ltorch.getitem(padded_tensor, slice(None, -padding_size, None))
+            self.swap_map[variableify(padded_tensor)] = unpadded_tensor
+            return VISIT_TYPE.INSERT_AFTER
+
+        if not any(variableify(a) in self.swap_map for a in bsym.flat_args):
+            return VISIT_TYPE.NO_OP
+        updated_bsym = bsym.from_bsym_swap_proxies(self.swap_map)
+        get_tracectx().scopes[-1].append(updated_bsym)
+        return VISIT_TYPE.REPLACE
 
 
 @dataclass(frozen=True)
@@ -49,6 +83,8 @@ class FSDPTraceTransform(Transform):
 
         computation_trace.push_scope([])
 
+        unsharded_to_padding: dict[VariableInterface, TensorProxy] = {}
+
         synchronized_parameters = []
         param_name_to_comp_trc_proxy = {}  # Track param_name to it's corresponding proxy in computation_trc.
         # todo: deal with epilogue output
@@ -72,6 +108,8 @@ class FSDPTraceTransform(Transform):
                         comp_inp_p._device = thunder_device
                     with tracectx(computation_trace):
                         synchronized_parameters.append(dist_prims.synchronize(comp_inp_p, self.process_group))
+                    if (padding_size := new_shape[0] * self.process_group.size() - old_shape[0]) > 0:
+                        unsharded_to_padding[variableify(synchronized_parameters[-1])] = padding_size
 
                     for c in prologue_consumers[pro_out_p]:
                         if c.sym is prims.check_tensor_shape_and_metadata:
@@ -114,5 +152,17 @@ class FSDPTraceTransform(Transform):
             new_computation_trace.bound_symbols.append(bsym.from_bsym(args=new_args))
 
         new_computation_trace.set_provenance(TraceProvenance("fsdp pass"))
-
+        if unsharded_to_padding:
+            producer_map, consumer_map = utils.producers_and_consumers(new_computation_trace)
+            prod_bsym_to_unsharded_and_padding: dict[BoundSymbol, tuple[TensorProxy, int]] = {}
+            for var_padded_tensor, padding_size in unsharded_to_padding.items():
+                padded_tensor = unvariableify(var_padded_tensor)
+                prod_bsym = producer_map[padded_tensor]
+                prod_bsym_to_unsharded_and_padding[prod_bsym] = (padded_tensor, padding_size)
+            visit = FSDPParamUnpaddingVisitor(prod_bsym_to_unsharded_and_padding)
+            new_computation_trace = visitor_transform(
+                trace_from=new_computation_trace,
+                visit=visit,
+                provenance="fsdp pass with unpadding",
+            )
         return prologue_trace, new_computation_trace, epilogue_trace

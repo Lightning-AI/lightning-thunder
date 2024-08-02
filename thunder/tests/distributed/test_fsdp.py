@@ -354,22 +354,25 @@ class FSDPTest(DistributedParallelTestCase):
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
     @common_utils.parametrize(
-        "bucketing_strategy,fsdptype",
+        "bucketing_strategy,fsdptype,apply_fsdp_first",
         product(
             (
                 FSDPBucketingStrategy.NONE,
                 FSDPBucketingStrategy.BLOCK,
             ),
             (FSDPType.ZERO2, FSDPType.ZERO3),
+            (True, False),
         ),
-        name_fn=lambda bucketing_strategy, fsdptype: (
-            f"bucketing_{str(bucketing_strategy).split('.')[1].lower()}_{(str(fsdptype).lower().split('.')[1])}"
+        name_fn=lambda bucketing_strategy, fsdptype, apply_fsdp_first: (
+            f"bucketing_{str(bucketing_strategy).split('.')[1].lower()}_"
+            f"{(str(fsdptype).lower().split('.')[1])}_{'jit_fsdp' if apply_fsdp_first else 'fsdp_jit'}"
         ),
     )
     def test_fsdp_with_padding(
         self,
         bucketing_strategy: FSDPBucketingStrategy,
         fsdptype: FSDPType,
+        apply_fsdp_first: bool,
     ):
 
         from thunder.core.prims import PrimIDs
@@ -388,7 +391,10 @@ class FSDPTest(DistributedParallelTestCase):
 
         device = torch.device(f"cuda:{self.rank}")
         m = M().to(device)
-        jitted = thunder.jit(fsdp(m, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype))
+        if apply_fsdp_first:
+            jitted = thunder.jit(fsdp(m, bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype))
+        else:
+            jitted = fsdp(thunder.jit(m), bucketing_strategy=bucketing_strategy, sharding_strategy=fsdptype)
 
         x = torch.randn(4, 4, device=device)
         y = jitted(x)
