@@ -26,6 +26,11 @@ comment_symbols = {prims.PrimIDs.COMMENT, prims.PrimIDs.UNPACK_TRIVIAL}
 
 
 # Transforms a trace by determining which execution transforms to call given the list of executors in priority order
+# This pass tries to preserve the original trace and proxies.
+# Implementation Steps -
+# 1. The trace is updated with `visitor_transform` with `visit_helper_` (where executors try to claim the symbols). Note that this replaces the output proxies in the trace.
+# 2. `visit_helper_` also creates a swapmap from the new symbols back to old one.
+# 3. After the `visitor_transform`, it iterates over the updated trace and puts back the old proxies.
 def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: Sequence[Executor]) -> TraceCtx:
     start_time_ns = time.perf_counter_ns()
 
