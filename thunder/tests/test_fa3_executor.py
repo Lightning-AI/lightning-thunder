@@ -24,7 +24,7 @@ def test_fa3():
     seq_len = 128
     num_heads = 6
     dim_per_head = 64
-    device = 'cuda'
+    device = "cuda"
     dtype = torch.float16
 
     query = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda", dtype=dtype)
