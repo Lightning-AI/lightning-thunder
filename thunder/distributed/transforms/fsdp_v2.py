@@ -31,7 +31,7 @@ __all__ = [
 
 
 @dataclass
-class VisitorTransform:
+class FSDPParamUnpaddingVisitor:
     prod_bsym_to_unsharded_and_padding: dict[BoundSymbol, tuple[TensorProxy, int]]
     swap_map: dict[VariableInterface, TensorProxy] = field(init=False, default_factory=dict)
 
@@ -159,7 +159,7 @@ class FSDPTraceTransform(Transform):
                 padded_tensor = unvariableify(var_padded_tensor)
                 prod_bsym = producer_map[padded_tensor]
                 prod_bsym_to_unsharded_and_padding[prod_bsym] = (padded_tensor, padding_size)
-            visit = VisitorTransform(prod_bsym_to_unsharded_and_padding)
+            visit = FSDPParamUnpaddingVisitor(prod_bsym_to_unsharded_and_padding)
             new_computation_trace = visitor_transform(
                 trace_from=new_computation_trace,
                 visit=visit,
