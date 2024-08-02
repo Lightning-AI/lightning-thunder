@@ -3062,14 +3062,17 @@ def test_cat_mixed_dtypes():
     torch.testing.assert_close(tuple(t.grad for t in tensors), tuple(t.grad for t in tensors_jit))
 
 
-def test_reshape_noop_prims():
-
+@pytest.mark.parametrize("requires_grad", [True, False])
+def test_reshape_noop_prims(requires_grad):
+    # NOTE - We test for requires_grad with True and False,
+    #        as the trace before execution may have `ltorch.reshape` (for requires_grad=False) or
+    #        `prims.reshape` (for requires_grad=True) as the `grad` rule is only defined for `prims.reshape`.
     def fn(x: torch.Tensor, y: torch.Tensor):
-        x_view = x.view(-1, 5)
-        y_view = y.view(-1)
+        x_view = x.reshape(-1, 5)
+        y_view = y.reshape(-1)
         return x_view + 3, y_view + 2
 
-    t = torch.randn(8, 5, requires_grad=True)
+    t = torch.randn(8, 5, requires_grad=requires_grad)
     labels = torch.tensor([2, 4, 2, 3, 1, 0, 4, 4])
 
     jfn = thunder.jit(fn)
