@@ -138,6 +138,10 @@ class CUDAGraphExecutor(FusionExecutor):
         inputs = [unvariableify(inp) for inp in region.inputs]
         outputs = [unvariableify(out) for out in region.outputs]
 
+        from thunder.executors.passes import _del_last_used
+
+        region.bound_symbols = _del_last_used(region.bound_symbols, outputs)
+
         fusion_name = f"CUDAGraph{fusion_counter}"
         fusion_callable: Callable = make_callable(f"{fusion_name}_fn", region.bound_symbols, inputs, outputs)
         fusion_callable = CUDAGraphCallable(fusion_callable, num_static_inputs)
@@ -165,7 +169,7 @@ class CUDAGraphExecutor(FusionExecutor):
             curr_tracectx.clear_collection_names.add(bsym.args[0].name)
             return False
 
-        # We let DEL to get fused, unless the deleted proxy is a CollectionProxy
+        # We let DEL to get fused (but should not see them much), unless the deleted proxy is a CollectionProxy
         # consumed by the `clear_mutable_collection` symbol
         if bsym.sym.id == prims.PrimIDs.DEL and bsym.args[0].name in curr_tracectx.clear_collection_names:
             return False
