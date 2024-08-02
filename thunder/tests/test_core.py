@@ -3,6 +3,7 @@ import traceback
 from functools import partial, reduce
 from itertools import product
 import dataclasses
+import re
 
 import pytest
 import torch
@@ -3080,3 +3081,44 @@ def test_reshape_noop_prims(requires_grad):
     expected = fn(t, labels)
 
     torch.testing.assert_close(actual, expected)
+
+
+@requiresCUDA
+def test_bound_symbol_sort_stability():
+    class LlamaMLPLike(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fc_1 = torch.nn.Linear(32, 32)
+            self.fc_2 = torch.nn.Linear(32, 32)
+            self.proj = torch.nn.Linear(32, 32)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            x_fc_1 = self.fc_1(x)
+            x_fc_2 = self.fc_2(x)
+            x = torch.nn.functional.silu(x_fc_1) * x_fc_2
+            return self.proj(x)
+
+    with torch.device("cuda"):
+        mlp = torch.nn.Sequential(*[LlamaMLPLike() for _ in range(16)]).requires_grad_(False)
+    j = thunder.jit(mlp)
+    j(torch.randn(32, 32, device="cuda"))
+    lt = thunder.last_traces(j)[-1]
+    assert all(
+        (i % 2 + 1 == i_2)
+        for i, i_2 in enumerate(
+            [
+                int(s.args[1].name.split("_")[-2])
+                for s in lt.bound_symbols
+                if s.sym.name == "linear" and "fc" in s.args[1].name
+            ]
+        )
+    )
+
+    fusions = examine.get_fusion_symbols(lt)
+
+    no_number = partial(re.sub, r"nvFusion\d+", "nvFusion")
+    fusions = [no_number(str(thunder.core.transform_common.canonicalize_proxies([f])[0])) for f in fusions]
+
+    f0 = fusions[0]
+    for f in fusions[1:]:
+        assert f0 == f
