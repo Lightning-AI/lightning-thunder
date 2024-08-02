@@ -147,7 +147,7 @@ class TestFallbackToTorch:
             else:
                 register_default_torch_op(op.torch_reference, meta_adaptor(op.torch_reference), torch.nn.functional)
             self._tmp_update_jit_lookup(op.torch_reference)
-        tdtype = torch.float32  # thunder.torch.to_torch_dtype(dtype)
+        tdtype = torch.float32
         device = torch.device("cuda")
         executor = TorchExecutor
         make = partial(make_tensor, dtype=tdtype, device=device)
