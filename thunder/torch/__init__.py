@@ -4101,6 +4101,22 @@ def adaptive_avg_pool2d_backward(g: TensorProxy, a: TensorProxy, /) -> TensorPro
     return TensorProxy(like=a)
 
 
+def _adaptive_avg_pool2d_grad(
+    a: TensorProxy,
+    /,
+    output_size: int | Sequence[int],
+) -> TensorProxy:
+    primals = adaptive_avg_pool2d(a, output_size)
+
+    grad = get_grad(primals)
+    grad_a = adaptive_avg_pool2d_backward(grad, a)
+    put_grad(a, grad_a)
+
+    return primals
+
+register_grad(adaptive_avg_pool2d, _adaptive_avg_pool2d_grad)
+
+
 @torchsymbol(torch.max_pool1d, torch.nn.functional.max_pool1d, id="torch.nn.functional.max_pool1d", is_method=False)
 def max_pool1d(
     a: TensorProxy,

@@ -1717,28 +1717,7 @@ ex.register_implementation(
 ex.register_implementation(
     ltorch.max_pool3d, max_pool3d, checker=_always_executable, grad_transform=max_pool3d_bwd_wrapper
 )
-
-
-def adaptive_avg_pool2d_bwd_wrapper(
-    a: TensorProxy,
-    /,
-    output_size: int | Sequence[int],
-) -> TensorProxy:
-    primals = adaptive_avg_pool2d(a, output_size)
-
-    grad = get_grad(primals)
-    grad_a = adaptive_avg_pool2d_backward(grad, a)
-    put_grad(a, grad_a)
-
-    return primals
-
-
-ex.register_implementation(
-    ltorch.adaptive_avg_pool2d,
-    adaptive_avg_pool2d,
-    checker=_always_executable,
-    grad_transform=adaptive_avg_pool2d_bwd_wrapper,
-)
+_register_implementation(ltorch.adaptive_avg_pool2d, adaptive_avg_pool2d, checker=_always_executable)
 _register_implementation(ltorch.adaptive_avg_pool2d_backward, adaptive_avg_pool2d_backward, checker=_always_executable)
 _register_implementation(ltorch.nll_loss, checker=_always_executable, execution_transform=_nll_loss_transform)
 nll_loss_backward = ex.register_operator(
