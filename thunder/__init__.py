@@ -594,8 +594,8 @@ def jit(
                 # applies transforms
                 cs.last_computation_transformation_start = time.perf_counter_ns()
                 for transform in transforms:
-                    new_computation_trc = transform.transform_trace_additionally(
-                        computation_trc, executors_list=cd.executors_list
+                    new_computation_trc = transform.transform_traces_pre_prologue(
+                        prologue_trc, computation_trc, epilogue_trc, backward=True, executors_list=cd.executors_list
                     )
                     if new_computation_trc is not computation_trc:
                         # todo: deprecation
