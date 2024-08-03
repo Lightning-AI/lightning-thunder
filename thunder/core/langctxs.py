@@ -1,7 +1,7 @@
 from contextvars import ContextVar
 from typing import Optional, Any
 from collections.abc import Callable
-from functools import wraps, update_wrapper
+from functools import update_wrapper
 from contextlib import contextmanager
 from enum import Enum, auto
 
