@@ -107,7 +107,6 @@ class Languages(Enum):
     PRIMS = auto()
 
 
-
 # Can be pickled, unlike @wraps and partial(). Serves the exact same purpose as wraps().
 class LangctxImplWrapper:
     def __init__(self, fn: Callable, _langctx: Any | LanguageContext):
