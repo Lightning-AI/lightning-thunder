@@ -659,6 +659,7 @@ def unpack_trivial_printer(
         lambda: f"Expected at most one kwarg for unpack_trivial but got {kwarg_printables}",
         exception_type=AssertionError,
     )
+
     result_str = "_" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)}"
     s = f"# {result_str}{' (unused)' if bsym.output is None else ''}"
     return s

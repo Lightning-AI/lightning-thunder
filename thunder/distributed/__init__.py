@@ -323,7 +323,6 @@ def ddp(
     device = first_param.device
     devicetype = device.type
     deviceindex = device.index
-
     for name, param in named_params:
         utils.check(
             param.device.type == devicetype,
@@ -560,6 +559,7 @@ def fsdp_transform_module(
                 "param_shard_meta": sharded_params[pn],
                 "param_name": pn,
             }
+
     transform_from_trace_to_fsdp_trace = FSDPTraceTransform(
         sharded_params=sharded_params,
         process_group=process_group,
