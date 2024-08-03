@@ -35,7 +35,17 @@ def required_nvfuser_version() -> LooseVersion:
 
 def nvfuser_available() -> bool:
     v = nvfuser_version()
-    return v is not None and v >= required_nvfuser_version()
+    if v is None:
+        return False
+
+    required = required_nvfuser_version()
+    if v < required:
+        import warnings
+
+        msg = f"Your nvfuser installation is out of date. Thunder requires version {required}, but found version {v}."
+        warnings.warn(msg)
+        return False
+    return True
 
 
 nvfuserex: None | FusionExecutor = None
