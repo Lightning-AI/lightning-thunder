@@ -1,7 +1,7 @@
 from contextvars import ContextVar
 from typing import Optional, Any
 from collections.abc import Callable
-from functools import wraps
+from functools import wraps, update_wrapper
 from contextlib import contextmanager
 from enum import Enum, auto
 
@@ -107,6 +107,23 @@ class Languages(Enum):
     PRIMS = auto()
 
 
+
+# Can be pickled, unlike @wraps and partial(). Serves the exact same purpose as wraps().
+class LangctxImplWrapper:
+    def __init__(self, fn: Callable, _langctx: Any | LanguageContext):
+        self.fn = fn
+        self._langctx = _langctx
+        update_wrapper(self, fn)
+
+    def __call__(self, *args, **kwargs):
+        try:
+            tok = set_langctx(self._langctx)
+            result = self.fn(*args, **kwargs)
+            return result
+        finally:
+            reset_langctx(tok)
+
+
 # Decorator and context manager for setting the language context with a function
 #   or region
 #
@@ -125,16 +142,7 @@ class langctx:
         self.langctx: LanguageContext = _langctx
 
     def __call__(self, fn: Callable, /) -> Callable:
-        @wraps(fn)
-        def _fn(*args, **kwargs):
-            try:
-                tok = set_langctx(self.langctx)
-                result = fn(*args, **kwargs)
-                return result
-            finally:
-                reset_langctx(tok)
-
-        return _fn
+        return LangctxImplWrapper(fn, self.langctx)
 
     def __enter__(self):
         self.tok = set_langctx(self.langctx)
