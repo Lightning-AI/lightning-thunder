@@ -187,3 +187,25 @@ def test_te_with_autocast():
     fwd_traces = thunder.last_traces(cfunc)
     # Verify that we have replaced `prims.linear` with `te_linear`
     assert any(bsym.sym.name.startswith("te_linear") for bsym in fwd_traces[-1].bound_symbols)
+
+
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="Retain graph is not supported by TE")
+@requiresCUDA
+def test_te_with_retain_graph():
+    def foo(x, w):
+        return thunder.torch.linear(x, w)
+
+    device = "cuda"
+    x = torch.randn(16, 16, device=device, requires_grad=True)
+    w = torch.randn(16, 16, device=device, requires_grad=True)
+
+    cfunc = thunder.jit(
+        foo,
+        executors=[transformer_engine_ex],
+    )
+    out = cfunc(x, w)
+
+    # Retain graph is not supported correctly by TE
+    # https://github.com/NVIDIA/TransformerEngine/issues/990
+    out.backward(torch.randn_like(out), retain_graph=True)
+    out.backward(torch.randn_like(out))
