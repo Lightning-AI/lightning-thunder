@@ -268,7 +268,7 @@ def test_hf_bert():
     # Transformers 2.41+ adds some more non-essential data-dependent
     # control flow behind a check whether we are compiling
     with warnings.catch_warnings():
-        warnings.filterwarnings(category=FutureWarning, message="torch._dynamo")
+        warnings.filterwarnings('ignore', category=FutureWarning, message="torch._dynamo")
 
         @thunder.core.jit_ext.register_general_jit_lookaside(torch._dynamo.is_compiling)
         @thunder.core.jit_ext.interpreter_needs_wrap
