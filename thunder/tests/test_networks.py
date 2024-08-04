@@ -1,6 +1,7 @@
 import math
 from dataclasses import dataclass
 from functools import partial
+import warnings
 
 import pytest
 import torch
@@ -266,10 +267,13 @@ def test_hf_bert():
 
     # Transformers 2.41+ adds some more non-essential data-dependent
     # control flow behind a check whether we are compiling
-    @thunder.core.jit_ext.register_general_jit_lookaside(torch._dynamo.is_compiling)
-    @thunder.core.jit_ext.interpreter_needs_wrap
-    def dummy(*args):
-        return True
+    with warnings.catch_warnings():
+        warnings.filterwarnings(category=FutureWarning, message="torch._dynamo")
+
+        @thunder.core.jit_ext.register_general_jit_lookaside(torch._dynamo.is_compiling)
+        @thunder.core.jit_ext.interpreter_needs_wrap
+        def dummy(*args):
+            return True
 
     m = transformers.BertForSequenceClassification(transformers.BertConfig())
     del m.bert.encoder.layer[2:]
