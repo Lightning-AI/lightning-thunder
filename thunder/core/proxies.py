@@ -1481,6 +1481,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
             # method but a property. Now a lot of code relies on it being a
             # property. But PyTorch uses it as a method. We need to converge on
             # one or the other.
+            # https://github.com/Lightning-AI/lightning-thunder/issues/925
             if attr == "numel":
                 return self._numel
             return partial(method_or_value, self)
