@@ -111,9 +111,7 @@ def attention_ref(
 
 # verify that fa3 kernel is accurate against manual reference implementation
 @requiresCUDA
-@pytest.mark.parametrize(
-    "dtype", [torch.bfloat16, torch.float16], ids=("bfloat16", "float16")
-)
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16], ids=("bfloat16", "float16"))
 def test_fa3_accuracy_vs_ref(dtype: torch.dtype):
     if not HAS_FA3:
         pytest.skip("fa3 not built")
@@ -153,18 +151,17 @@ def test_fa3_accuracy_vs_ref(dtype: torch.dtype):
     assert (dk - dk_ref).abs().max().item() <= 2 * (dk_pt - dk_ref).abs().max().item() + 3e-5
     assert (dv - dv_ref).abs().max().item() <= 2 * (dv_pt - dv_ref).abs().max().item() + 3e-5
 
+
 # verify that fa3 kernel is accurate against torch native sdpa kernel
 @requiresCUDA
-@pytest.mark.parametrize(
-    "dtype", [torch.bfloat16, torch.float16], ids=("bfloat16", "float16")
-)
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16], ids=("bfloat16", "float16"))
 def test_fa3_accuracy_vs_torch_sdpa(dtype: torch.dtype):
     if not HAS_FA3:
         pytest.skip("fa3 not built")
 
-    batch = 4 
-    seq_len = 128 
-    num_heads = 6 
+    batch = 4
+    seq_len = 128
+    num_heads = 6
     dim_per_head = 64
     device = "cuda"
 
@@ -179,19 +176,17 @@ def test_fa3_accuracy_vs_torch_sdpa(dtype: torch.dtype):
 
     # from https://github.com/Dao-AILab/flash-attention/issues/1128#issuecomment-2269962552:
     # FA uses (batch, seqlen, nheads, headdim). Torch sdpa expects (batch, nheads, seqlen, headdim).
-    q, k, v = (torch.transpose(a, 1, 2) for a in (q, k, v)) 
+    q, k, v = (torch.transpose(a, 1, 2) for a in (q, k, v))
     out_ref = fn(q, k, v)
     out_ref = torch.transpose(out_ref, 1, 2)
-    
+
     # Verifies the result is close to PyTorch
     torch.testing.assert_close(out, out_ref, atol=1e-4, rtol=1e-2)
 
 
 # verify that fa3 kernel is properly being called when used in a valid trace
 @requiresCUDA
-@pytest.mark.parametrize(
-    "dtype", [torch.bfloat16, torch.float16], ids=("bfloat16", "float16")
-)
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16], ids=("bfloat16", "float16"))
 def test_fa3_used(dtype: torch.dtype):
     if not HAS_FA3:
         pytest.skip("fa3 not built")
@@ -268,7 +263,7 @@ def test_checker():
     # currently fa3 requires gpu inputs
     check("cpu", dtype, attn_mask, dropout_p)
     # currently fa3 is fp16 and bf16
-    check (device, torch.float32, attn_mask, dropout_p)
+    check(device, torch.float32, attn_mask, dropout_p)
     # currently fa3 doesn't support attn_mask != None
     check(
         device,

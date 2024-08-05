@@ -150,7 +150,6 @@ def fa3_checker(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=Fals
     return query.device.type == "cuda" and key.device == query.device and value.device == query.device
 
 
-
 def fa3_execution_transform(
     q: thunder.TensorProxy,
     k: thunder.TensorProxy,
