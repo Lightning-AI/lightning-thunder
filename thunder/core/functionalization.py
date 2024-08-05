@@ -412,7 +412,13 @@ def apply_functionalization_to_canonicalized_trace(
                     views = base_to_views[variableify(base)]
                     views_to_replace = list(filter(lambda t: variableify(t) != var_copy_to, views))
                 if [bsym for bsym in consumer_map_of_intermediate_trace[base] if bsym_to_idx[bsym] > idx]:
-                    check(copy_from.numel == base.numel, lambda: f"{new_bsym=}, {copy_from=}, {base=}")
+                    check(
+                        copy_from.numel == base.numel,
+                        lambda: (
+                            f"Fail to propagate the in-place change of `{copy_from.name}` to `{base.name}` "
+                            f"because of the different number of elements: {copy_from.numel} and {base.numel}"
+                        ),
+                    )
                     new_t: TensorProxy = copy_from
                     if copy_from.shape != base.shape:
                         with tracectx(canonicalized_trace):
@@ -427,6 +433,13 @@ def apply_functionalization_to_canonicalized_trace(
                     if v in consumer_map_of_intermediate_trace and [
                         bsym for bsym in consumer_map_of_intermediate_trace[v] if bsym_to_idx[bsym] > idx
                     ]:
+                        check(
+                            copy_from.numel == v.numel,
+                            lambda: (
+                                f"Fail to propagate the in-place change of `{copy_from.name}` to `{v.name}` "
+                                f"because of the different number of elements: {copy_from.numel} and {v.numel}"
+                            ),
+                        )
                         new_t: TensorProxy = copy_from
                         if copy_from.shape != v.shape:
                             with tracectx(canonicalized_trace):
