@@ -818,19 +818,6 @@ instantiated) this heuristic actually leads to worse code.
                     fused_bsyms.extend(fusion.bound_symbols)
             fused_bsyms.extend(epilogue)
 
-        # Force return operator to be the last one in the fused_bsyms
-        if fused_bsyms[-1].sym.id != PrimIDs.RETURN:
-            return_idx: int = -1
-            for i, fused_bsym in enumerate(fused_bsyms):
-                if fused_bsym.sym.id == PrimIDs.RETURN:
-                    return_idx = i
-                    break
-            utils.check(
-                return_idx != -1,
-                lambda: f"Return operator does not exist in bound symbols",
-            )
-            fused_bsyms.append(fused_bsyms.pop(return_idx))
-
         fusedtrace.bound_symbols = fused_bsyms
 
         # Some of the operations might be better placed with its consumers (for

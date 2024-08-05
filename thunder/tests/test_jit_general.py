@@ -1203,3 +1203,20 @@ def test_cpp_property():
         return torch.cuda.get_device_properties(0).major
 
     assert fn() == thunder.jit(fn)()
+
+
+def test_failing_prologue_in_last_prologue_traces():
+    # we know that this will fail in the prologue
+    i = 0
+
+    def fn():
+        nonlocal i
+        i += 1
+        return i
+
+    jfn = thunder.jit(fn)
+    with pytest.raises(RuntimeError, match="Expected 1 to be equal to and have the type of 0"):
+        jfn()
+
+    # make sure that we have prologue traces in the last_prologue_traces
+    assert len(thunder.last_prologue_traces(jfn)) > 0
