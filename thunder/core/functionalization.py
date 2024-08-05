@@ -3,7 +3,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 import thunder.core.prims as prims
-from thunder.core.proxies import variableify, TensorProxy, unvariableify
+from thunder.core.proxies import variableify, TensorProxy, unvariableify, ProxyInterface
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace, tracectx
@@ -162,9 +162,14 @@ def replace_args_with_alias_map(
             if variableify(x) in swap_map_for_aliases
         }:
             bsyms.append(bsym.from_bsym_swap_proxies(swap_map_for_aliases, skip_output=True))
-            bsyms[-1].header = (
-                f"Aliases of {list(replaced_args_map.keys())} are replaced by {list(replaced_args_map.values())} respectively"
-            )
+            if len(replaced_args_map) == 1:
+                bsyms[-1].header = (
+                    f"[alias tensor args] `{list(replaced_args_map.keys())[0]}` is replaced by `{list(replaced_args_map.values())[0]}`"
+                )
+            else:
+                bsyms[-1].header = (
+                    f"[alias tensor args] {list(replaced_args_map.keys())} are replaced by {list(replaced_args_map.values())}, respectively"
+                )
         else:
             bsyms.append(bsym)
     no_implicit_alias_trace = from_trace(computation_trace)
@@ -195,8 +200,11 @@ def canonicalize_bsym_args(
             }:
                 keys = [unvariableify(k).name for k in replaced_args_map.keys()]
                 values = [v.name for v in replaced_args_map.values()]
-                new_bsym.header = f"{keys} are replaced by {values}"
-                if bsym.header.startswith("Aliases of"):
+                if len(keys) == 1:
+                    new_bsym.header = f"`{keys[0]}` is replaced by `{values[0]}`"
+                else:
+                    new_bsym.header = f"{keys} are replaced by {values}, respectively"
+                if bsym.header.startswith("[alias tensor args]"):
                     reverse_swap_map[new_bsym] = {
                         variableify(v): unvariableify(k) for k, v in replaced_args_map.items()
                     }
@@ -335,6 +343,17 @@ def apply_functionalization_to_canonicalized_trace(
 
         if not is_functionalizable(new_bsym):
             new_bsyms.append(new_bsym)
+            if replaced_args_map := {
+                variableify(x): swap_map[variableify(x)]
+                for x in filter(lambda p: isinstance(p, TensorProxy), bsym.flat_args)
+                if variableify(x) in swap_map
+            }:
+                keys = [unvariableify(k).name for k in replaced_args_map.keys()]
+                values = [v.name for v in replaced_args_map.values()]
+                if len(keys) == 1:
+                    new_bsym.header = f"`{keys[0]}` is replaced by `{values[0]}`"
+                else:
+                    new_bsym.header = f"{keys} are replaced by {values}, respectively"
             continue
 
         # If `bsym` is functionalizable, i.e., its last subsymbol is `prims.copy_`,
@@ -354,9 +373,9 @@ def apply_functionalization_to_canonicalized_trace(
         # The last subsymbol is `prims.copy_`, so the new_bsym shouldn't have it.
         new_bsym = new_bsym.from_bsym_swap_proxies(swap_map)
         functional_bsym = create_functional_bsym_from(new_bsym)
-        functional_bsym.header = (
-            f"Functionalized from `{tuple(bsym.flat_outs)} = {bsym.sym.name}{tuple(bsym.flat_args)}`"
-        )
+        out = ",".join([a.name if isinstance(a, ProxyInterface) else str(a) for a in bsym.flat_outs])
+        args = ",".join([a.name if isinstance(a, ProxyInterface) else str(a) for a in bsym.flat_args])
+        functional_bsym.header = f"Functionalized from `{out} = {bsym.sym.name}({args})`"
         new_bsyms.append(functional_bsym)
 
         # If trace's arguments and/or their views are consumed by an in-place op,
@@ -484,6 +503,16 @@ def apply_functionalization_to_canonicalized_trace(
                     swap_map[variableify(v)] = reshaped_copy_from_for_aliases
                 arg_to_copy_froms[var_arg_copy_dst].append(copy_from)
 
+        for k in swap_map:
+            v = swap_map[k]
+            cur_k = k
+            cur_v = v
+            while cur_k in swap_map:
+                cur_v = swap_map[cur_k]
+                cur_k = variableify(cur_v)
+            if v.name != cur_v.name:
+                swap_map[k] = cur_v
+
     # For nvfuser to be comfortably create fusion regions, we put each `prims.copy_` after the last
     # use of `copy_from`. We don't take the return value of `prims.copy_` because it's already
     # obviated by the functionalization above.
@@ -606,7 +635,7 @@ def functionalize_inplace_ops(
               # t1 = prims.exp(a)  # t1: "cpu f32[2, 2]"
             # t2 = prims.copy_(t1, a)  # t2: "cpu f32[2, 2]"
 
-          # ['a'] are replaced by ['t2']
+          # `a` is replaced by `t2`
           t3 = ltorch.cos(t2)  # t3: "cpu f32[2, 2]"
             # t3 = prims.cos(t2)  # t3: "cpu f32[2, 2]"
           return t3
@@ -622,10 +651,11 @@ def functionalize_inplace_ops(
           # x: "cpu f32[2, 2]"
           a = ltorch.sin(x)  # a: "cpu f32[2, 2]"
             # a = prims.sin(x)  # a: "cpu f32[2, 2]"
+          # Functionalized from `t2 = exp_(a)`
           t1 = ltorch.exp(a)  # t1: "cpu f32[2, 2]"
             # t1 = prims.exp(a)  # t1: "cpu f32[2, 2]"
 
-          # ['a'] are replaced by ['t2']
+          `t2` is replaced by `t1`
           t3 = ltorch.cos(t1)  # t3: "cpu f32[2, 2]"
             # t3 = prims.cos(t1)  # t3: "cpu f32[2, 2]"
           return t3
@@ -688,12 +718,12 @@ def functionalize_inplace_ops(
             # t1 = ltorch.exp(a)  # t1: "cpu f32[4]"
             # t2 = prims.copy_(t1, a)  # t2: "cpu f32[4]"
 
-          # ['a'] are replaced by ['t2']
+          # `a` is replaced by `t2`
           t4 = ltorch.sin_(t2)  # t4: "cpu f32[4]"
             # t3 = ltorch.sin(t2)  # t3: "cpu f32[4]"
             # t4 = prims.copy_(t3, t2)  # t4: "cpu f32[4]"
 
-          # ['a'] are replaced by ['t4']
+          # `a` is replaced by `t4`
           t5 = ltorch.cos(t4)  # t5: "cpu f32[4]"
             # t5 = prims.cos(t4)  # t5: "cpu f32[4]"
           return t5
@@ -706,12 +736,14 @@ def functionalize_inplace_ops(
           a = ltorch.view(x, -1)  # a: "cpu f32[4]"
             # a = ltorch.reshape(x, (-1,))  # a: "cpu f32[4]"
               # a = prims.reshape(x, (4,))  # a: "cpu f32[4]"
+          # Functionalized from `t2 = exp_(a)`
           t1 = ltorch.exp(a)  # t1: "cpu f32[4]"
             # t1 = prims.exp(a)  # t1: "cpu f32[4]"
+          # Functionalized from `t4 = sin_(t2)`
           t3 = ltorch.sin(t1)  # t3: "cpu f32[4]"
             # t3 = prims.sin(t1)  # t3: "cpu f32[4]"
 
-          # ['a'] are replaced by ['t4']
+          # `t4` is replaced by `t3`
           t5 = ltorch.cos(t3)  # t5: "cpu f32[4]"
             # t5 = prims.cos(t3)  # t5: "cpu f32[4]"
           t8 = prims.reshape(t3, (2, 2))  # t8: "cpu f32[2, 2]"
@@ -727,7 +759,9 @@ def functionalize_inplace_ops(
 
         @thunder.jit
         def f(a, b):
-            return a.exp_() + b.exp_()
+            c = a.exp_()
+            d = b.exp_()
+            return c + d
 
         a = torch.randn((2, 2))
         y = f(a, a)
@@ -744,18 +778,20 @@ def functionalize_inplace_ops(
           # a: "cpu f32[2, 2]"
           # b: "cpu f32[2, 2]"
 
-          # inplace_and_aliases.py:6:         def f(a, b): return a.exp_() + b.exp_()
-          t1 = ltorch.exp_(a)  # t1: "cpu f32[2, 2]"
+          # inplace_and_aliases.py:7:         c = a.exp_()
+          c = ltorch.exp_(a)  # t1: "cpu f32[2, 2]"
             # t0 = ltorch.exp(a)  # t0: "cpu f32[2, 2]"
               # t0 = prims.exp(a)  # t0: "cpu f32[2, 2]"
-            # t1 = prims.copy_(t0, a)  # t1: "cpu f32[2, 2]"
-          # Aliases of ['b'] are replaced by ['a'] respectively
-          t3 = ltorch.exp_(a)  # t3: "cpu f32[2, 2]"
+            # c = prims.copy_(t0, a)  # t1: "cpu f32[2, 2]"
+          # inplace_and_aliases.py:8:         d = b.exp_()
+          # [alias tensor args] `b` is replaced by `a`
+          d = ltorch.exp_(a)  # t3: "cpu f32[2, 2]"
             # t2 = ltorch.exp(a)  # t2: "cpu f32[2, 2]"
               # t2 = prims.exp(a)  # t2: "cpu f32[2, 2]"
-            # t3 = prims.copy_(t2, a)  # t3: "cpu f32[2, 2]"
-          result = ltorch.add(t1, t3, alpha=None)  # result: "cpu f32[2, 2]"
-            # result = prims.add(t1, t3)  # result: "cpu f32[2, 2]"
+            # d = prims.copy_(t2, a)  # t3: "cpu f32[2, 2]"
+          # inplace_and_aliases.py:9:         return c + d
+          result = ltorch.add(c, d, alpha=None)  # result: "cpu f32[2, 2]"
+            # result = prims.add(c, d)  # result: "cpu f32[2, 2]"
           return result
 
     As the header says, ``ltorch.exp_`` takes ``a`` instead of ``b`` based on the alias info.
@@ -768,18 +804,20 @@ def functionalize_inplace_ops(
           # a: "cpu f32[2, 2]"
           # b: "cpu f32[2, 2]"
 
-          # inplace_and_aliases.py:6:         def f(a, b): return a.exp_() + b.exp_()
+          # inplace_and_aliases.py:7:         c = a.exp_()
           t1 = ltorch.exp_(a)  # t1: "cpu f32[2, 2]"
             # t0 = ltorch.exp(a)  # t0: "cpu f32[2, 2]"
               # t0 = prims.exp(a)  # t0: "cpu f32[2, 2]"
             # t1 = prims.copy_(t0, a)  # t1: "cpu f32[2, 2]"
-          # ['a'] are replaced by ['t1']
-          t3 = ltorch.exp_(t1)  # t3: "cpu f32[2, 2]"
-            # t2 = ltorch.exp(t1)  # t2: "cpu f32[2, 2]"
-              # t2 = prims.exp(t1)  # t2: "cpu f32[2, 2]"
-            # t3 = prims.copy_(t2, t1)  # t3: "cpu f32[2, 2]"
-          result = ltorch.add(t1, t3, alpha=None)  # result: "cpu f32[2, 2]"
-            # result = prims.add(t1, t3)  # result: "cpu f32[2, 2]"
+          # inplace_and_aliases.py:8:         d = b.exp_()
+          # `a` is replaced by `c`
+          d = ltorch.exp_(c)  # t3: "cpu f32[2, 2]"
+            # t2 = ltorch.exp(c)  # t2: "cpu f32[2, 2]"
+              # t2 = prims.exp(c)  # t2: "cpu f32[2, 2]"
+            # d = prims.copy_(t2, c)  # t3: "cpu f32[2, 2]"
+          # inplace_and_aliases.py:9:         return c + d
+          result = ltorch.add(c, d, alpha=None)  # result: "cpu f32[2, 2]"
+            # result = prims.add(c, d)  # result: "cpu f32[2, 2]"
           return result
 
     Then the functionalized trace is:
@@ -790,12 +828,14 @@ def functionalize_inplace_ops(
         def computation(a, b):
           # a: "cpu f32[2, 2]"
           # b: "cpu f32[2, 2]"
+          # Functionalized from `c = exp_(a)`
           t0 = ltorch.exp(a)  # t0: "cpu f32[2, 2]"
             # t0 = prims.exp(a)  # t0: "cpu f32[2, 2]"
+          # Functionalized from `d = exp_(c)`
           t2 = ltorch.exp(t0)  # t2: "cpu f32[2, 2]"
             # t2 = prims.exp(t0)  # t2: "cpu f32[2, 2]"
 
-          # inplace_and_aliases.py:6:         def f(a, b): return a.exp_() + b.exp_()
+          # [`c`, `d`] are replaced by [`t2`, `t2`], respectively
           result = ltorch.add(t2, t2, alpha=None)  # result: "cpu f32[2, 2]"
             # result = prims.add(t2, t2)  # result: "cpu f32[2, 2]"
           t5 = prims.copy_(t2, a)  # t5: "cpu f32[2, 2]"
