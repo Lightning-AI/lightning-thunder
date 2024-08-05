@@ -232,7 +232,7 @@ def test_checker():
     check("cpu", dtype, attn_mask, dropout_p)
     # currently fa3 is fp16 only
     check(device, torch.bfloat16, attn_mask, dropout_p)
-    check (device, torch.float32, attn_mask, dropout_p)
+    check(device, torch.float32, attn_mask, dropout_p)
     # currently fa3 doesn't support attn_mask != None
     check(
         device,
