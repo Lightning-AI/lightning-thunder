@@ -203,11 +203,13 @@ def test_checker():
     num_heads = 4
     dim_per_head = 32
 
+    # default valid inputs
     device = "cuda"
     dtype = torch.float16
     attn_mask = None
     dropout_p = 0.0
 
+    # helper function to verify that the fa3 executor is not getting getting given various combinations of invalid inputs
     def check(device, dtype, attn_mask, dropout_p):
         query = torch.randn([batch, seq_len, num_heads, dim_per_head], device=device, dtype=dtype)
         key = torch.randn([batch, seq_len, num_heads, dim_per_head], device=device, dtype=dtype)
@@ -226,12 +228,17 @@ def test_checker():
         extrace = thunder.last_traces(cfn)[-1]
         assert not any(bsym.sym.name == "fa3_fwd" for bsym in extrace.bound_symbols)
 
+    # currently fa3 requires gpu inputs
     check("cpu", dtype, attn_mask, dropout_p)
+    # currently fa3 is fp16 only
     check(device, torch.bfloat16, attn_mask, dropout_p)
+    check (device, torch.float32, attn_mask, dropout_p)
+    # currently fa3 doesn't support attn_mask != None
     check(
         device,
         dtype,
         torch.randn([batch, seq_len, num_heads, num_heads], device="cuda", dtype=torch.float16),
         dropout_p,
     )
+    # currently fa3 doesn't support dropout != 0.0
     check(device, dtype, attn_mask, 0.5)
