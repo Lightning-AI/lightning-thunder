@@ -39,7 +39,7 @@ def fa3_fwd_impl(
     # the scaling of QK^T before applying softmax. Default to 1 / sqrt(headdim).
     if softmax_scale is None:
         softmax_scale = q.shape[-1] ** (-0.5)
-    q, k, v = (x.contiguous() for x in (q, k, v))
+    # q, k, v = (x.contiguous() for x in (q, k, v))
     out, q, k, v, out_padded, softmax_lse, S_dmask = _flash_attn_forward(q, k, v, softmax_scale, causal)
     return out, softmax_lse
 
@@ -72,9 +72,14 @@ def fa3_bwd_impl(
     if not HAS_FA3:
         raise Exception("fa3 not built, cannot use fa3 executor")  # checker should fail before getting here
 
-    dout, q, k, v, out = (x.contiguous() for x in (dout, q, k, v, out))
+    # dout, q, k, v, out = (x.contiguous() for x in (dout, q, k, v, out))
 
     dq, dk, dv = torch.empty_like(q), torch.empty_like(k), torch.empty_like(v)
+
+    # fa3 bwd requires last dim to be contiguous: https://github.com/Dao-AILab/flash-attention/issues/1109#issuecomment-2270043573
+    maybe_contiguous = lambda x: x.contiguous() if x.stride(-1) != 1 else x
+    dq, dk, dv = (maybe_contiguous(a) for a in (q, k, v))
+
     if softmax_scale is None:
         softmax_scale = q.shape[-1] ** (-0.5)
     _flash_attn_backward(
@@ -112,17 +117,17 @@ def fa3_checker(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=Fals
     # is currently no way in thunder to differentiate between fwd+bwd and fwd use cases only from the checker perspective,
     # we are disabling headdim 256 in general and we'll revisit adding it back for fwd only in the future.
     if not (
-        query.shape[3]
+        query.shape[-1]
         in (
             64,
             128,
         )
-        and key.shape[3]
+        and key.shape[-1]
         in (
             64,
             128,
         )
-        and value.shape[3]
+        and value.shape[-1]
         in (
             64,
             128,
@@ -130,11 +135,11 @@ def fa3_checker(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=Fals
     ):
         return False
 
-    # fa3 currently only supports fp16 for now
+    # fa3 currently supports fp16 and bfloat16
     if (
-        query.dtype != thunder.dtypes.float16
-        or key.dtype != thunder.dtypes.float16
-        or value.dtype != thunder.dtypes.float16
+        query.dtype not in (thunder.dtypes.float16, thunder.dtypes.bfloat16)
+        or key.dtype not in (thunder.dtypes.float16, thunder.dtypes.bfloat16)
+        or value.dtype not in (thunder.dtypes.float16, thunder.dtypes.bfloat16)
     ):
         return False
 
@@ -143,6 +148,7 @@ def fa3_checker(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=Fals
         return False
 
     return query.device.type == "cuda" and key.device == query.device and value.device == query.device
+
 
 
 def fa3_execution_transform(

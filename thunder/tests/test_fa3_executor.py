@@ -18,7 +18,7 @@ import math
 from einops import rearrange, repeat
 
 
-# helper function for test_fa3_accuracy
+# helper function for test_fa3_accuracy_vs_ref
 def attention_ref(
     q,
     k,
@@ -109,9 +109,12 @@ def attention_ref(
     return output.to(dtype=dtype_og), attention.to(dtype=dtype_og)
 
 
-# verify that fa3 kernel is accurate
+# verify that fa3 kernel is accurate against manual reference implementation
 @requiresCUDA
-def test_fa3_accuracy():
+@pytest.mark.parametrize(
+    "dtype", [torch.bfloat16, torch.float16], ids=("bfloat16", "float16")
+)
+def test_fa3_accuracy_vs_ref(dtype: torch.dtype):
     if not HAS_FA3:
         pytest.skip("fa3 not built")
 
@@ -120,7 +123,6 @@ def test_fa3_accuracy():
     num_heads = 6
     dim_per_head = 64
     device = "cuda"
-    dtype = torch.float16
 
     q = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda", dtype=dtype, requires_grad=True)
     k = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda", dtype=dtype, requires_grad=True)
@@ -151,10 +153,46 @@ def test_fa3_accuracy():
     assert (dk - dk_ref).abs().max().item() <= 2 * (dk_pt - dk_ref).abs().max().item() + 3e-5
     assert (dv - dv_ref).abs().max().item() <= 2 * (dv_pt - dv_ref).abs().max().item() + 3e-5
 
+# verify that fa3 kernel is accurate against torch native sdpa kernel
+@requiresCUDA
+@pytest.mark.parametrize(
+    "dtype", [torch.bfloat16, torch.float16], ids=("bfloat16", "float16")
+)
+def test_fa3_accuracy_vs_torch_sdpa(dtype: torch.dtype):
+    if not HAS_FA3:
+        pytest.skip("fa3 not built")
+
+    batch = 4 
+    seq_len = 128 
+    num_heads = 6 
+    dim_per_head = 64
+    device = "cuda"
+
+    q = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda", dtype=dtype, requires_grad=True)
+    k = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda", dtype=dtype, requires_grad=True)
+    v = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda", dtype=dtype, requires_grad=True)
+
+    out = flash_attn_func(q, k, v)[0]
+
+    def fn(query, key, value):
+        return torch.nn.functional.scaled_dot_product_attention(query, key, value)
+
+    # from https://github.com/Dao-AILab/flash-attention/issues/1128#issuecomment-2269962552:
+    # FA uses (batch, seqlen, nheads, headdim). Torch sdpa expects (batch, nheads, seqlen, headdim).
+    q, k, v = (torch.transpose(a, 1, 2) for a in (q, k, v)) 
+    out_ref = fn(q, k, v)
+    out_ref = torch.transpose(out_ref, 1, 2)
+    
+    # Verifies the result is close to PyTorch
+    torch.testing.assert_close(out, out_ref, atol=1e-4, rtol=1e-2)
+
 
 # verify that fa3 kernel is properly being called when used in a valid trace
 @requiresCUDA
-def test_fa3_used():
+@pytest.mark.parametrize(
+    "dtype", [torch.bfloat16, torch.float16], ids=("bfloat16", "float16")
+)
+def test_fa3_used(dtype: torch.dtype):
     if not HAS_FA3:
         pytest.skip("fa3 not built")
 
@@ -163,7 +201,6 @@ def test_fa3_used():
     num_heads = 6
     dim_per_head = 64
     device = "cuda"
-    dtype = torch.float16
 
     query = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda", dtype=dtype, requires_grad=True)
     key = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda", dtype=dtype, requires_grad=True)
@@ -230,8 +267,7 @@ def test_checker():
 
     # currently fa3 requires gpu inputs
     check("cpu", dtype, attn_mask, dropout_p)
-    # currently fa3 is fp16 only
-    check(device, torch.bfloat16, attn_mask, dropout_p)
+    # currently fa3 is fp16 and bf16
     check (device, torch.float32, attn_mask, dropout_p)
     # currently fa3 doesn't support attn_mask != None
     check(
