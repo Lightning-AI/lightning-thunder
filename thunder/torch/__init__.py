@@ -5373,11 +5373,11 @@ def register_default_torch_ops():
                 not fn.__name__.endswith("_"),
                 lambda: f"Automatic registration does not support in-place op of {m.__name__}.{fn.__name__}, please manually register it",
             )
-            register_default_torch_op(fn, meta_adaptor(fn), m)
+            register_default_torch_op(fn, m)
 
 
 def register_default_torch_op(torchfn: Callable, m):
-    fn_meta = meta_adaptor(fn)
+    fn_meta = meta_adaptor(torchfn)
     _fn = langctx(Languages.TORCH)(fn_meta)
     sym = Symbol(
         name=torchfn.__name__,
@@ -5401,7 +5401,8 @@ def register_default_torch_op(torchfn: Callable, m):
     backward_impls[sym.id] = bwd_op
 
 
-def _get_fake_arg(inp: Any, fake_mode):
+# Note this function should be used in side the fake mode context manager
+def _get_fake_arg(inp: Any):
     if inp is None:
         return inp
     if isinstance(inp, NumberProxy):
@@ -5410,13 +5411,11 @@ def _get_fake_arg(inp: Any, fake_mode):
         else:
             return inp.value
     elif isinstance(inp, TensorProxy):
-        return fake_mode.from_tensor(
-            torch.empty(
-                inp.shape,
-                dtype=_thunder_to_torch_dtype_map[inp.dtype],
-                requires_grad=inp.requires_grad,
-                device=devices.to_torch_device(inp.device),
-            )
+        return torch.empty(
+            inp.shape,
+            dtype=_thunder_to_torch_dtype_map[inp.dtype],
+            requires_grad=inp.requires_grad,
+            device=devices.to_torch_device(inp.device),
         )
     elif isinstance(inp, (TupleProxy, ListProxy, DictProxy)):
         return inp._value
@@ -5458,7 +5457,7 @@ def _fake_type_to_thunder(inp: Any):
 
 
 def augmented_forward_adaptor(sym_op: Callable):
-    def wrapper(*args, **kwargs):
+    def augmented_forward(*args, **kwargs):
         from thunder.core.transforms import VJPDual
 
         out = sym_op(*args, **kwargs)
@@ -5466,11 +5465,11 @@ def augmented_forward_adaptor(sym_op: Callable):
         saved_for_backward = ((args, kwargs),)
         return VJPDual(primal, saved_for_backward)
 
-    return wrapper
+    return augmented_forward
 
 
 def backward_adaptor(torch_func: Callable):
-    def wrapper(saved_for_backward, *grad_output):
+    def backward(saved_for_backward, *grad_output):
         inp_args, inp_kwargs = saved_for_backward
         flat_args, spec = tree_flatten(inp_args)
         if not any(map(_is_differentiable, grad_output)):
@@ -5481,12 +5480,12 @@ def backward_adaptor(torch_func: Callable):
             )
         from torch._subclasses.fake_tensor import FakeTensorMode
 
-        with FakeTensorMode() as mode:
-            fake_inp_args, fake_inp_kwargs = tree_map(lambda x: _get_fake_arg(x, mode), (inp_args, inp_kwargs))
+        with FakeTensorMode():
+            fake_inp_args, fake_inp_kwargs = tree_map(_get_fake_arg, (inp_args, inp_kwargs))
             wrapped_torch_func, diff_args = _make_differentiable_wrapper(torch_func, *fake_inp_args, **fake_inp_kwargs)
             try:
                 _, fake_vjp = torch.autograd.functional.vjp(
-                    wrapped_torch_func, diff_args, v=tree_map(lambda x: _get_fake_arg(x, mode), grad_output)
+                    wrapped_torch_func, diff_args, v=tree_map(_get_fake_arg, grad_output)
                 )
             except Exception as e:
                 msg = f"Exception encountered when doing automatic registration for {torch_func}, please use manual registration: {repr(e)}"
@@ -5497,11 +5496,11 @@ def backward_adaptor(torch_func: Callable):
         fake_vjp = tuple(next(iter_out_vjp) if _is_differentiable(arg) else None for arg in flat_args)
         return tree_unflatten(fake_vjp, spec)
 
-    return wrapper
+    return backward
 
 
-def _vjp_impl(torchfn, residules, *gs):
-    inp_args, inp_kwargs = residules
+def _vjp_impl(torchfn, saved_for_backward, *gs):
+    inp_args, inp_kwargs = saved_for_backward
 
     wrapped_func, diff_args = _make_differentiable_wrapper(torchfn, *inp_args, **inp_kwargs)
     _, vjp_outs = torch.autograd.functional.vjp(wrapped_func, diff_args, v=gs)
@@ -5512,7 +5511,7 @@ def _vjp_impl(torchfn, residules, *gs):
 
 
 def meta_adaptor(torch_func: Callable):
-    def wrapper(*args, **kwargs):
+    def meta_func(*args, **kwargs):
         from torch._subclasses.fake_tensor import FakeTensorMode
 
         if kwargs.get("inplace", False):
@@ -5520,8 +5519,8 @@ def meta_adaptor(torch_func: Callable):
         if kwargs.get("out", None) is not None:
             raise NotImplementedError(f"{torch_func} specifies 'out' argument, please use manual registration")
 
-        with FakeTensorMode() as mode:
-            fake_args, fake_kwargs = tree_map(lambda x: _get_fake_arg(x, mode), (args, kwargs))
+        with FakeTensorMode():
+            fake_args, fake_kwargs = tree_map( _get_fake_arg, (args, kwargs))
             try:
                 fake_outs = torch_func(*fake_args, **fake_kwargs)
             except Exception as e:
@@ -5534,7 +5533,7 @@ def meta_adaptor(torch_func: Callable):
             return outs
         return tree_unflatten(outs, spec_outs)
 
-    return wrapper
+    return meta_func
 
 
 def check_overlap_ops():
