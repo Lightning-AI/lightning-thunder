@@ -11,7 +11,15 @@ import thunder
 import thunder.core.devices as devices
 from thunder.core import dtypes
 from thunder.core.prims import PrimIDs
-from thunder.tests.framework import instantiate, ops, requiresCUDA, NOTHING, TorchExecutor, nvFuserExecutor
+from thunder.tests.framework import (
+    instantiate,
+    ops,
+    requiresCUDA,
+    NOTHING,
+    TorchExecutor,
+    TorchCompileExecutor,
+    nvFuserExecutor,
+)
 from thunder.tests.opinfos import opinfos, OpInfo, make_number, SampleInput
 from thunder.tests.make_tensor import make_tensor
 from thunder.torch import _torch_to_thunder_function_map, _inplace_to_out_of_place
@@ -451,6 +459,7 @@ def test_multiple_inplace_to_multiple_args(executor, device, _):
 
 @instantiate(
     dtypes=NOTHING,
+    executors=(TorchExecutor, TorchCompileExecutor, nvFuserExecutor),
 )
 def test_single_tensor_adam_like(executor, device, _):
 
