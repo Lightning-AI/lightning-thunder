@@ -18,7 +18,7 @@ import thunder
 from thunder.core.interpreter import is_jitting, InterpreterError
 
 from thunder.tests import litgpt_model
-from thunder.tests.framework import version_between
+from thunder.tests.framework import version_between, requiresCUDA
 import thunder.clang as clang
 from thunder.core.options import INTERPRETATION_OPTIONS, CACHE_OPTIONS
 import thunder.torch as ltorch
@@ -1195,3 +1195,28 @@ def test_custom_autograd_function():
     jitted = thunder.jit(model)
 
     gradcheck(jitted, (x,))
+
+
+@requiresCUDA  # I have not found a good other object to use
+def test_cpp_property():
+    def fn():
+        return torch.cuda.get_device_properties(0).major
+
+    assert fn() == thunder.jit(fn)()
+
+
+def test_failing_prologue_in_last_prologue_traces():
+    # we know that this will fail in the prologue
+    i = 0
+
+    def fn():
+        nonlocal i
+        i += 1
+        return i
+
+    jfn = thunder.jit(fn)
+    with pytest.raises(RuntimeError, match="Expected 1 to be equal to and have the type of 0"):
+        jfn()
+
+    # make sure that we have prologue traces in the last_prologue_traces
+    assert len(thunder.last_prologue_traces(jfn)) > 0

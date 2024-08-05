@@ -11,7 +11,15 @@ import thunder
 import thunder.core.devices as devices
 from thunder.core import dtypes
 from thunder.core.prims import PrimIDs
-from thunder.tests.framework import instantiate, ops, requiresCUDA, NOTHING, TorchExecutor, nvFuserExecutor
+from thunder.tests.framework import (
+    instantiate,
+    ops,
+    requiresCUDA,
+    NOTHING,
+    TorchExecutor,
+    TorchCompileExecutor,
+    nvFuserExecutor,
+)
 from thunder.tests.opinfos import opinfos, OpInfo, make_number, SampleInput
 from thunder.tests.make_tensor import make_tensor
 from thunder.torch import _torch_to_thunder_function_map, _inplace_to_out_of_place
@@ -381,10 +389,6 @@ def test_multiple_views_before_inplace_to_base(executor, device, _):
     torch.testing.assert_close(actual, expected)
     torch.testing.assert_close(x, x_ref)
 
-    # TODO(crcrpar): Need to improve the logic of identifying required copies and/or
-    # relationshipt of views and in-place ops.
-    # The case above seems to work only because thunder preserves `prims.copy_` for
-    # in-place ops whose operand is arg or view of arg.
     def f(x):
         x = x.add(1)
         y = x.view(-1)
@@ -403,9 +407,26 @@ def test_multiple_views_before_inplace_to_base(executor, device, _):
     jitted = executor.make_callable(f)
     actual = jitted(x)
 
-    with pytest.raises(AssertionError):
-        torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(actual, expected)
     torch.testing.assert_close(x, x_ref)
+
+    # ref: https://github.com/Lightning-AI/lightning-thunder/pull/869#issuecomment-2257738623
+    def f(x):
+        x = x.add(1)
+        z = x.view(-1)[::2]  # Note that basic slicing is used here which also produces a view
+        x.add_(1)
+        # z should have been updated
+        z2 = z + 1
+        return z2
+
+    x = make_tensor((2, 2), device=device, dtype=torch.float32)
+
+    jitted = executor.make_callable(f)
+    with pytest.raises(
+        RuntimeError,
+        match="Fail to propagate the in-place change of `t3` to `z` because of the different number of elements: 4 and 2",
+    ):
+        jitted(x)
 
 
 @instantiate(
@@ -438,6 +459,7 @@ def test_multiple_inplace_to_multiple_args(executor, device, _):
 
 @instantiate(
     dtypes=NOTHING,
+    executors=(TorchExecutor, TorchCompileExecutor, nvFuserExecutor),
 )
 def test_single_tensor_adam_like(executor, device, _):
 
@@ -564,3 +586,49 @@ def test_inplace_copy_on_fusion_inputs_issue_791(executor, device, _):
     assert a.allclose(a_)
     assert b.allclose(b_)
     assert o.allclose(o_)
+
+
+def test_error_out_func_with_alias_args():
+
+    @thunder.jit
+    def f_with_inplace(a, b):
+        return a.exp_() + b.tanh_()
+
+    a = torch.ones((1, 1))
+    b = torch.zeros((1, 1))
+
+    msg = "share their storage and some of them are modified in-place"
+    with pytest.raises(NotImplementedError) as excinfo:
+        f_with_inplace(a, a)
+    assert msg in str(excinfo.value)
+    assert (thunder.cache_hits(f_with_inplace), thunder.cache_misses(f_with_inplace)) == (0, 1)
+
+    with pytest.raises(NotImplementedError) as excinfo:
+        f_with_inplace(b, b)
+    assert msg in str(excinfo.value)
+    assert (thunder.cache_hits(f_with_inplace), thunder.cache_misses(f_with_inplace)) == (1, 1)
+
+    # Make sure the cache changes accordingly
+    f_with_inplace(a, b)
+    assert (thunder.cache_hits(f_with_inplace), thunder.cache_misses(f_with_inplace)) == (1, 2)
+
+    f_with_inplace(b, a)
+    assert (thunder.cache_hits(f_with_inplace), thunder.cache_misses(f_with_inplace)) == (2, 2)
+
+    with pytest.raises(NotImplementedError) as excinfo:
+        f_with_inplace(b, b)
+    assert msg in str(excinfo.value)
+    assert (thunder.cache_hits(f_with_inplace), thunder.cache_misses(f_with_inplace)) == (3, 2)
+
+    @thunder.jit
+    def f(a, b):
+        return a.exp() + b.tanh()
+
+    f(a, a)
+    assert (thunder.cache_hits(f), thunder.cache_misses(f)) == (0, 1)
+    f(a, b)
+    assert (thunder.cache_hits(f), thunder.cache_misses(f)) == (0, 2)
+    f(b, a)
+    assert (thunder.cache_hits(f), thunder.cache_misses(f)) == (1, 2)
+    f(b, b)
+    assert (thunder.cache_hits(f), thunder.cache_misses(f)) == (2, 2)

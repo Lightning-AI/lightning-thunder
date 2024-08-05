@@ -619,11 +619,8 @@ class nvFuserExecutor(FusionExecutor):
         return list(filter(lambda x: x.sym != prims.python_return, trace.bound_symbols))
 
     def fuse(self, region: Region, fusion_counter: int) -> BoundSymbol:
-        def keyfn(x: Variable) -> str:
-            return x.proxy.name
-
-        sorted_unique_inputs: list[Proxy] = list(unvariableify(x) for x in sorted(region.inputs, key=keyfn))
-        sorted_unique_outputs: list[Proxy] = list(unvariableify(x) for x in sorted(region.outputs, key=keyfn))
+        sorted_unique_inputs: list[Proxy] = [unvariableify(x) for x in region.inputs]
+        sorted_unique_outputs: list[Proxy] = [unvariableify(x) for x in region.outputs]
 
         flattened_bsyms: list[BoundSymbol] = []
         for bsym in region.bound_symbols:
@@ -828,19 +825,6 @@ instantiated) this heuristic actually leads to worse code.
                 else:
                     fused_bsyms.extend(fusion.bound_symbols)
             fused_bsyms.extend(epilogue)
-
-        # Force return operator to be the last one in the fused_bsyms
-        if fused_bsyms[-1].sym.id != PrimIDs.RETURN:
-            return_idx: int = -1
-            for i, fused_bsym in enumerate(fused_bsyms):
-                if fused_bsym.sym.id == PrimIDs.RETURN:
-                    return_idx = i
-                    break
-            utils.check(
-                return_idx != -1,
-                lambda: f"Return operator does not exist in bound symbols",
-            )
-            fused_bsyms.append(fused_bsyms.pop(return_idx))
 
         fusedtrace.bound_symbols = fused_bsyms
 

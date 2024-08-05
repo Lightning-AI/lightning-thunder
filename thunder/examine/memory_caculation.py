@@ -17,6 +17,7 @@ thunder_alias_operator_list = (
     "transpose",
     "expand",
     "reshape",
+    "torch_prims_reshape_impl",  # torchex implementation of prims.reshape.
     "permute",
     "contiguous",
     "torch_wait_prim_impl",

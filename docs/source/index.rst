@@ -142,6 +142,7 @@ API reference
    reference/executors/index
    reference/torch/index
    reference/extend/index
+   reference/transforms/index
 
 
 Indices and tables
