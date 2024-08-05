@@ -5520,7 +5520,7 @@ def meta_adaptor(torch_func: Callable):
             raise NotImplementedError(f"{torch_func} specifies 'out' argument, please use manual registration")
 
         with FakeTensorMode():
-            fake_args, fake_kwargs = tree_map( _get_fake_arg, (args, kwargs))
+            fake_args, fake_kwargs = tree_map(_get_fake_arg, (args, kwargs))
             try:
                 fake_outs = torch_func(*fake_args, **fake_kwargs)
             except Exception as e:
