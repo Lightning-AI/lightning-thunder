@@ -5376,7 +5376,8 @@ def register_default_torch_ops():
             register_default_torch_op(fn, meta_adaptor(fn), m)
 
 
-def register_default_torch_op(torchfn: Callable, fn_meta: Callable, m):
+def register_default_torch_op(torchfn: Callable, m):
+    fn_meta = meta_adaptor(fn)
     _fn = langctx(Languages.TORCH)(fn_meta)
     sym = Symbol(
         name=torchfn.__name__,
@@ -5393,8 +5394,7 @@ def register_default_torch_op(torchfn: Callable, fn_meta: Callable, m):
 
     augmented_forward_impls[sym.id] = augmented_forward_adaptor(op)
 
-    def _vjp_impl_wrapper(residules, *gs):
-        return _vjp_impl(torchfn, residules, *gs)
+    _vjp_impl_wrapper = partial(_vjp_impl, torchfn)
 
     bwd_op = ex.register_operator(torchfn.__name__ + "_vjp", meta=backward_adaptor(torchfn), fn=_vjp_impl_wrapper)
     ex.register_implementation(bwd_op.id, bwd_op, checker=_always_executable)
@@ -5463,8 +5463,8 @@ def augmented_forward_adaptor(sym_op: Callable):
 
         out = sym_op(*args, **kwargs)
         primal = out if isinstance(out, tuple) else (out,)
-        residuals = ((args, kwargs),)
-        return VJPDual(primal, residuals)
+        saved_for_backward = ((args, kwargs),)
+        return VJPDual(primal, saved_for_backward)
 
     return wrapper
 
