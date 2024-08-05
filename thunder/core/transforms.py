@@ -1464,7 +1464,7 @@ def grad(
             gradcomputation_trace = construct_trace()(
                 grad(python_callable), *computation_trace.args, **computation_trace.kwargs
             )
-            return gradcomputation_trace
+            return prologue_trace, gradcomputation_trace, epilogue_trace
 
     cfn._using_grad_transform = True
     _grad_transform = _GradTransform()
