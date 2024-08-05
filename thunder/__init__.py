@@ -374,6 +374,7 @@ def jit(
             return ""
         return ",".join(f"{i}" for i in alias_indices)
 
+    @langctxs.langctx(cd.langctx)
     @_with_cache_info_ctx
     def get_computation_and_inputs(*args, **kwargs):
         # set up a record of things in the current environment that impact caching / prologues
@@ -516,16 +517,15 @@ def jit(
             #   returns the (proxied) result of the operation
             cs.last_trace_tracing_start = time.perf_counter_ns()
 
-            with langctxs.langctx(cd.langctx):
-                prologue_trc: TraceCtx
-                computation_trc: TraceCtx
-                jit_results: TraceResults = interpreter(
-                    fn, args, kwargs, record_history=record_history, sharp_edges=cd.sharp_edges
-                )
-                prologue_trc = jit_results.prologue_trace
-                computation_trc = jit_results.computation_trace
-                epilogue_trc = jit_results.epilogue_trace
-                last_interpreter_log = jit_results.interpreter_log
+            prologue_trc: TraceCtx
+            computation_trc: TraceCtx
+            jit_results: TraceResults = interpreter(
+                fn, args, kwargs, record_history=record_history, sharp_edges=cd.sharp_edges
+            )
+            prologue_trc = jit_results.prologue_trace
+            computation_trc = jit_results.computation_trace
+            epilogue_trc = jit_results.epilogue_trace
+            last_interpreter_log = jit_results.interpreter_log
 
             prologue_traces = [prologue_trc]
             computation_traces = [computation_trc]
@@ -653,19 +653,17 @@ def jit(
                 from thunder.executors.passes import _transform_for_operator_executor_execution
                 from thunder.distributed.utils import maybe_sort_waits
 
-                with langctxs.langctx(cd.langctx):
-                    tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
+                tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
                 is_transformed, tmp_comp_trc = maybe_sort_waits(tmp_comp_trc)
                 if is_transformed:
                     computation_trc = tmp_comp_trc
                     computation_traces.append(computation_trc)
 
-                with langctxs.langctx(cd.langctx):
-                    extraces = transform_for_execution(
-                        computation_trc,
-                        executors_list=cd.executors_list,
-                        use_del_last_used=False,
-                    )
+                extraces = transform_for_execution(
+                    computation_trc,
+                    executors_list=cd.executors_list,
+                    use_del_last_used=False,
+                )
                 computation_traces.extend(extraces)
                 computation_trc = computation_traces[-1]
 
