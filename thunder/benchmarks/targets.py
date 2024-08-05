@@ -31,7 +31,7 @@ from thunder.benchmarks import (
     thunder_sdpa_torch_compile_nvfuser_executor,
     torch_compile_executor,
     torch_executor,
-    thunder_nvfuser_transformerengine_executor,
+    thunder_transformerengine_executor,
 )
 from thunder.core.interpreter import interpret
 
@@ -166,8 +166,8 @@ cudnn_layernorm_executors_ids = (
     "thunder+cudnn_layernorm+nvfuser",
 )
 
-transformer_engine_executors = (thunder_nvfuser_transformerengine_executor,)
-transformer_engine_execuors_ids = ("thunder+nvfuser+transformerengine",)
+transformer_engine_executors = (thunder_transformerengine_executor,)
+transformer_engine_execuors_ids = ("thunder+transformerengine",)
 
 
 def get_unique_configs(config_options: Sequence[str]):
@@ -397,13 +397,16 @@ def test_nanogpt_gpt2xl(benchmark, executor: Callable, compute_type: ComputeType
     ids=(transformer_engine_execuors_ids),
 )
 @parametrize_compute_type
-def test_llama_2_7b_hf_transformer_engine_only(benchmark, executor: Callable, compute_type: ComputeType):
-    cfg: LitGPTConfig = LitGPTConfig.from_name("Llama-2-7b-hf")
+@pytest.mark.parametrize("config,", (get_unique_configs(("name",))))
+def test_transformer_engine_executor_regression(benchmark, executor: Callable, compute_type: ComputeType, config: str):
+    # NOTE - This benchmark is present to track performance and memory usage regressions.
+    #        So, we don't need to run the complete model (running a chunk should give us this signal).
+    cfg: LitGPTConfig = LitGPTConfig.from_name(config)
 
-    # Setting this to higher leads to OOM.
-    cfg.n_layer = 15
+    # Setting this to default leads to OOM.
+    cfg.n_layer = 5  # This is/should be sufficient to get signals on perf regression and memory usage regression.
     b = LitGPTBenchmark(
-        cfg, batchdims=(2,), device="cuda:0", dtype=torch.bfloat16, requires_grad=is_requires_grad(compute_type)
+        cfg, batchdims=(1,), device="cuda:0", dtype=torch.bfloat16, requires_grad=is_requires_grad(compute_type)
     )
 
     args, kwargs = b.make_batch()

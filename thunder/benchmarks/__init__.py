@@ -751,12 +751,12 @@ if cudnn_available():
         return thunder.jit(fn, executors=[cudnn_layernorm_ex, thunder.nvfuser_executor])
 
 
-thunder_nvfuser_transformerengine_executor: None | Callable = None
+thunder_transformerengine_executor: None | Callable = None
 
 if TE_AVAILABLE:
 
-    def thunder_nvfuser_transformerengine_executor(fn: Callable):
-        return thunder.jit(fn, executors=[transformer_engine_ex, thunder.nvfuser_executor])
+    def thunder_transformerengine_executor(fn: Callable):
+        return thunder.jit(fn, executors=(transformer_engine_ex,) + thunder.get_default_executors())
 
 
 def thunder_sdpa_executor(fn: Callable) -> Callable:
