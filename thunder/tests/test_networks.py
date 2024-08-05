@@ -267,21 +267,26 @@ def test_hf_bert():
 
     # Transformers 2.41+ adds some more non-essential data-dependent
     # control flow behind a check whether we are compiling
+    if hasattr(torch, "compiler") and hasattr(torch.compiler, "is_compiling"):
+        is_compiling = torch.compiler.is_compiling
+    else:
+        is_compiling = torch._dynamo.is_compiling
+
+    @thunder.core.jit_ext.register_general_jit_lookaside(is_compiling)
+    @thunder.core.jit_ext.interpreter_needs_wrap
+    def dummy(*args):
+        return True
+
+    # transformers accesses the old attrib and causes the future warning
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=FutureWarning, message=".*torch._dynamo.*.is_compiling.*")
-
-        @thunder.core.jit_ext.register_general_jit_lookaside(torch._dynamo.is_compiling)
-        @thunder.core.jit_ext.interpreter_needs_wrap
-        def dummy(*args):
-            return True
-
-    m = transformers.BertForSequenceClassification(transformers.BertConfig())
-    del m.bert.encoder.layer[2:]
-    m.eval()
-    inp = torch.randint(1, 20, (1, 32))
-    jm = thunder.jit(m)
-    actual = jm(inp)
-    expected = m(inp)
+        m = transformers.BertForSequenceClassification(transformers.BertConfig())
+        del m.bert.encoder.layer[2:]
+        m.eval()
+        inp = torch.randint(1, 20, (1, 32))
+        jm = thunder.jit(m)
+        actual = jm(inp)
+        expected = m(inp)
 
     assert_close(actual, expected)
 
