@@ -247,13 +247,16 @@ class Benchmark_litGPT:
         if self.checkpoint_activations:
             self.setup_activation_checkpointing()
 
+        # Compile the model
+        self.model = self.setup_compile(self.model)
+
+        # Add required transforms to convert model into thunder's distributed parallel
+        self.model = self.apply_thunder_transforms(self.model)
+
         # Initialize the optimizer after the model is sharded if using FSDP
         self.optimizer = configure_optimizers(
             self.model, weight_decay, learning_rate, (beta1, beta2), device_type="cuda"
         )
-
-        # Compile the model
-        self.model = self.setup_compile(self.model)
 
         # Setup the Dummy dataloader for training
         self.train_dataloader = self.setup_dummy_dataloader()
@@ -275,80 +278,85 @@ class Benchmark_litGPT:
         model.to(dtype=torch.bfloat16)
         return model
 
+    def apply_thunder_transforms(self, model):
+        if "thunder" not in self.compile or self.distributed_mode == "none":
+            return model
+        if self.distributed_mode == "ddp":
+            from thunder.distributed import ddp
+
+            model = ddp(
+                model,
+                broadcast_from=0,
+                bucket_size_in_mb=self.ddp_bucket_size,
+            )
+            return model
+        elif self.distributed_mode == "fsdp":
+            from thunder.distributed import fsdp, FSDPType, FSDPBucketingStrategy
+
+            sharding_strategy = {"zero2": FSDPType.ZERO2, "zero3": FSDPType.ZERO3}[self.shard_mode]
+            bucketing_strategy = {
+                "none": FSDPBucketingStrategy.NONE,
+                "block": FSDPBucketingStrategy.BLOCK,
+                "layer": FSDPBucketingStrategy.LAYER,
+            }[self.bucketing_mode]
+            model = fsdp(
+                model,
+                broadcast_from=None,
+                sharding_strategy=sharding_strategy,
+                bucketing_strategy=bucketing_strategy,
+            )
+            return model
+        else:
+            raise ValueError(f"Invalid {self.distributed_mode=}")
+
     def setup_distributed(self, model):
-        if self.distributed_mode == "none":
+        if self.distributed_mode == "none" or "thunder" in self.compile:
             return model
 
         # Distributed Setup
-        # TODO: Change compiler call names
-        if "thunder" in self.compile:
-            if self.distributed_mode == "ddp":
-                from thunder.distributed import ddp
+        if self.distributed_mode == "ddp":
+            model = torch.nn.parallel.DistributedDataParallel(
+                model,
+                device_ids=[local_rank],
+                bucket_cap_mb=self.ddp_bucket_size,
+            )
+        elif self.distributed_mode == "fsdp":
+            from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStrategy
+            from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy, size_based_auto_wrap_policy
 
-                model = ddp(
-                    model,
-                    broadcast_from=0,
-                    bucket_size_in_mb=self.ddp_bucket_size,
-                )
-            elif self.distributed_mode == "fsdp":
-                from thunder.distributed import fsdp, FSDPType, FSDPBucketingStrategy
+            mesh = None
+            if self.sharding_size is not None:
+                mesh = init_device_mesh("cuda", (int(world_size / self.sharding_size), self.sharding_size))
 
-                sharding_strategy = {"zero2": FSDPType.ZERO2, "zero3": FSDPType.ZERO3}[self.shard_mode]
-                bucketing_strategy = {
-                    "none": FSDPBucketingStrategy.NONE,
-                    "block": FSDPBucketingStrategy.BLOCK,
-                    "layer": FSDPBucketingStrategy.LAYER,
-                }[self.bucketing_mode]
-                model = fsdp(
-                    model,
-                    broadcast_from=None,
-                    sharding_strategy=sharding_strategy,
-                    bucketing_strategy=bucketing_strategy,
-                )
-        else:
-            if self.distributed_mode == "ddp":
-                model = torch.nn.parallel.DistributedDataParallel(
-                    model,
-                    device_ids=[local_rank],
-                    bucket_cap_mb=self.ddp_bucket_size,
-                )
-            elif self.distributed_mode == "fsdp":
-                from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStrategy
-                from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy, size_based_auto_wrap_policy
+            litgpt_auto_wrap_policy = functools.partial(transformer_auto_wrap_policy, transformer_layer_cls={Block})
+            size_auto_wrap_policy = functools.partial(
+                size_based_auto_wrap_policy, min_num_params=self.fsdp_bucket_params
+            )
+            zero_bucket_wrap_policy = lambda module, recurse, nonwrapped_numel: nonwrapped_numel >= 0
 
-                mesh = None
-                if self.sharding_size is not None:
-                    mesh = init_device_mesh("cuda", (int(world_size / self.sharding_size), self.sharding_size))
+            custom_wrap_policy = {
+                "block": litgpt_auto_wrap_policy,
+                "size": size_auto_wrap_policy,
+                "none": zero_bucket_wrap_policy,
+            }[self.bucketing_mode]
 
-                litgpt_auto_wrap_policy = functools.partial(transformer_auto_wrap_policy, transformer_layer_cls={Block})
-                size_auto_wrap_policy = functools.partial(
-                    size_based_auto_wrap_policy, min_num_params=self.fsdp_bucket_params
-                )
-                zero_bucket_wrap_policy = lambda module, recurse, nonwrapped_numel: nonwrapped_numel >= 0
+            sharding_strategy: ShardingStrategy = {
+                "zero2": ShardingStrategy.SHARD_GRAD_OP,
+                "zero3": ShardingStrategy.FULL_SHARD,
+                "hybrid_zero2": ShardingStrategy._HYBRID_SHARD_ZERO2,
+                "hybrid_zero3": ShardingStrategy.HYBRID_SHARD,
+            }[self.shard_mode]
 
-                custom_wrap_policy = {
-                    "block": litgpt_auto_wrap_policy,
-                    "size": size_auto_wrap_policy,
-                    "none": zero_bucket_wrap_policy,
-                }[self.bucketing_mode]
-
-                sharding_strategy: ShardingStrategy = {
-                    "zero2": ShardingStrategy.SHARD_GRAD_OP,
-                    "zero3": ShardingStrategy.FULL_SHARD,
-                    "hybrid_zero2": ShardingStrategy._HYBRID_SHARD_ZERO2,
-                    "hybrid_zero3": ShardingStrategy.HYBRID_SHARD,
-                }[self.shard_mode]
-
-                # AssertionError: Dynamo only supports FSDP with use_orig_params=True
-                torch.cuda.set_device(local_rank)
-                model = FSDP(
-                    model,
-                    sharding_strategy=sharding_strategy,
-                    auto_wrap_policy=custom_wrap_policy,
-                    device_id=local_rank,
-                    use_orig_params=True,
-                    device_mesh=mesh,
-                )
+            # AssertionError: Dynamo only supports FSDP with use_orig_params=True
+            torch.cuda.set_device(local_rank)
+            model = FSDP(
+                model,
+                sharding_strategy=sharding_strategy,
+                auto_wrap_policy=custom_wrap_policy,
+                device_id=local_rank,
+                use_orig_params=True,
+                device_mesh=mesh,
+            )
         return model
 
     def setup_activation_checkpointing(self):
@@ -393,7 +401,15 @@ class Benchmark_litGPT:
 
                 executors.insert(0, transformer_engine_ex)
 
-            model = thunder.jit(model, executors=executors)
+            transforms = []
+            if self.distributed_mode == "fsdp":
+                from thunder.transforms import MaterializationTransform
+
+                def _init(*args, **kwargs):
+                    pass
+
+                transforms.append(MaterializationTransform(device=self.device, init=_init))
+            model = thunder.jit(model, executors=executors, transforms=transforms)
 
         elif self.compile != "eager":
             raise ValueError(f"Invalid compile option: {self.compile}")
