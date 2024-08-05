@@ -11,7 +11,15 @@ import thunder
 import thunder.core.devices as devices
 from thunder.core import dtypes
 from thunder.core.prims import PrimIDs
-from thunder.tests.framework import instantiate, ops, requiresCUDA, NOTHING, TorchExecutor, nvFuserExecutor
+from thunder.tests.framework import (
+    instantiate,
+    ops,
+    requiresCUDA,
+    NOTHING,
+    TorchExecutor,
+    TorchCompileExecutor,
+    nvFuserExecutor,
+)
 from thunder.tests.opinfos import opinfos, OpInfo, make_number, SampleInput
 from thunder.tests.make_tensor import make_tensor
 from thunder.torch import _torch_to_thunder_function_map, _inplace_to_out_of_place
@@ -381,10 +389,6 @@ def test_multiple_views_before_inplace_to_base(executor, device, _):
     torch.testing.assert_close(actual, expected)
     torch.testing.assert_close(x, x_ref)
 
-    # TODO(crcrpar): Need to improve the logic of identifying required copies and/or
-    # relationshipt of views and in-place ops.
-    # The case above seems to work only because thunder preserves `prims.copy_` for
-    # in-place ops whose operand is arg or view of arg.
     def f(x):
         x = x.add(1)
         y = x.view(-1)
@@ -403,9 +407,26 @@ def test_multiple_views_before_inplace_to_base(executor, device, _):
     jitted = executor.make_callable(f)
     actual = jitted(x)
 
-    with pytest.raises(AssertionError):
-        torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(actual, expected)
     torch.testing.assert_close(x, x_ref)
+
+    # ref: https://github.com/Lightning-AI/lightning-thunder/pull/869#issuecomment-2257738623
+    def f(x):
+        x = x.add(1)
+        z = x.view(-1)[::2]  # Note that basic slicing is used here which also produces a view
+        x.add_(1)
+        # z should have been updated
+        z2 = z + 1
+        return z2
+
+    x = make_tensor((2, 2), device=device, dtype=torch.float32)
+
+    jitted = executor.make_callable(f)
+    with pytest.raises(
+        RuntimeError,
+        match="Fail to propagate the in-place change of `t3` to `z` because of the different number of elements: 4 and 2",
+    ):
+        jitted(x)
 
 
 @instantiate(
@@ -438,6 +459,7 @@ def test_multiple_inplace_to_multiple_args(executor, device, _):
 
 @instantiate(
     dtypes=NOTHING,
+    executors=(TorchExecutor, TorchCompileExecutor, nvFuserExecutor),
 )
 def test_single_tensor_adam_like(executor, device, _):
 

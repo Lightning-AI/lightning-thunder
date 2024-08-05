@@ -5366,4 +5366,5 @@ _syms_returning_views: set[Symbol] = {
     split,
     tensor_split,
     chunk,
+    getitem,
 }

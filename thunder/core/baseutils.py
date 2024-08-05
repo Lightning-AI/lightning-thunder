@@ -442,10 +442,10 @@ def print_base_printable(x: Any, /) -> str:
 _exec_ctr = 0
 
 
-def compile_and_exec(fn_name: str, python_str: str, program_name: str, ctx: dict) -> Callable:
+def build_callable(fn_name: str, python_str: str, file_name: str, ctx: dict) -> Callable:
     global _exec_ctr
 
-    program_name = f"{program_name}_{_exec_ctr}"
+    program_name = f"{file_name}_{_exec_ctr}"
 
     # simple cache hack
     mtime = None  # this signals that the cache should not be invalidated(!)
@@ -454,9 +454,10 @@ def compile_and_exec(fn_name: str, python_str: str, program_name: str, ctx: dict
     inspect.linecache.cache[program_name] = size, mtime, lines, program_name
 
     try:
-        code = compile(python_str, program_name, mode="exec")
+        code: CodeType = compile(python_str, program_name, mode="exec")
         exec(code, ctx)
-        return ctx[fn_name]
+        _callable: Callable = ctx[fn_name]  # Grab from globals()
+        return _callable
     except Exception as e:
         print("Encountered an exception while trying to compile the following program:")
         print(python_str)
