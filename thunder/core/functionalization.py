@@ -655,7 +655,7 @@ def functionalize_inplace_ops(
           t1 = ltorch.exp(a)  # t1: "cpu f32[2, 2]"
             # t1 = prims.exp(a)  # t1: "cpu f32[2, 2]"
 
-          `t2` is replaced by `t1`
+          # `t2` is replaced by `t1`
           t3 = ltorch.cos(t1)  # t3: "cpu f32[2, 2]"
             # t3 = prims.cos(t1)  # t3: "cpu f32[2, 2]"
           return t3
