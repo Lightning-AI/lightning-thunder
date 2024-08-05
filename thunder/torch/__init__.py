@@ -5401,7 +5401,7 @@ def register_default_torch_op(torchfn: Callable, m):
     backward_impls[sym.id] = bwd_op
 
 
-# Note this function should be used in side the fake mode context manager
+# Note this function should be used inside the fake mode context manager
 def _get_fake_arg(inp: Any):
     if inp is None:
         return inp
