@@ -589,39 +589,39 @@ def jit(
                     # by split_forward_backward
                     extraces = cs.last_traces
 
-            if backward_trc is None:
-                ## EPILOGUE and TRANSFORMS should not mix...
-                # applies transforms
-                cs.last_computation_transformation_start = time.perf_counter_ns()
-                for transform in transforms:
-                    _, new_computation_trc, _ = transform.transform_traces_pre_prologue(
-                        prologue_trc, computation_trc, epilogue_trc, executors_list=cd.executors_list
-                    )
-                    if new_computation_trc is not computation_trc:
-                        # todo: deprecation
-                        computation_trc = new_computation_trc
-                        computation_traces.append(computation_trc)
-                cs.last_computation_transformation_stop = time.perf_counter_ns()
+                # if backward_trc is None:
+                #     ## EPILOGUE and TRANSFORMS should not mix...
+                #     # applies transforms
+                #     cs.last_computation_transformation_start = time.perf_counter_ns()
+                #     for transform in transforms:
+                #         _, new_computation_trc, _ = transform.transform_traces_pre_prologue(
+                #             prologue_trc, computation_trc, epilogue_trc, executors_list=cd.executors_list
+                #         )
+                #         if new_computation_trc is not computation_trc:
+                #             # todo: deprecation
+                #             computation_trc = new_computation_trc
+                #             computation_traces.append(computation_trc)
+                #     cs.last_computation_transformation_stop = time.perf_counter_ns()
+                #
+                #     from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
+                #     from thunder.executors.passes import _transform_for_operator_executor_execution
+                #     from thunder.distributed.utils import maybe_sort_waits
+                #
+                #     with langctxs.langctx(cd.langctx):
+                #         tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
+                #     is_transformed, tmp_comp_trc = maybe_sort_waits(tmp_comp_trc)
+                #     if is_transformed:
+                #         computation_trc = tmp_comp_trc
+                #         computation_traces.append(computation_trc)
 
-                from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
-                from thunder.executors.passes import _transform_for_operator_executor_execution
-                from thunder.distributed.utils import maybe_sort_waits
-
-                with langctxs.langctx(cd.langctx):
-                    tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
-                is_transformed, tmp_comp_trc = maybe_sort_waits(tmp_comp_trc)
-                if is_transformed:
-                    computation_trc = tmp_comp_trc
-                    computation_traces.append(computation_trc)
-
-                with langctxs.langctx(cd.langctx):
-                    extraces = transform_for_execution(
-                        computation_trc,
-                        executors_list=cd.executors_list,
-                        use_del_last_used=True,
-                    )
-                computation_traces.append(computation_trc)
-                computation_trc = extraces[-1]
+                # with langctxs.langctx(cd.langctx):
+                #     extraces = transform_for_execution(
+                #         computation_trc,
+                #         executors_list=cd.executors_list,
+                #         use_del_last_used=True,
+                #     )
+                # computation_traces.append(computation_trc)
+                # computation_trc = extraces[-1]
 
             if not compile_options.get("disable_inplace_copy_check", False):
                 thunder.core.transform_common._inplace_copy_sanity_check(computation_trc)
