@@ -9,7 +9,9 @@ import thunder.core.utils as utils
 from thunder.core.trace import TraceCtx
 from thunder.core.symbol import BoundSymbol
 from thunder.core.proxies import variableify, Proxy
+import thunder.core.prims as prims
 from thunder.core.prims import PrimIDs
+from thunder.executors import torchex
 
 
 # Represents a region and its parents (regions it consumes the output of) and
@@ -103,8 +105,7 @@ class Graph:
                 for copy_node in copy_nodes:
                     node.parents.add(copy_node)
                     copy_node.children.add(node)
-            # torch executor replaces prims.copy_ with torchex.copy_
-            elif bsym.sym.id in (PrimIDs.COPY_, "copy_"):
+            elif bsym.sym in (prims.copy_, torchex.copy_):
                 copy_nodes.append(node)
 
         for bsym_id, node in enumerate(bsym_id_to_node_map):
