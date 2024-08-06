@@ -634,39 +634,39 @@ def jit(
                     computation_trc, backward_trc = split_forward_backward(computation_trc, cd, cs, *inps)
                     # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
                     # by split_forward_backward
-                    extraces = cs.last_traces
 
-                # if backward_trc is None:
-                #     ## EPILOGUE and TRANSFORMS should not mix...
-                #     # applies transforms
-                #     cs.last_computation_transformation_start = time.perf_counter_ns()
-                #     for transform in transforms:
-                #         _, new_computation_trc, _ = transform.transform_traces_pre_prologue(
-                #             prologue_trc, computation_trc, epilogue_trc, executors_list=cd.executors_list
-                #         )
-                #         if new_computation_trc is not computation_trc:
-                #             # todo: deprecation
-                #             computation_trc = new_computation_trc
-                #             computation_traces.append(computation_trc)
-                #     cs.last_computation_transformation_stop = time.perf_counter_ns()
-                #
-                #     from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
-                #     from thunder.executors.passes import _transform_for_operator_executor_execution
-                #     from thunder.distributed.utils import maybe_sort_waits
-                #
-                #     with langctxs.langctx(cd.langctx):
-                #         tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
-                #     is_transformed, tmp_comp_trc = maybe_sort_waits(tmp_comp_trc)
-                #     if is_transformed:
-                #         computation_trc = tmp_comp_trc
+            if backward_trc is None:
+                ## EPILOGUE and TRANSFORMS should not mix...
+                # applies transforms
+                cs.last_computation_transformation_start = time.perf_counter_ns()
+                # for transform in transforms:
+                #     new_computation_trc = computation_trc
+                #     # new_computation_trc = transform.transform_trace_additionally(
+                #     #     computation_trc, executors_list=cd.executors_list
+                #     # )
+                #     if new_computation_trc is not computation_trc:
+                #         # todo: deprecation
+                #         computation_trc = new_computation_trc
                 #         computation_traces.append(computation_trc)
+                cs.last_computation_transformation_stop = time.perf_counter_ns()
 
-                # with langctxs.langctx(cd.langctx):
-                #     extraces = transform_for_execution(
-                #         computation_trc,
-                #         executors_list=cd.executors_list,
-                #         use_del_last_used=False,
-                #     )
+                from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
+                from thunder.executors.passes import _transform_for_operator_executor_execution
+                from thunder.distributed.utils import maybe_sort_waits
+
+                with langctxs.langctx(cd.langctx):
+                    tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
+                is_transformed, tmp_comp_trc = maybe_sort_waits(tmp_comp_trc)
+                if is_transformed:
+                    computation_trc = tmp_comp_trc
+                    computation_traces.append(computation_trc)
+
+                with langctxs.langctx(cd.langctx):
+                    extraces = transform_for_execution(
+                        computation_trc,
+                        executors_list=cd.executors_list,
+                        use_del_last_used=False,
+                    )
                 computation_traces.extend(extraces)
                 computation_trc = computation_traces[-1]
 
@@ -674,14 +674,14 @@ def jit(
                 from thunder.executors.cudagraphex import cudagraphex
 
                 computation_trc = cudagraphex.fusion_pass(computation_trc)
-                # computation_traces.append(computation_trc)
+                computation_traces.append(computation_trc)
 
                 if backward_trc is not None:
                     backward_trc = cudagraphex.fusion_pass(backward_trc, num_static_inputs=len(backward_trc.args[0][0]))
                     backward_traces.append(backward_trc)
 
             if backward_trc is None:
-                # computation_trc = thunder.executors.passes.del_last_used(computation_trc)
+                computation_trc = thunder.executors.passes.del_last_used(computation_trc)
 
             if not compile_options.get("disable_inplace_copy_check", False):
                 thunder.core.transform_common._inplace_copy_sanity_check(computation_trc)
