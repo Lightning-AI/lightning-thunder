@@ -569,6 +569,8 @@ def jit(
             transform: Transform
             for transform in transforms:
                 thunder.core.utils.check_type(transform, Transform)
+
+                # new_prologue_trc, new_computation_trc, new_epilogue_trc = prologue_trc, computation_trc, epilogue_trc
                 new_prologue_trc, new_computation_trc, new_epilogue_trc = transform.transform_traces_pre_prologue(
                     prologue_trc, computation_trc, epilogue_trc, executors_list=cd.executors_list
                 )
@@ -637,17 +639,7 @@ def jit(
 
             if backward_trc is None:
                 ## EPILOGUE and TRANSFORMS should not mix...
-                # applies transforms
                 cs.last_computation_transformation_start = time.perf_counter_ns()
-                # for transform in transforms:
-                #     new_computation_trc = computation_trc
-                #     # new_computation_trc = transform.transform_trace_additionally(
-                #     #     computation_trc, executors_list=cd.executors_list
-                #     # )
-                #     if new_computation_trc is not computation_trc:
-                #         # todo: deprecation
-                #         computation_trc = new_computation_trc
-                #         computation_traces.append(computation_trc)
                 cs.last_computation_transformation_stop = time.perf_counter_ns()
 
                 from thunder.executors.passes import transform_for_execution as transform_for_execution_pass

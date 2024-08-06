@@ -1441,14 +1441,20 @@ def grad(
 
     class _GradTransform(Transform):
         def transform_traces_pre_prologue(
-            self, prologue_trc, computation_trc: Trace, epilogue_trc, *, executors_list: Sequence[Any]
+            self,
+            prologue_trc: Trace,
+            computation_trc: Trace,
+            epilogue_trc: Trace | None,
+            *,
+            executors_list: Sequence[Any],
         ) -> Trace:
             # Using trc.python_callable() makes it impossible to retrace the
             # function because the python_callable uses python_ctx which replaces
             # symbol occurrences with its symbol._call_ctx function
             @wraps(computation_trc.python_callable())
             def python_callable(*args, **kwargs):
-                return eval_trace(computation_trc, *args, **kwargs)
+                # should allow duplicates for _GradTransform
+                return eval_trace(computation_trc, *args, **kwargs, allow_duplicates=True)
 
             gradtrc = construct_trace()(grad(python_callable), *computation_trc.args, **computation_trc.kwargs)
             return prologue_trc, gradtrc, epilogue_trc
@@ -1487,7 +1493,7 @@ transform_skip_list = (
 )
 
 
-def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwargs):
+def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, allow_duplicates=False, **kwargs):
     """Evaluate a trace.
 
     Args:
@@ -1517,8 +1523,8 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwa
             raise ValueError(f"Variable {v.name} is being overwritten this is not allowed")
         env[v.name] = val
 
-    safe_map_flat(write, list(trace.args), list(args))
-    safe_map_flat(write, list(trace.kwargs.values()), list(kwargs.values()))
+    safe_map_flat(partial(write, allow_duplicates=allow_duplicates), list(trace.args), list(args))
+    safe_map_flat(partial(write, allow_duplicates=allow_duplicates), list(trace.kwargs.values()), list(kwargs.values()))
 
     for symbol in trace.bound_symbols:
         if symbol.sym.id in transform_skip_list:
@@ -1529,7 +1535,9 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwa
         if prim_func is None:
             continue
         result = prim_func(*args, **kwargs)
-        safe_map_flat(write, list(sequencify(symbol.output)), list(sequencify(result)))
+        safe_map_flat(
+            partial(write, allow_duplicates=allow_duplicates), list(sequencify(symbol.output)), list(sequencify(result))
+        )
 
     if with_env:
         return tree_map(read, trace.output), env
