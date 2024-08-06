@@ -212,15 +212,12 @@ def test_fa3_used(dtype: torch.dtype):
     extrace = thunder.last_traces(cfn)[-1]
     assert any(bsym.sym.name == "fa3_fwd" for bsym in extrace.bound_symbols)
 
-    """
     loss = thunder_result.sum()
     loss.backward()
 
     # Verifies fa3 bwd was called
-    extrace = thunder.last_traces(cfn)[-1]
-    print(f'symbols: {[bsym.sym.name for bsym in extrace.bound_symbols]}')
-    assert any(bsym.sym.name == "fa3_bwd" for bsym in extrace.bound_symbols)
-    """
+    bw_extrace = thunder.last_backward_traces(cfn)[-1]
+    assert any(bsym.sym.name == "fa3_bwd" for bsym in bw_extrace.bound_symbols)
 
 
 # verify that checker is correctly returning False on invalid fa3 use cases
