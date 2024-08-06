@@ -88,14 +88,16 @@ class FSDPTraceTransform(Transform):
         synchronized_parameters = []
         param_name_to_comp_trc_proxy = {}  # Track param_name to it's corresponding proxy in computation_trc.
         # todo: deal with epilogue output
+        n_params_with_metadata_edit = 0
         for pro_out_p, comp_inp_p in zip(prologue_trace.output[0], computation_trace.args):
             bsym = prologue_producers[pro_out_p]
             if bsym.sym == prims.unpack_parameter:
                 param_thunder_module, param_name = bsym.args
                 assert param_thunder_module is thunder_module_proxy
                 if param_name in self.sharded_params:
+                    n_params_with_metadata_edit += 1
                     param_name_to_comp_trc_proxy[param_name] = comp_inp_p
-                    old_shape, new_shape, new_torch_device = self.sharded_params[param_name]
+                    old_shape, new_shape, new_torch_device, orig_p = self.sharded_params[param_name]
                     thunder_device = devices.to_device(new_torch_device)
                     thunder_device_str = thunder_device.device_str()
 
@@ -116,6 +118,14 @@ class FSDPTraceTransform(Transform):
                             # TODO have a more principled way to update this?
                             a0, _, _, *a2pp = c.args
                             c.args = (a0, tuple(new_shape), thunder_device_str, *a2pp)
+                    # `orig_p` is not None means the input module is initialized with `torch.device("meta")`,
+                    # meaning we should better remove the materialized to free up the unexpected memory.
+                    if orig_p is not None:
+                        orig_p.untyped_storage().resize_(0)
+        utils.check(
+            n_params_with_metadata_edit == len(self.sharded_params),
+            lambda: f"{n_params_with_metadata_edit} params' metadata updated but {len(self.sharded_params) = }",
+        )
 
         new_scope = computation_trace.pop_scope()
 

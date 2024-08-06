@@ -499,7 +499,9 @@ def fsdp_transform_module(
         # This is done before sharding in case the materialization logic depends on the tensor shape.
         # The tradeoff is that all of a module's direct parameters need to fit in device.
         # Each module only initializes its own parameters and not those of its children (recurse=False)
-        if any(t.is_meta for t in chain(module_copy.parameters(recurse=False), module_copy.buffers(recurse=False))):
+        if is_meta_initialized := any(
+            t.is_meta for t in chain(module_copy.parameters(recurse=False), module_copy.buffers(recurse=False))
+        ):
             # TODO: we could also support calling a "param_init_fn" argument like PyTorch
             _materialize(module_copy, device)
             for n, p in module_copy.named_parameters(recurse=False, prefix=module_name):
@@ -551,7 +553,12 @@ def fsdp_transform_module(
                 thunder_model._overrides_parameters[pn], global_rank, world_size, pn, allow_padding_for_fsdp=True
             )
             new_shape = thunder_model._overrides_parameters[pn].shape
-            sharded_params[pn] = (old_shape, new_shape, thunder_model._overrides_parameters[pn].device)
+            sharded_params[pn] = (
+                old_shape,
+                new_shape,
+                thunder_model._overrides_parameters[pn].device,
+                p if is_meta_initialized else None,
+            )
 
             # Track the original param and it's corresponding copied shard and metadata.
             shared_params[p] = {
@@ -619,6 +626,12 @@ def fsdp(
         tdist.is_available(),
         lambda: "fsdp requires torch distributed to be available (but it's not)",
     )
+
+    if broadcast_from is not None:
+        utils.check(
+            not any(t.is_meta for t in chain(model.parameters(), model.buffers())),
+            lambda: f"To broadcast from rank-{broadcast_from}, parameters and buffers must be materialized",
+        )
 
     if isinstance(model, thunder.ThunderModule):
         return fsdp_transform_module(
