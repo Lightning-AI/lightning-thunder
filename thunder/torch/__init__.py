@@ -5376,21 +5376,26 @@ def register_default_torch_ops():
             register_default_torch_op(fn, m)
 
 
-def register_default_torch_op(torchfn: Callable, m):
+def register_default_torch_op(torchfn: Callable, torch_module):
     fn_meta = meta_adaptor(torchfn)
     _fn = langctx(Languages.TORCH)(fn_meta)
     sym = Symbol(
         name=torchfn.__name__,
         meta=_fn,
-        id=f"{m.__name__}.{torchfn.__name__}",
+        id=f"{torch_module.__name__}.{torchfn.__name__}",
     )
     _torch_to_thunder_function_map[torchfn] = sym
     from thunder.executors.torchex import _always_executable, ex
 
-    op = ex.register_operator(torchfn.__name__, module=m, meta=fn_meta)
+    op = ex.register_operator(torchfn.__name__, module=torch_module, meta=fn_meta)
     ex.register_implementation(sym, op, checker=_always_executable)
 
     from thunder.core.transforms import augmented_forward_impls, backward_impls
+
+    # We need to invoke `register_method` on methods
+    # so that `x.method` is registered to the TensorProxy.
+    if torch_module is torch.Tensor:
+        register_method(torchfn.__name__, torchfn)
 
     augmented_forward_impls[sym.id] = augmented_forward_adaptor(op)
 
