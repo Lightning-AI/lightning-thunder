@@ -57,9 +57,9 @@ def test_jitting_through_opaque_torch_symbols_error():
         # randn_like is in ltorch
         return torch.randn_like(x)
 
-    def should_error(x):
+    def should_error(x, y):
         # rand_like is not yet in ltroch
-        return torch.rand_like(x)
+        return torch.allclose(x, y)
 
     x = torch.rand(1)
 
@@ -68,7 +68,7 @@ def test_jitting_through_opaque_torch_symbols_error():
 
     jshould_error = thunder.jit(should_error)
     with pytest.raises(NotImplementedError):
-        jshould_error(x)
+        jshould_error(x, x)
 
 
 def test_binary_add_tensors():

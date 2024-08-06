@@ -38,7 +38,7 @@ repos:
         #args: ["--write-changes"] # uncomment if you want to get automatic fixing
 
   - repo: https://github.com/psf/black
-    rev: 24.4.2
+    rev: 24.8.0
     hooks:
       - id: black
         name: Black code
