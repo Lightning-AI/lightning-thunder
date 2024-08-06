@@ -99,6 +99,7 @@ def check(cond: bool, s: Callable[[], str], exception_type: type[Exception] = Ru
 
     s is a callable producing a string to avoid string construction if the error check is passed.
     """
+    assert callable(s), "s must be a callable producing a string."
     if not cond:
         raise exception_type(s())
 
