@@ -383,10 +383,15 @@ class FusionDefinitionWrapper:
     cache_info: None | Callable = None
     cache_clear: None | Callable = None
     last_used: None | FusionDefinition = None
+    last_inputs: None | Sequence[tuple] = None
+    store_inputs: bool = False
 
     def __call__(self, *args):
         fd = self.get_fd(to_descriptors(args))
         self.last_used = fd
+
+        if self.store_inputs:
+            self.last_inputs = args
 
         # Set device if set in one of the "factory" methods like full, iota, or uniform
         kwargs = {"device": fd._selected_device} if hasattr(fd, "_selected_device") else {}
@@ -479,6 +484,9 @@ def create_fusion_definition_wrapper(
     #   objects is captured by names in the trace.
     # These properties are distinct from the inputs and outputs to the trace itself, which
     #   may contain duplicates and whose order must be preserved.
+    store_inputs: None | bool = get_compile_option(
+        "nv_store_fusion_inputs", "Allow nvFuser to store fusion inputs for repro."
+    )
 
     tensor_indices = []
     for idx, x in enumerate(sorted_unique_inputs):
@@ -493,7 +501,7 @@ def create_fusion_definition_wrapper(
         # A closure over local trace and region
         return create_fd(bsyms, input_descriptors, sorted_unique_inputs, sorted_unique_outputs)
 
-    fdw = FusionDefinitionWrapper(get_fd, name, get_fd.cache_info, get_fd.cache_clear)
+    fdw = FusionDefinitionWrapper(get_fd, name, get_fd.cache_info, get_fd.cache_clear, store_inputs=store_inputs)
     return fdw
 
 
