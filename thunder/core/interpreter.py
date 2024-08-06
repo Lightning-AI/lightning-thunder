@@ -1644,7 +1644,14 @@ def wrap_attribute(plain_result, obj, name):
     pr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[obj.provenance, name.provenance])
     result = wrap(plain_result, provenance=pr)
 
-    obj.attribute_wrappers[name.value] = result
+    # we want to avoid reference cycles (note that Python also does this)
+    # see https://github.com/Lightning-AI/lightning-thunder/issues/886 for
+    # discussion
+    if not (
+        isinstance(plain_result, (MethodType, BuiltinMethodType, MethodWrapperType))
+        and plain_result.__self__ is obj.value
+    ):
+        obj.attribute_wrappers[name.value] = result
 
     check_self(obj, result)
 
@@ -1655,9 +1662,13 @@ def _setattr_lookaside(obj: Any, name: str, value: Any):
     uobj = unwrap(obj)
     uname = unwrap(name)
     uvalue = unwrap(value)
-    compilectx: InterpreterCompileCtx = get_interpretercompilectx()
+    typ = type(uobj)
 
-    res = _interpret_call(lambda o, n, v: o.__setattr__(n, v), obj, name, value)
+    compilectx: InterpreterCompileCtx = get_interpretercompilectx()
+    if compilectx._with_provenance_tracking:
+        typ = wrap_const(typ)
+
+    res = _interpret_call(lambda typ, o, n, v: typ.__setattr__(o, n, v), typ, obj, name, value)
     if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
 
@@ -6639,7 +6650,7 @@ def _setup_frame_and_run_python_function(
         locals_dict[code.co_varnames[idx]] = unconsumed_kwargs
     elif unconsumed_kwargs:
 
-        return do_raise(TypeError(f"{fn}() got unexpected keyword arguments: {',',join(unconsumed_kwargs)}"))
+        return do_raise(TypeError(f"{fn}() got unexpected keyword arguments: {','.join(unconsumed_kwargs)}"))
 
     # And that's it! We have all local vars in locals_dict.
 

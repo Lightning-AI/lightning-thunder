@@ -728,6 +728,17 @@ class _OrderedSet(Generic[T, T1], Iterable[T]):
     def add(self, x: T | T1):
         self.d[self.canonicalize(x)] = None
 
+    def discard(self, x: T | T1):
+        c = self.canonicalize(x)
+        if c in self.d:
+            del self.d[c]
+
+    def issubset(self, other):
+        return all((e in other) for e in self)
+
+    def union(self, *others: "Sequence[_OrderedSet]") -> Self:
+        return self.__class__(itertools.chain(self, *others))
+
     def update(self, x: Iterable[T | T1]) -> None:
         for i in x:
             self.d.setdefault(self.canonicalize(i), None)

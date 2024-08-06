@@ -577,7 +577,11 @@ _register_implementation(
 )
 _register_implementation(prims.cat, cat, checker=_always_executable)
 _register_implementation(prims.flip, flip, checker=_always_executable)
-_register_implementation(prims.reshape, reshape, checker=_always_executable)
+# NOTE - `ltorch.reshape` short circuits when new shape is same as original shape and returns the input proxy as output.
+#        `prims.reshape` doesn't do that and returns a new proxy. So we add `torch_prims_reshape_impl` which is consistent
+#        with `prims.reshape` semantics otherwise this can lead incorrectness.
+torch_prims_reshape_impl = ex.register_operator("torch_prims_reshape_impl", meta=prims.reshape.meta, fn=torch.reshape)
+_register_implementation(prims.reshape, torch_prims_reshape_impl, checker=_always_executable)
 slice_prim_impl = ex.register_operator("torch_slice_prim_impl", meta=prims.slice_prim.meta, fn=_slice_prim_impl)
 _register_implementation(prims.slice_prim, slice_prim_impl, checker=_always_executable)
 _register_implementation(prims.squeeze, checker=_always_executable, execution_transform=_squeeze_transform)
@@ -2104,6 +2108,8 @@ _register_implementation(prims.item, item, checker=_always_executable)
 
 
 has_einops = importlib.util.find_spec("einops") is not None
+if has_einops:
+    has_einops = importlib.util.find_spec("einops._backends") is not None
 if has_einops:
     import einops
     from einops._backends import TorchBackend

@@ -6,6 +6,7 @@ from itertools import product
 import io
 import sys
 import dis
+import weakref
 from collections.abc import Callable
 
 import pytest
@@ -3296,3 +3297,54 @@ def test_metaclass(jit):
 
     fn()
     jit(fn)()
+
+
+def test_incorrect_args():
+    def fn(x):
+        return x
+
+    jfn = thunder.jit(fn)
+    with pytest.raises(TypeError, match="got unexpected keyword arguments: incorrect_arg"):
+        jfn(3, incorrect_arg=3)
+
+
+def test_class_setattr():
+    class A:
+        FOO = False
+
+        @classmethod
+        def set_something(cls):
+            cls.FOO = True
+
+    def foo():
+        A.set_something()
+
+    jfoo = thunder.jit(foo)
+    jfoo()
+    assert A.FOO
+
+
+def test_freeing_of_tensors():
+    # this guards against ref cycles preventing reeing of tensors
+    # see https://github.com/Lightning-AI/lightning-thunder/issues/886
+
+    l = []
+
+    def bar(x):
+        return x + 1
+
+    jbar = thunder.jit(bar)
+
+    def foo(i):
+        def on_finalize():
+            l.append(f"free {i}")
+
+        c = torch.randn(4, 4)
+        weakref.finalize(c, on_finalize)
+        return jbar(c)
+
+    for i in range(3):
+        l.append(f"run {i}")
+        foo(i)
+
+    assert l == ["run 0", "free 0", "run 1", "free 1", "run 2", "free 2"]

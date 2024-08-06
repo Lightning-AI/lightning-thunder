@@ -921,13 +921,9 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
 
     custom_autograd_function_cls = unwrap(obj)
     custom_forward = custom_autograd_function_cls.forward
-    args_, kwargs_ = tree_map(unwrap, (args, kwargs))
     ctx = torch.autograd.function.FunctionCtx()
-
-    pr = ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[wrap_const(custom_forward).provenance])
-    wrapped_ctx = wrap(ctx, provenance=pr)
-    args_, kwargs_ = tree_map(lambda a: wrap(a, provenance=pr), (args_, kwargs_))
-    return _interpret_call(custom_forward, wrapped_ctx, *args_, **kwargs_)
+    wrapped_ctx = wrap_const(ctx)
+    return _interpret_call(custom_forward, wrapped_ctx, *args, **kwargs)
 
 
 @register_general_jit_lookaside(torch.finfo)
@@ -1056,19 +1052,22 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
 
     ctx: GeneralJitCtx = get_general_jit_ctx()
 
-    if (executor_lookaside := ctx._executor_lookasides.get(fn, None)) is not None:
-        lookaside = executor_lookaside
-    elif isinstance(fn, Symbol) or fn in _clang_fn_set:
-        # Performs symbol lookasides
-        # NOTE Symbols "lookaside" to themselves; this just prevents their internals from being jitted
-        # NOTE clang operations are not symbols, but we still prevent their internals from being jitted
-        recursively_proxy(*args, **kwargs)
-        lookaside = interpreter_needs_wrap(record_source_loc_in_symbol_header(fn))
-    elif (general_jit_lookaside := _general_jit_lookaside_map.get(fn, None)) is not None:
-        lookaside = general_jit_lookaside
-    else:
-        # Falls through to the interpreter's default lookaside
-        lookaside = default_lookaside(fn, *args, **kwargs)
+    if thunder.core.utils.is_hashable(fn):  # see issue #889
+        if (executor_lookaside := ctx._executor_lookasides.get(fn, None)) is not None:
+            lookaside = executor_lookaside
+        elif isinstance(fn, Symbol) or fn in _clang_fn_set:
+            # Performs symbol lookasides
+            # NOTE Symbols "lookaside" to themselves; this just prevents their internals from being jitted
+            # NOTE clang operations are not symbols, but we still prevent their internals from being jitted
+            recursively_proxy(*args, **kwargs)
+            lookaside = interpreter_needs_wrap(record_source_loc_in_symbol_header(fn))
+        elif (general_jit_lookaside := _general_jit_lookaside_map.get(fn, None)) is not None:
+            lookaside = general_jit_lookaside
+        else:
+            # Falls through to the interpreter's default lookaside
+            lookaside = default_lookaside(fn, *args, **kwargs)
+    else:  # non-hashable
+        lookaside = None
 
     if lookaside is None:
 
@@ -1594,7 +1593,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
     with tracectx(prologue_trace):
         for n, l in (("args", len(args)), ("kwargs", len(kwargs))):
             output = Proxy(name=n)
-            bsym = prims.unpack_trivial.bind(output, output=output)
+            bsym = prims.unpack_trivial.bind(output, output=output, name=n)
             prologue_trace.bound_symbols.append(bsym)
             bsym = prims.check_len.bind(output, l, output=None)
             prologue_trace.bound_symbols.append(bsym)

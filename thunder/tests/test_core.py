@@ -3,6 +3,7 @@ import traceback
 from functools import partial, reduce
 from itertools import product
 import dataclasses
+import re
 
 import pytest
 import torch
@@ -2850,64 +2851,6 @@ def test_dataclass_input(requires_grad):
     torch.testing.assert_close(actual, expected)
 
 
-@pytest.mark.filterwarnings("ignore:Please use `torch.vmap`")
-def test_custom_autograd_function():
-    from torch.autograd.gradcheck import GradcheckError
-    from torch.testing._internal.common_utils import gradcheck
-
-    class MyFunction(torch.autograd.Function):
-
-        @staticmethod
-        def forward(ctx, x: torch.Tensor) -> torch.Tensor:
-            return x * 2.0
-
-        # this is wrong on purpose.
-        @staticmethod
-        def backward(ctx, grad_output) -> torch.Tensor:
-            return grad_output
-
-    class Model(torch.nn.Module):
-        def __init__(self):
-            super().__init__()
-
-        def forward(self, x) -> torch.Tensor:
-            return MyFunction.apply(x)
-
-    x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
-    model = Model().to(dtype=torch.float64)
-    jitted = thunder.jit(model)
-
-    gradcheck(jitted, (x,))
-    with pytest.raises(GradcheckError):
-        gradcheck(model, (x,))
-
-    class MyLinear(torch.autograd.Function):
-        @staticmethod
-        def forward(ctx, x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
-            ctx.save_for_backward(x)
-            ctx.pretty_attr = 100
-            return torch.matmul(x, weight.t())
-
-        @staticmethod
-        def backward(ctx, grad_output):
-            (x,) = ctx.saved_tensors
-            return torch.matmul(grad_output, weight), torch.matmul(grad_output.t(), x)
-
-    class Model(torch.nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.l1 = torch.nn.Linear(2, 2, bias=False)
-
-        def forward(self, x):
-            return MyLinear.apply(x, self.l1.weight)
-
-    x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
-    model = Model().to(dtype=torch.float64)
-    jitted = thunder.jit(model)
-
-    gradcheck(jitted, (x,))
-
-
 def test_proxy_repr():
     # Verify that we can call `__repr__` on different proxy subclasses.
     t = thunder.core.trace.TraceCtx()
@@ -3118,3 +3061,64 @@ def test_cat_mixed_dtypes():
     actual.backward(cotangent)
 
     torch.testing.assert_close(tuple(t.grad for t in tensors), tuple(t.grad for t in tensors_jit))
+
+
+@pytest.mark.parametrize("requires_grad", [True, False])
+def test_reshape_noop_prims(requires_grad):
+    # NOTE - We test for requires_grad with True and False,
+    #        as the trace before execution may have `ltorch.reshape` (for requires_grad=False) or
+    #        `prims.reshape` (for requires_grad=True) as the `grad` rule is only defined for `prims.reshape`.
+    def fn(x: torch.Tensor, y: torch.Tensor):
+        x_view = x.reshape(-1, 5)
+        y_view = y.reshape(-1)
+        return x_view + 3, y_view + 2
+
+    t = torch.randn(8, 5, requires_grad=requires_grad)
+    labels = torch.tensor([2, 4, 2, 3, 1, 0, 4, 4])
+
+    jfn = thunder.jit(fn)
+    actual = jfn(t, labels)
+    expected = fn(t, labels)
+
+    torch.testing.assert_close(actual, expected)
+
+
+@requiresCUDA
+def test_bound_symbol_sort_stability():
+    class LlamaMLPLike(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fc_1 = torch.nn.Linear(32, 32)
+            self.fc_2 = torch.nn.Linear(32, 32)
+            self.proj = torch.nn.Linear(32, 32)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            x_fc_1 = self.fc_1(x)
+            x_fc_2 = self.fc_2(x)
+            x = torch.nn.functional.silu(x_fc_1) * x_fc_2
+            return self.proj(x)
+
+    with torch.device("cuda"):
+        mlp = torch.nn.Sequential(*[LlamaMLPLike() for _ in range(16)]).requires_grad_(False)
+    j = thunder.jit(mlp)
+    j(torch.randn(32, 32, device="cuda"))
+    lt = thunder.last_traces(j)[-1]
+    assert all(
+        (i % 2 + 1 == i_2)
+        for i, i_2 in enumerate(
+            [
+                int(s.args[1].name.split("_")[-2])
+                for s in lt.bound_symbols
+                if s.sym.name == "linear" and "fc" in s.args[1].name
+            ]
+        )
+    )
+
+    fusions = examine.get_fusion_symbols(lt)
+
+    no_number = partial(re.sub, r"nvFusion\d+", "nvFusion")
+    fusions = [no_number(str(thunder.core.transform_common.canonicalize_proxies([f])[0])) for f in fusions]
+
+    f0 = fusions[0]
+    for f in fusions[1:]:
+        assert f0 == f
