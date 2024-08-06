@@ -103,7 +103,8 @@ class Graph:
                 for copy_node in copy_nodes:
                     node.parents.add(copy_node)
                     copy_node.children.add(node)
-            elif bsym.sym.id is PrimIDs.COPY_:
+            # torch executor replaces prims.copy_ with torchex.copy_
+            elif bsym.sym.id in (PrimIDs.COPY_, "copy_"):
                 copy_nodes.append(node)
 
         for bsym_id, node in enumerate(bsym_id_to_node_map):
