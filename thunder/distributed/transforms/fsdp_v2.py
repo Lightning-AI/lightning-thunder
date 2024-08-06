@@ -20,7 +20,10 @@ from thunder.core.transform_common import Transform
 
 if TYPE_CHECKING:
     from typing import Any
+    from torch import Tensor
+    from torch.nn import Parameter
     from torch.distributed import ProcessGroup
+    from thunder.core.module import ThunderModule
     from thunder.core.symbol import BoundSymbol
     from thunder.core.trace import VariableInterface
 
@@ -62,6 +65,7 @@ class FSDPTraceTransform(Transform):
     sharded_params: dict[str, Any]
     process_group: ProcessGroup
     shared_params_name: dict[str, str]
+    keep_state_dict_on_device: bool
 
     def transform_traces_pre_prologue(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
         from thunder.distributed import prims as dist_prims
@@ -166,3 +170,41 @@ class FSDPTraceTransform(Transform):
                 provenance="fsdp pass with unpadding",
             )
         return prologue_trace, new_computation_trace, epilogue_trace
+
+    def transform_state_dict(
+        self,
+        model: ThunderModule,
+        state_dict: dict[str, Parameter | Tensor],
+    ) -> dict[str, Parameter | Tensor]:
+        import torch
+        from torch.distributed.distributed_c10d import _coalescing_manager
+        from thunder.executors.torchex import _all_gather_prim_impl
+
+        name_to_padding: dict[str, int] = {}
+
+        if self.keep_state_dict_on_device:
+            with _coalescing_manager(self.process_group, async_ops=True) as cm:
+                for name, p in state_dict.items():
+                    if not torch.is_tensor(p):
+                        continue
+                    state_dict[name] = _all_gather_prim_impl(p, group=self.process_group)
+                    old_shape, new_shape, _ = self.sharded_params[name]
+                    if (padding := new_shape[0] * self.process_group.size() - old_shape[0]) > 0:
+                        name_to_padding[name] = padding
+            cm.wait()
+
+        for name, p in state_dict.items():
+            if not torch.is_tensor(p):
+                continue
+            p_to_gather = model.get_parameter(name)
+            if not torch.is_tensor(p_to_gather):
+                p_to_gather = model.get_buffer(name)
+            state_dict[name] = _all_gather_prim_impl(p_to_gather, group=self.process_group, do_async=False).cpu()
+            old_shape, new_shape, _ = self.sharded_params[name]
+            if (padding := new_shape[0] * self.process_group.size() - old_shape[0]) > 0:
+                name_to_padding[name] = padding
+        tensor: torch.Tensor
+        for name, padding in name_to_padding.items():
+            tensor: torch.Tesor = state_dict[name]
+            state_dict[name] = tensor.narrow(0, 0, tensor.size(0) - padding)
+        return state_dict
