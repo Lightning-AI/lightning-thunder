@@ -1429,7 +1429,6 @@ def grad(
     cfn,
 ) -> Callable:
     def grad(func):
-
         @wraps(func)
         def grad_func(*args, **kwargs):
             _, grads = value_and_grad(func)(*args, **kwargs)
@@ -1446,14 +1445,8 @@ def grad(
             computation_trace: Trace,
             epilogue_trace: Trace | None,
             *,
-            backward=False,
             executors_list: Sequence[Any],
         ) -> Trace:
-            if not backward:
-                return super().transform_traces_pre_prologue(
-                    prologue_trace, computation_trace, epilogue_trace, executors_list=executors_list
-                )
-
             # Using trc.python_callable() makes it impossible to retrace the
             # function because the python_callable uses python_ctx which replaces
             # symbol occurrences with its symbol._call_ctx function
