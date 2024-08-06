@@ -8,9 +8,11 @@ from thunder.core.trace import TraceCtx
 from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import BoundSymbol
 from thunder.torch import _torch_to_thunder_function_map
+from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.core.langctxs import resolve_language, LanguageContext, Languages
 import torch
 from warnings import warn
+from itertools import chain
 
 
 # TODO Maybe make collect_into a set?
@@ -73,9 +75,13 @@ def examine(fn: Callable, *args, show_call_stack: bool | int = False, **kwargs):
 
     # Step 1 Identifies supported (and unsupported) operations
     supported_ops = set()
+    all_auto_registered_ops = list(chain(*torch_auto_registered_ops.values()))
+    auto_registered_ops = set()
     for name, op in collected_ops.keys():
         if op in _torch_to_thunder_function_map:
             supported_ops.add((name, op))
+            if op in all_auto_registered_ops:
+                auto_registered_ops.add(name)
         elif name.startswith("_TensorBase.") or name.startswith("TensorBase.") or name.startswith("Tensor."):
             # Identifies properties and methods
             # NOTE The approach of testing if the name starts with "_TensorBase." or "Tensor." seems a little hacky
@@ -111,6 +117,10 @@ def examine(fn: Callable, *args, show_call_stack: bool | int = False, **kwargs):
         print(
             f"Found {len(collected_ops)} distinct operations, of which {len(supported_ops)} ({len(supported_ops) / len(collected_ops) * 100:.1f}%) are supported"
         )
+        if len(auto_registered_ops) != 0:
+            print(f"Note {len(auto_registered_ops)} operators are automatically registered: ")
+            for n in auto_registered_ops:
+                print(n)
 
     # Terminates early if there are unsupported operations or there was a preprocessing exception
     if len(unsupported_ops) > 0:
