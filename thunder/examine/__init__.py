@@ -226,3 +226,45 @@ def get_fusion_symbols(trace: TraceCtx, warn_if_fusions_unavailable: bool = True
             fusions.append(bsym)
 
     return fusions
+
+
+def get_nvfuser_fusion_definition(trace: TraceCtx, name: str, warn_if_fusion_unavailable: bool = True):
+    """
+    Return the fusion definition for the symbol with the provided name if found.
+    """
+    if warn_if_fusion_unavailable and warn_fusions():
+        return None
+
+    for bsym in trace.bound_symbols:
+        if bsym.sym.is_fusion and bsym.sym.name == name:
+            _, fusion_ctx, _ = bsym.gather_ctxs()
+            if (fusion_definition := fusion_ctx.get(name, None)) is not None:
+                return fusion_definition
+
+    return None
+
+
+def get_nvfuser_repro(trace: TraceCtx, fusion_name: str, /) -> str:
+    """
+    Helper function to get the repro of a specific nvFusion segment.
+    """
+    fusion = get_nvfuser_fusion_definition(trace, fusion_name)
+    if fusion is None:
+        raise RuntimeError(f"Unable to find fusion '{fusion_name}' in trace.")
+
+    if fusion.last_used is None:
+        raise RuntimeError(
+            "Fusion definition needs to be executed to record the inputs. You must execute the fusion first before you can query the repro."
+        )
+
+    if fusion.last_inputs is None:
+        raise RuntimeError(
+            "Fusion definition inputs need to be recorded. Use compile option 'nv_store_fusion_inputs=True' while tracing."
+        )
+
+    fd = fusion.last_used
+    get_repro = getattr(fd, "getReproString", None)
+    if get_repro is None:
+        raise RuntimeError("The installed version of nvFuser does not support repro generation unless on crash.")
+
+    return get_repro(fusion.last_inputs)
