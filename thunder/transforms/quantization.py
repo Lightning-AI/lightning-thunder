@@ -105,11 +105,7 @@ class BitsAndBytesLinearQuant4bit(Transform):
 
         return state_dict
 
-    def transform_traces_pre_prologue(
-        self, prologue_trace, computation_trace, epilogue_trace, *, backward=False, **kwargs
-    ):
-        if backward:
-            return super().transform_traces_pre_prologue(prologue_trace, computation_trace, epilogue_trace)
+    def transform_traces_pre_prologue(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
         tm = self.thunder_module
         from thunder.core.trace import tracectx
 
