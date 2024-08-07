@@ -570,7 +570,6 @@ def jit(
             for transform in transforms:
                 thunder.core.utils.check_type(transform, Transform)
 
-                # new_prologue_trc, new_computation_trc, new_epilogue_trc = prologue_trc, computation_trc, epilogue_trc
                 new_prologue_trc, new_computation_trc, new_epilogue_trc = transform.transform_traces_pre_prologue(
                     prologue_trc, computation_trc, epilogue_trc, executors_list=cd.executors_list
                 )
@@ -737,7 +736,6 @@ def jit(
         cs.last_trace_host_execution_start = time.perf_counter_ns()
 
         if cache_entry.vanilla_tensor_args:
-
             if alias_tensor_indices_str := _alias_tensor_of_args_kwargs(*inps):
                 alias_tensor_indices = {int(i) for i in alias_tensor_indices_str.split(",")}
                 vanilla_tensor_args = cache_entry.vanilla_tensor_args
