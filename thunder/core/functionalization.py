@@ -537,7 +537,7 @@ def apply_functionalization_to_canonicalized_trace(
     # obviated by the functionalization above.
     consumer_map_of_functionalized_bsyms = consumers(new_bsyms)
     producer_map_of_functionalized_bsyms = producers(new_bsyms)
-    bsym_to_copy_bsyms: dict[BoundSymbol, list[BoundSymbol]] = defaultdict(list)
+    bsym_to_copy_bsyms: dict[BoundSymbol, list[list[BoundSymbol]]] = defaultdict(list)
     for var_copy_from, copy_bsyms in copy_from_to_copy_bsyms.items():
         copy_from = unvariableify(var_copy_from)
         key_bsym: BoundSymbol = producer_map_of_functionalized_bsyms[copy_from]
@@ -554,20 +554,26 @@ def apply_functionalization_to_canonicalized_trace(
                     lambda: f"Unexpected `prims.copy_` found in {[bsym.sym for bsym in consumer_bsyms]} for {var_copy_from}",
                 )
                 key_bsym = consumer_bsyms[-1]
-        bsym_to_copy_bsyms[key_bsym].extend(copy_bsyms)
+        bsym_to_copy_bsyms[key_bsym].append(copy_bsyms)
 
     functionalized_computation_trace = from_trace(canonicalized_trace)
     functionalized_computation_trace.set_provenance(TraceProvenance("Functionalize in-place ops"))
 
     swap_map_for_return: dict[VariableInterface, TensorProxy] = {}
     functionalized_bsyms: list[BoundSymbol] = []
+    copy_outputs: list[TensorProxy] = []
     for bsym in new_bsyms[:-1]:
         functionalized_bsyms.append(bsym)
         if bsym in bsym_to_copy_bsyms:
-            functionalized_bsyms.extend(bsym_to_copy_bsyms[bsym])
-            copy_bsym = functionalized_bsyms[-1]
-            swap_map_for_return[variableify(copy_bsym.flat_proxy_args[0])] = copy_bsym.flat_proxy_args[1]
-    functionalized_bsyms.append(new_bsyms[-1].from_bsym_swap_proxies(swap_map_for_return))
+            for copy_bsyms in bsym_to_copy_bsyms[bsym]:
+                functionalized_bsyms.extend(copy_bsyms)
+                copy_bsym = functionalized_bsyms[-1]
+                swap_map_for_return[variableify(copy_bsym.flat_proxy_args[0])] = copy_bsym.flat_proxy_args[1]
+                copy_outputs.append(copy_bsym.flat_proxy_outs[0])
+
+    return_bsym = new_bsyms[-1].from_bsym_swap_proxies(swap_map_for_return)
+    return_bsym = return_bsym.from_bsym(kwargs={"hidden_dependencies": copy_outputs})
+    functionalized_bsyms.append(return_bsym)
 
     functionalized_computation_trace.bound_symbols = functionalized_bsyms
     return functionalized_computation_trace
@@ -701,7 +707,6 @@ def functionalize_inplace_ops(
 
         def computation(x):
           # x: "cpu f32[2, 2]"
-
           a = ltorch.view(x, -1)  # a: "cpu f32[4]"
             # a = ltorch.reshape(x, (-1,))  # a: "cpu f32[4]"
 
