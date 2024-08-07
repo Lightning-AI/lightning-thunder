@@ -722,8 +722,8 @@ class nvFuserExecutor(FusionExecutor):
 
         return_bsym = cse_trace.bound_symbols[-1]
         assert return_bsym.sym.id == prims.PrimIDs.RETURN
-        trace_output = tree_map(map_redundant, return_bsym.args)
-        cse_trace.bound_symbols[-1] = prims.python_return.bind(*trace_output, output=())
+        return_args, return_kwargs = tree_map(map_redundant, (return_bsym.args, return_bsym.kwargs))
+        cse_trace.bound_symbols[-1] = prims.python_return.bind(*return_args, **return_kwargs, output=())
 
         end_time_ns = time.perf_counter_ns()
         elapsed_time_ns = end_time_ns - start_time_ns

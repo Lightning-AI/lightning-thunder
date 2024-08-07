@@ -871,7 +871,7 @@ def transform_to_torch_types(trace: TraceCtx):
 
     last = trace.bound_symbols[-1]
     assert last.sym.id == prims.PrimIDs.RETURN
-    new_args = tree_map(map_to_torch, last.args)
-    new_bsym = prims.python_return.bind(*new_args, output=())
+    new_args, new_kwargs = tree_map(map_to_torch, (last.args, last.kwargs))
+    new_bsym = prims.python_return.bind(*new_args, **new_kwargs, output=())
     trace.bound_symbols[-1] = new_bsym
     return trace
