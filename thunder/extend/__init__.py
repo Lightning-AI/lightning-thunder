@@ -360,6 +360,7 @@ def get_all_executors() -> tuple[Executor, ...]:
         nvfuserex,
         pythonex,
         sdpaex,
+        fa3ex,
         torch_compile,
         torchex,
         transformer_engineex,
