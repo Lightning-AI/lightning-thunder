@@ -39,7 +39,16 @@ def test_torch_ops_trace(device, requires_grad, op_info):
         return
     if device == "cpu" and not torch._C.has_lapack and skipCPUIfNoLapack in op_info.decorators:
         return
-    funcs = [_name2func[op_info.name], _name2func.get(f"Tensor.{op_info.name}", None)]
+
+    def get_method(op_info):
+        # Check if we have registered this method.
+        if _name2func.get(f"Tensor.{op_info.name}", None):
+            # Call the method as `x.method(*args, **kwargs)`
+            # We have a different path for `torch.Tensor.method` and `x.method`.
+            return lambda x, *args, **kwargs: getattr(x, f"{op_info.name}")(*args, **kwargs)
+        return None
+
+    funcs = [_name2func[op_info.name], get_method(op_info)]
     for func in funcs:
         if func is None:
             continue

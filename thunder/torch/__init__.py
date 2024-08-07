@@ -27,7 +27,7 @@ from thunder.core.dtypes import to_torch_dtype, to_dtype, _thunder_to_torch_dtyp
 import thunder.core.prims as prims
 import thunder.core.utils as utils
 import thunder.distributed.prims as dist_prims
-from thunder.core.langctxs import langctx, Languages
+from thunder.core.langctxs import langctx, Languages, get_langctx
 from thunder.core.proxies import (
     FloatProxy,
     IntegerProxy,
@@ -5376,21 +5376,26 @@ def register_default_torch_ops():
             register_default_torch_op(fn, m)
 
 
-def register_default_torch_op(torchfn: Callable, m):
+def register_default_torch_op(torchfn: Callable, torch_module):
     fn_meta = meta_adaptor(torchfn)
     _fn = langctx(Languages.TORCH)(fn_meta)
     sym = Symbol(
         name=torchfn.__name__,
         meta=_fn,
-        id=f"{m.__name__}.{torchfn.__name__}",
+        id=f"{torch_module.__name__}.{torchfn.__name__}",
     )
     _torch_to_thunder_function_map[torchfn] = sym
     from thunder.executors.torchex import _always_executable, ex
 
-    op = ex.register_operator(torchfn.__name__, module=m, meta=fn_meta)
+    op = ex.register_operator(torchfn.__name__, module=torch_module, meta=fn_meta)
     ex.register_implementation(sym, op, checker=_always_executable)
 
     from thunder.core.transforms import augmented_forward_impls, backward_impls
+
+    # We need to invoke `register_method` on methods
+    # so that `x.method` is registered to the TensorProxy.
+    if torch_module is torch.Tensor:
+        register_method(torchfn.__name__, torchfn)
 
     augmented_forward_impls[sym.id] = augmented_forward_adaptor(op)
 
@@ -5536,14 +5541,21 @@ def meta_adaptor(torch_func: Callable):
     return meta_func
 
 
+@langctx(Languages.TORCH)
 def check_overlap_ops():
     from thunder.torch import default_torch_ops
 
+    torch_lang_ctx = get_langctx()
     for m, fns in default_torch_ops.torch_auto_registered_ops.items():
         for fn in fns:
             if fn in _torch_to_thunder_function_map:
                 raise RuntimeError(
                     f"{m.__name__}.{fn.__name__} is already registered in _torch_to_thunder_function_map, please remove it from default_torch_ops.py"
+                )
+            # NOTE - Some tensor methods like `float`, `size` are just registered as methods without `torchsymbol` so they don't show up in `_torch_to_thunder_function_map`.
+            if m is torch.Tensor and torch_lang_ctx.has_method(fn.__name__):
+                raise RuntimeError(
+                    f"{m.__name__}.{fn.__name__} is already registered as method for TensorProxy under torch_lang_ctx, please remove it from default_torch_ops.py"
                 )
 
 
