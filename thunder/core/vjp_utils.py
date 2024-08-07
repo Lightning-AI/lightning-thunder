@@ -131,7 +131,7 @@ def make_aug_forward_and_backward(bsym: BoundSymbol) -> tuple[Callable, Callable
     return_bsym = augmented_forward_trace.bound_symbols[-1]
     assert return_bsym.sym.id == PrimIDs.RETURN
     augmented_forward_trace.bound_symbols[-1] = prims.python_return.bind(
-        (joint_trace.output, saved_for_backward), output=()
+        (joint_trace.output, saved_for_backward), **return_bsym.kwargs, output=()
     )
     # Remove put/get grad and backward symbols from augmented forward trace
     augmented_forward_trace = dce(augmented_forward_trace)
@@ -155,8 +155,9 @@ def make_aug_forward_and_backward(bsym: BoundSymbol) -> tuple[Callable, Callable
         backward_bsyms = [bsym for bsym in backward_bsyms if bsym not in same_bsyms]
         additional_saved = [o for bsym in same_bsyms for o in bsym.flat_proxy_outs]
         saved_for_backward += list({variableify(arg): arg for arg in additional_saved}.values())
+        return_bsym = augmented_forward_trace.bound_symbols[-1]
         augmented_forward_trace.bound_symbols[-1] = prims.python_return.bind(
-            (joint_trace.output, saved_for_backward), output=()
+            (joint_trace.output, saved_for_backward), **return_bsym.kwargs, output=()
         )
 
     backward_params = [
