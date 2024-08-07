@@ -1633,16 +1633,18 @@ python_del = make_prim(
 )
 
 
-def _return_meta(*args) -> Any:
+def _return_meta(*args, hidden_dependencies=None) -> Any:
     return args
 
 
 def return_printer(
     bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
 ):
+    hidden_arg_printables = kwarg_printables.pop("hidden_dependencies", None)
+
     utils.check(
         len(kwarg_printables) == 0,
-        lambda: f"Expected no kwargs for del but got {kwarg_printables}",
+        lambda: f"Expected no kwargs for return other than hidden_dependencies but got {kwarg_printables}",
         exception_type=AssertionError,
     )
 
@@ -1651,12 +1653,17 @@ def return_printer(
         if (arg_printables is None or len(arg_printables) == 0)
         else ", ".join(codeutils.prettyprint(x) for x in arg_printables)
     )
+    hidden_arg_str = (
+        ""
+        if (hidden_arg_printables is None or len(hidden_arg_printables) == 0)
+        else " # , " + ", ".join(codeutils.prettyprint(x) for x in hidden_arg_printables)
+    )
 
-    return f"return {arg_str}"
+    return f"return {arg_str}{hidden_arg_str}"
 
 
 # NOTE This wrapper for del is necessary because python_impl=del is invalid syntax (del is not a regular function)
-def _return_impl(*args) -> Any:
+def _return_impl(*args, hidden_dependencies=None) -> Any:
     return args
 
 
