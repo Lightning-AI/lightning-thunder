@@ -176,11 +176,24 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     # trace.
     original_bw_saved_tensors_for_backward = bw_trace.args[0][0]
     new_fw_saved_tensors_for_backward = fw_extrace.output[1][0]
-    swap_map = {
+
+    # saved meta data (this could also contain proxies)
+    original_bw_saved_meta_for_backward = bw_trace.args[0][1]
+    new_fw_saved_meta_for_backward = fw_extrace.output[1][1]
+
+    saved_tensors_swap_map = {
         variableify(x): y
         for x, y in zip(original_bw_saved_tensors_for_backward, new_fw_saved_tensors_for_backward)
         if variableify(x) != variableify(y)
     }
+
+    saved_metadata_swap_map = {
+        variableify(x): y
+        for x, y in zip(original_bw_saved_meta_for_backward, new_fw_saved_meta_for_backward)
+        if variableify(x) != variableify(y)
+    }
+    swap_map = saved_tensors_swap_map | saved_metadata_swap_map
+
     new_bsyms = replace_redundant_inputs(swap_map, bw_trace.bound_symbols)
     # replace_redundant_inputs doesn't replace the output of
     # UNPACK_SEQUENCE so we do it manually. Here we have certain
@@ -189,7 +202,15 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     assert bw_trace.bound_symbols[0].kwargs["name"] == "saved_for_backward"
     assert bw_trace.bound_symbols[4].sym.id == PrimIDs.UNPACK_SEQUENCE
     assert bw_trace.bound_symbols[4].args[0].name == "C0"
+    assert bw_trace.bound_symbols[5].sym.id == PrimIDs.UNPACK_SEQUENCE
+    assert bw_trace.bound_symbols[5].args[0].name == "C1"
     new_bsyms[4] = new_bsyms[4].from_bsym_swap_proxies(
+        swap_map,
+        skip_inputs=False,
+        skip_output=False,
+        skip_subsymbols=False,
+    )
+    new_bsyms[5] = new_bsyms[5].from_bsym_swap_proxies(
         swap_map,
         skip_inputs=False,
         skip_output=False,

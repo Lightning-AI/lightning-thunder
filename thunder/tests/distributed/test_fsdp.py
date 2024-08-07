@@ -866,6 +866,65 @@ def _test_fsdp_transformer_engine(input_data):
         return comparison_exceptions
 
 
+def _test_fsdp_transformer_engine_bucketing(input_data):
+    # Test Description: Test is to that TE works with bucketing.
+    from thunder.tests.llama2_model import Transformer, ModelArgs
+
+    init_method, world_size, rank, executor, device, _unused_dtype, kwargs = input_data
+    thunder_fsdp_strategy, bucketing = kwargs["thunder_fsdp_strategy_and_bucketing"]
+    devicetype = devices.device_from_string(device).devicetype
+
+    # Setting LOCAL_RANK is necessary for thunder.distributed.fsdp
+    with unittest.mock.patch.dict(os.environ, {"LOCAL_RANK": str(rank)}):
+        init_per_process_distributed(init_method, devicetype, world_size, rank)
+        torch.cuda.set_device(rank)
+
+        # data
+        batch_size = 2
+        max_seq_len = 32
+        vocab_size = 32
+
+        model_args = dict(
+            dim=32,
+            n_layers=2,
+            n_heads=2,
+            n_kv_heads=2,
+            vocab_size=vocab_size,
+            multiple_of=32,
+            max_seq_len=max_seq_len,
+            dropout=0.0,
+        )
+        gptconf = ModelArgs(**model_args)
+        model = Transformer(gptconf)
+        model.to(device)
+        x = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
+        y = torch.randint(0, vocab_size, (batch_size, max_seq_len), dtype=torch.int64, device=device)
+        jit_model = thunder.jit(
+            thunder.distributed.fsdp(model, sharding_strategy=thunder_fsdp_strategy, bucketing_strategy=bucketing),
+            executors=(transformer_engine_ex,) + thunder.get_default_executors(),
+        )
+
+        sanity_exceptions = []
+        try:
+            for _ in range(5):
+                out = jit_model(x, y).sum()
+                out.backward()
+
+            # Verifies te_linear was called
+            forward_trace = thunder.last_traces(jit_model)
+            backward_trace = thunder.last_backward_traces(jit_model)
+            assert any(bsym.sym.name.startswith("te_linear") for bsym in forward_trace[-1].bound_symbols)
+            assert any(
+                bsym.sym.name.startswith("te_functional_linear_backward") for bsym in backward_trace[-1].bound_symbols
+            )
+        except Exception as e:
+            sanity_exceptions.append(e)
+
+        if rank == 0:
+            return sanity_exceptions
+        return None
+
+
 # NOTE CPU is skipped because of
 # RuntimeError: no support for _allgather_base in Gloo process group
 @instantiate(
@@ -914,6 +973,33 @@ def test_native_fsdp(executor, devices, dtype, fsdp_bucketing_strategy):
 )
 @distributed_wrapper("test_fsdp_transformer_engine", _test_fsdp_transformer_engine)
 def test_fsdp_transformer_engine(executor, devices, dtype, thunder_fsdp_strategy_and_intermediate_sharding):
+    pass
+
+
+@instantiate(
+    dtypes=(thunder.float32,),
+    num_devices=2,
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(TorchExecutor,),
+    decorators=(
+        # NOTE: ddp_wrapper
+        pytest.mark.parametrize(
+            "thunder_fsdp_strategy_and_bucketing",
+            (
+                (FSDPType.ZERO3, FSDPBucketingStrategy.LAYER),
+                (FSDPType.ZERO3, FSDPBucketingStrategy.BLOCK),
+            ),
+        ),
+        pytest.mark.skipif(not TE_AVAILABLE, reason="TransformerEngine is not installed."),
+        pytest.mark.skipif(not is_fp8_supported, reason=fp8_support_reason),
+        # See NOTE: Setting `NVTE_TORCH_COMPILE`
+        # NOTE: We don't pass `clear=True` to `unittest.mock.patch.dict` as that may clear paths
+        # from environment leading to picking up of incorrect dependencies in the spawned process.
+        unittest.mock.patch.dict(os.environ, {"NVTE_TORCH_COMPILE": "0"}),
+    ),
+)
+@distributed_wrapper("test_fsdp_transformer_engine_bucketing", _test_fsdp_transformer_engine_bucketing)
+def test_fsdp_transformer_engine_bucketing(executor, devices, dtype, thunder_fsdp_strategy_and_bucketing):
     pass
 
 
