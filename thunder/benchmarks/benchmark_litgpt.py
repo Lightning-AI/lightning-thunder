@@ -307,6 +307,9 @@ class Benchmark_litGPT:
                     sharding_strategy=sharding_strategy,
                     bucketing_strategy=bucketing_strategy,
                 )
+            else:
+                if self.distributed_mode == "fsdp2":
+                    raise ValueError(f"`fsdp2` is not available for `thunder.jit`.")
         else:
             if self.distributed_mode == "ddp":
                 model = torch.nn.parallel.DistributedDataParallel(
@@ -314,6 +317,35 @@ class Benchmark_litGPT:
                     device_ids=[local_rank],
                     bucket_cap_mb=self.ddp_bucket_size,
                 )
+            elif self.distributed_mode == "fsdp2":
+                # reference: https://github.com/pytorch/torchtitan/blob/6e7a183/docs/fsdp.md
+                from torch.distributed._composable.fsdp import fully_shard, MixedPrecisionPolicy
+
+                torch.cuda.set_device(local_rank)
+                mesh = None
+                if self.sharding_size is not None:
+                    mesh = init_device_mesh("cuda", (int(world_size / self.sharding_size), self.sharding_size))
+                else:
+                    mesh = init_device_mesh("cuda", (world_size,))
+
+                for transformer_block in model.modules():
+                    if isinstance(transformer_block, Block):
+                        fully_shard(
+                            transformer_block,
+                            mesh=mesh,
+                            reshard_after_forward=self.shard_mode == "zero3",
+                            mp_policy=MixedPrecisionPolicy(),
+                        )
+
+                fully_shard(
+                    model,
+                    mesh=mesh,
+                    reshard_after_forward=self.shard_mode == "zero3",
+                    mp_policy=MixedPrecisionPolicy(),
+                )
+                model.to_empty(device=self.device)
+                model.apply(model._init_weights)
+
             elif self.distributed_mode == "fsdp":
                 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStrategy
                 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy, size_based_auto_wrap_policy
