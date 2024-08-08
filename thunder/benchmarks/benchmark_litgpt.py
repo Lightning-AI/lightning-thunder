@@ -4,6 +4,7 @@ import time
 import warnings
 from typing import Any
 from contextlib import nullcontext
+from dataclasses import dataclass, field
 
 import torch
 import functools
@@ -24,6 +25,7 @@ from thunder.dynamo import ThunderCompiler
 from thunder.tests.litgpt_model import Config, GPT, Block
 from lightning.fabric.utilities.throughput import measure_flops
 from lightning.fabric.utilities import Throughput
+from thunder.core.module import ThunderModule
 
 
 try:
@@ -77,28 +79,52 @@ def configure_optimizers(model, weight_decay, learning_rate, betas, device_type)
     return optimizer
 
 
-# NOTE(crcrpar): Calling this method seems to bloat the memory consumption to some extent.
-# e.g. ref: https://github.com/Lightning-AI/lightning-thunder/issues/439
-def _run_fwd_bwd_one_microbatch(
-    model: torch.nn.Module,
-    input_ids: torch.Tensor,
-    targets: torch.Tensor,
-    gradient_accumulation_steps: int,
-    device: torch.device,
-    use_te_fp8_autocast: bool,
-) -> torch.Tensor:
-    input_ids = input_ids.to(device)
-    targets = targets.to(device)
-    if use_te_fp8_autocast:
-        with te.fp8_autocast(enabled=True):
-            logits = model(input_ids)
+def get_thunder_executors(compile_str: str) -> list[thunder.Executor]:
+    executors = [thunder.nvfuser_executor, thunder.pytorch_executor]
+    if "inductor_cat" in compile_str:
+        from thunder.executors.torch_compile import torch_compile_cat_ex as torch_compile_ex
+
+        executors.insert(0, torch_compile_ex)
+    elif "inductor" in compile_str:
+        from thunder.executors.torch_compile import torch_compile_ex
+
+        executors.insert(0, torch_compile_ex)
+    if "cudnn" in compile_str:
+        from thunder.executors.cudnnex import cudnn_ex
+
+        executors.insert(0, cudnn_ex)
     else:
-        logits = model(input_ids)
-    logits = logits.reshape(-1, logits.size(-1))
-    targets = targets.reshape(-1)
-    loss = torch.nn.functional.cross_entropy(logits, targets, ignore_index=-1) / gradient_accumulation_steps
-    loss.backward()
-    return loss
+        from thunder.executors.sdpaex import sdpa_ex
+
+        executors.insert(0, sdpa_ex)
+
+    if "transformerengine" in compile_str:
+        from thunder.executors.transformer_engineex import transformer_engine_ex
+
+        executors.insert(0, transformer_engine_ex)
+    return executors
+
+
+# ref: https://github.com/Lightning-AI/lightning-thunder/issues/915
+@dataclass
+class ThunderAsTorchCompileBackend:
+    """A class that compiles a GraphModule to a ThunderModule. This class is meant to be used
+    as a backend for the `torch.compile` function.
+
+    Keyword arguments:
+        jit_options -- a dictionary of options to pass to `thunder.jit`.
+    """
+
+    compile_str: str
+    jit_options: dict[Any, Any]
+    gm_to_thunder: dict[torch.fx.GraphModule, ThunderModule] = field(init=False, default_factory=dict)
+
+    def __call__(self, gm: torch.fx.GraphModule, sample_args: list[torch.Tensor]):
+        gm.real_recompile()
+        executors_list = get_thunder_executors(self.compile_str)
+        jitted_gm = thunder.jit(gm, executors=executors_list, **self.jit_options)
+        self.gm_to_thunder[gm] = jitted_gm
+        return jitted_gm
 
 
 class Benchmark_litGPT:
@@ -170,7 +196,7 @@ class Benchmark_litGPT:
                 world_size % self.sharding_size == 0
             ), f"World size {world_size} is not divisible by the sharding size {self.sharding_size}"
 
-        if self.bucketing_mode != "none" and self.distributed_mode != "fsdp":
+        if self.bucketing_mode != "none" and self.distributed_mode not in ("fsdp", "fsdp2"):
             print(
                 f"[WARNING] --bucketing_mode {self.bucketing_mode} will be ignored as \
              it is only used for FSDP style parallelism but running {self.distributed_mode}"
@@ -181,7 +207,7 @@ class Benchmark_litGPT:
         ), "'size' bucketing mode is not supported for Thunder. Please use 'none' or 'block'."
 
         if self.fsdp_bucket_params is not None:
-            if self.distributed_mode != "fsdp":
+            if self.distributed_mode not in ("fsdp", "fsdp2"):
                 print(
                     f"[WARNING] Found --fsdp_bucket_params but Distributed mode is {self.distributed_mode}. Will be ignored"
                 )
@@ -271,7 +297,7 @@ class Benchmark_litGPT:
             }
 
     def init_model(self):
-        init_device = torch.device("meta") if self.distributed_mode == "fsdp" else self.device
+        init_device = torch.device("meta") if self.distributed_mode in ("fsdp", "fsdp2") else self.device
         with init_device:
             model = GPT(self.config)
         model.to(dtype=torch.bfloat16)
@@ -397,12 +423,18 @@ class Benchmark_litGPT:
         apply_activation_checkpointing(self.model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=check_fn)
 
     def setup_compile(self, model):
-        if self.compile == "inductor":
+        if self.compile.startswith("inductor"):
             print("Resetting cache size for torch.compile")
             import torch._dynamo.config as dynamo_config
 
             dynamo_config.cache_size_limit = 64
-            model = torch.compile(model)
+            backend = "inductor"
+            if "thunder" in self.compile:
+                backend = ThunderAsTorchCompileBackend(
+                    compile_str=self.compile[len("inductor") :],
+                    jit_options={},
+                )
+            model = torch.compile(model, backend=backend)
         elif "thunder" in self.compile:
             executors = [thunder.nvfuser_executor, thunder.pytorch_executor]
             if "inductor_cat" in self.compile:
@@ -581,7 +613,7 @@ class Benchmark_litGPT:
             self.perf_metrics["Micro BS"] = self.micro_batch_size
             self.perf_metrics["Global BS"] = self.global_batch_size
             self.perf_metrics["GA"] = self.gradient_accumulation_steps
-            if self.distributed_mode in ["fsdp"]:
+            if self.distributed_mode in ["fsdp", "fsdp2"]:
                 self.perf_metrics["Distributed Mode"] = (
                     str(self.distributed_mode)
                     + "_"
@@ -634,7 +666,7 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
             f"Number of Layers: {benchmark.config.n_layer}\nNumber of parameters: {sum(p.numel() for p in benchmark.model.parameters() if p.requires_grad) / 1e9:.02f}B"
         )
         print(f"Distributed Mode: {benchmark.distributed_mode}")
-        if benchmark.distributed_mode == "fsdp":
+        if benchmark.distributed_mode in ("fsdp", "fsdp2"):
             print(f"Sharding Mode: {benchmark.shard_mode}\nBucketing: {benchmark.bucketing_mode}")
             if benchmark.sharding_size is not None:
                 print(
