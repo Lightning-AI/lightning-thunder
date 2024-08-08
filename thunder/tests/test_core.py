@@ -2782,6 +2782,20 @@ def test_grad_ctx():
     assert x.grad is not None
 
 
+def test_serialize_trace():
+    import dill as pickle
+
+    def fn(a, b):
+        return a + b
+
+    tm = thunder.jit(fn)
+    a, b = torch.randn(2, 5, device='cuda')
+    tm(a, b)
+    trace = thunder.last_traces(tm)[0]
+
+    assert str(pickle.loads(pickle.dumps(trace))) == str(trace)
+    
+
 @pytest.mark.parametrize("requires_grad", (True, False))
 def test_dataclass_output(requires_grad):
     # Test both `requires_grad={True, False}` as both have
