@@ -297,6 +297,7 @@ def make_prim(
     method_name: None | str = None,
     _bind_postprocess: None | Callable = None,
     _print_as_impl: bool = False,
+    python_name: str | None = None
 ):
     sym = Symbol(
         name=name,
@@ -308,6 +309,7 @@ def make_prim(
         python_impl=python_impl,
         _bind_postprocess=_bind_postprocess,
         _print_as_impl=_print_as_impl,
+        _python_name=python_name,
     )
 
     if method_name is not None:
@@ -486,6 +488,7 @@ check_tensor_shape_and_metadata = make_prim(
     "check_tensor_metadata",
     meta=_check_tensor_shape_and_metadata_meta,
     tags=(OpTags.DONT_DCE,),
+    python_name="check_tensor_shape_and_metadata",
 )
 
 
@@ -1630,6 +1633,7 @@ python_del = make_prim(
     meta=_del_meta,
     python_printer=del_printer,
     python_impl=_del_impl,
+    python_name='python_del',
 )
 
 
@@ -1667,6 +1671,7 @@ python_return = make_prim(
     python_printer=return_printer,
     python_impl=_return_impl,
     tags=(OpTags.DONT_DCE,),
+    python_name="python_return",
 )
 
 #
