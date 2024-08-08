@@ -6,6 +6,7 @@ import thunder
 from thunder.core.proxies import TensorProxy, AnyProxy
 from thunder.core.transforms import get_grad, put_grads
 from thunder.executors.utils import Context, set_saved_tensors
+from thunder.torch import TensorLike
 
 
 FUSED_NORMS_AVAILABLE = True
@@ -22,7 +23,7 @@ _apex_fused_rms_norm_ex = OperatorExecutor("apex_fused_rms_norm")
 register_executor(_apex_fused_rms_norm_ex)
 
 
-def meta_fn(input, weight, normalized_shape, eps, memory_efficient):
+def meta_fn(input: TensorLike, weight: TensorLike, normalized_shape: Sequence[int], eps: float, memory_efficient: bool):
     return TensorProxy(like=input)
 
 
@@ -30,7 +31,9 @@ def meta_fn(input, weight, normalized_shape, eps, memory_efficient):
 fused_rms_norm = _apex_fused_rms_norm_ex.register_operator("fused_rms_norm", meta=meta_fn)
 
 
-def meta_impl_fn(input, weight, normalized_shape, eps, memory_efficient):
+def meta_impl_fn(
+    input: TensorLike, weight: TensorLike, normalized_shape: Sequence[int], eps: float, memory_efficient: bool
+):
     output_or_input = TensorProxy(like=input)
     weight = TensorProxy(like=input, shape=normalized_shape)
     unnormalized_dims = len(input.shape) - len(normalized_shape)
@@ -38,7 +41,9 @@ def meta_impl_fn(input, weight, normalized_shape, eps, memory_efficient):
     return TensorProxy(like=input), (output_or_input, weight, invvar), AnyProxy(object())
 
 
-def fused_rms_norm_impl(input, weight, normalized_shape, eps, memory_efficient=False):
+def fused_rms_norm_impl(
+    input: TensorLike, weight: TensorLike, normalized_shape: Sequence[int], eps: float, memory_efficient: bool
+):
     ctx = Context()
     output = FusedRMSNormAffineMixedDtypesFunction.forward(ctx, input, weight, normalized_shape, eps, memory_efficient)
     return output, ctx.pop_saved_tensors(), ctx
@@ -49,13 +54,13 @@ fused_rms_norm_fwd = _apex_fused_rms_norm_ex.register_operator(
 )
 
 
-def fused_rms_norm_backward_meta(saved_tensors: Sequence[torch.Tensor], ctx: Context, g: torch.Tensor):
+def fused_rms_norm_backward_meta(saved_tensors: Sequence[torch.Tensor], ctx: Context, g: TensorLike):
     # saved_tensors[0] - input or output
     # saved_tensors[1] - weight
     return TensorProxy(like=saved_tensors[0]), TensorProxy(like=saved_tensors[1])
 
 
-def fused_rms_norm_backward_impl(saved_tensors: Sequence[torch.Tensor], ctx: Context, g: torch.Tensor):
+def fused_rms_norm_backward_impl(saved_tensors: Sequence[torch.Tensor], ctx: Context, g: TensorLike):
     with set_saved_tensors(ctx, saved_tensors):
         return FusedRMSNormAffineMixedDtypesFunction.backward(ctx, g)[:2]
 
@@ -65,7 +70,9 @@ fused_rms_norm_backward = _apex_fused_rms_norm_ex.register_operator(
 )
 
 
-def fused_rms_norm_grad_rule(input, weight, normalized_shape, eps, memory_efficient=False):
+def fused_rms_norm_grad_rule(
+    input: TensorLike, weight: TensorLike, normalized_shape: Sequence[int], eps: float, memory_efficient: bool
+):
     output, saved_tensors, saved_meta = fused_rms_norm_fwd(input, weight, normalized_shape, eps, memory_efficient)
     g = get_grad(output)
     grad_input, grad_weight = fused_rms_norm_backward(saved_tensors, saved_meta, g)
@@ -73,7 +80,9 @@ def fused_rms_norm_grad_rule(input, weight, normalized_shape, eps, memory_effici
     return output
 
 
-def execution_tfms(input, weight, normalized_shape, eps, memory_efficient):
+def execution_tfms(
+    input: TensorLike, weight: TensorLike, normalized_shape: Sequence[int], eps: float, memory_efficient: bool
+):
     output, _, _ = fused_rms_norm_fwd(input, weight, normalized_shape, eps, memory_efficient)
     return output
 
@@ -90,6 +99,7 @@ def register_apex_fused_rms_norm():
     @thunder.core.jit_ext.interpreter_needs_wrap
     def rms_forward_lookaside(ctx, input, weight, normalized_shape, eps, memory_efficient=False):
         # This is the symbol we created.
+        # NOTE - We don't use the `ctx` passed by PyTorch but instead use our Context to track saved_tensors and metadata.
         return fused_rms_norm(input, weight, normalized_shape, eps, memory_efficient)
 
     return None
