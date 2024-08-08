@@ -297,7 +297,7 @@ def make_prim(
     method_name: None | str = None,
     _bind_postprocess: None | Callable = None,
     _print_as_impl: bool = False,
-    python_name: str | None = None
+    python_name: str | None = None,
 ):
     sym = Symbol(
         name=name,
@@ -1634,7 +1634,7 @@ python_del = make_prim(
     meta=_del_meta,
     python_printer=del_printer,
     python_impl=_del_impl,
-    python_name='python_del',
+    python_name="python_del",
 )
 
 
