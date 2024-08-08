@@ -122,6 +122,7 @@ class Benchmark_litGPT:
         low_precision_mode: str = "none",
         max_iters: int = 45,
         warmup_iters: int = 25,
+        use_torchao_fp8: bool = False,
     ):
         seed = 1337
         torch.manual_seed(seed)
@@ -152,6 +153,7 @@ class Benchmark_litGPT:
         self.micro_batch_size = micro_batch_size
         self.low_precision_mode = low_precision_mode
         self.use_te_fp8_autocast = is_transformer_engine(low_precision_mode) and "thunder" not in compile
+        self.use_torchao_fp8 = use_torchao_fp8
 
         # Clarify benchmark assumptions
         if self.sharding_size is not None:
@@ -318,6 +320,37 @@ class Benchmark_litGPT:
             elif self.distributed_mode == "fsdp2":
                 # reference: https://github.com/pytorch/torchtitan/blob/6e7a183/docs/fsdp.md
                 from torch.distributed._composable.fsdp import fully_shard, MixedPrecisionPolicy
+
+                if self.use_torchao_fp8:
+                    from torchao.float8 import Float8LinearConfig, convert_to_float8_training, CastConfig, ScalingType
+                    from torchao.float8 import sync_float8_amax_and_scale_history
+                    from torchao.float8.float8_linear_utils import get_float8_layers
+                    from torchao.float8 import precompute_float8_dynamic_scale_for_fsdp
+
+                    scaling_type_input = ScalingType("dynamic")
+                    scaling_type_weight = ScalingType("dynamic")
+                    scaling_type_grad_output = ScalingType("dynamic")
+                    fp8_config = Float8LinearConfig(
+                        cast_config_input=CastConfig(scaling_type_input),
+                        cast_config_weight=CastConfig(scaling_type_weight),
+                        cast_config_grad_output=CastConfig(scaling_type_grad_output),
+                        enable_pre_and_post_forward=False,
+                        enable_fsdp_float8_all_gather=True,
+                        enable_amax_init=True,
+                    )
+                    convert_to_float8_training(
+                        model,
+                        config=fp8_config,
+                        module_filter_fn=lambda mod, fqn: fqn != "lm_head",
+                    )
+                    self._sync_fp8_amax_and_scale_history = None
+                    self.precompute_float8_dynamic_scale_for_fsdp = precompute_float8_dynamic_scale_for_fsdp
+                    print(f"# Converting {len(get_float8_layers(model))} linears to fp8 linear in-place")
+                    self.delayed_scaling = (
+                        scaling_type_input == "delayed"
+                        or scaling_type_weight == "delayed"
+                        or scaling_type_grad_output == "delayed"
+                    )
 
                 torch.cuda.set_device(local_rank)
                 mesh = None
@@ -526,9 +559,19 @@ class Benchmark_litGPT:
             )
             loss.backward()
 
+            if self.use_torchao_fp8:
+                from torchao.float8 import sync_float8_amax_and_scale_history
+
+                if self._sync_fp8_amax_and_scale_history is None:
+                    self._sync_fp8_amax_and_scale_history = sync_float8_amax_and_scale_history
+                    if self.compile != "eager":
+                        self._sync_fp8_amax_and_scale_history = torch.compile(sync_float8_amax_and_scale_history)
+                self._sync_fp8_amax_and_scale_history(self.model)
             # Simple Gradient Accumulation Implementation
             self.optimizer.step()
             self.optimizer.zero_grad(set_to_none=True)
+            if self.use_torchao_fp8 and self.delayed_scaling:
+                self.precompute_float8_dynamic_scale_for_fsdp(self.model)
 
             if self.nsys_enabled and i == self.profiler_stop and global_rank in [0, None]:
                 print("=====Stop NSYS Profiling======")
