@@ -1565,6 +1565,7 @@ python_print = make_prim(
     python_printer=python_print_printer,
     python_impl=print,
     tags=(OpTags.DONT_DCE,),
+    python_name="python_print",
 )
 
 
