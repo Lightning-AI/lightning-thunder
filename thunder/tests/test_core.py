@@ -2789,7 +2789,7 @@ def test_serialize_trace():
         return a + b
 
     tm = thunder.jit(fn)
-    a, b = torch.randn(2, 5, device=('cuda' if torch.cuda.is_available() else 'cpu'))
+    a, b = torch.randn(2, 5, device=("cuda" if torch.cuda.is_available() else "cpu"))
     tm(a, b)
     trace = thunder.last_traces(tm)[0]
 
