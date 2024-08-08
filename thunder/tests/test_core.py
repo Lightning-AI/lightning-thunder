@@ -2794,7 +2794,7 @@ def test_serialize_trace():
     trace = thunder.last_traces(tm)[0]
 
     assert str(pickle.loads(pickle.dumps(trace))) == str(trace)
-    
+
 
 @pytest.mark.parametrize("requires_grad", (True, False))
 def test_dataclass_output(requires_grad):
