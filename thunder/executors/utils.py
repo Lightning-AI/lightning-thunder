@@ -5,6 +5,7 @@ from typing import List, Set, Dict, Optional
 from collections.abc import Callable
 from itertools import chain
 from collections.abc import Sequence
+from contextlib import contextmanager
 
 import torch
 from looseversion import LooseVersion
@@ -84,3 +85,28 @@ class Region:
         s += "]"
 
         return s
+
+
+# Helper to use torch.autograd.Function as an implementation for a symbol.
+# See `transformer_engineex.py` for example.
+class Context:
+    def __init__(self):
+        self.saved_tensors = ()
+
+    def save_for_backward(self, *tensors):
+        self.saved_tensors = tensors
+
+    def pop_saved_tensors(self):
+        try:
+            return self.saved_tensors
+        finally:
+            del self.saved_tensors
+
+
+@contextmanager
+def set_saved_tensors(ctx, saved_tensors):
+    ctx.saved_tensors = saved_tensors
+    try:
+        yield
+    finally:
+        del ctx.saved_tensors
