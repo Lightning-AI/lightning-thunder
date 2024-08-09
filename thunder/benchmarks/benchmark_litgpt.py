@@ -19,6 +19,8 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 )
 
 import thunder
+from thunder.dynamo import ThunderCompiler
+
 from thunder.tests.litgpt_model import Config, GPT, Block
 from lightning.fabric.utilities.throughput import measure_flops
 from lightning.fabric.utilities import Throughput
@@ -281,7 +283,7 @@ class Benchmark_litGPT:
 
         # Distributed Setup
         # TODO: Change compiler call names
-        if "thunder" in self.compile:
+        if "thunder" in self.compile and not "dynamo" in self.compile:
             if self.distributed_mode == "ddp":
                 from thunder.distributed import ddp
 
@@ -393,7 +395,15 @@ class Benchmark_litGPT:
 
                 executors.insert(0, transformer_engine_ex)
 
-            model = thunder.jit(model, executors=executors)
+            if "dynamo" in self.compile:
+                backend = ThunderCompiler(executors=executors)
+                # Because Lightning Fabric is imported in this script it monkey patches the torch.compile function
+                # https://github.com/Lightning-AI/pytorch-lightning/blob/828fd998961f6a60f92c35254bb94d6e049ad069/src/lightning/fabric/wrappers.py#L421
+                # using __wrapped__ to access the original torch.compile function did not work
+                # so we are using the lower level torch._dynamo.optimize function
+                model = torch._dynamo.optimize(backend=backend)(model)
+            else:
+                model = thunder.jit(model, executors=executors)
 
         elif self.compile != "eager":
             raise ValueError(f"Invalid compile option: {self.compile}")
