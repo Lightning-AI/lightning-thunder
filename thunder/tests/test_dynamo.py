@@ -7,12 +7,11 @@ from thunder import last_traces
 import torch
 import pytest
 
+
 @instantiate(
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
-    decorators=(
-        pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),
-    ),
+    decorators=(pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),),
 )
 def test_basic(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
     backend = ThunderCompiler()

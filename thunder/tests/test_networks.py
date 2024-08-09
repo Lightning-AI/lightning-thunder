@@ -20,6 +20,7 @@ import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
 
 all_test_executors_and_dynamo = _all_test_executors() + [DynamoThunderExecutor]
 
+
 @instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
 def test_nanogpt_complete(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
