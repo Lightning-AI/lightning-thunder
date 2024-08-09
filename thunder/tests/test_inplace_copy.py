@@ -125,21 +125,21 @@ def test_inplace_copy_sanity_check(executor, device, dtype):
 
     def func1(x, y):
         z = x * y
-        thunder.core.prims.copy_(z, x)
-        thunder.core.prims.copy_(y, x)
-        return x
+        o1 = thunder.core.prims.copy_(z, x)
+        o2 = thunder.core.prims.copy_(y, x)
+        return x, o1, o2
 
     def func2(x, y):
         z = x * y
-        thunder.core.prims.copy_(z, x)
-        thunder.core.prims.copy_(x, y)
-        return y
+        o1 = thunder.core.prims.copy_(z, x)
+        o2 = thunder.core.prims.copy_(x, y)
+        return y, o1, o2
 
     def func3(x, y):
         z = x * y
-        o = thunder.core.prims.copy_(z, x)
-        thunder.core.prims.copy_(o, y)
-        return y
+        o1 = thunder.core.prims.copy_(z, x)
+        o2 = thunder.core.prims.copy_(o1, y)
+        return y, o1, o2
 
     for foo in (func0, func1, func2, func3):
         traced_foo = executor.make_callable(foo)
