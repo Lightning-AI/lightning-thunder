@@ -6611,6 +6611,13 @@ baddbmm_opinfo = OpInfo(
             pytest.mark.xfail,
             "test_phantom_grad_vs_torch_consistency",
         ),
+        # InterpreterError: Encountered exception Failed: Timeout >240.0s while tracing
+        # Appearing only in CI, passes locally.
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            executors=("torch", "nvfuser"),
+        ),
     ),
 )
 
