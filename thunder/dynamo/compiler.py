@@ -29,9 +29,15 @@ class ThunderCompiler:
         """
         from thunder import ThunderModule
 
-        # The dictionary is ordered so that the last compiled GraphModule is the
-        # most recent one.
-        self.gm_to_thunder: OrderedDict[torch.fx.GraphModule, ThunderModule] = OrderedDict()
+        # Thunder-compiled functions should be readily available for inspection
+        # and testing, so we will store them in a list. The order of the
+        # functions in the list will be the same as the order in which they were
+        # compiled. In addition, we will store a mapping from the ThunderModule
+        # to the GraphModule that was passed to ThunderCompiler. This will allow
+        # us to inspect the GraphModule that was compiled by Thunder.
+        self.thunder_fns: list[ThunderModule] = []
+        self.thunder_to_gm: OrderedDict[ThunderModule, torch.fx.GraphModule] = OrderedDict()
+
         self.thunder_options = thunder_options
 
         # There will be pieces of Dynamo IR that Thunder cannot compile, so we
@@ -51,5 +57,6 @@ class ThunderCompiler:
         # Here in the future we could add some logic to check if the GraphModule
         # is executable by Thunder, but for now we simply compile it and return
         jitted_gm = jit(gm, **self.thunder_options)
-        self.gm_to_thunder[gm] = jitted_gm
+        self.thunder_fns.append(jitted_gm)
+        self.thunder_to_gm[jitted_gm] = gm
         return jitted_gm

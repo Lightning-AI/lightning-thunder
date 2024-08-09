@@ -32,9 +32,9 @@ def test_basic(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None)
     assert out.grad_fn is not None
     assert out.grad_fn.name() == "ThunderFunctionBackward"
 
-    # We record the GraphModule that was compiled by ThunderCompiler
-    assert len(backend.gm_to_thunder) == 2
-    gm, thunder_func = list(backend.gm_to_thunder.items())[0]
+    # We record the GraphModules that was compiled by ThunderCompiler
+    assert len(backend.thunder_to_gm) == 2
+    thunder_func, gm = list(backend.thunder_to_gm.items())[0]
     assert isinstance(gm, torch.fx.GraphModule)
 
     # This shouldn't be empty
