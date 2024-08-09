@@ -150,6 +150,8 @@ class Benchmark_litGPT:
         low_precision_mode: str = "none",
         max_iters: int = 45,
         warmup_iters: int = 25,
+        dump_thunder_traces: bool = False,
+        dump_memory_snapshot: bool = False,
     ):
         seed = 1337
         torch.manual_seed(seed)
@@ -180,6 +182,9 @@ class Benchmark_litGPT:
         self.micro_batch_size = micro_batch_size
         self.low_precision_mode = low_precision_mode
         self.use_te_fp8_autocast = is_transformer_engine(low_precision_mode) and "thunder" not in compile
+        self.is_thunder_as_torchcompile_backend = False
+        self.dump_thunder_traces = dump_thunder_traces
+        self.dump_memory_snapshot = dump_memory_snapshot
 
         # Clarify benchmark assumptions
         if self.sharding_size is not None:
@@ -430,10 +435,12 @@ class Benchmark_litGPT:
             dynamo_config.cache_size_limit = 64
             backend = "inductor"
             if "thunder" in self.compile:
+                self.is_thunder_as_torchcompile_backend = True
                 backend = ThunderAsTorchCompileBackend(
                     compile_str=self.compile[len("inductor") :],
                     jit_options={},
                 )
+                self.thunder_as_torch_compile_backend = backend
             model = torch.compile(model, backend=backend)
         elif "thunder" in self.compile:
             executors = [thunder.nvfuser_executor, thunder.pytorch_executor]
@@ -530,6 +537,8 @@ class Benchmark_litGPT:
             iter_t0 = time.perf_counter()
             if i == self.warmup_iters:  # warmup
                 t0 = iter_t0
+                if self.dump_memory_snapshot and global_rank in (0, None):
+                    torch.cuda.memory._record_memory_history()
 
             if self.nsys_enabled and i == self.profiler_start and global_rank in [0, None]:
                 print("=====Start NSYS Profiling======")
@@ -683,6 +692,37 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
         print(f"Tokens/s: {benchmark.perf_metrics['tokens_per_sec']:.02f}")
         print(f"Tokens/s/GPU: {(benchmark.perf_metrics['tokens_per_sec']/world_size):.02f}")
         print(f"TFLOP/s: {benchmark.perf_metrics['model_flop_per_sec'] / 1e12:.02f}")
+
+        if benchmark.dump_memory_snapshot:
+            file_name = f"{benchmark.model_name}_{benchmark.compile}_{benchmark.distributed_mode}"
+            if benchmark.distributed_mode.startswith("fsdp"):
+                file_name = f"{file_name}_{benchmark.shard_mode}"
+                if benchmark.distributed_mode == "fsdp":
+                    file_name += f"_{benchmark.bucketing_mode}"
+            if benchmark.distributed_mode == "ddp":
+                file_name += f"_{benchmark.ddp_bucket_size}"
+            file_name = f"{file_name}.pickle"
+            print(f"Dump memory snapshot at {file_name}")
+            torch.cuda.memory._dump_snapshot(file_name)
+            torch.cuda.memory._record_memory_history(enabled=None)
+
+        if benchmark.dump_thunder_traces:
+            if benchmark.is_thunder_as_torchcompile_backend:
+                print(f"{len(benchmark.thunder_as_torch_compile_backend.gm_to_thunder)} ThunderModule's are created")
+                fwd_traces, bwd_traces = [], []
+                for jitted in benchmark.thunder_as_torch_compile_backend.gm_to_thunder.values():
+                    fwd_traces.append(thunder.last_traces(jitted))
+                    bwd_traces.append(thunder.last_backward_traces(jitted))
+            else:
+                fwd_traces = [thunder.last_traces(benchmark.model)]
+                bwd_traces = [thunder.last_backward_traces(benchmark.model)]
+
+            for i, f_traces in enumerate(fwd_traces, start=1):
+                print(f"##########\n#{i}-th ThunderModule\n##########")
+                print(f_traces[-1])
+            for i, b_traces in enumerate(bwd_traces, start=1):
+                print(f"##########\n#{i}-th ThunderModule\n##########")
+                print(b_traces[-1])
 
     if global_rank in [0, None]:
         if return_metrics_as_json:
