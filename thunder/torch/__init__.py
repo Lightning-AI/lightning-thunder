@@ -566,7 +566,7 @@ def full(
     shape: Sequence[int], fill_value: NumberLike, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
 ) -> TensorLike:
     device = to_device(maybe_get_default_device(device))
-    dtype = to_dtype(maybe_get_default_dtype(dtype))
+    dtype = to_dtype(dtype)
     return clang.full(shape, fill_value, device=device, dtype=dtype)
 
 
