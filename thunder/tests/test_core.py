@@ -2785,16 +2785,22 @@ def test_grad_ctx():
 def test_serialize_trace():
     import dill as pickle
 
-    def fn(a, b):
-        return a + b
+    def fn(a, b, l):
+        res = a + b
+        for t in l:
+            res = res + t
+        return res
 
     tm = thunder.jit(fn)
     a, b = torch.randn(2, 5, device=("cuda" if torch.cuda.is_available() else "cpu"))
-    tm(a, b)
+    tm(a, b, [a, b])
     trace = thunder.last_traces(tm)[0]
 
     assert str(pickle.loads(pickle.dumps(trace))) == str(trace)
 
+    prologue_trace = thunder.last_prologue_traces(tm)[0]
+
+    assert str(pickle.loads(pickle.dumps(prologue_trace))) == str(prologue_trace)
 
 @pytest.mark.parametrize("requires_grad", (True, False))
 def test_dataclass_output(requires_grad):

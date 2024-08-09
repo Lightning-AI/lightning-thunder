@@ -211,8 +211,8 @@ class Symbol:
             assert isinstance(sym, Symbol), f"lookup {module}.{name} gave object of type {type(sym)} instead of Symbol"
         else:
             import thunder
-            executors = thunder.get_executor(executor)
-            sym = executors.opmap.get(name)
+            ex = thunder.get_executor(executor)
+            sym = ex.opmap.get(name)
 
             if sym is None:
                 raise RuntimeError(f"Could not find symbol {name} in executor {executor}.")
@@ -230,7 +230,7 @@ class Symbol:
         if self.executor is None:
             assert getattr(sys.modules[self.module.__name__], self.name, None) is self
         else:
-            assert thunder.get_executor(executor).opmap.get(self.name) is self
+            assert thunder.get_executor(self.executor.name).opmap.get(self.name) is self
 
         return (
             Symbol.lookup_symbol,
