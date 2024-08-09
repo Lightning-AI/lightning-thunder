@@ -2447,14 +2447,8 @@ def _scaled_dot_product_flash_attention_check(
     *,
     scale: None | float = None,
 ) -> bool:
-
     # fd.ops.sdpfa_fwd and fd.ops.sdpfa_bwd are adding in versions 0.2.9 and 0.2.10 respectively.
     if nvfuser_version() < LooseVersion("0.2.10"):
-        return False
-
-    enable_sdpa: None | bool = get_compile_option("nv_enable_sdpa", "Enable nvFuser flash attention SDPA.")
-
-    if not enable_sdpa:
         return False
 
     # Flash attn does not support attn_mask currently.
