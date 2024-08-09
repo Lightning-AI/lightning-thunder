@@ -2802,6 +2802,7 @@ def test_serialize_trace():
 
     assert str(pickle.loads(pickle.dumps(prologue_trace))) == str(prologue_trace)
 
+
 @pytest.mark.parametrize("requires_grad", (True, False))
 def test_dataclass_output(requires_grad):
     # Test both `requires_grad={True, False}` as both have
