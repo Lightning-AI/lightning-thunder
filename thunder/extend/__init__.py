@@ -73,7 +73,7 @@ class Executor:
     @property
     def implmap(self) -> dict[Hashable, ImplInfo]:
         return self._implmap
-    
+
     @property
     def opmap(self) -> dict[str, Symbol]:
         return self._opmap

@@ -53,7 +53,7 @@ from thunder.executors.utils import (
     _input_dtype_check_fused_scaled_dot_product_attention,
     _input_shape_check_fused_scaled_dot_product_attention,
     _fused_sdp_choice,
-    SpdaBackend
+    SpdaBackend,
 )
 
 from thunder.executors.passes import update_fusion_call_ctx
@@ -749,7 +749,6 @@ class nvFuserExecutor(FusionExecutor):
         )
         return cse_trace
 
-    
     # TODO Restore fusion logic here -- this just replaces supported operations in isolation at the moment
     def fusion_pass(self, trace: TraceCtx) -> TraceCtx:
         start_time_ns: int = time.perf_counter_ns()
@@ -2226,13 +2225,12 @@ def matmul(
 register_supported(PrimIDs.MATMUL, matmul, _matmul_check)
 
 
-
-
 # Registering SDPA operators for nvFuser
 # SDPA requires an execution and grad transform since the forward and backward passes are called through different implementations.
 # For both execution and grad transform, a new operator is registered with nvfuserex (ex.register_operator) and then added to the translation map (register_supported).
 # The operators are tagged with OpTag.RANDOM_OP to prevent rematerialization in backward pass.
 # Finally, the complete rule is registered through ex.register_supported, with the execution and grad transform wrapping around these operators.
+
 
 # SDPA Forward
 def _scaled_dot_product_flash_attention_forward_meta(
@@ -2263,6 +2261,7 @@ def _scaled_dot_product_flash_attention_forward_meta(
         philox_offset := TensorProxy(shape=(), dtype=dtypes.int64, device=query.device, requires_grad=False),
     )
 
+
 def _scaled_dot_product_flash_attention_forward(
     query: TensorProxy,
     key: TensorProxy,
@@ -2275,7 +2274,7 @@ def _scaled_dot_product_flash_attention_forward(
     lc_to_nv_map: dict,
 ) -> Any:
 
-    inputs = [query, key, value,  dropout_p, is_causal, scale]
+    inputs = [query, key, value, dropout_p, is_causal, scale]
     nv_inputs = []
     for inp in inputs:
         nv_inp = getnv(inp, fd, lc_to_nv_map) if inp is not None else None
@@ -2283,14 +2282,16 @@ def _scaled_dot_product_flash_attention_forward(
 
     return fd.ops.sdpfa_fwd(*nv_inputs)
 
+
 nv_sdpfa_fwd = ex.register_operator(
-    'nv_sdpfa_fwd',
-    meta = _scaled_dot_product_flash_attention_forward_meta,
-    fn = _scaled_dot_product_flash_attention_forward,
-    tags = [prims.OpTags.RANDOM_OP]
+    "nv_sdpfa_fwd",
+    meta=_scaled_dot_product_flash_attention_forward_meta,
+    fn=_scaled_dot_product_flash_attention_forward,
+    tags=[prims.OpTags.RANDOM_OP],
 )
 
 register_supported(nv_sdpfa_fwd.id, _scaled_dot_product_flash_attention_forward, None)
+
 
 # SDPA Backward
 def _scaled_dot_product_flash_attention_backward_meta(
@@ -2349,10 +2350,11 @@ nv_sdpfa_bwd = ex.register_operator(
     "nv_sdpfa_bwd",
     meta=_scaled_dot_product_flash_attention_backward_meta,
     fn=_scaled_dot_product_flash_attention_backward,
-    tags = [prims.OpTags.RANDOM_OP]
+    tags=[prims.OpTags.RANDOM_OP],
 )
 
 register_supported(nv_sdpfa_bwd.id, _scaled_dot_product_flash_attention_backward, None)
+
 
 # Checker for SDPA
 def _scaled_dot_product_flash_attention_check(
@@ -2365,19 +2367,19 @@ def _scaled_dot_product_flash_attention_check(
     *,
     scale: None | float = None,
 ) -> bool:
-    
+
     # fd.ops.sdpfa_fwd and fd.ops.sdpfa_bwd are adding in versions 0.2.9 and 0.2.10 respectively.
     if nvfuser_version() < LooseVersion("0.2.10"):
         return False
 
     enable_sdpa: None | bool = get_compile_option("nv_enable_sdpa", "Enable nvFuser flash attention SDPA.")
-    
+
     if not enable_sdpa:
         return False
 
     if not are_supported_tensors(query, key, value):
         return False
-    
+
     # FP64 is not supported by flash attention
     supported_dtypes = (dtypes.float16, dtypes.bfloat16)
     _input_dtype_check_fused_scaled_dot_product_attention(query, key, value, attn_mask := None, supported_dtypes)
@@ -2386,6 +2388,7 @@ def _scaled_dot_product_flash_attention_check(
     # nvFuser only implements flash attention currently.
     backend = _fused_sdp_choice(query, key, value, None, dropout_p, is_causal, scale)
     return backend == SpdaBackend.FLASH_ATTENTION
+
 
 # SDPA execution_transform -- calls nv_sdpfa_fwd operator registered above
 def scaled_dot_product_flash_attention(
@@ -2397,11 +2400,12 @@ def scaled_dot_product_flash_attention(
     is_causal: bool = False,
     *,
     scale: None | float = None,
-):  
+):
     (attn_output, logsumexp, philox_seed, philox_offset) = nv_sdpfa_fwd(
-            query, key, value, dropout_p, is_causal, scale=scale
+        query, key, value, dropout_p, is_causal, scale=scale
     )
     return attn_output
+
 
 # SDPA grad_transform -- calls nv_sdpfa_fwd and nv_sdpfa_bwd registered above
 def scaled_dot_product_flash_attention_grad(
@@ -2421,7 +2425,9 @@ def scaled_dot_product_flash_attention_grad(
     grad_out = get_grad(attn_output)
     grad_query, grad_key, grad_val = nv_sdpfa_bwd(
         grad_out,
-        query, key, value,
+        query,
+        key,
+        value,
         attn_output,
         logsumexp,
         dropout_p,
@@ -2433,10 +2439,11 @@ def scaled_dot_product_flash_attention_grad(
     put_grads((query, key, value), (grad_query, grad_key, grad_val))
     return attn_output
 
+
 # Register the complete rule for SDPA in nvfuser executor
 ex.register_supported(
     ltorch.scaled_dot_product_attention,
-    checker = _scaled_dot_product_flash_attention_check,
-    execution_transform = scaled_dot_product_flash_attention,
-    grad_transform = scaled_dot_product_flash_attention_grad
+    checker=_scaled_dot_product_flash_attention_check,
+    execution_transform=scaled_dot_product_flash_attention,
+    grad_transform=scaled_dot_product_flash_attention_grad,
 )

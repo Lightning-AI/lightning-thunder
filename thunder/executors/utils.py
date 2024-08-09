@@ -158,6 +158,7 @@ def _input_shape_check_fused_scaled_dot_product_attention(
         lambda: "grad_forward_sdpa: Expected all inputs to have same number of attention heads or a broadcastable dimension.",
     )
 
+
 # TODO These checks should be converted to compile-time checks using a checker function
 # This helper function checks that the dtypes of input tensors are supported by fused sdpa implementation.
 def _input_dtype_check_fused_scaled_dot_product_attention(
@@ -180,6 +181,7 @@ def _input_dtype_check_fused_scaled_dot_product_attention(
         lambda: f"grad_forward_sdpa: Only {supported_dtypes} dtypes are supported, but value has {value.dtype}.",
     )
 
+
 # This helper function converts Thunder Proxy to PyTorch Meta Tensor
 def _convert_to_meta_tensor(a: None | TensorProxy) -> None | torch.Tensor:
     from thunder.torch import _thunder_to_torch_dtype_map
@@ -201,11 +203,13 @@ def _convert_to_fake_tensor(mode: FakeTensorMode, a: None | torch.Tensor) -> Non
         return None
     return FakeTensor(mode, a, device="cuda")
 
+
 class SpdaBackend(Enum):
     ERROR = -1
     MATH = 0
     FLASH_ATTENTION = 1
     MEMORY_EFFICIENT = 2
+
 
 # Convert input tensors represented as Thunder Proxy to PyTorch FakeTensor.
 # Determine which fused sdpa kernel.

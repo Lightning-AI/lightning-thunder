@@ -24,7 +24,7 @@ from thunder.executors.utils import (
     _input_dtype_check_fused_scaled_dot_product_attention,
     _input_shape_check_fused_scaled_dot_product_attention,
     _fused_sdp_choice,
-    SpdaBackend
+    SpdaBackend,
 )
 
 sdpa_ex: OperatorExecutor = OperatorExecutor("sdpa", version="0.1")
@@ -105,6 +105,7 @@ def _attention_mask_memory_efficient_helper(attn_mask: None | torch.Tensor, quer
         return padded_attn_mask[:, :, :, 0:key_seq_len]
     else:
         return expanded_attn_mask.contiguous()
+
 
 # This helper function maps to aten::_scaled_dot_product_efficient_attention function.
 def _grad_forward_scaled_dot_product_efficient_attention_meta(
@@ -518,6 +519,7 @@ def _scaled_dot_product_attention_grad(
         if attn_mask is not None:
             put_grad(attn_mask, grad_attn_mask)
     return primal
+
 
 def _scaled_dot_product_attention_checker(
     query: Proxy,
