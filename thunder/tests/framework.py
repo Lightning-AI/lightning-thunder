@@ -26,6 +26,7 @@ import thunder.executors.triton_utils as triton_utils
 import thunder.core.utils as utils
 
 from thunder.core.trace import TraceCtx, detached_trace
+from thunder.dynamo import ThunderCompiler
 
 import thunder
 
@@ -238,11 +239,7 @@ class DynamoThunderTestExecutor(TestExecutor):
     supported_dtypes = (datatypes.dtype,)
 
     def make_callable(self, fn, **kwargs):
-        def backend(gm: torch.fx.GraphModule, _: list[torch.Tensor | torch.SymInt]) -> Callable:
-            gm.real_recompile()
-            return thunder.jit(gm, **kwargs)
-
-        return torch.compile(backend=backend)(fn)
+        return torch.compile(backend=ThunderCompiler(**kwargs))(fn)
 
 
 # TODO Refactor these executors into the actual executor (sub)modules
