@@ -25,6 +25,7 @@ from thunder.extend import OperatorExecutor, register_executor
 from thunder.core.compile_data import get_compile_option, get_compile_data
 from thunder.core.langctxs import langctx, Languages
 from thunder.distributed import FSDPType
+from thunder.executors.utils import Context, set_saved_tensors
 
 
 __all__ = [
@@ -121,20 +122,6 @@ if not TE_AVAILABLE:
 # Reference to points where TE looks at `requires_grad`:
 # Ref: https://github.com/NVIDIA/TransformerEngine/blob/b957aa475bcbcf22405381d18bd7fefe4fb6b171/transformer_engine/pytorch/module/linear.py#L264
 # Ref: https://github.com/NVIDIA/TransformerEngine/blob/b957aa475bcbcf22405381d18bd7fefe4fb6b171/transformer_engine/pytorch/module/linear.py#L434
-
-
-class Context:
-    def __init__(self):
-        self.saved_tensors = ()
-
-    def save_for_backward(self, *tensors):
-        self.saved_tensors = tensors
-
-    def pop_saved_tensors(self):
-        try:
-            return self.saved_tensors
-        finally:
-            del self.saved_tensors
 
 
 # Eagerly apply map without
@@ -380,15 +367,6 @@ def make_te_linear_meta(is_grad_enabled: bool = False):
         return TensorProxy(like=a, shape=output_shape), None, None
 
     return _te_functional_linear_meta
-
-
-@contextmanager
-def set_saved_tensors(ctx, saved_tensors):
-    ctx.saved_tensors = saved_tensors
-    try:
-        yield
-    finally:
-        del ctx.saved_tensors
 
 
 #
