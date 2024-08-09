@@ -12,6 +12,20 @@ class ThunderCompiler:
 
         Keyword arguments:
             thunder_options: a dictionary of options to pass to `thunder.jit`.
+
+        Example:
+            >>> import torch
+            >>> from thunder.dynamo import ThunderCompiler
+            >>> backend = ThunderCompiler()
+            >>> x = torch.ones(2, requires_grad=True)
+            >>> @torch.compile(backend=backend)
+            ... def func(x):
+            ...     x = torch.sin(x)
+            ...     if x.sum() > 0:
+            ...         return x + 1
+            ...     else:
+            ...         return x - 1
+            >>> out = func(x)
         """
         from thunder import ThunderModule
 
