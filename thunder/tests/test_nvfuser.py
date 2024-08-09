@@ -1012,4 +1012,5 @@ def test_sdpa(executor, device, _):
     fwd_traces = thunder.last_traces(compiled_func)
     bwd_traces = thunder.last_backward_traces(compiled_func)
     fusions = examine.get_fusions(fwd_traces[-1])
-    breakpoint()
+    print (fwd_traces[-1])
+    print (bwd_traces[-1])
