@@ -7038,6 +7038,13 @@ convolution_opinfo = OpInfo(
             dtypes=(datatypes.complexfloating,),
             executors=("torch", "nvfuser"),
         ),
+        # InterpreterError: Encountered exception Failed: Timeout >240.0s while tracing
+        # Appearing only in CI, passes locally.
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            executors=("torch", "nvfuser"),
+        ),
     ),
 )
 nn_ops.append(convolution_opinfo)
