@@ -210,6 +210,7 @@ class Symbol:
                 raise RuntimeError(f"Could not find symbol {name} in module {module}.")
             assert isinstance(sym, Symbol), f"lookup {module}.{name} gave object of type {type(sym)} instead of Symbol"
         else:
+            import thunder
             executors = thunder.get_executor(executor)
             sym = executors.opmap.get(name)
 
@@ -222,6 +223,7 @@ class Symbol:
         return sym
 
     def __reduce__(self):  # for pickling
+        import thunder
         if self.module is None and self.executor is None:
             raise ValueError("Cannot serialize a symbol without a module and executor.")
 
