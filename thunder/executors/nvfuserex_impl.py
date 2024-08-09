@@ -41,9 +41,15 @@ from thunder.core.transform_common import dce, cse_single_bsym, replace_redundan
 from thunder.core.profile import add_markers
 from thunder.core.compile_data import get_compile_option
 
+from thunder.core.transforms import (
+    get_grad,
+    put_grads,
+)
+
 from thunder.executors.utils import Region
 from thunder.executors.passes import update_fusion_call_ctx
 from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor, add_default_executor
+from thunder.executors.nvfuserex import nvfuser_version
 
 # NOTE This impl file is here because nvFuser may not be available, so it's imported conditionally
 #   by nvfuserex.py when nvFuser is available.
@@ -524,6 +530,11 @@ class nvFuserExecutor(FusionExecutor):
         env_var_save_serde = os.getenv("ENABLE_NVFUSER_SERIALIZATION", None)
         save_serde: bool = env_var_save_serde in ("true", "1")
         self.write_cache_on_exit(save_serde)
+        self._opmap: dict[str, Symbol] = {}
+
+    @property
+    def opmap(self) -> dict[str, Symbol]:
+        return self._opmap
 
     def write_cache_on_exit(self, save_cache: bool = False):
         """
@@ -734,6 +745,60 @@ class nvFuserExecutor(FusionExecutor):
         )
         return cse_trace
 
+    from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
+    from types import ModuleType
+    def register_operator(
+        self,
+        name: str,
+        *,
+        like: None | Symbol = None,
+        meta: None | Callable = None,
+        tags: None | list[Any] = None,
+        module: None | type | ModuleType = None,
+        fn: None | Callable = None,
+        bind_postprocess: None | Callable = None,
+        replaces: None | Callable = None,
+        python_printer: Callable = default_python_printer,
+    ) -> Symbol:
+        ln = like is None
+        mn = meta is None
+        assert (
+            ln ^ mn
+        ), f"Expected one and only one of 'like' and 'meta' to be specified. {'Neither' if ln and mn else 'Both'} were specified."
+        assert (module is not None) + (
+            fn is not None
+        ) <= 2, f"Expected one and only one of 'module' or 'fn' to be specified. Module: {module}, Fn: {fn}"
+
+        # NOTE Directly specifying a meta function makes the operation a prim
+        is_prim = meta is not None
+        # Set tags to be the same as 'like' if 'tags' is not specified
+        tags = like.tags if (tags is None and like is not None and hasattr(like, "tags")) else tags
+        meta = meta if meta is not None else like
+        call_ctx: None | dict[str, Callable] = None if fn is None else {name: fn}
+
+        def _bind_postprocess(bsym: BoundSymbol) -> None:
+            bsym._call_ctx = call_ctx
+            if bind_postprocess is not None:
+                bind_postprocess(bsym)
+
+        sym = Symbol(
+            name=name,
+            id=name,
+            meta=meta,
+            is_prim=is_prim,
+            _module=module,
+            executor=self,
+            _bind_postprocess=_bind_postprocess,
+            python_printer=python_printer,
+            tags=tags,
+        )
+        self.opmap[name] = sym
+
+        if replaces is not None:
+            self._lookasides[replaces] = sym
+
+        return sym
+    
     # TODO Restore fusion logic here -- this just replaces supported operations in isolation at the moment
     def fusion_pass(self, trace: TraceCtx) -> TraceCtx:
         start_time_ns: int = time.perf_counter_ns()
@@ -2208,3 +2273,263 @@ def matmul(
 
 
 register_supported(PrimIDs.MATMUL, matmul, _matmul_check)
+
+from thunder.torch import TensorLike
+
+def _sdpa_fwd_check(
+    query: TensorProxy,
+    key: TensorProxy,
+    value: TensorProxy,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    *,
+    scale: None | float = None,
+):
+    return True
+
+from thunder.executors.sdpaex import _input_dtype_check_fused_scaled_dot_product_attention, _input_shape_check_fused_scaled_dot_product_attention
+def _scaled_dot_product_flash_attention_forward_meta(
+    query: TensorLike,
+    key: TensorLike,
+    value: TensorLike,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    *,
+    scale: None | float = None,
+) -> tuple[TensorProxy, TensorProxy, int, int]:
+    # Reference metadata:
+    # https://github.com/pytorch/pytorch/blob/main/torch/_meta_registrations.py
+    # * query (batch_size, num_heads, query_seq_len, E)
+    # * key (batch_size, num_heads, key_seq_len, E)
+    # * value (batch_size, num_heads, key_seq_len, Ev)
+    # * output (batch_size, num_heads, query_seq_len, Ev)
+
+    # FP64 is not supported by aten memory efficient implementation
+    supported_dtypes = (dtypes.float16, dtypes.bfloat16)
+    
+    _input_dtype_check_fused_scaled_dot_product_attention(query, key, value, attn_mask := None, supported_dtypes)
+    _input_shape_check_fused_scaled_dot_product_attention(query, key, value, attn_mask := None)
+
+    batch_size, num_heads, query_seq_len, E = query.shape
+    key_seq_len = key.shape[2]
+
+    utils.check(
+        E == key.shape[-1],
+        lambda: f"scaled dot product flash attention expects query head dim {E} to equal key head dim {key.shape[-1]}",
+    )
+
+    return (
+        output := TensorProxy(like=query, shape=(batch_size, num_heads, query_seq_len, E)),
+        log_sumexp := TensorProxy(
+            shape=(batch_size, num_heads, query_seq_len), dtype=dtypes.float32, device=query.device, requires_grad=False
+        ),
+        philox_seed := TensorProxy(shape=(), dtype=dtypes.int64, device=query.device, requires_grad=False),
+        philox_offset := TensorProxy(shape=(), dtype=dtypes.int64, device=query.device, requires_grad=False),
+    )
+
+def _scaled_dot_product_flash_attention_forward(
+    query: TensorProxy,
+    key: TensorProxy,
+    value: TensorProxy,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    *,
+    scale: None | float = None,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
+
+    nv_query = getnv(query, fd, lc_to_nv_map)
+    nv_key = getnv(key, fd, lc_to_nv_map)
+    nv_value = getnv(value, fd, lc_to_nv_map)
+    nv_dropout = getnv(dropout_p, fd, lc_to_nv_map)
+    nv_is_causal = getnv(is_causal, fd, lc_to_nv_map)
+    nv_scale = getnv(scale, fd, lc_to_nv_map) if scale is not None else None
+
+    primal, *remaining_args = fd.ops.sdpfa_fwd(nv_query, nv_key, nv_value, nv_dropout, nv_is_causal, nv_scale)
+    return primal, *remaining_args
+
+nv_sdpfa_fwd = ex.register_operator(
+    'nv_sdpfa_fwd',
+    meta = _scaled_dot_product_flash_attention_forward_meta,
+    fn = _scaled_dot_product_flash_attention_forward
+)
+
+register_supported(nv_sdpfa_fwd.id, _scaled_dot_product_flash_attention_forward, _sdpa_fwd_check)
+
+def _scaled_dot_product_flash_attention_backward_meta(
+    grad_out: TensorLike,
+    query: TensorLike,
+    key: TensorLike,
+    value: TensorLike,
+    out: TensorLike,
+    logsumexp: TensorLike,
+    dropout_p: float,
+    is_causal: bool,
+    philox_seed: TensorLike,
+    philox_offset: TensorLike,
+    *,
+    scale: None | float = None,
+) -> tuple[TensorProxy, TensorProxy, TensorProxy]:
+    # FP64 is not supported by aten memory efficient implementation
+    supported_dtypes = (dtypes.float16, dtypes.bfloat16)
+    _input_dtype_check_fused_scaled_dot_product_attention(query, key, value, attn_mask := None, supported_dtypes)
+    _input_shape_check_fused_scaled_dot_product_attention(query, key, value, attn_mask := None)
+
+    batch_size, num_heads, query_seq_len, E = query.shape
+    _, _, key_seq_len, _ = key.shape
+
+    # Reference metadata:
+    # https://github.com/pytorch/pytorch/blob/main/torch/_meta_registrations.py#L4907-L4956
+    grad_query = TensorProxy(like=query, shape=(batch_size, num_heads, query_seq_len, E))
+    grad_key = TensorProxy(like=key, shape=(batch_size, num_heads, key_seq_len, E))
+    grad_value = TensorProxy(like=value, shape=(batch_size, num_heads, key_seq_len, E))
+    return (grad_query, grad_key, grad_value)
+
+def _sdpa_bwd_check(
+    grad_out: TensorProxy,
+    query: TensorProxy,
+    key: TensorProxy,
+    value: TensorProxy,
+    out: TensorProxy,
+    logsumexp: TensorProxy,
+    dropout_p: float,
+    is_causal: bool,
+    philox_seed: TensorProxy,
+    philox_offset: TensorProxy,
+    scale: None | float,
+) -> bool:
+    return True
+
+def _scaled_dot_product_flash_attention_backward(
+    grad_out: TensorProxy,
+    query: TensorProxy,
+    key: TensorProxy,
+    value: TensorProxy,
+    out: TensorProxy,
+    logsumexp: TensorProxy,
+    dropout_p: float,
+    is_causal: bool,
+    philox_seed: TensorProxy,
+    philox_offset: TensorProxy,
+    *,
+    scale: None | float = None,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+
+    nv_grad_out= getnv(grad_out, fd, lc_to_nv_map)
+    nv_query = getnv(query, fd, lc_to_nv_map)
+    nv_key = getnv(key, fd, lc_to_nv_map)
+    nv_value = getnv(value, fd, lc_to_nv_map)
+    nv_out = getnv(out, fd, lc_to_nv_map)
+    nv_logsumexp= getnv(logsumexp, fd, lc_to_nv_map)
+    nv_dropout = getnv(dropout_p, fd, lc_to_nv_map)
+    nv_is_causal = getnv(is_causal, fd, lc_to_nv_map)
+    nv_philox_seed = getnv(philox_seed, fd, lc_to_nv_map)
+    nv_philox_offset = getnv(philox_offset, fd, lc_to_nv_map)
+    nv_scale = getnv(scale, fd, lc_to_nv_map) if scale is not None else None
+
+    grads = fd.ops.sdpfa_bwd(
+        nv_grad_out,
+        nv_query,
+        nv_key,
+        nv_value,
+        nv_out,
+        nv_logsumexp,
+        nv_dropout,
+        nv_is_causal,
+        nv_philox_seed,
+        nv_philox_offset,
+        nv_scale,
+    )
+    return grads
+
+
+nv_sdpfa_bwd = ex.register_operator(
+    "nv_sdpfa_bwd",
+    meta=_scaled_dot_product_flash_attention_backward_meta,
+    fn=_scaled_dot_product_flash_attention_backward,
+)
+
+register_supported(nv_sdpfa_bwd.id, _scaled_dot_product_flash_attention_backward, _sdpa_bwd_check)
+
+def _sdpa_check(
+    query: Proxy,
+    key: Proxy,
+    value: Proxy,
+    attn_mask: Proxy | None,
+    dropout_p: float,
+    is_causal: bool,
+    *,
+    scale: None | float = None,
+) -> bool:
+    
+    if nvfuser_version() < LooseVersion("0.2.10"):
+        return False
+
+    enable_sdpa: None | bool = get_compile_option("nv_enable_sdpa", "Enable nvFuser flash attention SDPA.")
+    
+    if not enable_sdpa:
+        return False
+
+    if not are_supported_tensors(query, key, value):
+        return False
+
+    from thunder.executors.sdpaex import _fused_sdp_choice, SpdaBackend
+    # Register fusion only for flash attention sdpa
+    backend = _fused_sdp_choice(query, key, value, None, dropout_p, is_causal, scale)
+    return backend == SpdaBackend.FLASH_ATTENTION
+
+def scaled_dot_product_flash_attention(
+    query: TensorProxy,
+    key: TensorProxy,
+    value: TensorProxy,
+    attn_mask: TensorProxy = None,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    *,
+    scale: None | float = None,
+):  
+    (primal, logsumexp, philox_seed, philox_offset) = nv_sdpfa_fwd(
+            query, key, value, dropout_p, is_causal, scale=scale
+    )
+    return primal
+
+
+def scaled_dot_product_flash_attention_grad(
+    query: Proxy,
+    key: Proxy,
+    value: Proxy,
+    attn_mask: None | Proxy,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    *,
+    scale: None | float = None,
+):
+
+    (primal, logsumexp, philox_seed, philox_offset) = nv_sdpfa_fwd(
+        query, key, value, dropout_p, is_causal, scale=scale
+    )
+    g = get_grad(primal)
+    grad_query, grad_key, grad_val = nv_sdpfa_bwd(
+        g,
+        query, key, value,
+        primal,
+        logsumexp,
+        dropout_p,
+        is_causal,
+        philox_seed,
+        philox_offset,
+        scale=scale,
+    )
+    put_grads((query, key, value), (grad_query, grad_key, grad_val))
+    return primal
+
+
+ex.register_supported(
+    ltorch.scaled_dot_product_attention,
+    checker = _sdpa_check,
+    execution_transform = scaled_dot_product_flash_attention,
+    grad_transform = scaled_dot_product_flash_attention_grad
+)

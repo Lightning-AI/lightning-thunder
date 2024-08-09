@@ -991,3 +991,26 @@ def test_div_truediv_integer_tensors_consistency_nvfuser(executor, device, thund
         rout = f(x.cpu(), y.cpu()).to(device)
         jout = f(x, y)
         assert rout.equal(jout)
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=(nvFuserExecutor,),
+)
+def test_sdpa(executor, device, _):
+    def fn(q, k, v, grad_out):
+        return torch.nn.functional.scaled_dot_product_attention(q, k, v)
+
+    compiled_func = thunder.jit(fn, executor=executor.executors_list(), nv_enable_sdpa=True)
+    N, H, L, S, E = 4, 8, 16, 16, 8
+    q = torch.randn((N, H, L, E), device='cuda', dtype=torch.bfloat16, requires_grad=True)
+    k = torch.randn((N, H, S, E), device='cuda', dtype=torch.bfloat16, requires_grad=True)
+    v = torch.randn((N, H, S, E), device='cuda', dtype=torch.bfloat16, requires_grad=True)
+    grad_out = torch.randn((N, H, L, E), device='cuda', dtype=torch.bfloat16)
+
+    out = compiled_func(q, k, v, grad_out)
+    out.backward(grad_out)
+    fwd_traces = thunder.last_traces(compiled_func)
+    bwd_traces = thunder.last_backward_traces(compiled_func)
+    fusions = examine.get_fusions(fwd_traces[-1])
+    breakpoint()
+
