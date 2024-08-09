@@ -105,7 +105,7 @@ def sort_communication_ops(execution_trace):
 
     # TODO: This pass doesn't behave correctly if del nodes are present in the trace
     check(
-        not any(bsym.sym.name == "del" for bsym in execution_trace.bound_symbols),
+        not any(bsym.sym is thunder.core.prims.python_del for bsym in execution_trace.bound_symbols),
         lambda: "Cannot sort execution trace with del nodes",
     )
     new_execution_trace.bound_symbols = toposort_bsym_dag(
@@ -165,7 +165,7 @@ def sort_waits(execution_trace):
 
     # TODO: This pass doesn't behave correctly if del nodes are present in the trace
     check(
-        not any(bsym.sym.name == "del" for bsym in execution_trace.bound_symbols),
+        not any(bsym.sym is thunder.core.prims.python_del for bsym in execution_trace.bound_symbols),
         lambda: "Cannot sort execution trace with del nodes",
     )
     new_execution_trace.bound_symbols = toposort_bsym_dag(

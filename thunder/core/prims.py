@@ -297,7 +297,6 @@ def make_prim(
     method_name: None | str = None,
     _bind_postprocess: None | Callable = None,
     _print_as_impl: bool = False,
-    python_name: str | None = None,
 ):
     sym = Symbol(
         name=name,
@@ -309,7 +308,6 @@ def make_prim(
         python_impl=python_impl,
         _bind_postprocess=_bind_postprocess,
         _print_as_impl=_print_as_impl,
-        _python_name=python_name,
     )
 
     if method_name is not None:
@@ -485,10 +483,9 @@ def _check_tensor_shape_and_metadata_meta(
 
 check_tensor_shape_and_metadata = make_prim(
     PrimIDs.CHECK_TENSOR_SHAPE_AND_METADATA,
-    "check_tensor_metadata",
+    "check_tensor_shape_and_metadata",
     meta=_check_tensor_shape_and_metadata_meta,
     tags=(OpTags.DONT_DCE,),
-    python_name="check_tensor_shape_and_metadata",
 )
 
 
@@ -1188,7 +1185,7 @@ def pack_buffer_impl(o: Any, key: Any, v: Any) -> None:
 
 pack_buffer = make_prim(
     PrimIDs.PACK_BUFFER,
-    "unpack_buffer",
+    "pack_buffer",
     meta=pack_buffer_meta,
     python_printer=pack_buffer_printer,
     python_impl=pack_buffer_impl,
@@ -1230,7 +1227,7 @@ def pack_setitem_impl(o: Any, key: Any, v: Any) -> None:
 
 pack_setitem = make_prim(
     PrimIDs.PACK_SETITEM,
-    "unpack_setitem",
+    "pack_setitem",
     meta=pack_setitem_meta,
     python_printer=pack_setitem_printer,
     python_impl=pack_setitem_impl,
@@ -1560,12 +1557,11 @@ def python_print_printer(
 
 python_print = make_prim(
     PrimIDs.PRINT,
-    "print",
+    "python_print",
     meta=_print_meta,
     python_printer=python_print_printer,
     python_impl=print,
     tags=(OpTags.DONT_DCE,),
-    python_name="python_print",
 )
 
 
@@ -1630,11 +1626,10 @@ def _del_impl(x: Any, /) -> None:
 
 python_del = make_prim(
     PrimIDs.DEL,
-    "del",
+    "python_del",
     meta=_del_meta,
     python_printer=del_printer,
     python_impl=_del_impl,
-    python_name="python_del",
 )
 
 
@@ -1667,12 +1662,11 @@ def _return_impl(*args) -> Any:
 
 python_return = make_prim(
     PrimIDs.RETURN,
-    "return",
+    "python_return",
     meta=_return_meta,
     python_printer=return_printer,
     python_impl=_return_impl,
     tags=(OpTags.DONT_DCE,),
-    python_name="python_return",
 )
 
 #
