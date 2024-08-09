@@ -434,6 +434,49 @@ class Benchmark_litGPT:
             dynamo_config.cache_size_limit = 64
             backend = "inductor"
             if "thunder" in self.compile:
+                if "transformerengine" in self.compile:
+                    # [rank0]: Traceback (most recent call last):
+                    # [rank0]:   File "/opt/pytorch/lightning-thunder/thunder/benchmarks/benchmark_litgpt.py", line 671, in <module>
+                    # [rank0]:     CLI(benchmark_main)
+                    # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/jsonargparse/_cli.py", line 96, in CLI
+                    # [rank0]:     return _run_component(components, init)
+                    # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/jsonargparse/_cli.py", line 204, in _run_component
+                    # [rank0]:     return component(**cfg)
+                    # [rank0]:   File "/opt/pytorch/lightning-thunder/thunder/benchmarks/benchmark_litgpt.py", line 626, in benchmark_main
+                    # [rank0]:     benchmark.train()
+                    # [rank0]:   File "/opt/pytorch/lightning-thunder/thunder/benchmarks/benchmark_litgpt.py", line 538, in train
+                    # [rank0]:     loss.backward()
+                    # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/torch/_tensor.py", line 522, in backward
+                    # [rank0]:     torch.autograd.backward(
+                    # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/torch/autograd/__init__.py", line 347, in backward
+                    # [rank0]:     _engine_run_backward(
+                    # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/torch/autograd/graph.py", line 817, in _engine_run_backward
+                    # [rank0]:     return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+                    # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/torch/autograd/function.py", line 307, in apply
+                    # [rank0]:     return user_fn(self, *args)
+                    # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/torch/autograd/function.py", line 600, in wrapper
+                    # [rank0]:     outputs = fn(ctx, *args)
+                    # [rank0]:   File "/opt/pytorch/lightning-thunder/thunder/executors/torch_autograd.py", line 96, in backward
+                    # [rank0]:     grads = ctx.compiled_backward([saved_tensors_list, ctx.saved_other], args)
+                    # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+                    # [rank0]:     return func(*args, **kwargs)
+                    # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/torch/amp/autocast_mode.py", line 44, in decorate_autocast
+                    # [rank0]:     return func(*args, **kwargs)
+                    # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/torch/amp/autocast_mode.py", line 44, in decorate_autocast
+                    # [rank0]:     return func(*args, **kwargs)
+                    # [rank0]:   File "thunder.backward_fn_359", line 25, in backward_fn
+                    # [rank0]:   File "/opt/pytorch/lightning-thunder/thunder/executors/transformer_engineex.py", line 410, in _te_functional_linear_backward_impl
+                    # [rank0]:     grads = _Linear.backward(ctx, g)
+                    # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/transformer_engine/pytorch/module/linear.py", line 449, in backward
+                    # [rank0]:     weight_fp8.transpose_2d(),
+                    # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/transformer_engine/pytorch/float8_tensor.py", line 625, in transpose_2d
+                    # [rank0]:     if self._transpose is None:
+                    # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/transformer_engine/pytorch/float8_tensor.py", line 39, in get_func
+                    # [rank0]:     return self._fp8_attrs[name]
+                    # [rank0]: AttributeError: 'Float8Tensor' object has no attribute '_fp8_attrs'
+                    raise ValueError(
+                        "TransformerEngine executor cannot be used as an executor of Thunder when Thunder is used as torch.compile backend"
+                    )
                 self.is_thunder_as_torchcompile_backend = True
                 backend = ThunderAsTorchCompileBackend(
                     compile_str=self.compile[len("inductor") :],
