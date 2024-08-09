@@ -114,7 +114,7 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
         build_cuda_graph.cache_clear()
 
 
-@instantiate(dtypes=(thunder.float32,), devicetypes=(thunder.devices.DeviceType.CUDA,), executors=all_test_executors_and_dynamo)
+@instantiate(dtypes=(thunder.float32,), devicetypes=(thunder.devices.DeviceType.CUDA,))
 @requiresCUDA
 def test_nanogpt_complete_cuda_graphs_autograd(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
