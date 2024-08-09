@@ -60,6 +60,7 @@ class Executor:
 
         self._implmap: dict[Hashable, ImplInfo] = {}
         self._lookasides: dict[Callable, Callable] = {}
+        self._opmap: dict[str, Symbol] = {}
 
     @property
     def name(self) -> Hashable:
@@ -72,6 +73,10 @@ class Executor:
     @property
     def implmap(self) -> dict[Hashable, ImplInfo]:
         return self._implmap
+    
+    @property
+    def opmap(self) -> dict[str, Symbol]:
+        return self._opmap
 
     def __repr__(self) -> str:
         return f"thunder.extend.OperatorExecutor('{str(self.name)}')"
@@ -132,6 +137,61 @@ class Executor:
             return None
 
         return impl.grad_transform
+
+    # TODO Document this operation
+    # TODO Wrap meta in prim context?
+    # TODO Document how to avoid name collisions
+    def register_operator(
+        self,
+        name: str,
+        *,
+        like: None | Symbol = None,
+        meta: None | Callable = None,
+        tags: None | list[Any] = None,
+        module: None | type | ModuleType = None,
+        fn: None | Callable = None,
+        bind_postprocess: None | Callable = None,
+        replaces: None | Callable = None,
+        python_printer: Callable = default_python_printer,
+    ) -> Symbol:
+        ln = like is None
+        mn = meta is None
+        assert (
+            ln ^ mn
+        ), f"Expected one and only one of 'like' and 'meta' to be specified. {'Neither' if ln and mn else 'Both'} were specified."
+        assert (module is not None) + (
+            fn is not None
+        ) <= 2, f"Expected one and only one of 'module' or 'fn' to be specified. Module: {module}, Fn: {fn}"
+
+        # NOTE Directly specifying a meta function makes the operation a prim
+        is_prim = meta is not None
+        # Set tags to be the same as 'like' if 'tags' is not specified
+        tags = like.tags if (tags is None and like is not None and hasattr(like, "tags")) else tags
+        meta = meta if meta is not None else like
+        call_ctx: None | dict[str, Callable] = None if fn is None else {name: fn}
+
+        def _bind_postprocess(bsym: BoundSymbol) -> None:
+            bsym._call_ctx = call_ctx
+            if bind_postprocess is not None:
+                bind_postprocess(bsym)
+
+        sym = Symbol(
+            name=name,
+            id=name,
+            meta=meta,
+            is_prim=is_prim,
+            _module=module,
+            executor=self,
+            _bind_postprocess=_bind_postprocess,
+            python_printer=python_printer,
+            tags=tags,
+        )
+        self.opmap[name] = sym
+
+        if replaces is not None:
+            self._lookasides[replaces] = sym
+
+        return sym
 
 
 class FUEL_LEVEL(enum.Enum):
@@ -197,67 +257,6 @@ class FusionExecutor(Executor):
 class OperatorExecutor(Executor):
     def __init__(self, name: Hashable, *, version: None | Any = None):
         super().__init__(name, version=version)
-
-        self._opmap: dict[str, Symbol] = {}
-
-    @property
-    def opmap(self) -> dict[str, Symbol]:
-        return self._opmap
-
-    # TODO Document this operation
-    # TODO Wrap meta in prim context?
-    # TODO Document how to avoid name collisions
-    def register_operator(
-        self,
-        name: str,
-        *,
-        like: None | Symbol = None,
-        meta: None | Callable = None,
-        tags: None | list[Any] = None,
-        module: None | type | ModuleType = None,
-        fn: None | Callable = None,
-        bind_postprocess: None | Callable = None,
-        replaces: None | Callable = None,
-        python_printer: Callable = default_python_printer,
-    ) -> Symbol:
-        ln = like is None
-        mn = meta is None
-        assert (
-            ln ^ mn
-        ), f"Expected one and only one of 'like' and 'meta' to be specified. {'Neither' if ln and mn else 'Both'} were specified."
-        assert (module is not None) + (
-            fn is not None
-        ) <= 2, f"Expected one and only one of 'module' or 'fn' to be specified. Module: {module}, Fn: {fn}"
-
-        # NOTE Directly specifying a meta function makes the operation a prim
-        is_prim = meta is not None
-        # Set tags to be the same as 'like' if 'tags' is not specified
-        tags = like.tags if (tags is None and like is not None and hasattr(like, "tags")) else tags
-        meta = meta if meta is not None else like
-        call_ctx: None | dict[str, Callable] = None if fn is None else {name: fn}
-
-        def _bind_postprocess(bsym: BoundSymbol) -> None:
-            bsym._call_ctx = call_ctx
-            if bind_postprocess is not None:
-                bind_postprocess(bsym)
-
-        sym = Symbol(
-            name=name,
-            id=name,
-            meta=meta,
-            is_prim=is_prim,
-            _module=module,
-            executor=self,
-            _bind_postprocess=_bind_postprocess,
-            python_printer=python_printer,
-            tags=tags,
-        )
-        self.opmap[name] = sym
-
-        if replaces is not None:
-            self._lookasides[replaces] = sym
-
-        return sym
 
     def register_implementation(
         self,

@@ -46,7 +46,14 @@ from thunder.core.transforms import (
     put_grads,
 )
 
-from thunder.executors.utils import Region
+from thunder.executors.utils import (
+    Region,
+    _input_dtype_check_fused_scaled_dot_product_attention,
+    _input_shape_check_fused_scaled_dot_product_attention,
+    _fused_sdp_choice,
+    SpdaBackend
+)
+
 from thunder.executors.passes import update_fusion_call_ctx
 from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor, add_default_executor
 from thunder.executors.nvfuserex import nvfuser_version
@@ -530,11 +537,6 @@ class nvFuserExecutor(FusionExecutor):
         env_var_save_serde = os.getenv("ENABLE_NVFUSER_SERIALIZATION", None)
         save_serde: bool = env_var_save_serde in ("true", "1")
         self.write_cache_on_exit(save_serde)
-        self._opmap: dict[str, Symbol] = {}
-
-    @property
-    def opmap(self) -> dict[str, Symbol]:
-        return self._opmap
 
     def write_cache_on_exit(self, save_cache: bool = False):
         """
@@ -745,59 +747,6 @@ class nvFuserExecutor(FusionExecutor):
         )
         return cse_trace
 
-    from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
-    from types import ModuleType
-    def register_operator(
-        self,
-        name: str,
-        *,
-        like: None | Symbol = None,
-        meta: None | Callable = None,
-        tags: None | list[Any] = None,
-        module: None | type | ModuleType = None,
-        fn: None | Callable = None,
-        bind_postprocess: None | Callable = None,
-        replaces: None | Callable = None,
-        python_printer: Callable = default_python_printer,
-    ) -> Symbol:
-        ln = like is None
-        mn = meta is None
-        assert (
-            ln ^ mn
-        ), f"Expected one and only one of 'like' and 'meta' to be specified. {'Neither' if ln and mn else 'Both'} were specified."
-        assert (module is not None) + (
-            fn is not None
-        ) <= 2, f"Expected one and only one of 'module' or 'fn' to be specified. Module: {module}, Fn: {fn}"
-
-        # NOTE Directly specifying a meta function makes the operation a prim
-        is_prim = meta is not None
-        # Set tags to be the same as 'like' if 'tags' is not specified
-        tags = like.tags if (tags is None and like is not None and hasattr(like, "tags")) else tags
-        meta = meta if meta is not None else like
-        call_ctx: None | dict[str, Callable] = None if fn is None else {name: fn}
-
-        def _bind_postprocess(bsym: BoundSymbol) -> None:
-            bsym._call_ctx = call_ctx
-            if bind_postprocess is not None:
-                bind_postprocess(bsym)
-
-        sym = Symbol(
-            name=name,
-            id=name,
-            meta=meta,
-            is_prim=is_prim,
-            _module=module,
-            executor=self,
-            _bind_postprocess=_bind_postprocess,
-            python_printer=python_printer,
-            tags=tags,
-        )
-        self.opmap[name] = sym
-
-        if replaces is not None:
-            self._lookasides[replaces] = sym
-
-        return sym
     
     # TODO Restore fusion logic here -- this just replaces supported operations in isolation at the moment
     def fusion_pass(self, trace: TraceCtx) -> TraceCtx:
@@ -2287,7 +2236,6 @@ def _sdpa_fwd_check(
 ):
     return True
 
-from thunder.executors.sdpaex import _input_dtype_check_fused_scaled_dot_product_attention, _input_shape_check_fused_scaled_dot_product_attention
 def _scaled_dot_product_flash_attention_forward_meta(
     query: TensorLike,
     key: TensorLike,
@@ -2352,7 +2300,8 @@ def _scaled_dot_product_flash_attention_forward(
 nv_sdpfa_fwd = ex.register_operator(
     'nv_sdpfa_fwd',
     meta = _scaled_dot_product_flash_attention_forward_meta,
-    fn = _scaled_dot_product_flash_attention_forward
+    fn = _scaled_dot_product_flash_attention_forward,
+    tags = [prims.OpTags.RANDOM_OP]
 )
 
 register_supported(nv_sdpfa_fwd.id, _scaled_dot_product_flash_attention_forward, _sdpa_fwd_check)
@@ -2450,6 +2399,7 @@ nv_sdpfa_bwd = ex.register_operator(
     "nv_sdpfa_bwd",
     meta=_scaled_dot_product_flash_attention_backward_meta,
     fn=_scaled_dot_product_flash_attention_backward,
+    tags = [prims.OpTags.RANDOM_OP]
 )
 
 register_supported(nv_sdpfa_bwd.id, _scaled_dot_product_flash_attention_backward, _sdpa_bwd_check)
