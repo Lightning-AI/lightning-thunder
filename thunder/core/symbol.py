@@ -138,6 +138,7 @@ class Symbol:
     executor: None | Any = None
     python_impl: None | Callable = None
     _print_as_impl: bool = False  # If not None, w
+    _python_name: str | None = None
 
     # An optional postprocessing function to modify the bound symbol resulting from bind()
     _bind_postprocess: None | Callable = None
@@ -198,6 +199,59 @@ class Symbol:
                     fn_ = fn_.__wrapped__
             result = inspect.getmodule(fn_)
         return result
+
+    @classmethod
+    def lookup_from_module(cls, name: str, executor: Any, module: ModuleType) -> Symbol:  # For unpickling
+        if module not in sys.modules:
+            raise RuntimeError(f"Cannot find module {module} for symbol {name}.")
+
+        if executor is None:
+            not_found = object()
+            sym = getattr(sys.modules[module], name, not_found)
+            if sym is not_found:
+                raise RuntimeError(f"Could not find symbol {name} in module {module}.")
+            assert isinstance(sym, Symbol), (name, module, type(sym), sym)
+            return sym
+        else:
+            # Try to find the executor in all_executors
+            import thunder.extend
+
+            executors = thunder.extend.get_all_executors()
+
+            for ex in executors:
+                implmap = ex.implmap.values()
+
+                for key, info in implmap:
+                    assert isinstance(key.id, str)
+                    if key.id == name:
+                        if (
+                            impl.symbol is not None
+                            and module is not None
+                            and impl.module is not None
+                            and module != impl.module
+                        ):
+                            continue
+                        return lookup_from_module(name, ex, module)
+
+            raise ValueError(f"Could not find an executor for symbol {name} from module {module.__qualname__}.")
+
+    def __reduce__(self):  # For pickling
+        if self.module is None:
+            raise ValueError("Cannot serialize a symbol without a module.")
+
+        if hasattr(self, "_python_name") and not self._python_name is None:
+            name = self._python_name
+        else:
+            name = self.name
+
+        return (
+            Symbol.lookup_from_module,
+            (
+                name,
+                None if self.executor is None else self.executor.name,
+                None if self.module is None else self.module.__name__,
+            ),
+        )
 
     def __repr__(self) -> str:
         return f"[Symbol name={self.name}]"

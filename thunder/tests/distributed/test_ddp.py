@@ -57,26 +57,32 @@ from torch.testing._internal import common_utils
 class DDPTest(DistributedParallelTestCase):
     # Reference issue "Add an example of DDP(compile(model)) to tests"
     def test_ddp_compile_module(self):
-        model = ToyModel().to(self.rank)
-        ddp_model = DDP(thunder.jit(model, device_ids=[self.rank]))
-
-        loss_fn = nn.MSELoss()
-        optimizer = torch.optim.SGD(ddp_model.parameters(), lr=0.001)
-
+        # Asserts that DDPing a jitted model yields the same results as raw torch DDP.
+        initial_model_state = ToyModel().state_dict()
+        ddp_fns = [
+            lambda model: DDP(thunder.jit(model)),
+            lambda model: ddp(thunder.jit(model)),
+        ]
         x, labels = torch.randn(20, 12).to(self.rank), torch.randn(20, 8).to(self.rank)
 
-        init_loss, last_loss = None, None
-        for i in range(3):
-            optimizer.zero_grad()
-            outputs = ddp_model(x)
-            loss = loss_fn(outputs, labels)
-            loss.backward()
-            optimizer.step()
-            if i == 0:
-                init_loss = loss.detach().item()
-            if i == 2:
-                last_loss = loss.detach().item()
-        assert init_loss > last_loss
+        def _get_last_loss(fn):
+            model = ToyModel().to(self.rank)
+            model.load_state_dict(initial_model_state)
+            ddp_model = fn(model)
+            loss_fn = nn.MSELoss()
+            optimizer = torch.optim.SGD(ddp_model.parameters(), lr=0.001)
+            for i in range(3):
+                optimizer.zero_grad()
+                outputs = ddp_model(x)
+                loss = loss_fn(outputs, labels)
+                loss.backward()
+                optimizer.step()
+            return loss
+
+        raw_ddp_loss = _get_last_loss(lambda model: DDP(model))
+        for fn in ddp_fns:
+            loss = _get_last_loss(fn)
+            self.assertEqual(loss, raw_ddp_loss)
 
     # Reference issue "[tracker] Support DistributedDataParallel"
     def test_compile_ddp_module(self):
@@ -199,6 +205,78 @@ class DDPTest(DistributedParallelTestCase):
         with thunder.ThunderModule.no_sync(model):
             fwd_loss(model, x)
 
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
+    def test_ddp_weight_sharing(self):
+        # This test is to verify that weight sharing works with ddp.
+        device = torch.device("cuda", self.rank)
+
+        class Model(torch.nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.fc1 = torch.nn.Linear(16, 16, bias=False)
+                self.fc2 = torch.nn.Linear(16, 16, bias=False)
+
+            def forward(self, x):
+                return self.fc1(x) + self.fc2(x)
+
+        def _test_model_output_and_gradients(model, x):
+            output = model(x)
+            with device:
+                grad_output = torch.ones_like(output)
+            output.backward(grad_output)
+            expected_shape = (4, 16)
+
+            assert output.shape == expected_shape, f"{output.shape=} - {expected_shape=}"
+
+            # Verify that both params point to same grad tensor.
+            assert id(model.get_parameter("fc1.weight").grad) == id(model.get_parameter("fc2.weight").grad)
+
+            # Verify that we accumulate the gradients for the shared parameter.
+            actual_grad = model.get_parameter("fc1.weight").grad
+            # Based on the forward, grad for both params is `(grad_output.T @ x)`. Multiplying by 2 as the grad will be accumulated.
+            expected_grad = 2 * (grad_output.T @ x)
+            torch.testing.assert_close(actual_grad, expected_grad)
+
+            forward_exec_trace = thunder.last_traces(model)[-1]
+            n_synced_params_forward = 0
+            for bsym in forward_exec_trace.bound_symbols:
+                if bsym.sym.id in (thunder.distributed.prims.PrimIDs.SYNCHRONIZE,):
+                    n_synced_params_forward += 1
+            assert (
+                n_synced_params_forward == 0
+            )  # Assert that no params were synced on forward (they should be removed by later transforms)
+
+            backward_exec_trace = thunder.last_backward_traces(model)[-1]
+            allreduced_grads = 0
+            for bsym in backward_exec_trace.bound_symbols:
+                if bsym.sym.id in (
+                    thunder.distributed.prims.PrimIDs.ALL_REDUCE,
+                    thunder.executors.torchex.all_reduce_prim_impl.id,
+                ):
+                    allreduced_grads += 1
+
+            # The expected behaviour is that the gradients were accumulated (since both weights are the same) and then allreduced, so only one allreduce
+            assert allreduced_grads == 1
+
+        with device:
+            jit_ddp_model = Model()
+            ddp_jit_model = Model()
+            x = torch.ones(4, 16)
+
+        # Check `jit(ddp(model))` works
+        jit_ddp_model.fc1.weight = jit_ddp_model.fc2.weight
+
+        jit_ddp_model = thunder.jit(thunder.distributed.ddp(jit_ddp_model), executors=["torch"])
+
+        _test_model_output_and_gradients(jit_ddp_model, x)
+
+        # Check `ddp(jit(model))` works
+        ddp_jit_model.fc1.weight = ddp_jit_model.fc2.weight
+
+        ddp_jit_model = thunder.distributed.ddp(thunder.jit(ddp_jit_model, executors=["torch"]))
+
+        _test_model_output_and_gradients(ddp_jit_model, x)
+
 
 common_utils.instantiate_parametrized_tests(DDPTest)
 
@@ -208,7 +286,7 @@ common_utils.instantiate_parametrized_tests(DDPTest)
 def _test_native_ddp_helper(input_data):
     init_method, world_size, rank, executor, device, dtype, kwargs = input_data
     bucket_size_in_mb = kwargs.get("bucket_size_in_mb", 0)
-
+    jit_first = kwargs.get("jit_first", False)
     num_samples = 2
     tensor_shape = (2, 2)
     sample_seed = 3456
@@ -231,11 +309,13 @@ def _test_native_ddp_helper(input_data):
 
     # Creates, compiles, and DDPs the model
     model = SmallModel(device, torch_dtype)
-    ddp_model = ddp(model)
-    cmodel = thunder.jit(
-        ddp_model,
-        executors=executor.executors_list(),
-    )
+    if jit_first:
+        cmodel = ddp(thunder.jit(model, executors=executor.executors_list()))
+    else:
+        cmodel = thunder.jit(
+            ddp(model),
+            executors=executor.executors_list(),
+        )
 
     comparison_exceptions = []
     for _ in range(num_epochs):
@@ -515,10 +595,13 @@ def _test_ddp_transformer_engine_llama_sanity(input_data):
     num_devices=2,
     # CPU broke around PyTorch 2.3.1, see PR #545
     devicetypes=(devices.DeviceType.CUDA,),
-    decorators=(pytest.mark.parametrize("bucket_size_in_mb", (0, 25)),),
+    decorators=(
+        pytest.mark.parametrize("bucket_size_in_mb", (0, 25)),
+        pytest.mark.parametrize("jit_first", (True, False)),
+    ),
 )
 @distributed_wrapper("test_native_ddp", _test_native_ddp_helper)
-def test_native_ddp(executor, devices, dtype, bucket_size_in_mb):
+def test_native_ddp(executor, devices, dtype, bucket_size_in_mb, jit_first):
     pass
 
 

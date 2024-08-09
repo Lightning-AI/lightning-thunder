@@ -360,6 +360,7 @@ def get_all_executors() -> tuple[Executor, ...]:
         nvfuserex,
         pythonex,
         sdpaex,
+        fa3ex,
         torch_compile,
         torchex,
         transformer_engineex,
@@ -458,6 +459,8 @@ def resolve_executors(executors: None | Sequence[Executor | str]) -> tuple[Execu
                 continue
             else:
                 resolved_executors.append(ex)
+        elif not isinstance(e, Executor):
+            raise ValueError(f"An object of type {type(e)} is not a valid Executor. Executor list: {executors}")
         else:
             resolved_executors.append(e)
 

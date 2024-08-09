@@ -201,9 +201,9 @@ def test_redundant_cast_nvfusion(executor, device: str, dtype: dtypes.dtype):
     assert len(fusions) == 2
 
     # Verifies that the nvFusion inputs and outputs are updated properly
-    t0 = fusions[0].output
-    assert fusions[1].args[0].name == "t0"
-    assert t0[0].name == "t0"
+    t0 = fusions[0].output[0]
+    assert fusions[1].args[2].name == "t0"
+    assert t0.name == "t0"
     assert extrace.output[0].name == "t0"
     assert len(fusions[0].subsymbols) == 3
 
@@ -317,7 +317,7 @@ def test_cse_subsymbol_redundant_args(executor, device, _):
     assert len(fusion_bsyms) == 1
     nvf_0 = fusion_bsyms[0]
 
-    assert [t.name for t in tree_flatten(nvf_0.args)[0]] == ["t0", "w", "z"]
+    assert [t.name for t in tree_flatten(nvf_0.args)[0]] == ["t0", "z", "w"]
     assert len(nvf_0.subsymbols) == 7
     assert [t.name for t in tree_flatten(nvf_0.output)[0]] == ["t13"]
 

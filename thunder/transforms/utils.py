@@ -18,6 +18,7 @@ def get_orig_and_thunder_module_proxies_from_prologue(prologue_trace):
 
 
 def get_checks(prologue_trace):
+    # returns a dictionary mapping model param names to (check bsym, get param bsym
     check_dict = {}
     prologue_producers, prologue_consumers = utils.producers_and_consumers(prologue_trace)
     for bsym in prologue_trace.bound_symbols:

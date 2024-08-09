@@ -8,9 +8,11 @@ from thunder.core.trace import TraceCtx
 from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import BoundSymbol
 from thunder.torch import _torch_to_thunder_function_map
+from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.core.langctxs import resolve_language, LanguageContext, Languages
 import torch
 from warnings import warn
+from itertools import chain
 
 
 # TODO Maybe make collect_into a set?
@@ -73,9 +75,13 @@ def examine(fn: Callable, *args, show_call_stack: bool | int = False, **kwargs):
 
     # Step 1 Identifies supported (and unsupported) operations
     supported_ops = set()
+    all_auto_registered_ops = list(chain(*torch_auto_registered_ops.values()))
+    auto_registered_ops = set()
     for name, op in collected_ops.keys():
         if op in _torch_to_thunder_function_map:
             supported_ops.add((name, op))
+            if op in all_auto_registered_ops:
+                auto_registered_ops.add(name)
         elif name.startswith("_TensorBase.") or name.startswith("TensorBase.") or name.startswith("Tensor."):
             # Identifies properties and methods
             # NOTE The approach of testing if the name starts with "_TensorBase." or "Tensor." seems a little hacky
@@ -111,6 +117,10 @@ def examine(fn: Callable, *args, show_call_stack: bool | int = False, **kwargs):
         print(
             f"Found {len(collected_ops)} distinct operations, of which {len(supported_ops)} ({len(supported_ops) / len(collected_ops) * 100:.1f}%) are supported"
         )
+        if len(auto_registered_ops) != 0:
+            print(f"Note {len(auto_registered_ops)} operators are automatically registered: ")
+            for n in auto_registered_ops:
+                print(n)
 
     # Terminates early if there are unsupported operations or there was a preprocessing exception
     if len(unsupported_ops) > 0:
@@ -216,3 +226,45 @@ def get_fusion_symbols(trace: TraceCtx, warn_if_fusions_unavailable: bool = True
             fusions.append(bsym)
 
     return fusions
+
+
+def get_nvfuser_fusion_definition(trace: TraceCtx, name: str, warn_if_fusion_unavailable: bool = True):
+    """
+    Return the fusion definition for the symbol with the provided name if found.
+    """
+    if warn_if_fusion_unavailable and warn_fusions():
+        return None
+
+    for bsym in trace.bound_symbols:
+        if bsym.sym.is_fusion and bsym.sym.name == name:
+            _, fusion_ctx, _ = bsym.gather_ctxs()
+            if (fusion_definition := fusion_ctx.get(name, None)) is not None:
+                return fusion_definition
+
+    return None
+
+
+def get_nvfuser_repro(trace: TraceCtx, fusion_name: str, /) -> str:
+    """
+    Helper function to get the repro of a specific nvFusion segment.
+    """
+    fusion = get_nvfuser_fusion_definition(trace, fusion_name)
+    if fusion is None:
+        raise RuntimeError(f"Unable to find fusion '{fusion_name}' in trace.")
+
+    if fusion.last_used is None:
+        raise RuntimeError(
+            "Fusion definition needs to be executed to record the inputs. You must execute the fusion first before you can query the repro."
+        )
+
+    if fusion.last_inputs is None:
+        raise RuntimeError(
+            "Fusion definition inputs need to be recorded. Use compile option 'nv_store_fusion_inputs=True' while tracing."
+        )
+
+    fd = fusion.last_used
+    get_repro = getattr(fd, "getReproString", None)
+    if get_repro is None:
+        raise RuntimeError("The installed version of nvFuser does not support repro generation unless on crash.")
+
+    return get_repro(fusion.last_inputs)

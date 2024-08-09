@@ -383,10 +383,15 @@ class FusionDefinitionWrapper:
     cache_info: None | Callable = None
     cache_clear: None | Callable = None
     last_used: None | FusionDefinition = None
+    last_inputs: None | Sequence[tuple] = None
+    store_inputs: bool = False
 
     def __call__(self, *args):
         fd = self.get_fd(to_descriptors(args))
         self.last_used = fd
+
+        if self.store_inputs:
+            self.last_inputs = args
 
         # Set device if set in one of the "factory" methods like full, iota, or uniform
         kwargs = {"device": fd._selected_device} if hasattr(fd, "_selected_device") else {}
@@ -479,6 +484,9 @@ def create_fusion_definition_wrapper(
     #   objects is captured by names in the trace.
     # These properties are distinct from the inputs and outputs to the trace itself, which
     #   may contain duplicates and whose order must be preserved.
+    store_inputs: None | bool = get_compile_option(
+        "nv_store_fusion_inputs", "Allow nvFuser to store fusion inputs for repro."
+    )
 
     tensor_indices = []
     for idx, x in enumerate(sorted_unique_inputs):
@@ -493,7 +501,7 @@ def create_fusion_definition_wrapper(
         # A closure over local trace and region
         return create_fd(bsyms, input_descriptors, sorted_unique_inputs, sorted_unique_outputs)
 
-    fdw = FusionDefinitionWrapper(get_fd, name, get_fd.cache_info, get_fd.cache_clear)
+    fdw = FusionDefinitionWrapper(get_fd, name, get_fd.cache_info, get_fd.cache_clear, store_inputs=store_inputs)
     return fdw
 
 
@@ -611,11 +619,8 @@ class nvFuserExecutor(FusionExecutor):
         return list(filter(lambda x: x.sym != prims.python_return, trace.bound_symbols))
 
     def fuse(self, region: Region, fusion_counter: int) -> BoundSymbol:
-        def keyfn(x: Variable) -> str:
-            return x.proxy.name
-
-        sorted_unique_inputs: list[Proxy] = list(unvariableify(x) for x in sorted(region.inputs, key=keyfn))
-        sorted_unique_outputs: list[Proxy] = list(unvariableify(x) for x in sorted(region.outputs, key=keyfn))
+        sorted_unique_inputs: list[Proxy] = [unvariableify(x) for x in region.inputs]
+        sorted_unique_outputs: list[Proxy] = [unvariableify(x) for x in region.outputs]
 
         flattened_bsyms: list[BoundSymbol] = []
         for bsym in region.bound_symbols:
@@ -820,19 +825,6 @@ instantiated) this heuristic actually leads to worse code.
                 else:
                     fused_bsyms.extend(fusion.bound_symbols)
             fused_bsyms.extend(epilogue)
-
-        # Force return operator to be the last one in the fused_bsyms
-        if fused_bsyms[-1].sym.id != PrimIDs.RETURN:
-            return_idx: int = -1
-            for i, fused_bsym in enumerate(fused_bsyms):
-                if fused_bsym.sym.id == PrimIDs.RETURN:
-                    return_idx = i
-                    break
-            utils.check(
-                return_idx != -1,
-                lambda: f"Return operator does not exist in bound symbols",
-            )
-            fused_bsyms.append(fused_bsyms.pop(return_idx))
 
         fusedtrace.bound_symbols = fused_bsyms
 
