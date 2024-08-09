@@ -199,8 +199,8 @@ class Symbol:
             result = inspect.getmodule(fn_)
         return result
 
-    @classmethod
-    def lookup_symbol(cls, name: str, executor: Any, module: ModuleType) -> Symbol:  # for unpickling
+    @staticmethod
+    def lookup_symbol(name: str, executor: Any, module: ModuleType) -> Symbol:  # for unpickling
         if executor is None:
             if module not in sys.modules:
                 raise RuntimeError(f"Cannot find module {module} for symbol {name}.")
@@ -226,12 +226,12 @@ class Symbol:
             raise ValueError("Cannot serialize a symbol without a module and executor.")
 
         if self.executor is None:
-            assert getattr(sys.modules[self.module], self.name, None) is self
+            assert getattr(sys.modules[self.module.__name__], self.name, None) is self
         else:
             assert thunder.get_executor(executor).opmap.get(self.name) is self
 
         return (
-            Symbol.lookup_from_module,
+            Symbol.lookup_symbol,
             (
                 self.name,
                 None if self.executor is None else self.executor.name,
