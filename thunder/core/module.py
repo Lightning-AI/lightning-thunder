@@ -90,9 +90,14 @@ class ThunderModule(pytorch.nn.Module):
         )
 
     def named_buffers(self, prefix="", recurse=True, remove_duplicate=True, *, persistent=None):
+        if persistent is not None:
+            orig_buffers = self._model.named_buffers(remove_duplicate=remove_duplicate, persistent=persistent)
+        else:
+            orig_buffers = self._model.named_buffers(remove_duplicate=remove_duplicate)
+
         yield from self._named_parameters_or_buffers(
             self._overrides_buffers,
-            self._model.named_buffers(remove_duplicate=remove_duplicate, persistent=persistent),
+            orig_buffers,
             prefix=prefix,
             recurse=recurse,
             remove_duplicate=remove_duplicate,
