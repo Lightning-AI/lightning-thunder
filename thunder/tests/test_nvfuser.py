@@ -61,8 +61,6 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor: TestEx
         e = d * a + d * b + d * c
         return sin(e) + cos(e), e, ltorch.sin(e) + ltorch.cos(e)
 
-    expected_vjp_func = executor.make_callable_legacy(value_and_grad(func))
-
     a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     c = make_tensor(
@@ -89,6 +87,9 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor: TestEx
     bw = bw_extrace.python_callable()
 
     fw_out, saved_for_backward = fw(a, b, c=c)
+
+    initial_trace = thunder.trace()(value_and_grad(func), a, b, c=c)
+    expected_vjp_func = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
     expected_fw_out, expected_grads = expected_vjp_func(a, b, c=c)
     torch.testing.assert_close(fw_out, expected_fw_out)
 

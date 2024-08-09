@@ -3665,6 +3665,12 @@ getitem_opinfo = OpInfo(
         # TypeError: Using a non-tuple sequence for multidimensional indexing is not allowed; use `arr[array(seq)]`
         # instead of `arr[seq]`. See https://github.com/google/jax/issues/4564 for more information.
         DecorateInfo(pytest.mark.xfail, "test_core_vs_jax_consistency"),
+        # TODO: https://github.com/Lightning-AI/lightning-thunder/issues/841
+        # check_slice_value(p0, slice(1, 3, 1)) in prologue trace fails
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+        ),
     ),
 )
 shape_ops.append(getitem_opinfo)
@@ -6605,6 +6611,13 @@ baddbmm_opinfo = OpInfo(
             pytest.mark.xfail,
             "test_phantom_grad_vs_torch_consistency",
         ),
+        # InterpreterError: Encountered exception Failed: Timeout >240.0s while tracing
+        # Appearing only in CI, passes locally.
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+            executors=("torch", "nvfuser"),
+        ),
     ),
 )
 
@@ -7030,6 +7043,13 @@ convolution_opinfo = OpInfo(
             # in composite operations like
             # torch.nn.functional.conv{1, 2, 3}
             dtypes=(datatypes.complexfloating,),
+            executors=("torch", "nvfuser"),
+        ),
+        # InterpreterError: Encountered exception Failed: Timeout >240.0s while tracing
+        # Appearing only in CI, passes locally.
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
             executors=("torch", "nvfuser"),
         ),
     ),
