@@ -2252,9 +2252,7 @@ def test_no_passthrough_symbol(executor, device, _):
 @instantiate(
     dtypes=NOTHING,
     # https://github.com/Lightning-AI/lightning-thunder/issues/946
-    decorators=(
-        pytest.mark.xfail(reason="Thunder JIT may rename variables differently, causing the test to fail."),
-    ),
+    decorators=(pytest.mark.xfail(reason="Thunder JIT may rename variables differently, causing the test to fail."),),
 )
 def test_cse(executor, device, _):
     from thunder.core.pytree import tree_flatten
