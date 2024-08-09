@@ -11,7 +11,7 @@ from torch.testing import assert_close, make_tensor
 
 import thunder
 import thunder.torch as ttorch
-from thunder.tests.framework import instantiate, requiresCUDA
+from thunder.tests.framework import instantiate, requiresCUDA, DynamoThunderExecutor, _all_test_executors
 import thunder.tests.nanogpt_model as nanogpt_model
 import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
 
@@ -19,8 +19,10 @@ import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
 # nanoGPT tests
 #
 
+all_test_executors_and_dynamo = _all_test_executors() + [DynamoThunderExecutor]
 
-@instantiate(dtypes=(thunder.float32,))
+
+@instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
 def test_nanogpt_complete(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=torch.int64, device=device)
@@ -43,7 +45,7 @@ def test_nanogpt_complete(executor, device, dtype):
 # TODO: Add float16 and bfloat16 comparison tests here and to all other tests in
 # this file.
 # See issue "Add half precision dtype tests to test_networks.py"
-@instantiate(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
 def test_nanogpt_complete_autograd(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
 
@@ -164,7 +166,7 @@ def test_nanogpt_complete_cuda_graphs_autograd(executor, device, dtype):
         build_cuda_graph.cache_clear()
 
 
-@instantiate(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
 def test_nanogpt_csa(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=tdtype, device=device)
@@ -188,7 +190,7 @@ def test_nanogpt_csa(executor, device, dtype):
     assert_close(torch_result, thunder_result)
 
 
-@instantiate(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
 def test_nanogpt_block(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=tdtype, device=device)
@@ -206,7 +208,7 @@ def test_nanogpt_block(executor, device, dtype):
     assert_close(torch_result, thunder_result)
 
 
-@instantiate(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
 def test_nanogpt_mlp(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=tdtype, device=device)
@@ -224,7 +226,7 @@ def test_nanogpt_mlp(executor, device, dtype):
     assert_close(torch_result, thunder_result)
 
 
-@instantiate(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
 def test_nanogpt_gelu(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=tdtype, device=device)
