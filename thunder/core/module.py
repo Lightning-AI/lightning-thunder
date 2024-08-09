@@ -64,7 +64,7 @@ class ThunderModule(pytorch.nn.Module):
     def _named_parameters_or_buffers(self, overrides, orig_iter, prefix="", recurse=True, remove_duplicate=True):
         seen_ids = set()
         seen_names = set()
-        for k, v in itertools.chain(overrides.items(), orig_iter(remove_duplicate=remove_duplicate)):
+        for k, v in itertools.chain(overrides.items(), orig_iter):
             if remove_duplicate:
                 id_v = id(v)
                 if id_v in seen_ids:
@@ -83,16 +83,16 @@ class ThunderModule(pytorch.nn.Module):
     def named_parameters(self, prefix="", recurse=True, remove_duplicate=True):
         yield from self._named_parameters_or_buffers(
             self._overrides_parameters,
-            self._model.named_parameters,
+            self._model.named_parameters(remove_duplicate=remove_duplicate),
             prefix=prefix,
             recurse=recurse,
             remove_duplicate=remove_duplicate,
         )
 
-    def named_buffers(self, prefix="", recurse=True, remove_duplicate=True):
+    def named_buffers(self, prefix="", recurse=True, remove_duplicate=True, *, persistent=None):
         yield from self._named_parameters_or_buffers(
             self._overrides_buffers,
-            self._model.named_buffers,
+            self._model.named_buffers(remove_duplicate=remove_duplicate, persistent=persistent),
             prefix=prefix,
             recurse=recurse,
             remove_duplicate=remove_duplicate,
