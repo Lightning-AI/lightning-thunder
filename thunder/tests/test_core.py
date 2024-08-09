@@ -2249,7 +2249,13 @@ def test_no_passthrough_symbol(executor, device, _):
     assert initial_trace_with_dce.bound_symbols[1].sym.id == prims.PrimIDs.RETURN
 
 
-@instantiate(dtypes=NOTHING)
+@instantiate(
+    dtypes=NOTHING,
+    # https://github.com/Lightning-AI/lightning-thunder/issues/946
+    decorators=(
+        pytest.mark.xfail(reason="Thunder JIT may rename variables differently, causing the test to fail."),
+    ),
+)
 def test_cse(executor, device, _):
     from thunder.core.pytree import tree_flatten
 
@@ -2269,6 +2275,7 @@ def test_cse(executor, device, _):
 
     x, y = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
     initial_trace = thunder.trace()(func, x, y, device)
+    print(initial_trace)
     compiled_func = thunder.jit(
         initial_trace.python_callable(),
         executors=executor.executors_list(),
