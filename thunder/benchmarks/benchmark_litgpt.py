@@ -2,16 +2,13 @@ from datetime import timedelta
 import os
 import time
 import warnings
-from typing import Any
 from contextlib import nullcontext
-from dataclasses import dataclass, field
 
 import torch
 import functools
 from torch.utils.data import DataLoader, IterableDataset
 import torch.distributed as torch_dist
 from torch.distributed.device_mesh import init_device_mesh
-import warnings
 
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     apply_activation_checkpointing,
@@ -25,7 +22,6 @@ from thunder.dynamo import ThunderCompiler
 from thunder.tests.litgpt_model import Config, GPT, Block
 from lightning.fabric.utilities.throughput import measure_flops
 from lightning.fabric.utilities import Throughput
-from thunder.core.module import ThunderModule
 
 
 try:
@@ -77,54 +73,6 @@ def configure_optimizers(model, weight_decay, learning_rate, betas, device_type)
         model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=betas, fused=use_fused
     )
     return optimizer
-
-
-def get_thunder_executors(compile_str: str) -> list[thunder.Executor]:
-    executors = [thunder.nvfuser_executor, thunder.pytorch_executor]
-    if "inductor_cat" in compile_str:
-        from thunder.executors.torch_compile import torch_compile_cat_ex as torch_compile_ex
-
-        executors.insert(0, torch_compile_ex)
-    elif "inductor" in compile_str:
-        from thunder.executors.torch_compile import torch_compile_ex
-
-        executors.insert(0, torch_compile_ex)
-    if "cudnn" in compile_str:
-        from thunder.executors.cudnnex import cudnn_ex
-
-        executors.insert(0, cudnn_ex)
-    else:
-        from thunder.executors.sdpaex import sdpa_ex
-
-        executors.insert(0, sdpa_ex)
-
-    if "transformerengine" in compile_str:
-        from thunder.executors.transformer_engineex import transformer_engine_ex
-
-        executors.insert(0, transformer_engine_ex)
-    return executors
-
-
-# ref: https://github.com/Lightning-AI/lightning-thunder/issues/915
-@dataclass
-class ThunderAsTorchCompileBackend:
-    """A class that compiles a GraphModule to a ThunderModule. This class is meant to be used
-    as a backend for the `torch.compile` function.
-
-    Keyword arguments:
-        jit_options -- a dictionary of options to pass to `thunder.jit`.
-    """
-
-    compile_str: str
-    jit_options: dict[Any, Any]
-    gm_to_thunder: dict[torch.fx.GraphModule, ThunderModule] = field(init=False, default_factory=dict)
-
-    def __call__(self, gm: torch.fx.GraphModule, sample_args: list[torch.Tensor]):
-        gm.real_recompile()
-        executors_list = get_thunder_executors(self.compile_str)
-        jitted_gm = thunder.jit(gm, executors=executors_list, **self.jit_options)
-        self.gm_to_thunder[gm] = jitted_gm
-        return jitted_gm
 
 
 class Benchmark_litGPT:
@@ -359,19 +307,21 @@ class Benchmark_litGPT:
                 else:
                     mesh = init_device_mesh("cuda", (world_size,))
 
+                reshard_after_forward: bool = self.shard_mode == "zero3"
+
                 for transformer_block in model.modules():
                     if isinstance(transformer_block, Block):
                         fully_shard(
                             transformer_block,
                             mesh=mesh,
-                            reshard_after_forward=self.shard_mode == "zero3",
+                            reshard_after_forward=reshard_after_forward,
                             mp_policy=MixedPrecisionPolicy(),
                         )
 
                 fully_shard(
                     model,
                     mesh=mesh,
-                    reshard_after_forward=self.shard_mode == "zero3",
+                    reshard_after_forward=reshard_after_forward,
                     mp_policy=MixedPrecisionPolicy(),
                 )
                 model.to_empty(device=self.device)
@@ -428,20 +378,12 @@ class Benchmark_litGPT:
         apply_activation_checkpointing(self.model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=check_fn)
 
     def setup_compile(self, model):
-        if self.compile.startswith("inductor"):
+        if self.compile == "inductor":
             print("Resetting cache size for torch.compile")
             import torch._dynamo.config as dynamo_config
 
             dynamo_config.cache_size_limit = 64
-            backend = "inductor"
-            if "thunder" in self.compile:
-                self.is_thunder_as_torchcompile_backend = True
-                backend = ThunderAsTorchCompileBackend(
-                    compile_str=self.compile[len("inductor") :],
-                    jit_options={},
-                )
-                self.thunder_as_torch_compile_backend = backend
-            model = torch.compile(model, backend=backend)
+            model = torch.compile(model)
         elif "thunder" in self.compile:
             executors = [thunder.nvfuser_executor, thunder.pytorch_executor]
             if "inductor_cat" in self.compile:
@@ -467,6 +409,19 @@ class Benchmark_litGPT:
                 executors.insert(0, transformer_engine_ex)
 
             if "dynamo" in self.compile:
+                if "transformerengine" in self.compile:
+                    # [rank0]:   File "/opt/pytorch/lightning-thunder/thunder/executors/transformer_engineex.py", line 410, in _te_functional_linear_backward_impl
+                    # [rank0]:     grads = _Linear.backward(ctx, g)
+                    # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/transformer_engine/pytorch/module/linear.py", line 449, in backward
+                    # [rank0]:     weight_fp8.transpose_2d(),
+                    # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/transformer_engine/pytorch/float8_tensor.py", line 625, in transpose_2d
+                    # [rank0]:     if self._transpose is None:
+                    # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/transformer_engine/pytorch/float8_tensor.py", line 39, in get_func
+                    # [rank0]:     return self._fp8_attrs[name]
+                    # [rank0]: AttributeError: 'Float8Tensor' object has no attribute '_fp8_attrs'
+                    raise ValueError(
+                        "TransformerEngine executor cannot be used as an executor of Thunder when Thunder is used as torch.compile backend"
+                    )
                 backend = ThunderCompiler(executors=executors)
                 # Because Lightning Fabric is imported in this script it monkey patches the torch.compile function
                 # https://github.com/Lightning-AI/pytorch-lightning/blob/828fd998961f6a60f92c35254bb94d6e049ad069/src/lightning/fabric/wrappers.py#L421
