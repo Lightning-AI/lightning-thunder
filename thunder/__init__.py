@@ -44,7 +44,6 @@ from thunder.core.functionalization import (
 from thunder.common import (
     CompileData,
     CompileStats,
-    _create_callable,
     trace,
     transform_for_execution,
     transform_to_torch_types,
@@ -823,37 +822,6 @@ def jit(
         fn_._lc_transforms = transforms[:]
 
     return fn_
-
-
-def compile(
-    fn: Callable,
-    *,
-    langctx: None | Any = None,
-    executors_list: None | Sequence[Executor] = None,
-    cache_mode: None | str | CACHE_OPTIONS = None,
-    use_cudagraphs: bool = False,
-    disable_torch_autograd_support: bool = False,
-    use_rematerialization: bool = False,
-    only_execute_prims: bool = False,
-    disable_preprocessing: bool = False,
-    **kwargs,
-) -> Callable:
-    cd = CompileData(
-        fn=fn,
-        langctx=langctx,
-        executors_list=executors_list,
-        cache_option=cache_mode,
-        use_cudagraphs=use_cudagraphs,
-        disable_torch_autograd_support=disable_torch_autograd_support,
-        use_rematerialization=use_rematerialization,
-        only_execute_prims=only_execute_prims,
-        disable_preprocessing=disable_preprocessing,
-        compile_options=kwargs,
-    )
-
-    cs = CompileStats()
-    _fn = _create_callable(cd, cs)
-    return _fn
 
 
 def compile_data(fn) -> CompileData | None:
