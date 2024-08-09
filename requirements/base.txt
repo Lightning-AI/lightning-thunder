@@ -6,3 +6,4 @@ igraph >=0.10.4
 optree >=0.11.0
 opt_einsum >= 3.3.0
 mpmath <1.4.0  # todo: teporarl pin for `NameError: name '_C' is not defined`
+dill >=0.3.8 # Support for 3.12
