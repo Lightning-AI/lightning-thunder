@@ -18,7 +18,6 @@ import torch
 import math
 from looseversion import LooseVersion
 
-from thunder.core.langctxs import langctx, Languages
 import thunder.core.dtypes as dtypes
 from thunder.core.dtypes import to_torch_dtype, to_dtype
 import thunder.core.devices as devices
@@ -1234,12 +1233,10 @@ def _index_put_prim_transform(
     return index_put(a, indices, values, accumulate)
 
 
-@langctx(Languages.TORCH)
 def _gather_prim_transform(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
     return gather(a, dim, index)
 
 
-@langctx(Languages.TORCH)
 def _gather_transform(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
     return gather(a, dim, index)
 
@@ -1275,9 +1272,6 @@ def _scatter_transform(
 
 # NOTE torch.compile has a compilation issue with scatter add in bfloat16,
 #      hence the special case here.
-# NOTE The scatter add transforms must set the torch language context explicitly so the .to() method
-#   on tensors is resolved (alternatively they could explicitly call thunder.torch.to)
-@langctx(Languages.TORCH)
 def _scatter_add_prim_transform(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     if a.dtype == dtypes.bfloat16:
         a = a.to(torch.float32)
@@ -1289,7 +1283,6 @@ def _scatter_add_prim_transform(a: TensorProxy, /, index: TensorProxy, value: Te
 
 # NOTE torch.compile has a compilation issue with scatter add in bfloat16,
 #      hence the special case here.
-@langctx(Languages.TORCH)
 def _scatter_add_transform(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike) -> TensorLike:
     # NOTE scatter_add does not participate in type promotion, so if a has the bfloat16 dtype, then so does src
     if a.dtype == dtypes.bfloat16:

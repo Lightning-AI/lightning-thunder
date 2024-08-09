@@ -52,9 +52,13 @@ def set_langctx(ctx: LanguageContext, /) -> Any:
 
 
 def get_langctx() -> LanguageContext:
-    """Gets the current language context"""
-    t = _langctx.get()
-    return t
+    """Gets the current language context (defaulting to the torch language)"""
+    # The default value is set here and not in the ContextVar constructor
+    # because the torch language context is not available at the time the
+    # ContextVar is created
+    # If get_langctx is called before the torch language context is registered,
+    # it will raise a LookupError
+    return _langctx.get(resolve_language(Languages.TORCH))
 
 
 def reset_langctx(token: Any, /) -> None:
@@ -94,7 +98,7 @@ def resolve_language(id: Any, /) -> LanguageContext:
     lang: None | LanguageContext = _langctx_registry.get(id, None)
 
     if lang is None:
-        raise ValueError(f"Unknown language context {id}")
+        raise LookupError(f"Unknown language context {id}")
 
     return lang
 

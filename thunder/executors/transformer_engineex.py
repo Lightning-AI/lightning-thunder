@@ -23,7 +23,6 @@ from thunder.core.symbol import Symbol
 from thunder.core.vjp_utils import disable_caching_split_forward_and_backward
 from thunder.extend import OperatorExecutor, register_executor
 from thunder.core.compile_data import get_compile_option, get_compile_data
-from thunder.core.langctxs import langctx, Languages
 from thunder.distributed import FSDPType
 
 
@@ -492,8 +491,6 @@ def _create_fp8_linear_bound_symbol(
 #
 
 
-# NOTE: We need langctx so that we can resolve `view` on TensorProxy.
-@langctx(Languages.TORCH)
 def _linear_checker(
     a: TensorProxy,
     w: TensorProxy,
