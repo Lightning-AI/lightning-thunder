@@ -63,7 +63,7 @@ def check_inplace_to_views(computation_trace: Trace) -> dict[VariableInterface, 
             prod_bsym.sym not in ltorch._syms_returning_runtime_dependently_views,
             lambda: (
                 f"in-place op of `{bsym.sym.id}` to `{prod_bsym.sym.id}` output `{in_tensor}` is not "
-                f"supported. It's unclear if the output of "
+                f"supported. It's unclear if `{in_tensor.name}`, the output of "
                 f"{tuple(s.id for s in ltorch._syms_returning_runtime_dependently_views)} is "
                 f"a copy, a view, or the input itself, as per https://pytorch.org/docs/stable/tensor_view.html"
             ),
@@ -312,6 +312,23 @@ def apply_functionalization_to_canonicalized_trace(
             ),
         )
 
+    def _check_prod_bsym(src: TensorProxy, producer_map: ProxyDict) -> None:
+        from thunder.torch import _unsupported_view_prod_syms
+
+        prod_bsym = producer_map[src]
+
+        def _msg(src: TensorProxy, bsym: BoundSymbol) -> str:
+            args = [a.name if isinstance(a, ProxyInterface) else str(a) for a in bsym.flat_args]
+            args_str = ", ".join(args)
+            bsym_str = f"`{bsym.sym.id}({args_str})`"
+            return f"in-place op to `{src.name}` is not supported since `{src.name}` is created by {bsym_str}`"
+
+        check(
+            prod_bsym.sym not in _unsupported_view_prod_syms,
+            lambda: _msg(src, prod_bsym),
+            exception_type=NotImplementedError,
+        )
+
     def _reshape_bsym_ctor(src: TensorProxy, dst: TensorProxy, trace: Trace) -> tuple[BoundSymbol | None, TensorProxy]:
         target = dst
         if src.shape == dst.shape:
@@ -386,8 +403,10 @@ def apply_functionalization_to_canonicalized_trace(
         copy_bsym = bsym.subsymbols[-1]
         copy_return = copy_bsym.flat_proxy_outs[0]
         copy_from = copy_bsym.flat_proxy_args[0]
-        copy_to = copy_bsym.flat_proxy_args[1]
         swap_map[variableify(copy_return)] = copy_from
+
+        copy_to = copy_bsym.flat_proxy_args[1]
+        _check_prod_bsym(copy_to, producer_map_of_intermediate_trace)
 
         # The last subsymbol is `prims.copy_`, so the new_bsym shouldn't have it.
         new_bsym = new_bsym.from_bsym_swap_proxies(swap_map)

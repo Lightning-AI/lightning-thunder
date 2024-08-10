@@ -5601,3 +5601,9 @@ _syms_returning_views: set[Symbol] = {
     chunk,
     getitem,
 }
+
+_unsupported_view_prod_syms: set[Symbol] = {
+    transpose,
+    t,
+    real,
+}

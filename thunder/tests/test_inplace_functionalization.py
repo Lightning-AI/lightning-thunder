@@ -672,3 +672,24 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     out, out_ref = jitted_f(a, b, a), f(a_ref, b_ref, a_ref)
     torch.testing.assert_close(out, out_ref)
     torch.testing.assert_close((a, b), (a_ref, b_ref))
+
+
+def test_unsupported_funcs_returning_views():
+
+    def f(x):
+        a = x.t()
+        a.exp_()
+        return a * 2
+
+    def g(x):
+        a = x.transpose(0, 1)
+        a.exp_()
+        return a * 2
+
+    x = make_tensor((2, 2), dtype=torch.float32, device="cpu")
+
+    for fn in (f, g):
+        jitted = thunder.jit(fn)
+
+        with pytest.raises(NotImplementedError, match="in-place op to `a` is not supported since"):
+            jitted(x)
