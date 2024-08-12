@@ -89,7 +89,7 @@ def test_materialization():
     m.cos, m.sin = ref_m.cos.clone(), ref_m.sin.clone()
 
     for p in m.parameters():
-        p.__thunder_device = torch.device("cuda")
+        p._thunder_device = torch.device("cuda")
 
     init_from_sd = MaterializationTransform.init_from_original_state_dict(ref_m.state_dict())
     jm = thunder.jit(m, transforms=[MaterializationTransform("cuda", init=init_from_sd)], executors=())
@@ -132,7 +132,7 @@ def test_quantization_on_meta():
     m.cos, m.sin = ref_m.cos.clone(), ref_m.sin.clone()
 
     for p in m.parameters():
-        p.__thunder_device = torch.device("cuda")
+        p._thunder_device = torch.device("cuda")
 
     init_from_sd = MaterializationTransform.init_from_original_state_dict(ref_m.state_dict())
 
