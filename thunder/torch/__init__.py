@@ -564,8 +564,8 @@ def arange(
 # Infers dtype from the fill_value and dtype
 def _infer_full_dtype(fill_value: NumberLike, dtype):
     fill_value_dtype = dtypes.numbertype_to_dtype(dtypes.to_dtype(fill_value))
-    current_default_dtype = get_default_dtype()
     if not dtype:
+        current_default_dtype = get_default_dtype()
         if dtypes.is_boolean_dtype(fill_value_dtype):
             return fill_value_dtype
         elif dtypes.is_nonboolean_integer_dtype(fill_value_dtype):
