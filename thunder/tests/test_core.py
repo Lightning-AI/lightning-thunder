@@ -1654,11 +1654,11 @@ def test_transforms_identity(executor, device, _):
 def test_transforms_vmap_axis_size(executor, device, _):
     from thunder.core.transforms import vmap
 
-    actual = executor.make_callable_legacy(vmap(lambda: 2, axis_size=4))()
+    actual = executor.make_callable(vmap(lambda: 2, axis_size=4), disable_torch_autograd=True)()
     expected = torch.full((4,), 2, device="cpu")
     assert_close(actual, expected)
 
-    actual = executor.make_callable_legacy(vmap(lambda x: x, axis_size=4))(2)
+    actual = executor.make_callable(vmap(lambda x: x, axis_size=4), disable_torch_autograd=True)(2)
     assert_close(actual, expected)
 
 
