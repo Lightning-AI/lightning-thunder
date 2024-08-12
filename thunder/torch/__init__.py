@@ -572,9 +572,9 @@ def _infer_full_dtype(fill_value: NumberLike, dtype):
             return dtypes.int64
         elif dtypes.is_complex_dtype(fill_value_dtype):
             if current_default_dtype == torch.float64:
-                return dtypes.complex64
+                return dtypes.complex128
             else:
-                return dtypes.complex32
+                return dtypes.complex64
         else:
             return to_dtype(current_default_dtype)
     return to_dtype(dtype)
@@ -602,7 +602,7 @@ def full_like(
 @torchsymbol(torch.ones)
 def ones(*shape: int, device: None | DeviceLike = None, dtype: None | dtypeLike = None) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
-    return full(shape, 1.0, device=device, dtype=dtype)
+    return full(shape, 1, device=device, dtype=maybe_get_default_dtype(dtype))
 
 
 @torchsymbol(torch.ones_like)
@@ -788,7 +788,7 @@ def bernoulli(a: TensorLike, *, generator=None, out=None):
 @torchsymbol(torch.zeros)
 def zeros(*shape: int, device: None | DeviceLike = None, dtype: None | dtypeLike = None) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
-    return full(shape, 0.0, device=device, dtype=dtype)
+    return full(shape, 0, device=device, dtype=maybe_get_default_dtype(dtype))
 
 
 @torchsymbol(torch.zeros_like)
