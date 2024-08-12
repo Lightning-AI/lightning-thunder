@@ -602,7 +602,7 @@ def full_like(
 @torchsymbol(torch.ones)
 def ones(*shape: int, device: None | DeviceLike = None, dtype: None | dtypeLike = None) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
-    return full(shape, 1., device=device, dtype=dtype)
+    return full(shape, 1.0, device=device, dtype=dtype)
 
 
 @torchsymbol(torch.ones_like)
@@ -788,7 +788,7 @@ def bernoulli(a: TensorLike, *, generator=None, out=None):
 @torchsymbol(torch.zeros)
 def zeros(*shape: int, device: None | DeviceLike = None, dtype: None | dtypeLike = None) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
-    return full(shape, 0., device=device, dtype=dtype)
+    return full(shape, 0.0, device=device, dtype=dtype)
 
 
 @torchsymbol(torch.zeros_like)
