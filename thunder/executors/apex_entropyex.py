@@ -10,7 +10,7 @@ from thunder.core.utils import check, same_shape
 from thunder.core.transforms import get_grad, put_grad, mean_backward, restore_reduced_dims
 from thunder.core.compile_data import get_compile_option
 
-from thunder.executors.apex_ex import apex_ex
+from thunder.executors.apexex import apex_ex
 
 APEX_CROSS_ENTROPY_AVAILABLE: bool = package_available("xentropy_cuda")
 
