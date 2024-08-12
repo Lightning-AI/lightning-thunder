@@ -10,6 +10,7 @@ from thunder.core.pytree import tree_flatten
 from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import TraceCtx, from_trace, set_tracectx, reset_tracectx
 from thunder.core.transform_common import replace_redundant_inputs
+from thunder.core.vjp_utils import get_saved_for_backward_tensors
 
 if TYPE_CHECKING:
     from thunder.core.trace import VariableInterface
@@ -175,7 +176,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     # any change in the forward trace must be reflected in the backward
     # trace.
     original_bw_saved_tensors_for_backward = bw_trace.args[0][0]
-    new_fw_saved_tensors_for_backward = fw_extrace.output[1][0]
+    new_fw_saved_tensors_for_backward = get_saved_for_backward_tensors(fw_extrace)
 
     # saved meta data (this could also contain proxies)
     original_bw_saved_meta_for_backward = bw_trace.args[0][1]

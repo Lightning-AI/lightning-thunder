@@ -21,7 +21,7 @@ from thunder.tests.framework import (
     nvFuserExecutor,
 )
 from thunder.tests.opinfos import opinfos, OpInfo, make_number, SampleInput
-from thunder.tests.make_tensor import make_tensor
+from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.torch import _torch_to_thunder_function_map, _inplace_to_out_of_place
 
 if TYPE_CHECKING:
@@ -111,10 +111,7 @@ def test_functionalization(op: OpInfo, device: str, dtype: dtypes.dtype, executo
 
     is_polygamma = op.name == "polygamma_"
     inplace_op = InplaceOpWrapper(op.torch_reference, is_polygamma, False)
-    jitted_inplace_op = thunder.jit(
-        InplaceOpWrapper(op.torch_reference, is_polygamma, True),
-        executors=executor.executors_list(),
-    )
+    jitted_inplace_op = executor.make_callable(InplaceOpWrapper(op.torch_reference, is_polygamma, True))
     sample: SampleInput
     for idx, sample in enumerate(op.sample_inputs(device, dtype)):
         if idx > 0:
@@ -214,9 +211,9 @@ def test_inplace_to_views(executor, device, _):
     a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
     a_, b_ = a.clone().detach(), b.clone().detach()
 
-    jittd_f = thunder.jit(f, executors=executor.executors_list())
+    jitted_f = executor.make_callable(f)
 
-    c, d, e = jittd_f(a, b)
+    c, d, e = jitted_f(a, b)
     c_, d_, e_ = f(a_, b_)
 
     torch.testing.assert_close((c, d, e), (c_, d_, e_))
@@ -234,9 +231,9 @@ def test_inplace_to_views(executor, device, _):
     a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
     a_, b_ = a.clone().detach(), b.clone().detach()
 
-    jittd_g = thunder.jit(g, executors=executor.executors_list())
+    jitted_g = executor.make_callable(g)
 
-    d, e = jittd_g(a, b)
+    d, e = jitted_g(a, b)
     d_, e_ = g(a_, b_)
 
     torch.testing.assert_close((d, e), (d_, e_))
@@ -254,9 +251,9 @@ def test_inplace_to_views(executor, device, _):
     a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
     a_, b_ = a.clone().detach(), b.clone().detach()
 
-    jittd_h = thunder.jit(h, executors=executor.executors_list())
+    jitted_h = executor.make_callable(h)
 
-    c, d, e = jittd_h(a, b)
+    c, d, e = jitted_h(a, b)
     c_, d_, e_ = h(a_, b_)
 
     torch.testing.assert_close((c, d, e), (c_, d_, e_))
@@ -308,10 +305,10 @@ def test_error_of_inplace_to_views(executor, device, _):
         return c, d, e
 
     a, b = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
-    jittd_f = thunder.jit(f, executors=executor.executors_list())
+    jitted_f = executor.make_callable(f)
 
     with pytest.raises(NotImplementedError, match="in-place op of `torch.Tensor.add_` to `torch.flatten` output"):
-        _ = jittd_f(a, b)
+        _ = jitted_f(a, b)
 
     def f(a: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         c = torch.exp(a)
@@ -323,9 +320,9 @@ def test_error_of_inplace_to_views(executor, device, _):
         d.div_(a)
         return c, d, e
 
-    jittd_f = thunder.jit(f, executors=executor.executors_list())
+    jitted_f = executor.make_callable(f)
     with pytest.raises(NotImplementedError, match="in-place op of `torch.Tensor.mul_`"):
-        _ = jittd_f(a, b)
+        _ = jitted_f(a, b)
 
 
 @instantiate(
@@ -588,47 +585,90 @@ def test_inplace_copy_on_fusion_inputs_issue_791(executor, device, _):
     assert o.allclose(o_)
 
 
-def test_error_out_func_with_alias_args():
+@instantiate(
+    dtypes=(dtypes.float32,),
+)
+def test_inplace_to_alias_func_args(executor, device, dtype):
+    shape = (2, 2)
+    torch_dtype = dtypes.to_torch_dtype(dtype)
 
-    @thunder.jit
-    def f_with_inplace(a, b):
-        return a.exp_() + b.tanh_()
+    # copied from https://github.com/Lightning-AI/lightning-thunder/issues/738
+    def f(a, b):
+        return a.exp_() + b.tanh_(), a
 
-    a = torch.ones((1, 1))
-    b = torch.zeros((1, 1))
+    jitted_f = executor.make_callable(f)
 
-    msg = "share their storage and some of them are modified in-place"
-    with pytest.raises(NotImplementedError) as excinfo:
-        f_with_inplace(a, a)
-    assert msg in str(excinfo.value)
-    assert (thunder.cache_hits(f_with_inplace), thunder.cache_misses(f_with_inplace)) == (0, 1)
+    a = make_tensor(shape, device=device, dtype=torch_dtype)
+    b = make_tensor(shape, device=device, dtype=torch_dtype)
+    a_ref, b_ref = a.clone().detach(), b.clone().detach()
 
-    with pytest.raises(NotImplementedError) as excinfo:
-        f_with_inplace(b, b)
-    assert msg in str(excinfo.value)
-    assert (thunder.cache_hits(f_with_inplace), thunder.cache_misses(f_with_inplace)) == (1, 1)
+    res_of_a, a_out = jitted_f(a, a)
+    ref_res_of_a, ref_a_out = f(a_ref, a_ref)
+    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (0, 1)
+    torch.testing.assert_close(res_of_a, ref_res_of_a)
+    torch.testing.assert_close(a, a_ref)
+    assert a_out.data_ptr() == a.data_ptr()
 
-    # Make sure the cache changes accordingly
-    f_with_inplace(a, b)
-    assert (thunder.cache_hits(f_with_inplace), thunder.cache_misses(f_with_inplace)) == (1, 2)
+    a = make_tensor_like(a)
+    a_ref = a.clone().detach()
+    res_of_a_and_b, _ = jitted_f(a, b)
+    ref_res_of_a_and_b, _ = f(a_ref, b_ref)
+    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (0, 2)
+    torch.testing.assert_close(res_of_a_and_b, ref_res_of_a_and_b)
 
-    f_with_inplace(b, a)
-    assert (thunder.cache_hits(f_with_inplace), thunder.cache_misses(f_with_inplace)) == (2, 2)
+    res_of_b, _ = jitted_f(b, b)
+    ref_res_of_b, _ = f(b_ref, b_ref)
+    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (1, 2)
+    torch.testing.assert_close(res_of_b, ref_res_of_b)
+    torch.testing.assert_close(b, b_ref)
 
-    with pytest.raises(NotImplementedError) as excinfo:
-        f_with_inplace(b, b)
-    assert msg in str(excinfo.value)
-    assert (thunder.cache_hits(f_with_inplace), thunder.cache_misses(f_with_inplace)) == (3, 2)
+    b = make_tensor_like(b)
+    b_ref = b.clone().detach()
+    res_of_b_and_a, _ = jitted_f(b, a)
+    ref_res_of_b_and_a, _ = f(b_ref, a_ref)
+    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (2, 2)
+    torch.testing.assert_close(res_of_b_and_a, ref_res_of_b_and_a)
 
-    @thunder.jit
+    # TODO(crcrpar): The message should be from the check of in-place to aliases of different shapes.
+    with pytest.raises(RuntimeError, match="Attempting to reshape a.shape"):
+        jitted_f(a, a[0, :])
+
     def f(a, b):
         return a.exp() + b.tanh()
 
-    f(a, a)
-    assert (thunder.cache_hits(f), thunder.cache_misses(f)) == (0, 1)
-    f(a, b)
-    assert (thunder.cache_hits(f), thunder.cache_misses(f)) == (0, 2)
-    f(b, a)
-    assert (thunder.cache_hits(f), thunder.cache_misses(f)) == (1, 2)
-    f(b, b)
-    assert (thunder.cache_hits(f), thunder.cache_misses(f)) == (2, 2)
+    jitted_f = executor.make_callable(f)
+    jitted_f(a, a)
+    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (0, 1)
+    jitted_f(a, b)
+    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (0, 2)
+    jitted_f(b, a)
+    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (1, 2)
+    jitted_f(b, b)
+    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (2, 2)
+
+    def f(a, b, c):
+        d = a.exp_()
+        e = b.tanh_()
+        f = c.cosh_()
+        return d + e + f
+
+    a = make_tensor(shape, device=device, dtype=torch_dtype)
+    a_expected = a.exp().tanh().cosh()
+
+    jitted_f = executor.make_callable(f)
+    out = jitted_f(a, a, a)
+
+    torch.testing.assert_close(a, a_expected)
+    torch.testing.assert_close(out, 3 * a_expected)
+
+    a, b = make_tensor_like(a), make_tensor_like(a)
+    a_ref, b_ref = a.clone().detach(), b.clone().detach()
+    out, out_ref = jitted_f(a, b, b), f(a_ref, b_ref, b_ref)
+    torch.testing.assert_close(out, out_ref)
+    torch.testing.assert_close((a, b), (a_ref, b_ref))
+
+    a, b = make_tensor_like(a), make_tensor_like(a)
+    a_ref, b_ref = a.clone().detach(), b.clone().detach()
+    out, out_ref = jitted_f(a, b, a), f(a_ref, b_ref, a_ref)
+    torch.testing.assert_close(out, out_ref)
+    torch.testing.assert_close((a, b), (a_ref, b_ref))

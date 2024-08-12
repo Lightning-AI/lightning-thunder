@@ -29,7 +29,7 @@ def runtime_allocated_memory(dev):
 
 
 def get_return_memory(bsym):
-    assert bsym.sym.name == "return"
+    assert bsym.sym is thunder.core.prims.python_return
     return_tensors_name = set()
     res = 0
     for x in bsym.flat_proxy_args:

@@ -129,6 +129,7 @@ def test_get_all_executors_includes_all_native_executors():
     expected = {
         "apex",
         "cudnn",
+        "fa3",
         "torch",
         "cudnn_layernorm",
         "sdpa",
