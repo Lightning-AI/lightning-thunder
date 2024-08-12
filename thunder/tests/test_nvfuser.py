@@ -366,23 +366,23 @@ def test_cse_rematerialization(executor, device, _):
     # Nvfuser with recomputation should use precomputed cos and sin values.
     assert len(fusion_bsyms[1].args) == len(fusion_bsyms[6].args)
 
-    # Below, we check that freqs_sin and tos1 (the latter being freqs_cos) are used
+    # Below, we check that freqs_sin and freqs_cos are used
     # in the same operation in both fusions.
     (fusion1_freqs_sin_arg,) = (a for a in fusion_bsyms[1].args if a.name == "freqs_sin")
-    (fusion1_tos1_arg,) = (a for a in fusion_bsyms[1].args if a.name == "tos1")
+    (fusion1_freqs_cos_arg,) = (a for a in fusion_bsyms[1].args if a.name == "freqs_cos")
     (fusion6_freqs_sin_arg,) = (a for a in fusion_bsyms[6].args if a.name == "freqs_sin")
-    (fusion6_tos1_arg,) = (a for a in fusion_bsyms[6].args if a.name == "tos1")
+    (fusion6_freqs_cos_arg,) = (a for a in fusion_bsyms[6].args if a.name == "freqs_cos")
 
     (fusion1_freqs_sin_user,) = (s for s in fusion_bsyms[1].subsymbols if s.args[0] is fusion1_freqs_sin_arg)
     (fusion6_freqs_sin_user,) = (s for s in fusion_bsyms[6].subsymbols if s.args[0] is fusion6_freqs_sin_arg)
 
     assert fusion1_freqs_sin_user.sym is fusion6_freqs_sin_user.sym
     assert fusion1_freqs_sin_user.args[1:] == fusion6_freqs_sin_user.args[1:]
-    (fusion1_tos1_user,) = (s for s in fusion_bsyms[1].subsymbols if s.args[0] is fusion1_tos1_arg)
-    (fusion6_tos1_user,) = (s for s in fusion_bsyms[6].subsymbols if s.args[0] is fusion1_tos1_arg)
+    (fusion1_freqs_cos_user,) = (s for s in fusion_bsyms[1].subsymbols if s.args[0] is fusion1_freqs_cos_arg)
+    (fusion6_freqs_cos_user,) = (s for s in fusion_bsyms[6].subsymbols if s.args[0] is fusion1_freqs_cos_arg)
 
-    assert fusion1_tos1_user.sym is fusion6_tos1_user.sym
-    assert fusion1_tos1_user.args[1:] == fusion6_tos1_user.args[1:]
+    assert fusion1_freqs_cos_user.sym is fusion6_freqs_cos_user.sym
+    assert fusion1_freqs_cos_user.args[1:] == fusion6_freqs_cos_user.args[1:]
 
 
 # Tests that two separated nvFuser regions can be merged when they don't depend
