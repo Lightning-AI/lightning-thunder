@@ -3364,6 +3364,20 @@ def matmul(a: TensorLike, b: TensorLike, /) -> TensorLike:
     if a.ndim == 1 or b.ndim == 1:
         return prims.matmul(a, b)
 
+    # Case nd @ 2d --> reduce to a 2d gemm
+    if a.ndim > 2 and b.ndim == 2:
+        a_batch_dims = a.shape[:-2]
+
+        # a -> a_2d by flattening batch dims with the row space
+        a_2d = a.reshape(-1, a.shape[-1])
+
+        # 2d gemm
+        res_2d = prims.matmul(a_2d, b)
+
+        # reshape `res` from 2d to a proper nd shape
+        res = res_2d.reshape(*a_batch_dims, -1, b.shape[-1])
+        return res
+
     a_batch_dims = a.shape[:-2]
     b_batch_dims = b.shape[:-2]
 

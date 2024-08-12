@@ -6232,6 +6232,10 @@ def matmul_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((M, N), (N, M)),
         ((B, M, N), (B, N, M)),
         ((B, B, M, N), (B, B, N, M)),
+        # cases nd @ 2d --> these should lower to 2d-gemms for efficiency
+        ((1, M, N), (N, N)),
+        ((B, M, N), (N, N)),
+        ((B, N, M), (M, N)),
     )
 
     for shape_a, shape_b in cases:
