@@ -1861,7 +1861,9 @@ def _vmap_call_metafunc(detached: bool, args, in_dims, out_dims, axis_size, func
             and isinstance(result.value, (Number, NumberProxy))
             and axis_size is not None
         ):
-            result = BatchedValue(ltorch.full(shape=(), fill_value=result.value, device=common_device), result.batch_dim)
+            result = BatchedValue(
+                ltorch.full(shape=(), fill_value=result.value, device=common_device), result.batch_dim
+            )
         assert isinstance(result, BatchedValue)
         out = move_batch_dim(axis_size, result.batch_dim, out_dims[0], result.value)
         return out
