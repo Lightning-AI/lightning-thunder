@@ -22,7 +22,7 @@ import thunder.core.dtypes as dtypes
 import thunder.executors as executors
 import thunder.torch as ltorch
 from thunder.core.transforms import grad, clear_grads, populate_grads
-from thunder.executors.apex_entropyex import apex_ex, apex_available
+from thunder.executors.apex_entropyex import apex_ex, apex_entropy_available
 from thunder.executors.cudnn_layernormex import cudnn_layernorm_ex
 from thunder.executors.cudnnex import cudnn_ex, cudnn_available
 from thunder.executors.transformer_engineex import transformer_engine_ex, TE_AVAILABLE
@@ -717,7 +717,7 @@ def thunder_torch_compile_executor(fn: Callable) -> Callable:
 
 thunder_apex_executor: None | Callable = None
 thunder_apex_nvfuser_executor: None | Callable = None
-if apex_available():
+if apex_entropy_available():
 
     def thunder_apex_executor(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True

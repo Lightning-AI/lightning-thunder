@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+import math
 
 import torch
 
@@ -7,6 +8,8 @@ from thunder.core.proxies import TensorProxy, AnyProxy
 from thunder.core.transforms import get_grad, put_grads
 from thunder.executors.utils import Context, set_saved_tensors
 from thunder.torch import TensorLike
+from thunder.core.compile_data import get_compile_option
+from thunder.executors.apex_ex import apex_ex
 
 
 FUSED_NORMS_AVAILABLE = True
@@ -16,19 +19,13 @@ try:
 except:
     FUSED_NORMS_AVAILABLE = False
 
-import math
-from thunder.extend import OperatorExecutor, register_executor
-
-_apex_fused_rms_norm_ex = OperatorExecutor("apex_fused_rms_norm")
-register_executor(_apex_fused_rms_norm_ex)
-
 
 def meta_fn(input: TensorLike, weight: TensorLike, normalized_shape: Sequence[int], eps: float, memory_efficient: bool):
     return TensorProxy(like=input)
 
 
 # Symbol which will be used by lookaside.
-fused_rms_norm = _apex_fused_rms_norm_ex.register_operator("fused_rms_norm", meta=meta_fn)
+fused_rms_norm = apex_ex.register_operator("fused_rms_norm", meta=meta_fn)
 
 
 def meta_impl_fn(
@@ -49,9 +46,7 @@ def fused_rms_norm_impl(
     return output, ctx.pop_saved_tensors(), ctx
 
 
-fused_rms_norm_fwd = _apex_fused_rms_norm_ex.register_operator(
-    "fused_rms_norm_fwd", meta=meta_impl_fn, fn=fused_rms_norm_impl
-)
+fused_rms_norm_fwd = apex_ex.register_operator("fused_rms_norm_fwd", meta=meta_impl_fn, fn=fused_rms_norm_impl)
 
 
 def fused_rms_norm_backward_meta(saved_tensors: Sequence[torch.Tensor], ctx: Context, g: TensorLike):
@@ -65,7 +60,7 @@ def fused_rms_norm_backward_impl(saved_tensors: Sequence[torch.Tensor], ctx: Con
         return FusedRMSNormAffineMixedDtypesFunction.backward(ctx, g)[:2]
 
 
-fused_rms_norm_backward = _apex_fused_rms_norm_ex.register_operator(
+fused_rms_norm_backward = apex_ex.register_operator(
     "fused_rms_norm_backward", meta=fused_rms_norm_backward_meta, fn=fused_rms_norm_backward_impl
 )
 
@@ -87,14 +82,31 @@ def execution_tfms(
     return output
 
 
-_apex_fused_rms_norm_ex.register_implementation(
-    fused_rms_norm, execution_transform=execution_tfms, grad_transform=fused_rms_norm_grad_rule
+def _fused_rms_norm_checker(
+    input: TensorLike, weight: TensorLike, normalized_shape: Sequence[int], eps: float, memory_efficient: bool
+):
+    use_apex_fused_rms_norm = get_compile_option(
+        "use_apex_fused_rms_norm", "Whether to enable `fused_rms_norm` from `apex_ex`. Defaults to `True`."
+    )
+    # We explicitly check for `False` as if the value is unspecified by user, `get_compile_option` returns `None` and `not None` is equal to True.
+    if use_apex_fused_rms_norm == False:  # User explicitly disabled this.
+        return False
+
+    # use_apex_fused_rms_norm is `None` or `True`.
+    return True
+
+
+apex_ex.register_implementation(
+    fused_rms_norm,
+    execution_transform=execution_tfms,
+    grad_transform=fused_rms_norm_grad_rule,
+    checker=_fused_rms_norm_checker,
 )
-_apex_fused_rms_norm_ex.register_implementation(fused_rms_norm_backward, fused_rms_norm_backward)
+apex_ex.register_implementation(fused_rms_norm_backward, fused_rms_norm_backward)
 
 
 # Register the lookaside.
-def register_apex_fused_rms_norm():
+def register_apex_fused_rms_norm() -> None:
     @thunder.core.jit_ext.register_general_jit_lookaside(FusedRMSNormAffineMixedDtypesFunction.forward)
     @thunder.core.jit_ext.interpreter_needs_wrap
     def rms_forward_lookaside(ctx, input, weight, normalized_shape, eps, memory_efficient=False):
@@ -105,10 +117,5 @@ def register_apex_fused_rms_norm():
     return None
 
 
-def get_apex_fused_rms_norm_ex() -> OperatorExecutor | None:
-    if FUSED_NORMS_AVAILABLE:
-        register_apex_fused_rms_norm()
-        return _apex_fused_rms_norm_ex
-    # If the relevant module is unavailable for import
-    # then don't return the executor.
-    return None
+if FUSED_NORMS_AVAILABLE:
+    register_apex_fused_rms_norm()
