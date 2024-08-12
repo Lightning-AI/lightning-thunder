@@ -561,12 +561,31 @@ def arange(
     return clang.arange(start=start, step=step, stop=end, device=device, dtype=dtype)
 
 
+# Infers dtype from the fill_value and dtype
+def _infer_full_dtype(fill_value: NumberLike, dtype):
+    fill_value_dtype = dtypes.numbertype_to_dtype(dtypes.to_dtype(fill_value))
+    current_default_dtype = get_default_dtype()
+    if not dtype:
+        if dtypes.is_boolean_dtype(fill_value_dtype):
+            return fill_value_dtype
+        elif dtypes.is_nonboolean_integer_dtype(fill_value_dtype):
+            return dtypes.int64
+        elif dtypes.is_complex_dtype(fill_value_dtype):
+            if current_default_dtype == torch.float64:
+                return dtypes.complex64
+            else:
+                return dtypes.complex32
+        else:
+            return to_dtype(current_default_dtype)
+    return to_dtype(dtype)
+
+
 @torchsymbol(torch.full)
 def full(
     shape: Sequence[int], fill_value: NumberLike, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
 ) -> TensorLike:
     device = to_device(maybe_get_default_device(device))
-    dtype = to_dtype(dtype)
+    dtype = _infer_full_dtype(fill_value, dtype)
     return clang.full(shape, fill_value, device=device, dtype=dtype)
 
 
@@ -583,7 +602,7 @@ def full_like(
 @torchsymbol(torch.ones)
 def ones(*shape: int, device: None | DeviceLike = None, dtype: None | dtypeLike = None) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
-    return full(shape, 1, device=device, dtype=dtype)
+    return full(shape, 1., device=device, dtype=dtype)
 
 
 @torchsymbol(torch.ones_like)
@@ -769,7 +788,7 @@ def bernoulli(a: TensorLike, *, generator=None, out=None):
 @torchsymbol(torch.zeros)
 def zeros(*shape: int, device: None | DeviceLike = None, dtype: None | dtypeLike = None) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
-    return full(shape, 0, device=device, dtype=dtype)
+    return full(shape, 0., device=device, dtype=dtype)
 
 
 @torchsymbol(torch.zeros_like)

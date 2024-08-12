@@ -272,9 +272,6 @@ def convolution(
 def full(
     shape: Sequence[int], fill_value: NumberLike, *, device: DeviceLike, dtype: None | dtypes.dtype = None
 ) -> TensorLike:
-    # Infers dtype from the fill_value when not explicitly provided
-    if dtype is None:
-        dtype = dtypes.numbertype_to_dtype(dtypes.to_dtype(fill_value))
     device = devices.to_device(device)
 
     return prims.full(shape, fill_value, device=device, dtype=dtype)
