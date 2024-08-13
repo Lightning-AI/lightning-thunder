@@ -1,7 +1,5 @@
 import torch
 
-from collections import OrderedDict
-
 
 class ThunderCompiler:
     def __init__(self, **thunder_options):
@@ -36,7 +34,7 @@ class ThunderCompiler:
         # to the GraphModule that was passed to ThunderCompiler. This will allow
         # us to inspect the GraphModule that was compiled by Thunder.
         self.thunder_fns: list[ThunderModule] = []
-        self.thunder_to_gm: OrderedDict[ThunderModule, torch.fx.GraphModule] = OrderedDict()
+        self.thunder_to_gm: dict[ThunderModule, torch.fx.GraphModule] = {}
 
         self.thunder_options = thunder_options
 
