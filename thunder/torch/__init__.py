@@ -570,11 +570,11 @@ def _infer_full_dtype(fill_value: NumberLike, dtype):
             return fill_value_dtype
         elif dtypes.is_nonboolean_integer_dtype(fill_value_dtype):
             return dtypes.int64
+        # NOTE Thunder has slightly different behavior than Torch, Torch (2.5.0a0+git8927fc2):
+        # float64 -> complex128
+        # float32, float16, bfloat16 -> complex64
         elif dtypes.is_complex_dtype(fill_value_dtype):
-            if current_default_dtype == torch.float64:
-                return dtypes.complex128
-            else:
-                return dtypes.complex64
+            return dtypes.corresponding_complex_dtype(current_default_dtype)
         else:
             return to_dtype(current_default_dtype)
     return to_dtype(dtype)
