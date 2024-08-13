@@ -19,6 +19,12 @@ import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
 # nanoGPT tests
 #
 
+# NOTE: DynamoThunderExecutor is not included in the _all_test_executors() list
+# because we don't want to run all the tests with the DynamoThunderExecutor by
+# default. We only want to run it with the tests that are explicitly marked to
+# use the DynamoThunderExecutor. When there's more than one file that uses the
+# DynamoThunderExecutor, we should consider adding a separate list of executors
+# to the framework.py file.
 all_test_executors_and_dynamo = _all_test_executors() + [DynamoThunderExecutor]
 
 
