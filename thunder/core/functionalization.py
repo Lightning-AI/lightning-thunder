@@ -120,7 +120,11 @@ def _get_prod_bsym_with_arg(
                 f"in-place op of `{orig_bsym_of_in_tensor.sym.id}` to `{bsym.sym.id}` output `{in_tensor.name}` is not "
                 f"supported. It's unclear if `{in_tensor.name}`, the output of "
                 f"{tuple(s.id for s in _syms_returning_runtime_dependently_views)} is "
-                f"a copy, a view, or the input itself, as per https://pytorch.org/docs/stable/tensor_view.html"
+                "a copy, a view, or the input itself, as per https://pytorch.org/docs/stable/tensor_view.html\n"
+                "Please use `torch.view` to create a view. Cloning the reshaped tensor before the in-place op is not currently supported.\n"
+                "This error can be skipped with `skip_inplace_functionalization=True` passed to `thunder.jit`.\n"
+                "If you believe this is a bug, please report it to the Lightning Thunder team in "
+                "https://github.com/Lightning-AI/lightning-thunder/issues/957."
             ),
             NotImplementedError,
         )
