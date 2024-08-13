@@ -1,6 +1,17 @@
 import torch
 import warnings
 
+from thunder.core.baseutils import run_once
+
+
+@run_once
+def _warn_thunder_compiler():
+    warnings.warn(
+        "The ThunderCompiler is in active development and may not work as expected."
+        + " Please report any issues you encounter to the Lightning Thunder team."
+    )
+
+
 
 class ThunderCompiler:
     def __init__(self, **thunder_options):
@@ -28,10 +39,7 @@ class ThunderCompiler:
         """
         from thunder import ThunderModule
 
-        warnings.warn(
-            "The ThunderCompiler is in active development and may not work as expected."
-            + " Please report any issues you encounter to the Lightning Thunder team."
-        )
+        _warn_thunder_compiler()
 
         # Thunder-compiled functions should be readily available for inspection
         # and testing, so we will store them in a list. The order of the
