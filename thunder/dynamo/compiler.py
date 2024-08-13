@@ -1,6 +1,7 @@
 import torch
 import warnings
 
+
 class ThunderCompiler:
     def __init__(self, **thunder_options):
         """
@@ -28,8 +29,8 @@ class ThunderCompiler:
         from thunder import ThunderModule
 
         warnings.warn(
-            "The ThunderCompiler is in active development and may not work as expected." +
-            " Please report any issues you encounter to the Lightning Thunder team."
+            "The ThunderCompiler is in active development and may not work as expected."
+            + " Please report any issues you encounter to the Lightning Thunder team."
         )
 
         # Thunder-compiled functions should be readily available for inspection
