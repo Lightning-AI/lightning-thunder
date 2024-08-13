@@ -2959,9 +2959,12 @@ def type_as_sample_generator(op, device, dtype, requires_grad, **kwargs):
         (1, 2, 3),
     )
 
+    other_dev = "cpu" if device == "cuda" else "cuda"
     for a_shape, b_shape in itertools.product(shapes, shapes):
         yield SampleInput(make(a_shape), make(b_shape))
         yield SampleInput(make(a_shape), make(b_shape, dtype=torch.float32))
+        # Tests when inputs from different devices
+        yield SampleInput(make(a_shape), make(b_shape, device=other_dev))
 
 
 type_as_sample = OpInfo(
