@@ -33,6 +33,7 @@ except ImportError:
     transformer_engine_available = False
 
 
+FSDP_MODES: set[str] = {"fsdp", "fsdp2"}
 world_size = int(os.environ.get("WORLD_SIZE", 1))
 local_rank = int(os.environ.get("LOCAL_RANK", 0))
 global_rank = int(os.environ.get("RANK", 0))
@@ -149,10 +150,10 @@ class Benchmark_litGPT:
                 world_size % self.sharding_size == 0
             ), f"World size {world_size} is not divisible by the sharding size {self.sharding_size}"
 
-        if self.bucketing_mode != "none" and self.distributed_mode not in ("fsdp", "fsdp2"):
-            print(
-                f"[WARNING] --bucketing_mode {self.bucketing_mode} will be ignored as \
-             it is only used for FSDP style parallelism but running {self.distributed_mode}"
+        if self.bucketing_mode != "none" and self.distributed_mode not in FSDP_MODES:
+            warnings.warn(
+                f"--bucketing_mode {self.bucketing_mode} will be ignored as "
+                f" it is only used for FSDP style parallelism but running {self.distributed_mode}"
             )
 
         assert not (
@@ -160,15 +161,13 @@ class Benchmark_litGPT:
         ), "'size' bucketing mode is not supported for Thunder. Please use 'none' or 'block'."
 
         if self.fsdp_bucket_params is not None:
-            if self.distributed_mode not in ("fsdp", "fsdp2"):
-                print(
-                    f"[WARNING] Found --fsdp_bucket_params but Distributed mode is {self.distributed_mode}. Will be ignored"
+            if self.distributed_mode not in FSDP_MODES:
+                warnings.warn(
+                    f"Found --fsdp_bucket_params but Distributed mode is {self.distributed_mode}. Will be ignored"
                 )
 
             if self.bucketing_mode != "size":
-                print(
-                    f"[WARNING] Bucketing mode is set to {self.bucketing_mode}. --fsdp_bucket_params will be ignored."
-                )
+                warnings.warn(f"Bucketing mode is set to {self.bucketing_mode}. --fsdp_bucket_params will be ignored.")
 
         if is_transformer_engine(low_precision_mode):
             if not transformer_engine_available:
@@ -250,7 +249,7 @@ class Benchmark_litGPT:
             }
 
     def init_model(self):
-        init_device = torch.device("meta") if self.distributed_mode in ("fsdp", "fsdp2") else self.device
+        init_device = torch.device("meta") if self.distributed_mode in FSDP_MODES else self.device
         with init_device:
             model = GPT(self.config)
         model.to(dtype=torch.bfloat16)
@@ -577,7 +576,7 @@ class Benchmark_litGPT:
             self.perf_metrics["Micro BS"] = self.micro_batch_size
             self.perf_metrics["Global BS"] = self.global_batch_size
             self.perf_metrics["GA"] = self.gradient_accumulation_steps
-            if self.distributed_mode in ["fsdp", "fsdp2"]:
+            if self.distributed_mode in FSDP_MODES:
                 self.perf_metrics["Distributed Mode"] = (
                     str(self.distributed_mode)
                     + "_"
@@ -630,7 +629,7 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
             f"Number of Layers: {benchmark.config.n_layer}\nNumber of parameters: {sum(p.numel() for p in benchmark.model.parameters() if p.requires_grad) / 1e9:.02f}B"
         )
         print(f"Distributed Mode: {benchmark.distributed_mode}")
-        if benchmark.distributed_mode in ("fsdp", "fsdp2"):
+        if benchmark.distributed_mode in FSDP_MODES:
             print(f"Sharding Mode: {benchmark.shard_mode}\nBucketing: {benchmark.bucketing_mode}")
             if benchmark.sharding_size is not None:
                 print(
