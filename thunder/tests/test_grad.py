@@ -45,6 +45,7 @@ op_skip = {
     "embedding",
     "index_put",
     "batch_norm",
+    "type_as",
 }
 
 if not torch.cuda.is_available():
@@ -473,6 +474,24 @@ def test_vjp_correctness_embedding_manual(op, device, dtype, executor, comp):
         assert gindices is None, "gindices should be None"
         comp(gweight, expected[0])
         comp(actual_out, out)
+
+
+@ops((op for op in opinfos if op.name == "type_as"), supported_dtypes=(dtypes.float64,))
+def test_vjp_correctness_type_as_manual(op, device, dtype, executor, comp):
+    for sample in op.sample_inputs(device, dtype, requires_grad=True):
+        # Compute vjp result using PyTorch
+        out = op.torch_reference(*sample.args, **sample.kwargs)
+        v = make_tensor_like(out)
+        expected = torch.autograd.grad(out, sample.args[0], v)
+
+        # Compute vjp result using Thunder
+        flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
+        filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
+        actual_out = executor.make_callable_legacy(
+            vjp(filtered_op), disable_torch_autograd=True
+        )(filtered_args, (v,))
+        comp(actual_out[1][0], expected[0])
+        comp(actual_out[0], out)
 
 
 @ops(
