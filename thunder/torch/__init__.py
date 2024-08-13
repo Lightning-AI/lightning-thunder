@@ -520,7 +520,7 @@ def type_as(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
     #   tensors and TensorProxies being passed to this operation
     utils.check_type(b, TensorProxy)
 
-    return to(a, b.true_dtype)
+    return to(a, b.true_dtype, device=b.device)
 
 
 @torchsymbol(torch.Tensor.long, is_method=True)
