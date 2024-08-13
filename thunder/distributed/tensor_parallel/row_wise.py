@@ -284,7 +284,7 @@ def row_parallel(
 
     rowwise_thunder_module = add_transform(
         thunder_module,
-        early_transform=TransformForRowWiseParallel(
+        transform=TransformForRowWiseParallel(
             rank=rank,
             world_size=world_size,
             compile_data=get_compile_data(thunder_module),

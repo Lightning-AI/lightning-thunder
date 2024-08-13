@@ -1,7 +1,9 @@
 from collections.abc import Sequence
 
 import thunder
-from thunder.core.transform_common import EarlyTransform
+from thunder.core.transform_common import Transform
+from thunder.core.trace import TraceCtx
+from thunder.core.pytree import tree_map
 from thunder.core import utils
 from thunder.core import prims
 import torch
@@ -44,11 +46,61 @@ def get_bitsandbytes_executor():
     return bitsandbytes_executor
 
 
-class BitsAndBytesLinearQuant4bit(EarlyTransform):
+def trace_with_replaced_proxy_metadata(trace: TraceCtx, proxy_replacement_metadata) -> TraceCtx:
+    t = TraceCtx(trace.fn, prologue=trace.prologue)
+
+    proxymap: dict[str, thunder.Proxy] = {}
+
+    def map_proxy(p):
+        if isinstance(p, thunder.Proxy):
+            return proxymap[p.name]
+        return p
+
+    def create_proxy(p):
+        if isinstance(p, thunder.Proxy):
+            if p.name in proxymap:  # happens with subsymbols
+                return p
+            with thunder.core.trace.tracectx(t):
+                np = p.replace(**proxy_replacement_metadata.get(p.name, {}))
+                proxymap[p.name] = np
+                return np
+        return p
+
+    def process_bound_symbols(src_bound_symbols, target_bound_symbols):
+        for bsym in src_bound_symbols:
+            new_args = tree_map(map_proxy, bsym.args)
+            new_kwargs = tree_map(map_proxy, bsym.kwargs)
+            new_output = tree_map(create_proxy, bsym.output)
+            new_bsym = bsym.from_bsym(output=new_output, args=new_args, kwargs=new_kwargs, subsymbols=[])
+            target_bound_symbols.append(new_bsym)
+            if len(bsym.subsymbols) > 0:
+                process_bound_symbols(bsym.subsymbols, new_bsym.subsymbols)
+
+    process_bound_symbols(trace.bound_symbols, t.bound_symbols)
+
+    t.args = tree_map(map_proxy, trace.args)
+    t.kwargs = tree_map(map_proxy, trace.kwargs)
+    t._siginfo = trace._siginfo
+    return t
+
+
+class BitsAndBytesLinearQuant4bit(Transform):
     def __init__(self):
         self.quant_states = {}
         self.quantized_submodule_names = set()
         get_bitsandbytes_executor()
+
+    def quantize_weight(self, w):
+        # todo: revisit staying on CPU when bnb supports it
+        if w.device.type == "meta":
+            w_work = torch.zeros_like(w, device="cuda")
+        elif w.device.type != "cuda":
+            with torch.no_grad():
+                w_work = w.to("cuda")
+        else:
+            w_work = w
+
+        return bitsandbytes.functional.quantize_4bit(w_work, quant_type="nf4")
 
     def transform_module(self, model: thunder.ThunderModule):
         self.thunder_module = model
@@ -57,12 +109,24 @@ class BitsAndBytesLinearQuant4bit(EarlyTransform):
             self.quantized_submodule_names.add(name)
             weight_name = f"{name}.weight"
             w = tm.get_parameter(weight_name)
-            # device!, double quant support
-            qw, qs = bitsandbytes.functional.quantize_4bit(w.to("cuda"), quant_type="nf4")
-            tm._overrides_parameters[weight_name] = qw
-            tm._overrides_parameters[f"{weight_name}.absmax"] = qs.absmax
-            tm._overrides_parameters[f"{weight_name}.code"] = qs.code
-            self.quant_states[weight_name] = {"dtype": qs.dtype, "shape": qs.shape, "blocksize": qs.blocksize}
+            # TODO: double quant support
+
+            qw, qs = self.quantize_weight(w)
+            tm._overrides_parameters[weight_name] = qw.to(w.device)
+            tm._overrides_parameters[f"{weight_name}.absmax"] = qs.absmax.to(w.device)
+            tm._overrides_parameters[f"{weight_name}.code"] = qs.code.to(w.device)
+            self.quant_states[weight_name] = {
+                "dtype": qs.dtype,
+                "shape": tuple(qs.shape),
+                "blocksize": qs.blocksize,
+                "qweight.dtype": qw.dtype,
+                "qweight.shape": tuple(qw.shape),
+                "absmax.dtype": qs.absmax.dtype,
+                "absmax.shape": tuple(qs.absmax.shape),
+                "code.dtype": qs.code.dtype,
+                "code.shape": tuple(qs.code.shape),
+                "device": getattr(w, "__thunder_device", w.device),
+            }
 
         for n, submodule in model._model.named_modules():
             if isinstance(submodule, torch.nn.Linear):
@@ -78,30 +142,41 @@ class BitsAndBytesLinearQuant4bit(EarlyTransform):
         assert w.dtype == qs_dict["dtype"]
         assert w.shape == qs_dict["shape"]
 
-        qw, qs = bitsandbytes.functional.quantize_4bit(w.to("cuda"), block_size=qs_dict["blocksize"], quant_type="nf4")
+        qw, qs = self.quantize_weight(w)
 
         # double quant support...
         state_dict = state_dict.copy()
-        state_dict[weight_name] = qw
-        state_dict[f"{weight_name}.absmax"] = qs.absmax
-        state_dict[f"{weight_name}.code"] = qs.code
+        state_dict["weight"] = qw.to(w.device)
+        state_dict["weight.absmax"] = qs.absmax.to(w.device)
+        state_dict["weight.code"] = qs.code.to(w.device)
 
         return state_dict
 
-    def transform_traces(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
+    def transform_traces_pre_prologue(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
         tm = self.thunder_module
         from thunder.core.trace import tracectx
 
         checks = get_checks(prologue_trace)
 
-        compute_producers, compute_consumers = utils.producers_and_consumers(computation_trace)
+        prologue_proxy_map = {
+            get_param_bsym.output.name: dict(
+                shape=self.quant_states[model_weight_name]["qweight.shape"],
+                dtype=thunder.dtypes.to_dtype(self.quant_states[model_weight_name]["qweight.dtype"]),
+            )
+            for model_weight_name, (check_bsym, get_param_bsym) in checks.items()
+            if model_weight_name in self.quant_states
+        }
 
+        # here we switch the prologue_trace to a copy with new metadata
+        prologue_trace = trace_with_replaced_proxy_metadata(prologue_trace, prologue_proxy_map)
+
+        checks = get_checks(prologue_trace)
         proglogue_to_compute_outputs = prologue_trace.output[0]
 
-        output_idxes = {id(o): i for i, o in enumerate(proglogue_to_compute_outputs)}
+        output_idxes = {o.name: i for i, o in enumerate(proglogue_to_compute_outputs)}
 
-        computation_trace.push_scope([])
-        quantized_proxies: dict[int, str] = {}  # id -> name
+        quantized_proxies: dict[str, str] = {}  # proxy_name -> param_name
+        additional_proxies: dict[str, thunder.Proxy] = {}  # param_name.(absmax|code) -> Proxy
 
         new_bsyms = []
         new_compute_inputs = []
@@ -112,29 +187,27 @@ class BitsAndBytesLinearQuant4bit(EarlyTransform):
             param_absmax = tm.get_parameter(n_absmax)
             param_code = tm.get_parameter(n_code)
             check, get_param = checks[n]
-            quantized_proxies[id(get_param.output)] = n
+            quantized_proxies[get_param.output.name] = n
             # check has args: tensor, shape, device, dtype, requires_grad
-            proxy, _, _, _, requires_grad = check.args
-            thunder_device = thunder.devices.to_device(param.device)
-            thunder_device_str = thunder_device.device_str()
-            check.args = (proxy, (*param.shape,), thunder_device_str, param.dtype, False)
+            proxy, _, device, _, requires_grad = check.args
+            check.args = (proxy, qs["qweight.shape"], device, qs["qweight.dtype"], False)
 
-            output_idx = output_idxes.get(id(get_param.output))
+            output_idx = output_idxes.get(get_param.output.name)
             if output_idx is not None:
                 with tracectx(prologue_trace):
                     # better way
                     proxy_absmax = thunder.TensorProxy(
                         name=f"{get_param.output.name}_absmax",
-                        shape=param_absmax.shape,
-                        dtype=thunder.dtypes.to_dtype(param_absmax.dtype),
-                        device=thunder.devices.to_device(param_absmax.device),
+                        shape=qs["absmax.shape"],
+                        dtype=thunder.dtypes.to_dtype(qs["absmax.dtype"]),
+                        device=thunder.devices.to_device(qs["device"]),
                         requires_grad=False,
                     )
                     proxy_code = thunder.TensorProxy(
                         name=f"{get_param.output.name}_code",
-                        shape=param_code.shape,
-                        dtype=thunder.dtypes.to_dtype(param_code.dtype),
-                        device=thunder.devices.to_device(param_code.device),
+                        shape=qs["code.shape"],
+                        dtype=thunder.dtypes.to_dtype(qs["code.dtype"]),
+                        device=thunder.devices.to_device(qs["device"]),
                         requires_grad=False,
                     )
                     # get_param.sym = unpack_buffer/parameter as needed
@@ -144,35 +217,50 @@ class BitsAndBytesLinearQuant4bit(EarlyTransform):
                     add_trace_output(prologue_trace, proxy_code, subindex=0)
                     new_compute_inputs.append(proxy_absmax)
                     new_compute_inputs.append(proxy_code)
-                    qs["proxy_absmax"] = proxy_absmax
-                    qs["proxy_code"] = proxy_code
-                compute_input = computation_trace.args[output_idx]
+                    # this is not good, because we will have several traces...
+                    additional_proxies[n_absmax] = proxy_absmax
+                    additional_proxies[n_code] = proxy_code
 
         prologue_trace.bound_symbols[-1:-1] = new_bsyms
 
-        with tracectx(computation_trace):
-            new_bindings = [thunder.core.prims.unpack_trivial.bind(i, output=i) for i in new_compute_inputs]
+        computation_proxy_map = {
+            csym.name: dict(
+                shape=psym.shape,
+                dtype=psym.dtype,
+            )
+            for psym, csym in zip(prologue_trace.bound_symbols[-1].args[0][0], computation_trace.args)
+            if psym.shape != csym.shape or psym.dtype != csym.dtype
+        }
 
-        new_computation_trace = thunder.core.trace.from_trace(computation_trace)
+        new_computation_trace = trace_with_replaced_proxy_metadata(computation_trace, computation_proxy_map)
+        bound_symbols = new_computation_trace.bound_symbols
+        new_computation_trace.bound_symbols = []
+
         new_computation_trace.args = (*new_computation_trace.args, *new_compute_inputs)
         new_computation_trace._siginfo.args = [(a.name, None) for a in new_computation_trace.args]
-        for idx, bsym in enumerate(computation_trace.bound_symbols):
+
+        with tracectx(new_computation_trace):
+            new_bindings = [
+                thunder.core.prims.unpack_trivial.bind(i, output=i, name=i.name) for i in new_compute_inputs
+            ]
+
+        for idx, bsym in enumerate(bound_symbols):
             if bsym.sym != prims.unpack_trivial:
                 break
             new_computation_trace.bound_symbols.append(bsym.from_bsym())
         new_computation_trace.bound_symbols += new_bindings
-        proxies_to_replace = {}
-        for bsym in computation_trace.bound_symbols[idx:]:
-            if bsym.sym == thunder.torch.linear and id(bsym.args[1]) in quantized_proxies:
+
+        for bsym in bound_symbols[idx:]:
+            if bsym.sym == thunder.torch.linear and bsym.args[1].name in quantized_proxies:
                 assert len(bsym.args) == 3  # torch.linear(input, weight, bias)
-                n = quantized_proxies[id(bsym.args[1])]
+                n = quantized_proxies[bsym.args[1].name]
                 qs = self.quant_states[n]
                 # signature of the new symbol:
                 # bnb_matmul_nf4(x, qweight, bias, absmax, quant_map, blocksize, dtype, shape)
                 new_args = (
                     *bsym.args[:3],
-                    qs["proxy_absmax"],
-                    qs["proxy_code"],
+                    additional_proxies[f"{n}.absmax"],
+                    additional_proxies[f"{n}.code"],
                     qs["blocksize"],
                     qs["dtype"],
                     qs["shape"],

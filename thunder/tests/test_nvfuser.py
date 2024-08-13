@@ -200,9 +200,9 @@ def test_redundant_cast_nvfusion(executor, device: str, dtype: dtypes.dtype):
     assert len(fusions) == 2
 
     # Verifies that the nvFusion inputs and outputs are updated properly
-    t0 = fusions[0].output
-    assert fusions[1].args[0].name == "t0"
-    assert t0[0].name == "t0"
+    t0 = fusions[0].output[0]
+    assert fusions[1].args[2].name == "t0"
+    assert t0.name == "t0"
     assert extrace.output[0].name == "t0"
     assert len(fusions[0].subsymbols) == 3
 
@@ -316,7 +316,7 @@ def test_cse_subsymbol_redundant_args(executor, device, _):
     assert len(fusion_bsyms) == 1
     nvf_0 = fusion_bsyms[0]
 
-    assert [t.name for t in tree_flatten(nvf_0.args)[0]] == ["t0", "w", "z"]
+    assert [t.name for t in tree_flatten(nvf_0.args)[0]] == ["t0", "z", "w"]
     assert len(nvf_0.subsymbols) == 7
     assert [t.name for t in tree_flatten(nvf_0.output)[0]] == ["t13"]
 
@@ -961,3 +961,33 @@ def test_rm_unused_inputs_of_nvfusion(executor, device, _):
     out_ref = foo(t, ab)
 
     assert out.equal(out_ref)
+
+
+# TODO: we should improve our consistency testing
+# to also include checks for the result of meta functions.
+@instantiate(
+    dtypes=(thunder.int64, thunder.int32),
+    executors=(nvFuserExecutor,),
+)
+def test_div_truediv_integer_tensors_consistency_nvfuser(executor, device, thunder_dtype):
+    dtype = ltorch.to_torch_dtype(thunder_dtype)
+
+    def div(a, b):
+        return thunder.prims.div(a, b)
+
+    def truediv(a, b):
+        return a // b
+
+    def make_integer_tensor():
+        half_len = 5
+        t = torch.tensor([*range(-half_len, 0), *range(1, half_len + 1)], device=device, dtype=dtype)
+        perm = torch.randperm(2 * half_len)
+        return t[perm]
+
+    x = make_integer_tensor()
+    y = make_integer_tensor()
+
+    for f in (thunder.jit(div), thunder.jit(truediv)):
+        rout = f(x.cpu(), y.cpu()).to(device)
+        jout = f(x, y)
+        assert rout.equal(jout)

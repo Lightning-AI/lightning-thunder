@@ -35,11 +35,11 @@ import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 from thunder.core.transform_common import (
     dce,
-    EarlyTransform,
-    AdditionalTransform,
-    PostOptimizationTransform,
-    functionalize_inplace_ops,
+    Transform,
+)
+from thunder.core.functionalization import (
     check_inplace_to_views,
+    functionalize_inplace_ops,
 )
 from thunder.common import (
     CompileData,
@@ -253,6 +253,7 @@ CacheEntry = namedtuple(
         "backward_fn",
         "backward_traces",
         "return_none_instead_of_grads",
+        "vanilla_tensor_args",
     ],
 )
 
@@ -270,9 +271,7 @@ def jit(
     interpretation: None | INTERPRETATION_OPTIONS | str = None,
     cache: None | CACHE_OPTIONS | str = None,
     disable_torch_autograd: bool = False,  # TODO Revisit this UX for RC1
-    early_transforms: list[EarlyTransform] | None = None,
-    additional_transforms: list[AdditionalTransform] | None = None,
-    post_optimization_transforms: list[PostOptimizationTransform] | None = None,
+    transforms: list[Transform] | None = None,
     record_history: bool = False,
     **compile_options,  # TODO RC1 Make this explicit -- dict of options
 ) -> Callable:
@@ -283,7 +282,7 @@ def jit(
         Thunder's support of PyTorch in-place support is experimental.
         Thunder functionalizes in-place ops and adds required tensor copies.
         The functionalization can be turned off with the kwarg of ``skip_inplace_functionalization``.
-        See :func:`thunder.core.transform_common.functionalize_inplace_ops`
+        See :func:`thunder.core.functionalization.functionalize_inplace_ops`
         for the details.
 
     Args:
@@ -300,9 +299,7 @@ def jit(
                - ``"same input"`` - don't check, but just assume that a cached function works if it exists.
         interpretation: (deprecated: don't use this, use the thunder.functional.jit entry point to get the functional jit)
 
-        early_transforms: List of transforms to be applied to prologue, computation, and epilogue traces before executing the prologue. It should be an instance :class:`thunder.core.transforms.EarlyTransform`. Default: ``None``
-        transforms: List of transforms to be applied to the computation trace. It should be an instance :class:`thunder.core.transforms.AdditionalTransform`. Default: ``None``
-        post_optimization_transforms: List of transforms to be applied to the optimized computation traces i.e. forward and backward traces. It should be an instance :class:`thunder.core.transforms.PostOptimizationTransform`. Default: ``None``
+        transforms: List of transforms to be applied. It should be an instance :class:`thunder.core.transforms.Transform`. Default: ``None``
     """
 
     if "executors_list" in compile_options:
@@ -320,14 +317,8 @@ def jit(
     elif interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
         interpreter = _general_frontend
 
-    if early_transforms is None:
-        early_transforms = []
-
-    if additional_transforms is None:
-        additional_transforms = []
-
-    if post_optimization_transforms is None:
-        post_optimization_transforms = []
+    if transforms is None:
+        transforms = []
 
     # Resolve names of executors
     executors = resolve_executors(executors)
@@ -365,6 +356,31 @@ def jit(
     )
     cs = CompileStats()
 
+    def _alias_tensor_of_args_kwargs_dict(*args, **kwargs) -> dict[int, list[int]]:
+        flat_args, _ = tree_flatten((args, kwargs))
+        data_ptr_to_tensor_group_index = {}
+        tensor_group_index_to_tensor_indices = defaultdict(list)
+        for idx, t in enumerate(flat_args):
+            if pytorch.is_tensor(t) and t.layout == pytorch.strided:
+                data_ptr = t.untyped_storage().data_ptr()
+                if data_ptr not in data_ptr_to_tensor_group_index:
+                    data_ptr_to_tensor_group_index[data_ptr] = len(data_ptr_to_tensor_group_index)
+                tgi = data_ptr_to_tensor_group_index[data_ptr]
+                tensor_group_index_to_tensor_indices[tgi].append(idx)
+        return tensor_group_index_to_tensor_indices
+
+    def _alias_tensor_of_args_kwargs(*args, **kwargs) -> str:
+        """If no aliases found, empty string, otherwise, aliases are comma separated, groups are hyphen separated."""
+
+        alias_indices = []
+        for k, v in _alias_tensor_of_args_kwargs_dict(*args, **kwargs).items():
+            if len(v) > 1:
+                s = ",".join(f"{i}" for i in v)
+                alias_indices.append(s)
+        if not alias_indices:
+            return ""
+        return "-".join(alias_indices)
+
     @_with_cache_info_ctx
     def get_computation_and_inputs(*args, **kwargs):
         # set up a record of things in the current environment that impact caching / prologues
@@ -373,6 +389,9 @@ def jit(
 
         # default dtype (for factory functions)
         cache_info["default_dtype"] = pytorch.get_default_dtype()
+
+        # default device (for factory functions)
+        cache_info["default_device"] = pytorch.get_default_device()
 
         # autocast related operations
         is_autocast_enabled = False
@@ -405,6 +424,12 @@ def jit(
         cache_info["no_grad_sync"] = no_grad_sync
         return_none_instead_of_grads = is_fsdp_enabled and no_grad_sync
 
+        # NOTE(crcrpar): If a callable is free from in-place ops whose operand is args and/or their views
+        # alaises wouldn't matter, thus it'd be better to nullify this entry in such cases.
+        # It however would require the functionalized computation trace to interact with `cache_info`,
+        # which seems to break the consistency of cache_info, leading to a failure in cache_info check.
+        cache_info["alias_tensor_indices"] = _alias_tensor_of_args_kwargs(*args, **kwargs)
+
         # TODO RC1 Add module and function checks to prologue (make it a compile option)
 
         # Checks cache
@@ -422,6 +447,7 @@ def jit(
                         backward_fn,
                         backward_traces,
                         _return_none_instead_of_grads,
+                        _vanilla_args,
                     ) = cache_entry
                     try:
                         cs.last_prologue_execution_start = time.perf_counter_ns()
@@ -511,13 +537,43 @@ def jit(
             prologue_traces = [prologue_trc]
             computation_traces = [computation_trc]
             orig_to_view_swap_map = check_inplace_to_views(computation_trc)
+            vanilla_tensor_args: set[int] | None = None
             if not compile_options.get("skip_inplace_functionalization", False):
+                orig_len = len(computation_traces)
+                alias_tensor_indices = []
+                if alias_tensor_indices_str := cache_info["alias_tensor_indices"]:
+                    alias_tensor_indices: list[list[int]] = [
+                        [int(i) for i in s.split(",")] for s in alias_tensor_indices_str.split("-")
+                    ]
                 computation_traces.extend(
                     functionalize_inplace_ops(
-                        computation_trace=computation_trc, orig_to_view_swap_map=orig_to_view_swap_map
+                        computation_trace=computation_trc,
+                        orig_to_view_swap_map=orig_to_view_swap_map,
+                        alias_tensor_indices=alias_tensor_indices,
                     )
                 )
                 computation_trc = computation_traces[-1]
+                if len(computation_traces) > orig_len:
+                    from thunder.core.pytree import tree_flatten
+                    from thunder.core.utils import ProxyDict
+
+                    flat_args, _ = tree_flatten((computation_trc.args, computation_trc.kwargs))
+                    arg_to_idx = ProxyDict()
+                    for i, a in enumerate(flat_args):
+                        if not isinstance(a, TensorProxy):
+                            continue
+                        arg_to_idx[a] = i
+
+                    tensor_indices: int = []
+                    tensor_args_consumed_by_inplace_grouped_by_numel: dict[int, list[TensorProxy]] = defaultdict(list)
+                    for bsym in filter(lambda b: b.sym.id == prims.PrimIDs.COPY_, computation_trc.bound_symbols):
+                        t = bsym.flat_proxy_args[1]
+                        index = arg_to_idx[t]
+                        numel = t.numel
+                        tensor_args_consumed_by_inplace_grouped_by_numel[numel].append(index)
+                        tensor_indices.append(index)
+                    if len(tensor_args_consumed_by_inplace_grouped_by_numel) > 1:
+                        vanilla_tensor_args = set(tensor_indices)
 
             if epilogue_trc is not None:
                 epilogue_traces = [epilogue_trc]
@@ -529,24 +585,35 @@ def jit(
             # Makes the prologue callable
             cs.last_prologue_transformation_start = time.perf_counter_ns()
 
-            transform: Callable
-            for transform in early_transforms:
-                thunder.core.utils.check_type(transform, EarlyTransform)
-                prologue_trc, computation_trc, epilogue_trc = transform.transform_traces(
+            transform: Transform
+            for transform in transforms:
+                thunder.core.utils.check_type(transform, Transform)
+                new_prologue_trc, new_computation_trc, new_epilogue_trc = transform.transform_traces_pre_prologue(
                     prologue_trc, computation_trc, epilogue_trc, executors_list=cd.executors_list
                 )
-                prologue_traces.append(prologue_trc)
-                computation_traces.append(computation_trc)
-                if epilogue_trc is not None:
-                    epilogue_traces.append(epilogue_trc)
+                # if the transform did anything in the transform_traces_pre_prologue step
+                if (
+                    new_prologue_trc is not prologue_trc
+                    or new_computation_trc is not computation_trc
+                    or new_epilogue_trc is not epilogue_trc
+                ):
+                    prologue_trc, computation_trc, epilogue_trc = (
+                        new_prologue_trc,
+                        new_computation_trc,
+                        new_epilogue_trc,
+                    )
+                    prologue_traces.append(prologue_trc)
+                    computation_traces.append(computation_trc)
+                    if epilogue_trc is not None:
+                        epilogue_traces.append(epilogue_trc)
 
             prologue_traces += transform_for_execution(
                 prologue_trc,
                 executors_list=(pythonex,),
                 use_del_last_used=False,
             )
-            protrace = prologue_traces[-1]
-            pro = protrace.python_callable()
+            prologue_trc = prologue_traces[-1]
+            pro = prologue_trc.python_callable()
 
             if epilogue_trc is not None:
                 epilogue = epilogue_trc.python_callable()
@@ -554,6 +621,13 @@ def jit(
                 epilogue = None
 
             cs.last_prologue_transformation_stop = time.perf_counter_ns()
+            cs.last_prologue_traces = prologue_traces
+            cs.last_prologue = pro
+            cs.last_traces = computation_traces
+            backward_traces = []
+            cs.last_backward_traces = backward_traces
+            cs.last_interpreter_log = last_interpreter_log
+            cs.last_interpreted_instructions = (i for i in last_interpreter_log if isinstance(i, dis.Instruction))
 
             cs.last_prologue_execution_start = time.perf_counter_ns()
             if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
@@ -562,12 +636,6 @@ def jit(
                 inps = pro(*args, **kwargs)
                 pro_to_epi = None
             cs.last_prologue_execution_stop = time.perf_counter_ns()
-
-            cs.last_traces = computation_traces
-            backward_traces = []
-            cs.last_backward_traces = backward_traces
-            cs.last_interpreter_log = last_interpreter_log
-            cs.last_interpreted_instructions = (i for i in last_interpreter_log if isinstance(i, dis.Instruction))
 
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
@@ -585,46 +653,73 @@ def jit(
                     computation_trc, backward_trc = split_forward_backward(computation_trc, cd, cs, *inps)
                     # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
                     # by split_forward_backward
-                    extraces = cs.last_traces
 
             if backward_trc is None:
                 ## EPILOGUE and TRANSFORMS should not mix...
                 # applies transforms
                 cs.last_computation_transformation_start = time.perf_counter_ns()
-                for transform in additional_transforms:
-                    thunder.core.utils.check_type(transform, AdditionalTransform)
-                    computation_trc = transform.transform_trace(computation_trc, executors_list=cd.executors_list)
-                    computation_traces.append(computation_trc)
+                for transform in transforms:
+                    new_computation_trc = transform.transform_trace_additionally(
+                        computation_trc, executors_list=cd.executors_list
+                    )
+                    if new_computation_trc is not computation_trc:
+                        # todo: deprecation
+                        computation_trc = new_computation_trc
+                        computation_traces.append(computation_trc)
                 cs.last_computation_transformation_stop = time.perf_counter_ns()
+
+                from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
+                from thunder.executors.passes import _transform_for_operator_executor_execution
+                from thunder.distributed.utils import maybe_sort_waits
+
+                with langctxs.langctx(cd.langctx):
+                    tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
+                is_transformed, tmp_comp_trc = maybe_sort_waits(tmp_comp_trc)
+                if is_transformed:
+                    computation_trc = tmp_comp_trc
+                    computation_traces.append(computation_trc)
 
                 with langctxs.langctx(cd.langctx):
                     extraces = transform_for_execution(
                         computation_trc,
                         executors_list=cd.executors_list,
+                        use_del_last_used=False,
                     )
-                computation_trc = extraces[-1]
-
-            if not compile_options.get("disable_inplace_copy_check", False):
-                thunder.core.transform_common._inplace_copy_sanity_check(computation_trc)
-
-            for transform in post_optimization_transforms:
-                # NOTE: `backward_trc` could be None.
-                thunder.core.utils.check_type(transform, PostOptimizationTransform)
-                computation_trc = transform.transform_trace(computation_trc, executors_list=cd.executors_list)
-                extraces.append(computation_trc)
-                if backward_trc is not None:
-                    backward_trc = transform.transform_trace(backward_trc, executors_list=cd.executors_list)
-                    backward_traces.append(backward_trc)
+                computation_traces.extend(extraces)
+                computation_trc = computation_traces[-1]
 
             if cd.use_cudagraphs:
                 from thunder.executors.cudagraphex import cudagraphex
 
                 computation_trc = cudagraphex.fusion_pass(computation_trc)
-                extraces.append(computation_trc)
+                computation_traces.append(computation_trc)
 
                 if backward_trc is not None:
                     backward_trc = cudagraphex.fusion_pass(backward_trc, num_static_inputs=len(backward_trc.args[0][0]))
                     backward_traces.append(backward_trc)
+
+            if backward_trc is None:
+                computation_trc = thunder.executors.passes.del_last_used(computation_trc)
+
+            if not compile_options.get("disable_inplace_copy_check", False):
+                thunder.core.transform_common._inplace_copy_sanity_check(computation_trc)
+                computation_traces.append(computation_trc)
+
+            for transform in transforms:
+                # NOTE: `backward_trc` could be None.
+                new_computation_trc = transform.transform_trace_post_optimization(
+                    computation_trc, executors_list=cd.executors_list
+                )
+                if new_computation_trc is not computation_trc:
+                    computation_trc = new_computation_trc
+                    computation_traces.append(computation_trc)
+                if backward_trc is not None:
+                    new_backward_trc = transform.transform_trace_post_optimization(
+                        backward_trc, executors_list=cd.executors_list
+                    )
+                    if new_backward_trc is not backward_trc:
+                        backward_trc = new_backward_trc
+                        backward_traces.append(backward_trc)
 
             computation_trc = transform_to_torch_types(computation_trc)
             comp = computation_trc.python_callable()
@@ -639,19 +734,16 @@ def jit(
                 pro,
                 prologue_traces,
                 comp,
-                extraces,
+                computation_traces,
                 epilogue,
                 epilogue_traces,
                 backward_fn,
                 backward_traces,
                 return_none_instead_of_grads,
+                vanilla_tensor_args,
             )
             if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
                 cs.interpreter_cache.append(cache_entry)
-
-            cs.last_traces += extraces
-            cs.last_prologue_traces = [prologue_trc] + prologue_traces
-            cs.last_prologue = pro
 
         return cache_entry, inps, pro_to_epi
 
@@ -669,6 +761,18 @@ def jit(
 
         cache_entry, inps, pro_to_epi = get_computation_and_inputs(*args, **kwargs)
         cs.last_trace_host_execution_start = time.perf_counter_ns()
+
+        if cache_entry.vanilla_tensor_args:
+
+            if alias_tensor_indices_str := _alias_tensor_of_args_kwargs(*inps):
+                alias_tensor_indices = alias_tensor_indices_str
+                alias_tensor_indices = {int(i) for i in alias_tensor_indices_str.split(",")}
+                vanilla_tensor_args = cache_entry.vanilla_tensor_args
+                check(
+                    not vanilla_tensor_args & alias_tensor_indices,
+                    lambda: f"It seems that {vanilla_tensor_args} are {alias_tensor_indices=} share their storage and some of them are modified in-place",
+                    NotImplementedError,
+                )
 
         result = cache_entry.computation_fn(*inps)
 
@@ -703,16 +807,20 @@ def jit(
     if isinstance(fn, pytorch.nn.Module):
         fn_ = ThunderModule(fn, fn_)
         cd._thunder_module_map[id(fn)] = fn_
-        for transform in early_transforms:
-            transform.transform_module(fn_)
 
     # Sets compile options and statistics attributes
     cd._get_computation_and_inputs = get_computation_and_inputs
     fn_._lc_cd = cd
     fn_._lc_cs = cs
-    fn_._lc_early_transforms = early_transforms[:]  ## transforms
-    fn_._lc_transforms = additional_transforms[:]  ## transforms
-    fn_._lc_post_optimization_transforms = post_optimization_transforms[:]  ## post_optimization_transforms
+
+    if isinstance(fn, pytorch.nn.Module):
+        fn_._lc_transforms = []
+        for transform in transforms:
+            transform.transform_module(fn_)
+            fn_._lc_transforms.append(transform)
+    else:
+        # todo: move to compile data
+        fn_._lc_transforms = transforms[:]
 
     return fn_
 

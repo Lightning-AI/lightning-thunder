@@ -16,7 +16,7 @@ from thunder.core.proxies import TensorProxy, variableify, NumberProxy
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import has_tags
 from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
-from thunder.core.transform_common import dce
+from thunder.core.transform_common import dce, order_proxies
 from thunder.executors.passes import update_fusion_call_ctx
 
 
@@ -54,7 +54,7 @@ def find_external_producer_outputs(
         # to see if the output is used by other consumers.
         global_consumers = proxy_to_consumers.get(out, tuple())
         global_consumers = tuple(
-            x for x in global_consumers if x.sym.name != "del" and x not in chain((consumer,), next_consumers)
+            x for x in global_consumers if x.sym is not prims.python_del and x not in chain((consumer,), next_consumers)
         )
 
         # If the output is used by other global consumers, it's not rematerializable.
@@ -126,7 +126,8 @@ def apply_rematerialization_for_producer(
     all_produced_vars = tuple(chain.from_iterable((y for y in x.flat_proxy_outs) for x in producer.subsymbols))
     # Choose the new producer's output from all the produced variables.
     new_producer_output = tuple(x for x in all_produced_vars if x.name in new_producer_output_names)
-    new_producer_output = tuple(sorted(new_producer_output, key=lambda x: x.name))
+    proxy_order = order_proxies(producer.subsymbols)
+    new_producer_output = tuple(sorted(new_producer_output, key=lambda p: proxy_order[p.name]))
     new_producer = replace(producer, output=new_producer_output)
     return new_producer
 
@@ -179,7 +180,9 @@ def apply_rematerialization_for_consumer(
     new_consumer_args += tuple(
         x for x in producer.args if x.name in all_args and x.name not in (x.name for x in new_consumer_args)
     )
-    new_consumer_args = tuple(sorted(new_consumer_args, key=lambda x: x.name))
+
+    proxy_order = order_proxies(new_subsymbols)
+    new_consumer_args = tuple(sorted(new_consumer_args, key=lambda x: proxy_order[x.name]))
     new_consumer = replace(consumer, args=new_consumer_args, subsymbols=new_subsymbols)
     return new_consumer
 

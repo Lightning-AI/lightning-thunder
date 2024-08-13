@@ -101,6 +101,7 @@ The compiled function ``jitted_foo`` takes and returns PyTorch tensors, just lik
    Distributed Data Parallel <intermediate/ddp>
    What's next <intermediate/whats_next>
    FSDP Under the Hood Tutorial <notebooks/dev_tutorials/fsdp_tutorial>
+   Benchmarking Thunder <intermediate/benchmarking>
 
 .. toctree::
    :maxdepth: 1
@@ -141,6 +142,7 @@ API reference
    reference/executors/index
    reference/torch/index
    reference/extend/index
+   reference/transforms/index
 
 
 Indices and tables

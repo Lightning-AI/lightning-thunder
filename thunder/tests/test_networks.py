@@ -1,6 +1,7 @@
 import math
 from dataclasses import dataclass
 from functools import partial
+import warnings
 
 import pytest
 import torch
@@ -256,6 +257,42 @@ def test_hf_bart_self_attn():
     assert_close(torch_result, thunder_result)
 
 
+def test_hf_bert():
+    import transformers
+
+    @thunder.core.jit_ext.register_general_jit_lookaside(
+        transformers.modeling_utils.PreTrainedModel.warn_if_padding_and_no_attention_mask
+    )
+    @thunder.core.jit_ext.interpreter_needs_wrap
+    def dummy(*args):
+        pass
+
+    # Transformers 2.41+ adds some more non-essential data-dependent
+    # control flow behind a check whether we are compiling
+    if hasattr(torch, "compiler") and hasattr(torch.compiler, "is_compiling"):
+        is_compiling = torch.compiler.is_compiling
+    else:
+        is_compiling = torch._dynamo.is_compiling
+
+    @thunder.core.jit_ext.register_general_jit_lookaside(is_compiling)
+    @thunder.core.jit_ext.interpreter_needs_wrap
+    def dummy(*args):
+        return True
+
+    # transformers accesses the old attrib and causes the future warning
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FutureWarning, message=".*torch._dynamo.*.is_compiling.*")
+        m = transformers.BertForSequenceClassification(transformers.BertConfig())
+        del m.bert.encoder.layer[2:]
+        m.eval()
+        inp = torch.randint(1, 20, (1, 32))
+        jm = thunder.jit(m)
+        actual = jm(inp)
+        expected = m(inp)
+
+    assert_close(actual, expected)
+
+
 @requiresCUDA
 def test_quantization():
     try:
@@ -304,7 +341,7 @@ def test_quantization():
     jm = thunder.jit(
         model_fp_reference,
         executors=(bitsandbytes_executor,),
-        early_transforms=[BitsAndBytesLinearQuant4bit()],
+        transforms=[BitsAndBytesLinearQuant4bit()],
     )
 
     logits_thunder = jm(x, input_pos)

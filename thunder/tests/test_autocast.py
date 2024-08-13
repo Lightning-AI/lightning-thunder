@@ -171,6 +171,26 @@ def test_autocast_mixed_dtype_inputs():
     torch.testing.assert_close(eager_out, jit_out)
 
 
+def test_autocast_mixed_dtype_inputs_on_prims():
+    # Verify that the autocast rules are applied when
+    # directly using the prims.
+    # See - https://github.com/Lightning-AI/lightning-thunder/issues/725
+    def foo(x, w):
+        return thunder.prims.linear(x, w, None)
+
+    # Mixed input types.
+    x, w = torch.randn(16, 16, dtype=torch.bfloat16), torch.randn(16, 16)
+
+    jfoo = thunder.jit(foo)
+
+    with torch.autocast("cpu", torch.bfloat16):
+        jit_out = jfoo(x, w)
+
+    assert jit_out.dtype == torch.bfloat16
+    exec_trace = thunder.last_traces(jfoo)[0]
+    assert any(bsym.sym.id == thunder.prims.PrimIDs.CONVERT_ELEMENT_TYPE for bsym in exec_trace.bound_symbols)
+
+
 @pytest.mark.parametrize("dim", [1, 2, 3])
 @pytest.mark.parametrize("requires_grad", [False, True])
 def test_autocast_convolution(dim, requires_grad):
@@ -212,3 +232,32 @@ def test_autocast_convolution(dim, requires_grad):
 
         for eg, jg in zip(eager_grads, jit_grads):
             torch.testing.assert_close(eg, jg, rtol=5e-2, atol=5e-2)
+
+
+@pytest.mark.parametrize("requires_grad", [False, True])
+@pytest.mark.parametrize("device", ("cpu", "cuda"))
+@pytest.mark.parametrize("b_dtype", (torch.float, torch.bfloat16))
+def test_autocast_torch_matmul(requires_grad, device, b_dtype):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("Skipping - CUDA is not available")
+
+    def foo(a, b):
+        output = torch.matmul(a, b)
+        return output
+
+    a = torch.rand([3, 1, 2], dtype=torch.float, device=device, requires_grad=requires_grad)
+    b = torch.rand([2, 3], dtype=b_dtype, device=device, requires_grad=requires_grad)
+
+    with torch.autocast(device, torch.bfloat16):
+        expected = foo(a, b)
+        actual = thunder.jit(foo)(a, b)
+
+    torch.testing.assert_close(actual, expected)
+
+    if requires_grad:
+        go = torch.ones_like(expected) / expected.numel()
+        eager_grads = torch.autograd.grad(expected, [a, b], go)
+        jit_grads = torch.autograd.grad(actual, [a, b], go)
+
+        for eg, jg in zip(eager_grads, jit_grads):
+            torch.testing.assert_close(eg, jg, rtol=5e-3, atol=5e-3)

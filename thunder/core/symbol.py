@@ -199,6 +199,50 @@ class Symbol:
             result = inspect.getmodule(fn_)
         return result
 
+    @staticmethod
+    def lookup_symbol(name: str, executor: Any, module: ModuleType) -> Symbol:  # for unpickling
+        if executor is None:
+            if module not in sys.modules:
+                raise RuntimeError(f"Cannot find module {module} for symbol {name}.")
+            not_found = object()
+            sym = getattr(sys.modules[module], name, not_found)
+            if sym is not_found:
+                raise RuntimeError(f"Could not find symbol {name} in module {module}.")
+            assert isinstance(sym, Symbol), f"lookup {module}.{name} gave object of type {type(sym)} instead of Symbol"
+        else:
+            import thunder
+
+            ex = thunder.get_executor(executor)
+            sym = ex.opmap.get(name)
+
+            if sym is None:
+                raise RuntimeError(f"Could not find symbol {name} in executor {executor}.")
+            assert isinstance(
+                sym, Symbol
+            ), f"lookup {name} in executor {executor} gave object of type {type(sym)} instead of Symbol"
+
+        return sym
+
+    def __reduce__(self):  # for pickling
+        import thunder
+
+        if self.module is None and self.executor is None:
+            raise ValueError("Cannot serialize a symbol without a module and executor.")
+
+        if self.executor is None:
+            assert getattr(sys.modules[self.module.__name__], self.name, None) is self
+        else:
+            assert thunder.get_executor(self.executor.name).opmap.get(self.name) is self
+
+        return (
+            Symbol.lookup_symbol,
+            (
+                self.name,
+                None if self.executor is None else self.executor.name,
+                None if self.module is None else self.module.__name__,
+            ),
+        )
+
     def __repr__(self) -> str:
         return f"[Symbol name={self.name}]"
 
@@ -251,6 +295,14 @@ class Symbol:
             )
 
         baseutils.check(not trace._complete, lambda: f"Trying to add {self} to a trace that is complete!")
+
+        # Import here to avoid cyclical import issues.
+        from thunder.core.transforms import maybe_apply_autocast
+
+        # See NOTE: torch.autocast support - for more details on why we apply autocast here.
+        if (autocast_impl := maybe_apply_autocast(self)) is not None:
+            return autocast_impl(*args, **kwargs)
+
         result: Any
         subsymbols = []
         if self.is_prim:

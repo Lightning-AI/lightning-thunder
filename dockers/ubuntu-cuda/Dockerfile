@@ -51,6 +51,7 @@ RUN \
         curl \
         unzip \
         libopenmpi-dev \
+        liblapack-dev \
         openmpi-bin \
         graphviz \
         libnccl2 \

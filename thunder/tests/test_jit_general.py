@@ -18,7 +18,7 @@ import thunder
 from thunder.core.interpreter import is_jitting, InterpreterError
 
 from thunder.tests import litgpt_model
-from thunder.tests.framework import version_between
+from thunder.tests.framework import version_between, requiresCUDA
 import thunder.clang as clang
 from thunder.core.options import INTERPRETATION_OPTIONS, CACHE_OPTIONS
 import thunder.torch as ltorch
@@ -26,7 +26,7 @@ import thunder.core.prims as prims
 from thunder import pytorch_executor, nvfuser_executor
 from thunder.executors.sdpaex import sdpa_ex
 from thunder.core.jit_ext import JITSharpEdgeError
-from thunder.core.transforms import PostOptimizationTransform
+from thunder.core.transforms import Transform
 
 #
 # Test suite for the general jit
@@ -57,9 +57,9 @@ def test_jitting_through_opaque_torch_symbols_error():
         # randn_like is in ltorch
         return torch.randn_like(x)
 
-    def should_error(x):
+    def should_error(x, y):
         # rand_like is not yet in ltroch
-        return torch.rand_like(x)
+        return torch.allclose(x, y)
 
     x = torch.rand(1)
 
@@ -68,7 +68,7 @@ def test_jitting_through_opaque_torch_symbols_error():
 
     jshould_error = thunder.jit(should_error)
     with pytest.raises(NotImplementedError):
-        jshould_error(x)
+        jshould_error(x, x)
 
 
 def test_binary_add_tensors():
@@ -863,8 +863,8 @@ def test_post_optimization_transform():
     def foo(a, b, c):
         return a * a + b * c
 
-    class MyTransform(PostOptimizationTransform):
-        def transform_trace(self, trace, executors_list=None):
+    class MyTransform(Transform):
+        def transform_trace_post_optimization(self, trace, executors_list=None):
             # Transform that adds a comment before any `add` BoundSymbol.
             commented_trace = thunder.core.trace.from_trace(trace)
 
@@ -880,7 +880,7 @@ def test_post_optimization_transform():
             commented_trace.bound_symbols = bsyms
             return commented_trace
 
-    jfoo = thunder.jit(foo, post_optimization_transforms=[MyTransform()])
+    jfoo = thunder.jit(foo, transforms=[MyTransform()])
 
     a = torch.randn(3, 3, requires_grad=True)
     b = torch.randn(3, 3)
@@ -1135,3 +1135,128 @@ def test_cache_symbolic_values_reshape(device):
     assert_close(expected, actual)
     assert thunder.cache_misses(jfoo) == 1
     assert thunder.cache_hits(jfoo) == 1
+
+
+@pytest.mark.filterwarnings("ignore:Please use `torch.vmap`")
+def test_custom_autograd_function():
+    from torch.autograd.gradcheck import GradcheckError
+    from torch.testing._internal.common_utils import gradcheck
+
+    class MyFunction(torch.autograd.Function):
+
+        @staticmethod
+        def forward(ctx, x: torch.Tensor) -> torch.Tensor:
+            return x * 2.0
+
+        # this is wrong on purpose.
+        @staticmethod
+        def backward(ctx, grad_output) -> torch.Tensor:
+            return grad_output
+
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+
+        def forward(self, x) -> torch.Tensor:
+            return MyFunction.apply(x)
+
+    x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
+    model = Model().to(dtype=torch.float64)
+    jitted = thunder.jit(model)
+
+    gradcheck(jitted, (x,))
+    with pytest.raises(GradcheckError):
+        gradcheck(model, (x,))
+
+    class MyLinear(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, x: torch.Tensor, weight: torch.Tensor, shape: tuple) -> torch.Tensor:
+            ctx.shape = shape
+            ctx.save_for_backward(x, weight)
+            ctx.pretty_attr = 100
+            return torch.matmul(x, weight.t())
+
+        @staticmethod
+        def backward(ctx, grad_output):
+            (x, weight) = ctx.saved_tensors
+            assert weight.shape == ctx.shape  # really bogus, just to use ctx.shape
+            return torch.matmul(grad_output, weight), torch.matmul(grad_output.t(), x)
+
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.l1 = torch.nn.Linear(2, 2, bias=False)
+
+        def forward(self, x):
+            return MyLinear.apply(x, self.l1.weight, self.l1.weight.shape)
+
+    x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
+    model = Model().to(dtype=torch.float64)
+    jitted = thunder.jit(model)
+
+    gradcheck(jitted, (x,))
+
+
+@requiresCUDA  # I have not found a good other object to use
+def test_cpp_property():
+    def fn():
+        return torch.cuda.get_device_properties(0).major
+
+    assert fn() == thunder.jit(fn)()
+
+
+def test_failing_prologue_in_last_prologue_traces():
+    # we know that this will fail in the prologue
+    i = 0
+
+    def fn():
+        nonlocal i
+        i += 1
+        return i
+
+    jfn = thunder.jit(fn)
+    with pytest.raises(RuntimeError, match="Expected 1 to be equal to and have the type of 0"):
+        jfn()
+
+    # make sure that we have prologue traces in the last_prologue_traces
+    assert len(thunder.last_prologue_traces(jfn)) > 0
+
+
+@pytest.mark.parametrize(
+    "device",
+    ("cpu", "cuda"),
+)
+def test_matmul_nd_times_2d_runs_2d_gemm(device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    def f(x, y):
+        return x @ y
+
+    jf = thunder.jit(f)
+
+    x = torch.rand(2, 3, 4, device=device)
+    y = torch.rand(4, 5, device=device)
+
+    thunder_res = jf(x, y)
+    torch_res = f(x, y)
+    assert_close(thunder_res, torch_res)
+
+    trace = thunder.last_traces(jf)[-1]
+
+    # Extract prims.matmul
+    matmul_prim_bsym = None
+    for bsym in trace.bound_symbols:
+        if bsym.sym.name == "matmul":
+            for subbsym in bsym.subsymbols:
+                if subbsym.sym.name == "matmul":
+                    for subsubbsym in subbsym.subsymbols:
+                        if subsubbsym.sym.id == prims.PrimIDs.MATMUL:
+                            matmul_prim_bsym = subsubbsym
+                            break
+                    break
+            break
+
+    # Check that prim.matmul outputs a 2d tensor
+    assert matmul_prim_bsym is not None
+    assert matmul_prim_bsym.output.ndim == 2

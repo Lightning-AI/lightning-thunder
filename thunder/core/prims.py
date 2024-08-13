@@ -483,7 +483,7 @@ def _check_tensor_shape_and_metadata_meta(
 
 check_tensor_shape_and_metadata = make_prim(
     PrimIDs.CHECK_TENSOR_SHAPE_AND_METADATA,
-    "check_tensor_metadata",
+    "check_tensor_shape_and_metadata",
     meta=_check_tensor_shape_and_metadata_meta,
     tags=(OpTags.DONT_DCE,),
 )
@@ -667,6 +667,10 @@ def unpack_trivial_printer(
 
 # Removes the inputs from unpack_trivial, so it appears to have no input
 def _unpack_trivial_bind_postprocess(bsym: BoundSymbol) -> None:
+    utils.check(
+        bsym.kwargs["name"] is not None,
+        lambda: "Expected name keyword argument not to be None for unpack_trivial.bind().",
+    )
     bsym.args = ()
 
 
@@ -707,13 +711,17 @@ def unpack_function_obj_printer(
     return s
 
 
+def _unpack_function_obj_bind_postprocess(bsym: BoundSymbol) -> None:
+    bsym.args = ()
+
+
 unpack_function_obj = make_prim(
     PrimIDs.UNPACK_FUNCTION_OBJ,
     "unpack_function_obj",
     meta=unpack_function_obj_meta,
     python_printer=unpack_function_obj_printer,
     python_impl=unpack_function_obj_impl,
-    _bind_postprocess=_unpack_trivial_bind_postprocess,
+    _bind_postprocess=_unpack_function_obj_bind_postprocess,
 )
 
 
@@ -781,13 +789,17 @@ def unpack_cache_info_printer(
     return s
 
 
+def _unpack_cache_info_bind_postprocess(bsym: BoundSymbol) -> None:
+    bsym.args = ()
+
+
 unpack_cache_info = make_prim(
     PrimIDs.UNPACK_CACHE_INFO,
     "unpack_cache_info",
     meta=unpack_cache_info_meta,
     python_printer=unpack_cache_info_printer,
     python_impl=unpack_cache_info_impl,
-    _bind_postprocess=_unpack_trivial_bind_postprocess,
+    _bind_postprocess=_unpack_cache_info_bind_postprocess,
 )
 
 
@@ -1173,7 +1185,7 @@ def pack_buffer_impl(o: Any, key: Any, v: Any) -> None:
 
 pack_buffer = make_prim(
     PrimIDs.PACK_BUFFER,
-    "unpack_buffer",
+    "pack_buffer",
     meta=pack_buffer_meta,
     python_printer=pack_buffer_printer,
     python_impl=pack_buffer_impl,
@@ -1215,7 +1227,7 @@ def pack_setitem_impl(o: Any, key: Any, v: Any) -> None:
 
 pack_setitem = make_prim(
     PrimIDs.PACK_SETITEM,
-    "unpack_setitem",
+    "pack_setitem",
     meta=pack_setitem_meta,
     python_printer=pack_setitem_printer,
     python_impl=pack_setitem_impl,
@@ -1509,7 +1521,7 @@ def unpack(x: Any) -> Any:
             return unpack_dict(x)
         baseutils.check(False, lambda: f"unpack encountered an unsupported collection type {type(coll)}")
 
-    return unpack_trivial(x)
+    return unpack_trivial(x, name=x.name)
 
 
 #
@@ -1545,7 +1557,7 @@ def python_print_printer(
 
 python_print = make_prim(
     PrimIDs.PRINT,
-    "print",
+    "python_print",
     meta=_print_meta,
     python_printer=python_print_printer,
     python_impl=print,
@@ -1614,7 +1626,7 @@ def _del_impl(x: Any, /) -> None:
 
 python_del = make_prim(
     PrimIDs.DEL,
-    "del",
+    "python_del",
     meta=_del_meta,
     python_printer=del_printer,
     python_impl=_del_impl,
@@ -1650,7 +1662,7 @@ def _return_impl(*args) -> Any:
 
 python_return = make_prim(
     PrimIDs.RETURN,
-    "return",
+    "python_return",
     meta=_return_meta,
     python_printer=return_printer,
     python_impl=_return_impl,
@@ -3636,7 +3648,7 @@ def linear_meta(a: TensorProxy, w: TensorProxy, bias: None | TensorProxy) -> Ten
     utils.check(isinstance(w, TensorProxy), lambda: f"w={w} was not a TensorProxy!")
 
     # Checks that required arguments are on the same device
-    utils.check(a.device == w.device, lambda: f"Expected a.device={a.device} and w.device={w.device} to be the same!")
+    utils.check_same_device(a, w)
 
     # Acquires the computation dtype and checks that a and w have the same dtype
     dtype = a.dtype
@@ -3696,7 +3708,7 @@ def matmul_meta(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
     if a.ndim < 1 or b.ndim < 1:
         raise NotImplementedError
 
-    utils.check(a.device == b.device, lambda: f"Expected a.device={a.device} and b.device={b.device} to be the same")
+    utils.check_same_device(a, b)
 
     utils.check(
         dtypes.are_same_dtypes(a, b), lambda: f"Expected a.dtype={a.dtype} and b.dtype={b.dtype} to be the same"
@@ -3729,7 +3741,7 @@ def matmul_meta(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
 
     utils.check(
         utils.same_shape(a.shape[:-2], b.shape[:-2]),
-        lambda: f"Expected the batch dimensions of a ({a.shape[:-2],}) and the batch dimensions of b ({b.shape[:-2]}) to be the same",
+        lambda: f"Expected the batch dimensions of a {a.shape[:-2]} and the batch dimensions of b {b.shape[:-2]} to be the same",
     )
 
     utils.check(

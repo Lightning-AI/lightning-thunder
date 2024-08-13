@@ -666,7 +666,8 @@ def check_no_duplicates(dims: Sequence):
 # TODO: improve device handling by canonicalizing devices and expressing them per langctx
 # TODO: should the comparison between devices be ==?
 def check_same_device(*args):
-    devices = tuple(x.device for x in args if isinstance(x, TensorProxyInterface))
+    devices = tuple(x.device for x in args if isinstance(x, TensorProxyInterface) and x.device.type != "meta")
+
     if len(devices) > 1:
         device = devices[0]
         for otherdevice in devices[1:]:
@@ -726,6 +727,17 @@ class _OrderedSet(Generic[T, T1], Iterable[T]):
 
     def add(self, x: T | T1):
         self.d[self.canonicalize(x)] = None
+
+    def discard(self, x: T | T1):
+        c = self.canonicalize(x)
+        if c in self.d:
+            del self.d[c]
+
+    def issubset(self, other):
+        return all((e in other) for e in self)
+
+    def union(self, *others: "Sequence[_OrderedSet]") -> Self:
+        return self.__class__(itertools.chain(self, *others))
 
     def update(self, x: Iterable[T | T1]) -> None:
         for i in x:

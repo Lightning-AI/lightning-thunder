@@ -177,6 +177,13 @@ def _sync_grads(module: torch.nn.Module) -> None:
         )
 
 
+# When the user calls ddp(jitted_module), this function does the following
+# - Marks the original function with appropiate attributes (use_ddp...)
+# - Broadcasts parameters if necessary
+# - It then registers a transform (callback that runs before prologue is executed) that transforms the
+#   prologue and compute trace, that insert syncs (and grad syncs for the backward, handled by thunder automatically.)
+
+
 # TODO Verify parameters are not partially initialized
 # TODO Handle buffers
 # TODO Improve initial broadcast logic
@@ -286,6 +293,21 @@ def ddp(
         tdist.is_available(),
         lambda: "ddp requires torch distributed to be available (but it's not)",
     )
+    from thunder.core.module import ThunderModule
+
+    if isinstance(model, ThunderModule):
+        from thunder.distributed.transforms.ddp_v2 import DDPTransform
+        from thunder.core.transforms import add_transform
+
+        process_group = copy_default_process_group()
+        utils.check(process_group is not None, lambda: "The default process group is None")
+        # will insert syncs for parameters (and gradient syncs in the backward pass, this is handled by thunder)
+        # usually, other transforms will remove the forward syncs inserted by this transform.
+        transform_from_trace_to_ddp_trace = DDPTransform(
+            process_group=process_group, bucket_size_in_mb=bucket_size_in_mb, broadcast_from=broadcast_from
+        )
+        model_new = add_transform(model, transform=transform_from_trace_to_ddp_trace)
+        return model_new
 
     pg = copy_default_process_group()
     utils.check(pg is not None, lambda: "The default process group is None")
@@ -538,13 +560,13 @@ def fsdp_transform_module(
                 "param_name": pn,
             }
 
-    early_transform_from_trace_to_fsdp_trace = FSDPTraceTransform(
+    transform_from_trace_to_fsdp_trace = FSDPTraceTransform(
         sharded_params=sharded_params,
         process_group=process_group,
         shared_params_name=shared_params_name,
     )
     # add prologue + compute transform
-    thunder_model = add_transform(thunder_model, early_transform=early_transform_from_trace_to_fsdp_trace)
+    thunder_model = add_transform(thunder_model, transform=transform_from_trace_to_fsdp_trace)
 
     return thunder_model
 

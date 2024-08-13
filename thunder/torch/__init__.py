@@ -1,4 +1,5 @@
 from __future__ import annotations
+import builtins
 import itertools
 import math
 import operator
@@ -26,7 +27,7 @@ from thunder.core.dtypes import to_torch_dtype, to_dtype, _thunder_to_torch_dtyp
 import thunder.core.prims as prims
 import thunder.core.utils as utils
 import thunder.distributed.prims as dist_prims
-from thunder.core.langctxs import langctx, Languages
+from thunder.core.langctxs import langctx, Languages, get_langctx
 from thunder.core.proxies import (
     FloatProxy,
     IntegerProxy,
@@ -35,8 +36,12 @@ from thunder.core.proxies import (
     TensorProxy,
     FutureTensorProxy,
     pyval,
+    TupleProxy,
+    ListProxy,
+    DictProxy,
+    numberproxy,
 )
-from thunder.core.pytree import tree_map
+from thunder.core.pytree import tree_map, tree_flatten, tree_unflatten
 from thunder.core.symbol import Symbol
 from thunder.core.transforms import register_grad
 from thunder.core.prims import get_grad, put_grad
@@ -85,7 +90,7 @@ _torch_to_thunder_function_map: dict[Callable, Callable] = {}
 _inplace_to_out_of_place: dict[Callable, tuple[Callable, int]] = {}
 
 
-# Helpers for factory functions to get default dtypes.
+# Helpers for factory functions to get default dtype and device.
 def get_default_dtype():
     # `thunder.jit` will create cache info and stash the default dtype
     # observed at the beginning of jitting.
@@ -101,6 +106,23 @@ def get_default_dtype():
 
 def maybe_get_default_dtype(dtype):
     return dtype or get_default_dtype()
+
+
+def get_default_device():
+    # `thunder.jit` will create cache info and stash the default device
+    # observed at the beginning of jitting.
+    cache_info = thunder._get_cache_info()
+
+    # Currently, changing device during the jitted function is unsupported.
+    utils.check(
+        cache_info["default_device"] == torch.get_default_device(),
+        lambda: "Default device is changed during the execution of jitted function. This is currently unsupported.",
+    )
+    return torch.get_default_device()
+
+
+def maybe_get_default_device(device):
+    return device or get_default_device()
 
 
 # A wrapper that executes the operations within the torch language context
@@ -161,52 +183,22 @@ class torchsymbol:
         else:
             sym = Symbol(name=fn.__name__, meta=_fn, id=id, is_prim=self.is_prim, tags=self.tags)
 
-        # NOTE: torch.autocast support
-        # In PyTorch eager, enabling autocast allows mixed inputs to operator like `linear`
-        # which expect dtypes to be same. This works in PyTorch eager, as dispatcher applies the
-        # conversion first and then passes the converted input to the operator.
-        # To mimick similar behavior, here we replace the `sym` for all operators which have
-        # autocast rule, to apply the conversion rule if autocast was enabled.
-        autocast_impl: Callable | None = _maybe_get_autocast_rule_for_symbol(sym)
-
-        # `mapping_fn` is used to map `torch` -> `thunder.torch`
-        # If autocast is enabled - it will also take care of casting the inputs
-        # as per autocast rule else it will be just the symbol.
-        mapping_fn = sym
-        if autocast_impl is not None:
-
-            @wraps(sym)
-            def maybe_autocast(*args, **kwargs):
-                # Cache info may not be available in case of legacy `thunder.compile`
-                # which is still used for cases.
-                try:
-                    cache_info = thunder._get_cache_info()
-                except LookupError:
-                    cache_info = {}
-
-                if cache_info.get("is_autocast_enabled", False):
-                    thunder_autocast_dtype = _get_downcast_dtype_from_str(cache_info["autocast_thunder_dtype"])
-                    return partial(autocast_impl, dtype=thunder_autocast_dtype)(*args, **kwargs)
-                return sym(*args, **kwargs)
-
-            mapping_fn = maybe_autocast
-
         if self.is_method:
             method_name: str = self.method_name if self.method_name is not None else fn.__name__
-            register_method(method_name, mapping_fn)
+            register_method(method_name, sym)
             torch_method: None | Callable = getattr(torch.Tensor, method_name, None)
             if torch_method is not None:
-                _torch_to_thunder_function_map[torch_method] = mapping_fn
+                _torch_to_thunder_function_map[torch_method] = sym
         elif self.is_property:
             method_name: str = self.method_name if self.method_name is not None else fn.__name__
-            register_property(method_name, mapping_fn)
+            register_property(method_name, sym)
             torch_property = getattr(torch.Tensor, method_name, None)
             if torch_property is not None:
-                _torch_to_thunder_function_map[torch_property] = mapping_fn
+                _torch_to_thunder_function_map[torch_property] = sym
 
         if self.torchfns is not None:
             for torchfn in self.torchfns:
-                _torch_to_thunder_function_map[torchfn] = mapping_fn
+                _torch_to_thunder_function_map[torchfn] = sym
 
         if self.tags and prims.OpTags.IN_PLACE in self.tags:
             if self.id is not None:
@@ -550,9 +542,7 @@ def arange(
     device: None | DeviceLike = None,
     dtype: None | dtypeLike = None,
 ) -> TensorLike:
-    if device is None:
-        device = "cpu"
-
+    device = maybe_get_default_device(device)
     device = to_device(device)
     # From torch docs - https://pytorch.org/docs/stable/generated/torch.arange.html
     # If any of start, end, or stop are floating-point, the dtype is inferred to be the default dtype, see get_default_dtype().
@@ -575,12 +565,8 @@ def arange(
 def full(
     shape: Sequence[int], fill_value: NumberLike, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
 ) -> TensorLike:
-    if device is None:
-        device = "cpu"
-
-    device = to_device(device)
+    device = to_device(maybe_get_default_device(device))
     dtype = to_dtype(maybe_get_default_dtype(dtype))
-
     return clang.full(shape, fill_value, device=device, dtype=dtype)
 
 
@@ -646,7 +632,7 @@ def uniform(
     device: DeviceLike,
     dtype: dtypeLike,
 ) -> TensorLike:
-    device = to_device(device)
+    device = to_device(maybe_get_default_device(device))
     dtype = to_dtype(maybe_get_default_dtype(dtype))
 
     return clang.uniform(shape, minval, maxval, device=device, dtype=dtype)
@@ -703,7 +689,7 @@ def uniform_philox(
     seed: int | TensorProxy,
     offset: int | TensorProxy,
 ) -> TensorLike:
-    device = to_device(device)
+    device = to_device(maybe_get_default_device(device))
     dtype = to_dtype(maybe_get_default_dtype(dtype))
 
     return clang.uniform_philox(shape, minval, maxval, device=device, dtype=dtype, seed=seed, offset=offset)
@@ -728,10 +714,8 @@ def randn(
     # NOTE: Currently, we don't model randomness
     utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
     utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
-    if device is None:
-        device = "cpu"
-    device = to_device(device)
 
+    device = to_device(maybe_get_default_device(device))
     dtype = to_dtype(maybe_get_default_dtype(dtype))
     shape = utils.extract_shape_from_varargs(shape)
     return prims.randn(shape, device=device, dtype=dtype)
@@ -818,15 +802,8 @@ def empty(
         NotImplementedError,
     )
 
-    # For now we default to `float32`,
-    # however, we should add a default dtype or rely on `torch.get_default_dtype`.
     dtype = to_dtype(maybe_get_default_dtype(dtype))
-
-    # For now we default to "cpu",
-    # however, we should add a default device or rely on `torch.get_default_device`.
-    if device is None:
-        device = "cpu"
-    device = to_device(device)
+    device = to_device(maybe_get_default_device(device))
 
     return clang.empty(size, device=device, dtype=dtype)
 
@@ -3387,6 +3364,20 @@ def matmul(a: TensorLike, b: TensorLike, /) -> TensorLike:
     if a.ndim == 1 or b.ndim == 1:
         return prims.matmul(a, b)
 
+    # Case nd @ 2d --> reduce to a 2d gemm
+    if a.ndim > 2 and b.ndim == 2:
+        a_batch_dims = a.shape[:-2]
+
+        # a -> a_2d by flattening batch dims with the row space
+        a_2d = a.reshape(-1, a.shape[-1])
+
+        # 2d gemm
+        res_2d = prims.matmul(a_2d, b)
+
+        # reshape `res` from 2d to a proper nd shape
+        res = res_2d.reshape(*a_batch_dims, -1, b.shape[-1])
+        return res
+
     a_batch_dims = a.shape[:-2]
     b_batch_dims = b.shape[:-2]
 
@@ -5324,7 +5315,7 @@ else:
     def all_reduce_(
         a: TensorLike,
         /,
-        op: DistributedReduceOpLike = torch.distributed.ReduceOp.SUM,
+        op: DistributedReduceOpLike = "torch.distributed.ReduceOp.SUM",
         group: torch.distributed.ProcessGroup | None = None,
         async_op: bool = False,
     ) -> None:
@@ -5357,6 +5348,234 @@ else:
 
     def wait(slf) -> None:
         utils.check(False, lambda: "torch.distributed is not available")
+
+
+#
+# The automatically registered torch operators
+#
+
+
+def _is_differentiable(arg: Any) -> bool:
+    from torch._subclasses.fake_tensor import FakeTensor
+
+    if isinstance(arg, (torch.Tensor, FakeTensor, TensorProxy)):
+        return dtypes.is_inexact_dtype(to_dtype(arg.dtype))
+    return False
+
+
+def _make_differentiable_wrapper(func: Callable, *args, **kwargs):
+    flat_args, spec = tree_flatten((args, kwargs))
+    differentiable_args_idx = tuple(i for i, a in enumerate(flat_args) if _is_differentiable(a))
+    differentiable_args = tuple(arg for i, arg in enumerate(flat_args) if i in differentiable_args_idx)
+
+    def wrapper(*diff_args):
+        diff_args_iter = iter(diff_args)
+        full_args = [next(diff_args_iter) if i in differentiable_args_idx else arg for i, arg in enumerate(flat_args)]
+        full_args, full_kwargs = tree_unflatten(full_args, spec)
+        return func(*full_args, **full_kwargs)
+
+    return wrapper, differentiable_args
+
+
+def register_default_torch_ops():
+    from thunder.torch import default_torch_ops
+
+    for m, fns in default_torch_ops.torch_auto_registered_ops.items():
+        for fn in fns:
+            # Ensure no inplace op in the list
+            utils.check(
+                not fn.__name__.endswith("_"),
+                lambda: f"Automatic registration does not support in-place op of {m.__name__}.{fn.__name__}, please manually register it",
+            )
+            register_default_torch_op(fn, m)
+
+
+def register_default_torch_op(torchfn: Callable, torch_module):
+    fn_meta = meta_adaptor(torchfn)
+    _fn = langctx(Languages.TORCH)(fn_meta)
+    sym = Symbol(
+        name=torchfn.__name__,
+        meta=_fn,
+        id=f"{torch_module.__name__}.{torchfn.__name__}",
+    )
+    _torch_to_thunder_function_map[torchfn] = sym
+    from thunder.executors.torchex import _always_executable, ex
+
+    op = ex.register_operator(torchfn.__name__, module=torch_module, meta=fn_meta)
+    ex.register_implementation(sym, op, checker=_always_executable)
+
+    from thunder.core.transforms import augmented_forward_impls, backward_impls
+
+    # We need to invoke `register_method` on methods
+    # so that `x.method` is registered to the TensorProxy.
+    if torch_module is torch.Tensor:
+        register_method(torchfn.__name__, torchfn)
+
+    augmented_forward_impls[sym.id] = augmented_forward_adaptor(op)
+
+    _vjp_impl_wrapper = partial(_vjp_impl, torchfn)
+
+    bwd_op = ex.register_operator(torchfn.__name__ + "_vjp", meta=backward_adaptor(torchfn), fn=_vjp_impl_wrapper)
+    ex.register_implementation(bwd_op.id, bwd_op, checker=_always_executable)
+    backward_impls[sym.id] = bwd_op
+
+
+# Note this function should be used inside the fake mode context manager
+def _get_fake_arg(inp: Any):
+    if inp is None:
+        return inp
+    if isinstance(inp, NumberProxy):
+        if inp.value == None:
+            raise NotImplementedError("Unsupported for NumberProxy.value=None")
+        else:
+            return inp.value
+    elif isinstance(inp, TensorProxy):
+        return torch.empty(
+            inp.shape,
+            dtype=_thunder_to_torch_dtype_map[inp.dtype],
+            requires_grad=inp.requires_grad,
+            device=devices.to_torch_device(inp.device),
+        )
+    elif isinstance(inp, (TupleProxy, ListProxy, DictProxy)):
+        return inp._value
+    elif isinstance(inp, (torch.dtype, torch.device, torch.Size, torch.memory_format, str, bool, int, float, complex)):
+        return inp
+    elif isinstance(inp, devices.Device):
+        return devices.to_torch_device(inp)
+    elif isinstance(inp, dtypes.dtype):
+        return to_torch_dtype(inp)
+    else:
+        raise NotImplementedError(f"Unsupported type: {builtins.type(inp)}")
+
+
+def _fake_type_to_thunder(inp: Any):
+    from thunder.core.proxies import _cls_to_number_proxy_map
+    from torch._subclasses.fake_tensor import FakeTensor
+
+    if inp is None:
+        return inp
+    if isinstance(inp, tuple(_cls_to_number_proxy_map.keys())):
+        return numberproxy(builtins.type(inp), inp)
+    elif isinstance(inp, FakeTensor):
+        return TensorProxy(
+            shape=inp.shape,
+            device=to_device(inp.device),
+            dtype=_torch_to_thunder_dtype_map[inp.dtype],
+            requires_grad=inp.requires_grad,
+        )
+    elif isinstance(inp, torch.Size):
+        return tuple(inp)
+    elif isinstance(inp, torch.device):
+        return to_device(inp)
+    elif isinstance(inp, torch.dtype):
+        return _torch_to_thunder_dtype_map[inp]
+    elif isinstance(inp, (str, bool, int, float, complex)):
+        return inp
+    else:
+        raise NotImplementedError(f"Unsupported type: {builtins.type(inp)}")
+
+
+def augmented_forward_adaptor(sym_op: Callable):
+    def augmented_forward(*args, **kwargs):
+        from thunder.core.transforms import VJPDual
+
+        out = sym_op(*args, **kwargs)
+        primal = out if isinstance(out, tuple) else (out,)
+        saved_for_backward = ((args, kwargs),)
+        return VJPDual(primal, saved_for_backward)
+
+    return augmented_forward
+
+
+def backward_adaptor(torch_func: Callable):
+    def backward(saved_for_backward, *grad_output):
+        inp_args, inp_kwargs = saved_for_backward
+        flat_args, spec = tree_flatten(inp_args)
+        if not any(map(_is_differentiable, grad_output)):
+            return tree_unflatten(len(flat_args) * [None], spec)
+        if any(map(_is_differentiable, tree_flatten(inp_kwargs)[0])):
+            raise NotImplementedError(
+                f"Exception encountered when doing automatic registration for {torch_func} because there is keyword argument that requires gradient, please use manual registration."
+            )
+        from torch._subclasses.fake_tensor import FakeTensorMode
+
+        with FakeTensorMode():
+            fake_inp_args, fake_inp_kwargs = tree_map(_get_fake_arg, (inp_args, inp_kwargs))
+            wrapped_torch_func, diff_args = _make_differentiable_wrapper(torch_func, *fake_inp_args, **fake_inp_kwargs)
+            try:
+                _, fake_vjp = torch.autograd.functional.vjp(
+                    wrapped_torch_func, diff_args, v=tree_map(_get_fake_arg, grad_output)
+                )
+            except Exception as e:
+                msg = f"Exception encountered when doing automatic registration for {torch_func}, please use manual registration: {repr(e)}"
+                raise NotImplementedError(msg) from e
+
+        out_vjp = tree_map(_fake_type_to_thunder, fake_vjp)
+        iter_out_vjp = iter(out_vjp if isinstance(out_vjp, Sequence) else (out_vjp,))
+        fake_vjp = tuple(next(iter_out_vjp) if _is_differentiable(arg) else None for arg in flat_args)
+        return tree_unflatten(fake_vjp, spec)
+
+    return backward
+
+
+def _vjp_impl(torchfn, saved_for_backward, *gs):
+    inp_args, inp_kwargs = saved_for_backward
+
+    wrapped_func, diff_args = _make_differentiable_wrapper(torchfn, *inp_args, **inp_kwargs)
+    _, vjp_outs = torch.autograd.functional.vjp(wrapped_func, diff_args, v=gs)
+    flat_inp_args, inp_spec = tree_flatten(inp_args)
+    iter_vjp_out = iter(vjp_outs if isinstance(vjp_outs, Sequence) else (vjp_outs,))
+    vjp_outs = tuple(next(iter_vjp_out) if _is_differentiable(arg) else None for arg in flat_inp_args)
+    return tree_unflatten(vjp_outs, inp_spec)
+
+
+def meta_adaptor(torch_func: Callable):
+    def meta_func(*args, **kwargs):
+        from torch._subclasses.fake_tensor import FakeTensorMode
+
+        if kwargs.get("inplace", False):
+            raise NotImplementedError(f"{torch_func} has inplace=True, please use manual registration")
+        if kwargs.get("out", None) is not None:
+            raise NotImplementedError(f"{torch_func} specifies 'out' argument, please use manual registration")
+
+        with FakeTensorMode():
+            fake_args, fake_kwargs = tree_map(_get_fake_arg, (args, kwargs))
+            try:
+                fake_outs = torch_func(*fake_args, **fake_kwargs)
+            except Exception as e:
+                msg = f"Exception encountered when doing automatic registration for {torch_func.__name__}, please use manual registration: {repr(e)}"
+                raise NotImplementedError(msg) from e
+
+        flat_fake_outs, spec_outs = tree_flatten(fake_outs)
+        outs = tuple(map(_fake_type_to_thunder, flat_fake_outs))
+        if hasattr(spec_outs.type, "__module__") and spec_outs.type.__module__.startswith("torch.return_types"):
+            return outs
+        return tree_unflatten(outs, spec_outs)
+
+    return meta_func
+
+
+@langctx(Languages.TORCH)
+def check_overlap_ops():
+    from thunder.torch import default_torch_ops
+
+    torch_lang_ctx = get_langctx()
+    for m, fns in default_torch_ops.torch_auto_registered_ops.items():
+        for fn in fns:
+            if fn in _torch_to_thunder_function_map:
+                raise RuntimeError(
+                    f"{m.__name__}.{fn.__name__} is already registered in _torch_to_thunder_function_map, please remove it from default_torch_ops.py"
+                )
+            # NOTE - Some tensor methods like `float`, `size` are just registered as methods without `torchsymbol` so they don't show up in `_torch_to_thunder_function_map`.
+            if m is torch.Tensor and torch_lang_ctx.has_method(fn.__name__):
+                raise RuntimeError(
+                    f"{m.__name__}.{fn.__name__} is already registered as method for TensorProxy under torch_lang_ctx, please remove it from default_torch_ops.py"
+                )
+
+
+# Verify that there is no overlap between automatically registered operations and manually registered operations.
+check_overlap_ops()
+register_default_torch_ops()
 
 
 #
@@ -5394,4 +5613,5 @@ _syms_returning_views: set[Symbol] = {
     split,
     tensor_split,
     chunk,
+    getitem,
 }

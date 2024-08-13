@@ -136,6 +136,9 @@ def available_devicetypes():
 
 
 class TestExecutor:
+    def is_available(self) -> bool:
+        return True
+
     def supports_dtype(self, dtype: datatypes.dtype) -> bool:
         return dtype in datatypes.resolve_dtypes(self.supported_dtypes)
 
@@ -210,6 +213,9 @@ class TorchCompileCatTestExecutor(TestExecutor):
     supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
     supported_dtypes = (datatypes.dtype,)
 
+    def is_available(self) -> bool:
+        return not IS_WINDOWS
+
     def executors_list(self) -> list[extend.Executor]:
         from thunder.executors.torch_compile import torch_compile_cat_ex
 
@@ -223,6 +229,9 @@ class TorchCompileTestExecutor(TestExecutor):
     name = "torchcompile"
     supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
     supported_dtypes = (datatypes.dtype,)
+
+    def is_available(self) -> bool:
+        return not IS_WINDOWS
 
     def executors_list(self) -> list[extend.Executor]:
         from thunder.executors.torch_compile import torch_compile_ex
@@ -476,7 +485,7 @@ class instantiate:
         for executor, devicetype in product(
             sorted(self.executors, key=lambda x: repr(x)), sorted(self.devicetypes, key=lambda x: repr(x))
         ):
-            if executor is None:
+            if executor is None or not executor.is_available():
                 continue
 
             if not executor.supports_devicetype(devicetype):

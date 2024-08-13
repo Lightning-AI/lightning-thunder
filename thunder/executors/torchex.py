@@ -447,8 +447,8 @@ def _get_and_update_rng_state_impl(seed, offset, device):
     # We follow the nvFuser way here. pytorch_new_offset = (nvfuser_offset + 1) * 4
     # See Note [Divide offset by 4] https://github.com/NVIDIA/Fuser/blob/729f36c/csrc/rng.cpp#L54
     new_offset = (offset + 1) * 4
-    seed_portion = torch.tensor([seed]).view(torch.uint8)
-    offset_portion = torch.tensor([new_offset]).view(torch.uint8)
+    seed_portion = torch.tensor([seed], device="cpu").view(torch.uint8)
+    offset_portion = torch.tensor([new_offset], device="cpu").view(torch.uint8)
     new_state = torch.cat([seed_portion, offset_portion])
     torch.cuda.set_rng_state(new_state, device)
     return seed, offset
@@ -572,36 +572,16 @@ def _squeeze_transform(a: TensorLike, /, dim: None | int | Sequence[int] = None)
     return squeeze(a, dim)
 
 
-def _empty_transform(
-    shape: Sequence[int],
-    device: None | DeviceLike = None,
-    dtype: None | dtypeLike = None,
-    out: None | TensorLike = None,
-    layout: torch.layout = torch.strided,
-    requires_grad: bool = False,
-    pin_memory: bool = False,
-    memory_format: torch.memory_format = torch.contiguous_format,
-):
-    torch_device: None | torch.device = to_torch_device(device)
-    torch_dtype: None | torch.dtype = to_torch_dtype(dtype)
-    return empty(
-        shape,
-        device=torch_device,
-        dtype=torch_dtype,
-        out=out,
-        layout=layout,
-        requires_grad=requires_grad,
-        pin_memory=pin_memory,
-        memory_format=memory_format,
-    )
-
-
 _register_implementation(
     prims.broadcast_in_dim, checker=_always_executable, execution_transform=_broadcast_in_dim_prim_transform
 )
 _register_implementation(prims.cat, cat, checker=_always_executable)
 _register_implementation(prims.flip, flip, checker=_always_executable)
-_register_implementation(prims.reshape, reshape, checker=_always_executable)
+# NOTE - `ltorch.reshape` short circuits when new shape is same as original shape and returns the input proxy as output.
+#        `prims.reshape` doesn't do that and returns a new proxy. So we add `torch_prims_reshape_impl` which is consistent
+#        with `prims.reshape` semantics otherwise this can lead incorrectness.
+torch_prims_reshape_impl = ex.register_operator("torch_prims_reshape_impl", meta=prims.reshape.meta, fn=torch.reshape)
+_register_implementation(prims.reshape, torch_prims_reshape_impl, checker=_always_executable)
 slice_prim_impl = ex.register_operator("torch_slice_prim_impl", meta=prims.slice_prim.meta, fn=_slice_prim_impl)
 _register_implementation(prims.slice_prim, slice_prim_impl, checker=_always_executable)
 _register_implementation(prims.squeeze, checker=_always_executable, execution_transform=_squeeze_transform)
@@ -631,7 +611,6 @@ _register_implementation(ltorch.unfold, unfold, checker=_always_executable)
 _register_implementation(ltorch.unsqueeze, unsqueeze, checker=_always_executable)
 _register_implementation(ltorch.view, view, checker=_always_executable)
 _register_implementation(ltorch.view_as, view_as, checker=_always_executable)
-_register_implementation(ltorch.empty, empty, checker=_always_executable, execution_transform=_empty_transform)
 _register_implementation(ltorch.all_tensor, all_tensor, checker=_always_executable)
 _register_implementation(ltorch.any_tensor, any_tensor, checker=_always_executable)
 
@@ -2129,6 +2108,8 @@ _register_implementation(prims.item, item, checker=_always_executable)
 
 
 has_einops = importlib.util.find_spec("einops") is not None
+if has_einops:
+    has_einops = importlib.util.find_spec("einops._backends") is not None
 if has_einops:
     import einops
     from einops._backends import TorchBackend
