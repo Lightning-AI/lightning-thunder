@@ -5409,7 +5409,7 @@ def register_default_torch_op(torchfn: Callable, torch_module):
     # We need to invoke `register_method` on methods
     # so that `x.method` is registered to the TensorProxy.
     if torch_module is torch.Tensor:
-        register_method(torchfn.__name__, torchfn)
+        register_method(torchfn.__name__, sym)
 
     augmented_forward_impls[sym.id] = augmented_forward_adaptor(op)
 

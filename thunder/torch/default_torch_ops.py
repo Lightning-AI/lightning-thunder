@@ -563,6 +563,7 @@ torch_auto_registered_ops = {
         torch.Tensor.ndimension,
         torch.Tensor.negative,
         torch.Tensor.nelement,
+        torch.Tensor.new_ones,
         torch.Tensor.nonzero,
         torch.Tensor.nonzero_static,
         torch.Tensor.norm,
