@@ -12,7 +12,6 @@ def _warn_thunder_compiler():
     )
 
 
-
 class ThunderCompiler:
     def __init__(self, **thunder_options):
         """
