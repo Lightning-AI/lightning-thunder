@@ -40,7 +40,7 @@ class ThunderCompiler:
 
         self.thunder_options = thunder_options
 
-        # There will be pieces of Dynamo IR that Thunder cannot compile, so we
+        # TODO: There will be pieces of Dynamo IR that Thunder cannot compile, so we
         # will need to build a fallback mechanism to handle those cases.
         # Possible stages of the compilation that need to be saved for inspection:
         # 1. The GraphModule as it was passed to ThunderCompiler.
