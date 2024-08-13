@@ -125,7 +125,7 @@ class BitsAndBytesLinearQuant4bit(Transform):
                 "absmax.shape": tuple(qs.absmax.shape),
                 "code.dtype": qs.code.dtype,
                 "code.shape": tuple(qs.code.shape),
-                "device": getattr(w, "__thunder_device", w.device),
+                "device": getattr(w, "_thunder_device", w.device),
             }
 
         for n, submodule in model._model.named_modules():
@@ -200,14 +200,14 @@ class BitsAndBytesLinearQuant4bit(Transform):
                         name=f"{get_param.output.name}_absmax",
                         shape=qs["absmax.shape"],
                         dtype=thunder.dtypes.to_dtype(qs["absmax.dtype"]),
-                        device=thunder.devices.to_device(qs["device"]),
+                        device=thunder.devices.to_device(device),
                         requires_grad=False,
                     )
                     proxy_code = thunder.TensorProxy(
                         name=f"{get_param.output.name}_code",
                         shape=qs["code.shape"],
                         dtype=thunder.dtypes.to_dtype(qs["code.dtype"]),
-                        device=thunder.devices.to_device(qs["device"]),
+                        device=thunder.devices.to_device(device),
                         requires_grad=False,
                     )
                     # get_param.sym = unpack_buffer/parameter as needed
