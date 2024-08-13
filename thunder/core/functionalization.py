@@ -105,11 +105,29 @@ def _get_prod_bsym_with_arg(
     t: TensorProxy,
     producer_map: ProxyDict,
     trace_args: ProxyDict,
+    *,
+    orig_bsym_of_in_tensor: BoundSymbol,
+    in_tensor: TensorProxy,
 ) -> BoundSymbol | None:
     from thunder.torch import _syms_returning_views
+    from thunder.torch import _syms_returning_runtime_dependently_views
 
     def inplace_or_view(bsym) -> bool:
         sym = bsym.sym
+        check(
+            sym not in _syms_returning_runtime_dependently_views,
+            lambda: (
+                f"in-place op of `{orig_bsym_of_in_tensor.sym.id}` to `{bsym.sym.id}` output `{in_tensor.name}` is not "
+                f"supported. It's unclear if `{in_tensor.name}`, the output of "
+                f"{tuple(s.id for s in _syms_returning_runtime_dependently_views)} is "
+                "a copy, a view, or the input itself, as per https://pytorch.org/docs/stable/tensor_view.html\n"
+                "Please use `torch.view` to create a view. Cloning the reshaped tensor before the in-place op is not currently supported.\n"
+                "This error can be skipped with `skip_inplace_functionalization=True` passed to `thunder.jit`.\n"
+                "If you believe this is a bug, please report it to the Lightning Thunder team in "
+                "https://github.com/Lightning-AI/lightning-thunder/issues/957."
+            ),
+            NotImplementedError,
+        )
         return (sym.tags and prims.OpTags.IN_PLACE in sym.tags) or sym in _syms_returning_views
 
     if t not in producer_map:
@@ -123,7 +141,13 @@ def _get_prod_bsym_with_arg(
         if first_tensor in trace_args:
             return prod_bsym
         else:
-            return _get_prod_bsym_with_arg(first_tensor, producer_map, trace_args)
+            return _get_prod_bsym_with_arg(
+                first_tensor,
+                producer_map,
+                trace_args,
+                orig_bsym_of_in_tensor=orig_bsym_of_in_tensor,
+                in_tensor=in_tensor,
+            )
     else:
         return None
 
@@ -417,7 +441,11 @@ def apply_functionalization_to_canonicalized_trace(
             arg_copy_dst = copy_to
         elif (
             optional_prod_bsym := _get_prod_bsym_with_arg(
-                copy_to, producer_map_of_intermediate_trace, arg_to_copy_bsyms
+                copy_to,
+                producer_map_of_intermediate_trace,
+                arg_to_copy_bsyms,
+                orig_bsym_of_in_tensor=new_bsym,
+                in_tensor=copy_to,
             )
         ) is not None:
             new_copy_to = _get_first_tensor_arg(optional_prod_bsym)
