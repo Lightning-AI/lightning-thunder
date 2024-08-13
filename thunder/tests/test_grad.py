@@ -487,7 +487,9 @@ def test_vjp_correctness_type_as_manual(op, device, dtype, executor, comp):
         # Compute vjp result using Thunder
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
-        actual_out = executor.make_callable_legacy(vjp(filtered_op), disable_torch_autograd=True)(filtered_args, (v,))
+        actual_out = executor.make_callable_legacy(vjp(filtered_op), disable_torch_autograd_support=True)(
+            filtered_args, (v,)
+        )
         comp(actual_out[1][0], expected[0])
         comp(actual_out[0], out)
 
