@@ -24,18 +24,6 @@ def apex_fused_norms_available() -> bool:
     return APEX_FUSED_NORMS_AVAILABLE
 
 
-def meta_fn(
-    ctx, input: TensorLike, weight: TensorLike, normalized_shape: Sequence[int], eps: float, memory_efficient: bool
-):
-    return TensorProxy(like=input)
-
-
-# Symbol which will be used by lookaside.
-fused_rms_norm = apex_ex.register_operator(
-    "fused_rms_norm", meta=meta_fn, replaces=FusedRMSNormAffineMixedDtypesFunction.forward
-)
-
-
 def meta_impl_fn(
     input: TensorLike, weight: TensorLike, normalized_shape: Sequence[int], eps: float, memory_efficient: bool
 ):
@@ -109,10 +97,23 @@ def _fused_rms_norm_checker(
     return True
 
 
-apex_ex.register_implementation(
-    fused_rms_norm,
-    execution_transform=execution_tfms,
-    grad_transform=fused_rms_norm_grad_rule,
-    checker=_fused_rms_norm_checker,
-)
-apex_ex.register_implementation(fused_rms_norm_backward, fused_rms_norm_backward)
+# Create a new symbol and register lookaside only if import is available.
+if apex_fused_norms_available():
+
+    def meta_fn(
+        ctx, input: TensorLike, weight: TensorLike, normalized_shape: Sequence[int], eps: float, memory_efficient: bool
+    ):
+        return TensorProxy(like=input)
+
+    # Symbol which will be used by lookaside.
+    fused_rms_norm = apex_ex.register_operator(
+        "fused_rms_norm", meta=meta_fn, replaces=FusedRMSNormAffineMixedDtypesFunction.forward
+    )
+
+    apex_ex.register_implementation(
+        fused_rms_norm,
+        execution_transform=execution_tfms,
+        grad_transform=fused_rms_norm_grad_rule,
+        checker=_fused_rms_norm_checker,
+    )
+    apex_ex.register_implementation(fused_rms_norm_backward, fused_rms_norm_backward)
