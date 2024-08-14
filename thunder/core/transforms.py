@@ -1854,14 +1854,16 @@ def _vmap_call_metafunc(detached: bool, args, in_dims, out_dims, axis_size, func
             return tree_unflatten(outs, spec)
         if isinstance(result, (Number, NumberProxy)) and axis_size is not None:
             # TODO: fetch the default device from the context
-            result = full(shape=(), fill_value=result, device=common_device)
+            result = ltorch.full(shape=(), fill_value=result, device=common_device)
             result = BatchedValue(result, not_mapped)
         elif (
             isinstance(result, BatchedValue)
             and isinstance(result.value, (Number, NumberProxy))
             and axis_size is not None
         ):
-            result = BatchedValue(full(shape=(), fill_value=result.value, device=common_device), result.batch_dim)
+            result = BatchedValue(
+                ltorch.full(shape=(), fill_value=result.value, device=common_device), result.batch_dim
+            )
         assert isinstance(result, BatchedValue)
         out = move_batch_dim(axis_size, result.batch_dim, out_dims[0], result.value)
         return out

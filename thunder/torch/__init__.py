@@ -561,12 +561,44 @@ def arange(
     return clang.arange(start=start, step=step, stop=end, device=device, dtype=dtype)
 
 
+# Infers dtype from the fill_value and dtype
+def _infer_full_dtype(fill_value: NumberLike, dtype: None | dtypeLike) -> dtypeLike:
+
+    # Short-circuits if dtype is explicitly specified
+    if dtype is not None:
+        return to_dtype(dtype)
+
+    # NOTE dtype is None
+    fill_value_dtype = dtypes.numbertype_to_dtype(dtypes.to_dtype(fill_value))
+
+    if dtypes.is_boolean_dtype(fill_value_dtype):
+        return dtypes.bool8
+
+    if dtypes.is_nonboolean_integer_dtype(fill_value_dtype):
+        return dtypes.int64
+
+    current_default_dtype = get_default_dtype()
+
+    # NOTE When the `fill_value' is a complex dtype, Thunder infers a slightly different dtype than Torch.
+    # Torch (2.5.0a0+git8927fc2):
+    #     float64 -> complex128
+    #     float32, float16, bfloat16 -> complex64
+    # (Ref: the torch function: https://github.com/pytorch/pytorch/blob/cd307fb0b1a833f9297d2233653b514ed4aa3163/aten/src/ATen/native/TensorFactories.cpp#L584-L604)
+    # Thunder uses `dtypes.corresponding_complex_dtype` (see its implementation for details)
+    # The only difference is that when `fill_value_dtype` is float16, Thunder returns complex32 but Torch returns complex64
+    if dtypes.is_complex_dtype(fill_value_dtype):
+        return dtypes.corresponding_complex_dtype(current_default_dtype)
+
+    # NOTE fill_value_dtype is a non-complex floating-point type
+    return to_dtype(current_default_dtype)
+
+
 @torchsymbol(torch.full)
 def full(
     shape: Sequence[int], fill_value: NumberLike, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
 ) -> TensorLike:
     device = to_device(maybe_get_default_device(device))
-    dtype = to_dtype(maybe_get_default_dtype(dtype))
+    dtype = _infer_full_dtype(fill_value, dtype)
     return clang.full(shape, fill_value, device=device, dtype=dtype)
 
 
@@ -583,7 +615,7 @@ def full_like(
 @torchsymbol(torch.ones)
 def ones(*shape: int, device: None | DeviceLike = None, dtype: None | dtypeLike = None) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
-    return full(shape, 1, device=device, dtype=dtype)
+    return full(shape, 1, device=device, dtype=maybe_get_default_dtype(dtype))
 
 
 @torchsymbol(torch.ones_like)
@@ -769,7 +801,7 @@ def bernoulli(a: TensorLike, *, generator=None, out=None):
 @torchsymbol(torch.zeros)
 def zeros(*shape: int, device: None | DeviceLike = None, dtype: None | dtypeLike = None) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
-    return full(shape, 0, device=device, dtype=dtype)
+    return full(shape, 0, device=device, dtype=maybe_get_default_dtype(dtype))
 
 
 @torchsymbol(torch.zeros_like)

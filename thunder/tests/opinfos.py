@@ -5777,6 +5777,8 @@ def full_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     for shape, fill_value in cases:
         yield SampleInput(shape, fill_value, device=device, dtype=dtype)
+    # Tests dtype is inferred correctly
+    yield SampleInput(shape, fill_value, device=device)
 
 
 def full_error_generator(op, device, **kwargs):
