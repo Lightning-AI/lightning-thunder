@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 import itertools
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 import collections
 
 import torch as pytorch
@@ -176,8 +177,6 @@ class ThunderModule(pytorch.nn.Module):
 
     def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True, assign: bool = False):
         # this is much more simple than the original (hooks etc.)
-        if assign:
-            raise NotImplementedError("load_state_dict with assign=True")
 
         # non-persistent buffer overrides?
         non_persistent_buffers_set = set()
@@ -210,7 +209,18 @@ class ThunderModule(pytorch.nn.Module):
                     continue
                 # check dtype?
                 with pytorch.no_grad():
-                    v.copy_(sd_v)
+                    if assign:
+                        if isinstance(v, pytorch.nn.Parameter):
+                            if not isinstance(sd_v, pytorch.nn.Parameter):
+                                sd_v = pytorch.nn.Parameter(sd_v, requires_grad=v.requires_grad)
+                            else:
+                                sd_v.requires_grad_(v.requires_grad)
+                            self._overrides_parameters[name] = sd_v
+                        else:
+                            self._overrides_buffers[name] = sd_v
+
+                    else:
+                        v.copy_(sd_v)
         if strict:
             if keys_unused:
                 errors.insert(
