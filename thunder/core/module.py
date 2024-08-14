@@ -145,8 +145,14 @@ class ThunderModule(pytorch.nn.Module):
 
     def state_dict(self, *, destination=None, prefix="", keep_vars=False):
         """
-        Save state dict of the (transformed) Thunder module.
-        Note that this is rather more rudimentary than the original state_dict.
+        Returns the state dict of the (transformed) Thunder module.
+
+        Args:
+            destination: if given, use this mutuable mapping as the dict container.
+            prefix: a prefix for the keys.
+            keep_vars: do not detach
+
+        Note that this similar but rather more rudimentary than the original state_dict.
         """
         if destination is None:
             destination = collections.OrderedDict()
@@ -176,8 +182,16 @@ class ThunderModule(pytorch.nn.Module):
         return destination
 
     def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True, assign: bool = False):
-        # this is much more simple than the original (hooks etc.)
+        """Loads the state dict to a transformed module.
 
+        Args:
+            state_dict: the state dict to load.
+            strict: error on missing / unused state dict members
+            assign: assign the state dict tensors instead of copying the data
+
+        This is similar much more simple than the original load_state_dict.
+        (Regarding hooks, customization etc.)
+        """
         # non-persistent buffer overrides?
         non_persistent_buffers_set = set()
         for name, submodule in self._model.named_modules():
@@ -188,39 +202,40 @@ class ThunderModule(pytorch.nn.Module):
         keys_missing = thunder.core.utils.OrderedSet()
         errors = []
         for name, v in itertools.chain(self.named_parameters(), self.named_buffers()):
-            if name not in non_persistent_buffers_set:
-                if name not in state_dict:
-                    keys_missing.add(name)
-                    continue
-                keys_unused.remove(name)
-                sd_v = state_dict[name]
-                if not isinstance(sd_v, pytorch.Tensor):
-                    errors.append(
-                        f'While copying the parameter named "{name}", '
-                        "expected torch.Tensor or Tensor-like object from checkpoint but "
-                        f"received {type(sd_v)}"
-                    )
-                    continue
-                if sd_v.shape != v.shape:
-                    errors.append(
-                        f"size mismatch for {name}: copying a param with shape {sd_v.shape} from checkpoint, "
-                        f"the shape in current model is {v.shape}."
-                    )
-                    continue
-                # check dtype?
-                with pytorch.no_grad():
-                    if assign:
-                        if isinstance(v, pytorch.nn.Parameter):
-                            if not isinstance(sd_v, pytorch.nn.Parameter):
-                                sd_v = pytorch.nn.Parameter(sd_v, requires_grad=v.requires_grad)
-                            else:
-                                sd_v.requires_grad_(v.requires_grad)
-                            self._overrides_parameters[name] = sd_v
+            if name in non_persistent_buffers_set:
+                continue
+            if name not in state_dict:
+                keys_missing.add(name)
+                continue
+            keys_unused.remove(name)
+            sd_v = state_dict[name]
+            if not isinstance(sd_v, pytorch.Tensor):
+                errors.append(
+                    f'While copying the parameter named "{name}", '
+                    "expected torch.Tensor or Tensor-like object from checkpoint but "
+                    f"received {type(sd_v)}"
+                )
+                continue
+            if sd_v.shape != v.shape:
+                errors.append(
+                    f"size mismatch for {name}: copying a param with shape {sd_v.shape} from checkpoint, "
+                    f"the shape in current model is {v.shape}."
+                )
+                continue
+            # check dtype?
+            with pytorch.no_grad():
+                if assign:
+                    if isinstance(v, pytorch.nn.Parameter):
+                        if not isinstance(sd_v, pytorch.nn.Parameter):
+                            sd_v = pytorch.nn.Parameter(sd_v, requires_grad=v.requires_grad)
                         else:
-                            self._overrides_buffers[name] = sd_v
-
+                            sd_v.requires_grad_(v.requires_grad)
+                        self._overrides_parameters[name] = sd_v
                     else:
-                        v.copy_(sd_v)
+                        self._overrides_buffers[name] = sd_v
+
+                else:
+                    v.copy_(sd_v)
         if strict:
             if keys_unused:
                 errors.insert(
