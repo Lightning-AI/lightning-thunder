@@ -8,7 +8,6 @@ register_executor(apex_ex)
 import thunder.executors.apex_entropyex_impl
 import thunder.executors.apex_fused_rms_norm_impl as apex_fused_rms_norm_impl
 
-apex_fused_rms_norm_impl.maybe_register_apex_fused_rms_norm_lookaside()  # Register the lookaside if available.
 from thunder.executors.apex_entropyex_impl import apex_entropy_available
 from thunder.executors.apex_fused_rms_norm_impl import apex_fused_norms_available
 

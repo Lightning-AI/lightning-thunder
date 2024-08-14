@@ -24,12 +24,16 @@ def apex_fused_norms_available() -> bool:
     return APEX_FUSED_NORMS_AVAILABLE
 
 
-def meta_fn(input: TensorLike, weight: TensorLike, normalized_shape: Sequence[int], eps: float, memory_efficient: bool):
+def meta_fn(
+    ctx, input: TensorLike, weight: TensorLike, normalized_shape: Sequence[int], eps: float, memory_efficient: bool
+):
     return TensorProxy(like=input)
 
 
 # Symbol which will be used by lookaside.
-fused_rms_norm = apex_ex.register_operator("fused_rms_norm", meta=meta_fn)
+fused_rms_norm = apex_ex.register_operator(
+    "fused_rms_norm", meta=meta_fn, replaces=FusedRMSNormAffineMixedDtypesFunction.forward
+)
 
 
 def meta_impl_fn(
@@ -70,7 +74,7 @@ fused_rms_norm_backward = apex_ex.register_operator(
 
 
 def fused_rms_norm_grad_rule(
-    input: TensorLike, weight: TensorLike, normalized_shape: Sequence[int], eps: float, memory_efficient: bool
+    ctx, input: TensorLike, weight: TensorLike, normalized_shape: Sequence[int], eps: float, memory_efficient: bool
 ):
     output, saved_tensors, saved_meta = fused_rms_norm_fwd(input, weight, normalized_shape, eps, memory_efficient)
     g = get_grad(output)
@@ -80,14 +84,19 @@ def fused_rms_norm_grad_rule(
 
 
 def execution_tfms(
-    input: TensorLike, weight: TensorLike, normalized_shape: Sequence[int], eps: float, memory_efficient: bool
+    ctx, input: TensorLike, weight: TensorLike, normalized_shape: Sequence[int], eps: float, memory_efficient: bool
 ):
     output, _, _ = fused_rms_norm_fwd(input, weight, normalized_shape, eps, memory_efficient)
     return output
 
 
 def _fused_rms_norm_checker(
-    input: TensorLike, weight: TensorLike, normalized_shape: Sequence[int], eps: float, memory_efficient: bool
+    ctx: torch.autograd.Function,
+    input: TensorLike,
+    weight: TensorLike,
+    normalized_shape: Sequence[int],
+    eps: float,
+    memory_efficient: bool,
 ):
     use_apex_fused_rms_norm = get_compile_option(
         "use_apex_fused_rms_norm", "Whether to enable `fused_rms_norm` from `apex_ex`. Defaults to `True`."
@@ -107,17 +116,3 @@ apex_ex.register_implementation(
     checker=_fused_rms_norm_checker,
 )
 apex_ex.register_implementation(fused_rms_norm_backward, fused_rms_norm_backward)
-
-
-# Register the lookaside.
-def maybe_register_apex_fused_rms_norm_lookaside() -> None:
-    if APEX_FUSED_NORMS_AVAILABLE:
-
-        @thunder.core.jit_ext.register_general_jit_lookaside(FusedRMSNormAffineMixedDtypesFunction.forward)
-        @thunder.core.jit_ext.interpreter_needs_wrap
-        def rms_forward_lookaside(ctx, input, weight, normalized_shape, eps, memory_efficient=False):
-            # This is the symbol we created.
-            # NOTE - We don't use the `ctx` passed by PyTorch but instead use our Context to track saved_tensors and metadata.
-            return fused_rms_norm(input, weight, normalized_shape, eps, memory_efficient)
-
-    return None
