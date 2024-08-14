@@ -1,10 +1,11 @@
 from contextlib import contextmanager
 import itertools
-from typing import Any
+from typing import Any, Mapping
 import collections
 
 import torch as pytorch
 
+import thunder
 from thunder.core.compile_data import get_compile_data
 
 
@@ -141,6 +142,92 @@ class ThunderModule(pytorch.nn.Module):
                 else:
                     raise NotImplementedError(f"don't know how to handle {full_k}")
 
+    def state_dict(self, *, destination=None, prefix="", keep_vars=False):
+        """
+        Save state dict of the (transformed) Thunder module.
+        Note that this is rather more rudimentary than the original state_dict.
+        """
+        if destination is None:
+            destination = collections.OrderedDict()
+            destination._metadata = collections.OrderedDict()
+
+        for name, param in self.named_parameters(prefix=prefix):
+            if param is not None:
+                destination[name] = param if keep_vars else param.detach()
+
+        non_persistent_buffers_set = set()
+        for name, submodule in self._model.named_modules(prefix=prefix):
+            subprefix = f"{name}." if name else name
+            non_persistent_buffers_set.update(f"{subprefix}{bname}" for bname in submodule._non_persistent_buffers_set)
+
+        for name, buf in self.named_buffers(prefix=prefix):
+            if buf is not None and name not in non_persistent_buffers_set:
+                destination[name] = buf if keep_vars else buf.detach()
+
+        for name, submodule in self._model.named_modules(prefix=prefix):
+            subprefix = f"{name}." if name else name
+            extra_state_key = subprefix + pytorch.nn.modules.module._EXTRA_STATE_KEY_SUFFIX
+            if (
+                getattr(self.__class__, "get_extra_state", pytorch.nn.Module.get_extra_state)
+                is not pytorch.nn.Module.get_extra_state
+            ):
+                destination[extra_state_key] = self.get_extra_state()
+        return destination
+
+    def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True, assign: bool = False):
+        # this is much more simple than the original (hooks etc.)
+        if assign:
+            raise NotImplementedError("load_state_dict with assign=True")
+
+        # non-persistent buffer overrides?
+        non_persistent_buffers_set = set()
+        for name, submodule in self._model.named_modules():
+            subprefix = f"{name}." if name else name
+            non_persistent_buffers_set.update(f"{subprefix}{bname}" for bname in submodule._non_persistent_buffers_set)
+
+        keys_unused = thunder.core.utils.OrderedSet(state_dict.keys())
+        keys_missing = thunder.core.utils.OrderedSet()
+        errors = []
+        for name, v in itertools.chain(self.named_parameters(), self.named_buffers()):
+            if name not in non_persistent_buffers_set:
+                if name not in state_dict:
+                    keys_missing.add(name)
+                    continue
+                keys_unused.remove(name)
+                sd_v = state_dict[name]
+                if not isinstance(sd_v, pytorch.Tensor):
+                    errors.append(
+                        f'While copying the parameter named "{name}", '
+                        "expected torch.Tensor or Tensor-like object from checkpoint but "
+                        f"received {type(sd_v)}"
+                    )
+                    continue
+                if sd_v.shape != v.shape:
+                    errors.append(
+                        f"size mismatch for {name}: copying a param with shape {sd_v.shape} from checkpoint, "
+                        f"the shape in current model is {v.shape}."
+                    )
+                    continue
+                # check dtype?
+                with pytorch.no_grad():
+                    v.copy_(sd_v)
+        if strict:
+            if keys_unused:
+                errors.insert(
+                    0,
+                    "Unexpected key(s) in state_dict: {}. ".format(", ".join(f'"{k}"' for k in keys_unused)),
+                )
+            if keys_missing:
+                errors.insert(
+                    0,
+                    "Missing key(s) in state_dict: {}. ".format(", ".join(f'"{k}"' for k in keys_missing)),
+                )
+
+        if errors:
+            raise RuntimeError("Error(s) in loading state_dict:\n\t{}".format("\n\t".join(errors)))
+
+        return pytorch.nn.modules.module._IncompatibleKeys(keys_missing, keys_unused)
+
     @contextmanager
     def no_sync(self):
         r"""Context manager to disable gradient synchronization in data parallel mode.
@@ -189,14 +276,6 @@ class ThunderModule(pytorch.nn.Module):
         if name == "_model":
             return self._modules["_model"]
         return getattr(self._model, name)
-
-    def state_dict(self, *args: Any, **kwargs: Any) -> Any:
-        # this is broken for transformed modules!!!
-        return self._model.state_dict(*args, **kwargs)
-
-    def load_state_dict(self, *args: Any, **kwargs: Any) -> Any:
-        # this is broken for transformed modules!!!
-        return self._model.load_state_dict(*args, **kwargs)
 
 
 def get_thunder_module(model):

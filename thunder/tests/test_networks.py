@@ -304,6 +304,7 @@ def test_quantization():
     config = litgpt_model.Config.from_name("llama2-like")
     with torch.device("cuda"):
         model_fp_reference = litgpt_model.GPT(config).to(torch.bfloat16)
+        model_fp_reference2 = litgpt_model.GPT(config).to(torch.bfloat16)
 
     import lightning as L
 
@@ -336,16 +337,31 @@ def test_quantization():
     model_fp_reference.requires_grad_(False)
     model_fp_reference.eval()
 
+    model_fp_reference2.set_kv_cache(1, device="cuda", dtype=torch.bfloat16)
+    model_fp_reference2.max_seq_length = 20
+    model_fp_reference2.requires_grad_(False)
+    model_fp_reference2.eval()
+
     jm = thunder.jit(
         model_fp_reference,
         executors=(bitsandbytes_executor,),
         transforms=[BitsAndBytesLinearQuant4bit()],
     )
 
+    jm2 = thunder.jit(
+        model_fp_reference2,
+        executors=(bitsandbytes_executor,),
+        transforms=[BitsAndBytesLinearQuant4bit()],
+    )
+    jm2.load_state_dict(jm.state_dict())
+
     logits_thunder = jm(x, input_pos)
+    logits_thunder2 = jm2(x, input_pos)
     # check_dtype=False due to litgpt returning float32
     # (maybe that also is the numerical discrepancy?)
     assert_close(logits_thunder, logits_expected, atol=2e-2, rtol=1e-3, check_dtype=False)
+
+    assert_close(logits_thunder, logits_thunder2, atol=2e-5, rtol=1e-5)
 
     sd = {k: v.clone() for k, v in jm.state_dict().items()}
     jm.load_original_state_dict(model_fp_reference.state_dict())
