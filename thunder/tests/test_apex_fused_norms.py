@@ -4,14 +4,13 @@ from torch.testing import assert_close
 
 fused_layer_norm_cuda = pytest.importorskip("fused_layer_norm_cuda")
 from apex.normalization.fused_layer_norm import FusedRMSNormAffineMixedDtypesFunction
-from thunder.executors.apex_fused_rms_norm import register_apex_fused_rms_norm
-from thunder.executors.apex_entropyex import apex_ex
+from thunder.executors.apex_fused_rms_norm import apex_ex
 import thunder
 
 
 @pytest.mark.parametrize("requires_grad", [True, False])
 @pytest.mark.parametrize("memory_efficient", [True, False])
-def test_apex_fused_norm(requires_grad, memory_efficient):
+def test_apex_fused_rms_norm(requires_grad, memory_efficient):
     def fn(x, weight, normalized_shape, eps):
         return FusedRMSNormAffineMixedDtypesFunction.apply(x, weight, normalized_shape, eps, memory_efficient)
 
