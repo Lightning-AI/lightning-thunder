@@ -18,7 +18,9 @@ _name2func = {}
 [_name2func.setdefault(f"nn.functional.{v.__name__}", v) for v in ops.torch_auto_registered_ops[torch.nn.functional]]
 # Use the sample input from torch.xx to test torch.tensor.xx
 [_name2func.setdefault(f"Tensor.{v.__name__}", v) for v in ops.torch_auto_registered_ops[torch.Tensor]]
-_opinfos = [opinfo for opinfo in op_db if opinfo.name in _name2func]
+# NOTE some `opinfo.name`s don't have torch.xxx but are only used as torch.Tensor.xxx
+torch_tensor_space_names = [v.__name__ for v in ops.torch_auto_registered_ops[torch.Tensor]]
+_opinfos = [opinfo for opinfo in op_db if opinfo.name in _name2func or opinfo.name in torch_tensor_space_names]
 
 
 # Note that successfully catching an exception in this test is also noted as passed
@@ -48,7 +50,7 @@ def test_torch_ops_trace(device, requires_grad, op_info):
             return lambda x, *args, **kwargs: getattr(x, f"{op_info.name}")(*args, **kwargs)
         return None
 
-    funcs = [_name2func[op_info.name], get_method(op_info)]
+    funcs = [_name2func.get(op_info.name, None), get_method(op_info)]
     for func in funcs:
         if func is None:
             continue
