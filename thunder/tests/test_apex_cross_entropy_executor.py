@@ -11,7 +11,7 @@ from thunder.tests.opinfos import get_opinfo
 from thunder.core.transforms import grad
 
 xentropy_cuda = pytest.importorskip("xentropy_cuda")
-from thunder.executors.apex_entropyex import apex_ex
+from thunder.executors.apexex import apex_ex
 
 
 @pytest.mark.parametrize("dtype", [torch.float32], ids=("float32",))
@@ -49,7 +49,7 @@ def snippet_torch_consistency(op, torch_op, sample):
 @pytest.mark.parametrize("dtype", [torch.float16, torch.float32], ids=("float16", "float32"))
 @pytest.mark.parametrize("device,", ["cuda"])
 def test_apex_torch_consistency(device: str, dtype: torch.dtype):
-    from thunder.executors.apex_entropyex import _cross_entropy_checker
+    from thunder.executors.apex_entropyex_impl import _cross_entropy_checker
 
     op = get_opinfo("cross_entropy")
 

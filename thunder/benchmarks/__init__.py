@@ -22,7 +22,7 @@ import thunder.core.dtypes as dtypes
 import thunder.executors as executors
 import thunder.torch as ltorch
 from thunder.core.transforms import grad, clear_grads, populate_grads
-from thunder.executors.apex_entropyex import apex_ex, apex_entropy_available
+from thunder.executors.apexex import apex_ex, apex_entropy_available
 from thunder.executors.cudnn_layernormex import cudnn_layernorm_ex
 from thunder.executors.cudnnex import cudnn_ex, cudnn_available
 from thunder.executors.transformer_engineex import transformer_engine_ex, TE_AVAILABLE
@@ -917,7 +917,7 @@ def default_thunder_apex_executor(fn: Callable) -> Callable:
     APEX_CROSS_ENTROPY_AVAILABLE = package_available("xentropy_cuda")
     assert APEX_CROSS_ENTROPY_AVAILABLE, "Trying to benchmark with the thunder+apex executor, but apex is not available"
 
-    from thunder.executors.apex_entropyex import register_apex_entropyex
+    from thunder.executors.apex_entropyex_impl import register_apex_entropyex
 
     register_apex_entropyex(add_to_default_executors=False)
 

@@ -62,7 +62,7 @@ The Apex CrossEntropy executor can execute ``torch.cross_entropy()`` through an 
 
   import torch
   import thunder
-  from thunder.executors.apex_entropyex import apex_ex
+  from thunder.executors.apexex import apex_ex
 
   def xentropy(logits, labels):
       return thunder.torch.cross_entropy(

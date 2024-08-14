@@ -4,7 +4,7 @@ from torch.testing import assert_close
 
 fused_layer_norm_cuda = pytest.importorskip("fused_layer_norm_cuda")
 from apex.normalization.fused_layer_norm import FusedRMSNormAffineMixedDtypesFunction
-from thunder.executors.apex_fused_rms_norm import apex_ex
+from thunder.executors.apexex import apex_ex
 import thunder
 
 

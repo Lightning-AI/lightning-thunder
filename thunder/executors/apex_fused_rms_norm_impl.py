@@ -12,12 +12,16 @@ from thunder.core.compile_data import get_compile_option
 from thunder.executors.apexex import apex_ex
 
 
-FUSED_NORMS_AVAILABLE = True
+APEX_FUSED_NORMS_AVAILABLE = True
 try:
     import fused_layer_norm_cuda
     from apex.normalization.fused_layer_norm import FusedRMSNormAffineMixedDtypesFunction
 except:
-    FUSED_NORMS_AVAILABLE = False
+    APEX_FUSED_NORMS_AVAILABLE = False
+
+
+def apex_fused_norms_available() -> bool:
+    return APEX_FUSED_NORMS_AVAILABLE
 
 
 def meta_fn(input: TensorLike, weight: TensorLike, normalized_shape: Sequence[int], eps: float, memory_efficient: bool):
@@ -106,16 +110,14 @@ apex_ex.register_implementation(fused_rms_norm_backward, fused_rms_norm_backward
 
 
 # Register the lookaside.
-def register_apex_fused_rms_norm() -> None:
-    @thunder.core.jit_ext.register_general_jit_lookaside(FusedRMSNormAffineMixedDtypesFunction.forward)
-    @thunder.core.jit_ext.interpreter_needs_wrap
-    def rms_forward_lookaside(ctx, input, weight, normalized_shape, eps, memory_efficient=False):
-        # This is the symbol we created.
-        # NOTE - We don't use the `ctx` passed by PyTorch but instead use our Context to track saved_tensors and metadata.
-        return fused_rms_norm(input, weight, normalized_shape, eps, memory_efficient)
+def maybe_register_apex_fused_rms_norm_lookaside() -> None:
+    if APEX_FUSED_NORMS_AVAILABLE:
+
+        @thunder.core.jit_ext.register_general_jit_lookaside(FusedRMSNormAffineMixedDtypesFunction.forward)
+        @thunder.core.jit_ext.interpreter_needs_wrap
+        def rms_forward_lookaside(ctx, input, weight, normalized_shape, eps, memory_efficient=False):
+            # This is the symbol we created.
+            # NOTE - We don't use the `ctx` passed by PyTorch but instead use our Context to track saved_tensors and metadata.
+            return fused_rms_norm(input, weight, normalized_shape, eps, memory_efficient)
 
     return None
-
-
-if FUSED_NORMS_AVAILABLE:
-    register_apex_fused_rms_norm()
