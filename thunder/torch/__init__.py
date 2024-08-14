@@ -562,22 +562,35 @@ def arange(
 
 
 # Infers dtype from the fill_value and dtype
-def _infer_full_dtype(fill_value: NumberLike, dtype):
+def _infer_full_dtype(fill_value: NumberLike, dtype: None | dtypeLike) -> dtypeLike:
+
+    # Short-circuits if dtype is explicitly specified
+    if dtype is not None:
+        return to_dtype(dtype)
+
+    # NOTE dtype is None
     fill_value_dtype = dtypes.numbertype_to_dtype(dtypes.to_dtype(fill_value))
-    if not dtype:
-        current_default_dtype = get_default_dtype()
-        if dtypes.is_boolean_dtype(fill_value_dtype):
-            return fill_value_dtype
-        elif dtypes.is_nonboolean_integer_dtype(fill_value_dtype):
-            return dtypes.int64
-        # NOTE Thunder has slightly different behavior than Torch, Torch (2.5.0a0+git8927fc2):
-        # float64 -> complex128
-        # float32, float16, bfloat16 -> complex64
-        elif dtypes.is_complex_dtype(fill_value_dtype):
-            return dtypes.corresponding_complex_dtype(current_default_dtype)
-        else:
-            return to_dtype(current_default_dtype)
-    return to_dtype(dtype)
+
+    if dtypes.is_boolean_dtype(fill_value_dtype):
+        return dtypes.bool8
+
+    if dtypes.is_nonboolean_integer_dtype(fill_value_dtype):
+        return dtypes.int64
+
+    current_default_dtype = get_default_dtype()
+
+    # NOTE When the `fill_value' is a complex dtype, Thunder infers a slightly different dtype than Torch.
+    # Torch (2.5.0a0+git8927fc2):
+    #     float64 -> complex128
+    #     float32, float16, bfloat16 -> complex64
+    # (Ref: the torch function: https://github.com/pytorch/pytorch/blob/cd307fb0b1a833f9297d2233653b514ed4aa3163/aten/src/ATen/native/TensorFactories.cpp#L584-L604)
+    # Thunder uses `dtypes.corresponding_complex_dtype` (see its implementation for details)
+    # The only difference is that when `fill_value_dtype` is float16, Thunder returns complex32 but Torch returns complex64
+    if dtypes.is_complex_dtype(fill_value_dtype):
+        return dtypes.corresponding_complex_dtype(current_default_dtype)
+
+    # NOTE fill_value_dtype is a non-complex floating-point type
+    return to_dtype(current_default_dtype)
 
 
 @torchsymbol(torch.full)
