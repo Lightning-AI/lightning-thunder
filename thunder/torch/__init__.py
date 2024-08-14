@@ -520,7 +520,7 @@ def type_as(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
     #   tensors and TensorProxies being passed to this operation
     utils.check_type(b, TensorProxy)
 
-    return to(a, b.true_dtype)
+    return to(a, b.true_dtype, device=b.device)
 
 
 @torchsymbol(torch.Tensor.long, is_method=True)
@@ -5441,7 +5441,7 @@ def register_default_torch_op(torchfn: Callable, torch_module):
     # We need to invoke `register_method` on methods
     # so that `x.method` is registered to the TensorProxy.
     if torch_module is torch.Tensor:
-        register_method(torchfn.__name__, torchfn)
+        register_method(torchfn.__name__, sym)
 
     augmented_forward_impls[sym.id] = augmented_forward_adaptor(op)
 

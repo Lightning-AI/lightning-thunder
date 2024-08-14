@@ -2892,7 +2892,8 @@ def test_proxy_repr():
 
 def test_type_string():
     def fn(x):
-        return 2 * x
+        result = 2 * x
+        return result
 
     jfn = thunder.jit(fn)
 
