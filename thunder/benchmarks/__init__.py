@@ -948,7 +948,7 @@ def default_thunder_cudagraphs_executor(fn: Callable) -> Callable:
     # Adds the Apex executor, if available
     APEX_CROSS_ENTROPY_AVAILABLE = package_available("xentropy_cuda")
     if APEX_CROSS_ENTROPY_AVAILABLE:
-        from thunder.executors.apex_entropyex import register_apex_entropyex
+        from thunder.executors.apex_entropyex_impl import register_apex_entropyex
 
         register_apex_entropyex(add_to_default_executors=False)
         executors_list.append("apex_xentropy")

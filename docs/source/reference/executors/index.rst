@@ -15,7 +15,7 @@ thunder.executors
 .. toctree::
     :maxdepth: 1
 
-    apex_entropyex
+    apexex
     cudnnex
     nvfuserex
     passes
