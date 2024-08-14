@@ -222,7 +222,8 @@ class ThunderModule(pytorch.nn.Module):
                     f"the shape in current model is {v.shape}."
                 )
                 continue
-            # check dtype?
+
+            # We don't check dtype because PyTorch also does dtype conversion on load.
             with pytorch.no_grad():
                 if assign:
                     if isinstance(v, pytorch.nn.Parameter):

@@ -43,4 +43,4 @@ JITed Model wrapper
 
 .. autoclass:: ThunderModule
     :members: no_sync
-    :exclude-members: forward,load_state_dict,state_dict
+    :exclude-members: forward
