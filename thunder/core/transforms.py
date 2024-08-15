@@ -1530,7 +1530,7 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwa
         try:
             safe_map_flat(write, list(sequencify(symbol.output)), list(sequencify(result)))
         except AssertionError as e:
-            raise AssertionError(
+            raise RuntimeError(
                 f"Error in symbol {symbol} with the augmented forward result {result}"
                 " the error is likely due to the mismatch in the number of outputs"
                 " in the original and augmented forward definitions."
