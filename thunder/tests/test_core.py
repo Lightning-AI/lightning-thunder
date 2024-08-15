@@ -3144,3 +3144,24 @@ def test_bound_symbol_sort_stability():
     f0 = fusions[0]
     for f in fusions[1:]:
         assert f0 == f
+
+
+def test_state_dict():
+    def make_model():
+        return torch.nn.Sequential(
+            torch.nn.Linear(3, 4),
+            torch.nn.GELU(),
+            torch.nn.Linear(4, 3),
+        )
+
+    m1 = make_model()
+    m2 = make_model()
+
+    jm1 = thunder.jit(m1)
+    jm2 = thunder.jit(m2)
+
+    inp = torch.randn(2, 3)
+
+    jm2.load_state_dict(jm1.state_dict())
+
+    torch.testing.assert_close(jm1(inp), jm2(inp))
