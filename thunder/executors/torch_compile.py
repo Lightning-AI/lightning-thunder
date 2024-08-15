@@ -203,7 +203,22 @@ required_ops = {
 }
 torch_compile_cat_ex = TorchCompileExecutor(name="torchcompile_cat", required_ops=required_ops)
 register_executor(torch_compile_cat_ex)
-torch_compile_cat_ex._implmap = {op: ImplInfo() for op in pytorch_ex.implmap}
+# TODO: Carefully enable more ops checking that they do improve performance
+supported_ops = {
+    "torch.split",
+    prims.add.id,
+    prims.broadcast_in_dim.id,
+    prims.cat.id,
+    prims.convert_element_type.id,
+    prims.full.id,
+    prims.mul.id,
+    prims.neg.id,
+    prims.pad.id,
+    prims.reshape.id,
+    prims.slice_prim.id,
+    prims.transpose.id,
+}
+torch_compile_cat_ex._implmap = {op: ImplInfo() for op in pytorch_ex.implmap if op in supported_ops}
 
 
 torch_compile_ex = TorchCompileExecutor(name="torchcompile")
