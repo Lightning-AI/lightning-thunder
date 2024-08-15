@@ -1527,7 +1527,14 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwa
         if prim_func is None:
             continue
         result = prim_func(*args, **kwargs)
-        safe_map_flat(write, list(sequencify(symbol.output)), list(sequencify(result)))
+        try:
+            safe_map_flat(write, list(sequencify(symbol.output)), list(sequencify(result)))
+        except AssertionError as e:
+            raise RuntimeError(
+                f"Error while assigning the result of dispatched function {prim_func} to the output of the original symbol {symbol}."
+                " This is likely due to a mismatch in the number of outputs."
+                f" The original symbol has {len(symbol.output)} outputs and the dispatched function has {len(sequencify(result))} outputs."
+            ) from e
 
     if with_env:
         return tree_map(read, trace.output), env
@@ -1854,14 +1861,16 @@ def _vmap_call_metafunc(detached: bool, args, in_dims, out_dims, axis_size, func
             return tree_unflatten(outs, spec)
         if isinstance(result, (Number, NumberProxy)) and axis_size is not None:
             # TODO: fetch the default device from the context
-            result = full(shape=(), fill_value=result, device=common_device)
+            result = ltorch.full(shape=(), fill_value=result, device=common_device)
             result = BatchedValue(result, not_mapped)
         elif (
             isinstance(result, BatchedValue)
             and isinstance(result.value, (Number, NumberProxy))
             and axis_size is not None
         ):
-            result = BatchedValue(full(shape=(), fill_value=result.value, device=common_device), result.batch_dim)
+            result = BatchedValue(
+                ltorch.full(shape=(), fill_value=result.value, device=common_device), result.batch_dim
+            )
         assert isinstance(result, BatchedValue)
         out = move_batch_dim(axis_size, result.batch_dim, out_dims[0], result.value)
         return out

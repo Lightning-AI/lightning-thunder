@@ -47,3 +47,11 @@ class MaterializationTransform(Transform):
             model.load_original_state_dict(state_dict)
 
         return module_init_from_original_state_dict
+
+    @staticmethod
+    def init_from_transformed_state_dict(state_dict):
+        def module_init_from_transformed_state_dict(transform: MaterializationTransform, model: ThunderModule):
+            # transform is unused
+            model.load_state_dict(state_dict)
+
+        return module_init_from_transformed_state_dict

@@ -1775,8 +1775,8 @@ _cls_to_number_proxy_map = {
 
 
 def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple = None) -> TensorProxy:
-    if hasattr(t, "__thunder_device"):
-        torch_device = t.__thunder_device
+    if hasattr(t, "_thunder_device"):
+        torch_device = t._thunder_device
     else:
         torch_device = t.device
     device = devices.to_device(torch_device)
@@ -1800,8 +1800,8 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
 def futuretensorproxy(
     t: torch.Tensor | TensorProxy | FutureTensorProxy, /, *, name: None | str, history: None | tuple = None
 ) -> FutureTensorProxy:
-    if hasattr(t, "__thunder_device"):
-        torch_device = t.__thunder_device
+    if hasattr(t, "_thunder_device"):
+        torch_device = t._thunder_device
     else:
         torch_device = t.device
     device = devices.to_device(torch_device)

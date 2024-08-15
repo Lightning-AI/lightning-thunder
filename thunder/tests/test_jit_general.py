@@ -697,6 +697,9 @@ def test_litgpt_variants(name, device):
     actual_logits = tom(x)
     assert_close(actual_logits, expected_logits)
 
+    # small check that we do not leak internal var names
+    assert "tos" not in str(thunder.last_prologue_traces(tom)[0])
+
     actual_logits.sum().backward()
 
     for param1, param2 in zip(reference.parameters(), model.parameters()):

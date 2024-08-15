@@ -47,6 +47,7 @@ def tree_flatten(args, namespace=""):
             # FakeTensor type is used for automatic registration of torch ops
             torch._subclasses.fake_tensor.FakeTensor,
             torch.device,
+            torch.autograd.function.FunctionCtx,
         }
         and not isinstance(args, (ProxyInterface))
         and not dataclasses.is_dataclass(args)

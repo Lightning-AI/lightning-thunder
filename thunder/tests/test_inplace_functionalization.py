@@ -672,3 +672,24 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     out, out_ref = jitted_f(a, b, a), f(a_ref, b_ref, a_ref)
     torch.testing.assert_close(out, out_ref)
     torch.testing.assert_close((a, b), (a_ref, b_ref))
+
+
+@instantiate(dtypes=NOTHING)
+def test_reshape_flatten_error_out(executor, device, _):
+
+    def f(x):
+        y = x.reshape(6, 4)
+        y.add_(1)
+        return y
+
+    def g(x):
+        y = x.flatten()
+        y.add_(1)
+        return y
+
+    for fn in (f, g):
+        x = make_tensor((3, 2, 4), device=device, dtype=torch.float32)
+        jitted = executor.make_callable(fn)
+
+        with pytest.raises(NotImplementedError, match="in-place op of"):
+            jitted(x)
