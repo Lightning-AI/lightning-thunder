@@ -287,7 +287,9 @@ class Benchmark_litGPT:
                 )
             else:
                 if self.distributed_mode == "fsdp2":
-                    raise ValueError(f"`fsdp2` is not available for `thunder.jit`.")
+                    raise ValueError(
+                        f"To use `fsdp2`, use thunder as torch.compile backend by including dynamo in `--compile` option or set `--compile` to either eager or inductor"
+                    )
         else:
             if self.distributed_mode == "ddp":
                 model = torch.nn.parallel.DistributedDataParallel(
