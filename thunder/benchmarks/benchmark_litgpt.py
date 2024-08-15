@@ -301,6 +301,9 @@ class Benchmark_litGPT:
                 # reference: https://github.com/pytorch/torchtitan/blob/6e7a183/docs/fsdp.md
                 from torch.distributed._composable.fsdp import fully_shard, MixedPrecisionPolicy
 
+                if self.bucketing_mode != "none":
+                    warnings.warn(f"fsdp2 ignores {self.bucketing_mode=}")
+
                 torch.cuda.set_device(local_rank)
                 mesh = None
                 if self.sharding_size is not None:
