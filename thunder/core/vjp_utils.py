@@ -144,7 +144,7 @@ def make_aug_forward_and_backward(bsym: BoundSymbol) -> tuple[Callable, Callable
         "The number of outputs of the original forward function must be the same as the number of primal outputs of the augmented forward trace.\n"
         f"Number of outputs of the original forward function: {len(utils.sequencify(bsym.output))}\n"
         f"Number of primal outputs of the augmented forward trace: {len(utils.sequencify(augmented_forward_trace.output[0]))}\n"
-        "Please check the forward function and the augmented forward trace to ensure that they have the same number of outputs."
+        "Please check the forward function and the augmented forward trace to ensure that they have the same number of outputs.",
     )
 
     # Check if any of the bound symbols in the backward trace are also in the

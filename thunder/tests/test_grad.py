@@ -1703,9 +1703,13 @@ def test_inconsistent_output_length_grad_transform():
 
     my_ex = OperatorExecutor("my_ex")
 
-    forward_op = my_ex.register_operator("forward_op", meta=lambda x: (TensorProxy(like=x), AnyProxy(object())), fn=lambda x: (x, x.shape))
+    forward_op = my_ex.register_operator(
+        "forward_op", meta=lambda x: (TensorProxy(like=x), AnyProxy(object())), fn=lambda x: (x, x.shape)
+    )
 
-    backward_op = my_ex.register_operator("backward_op", meta=lambda saved_meta, g: TensorProxy(like=g), fn=lambda saved_meta, g: g)
+    backward_op = my_ex.register_operator(
+        "backward_op", meta=lambda saved_meta, g: TensorProxy(like=g), fn=lambda saved_meta, g: g
+    )
 
     def forward_op_grad(x):
         out, meta = forward_op(x)
@@ -1722,5 +1726,8 @@ def test_inconsistent_output_length_grad_transform():
     jf = thunder.jit(f, executors=[my_ex])
     a = make_tensor((2, 2), device="cpu", dtype=torch.float32, requires_grad=True)
 
-    with pytest.raises(RuntimeError, match="number of outputs of the original forward function must be the same as the number of primal outputs"):
+    with pytest.raises(
+        RuntimeError,
+        match="number of outputs of the original forward function must be the same as the number of primal outputs",
+    ):
         _ = jf(a)
