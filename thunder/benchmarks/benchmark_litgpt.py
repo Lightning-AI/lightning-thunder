@@ -408,6 +408,11 @@ class Benchmark_litGPT:
                 executors.insert(0, transformer_engine_ex)
 
             if "dynamo" in self.compile:
+                if self.distributed_mode == "fsdp2":
+                    print("Resetting cache size for when fsdp2 and using thunder as backend torch.compile")
+                    import torch._dynamo.config as dynamo_config
+
+                    dynamo_config.cache_size_limit = 64
                 if "transformerengine" in self.compile:
                     # [rank0]:   File "/opt/pytorch/lightning-thunder/thunder/executors/transformer_engineex.py", line 410, in _te_functional_linear_backward_impl
                     # [rank0]:     grads = _Linear.backward(ctx, g)
