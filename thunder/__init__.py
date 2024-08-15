@@ -175,13 +175,17 @@ get_always_executors = extend.get_always_executors
 
 cudnn_executor: None | extend.Executor = extend.get_executor("cudnn")
 sdpa_executor: None | extend.Executor = extend.get_executor("sdpa")
+torchcompile_cat_executor: None | extend.Executor = extend.get_executor("torchcompile_cat")
 nvfuser_executor: None | extend.Executor = extend.get_executor("nvfuser")
 pytorch_executor: None | extend.Executor = extend.get_executor("torch")
 
-# Default executor list is [cudnn -> sdpa -> nvfuser -> torch -> python]
+# Default executor list is [cudnn -> sdpa -> torchcompile_cat -> nvfuser -> torch -> python]
 # Note that add_default_executor inserts executor at start of list, hence the reverse order below.
 if nvfuser_executor:
     add_default_executor(nvfuser_executor)
+
+if torchcompile_cat_executor:
+    add_default_executor(torchcompile_cat_executor)
 
 if sdpa_executor:
     add_default_executor(sdpa_executor)
