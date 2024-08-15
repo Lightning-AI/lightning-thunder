@@ -1527,7 +1527,15 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwa
         if prim_func is None:
             continue
         result = prim_func(*args, **kwargs)
-        safe_map_flat(write, list(sequencify(symbol.output)), list(sequencify(result)))
+        try:
+            safe_map_flat(write, list(sequencify(symbol.output)), list(sequencify(result)))
+        except AssertionError as e:
+            raise AssertionError(
+                f"Error in symbol {symbol} with the augmented forward result {result}"
+                " the error is likely due to the mismatch in the number of outputs"
+                " in the original and augmented forward definitions."
+                f" The original forward has {len(symbol.output)} outputs while the augmented forward has {len(result)}."
+            ) from e
 
     if with_env:
         return tree_map(read, trace.output), env
