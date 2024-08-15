@@ -209,7 +209,7 @@ class ThunderModule(pytorch.nn.Module):
                 continue
             keys_unused.remove(name)
             sd_v = state_dict[name]
-            if not isinstance(sd_v, pytorch.Tensor):
+            if not pytorch.overrides.is_tensor_like(sd_v):
                 errors.append(
                     f'While copying the parameter named "{name}", '
                     "expected torch.Tensor or Tensor-like object from checkpoint but "
