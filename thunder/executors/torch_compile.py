@@ -200,8 +200,6 @@ from thunder.executors.torchex import ex as pytorch_ex
 required_ops = {
     "torch.cat",
     prims.cat.id,
-    prims.pad.id,
-    prims.slice_prim.id,
 }
 torch_compile_cat_ex = TorchCompileExecutor(name="torchcompile_cat", required_ops=required_ops)
 register_executor(torch_compile_cat_ex)
