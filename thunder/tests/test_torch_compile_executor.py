@@ -3,7 +3,7 @@ import torch
 from torch._dynamo import is_inductor_supported
 
 import thunder
-from thunder.executors.torch_compile import supported_ops, torch_compile_ex, torch_compile_cat_ex
+from thunder.executors.torch_compile import torch_compile_ex, torch_compile_cat_ex
 from thunder.executors.torchex import ex as pytorch_ex
 from thunder.executors.nvfuserex import nvfuserex
 from thunder.tests.bf16 import device_supports_bf16
@@ -44,3 +44,25 @@ def test_torch_compile_cat_nvfuser_phi2_tanh():
     cmodel = thunder.jit(model, executors=[torch_compile_cat_ex, nvfuserex])
     logits = cmodel(x)
     logits.sum().backward()
+
+
+def test_torch_compile_cat_rope_single_fusion():
+    from thunder.benchmarks import LlamaQKVSplitRopeBenchmark
+    from thunder.examine import get_fusions
+
+    bench = LlamaQKVSplitRopeBenchmark(
+        config="Llama-3-8B",
+        batchdims=(1,),
+        device="cuda",
+        dtype=thunder.bfloat16,
+        requires_grad=True,
+    )
+
+    jfn = thunder.jit(bench.fn(), executors=[torch_compile_cat_ex])
+    args, kwargs = bench.make_batch()
+    jfn(*args, **kwargs)
+    forward_execution_trace = thunder.last_traces(jfn)[-1]
+    assert len(get_fusions(forward_execution_trace)) == 1
+
+    backward_execution_trace = thunder.last_backward_traces(jfn)[-1]
+    assert len(get_fusions(backward_execution_trace)) == 1
