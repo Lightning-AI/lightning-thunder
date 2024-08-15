@@ -418,19 +418,19 @@ class Benchmark_litGPT:
                     import torch._dynamo.config as dynamo_config
 
                     dynamo_config.cache_size_limit = 64
-                if "transformerengine" in self.compile:
-                    # [rank0]:   File "/opt/pytorch/lightning-thunder/thunder/executors/transformer_engineex.py", line 410, in _te_functional_linear_backward_impl
-                    # [rank0]:     grads = _Linear.backward(ctx, g)
-                    # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/transformer_engine/pytorch/module/linear.py", line 449, in backward
-                    # [rank0]:     weight_fp8.transpose_2d(),
-                    # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/transformer_engine/pytorch/float8_tensor.py", line 625, in transpose_2d
-                    # [rank0]:     if self._transpose is None:
-                    # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/transformer_engine/pytorch/float8_tensor.py", line 39, in get_func
-                    # [rank0]:     return self._fp8_attrs[name]
-                    # [rank0]: AttributeError: 'Float8Tensor' object has no attribute '_fp8_attrs'
-                    raise ValueError(
-                        "TransformerEngine executor cannot be used as an executor of Thunder when Thunder is used as torch.compile backend"
-                    )
+                    if "transformerengine" in self.compile:
+                        # [rank0]:   File "/opt/pytorch/lightning-thunder/thunder/executors/transformer_engineex.py", line 410, in _te_functional_linear_backward_impl
+                        # [rank0]:     grads = _Linear.backward(ctx, g)
+                        # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/transformer_engine/pytorch/module/linear.py", line 449, in backward
+                        # [rank0]:     weight_fp8.transpose_2d(),
+                        # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/transformer_engine/pytorch/float8_tensor.py", line 625, in transpose_2d
+                        # [rank0]:     if self._transpose is None:
+                        # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/transformer_engine/pytorch/float8_tensor.py", line 39, in get_func
+                        # [rank0]:     return self._fp8_attrs[name]
+                        # [rank0]: AttributeError: 'Float8Tensor' object has no attribute '_fp8_attrs'
+                        raise ValueError(
+                            "TransformerEngine executor cannot be used as an executor of Thunder when Thunder is used as torch.compile backend"
+                        )
                 backend = ThunderCompiler(executors=executors)
                 # Because Lightning Fabric is imported in this script it monkey patches the torch.compile function
                 # https://github.com/Lightning-AI/pytorch-lightning/blob/828fd998961f6a60f92c35254bb94d6e049ad069/src/lightning/fabric/wrappers.py#L421
