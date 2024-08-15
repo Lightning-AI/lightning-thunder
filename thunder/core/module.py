@@ -152,7 +152,7 @@ class ThunderModule(pytorch.nn.Module):
             prefix: a prefix for the keys.
             keep_vars: do not detach
 
-        Note that this is similar but rather more rudimentary than the original state_dict.
+        Note that this is similar but rather more rudimentary than the original state_dict (e.g. no hook suport yet).
         """
         if destination is None:
             destination = collections.OrderedDict()
