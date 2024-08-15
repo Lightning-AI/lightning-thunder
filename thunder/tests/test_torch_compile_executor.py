@@ -58,7 +58,7 @@ def test_torch_compile_cat_rope_single_fusion():
         requires_grad=True,
     )
 
-    jfn = thunder.jit(bench.fn(), executors=[torch_compile_cat_ex])
+    jfn = thunder.jit(bench.fn(), executors=[torch_compile_cat_ex, nvfuserex])
     args, kwargs = bench.make_batch()
     jfn(*args, **kwargs)
     forward_execution_trace = thunder.last_traces(jfn)[-1]
