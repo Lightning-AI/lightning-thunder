@@ -230,7 +230,9 @@ supported_ops = {
     prims.slice_prim.id,
     prims.transpose.id,
 }
-torch_compile_cat_ex._implmap = {op: ImplInfo(checker=cuda_device_checker) for op in pytorch_ex.implmap if op in supported_ops}
+torch_compile_cat_ex._implmap = {
+    op: ImplInfo(checker=cuda_device_checker) for op in pytorch_ex.implmap if op in supported_ops
+}
 
 
 torch_compile_ex = TorchCompileExecutor(name="torchcompile")
