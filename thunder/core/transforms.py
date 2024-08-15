@@ -1531,10 +1531,9 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwa
             safe_map_flat(write, list(sequencify(symbol.output)), list(sequencify(result)))
         except AssertionError as e:
             raise RuntimeError(
-                f"Error in symbol {symbol} with the augmented forward result {result}"
-                " the error is likely due to the mismatch in the number of outputs"
-                " in the original and augmented forward definitions."
-                f" The original forward has {len(symbol.output)} outputs while the augmented forward has {len(result)}."
+                f"Error while assigning the result of dispatched function {prim_func} to the output of the original symbol {symbol}."
+                " This is likely due to a mismatch in the number of outputs."
+                f" The original symbol has {len(symbol.output)} outputs and the dispatched function has {len(sequencify(result))} outputs."
             ) from e
 
     if with_env:
