@@ -46,6 +46,7 @@ def test_torch_compile_cat_nvfuser_phi2_tanh():
     logits.sum().backward()
 
 
+@requiresCUDA
 def test_torch_compile_cat_rope_single_fusion():
     from thunder.benchmarks import LlamaQKVSplitRopeBenchmark
     from thunder.examine import get_fusions
