@@ -63,6 +63,8 @@ def test_torch_compile_cat_rope_single_fusion():
     jfn(*args, **kwargs)
     forward_execution_trace = thunder.last_traces(jfn)[-1]
     assert len(get_fusions(forward_execution_trace)) == 1
+    assert len(forward_execution_trace.bound_symbols) == 5
 
     backward_execution_trace = thunder.last_backward_traces(jfn)[-1]
     assert len(get_fusions(backward_execution_trace)) == 1
+    assert len(backward_execution_trace.bound_symbols) == 14
