@@ -206,6 +206,7 @@ register_executor(torch_compile_cat_ex)
 # TODO: Carefully enable more ops checking that they do improve performance
 supported_ops = {
     "torch.split",
+    "torch.sum",
     prims.add.id,
     prims.broadcast_in_dim.id,
     prims.cat.id,
