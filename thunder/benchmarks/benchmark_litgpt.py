@@ -319,14 +319,17 @@ class Benchmark_litGPT:
                             transformer_block,
                             mesh=mesh,
                             reshard_after_forward=reshard_after_forward,
-                            mp_policy=MixedPrecisionPolicy(),
+                            mp_policy=MixedPrecisionPolicy(
+                                param_dtype=torch.bfloat16,
+                                reduce_dtype=torch.bfloat16,
+                            ),
                         )
 
                 fully_shard(
                     model,
                     mesh=mesh,
                     reshard_after_forward=reshard_after_forward,
-                    mp_policy=MixedPrecisionPolicy(),
+                    mp_policy=MixedPrecisionPolicy(param_dtype=torch.bfloat16, reduce_dtype=torch.bfloat16),
                 )
                 model.to_empty(device=self.device)
                 model.apply(model._init_weights)
