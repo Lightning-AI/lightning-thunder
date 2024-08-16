@@ -1492,7 +1492,7 @@ transform_skip_list = (
 )
 
 
-def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, allow_duplicates=False, **kwargs):
+def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwargs):
     """Evaluate a trace.
 
     Args:
@@ -1522,8 +1522,8 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, allow
             raise ValueError(f"Variable {v.name} is being overwritten this is not allowed")
         env[v.name] = val
 
-    safe_map_flat(partial(write, allow_duplicates=allow_duplicates), list(trace.args), list(args))
-    safe_map_flat(partial(write, allow_duplicates=allow_duplicates), list(trace.kwargs.values()), list(kwargs.values()))
+    safe_map_flat(write, list(trace.args), list(args))
+    safe_map_flat(write, list(trace.kwargs.values()), list(kwargs.values()))
 
     for symbol in trace.bound_symbols:
         if symbol.sym.id in transform_skip_list:
@@ -1534,9 +1534,7 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, allow
         if prim_func is None:
             continue
         result = prim_func(*args, **kwargs)
-        safe_map_flat(
-            partial(write, allow_duplicates=allow_duplicates), list(sequencify(symbol.output)), list(sequencify(result))
-        )
+        safe_map_flat(write, list(sequencify(symbol.output)), list(sequencify(result)))
 
     if with_env:
         return tree_map(read, trace.output), env
