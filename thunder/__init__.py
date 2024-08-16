@@ -184,7 +184,7 @@ pytorch_executor: None | extend.Executor = extend.get_executor("torch")
 if nvfuser_executor:
     add_default_executor(nvfuser_executor)
 
-if torchcompile_cat_executor:
+if torchcompile_cat_executor and pytorch._dynamo.is_inductor_supported():
     add_default_executor(torchcompile_cat_executor)
 
 if sdpa_executor:
