@@ -1452,8 +1452,8 @@ def grad(
             # symbol occurrences with its symbol._call_ctx function
             @wraps(computation_trc.python_callable())
             def python_callable(*args, **kwargs):
-                computation_trace = dce(computation_trace)
-                return eval_trace(computation_trace, *args, **kwargs)
+                computation_trc = dce(computation_trc)
+                return eval_trace(computation_trc, *args, **kwargs)
 
             gradtrc = construct_trace()(grad(python_callable), *computation_trc.args, **computation_trc.kwargs)
             return prologue_trc, gradtrc, epilogue_trc
