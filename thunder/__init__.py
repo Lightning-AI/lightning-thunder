@@ -569,7 +569,6 @@ def jit(
             transform: Transform
             for transform in transforms:
                 thunder.core.utils.check_type(transform, Transform)
-
                 new_prologue_trc, new_computation_trc, new_epilogue_trc = transform.transform_traces_pre_prologue(
                     prologue_trc, computation_trc, epilogue_trc, executors_list=cd.executors_list
                 )
@@ -637,10 +636,6 @@ def jit(
                     # by split_forward_backward
 
             if backward_trc is None:
-                ## EPILOGUE and TRANSFORMS should not mix...
-                cs.last_computation_transformation_start = time.perf_counter_ns()
-                cs.last_computation_transformation_stop = time.perf_counter_ns()
-
                 from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
                 from thunder.executors.passes import _transform_for_operator_executor_execution
                 from thunder.distributed.utils import maybe_sort_waits

@@ -363,15 +363,6 @@ class Transform(ABC):
         """
         return state_dict
 
-    def transform_trace_additionally(self, computation_trace: Trace, **kwargs):
-        """
-        transform_trace_additionally enables transforming the computation trace before optimization pass.
-        Note that this transform is only applicable if autograd is disabled.
-
-        Please don't use this method in new implementations, we are working on removing it. Use transform_traces_pre_prologue instead.
-        """
-        return computation_trace
-
     def transform_trace_post_optimization(self, computation_trace: Trace, **kwargs):
         """
         transform_trace_post_optimization enables transforming computation trace after optimization pass.
