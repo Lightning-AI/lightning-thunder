@@ -1033,7 +1033,7 @@ def test_sdpa(
     tensor_inputs = [q, k, v]
     scalar_inputs = [dropout_p, is_causal, scale]
 
-    compiled_func = thunder.jit(sdpa_fn, executor=executor.executors_list(), nv_enable_sdpa=True)
+    compiled_func = thunder.jit(sdpa_fn, executors_list=executor.executors_list(), nv_enable_sdpa=True)
     with torch.random.fork_rng(devices=[torch.cuda.current_device()]):
         attn_out = compiled_func(*tensor_inputs, *scalar_inputs)
     attn_out.backward(grad_out)
