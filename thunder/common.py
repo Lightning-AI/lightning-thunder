@@ -195,7 +195,6 @@ class CompileData:
         using_jit: bool = False,
         only_execute_prims: bool = False,
         disable_preprocessing: bool = False,
-        use_cudagraphs: bool = False,
         disable_torch_autograd_support: bool = False,
         use_rematerialization: bool = False,
         debug_log: None | StringIO = None,
@@ -253,7 +252,6 @@ class CompileData:
         self.only_execute_prims = only_execute_prims
         self.disable_preprocessing = disable_preprocessing
         self.use_rematerialization = use_rematerialization
-        self.use_cudagraphs = use_cudagraphs
         self.disable_torch_autograd_support = disable_torch_autograd_support
         self.debug_log = debug_log
 

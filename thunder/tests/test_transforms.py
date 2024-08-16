@@ -221,3 +221,22 @@ def test_nvfuser_cse():
         assert prologue_proxy.device == thunder.core.devices.to_device(t.device)
         assert comp_proxy.dtype == thunder.core.dtypes.to_dtype(t.dtype)
         assert prologue_proxy.dtype == thunder.core.dtypes.to_dtype(t.dtype)
+
+
+@requiresCUDA
+def test_cudagraph_warmup_runs_with_correct_buffers():
+    """
+    Tests whether newly-created buffers are being properly initialized.
+    Otherwise we should expect failures because of incorrect values.
+    """
+
+    from thunder.transforms.cudagraph import CUDAGraphTransform
+
+    weights = torch.tensor([0, 10, 3, 0], device="cuda", dtype=torch.float)
+
+    def f(x):
+        return torch.multinomial(x, num_samples=3, replacement=True)
+
+    jf = thunder.jit(f, transforms=[CUDAGraphTransform()])
+    jf(weights)
+    jf(weights)
