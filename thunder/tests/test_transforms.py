@@ -221,3 +221,44 @@ def test_nvfuser_cse():
         assert prologue_proxy.device == thunder.core.devices.to_device(t.device)
         assert comp_proxy.dtype == thunder.core.dtypes.to_dtype(t.dtype)
         assert prologue_proxy.dtype == thunder.core.dtypes.to_dtype(t.dtype)
+
+
+def test_debug_transform():
+    from thunder.dev_utils.debug_transform import debug_execution_trace
+
+    # Only use the primitive operations in `fn` so that
+    # we can count them easily.
+    N_PRIMITIVE_OPS = 3
+
+    def fn(x, y):
+        return (x + y * y) / x
+
+    def pre_callback(bsym, *args, **kwargs):
+        return f"Pre - {bsym.sym.name}"
+
+    def post_callback(bsym, *args, **kwargs):
+        return f"Post - {bsym.sym.name}"
+
+    jfn = debug_execution_trace(thunder.jit(fn), pre_callback=pre_callback, post_callback=post_callback)
+    x = torch.randn(3, 3)
+    y = torch.randn(3, 3)
+    jfn(x, y)
+
+    fwd_exec_trace = thunder.last_traces(jfn)[-1]
+
+    debug_syms = set()
+    for bsym in fwd_exec_trace.bound_symbols:
+        if bsym.sym.name.startswith("debug"):
+            debug_syms.add(bsym)
+
+    n_expected_debug_syms = 2 * N_PRIMITIVE_OPS  # Multiply by 2 as we have both pre and post callbacks
+    assert len(debug_syms) == n_expected_debug_syms
+
+    # As `debug_syms` have name of the form `debug_{pre|post}_{sym_name}_{debug_count}`,
+    # we expect to see debug_sym with `N_PRIMITIVE_OPS` at `{debug_count}` part of the name.
+    assert any(map(lambda bsym: bsym.sym.name.endswith(f"{str(N_PRIMITIVE_OPS)}"), debug_syms))
+
+    # Verify that we have correctly set the header for all debug_syms.
+    debug_headers = {sym.header for sym in debug_syms}
+    expected_headers = {"Pre - true_divide", "Pre - add", "Pre - mul", "Post - true_divide", "Post - add", "Post - mul"}
+    assert debug_headers == expected_headers
