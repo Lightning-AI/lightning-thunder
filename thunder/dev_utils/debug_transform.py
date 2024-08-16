@@ -17,7 +17,7 @@ def create_debug_boundsymbol(name: str, bsym: BoundSymbol, call_ctx: Callable):
     return debug_bsym
 
 
-class DebugTransform(thunder.core.transforms.Transform):
+class _DebugTransform(thunder.core.transforms.Transform):
     def __init__(
         self,
         *,
@@ -75,9 +75,24 @@ class DebugTransform(thunder.core.transforms.Transform):
 
 
 def debug_execution_trace(cfn, pre_callback: Callable | None = None, post_callback: Callable | None = None):
+    """
+    Adds a debugging transform to the trace allowing pre and post execution callbacks.
+
+    The function inserts debug symbols in the computation traces to call the callbacks before and/or after each symbol
+    in the trace. These callbacks can be used to inspect or log information about the execution of the computation.
+
+    Args:
+        cfn: `thunder.jit` function to debug.
+        pre_callback: An optional callable that is executed before each bound symbol is processed.
+            It should have the signature `(BoundSymbol, *args, **kwargs)` and return a string. If `None`, no
+            pre-execution callback is used.
+        post_callback: An optional callable that is executed after each bound symbol is processed.
+            It should have the signature `(BoundSymbol, *args, **kwargs)` and return a string. If `None`, no
+            post-execution callback is used.
+    """
     if pre_callback is None and post_callback is None:
         raise RuntimeError(
             "debug_execution_trace: Both `pre_callback` and `post_callback` were both None, expected atleast one of them to be None."
         )
-    _debug_tfms = DebugTransform(pre_callback=pre_callback, post_callback=post_callback)
+    _debug_tfms = _DebugTransform(pre_callback=pre_callback, post_callback=post_callback)
     return thunder.core.transforms.add_transform(cfn, transform=_debug_tfms)
