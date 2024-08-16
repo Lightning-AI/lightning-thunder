@@ -18,9 +18,28 @@ _name2func = {}
 [_name2func.setdefault(f"nn.functional.{v.__name__}", v) for v in ops.torch_auto_registered_ops[torch.nn.functional]]
 # Use the sample input from torch.xx to test torch.tensor.xx
 [_name2func.setdefault(f"Tensor.{v.__name__}", v) for v in ops.torch_auto_registered_ops[torch.Tensor]]
-# NOTE some `opinfo.name`s don't have torch.xxx but are only used as torch.Tensor.xxx
-torch_tensor_space_names = [v.__name__ for v in ops.torch_auto_registered_ops[torch.Tensor]]
-_opinfos = [opinfo for opinfo in op_db if opinfo.name in _name2func or opinfo.name in torch_tensor_space_names]
+[_name2func.setdefault(f"special.{v.__name__.split('_')[1]}", v) for v in ops.torch_auto_registered_ops[torch.special]]
+
+
+def get_opinfos_for_test():
+    opinfos = []
+    for opinfo in op_db:
+        if (
+            opinfo.name in _name2func
+            or f"Tensor.{opinfo.name}" in _name2func
+            or any(
+                alias.name in _name2func
+                or f"Tensor.{alias.name}" in _name2func
+                or any(alias.name.endswith(k) for k in _name2func)
+                for alias in opinfo.aliases
+            )
+        ):
+            opinfos.append(opinfo)
+
+    return opinfos
+
+
+_opinfos = get_opinfos_for_test()
 
 
 # Note that successfully catching an exception in this test is also noted as passed

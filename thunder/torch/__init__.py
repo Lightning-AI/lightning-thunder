@@ -5425,15 +5425,16 @@ def register_default_torch_ops():
 def register_default_torch_op(torchfn: Callable, torch_module):
     fn_meta = meta_adaptor(torchfn)
     _fn = langctx(Languages.TORCH)(fn_meta)
+    torchfn_name = torchfn.__name__.split("_")[1] if torch_module == torch.special else torchfn.__name__
     sym = Symbol(
-        name=torchfn.__name__,
+        name=torchfn_name,
         meta=_fn,
-        id=f"{torch_module.__name__}.{torchfn.__name__}",
+        id=f"{torch_module.__name__}.{torchfn_name}",
     )
     _torch_to_thunder_function_map[torchfn] = sym
     from thunder.executors.torchex import _always_executable, ex
 
-    op = ex.register_operator(torchfn.__name__, module=torch_module, meta=fn_meta)
+    op = ex.register_operator(torchfn_name, module=torch_module, meta=fn_meta)
     ex.register_implementation(sym, op, checker=_always_executable)
 
     from thunder.core.transforms import augmented_forward_impls, backward_impls
@@ -5447,7 +5448,7 @@ def register_default_torch_op(torchfn: Callable, torch_module):
 
     _vjp_impl_wrapper = partial(_vjp_impl, torchfn)
 
-    bwd_op = ex.register_operator(torchfn.__name__ + "_vjp", meta=backward_adaptor(torchfn), fn=_vjp_impl_wrapper)
+    bwd_op = ex.register_operator(torchfn_name + "_vjp", meta=backward_adaptor(torchfn), fn=_vjp_impl_wrapper)
     ex.register_implementation(bwd_op.id, bwd_op, checker=_always_executable)
     backward_impls[sym.id] = bwd_op
 
