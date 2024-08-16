@@ -27,12 +27,7 @@ def get_opinfos_for_test():
         if (
             opinfo.name in _name2func
             or f"Tensor.{opinfo.name}" in _name2func
-            or any(
-                alias.name in _name2func
-                or f"Tensor.{alias.name}" in _name2func
-                or any(alias.name.endswith(k) for k in _name2func)
-                for alias in opinfo.aliases
-            )
+            or any(alias.name in _name2func or f"Tensor.{alias.name}" in _name2func for alias in opinfo.aliases)
         ):
             opinfos.append(opinfo)
 
@@ -70,6 +65,7 @@ def test_torch_ops_trace(device, requires_grad, op_info):
         return None
 
     funcs = [_name2func.get(op_info.name, None), get_method(op_info)]
+    funcs.extend(_name2func.get(alias.name, None) for alias in op_info.aliases)
     for func in funcs:
         if func is None:
             continue
