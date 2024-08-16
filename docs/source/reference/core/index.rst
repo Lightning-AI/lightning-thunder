@@ -18,4 +18,4 @@ thunder.core
     symbol
     trace
     transforms
-    transform_common
+    functionalization

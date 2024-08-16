@@ -71,6 +71,7 @@ from thunder.core.proxies import (
 from thunder.core.trace import set_tracectx, reset_tracectx, tracectx, from_trace
 from thunder.core.interpreter import (
     InterpreterLogItem,
+    InterpreterFrame,
     interpret,
     _interpret_call,
     CapsuleType,
@@ -1127,16 +1128,27 @@ def _general_jit_const_callback(value: Any) -> WrappedValue:
 
 
 # TODO(nikitaved): maybe call it upon Frame creation
-def _maybe_update_proxy_name(orig_value: Any, name: str):
+def _maybe_update_proxy_name(orig_value: Any, name: str, is_internal: bool | None = None):
     # Names that we do not re-name proxies into as these are reserved
     proxy_rename_ignore_names = {
         "fn",  # For example, `fn = globals()['__function_obj']` in prologue
         "obj",  # For example, `obj = fn.forward` in prologue
     }
 
+    if is_internal is None:
+        runtimectx: Interpreterruntimectx = get_interpreterruntimectx()
+        frame = runtimectx.peek_frame_stack()
+        assert frame is not None  # pass is_internal if you call this before the frame is set up
+        is_internal = frame.module in {"thunder.core.interpreter", "thunder.core.jit_ext"}
+
     uvalue = unwrap(orig_value)
 
-    if isinstance(uvalue, Proxy) and (name not in proxy_rename_ignore_names) and is_proxy_name_available(name):
+    if (
+        isinstance(uvalue, Proxy)
+        and (name not in proxy_rename_ignore_names)
+        and is_proxy_name_available(name)
+        and not is_internal
+    ):
         uvalue_var = variableify(uvalue)
         rename_proxy_swapmap = get_general_jit_ctx()._proxy_swapmap
         if uvalue_var not in rename_proxy_swapmap:
@@ -1285,6 +1297,19 @@ def _general_jit_store_deref_callback(
     return orig_value
 
 
+def _general_jit_store_fast_callback(orig_value: Any, name: str) -> Any:
+    _maybe_update_proxy_name(orig_value, name)
+
+    return orig_value
+
+
+def _general_jit_local_callback(name: str, value: Any, *, module: str) -> None:
+    is_internal = module in {"thunder.core.interpreter", "thunder.core.jit_ext"}
+
+    _maybe_update_proxy_name(value, name, is_internal=is_internal)
+    return value
+
+
 general_jit_callbacks: dict[INTERPRETER_CALLBACKS, Callable] = {
     INTERPRETER_CALLBACKS.CONST_CALLBACK: _general_jit_const_callback,
     INTERPRETER_CALLBACKS.GLOBAL_CALLBACK: _general_jit_global_callback,
@@ -1292,6 +1317,8 @@ general_jit_callbacks: dict[INTERPRETER_CALLBACKS, Callable] = {
     INTERPRETER_CALLBACKS.LOAD_FAST_CALLBACK: _general_jit_load_fast_callback,
     INTERPRETER_CALLBACKS.LOAD_DEREF_CALLBACK: _general_jit_load_deref_callback,
     INTERPRETER_CALLBACKS.STORE_DEREF_CALLBACK: _general_jit_store_deref_callback,
+    INTERPRETER_CALLBACKS.STORE_FAST_CALLBACK: _general_jit_store_fast_callback,
+    INTERPRETER_CALLBACKS.LOCAL_CALLBACK: _general_jit_local_callback,
 }
 general_jit_callbacks = default_callbacks | general_jit_callbacks
 

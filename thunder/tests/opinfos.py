@@ -2962,6 +2962,8 @@ def type_as_sample_generator(op, device, dtype, requires_grad, **kwargs):
     for a_shape, b_shape in itertools.product(shapes, shapes):
         yield SampleInput(make(a_shape), make(b_shape))
         yield SampleInput(make(a_shape), make(b_shape, dtype=torch.float32))
+        # Tests when inputs from different devices
+        yield SampleInput(make(a_shape), make(b_shape, device="cpu"))
 
 
 type_as_sample = OpInfo(
@@ -5775,6 +5777,8 @@ def full_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     for shape, fill_value in cases:
         yield SampleInput(shape, fill_value, device=device, dtype=dtype)
+    # Tests dtype is inferred correctly
+    yield SampleInput(shape, fill_value, device=device)
 
 
 def full_error_generator(op, device, **kwargs):
@@ -6232,6 +6236,10 @@ def matmul_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((M, N), (N, M)),
         ((B, M, N), (B, N, M)),
         ((B, B, M, N), (B, B, N, M)),
+        # cases nd @ 2d --> these should lower to 2d-gemms for efficiency
+        ((1, M, N), (N, N)),
+        ((B, M, N), (N, N)),
+        ((B, N, M), (M, N)),
     )
 
     for shape_a, shape_b in cases:

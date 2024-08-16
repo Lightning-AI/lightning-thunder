@@ -89,7 +89,7 @@ def test_materialization():
     m.cos, m.sin = ref_m.cos.clone(), ref_m.sin.clone()
 
     for p in m.parameters():
-        p.__thunder_device = torch.device("cuda")
+        p._thunder_device = torch.device("cuda")
 
     init_from_sd = MaterializationTransform.init_from_original_state_dict(ref_m.state_dict())
     jm = thunder.jit(m, transforms=[MaterializationTransform("cuda", init=init_from_sd)], executors=())
@@ -132,21 +132,29 @@ def test_quantization_on_meta():
     m.cos, m.sin = ref_m.cos.clone(), ref_m.sin.clone()
 
     for p in m.parameters():
-        p.__thunder_device = torch.device("cuda")
-
-    init_from_sd = MaterializationTransform.init_from_original_state_dict(ref_m.state_dict())
+        p._thunder_device = torch.device("cuda")
 
     jm_ref = thunder.jit(
         ref_m,
         executors=(bitsandbytes_executor,),
         transforms=[BitsAndBytesLinearQuant4bit()],
     )
+    init_from_orig_sd = MaterializationTransform.init_from_original_state_dict(ref_m.state_dict())
     jm = thunder.jit(
         m,
         executors=(bitsandbytes_executor,),
         transforms=[
             BitsAndBytesLinearQuant4bit(),
-            MaterializationTransform("cuda", init=init_from_sd),
+            MaterializationTransform("cuda", init=init_from_orig_sd),
+        ],
+    )
+    init_from_transformed_sd = MaterializationTransform.init_from_transformed_state_dict(jm_ref.state_dict())
+    jm2 = thunder.jit(
+        m,
+        executors=(bitsandbytes_executor,),
+        transforms=[
+            BitsAndBytesLinearQuant4bit(),
+            MaterializationTransform("cuda", init=init_from_transformed_sd),
         ],
     )
 
@@ -155,15 +163,21 @@ def test_quantization_on_meta():
 
     expected = jm_ref(x, input_pos)
     actual = jm(x, input_pos)
+    actual2 = jm2(x, input_pos)
 
     for n, p in jm_ref.named_parameters():
         p2 = jm.get_parameter(n)
         assert_close(p, p2)
+        p2 = jm2.get_parameter(n)
+        assert_close(p, p2)
     for n, b in jm_ref.named_buffers():
         b2 = jm.get_buffer(n)
         assert_close(b2, b)
+        b2 = jm2.get_buffer(n)
+        assert_close(b2, b)
 
     assert_close(actual, expected, rtol=1e-2, atol=1e-2)
+    assert_close(actual, actual2)
 
 
 @requiresCUDA
