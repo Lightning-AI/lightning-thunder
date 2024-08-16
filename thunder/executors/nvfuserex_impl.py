@@ -2243,11 +2243,14 @@ def _scaled_dot_product_flash_attention_forward_meta(
     scale: None | float = None,
 ) -> tuple[TensorProxy, TensorProxy, int, int]:
     # Reference metadata:
-    # https://github.com/pytorch/pytorch/blob/main/torch/_meta_registrations.py
     # * query (batch_size, num_heads, query_seq_len, E)
     # * key (batch_size, num_heads, key_seq_len, E)
     # * value (batch_size, num_heads, key_seq_len, Ev)
     # * output (batch_size, num_heads, query_seq_len, Ev)
+
+    # at::_scaled_dot_product_flash_attention returns {output, log_sumexp, cum_seq_q, cum_seq_k, max_q, max_k, philox_seed, philox_offset, debug_attn_mask}.
+    # In nvFuser, we only save {output, log_sumexp, philox_seed/offset} for backward since the other variables are not required for non-nested input tensors.
+    # For non-nested tensor, cum_seq_q/k is undefined, max_q/k can be inferred from input size, and we set `return_debug_mask=False`, so `debug_attn_mask` is a 1D zero tensor.
 
     batch_size, num_heads, query_seq_len, E = query.shape
     key_seq_len = key.shape[2]
@@ -2313,7 +2316,7 @@ def _scaled_dot_product_flash_attention_backward_meta(
     key_seq_len = key.shape[2]
 
     # Reference metadata:
-    # https://github.com/pytorch/pytorch/blob/main/torch/_meta_registrations.py#L4907-L4956
+    # https://github.com/pytorch/pytorch/blob/f57b00704e498a676854a02974ca9e0c42188b23/torch/_meta_registrations.py#L5043-L5063
     grad_query = TensorProxy(like=query, shape=(batch_size, num_heads, query_seq_len, E))
     grad_key = TensorProxy(like=key, shape=(batch_size, num_heads, key_seq_len, E))
     grad_value = TensorProxy(like=value, shape=(batch_size, num_heads, key_seq_len, E))
