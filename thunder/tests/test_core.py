@@ -2802,6 +2802,12 @@ def test_serialize_trace():
 
     assert str(pickle.loads(pickle.dumps(prologue_trace))) == str(prologue_trace)
 
+    # check that these are looked up rather than duplicated
+    device = thunder.devices.Device("cpu")
+    assert pickle.loads(pickle.dumps(device)) is device
+    fp32 = thunder.dtypes.float32
+    assert pickle.loads(pickle.dumps(fp32)) is fp32
+
 
 @pytest.mark.parametrize("requires_grad", (True, False))
 def test_dataclass_output(requires_grad):
