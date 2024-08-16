@@ -66,7 +66,7 @@ def test_torch_ops_trace(device, requires_grad, op_info):
 
     funcs = [_name2func.get(op_info.name, None), get_method(op_info)]
     funcs.extend(_name2func.get(alias.name, None) for alias in op_info.aliases)
-    for func in funcs:
+    for idx, func in enumerate(funcs):
         if func is None:
             continue
         # It takes too long, test only the first 5 sample inputs
@@ -87,6 +87,8 @@ def test_torch_ops_trace(device, requires_grad, op_info):
                 ).startswith(f"Unsupported type:")
                 break
             else:
+                # Get the alias name when testing for alias
+                cur_op_name = op_info.name if idx < 2 else op_info.aliases[idx - 2].name
                 if requires_grad:
                     trc = thunder.last_backward_traces(jfun)[-1]
                     fwd_trc = thunder.last_traces(jfun)[-1]
@@ -95,7 +97,7 @@ def test_torch_ops_trace(device, requires_grad, op_info):
                     outs = outs if isinstance(outs, tuple) else (outs,)
                     if all(not thunder.core.dtypes.is_inexact_dtype(o.dtype) for o in outs):
                         continue
-                    vjp_op_name = f"{op_info.name.split('.')[-1]}_vjp"
+                    vjp_op_name = f"{cur_op_name.split('.')[-1]}_vjp"
                     if op_info.name == "mm":
                         assert any(bsym.sym.name.endswith(vjp_op_name) for bsym in trc.bound_symbols)
                     else:
@@ -103,7 +105,7 @@ def test_torch_ops_trace(device, requires_grad, op_info):
                 else:
                     fwd_trc = thunder.last_traces(jfun)[-1]
                     assert any(
-                        bsym.sym.name.endswith(op_info.name.split(".")[-1]) and not bsym.subsymbols
+                        bsym.sym.name.endswith(cur_op_name.split(".")[-1]) and not bsym.subsymbols
                         for bsym in fwd_trc.bound_symbols
                     )
 
