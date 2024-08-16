@@ -92,7 +92,7 @@ def debug_execution_trace(cfn, pre_callback: Callable | None = None, post_callba
     """
     if pre_callback is None and post_callback is None:
         raise RuntimeError(
-            "debug_execution_trace: Both `pre_callback` and `post_callback` were both None, expected atleast one of them to be None."
+            "debug_execution_trace: Both `pre_callback` and `post_callback` were None, expected atleast one of them to not be None."
         )
     _debug_transform = _DebugTransform(pre_callback=pre_callback, post_callback=post_callback)
     return thunder.core.transforms.add_transform(cfn, transform=_debug_transform)
