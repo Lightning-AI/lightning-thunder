@@ -221,3 +221,33 @@ def test_nvfuser_cse():
         assert prologue_proxy.device == thunder.core.devices.to_device(t.device)
         assert comp_proxy.dtype == thunder.core.dtypes.to_dtype(t.dtype)
         assert prologue_proxy.dtype == thunder.core.dtypes.to_dtype(t.dtype)
+
+
+@requiresCUDA
+def test_materialization_init():
+    from thunder.transforms import MaterializationTransform
+    from thunder.transforms.quantization import BitsAndBytesLinearQuant4bit, get_bitsandbytes_executor
+
+    bitsandbytes_executor = get_bitsandbytes_executor()
+
+    def get_model():
+        return torch.nn.Sequential(
+            torch.nn.Linear(2, 3),
+            torch.nn.GELU(),
+            torch.nn.Linear(3, 2),
+        )
+
+    torch.manual_seed(1234)
+    m_ref = get_model()
+
+    jm_ref = thunder.jit(m_ref, transforms=[BitsAndBytesLinearQuant4bit()], executors=(bitsandbytes_executor,))
+
+    torch.manual_seed(1234)
+    init_from_module_init = MaterializationTransform.init_from_original_module_init()
+    with torch.device("meta"):
+        m = get_model()
+    jm = thunder.jit(
+        m,
+        transforms=[BitsAndBytesLinearQuant4bit(), MaterializationTransform("cuda", init=init_from_module_init)],
+        executors=(bitsandbytes_executor,),
+    )

@@ -117,31 +117,34 @@ class ThunderModule(pytorch.nn.Module):
             sd_per_module[prefix][k[len(prefix) + len(sep) :]] = v
 
         for submodule_name, sd_part in sd_per_module.items():
-            prefix = submodule_name + ("." if submodule_name else "")
-            for transform in self._lc_transforms:
-                sd_part = transform.transform_state_dict_for_submodule(self, submodule_name, sd_part)
-            for k, v in sd_part.items():
-                full_k = prefix + k
-                if full_k in self._overrides_parameters:
-                    p = self._overrides_parameters[full_k]
-                    if p.dtype == v.dtype and p.shape == v.shape:
-                        with pytorch.no_grad():
-                            p.copy_(v)
-                    else:
-                        with pytorch.no_grad():
-                            self._overrides_parameters[full_k] = pytorch.nn.Parameter(
-                                v.to(p.device), requires_grad=p.requires_grad
-                            )
+            self.transform_and_load_for_submodule(submodule_name, sd_part)
 
-                elif full_k in self._overrides_buffers:
-                    if p.dtype == v.dtype and p.shape == v.shape:
-                        with pytorch.no_grad():
-                            self._overrides_buffers[full_k].copy_(v)
-                    else:
-                        with pytorch.no_grad():
-                            self._overrides_parameters[full_k] = v.to(p.device).requires_grad_(p.requires_grad)
+    def transform_and_load_for_submodule(self, submodule_name, sd_part):
+        prefix = submodule_name + ("." if submodule_name else "")
+        for transform in self._lc_transforms:
+            sd_part = transform.transform_state_dict_for_submodule(self, submodule_name, sd_part)
+        for k, v in sd_part.items():
+            full_k = prefix + k
+            if full_k in self._overrides_parameters:
+                p = self._overrides_parameters[full_k]
+                if p.dtype == v.dtype and p.shape == v.shape:
+                    with pytorch.no_grad():
+                        p.copy_(v)
                 else:
-                    raise NotImplementedError(f"don't know how to handle {full_k}")
+                    with pytorch.no_grad():
+                        self._overrides_parameters[full_k] = pytorch.nn.Parameter(
+                            v.to(p.device), requires_grad=p.requires_grad
+                        )
+
+            elif full_k in self._overrides_buffers:
+                if p.dtype == v.dtype and p.shape == v.shape:
+                    with pytorch.no_grad():
+                        self._overrides_buffers[full_k].copy_(v)
+                else:
+                    with pytorch.no_grad():
+                        self._overrides_parameters[full_k] = v.to(p.device).requires_grad_(p.requires_grad)
+            else:
+                raise NotImplementedError(f"don't know how to handle {full_k}")
 
     def state_dict(self, *, destination=None, prefix="", keep_vars=False):
         """
