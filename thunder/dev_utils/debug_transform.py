@@ -82,12 +82,12 @@ def debug_execution_trace(cfn, pre_callback: Callable | None = None, post_callba
     in the trace. These callbacks can be used to inspect or log information about the execution of the computation.
 
     Args:
-        cfn: `thunder.jit` function to debug.
+        cfn: :func:`thunder.jit` function to debug.
         pre_callback: An optional callable that is executed before each bound symbol is processed.
-            It should have the signature `(BoundSymbol, *args, **kwargs)` and return a string. If `None`, no
+            It should have the signature ``(BoundSymbol, *args, **kwargs)`` and return a string. If :obj:`None`, no
             pre-execution callback is used.
         post_callback: An optional callable that is executed after each bound symbol is processed.
-            It should have the signature `(BoundSymbol, *args, **kwargs)` and return a string. If `None`, no
+            It should have the signature ``(BoundSymbol, *args, **kwargs)`` and return a string. If :obj:`None`, no
             post-execution callback is used.
     """
     if pre_callback is None and post_callback is None:
