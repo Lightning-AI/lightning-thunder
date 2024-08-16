@@ -17,9 +17,18 @@ class MaterializationTransform(Transform):
 
     Args:
         device: Device to host :class:`~thunder.core.module.ThunderModule` after materialization.
+                The transform will annotate any unannotated parameters on the meta device as to be initialized on this device.
 
     Keyword Args:
         init: Post-processing callable applied to :class:`~thunder.core.module.ThunderModule` after materialization.
+              possible values are obtained from
+
+              - `MaterializationTransform.init_from_original_state_dict(state_dict)`
+                populate weights from a `state_dict` from the untransformed module,
+              - `MaterializationTransform.init_from_transformed_state_dict(state_dict)`
+                populate weights from a `state_dict` from the transformed module,
+              - `MaterializationTransform.init_from_original_module_init()`
+                initialize using the weight initialization of the original module (`reset_parameters`)
     """
 
     def __init__(
