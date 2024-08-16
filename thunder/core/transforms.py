@@ -1450,9 +1450,10 @@ def grad(
             # Using trc.python_callable() makes it impossible to retrace the
             # function because the python_callable uses python_ctx which replaces
             # symbol occurrences with its symbol._call_ctx function
+            computation_trc = dce(computation_trc)
+
             @wraps(computation_trc.python_callable())
             def python_callable(*args, **kwargs):
-                computation_trc = dce(computation_trc)
                 return eval_trace(computation_trc, *args, **kwargs)
 
             gradtrc = construct_trace()(grad(python_callable), *computation_trc.args, **computation_trc.kwargs)
