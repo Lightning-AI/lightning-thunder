@@ -79,7 +79,7 @@ To use Thunder on your local machine:
 
 ```bash
 # install nvFuser which installs the matching nightly PyTorch
-pip install --pre 'nvfuser-cu121[torch]' --extra-index-url https://pypi.nvidia.com
+pip install --pre nvfuser-cu121-torch24
 ```
 
 - install [cudnn](https://gitlab-master.nvidia.com/cudnn/cudnn_frontend) as follows:
@@ -108,7 +108,7 @@ Alternatively, you can install the latest version of Thunder directly from this 
 
 ```
 # 1) Install nvFuser and PyTorch nightly dependencies:
-pip install --pre 'nvfuser-cu121[torch]' --extra-index-url https://pypi.nvidia.com
+pip install --pre nvfuser-cu121-torch24
 ```
 
 ```bash
