@@ -5,6 +5,7 @@ from itertools import chain
 from typing import TYPE_CHECKING
 
 import torch
+from torch.utils.weak import WeakTensorKeyDictionary
 
 from thunder.core.transform_common import Transform
 
@@ -45,14 +46,26 @@ class MaterializationTransform(Transform):
             if p.device.type == "meta" and not hasattr(p, "_thunder_device"):
                 p._thunder_device = self.device
 
-        for n, p in model.named_parameters():
+        shared_names = model._get_shared_names()
+
+        # note: the iterations below are without duplicates
+        for n, p in list(model.named_parameters()):
             if p.device.type == "meta":
-                model._overrides_parameters[n] = torch.nn.Parameter(
-                    torch.empty_like(p, device=self.device), requires_grad=p.requires_grad
+                p = torch.nn.Parameter(
+                    torch.empty_like(p, device=getattr(p, "_thunder_device", self.device)),
+                    requires_grad=p.requires_grad,
                 )
-        for n, b in model.named_buffers():
+                for nn in shared_names[n]:
+                    model._overrides_parameters[nn] = p
+
+        for n, b in list(model.named_buffers()):
             if b.device.type == "meta":
-                model._overrides_buffers[n] = torch.empty_like(b, device=self.device, requires_grad=b.requires_grad)
+                b = torch.empty_like(
+                    b, device=getattr(b, "_thunder_device", self.device), requires_grad=b.requires_grad
+                )
+                for nn in shared_names[n]:
+                    model._overrides_parameters[nn] = b
+
         self.init(self, model)
 
     @staticmethod
@@ -74,6 +87,16 @@ class MaterializationTransform(Transform):
     @staticmethod
     def init_from_original_module_init():
         def module_init_from_original_module_init(transform: MaterializationTransform, tm: ThunderModule):
+
+            shared_names = tm._get_shared_names()
+            processed_names = set()
+
+            # Shared parameters in PyTorch eager are parameters of module which have different name but share the underlying tensor.
+            # For shared parameter, we replace all occurence shared parameter with it's corresponding `base` parameter.
+            # In our implementation `base` parameter is the parameter and corresponding name which we see the first time while
+            # iterating our parameters (see below). We track subsequent parameter which share the underlying Tensor with this `base` parameter
+            # in `shared_params_name` dictionary.
+
             for module_name, _ in tm._model.named_modules():
                 prefix = module_name if not module_name else f"{module_name}."
                 submodule = tm.get_submodule(module_name)
@@ -88,14 +111,24 @@ class MaterializationTransform(Transform):
                 if any(
                     t.is_meta for t in chain(module_copy.parameters(recurse=False), module_copy.buffers(recurse=False))
                 ):
-                    # TODO: we could also support calling a "param_init_fn" argument like PyTorch
-                    module_copy.to_empty(device=transform.device, recurse=False)
-                    if not hasattr(module_copy, "reset_parameters"):
-                        raise TypeError(
-                            f"Materialization requires that the `{type(submodule).__name__}.reset_parameters` method is implemented."
-                            " This method is used to initialize any children parameters or buffers in this module."
+                    # we need to initialize the module unless all parameters are duplicatess
+                    need_init = not all(
+                        shared_names[n] & processed_names
+                        for n, _ in chain(
+                            module_copy.named_parameters(prefix=module_name, recurse=False),
+                            module_copy.named_buffers(prefix=module_name, recurse=False),
                         )
-                    module_copy.reset_parameters()
+                    )
+
+                    if need_init:
+                        # TODO: we could also support calling a "param_init_fn" argument like PyTorch
+                        module_copy.to_empty(device=transform.device, recurse=False)
+                        if not hasattr(module_copy, "reset_parameters"):
+                            raise TypeError(
+                                f"Materialization requires that the `{type(submodule).__name__}.reset_parameters` method is implemented."
+                                " This method is used to initialize any children parameters or buffers in this module."
+                            )
+                        module_copy.reset_parameters()
 
                     # TODO: non-persistent buffers?
                     sd = {
@@ -104,6 +137,6 @@ class MaterializationTransform(Transform):
                             module_copy.named_parameters(recurse=False), module_copy.named_buffers(recurse=False)
                         )
                     }
-                    tm.transform_and_load_for_submodule(module_name, sd)
+                    tm._transform_and_load_for_submodule(module_name, sd, shared_names, processed_names)
 
         return module_init_from_original_module_init

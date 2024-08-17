@@ -231,14 +231,31 @@ def test_materialization_init():
     bitsandbytes_executor = get_bitsandbytes_executor()
 
     def get_model():
-        return torch.nn.Sequential(
-            torch.nn.Linear(2, 3),
-            torch.nn.GELU(),
-            torch.nn.Linear(3, 2),
+        m0 = torch.nn.Linear(2, 2)
+
+        # to not change the rng state
+        with torch.device("meta"):
+            m4 = torch.nn.Linear(2, 2)
+
+        m4.weight = m0.weight
+        m4.bias = m0.bias
+
+        return (
+            torch.nn.Sequential(
+                m0,
+                torch.nn.GELU(),
+                torch.nn.Linear(2, 2),
+                torch.nn.GELU(),
+                m4,
+            )
+            .eval()
+            .requires_grad_(False)
         )
 
     torch.manual_seed(1234)
-    m_ref = get_model()
+    with torch.device("cuda"):
+        m_ref = get_model()
+        inp = torch.randn(3, 2)
 
     jm_ref = thunder.jit(m_ref, transforms=[BitsAndBytesLinearQuant4bit()], executors=(bitsandbytes_executor,))
 
@@ -246,8 +263,14 @@ def test_materialization_init():
     init_from_module_init = MaterializationTransform.init_from_original_module_init()
     with torch.device("meta"):
         m = get_model()
+
     jm = thunder.jit(
         m,
         transforms=[BitsAndBytesLinearQuant4bit(), MaterializationTransform("cuda", init=init_from_module_init)],
         executors=(bitsandbytes_executor,),
     )
+
+    assert_close(jm(inp), jm_ref(inp))
+
+    assert jm_ref._get_shared_names()["0.weight"] == {"0.weight", "4.weight"}
+    assert jm._get_shared_names()["0.weight"] == {"0.weight", "4.weight"}
