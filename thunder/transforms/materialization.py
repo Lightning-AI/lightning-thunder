@@ -73,7 +73,7 @@ class MaterializationTransform(Transform):
 
     @staticmethod
     def init_from_original_module_init():
-        def module_init_from_original_module_init(transform: MaterializationTransform, tm: thunder.ThunderModule):
+        def module_init_from_original_module_init(transform: MaterializationTransform, tm: ThunderModule):
             for module_name, _ in tm._model.named_modules():
                 prefix = module_name if not module_name else f"{module_name}."
                 submodule = tm.get_submodule(module_name)
