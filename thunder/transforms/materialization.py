@@ -92,7 +92,7 @@ class MaterializationTransform(Transform):
                     module_copy.to_empty(device=transform.device, recurse=False)
                     if not hasattr(module_copy, "reset_parameters"):
                         raise TypeError(
-                            f"Materialization requires that the `{type(module).__name__}.reset_parameters` method is implemented."
+                            f"Materialization requires that the `{type(submodule).__name__}.reset_parameters` method is implemented."
                             " This method is used to initialize any children parameters or buffers in this module."
                         )
                     module_copy.reset_parameters()
