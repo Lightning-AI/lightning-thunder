@@ -44,3 +44,30 @@ def test_torch_compile_cat_nvfuser_phi2_tanh():
     cmodel = thunder.jit(model, executors=[torch_compile_cat_ex, nvfuserex])
     logits = cmodel(x)
     logits.sum().backward()
+
+
+@pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported")
+@requiresCUDA
+@pytest.mark.skipif(not device_supports_bf16(torch.device("cuda")), reason="bf16 is not supported")
+def test_torch_compile_cat_rope_single_fusion():
+    from thunder.benchmarks import LlamaQKVSplitRopeBenchmark
+    from thunder.examine import get_fusions
+
+    bench = LlamaQKVSplitRopeBenchmark(
+        config="Llama-3-8B",
+        batchdims=(1,),
+        device="cuda",
+        dtype=thunder.bfloat16,
+        requires_grad=True,
+    )
+
+    jfn = thunder.jit(bench.fn(), executors=[torch_compile_cat_ex, nvfuserex])
+    args, kwargs = bench.make_batch()
+    jfn(*args, **kwargs)
+    forward_execution_trace = thunder.last_traces(jfn)[-1]
+    assert len(get_fusions(forward_execution_trace)) == 1
+    assert len(forward_execution_trace.bound_symbols) == 5
+
+    backward_execution_trace = thunder.last_backward_traces(jfn)[-1]
+    assert len(get_fusions(backward_execution_trace)) == 1
+    assert len(backward_execution_trace.bound_symbols) == 14
