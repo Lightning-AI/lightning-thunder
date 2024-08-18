@@ -69,7 +69,7 @@ class FSDPParamUnpaddingVisitor:
 # - It transforms the ThunderModule jitted_module, materializing and sharding the parameters as `overrides`
 #   in the ThunderModule.
 # - While doing that, it leaves the original user module alone.
-# - It then registers an early transform (callback that runs before prologue is executed) that transforms the
+# - It then registers an transform (callback that runs before prologue is executed) that transforms the
 #   prologue and compute trace.
 #
 # Note that for doing so, there are a few constraints / caveats:
