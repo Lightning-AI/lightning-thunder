@@ -223,7 +223,7 @@ class FSDPTransform(Transform):
                     if p_orig.device.type != "meta":
                         p_meta = torch.nn.Parameter(p.to(device="meta"), requires_grad=p.requires_grad)
                         p_meta._thunder_device = p_orig.device
-                        setattr(submodule, base_pn, p_meta)
+                        submodule.register_parameter(base_pn, p_meta)
                     else:
                         p_orig._thunder_device = self.device
 
