@@ -24,7 +24,7 @@ from thunder.core.trace import TraceProvenance
 from thunder.core.transforms import VISIT_TYPE
 from thunder.core.transforms import visitor_transform
 from thunder.core.transform_common import Transform
-from thunder.distributed import copy_default_process_group, FSDPType, FSDPBucketingStrategy, _shard_param
+from thunder.distributed import copy_default_process_group, FSDPType, FSDPBucketingStrategy, _shard_param, _materialize
 
 if TYPE_CHECKING:
     from typing import Any
