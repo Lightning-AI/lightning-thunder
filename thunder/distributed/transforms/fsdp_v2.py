@@ -24,7 +24,14 @@ from thunder.core.trace import TraceProvenance
 from thunder.core.transforms import VISIT_TYPE
 from thunder.core.transforms import visitor_transform
 from thunder.core.transform_common import Transform
-from thunder.distributed import copy_default_process_group, FSDPType, FSDPBucketingStrategy, _shard_param, _materialize
+from thunder.distributed import (
+    copy_default_process_group,
+    FSDPType,
+    FSDPBucketingStrategy,
+    _materialize,
+    _shard_param,
+    _shard_tensor,
+)
 
 if TYPE_CHECKING:
     from typing import Any
@@ -111,6 +118,8 @@ class FSDPTransform(Transform):
         utils.check(self.process_group is not None, lambda: "The default process group is None")
         global_rank = tdist.get_rank(group=self.process_group)
         world_size = tdist.get_world_size(group=self.process_group)
+        self.global_rank = global_rank
+        self.world_size = world_size
         if self.device is None:
             local_rank = int(os.environ["LOCAL_RANK"])
             self.device = torch.device("cuda", local_rank)
@@ -237,7 +246,14 @@ class FSDPTransform(Transform):
     def transform_state_dict_for_submodule(
         self, model: thunder.ThunderModule, submodule_name: str, state_dict: dict
     ) -> dict:
-        raise NotImplementedError("cannot transform state dict yet")
+        prefix = submodule_name + ("." if submodule_name else "")
+        new_state_dict = {}
+        for k, v in state_dict.items():
+            full_k = prefix + k
+            if full_k in self.sharded_params:
+                v, _ = _shard_tensor(v, self.global_rank, self.world_size, full_k, allow_padding_for_fsdp=True)
+            new_state_dict[k] = v
+        return new_state_dict
 
     def transform_traces_pre_prologue(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
         from thunder.distributed import prims as dist_prims

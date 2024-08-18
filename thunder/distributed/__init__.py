@@ -556,7 +556,7 @@ def _shard_params(
             sharded_params[param] = True
 
 
-def _shard_param(
+def _shard_tensor(
     param: torch.Tensor,
     rank: int,
     world_size: int,
@@ -564,7 +564,7 @@ def _shard_param(
     *,
     allow_padding_for_fsdp: bool = False,
     dim: int | None = None,
-) -> None:
+) -> tuple[torch.Tensor, int | None]:
 
     dim_to_shard = 0 if dim is None else dim
     if allow_padding_for_fsdp:
@@ -577,11 +577,11 @@ def _shard_param(
         if _thunder_fsdp_padding_size > 0:
             padded_param = torch.empty(padded_param_shape, device=param.device, dtype=param.dtype)
             padded_param[:orig_0dim_size].copy_(param)
-            param.data = padded_param.data.narrow(0, chunk_size * rank, chunk_size).clone()
-            param._thunder_fsdp_padding_size = _thunder_fsdp_padding_size
+            shard = padded_param.data.narrow(0, chunk_size * rank, chunk_size).clone()
+            return shard, _thunder_fsdp_padding_size
         else:
-            param.data = param.data.narrow(0, chunk_size * rank, chunk_size).clone()
-            param._thunder_fsdp_padding_size = None
+            shard = param.data.narrow(0, chunk_size * rank, chunk_size).clone()
+            return shard, None
     else:
         utils.check(
             param.shape[dim_to_shard] % world_size == 0,
@@ -594,7 +594,29 @@ def _shard_param(
         # NOTE This could be a ShardTensor to indicate other parts of the code
         # that it's sharded and should be treated differently
         shard = param.data.narrow(dim_to_shard, chunk_size * rank, chunk_size).clone()
-        param.data = shard
+        return shard, None
+
+
+def _shard_param(
+    param: torch.Tensor,
+    rank: int,
+    world_size: int,
+    name: str,
+    *,
+    allow_padding_for_fsdp: bool = False,
+    dim: int | None = None,
+) -> None:
+    shard, padding_size = _shard_tensor(
+        param,
+        rank,
+        world_size,
+        name,
+        allow_padding_for_fsdp=allow_padding_for_fsdp,
+        dim=dim,
+    )
+    param.data = shard
+    if allow_padding_for_fsdp:
+        param._thunder_fsdp_padding_size = padding_size
 
 
 @torch.no_grad()
