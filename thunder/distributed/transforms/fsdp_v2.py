@@ -93,6 +93,9 @@ class FSDPTransform(Transform):
         self.broadcast_from = broadcast_from
         self.sharding_strategy = sharding_strategy
         self.bucketing_strategy = bucketing_strategy
+        self.sharded_params: dict[str, Any] = {}
+        self.process_group: ProcessGroup | None = None
+        self.shared_params_name: dict[str, str] = {}
 
     def transform_module(
         self,
