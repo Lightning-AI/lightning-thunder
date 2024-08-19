@@ -92,7 +92,7 @@ class MaterializationTransform(Transform):
             processed_names = set()
 
             # Shared parameters in PyTorch eager are parameters of module which have different name but share the underlying tensor.
-            # For shared parameter, we replace all occurence shared parameter with it's corresponding `base` parameter.
+            # For shared parameter, we replace all occurence shared parameter with its corresponding `base` parameter.
             # In our implementation `base` parameter is the parameter and corresponding name which we see the first time while
             # iterating our parameters (see below). We track subsequent parameter which share the underlying Tensor with this `base` parameter
             # in `shared_params_name` dictionary.
