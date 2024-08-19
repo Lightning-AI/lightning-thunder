@@ -101,16 +101,25 @@ class MaterializationTransform(Transform):
                 prefix = module_name if not module_name else f"{module_name}."
                 submodule = tm.get_submodule(module_name)
 
-                # we use a copy to let the user's module alone
-                module_copy = copy.copy(submodule)
-
                 # Materialize meta-parameters on-device if necessary.
                 # This is done before sharding in case the materialization logic depends on the tensor shape.
                 # The tradeoff is that all of a module's direct parameters need to fit in device.
                 # Each module only initializes its own parameters and not those of its children (recurse=False)
                 if any(
-                    t.is_meta for t in chain(module_copy.parameters(recurse=False), module_copy.buffers(recurse=False))
+                    chain(
+                        (
+                            tm.get_parameter(n).is_meta
+                            for n, _ in submodule.named_parameters(recurse=False, prefix=module_name)
+                        ),
+                        (
+                            tm.get_buffer(n).is_meta
+                            for n, _ in submodule.named_buffers(recurse=False, prefix=module_name)
+                        ),
+                    )
                 ):
+                    # we use a copy to let the user's module alone
+                    module_copy = copy.copy(submodule)
+
                     # we need to initialize the module unless all parameters are duplicatess
                     need_init = not all(
                         shared_names[n] & processed_names

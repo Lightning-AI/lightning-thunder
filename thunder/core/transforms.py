@@ -403,7 +403,7 @@ def visitor_transform(trace_from: Trace, visit: Callable, *, provenance: None | 
 def add_transform(
     cfn: Callable,
     *,
-    transform: Transform,
+    transform: Transform | list[Transform],
     disable_torch_autograd_support=False,
     _legacy_copy_params=False,
 ) -> Callable:
@@ -413,15 +413,20 @@ def add_transform(
 
     utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
     utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
-    utils.check_type(transform, Transform)
+    if isinstance(transform, Transform):
+        transform = [transform]
+    else:
+        utils.check(
+            all(isinstance(t, Transform) for t in transform),
+            lambda: "transform must be an instance of Transform or a list of Transform instances.",
+        )
 
     assert cd.using_jit
 
     from thunder import jit
 
     # todo: move _lc_transforms to compile_data
-    transforms = cfn._lc_transforms[:]
-    transforms.append(transform)
+    transforms = cfn._lc_transforms + transform
     jfn = jit(
         cd.fn,
         langctx=cd.langctx,
