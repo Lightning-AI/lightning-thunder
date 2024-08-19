@@ -88,11 +88,13 @@ class FSDPTransform(Transform):
         broadcast_from: int | None = None,
         sharding_strategy: FSDPType = FSDPType.ZERO2,
         bucketing_strategy: FSDPBucketingStrategy = FSDPBucketingStrategy.NONE,
+        release_original_parameters: bool = False,
     ):
         self.device = device
         self.broadcast_from = broadcast_from
         self.sharding_strategy = sharding_strategy
         self.bucketing_strategy = bucketing_strategy
+        self.release_original_parameters = release_original_parameters
         self.sharded_params: dict[str, Any] = {}
         self.process_group: ProcessGroup | None = None
         self.shared_params_name: dict[str, str] = {}
@@ -215,6 +217,15 @@ class FSDPTransform(Transform):
                 )
                 new_shape = thunder_model._overrides_parameters[pn].shape
                 self.sharded_params[pn] = (old_shape, new_shape, thunder_model._overrides_parameters[pn].device)
+                if self.release_original_parameters:
+                    base_pn = pn.rsplit(".", 1)[-1]
+                    p_orig = getattr(submodule, base_pn)
+                    if p_orig.device.type != "meta":
+                        p_meta = torch.nn.Parameter(p.to(device="meta"), requires_grad=p.requires_grad)
+                        p_meta._thunder_device = p_orig.device
+                        submodule.register_parameter(base_pn, p_meta)
+                    else:
+                        p_orig._thunder_device = self.device
 
                 # Track the original param and it's corresponding copied shard and metadata.
                 shared_params[p] = {

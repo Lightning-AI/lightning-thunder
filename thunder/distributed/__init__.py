@@ -482,6 +482,7 @@ def fsdp(
                 broadcast_from=broadcast_from,
                 sharding_strategy=sharding_strategy,
                 bucketing_strategy=bucketing_strategy,
+                release_original_parameters=True,
             ),
         )
 
