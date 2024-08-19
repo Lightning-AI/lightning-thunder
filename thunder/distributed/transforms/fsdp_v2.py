@@ -246,7 +246,9 @@ class FSDPTransform(Transform):
     def transform_state_dict_for_submodule(
         self, model: thunder.ThunderModule, submodule_name: str, state_dict: dict
     ) -> dict:
-        prefix = submodule_name + ("." if submodule_name else "")
+        prefix = ""
+        if submodule_name:
+            prefix = f"{submodule_name}."
         new_state_dict = {}
         for k, v in state_dict.items():
             full_k = prefix + k
