@@ -479,7 +479,7 @@ def fsdp(
         if device is None:
             local_rank = int(os.environ["LOCAL_RANK"])
             device = torch.device("cuda", local_rank)
-        new_model = add_transform(
+        return add_transform(
             model,
             transform=[
                 FSDPTransform(
@@ -492,7 +492,6 @@ def fsdp(
                 MaterializationTransform(device, init=MaterializationTransform.init_from_original_module_init()),
             ],
         )
-        return new_model
 
     process_group = copy_default_process_group()
     utils.check(process_group is not None, lambda: "The default process group is None")
