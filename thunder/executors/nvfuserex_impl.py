@@ -2260,8 +2260,8 @@ def _scaled_dot_product_flash_attention_forward_meta(
         log_sumexp := TensorProxy(
             shape=(batch_size, num_heads, query_seq_len), dtype=dtypes.float32, device=query.device, requires_grad=False
         ),
-        philox_seed := TensorProxy(shape=(), dtype=dtypes.int64, device=query.device, requires_grad=False),
-        philox_offset := TensorProxy(shape=(), dtype=dtypes.int64, device=query.device, requires_grad=False),
+        philox_seed := TensorProxy(shape=(), dtype=dtypes.int64, device=DeviceType.CPU, requires_grad=False),
+        philox_offset := TensorProxy(shape=(), dtype=dtypes.int64, device=DeviceType.CPU, requires_grad=False),
     )
 
 
@@ -2378,6 +2378,10 @@ def _scaled_dot_product_flash_attention_check(
     enable_sdpa: None | bool = get_compile_option("nv_enable_sdpa", "Enable nvFuser flash attention SDPA.")
 
     if not enable_sdpa:
+        return False
+
+    # Flash attn does not support attn_mask currently.
+    if attn_mask is not None:
         return False
 
     if not are_supported_tensors(query, key, value):
