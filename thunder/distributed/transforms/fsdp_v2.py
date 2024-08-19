@@ -166,9 +166,9 @@ class FSDPTransform(Transform):
 
         is_fully_materialized = True
         for n, p in thunder_model.named_parameters():
-            for nn in shared_names[n]:
-                if nn != n:
-                    self.shared_params_name[nn] = n
+            for n2 in shared_names[n]:
+                if n2 != n:
+                    self.shared_params_name[n2] = n
             try:
                 orig_p = thunder_model._model.get_parameter(n)
             except AttributeError:
@@ -179,14 +179,14 @@ class FSDPTransform(Transform):
                 if orig_p is not None:
                     orig_p._thunder_device = self.device
                 # TODO: check if devic_adjustments are still needed
-                for nn in shared_names[n]:
-                    device_adjustments[nn] = self.device
+                for n2 in shared_names[n]:
+                    device_adjustments[n2] = self.device
             elif p.device != self.device:
                 with torch.no_grad():
                     new_p = torch.nn.Parameter(p.to(device=self.device), requires_grad=p.requires_grad)
-                for nn in shared_names[n]:
-                    thunder_model._overrides_parameters[nn] = new_p
-                    device_adjustments[nn] = self.device
+                for n2 in shared_names[n]:
+                    thunder_model._overrides_parameters[n2] = new_p
+                    device_adjustments[n2] = self.device
 
         for n, b in thunder_model.named_buffers():
             try:
@@ -202,9 +202,9 @@ class FSDPTransform(Transform):
                 device_adjustments[n] = self.device
             elif b.device != self.device:
                 new_b = b.to(device=self.device)
-                for nn in shared_names[n]:
-                    thunder_model._overrides_buffers[nn] = new_p
-                    device_adjustments[nn] = self.device
+                for n2 in shared_names[n]:
+                    thunder_model._overrides_buffers[n2] = new_p
+                    device_adjustments[n2] = self.device
 
         # Broadcast parameters if requested
         if self.broadcast_from is not None:
@@ -228,16 +228,16 @@ class FSDPTransform(Transform):
             p_new, _ = _shard_tensor(p, global_rank, world_size, pn, allow_padding_for_fsdp=True)
             p_new = torch.nn.Parameter(p_new.clone(), requires_grad=p.requires_grad)
             new_shape = p_new.shape
-            for nn in shared_names[pn]:
-                thunder_model._overrides_parameters[nn] = p_new
-                self.sharded_params[nn] = (old_shape, new_shape, getattr(p, "_thunder_device", p.device))
+            for n2 in shared_names[pn]:
+                thunder_model._overrides_parameters[n2] = p_new
+                self.sharded_params[n2] = (old_shape, new_shape, getattr(p, "_thunder_device", p.device))
             if self.release_original_parameters:
                 p_orig = thunder_model._model.get_parameter(pn)
                 if p_orig.device.type != "meta":
                     p_meta = torch.nn.Parameter(p_orig.to(device="meta"), requires_grad=p_orig.requires_grad)
                     p_meta._thunder_device = p_orig.device
-                    for nn in shared_names[pn]:
-                        submodule_name, _, base_pn = nn.rpartition(".")
+                    for n2 in shared_names[pn]:
+                        submodule_name, _, base_pn = n2.rpartition(".")
                         submodule = thunder_model._model.get_submodule(submodule_name)
                         submodule.register_parameter(base_pn, p_meta)
                 else:
