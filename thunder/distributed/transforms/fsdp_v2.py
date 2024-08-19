@@ -171,7 +171,7 @@ class FSDPTransform(Transform):
                     self.shared_params_name[nn] = n
             try:
                 orig_p = thunder_model._model.get_parameter(n)
-            except AttributeError as _:
+            except AttributeError:
                 orig_p = None
             if p.is_meta:
                 is_fully_materialized = False
