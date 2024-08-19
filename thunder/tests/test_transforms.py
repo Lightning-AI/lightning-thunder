@@ -241,6 +241,7 @@ def test_cudagraph_warmup_runs_with_correct_buffers():
     jf(weights)
     jf(weights)
 
+
 @requiresCUDA
 def test_materialization_init():
     from thunder.transforms import MaterializationTransform
