@@ -556,6 +556,7 @@ def _shard_params(
             sharded_params[param] = True
 
 
+@torch.no_grad()
 def _shard_tensor(
     param: torch.Tensor,
     rank: int,
