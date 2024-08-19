@@ -36,7 +36,7 @@ from thunder.core.rematerialization import rematerialize
 from thunder.core.utils import OrderedSet, check, check_same_dtype
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, Symbol, has_tags
-from thunder.core.devices import Device, DeviceType
+from thunder.core.devices import Device, DeviceType, cpu
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
 from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs, NON_FUNCTIONAL_OPS
@@ -2260,8 +2260,8 @@ def _scaled_dot_product_flash_attention_forward_meta(
         log_sumexp := TensorProxy(
             shape=(batch_size, num_heads, query_seq_len), dtype=dtypes.float32, device=query.device, requires_grad=False
         ),
-        philox_seed := TensorProxy(shape=(), dtype=dtypes.int64, device=DeviceType.CPU, requires_grad=False),
-        philox_offset := TensorProxy(shape=(), dtype=dtypes.int64, device=DeviceType.CPU, requires_grad=False),
+        philox_seed := TensorProxy(shape=(), dtype=dtypes.int64, device=cpu, requires_grad=False),
+        philox_offset := TensorProxy(shape=(), dtype=dtypes.int64, device=cpu, requires_grad=False),
     )
 
 
