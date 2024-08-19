@@ -119,6 +119,9 @@ class MaterializationTransform(Transform):
                 ):
                     # we use a copy to let the user's module alone
                     module_copy = copy.copy(submodule)
+                    module_copy._parameters = module_copy._parameters.copy()
+                    module_copy._buffers = module_copy._buffers.copy()
+                    module_copy._modules = module_copy._modules.__class__()
 
                     # we need to initialize the module unless all parameters are duplicatess
                     need_init = not all(
