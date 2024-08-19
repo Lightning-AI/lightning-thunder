@@ -366,6 +366,10 @@ class BoundSymbol(BoundSymbolInterface):
     _object_ctx: dict = field(default_factory=dict)
     _executor: None | Any = None
 
+    # e.g. prims.copy_'s must happen before prims.python_return,
+    # not just the value it returns
+    _hidden_dependencies: Sequence[BoundSymbol] = ()
+
     # The line number of the bound symbol
     # NOTE This is only intended for internal use, and should be set explicitly on all BoundSymbols
     #   being analyzed before use, since it may have been set by previous passes, too
@@ -395,6 +399,7 @@ class BoundSymbol(BoundSymbolInterface):
             "_import_ctx": self._import_ctx,
             "_object_ctx": self._object_ctx,
             "_executor": self._executor,
+            "_hidden_dependencies": self._hidden_dependencies,
         }
 
         self_kwargs.update(kwargs)
@@ -487,7 +492,7 @@ class BoundSymbol(BoundSymbolInterface):
 
     @functools.cached_property
     def flat_args_and_spec(self):
-        return tree_flatten_with_dataclass((self.args, self.kwargs))
+        return tree_flatten_with_dataclass((self.args, self.kwargs, self._hidden_dependencies))
 
     @functools.cached_property
     def flat_args(self):
