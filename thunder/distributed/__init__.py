@@ -475,7 +475,7 @@ def fsdp(
         from thunder.core.transforms import add_transform
         from thunder.distributed.transforms.fsdp_v2 import FSDPTransform
 
-        new_model = add_transform(
+        return add_transform(
             model,
             transform=FSDPTransform(
                 device=device,
@@ -485,7 +485,6 @@ def fsdp(
                 release_original_parameters=True,
             ),
         )
-        return new_model
 
     process_group = copy_default_process_group()
     utils.check(process_group is not None, lambda: "The default process group is None")
