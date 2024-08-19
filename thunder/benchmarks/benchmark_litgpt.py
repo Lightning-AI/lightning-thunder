@@ -1,8 +1,11 @@
+from __future__ import annotations
 from datetime import timedelta
 import os
 import time
 import warnings
 from contextlib import nullcontext
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import torch
 import functools
@@ -22,15 +25,26 @@ from thunder.dynamo import ThunderCompiler
 from thunder.tests.litgpt_model import Config, GPT, Block
 from lightning.fabric.utilities.throughput import measure_flops
 from lightning.fabric.utilities import Throughput
+from lightning_utilities.core.imports import package_available
 
+transformer_engine_available = package_available("transformer_engine")
+torchao_available = package_available("torchao")
 
-try:
+if transformer_engine_available:
     import transformer_engine.pytorch as te
     from lightning.fabric.plugins.precision.transformer_engine import TransformerEnginePrecision
 
-    transformer_engine_available = True
-except ImportError:
-    transformer_engine_available = False
+if torchao_available:
+    from torchao.float8.config import CastConfig, Float8LinearConfig, ScalingType
+    from torchao.float8 import precompute_float8_dynamic_scale_for_fsdp
+    from torchao.float8.float8_linear_utils import (
+        convert_to_float8_training,
+        sync_float8_amax_and_scale_history,
+        get_float8_layers,
+    )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
 
 
 FSDP_MODES: set[str] = {"fsdp", "fsdp2"}
@@ -63,6 +77,75 @@ def check_fp8_compute_capability() -> None:
 
 def is_transformer_engine(low_precision_mode: str) -> bool:
     return low_precision_mode == "fp8-delayed-te"
+
+
+# FIXME(crcrpar): Recompilation warning
+#     [rank0]:[rank0]:W0819 05:54:10.552000 31473 torch/_dynamo/convert_frame.py:831] [2/256] torch._dynamo hit config.accumulated_cache_size_limit (256)
+#     [rank0]:[rank0]:W0819 05:54:10.552000 31473 torch/_dynamo/convert_frame.py:831] [2/256]    function: 'torch_dynamo_resume_in_fsdp_hook_wrapper_at_66' (/usr/local/lib/python3.10/dist-packages/torch/distributed/_composable/fsdp/_fsdp_state.py:66)
+#     [rank0]:[rank0]:W0819 05:54:10.552000 31473 torch/_dynamo/convert_frame.py:831] [2/256]    last reason: Unable to find recompilation reasons
+#     [rank0]:[rank0]:W0819 05:54:10.552000 31473 torch/_dynamo/convert_frame.py:831] [2/256] To log all recompilation reasons, use TORCH_LOGS="recompiles".
+#     [rank0]:[rank0]:W0819 05:54:10.552000 31473 torch/_dynamo/convert_frame.py:831] [2/256] To diagnose recompilation issues, see https://pytorch.org/docs/main/torch.compiler_troubleshooting.html.
+# TODO(crcrpar): support delayed scaling. I couldn't manage to make delayed scaling work.
+@dataclass
+class TorchAOFP8Handler:
+    is_fsdp2: bool
+    use_fp8_linear: bool
+    use_fp8_allgather: bool
+    use_torchao_fp8_precompute_float8_dynamic_scale_for_fsdp: bool
+    use_torch_compile: bool
+    fp8_layers: list[torch.nn.Module] = field(
+        init=False,
+        default_factory=list,
+        repr=False,
+    )
+    _sync_float8_amax_and_scale_history: None | Callable[[torch.nn.Module, Sequence[torch.nn.Module]], None] = field(
+        init=False,
+        default=None,
+        repr=False,
+    )
+
+    def __post_init__(self) -> None:
+        if not self.use_fp8_linear:
+            return
+        if torch.cuda.get_device_capability()[0] < 9:
+            raise ValueError(f"torchao float8 requires Hopper but {torch.cuda.get_device_capability()}")
+        self.fp8_linear_config = Float8LinearConfig(
+            cast_config_input=CastConfig(ScalingType.DYNAMIC),
+            cast_config_weight=CastConfig(ScalingType.DYNAMIC),
+            cast_config_grad_output=CastConfig(ScalingType.DYNAMIC),
+            enable_fsdp_float8_all_gather=self.use_fp8_allgather and self.is_fsdp2,
+            enable_pre_and_post_forward=False,
+        )
+        self.precompute_scale = (
+            self.is_fsdp2 and self.use_fp8_allgather and self.use_torchao_fp8_precompute_float8_dynamic_scale_for_fsdp
+        )
+        if self.precompute_scale:
+            warnings.warn("Currently loss goes to nan immediately after first precompute call")
+
+    def convert_model_to_fp8(self, model: torch.nn.Module) -> torch.nn.Module:
+        if not self.use_fp8_linear:
+            return model
+        model = convert_to_float8_training(
+            model,
+            module_filter_fn=lambda _, fqn: "lm_head" != fqn,
+            config=self.fp8_linear_config,
+        )
+        self.fp8_layers = get_float8_layers(model)
+        return model
+
+    def sync_float8_amax_and_scale_history_for_delayed_scaling(self, model: torch.nn.Module) -> None:
+        # NOTE(crcrpar): Delayed scaling is not supported in this script.
+        if False and self.use_delayed_scaling:
+            if self._sync_float8_amax_and_scale_history is None:
+                if self.use_torch_compile:
+                    self._sync_float8_amax_and_scale_history = torch.compile(sync_float8_amax_and_scale_history)
+                else:
+                    self._sync_float8_amax_and_scale_history = sync_float8_amax_and_scale_history
+            self._sync_float8_amax_and_scale_history(model, self.fp8_layers)
+
+    def precompute_fp8_dynamic_scale_for_fsdp(self, model: torch.nn.Module) -> None:
+        if self.use_fp8_linear and self.is_fsdp2 and self.precompute_scale:
+            precompute_float8_dynamic_scale_for_fsdp(model)
 
 
 def configure_optimizers(model, weight_decay, learning_rate, betas, device_type):
@@ -101,6 +184,10 @@ class Benchmark_litGPT:
         warmup_iters: int = 25,
         dump_thunder_traces: bool = False,
         dump_memory_snapshot: bool = False,
+        use_torchao_fp8_linear: bool = False,
+        use_torchao_fp8_allgather: bool = False,
+        # FIXME(crcrpar): loss goes nan after one param update.
+        # use_torchao_fp8_precompute_scale_for_fsdp: bool = False,
     ):
         seed = 1337
         torch.manual_seed(seed)
@@ -134,6 +221,20 @@ class Benchmark_litGPT:
         self.is_thunder_as_torchcompile_backend = False
         self.dump_thunder_traces = dump_thunder_traces
         self.dump_memory_snapshot = dump_memory_snapshot
+
+        if use_torchao_fp8_linear:
+
+            if not torchao_available:
+                raise ValueError("`torchao` is not available")
+            if self.distributed_mode not in ("none", "fsdp2"):
+                raise ValueError(f"torchao fp8 requires {self.distributed_mode=} to be `none` or `fsdp2`")
+        self._torchao_fp8_handler = TorchAOFP8Handler(
+            is_fsdp2=self.distributed_mode == "fsdp2",
+            use_fp8_linear=use_torchao_fp8_linear,
+            use_fp8_allgather=use_torchao_fp8_allgather,
+            use_torchao_fp8_precompute_float8_dynamic_scale_for_fsdp=False,
+            use_torch_compile=self.compile == "inductor",
+        )
 
         # Clarify benchmark assumptions
         if self.sharding_size is not None:
@@ -259,6 +360,7 @@ class Benchmark_litGPT:
         with init_device:
             model = GPT(self.config)
         model.to(dtype=torch.bfloat16)
+        model = self._torchao_fp8_handler.convert_model_to_fp8(model)
         return model
 
     def setup_distributed(self, model):
@@ -390,6 +492,8 @@ class Benchmark_litGPT:
         check_fn = lambda submodule: isinstance(submodule, Block)
         apply_activation_checkpointing(self.model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=check_fn)
 
+    # TODO(crcrpar): Think of apply `torch.compile` or `thunder.jit` per block/module
+    # like https://github.com/pytorch/torchtitan/blob/cfc0f4e/torchtitan/parallelisms/parallelize_llama.py#L275-L284
     def setup_compile(self, model):
         if self.compile == "inductor":
             print("Resetting cache size for torch.compile")
@@ -542,9 +646,13 @@ class Benchmark_litGPT:
             )
             loss.backward()
 
+            self._torchao_fp8_handler.sync_float8_amax_and_scale_history_for_delayed_scaling(self.model)
+
             # Simple Gradient Accumulation Implementation
             self.optimizer.step()
             self.optimizer.zero_grad(set_to_none=True)
+
+            self._torchao_fp8_handler.precompute_fp8_dynamic_scale_for_fsdp(self.model)
 
             if self.nsys_enabled and i == self.profiler_stop and global_rank in [0, None]:
                 print("=====Stop NSYS Profiling======")
