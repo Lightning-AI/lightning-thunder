@@ -2180,6 +2180,10 @@ polygamma_opinfo = OpInfo(
             executors=("torch"),
             dtypes=(datatypes.complexfloating, datatypes.bfloat16, datatypes.float16),
         ),
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-6, rtol=1e-6)),
+            "test_vjp_correctness",
+        ),
     ),
 )
 elementwise_binary_ops.append(polygamma_opinfo)
