@@ -393,8 +393,8 @@ def order_proxies(bsyms: Sequence[BoundSymbol]) -> dict[str, int]:
             if len(bsym.subsymbols) > 0:
                 process_bound_symbols(bsym.subsymbols)
             # should kwargs be sorted by name?
-            for p in tree_iter((bsym.args, bsym.kwargs, bsym._hidden_dependencies, bsym.output)):
-                if isinstance(p, thunder.Proxy) and p.name not in proxy_order:
+            for p in tree_iter((bsym.flat_proxy_args, bsym.flat_proxy_outs)):
+                if p.name not in proxy_order:
                     counter += 1
                     proxy_order[p.name] = counter
 

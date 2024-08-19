@@ -366,9 +366,9 @@ class BoundSymbol(BoundSymbolInterface):
     _object_ctx: dict = field(default_factory=dict)
     _executor: None | Any = None
 
-    # e.g. prims.copy_'s must happen before prims.python_return,
-    # not just the value it returns
-    _hidden_dependencies: Sequence[BoundSymbol] = ()
+    # Only used by prims.python_return
+    # prims.copy_'s must be placed before the return statement
+    _copy_outputs_before_return: Sequence[BoundSymbol] = ()
 
     # The line number of the bound symbol
     # NOTE This is only intended for internal use, and should be set explicitly on all BoundSymbols
@@ -399,7 +399,7 @@ class BoundSymbol(BoundSymbolInterface):
             "_import_ctx": self._import_ctx,
             "_object_ctx": self._object_ctx,
             "_executor": self._executor,
-            "_hidden_dependencies": self._hidden_dependencies,
+            "_copy_outputs_before_return": self._copy_outputs_before_return,
         }
 
         self_kwargs.update(kwargs)
@@ -487,12 +487,12 @@ class BoundSymbol(BoundSymbolInterface):
 
         return self.from_bsym(args=nargs, kwargs=nkwargs, output=new_output, subsymbols=subsymbols)
 
-    # NOTE Making these cached properties relies on the assumption that the inputs to and output of a BoundSymbol
-    #   are immutable
+    # Only used by prims.python_return
+    # NOTE Making these cached properties relies on the assumption that the inputs to come before the return statement
 
     @functools.cached_property
     def flat_args_and_spec(self):
-        return tree_flatten_with_dataclass((self.args, self.kwargs, self._hidden_dependencies))
+        return tree_flatten_with_dataclass((self.args, self.kwargs, self._copy_outputs_before_return))
 
     @functools.cached_property
     def flat_args(self):
