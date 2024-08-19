@@ -182,7 +182,8 @@ class FSDPTransform(Transform):
                 for nn in shared_names[n]:
                     device_adjustments[nn] = self.device
             elif p.device != self.device:
-                new_p = torch.nn.Parameter(p.to(device=self.device), requires_grad=p.requires_grad)
+                with torch.no_grad():
+                    new_p = torch.nn.Parameter(p.to(device=self.device), requires_grad=p.requires_grad)
                 for nn in shared_names[n]:
                     thunder_model._overrides_parameters[nn] = new_p
                     device_adjustments[nn] = self.device
@@ -190,7 +191,7 @@ class FSDPTransform(Transform):
         for n, b in thunder_model.named_buffers():
             try:
                 orig_b = thunder_model._model.get_buffer(n)
-            except AttributeError as _:
+            except AttributeError:
                 orig_b = None
             if b.is_meta:
                 is_fully_materialized = False
