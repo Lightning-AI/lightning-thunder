@@ -178,7 +178,7 @@ class FSDPTransform(Transform):
                 p._thunder_device = self.device
                 if orig_p is not None:
                     orig_p._thunder_device = self.device
-                # TODO: check if devic_adjustments are still needed
+                # TODO: check if device_adjustments are still needed
                 for n2 in shared_names[n]:
                     device_adjustments[n2] = self.device
             elif p.device != self.device:
