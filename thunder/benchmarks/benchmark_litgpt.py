@@ -79,7 +79,7 @@ def is_transformer_engine(low_precision_mode: str) -> bool:
     return low_precision_mode == "fp8-delayed-te"
 
 
-# FIXME(crcrpar): Recompilation warning
+# FIXME(crcrpar): Recompilation warning after 2 iterations
 #     [rank0]:[rank0]:W0819 05:54:10.552000 31473 torch/_dynamo/convert_frame.py:831] [2/256] torch._dynamo hit config.accumulated_cache_size_limit (256)
 #     [rank0]:[rank0]:W0819 05:54:10.552000 31473 torch/_dynamo/convert_frame.py:831] [2/256]    function: 'torch_dynamo_resume_in_fsdp_hook_wrapper_at_66' (/usr/local/lib/python3.10/dist-packages/torch/distributed/_composable/fsdp/_fsdp_state.py:66)
 #     [rank0]:[rank0]:W0819 05:54:10.552000 31473 torch/_dynamo/convert_frame.py:831] [2/256]    last reason: Unable to find recompilation reasons
@@ -105,7 +105,8 @@ class TorchAOFP8Handler:
     )
 
     def __post_init__(self) -> None:
-        if not self.use_fp8_linear:
+        self._enabled = self.use_fp8_linear
+        if not self._enabled:
             return
         if torch.cuda.get_device_capability()[0] < 9:
             raise ValueError(f"torchao float8 requires Hopper but {torch.cuda.get_device_capability()}")
@@ -119,11 +120,9 @@ class TorchAOFP8Handler:
         self.precompute_scale = (
             self.is_fsdp2 and self.use_fp8_allgather and self.use_torchao_fp8_precompute_float8_dynamic_scale_for_fsdp
         )
-        if self.precompute_scale:
-            warnings.warn("Currently loss goes to nan immediately after first precompute call")
 
     def convert_model_to_fp8(self, model: torch.nn.Module) -> torch.nn.Module:
-        if not self.use_fp8_linear:
+        if not self._enabled:
             return model
         model = convert_to_float8_training(
             model,
@@ -135,7 +134,7 @@ class TorchAOFP8Handler:
 
     def sync_float8_amax_and_scale_history_for_delayed_scaling(self, model: torch.nn.Module) -> None:
         # NOTE(crcrpar): Delayed scaling is not supported in this script.
-        if False and self.use_delayed_scaling:
+        if False:
             if self._sync_float8_amax_and_scale_history is None:
                 if self.use_torch_compile:
                     self._sync_float8_amax_and_scale_history = torch.compile(sync_float8_amax_and_scale_history)
@@ -144,7 +143,7 @@ class TorchAOFP8Handler:
             self._sync_float8_amax_and_scale_history(model, self.fp8_layers)
 
     def precompute_fp8_dynamic_scale_for_fsdp(self, model: torch.nn.Module) -> None:
-        if self.use_fp8_linear and self.is_fsdp2 and self.precompute_scale:
+        if self._enabled and self.precompute_scale:
             precompute_float8_dynamic_scale_for_fsdp(model)
 
 
@@ -186,8 +185,7 @@ class Benchmark_litGPT:
         dump_memory_snapshot: bool = False,
         use_torchao_fp8_linear: bool = False,
         use_torchao_fp8_allgather: bool = False,
-        # FIXME(crcrpar): loss goes nan after one param update.
-        # use_torchao_fp8_precompute_scale_for_fsdp: bool = False,
+        use_torchao_fp8_precompute_scale_for_fsdp: bool = False,
     ):
         seed = 1337
         torch.manual_seed(seed)
@@ -232,7 +230,7 @@ class Benchmark_litGPT:
             is_fsdp2=self.distributed_mode == "fsdp2",
             use_fp8_linear=use_torchao_fp8_linear,
             use_fp8_allgather=use_torchao_fp8_allgather,
-            use_torchao_fp8_precompute_float8_dynamic_scale_for_fsdp=False,
+            use_torchao_fp8_precompute_float8_dynamic_scale_for_fsdp=use_torchao_fp8_precompute_scale_for_fsdp,
             use_torch_compile=self.compile == "inductor",
         )
 
@@ -359,7 +357,10 @@ class Benchmark_litGPT:
             init_device = torch.device("meta")
         with init_device:
             model = GPT(self.config)
-        model.to(dtype=torch.bfloat16)
+        if not getattr(self._torchao_fp8_handler, "_enabled", False):
+            model.to(dtype=torch.bfloat16)
+        else:
+            warnings.warn("Parameters are kept in float32 for torchao precompute fp8 dynamic scaling for fsdp2")
         model = self._torchao_fp8_handler.convert_model_to_fp8(model)
         return model
 
@@ -421,6 +422,7 @@ class Benchmark_litGPT:
 
                 reshard_after_forward: bool = self.shard_mode == "zero3"
 
+                # for transformer_block in model.transformer.modules():
                 for transformer_block in model.modules():
                     if isinstance(transformer_block, Block):
                         fully_shard(
