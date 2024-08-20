@@ -572,7 +572,7 @@ def apply_functionalization_to_canonicalized_trace(
                 copy_outputs.append(copy_bsym.flat_proxy_outs[0])
 
     return_bsym = new_bsyms[-1].from_bsym_swap_proxies(swap_map_for_return)
-    return_bsym._hidden_dependencies += tuple(copy_outputs)
+    return_bsym._additional_dependencies += tuple(copy_outputs)
     functionalized_bsyms.append(return_bsym)
 
     functionalized_computation_trace.bound_symbols = functionalized_bsyms

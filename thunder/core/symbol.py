@@ -366,9 +366,12 @@ class BoundSymbol(BoundSymbolInterface):
     _object_ctx: dict = field(default_factory=dict)
     _executor: None | Any = None
 
-    # Only used by prims.python_return
-    # prims.copy_'s must be placed before the return statement
-    _copy_outputs_before_return: Sequence[BoundSymbol] = ()
+    # BoundSymbols may later be reordered and grouped into regions for fusion.
+    # This reordering consideres bsym.flat_proxy_args as bsym's dependencies and place them before bsym itself.
+    # This includes bsym._additional_dependencies in addition to bsym.args and kwargs.
+    # e.g. functionalization registeres prims.copy_'s output as prims.python_return's additional dependency
+    # so that the copy happens before returning.
+    _additional_dependencies: Sequence[BoundSymbol] = ()
 
     # The line number of the bound symbol
     # NOTE This is only intended for internal use, and should be set explicitly on all BoundSymbols
@@ -399,7 +402,7 @@ class BoundSymbol(BoundSymbolInterface):
             "_import_ctx": self._import_ctx,
             "_object_ctx": self._object_ctx,
             "_executor": self._executor,
-            "_copy_outputs_before_return": self._copy_outputs_before_return,
+            "_additional_dependencies": self._additional_dependencies,
         }
 
         self_kwargs.update(kwargs)
