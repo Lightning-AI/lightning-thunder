@@ -2,13 +2,11 @@ import math
 from looseversion import LooseVersion
 
 import torch
-from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
 
 import thunder.core.dtypes as dtypes
 from thunder.core.proxies import Proxy, TensorProxy
 import thunder.core.utils as utils
 import thunder.core.devices as devices
-from thunder.core.compile_data import get_compile_option
 
 import thunder.torch as ltorch
 from thunder.torch import TensorLike
@@ -22,15 +20,15 @@ from thunder.extend import OperatorExecutor, register_executor
 
 from enum import Enum
 
+from thunder.executors.utils import (
+    _input_dtype_check_fused_scaled_dot_product_attention,
+    _input_shape_check_fused_scaled_dot_product_attention,
+    _fused_sdp_choice,
+    SpdaBackend,
+)
+
 sdpa_ex: OperatorExecutor = OperatorExecutor("sdpa", version="0.1")
 register_executor(sdpa_ex)
-
-
-class SpdaBackend(Enum):
-    ERROR = -1
-    MATH = 0
-    FLASH_ATTENTION = 1
-    MEMORY_EFFICIENT = 2
 
 
 # Both flash attention and memory efficient sdpa require that the last stride be one.
@@ -107,73 +105,6 @@ def _attention_mask_memory_efficient_helper(attn_mask: None | torch.Tensor, quer
         return padded_attn_mask[:, :, :, 0:key_seq_len]
     else:
         return expanded_attn_mask.contiguous()
-
-
-# TODO These checks should be converted to compile-time checks using a checker function
-# This helper function checks that the shape of input tensors are supported by fused sdpa implementation.
-def _input_shape_check_fused_scaled_dot_product_attention(
-    query: TensorLike, key: TensorLike, value: TensorLike, attn_mask: None | TensorLike
-):
-    # Restrict input tensors to 4 dimension
-    utils.check(
-        query.ndim == 4,
-        lambda: f"grad_forward_sdpa: Expected query tensor to have 4 dimension, but it has {query.ndim}.",
-    )
-    utils.check(
-        key.ndim == 4,
-        lambda: f"grad_forward_sdpa: Expected key tensor to have 4 dimension, but it has {key.ndim}.",
-    )
-    utils.check(
-        value.ndim == 4,
-        lambda: f"grad_forward_sdpa: Expected value tensor to have 4 dimension, but it has {value.ndim}.",
-    )
-    utils.check(
-        attn_mask is None or attn_mask.ndim == 4,
-        lambda: f"grad_forward_sdpa: Expected attn_mask tensor to have 4 dimension, but it has {attn_mask.ndim}.",
-    )
-
-    # query (batch_size, num_heads, query_seq_len, E)
-    # key (batch_size, num_heads, key_seq_len, E)
-    # value (batch_size, num_heads, key_seq_len, Ev)
-    # attn_mask (batch_size, num_heads, query_seq_len, key_seq_len)
-    inputs = [query, key, value]
-    if attn_mask is not None:
-        inputs.append(attn_mask)
-
-    # NOTE aten::scaled_dot_product_efficient_attention does not support broadcastable batch size.
-    utils.check(
-        all(a.shape[0] == inputs[0].shape[0] for a in inputs),
-        lambda: "grad_forward_sdpa: Expected all inputs to have same batch_size.",
-    )
-
-    # Check for the same number of heads
-    utils.check(
-        all(a.shape[1] == 1 or a.shape[1] == inputs[0].shape[1] for a in inputs),
-        lambda: "grad_forward_sdpa: Expected all inputs to have same number of attention heads or a broadcastable dimension.",
-    )
-
-
-# TODO These checks should be converted to compile-time checks using a checker function
-# This helper function checks that the dtypes of input tensors are supported by fused sdpa implementation.
-def _input_dtype_check_fused_scaled_dot_product_attention(
-    query: TensorLike,
-    key: TensorLike,
-    value: TensorLike,
-    attn_mask: None | TensorLike,
-    supported_dtypes: tuple[dtypes.dtype, ...],
-):
-    utils.check(
-        query.dtype in supported_dtypes,
-        lambda: f"grad_forward_sdpa: Only {supported_dtypes} dtypes are supported, but query has {query.dtype}.",
-    )
-    utils.check(
-        key.dtype in supported_dtypes,
-        lambda: f"grad_forward_sdpa: Only {supported_dtypes} dtypes are supported, but key has {key.dtype}.",
-    )
-    utils.check(
-        value.dtype in supported_dtypes,
-        lambda: f"grad_forward_sdpa: Only {supported_dtypes} dtypes are supported, but value has {value.dtype}.",
-    )
 
 
 # This helper function maps to aten::_scaled_dot_product_efficient_attention function.
@@ -588,99 +519,6 @@ def _scaled_dot_product_attention_grad(
         if attn_mask is not None:
             put_grad(attn_mask, grad_attn_mask)
     return primal
-
-
-# This helper function converts Thunder Proxy to PyTorch Meta Tensor
-def _convert_to_meta_tensor(a: None | TensorProxy) -> None | torch.Tensor:
-    from thunder.torch import _thunder_to_torch_dtype_map
-
-    if a is None:
-        return None
-    return torch.empty(
-        a.shape,
-        dtype=_thunder_to_torch_dtype_map[a.dtype],
-        requires_grad=a.requires_grad,
-        device="meta",
-    )
-
-
-# This helper function converts PyTorch meta tensor to FakeTensor, which
-# models stride order for contiguity checks.
-def _convert_to_fake_tensor(mode: FakeTensorMode, a: None | torch.Tensor) -> None | FakeTensor:
-    if a is None:
-        return None
-    return FakeTensor(mode, a, device="cuda")
-
-
-# Convert input tensors represented as Thunder Proxy to PyTorch FakeTensor.
-# Determine which fused sdpa kernel.
-def _fused_sdp_choice(
-    query: Proxy,
-    key: Proxy,
-    value: Proxy,
-    attn_mask: None | Proxy,
-    dropout_p: float = 0.0,
-    is_causal: bool = False,
-    scale: None | float = None,
-) -> int:
-    input_tensors = (query, key, value, attn_mask)
-    meta_input_tensors = list(map(_convert_to_meta_tensor, input_tensors))
-    with FakeTensorMode() as mode:
-        fake_query, fake_key, fake_value, fake_attn_mask = list(
-            map(lambda a: _convert_to_fake_tensor(mode, a), meta_input_tensors)
-        )
-
-    import thunder
-
-    if isinstance(is_causal, thunder.core.proxies.IntegerProxy):
-        is_causal = is_causal.value
-
-    if LooseVersion(torch.__version__) < LooseVersion("2.2.0"):
-        # Figure out which SDPA to use. There are performance cliffs to the
-        # various implementations, and this makes the decision cognizant of
-        # those cliffs.
-        backend = torch._fused_sdp_choice(
-            fake_query,
-            fake_key,
-            fake_value,
-            fake_attn_mask,
-            dropout_p,
-            is_causal,
-            scale=scale,
-        )
-        return SpdaBackend(backend)
-    else:
-        from torch.backends.cuda import (
-            SDPAParams,
-            can_use_efficient_attention,
-            can_use_flash_attention,
-            flash_sdp_enabled,
-            math_sdp_enabled,
-            mem_efficient_sdp_enabled,
-        )
-
-        args = []
-        if hasattr(SDPAParams, "enable_gqa"):
-            args.append(False)
-
-        sdp_params = SDPAParams(fake_query, fake_key, fake_value, fake_attn_mask, dropout_p, is_causal, *args)
-
-        enable_debug: None | bool = get_compile_option(
-            "sdpa_debug", "Enables sdpa backend warning messages when a specific kernel is unavailable."
-        )
-        # Set default value.
-        if enable_debug is None:
-            enable_debug = False
-        assert isinstance(enable_debug, bool)
-
-        if flash_sdp_enabled() and can_use_flash_attention(sdp_params, enable_debug):
-            return SpdaBackend.FLASH_ATTENTION
-        elif mem_efficient_sdp_enabled() and can_use_efficient_attention(sdp_params, enable_debug):
-            return SpdaBackend.MEMORY_EFFICIENT
-        elif math_sdp_enabled():
-            return SpdaBackend.MATH
-        else:
-            return SpdaBackend.ERROR
 
 
 def _scaled_dot_product_attention_checker(
