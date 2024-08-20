@@ -207,19 +207,25 @@ class FSDPTransform(Transform):
                     device_adjustments[n2] = self.device
 
         # Broadcast parameters if requested
+        # (todos shared with thunder/distributed/_init__.py)
+        # TODO Make these broadcast asyncs
+        # TODO Perform up to two broadcasts at a time
+        # See issue "Update ddp to use async broadcasts"
+        # TODO "Bucket" small tensors together before broadcasting
         if self.broadcast_from is not None:
             if not is_fully_materialized:
                 # Note: we could move broadcasting into its own transform coming
                 #       after materialization (in thunder.distributed.fsdp) to
                 #       support this, if it is useful.
                 raise RuntimeError("cannot broadcast from non-materialized model")
-            for pn, p in chain(thunder_model.named_parameters(), thunder_model.named_buffers()):
-                tdist.broadcast(
-                    p,
-                    src=self.broadcast_from,
-                    group=self.process_group,
-                    async_op=False,
-                )
+            with torch.no_grad():
+                for pn, p in chain(thunder_model.named_parameters(), thunder_model.named_buffers()):
+                    tdist.broadcast(
+                        p,
+                        src=self.broadcast_from,
+                        group=self.process_group,
+                        async_op=False,
+                    )
 
         # do the actual sharding. Note that meta tensors will give sharded meta tensors.
         for pn, p in list(thunder_model.named_parameters()):
