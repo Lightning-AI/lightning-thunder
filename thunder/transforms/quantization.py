@@ -104,10 +104,22 @@ class BitsAndBytesLinearQuant4bit(Transform):
 
     def transform_module(self, model: thunder.ThunderModule):
         self.thunder_module = model
+        shared_names = model._get_shared_names()
+        processed_names = set()
 
         def convert_linear_submodule(tm, name):
             self.quantized_submodule_names.add(name)
             weight_name = f"{name}.weight"
+            processed_copies = shared_names[weight_name] & processed_names
+            if processed_copies:
+                copy_name = next(iter(processed_copies))
+                self.quant_states[weight_name] = self.quant_states[copy_name]
+                tm._overrides_parameters[weight_name] = tm._overrides_parameters[copy_name]
+                tm._overrides_parameters[f"{weight_name}.absmax"] = tm._overrides_parameters[f"{copy_name}.absmax"]
+                tm._overrides_parameters[f"{weight_name}.code"] = tm._overrides_parameters[f"{copy_name}.code"]
+                processed_names.add(weight_name)
+                return
+
             w = tm.get_parameter(weight_name)
             # TODO: double quant support
 
@@ -125,8 +137,9 @@ class BitsAndBytesLinearQuant4bit(Transform):
                 "absmax.shape": tuple(qs.absmax.shape),
                 "code.dtype": qs.code.dtype,
                 "code.shape": tuple(qs.code.shape),
-                "device": getattr(w, "__thunder_device", w.device),
+                "device": getattr(w, "_thunder_device", w.device),
             }
+            processed_names.add(weight_name)
 
         for n, submodule in model._model.named_modules():
             if isinstance(submodule, torch.nn.Linear):
@@ -200,14 +213,14 @@ class BitsAndBytesLinearQuant4bit(Transform):
                         name=f"{get_param.output.name}_absmax",
                         shape=qs["absmax.shape"],
                         dtype=thunder.dtypes.to_dtype(qs["absmax.dtype"]),
-                        device=thunder.devices.to_device(qs["device"]),
+                        device=thunder.devices.to_device(device),
                         requires_grad=False,
                     )
                     proxy_code = thunder.TensorProxy(
                         name=f"{get_param.output.name}_code",
                         shape=qs["code.shape"],
                         dtype=thunder.dtypes.to_dtype(qs["code.dtype"]),
-                        device=thunder.devices.to_device(qs["device"]),
+                        device=thunder.devices.to_device(device),
                         requires_grad=False,
                     )
                     # get_param.sym = unpack_buffer/parameter as needed

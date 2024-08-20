@@ -133,6 +133,9 @@ class Device(metaclass=DeviceMeta):
         # note: self.devicetype == DeviceType.CPU, .META
         return devicetype_string(self.devicetype)
 
+    def __reduce__(self):
+        return (Device, (self.device_str(),))
+
 
 cpu = Device(DeviceType.CPU, None)
 

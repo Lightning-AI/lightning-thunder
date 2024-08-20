@@ -1654,11 +1654,11 @@ def test_transforms_identity(executor, device, _):
 def test_transforms_vmap_axis_size(executor, device, _):
     from thunder.core.transforms import vmap
 
-    actual = executor.make_callable_legacy(vmap(lambda: 2, axis_size=4))()
+    actual = executor.make_callable(vmap(lambda: 2, axis_size=4), disable_torch_autograd=True)()
     expected = torch.full((4,), 2, device="cpu")
     assert_close(actual, expected)
 
-    actual = executor.make_callable_legacy(vmap(lambda x: x, axis_size=4))(2)
+    actual = executor.make_callable(vmap(lambda x: x, axis_size=4), disable_torch_autograd=True)(2)
     assert_close(actual, expected)
 
 
@@ -2802,6 +2802,12 @@ def test_serialize_trace():
 
     assert str(pickle.loads(pickle.dumps(prologue_trace))) == str(prologue_trace)
 
+    # check that these are looked up rather than duplicated
+    device = thunder.devices.Device("cpu")
+    assert pickle.loads(pickle.dumps(device)) is device
+    fp32 = thunder.dtypes.float32
+    assert pickle.loads(pickle.dumps(fp32)) is fp32
+
 
 @pytest.mark.parametrize("requires_grad", (True, False))
 def test_dataclass_output(requires_grad):
@@ -2892,7 +2898,8 @@ def test_proxy_repr():
 
 def test_type_string():
     def fn(x):
-        return 2 * x
+        result = 2 * x
+        return result
 
     jfn = thunder.jit(fn)
 
@@ -3143,3 +3150,24 @@ def test_bound_symbol_sort_stability():
     f0 = fusions[0]
     for f in fusions[1:]:
         assert f0 == f
+
+
+def test_state_dict():
+    def make_model():
+        return torch.nn.Sequential(
+            torch.nn.Linear(3, 4),
+            torch.nn.GELU(),
+            torch.nn.Linear(4, 3),
+        )
+
+    m1 = make_model()
+    m2 = make_model()
+
+    jm1 = thunder.jit(m1)
+    jm2 = thunder.jit(m2)
+
+    inp = torch.randn(2, 3)
+
+    jm2.load_state_dict(jm1.state_dict())
+
+    torch.testing.assert_close(jm1(inp), jm2(inp))
