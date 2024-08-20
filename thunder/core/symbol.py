@@ -497,8 +497,8 @@ class BoundSymbol(BoundSymbolInterface):
             subsymbols=subsymbols,
         )
 
-    # Only used by prims.python_return
-    # NOTE Making these cached properties relies on the assumption that the inputs to come before the return statement
+    # NOTE Making these cached properties relies on the assumption that the inputs to and output of a BoundSymbol
+    #   are immutable
 
     @functools.cached_property
     def flat_args_and_spec(self):
