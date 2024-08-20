@@ -22,9 +22,10 @@ import thunder.core.dtypes as dtypes
 import thunder.executors as executors
 import thunder.torch as ltorch
 from thunder.core.transforms import grad, clear_grads, populate_grads
-from thunder.executors.apex_entropyex import apex_ex, apex_available
+from thunder.executors.apexex import apex_ex, apex_entropy_available
 from thunder.executors.cudnn_layernormex import cudnn_layernorm_ex
 from thunder.executors.cudnnex import cudnn_ex, cudnn_available
+from thunder.executors.transformer_engineex import transformer_engine_ex, TE_AVAILABLE
 from thunder.executors.sdpaex import sdpa_ex
 from thunder.executors.torch_compile import torch_compile_cat_ex, torch_compile_ex
 from thunder.tests import nanogpt_model, hf_bart_self_attn, litgpt_model
@@ -716,7 +717,7 @@ def thunder_torch_compile_executor(fn: Callable) -> Callable:
 
 thunder_apex_executor: None | Callable = None
 thunder_apex_nvfuser_executor: None | Callable = None
-if apex_available():
+if apex_entropy_available():
 
     def thunder_apex_executor(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -748,6 +749,14 @@ if cudnn_available():
     def thunder_cudnn_layer_norm_nvfuser_executor(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
         return thunder.jit(fn, executors=[cudnn_layernorm_ex, thunder.nvfuser_executor])
+
+
+thunder_transformerengine_executor: None | Callable = None
+
+if TE_AVAILABLE:
+
+    def thunder_transformerengine_executor(fn: Callable):
+        return thunder.jit(fn, executors=(transformer_engine_ex,) + thunder.get_default_executors())
 
 
 def thunder_sdpa_executor(fn: Callable) -> Callable:
@@ -908,7 +917,7 @@ def default_thunder_apex_executor(fn: Callable) -> Callable:
     APEX_CROSS_ENTROPY_AVAILABLE = package_available("xentropy_cuda")
     assert APEX_CROSS_ENTROPY_AVAILABLE, "Trying to benchmark with the thunder+apex executor, but apex is not available"
 
-    from thunder.executors.apex_entropyex import register_apex_entropyex
+    from thunder.executors.apex_entropyex_impl import register_apex_entropyex
 
     register_apex_entropyex(add_to_default_executors=False)
 
@@ -939,7 +948,7 @@ def default_thunder_cudagraphs_executor(fn: Callable) -> Callable:
     # Adds the Apex executor, if available
     APEX_CROSS_ENTROPY_AVAILABLE = package_available("xentropy_cuda")
     if APEX_CROSS_ENTROPY_AVAILABLE:
-        from thunder.executors.apex_entropyex import register_apex_entropyex
+        from thunder.executors.apex_entropyex_impl import register_apex_entropyex
 
         register_apex_entropyex(add_to_default_executors=False)
         executors_list.append("apex_xentropy")

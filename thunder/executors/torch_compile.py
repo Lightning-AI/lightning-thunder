@@ -7,11 +7,12 @@ import torch
 from lightning_utilities import compare_version
 
 from thunder.core import prims, utils
-from thunder.core.proxies import Proxy, unvariableify, Variable
+from thunder.core.proxies import Proxy, TensorProxy, unvariableify, Variable
 from thunder.core.rematerialization import rematerialize
 from thunder.core.symbol import BoundSymbol, Symbol
 from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
 from thunder.core.transform_common import dce
+from thunder.core.pytree import tree_flatten
 from thunder.executors.passes import update_fusion_call_ctx
 from thunder.executors.utils import Region
 from thunder.extend import FusionExecutor, register_executor, ImplInfo
@@ -190,6 +191,16 @@ class TorchCompileExecutor(FusionExecutor):
 from thunder.executors.torchex import ex as pytorch_ex
 
 
+def cuda_device_checker(*args, **kwargs):
+    # We only want to compile if all the TensorProxy arguments are on the GPU
+    flat_args, _ = tree_flatten((args, kwargs))
+    flat_tensorproxy_args = [x for x in flat_args if isinstance(x, TensorProxy)]
+    for arg in flat_tensorproxy_args:
+        if arg.device.type != "cuda":
+            return False
+    return True
+
+
 # NOTE: [torch_compile_cat_ex vs torch_compile_ex]
 # The former only relies on `torch.compile` for the operators where it shines the most and is meant to be used
 # together with the nvfuser executor. Its current goal is only to fuse RoPE but the set of ops fused will change as each
@@ -200,14 +211,13 @@ from thunder.executors.torchex import ex as pytorch_ex
 required_ops = {
     "torch.cat",
     prims.cat.id,
-    prims.pad.id,
-    prims.slice_prim.id,
 }
 torch_compile_cat_ex = TorchCompileExecutor(name="torchcompile_cat", required_ops=required_ops)
 register_executor(torch_compile_cat_ex)
 # TODO: Carefully enable more ops checking that they do improve performance
 supported_ops = {
     "torch.split",
+    "torch.sum",
     prims.add.id,
     prims.broadcast_in_dim.id,
     prims.cat.id,
@@ -220,7 +230,9 @@ supported_ops = {
     prims.slice_prim.id,
     prims.transpose.id,
 }
-torch_compile_cat_ex._implmap = {op: ImplInfo() for op in pytorch_ex.implmap if op in supported_ops}
+torch_compile_cat_ex._implmap = {
+    op: ImplInfo(checker=cuda_device_checker) for op in pytorch_ex.implmap if op in supported_ops
+}
 
 
 torch_compile_ex = TorchCompileExecutor(name="torchcompile")

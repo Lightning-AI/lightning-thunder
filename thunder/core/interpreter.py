@@ -1106,6 +1106,7 @@ class InterpreterStack:
 class InterpreterFrame:
     code: CodeType
     qualname: str
+    module: str
     globals: dict[str, Any] | WrappedValue
     # Name storage, for LOAD_NAME, STORE_NAME, and DELETE_NAME
     # TODO Is this the best way to model this?
@@ -1463,8 +1464,12 @@ def eval_exec_helper(
         res = _interpret_call(set_builtins, globals, bd)
         assert res is not INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
+    module = runtimectx.peek_frame_stack().module
+
     # execed code has no LOCALSPLUS but only NAMES...
-    frame = InterpreterFrame(code=ucode, localsplus=[], globals=globals, names=locals, qualname="<string>")
+    frame = InterpreterFrame(
+        code=ucode, localsplus=[], globals=globals, names=locals, qualname="<string>", module=module
+    )
 
     if ucode.co_flags & (inspect.CO_GENERATOR | inspect.CO_COROUTINE | inspect.CO_ASYNC_GENERATOR):
         # we should split the preparation from _setup_frame_and_run_python_function
@@ -2925,8 +2930,13 @@ class INTERPRETER_CALLBACKS(enum.Enum):
     #   The returned value is stored instead of the original value
     STORE_DEREF_CALLBACK = enum.auto()
 
+    # Called when storing into a local variable
+    #   (orig_value: Any | WrappedValue, name: str) -> Any
+    #   The returned value is stored instead of the original value
+    STORE_FAST_CALLBACK = enum.auto()
+
     # Called when a locals (in localsplus) is created
-    #   (name: str, value: Any, /) -> Any
+    #   (name: str, value: Any, /, *, module: str) -> Any
     #   The returned value is used in place of the original value
     LOCAL_CALLBACK = enum.auto()
 
@@ -3053,6 +3063,18 @@ def global_callback(
         return cb(orig_val, name)
 
 
+def store_fast_callback(value: Any, name: str) -> Any:
+    assert isinstance(name, str)
+
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
+    cb: None | Callable = ctx.callback(INTERPRETER_CALLBACKS.STORE_FAST_CALLBACK)
+
+    if cb is None:
+        return value
+
+    return cb(value, name)
+
+
 def store_deref_callback(value: Any, name: str, co_cellvars: tuple[str], co_freevars: tuple[str]) -> Any:
     assert isinstance(name, str)
     assert isinstance(co_cellvars, tuple)
@@ -3091,7 +3113,7 @@ def load_deref_callback(value: Any, name: str):
     return cb(value, name)
 
 
-def local_callback(name: str, value: Any, /) -> Any:
+def local_callback(name: str, value: Any, /, *, module: str) -> Any:
     assert isinstance(name, str)
 
     ctx: InterpreterCompileCtx = get_interpretercompilectx()
@@ -3100,7 +3122,7 @@ def local_callback(name: str, value: Any, /) -> Any:
     if cb is None:
         return value
 
-    return cb(name, value)
+    return cb(name, value, module=module)
 
 
 def check_and_append(stack, val):
@@ -4914,6 +4936,9 @@ def _make_cell_handler(inst: dis.Instruction, /, frame: InterpreterFrame, **kwar
     assert i >= 0 and i < len(frame.localsplus)
     val = frame.localsplus[i]
 
+    if not isinstance(val, Py_NULL):
+        val = store_deref_callback(val, inst.argval, frame.code.co_cellvars, frame.code.co_freevars)
+
     if isinstance(val, Py_NULL):
         # empty local variable slots (Py_NULL()) produce an empty cell
         c = _interpret_call(CellType)
@@ -5847,6 +5872,9 @@ def _store_fast_handler(
     var_num: int = inst.arg
 
     name: str = co.co_varnames[var_num]
+
+    tos = store_fast_callback(tos, name)
+
     frame.localsplus[var_num] = tos
 
 
@@ -6654,6 +6682,7 @@ def _setup_frame_and_run_python_function(
 
     # And that's it! We have all local vars in locals_dict.
 
+    module: str = fn.__module__
     # in Python 3.10: local vars is (var_names, co_cellvars, co_freevars), also the cellvars/freevars are set up on call
     # in Python 3.11+, these are not separated and cells will be set up by the MAKE_CELL instruction
     # in Thunder, we adopt the Python 3.11 way of allocating a single array for all localplus vars,
@@ -6675,7 +6704,7 @@ def _setup_frame_and_run_python_function(
         assert len(code.co_varnames) == code.co_nlocals
         for n in code.co_varnames:
             local = locals_dict.get(n, Py_NULL())
-            local = local_callback(n, local)
+            local = local_callback(n, local, module=module)
             localsplus.append(local)
             # NOTE Updates locals_dict on Python 3.10, so co_cellvars has the same replacements
             #   as localsplus does (this is not necessary on Python 3.11, because there cellvars are
@@ -6696,7 +6725,7 @@ def _setup_frame_and_run_python_function(
         assert len(code.co_varnames) == code.co_nlocals
         for n in code.co_varnames:
             local = locals_dict.get(n, Py_NULL())
-            local = local_callback(n, local)
+            local = local_callback(n, local, module=module)
             localsplus.append(local)
         for n in code.co_cellvars:
             # those in locals_dict will use that index but will
@@ -6720,7 +6749,12 @@ def _setup_frame_and_run_python_function(
 
     # Creates the current ready to run stack frame for the current function
     frame = InterpreterFrame(
-        code=code, localsplus=localsplus, globals=frame_globals, names=wrap_const({}), qualname=fn.__qualname__
+        code=code,
+        localsplus=localsplus,
+        globals=frame_globals,
+        names=wrap_const({}),
+        qualname=fn.__qualname__,
+        module=module,
     )
 
     # Python 3.10 deals with creating the generator on call,

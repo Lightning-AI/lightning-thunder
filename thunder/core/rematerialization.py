@@ -54,7 +54,7 @@ def find_external_producer_outputs(
         # to see if the output is used by other consumers.
         global_consumers = proxy_to_consumers.get(out, tuple())
         global_consumers = tuple(
-            x for x in global_consumers if x.sym.name != "del" and x not in chain((consumer,), next_consumers)
+            x for x in global_consumers if x.sym is not prims.python_del and x not in chain((consumer,), next_consumers)
         )
 
         # If the output is used by other global consumers, it's not rematerializable.

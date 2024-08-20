@@ -89,6 +89,7 @@ class Graph:
         # as it appears to be far off from being universal.
         # We use indices as hash values instead.
         bsym_id_to_node_map: list[int] = []
+        copy_nodes: list[Node] = []
         for bsym_id, bsym in enumerate(trace.bound_symbols):
             node = Node(bsym_id, [bsym], [bsym_id], bsym_id, bsym_id)
             bsym_id_to_node_map.append(node)
@@ -99,10 +100,13 @@ class Graph:
                     lambda: f"Found multiple RETURN nodes while converting a list of bound symbols to a dag",
                 )
                 self.return_node = node
+                for copy_node in copy_nodes:
+                    node.parents.add(copy_node)
+                    copy_node.children.add(node)
+            elif bsym.sym.id is PrimIDs.COPY_:
+                copy_nodes.append(node)
 
         for bsym_id, node in enumerate(bsym_id_to_node_map):
-            has_parents: bool = False
-
             bsym = node.group_bsyms[0]
             for inp in bsym.flat_args:
                 if not isinstance(inp, Proxy):
@@ -111,9 +115,8 @@ class Graph:
                 producer_id = producers[inp]
                 parent = bsym_id_to_node_map[producer_id]
                 node.parents.add(parent)
-                has_parents = True
 
-            if not has_parents:
+            if not node.parents:
                 self.roots.append(node)
 
             for out in bsym.flat_outs:

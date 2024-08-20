@@ -405,6 +405,7 @@ def add_transform(
     *,
     transform: Transform,
     disable_torch_autograd_support=False,
+    _legacy_copy_params=False,
 ) -> Callable:
     from thunder.common import CompileData
 
@@ -433,7 +434,7 @@ def add_transform(
     )
     from thunder import ThunderModule
 
-    if isinstance(jfn, ThunderModule):
+    if _legacy_copy_params and isinstance(jfn, ThunderModule):
         jfn._overrides_parameters = cfn._overrides_parameters
         jfn._overrides_buffers = cfn._overrides_buffers
     return jfn
@@ -472,7 +473,7 @@ def noop(cfn: Callable) -> Callable:
 # The comment fusions transform. Just adds a comment before and after each fusion.
 #   This is an example of a post-optimization transform.
 class _CommentFusionsTransform(Transform):
-    def transform_trace_post_optimization(trace: Trace, **kwargs) -> Trace:
+    def transform_trace_post_optimization(self, trace: Trace, **kwargs) -> Trace:
         start_time_ns = time.perf_counter_ns()
         commented_trace = from_trace(trace)
 
@@ -498,7 +499,7 @@ class _CommentFusionsTransform(Transform):
 
 
 def comment_fusions(cfn: Callable) -> Callable:
-    return add_ransform(cfn, _CommentFusionsTransform)
+    return add_transform(cfn, _CommentFusionsTransform)
 
 
 #
@@ -1487,7 +1488,14 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwa
         if prim_func is None:
             continue
         result = prim_func(*args, **kwargs)
-        safe_map_flat(write, list(sequencify(symbol.output)), list(sequencify(result)))
+        try:
+            safe_map_flat(write, list(sequencify(symbol.output)), list(sequencify(result)))
+        except AssertionError as e:
+            raise RuntimeError(
+                f"Error while assigning the result of dispatched function {prim_func} to the output of the original symbol {symbol}."
+                " This is likely due to a mismatch in the number of outputs."
+                f" The original symbol has {len(symbol.output)} outputs and the dispatched function has {len(sequencify(result))} outputs."
+            ) from e
 
     if with_env:
         return tree_map(read, trace.output), env
@@ -1814,14 +1822,16 @@ def _vmap_call_metafunc(detached: bool, args, in_dims, out_dims, axis_size, func
             return tree_unflatten(outs, spec)
         if isinstance(result, (Number, NumberProxy)) and axis_size is not None:
             # TODO: fetch the default device from the context
-            result = full(shape=(), fill_value=result, device=common_device)
+            result = ltorch.full(shape=(), fill_value=result, device=common_device)
             result = BatchedValue(result, not_mapped)
         elif (
             isinstance(result, BatchedValue)
             and isinstance(result.value, (Number, NumberProxy))
             and axis_size is not None
         ):
-            result = BatchedValue(full(shape=(), fill_value=result.value, device=common_device), result.batch_dim)
+            result = BatchedValue(
+                ltorch.full(shape=(), fill_value=result.value, device=common_device), result.batch_dim
+            )
         assert isinstance(result, BatchedValue)
         out = move_batch_dim(axis_size, result.batch_dim, out_dims[0], result.value)
         return out

@@ -26,6 +26,7 @@ import thunder.executors.triton_utils as triton_utils
 import thunder.core.utils as utils
 
 from thunder.core.trace import TraceCtx, detached_trace
+from thunder.dynamo import ThunderCompiler
 
 import thunder
 
@@ -135,6 +136,9 @@ def available_devicetypes():
 
 
 class TestExecutor:
+    def is_available(self) -> bool:
+        return True
+
     def supports_dtype(self, dtype: datatypes.dtype) -> bool:
         return dtype in datatypes.resolve_dtypes(self.supported_dtypes)
 
@@ -209,6 +213,9 @@ class TorchCompileCatTestExecutor(TestExecutor):
     supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
     supported_dtypes = (datatypes.dtype,)
 
+    def is_available(self) -> bool:
+        return not IS_WINDOWS
+
     def executors_list(self) -> list[extend.Executor]:
         from thunder.executors.torch_compile import torch_compile_cat_ex
 
@@ -223,6 +230,9 @@ class TorchCompileTestExecutor(TestExecutor):
     supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
     supported_dtypes = (datatypes.dtype,)
 
+    def is_available(self) -> bool:
+        return not IS_WINDOWS
+
     def executors_list(self) -> list[extend.Executor]:
         from thunder.executors.torch_compile import torch_compile_ex
 
@@ -232,10 +242,27 @@ class TorchCompileTestExecutor(TestExecutor):
         return torch.__version__
 
 
+# This is a test executor that uses the ThunderCompiler with torch.compile to
+# compile the function. However, this executor is not used for all tests by
+# default (it's not part of the _all_test_executors list) because it might
+# increase the test runtime significantly. Instead, it's used for specific tests
+# that add it to the supported_executors list when needed. Thunder's end-to-end
+# tests (test_networks.py) use this executor to test the integration between
+# torch.compile and Thunder.
+class DynamoThunderTestExecutor(TestExecutor):
+    name = "DynamoThunder"
+    supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
+    supported_dtypes = (datatypes.dtype,)
+
+    def make_callable(self, fn, **kwargs):
+        return torch.compile(backend=ThunderCompiler(**kwargs))(fn)
+
+
 # TODO Refactor these executors into the actual executor (sub)modules
 TorchExecutor: TorchTestExecutor = TorchTestExecutor()
 TorchCompileCatExecutor: TorchCompileCatTestExecutor = TorchCompileCatTestExecutor()
 TorchCompileExecutor: TorchCompileTestExecutor = TorchCompileTestExecutor()
+DynamoThunderExecutor: DynamoThunderTestExecutor = DynamoThunderTestExecutor()
 nvFuserExecutor: None | nvFuserTestExecutor = None
 
 if NVFUSER_AVAILABLE:
@@ -465,7 +492,7 @@ class instantiate:
         for executor, devicetype in product(
             sorted(self.executors, key=lambda x: repr(x)), sorted(self.devicetypes, key=lambda x: repr(x))
         ):
-            if executor is None:
+            if executor is None or not executor.is_available():
                 continue
 
             if not executor.supports_devicetype(devicetype):
