@@ -1482,8 +1482,16 @@ class TensorProxy(Proxy, TensorProxyInterface):
             # property. But PyTorch uses it as a method. We need to converge on
             # one or the other.
             # https://github.com/Lightning-AI/lightning-thunder/issues/925
+            class _Numel(int):
+                def __new__(cls, value):
+                    assert isinstance(value, int), f"Expected int, got {type(value)}"
+                    return int.__new__(cls, value)
+
+                def __call__(self):
+                    return int(self)
+
             if attr == "numel":
-                return self._numel
+                return _Numel(self._numel)
             return partial(method_or_value, self)
 
         return method_or_value
