@@ -31,6 +31,7 @@ from thunder.benchmarks import (
     thunder_sdpa_torch_compile_nvfuser_executor,
     torch_compile_executor,
     torch_executor,
+    thunder_transformerengine_executor,
 )
 from thunder.core.interpreter import interpret
 
@@ -164,6 +165,9 @@ cudnn_layernorm_executors_ids = (
     "thunder+cudnn_layernorm",
     "thunder+cudnn_layernorm+nvfuser",
 )
+
+transformer_engine_executors = (thunder_transformerengine_executor,)
+transformer_engine_execuors_ids = ("thunder+transformerengine",)
 
 
 def get_unique_configs(config_options: Sequence[str]):
@@ -387,6 +391,39 @@ def test_nanogpt_gpt2xl(benchmark, executor: Callable, compute_type: ComputeType
 #
 
 
+@pytest.mark.parametrize(
+    "executor,",
+    (transformer_engine_executors),
+    ids=(transformer_engine_execuors_ids),
+)
+@parametrize_compute_type
+@pytest.mark.parametrize("config,", (get_unique_configs(("name",))))
+def test_transformer_engine_executor_regression(benchmark, executor: Callable, compute_type: ComputeType, config: str):
+    # NOTE - This benchmark is present to track performance and memory usage regressions.
+    #        So, we don't need to run the complete model (running a chunk should give us this signal).
+    cfg: LitGPTConfig = LitGPTConfig.from_name(config)
+
+    # Setting this to default leads to OOM.
+    cfg.n_layer = 5  # This is/should be sufficient to get signals on perf regression and memory usage regression.
+    b = LitGPTBenchmark(
+        cfg, batchdims=(1,), device="cuda:0", dtype=torch.bfloat16, requires_grad=is_requires_grad(compute_type)
+    )
+
+    args, kwargs = b.make_batch()
+    fn = executor(b.fn())
+
+    if compute_type in (ComputeType.INFERENCE, ComputeType.TRAINING_FORWARD):
+        benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
+    else:
+        # We use `setup_graph_on_each_invocation` here to mitigate - https://github.com/Lightning-AI/lightning-thunder/issues/701
+        # Once #701 is fixed, we should remove this `if-else` and use `benchmark_for_compute_type` directly.
+        with record_peak_allocated_memory(benchmark):
+            backward_fn, backward_setup = backward_only(fn, *args, setup_graph_on_each_invocation=True, **kwargs)
+            benchmark.pedantic(
+                backward_fn, setup=lambda: (backward_setup(), {}), warmup_rounds=2, iterations=1, rounds=5
+            )
+
+
 @pytest.mark.parametrize("executor,", (executors + cudnn_executors), ids=(executors_ids + cudnn_executors_ids))
 @parametrize_compute_type
 def test_llama_2_7b_hf(benchmark, executor: Callable, compute_type: ComputeType):
@@ -556,7 +593,30 @@ def test_litgpt_qkv_split_rope(
     benchmark_for_compute_type(compute_type, benchmark, jfn, args, kwargs)
 
 
-def backward_only(fn: Callable, *args, **kwargs):
+def backward_only(fn: Callable, *args, setup_graph_on_each_invocation=False, **kwargs):
+    """
+    Returns a function that runs the backward pass of the given function.
+
+    The returned function should be called with the output of setup function.
+
+    Args:
+        fn: The forward function
+        setup_graph_on_each_invocation: Should the forward graph be setup on each invocation.
+                                        Defaults to False.
+        *args: Arguments to the forward function
+        **kwargs: Keyword arguments to the forward function
+
+    Returns:
+        A tuple of the backward function and the setup function
+        that returns the arguments for the backward function.
+    """
+    if setup_graph_on_each_invocation:
+        return backward_only_setup_graph_on_each_invocation(fn, *args, **kwargs)
+
+    return backward_only_setup_graph_once(fn, *args, **kwargs)
+
+
+def backward_only_setup_graph_once(fn: Callable, *args, **kwargs):
     """
     Returns a function that runs the backward pass of the given function.
 
@@ -594,6 +654,53 @@ def backward_only(fn: Callable, *args, **kwargs):
             i.grad = None
 
         torch.autograd.backward(result, output_grads, retain_graph=True)
+
+    return backward_fn, backward_setup
+
+
+def backward_only_setup_graph_on_each_invocation(fn: Callable, *args, **kwargs):
+    """
+    Returns a function that runs the backward pass of the given function.
+
+    The returned function should be called with the output of setup function.
+
+    NOTE: The forward graph will be setup on each invocation.
+
+    Args:
+        fn: The forward function
+        *args: Arguments to the forward function
+        **kwargs: Keyword arguments to the forward function
+
+    Returns:
+        A tuple of the backward function and the setup function
+        that returns the arguments for the backward function.
+    """
+
+    # backward setup takes care of running the forward, saving the relevant context for backward
+    # and returning the `grads` for output.
+    def backward_setup():
+        result = fn(*args, **kwargs)
+        result = thunder.core.utils.sequencify(result)
+
+        forward_inputs = thunder.core.pytree.tree_flatten((args, kwargs))[0]
+        forward_inputs = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, forward_inputs))
+        backwardable_tensor_result = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, result))
+
+        # Capture metadata for backward to avoid keeping the result in memory
+        backwardable_result_metadata = [(r.dtype, r.device, r.shape) for r in backwardable_tensor_result]
+        output_grads = []
+        for dtype, device, shape in backwardable_result_metadata:
+            torch_dtype = thunder.torch.to_torch_dtype(dtype)
+            torch_device = thunder.core.devices.to_torch_device(device)
+            output_grads.append(make_tensor(shape, dtype=torch_dtype, device=torch_device, requires_grad=False))
+        return result, forward_inputs, output_grads
+
+    # Actually do the backward pass.
+    def backward_fn(result, forward_inputs, output_grads):
+        for i in forward_inputs:
+            i.grad = None
+
+        torch.autograd.backward(result, output_grads)
 
     return backward_fn, backward_setup
 

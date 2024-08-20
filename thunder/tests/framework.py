@@ -26,6 +26,7 @@ import thunder.executors.triton_utils as triton_utils
 import thunder.core.utils as utils
 
 from thunder.core.trace import TraceCtx, detached_trace
+from thunder.dynamo import ThunderCompiler
 
 import thunder
 
@@ -241,10 +242,27 @@ class TorchCompileTestExecutor(TestExecutor):
         return torch.__version__
 
 
+# This is a test executor that uses the ThunderCompiler with torch.compile to
+# compile the function. However, this executor is not used for all tests by
+# default (it's not part of the _all_test_executors list) because it might
+# increase the test runtime significantly. Instead, it's used for specific tests
+# that add it to the supported_executors list when needed. Thunder's end-to-end
+# tests (test_networks.py) use this executor to test the integration between
+# torch.compile and Thunder.
+class DynamoThunderTestExecutor(TestExecutor):
+    name = "DynamoThunder"
+    supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
+    supported_dtypes = (datatypes.dtype,)
+
+    def make_callable(self, fn, **kwargs):
+        return torch.compile(backend=ThunderCompiler(**kwargs))(fn)
+
+
 # TODO Refactor these executors into the actual executor (sub)modules
 TorchExecutor: TorchTestExecutor = TorchTestExecutor()
 TorchCompileCatExecutor: TorchCompileCatTestExecutor = TorchCompileCatTestExecutor()
 TorchCompileExecutor: TorchCompileTestExecutor = TorchCompileTestExecutor()
+DynamoThunderExecutor: DynamoThunderTestExecutor = DynamoThunderTestExecutor()
 nvFuserExecutor: None | nvFuserTestExecutor = None
 
 if NVFUSER_AVAILABLE:

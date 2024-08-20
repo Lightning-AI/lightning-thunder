@@ -89,7 +89,7 @@ def test_materialization():
     m.cos, m.sin = ref_m.cos.clone(), ref_m.sin.clone()
 
     for p in m.parameters():
-        p.__thunder_device = torch.device("cuda")
+        p._thunder_device = torch.device("cuda")
 
     init_from_sd = MaterializationTransform.init_from_original_state_dict(ref_m.state_dict())
     jm = thunder.jit(m, transforms=[MaterializationTransform("cuda", init=init_from_sd)], executors=())
@@ -132,21 +132,29 @@ def test_quantization_on_meta():
     m.cos, m.sin = ref_m.cos.clone(), ref_m.sin.clone()
 
     for p in m.parameters():
-        p.__thunder_device = torch.device("cuda")
-
-    init_from_sd = MaterializationTransform.init_from_original_state_dict(ref_m.state_dict())
+        p._thunder_device = torch.device("cuda")
 
     jm_ref = thunder.jit(
         ref_m,
         executors=(bitsandbytes_executor,),
         transforms=[BitsAndBytesLinearQuant4bit()],
     )
+    init_from_orig_sd = MaterializationTransform.init_from_original_state_dict(ref_m.state_dict())
     jm = thunder.jit(
         m,
         executors=(bitsandbytes_executor,),
         transforms=[
             BitsAndBytesLinearQuant4bit(),
-            MaterializationTransform("cuda", init=init_from_sd),
+            MaterializationTransform("cuda", init=init_from_orig_sd),
+        ],
+    )
+    init_from_transformed_sd = MaterializationTransform.init_from_transformed_state_dict(jm_ref.state_dict())
+    jm2 = thunder.jit(
+        m,
+        executors=(bitsandbytes_executor,),
+        transforms=[
+            BitsAndBytesLinearQuant4bit(),
+            MaterializationTransform("cuda", init=init_from_transformed_sd),
         ],
     )
 
@@ -155,15 +163,21 @@ def test_quantization_on_meta():
 
     expected = jm_ref(x, input_pos)
     actual = jm(x, input_pos)
+    actual2 = jm2(x, input_pos)
 
     for n, p in jm_ref.named_parameters():
         p2 = jm.get_parameter(n)
         assert_close(p, p2)
+        p2 = jm2.get_parameter(n)
+        assert_close(p, p2)
     for n, b in jm_ref.named_buffers():
         b2 = jm.get_buffer(n)
         assert_close(b2, b)
+        b2 = jm2.get_buffer(n)
+        assert_close(b2, b)
 
     assert_close(actual, expected, rtol=1e-2, atol=1e-2)
+    assert_close(actual, actual2)
 
 
 @requiresCUDA
@@ -207,3 +221,97 @@ def test_nvfuser_cse():
         assert prologue_proxy.device == thunder.core.devices.to_device(t.device)
         assert comp_proxy.dtype == thunder.core.dtypes.to_dtype(t.dtype)
         assert prologue_proxy.dtype == thunder.core.dtypes.to_dtype(t.dtype)
+
+
+def test_debug_transform():
+    from thunder.dev_utils.debug_transform import debug_execution_trace
+
+    # Only use the primitive operations in `fn` so that
+    # we can count them easily.
+    N_PRIMITIVE_OPS = 3
+
+    def fn(x, y):
+        return (x + y * y) / x
+
+    def pre_callback(bsym, *args, **kwargs):
+        return f"Pre - {bsym.sym.name}"
+
+    def post_callback(bsym, *args, **kwargs):
+        return f"Post - {bsym.sym.name}"
+
+    jfn = debug_execution_trace(thunder.jit(fn), pre_callback=pre_callback, post_callback=post_callback)
+    x = torch.randn(3, 3)
+    y = torch.randn(3, 3)
+    jfn(x, y)
+
+    fwd_exec_trace = thunder.last_traces(jfn)[-1]
+
+    debug_syms = set()
+    for bsym in fwd_exec_trace.bound_symbols:
+        if bsym.sym.name.startswith("debug"):
+            debug_syms.add(bsym)
+
+    n_expected_debug_syms = 2 * N_PRIMITIVE_OPS  # Multiply by 2 as we have both pre and post callbacks
+    assert len(debug_syms) == n_expected_debug_syms
+
+    # As `debug_syms` have name of the form `debug_{pre|post}_{sym_name}_{debug_count}`,
+    # we expect to see debug_sym with `N_PRIMITIVE_OPS` at `{debug_count}` part of the name.
+    assert any(map(lambda bsym: bsym.sym.name.endswith(f"{str(N_PRIMITIVE_OPS)}"), debug_syms))
+
+    # Verify that we have correctly set the header for all debug_syms.
+    debug_headers = {sym.header for sym in debug_syms}
+    expected_headers = {"Pre - true_divide", "Pre - add", "Pre - mul", "Post - true_divide", "Post - add", "Post - mul"}
+    assert debug_headers == expected_headers
+
+
+@requiresCUDA
+def test_materialization_init():
+    from thunder.transforms import MaterializationTransform
+    from thunder.transforms.quantization import BitsAndBytesLinearQuant4bit, get_bitsandbytes_executor
+
+    bitsandbytes_executor = get_bitsandbytes_executor()
+
+    def get_model():
+        m0 = torch.nn.Linear(2, 2)
+
+        # to not change the rng state
+        with torch.device("meta"):
+            m4 = torch.nn.Linear(2, 2)
+
+        m4.weight = m0.weight
+        m4.bias = m0.bias
+
+        return (
+            torch.nn.Sequential(
+                m0,
+                torch.nn.GELU(),
+                torch.nn.Linear(2, 2),
+                torch.nn.GELU(),
+                m4,
+            )
+            .eval()
+            .requires_grad_(False)
+        )
+
+    torch.manual_seed(1234)
+    with torch.device("cuda"):
+        m_ref = get_model()
+        inp = torch.randn(3, 2)
+
+    jm_ref = thunder.jit(m_ref, transforms=[BitsAndBytesLinearQuant4bit()], executors=(bitsandbytes_executor,))
+
+    torch.manual_seed(1234)
+    init_from_module_init = MaterializationTransform.init_from_original_module_init()
+    with torch.device("meta"):
+        m = get_model()
+
+    jm = thunder.jit(
+        m,
+        transforms=[BitsAndBytesLinearQuant4bit(), MaterializationTransform("cuda", init=init_from_module_init)],
+        executors=(bitsandbytes_executor,),
+    )
+
+    assert_close(jm(inp), jm_ref(inp))
+
+    assert jm_ref._get_shared_names()["0.weight"] == {"0.weight", "4.weight"}
+    assert jm._get_shared_names()["0.weight"] == {"0.weight", "4.weight"}

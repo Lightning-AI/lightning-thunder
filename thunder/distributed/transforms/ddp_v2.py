@@ -72,11 +72,13 @@ class DDPTransform(Transform):
             # Since we are doing no sharding, we do not need to materialize the params
 
             # Broadcast parameters if requested
-            if broadcast_from := self.broadcast_from is not None:
+            if self.broadcast_from is not None:
                 for pn, _ in submodule.named_parameters(recurse=False, prefix=module_name):
-                    tdist.broadcast(model.get_parameter(pn), src=broadcast_from, group=process_group, async_op=False)
+                    tdist.broadcast(
+                        model.get_parameter(pn), src=self.broadcast_from, group=process_group, async_op=False
+                    )
                 for pn, _ in submodule.named_buffers(recurse=False, prefix=module_name):
-                    tdist.broadcast(model.get_buffer(pn), src=broadcast_from, group=process_group, async_op=False)
+                    tdist.broadcast(model.get_buffer(pn), src=self.broadcast_from, group=process_group, async_op=False)
 
             for pn, p in submodule.named_parameters(recurse=False, prefix=module_name):
                 # If there are shared params in the original user Module, we reuse the sharded copy created from the original parameter below.

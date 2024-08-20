@@ -11,7 +11,7 @@ from torch.testing import assert_close, make_tensor
 
 import thunder
 import thunder.torch as ttorch
-from thunder.tests.framework import instantiate, requiresCUDA
+from thunder.tests.framework import instantiate, requiresCUDA, DynamoThunderExecutor, _all_test_executors
 import thunder.tests.nanogpt_model as nanogpt_model
 import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
 
@@ -19,8 +19,16 @@ import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
 # nanoGPT tests
 #
 
+# NOTE: DynamoThunderExecutor is not included in the _all_test_executors() list
+# because we don't want to run all the tests with the DynamoThunderExecutor by
+# default. We only want to run it with the tests that are explicitly marked to
+# use the DynamoThunderExecutor. When there's more than one file that uses the
+# DynamoThunderExecutor, we should consider adding a separate list of executors
+# to the framework.py file.
+all_test_executors_and_dynamo = _all_test_executors() + [DynamoThunderExecutor]
 
-@instantiate(dtypes=(thunder.float32,))
+
+@instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
 def test_nanogpt_complete(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=torch.int64, device=device)
@@ -43,7 +51,7 @@ def test_nanogpt_complete(executor, device, dtype):
 # TODO: Add float16 and bfloat16 comparison tests here and to all other tests in
 # this file.
 # See issue "Add half precision dtype tests to test_networks.py"
-@instantiate(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
 def test_nanogpt_complete_autograd(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
 
@@ -164,7 +172,7 @@ def test_nanogpt_complete_cuda_graphs_autograd(executor, device, dtype):
         build_cuda_graph.cache_clear()
 
 
-@instantiate(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
 def test_nanogpt_csa(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=tdtype, device=device)
@@ -188,7 +196,7 @@ def test_nanogpt_csa(executor, device, dtype):
     assert_close(torch_result, thunder_result)
 
 
-@instantiate(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
 def test_nanogpt_block(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=tdtype, device=device)
@@ -206,7 +214,7 @@ def test_nanogpt_block(executor, device, dtype):
     assert_close(torch_result, thunder_result)
 
 
-@instantiate(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
 def test_nanogpt_mlp(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=tdtype, device=device)
@@ -224,7 +232,7 @@ def test_nanogpt_mlp(executor, device, dtype):
     assert_close(torch_result, thunder_result)
 
 
-@instantiate(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
 def test_nanogpt_gelu(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=tdtype, device=device)
@@ -304,6 +312,7 @@ def test_quantization():
     config = litgpt_model.Config.from_name("llama2-like")
     with torch.device("cuda"):
         model_fp_reference = litgpt_model.GPT(config).to(torch.bfloat16)
+        model_fp_reference2 = litgpt_model.GPT(config).to(torch.bfloat16)
 
     import lightning as L
 
@@ -336,16 +345,31 @@ def test_quantization():
     model_fp_reference.requires_grad_(False)
     model_fp_reference.eval()
 
+    model_fp_reference2.set_kv_cache(1, device="cuda", dtype=torch.bfloat16)
+    model_fp_reference2.max_seq_length = 20
+    model_fp_reference2.requires_grad_(False)
+    model_fp_reference2.eval()
+
     jm = thunder.jit(
         model_fp_reference,
         executors=(bitsandbytes_executor,),
         transforms=[BitsAndBytesLinearQuant4bit()],
     )
 
+    jm2 = thunder.jit(
+        model_fp_reference2,
+        executors=(bitsandbytes_executor,),
+        transforms=[BitsAndBytesLinearQuant4bit()],
+    )
+    jm2.load_state_dict(jm.state_dict())
+
     logits_thunder = jm(x, input_pos)
+    logits_thunder2 = jm2(x, input_pos)
     # check_dtype=False due to litgpt returning float32
     # (maybe that also is the numerical discrepancy?)
     assert_close(logits_thunder, logits_expected, atol=2e-2, rtol=1e-3, check_dtype=False)
+
+    assert_close(logits_thunder, logits_thunder2, atol=2e-5, rtol=1e-5)
 
     sd = {k: v.clone() for k, v in jm.state_dict().items()}
     jm.load_original_state_dict(model_fp_reference.state_dict())
