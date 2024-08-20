@@ -78,7 +78,7 @@ To use Thunder on your local machine:
 - install [nvFuser](https://github.com/NVIDIA/Fuser) and PyTorch stable together as follows:
 
 ```bash
-# install nvFuser which installs the matching nightly PyTorch
+# install nvFuser which installs the matching stable PyTorch
 pip install --pre nvfuser-cu121-torch24
 ```
 
