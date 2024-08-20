@@ -107,7 +107,7 @@ pip install lightning-thunder
 Alternatively, you can install the latest version of Thunder directly from this GitHub repository as follows:
 
 ```
-# 1) Install nvFuser and PyTorch nightly dependencies:
+# 1) Install nvFuser and PyTorch dependencies:
 pip install --pre nvfuser-cu121-torch24
 ```
 
