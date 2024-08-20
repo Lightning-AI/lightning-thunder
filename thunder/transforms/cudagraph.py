@@ -7,6 +7,7 @@ from typing import Any
 import torch
 
 from thunder import trace
+from thunder.core.transform_common import Transform
 from thunder.core.transforms import eval_trace
 from thunder.extend import FusionExecutor, register_executor
 from thunder.core import utils, prims
@@ -97,7 +98,6 @@ class CUDAGraphCallable:
                 static_input.copy_(arg)
 
         graph.replay()
-
         return static_outputs
 
 
@@ -130,9 +130,13 @@ def make_callable(
     return region_trace.python_callable()
 
 
-class CUDAGraphExecutor(FusionExecutor):
-    def __init__(self, name: Hashable):
-        super().__init__(name, version=torch.version.cuda)
+class CUDAGraphTransform(Transform):
+    """
+    Transform to fuse operations into CUDA graphs post optimization.
+
+    This class provides the basic infrastructure, but it is expected that you might subclass this transform
+    in order to override ``can_fuse```or other methods.
+    """
 
     def fuse(self, region: Region, fusion_counter: int, num_static_inputs: None | int = None) -> BoundSymbol:
         inputs = [unvariableify(inp) for inp in region.inputs]
@@ -143,8 +147,8 @@ class CUDAGraphExecutor(FusionExecutor):
         region.bound_symbols = _del_last_used(region.bound_symbols, outputs)
 
         fusion_name = f"CUDAGraph{fusion_counter}"
-        fusion_callable: Callable = make_callable(f"{fusion_name}_fn", region.bound_symbols, inputs, outputs)
-        fusion_callable = CUDAGraphCallable(fusion_callable, num_static_inputs)
+        fusible_callable: Callable = make_callable(f"{fusion_name}_fn", region.bound_symbols, inputs, outputs)
+        fusion_callable = CUDAGraphCallable(fusible_callable, num_static_inputs)
 
         fusion_sym = Symbol(fusion_name, meta=None, is_fusion=True, executor=self)
         fusion_bsym = BoundSymbol(
@@ -191,7 +195,7 @@ class CUDAGraphExecutor(FusionExecutor):
 
         return True
 
-    def fusion_pass(self, trace: TraceCtx, num_static_inputs: None | int = None) -> TraceCtx:
+    def transform_trace_post_optimization(self, trace: TraceCtx, **kwargs) -> TraceCtx:
         start_time_ns: int = time.perf_counter_ns()
 
         def _should_fuse(a: Node, b: Node):
@@ -230,7 +234,7 @@ class CUDAGraphExecutor(FusionExecutor):
                 fused_bsyms.extend(bsyms)
             else:
                 region = Region(producers, consumers, bsyms)
-                fusion_bsym: BoundSymbol = self.fuse(region, fusion_counter, num_static_inputs)
+                fusion_bsym: BoundSymbol = self.fuse(region, fusion_counter)
                 fusion_counter += 1
                 fused_bsyms.append(fusion_bsym)
 
@@ -244,7 +248,3 @@ class CUDAGraphExecutor(FusionExecutor):
         fused_trace.set_provenance(TraceProvenance(f"CUDAGraph fusion (took {elapsed_time_ms} milliseconds)"))
 
         return fused_trace
-
-
-cudagraphex = CUDAGraphExecutor(name="cudagraphex")
-register_executor(cudagraphex)

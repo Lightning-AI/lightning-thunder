@@ -265,6 +265,25 @@ def test_debug_transform():
 
 
 @requiresCUDA
+def test_cudagraph_warmup_runs_with_correct_buffers():
+    """
+    Tests whether newly-created buffers are being properly initialized.
+    Otherwise we should expect failures because of incorrect values.
+    """
+
+    from thunder.transforms.cudagraph import CUDAGraphTransform
+
+    weights = torch.tensor([0, 10, 3, 0], device="cuda", dtype=torch.float)
+
+    def f(x):
+        return torch.multinomial(x, num_samples=3, replacement=True)
+
+    jf = thunder.jit(f, transforms=[CUDAGraphTransform()])
+    jf(weights)
+    jf(weights)
+
+
+@requiresCUDA
 def test_materialization_init():
     from thunder.transforms import MaterializationTransform
     from thunder.transforms.quantization import BitsAndBytesLinearQuant4bit, get_bitsandbytes_executor

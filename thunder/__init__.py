@@ -311,6 +311,12 @@ def jit(
         if executors is None:
             executors = compile_options.pop("executors_list")
 
+    if "early_transforms" in compile_options:
+        raise RuntimeError("early_transforms= has been absorbed by transforms=")
+
+    if compile_options.get("use_cudagraphs") is not None:
+        raise RuntimeError("use_cudagraphs is replaced by using thunder.transforms.CUDAGraphTransform")
+
     # Resolves interpreter option
     interpretation = resolve_interpretation_option(interpretation)
     interpreter: Callable
@@ -341,8 +347,6 @@ def jit(
 
     # TODO RC1 Refine the compile data option to remove unused options
     # TODO: refine options
-    # NOTE(fixme): use_cudagraphs is being absorbed into compile_options
-    use_cudagraphs = compile_options.get("use_cudagraphs", False)
     cd = CompileData(
         fn=fn,
         langctx=langctx,
@@ -350,7 +354,6 @@ def jit(
         cache_option=cache,
         sharp_edges=sharp_edges,
         using_jit=True,
-        use_cudagraphs=use_cudagraphs,
         disable_torch_autograd_support=disable_torch_autograd,
         use_rematerialization=False,
         only_execute_prims=False,
@@ -679,16 +682,6 @@ def jit(
                 computation_traces.extend(extraces)
                 computation_trc = computation_traces[-1]
 
-            if cd.use_cudagraphs:
-                from thunder.executors.cudagraphex import cudagraphex
-
-                computation_trc = cudagraphex.fusion_pass(computation_trc)
-                computation_traces.append(computation_trc)
-
-                if backward_trc is not None:
-                    backward_trc = cudagraphex.fusion_pass(backward_trc, num_static_inputs=len(backward_trc.args[0][0]))
-                    backward_traces.append(backward_trc)
-
             if backward_trc is None:
                 computation_trc = thunder.executors.passes.del_last_used(computation_trc)
 
@@ -821,7 +814,6 @@ def compile(
     langctx: None | Any = None,
     executors_list: None | Sequence[Executor] = None,
     cache_mode: None | str | CACHE_OPTIONS = None,
-    use_cudagraphs: bool = False,
     disable_torch_autograd_support: bool = False,
     use_rematerialization: bool = False,
     only_execute_prims: bool = False,
@@ -833,7 +825,6 @@ def compile(
         langctx=langctx,
         executors_list=executors_list,
         cache_option=cache_mode,
-        use_cudagraphs=use_cudagraphs,
         disable_torch_autograd_support=disable_torch_autograd_support,
         use_rematerialization=use_rematerialization,
         only_execute_prims=only_execute_prims,
