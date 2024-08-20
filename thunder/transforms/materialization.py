@@ -47,6 +47,7 @@ class MaterializationTransform(Transform):
                 p._thunder_device = self.device
 
         shared_names = model._get_shared_names()
+        self.have_materialized: set[str] = set()
 
         # note: the iterations below are without duplicates
         for n, p in list(model.named_parameters()):
@@ -55,16 +56,18 @@ class MaterializationTransform(Transform):
                     torch.empty_like(p, device=getattr(p, "_thunder_device", self.device)),
                     requires_grad=p.requires_grad,
                 )
-                for nn in shared_names[n]:
-                    model._overrides_parameters[nn] = p
+                for n2 in shared_names[n]:
+                    model._overrides_parameters[n2] = p
+                    self.have_materialized.add(n2)
 
         for n, b in list(model.named_buffers()):
             if b.device.type == "meta":
                 b = torch.empty_like(
                     b, device=getattr(b, "_thunder_device", self.device), requires_grad=b.requires_grad
                 )
-                for nn in shared_names[n]:
-                    model._overrides_parameters[nn] = b
+                for n2 in shared_names[n]:
+                    model._overrides_parameters[n2] = b
+                    self.have_materialized.add(n2)
 
         self.init(self, model)
 
@@ -108,11 +111,11 @@ class MaterializationTransform(Transform):
                 if any(
                     chain(
                         (
-                            tm.get_parameter(n).is_meta
+                            transform.have_materialized
                             for n, _ in submodule.named_parameters(recurse=False, prefix=module_name)
                         ),
                         (
-                            tm.get_buffer(n).is_meta
+                            transform.have_materialized
                             for n, _ in submodule.named_buffers(recurse=False, prefix=module_name)
                         ),
                     )
