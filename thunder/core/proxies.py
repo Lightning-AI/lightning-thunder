@@ -1477,7 +1477,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         if callable(method_or_value):
             # TODO: This is a temporary fix to allow for the `numel` attribute
             # to be called without arguments. This is a workaround for the fact
-            # that the `numel` was initially in Thunder introduced not as not a
+            # that the `numel` was initially in Thunder introduced not as a
             # method but a property. Now a lot of code relies on it being a
             # property. But PyTorch uses it as a method. We need to converge on
             # one or the other.
