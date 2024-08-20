@@ -86,7 +86,7 @@ class CompileStats:
         last_computation_execution_start (int):
         last_computation_execution_stop (int):
         cache (dict):
-        interpreter_cashe (list):
+        interpreter_cache (list):
         calls (int):
         cache_hits (int):
         cache_misses (int):
