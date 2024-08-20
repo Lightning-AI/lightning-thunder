@@ -638,6 +638,53 @@ class FSDPTest(DistributedParallelTestCase):
 
         _test_model_output_and_gradients(fsdp_jit_model, x, duplicate_all_gather=False)
 
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
+    @common_utils.parametrize("model_device", ["cuda", "meta"])
+    def test_memory_consumption(self, model_device):
+        import gc
+
+        device = torch.device("cuda", self.rank)
+        with device:
+            x_1 = torch.randn((2, ToyModel.N_IN))
+        with torch.device(model_device):
+            model = ToyModel()
+        jit_fsdp_model = thunder.jit(fsdp(model, device=device))
+        y_1 = jit_fsdp_model(x_1)
+        active_mem_jit_fsdp = torch.cuda.memory_stats()["active_bytes.all.current"]
+
+        del x_1, y_1, jit_fsdp_model, model
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        with device:
+            x_2 = torch.randn((2, ToyModel.N_IN))
+        with torch.device(model_device):
+            model = ToyModel()
+        fsdp_jit_model = fsdp(thunder.jit(model), device=device)
+        y_2 = fsdp_jit_model(x_2)
+        active_mem_fsdp_jit = torch.cuda.memory_stats()["active_bytes.all.current"]
+        self.assertAlmostEqual(active_mem_fsdp_jit, active_mem_jit_fsdp)
+
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
+    def test_load_original_state_dict(self):
+        device = torch.device("cuda", self.rank)
+        with device:
+            x = torch.randn((2, ToyModel.N_IN))
+        with torch.device("cuda"):
+            model1 = ToyModel()
+            model2 = ToyModel()
+
+        sd = {k: v.clone() for k, v in model1.state_dict().items()}
+
+        jm1 = fsdp(thunder.jit(model1), device=device)
+        jm2 = fsdp(thunder.jit(model2), device=device)
+        jm2.load_original_state_dict(sd)
+
+        y_1 = jm1(x)
+        y_2 = jm2(x)
+
+        torch.testing.assert_close(y_1, y_2)
+
 
 common_utils.instantiate_parametrized_tests(FSDPTest)
 

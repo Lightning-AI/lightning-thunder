@@ -354,7 +354,6 @@ def get_all_executors() -> tuple[Executor, ...]:
     # manually import all native executors to let them register themselves
     from thunder.executors import (
         apexex,
-        cudagraphex,
         cudnn_layernormex,
         cudnnex,
         nvfuserex,

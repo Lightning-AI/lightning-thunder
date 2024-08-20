@@ -35,6 +35,7 @@ from thunder.core.proxies import (
 )
 from thunder.core.baseutils import default_dataclass_params
 from thunder.core.compile_data import get_compile_data
+from thunder.core.langctxs import langctx, Languages
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten, tree_flatten_with_dataclass
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol
 from thunder.core.trace import TraceCtx as Trace, tracectx
@@ -403,8 +404,9 @@ def visitor_transform(trace_from: Trace, visit: Callable, *, provenance: None | 
 def add_transform(
     cfn: Callable,
     *,
-    transform: Transform,
+    transform: Transform | list[Transform],
     disable_torch_autograd_support=False,
+    _legacy_copy_params=False,
 ) -> Callable:
     from thunder.common import CompileData
 
@@ -412,15 +414,20 @@ def add_transform(
 
     utils.check(cd is not None, lambda: f"Can only transform compiled thunder functions")
     utils.check(isinstance(cd, CompileData), lambda: f"Found an unknown compile data attribute {cd}")
-    utils.check_type(transform, Transform)
+    if isinstance(transform, Transform):
+        transform = [transform]
+    else:
+        utils.check(
+            all(isinstance(t, Transform) for t in transform),
+            lambda: "transform must be an instance of Transform or a list of Transform instances.",
+        )
 
     assert cd.using_jit
 
     from thunder import jit
 
     # todo: move _lc_transforms to compile_data
-    transforms = cfn._lc_transforms[:]
-    transforms.append(transform)
+    transforms = cfn._lc_transforms + transform
     jfn = jit(
         cd.fn,
         langctx=cd.langctx,
@@ -433,7 +440,7 @@ def add_transform(
     )
     from thunder import ThunderModule
 
-    if isinstance(jfn, ThunderModule):
+    if _legacy_copy_params and isinstance(jfn, ThunderModule):
         jfn._overrides_parameters = cfn._overrides_parameters
         jfn._overrides_buffers = cfn._overrides_buffers
     return jfn
@@ -586,16 +593,6 @@ def clear_grads(module: torch.nn.Module) -> None:
         b.grad = None
 
 
-from thunder.core.interpreter import make_opaque
-from thunder.core.langctxs import langctx, Languages
-
-
-# TODO RC1 Replace with langctx
-def torchctx(fn):
-    _fn = langctx(Languages.TORCH)(fn)
-    return make_opaque(_fn)
-
-
 _grad_fn_map: dict[Any, Callable] = {}
 
 
@@ -603,7 +600,15 @@ def register_grad(sym_or_id: Symbol | Any, gradfn: Callable) -> None:
     id: Any = sym_or_id
     if isinstance(sym_or_id, Symbol):
         id = sym_or_id.id
-    _grad_fn_map[id] = gradfn
+
+    # The gradfn are expected to be written in terms of torch functions by
+    # default even if the original forward function could be written in terms of
+    # other languages. We don't want to have developers worry about the language
+    # context when writing grad functions. If the grad function is written in
+    # terms of another language, developers can always wrap the gradfn in an
+    # appropriate language context that will take precedence over the default
+    # torch language context.
+    _grad_fn_map[id] = langctx(Languages.TORCH)(gradfn)
 
 
 # Grad functions for prims
@@ -639,7 +644,6 @@ register_grad(pids.UNPACK_SEQUENCE, prims.unpack_sequence)
 #
 # Data movement and transformation operator grads
 #
-@torchctx
 def _convert_element_type_prim_grad(a: Number | TensorProxy, dtype: type | dtypes.dtype) -> Number | TensorProxy:
     fwd = prims.convert_element_type(a, dtype)
 
@@ -678,7 +682,6 @@ register_grad(pids.UNIFORM, _uniform_grad)
 #
 
 
-@torchctx
 def _broadcast_in_dim_prim_grad(
     a: TensorProxy, shape: Sequence[int], broadcast_dimensions: Sequence[int]
 ) -> TensorProxy:
@@ -707,7 +710,6 @@ def _broadcast_in_dim_prim_grad(
 register_grad(pids.BROADCAST_IN_DIM, _broadcast_in_dim_prim_grad)
 
 
-@torchctx
 def _cat_prim_grad(tensors: list[TensorProxy], /, dim: int) -> TensorProxy:
     fwd = prims.cat(tensors, dim)
 
@@ -742,7 +744,6 @@ def _reshape_prim_grad(a: TensorProxy, shape: tuple[int, ...]) -> TensorProxy:
 register_grad(pids.RESHAPE, _reshape_prim_grad)
 
 
-@torchctx
 def _slice_prim_grad(
     a: TensorProxy, start_indices: Sequence[int], end_indices: Sequence[int], strides: None | Sequence[int] = None
 ) -> TensorProxy:
@@ -772,7 +773,6 @@ def _slice_prim_grad(
 register_grad(pids.SLICE, _slice_prim_grad)
 
 
-@torchctx
 def _squeeze_prim_grad(a: TensorProxy, /, dims: tuple[int, ...]) -> TensorProxy:
     fwd = prims.squeeze(a, tuple(dims))
 
@@ -788,7 +788,6 @@ def _squeeze_prim_grad(a: TensorProxy, /, dims: tuple[int, ...]) -> TensorProxy:
 register_grad(pids.SQUEEZE, _squeeze_prim_grad)
 
 
-@torchctx
 def _take_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy:
     fwd = prims.take(a, index, dim)
 
@@ -807,7 +806,6 @@ def _take_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy
 register_grad(pids.TAKE, _take_prim_grad)
 
 
-@torchctx
 def _gather_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy:
     fwd = prims.gather(a, index, dim)
 
@@ -824,7 +822,6 @@ def _gather_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> TensorPro
 register_grad(pids.GATHER, _gather_prim_grad)
 
 
-@torchctx
 def _scatter_prim_grad(a: TensorProxy, /, index: TensorProxy, src: TensorProxy | Number, dim: int) -> TensorProxy:
     fwd = prims.scatter(a, index, src, dim)
 
@@ -846,7 +843,6 @@ def _scatter_prim_grad(a: TensorProxy, /, index: TensorProxy, src: TensorProxy |
 register_grad(pids.SCATTER, _scatter_prim_grad)
 
 
-@torchctx
 def _index_copy_grad(a: TensorProxy, /, index: TensorProxy, src: TensorProxy, dim: int) -> TensorProxy:
     fwd = prims.index_copy(a, index, src, dim)
 
@@ -876,7 +872,6 @@ def _index_copy_grad(a: TensorProxy, /, index: TensorProxy, src: TensorProxy, di
 register_grad(pids.INDEX_COPY, _index_copy_grad)
 
 
-@torchctx
 def _scatter_add_prim_grad(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     utils.check(
         not value._requires_grad or value.shape == index.shape,
@@ -898,7 +893,6 @@ def _scatter_add_prim_grad(a: TensorProxy, /, index: TensorProxy, value: TensorP
 register_grad(pids.SCATTER_ADD, _scatter_add_prim_grad)
 
 
-@torchctx
 def _take_along_axis_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> TensorProxy:
     fwd = prims.take_along_axis(a, index, dim)
 
@@ -915,7 +909,6 @@ def _take_along_axis_prim_grad(a: TensorProxy, index: TensorProxy, dim: int) -> 
 register_grad(pids.TAKE_ALONG_AXIS, _take_along_axis_prim_grad)
 
 
-@torchctx
 def _transpose_prim_grad(a: TensorProxy, permutation: tuple[int, ...]) -> TensorProxy:
     fwd = prims.transpose(a, tuple(permutation))
 
@@ -934,7 +927,6 @@ register_grad(pids.TRANSPOSE, _transpose_prim_grad)
 #
 
 
-@torchctx
 def _stride_order_prim_grad(a: TensorProxy, /, order: Sequence[int]) -> TensorProxy:
     fwd = prims.stride_order(a, order)
 
@@ -950,7 +942,6 @@ register_grad(pids.STRIDE_ORDER, _stride_order_prim_grad)
 #
 # Elementwise unary operator grads
 #
-@torchctx
 def _abs_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
     fwd = prims.abs(a)
 
@@ -975,7 +966,6 @@ def _cos_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
 register_grad(pids.COS, _cos_prim_grad)
 
 
-@torchctx
 def _erf_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
     fwd = prims.erf(a)
 
@@ -989,7 +979,6 @@ def _erf_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
 register_grad(pids.ERF, _erf_prim_grad)
 
 
-@torchctx
 def _exp_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
     fwd = prims.exp(a)
 
@@ -1003,7 +992,6 @@ def _exp_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
 register_grad(pids.EXP, _exp_prim_grad)
 
 
-@torchctx
 def _log_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
     fwd = prims.log(a)
 
@@ -1017,7 +1005,6 @@ def _log_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
 register_grad(pids.LOG, _log_prim_grad)
 
 
-@torchctx
 def _neg_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
     fwd = prims.neg(a)
 
@@ -1030,7 +1017,6 @@ def _neg_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
 register_grad(pids.NEG, _neg_prim_grad)
 
 
-@torchctx
 def _rsqrt_prim_grad(a: Number | TensorProxy, /) -> Number | TensorProxy:
     fwd = prims.rsqrt(a)
 
@@ -1059,7 +1045,6 @@ def _sin_prim_grad(a: Number | TensorProxy) -> Number | TensorProxy:
 register_grad(pids.SIN, _sin_prim_grad)
 
 
-@torchctx
 def _tanh_prim_grad(a: Number | TensorProxy, /) -> Number | TensorProxy:
     fwd = prims.tanh(a)
 
@@ -1077,7 +1062,6 @@ register_grad(pids.TANH, _tanh_prim_grad)
 #
 
 
-@torchctx
 def _add_prim_grad(a: Number | TensorProxy, b: Number | TensorProxy, /) -> Number | TensorProxy:
     fwd = a + b
 
@@ -1094,7 +1078,6 @@ register_grad(pids.ADD, _add_prim_grad)
 
 # NOTE The following grad definition relies on the fact that only inexact dtypes are differentiable,
 #   and torch's true division operator and the division primitive agree on those types
-@torchctx
 def _div_prim_grad(a: Number | TensorProxy, b: Number | TensorProxy, /) -> Number | TensorProxy:
     fwd = a / b
 
@@ -1117,7 +1100,6 @@ register_grad(pids.LE, prims.le)
 register_grad(pids.LT, prims.lt)
 
 
-@torchctx
 def _mul_prim_grad(a: Number | TensorProxy, b: Number | TensorProxy, /) -> Number | TensorProxy:
     fwd = a * b
 
@@ -1132,7 +1114,6 @@ def _mul_prim_grad(a: Number | TensorProxy, b: Number | TensorProxy, /) -> Numbe
 register_grad(pids.MUL, _mul_prim_grad)
 
 
-@torchctx
 def _sub_prim_grad(a: Number | TensorProxy, b: Number | TensorProxy) -> Number | TensorProxy:
     fwd = a - b
 
@@ -1197,7 +1178,6 @@ def _sum_prim_grad(a: TensorProxy, /, dims: Sequence[int]) -> TensorProxy:
 register_grad(pids.SUM, _sum_prim_grad)
 
 
-@torchctx
 def _topk_prim_grad(
     a: TensorProxy, /, k: int, dim: None | int = None, largest: bool = True, sorted: bool = True, *, out=None
 ):
@@ -1218,7 +1198,6 @@ def _topk_prim_grad(
 register_grad(pids.TOPK, _topk_prim_grad)
 
 
-@torchctx
 def _sort_prim_grad(
     a: TensorProxy, /, dim: None | int = None, descending: bool = False, stable: bool = False, *, out=None
 ) -> (TensorProxy, TensorProxy):
@@ -1245,7 +1224,6 @@ register_grad(pids.SORT, _sort_prim_grad)
 # TODO Fix division by zero when n_elem_reduced == 0 or when mean.numel == 0
 #   by returning zeros_like(a) or similar.
 # TODO Fix grad when correction > n_elem_reduced.
-@torchctx
 def _var_mean_prim_grad(a: TensorProxy, /, dims: Sequence[int], *, correction: Number) -> TensorProxy:
     v, m = prims.var_mean(a, dims, correction=correction)
 
@@ -1279,7 +1257,6 @@ register_grad(pids.VAR_MEAN, _var_mean_prim_grad)
 #
 # Linear algebra operator grads
 #
-@torchctx
 def _linear_prim_grad(a: TensorProxy, w: TensorProxy, bias: None | TensorProxy) -> TensorProxy:
     fwd = prims.linear(a, w, bias)
 
@@ -1311,7 +1288,6 @@ register_grad(pids.LINEAR, _linear_prim_grad)
 
 # TODO Add explicit ltorch vs clang module to the tensor operations below
 # TODO could we get rid of the final squeezes in the b.ndim == 1 case and the a.ndim == 1 case?
-@torchctx
 def _matmul_prim_grad(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
     fwd = prims.matmul(a, b)
     g = get_grad(fwd)
@@ -1346,7 +1322,6 @@ register_grad(pids.MATMUL, _matmul_prim_grad)
 #
 
 
-@torchctx
 def _embedding_prim_grad(
     a: TensorProxy, /, weight, *, padding_idx=-1, max_norm=None, norm_type=2.0, scale_grad_by_freq=False, sparse=False
 ) -> TensorProxy:
@@ -1429,7 +1404,6 @@ def grad(
     cfn,
 ) -> Callable:
     def grad(func):
-
         @wraps(func)
         def grad_func(*args, **kwargs):
             _, grads = value_and_grad(func)(*args, **kwargs)
@@ -1440,16 +1414,25 @@ def grad(
         return grad_func
 
     class _GradTransform(Transform):
-        def transform_trace_additionally(self, trc: Trace, *, executors_list: Sequence[Any]) -> Trace:
+        def transform_traces_pre_prologue(
+            self,
+            prologue_trc: Trace,
+            computation_trc: Trace,
+            epilogue_trc: Trace | None,
+            *,
+            executors_list: Sequence[Any],
+        ) -> Trace:
             # Using trc.python_callable() makes it impossible to retrace the
             # function because the python_callable uses python_ctx which replaces
             # symbol occurrences with its symbol._call_ctx function
-            @wraps(trc.python_callable())
-            def python_callable(*args, **kwargs):
-                return eval_trace(trc, *args, **kwargs)
+            computation_trc = dce(computation_trc)
 
-            gradtrc = construct_trace()(grad(python_callable), *trc.args, **trc.kwargs)
-            return gradtrc
+            @wraps(computation_trc.python_callable())
+            def python_callable(*args, **kwargs):
+                return eval_trace(computation_trc, *args, **kwargs)
+
+            gradtrc = construct_trace()(grad(python_callable), *computation_trc.args, **computation_trc.kwargs)
+            return prologue_trc, gradtrc, epilogue_trc
 
     cfn._using_grad_transform = True
     _grad_transform = _GradTransform()

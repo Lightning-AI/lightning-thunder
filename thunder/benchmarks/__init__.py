@@ -28,6 +28,7 @@ from thunder.executors.cudnnex import cudnn_ex, cudnn_available
 from thunder.executors.transformer_engineex import transformer_engine_ex, TE_AVAILABLE
 from thunder.executors.sdpaex import sdpa_ex
 from thunder.executors.torch_compile import torch_compile_cat_ex, torch_compile_ex
+from thunder.transforms.cudagraph import CUDAGraphTransform
 from thunder.tests import nanogpt_model, hf_bart_self_attn, litgpt_model
 from thunder.tests.litgpt_model import Config as LitGPTConfig
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
@@ -954,7 +955,8 @@ def default_thunder_cudagraphs_executor(fn: Callable) -> Callable:
         executors_list.append("apex_xentropy")
 
     executors_list.extend((executors.NVFUSER, executors.TORCH))
-    return thunder.jit(fn, executors=executors_list, use_cudagraphs=True, disable_torch_autograd=True)
+    transforms = [CUDAGraphTransform()]
+    return thunder.jit(fn, executors=executors_list, transforms=transforms, disable_torch_autograd=True)
 
 
 #

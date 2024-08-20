@@ -83,8 +83,6 @@ class CompileStats:
         last_prologue_transformation_stop (int):
         last_prologue_execution_start (int):
         last_prologue_execution_stop (int):
-        last_computation_transformation_start (int):
-        last_computation_transformation_stop (int):
         last_computation_execution_start (int):
         last_computation_execution_stop (int):
         cache (dict):
@@ -121,8 +119,6 @@ class CompileStats:
         self.last_prologue_transformation_stop: int = -1
         self.last_prologue_execution_start: int = -1
         self.last_prologue_execution_stop: int = -1
-        self.last_computation_transformation_start: int = -1
-        self.last_computation_transformation_stop: int = -1
         self.last_computation_execution_start: int = -1
         self.last_computation_execution_stop: int = -1
 
@@ -163,11 +159,6 @@ class CompileStats:
         stop: int = self.last_prologue_execution_stop
         return self._time_template(start, stop, "prologue execution")
 
-    def last_computation_transformation_time(self, /) -> int:
-        start: int = self.last_computation_transformation_start
-        stop: int = self.last_computation_transformation_stop
-        return self._time_template(start, stop, "computation transformation")
-
     def last_computation_execution_time(self, /) -> int:
         start: int = self.last_computation_execution_start
         stop: int = self.last_computation_execution_stop
@@ -195,7 +186,6 @@ class CompileData:
         using_jit: bool = False,
         only_execute_prims: bool = False,
         disable_preprocessing: bool = False,
-        use_cudagraphs: bool = False,
         disable_torch_autograd_support: bool = False,
         use_rematerialization: bool = False,
         debug_log: None | StringIO = None,
@@ -253,7 +243,6 @@ class CompileData:
         self.only_execute_prims = only_execute_prims
         self.disable_preprocessing = disable_preprocessing
         self.use_rematerialization = use_rematerialization
-        self.use_cudagraphs = use_cudagraphs
         self.disable_torch_autograd_support = disable_torch_autograd_support
         self.debug_log = debug_log
 
