@@ -477,6 +477,7 @@ class BoundSymbol(BoundSymbolInterface):
 
         nargs = swap(self.args) if not skip_inputs else self.args
         nkwargs = swap(self.kwargs) if not skip_inputs else self.kwargs
+        new_additional_deps = swap(self._additional_dependencies) if not skip_inputs else self._additional_dependencies
 
         new_output = swap(self.output) if not skip_output else self.output
 
@@ -488,14 +489,20 @@ class BoundSymbol(BoundSymbolInterface):
         else:
             subsymbols = list(self.subsymbols)
 
-        return self.from_bsym(args=nargs, kwargs=nkwargs, output=new_output, subsymbols=subsymbols)
+        return self.from_bsym(
+            args=nargs,
+            kwargs=nkwargs,
+            _additional_dependencies=new_additional_deps,
+            output=new_output,
+            subsymbols=subsymbols,
+        )
 
     # Only used by prims.python_return
     # NOTE Making these cached properties relies on the assumption that the inputs to come before the return statement
 
     @functools.cached_property
     def flat_args_and_spec(self):
-        return tree_flatten_with_dataclass((self.args, self.kwargs, self._copy_outputs_before_return))
+        return tree_flatten_with_dataclass((self.args, self.kwargs, self._additional_dependencies))
 
     @functools.cached_property
     def flat_args(self):
