@@ -12,7 +12,7 @@ from thunder.tests.framework import requiresCUDA, TorchExecutor
 from thunder.tests.make_tensor import make_tensor
 from thunder.tests.opinfos import get_opinfo, OpInfo
 from thunder.tests.test_einops import skipIfNoCUDA
-from torch.testing._internal.common_device_type import skipCPUIfNoLapack
+from torch.testing._internal.common_device_type import skipCPUIfNoLapack, skipCUDAIfNoMagma
 from torch.testing._internal.common_methods_invocations import op_db
 
 _name2func = {}
@@ -46,8 +46,6 @@ _opinfos = get_opinfos_for_test()
 def test_torch_ops_trace(device, requires_grad, op_info):
     if not op_info.supports_autograd and requires_grad:
         pytest.skip("op_info.supports_autograd is False")
-
-    # for op_info in op_infos:
     if device == "cuda" and torch.float32 not in op_info.dtypesIfCUDA:
         pytest.skip("float32 is not in op_info.dtypesIfCUDA")
     if device == "cpu" and not torch.float32 in op_info.dtypes:
@@ -56,6 +54,8 @@ def test_torch_ops_trace(device, requires_grad, op_info):
         pytest.skip("Could not run 'aten::nonzero_static' with arguments from the 'CUDA' backend.")
     if device == "cpu" and not torch._C.has_lapack and skipCPUIfNoLapack in op_info.decorators:
         pytest.skip("PyTorch compiled without Lapack")
+    if device == "cuda" and not torch.cuda.has_magma and skipCUDAIfNoMagma in op_info.decorators:
+        pytest.skip("PyTorch compiled without Magma")
 
     def get_method(op_info):
         # Check if we have registered this method.
