@@ -50,6 +50,7 @@ from thunder.core.utils import (
     const_as,
     sequencify,
     ProxyDict,
+    find_producer_symbols,
 )
 import thunder.clang as clang
 from thunder.clang import (
@@ -63,7 +64,7 @@ from thunder.clang import (
     convolution,
 )
 from thunder.core.transform_common import dce, Transform
-from thunder.core.vjp_utils import make_aug_forward_and_backward
+from thunder.core.vjp_utils import make_aug_forward_and_backward, get_saved_for_backward_tensors
 from thunder.extend import Executor
 import thunder.torch as ltorch
 
@@ -3770,16 +3771,69 @@ def recompute_saved_for_backward(fw_trace: Trace, bw_trace: Trace) -> tuple[Trac
         tuple[Trace, Trace]: A tuple containing the new forward and backward traces.
     """
     start_time_ns = time.perf_counter_ns()
+    # First of all we need to get the saved for backward tensors
+    saved_for_bw = get_saved_for_backward_tensors(fw_trace)
+
+    # Let's create these two maps that will help writing the logic
+    fw_trace_args = {j.name: j for j in fw_trace.args}
+    old_saved_for_bw_map = {j.name: j for j in saved_for_bw}
+
+    # The second step is to determine which tensors we can rematerialize. Let's remove the tensors that come from the argument to the forward tarce.
+    recomputable_map = {
+        old_saved_for_bw_map[i].name: old_saved_for_bw_map[i] for i in set(old_saved_for_bw_map) - set(fw_trace_args)
+    }
+
+    # Here will come the selection logic for what to materialize. At the moment let's remat everything and just print some stats.
+    from collections import Counter
+
+    tensor_counter = Counter({k: v.numel * v.dtype.bytes for k, v in recomputable_map.items()})
+    print(f"DEBUG: out of {len(saved_for_bw)} sfb, {len(recomputable_map)} are recomputable")
+    print(f"DEBUG: can save up to {tensor_counter.total()*1e-6:.3f} MB")
+
+    # Now that we have the list of tensors that are going to be recomputed we can start to collect the computation needed to generate them.
+    prod_symbols = find_producer_symbols(fw_trace, recomputable_map.values(), fw_trace.args)
+    # We need to check which inputs to the fw trace are used to compute the producer symbols
+    required_fw_args = {}
+    for p in prod_symbols:
+        for pa in p.flat_args:
+            if isinstance(pa, TensorProxy) and pa.name in fw_trace_args.keys():
+                required_fw_args[pa.name] = pa
+
+    # Now that everything is ready we can prepare the new saved for backward list
+    # To do so we need: the saved for backward that still needs to be carried on from the old list and the new required arguments from the forward.
+    required_saved_for_bw = {
+        fw_trace_args[i].name: fw_trace_args[i] for i in set(fw_trace_args) & set(old_saved_for_bw_map)
+    }
+    new_saved_for_backward = tuple((required_saved_for_bw | required_fw_args).values())
+
+    # Everything is now ready and we can start to build the new traces.
+    new_fw_trace = from_trace(fw_trace)
+    new_fw_trace.bound_symbols = fw_trace.bound_symbols.copy()
+    new_return = (fw_trace.output[0], (new_saved_for_backward, fw_trace.output[1][1]))
+    new_fw_trace.bound_symbols[-1] = prims.python_return.bind(new_return, output=())
+
+    new_bw_trace = from_trace(bw_trace)
+    new_bsym = bw_trace.bound_symbols.copy()
+
+    with tracectx(new_bw_trace):
+        unpack_args = (CollectionProxy(new_saved_for_backward, name="C0"), len(new_saved_for_backward))
+
+    new_bsym[4] = prims.unpack_sequence.bind(*unpack_args, output=new_saved_for_backward)
+    # Attach the producer symbols
+    new_bsym[6:6] = prod_symbols
+
+    new_bw_trace.bound_symbols = new_bsym
+    new_bw_trace.args = [(new_saved_for_backward, fw_trace.output[1][1]), *new_bw_trace.args[1:]]
 
     elapsed_time_ns = time.perf_counter_ns() - start_time_ns
-    bw_trace.set_provenance(
+    new_bw_trace.set_provenance(
         TraceProvenance(f"Saved for backward remat trace (took {elapsed_time_ns * 1e-6:.2f} milliseconds)")
     )
-    fw_trace.set_provenance(
+    new_fw_trace.set_provenance(
         TraceProvenance(f"Saved for backward remat trace (took {elapsed_time_ns * 1e-6:.2f} milliseconds)")
     )
 
-    return fw_trace, bw_trace
+    return new_fw_trace, new_bw_trace
 
 
 # do we happen to want to register `ltorch` ops such as `ltorch.layer_norm` as well?
