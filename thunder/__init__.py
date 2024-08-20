@@ -659,19 +659,6 @@ def jit(
                     # by split_forward_backward
 
             if backward_trc is None:
-                ## EPILOGUE and TRANSFORMS should not mix...
-                # applies transforms
-                cs.last_computation_transformation_start = time.perf_counter_ns()
-                for transform in transforms:
-                    new_computation_trc = transform.transform_trace_additionally(
-                        computation_trc, executors_list=cd.executors_list
-                    )
-                    if new_computation_trc is not computation_trc:
-                        # todo: deprecation
-                        computation_trc = new_computation_trc
-                        computation_traces.append(computation_trc)
-                cs.last_computation_transformation_stop = time.perf_counter_ns()
-
                 from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
                 from thunder.executors.passes import _transform_for_operator_executor_execution
                 from thunder.distributed.utils import maybe_sort_waits
@@ -767,7 +754,6 @@ def jit(
         cs.last_trace_host_execution_start = time.perf_counter_ns()
 
         if cache_entry.vanilla_tensor_args:
-
             if alias_tensor_indices_str := _alias_tensor_of_args_kwargs(*inps):
                 alias_tensor_indices = alias_tensor_indices_str
                 alias_tensor_indices = {int(i) for i in alias_tensor_indices_str.split(",")}

@@ -1430,7 +1430,6 @@ def grad(
     cfn,
 ) -> Callable:
     def grad(func):
-
         @wraps(func)
         def grad_func(*args, **kwargs):
             _, grads = value_and_grad(func)(*args, **kwargs)
@@ -1441,16 +1440,25 @@ def grad(
         return grad_func
 
     class _GradTransform(Transform):
-        def transform_trace_additionally(self, trc: Trace, *, executors_list: Sequence[Any]) -> Trace:
+        def transform_traces_pre_prologue(
+            self,
+            prologue_trc: Trace,
+            computation_trc: Trace,
+            epilogue_trc: Trace | None,
+            *,
+            executors_list: Sequence[Any],
+        ) -> Trace:
             # Using trc.python_callable() makes it impossible to retrace the
             # function because the python_callable uses python_ctx which replaces
             # symbol occurrences with its symbol._call_ctx function
-            @wraps(trc.python_callable())
-            def python_callable(*args, **kwargs):
-                return eval_trace(trc, *args, **kwargs)
+            computation_trc = dce(computation_trc)
 
-            gradtrc = construct_trace()(grad(python_callable), *trc.args, **trc.kwargs)
-            return gradtrc
+            @wraps(computation_trc.python_callable())
+            def python_callable(*args, **kwargs):
+                return eval_trace(computation_trc, *args, **kwargs)
+
+            gradtrc = construct_trace()(grad(python_callable), *computation_trc.args, **computation_trc.kwargs)
+            return prologue_trc, gradtrc, epilogue_trc
 
     cfn._using_grad_transform = True
     _grad_transform = _GradTransform()
