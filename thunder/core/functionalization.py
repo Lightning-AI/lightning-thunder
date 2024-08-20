@@ -298,6 +298,7 @@ def create_functional_bsym_from(inplace_bsym: BoundSymbol) -> BoundSymbol:
         output=inplace_bsym.output,
         subsymbols=inplace_bsym.subsymbols,
         _call_ctx=inplace_bsym._call_ctx,
+        _additional_dependencies=inplace_bsym._additional_dependencies,
     )
     if functional_bsym.subsymbols[-1].sym.id == prims.PrimIDs.COPY_:
         functional_bsym.subsymbols = functional_bsym.subsymbols[:-1]

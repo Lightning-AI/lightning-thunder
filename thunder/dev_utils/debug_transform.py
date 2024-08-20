@@ -13,7 +13,12 @@ def create_debug_boundsymbol(name: str, bsym: BoundSymbol, call_ctx: Callable):
         debug_bsym._call_ctx = {name: partial(call_ctx, debug_bsym, bsym)}
 
     debug_sym = Symbol(name, lambda *_: None, is_prim=True, _bind_postprocess=bind_postprocess)
-    debug_bsym = debug_sym.bind(*bsym.args, output=None, **bsym.kwargs)
+    debug_bsym = debug_sym.bind(
+        *bsym.args,
+        **bsym.kwargs,
+        output=None,
+        _additional_dependencies=bsym._additional_dependencies,
+    )
     return debug_bsym
 
 

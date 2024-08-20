@@ -254,7 +254,9 @@ class Symbol:
         return ba.args, ba.kwargs
 
     # TODO Remove _call_ctx
-    def bind(self, *args, output, subsymbols=(), _call_ctx: None | dict = None, **kwargs) -> BoundSymbol:
+    def bind(
+        self, *args, output, subsymbols=(), _call_ctx: None | dict = None, _additional_dependencies=(), **kwargs
+    ) -> BoundSymbol:
         if self.meta is not None:
             args, kwargs = self.normalize(*args, **kwargs)
 
@@ -276,6 +278,7 @@ class Symbol:
             source_filename=source_filename,
             source_positions=source_positions,
             _call_ctx=_call_ctx,
+            _additional_dependencies=_additional_dependencies,
         )
         if self._bind_postprocess:
             self._bind_postprocess(b)
