@@ -35,6 +35,7 @@ from thunder.core.proxies import (
 )
 from thunder.core.baseutils import default_dataclass_params
 from thunder.core.compile_data import get_compile_data
+from thunder.core.langctxs import langctx, Languages
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten, tree_flatten_with_dataclass
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol
 from thunder.core.trace import TraceCtx as Trace, tracectx
@@ -594,7 +595,15 @@ def register_grad(sym_or_id: Symbol | Any, gradfn: Callable) -> None:
     id: Any = sym_or_id
     if isinstance(sym_or_id, Symbol):
         id = sym_or_id.id
-    _grad_fn_map[id] = gradfn
+
+    # The gradfn are expected to be written in terms of torch functions by
+    # default even if the original forward function could be written in terms of
+    # other languages. We don't want to have developers worry about the language
+    # context when writing grad functions. If the grad function is written in
+    # terms of another language, developers can always wrap the gradfn in an
+    # appropriate language context that will take precedence over the default
+    # torch language context.
+    _grad_fn_map[id] = langctx(Languages.TORCH)(gradfn)
 
 
 # Grad functions for prims
