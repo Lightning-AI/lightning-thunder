@@ -47,6 +47,7 @@ class MaterializationTransform(Transform):
                 p._thunder_device = self.device
 
         shared_names = model._get_shared_names()
+        self.have_materialized: set[str] = set()
 
         # note: the iterations below are without duplicates
         for n, p in list(model.named_parameters()):
@@ -55,16 +56,18 @@ class MaterializationTransform(Transform):
                     torch.empty_like(p, device=getattr(p, "_thunder_device", self.device)),
                     requires_grad=p.requires_grad,
                 )
-                for nn in shared_names[n]:
-                    model._overrides_parameters[nn] = p
+                for n2 in shared_names[n]:
+                    model._overrides_parameters[n2] = p
+                    self.have_materialized.add(n2)
 
         for n, b in list(model.named_buffers()):
             if b.device.type == "meta":
                 b = torch.empty_like(
                     b, device=getattr(b, "_thunder_device", self.device), requires_grad=b.requires_grad
                 )
-                for nn in shared_names[n]:
-                    model._overrides_parameters[nn] = b
+                for n2 in shared_names[n]:
+                    model._overrides_parameters[n2] = b
+                    self.have_materialized.add(n2)
 
         self.init(self, model)
 
@@ -101,16 +104,28 @@ class MaterializationTransform(Transform):
                 prefix = module_name if not module_name else f"{module_name}."
                 submodule = tm.get_submodule(module_name)
 
-                # we use a copy to let the user's module alone
-                module_copy = copy.copy(submodule)
-
                 # Materialize meta-parameters on-device if necessary.
                 # This is done before sharding in case the materialization logic depends on the tensor shape.
                 # The tradeoff is that all of a module's direct parameters need to fit in device.
                 # Each module only initializes its own parameters and not those of its children (recurse=False)
                 if any(
-                    t.is_meta for t in chain(module_copy.parameters(recurse=False), module_copy.buffers(recurse=False))
+                    chain(
+                        (
+                            transform.have_materialized
+                            for n, _ in submodule.named_parameters(recurse=False, prefix=module_name)
+                        ),
+                        (
+                            transform.have_materialized
+                            for n, _ in submodule.named_buffers(recurse=False, prefix=module_name)
+                        ),
+                    )
                 ):
+                    # we use a copy to let the user's module alone
+                    module_copy = copy.copy(submodule)
+                    module_copy._parameters = module_copy._parameters.copy()
+                    module_copy._buffers = module_copy._buffers.copy()
+                    module_copy._modules = module_copy._modules.__class__()
+
                     # we need to initialize the module unless all parameters are duplicatess
                     need_init = not all(
                         shared_names[n] & processed_names

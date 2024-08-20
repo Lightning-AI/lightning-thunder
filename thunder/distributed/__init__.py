@@ -474,16 +474,23 @@ def fsdp(
     if isinstance(model, thunder.ThunderModule):
         from thunder.core.transforms import add_transform
         from thunder.distributed.transforms.fsdp_v2 import FSDPTransform
+        from thunder.transforms import MaterializationTransform
 
+        if device is None:
+            local_rank = int(os.environ["LOCAL_RANK"])
+            device = torch.device("cuda", local_rank)
         return add_transform(
             model,
-            transform=FSDPTransform(
-                device=device,
-                broadcast_from=broadcast_from,
-                sharding_strategy=sharding_strategy,
-                bucketing_strategy=bucketing_strategy,
-                release_original_parameters=True,
-            ),
+            transform=[
+                FSDPTransform(
+                    device=device,
+                    broadcast_from=broadcast_from,
+                    sharding_strategy=sharding_strategy,
+                    bucketing_strategy=bucketing_strategy,
+                    release_original_parameters=True,
+                ),
+                MaterializationTransform(device, init=MaterializationTransform.init_from_original_module_init()),
+            ],
         )
 
     process_group = copy_default_process_group()
