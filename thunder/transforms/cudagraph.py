@@ -176,7 +176,7 @@ class CUDAGraphTransform(Transform):
     """
     Transform to fuse operations into CUDA graphs post optimization.
 
-    This class provides the basic infrastructure, but it is expected that you might subclass this transformm
+    This class provides the basic infrastructure, but it is expected that you might subclass this transform
     in order to override ``can_fuse```or other methods.
     """
 

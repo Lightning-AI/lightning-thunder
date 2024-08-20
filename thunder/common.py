@@ -83,8 +83,6 @@ class CompileStats:
         last_prologue_transformation_stop (int):
         last_prologue_execution_start (int):
         last_prologue_execution_stop (int):
-        last_computation_transformation_start (int):
-        last_computation_transformation_stop (int):
         last_computation_execution_start (int):
         last_computation_execution_stop (int):
         cache (dict):
@@ -121,8 +119,6 @@ class CompileStats:
         self.last_prologue_transformation_stop: int = -1
         self.last_prologue_execution_start: int = -1
         self.last_prologue_execution_stop: int = -1
-        self.last_computation_transformation_start: int = -1
-        self.last_computation_transformation_stop: int = -1
         self.last_computation_execution_start: int = -1
         self.last_computation_execution_stop: int = -1
 
@@ -162,11 +158,6 @@ class CompileStats:
         start: int = self.last_prologue_execution_start
         stop: int = self.last_prologue_execution_stop
         return self._time_template(start, stop, "prologue execution")
-
-    def last_computation_transformation_time(self, /) -> int:
-        start: int = self.last_computation_transformation_start
-        stop: int = self.last_computation_transformation_stop
-        return self._time_template(start, stop, "computation transformation")
 
     def last_computation_execution_time(self, /) -> int:
         start: int = self.last_computation_execution_start
