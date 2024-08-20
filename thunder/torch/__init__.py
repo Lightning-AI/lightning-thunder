@@ -10,7 +10,7 @@ from enum import Enum
 from functools import partial, reduce, wraps
 from numbers import Number
 from typing import Any, overload
-from types import NoneType
+from types import NoneType, ModuleType
 from collections.abc import Callable
 
 import opt_einsum
@@ -5422,10 +5422,33 @@ def register_default_torch_ops():
             register_default_torch_op(fn, m)
 
 
+def _get_torch_function_name(torch_module: ModuleType, torchfn: Callable):
+    # Handle special cases where torchfn.__name__ differs from the name used to call it in Python,
+    # e.g., `torch.nn.functional.logsigmoid.__name__` is 'log_sigmoid'.
+    special_cases = {torch.nn.functional.logsigmoid: "logsigmoid"}
+    # Operators in the following namespace have an extra prefix in their __name__ attribute compared to their Python call name.
+    # e.g., `torch.special.xlogy.__name__` is 'special_xlogy' instead of just 'xlogy'.
+    name_prefix_map = {torch.special: "special_", torch.linalg: "linalg_", torch.fft: "fft_"}
+    if function_name := special_cases.get(torchfn, None):
+        return function_name
+    if not (function_name := getattr(torchfn, "__name__", None)):
+        raise RuntimeError(
+            f"The function {torchfn} from the module {torch_module} does not have a __name__ attribute. Please ensure that you are passing a valid PyTorch function."
+        )
+    prefix = name_prefix_map.get(torch_module, None)
+    if prefix and function_name.startswith(prefix):
+        function_name = function_name[len(prefix) :]
+    utils.check(
+        getattr(torch_module, function_name, None),
+        lambda: f"Incorrect function name {function_name} inferred for PyTorch function {torchfn} from module {torch_module}.",
+    )
+    return function_name
+
+
 def register_default_torch_op(torchfn: Callable, torch_module):
     fn_meta = meta_adaptor(torchfn)
     _fn = langctx(Languages.TORCH)(fn_meta)
-    torchfn_name = torchfn.__name__.split("_")[1] if torch_module == torch.special else torchfn.__name__
+    torchfn_name = _get_torch_function_name(torch_module, torchfn)
     sym = Symbol(
         name=torchfn_name,
         meta=_fn,

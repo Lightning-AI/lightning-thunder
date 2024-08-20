@@ -1,9 +1,11 @@
 from functools import partial
 from unittest.mock import patch
+from itertools import islice
 
 import pytest
 import thunder
 import thunder.torch.default_torch_ops as ops
+from thunder.torch import _get_torch_function_name
 import torch
 
 from thunder.tests.framework import requiresCUDA, TorchExecutor
@@ -14,11 +16,10 @@ from torch.testing._internal.common_device_type import skipCPUIfNoLapack
 from torch.testing._internal.common_methods_invocations import op_db
 
 _name2func = {}
-[_name2func.setdefault(v.__name__, v) for v in ops.torch_auto_registered_ops[torch]]
-[_name2func.setdefault(f"nn.functional.{v.__name__}", v) for v in ops.torch_auto_registered_ops[torch.nn.functional]]
-# Use the sample input from torch.xx to test torch.tensor.xx
-[_name2func.setdefault(f"Tensor.{v.__name__}", v) for v in ops.torch_auto_registered_ops[torch.Tensor]]
-[_name2func.setdefault(f"special.{v.__name__.split('_')[1]}", v) for v in ops.torch_auto_registered_ops[torch.special]]
+for m, fns in ops.torch_auto_registered_ops.items():
+    m_name = m.__name__[len("torch.") :] if m.__name__.startswith("torch.") else m.__name__
+    for fn in fns:
+        _name2func.setdefault(f"{m_name}.{_get_torch_function_name(m, fn)}", fn)
 
 
 def get_opinfos_for_test():
@@ -43,18 +44,18 @@ _opinfos = get_opinfos_for_test()
 @pytest.mark.parametrize("requires_grad", [True, False], ids=("train", "inference"))
 @pytest.mark.parametrize("device,", ["cuda", "cpu"])
 def test_torch_ops_trace(device, requires_grad, op_info):
-    from itertools import islice
+    if not op_info.supports_autograd and requires_grad:
+        pytest.skip("op_info.supports_autograd is False")
 
     # for op_info in op_infos:
     if device == "cuda" and torch.float32 not in op_info.dtypesIfCUDA:
-        return
+        pytest.skip("float32 is not in op_info.dtypesIfCUDA")
     if device == "cpu" and not torch.float32 in op_info.dtypes:
-        return
-    # No cuda backend support
+        pytest.skip("float32 is not in op_info.dtypes")
     if op_info.name in ("nonzero_static",) and device == "cuda":
-        return
+        pytest.skip("Could not run 'aten::nonzero_static' with arguments from the 'CUDA' backend.")
     if device == "cpu" and not torch._C.has_lapack and skipCPUIfNoLapack in op_info.decorators:
-        return
+        pytest.skip("PyTorch compiled without Lapack")
 
     def get_method(op_info):
         # Check if we have registered this method.
@@ -165,10 +166,7 @@ class TestFallbackToTorch:
         import thunder.tests.nanogpt_model as nanogpt_model
 
         for op in _skip_ops_nanogpt:
-            if op.name == "gelu":
-                register_default_torch_op(op.torch_reference, torch)
-            else:
-                register_default_torch_op(op.torch_reference, torch.nn.functional)
+            register_default_torch_op(op.torch_reference, torch.nn.functional)
             self._tmp_update_jit_lookup(op.torch_reference)
         tdtype = torch.float32
         device = torch.device("cuda")
