@@ -34,7 +34,7 @@ from thunder.core.proxies import (
     FutureTensorProxy,
 )
 from thunder.core.baseutils import default_dataclass_params
-from thunder.core.compile_data import get_compile_data
+from thunder.core.compile_data import get_compile_data, get_compile_option
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten, tree_flatten_with_dataclass
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol
 from thunder.core.trace import TraceCtx as Trace, tracectx
@@ -3750,7 +3750,36 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
     _update_backward_with_new_saved_for_backward(backward_trace, only_used_bw_saved_for_backward)
     forward_trace.set_provenance(TraceProvenance("Augmented forward pass"))
     backward_trace.set_provenance(TraceProvenance("Backward pass"))
+
+    disable_saved_for_backward_recomputation: None | bool = get_compile_option(
+        "disable_saved_for_backward_recomputation", "Disable save for backward tensors recomputation."
+    )
+    if not disable_saved_for_backward_recomputation:
+        forward_trace, backward_trace = recompute_saved_for_backward(forward_trace, backward_trace)
+
     return ForwardBackwardTraces(forward_trace, backward_trace)
+
+
+def recompute_saved_for_backward(fw_trace: Trace, bw_trace: Trace) -> tuple[Trace, Trace]:
+    """Generates the pair of traces with rematerializaion of the saved-for-backward tensors.
+    Args:
+        fw_trace (Trace): forward trace where to get the saved for backward from.
+        bw_trace (Trace): backward trace where to recompute the saved for backward to.
+
+    Returns:
+        tuple[Trace, Trace]: A tuple containing the new forward and backward traces.
+    """
+    start_time_ns = time.perf_counter_ns()
+
+    elapsed_time_ns = time.perf_counter_ns() - start_time_ns
+    bw_trace.set_provenance(
+        TraceProvenance(f"Saved for backward remat trace (took {elapsed_time_ns * 1e-6:.2f} milliseconds)")
+    )
+    fw_trace.set_provenance(
+        TraceProvenance(f"Saved for backward remat trace (took {elapsed_time_ns * 1e-6:.2f} milliseconds)")
+    )
+
+    return fw_trace, bw_trace
 
 
 # do we happen to want to register `ltorch` ops such as `ltorch.layer_norm` as well?
