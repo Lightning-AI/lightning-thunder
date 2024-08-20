@@ -768,6 +768,15 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
             print(f"DDP Bucketing Size: {benchmark.ddp_bucket_size} MB")
         print(f"Compiler: {benchmark.compile}")
         print(f"Low Precision Mode: {benchmark.low_precision_mode}")
+        if benchmark._torchao_fp8_handler._enabled:
+            msg = "linear"
+            if benchmark._torchao_fp8_handler.use_fp8_allgather:
+                msg += ", all-gather"
+            if benchmark._torchao_fp8_handler.precompute_scale:
+                msg += ", single all-reduce of AMAX/scales for dynamic scaling"
+            msg += " are enabled"
+            print(f"[torchao float8] {msg}")
+
         print(f"Average iter time: {benchmark.perf_metrics['average_iter_time']:.2f} ms")
         print(f"Memory used: {benchmark.perf_metrics['memory_used_GB']:.02f} GB")
         print(f"Tokens/s: {benchmark.perf_metrics['tokens_per_sec']:.02f}")
