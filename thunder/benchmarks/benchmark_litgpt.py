@@ -357,6 +357,7 @@ class Benchmark_litGPT:
             init_device = torch.device("meta")
         with init_device:
             model = GPT(self.config)
+        # TODO(crcrpar): Remove this guard once https://github.com/pytorch/ao/pull/713 is merged
         if (
             self.distributed_mode == "fsdp2"
             and self._torchao_fp8_handler._enabled
