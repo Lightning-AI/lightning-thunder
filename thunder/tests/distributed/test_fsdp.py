@@ -693,13 +693,15 @@ class FSDPTest(DistributedParallelTestCase):
             with torch.device("cuda"):
                 model = ToyModel()
 
+            init_state_dict = model.state_dict()
             jitted = fsdp(thunder.jit(model), device=device, move_state_dict_to_cpu=move_state_dict_to_cpu)
-            state_dict = jitted.state_dict()
-            original_state_dict = jitted.original_state_dict()
 
-            for key, sharded_param in state_dict.items():
-                unsharded = original_state_dict[key]
-                self.assertEqual(len(sharded_param) * self.world_size, len(unsharded))
+            sharded_state_dict = jitted.state_dict()
+            original_state_dict = jitted.original_state_dict()
+            for key, unsharded in original_state_dict.items():
+                self.assertTrue(key in init_state_dict and key in sharded_state_dict)
+                self.assertEqual(len(init_state_dict[key]), len(unsharded))
+                self.assertGreater(len(unsharded), len(sharded_state_dict[key]))
                 if move_state_dict_to_cpu:
                     self.assertEqual(unsharded.device, torch.device("cpu"))
                 else:

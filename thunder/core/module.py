@@ -244,11 +244,12 @@ class ThunderModule(pytorch.nn.Module):
 
         """
         module_names = {name for name, _ in self._model.named_modules()}
-        state_dict = self.state_dict(destination=destination, prefix=prefix, keep_vars=keep_vars)
-        state_dict_per_submodule = _convert_state_dict_to_per_module(state_dict, module_names)
+        state_dict_per_submodule = _convert_state_dict_to_per_module(self.state_dict(), module_names)
 
-        _state_dict_keys = list(state_dict.keys())
-        cur_idx: int = 0
+        if destination is None:
+            destination = collections.OrderedDict()
+            destination._metadata = collections.OrderedDict()
+
         transform: Transform
         for submodule_name, submodule_state_dict in state_dict_per_submodule.items():
             for transform in reversed(self._lc_transforms):
@@ -257,11 +258,8 @@ class ThunderModule(pytorch.nn.Module):
                     submodule_name,
                     submodule_state_dict,
                 )
-            state_dict_per_submodule[submodule_name] = submodule_state_dict
-            for v in submodule_state_dict.values():
-                state_dict[_state_dict_keys[cur_idx]] = v
-                cur_idx += 1
-        return state_dict
+            destination.update({f"{prefix}{submodule_name}.{k}": v for k, v in submodule_state_dict.items()})
+        return destination
 
     def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True, assign: bool = False):
         """Loads the state dict to a transformed module.
