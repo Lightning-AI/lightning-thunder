@@ -291,7 +291,6 @@ def row_parallel(
             chunked_param_name_to_layer_type=chunked_param_name_to_layer_type,
             process_group=process_group,
         ),
-        _legacy_copy_params=True,
     )
 
     return rowwise_thunder_module
