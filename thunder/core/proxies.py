@@ -1792,7 +1792,9 @@ _cls_to_number_proxy_map = {
 }
 
 
+# TODO: move this function to jit_ext.py
 def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple = None) -> TensorProxy:
+    from thunder.core.interpreter import ProvenanceRecord, PseudoInst, wrap_const
     if hasattr(t, "_thunder_device"):
         torch_device = t._thunder_device
     else:
@@ -1803,7 +1805,9 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
     distparallel_type = getattr(t, "distparallel_type", None)
     _thunder_fsdp_padding_size = getattr(t, "_thunder_fsdp_padding_size", None)
     if using_symbolic_values():
-        shape = tuple(IntegerProxy(s, CONSTRAINT.CONSTRAINABLE) for s in t.shape)
+        shape_attr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[history, wrap_const("shape").provenance])
+        shape = tuple(IntegerProxy(None, s, history=ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[shape_attr, wrap_const(idx).provenance]), constraint=CONSTRAINT.CONSTRAINABLE) for idx, s in enumerate(t.shape))
+        print(shape)
     else:
         shape = tuple(t.shape)
     # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
