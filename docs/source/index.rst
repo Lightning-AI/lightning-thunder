@@ -102,6 +102,7 @@ The compiled function ``jitted_foo`` takes and returns PyTorch tensors, just lik
    What's next <intermediate/whats_next>
    FSDP Under the Hood Tutorial <notebooks/dev_tutorials/fsdp_tutorial>
    Benchmarking Thunder <intermediate/benchmarking>
+   Writing a Transform <notebooks/writing_a_trace_transform_cpu_offloading>
 
 .. toctree::
    :maxdepth: 1
