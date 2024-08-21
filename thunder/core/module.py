@@ -1,7 +1,6 @@
 from contextlib import contextmanager
 import itertools
-from typing import Any
-from collections.abc import Mapping
+from typing import TYPE_CHECKING
 import collections
 
 import torch as pytorch
@@ -9,6 +8,22 @@ from torch.utils.weak import WeakTensorKeyDictionary
 
 import thunder
 from thunder.core.compile_data import get_compile_data
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from typing import Any
+    from thunder.core.transform_common import Transform
+
+
+def _convert_state_dict_to_per_module(state_dict: dict[str, Any], module_names: set[str]) -> dict[str, dict[str, Any]]:
+    state_dict_per_module = collections.defaultdict(dict)
+    for k, v in state_dict.items():
+        prefix, sep, _ = k.rpartition(".")
+        # not great but should not happen too often / deep
+        while prefix not in module_names:
+            prefix, sep, _ = prefix.rpartition(".")
+        state_dict_per_module[prefix][k[len(prefix) + len(sep) :]] = v
+    return state_dict_per_module
 
 
 class ThunderModule(pytorch.nn.Module):
@@ -118,16 +133,20 @@ class ThunderModule(pytorch.nn.Module):
                 shared_names[n] = s
         return shared_names
 
-    def load_original_state_dict(self, state_dict):
-        # this loads the state dict incrementally to not exhaust memory
+    def _to_state_dict_per_module(self, state_dict: dict[str, Any]) -> dict[str, dict[str, Any]]:
         module_names = {n for n, _ in self._model.named_modules()}
-        sd_per_module = collections.defaultdict(dict)
+        state_dict_per_module = collections.defaultdict(dict)
         for k, v in state_dict.items():
             prefix, sep, _ = k.rpartition(".")
             # not great but should not happen too often / deep
             while prefix not in module_names:
                 prefix, sep, _ = prefix.rpartition(".")
-            sd_per_module[prefix][k[len(prefix) + len(sep) :]] = v
+            state_dict_per_module[prefix][k[len(prefix) + len(sep) :]] = v
+        return state_dict_per_module
+
+    def load_original_state_dict(self, state_dict):
+        # this loads the state dict incrementally to not exhaust memory
+        sd_per_module = _convert_state_dict_to_per_module(state_dict, {n for n, _ in self._model.named_modules()})
 
         shared_names = self._get_shared_names()
         processed_names = set()
@@ -182,7 +201,7 @@ class ThunderModule(pytorch.nn.Module):
         Returns the state dict of the (transformed) Thunder module.
 
         Args:
-            destination: if given, use this mutuable mapping as the dict container.
+            destination: if given, use this mutable mapping as the dict container.
             prefix: a prefix for the keys.
             keep_vars: do not detach
 
@@ -214,6 +233,41 @@ class ThunderModule(pytorch.nn.Module):
             ):
                 destination[extra_state_key] = self.get_extra_state()
         return destination
+
+    def original_state_dict(
+        self,
+        *,
+        destination: dict[str, Any] | None = None,
+        prefix: str = "",
+        keep_vars: bool = False,
+    ) -> dict[str, Any]:
+        """Returns the state dict of the transformed :class:`ThunderModule`.
+
+        Args:
+            destination: if given, use this mutable mapping as the dict container.
+            prefix: a prefix for the keys.
+            keep_vars: do not detach
+
+        """
+        module_names = {name for name, _ in self._model.named_modules()}
+        state_dict = self.state_dict(destination=destination, prefix=prefix, keep_vars=keep_vars)
+        state_dict_per_submodule = _convert_state_dict_to_per_module(state_dict, module_names)
+
+        _state_dict_keys = list(state_dict.keys())
+        cur_idx: int = 0
+        transform: Transform
+        for submodule_name, submodule_state_dict in state_dict_per_submodule.items():
+            for transform in reversed(self._lc_transforms):
+                submodule_state_dict = transform.reverse_transform_state_dict_for_submodule(
+                    self,
+                    submodule_name,
+                    submodule_state_dict,
+                )
+            state_dict_per_submodule[submodule_name] = submodule_state_dict
+            for v in submodule_state_dict.values():
+                state_dict[_state_dict_keys[cur_idx]] = v
+                cur_idx += 1
+        return state_dict
 
     def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True, assign: bool = False):
         """Loads the state dict to a transformed module.

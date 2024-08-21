@@ -1,7 +1,6 @@
 """Transform for `fsdp(jit(model))` to convert a model to use fsdp."""
 
 from __future__ import annotations
-import copy
 from dataclasses import dataclass
 from dataclasses import field
 from itertools import chain
@@ -27,14 +26,13 @@ from thunder.distributed import (
     copy_default_process_group,
     FSDPType,
     FSDPBucketingStrategy,
-    _materialize,
-    _shard_param,
     _shard_tensor,
 )
 
 if TYPE_CHECKING:
     from typing import Any
     from torch.distributed import ProcessGroup
+    from thunder.core.module import ThunderModule
     from thunder.core.symbol import BoundSymbol
     from thunder.core.trace import VariableInterface
 
@@ -71,7 +69,7 @@ class FSDPParamUnpaddingVisitor:
         return VISIT_TYPE.REPLACE
 
 
-# When the user calls fsdp(jitted_module), or applies this Transform direcly, it does the following
+# When the user calls fsdp(jitted_module), or applies this Transform directly, it does the following
 # - It transforms the ThunderModule jitted_module, sharding the parameters as `overrides`
 #   in the ThunderModule.
 # - While doing that, it leaves the original user module alone, except when
@@ -86,13 +84,7 @@ class FSDPParamUnpaddingVisitor:
 #
 # The thunder.distributed.fsdp function calls FSDPTransform followed by MaterializationTransform, the latter does
 # the materialization of submodules previously on the meta device.
-
-
 class FSDPTransform(Transform):
-    sharded_params: dict[str, Any]
-    process_group: ProcessGroup
-    shared_params_name: dict[str, str]
-
     def __init__(
         self,
         device: torch.device | None = None,
@@ -100,7 +92,8 @@ class FSDPTransform(Transform):
         sharding_strategy: FSDPType = FSDPType.ZERO2,
         bucketing_strategy: FSDPBucketingStrategy = FSDPBucketingStrategy.NONE,
         release_original_parameters: bool = False,
-    ):
+        move_state_dict_to_cpu: bool = False,
+    ) -> None:
         self.device = device
         self.broadcast_from = broadcast_from
         self.sharding_strategy = sharding_strategy
@@ -109,13 +102,13 @@ class FSDPTransform(Transform):
         self.sharded_params: dict[str, Any] = {}
         self.process_group: ProcessGroup | None = None
         self.shared_params_name: dict[str, str] = {}
+        self.move_state_dict_to_cpu = move_state_dict_to_cpu
 
     def transform_module(
         self,
         thunder_model: ThunderModule,
     ):
         from thunder import compile_data as get_compile_data
-        from thunder.core.transforms import add_transform
         from thunder.core.module import ThunderModule
 
         self.process_group = copy_default_process_group()
@@ -250,8 +243,11 @@ class FSDPTransform(Transform):
                     p_orig._thunder_device = self.device
 
     def transform_state_dict_for_submodule(
-        self, model: thunder.ThunderModule, submodule_name: str, state_dict: dict
-    ) -> dict:
+        self,
+        model: ThunderModule,
+        submodule_name: str,
+        state_dict: dict[str, Any],
+    ) -> dict[str, Any]:
         prefix = ""
         if submodule_name:
             prefix = f"{submodule_name}."
@@ -262,6 +258,36 @@ class FSDPTransform(Transform):
                 v, _ = _shard_tensor(v, self.global_rank, self.world_size, full_k, allow_padding_for_fsdp=True)
             new_state_dict[k] = v
         return new_state_dict
+
+    def reverse_transform_state_dict_for_submodule(
+        self,
+        model: ThunderModule,
+        submodule_name: str,
+        state_dict: dict[str, Any],
+    ) -> dict[str, Any]:
+        from thunder.executors.torchex import _all_gather_prim_impl
+
+        for name, tensor in state_dict.items():
+            fqn: str
+            if submodule_name:
+                fqn = f"{submodule_name}.{name}"
+            else:
+                fqn = name
+
+            if fqn not in self.sharded_params:
+                continue
+
+            old_shape, new_shape, *_ = self.sharded_params[fqn]
+            unsharded_tensor = _all_gather_prim_impl(
+                tensor,
+                group=self.process_group,
+                do_async=False,
+                dim=None,
+            ).narrow(0, 0, new_shape[0])
+            if self.move_state_dict_to_cpu:
+                unsharded_tensor = unsharded_tensor.cpu()
+            state_dict[name] = unsharded_tensor
+        return state_dict
 
     def transform_traces_pre_prologue(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
         from thunder.distributed import prims as dist_prims
