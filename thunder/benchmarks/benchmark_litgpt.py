@@ -221,19 +221,23 @@ class Benchmark_litGPT:
             self.model = te_precision.convert_module(self.model)
 
         # Setup the distributed algorithm choices
-        self.model = self.setup_distributed(self.model)
+        if distributed_first := (self.compile in ("eager", "inductor") or "dynamo" in self.compile):
+            self.model = self.setup_distributed(self.model)
 
         # Setup activations checkpointing
         if self.checkpoint_activations:
             self.setup_activation_checkpointing()
 
+        # Compile the model
+        self.model = self.setup_compile(self.model)
+
+        if not distributed_first:
+            self.model = self.setup_distributed(self.model)
+
         # Initialize the optimizer after the model is sharded if using FSDP
         self.optimizer = configure_optimizers(
             self.model, weight_decay, learning_rate, (beta1, beta2), device_type="cuda"
         )
-
-        # Compile the model
-        self.model = self.setup_compile(self.model)
 
         # Setup the Dummy dataloader for training
         self.train_dataloader = self.setup_dummy_dataloader()
