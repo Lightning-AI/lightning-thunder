@@ -24,7 +24,6 @@ class ArgsDescriptor:
     sizes: tuple
     strides: tuple
     non_tensor_args: tuple
-    args: list = field(hash=False, repr=False, compare=False)
 
 
 def to_arg_descriptor(*args):
@@ -35,63 +34,75 @@ def to_arg_descriptor(*args):
             return type(arg), None, None, arg
 
     dtypes, sizes, strides, non_tensor_args = zip(*map(extract_descriptor, args))
-    return ArgsDescriptor(dtypes, sizes, strides, non_tensor_args, args)
+    return ArgsDescriptor(dtypes, sizes, strides, non_tensor_args)
 
 
-@lru_cache
-def build_cuda_graph(
-    fn: Callable, args_descriptor: ArgsDescriptor, static_args_mask: tuple[bool, ...]
-) -> tuple[torch.cuda.CUDAGraph, Sequence[torch.Tensor | Any], Sequence[torch.Tensor | Any]]:
+class CUDAGraphRunner:
+    def __init__(self):
+        self.cuda_graph_cache = {}
+        self.python_callables = {}  # fn_name -> (callable. num_static_inputs)
+        self.trace_symbols = {}  # fn_name -> (bsyms, inputs, outputs)
+        self.name_counter = 1
 
-    def get_static_buffer(x):
+    def get_static_buffer(self, x):
         if isinstance(x, torch.Tensor):
             return torch.empty_like(x).copy_(x)
         return x
 
-    args = args_descriptor.args
+    def build_cuda_graph(
+        self, fn: Callable, args: list[any], static_args_mask: tuple[bool, ...]
+    ) -> tuple[torch.cuda.CUDAGraph, Sequence[torch.Tensor | Any], Sequence[torch.Tensor | Any]]:
 
-    # Warmup
-    torch.cuda.synchronize()
-    stream = torch.cuda.Stream()
-    stream.wait_stream(torch.cuda.current_stream())
+        # Warmup
+        torch.cuda.synchronize()
+        stream = torch.cuda.Stream()
+        stream.wait_stream(torch.cuda.current_stream())
 
-    with torch.cuda.stream(stream):
-        static_inputs = tuple(
-            get_static_buffer(arg) if not is_static else arg for arg, is_static in zip(args, static_args_mask)
-        )
-        for _ in range(3):
-            fn(*static_inputs)
+        with torch.cuda.stream(stream):
+            static_inputs = tuple(
+                self.get_static_buffer(arg) if not is_static else arg for arg, is_static in zip(args, static_args_mask)
+            )
+            for _ in range(3):
+                fn(*static_inputs)
 
-    stream.synchronize()
-    torch.cuda.current_stream().wait_stream(stream)
-    torch.cuda.synchronize()
+        stream.synchronize()
+        torch.cuda.current_stream().wait_stream(stream)
+        torch.cuda.synchronize()
 
-    # Record
-    # NOTE: We are using default private pool here, but it is possibly better to
-    # use a custom pool for better memory management. See CUDA Graphs Tree in
-    # PyTorch's Inductor: torch/_inductor/cudagraph_trees.py
-    # Design doc: https://docs.google.com/document/d/1ZrxLGWz7T45MSX6gPsL6Ln4t0eZCSfWewtJ_qLd_D0E/view
-    graph = torch.cuda.CUDAGraph()
-    with torch.cuda.graph(graph, stream=stream):
-        static_outputs = fn(*static_inputs)
+        # Record
+        # NOTE: We are using default private pool here, but it is possibly better to
+        # use a custom pool for better memory management. See CUDA Graphs Tree in
+        # PyTorch's Inductor: torch/_inductor/cudagraph_trees.py
+        # Design doc: https://docs.google.com/document/d/1ZrxLGWz7T45MSX6gPsL6Ln4t0eZCSfWewtJ_qLd_D0E/view
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph, stream=stream):
+            static_outputs = fn(*static_inputs)
 
-    return graph, static_inputs, static_outputs
+        return graph, static_inputs, static_outputs
 
-
-class CUDAGraphCallable:
-    def __init__(self, fn: Callable, num_static_inputs: None | int = None):
-        self.fn = fn
-        self.num_static_inputs = num_static_inputs
-
-    def __call__(self, *args):
-        if self.num_static_inputs is not None:
-            static_inputs_mask = (True,) * self.num_static_inputs + (False,) * (len(args) - self.num_static_inputs)
-        else:
+    def make_static_inputs_mask(self, fn_name, *args):
+        _, static_inputs_mask = self.python_callables[fn_name]
+        if static_inputs_mask is None:
             static_inputs_mask = tuple(isinstance(arg, torch.nn.Parameter) for arg in args)
+        return static_inputs_mask
 
-        args_descriptor = to_arg_descriptor(*args)
+    def make_cache_key(self, fn_name, *args):
+        # if args_descriptor included torch.nn.Parameter-ness, we would
+        # could use the static_inputs_mask or None as the key.
+        return (fn_name, self.make_static_inputs_mask(fn_name, *args), to_arg_descriptor(*args))
 
-        graph, static_inputs, static_outputs = build_cuda_graph(self.fn, args_descriptor, static_inputs_mask)
+    def call_cuda_graph(self, fn_name, *args):
+        fn, num_static_inputs = self.python_callables[fn_name]
+
+        cache_key = self.make_cache_key(fn_name, *args)
+
+        cache_entry = self.cuda_graph_cache.get(cache_key)
+        if cache_entry is None:
+            static_inputs_mask = self.make_static_inputs_mask(fn_name, *args)
+            cache_entry = self.build_cuda_graph(fn, args, static_inputs_mask)
+            self.cuda_graph_cache[cache_key] = cache_entry
+
+        graph, static_inputs, static_outputs = cache_entry
 
         for static_input, arg in utils.safe_zip(static_inputs, args):
             if id(static_input) != id(arg) and isinstance(static_input, torch.Tensor) and isinstance(arg, torch.Tensor):
@@ -100,34 +111,65 @@ class CUDAGraphCallable:
         graph.replay()
         return static_outputs
 
+    def make_python_callable_from_symbols(
+        self,
+        fn_name: str,
+        bsyms: list[BoundSymbol],
+        inputs: list[Proxy],
+        outputs: list[Proxy],
+    ) -> Callable:
 
-def make_callable(
-    fn_name: str,
-    bsyms: list[BoundSymbol],
-    inputs: list[Proxy],
-    outputs: list[Proxy],
-) -> Callable:
-    from inspect import Parameter, Signature
+        from inspect import Parameter, Signature
 
-    region_fn_params = (
-        Parameter(getattr(param, "name", f"arg{i}"), Parameter.POSITIONAL_ONLY) for i, param in enumerate(inputs)
-    )
+        region_fn_params = (
+            Parameter(getattr(param, "name", f"arg{i}"), Parameter.POSITIONAL_ONLY) for i, param in enumerate(inputs)
+        )
 
-    region_fn_signature = Signature(region_fn_params)
+        region_fn_signature = Signature(region_fn_params)
 
-    def region_fn():
-        pass
+        def region_fn():
+            pass
 
-    region_fn.__signature__ = region_fn_signature
-    region_fn.__name__ = fn_name
+        region_fn.__signature__ = region_fn_signature
+        region_fn.__name__ = fn_name
 
-    region_trace = TraceCtx(region_fn)
-    region_trace.bound_symbols = bsyms
-    region_trace.args = inputs
-    region_trace.kwargs = {}
-    region_trace.bound_symbols.append(prims.python_return.bind(outputs, output=()))
+        region_trace = TraceCtx(region_fn)
+        region_trace.bound_symbols = bsyms
+        region_trace.args = inputs
+        region_trace.kwargs = {}
+        region_trace.bound_symbols.append(prims.python_return.bind(outputs, output=()))
+        return region_trace.python_callable()
 
-    return region_trace.python_callable()
+    def make_cuda_graph_callable_from_symbols(
+        self,
+        fn_name: str,
+        bsyms: list[BoundSymbol],
+        inputs: list[Proxy],
+        outputs: list[Proxy],
+        num_static_inputs: int | None = None,
+    ) -> Callable:
+
+        if num_static_inputs is not None:
+            static_inputs_mask = (True,) * num_static_inputs + (False,) * (len(inputs) - num_static_inputs)
+        else:
+            static_inputs_mask = None
+
+        x_fn_name = f"{fn_name}_{self.name_counter}"
+        self.name_counter += 1
+
+        self.python_callables[x_fn_name] = (
+            self.make_python_callable_from_symbols(fn_name, bsyms, inputs, outputs),
+            static_inputs_mask,
+        )
+        self.trace_symbols[x_fn_name] = (bsyms, inputs, outputs)
+
+        def callable(*args):
+            return self.call_cuda_graph(x_fn_name, *args)
+
+        callable.__name__ = fn_name
+        callable.__qualname__ = fn_name
+
+        return callable
 
 
 class CUDAGraphTransform(Transform):
@@ -138,6 +180,10 @@ class CUDAGraphTransform(Transform):
     in order to override ``can_fuse```or other methods.
     """
 
+    def __init__(self):
+        super().__init__()
+        self.cuda_graph_runner = CUDAGraphRunner()
+
     def fuse(self, region: Region, fusion_counter: int, num_static_inputs: None | int = None) -> BoundSymbol:
         inputs = [unvariableify(inp) for inp in region.inputs]
         outputs = [unvariableify(out) for out in region.outputs]
@@ -147,8 +193,10 @@ class CUDAGraphTransform(Transform):
         region.bound_symbols = _del_last_used(region.bound_symbols, outputs)
 
         fusion_name = f"CUDAGraph{fusion_counter}"
-        fusible_callable: Callable = make_callable(f"{fusion_name}_fn", region.bound_symbols, inputs, outputs)
-        fusion_callable = CUDAGraphCallable(fusible_callable, num_static_inputs)
+
+        fusion_callable = self.cuda_graph_runner.make_cuda_graph_callable_from_symbols(
+            f"{fusion_name}_fn", region.bound_symbols, inputs, outputs, num_static_inputs
+        )
 
         fusion_sym = Symbol(fusion_name, meta=None, is_fusion=True, executor=self)
         fusion_bsym = BoundSymbol(

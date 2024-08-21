@@ -112,7 +112,7 @@ class ThunderModule(pytorch.nn.Module):
             self.named_parameters(remove_duplicate=False), self.named_buffers(remove_duplicate=False)
         ):
             parameters_to_names.setdefault(v, set()).add(name)
-        shared_names = {}
+        shared_names: dict[str, set[str]] = {}
         for s in parameters_to_names.values():
             for n in s:
                 shared_names[n] = s

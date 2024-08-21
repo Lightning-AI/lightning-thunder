@@ -1475,6 +1475,23 @@ class TensorProxy(Proxy, TensorProxyInterface):
         baseutils.check(method_or_value is not None, lambda: f"Unknown attribute {attr}", exception_type=AttributeError)
 
         if callable(method_or_value):
+            # TODO: This is a temporary fix to allow for the `numel` attribute
+            # to be called without arguments. This is a workaround for the fact
+            # that the `numel` was initially in Thunder introduced not as a
+            # method but a property. Now a lot of code relies on it being a
+            # property. But PyTorch uses it as a method. We need to converge on
+            # one or the other.
+            # https://github.com/Lightning-AI/lightning-thunder/issues/925
+            class _Numel(int):
+                def __new__(cls, value):
+                    assert isinstance(value, int), f"Expected int, got {type(value)}"
+                    return int.__new__(cls, value)
+
+                def __call__(self):
+                    return int(self)
+
+            if attr == "numel":
+                return _Numel(self._numel)
             return partial(method_or_value, self)
 
         return method_or_value

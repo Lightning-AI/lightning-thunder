@@ -90,13 +90,10 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
     config = nanogpt_model.GPTConfig(dropout=0, block_size=512, n_layer=4, n_head=6, n_embd=768)
     gpt = nanogpt_model.GPT(config).to(device=device, dtype=tdtype).requires_grad_(False).eval()
 
-    from thunder.transforms.cudagraph import CUDAGraphTransform, build_cuda_graph
+    from thunder.transforms.cudagraph import CUDAGraphTransform
 
     cgtransform = CUDAGraphTransform()
     tom = executor.make_callable(gpt, transforms=[cgtransform], disable_torch_autograd=True)
-
-    # Cache stats before test runs
-    build_graph_stats_old = build_cuda_graph.cache_info()
 
     for _ in range(2):
         idx = make((4, 64), dtype=torch.int64, low=0, high=255)
@@ -105,20 +102,12 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
         thunder_result = tom(idx)
         assert_close(torch_result, thunder_result)
 
-    # Cache stats after test runs
-    build_graph_stats_new = build_cuda_graph.cache_info()
     # We ran only a single (forward) graph several times.
-    # Test that at most 1 cache miss happened after the runs.
-    assert (build_graph_stats_new.misses - build_graph_stats_old.misses) <= 1
+    # Test that at only 1 cache entry was created during the runs.
+    assert len(cgtransform.cuda_graph_runner.cuda_graph_cache) == 1
 
-    # Check we really use CUDA graphs {
+    # Check we really use CUDA graphs
     assert _there_is_cudagraph_sym(thunder.last_traces(tom)[-1])
-    # }
-
-    # Let's clear cache if run only in tests
-    # TODO: merge with the cache of the thunder.jit callable
-    if build_graph_stats_old.misses == 0:
-        build_cuda_graph.cache_clear()
 
 
 @instantiate(dtypes=(thunder.float32,), devicetypes=(thunder.devices.DeviceType.CUDA,))
@@ -131,14 +120,10 @@ def test_nanogpt_complete_cudagraphs_autograd(executor, device, dtype):
     config = nanogpt_model.GPTConfig(dropout=0, block_size=512, n_layer=6, n_head=6, n_embd=768)
     gpt = nanogpt_model.GPT(config).to(device=device, dtype=tdtype)
 
-    from thunder.transforms.cudagraph import CUDAGraphTransform, build_cuda_graph
+    from thunder.transforms.cudagraph import CUDAGraphTransform
 
     cgtransform = CUDAGraphTransform()
     cmodel = executor.make_callable(gpt, transforms=[cgtransform])
-
-    # Checking graph cache stats
-    # Cache stats before test runs
-    build_graph_stats_old = build_cuda_graph.cache_info()
 
     # Multiple runs to test whether static buffers are properly updated
     for i in range(3):
@@ -154,22 +139,14 @@ def test_nanogpt_complete_cudagraphs_autograd(executor, device, dtype):
         assert_close(torch_result, thunder_result)
         assert_close(torch_grads, thunder_grads)
 
-    # Cache stats after test runs
-    build_graph_stats_new = build_cuda_graph.cache_info()
     # We ran only at most two (forward and backward) graphs several times.
     # Test that at most 2 cache misses happened after the runs
     # (at most one per each graph)
-    assert (build_graph_stats_new.misses - build_graph_stats_old.misses) <= 2
+    assert len(cgtransform.cuda_graph_runner.cuda_graph_cache) == 2
 
-    # Check we really run CUDAGraphExecutor {
+    # Check we have CUDAGraph symbols in forward and backward
     assert _there_is_cudagraph_sym(thunder.last_traces(cmodel)[-1])
     assert _there_is_cudagraph_sym(thunder.last_backward_traces(cmodel)[-1])
-    # }
-
-    # Let's clear cache if run only in tests
-    # TODO: merge with the cache of the thunder.jit callable
-    if build_graph_stats_old.misses == 0:
-        build_cuda_graph.cache_clear()
 
 
 @instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
