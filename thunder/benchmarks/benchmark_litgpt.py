@@ -401,14 +401,6 @@ class Benchmark_litGPT:
                 from thunder.executors.torch_compile import torch_compile_ex
 
                 executors.insert(0, torch_compile_ex)
-            if "cudnn" in self.compile:
-                from thunder.executors.cudnnex import cudnn_ex
-
-                executors.insert(0, cudnn_ex)
-            else:
-                from thunder.executors.sdpaex import sdpa_ex
-
-                executors.insert(0, sdpa_ex)
 
             if "transformerengine" in self.compile:
                 from thunder.executors.transformer_engineex import transformer_engine_ex
