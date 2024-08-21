@@ -134,17 +134,6 @@ class ThunderModule(pytorch.nn.Module):
                 shared_names[n] = s
         return shared_names
 
-    def _to_state_dict_per_module(self, state_dict: dict[str, Any]) -> dict[str, dict[str, Any]]:
-        module_names = {n for n, _ in self._model.named_modules()}
-        state_dict_per_module = collections.defaultdict(dict)
-        for k, v in state_dict.items():
-            prefix, sep, _ = k.rpartition(".")
-            # not great but should not happen too often / deep
-            while prefix not in module_names:
-                prefix, sep, _ = prefix.rpartition(".")
-            state_dict_per_module[prefix][k[len(prefix) + len(sep) :]] = v
-        return state_dict_per_module
-
     def load_original_state_dict(self, state_dict):
         # this loads the state dict incrementally to not exhaust memory
         sd_per_module = _convert_state_dict_to_per_module(state_dict, {n for n, _ in self._model.named_modules()})
