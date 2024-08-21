@@ -458,6 +458,8 @@ def fsdp(
             from a checkpoint in a single rank.
         sharding_strategy:
         bucketing_strategy:
+        move_state_dict_to_cpu: Move all-gather'ed parameters of :func:`~thunder.core.module.ThunderModule.original_state_dict` to CPU
+            as each all-gather is finished.
 
      Returns:
         :class:`torch.nn.Module`
