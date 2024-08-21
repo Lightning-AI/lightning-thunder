@@ -242,7 +242,11 @@ class ThunderModule(pytorch.nn.Module):
         prefix: str = "",
         keep_vars: bool = False,
     ) -> dict[str, Any]:
-        """Returns the state dict of the transformed :class:`ThunderModule`.
+        """Returns the state dict of the transformed :class:`ThunderModule` with reverse transform applied.
+
+        For example, :func:`ThunderModule.state_dict` returns a state dict of sharded tensors if
+        a model is :func:`thunder.distributed.fsdp` applied while :func:`ThunderModule.original_state_dict`
+        returns a state dict of unsharded tensors.
 
         Args:
             destination: if given, use this mutable mapping as the dict container.

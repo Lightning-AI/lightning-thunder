@@ -376,7 +376,7 @@ class Transform(ABC):
         model: ThunderModule,
         submodule_name: str,
         state_dict: dict[str, Any],
-    ) -> dict[str, Anu]:
+    ) -> dict[str, Any]:
         return state_dict
 
 
