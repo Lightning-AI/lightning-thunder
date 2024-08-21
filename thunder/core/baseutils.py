@@ -129,8 +129,9 @@ def check_valid_length(length: int):
     """Validates that an object represents a valid dimension length."""
 
     # maybe we should skip the check for IntegerProxy in general
-    check_type(length, (int, NumberProxyInterface))
-    check(length >= 0, lambda: f"Found invalid length {length}!")
+    if not isinstance(length, NumberProxyInterface):
+        check_type(length, (int))
+        check(length >= 0, lambda: f"Found invalid length {length}!")
 
 
 def check_valid_shape(shape: tuple[int, ...] | list[int]):

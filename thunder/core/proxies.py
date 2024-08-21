@@ -1809,7 +1809,7 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
     # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
     return TensorProxy(
         name,
-        shape=tuple(t.shape),
+        shape=tuple(shape),
         device=device,
         dtype=dtype,
         requires_grad=t.requires_grad,
