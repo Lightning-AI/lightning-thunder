@@ -1802,6 +1802,10 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
     # See Note [DistributedDataParallel and distparallel_type]
     distparallel_type = getattr(t, "distparallel_type", None)
     _thunder_fsdp_padding_size = getattr(t, "_thunder_fsdp_padding_size", None)
+    if using_symbolic_values():
+        shape = tuple(IntegerProxy(s, CONSTRAINT.CONSTRAINABLE) for s in t.shape)
+    else:
+        shape = tuple(t.shape)
     # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
     return TensorProxy(
         name,
