@@ -687,19 +687,23 @@ class FSDPTest(DistributedParallelTestCase):
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
     def test_original_state_dict(self):
-        from thunder.core.module import ThunderModule
-
         device = torch.device("cuda", self.rank)
-        with torch.device("cuda"):
-            model = ToyModel()
 
-        jitted: ThunderModule = fsdp(thunder.jit(model), device=device)
-        state_dict = jitted.state_dict()
-        original_state_dict = jitted.original_state_dict()
+        for move_state_dict_to_cpu in (False, True):
+            with torch.device("cuda"):
+                model = ToyModel()
 
-        for key, sharded_param in state_dict.items():
-            unsharded = original_state_dict[key]
-            self.assertEqual(len(sharded_param) * self.world_size, len(unsharded))
+            jitted = fsdp(thunder.jit(model), device=device, move_state_dict_to_cpu=move_state_dict_to_cpu)
+            state_dict = jitted.state_dict()
+            original_state_dict = jitted.original_state_dict()
+
+            for key, sharded_param in state_dict.items():
+                unsharded = original_state_dict[key]
+                self.assertEqual(len(sharded_param) * self.world_size, len(unsharded))
+                if move_state_dict_to_cpu:
+                    self.assertEqual(unsharded.device, torch.device("cpu"))
+                else:
+                    self.assertEqual(unsharded.device, device)
 
 
 common_utils.instantiate_parametrized_tests(FSDPTest)

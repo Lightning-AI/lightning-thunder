@@ -277,13 +277,13 @@ class FSDPTransform(Transform):
             if fqn not in self.sharded_params:
                 continue
 
-            old_shape, new_shape, *_ = self.sharded_params[fqn]
+            old_shape, *_ = self.sharded_params[fqn]
             unsharded_tensor = _all_gather_prim_impl(
                 tensor,
                 group=self.process_group,
                 do_async=False,
                 dim=None,
-            ).narrow(0, 0, new_shape[0])
+            ).narrow(0, 0, old_shape[0])
             if self.move_state_dict_to_cpu:
                 unsharded_tensor = unsharded_tensor.cpu()
             state_dict[name] = unsharded_tensor

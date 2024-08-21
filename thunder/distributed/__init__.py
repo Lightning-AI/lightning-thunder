@@ -21,6 +21,7 @@ from thunder.distributed.tensor_parallel import row_parallel
 
 if TYPE_CHECKING:
     from torch.distributed import ProcessGroup
+    from thunder.core.module import ThunderModule
 
 
 __all__ = [
@@ -421,14 +422,14 @@ def get_extract_bucket_name_from_tensor_proxy(granularity: FSDPBucketingStrategy
 
 
 def fsdp(
-    model: torch.nn.Module,
+    model: torch.nn.Module | ThunderModule,
     *,
     device: torch.device | None = None,
     broadcast_from: int | None = None,
     sharding_strategy: FSDPType = FSDPType.ZERO2,
     bucketing_strategy: FSDPBucketingStrategy = FSDPBucketingStrategy.NONE,
     move_state_dict_to_cpu: bool | None = None,
-) -> torch.nn.Module:
+) -> torch.nn.Module | ThunderModule:
     """Convert ``model`` into Fully Sharded Data Parallel.
 
     This splits ``model``'s parameters in their first dimension into ``world_size`` chunks
