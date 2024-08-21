@@ -1641,8 +1641,18 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 assert n == "kwargs"
                 pro_kwargs_proxy = output
 
-    pro_to_epi = tuple(sorted((unpack(v) for v in pro_to_epi_inps), key=lambda x: param_ordering[id(x)][1]))
-    pro_to_comp = tuple(sorted((unpack(v) for v in pro_to_comp_inps), key=lambda x: param_ordering[id(x)][1]))
+    def get_name(x: Variable | Proxy):
+        if isinstance(x, Proxy):
+            return x.name
+        else:
+            return x.proxy.name
+
+    # unpack tensor XX before XX_grad
+    sorted_pro_to_epi_inps = sorted(pro_to_epi_inps, key=lambda v: len(get_name(v)))
+    sorted_pro_to_comp_inps = sorted(pro_to_comp_inps, key=lambda v: len(get_name(v)))
+
+    pro_to_epi = tuple(sorted((unpack(v) for v in sorted_pro_to_epi_inps), key=lambda x: param_ordering[id(x)][1]))
+    pro_to_comp = tuple(sorted((unpack(v) for v in sorted_pro_to_comp_inps), key=lambda x: param_ordering[id(x)][1]))
 
     with tracectx(prologue_trace):
         for prim, *args in reversed(ctx._constraints):
