@@ -392,7 +392,7 @@ class Benchmark_litGPT:
             dynamo_config.cache_size_limit = 64
             model = torch.compile(model)
         elif "thunder" in self.compile:
-            executors = [thunder.nvfuser_executor, thunder.pytorch_executor]
+            executors = thunder.get_default_executors()
             if "inductor_cat" in self.compile:
                 from thunder.executors.torch_compile import torch_compile_cat_ex as torch_compile_ex
 
