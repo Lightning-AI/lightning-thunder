@@ -396,7 +396,7 @@ class Benchmark_litGPT:
             dynamo_config.cache_size_limit = 64
             model = torch.compile(model)
         elif "thunder" in self.compile:
-            executors = thunder.get_default_executors()
+            executors = list(thunder.get_default_executors())
             if "inductor_cat" in self.compile:
                 from thunder.executors.torch_compile import torch_compile_cat_ex as torch_compile_ex
 
@@ -405,14 +405,6 @@ class Benchmark_litGPT:
                 from thunder.executors.torch_compile import torch_compile_ex
 
                 executors.insert(0, torch_compile_ex)
-            if "cudnn" in self.compile:
-                from thunder.executors.cudnnex import cudnn_ex
-
-                executors.insert(0, cudnn_ex)
-            else:
-                from thunder.executors.sdpaex import sdpa_ex
-
-                executors.insert(0, sdpa_ex)
 
             if "transformerengine" in self.compile:
                 from thunder.executors.transformer_engineex import transformer_engine_ex
