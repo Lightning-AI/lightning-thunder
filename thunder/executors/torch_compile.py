@@ -229,6 +229,10 @@ supported_ops = {
     prims.reshape.id,
     prims.slice_prim.id,
     prims.transpose.id,
+    # div and erf are used in GELU and are fused horizontally with RoPE when
+    # parallel residual paths are used in the transformer block
+    prims.div.id,
+    prims.erf.id,
 }
 torch_compile_cat_ex._implmap = {
     op: ImplInfo(checker=cuda_device_checker) for op in pytorch_ex.implmap if op in supported_ops
