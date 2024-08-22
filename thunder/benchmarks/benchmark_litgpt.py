@@ -221,19 +221,23 @@ class Benchmark_litGPT:
             self.model = te_precision.convert_module(self.model)
 
         # Setup the distributed algorithm choices
-        self.model = self.setup_distributed(self.model)
+        if distributed_first := (self.compile in ("eager", "inductor") or "dynamo" in self.compile):
+            self.model = self.setup_distributed(self.model)
 
         # Setup activations checkpointing
         if self.checkpoint_activations:
             self.setup_activation_checkpointing()
 
+        # Compile the model
+        self.model = self.setup_compile(self.model)
+
+        if not distributed_first:
+            self.model = self.setup_distributed(self.model)
+
         # Initialize the optimizer after the model is sharded if using FSDP
         self.optimizer = configure_optimizers(
             self.model, weight_decay, learning_rate, (beta1, beta2), device_type="cuda"
         )
-
-        # Compile the model
-        self.model = self.setup_compile(self.model)
 
         # Setup the Dummy dataloader for training
         self.train_dataloader = self.setup_dummy_dataloader()
@@ -392,7 +396,7 @@ class Benchmark_litGPT:
             dynamo_config.cache_size_limit = 64
             model = torch.compile(model)
         elif "thunder" in self.compile:
-            executors = [thunder.nvfuser_executor, thunder.pytorch_executor]
+            executors = list(thunder.get_default_executors())
             if "inductor_cat" in self.compile:
                 from thunder.executors.torch_compile import torch_compile_cat_ex as torch_compile_ex
 
@@ -401,14 +405,6 @@ class Benchmark_litGPT:
                 from thunder.executors.torch_compile import torch_compile_ex
 
                 executors.insert(0, torch_compile_ex)
-            if "cudnn" in self.compile:
-                from thunder.executors.cudnnex import cudnn_ex
-
-                executors.insert(0, cudnn_ex)
-            else:
-                from thunder.executors.sdpaex import sdpa_ex
-
-                executors.insert(0, sdpa_ex)
 
             if "transformerengine" in self.compile:
                 from thunder.executors.transformer_engineex import transformer_engine_ex
