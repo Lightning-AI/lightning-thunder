@@ -357,17 +357,7 @@ class Benchmark_litGPT:
             init_device = torch.device("meta")
         with init_device:
             model = GPT(self.config)
-        # TODO(crcrpar): Remove this guard once https://github.com/pytorch/ao/pull/713 is merged
-        if (
-            self.distributed_mode == "fsdp2"
-            and self._torchao_fp8_handler._enabled
-            and self._torchao_fp8_handler.precompute_scale
-        ):
-            warnings.warn(
-                f"Parameters are kept in float32 as {self.distributed_mode=} and fp8 dynamic scaling precompute is enabled"
-            )
-        else:
-            model.to(dtype=torch.bfloat16)
+        model.to(dtype=torch.bfloat16)
         model = self._torchao_fp8_handler.convert_model_to_fp8(model)
         return model
 
