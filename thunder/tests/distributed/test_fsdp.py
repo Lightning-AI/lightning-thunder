@@ -707,6 +707,38 @@ class FSDPTest(DistributedParallelTestCase):
                 else:
                     self.assertEqual(unsharded.device, device)
 
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
+    def test_fsdpv2_with_1layer_llama_meta_init(self):
+        import re
+        from thunder.tests.litgpt_model import Config, GPT
+
+        device = torch.device("cuda", self.rank)
+        config = Config("Llama-2-7b-hf")
+        config.n_layer = 1
+        with torch.device("meta"):
+            model = GPT(config)
+        jitted = fsdp(thunder.jit(model), device=device)
+
+        t = config.block_size
+        data = torch.randint(
+            0,
+            100,
+            (
+                1,
+                t + 1,
+            ),
+            dtype=torch.int64,
+        )
+        x = data[:, :t]
+        x = x.to(device=device)
+        with self.assertRaisesRegex(
+            AssertionError,
+            re.escape(
+                f"expected tensor with (4096, 32), cuda:{self.rank}, torch.float32, requires_grad=False, got (4096, 32), meta, torch.float32, False"
+            ),
+        ):
+            jitted(x)
+
 
 common_utils.instantiate_parametrized_tests(FSDPTest)
 
