@@ -7,6 +7,7 @@ from thunder.core.pytree import tree_map
 from thunder.core import utils
 from thunder.core import prims
 import torch
+import math
 
 from .utils import (
     get_orig_and_thunder_module_proxies_from_prologue,
@@ -294,3 +295,76 @@ class BitsAndBytesLinearQuant4bit(Transform):
 
         new_computation_trace.set_provenance(thunder.core.trace.TraceProvenance("quant pass"))
         return prologue_trace, new_computation_trace, epilogue_trace
+
+
+class LORATransform(Transform):
+    def __init__(
+        self,
+        r: int = 0,
+        lora_alpha: int = 1,
+        lora_dropout: float = 0.0,
+        **kwargs,
+    ):
+        self.r = r
+        self.lora_alpha = lora_alpha
+        self.lora_dropout = lora_dropout
+        self.lora_linear_names = set()
+
+    def lora_linear(self, x):
+        in_features, out_features = x.shape[0], x.shape[1]
+
+        if self.lora_dropout > 0.0:
+            dropout = torch.nn.Dropout(p=self.lora_dropout)
+        else:
+            dropout = lambda x: x
+
+        linear = torch.nn.Linear(in_features, out_features)
+        lora_A = torch.nn.Parameter(torch.empty((self.r, in_features)))
+        lora_B = torch.nn.Parameter(torch.empty((out_features, self.r)))
+        torch.nn.init.kaiming_uniform_(lora_A, a=math.sqrt(5))
+        torch.nn.init.zeros_(lora_B)
+        scaling = self.lora_alpha / self.r
+
+        pretrained = linear(x)
+        lora = (dropout(x) @ lora_A.transpose(0, 1) @ lora_B.transpose(0, 1)) * scaling
+        return pretrained + lora
+
+    def transform_module(self, model: thunder.ThunderModule):
+        self.thunder_module = model
+        shared_names = model._get_shared_names()
+        processed_names = set()
+
+        def convert_linear_submodule(tm, name):
+            self.lora_linear_names.add(name)
+            weight_name = f"{name}.weight"
+            processed_copies = shared_names[weight_name] & processed_names
+            if processed_copies:
+                copy_name = next(iter(processed_copies))
+                tm._overrides_parameters[weight_name] = tm._overrides_parameters[copy_name]
+
+            w = tm.get_parameter(weight_name)
+            qw = self.lora_linear(w)
+            tm._overrides_parameters[weight_name] = qw.to(w.device)
+            processed_copies.add(weight_name)
+
+        for n, submodule in model._model.named_modules():
+            if isinstance(submodule, torch.nn.Linear):
+                convert_linear_submodule(model, n)
+
+    def transform_state_dict_for_submodule(
+        self, model: thunder.ThunderModule, submodule_name: str, state_dict: dict
+    ) -> dict:
+        if submodule_name not in self.lora_linear_names:
+            return state_dict
+
+        weight_name_full = f"{submodule_name}.weight"
+        w = state_dict["weight"]
+        qw = self.lora_linear(w)
+
+        state_dict = state_dict.copy()
+        state_dict["weight"] = qw.to(w.device)
+
+        return state_dict
+
+    def transform_traces_pre_prologue(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
+        return prologue_trace, computation_trace, epilogue_trace

@@ -334,3 +334,42 @@ def test_materialization_init():
 
     assert jm_ref._get_shared_names()["0.weight"] == {"0.weight", "4.weight"}
     assert jm._get_shared_names()["0.weight"] == {"0.weight", "4.weight"}
+
+
+def test_lora_transform_linear():
+    from thunder.transforms import LORATransform
+
+    DIM = 512
+
+    class Model(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fc1 = torch.nn.Linear(DIM, DIM)
+            self.fc2 = torch.nn.Linear(DIM, DIM)
+
+        def forward(self, x):
+            x = self.fc1(x)
+            x = torch.nn.functional.relu(x)
+            x = self.fc2(x)
+            return x
+
+    model = Model()
+    x = torch.randn(4, DIM)
+
+    loratransform = LORATransform(r=16, lora_alpha=32)
+
+    jmodel = thunder.jit(
+        model,
+        transforms=[
+            loratransform,
+        ],
+    )
+    actual = jmodel(x)
+    original_jmodel = thunder.jit(model)
+    expected = original_jmodel(x)
+
+    print(thunder.last_traces(original_jmodel)[-1])
+    print(thunder.last_traces(jmodel)[-1])
+
+    assert_close(actual, expected, atol=2e-1, rtol=2e-1)
+    assert False == True
