@@ -117,7 +117,7 @@ def assert_closer(*, reference, candidate, competitor, comparator):
             competitor_dist = torch.abs(ref - com)
             minimum_dist = torch.minimum(candidate_dist, competitor_dist)
 
-            signed_minimum_dist = torch.where(candidate_dist < 0, -minimum_dist, minimum_dist)
+            signed_minimum_dist = torch.where(ref > cand, -minimum_dist, minimum_dist)
             target = ref + signed_minimum_dist
 
             comparator(cand, target, check_dtype=False)
