@@ -566,7 +566,7 @@ def apply_functionalization_to_canonicalized_trace(
         if bsym in bsym_to_copy_bsyms:
             functionalized_bsyms.extend(bsym_to_copy_bsyms[bsym])
             copy_bsym = functionalized_bsyms[-1]
-            swap_map_for_return[variableify(copy_bsym.flat_proxy_args[0])] = copy_bsym.flat_proxy_args[1]
+            swap_map_for_return[variableify(copy_bsym.flat_proxy_args[0])] = copy_bsym.flat_proxy_outs[0]
     functionalized_bsyms.append(new_bsyms[-1].from_bsym_swap_proxies(swap_map_for_return))
 
     functionalized_computation_trace.bound_symbols = functionalized_bsyms

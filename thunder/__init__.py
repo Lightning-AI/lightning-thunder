@@ -36,6 +36,7 @@ import thunder.core.devices as devices
 from thunder.core.transform_common import (
     dce,
     Transform,
+    wrap_return_value_along_with_argments,
 )
 from thunder.core.functionalization import (
     check_inplace_to_views,
@@ -543,6 +544,10 @@ def jit(
 
             prologue_traces = [prologue_trc]
             computation_traces = [computation_trc]
+
+            computation_trc = wrap_return_value_along_with_argments(computation_trc)
+            computation_traces.append(computation_trc)
+
             orig_to_view_swap_map = check_inplace_to_views(computation_trc)
             vanilla_tensor_args: set[int] | None = None
             if not compile_options.get("skip_inplace_functionalization", False):
@@ -759,7 +764,7 @@ def jit(
 
         if cache_entry.backward_fn:
             # Run the compiled forward function
-            data_for_autograd, (saved_tensors, saved_other) = result
+            result, (saved_tensors, saved_other) = result
 
             # Connect produced tensors with PyTorch's autograd graph
             ThunderFunction.apply(
@@ -767,10 +772,11 @@ def jit(
                 cache_entry.backward_fn,
                 saved_tensors,
                 saved_other,
-                data_for_autograd["flat_output"],
-                *data_for_autograd["flat_args"],
+                result["flat_output"],
+                *result["flat_args"],
             )
-            result = data_for_autograd["output"]
+
+        result = result["output"]
 
         if cache_entry.epilogue_fn:
             result, comp_to_epi = result

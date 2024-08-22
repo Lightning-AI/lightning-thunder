@@ -3565,17 +3565,6 @@ def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_fo
     backward_trace.bound_symbols = list((*unpacking_trace.bound_symbols[:-1], *backward_trace_bsyms_without_unpacking))
 
 
-# NOTE: Returning namedtuples from compiled functions doesn't work. See:
-# "Allow returning namedtuples from compiled functions"
-# Note [Grad forward output spec]
-# If it did work it would be nice to use this namedtuple
-# instead of the plain tuple or dict that we're using now.
-TorchAutogradForwardData = namedtuple(
-    "TorchAutogradForwardData",
-    ["output", "flat_args", "flat_output"],
-)
-
-
 def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> ForwardBackwardTraces:
     """Generates the forward and backward passes from a trace.
 
@@ -3637,17 +3626,10 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
         saved_for_backward = deconstruct_forward_env_for_backward(trace, env)
         if torch_autograd:
             nonlocal output_spec
-            flat_args, _ = tree_flatten((args, kwargs))
             # The custom torch.autograd.Function only considers Tensors in the input/output (not ones that are nested inside python data structures)
             flat_output, output_spec = tree_flatten_with_dataclass(result)
-            flat_output = tuple(flat_output)
-            # See Note [Grad forward output spec]
-            for_autograd = TorchAutogradForwardData(
-                result,
-                flat_args,
-                flat_output,
-            )._asdict()
-            return (for_autograd, saved_for_backward)
+            # result is a dict with "output" and "flat_args"
+            result["flat_output"] = tuple(flat_output)
         return result, saved_for_backward
 
     # Copy the signature of the original function so that the arguments are
@@ -3671,7 +3653,6 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
         # We don't want to record those ones_like calls in the forward trace.
         with detached_trace():
             if torch_autograd:
-                # It's assumed that forward_trace.output[0] is a dict from TorchAutogradForwardData
                 flat_output = forward_trace.output[0]["flat_output"]
                 cotangents = utils.sequencify(tree_map(lambda v: ones_like(v), flat_output))
             else:
