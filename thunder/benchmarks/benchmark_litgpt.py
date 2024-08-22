@@ -108,8 +108,8 @@ class TorchAOFP8Handler:
         self._enabled = self.use_fp8_linear
         if not self._enabled:
             return
-        if torch.cuda.get_device_capability()[0] < 9:
-            raise ValueError(f"torchao float8 requires Hopper but {torch.cuda.get_device_capability()}")
+        if torch.cuda.get_device_capability() < (8, 9):
+            raise ValueError(f"torchao float8 requires {torch.cuda.get_device_capability()=} >= (8, 9)")
         self.fp8_linear_config = Float8LinearConfig(
             cast_config_input=CastConfig(ScalingType.DYNAMIC),
             cast_config_weight=CastConfig(ScalingType.DYNAMIC),
