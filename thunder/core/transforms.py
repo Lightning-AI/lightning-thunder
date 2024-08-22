@@ -63,7 +63,7 @@ from thunder.clang import (
     reciprocal,
     convolution,
 )
-from thunder.core.transform_common import dce, Transform
+from thunder.core.transform_common import dce, Transform, wrap_return_value_along_with_argments
 from thunder.core.vjp_utils import make_aug_forward_and_backward
 from thunder.extend import Executor
 import thunder.torch as ltorch
@@ -1429,9 +1429,15 @@ def grad(
 
             @wraps(computation_trc.python_callable())
             def python_callable(*args, **kwargs):
-                return eval_trace(computation_trc, *args, **kwargs)
+                return eval_trace(computation_trc, *args, **kwargs)["output"]
 
-            gradtrc = construct_trace()(grad(python_callable), *computation_trc.args, **computation_trc.kwargs)
+            # Don't DCE yet to keep argument unpackings
+            gradtrc = construct_trace(use_dce=False)(
+                grad(python_callable), *computation_trc.args, **computation_trc.kwargs
+            )
+
+            gradtrc = wrap_return_value_along_with_argments(gradtrc)
+            gradtrc = dce(gradtrc)
             return prologue_trc, gradtrc, epilogue_trc
 
     cfn._using_grad_transform = True
