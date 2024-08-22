@@ -1371,6 +1371,16 @@ def propagate_constraints(ctx, inputs, intermediates, computation_trace):
                     front.append(variableify(inp))
 
 
+# lift shape computational logic into top level trace
+# Maybe: replace usage of shape NumberProxy with prim?
+def lift_shape_logic(computation_trace):
+    #import thunder.core.utils as utils
+    #consumers = utils.consumers(computation_trace)
+    #for bsym in computation_trace.bound_symbols:
+    from thunder.core.transform_common import dce
+    return dce(computation_trace)
+
+
 def get_computation_inputs_and_intermediates(computation_trace):
     inputs_list = []
     inputs_set = set()
@@ -1799,6 +1809,9 @@ def thunder_general_jit(
             process_recorded_modifications(ctx, epilogue_trace)
             last_interpreter_log = jfn._last_interpreter_log
 
+    print("before lift", computation_trace)
+    computation_trace = lift_shape_logic(computation_trace)
+    print("after lift", computation_trace)
     pro_to_comp, computation_intermediates = get_computation_inputs_and_intermediates(computation_trace)
     epilogue_inputs, _ = get_computation_inputs_and_intermediates(epilogue_trace)
 
@@ -1828,7 +1841,12 @@ def thunder_general_jit(
     else:
         epilogue_trace = None
 
+    print("my little trace:\n", computation_trace)
+    print("pro_to_comp:\n", pro_to_comp)
+
     pro_to_comp_proxies, pro_to_epi_proxies = unpack_inputs(ctx, prologue_trace, pro_to_comp, pro_to_epi, args, kwargs)
+
+    print("pro_trace:\n", prologue_trace)
 
     proxy_order = {id(p): i for i, p in enumerate(pro_to_comp_proxies)}
     pro_to_comp = tuple(sorted(pro_to_comp, key=lambda v: proxy_order[id(v.proxy)]))

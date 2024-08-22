@@ -70,7 +70,7 @@ class clangop:
 def check_tensor_shape_and_metadata(t: TensorProxy, /) -> None:
     return prims.check_tensor_shape_and_metadata(
         t,
-        tuple(t.shape),
+        tuple(-1 if isinstance(s, Proxy) else s for s in t.shape),
         t.device.device_str(),
         dtypes.to_torch_dtype(t.dtype),
         t.requires_grad,
