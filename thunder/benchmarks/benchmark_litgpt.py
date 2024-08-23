@@ -79,7 +79,7 @@ def is_transformer_engine(low_precision_mode: str) -> bool:
 
 
 def swap_linear_layers_for_te(model: nn.Module, device: Any, swap_layernorm: bool = True) -> None:
-    
+
     def parameters_cnt(model: nn.Module) -> int:
         return sum(p.numel() for p in model.parameters())
 
@@ -90,18 +90,14 @@ def swap_linear_layers_for_te(model: nn.Module, device: Any, swap_layernorm: boo
 
             if isinstance(m, nn.Linear):
                 has_bias = m.bias is not None
-                new_linear = te.Linear(
-                    m.in_features, m.out_features, bias=bias_flag, device=device
-                )
+                new_linear = te.Linear(m.in_features, m.out_features, bias=bias_flag, device=device)
                 new_linear.weight.data = child.weight.data.clone()
                 if has_bias:
                     new_linear.bias.data = child.bias.data.clone()
                 setattr(module, n, new_linear)
-            
+
             if swap_layernorm and isinstance(m, nn.LayerNorm):
-                new_layernorm = te.LayerNorm(
-                    m.normalized_shape[0], eps=m.eps, device=device
-                )
+                new_layernorm = te.LayerNorm(m.normalized_shape[0], eps=m.eps, device=device)
                 new_layernorm.weight.data = child.weight.data.clone()
                 new_layernorm.bias.data = child.bias.data.clone()
                 setattr(module, n, new_layernorm)
