@@ -32,7 +32,6 @@ torchao_available = package_available("torchao")
 
 if transformer_engine_available:
     import transformer_engine.pytorch as te
-    from lightning.fabric.plugins.precision.transformer_engine import TransformerEnginePrecision
 
 if torchao_available:
     from torchao.float8.config import CastConfig, Float8LinearConfig, ScalingType
@@ -76,7 +75,45 @@ def check_fp8_compute_capability() -> None:
 
 
 def is_transformer_engine(low_precision_mode: str) -> bool:
-    return low_precision_mode == "fp8-delayed-te"
+    return low_precision_mode in ["fp8-delayed-te", "fp8-delayed-te-wo_layernorm"]
+
+
+def swap_linear_layers_for_te(model: nn.Module, device: Any, swap_layernorm: bool = True) -> None:
+    
+    def parameters_cnt(model: nn.Module) -> int:
+        return sum(p.numel() for p in model.parameters())
+
+    def _resursively_swap_linear_layers_for_te(module: nn.Module) -> None:
+        for n, m in module.named_children():
+            if len(list(m.children())) > 0:
+                _resursively_swap_linear_layers_for_te(m)
+
+            if isinstance(m, nn.Linear):
+                has_bias = m.bias is not None
+                new_linear = te.Linear(
+                    m.in_features, m.out_features, bias=bias_flag, device=device
+                )
+                new_linear.weight.data = child.weight.data.clone()
+                if has_bias:
+                    new_linear.bias.data = child.bias.data.clone()
+                setattr(module, n, new_linear)
+            
+            if swap_layernorm and isinstance(m, nn.LayerNorm):
+                new_layernorm = te.LayerNorm(
+                    m.normalized_shape[0], eps=m.eps, device=device
+                )
+                new_layernorm.weight.data = child.weight.data.clone()
+                new_layernorm.bias.data = child.bias.data.clone()
+                setattr(module, n, new_layernorm)
+
+    initial_params_cnt = parameters_cnt(model)
+
+    _resursively_swap_linear_layers_for_te(model)
+    assert initial_params_cnt == parameters_cnt(model)
+    for m in model.modules():
+        assert not isinstance(m, nn.Linear)
+        if swap_layernorm:
+            assert not isinstance(m, nn.LayerNorm)
 
 
 # FIXME(crcrpar): Recompilation warning after 2 iterations
@@ -316,8 +353,8 @@ class Benchmark_litGPT:
         print(f"Time to instantiate model: {time.perf_counter() - t0:.02f} seconds.")
 
         if self.use_te_fp8_autocast:
-            te_precision = TransformerEnginePrecision(weights_dtype=torch.bfloat16, replace_layers=True)
-            self.model = te_precision.convert_module(self.model)
+            is_wo_layernorm = self.low_precision_mode == "fp8-delayed-te-wo_layernorm"
+            swap_linear_layers_for_te(self.model, device, swap_layernorm=not is_wo_layernorm)
 
         # Setup the distributed algorithm choices
         if distributed_first := (self.compile in ("eager", "inductor") or "dynamo" in self.compile):
