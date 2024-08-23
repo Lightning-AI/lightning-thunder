@@ -3171,3 +3171,21 @@ def test_state_dict():
     jm2.load_state_dict(jm1.state_dict())
 
     torch.testing.assert_close(jm1(inp), jm2(inp))
+
+
+def test_opt_module_is_freed():
+    import torch
+    import thunder
+    import weakref
+    import gc
+
+    mod = torch.nn.ReLU()
+    opt_mod = thunder.jit(mod)
+    ref_opt_mod = weakref.ref(opt_mod)
+    x = torch.randn(10, 10)
+    opt_mod(x)
+    del x
+    del mod
+    del opt_mod
+    pass
+    assert ref_opt_mod() is None
