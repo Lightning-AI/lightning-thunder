@@ -222,6 +222,7 @@ def column_parallel(
     from thunder.core.transforms import add_transform
     from thunder.core.module import ThunderModule
     from thunder.distributed import copy_default_process_group
+    from thunder.distributed.tensor_parallel.common import tensor_parallel_sharding
 
     utils.check_type(thunder_module, ThunderModule)
 
@@ -236,45 +237,14 @@ def column_parallel(
         utils.check_type(device, torch.device)
         utils.check(device.index == rank, lambda: f"{device.index=} expected to match {rank=} of {process_group=}")
 
-    chunked_param_name_to_layer_type: dict[str, Any] = {}
-    for target_mod_name in target_modules:
-        mod = thunder_module.get_submodule(target_mod_name)
-        utils.check_type(
-            mod,
-            (
-                nn.Linear,
-                nn.Embedding,
-            ),
-        )
-        for name, p in mod.named_parameters(recurse=False):
-            chunked_param_name_to_layer_type["t_" + f"{target_mod_name}.{name}".replace(".", "_")] = type(mod)
-
-    # Modify module
-    for module_name, _ in thunder_module._model.named_modules():
-        submodule = thunder_module.get_submodule(module_name)
-
-        # Materialize meta parameters on device if necessary.
-        # This is done before sharding in case the materialization logic depends on the tensor shape.
-        # The trade-off is that all of a module's direct parameters need to fit in device.
-        # Each module only initializes its own parameters and not those of its children (recurse=False)
-        if any(t.is_meta for t in chain(submodule.parameters(recurse=False), submodule.buffers(recurse=False))):
-            from thunder.distributed import _materialize
-
-            _materialize(submodule, device=device)
-            for n, p in submodule.named_parameters(recurse=False, prefix=module_name):
-                thunder_module._overrides_parameters[n] = p
-            for n, b in submodule.named_buffers(recurse=False, prefix=module_name):
-                thunder_module._overrides_buffers[n] = b
-
-        if module_name not in target_modules:
-            continue
-
-        for pn, p in submodule.named_parameters(recurse=False, prefix=module_name):
-            # if we don't have an override or it is just the original, do create a copy
-            if thunder_module._overrides_parameters.get(pn, p) is p:
-                thunder_module._overrides_parameters[pn] = copy.copy(p)
-            _shard_param(thunder_module._overrides_parameters[pn], rank, world_size, pn, allow_padding_for_fsdp=False)
-
+    chunked_param_name_to_layer_type = tensor_parallel_sharding(
+        thunder_module,
+        target_modules,
+        dim_to_shard=0,
+        device=device,
+        rank=rank,
+        world_size=world_size,
+    )
     colwise_thunder_module = add_transform(
         thunder_module,
         transform=TransformForColumnWiseParallel(

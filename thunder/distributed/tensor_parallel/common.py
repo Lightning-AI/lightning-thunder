@@ -1,20 +1,26 @@
 from __future__ import annotations
 from abc import ABC
 from abc import abstractmethod
+import copy
 from enum import Enum
 from enum import auto
 from dataclasses import dataclass
 from dataclasses import field
+from itertools import chain
 from typing import TYPE_CHECKING
+
+import torch
 
 from thunder.core.proxies import DistParallelType
 from thunder.core.proxies import TensorProxy
 from thunder.core.transform_common import Transform
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from typing import Any
     from torch.distributed import ProcessGroup
     from thunder.common import CompileData
+    from thunder.core.module import ThunderModule
     from thunder.core.proxies import ProxyInterface
     from thunder.core.symbol import BoundSymbol
     from thunder.core.trace import TraceCtx
@@ -268,3 +274,64 @@ class TransformForTensorParallel(Transform):
             from thunder.distributed.tensor_parallel.optimize_comm import remove_redundant_comms
 
             return prologue_trace, remove_redundant_comms(new_computation_trace), epilogue_trace
+
+
+def tensor_parallel_sharding(
+    model: ThunderModule,
+    target_modules: Sequence[str],
+    *,
+    dim_to_shard: int,
+    device: torch.device,
+    rank: int,
+    world_size: int,
+) -> dict[str, Any]:
+    import torch.nn as nn
+    from thunder.core import utils
+    from thunder.distributed import _shard_param
+
+    chunked_param_name_to_layer_type: dict[str, Any] = {}
+    for target_mod_name in target_modules:
+        mod = model.get_submodule(target_mod_name)
+        utils.check_type(
+            mod,
+            (
+                nn.Linear,
+                nn.Embedding,
+            ),
+        )
+        for name, p in mod.named_parameters(recurse=False):
+            if p.ndim <= dim_to_shard:
+                continue
+            chunked_param_name_to_layer_type["t_" + f"{target_mod_name}.{name}".replace(".", "_")] = type(mod)
+
+    # Modify module
+    for module_name, _ in model._model.named_modules():
+        submodule = model.get_submodule(module_name)
+
+        # Materialize meta parameters on device if necessary.
+        # This is done before sharding in case the materialization logic depends on the tensor shape.
+        # The trade-off is that all of a module's direct parameters need to fit in device.
+        # Each module only initializes its own parameters and not those of its children (recurse=False)
+        if any(t.is_meta for t in chain(submodule.parameters(recurse=False), submodule.buffers(recurse=False))):
+            from thunder.distributed import _materialize
+
+            _materialize(submodule, device=device)
+            for n, p in submodule.named_parameters(recurse=False, prefix=module_name):
+                model._overrides_parameters[n] = p
+            for n, b in submodule.named_buffers(recurse=False, prefix=module_name):
+                model._overrides_buffers[n] = b
+
+        if module_name not in target_modules:
+            continue
+
+        for pn, p in submodule.named_parameters(recurse=False, prefix=module_name):
+            # if we don't have an override or it is just the original, do create a copy
+            if model._overrides_parameters.get(pn, p) is p:
+                model._overrides_parameters[pn] = copy.copy(p)
+            if p.ndim <= dim_to_shard:
+                continue
+            _shard_param(
+                model._overrides_parameters[pn], rank, world_size, pn, dim=dim_to_shard, allow_padding_for_fsdp=False
+            )
+
+    return chunked_param_name_to_layer_type
