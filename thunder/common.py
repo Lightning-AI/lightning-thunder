@@ -252,7 +252,7 @@ class CompileData:
 
         self.is_module = isinstance(self.fn, torch.nn.Module)
 
-        # to not introduce (more) ref cycles, make this int->ThunderModule with
+        # to not introduce (more) ref cycles, use WeakValueDictionary and map from int->ThunderModule
         # but the accessor has to check if tmm[id(module)]._module is module
         self._thunder_module_map = WeakValueDictionary()
 
