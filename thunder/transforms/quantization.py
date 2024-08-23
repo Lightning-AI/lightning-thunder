@@ -309,6 +309,7 @@ class LORATransform(Transform):
         self.lora_alpha = lora_alpha
         self.lora_dropout = lora_dropout
         self.lora_linear_names = set()
+        self.quant_states = {}
 
     def lora_linear(self, x):
         in_features, out_features = x.shape[0], x.shape[1]
@@ -318,16 +319,14 @@ class LORATransform(Transform):
         else:
             dropout = lambda x: x
 
-        linear = torch.nn.Linear(in_features, out_features)
         lora_A = torch.nn.Parameter(torch.empty((self.r, in_features)))
         lora_B = torch.nn.Parameter(torch.empty((out_features, self.r)))
         torch.nn.init.kaiming_uniform_(lora_A, a=math.sqrt(5))
         torch.nn.init.zeros_(lora_B)
         scaling = self.lora_alpha / self.r
 
-        pretrained = linear(x)
         lora = (dropout(x) @ lora_A.transpose(0, 1) @ lora_B.transpose(0, 1)) * scaling
-        return pretrained + lora
+        return lora
 
     def transform_module(self, model: thunder.ThunderModule):
         self.thunder_module = model
@@ -344,7 +343,16 @@ class LORATransform(Transform):
 
             w = tm.get_parameter(weight_name)
             qw = self.lora_linear(w)
-            tm._overrides_parameters[weight_name] = qw.to(w.device)
+            tm._overrides_parameters[weight_name] = w
+            tm._overrides_parameters[f"{weight_name}.lora_linear"] = qw.to(w.device)
+            self.quant_states[weight_name] = {
+                "dtype": w.dtype,
+                "shape": tuple(w.shape),
+                # "blocksize": w.blocksize,
+                "lora_linear.dtype": qw.dtype,
+                "lora_linear.shape": tuple(qw.shape),
+                "device": getattr(w, "_thunder_device", w.device),
+            }
             processed_copies.add(weight_name)
 
         for n, submodule in model._model.named_modules():
@@ -362,9 +370,125 @@ class LORATransform(Transform):
         qw = self.lora_linear(w)
 
         state_dict = state_dict.copy()
-        state_dict["weight"] = qw.to(w.device)
+        state_dict["weight"] = w.to(w.device)
+        state_dict["weight.lora_linear"] = qw.to(w.device)
 
         return state_dict
 
     def transform_traces_pre_prologue(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
-        return prologue_trace, computation_trace, epilogue_trace
+        tm = self.thunder_module
+        from thunder.core.trace import tracectx
+
+        checks = get_checks(prologue_trace)
+        for model_weight_name, (check_bsym, get_param_bsym) in checks.items():
+            if model_weight_name in self.quant_states:
+                print(f"model_weight_name: {model_weight_name}")
+
+        prologue_proxy_map = {
+            get_param_bsym.output.name: dict(
+                shape=self.quant_states[model_weight_name]["lora_linear.shape"],
+                dtype=thunder.dtypes.to_dtype(self.quant_states[model_weight_name]["lora_linear.dtype"]),
+            )
+            for model_weight_name, (check_bsym, get_param_bsym) in checks.items()
+            if model_weight_name in self.quant_states
+        }
+
+        # here we switch the prologue_trace to a copy with new metadata
+        prologue_trace = trace_with_replaced_proxy_metadata(prologue_trace, prologue_proxy_map)
+
+        checks = get_checks(prologue_trace)
+        proglogue_to_compute_outputs = prologue_trace.output[0]
+
+        output_idxes = {o.name: i for i, o in enumerate(proglogue_to_compute_outputs)}
+
+        quantized_proxies: dict[str, str] = {}  # proxy_name -> param_name
+        additional_proxies: dict[str, thunder.Proxy] = {}  # param_name.(absmax|code) -> Proxy
+
+        new_bsyms = []
+        new_compute_inputs = []
+        for n, qs in self.quant_states.items():
+            param = tm.get_parameter(n)
+            n_lora_linear = f"{n}.lora_linear"
+            param_lora_linear = tm.get_parameter(n_lora_linear)
+            check, get_param = checks[n]
+            quantized_proxies[get_param.output.name] = n
+            # check has args: tensor, shape, device, dtype, requires_grad
+            proxy, _, device, _, requires_grad = check.args
+            check.args = (proxy, qs["lora_linear.shape"], device, qs["lora_linear.dtype"], False)
+
+            output_idx = output_idxes.get(get_param.output.name)
+            if output_idx is not None:
+                with tracectx(prologue_trace):
+                    # better way
+                    proxy_lora_linear = thunder.TensorProxy(
+                        name=f"{get_param.output.name}_lora_linear",
+                        shape=qs["lora_linear.shape"],
+                        dtype=thunder.dtypes.to_dtype(qs["lora_linear.dtype"]),
+                        device=thunder.devices.to_device(device),
+                        requires_grad=False,
+                    )
+                    # get_param.sym = unpack_buffer/parameter as needed
+                    new_bsyms.append(get_param.sym.bind(get_param.args[0], n_lora_linear, output=proxy_lora_linear))
+                    add_trace_output(prologue_trace, proxy_lora_linear, subindex=0)
+                    new_compute_inputs.append(proxy_lora_linear)
+                    # this is not good, because we will have several traces...
+                    additional_proxies[n_lora_linear] = proxy_lora_linear
+
+        prologue_trace.bound_symbols[-1:-1] = new_bsyms
+
+        computation_proxy_map = {
+            csym.name: dict(
+                shape=psym.shape,
+                dtype=psym.dtype,
+            )
+            for psym, csym in zip(prologue_trace.bound_symbols[-1].args[0][0], computation_trace.args)
+            if psym.shape != csym.shape or psym.dtype != csym.dtype
+        }
+
+        new_computation_trace = trace_with_replaced_proxy_metadata(computation_trace, computation_proxy_map)
+        bound_symbols = new_computation_trace.bound_symbols
+        new_computation_trace.bound_symbols = []
+
+        new_computation_trace.args = (*new_computation_trace.args, *new_compute_inputs)
+        new_computation_trace._siginfo.args = [(a.name, None) for a in new_computation_trace.args]
+
+        with tracectx(new_computation_trace):
+            new_bindings = [
+                thunder.core.prims.unpack_trivial.bind(i, output=i, name=i.name) for i in new_compute_inputs
+            ]
+
+        for idx, bsym in enumerate(bound_symbols):
+            if bsym.sym != prims.unpack_trivial:
+                break
+            new_computation_trace.bound_symbols.append(bsym.from_bsym())
+        new_computation_trace.bound_symbols += new_bindings
+
+        for bsym in bound_symbols[idx:]:
+            if bsym.sym == thunder.torch.linear and bsym.args[1].name in quantized_proxies:
+                assert len(bsym.args) == 3  # torch.linear(input, weight, bias)
+                n = quantized_proxies[bsym.args[1].name]
+                qs = self.quant_states[n]
+                # signature of the new symbol:
+                # bnb_matmul_nf4(x, qweight, bias, absmax, quant_map, blocksize, dtype, shape)
+                new_args = (
+                    *bsym.args[:3],
+                    additional_proxies[f"{n}.lora_linear"],
+                    qs["dtype"],
+                    qs["shape"],
+                )
+            #     mm_bsym = bsym.from_bsym(
+            #         sym=bnb_matmul_nf4,
+            #         subsymbols=[],
+            #         args=new_args,
+            #     )
+            #
+            #     new_computation_trace.bound_symbols.append(mm_bsym)
+            #     # we need the postprocess to set the internal state (call_ctx) because we do not bind / execute the new symbol to
+            #     # preserve the "meta"-info like source location, header, etc.
+            #     # TODO: switch to a better solution when it is there
+            #     bnb_matmul_nf4._bind_postprocess(mm_bsym)
+            # else:
+            #     new_computation_trace.bound_symbols.append(bsym.from_bsym())
+
+        new_computation_trace.set_provenance(thunder.core.trace.TraceProvenance("quant pass"))
+        return prologue_trace, new_computation_trace, epilogue_trace
