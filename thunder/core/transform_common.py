@@ -447,3 +447,14 @@ def wrap_return_value_along_with_argments(trace: Trace) -> Trace:
     new_trace.bound_symbols = trace.bound_symbols[:-1] + [new_return_bsym]
     new_trace.set_provenance(TraceProvenance("Return arguments to track copies onto them"))
     return new_trace
+
+
+def unwrap_return_value(trace: Trace) -> Trace:
+    last = trace.bound_symbols[-1]
+    assert last.sym.id == prims.PrimIDs.RETURN
+    new_return_bsym = last.from_bsym(args=(last.args[0]["output"],))
+
+    new_trace = from_trace(trace)
+    new_trace.bound_symbols = trace.bound_symbols[:-1] + [new_return_bsym]
+    new_trace.set_provenance(TraceProvenance("Unwrap the actual return value"))
+    return new_trace

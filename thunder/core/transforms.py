@@ -63,7 +63,7 @@ from thunder.clang import (
     reciprocal,
     convolution,
 )
-from thunder.core.transform_common import dce, Transform, wrap_return_value_along_with_argments
+from thunder.core.transform_common import dce, Transform, wrap_return_value_along_with_argments, unwrap_return_value
 from thunder.core.vjp_utils import make_aug_forward_and_backward
 from thunder.extend import Executor
 import thunder.torch as ltorch
@@ -3633,8 +3633,7 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
         if torch_autograd:
             nonlocal output_spec
             # The custom torch.autograd.Function only considers Tensors in the input/output (not ones that are nested inside python data structures)
-            flat_output, output_spec = tree_flatten_with_dataclass(result)
-            # result is a dict with "output" and "flat_args"
+            flat_output, output_spec = tree_flatten_with_dataclass(result["output"])
             result["flat_output"] = tuple(flat_output)
         return result, saved_for_backward
 
@@ -3668,6 +3667,7 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
 
     saved_for_backward = forward_trace.output[1]
     flat_saves, _ = tree_flatten(saved_for_backward)
+    trace_with_unwrapped_return = unwrap_return_value(trace)
 
     def backward_fn(saved_for_backward, cotangents):
         # trace converts all saved_for_backward into proxy, we want to restore number scalars afterwards.
@@ -3677,15 +3677,15 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
             for proxified, entry in zip(flat_saves_proxified, flat_saves)
         ]
         saved_for_backward = tree_unflatten(flat_filtered, saves_spec)
-        env = reconstruct_forward_env_for_backward(trace, saved_for_backward)
+        env = reconstruct_forward_env_for_backward(trace_with_unwrapped_return, saved_for_backward)
 
         if torch_autograd:
             cotangents = tree_unflatten(cotangents, output_spec)
-        out = backward_pass(env, trace, cotangents)
+        out = backward_pass(env, trace_with_unwrapped_return, cotangents)
         if torch_autograd:
             gkwargs = out[-1] if isinstance(out[-1], dict) else {}
             gargs = out[:-1] if isinstance(out[-1], dict) else out
-            gkwargs = {k: gkwargs.get(k, None) for k in trace.kwargs}
+            gkwargs = {k: gkwargs.get(k, None) for k in trace_with_unwrapped_return.kwargs}
             out = (*gargs, gkwargs)
             out = tree_flatten(out)[0]
         return out

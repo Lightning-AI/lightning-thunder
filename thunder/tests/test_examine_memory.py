@@ -106,6 +106,7 @@ def test_view_ops(executor, device: str, dtype: dtypes.dtype):
         assert alloc_mem[0] == 272
         assert sum(alloc_mem[1].values()) == get_return_memory(extrace.bound_symbols[-1])  # 128
     if isinstance(executor, TorchTestExecutor):
+        print(extrace)
         assert alloc_mem[0] == 208
         assert sum(alloc_mem[1].values()) == get_return_memory(extrace.bound_symbols[-1])  # 128
 
