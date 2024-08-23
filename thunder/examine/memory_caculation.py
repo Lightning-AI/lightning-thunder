@@ -5,6 +5,7 @@ from thunder.core.proxies import FutureTensorProxy, Proxy, TensorProxy
 from thunder.core.symbol import BoundSymbol, Symbol
 from thunder.core.trace import TraceCtx
 from thunder.core.utils import check_type, ProxyDict
+from thunder.core.pytree import tree_iter
 
 memory_calculate_skip_list = (PrimIDs.RETURN, "clear_collection")
 
@@ -141,6 +142,10 @@ def get_alloc_memory(trc: TraceCtx) -> tuple[int, dict[str, int]]:
     allocated = 0
 
     tensor_to_memory_data = ProxyDict()
+    for arg in tree_iter((trc.args, trc.kwargs)):
+        # In addition to the arguments themselves, the interpreter holds references to the arguments
+        tensor_to_memory_data[arg] = MemoryData(n=2, proxy=arg)
+
     for bsym in trc.bound_symbols:
         if bsym.sym.id in memory_calculate_skip_list:
             continue
