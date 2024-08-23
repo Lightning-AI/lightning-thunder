@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
+from thunder.core.module import ThunderModule
 from thunder.core.proxies import DistParallelType
 from thunder.core.proxies import TensorProxy
 from thunder.core.transform_common import Transform
@@ -171,8 +172,10 @@ class TransformForTensorParallel(Transform):
     rank: int
     world_size: int
     compile_data: CompileData
-    chunked_param_name_to_layer_type: dict[str, Any]
     process_group: ProcessGroup
+    target_modules: Sequence[str]
+    chunked_param_name_to_layer_type: dict[str, Any] = field(init=False, default_factory=dict)
+    dim_to_shard: int = field(init=False, default=-1)
 
     def __post_init__(self):
         from thunder.common import CompileData
@@ -181,6 +184,10 @@ class TransformForTensorParallel(Transform):
         utils.check_type(self.compile_data, CompileData)
         if getattr(self.compile_data, "use_fsdp", False) or getattr(self.compile_data.fn, "use_fsdp", False):
             raise NotImplementedError("Currently thunder does not support the combination of fsdp and tensor parallel")
+        self.device = torch.device("cuda", self.rank)
+
+        if self.dim_to_shard == -1:
+            raise ValueError(f"Set valid {self.dim_to_shard=} in inheritance")
 
     @abstractmethod
     def get_visitor_of_computation_trace_and_provenance(
@@ -240,12 +247,6 @@ class TransformForTensorParallel(Transform):
                         comp_inp_p._shape = new_shape
                         comp_inp_p._distparallel_type = self.distparallel_type
 
-                    for c in prologue_consumers[pro_out_p]:
-                        if c.sym is prims.check_tensor_shape_and_metadata:
-                            # TODO have a more principled way to update this?
-                            a0, _, _, *a2pp = c.args
-                            c.args = (a0, tuple(new_shape), a0.device.device_str(), *a2pp)
-
         for bsym in prologue_trace.bound_symbols:
             if bsym.sym is prims.check_tensor_shape_and_metadata and prologue_producers[bsym.args[0]].sym in (
                 prims.unpack_parameter,
@@ -275,63 +276,53 @@ class TransformForTensorParallel(Transform):
 
             return prologue_trace, remove_redundant_comms(new_computation_trace), epilogue_trace
 
+    def transform_module(self, model: ThunderModule) -> None:
+        import torch.nn as nn
+        from thunder.core import utils
+        from thunder.distributed import _shard_tensor
 
-def tensor_parallel_sharding(
-    model: ThunderModule,
-    target_modules: Sequence[str],
-    *,
-    dim_to_shard: int,
-    device: torch.device,
-    rank: int,
-    world_size: int,
-) -> dict[str, Any]:
-    import torch.nn as nn
-    from thunder.core import utils
-    from thunder.distributed import _shard_param
-
-    chunked_param_name_to_layer_type: dict[str, Any] = {}
-    for target_mod_name in target_modules:
-        mod = model.get_submodule(target_mod_name)
-        utils.check_type(
-            mod,
-            (
-                nn.Linear,
-                nn.Embedding,
-            ),
-        )
-        for name, p in mod.named_parameters(recurse=False):
-            if p.ndim <= dim_to_shard:
-                continue
-            chunked_param_name_to_layer_type["t_" + f"{target_mod_name}.{name}".replace(".", "_")] = type(mod)
-
-    # Modify module
-    for module_name, _ in model._model.named_modules():
-        submodule = model.get_submodule(module_name)
-
-        # Materialize meta parameters on device if necessary.
-        # This is done before sharding in case the materialization logic depends on the tensor shape.
-        # The trade-off is that all of a module's direct parameters need to fit in device.
-        # Each module only initializes its own parameters and not those of its children (recurse=False)
-        if any(t.is_meta for t in chain(submodule.parameters(recurse=False), submodule.buffers(recurse=False))):
-            from thunder.distributed import _materialize
-
-            _materialize(submodule, device=device)
-            for n, p in submodule.named_parameters(recurse=False, prefix=module_name):
-                model._overrides_parameters[n] = p
-            for n, b in submodule.named_buffers(recurse=False, prefix=module_name):
-                model._overrides_buffers[n] = b
-
-        if module_name not in target_modules:
-            continue
-
-        for pn, p in submodule.named_parameters(recurse=False, prefix=module_name):
-            # if we don't have an override or it is just the original, do create a copy
-            if model._overrides_parameters.get(pn, p) is p:
-                model._overrides_parameters[pn] = copy.copy(p)
-            if p.ndim <= dim_to_shard:
-                continue
-            _shard_param(
-                model._overrides_parameters[pn], rank, world_size, pn, dim=dim_to_shard, allow_padding_for_fsdp=False
+        params_to_shard = {}
+        for target_mod_name in self.target_modules:
+            mod = model.get_submodule(target_mod_name)
+            utils.check_type(
+                mod,
+                (
+                    nn.Linear,
+                    nn.Embedding,
+                ),
             )
+            for name, p in mod.named_parameters(recurse=False):
+                if p.ndim <= self.dim_to_shard:
+                    continue
+                self.chunked_param_name_to_layer_type["t_" + f"{target_mod_name}.{name}".replace(".", "_")] = type(mod)
+                params_to_shard[p] = None
 
-    return chunked_param_name_to_layer_type
+        # Modify module
+        for name, param in model.named_parameters():
+
+            orig_param: torch.Tensor | None
+            try:
+                orig_param = model._model.get_parameter(name)
+            except AttributeError:
+                orig_param = None
+
+            if param.is_meta:
+                param._thunder_device = self.device
+                if orig_param is not None:
+                    orig_param._thunder_device = self.device
+            elif param.device != self.device:
+                with torch.no_grad():
+                    new_param = torch.nn.Parameter(param.to(device=self.device), requires_grad=param.requires_grad)
+                model._overrides_parameters[name] = new_param
+
+            if name in params_to_shard:
+                sharded_param, _ = _shard_tensor(
+                    param,
+                    self.rank,
+                    self.world_size,
+                    name,
+                    allow_padding_for_fsdp=False,
+                    dim=self.dim_to_shard,
+                )
+                sharded_param = torch.nn.Parameter(sharded_param.clone(), requires_grad=param.requires_grad)
+                model._overrides_parameters[name] = sharded_param

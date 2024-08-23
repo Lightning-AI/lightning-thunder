@@ -1,7 +1,6 @@
 from __future__ import annotations
-import copy
 from dataclasses import dataclass
-from itertools import chain
+from dataclasses import field
 from typing import TYPE_CHECKING
 from typing import ClassVar
 
@@ -102,6 +101,7 @@ class RowParallelEmbeddingPreProcess(PrePostProcessInterface):
 
 @dataclass
 class TransformForRowWiseParallel(TransformForTensorParallel):
+    dim_to_shard: int = field(default=1, init=False)
 
     @property
     def distparallel_type(self) -> DistParallelType:
@@ -225,7 +225,7 @@ def row_parallel(
     from thunder.core.transforms import add_transform
     from thunder.core.module import ThunderModule
     from thunder.distributed import copy_default_process_group
-    from thunder.distributed.tensor_parallel.common import tensor_parallel_sharding
+    from thunder.transforms import MaterializationTransform
 
     utils.check_type(thunder_module, ThunderModule)
 
@@ -240,24 +240,21 @@ def row_parallel(
         utils.check_type(device, torch.device)
         utils.check(device.index == rank, lambda: f"{device.index=} expected to match {rank=} of {process_group=}")
 
-    chunked_param_name_to_layer_type = tensor_parallel_sharding(
-        thunder_module,
-        target_modules,
-        dim_to_shard=1,
-        device=device,
-        rank=rank,
-        world_size=world_size,
-    )
     rowwise_thunder_module = add_transform(
         thunder_module,
-        transform=TransformForRowWiseParallel(
-            rank=rank,
-            world_size=world_size,
-            compile_data=get_compile_data(thunder_module),
-            chunked_param_name_to_layer_type=chunked_param_name_to_layer_type,
-            process_group=process_group,
-        ),
-        _legacy_copy_params=True,
+        transform=[
+            TransformForRowWiseParallel(
+                rank=rank,
+                world_size=world_size,
+                compile_data=get_compile_data(thunder_module),
+                process_group=process_group,
+                target_modules=target_modules,
+            ),
+            MaterializationTransform(
+                device=device,
+                init=MaterializationTransform.init_from_original_module_init(),
+            ),
+        ],
     )
 
     return rowwise_thunder_module
