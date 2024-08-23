@@ -59,7 +59,13 @@ def test_view_ops(executor, device: str, dtype: dtypes.dtype):
         result2 = b_4 + a_3
         return result1, result2
 
-    cbar = executor.make_callable(bar, disable_preprocessing=False)
+    # Bookending changes memory footprint and whether bookending is enabled
+    # depends on version. For several tests in this file that are sensitive to
+    # bookending, I forced bookending to be off, the default for the latest
+    # veresion of nvFuser. I could also test nv_enable_bookend=True, the old
+    # default, but I would have to use different "golden" values, making tests
+    # complicated.
+    cbar = executor.make_callable(bar, disable_preprocessing=False, nv_enable_bookend=False)
     with runtime_allocated_memory(device):
         cbar(a, b)
 
@@ -75,7 +81,6 @@ def test_view_ops(executor, device: str, dtype: dtypes.dtype):
     # due to a limitation of `get_alloc_memory` (https://github.com/Lightning-AI/lightning-thunder/blob/6dfe7e939a19d1ef5ab259de8709a79f0104fa42/thunder/examine/memory_caculation.py#L123-L125), this saved memory is not taken into consideration.
     assert max_mem_bw[0] == 144
 
-    # NOTE: The get_return_memory method cannot distinguish wether the returned values come from an alias op.
     assert sum(max_mem_bw[1].values()) == get_return_memory(bw_extrace.bound_symbols[-1])  # 32
 
     def bar1(a, b, c):  # [4], [1,4,4], [4,1,4]
@@ -88,7 +93,7 @@ def test_view_ops(executor, device: str, dtype: dtypes.dtype):
     a = make_tensor((4,), device=device, dtype=torch_dtype)
     b = make_tensor((1, 4, 4), device=device, dtype=torch_dtype)
     c = make_tensor((4, 1, 4), device=device, dtype=torch_dtype)
-    cbar = executor.make_callable(bar1, disable_preprocessing=False)
+    cbar = executor.make_callable(bar1, disable_preprocessing=False, nv_enable_bookend=False)
     with runtime_allocated_memory(device):
         cbar(a, b, c)
 
@@ -110,7 +115,7 @@ def test_view_ops(executor, device: str, dtype: dtypes.dtype):
 
     a = make_tensor((5, 2), device=device, dtype=torch_dtype)
     b = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    cbar = executor.make_callable(bar2, disable_preprocessing=False)
+    cbar = executor.make_callable(bar2, disable_preprocessing=False, nv_enable_bookend=False)
 
     with runtime_allocated_memory(device):
         cbar(a, b)
@@ -135,7 +140,7 @@ def test_nanogpt_block(executor, device, dtype):
 
     config = nanogpt_model.GPTConfig(dropout=0)
     block = nanogpt_model.Block(config).to(device=device, dtype=tdtype)
-    cblock = executor.make_callable(block)
+    cblock = executor.make_callable(block, nv_enable_bookend=False)
 
     with runtime_allocated_memory(device):
         inp = make((2, config.block_size, config.n_embd))

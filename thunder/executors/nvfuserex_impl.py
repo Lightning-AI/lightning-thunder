@@ -803,9 +803,10 @@ the metadata operation is awkward enough to force the output tensor to be
 instantiated) this heuristic actually leads to worse code.
 """
             enable_bookend: None | bool = get_compile_option("nv_enable_bookend", bookend_help)
-            # Set default value.
             if enable_bookend is None:
-                enable_bookend = False
+                # Set the default value. Before 0.2.10, bookending was needed
+                # to hide https://github.com/NVIDIA/Fuser/issues/2395.
+                enable_bookend = nvfuser_version() < LooseVersion("0.2.10")
             assert isinstance(enable_bookend, bool)
 
             if enable_bookend:
