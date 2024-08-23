@@ -78,28 +78,52 @@ def is_transformer_engine(low_precision_mode: str) -> bool:
     return low_precision_mode in ["fp8-delayed-te", "fp8-delayed-te-wo_layernorm"]
 
 
-def swap_linear_layers_for_te(model: nn.Module, device: Any, swap_layernorm: bool = True) -> None:
+def check_and_update_config_for_te_if_needed(config: Config) -> None:
+    updates_info = []
 
-    def parameters_cnt(model: nn.Module) -> int:
+    def update_if_not_divisible(attr_name, divisor):
+        current_value = getattr(config, attr_name, 0)
+        if current_value % divisor != 0:
+            new_value = current_value + (divisor - current_value % divisor)
+            setattr(config, attr_name, new_value)
+            updates_info.append((attr_name, new_value))
+            return True
+        return False
+
+    updated = False
+    updated |= update_if_not_divisible("padded_vocab_size", 16)
+    updated |= update_if_not_divisible("n_embd", 8)
+
+    if updated:
+        print("Configuration was updated with the following changes:")
+        for key, value in updates_info:
+            print(f"{key} updated to {value}")
+    else:
+        print("No updates were necessary.")
+
+
+
+def swap_linear_layers_for_te(model: torch.nn.Module, device: Any, swap_layernorm: bool = True) -> None:
+    
+    def parameters_cnt(model: torch.nn.Module) -> int:
         return sum(p.numel() for p in model.parameters())
 
-    def _resursively_swap_linear_layers_for_te(module: nn.Module) -> None:
+    def _resursively_swap_linear_layers_for_te(module: torch.nn.Module) -> None:
         for n, m in module.named_children():
             if len(list(m.children())) > 0:
                 _resursively_swap_linear_layers_for_te(m)
 
-            if isinstance(m, nn.Linear):
+            if isinstance(m, torch.nn.Linear):
                 has_bias = m.bias is not None
-                new_linear = te.Linear(m.in_features, m.out_features, bias=bias_flag, device=device)
-                new_linear.weight.data = child.weight.data.clone()
-                if has_bias:
-                    new_linear.bias.data = child.bias.data.clone()
+                new_linear = te.Linear(
+                    m.in_features, m.out_features, bias=has_bias, device=device
+                )
                 setattr(module, n, new_linear)
-
-            if swap_layernorm and isinstance(m, nn.LayerNorm):
-                new_layernorm = te.LayerNorm(m.normalized_shape[0], eps=m.eps, device=device)
-                new_layernorm.weight.data = child.weight.data.clone()
-                new_layernorm.bias.data = child.bias.data.clone()
+            
+            if swap_layernorm and isinstance(m, torch.nn.LayerNorm):
+                new_layernorm = te.LayerNorm(
+                    m.normalized_shape[0], eps=m.eps, device=device
+                )
                 setattr(module, n, new_layernorm)
 
     initial_params_cnt = parameters_cnt(model)
@@ -107,9 +131,9 @@ def swap_linear_layers_for_te(model: nn.Module, device: Any, swap_layernorm: boo
     _resursively_swap_linear_layers_for_te(model)
     assert initial_params_cnt == parameters_cnt(model)
     for m in model.modules():
-        assert not isinstance(m, nn.Linear)
+        assert not isinstance(m, torch.nn.Linear)
         if swap_layernorm:
-            assert not isinstance(m, nn.LayerNorm)
+            assert not isinstance(m, torch.nn.LayerNorm)
 
 
 # FIXME(crcrpar): Recompilation warning after 2 iterations
@@ -345,12 +369,15 @@ class Benchmark_litGPT:
         # Initialize the model
         t0 = time.perf_counter()
         print(f"Loading model with {self.config.__dict__}")
+        if is_transformer_engine(self.low_precision_mode):
+            check_and_update_config_for_te_if_needed(self.config)
         self.model = self.init_model()
         print(f"Time to instantiate model: {time.perf_counter() - t0:.02f} seconds.")
 
         if self.use_te_fp8_autocast:
             is_wo_layernorm = self.low_precision_mode == "fp8-delayed-te-wo_layernorm"
             swap_linear_layers_for_te(self.model, device, swap_layernorm=not is_wo_layernorm)
+            self.model.to(torch.bfloat16)
 
         # Setup the distributed algorithm choices
         if distributed_first := (self.compile in ("eager", "inductor") or "dynamo" in self.compile):
