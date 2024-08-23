@@ -240,6 +240,7 @@ def create_fd(
                 python_type = y
                 nvdtype = lcdtype_to_nvdtype(python_type)
                 nv = fd.define_scalar(nvdtype)
+                lc_to_nv_map[x] = nv
             elif isinstance(x, TensorProxy):
                 utils.check_type(y, tuple)
                 symbolic_shape, contiguity, stride_order, dtype = y
@@ -247,17 +248,23 @@ def create_fd(
                 nv = fd.define_tensor(
                     shape=symbolic_shape, contiguity=contiguity, dtype=nvdtype, stride_order=stride_order
                 )
+                lc_to_nv_map[x] = nv
+
+                for idx, s in enumerate(x.shape):
+                    if isinstance(s, Proxy):
+                        lc_to_nv_map[s] = nv.size(idx)
             elif isinstance(x, TupleProxy):
                 # TODO: discuss the contract here on baked in number from a tuple
                 # TODO: validate x is a tuple of int
                 utils.check_type(y, type)
                 nv = fd.define_vector(len(x._value))
+                lc_to_nv_map[x] = nv
             elif isinstance(x, Proxy):
                 utils.check(False, lambda: f"Unsupported proxy type {type(x)} in fusion", exception_type=AssertionError)
             else:
                 nv = x
+                lc_to_nv_map[x] = nv
 
-            lc_to_nv_map[x] = nv
             return nv
 
         for pinp, inp in zip(sorted_unique_inputs, input_descriptors):
