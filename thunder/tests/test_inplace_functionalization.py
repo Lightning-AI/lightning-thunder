@@ -370,7 +370,7 @@ def test_multiple_views_before_inplace_to_base(executor, device, _):
         pytest.skip(
             "nvFuser doesn't enforce the order between `z=x.view(-1)` and "
             "`x.add_(1)`, so the behavior is undefined due to this "
-            "race condition."
+            "race condition. See https://github.com/NVIDIA/Fuser/issues/2839."
         )
 
     # ref: https://github.com/pytorch/pytorch/blob/29e2e2a/test/test_functionalization.py#L159-L169
