@@ -1377,8 +1377,38 @@ def lift_shape_logic(computation_trace):
     #import thunder.core.utils as utils
     #consumers = utils.consumers(computation_trace)
     #for bsym in computation_trace.bound_symbols:
-    from thunder.core.transform_common import dce
-    return dce(computation_trace)
+
+    #from thunder.core.transform_common import dce
+    #return dce(computation_trace)
+
+    # TODO: two things needs to be done here:
+    # 1. replace all uses of tensor shape 
+    # 2. hoising all computation logic on shapes.
+
+    # for simplicity for now, we'll just inline everything.
+    idx = 0
+    bound_symbols = []
+    for sym in computation_trace.bound_symbols:
+        if len(sym.subsymbols) > 0:
+            produced = set()
+            should_lift = False
+            # TODO: numel of new tensor proxy is inside prim logic, needs to expose that as well
+            for subsym in sym.subsymbols:
+                # TODO: errr. how does lambda work with local variable?!
+                #map(lambda x: produced.add(x), subsym.flat_variableified_proxy_outs)
+                for v_out in subsym.flat_variableified_proxy_outs:
+                    produced.add(v_out)
+            for proxy_out in sym.flat_proxy_outs:
+                if isinstance(proxy_out, TensorProxy) and any(variableify(s) in produced for s in proxy_out.shape):
+                    should_lift = True
+                    break
+
+            if should_lift:
+                bound_symbols.extend(sym.subsymbols)
+                continue
+        bound_symbols.append(sym)
+
+    computation_trace.bound_symbols = bound_symbols
 
 
 def get_computation_inputs_and_intermediates(computation_trace):
@@ -1642,6 +1672,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 assert n == "kwargs"
                 pro_kwargs_proxy = output
 
+    breakpoint()
     pro_to_epi = tuple(sorted((unpack(v) for v in pro_to_epi_inps), key=lambda x: param_ordering[id(x)][1]))
     pro_to_comp = tuple(sorted((unpack(v) for v in pro_to_comp_inps), key=lambda x: param_ordering[id(x)][1]))
 
@@ -1722,16 +1753,21 @@ def process_recorded_modifications(ctx, epilogue_trace):
 
 
 def bind_inputs(name, trace, input_vars, input_proxies):
+
+    trace.scopes = [trace.bound_symbols]
     # Unpacks inputs into the computation trace
     # TODO This currently does the unpacks at the end of the trace, then moves them to the beginning, there's
     #   almost certainly a more elegant way to do this
     with tracectx(trace):
         p: Proxy
         for p in input_proxies:
+            print("adding an unpack", p)
             prims.unpack_trivial(p, name=p.name)
 
     bsyms = trace.bound_symbols
+    print("--- before: ", trace)
     trace.bound_symbols = bsyms[-len(input_proxies) :] + bsyms[: -len(input_proxies)]
+    print("--- after: ", trace)
 
     si = SigInfo(name)
     si.args = [(v.proxy.name, None) for v in input_vars]
@@ -1810,7 +1846,7 @@ def thunder_general_jit(
             last_interpreter_log = jfn._last_interpreter_log
 
     print("before lift", computation_trace)
-    computation_trace = lift_shape_logic(computation_trace)
+    lift_shape_logic(computation_trace)
     print("after lift", computation_trace)
     pro_to_comp, computation_intermediates = get_computation_inputs_and_intermediates(computation_trace)
     epilogue_inputs, _ = get_computation_inputs_and_intermediates(epilogue_trace)
@@ -1844,16 +1880,26 @@ def thunder_general_jit(
     print("my little trace:\n", computation_trace)
     print("pro_to_comp:\n", pro_to_comp)
 
+    # FIXME: unpack_inputs needs to figure out the proper order of resolving shape and tensor
+    # This is a hack to unblock my toy example
+    pro_to_comp.reverse()
+
     pro_to_comp_proxies, pro_to_epi_proxies = unpack_inputs(ctx, prologue_trace, pro_to_comp, pro_to_epi, args, kwargs)
 
     print("pro_trace:\n", prologue_trace)
+    print("pro_to_comp_proxies:\n", pro_to_comp_proxies)
 
     proxy_order = {id(p): i for i, p in enumerate(pro_to_comp_proxies)}
     pro_to_comp = tuple(sorted(pro_to_comp, key=lambda v: proxy_order[id(v.proxy)]))
 
+    print(f"{proxy_order=}\n")
+    print(f"{pro_to_comp=}\n")
+
     bind_inputs("computation", computation_trace, pro_to_comp, pro_to_comp_proxies)
     if epilogue_trace:
         bind_inputs("epilogue", epilogue_trace, pro_to_epi + comp_to_epi, pro_to_epi_proxies + comp_to_epi_proxies)
+
+    print("my little trace after binding:\n", computation_trace)
 
     # Returns a new swapmap dictionary which has the keys (ctx._proxy_swapmap.key() & variableify(proxies))
     def restrict_proxy_swapmap(proxies: tuple[Proxy]) -> dict[Variable, Proxy]:
