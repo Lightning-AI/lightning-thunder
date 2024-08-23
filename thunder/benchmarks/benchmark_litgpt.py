@@ -102,9 +102,8 @@ def check_and_update_config_for_te_if_needed(config: Config) -> None:
         print("No updates were necessary.")
 
 
-
 def swap_linear_layers_for_te(model: torch.nn.Module, device: Any, swap_layernorm: bool = True) -> None:
-    
+
     def parameters_cnt(model: torch.nn.Module) -> int:
         return sum(p.numel() for p in model.parameters())
 
@@ -115,15 +114,11 @@ def swap_linear_layers_for_te(model: torch.nn.Module, device: Any, swap_layernor
 
             if isinstance(m, torch.nn.Linear):
                 has_bias = m.bias is not None
-                new_linear = te.Linear(
-                    m.in_features, m.out_features, bias=has_bias, device=device
-                )
+                new_linear = te.Linear(m.in_features, m.out_features, bias=has_bias, device=device)
                 setattr(module, n, new_linear)
-            
+
             if swap_layernorm and isinstance(m, torch.nn.LayerNorm):
-                new_layernorm = te.LayerNorm(
-                    m.normalized_shape[0], eps=m.eps, device=device
-                )
+                new_layernorm = te.LayerNorm(m.normalized_shape[0], eps=m.eps, device=device)
                 setattr(module, n, new_layernorm)
 
     initial_params_cnt = parameters_cnt(model)
