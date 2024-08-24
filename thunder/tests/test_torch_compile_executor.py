@@ -74,6 +74,7 @@ def test_torch_compile_cat_rope_single_fusion():
     assert len(backward_execution_trace.bound_symbols) == 14
 
 
+@pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported")
 def test_transform_for_execution_for_callable():
     def fn(a):
         return a.type("torch.DoubleTensor")
