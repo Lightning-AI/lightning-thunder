@@ -74,7 +74,8 @@ def make_compiled(
         region_trace.add_name(a.name)
     for bsym in region_trace.bound_symbols:
         for o in bsym.flat_outs:
-            region_trace.add_name(o.name)
+            if o is not None:  # TODO: investigate
+                region_trace.add_name(o.name)
 
     # maybe make this the default if no sig info is present?
     region_trace._siginfo = SigInfo("to_be_compiled")
