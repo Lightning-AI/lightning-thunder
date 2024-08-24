@@ -13,7 +13,11 @@ from thunder.core.symbol import BoundSymbol, Symbol
 from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
 from thunder.core.transform_common import dce
 from thunder.core.pytree import tree_flatten
-from thunder.executors.passes import update_fusion_call_ctx, transform_for_execution
+from thunder.executors.passes import (
+    update_fusion_call_ctx,
+    _transform_for_operator_executor_execution,
+    transform_for_execution,
+)
 from thunder.executors.utils import Region
 from thunder.extend import FusionExecutor, register_executor, ImplInfo
 from thunder.core.compile_data import get_compile_option
@@ -56,14 +60,21 @@ def make_compiled(
     from thunder.core.transforms import eval_trace
     from thunder.executors.torchex import no_autocast
     from thunder.executors.torchex import ex as torchex
+    from thunder.executors.pythonex import ex as pythonex
     from thunder.core.codeutils import SigInfo
 
     # Here we construct a trace that will be used to compile the function
+    # TODO: maybe we should have a utility that does this properly
     region_trace = TraceCtx(None)
     region_trace.bound_symbols = list(bsyms)
     region_trace.args = sorted_unique_inputs
     region_trace.kwargs = {}
     region_trace.bound_symbols.append(prims.python_return.bind(sorted_unique_outputs, output=()))
+    for a in region_trace.args:
+        region_trace.add_name(a.name)
+    for bsym in region_trace.bound_symbols:
+        for o in bsym.flat_outs:
+            region_trace.add_name(o.name)
 
     # maybe make this the default if no sig info is present?
     region_trace._siginfo = SigInfo("to_be_compiled")
