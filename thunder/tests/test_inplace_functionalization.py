@@ -588,9 +588,9 @@ def test_inplace_copy_on_fusion_inputs_issue_791(executor, device, _):
     jitted = executor.make_callable(f)
     o = jitted(a, b, idx, src)
 
-    assert a.allclose(a_)
-    assert b.allclose(b_)
-    assert o.allclose(o_)
+    torch.testing.assert_close(a, a_)
+    torch.testing.assert_close(b, b_)
+    torch.testing.assert_close(o, o_)
 
 
 @instantiate(

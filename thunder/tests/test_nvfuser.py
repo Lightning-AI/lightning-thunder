@@ -1057,12 +1057,13 @@ def test_sdpa(
         ref_inp.requires_grad = True
         ref_tensor_inputs.append(ref_inp)
 
-    with torch.random.fork_rng(devices=[torch.cuda.current_device()]):
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+
+    with torch.random.fork_rng(devices=[torch.cuda.current_device()]) and sdpa_kernel(SDPBackend.FLASH_ATTENTION):
         ref_attn_out = sdpa_fn(*ref_tensor_inputs, *scalar_inputs)
     ref_attn_out.backward(grad_out)
 
     nv_outputs = (attn_out, q.grad, k.grad, v.grad)
     ref_outputs = (ref_attn_out, *(inp.grad for inp in ref_tensor_inputs))
-
     for nv_out, ref_out in zip(nv_outputs, ref_outputs):
         torch.testing.assert_close(nv_out, ref_out)
