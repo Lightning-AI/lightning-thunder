@@ -3784,13 +3784,16 @@ def recompute_saved_for_backward(fw_trace: Trace, bw_trace: Trace) -> tuple[Trac
     # To do so we need: the saved for backward that still needs to be carried on from the old list and the new required arguments from the forward.
     # We need to check which inputs to the fw trace are used to compute the producer symbols
     required_fw_args = fw_trace_args & old_saved_for_bw
+    recomputed_tensors_from_producers = set()
     for p in prod_symbols:
         for pa in p.flat_args:
             if variableify(pa) in fw_trace_args:
                 required_fw_args.add(variableify(pa))
+        for po in p.flat_outs:
+            recomputed_tensors_from_producers.add(variableify(po))
 
     # add the save for bw that wont be recomputed
-    required_saved_for_bw = old_saved_for_bw - rematerializable
+    required_saved_for_bw = all_rematerializable - rematerializable - recomputed_tensors_from_producers
 
     new_saved_for_backward = tuple(unvariableify(i) for i in required_fw_args | required_saved_for_bw)
 
