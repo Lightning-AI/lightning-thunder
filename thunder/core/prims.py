@@ -151,6 +151,7 @@ class PrimIDs(Enum):
     RANDN = auto()
     EMPTY = auto()
     TENSOR_FROM_SEQUENCE = auto()
+    CLONE = auto()
     # Probability distribution-related ops
     MULTINOMIAL = auto()
     GET_AND_UPDATE_RNG_STATE = auto()
@@ -2812,6 +2813,14 @@ def _empty_meta(
 
 
 empty = make_prim(PrimIDs.EMPTY, "empty", meta=_empty_meta)
+
+
+# TODO(crcrpar): Cover `memory_format` kwarg
+def _clone_mta(a: TensorProxy, **kwargs) -> TensorProxy:
+    return TensorProxy(like=a, requires_grad=a.requires_grad)
+
+
+clone = make_prim(PrimIDs.CLONE, "clone", meta=_clone_mta)
 
 
 # Prim to construct a Tensor from sequence/nested sequence of Numbers.
