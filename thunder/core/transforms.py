@@ -3738,10 +3738,10 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
     forward_trace.set_provenance(TraceProvenance("Augmented forward pass"))
     backward_trace.set_provenance(TraceProvenance("Backward pass"))
 
-    disable_saved_for_backward_recomputation: None | bool = get_compile_option(
-        "disable_saved_for_backward_recomputation", "Disable save for backward tensors recomputation."
+    enable_saved_for_backward_recomputation: None | bool = get_compile_option(
+        "enable_saved_for_backward_recomputation", "Enable save for backward tensors recomputation."
     )
-    if not disable_saved_for_backward_recomputation:
+    if enable_saved_for_backward_recomputation:
         forward_trace, backward_trace = recompute_saved_for_backward(forward_trace, backward_trace)
 
     return ForwardBackwardTraces(forward_trace, backward_trace)
