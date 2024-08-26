@@ -685,6 +685,60 @@ class FSDPTest(DistributedParallelTestCase):
 
         torch.testing.assert_close(y_1, y_2)
 
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
+    def test_original_state_dict(self):
+        device = torch.device("cuda", self.rank)
+
+        for move_state_dict_to_cpu in (False, True):
+            with torch.device("cuda"):
+                model = ToyModel()
+
+            init_state_dict = model.state_dict()
+            jitted = fsdp(thunder.jit(model), device=device, move_state_dict_to_cpu=move_state_dict_to_cpu)
+
+            sharded_state_dict = jitted.state_dict()
+            original_state_dict = jitted.original_state_dict()
+            for key, unsharded in original_state_dict.items():
+                self.assertTrue(key in init_state_dict and key in sharded_state_dict)
+                self.assertEqual(len(init_state_dict[key]), len(unsharded))
+                self.assertGreater(len(unsharded), len(sharded_state_dict[key]))
+                if move_state_dict_to_cpu:
+                    self.assertEqual(unsharded.device, torch.device("cpu"))
+                else:
+                    self.assertEqual(unsharded.device, device)
+
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
+    def test_fsdpv2_with_1layer_llama_meta_init(self):
+        import re
+        from thunder.tests.litgpt_model import Config, GPT
+
+        device = torch.device("cuda", self.rank)
+        config = Config("Llama-2-7b-hf")
+        config.n_layer = 1
+        with torch.device("meta"):
+            model = GPT(config)
+        jitted = fsdp(thunder.jit(model), device=device)
+
+        t = config.block_size
+        data = torch.randint(
+            0,
+            100,
+            (
+                1,
+                t + 1,
+            ),
+            dtype=torch.int64,
+        )
+        x = data[:, :t]
+        x = x.to(device=device)
+        with self.assertRaisesRegex(
+            AssertionError,
+            re.escape(
+                f"expected tensor with (4096, 32), cuda:{self.rank}, torch.float32, requires_grad=False, got (4096, 32), meta, torch.float32, False"
+            ),
+        ):
+            jitted(x)
+
 
 common_utils.instantiate_parametrized_tests(FSDPTest)
 

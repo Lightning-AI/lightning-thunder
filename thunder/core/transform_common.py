@@ -1,11 +1,9 @@
 from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
-from abc import ABC, abstractmethod
-from collections import defaultdict
+from abc import ABC
 from collections.abc import Sequence
-from collections import defaultdict
-from itertools import filterfalse, chain
+from itertools import filterfalse
 from functools import partial
 
 import thunder
@@ -15,11 +13,11 @@ from thunder.core.proxies import Proxy, variableify, Variable, TensorProxy, unva
 from thunder.core.pytree import tree_flatten, tree_iter, tree_map, tree_unflatten
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, has_tags
 from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace, tracectx
-from thunder.core.utils import ProxyDict, producers, check, consumers
+from thunder.core.utils import ProxyDict, producers, check
 
 if TYPE_CHECKING:
-    from thunder.core.proxies import ProxyInterface
-    from thunder.core.symbol import Symbol, VariableInterface
+    from typing import Any
+    from thunder.core.module import ThunderModule
 
 
 #
@@ -346,13 +344,16 @@ class Transform(ABC):
         # default to noop
         return prologue_trace, computation_trace, epilogue_trace
 
-    def transform_module(self, model: thunder.ThunderModule):
+    def transform_module(self, model: ThunderModule) -> None:
         """Transforms the ThunderModule. This is executed once on application of the transform"""
         pass
 
     def transform_state_dict_for_submodule(
-        self, model: thunder.ThunderModule, submodule_name: str, state_dict: dict
-    ) -> dict:
+        self,
+        model: ThunderModule,
+        submodule_name: str,
+        state_dict: dict[str, Any],
+    ) -> dict[str, Any]:
         """
         Implement this to transform the state dict (mostly parameters and buffers) of a module, e.g. when loading
         from a state dict of the original model.
@@ -369,6 +370,14 @@ class Transform(ABC):
         Note that this transform will also be applied to the backward trace if the the autograd transform was enabled.
         """
         return computation_trace
+
+    def reverse_transform_state_dict_for_submodule(
+        self,
+        model: ThunderModule,
+        submodule_name: str,
+        state_dict: dict[str, Any],
+    ) -> dict[str, Any]:
+        return state_dict
 
 
 def order_proxies(bsyms: Sequence[BoundSymbol]) -> dict[str, int]:

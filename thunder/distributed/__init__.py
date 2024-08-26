@@ -4,7 +4,6 @@ import os
 from itertools import chain
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
-import copy
 from enum import auto, Enum
 from typing import TYPE_CHECKING, Any
 from collections.abc import Generator
@@ -423,13 +422,14 @@ def get_extract_bucket_name_from_tensor_proxy(granularity: FSDPBucketingStrategy
 
 
 def fsdp(
-    model: torch.nn.Module,
+    model: torch.nn.Module | ThunderModule,
     *,
     device: torch.device | None = None,
     broadcast_from: int | None = None,
     sharding_strategy: FSDPType = FSDPType.ZERO2,
     bucketing_strategy: FSDPBucketingStrategy = FSDPBucketingStrategy.NONE,
-) -> torch.nn.Module:
+    move_state_dict_to_cpu: bool | None = None,
+) -> torch.nn.Module | ThunderModule:
     """Convert ``model`` into Fully Sharded Data Parallel.
 
     This splits ``model``'s parameters in their first dimension into ``world_size`` chunks
@@ -458,12 +458,14 @@ def fsdp(
             from a checkpoint in a single rank.
         sharding_strategy:
         bucketing_strategy:
+        move_state_dict_to_cpu: Move all-gather'ed parameters of :func:`~thunder.core.module.ThunderModule.original_state_dict` to CPU
+            as each all-gather is finished.
 
      Returns:
         :class:`torch.nn.Module`
 
     """
-    import thunder
+    from thunder.core.module import ThunderModule
 
     utils.check(isinstance(sharding_strategy, FSDPType), lambda: f"FSDPType.ZERO2 and FSDPType.ZERO3 are supported.")
     utils.check(
@@ -471,21 +473,35 @@ def fsdp(
         lambda: "fsdp requires torch distributed to be available (but it's not)",
     )
 
-    if isinstance(model, thunder.ThunderModule):
+    if isinstance(model, ThunderModule):
         from thunder.core.transforms import add_transform
         from thunder.distributed.transforms.fsdp_v2 import FSDPTransform
+        from thunder.transforms import MaterializationTransform
 
+        if device is None:
+            local_rank = int(os.environ["LOCAL_RANK"])
+            device = torch.device("cuda", local_rank)
         return add_transform(
             model,
-            transform=FSDPTransform(
-                device=device,
-                broadcast_from=broadcast_from,
-                sharding_strategy=sharding_strategy,
-                bucketing_strategy=bucketing_strategy,
-                release_original_parameters=True,
-            ),
+            transform=[
+                FSDPTransform(
+                    device=device,
+                    broadcast_from=broadcast_from,
+                    sharding_strategy=sharding_strategy,
+                    bucketing_strategy=bucketing_strategy,
+                    release_original_parameters=True,
+                    move_state_dict_to_cpu=False if move_state_dict_to_cpu is None else move_state_dict_to_cpu,
+                ),
+                MaterializationTransform(device, init=MaterializationTransform.init_from_original_module_init()),
+            ],
         )
 
+    if move_state_dict_to_cpu is not None:
+        import warnings
+
+        warnings.warn(
+            "`move_state_dict_to_cpu` is only effective when `model` is `ThunderModule`, i.e., `thunder.jit(model)`"
+        )
     process_group = copy_default_process_group()
     utils.check(process_group is not None, lambda: "The default process group is None")
     model.use_fsdp = True
