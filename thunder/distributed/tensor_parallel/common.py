@@ -14,6 +14,7 @@ import torch
 from thunder.core.module import ThunderModule
 from thunder.core.proxies import DistParallelType
 from thunder.core.proxies import TensorProxy
+from thunder.core.proxies import variableify
 from thunder.core.transform_common import Transform
 
 if TYPE_CHECKING:
@@ -196,7 +197,7 @@ class TransformForTensorParallel(Transform):
     ) -> tuple[ComputationTraceTransformVisitorForTensorParallel, TraceProvenance | str]: ...
 
     @abstractmethod
-    def _calc_new_shape(self, orig_shape) -> tuple[int, ...]: ...
+    def _calc_new_shape(self, orig_shape: list[int]) -> tuple[int, ...]: ...
 
     @property
     @abstractmethod
@@ -223,6 +224,7 @@ class TransformForTensorParallel(Transform):
         prologue_producers, prologue_consumers = utils.producers_and_consumers(prologue_trace)
         pro_out_p: TensorProxy
         comp_inp_p: TensorProxy
+        pro_out_p_dict: dict[VariableInterface, TensorProxy] = {}
         for pro_out_p, comp_inp_p in zip(prologue_trace.output[0], computation_trace.args):
             if pro_out_p.name not in self.chunked_param_name_to_layer_type:
                 continue
@@ -243,6 +245,7 @@ class TransformForTensorParallel(Transform):
                         lambda: f"{comp_inp_p.distparallel_type = } is not compatible with {self.distparallel_type=}",
                     )
                     pro_out_p._distparallel_type = self.distparallel_type
+                    pro_out_p_dict[variableify(pro_out_p)] = pro_out_p
                     if comp_inp_p is not pro_out_p:
                         comp_inp_p._shape = new_shape
                         comp_inp_p._distparallel_type = self.distparallel_type
@@ -252,11 +255,12 @@ class TransformForTensorParallel(Transform):
                 prims.unpack_parameter,
                 prims.unpack_buffer,
             ):
-                param_thunder_module, name = prologue_producers[bsym.args[0]].args
+                param_thunder_module, _ = prologue_producers[bsym.args[0]].args
                 assert param_thunder_module is thunder_module_proxy
-                if name not in self.chunked_param_name_to_layer_type:
-                    a0, shape, _, *a2pp = bsym.args
-                    bsym.args = (a0, shape, a0.device.device_str(), *a2pp)
+                a0, shape, _, *a2pp = bsym.args
+                if variableify(a0) in pro_out_p_dict:
+                    new_shape = self._calc_new_shape(orig_shape=list(shape))
+                    bsym.args = (a0, new_shape, a0.device.device_str(), *a2pp)
 
         if len(modules_and_thunder_modules) != 1:
             raise NotImplementedError("cannot deal with modules other than the compiled module")
@@ -291,11 +295,11 @@ class TransformForTensorParallel(Transform):
                     nn.Embedding,
                 ),
             )
-            for name, p in mod.named_parameters(recurse=False):
+            for name, p in mod.named_parameters(prefix=target_mod_name, recurse=False):
                 if p.ndim <= self.dim_to_shard:
                     continue
-                self.chunked_param_name_to_layer_type["t_" + f"{target_mod_name}.{name}".replace(".", "_")] = type(mod)
-                params_to_shard[p] = None
+                self.chunked_param_name_to_layer_type["t_" + name.replace(".", "_")] = type(mod)
+                params_to_shard[name] = None
 
         # Modify module
         for name, param in model.named_parameters():

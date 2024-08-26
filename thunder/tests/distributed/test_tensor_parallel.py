@@ -116,7 +116,8 @@ class TensorParallelTest(DistributedParallelTestCase):
             dim = 1
             orig_size = embedding_dim
         torch.testing.assert_close(
-            tp_jitted_model.get_parameter("embed.weight").size(dim), orig_size // self.world_size
+            tp_jitted_model.get_parameter("embed.weight").size(dim),
+            orig_size // self.world_size,
         )
         torch.testing.assert_close(expected=expected, actual=y)
 
