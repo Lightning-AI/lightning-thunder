@@ -215,7 +215,7 @@ class BitsAndBytesLinearQuant4bit(Transform):
                         dtype=thunder.dtypes.to_dtype(qs["absmax.dtype"]),
                         device=thunder.devices.to_device(device),
                         requires_grad=False,
-                        tags=(thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION),
+                        tags=set(thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION),
                     )
                     proxy_code = thunder.TensorProxy(
                         name=f"{get_param.output.name}_code",
@@ -223,7 +223,7 @@ class BitsAndBytesLinearQuant4bit(Transform):
                         dtype=thunder.dtypes.to_dtype(qs["code.dtype"]),
                         device=thunder.devices.to_device(device),
                         requires_grad=False,
-                        tags=(thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION),
+                        tags=set(thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION),
                     )
                     # get_param.sym = unpack_buffer/parameter as needed
                     new_bsyms.append(get_param.sym.bind(get_param.args[0], n_absmax, output=proxy_absmax))

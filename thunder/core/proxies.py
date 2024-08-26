@@ -90,6 +90,8 @@ def make_proxy_name(*, name: None | str = None, prefix: None | str = None) -> st
 class ProxyTag:
     def __new__(cls, name, _register=False):
         if _register:
+            if hasattr(cls, name):
+                raise AttributeError(f"{cls.__name__}.{name} is already registered")
             res = super().__new__(cls)
             res._value = name
             setattr(cls, name, res)
@@ -102,7 +104,7 @@ class ProxyTag:
         ProxyTag(name, _register=True)
 
     def __repr__(self):
-        return f"ProxyTag.{self._value}"
+        return f"{self.__class__.__name__}.{self._value}"
 
 
 # TODO Document this class
@@ -149,7 +151,7 @@ class Proxy(VariableInterface, ProxyInterface):
         self._name = make_proxy_name(name=name, prefix=prefix)
         self._has_weak_name: bool = name is None
         self.history = history
-        self._tags = tags if tags is not None else set()
+        self._tags = set(tags) if tags is not None else set()
 
     @property
     def tags(self) -> set:

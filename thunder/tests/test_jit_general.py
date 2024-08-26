@@ -1269,7 +1269,7 @@ def test_tag_static_memory_location():
     # not much sense, but hey.
     m = torch.nn.Sequential(torch.nn.Tanh(), torch.nn.Linear(2, 3), torch.nn.BatchNorm1d(3))
     jm = thunder.jit(m)
-    jm(torch.randn(5, 2))
+    jm(torch.randn(2, 2))
     lt = thunder.last_traces(jm)[-1]
 
     # input should not be tagged static
@@ -1284,3 +1284,4 @@ def test_tag_static_memory_location():
         for a in bsym.flat_outs:
             if isinstance(a, thunder.Proxy):
                 assert thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION not in a.tags
+    assert str(thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION) == "ProxyTag.STATIC_MEMORY_LOCATION"
