@@ -176,6 +176,7 @@ class TransformForTensorParallel(Transform):
     process_group: ProcessGroup
     target_modules: Sequence[str]
     chunked_param_name_to_layer_type: dict[str, Any] = field(init=False, default_factory=dict)
+    params_to_shard: dict[str, Any] = field(init=False, default_factory=dict)
     dim_to_shard: int = field(init=False, default=-1)
 
     def __post_init__(self):
@@ -285,7 +286,6 @@ class TransformForTensorParallel(Transform):
         from thunder.core import utils
         from thunder.distributed import _shard_tensor
 
-        params_to_shard = {}
         for target_mod_name in self.target_modules:
             mod = model.get_submodule(target_mod_name)
             utils.check_type(
@@ -299,7 +299,7 @@ class TransformForTensorParallel(Transform):
                 if p.ndim <= self.dim_to_shard:
                     continue
                 self.chunked_param_name_to_layer_type["t_" + name.replace(".", "_")] = type(mod)
-                params_to_shard[name] = None
+                self.params_to_shard[name] = None
 
         # Modify module
         for name, param in model.named_parameters():
@@ -319,7 +319,7 @@ class TransformForTensorParallel(Transform):
                     new_param = torch.nn.Parameter(param.to(device=self.device), requires_grad=param.requires_grad)
                 model._overrides_parameters[name] = new_param
 
-            if name in params_to_shard:
+            if name in self.params_to_shard:
                 sharded_param, _ = _shard_tensor(
                     param,
                     self.rank,
@@ -330,3 +330,29 @@ class TransformForTensorParallel(Transform):
                 )
                 sharded_param = torch.nn.Parameter(sharded_param.clone(), requires_grad=param.requires_grad)
                 model._overrides_parameters[name] = sharded_param
+
+    def transform_state_dict_for_submodule(
+        self,
+        model: ThunderModule,
+        submodule_name: str,
+        state_dict: dict[str, Any],
+    ) -> dict[str, Any]:
+        from thunder.distributed import _shard_tensor
+
+        prefix = ""
+        if submodule_name:
+            prefix = f"{submodule_name}."
+        new_state_dict = {}
+        for k, v in state_dict.items():
+            full_k = prefix + k
+            if full_k in self.params_to_shard:
+                v, _ = _shard_tensor(
+                    v,
+                    self.rank,
+                    self.world_size,
+                    full_k,
+                    allow_padding_for_fsdp=False,
+                    dim=self.dim_to_shard,
+                )
+            new_state_dict[k] = v
+        return new_state_dict
