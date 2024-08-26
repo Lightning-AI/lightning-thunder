@@ -712,3 +712,13 @@ def test_reshape_flatten_error_out(executor, device, _):
 
         with pytest.raises(NotImplementedError, match="in-place op of"):
             jitted(x)
+
+    def f_with_clone(a):
+        y = x.reshape(6, 4)
+        z = y.clone()
+        z = z + 1
+        return z
+
+    x = make_tensor((3, 2, 4), device=device, dtype=torch.float32)
+    jitted = executor.make_callable(f_with_clone)
+    jitted(x)
