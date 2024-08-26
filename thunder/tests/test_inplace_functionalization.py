@@ -359,6 +359,17 @@ def test_multiple_inplace_to_args(executor, device, _):
     torch.testing.assert_close(actual, expected)
     torch.testing.assert_close(x, x_ref)
 
+    def f(a):
+        return a.exp_().sin_()
+
+    x = make_tensor((2, 2), device=device, dtype=torch.float32)
+    x_ref = x.clone().detach()
+    expected = f(x_ref)
+    jitted = executor.make_callable(f)
+    actual = jitted(x)
+    torch.testing.assert_close(actual, expected)
+    assert x.data_ptr() == actual.data_ptr()
+
 
 @instantiate(
     dtypes=NOTHING,
