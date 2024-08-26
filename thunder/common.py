@@ -5,6 +5,7 @@ from collections import deque, defaultdict
 import time
 from functools import wraps
 from io import StringIO
+from weakref import WeakValueDictionary
 
 from thunder.core.options import (
     CACHE_OPTIONS,
@@ -251,9 +252,9 @@ class CompileData:
 
         self.is_module = isinstance(self.fn, torch.nn.Module)
 
-        # to not introduce (more) ref cycles, make this int->ThunderModule with
+        # to not introduce (more) ref cycles, use WeakValueDictionary and map from int->ThunderModule
         # but the accessor has to check if tmm[id(module)]._module is module
-        self._thunder_module_map = {}
+        self._thunder_module_map = WeakValueDictionary()
 
         # We set the process_group_for_ddp attribute on the module when
         # thunder.distributed.ddp(module) is called.

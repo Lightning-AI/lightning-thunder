@@ -196,7 +196,7 @@ class FSDPTransform(Transform):
             elif b.device != self.device:
                 new_b = b.to(device=self.device)
                 for n2 in shared_names[n]:
-                    thunder_model._overrides_buffers[n2] = new_p
+                    thunder_model._overrides_buffers[n2] = new_b
                     device_adjustments[n2] = self.device
 
         # Broadcast parameters if requested
