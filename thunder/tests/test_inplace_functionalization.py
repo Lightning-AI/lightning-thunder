@@ -364,6 +364,14 @@ def test_multiple_inplace_to_args(executor, device, _):
     dtypes=NOTHING,
 )
 def test_multiple_views_before_inplace_to_base(executor, device, _):
+    from thunder.tests.framework import nvFuserTestExecutor
+
+    if type(executor) is nvFuserTestExecutor:
+        pytest.skip(
+            "nvFuser doesn't enforce the order between `z=x.view(-1)` and "
+            "`x.add_(1)`, so the behavior is undefined due to this "
+            "race condition. See https://github.com/NVIDIA/Fuser/issues/2839."
+        )
 
     # ref: https://github.com/pytorch/pytorch/blob/29e2e2a/test/test_functionalization.py#L159-L169
     def f(x):
