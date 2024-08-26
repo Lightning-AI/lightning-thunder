@@ -3795,8 +3795,8 @@ def recompute_saved_for_backward(fw_trace: Trace, bw_trace: Trace) -> tuple[Trac
     # Everything is now ready and we can start to build the new traces.
     new_fw_trace = from_trace(fw_trace)
     new_fw_trace.bound_symbols = fw_trace.bound_symbols.copy()
-    new_return = (fw_trace.output[0], (new_saved_for_backward, fw_trace.output[1][1]))
-    new_fw_trace.bound_symbols[-1] = prims.python_return.bind(new_return, output=())
+    new_return_args = (fw_trace.output[0], (new_saved_for_backward, fw_trace.output[1][1]))
+    new_fw_trace.bound_symbols[-1] = prims.python_return.bind(new_return_args, output=())
 
     new_bw_trace = from_trace(bw_trace)
     new_bsym = bw_trace.bound_symbols.copy()
