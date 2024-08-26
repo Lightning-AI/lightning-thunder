@@ -2816,11 +2816,11 @@ empty = make_prim(PrimIDs.EMPTY, "empty", meta=_empty_meta)
 
 
 # TODO(crcrpar): Cover `memory_format` kwarg
-def _clone_mta(a: TensorProxy, **kwargs) -> TensorProxy:
+def _clone_meta(a: TensorProxy, **kwargs) -> TensorProxy:
     return TensorProxy(like=a, requires_grad=a.requires_grad)
 
 
-clone = make_prim(PrimIDs.CLONE, "clone", meta=_clone_mta)
+clone = make_prim(PrimIDs.CLONE, "clone", meta=_clone_meta)
 
 
 # Prim to construct a Tensor from sequence/nested sequence of Numbers.
