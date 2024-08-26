@@ -3775,7 +3775,7 @@ def recompute_saved_for_backward(fw_trace: Trace, bw_trace: Trace) -> tuple[Trac
     top_one_third = len(saved_for_bw) // 3
     print(f"DEBUG: remat {top_one_third} tensors")
 
-    rematerializable = set(map(lambda i: i[0], tensor_counter.most_common(top_one_third)))
+    rematerializable = {k for k, v in tensor_counter.most_common(top_one_third)}
 
     # Now that we have the list of tensors that are going to be recomputed we can start to collect the computation needed to generate them.
     prod_symbols = find_producer_symbols(fw_trace, tuple(unvariableify(i) for i in rematerializable), fw_trace.args)
