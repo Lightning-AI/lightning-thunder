@@ -1019,7 +1019,7 @@ def print_auto_registered_torch_ops(fn: Callable, /) -> set[str] | None:
     op_names = set()
     trc = last_traces(fn)[0]
     for bsym in trc.bound_symbols:
-        if (meta_func_name := getattr(bsym.sym.meta, "__name__", None)) and meta_func_name == "meta_func":
+        if getattr(bsym.sym.meta, "__name__", None) == "meta_func":
             op_names.add(bsym.sym.id)
     return op_names if op_names else None
 
