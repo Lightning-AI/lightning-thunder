@@ -3804,6 +3804,12 @@ def recompute_saved_for_backward(fw_trace: Trace, bw_trace: Trace) -> tuple[Trac
     with tracectx(new_bw_trace):
         unpack_args = (CollectionProxy(new_saved_for_backward, name="C0"), len(new_saved_for_backward))
 
+    # Let's make sure the structure of the trace is as we expect it.
+    assert bw_trace.bound_symbols[4].sym.id == prims.PrimIDs.UNPACK_SEQUENCE
+    assert bw_trace.bound_symbols[4].args[0].name == "C0"
+    assert bw_trace.bound_symbols[5].sym.id == prims.PrimIDs.UNPACK_SEQUENCE
+    assert bw_trace.bound_symbols[5].args[0].name == "C1"
+
     new_bsym[4] = prims.unpack_sequence.bind(*unpack_args, output=new_saved_for_backward)
     # Attach the producer symbols
     new_bsym[6:6] = prod_symbols
