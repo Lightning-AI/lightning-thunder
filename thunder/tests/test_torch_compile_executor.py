@@ -9,6 +9,7 @@ from thunder.executors.nvfuserex import nvfuserex
 from thunder.tests.bf16 import device_supports_bf16
 from thunder.tests.litgpt_model import GPT, Config
 from thunder.tests.framework import requiresCUDA
+from torch.testing import assert_close
 
 
 def test_supported_ops_are_in_pytorch_executor():
@@ -71,3 +72,13 @@ def test_torch_compile_cat_rope_single_fusion():
     backward_execution_trace = thunder.last_backward_traces(jfn)[-1]
     assert len(get_fusions(backward_execution_trace)) == 1
     assert len(backward_execution_trace.bound_symbols) == 14
+
+
+@pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported")
+def test_transform_for_execution_for_callable():
+    def fn(a):
+        return a.type("torch.DoubleTensor")
+
+    a = torch.randn(3)
+    jfn = thunder.jit(fn, executors=(thunder.executors.torch_compile.torch_compile_ex,))
+    assert_close(jfn(a), fn(a))
