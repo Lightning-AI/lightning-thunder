@@ -250,6 +250,15 @@ class TensorParallelTest(DistributedParallelTestCase):
         # - postprocessing of row-wise parallel linear
         self.assertEqual(len(bsyms_of_tp_sync), 2, msg=msg)
 
+        state_dict = tp_mlp.original_state_dict()
+        ref_state_dict = ref_mlp.state_dict()
+        for name in state_dict:
+            param = state_dict[name]
+            ref_param = ref_state_dict[name]
+            self.assertEqual(param.shape, ref_param.shape)
+
+        tp_mlp.load_original_state_dict(ref_state_dict)
+
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     def test_litgpt_causal_self_attention(self):
         from thunder.tests.litgpt_model import Config

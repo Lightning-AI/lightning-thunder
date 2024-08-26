@@ -356,3 +356,31 @@ class TransformForTensorParallel(Transform):
                 )
             new_state_dict[k] = v
         return new_state_dict
+
+    def reverse_transform_state_dict_for_submodule(
+        self,
+        model: ThunderModule,
+        submodule_name: str,
+        state_dict: dict[str, Any],
+    ) -> dict[str, Any]:
+        from thunder.executors.torchex import _all_gather_prim_impl
+
+        new_state_dict = {}
+        for name, tensor in state_dict.items():
+            fqn: str
+            if submodule_name:
+                fqn = f"{submodule_name}.{name}"
+            else:
+                fqn = name
+
+            if fqn not in self.params_to_shard:
+                new_state_dict[name] = tensor
+            else:
+                all_gathered_param = _all_gather_prim_impl(
+                    tensor,
+                    group=self.process_group,
+                    do_async=False,
+                    dim=self.dim_to_shard,
+                )
+                new_state_dict[name] = all_gathered_param
+        return new_state_dict
