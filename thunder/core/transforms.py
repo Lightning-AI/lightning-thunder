@@ -3761,36 +3761,38 @@ def recompute_saved_for_backward(fw_trace: Trace, bw_trace: Trace) -> tuple[Trac
     saved_for_bw = get_saved_for_backward_tensors(fw_trace)
 
     # Let's create these two maps that will help writing the logic
-    fw_trace_args = {j.name: j for j in fw_trace.args}
-    old_saved_for_bw_map = {j.name: j for j in saved_for_bw}
-
+    fw_trace_args = {variableify(j) for j in fw_trace.args}
+    old_saved_for_bw = {variableify(j) for j in saved_for_bw}
     # The second step is to determine which tensors we can rematerialize. Let's remove the tensors that come from the argument to the forward tarce.
-    recomputable_map = {
-        old_saved_for_bw_map[i].name: old_saved_for_bw_map[i] for i in set(old_saved_for_bw_map) - set(fw_trace_args)
-    }
+    all_rematerializable = old_saved_for_bw - fw_trace_args
 
     # Here will come the selection logic for what to materialize. At the moment let's remat everything and just print some stats.
     from collections import Counter
 
-    tensor_counter = Counter({k: v.numel * v.dtype.bytes for k, v in recomputable_map.items()})
-    print(f"DEBUG: out of {len(saved_for_bw)} sfb, {len(recomputable_map)} are recomputable")
+    tensor_counter = Counter({v: unvariableify(v).numel * unvariableify(v).dtype.bytes for v in all_rematerializable})
+    print(f"DEBUG: out of {len(saved_for_bw)} sfb, {len(all_rematerializable)} are recomputable")
     print(f"DEBUG: can save up to {tensor_counter.total()*1e-6:.3f} MB")
+    top_one_third = len(saved_for_bw) // 3
+    print(f"DEBUG: remat {top_one_third} tensors")
+
+    rematerializable = set(map(lambda i: i[0], tensor_counter.most_common(top_one_third)))
 
     # Now that we have the list of tensors that are going to be recomputed we can start to collect the computation needed to generate them.
-    prod_symbols = find_producer_symbols(fw_trace, recomputable_map.values(), fw_trace.args)
-    # We need to check which inputs to the fw trace are used to compute the producer symbols
-    required_fw_args = {}
-    for p in prod_symbols:
-        for pa in p.flat_args:
-            if isinstance(pa, TensorProxy) and pa.name in fw_trace_args.keys():
-                required_fw_args[pa.name] = pa
+    prod_symbols = find_producer_symbols(fw_trace, tuple(unvariableify(i) for i in rematerializable), fw_trace.args)
 
     # Now that everything is ready we can prepare the new saved for backward list
     # To do so we need: the saved for backward that still needs to be carried on from the old list and the new required arguments from the forward.
-    required_saved_for_bw = {
-        fw_trace_args[i].name: fw_trace_args[i] for i in set(fw_trace_args) & set(old_saved_for_bw_map)
-    }
-    new_saved_for_backward = tuple((required_saved_for_bw | required_fw_args).values())
+    # We need to check which inputs to the fw trace are used to compute the producer symbols
+    required_fw_args = fw_trace_args & old_saved_for_bw
+    for p in prod_symbols:
+        for pa in p.flat_args:
+            if variableify(pa) in fw_trace_args:
+                required_fw_args.add(variableify(pa))
+
+    # add the save for bw that wont be recomputed
+    required_saved_for_bw = old_saved_for_bw - rematerializable
+
+    new_saved_for_backward = tuple(unvariableify(i) for i in required_fw_args | required_saved_for_bw)
 
     # Everything is now ready and we can start to build the new traces.
     new_fw_trace = from_trace(fw_trace)
