@@ -58,6 +58,7 @@ from thunder.core.proxies import (
     DistParallelType,
     proxy,
     Proxy,
+    ProxyTag,
     AnyProxy,
     NumberProxy,
     StringProxy,
@@ -115,6 +116,7 @@ from thunder.core.compile_data import compile_data_and_stats
 #
 # jit_ext.py implements extensions of thunder's interpreter
 #
+ProxyTag.register_tag("STATIC_MEMORY_LOCATION")
 
 
 EXT_FLAG_IS_PROXY_DERIVED = 1
@@ -1545,8 +1547,10 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             name = ".".join(name)
             if typ == "_parameters":
                 bsym = prims.unpack_parameter.bind(root_module, name, output=output)
+                output.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
             elif typ == "_buffers":
                 bsym = prims.unpack_buffer.bind(root_module, name, output=output)
+                output.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
             elif typ == "_modules":
                 bsym = prims.unpack_submodule.bind(root_module, name, output=output)
             else:

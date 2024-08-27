@@ -1048,6 +1048,9 @@ def test_sdpa(
 
     # Check nv_sdpfa_fwd is not in bwd_fusion -> that would indicate rematerialization
     assert "nv_sdpfa_bwd" in bwd_fusion[-1][-1].name and "nv_sdpfa_fwd" not in bwd_fusion[-1][-1].name
+    assert (
+        bwd_fusion[-1][-1].last_used.getReproString().count("is_cpu=True") == 2
+    ), "Expected philox_seed and philox_offset inputs to be CPU scalar tensors."
 
     # Torch reference computation
     # Clone the inputs to verify gradients with torch reference
@@ -1057,12 +1060,13 @@ def test_sdpa(
         ref_inp.requires_grad = True
         ref_tensor_inputs.append(ref_inp)
 
-    with torch.random.fork_rng(devices=[torch.cuda.current_device()]):
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+
+    with torch.random.fork_rng(devices=[torch.cuda.current_device()]) and sdpa_kernel(SDPBackend.FLASH_ATTENTION):
         ref_attn_out = sdpa_fn(*ref_tensor_inputs, *scalar_inputs)
     ref_attn_out.backward(grad_out)
 
     nv_outputs = (attn_out, q.grad, k.grad, v.grad)
     ref_outputs = (ref_attn_out, *(inp.grad for inp in ref_tensor_inputs))
-
     for nv_out, ref_out in zip(nv_outputs, ref_outputs):
         torch.testing.assert_close(nv_out, ref_out)

@@ -59,7 +59,13 @@ def test_view_ops(executor, device: str, dtype: dtypes.dtype):
         result2 = b_4 + a_3
         return result1, result2
 
-    cbar = executor.make_callable(bar, disable_preprocessing=False)
+    # Bookending changes memory footprint and whether bookending is enabled
+    # depends on version. For several tests in this file that are sensitive to
+    # bookending, I forced bookending to be off, the default for the latest
+    # veresion of nvFuser. I could also test nv_enable_bookend=True, the old
+    # default, but I would have to use different "golden" values, making tests
+    # complicated.
+    cbar = executor.make_callable(bar, disable_preprocessing=False, nv_enable_bookend=False)
     with runtime_allocated_memory(device):
         cbar(a, b)
 
@@ -71,19 +77,11 @@ def test_view_ops(executor, device: str, dtype: dtypes.dtype):
     bw_traces = thunder.last_backward_traces(cbar)
     bw_extrace = bw_traces[-1]
     max_mem_bw = get_alloc_memory(bw_extrace)
+    # nvFuser should be able to avoid the allocation of result2 and produce it as alias to result1, reducing the allocated memory to 128. However,
+    # due to a limitation of `get_alloc_memory` (https://github.com/Lightning-AI/lightning-thunder/blob/6dfe7e939a19d1ef5ab259de8709a79f0104fa42/thunder/examine/memory_caculation.py#L123-L125), this saved memory is not taken into consideration.
+    assert max_mem_bw[0] == 144
 
-    # NOTE: nvFuser is able to avoid the allocation of result2 and produce it as alias to result1.
-    if executor.name == "nvfuser":
-        assert max_mem_bw[0] == 128
-    else:
-        assert max_mem_bw[0] == 144
-
-    # NOTE: The get_return_memory method cannot distinguish wether the returned values come from an alias op.
-    # In this case, since nvFuser returns one tensor and it's reshaped alias it only allocates once (32/2).
-    if executor.name == "nvfuser":
-        assert sum(max_mem_bw[1].values()) == 16
-    else:
-        assert sum(max_mem_bw[1].values()) == get_return_memory(bw_extrace.bound_symbols[-1])  # 32
+    assert sum(max_mem_bw[1].values()) == get_return_memory(bw_extrace.bound_symbols[-1])  # 32
 
     def bar1(a, b, c):  # [4], [1,4,4], [4,1,4]
         a_1 = torch.unsqueeze(a, 0)  # [1,4]
@@ -95,7 +93,7 @@ def test_view_ops(executor, device: str, dtype: dtypes.dtype):
     a = make_tensor((4,), device=device, dtype=torch_dtype)
     b = make_tensor((1, 4, 4), device=device, dtype=torch_dtype)
     c = make_tensor((4, 1, 4), device=device, dtype=torch_dtype)
-    cbar = executor.make_callable(bar1, disable_preprocessing=False)
+    cbar = executor.make_callable(bar1, disable_preprocessing=False, nv_enable_bookend=False)
     with runtime_allocated_memory(device):
         cbar(a, b, c)
 
@@ -117,7 +115,7 @@ def test_view_ops(executor, device: str, dtype: dtypes.dtype):
 
     a = make_tensor((5, 2), device=device, dtype=torch_dtype)
     b = make_tensor((2, 2), device=device, dtype=torch_dtype)
-    cbar = executor.make_callable(bar2, disable_preprocessing=False)
+    cbar = executor.make_callable(bar2, disable_preprocessing=False, nv_enable_bookend=False)
 
     with runtime_allocated_memory(device):
         cbar(a, b)
@@ -126,7 +124,7 @@ def test_view_ops(executor, device: str, dtype: dtypes.dtype):
     extrace = traces[-1]
     alloc_mem = get_alloc_memory(extrace)
     if isinstance(executor, nvFuserTestExecutor):
-        assert alloc_mem[0] == 144
+        assert alloc_mem[0] == 128
         assert sum(alloc_mem[1].values()) == get_return_memory(extrace.bound_symbols[-1])  # 72
     if isinstance(executor, TorchTestExecutor):
         assert alloc_mem[0] == 112
@@ -142,7 +140,7 @@ def test_nanogpt_block(executor, device, dtype):
 
     config = nanogpt_model.GPTConfig(dropout=0)
     block = nanogpt_model.Block(config).to(device=device, dtype=tdtype)
-    cblock = executor.make_callable(block)
+    cblock = executor.make_callable(block, nv_enable_bookend=False)
 
     with runtime_allocated_memory(device):
         inp = make((2, config.block_size, config.n_embd))
@@ -156,16 +154,16 @@ def test_nanogpt_block(executor, device, dtype):
 
     if isinstance(executor, nvFuserTestExecutor):
         assert fw_alloc_mem[0] == 267426816
-        # t67 is the expand result of ln_2_weight, and they are both return values in trace
-        # but for calculation we assume they share memory, so expect to subtract the size of t67
-        expected_return_calculated_mem = get_return_memory(fw_extrace.bound_symbols[-1]) - 4 * 2 * 1024 * 768
+        expected_return_calculated_mem = get_return_memory(fw_extrace.bound_symbols[-1])
         assert expected_return_calculated_mem == sum(fw_alloc_mem[1].values())
 
-        assert bw_alloc_mem[0] == 361783296
+        assert bw_alloc_mem[0] == 412112896
         assert sum(bw_alloc_mem[1].values()) == get_return_memory(bw_extrace.bound_symbols[-1])
     if isinstance(executor, TorchTestExecutor):
         assert fw_alloc_mem[0] == 362863616
-        # same reason as above, expect to -t38+t37-t65-t67
+        # Expect the memory to -t38+t37-t65-t67.
+        # t67 is the expand result of ln_2_weight, and they are both return values in trace
+        # but for calculation we assume they share memory, so expect to subtract the size of t67.
         expected_return_calculated_mem = (
             get_return_memory(fw_extrace.bound_symbols[-1]) - 23 * 1024 * 1024 - 4 * 2 * 1024 * 768 * 2
         )

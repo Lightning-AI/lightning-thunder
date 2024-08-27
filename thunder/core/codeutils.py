@@ -241,9 +241,11 @@ def prettyprint(
         unflattened_str = str(unflattened)
         # NOTE Collections of strings (so collections of names) print like this --
         #   ('a', 'b') -- but we want them to print like this -- (a, b) --
-        #   so this just removes all the single quotes -- this seems super hacky
+        #   so this just removes all the quotes -- this seems super hacky
         unflattened_str = unflattened_str.replace(f"{_quote_marker}'", "")
         unflattened_str = unflattened_str.replace(f"'{_quote_marker}", "")
+        unflattened_str = unflattened_str.replace(f'{_quote_marker}"', "")
+        unflattened_str = unflattened_str.replace(f'"{_quote_marker}', "")
         return unflattened_str
     if isinstance(x, dtypes.dtype):
         # str(x) -> thunder.dtypes.foo
