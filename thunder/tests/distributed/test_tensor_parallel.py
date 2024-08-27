@@ -116,7 +116,8 @@ class TensorParallelTest(DistributedParallelTestCase):
             dim = 1
             orig_size = embedding_dim
         torch.testing.assert_close(
-            tp_jitted_model.get_parameter("embed.weight").size(dim), orig_size // self.world_size
+            tp_jitted_model.get_parameter("embed.weight").size(dim),
+            orig_size // self.world_size,
         )
         torch.testing.assert_close(expected=expected, actual=y)
 
@@ -248,6 +249,15 @@ class TensorParallelTest(DistributedParallelTestCase):
         # - preprocessing of column-wise parallel linear
         # - postprocessing of row-wise parallel linear
         self.assertEqual(len(bsyms_of_tp_sync), 2, msg=msg)
+
+        state_dict = tp_mlp.original_state_dict()
+        ref_state_dict = ref_mlp.state_dict()
+        for name in state_dict:
+            param = state_dict[name]
+            ref_param = ref_state_dict[name]
+            self.assertEqual(param.shape, ref_param.shape)
+
+        tp_mlp.load_original_state_dict(ref_state_dict)
 
     @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="")
     def test_litgpt_causal_self_attention(self):

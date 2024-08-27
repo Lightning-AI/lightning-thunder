@@ -105,7 +105,7 @@ def test_nanogpt_block():
 
     config = nanogpt_model.GPTConfig(dropout=0)
     block = nanogpt_model.Block(config).to(dtype=torch.float32, device="cuda")
-    cblock = TorchExecutor.make_callable(block, disable_preprocessing=False)
+    cblock = TorchExecutor.make_callable(block)
     inp = make_tensor((2, config.block_size, config.n_embd), dtype=torch.float32, device="cuda", requires_grad=True)
     cblock(inp)
 
