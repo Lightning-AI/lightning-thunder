@@ -1376,15 +1376,15 @@ def propagate_constraints(ctx, inputs, intermediates, computation_trace):
 # lift shape computational logic into top level trace
 # Maybe: replace usage of shape NumberProxy with prim?
 def lift_shape_logic(computation_trace):
-    #import thunder.core.utils as utils
-    #consumers = utils.consumers(computation_trace)
-    #for bsym in computation_trace.bound_symbols:
+    # import thunder.core.utils as utils
+    # consumers = utils.consumers(computation_trace)
+    # for bsym in computation_trace.bound_symbols:
 
-    #from thunder.core.transform_common import dce
-    #return dce(computation_trace)
+    # from thunder.core.transform_common import dce
+    # return dce(computation_trace)
 
     # TODO: two things needs to be done here:
-    # 1. replace all uses of tensor shape 
+    # 1. replace all uses of tensor shape
     # 2. hoising all computation logic on shapes.
 
     # for simplicity for now, we'll just inline everything.
@@ -1397,7 +1397,7 @@ def lift_shape_logic(computation_trace):
             # TODO: numel of new tensor proxy is inside prim logic, needs to expose that as well
             for subsym in sym.subsymbols:
                 # TODO: errr. how does lambda work with local variable?!
-                #map(lambda x: produced.add(x), subsym.flat_variableified_proxy_outs)
+                # map(lambda x: produced.add(x), subsym.flat_variableified_proxy_outs)
                 for v_out in subsym.flat_variableified_proxy_outs:
                     produced.add(v_out)
             for proxy_out in sym.flat_proxy_outs:
