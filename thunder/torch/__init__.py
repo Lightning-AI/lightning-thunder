@@ -5453,6 +5453,7 @@ def register_default_torch_op(torchfn: Callable, torch_module):
         name=torchfn_name,
         meta=_fn,
         id=f"{torch_module.__name__}.{torchfn_name}",
+        tags=(prims.OpTags.AUTO_REGISTERED,),
     )
     _torch_to_thunder_function_map[torchfn] = sym
     from thunder.executors.torchex import _always_executable, ex
