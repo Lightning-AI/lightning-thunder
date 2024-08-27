@@ -538,8 +538,6 @@ def jit(
             )
             prologue_trc = jit_results.prologue_trace
             computation_trc = jit_results.computation_trace
-            print(f"xxxx==== {computation_trc=}")
-            print(computation_trc.bound_symbols[0])
             epilogue_trc = jit_results.epilogue_trace
             last_interpreter_log = jit_results.interpreter_log
 
