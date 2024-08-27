@@ -223,5 +223,5 @@ def test_query_autoreg_ops(executor, device: str, _):
 
         a = make_tensor((2, 2), device=device, dtype=torch.float32)
         cfn(a)
-        ops = thunder.get_auto_registered_torch_ops(cfn)
+        ops = thunder.get_auto_registered_torch_op_names(cfn)
         assert expect == ops
