@@ -21,6 +21,7 @@ thunder_alias_operator_list = (
     "torch_prims_reshape_impl",  # torchex implementation of prims.reshape.
     "permute",
     "contiguous",
+    "split",
     "torch_wait_prim_impl",
 )
 
@@ -96,11 +97,13 @@ def default_alloc_memory(
 def track_alias_op_memory(
     bsym: BoundSymbol, tensor_to_memory_data: ProxyDict, name_to_alloc_memory: dict[str, int]
 ) -> int:
+    import thunder
+
     inp = bsym.flat_proxy_args[0]
-    out = bsym.flat_proxy_outs[0]
     assert inp in tensor_to_memory_data
-    tensor_to_memory_data[inp].incr_ref()
-    tensor_to_memory_data[out] = tensor_to_memory_data[inp]
+    for out in bsym.flat_proxy_outs:
+        tensor_to_memory_data[inp].incr_ref()
+        tensor_to_memory_data[out] = tensor_to_memory_data[inp]
     return 0
 
 
