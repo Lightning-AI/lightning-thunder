@@ -8,6 +8,20 @@ import torch
 import pytest
 
 
+# This will be applied to all tests in this file.
+@pytest.fixture(scope="function", autouse=True)
+def reset_torch_dynamo():
+    # Without this, if a frame is compiled multiple times
+    # potentially due to matrix of inputs then it will hit cache_size_limit
+    # and fallback to eager.
+    #
+    # [0/8] torch._dynamo hit config.cache_size_limit (8)
+    # [0/8]    function: 'func' (lightning-thunder/thunder/tests/test_dynamo.py:26)
+    # [0/8]    last reason: 0/0:
+    # [0/8] To log all recompilation reasons, use TORCH_LOGS="recompiles".
+    torch._dynamo.reset()
+
+
 @instantiate(
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
