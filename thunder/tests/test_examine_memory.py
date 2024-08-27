@@ -1,23 +1,17 @@
-from contextlib import contextmanager
-from functools import partial
-
 import pytest
 
 import torch
 
 import thunder
-import thunder.core.devices as devices
-import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_map
 import thunder.torch as ltorch
 from thunder.examine.memory_caculation import get_alloc_memory
 
 from thunder.tests.framework import requiresCUDA, TorchExecutor
-from thunder.tests.make_tensor import make_tensor, make_tensor_like
+from thunder.tests.make_tensor import make_tensor
 
 
 def measure_memory_usage(trace):
-    torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
     before = torch.cuda.memory_stats().get("requested_bytes.all.current", 0)
 
@@ -94,7 +88,7 @@ def test_view_ops():
         a_1, a_2, a_3 = torch.split(a, 2)
         c = a_1 + b
         d = a + a
-        return c, d, a_2, a_3
+        return c, d, a_2, a_3  # We have to use all the outputs of torch.split due to #1043
 
     test(bar2, (5, 2), (2, 2))
 
