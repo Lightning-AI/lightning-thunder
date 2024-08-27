@@ -244,8 +244,9 @@ def create_fd(
                 utils.check_type(y, tuple)
                 symbolic_shape, contiguity, stride_order, dtype = y
                 nvdtype = lcdtype_to_nvdtype(dtypes.to_dtype(dtype))
+                is_cpu = x.device == cpu
                 nv = fd.define_tensor(
-                    shape=symbolic_shape, contiguity=contiguity, dtype=nvdtype, stride_order=stride_order
+                    shape=symbolic_shape, contiguity=contiguity, dtype=nvdtype, stride_order=stride_order, is_cpu=is_cpu
                 )
             elif isinstance(x, TupleProxy):
                 # TODO: discuss the contract here on baked in number from a tuple
