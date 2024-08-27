@@ -2164,6 +2164,16 @@ def addcdiv_(a: TensorLike, b: TensorLike, c: TensorLike, /, *, value: None | Nu
     return prims.copy_(addcdiv(a, b, c, value=value), a)
 
 
+@torchsymbol(torch.lerp, is_method=True)
+def lerp(start: TensorLike, end: TensorLike, weight: Number | TensorLike) -> TensorLike:
+    return clang.lerp(start, end, weight)
+
+
+@torchsymbol(torch.Tensor.lerp_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def lerp_(start: TensorLike, end: TensorLike, weight: Number | TensorLike) -> TensorLike:
+    return prims.copy_(lerp(start, end, weight), start)
+
+
 #
 # Conditional operations and masking operations
 #
