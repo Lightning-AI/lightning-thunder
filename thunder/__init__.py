@@ -1017,10 +1017,8 @@ def last_compile_options(fn: Callable, /) -> None:
 
 def get_auto_registered_torch_op_names(fn: Callable, /) -> set[str] | None:
     """Returns a set of auto-registered Torch operator names present in the given JIT-compiled function."""
-    op_names = set()
     trc = last_traces(fn)[0]
-    tuple(op_names.add(bsym.sym.id) for bsym in trc.bound_symbols if has_tags(bsym, {prims.OpTags.AUTO_REGISTERED}))
-    return op_names if op_names else None
+    return {bsym.sym.id for bsym in trc.bound_symbols if has_tags(bsym, {prims.OpTags.AUTO_REGISTERED})}
 
 
 # TODO (mruberry) Update this

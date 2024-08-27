@@ -217,7 +217,7 @@ def test_query_autoreg_ops(executor, device: str, _):
     def fn_none(a):
         return torch.nn.functional.relu(a)
 
-    expected = ({"torch.special.erf", "torch.special.gammaln"}, None)
+    expected = ({"torch.special.erf", "torch.special.gammaln"}, set())
     for fn, expect in zip((fn, fn_none), expected):
         cfn = executor.make_callable(fn)
 
