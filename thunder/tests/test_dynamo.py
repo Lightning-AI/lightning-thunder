@@ -11,7 +11,10 @@ import pytest
 # This will be applied to all tests in this file.
 @pytest.fixture(scope="function", autouse=True)
 def reset_torch_dynamo():
-    # Without this, if a frame is compiled multiple times
+    # From torch.compile docs - https://pytorch.org/docs/stable/generated/torch.compile.html
+    # > Multiple compiled results can be associated with a frame up to torch._dynamo.config.cache_size_limit, which defaults to 8; at which point we will fall back to eager.
+    #
+    # Without this fixture, if a function frame is compiled multiple times
     # potentially due to matrix of inputs then it will hit cache_size_limit
     # and fallback to eager.
     #
