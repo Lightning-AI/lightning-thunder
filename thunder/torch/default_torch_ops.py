@@ -756,3 +756,28 @@ torch_auto_registered_ops = {
         torch.fft.rfftn,
     ],
 }
+
+_auto_registered_operators_returning_views = [
+    torch.adjoint,
+    torch.Tensor.adjoint,
+    torch.Tensor.as_strided,
+    torch.detach,
+    torch.Tensor.detach,
+    torch.narrow,
+    torch.Tensor.narrow,
+    torch.imag,
+    torch.view_as_real,
+    torch.nn.functional.unfold,
+    torch.Tensor.hsplit,
+    torch.hsplit,
+    torch.Tensor.vsplit,
+    torch.vsplit,
+    torch.Tensor.split_with_sizes,
+    torch.split_with_sizes,
+    torch.Tensor.swapaxes,
+    torch.swapaxes,
+    torch.Tensor.swapdims,
+    torch.swapdims,
+    torch.Tensor.indices,
+    torch.Tensor.values,
+]

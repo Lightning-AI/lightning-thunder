@@ -706,7 +706,13 @@ def test_reshape_flatten_error_out(executor, device, _):
         y.add_(1)
         return y
 
-    for fn in (f, g):
+    def h(x):
+        tmp = torch.randn((6, 4))
+        y = x.reshape_as(tmp)
+        y.add_(1)
+        return y
+
+    for fn in (f, g, h):
         x = make_tensor((3, 2, 4), device=device, dtype=torch.float32)
         jitted = executor.make_callable(fn)
 
