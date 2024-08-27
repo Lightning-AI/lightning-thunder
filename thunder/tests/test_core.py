@@ -4,6 +4,7 @@ from functools import partial, reduce
 from itertools import product
 import dataclasses
 import re
+import weakref
 
 import pytest
 import torch
@@ -3171,3 +3172,28 @@ def test_state_dict():
     jm2.load_state_dict(jm1.state_dict())
 
     torch.testing.assert_close(jm1(inp), jm2(inp))
+
+
+def test_thunder_optimized_module_is_freed():
+    mod = torch.nn.ReLU()
+    opt_mod = thunder.jit(mod)
+    ref_opt_mod = weakref.ref(opt_mod)
+    x = torch.randn(10, 10)
+    opt_mod(x)
+    del x
+    del mod
+    del opt_mod
+    assert ref_opt_mod() is None
+
+
+@pytest.mark.xfail(strict=True)
+def test_user_module_is_freed():
+    mod = torch.nn.ReLU()
+    opt_mod = thunder.jit(mod)
+    ref_mod = weakref.ref(mod)
+    x = torch.randn(10, 10)
+    opt_mod(x)
+    del x
+    del mod
+    del opt_mod
+    assert ref_mod() is None

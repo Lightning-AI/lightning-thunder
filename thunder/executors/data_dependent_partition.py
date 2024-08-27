@@ -9,7 +9,9 @@ import thunder.core.utils as utils
 from thunder.core.trace import TraceCtx
 from thunder.core.symbol import BoundSymbol
 from thunder.core.proxies import variableify, Proxy
+import thunder.core.prims as prims
 from thunder.core.prims import PrimIDs
+from thunder.executors import torchex
 
 
 # Represents a region and its parents (regions it consumes the output of) and

@@ -406,7 +406,6 @@ def add_transform(
     *,
     transform: Transform | list[Transform],
     disable_torch_autograd_support=False,
-    _legacy_copy_params=False,
 ) -> Callable:
     from thunder.common import CompileData
 
@@ -438,11 +437,6 @@ def add_transform(
         disable_torch_autograd=cd.disable_torch_autograd_support or disable_torch_autograd_support,
         **cd.compile_options,
     )
-    from thunder import ThunderModule
-
-    if _legacy_copy_params and isinstance(jfn, ThunderModule):
-        jfn._overrides_parameters = cfn._overrides_parameters
-        jfn._overrides_buffers = cfn._overrides_buffers
     return jfn
 
 

@@ -14,7 +14,6 @@ import torch
 from torch._dynamo import is_inductor_supported
 from torch.testing import assert_close
 
-from looseversion import LooseVersion
 from lightning_utilities.core.imports import package_available
 
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
@@ -192,7 +191,7 @@ class nvFuserTestExecutor(TestExecutor):
         return [executors.get_nvfuser_executor()]
 
     def version(self):
-        return executors.get_nvfuser_executor().version()
+        return executors.get_nvfuser_executor().version
 
 
 # TODO Convert to singletons or just add to executor logic
