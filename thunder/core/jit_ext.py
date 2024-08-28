@@ -1865,7 +1865,7 @@ def thunder_general_jit(
     pro_to_epi = tuple(pro_to_epi)
 
     if epilogue_trace.bound_symbols:
-        computation_trace.scopes = [bound_symbols]
+        computation_trace.scopes = [computation_trace.bound_symbols]
         with tracectx(computation_trace):
             last = computation_trace.bound_symbols.pop(-1)
             assert last.sym.id == prims.PrimIDs.RETURN
