@@ -50,8 +50,8 @@ def _check_tensor_shape_and_metadata_impl(
 ) -> None:
     assert isinstance(t, torch.Tensor), f"expected Tensor, got {type(t).__name__}"
     assert (
-        len(t.shape) == len(shape) and
-        all(map(lambda x, ref: ref == -1 or x == ref, t.shape, shape))
+        len(t.shape) == len(shape)
+        and all(map(lambda x, ref: ref == -1 or x == ref, t.shape, shape))
         and str(t.device) == device
         and t.dtype == dtype
         and t.requires_grad == requires_grad
