@@ -3807,7 +3807,6 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
     assert bwd_trace.bound_symbols[5].sym.id == prims.PrimIDs.UNPACK_SEQUENCE
     assert bwd_trace.bound_symbols[5].args[0].name == "C1"
 
-
     for idx, bsym in enumerate(bwd_trace.bound_symbols):
         if idx == 4:
             new_unpack = prims.unpack_sequence.bind(*unpack_args, output=new_saved_for_backward)
