@@ -2828,14 +2828,16 @@ class BatchNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 class ResNet50Benchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     def __init__(
         self,
-        input_shape,
+        batch_size: int,
+        input_shape: Sequence[int],
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.float32,
         requires_grad: bool = False,
     ) -> None:
         super().__init__()
 
-        self.shape: Sequence[int] = input_shape
+        # the typical input image size of ResNet50 is (3, 224, 224)
+        self.shape: Sequence[int] = (batch_size,) + input_shape
         self.device: str = device
         self.dtype: dtypes.dtype = dtype
         self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
@@ -2849,7 +2851,7 @@ class ResNet50Benchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (a,), {}
 
     def fn(self) -> Callable:
-        from thunder.tests.resnet import resnet50
+        from torchvision.models import resnet50
 
         model = resnet50()
         model = model.to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)

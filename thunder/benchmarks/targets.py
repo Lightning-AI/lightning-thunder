@@ -739,7 +739,7 @@ def test_interpreter_nanogpt_gpt2_fwd(benchmark, executor: Callable):
 @parametrize_compute_type
 def test_resnet50(benchmark, executor: Callable, compute_type: ComputeType):
     b = ResNet50Benchmark(
-        (64, 3, 224, 224), device="cuda:0", dtype=torch.bfloat16, requires_grad=is_requires_grad(compute_type)
+        64, (3, 224, 224), device="cuda:0", dtype=torch.bfloat16, requires_grad=is_requires_grad(compute_type)
     )
 
     args, kwargs = b.make_batch()
