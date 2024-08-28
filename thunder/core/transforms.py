@@ -3798,7 +3798,6 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
     new_fwd_trace.bound_symbols[-1] = prims.python_return.bind(new_return_args, output=())
 
     new_bwd_trace = from_trace(bwd_trace)
-    new_bsym = bw_trace.bound_symbols.copy()
 
     with tracectx(new_bwd_trace):
         unpack_args = (CollectionProxy(new_saved_for_backward, name="C0"), len(new_saved_for_backward))
