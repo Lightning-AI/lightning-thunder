@@ -3747,90 +3747,89 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
     return ForwardBackwardTraces(forward_trace, backward_trace)
 
 
-def recompute_saved_for_backward(fw_trace: Trace, bw_trace: Trace) -> tuple[Trace, Trace]:
+def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Trace, Trace]:
     """Generates the pair of traces with rematerializaion of the saved-for-backward tensors.
     Args:
-        fw_trace (Trace): forward trace where to get the saved for backward from.
-        bw_trace (Trace): backward trace where to recompute the saved for backward to.
+        fwd_trace (Trace): forward trace where to get the saved for backward from.
+        bwd_trace (Trace): backward trace where to recompute the saved for backward to.
 
     Returns:
         tuple[Trace, Trace]: A tuple containing the new forward and backward traces.
     """
+
     start_time_ns = time.perf_counter_ns()
-    # First of all we need to get the saved for backward tensors
-    saved_for_bw = get_saved_for_backward_tensors(fw_trace)
 
-    # Let's create these two maps that will help writing the logic
-    fw_trace_args = {variableify(j) for j in fw_trace.args}
-    old_saved_for_bw = {variableify(j) for j in saved_for_bw}
-    # The second step is to determine which tensors we can rematerialize. Let's remove the tensors that come from the argument to the forward tarce.
-    all_rematerializable = old_saved_for_bw - fw_trace_args
+    saved_for_bw = get_saved_for_backward_tensors(fwd_trace)
+    fwd_trace_args = {variableify(j) for j in fwd_trace.args}
+    old_saved_for_bwd = {variableify(j) for j in saved_for_bw}
 
-    # Here will come the selection logic for what to materialize. At the moment let's remat everything and just print some stats.
+    all_rematerializable = old_saved_for_bwd - fwd_trace_args
+
+    # Here will come the selection logic for what to materialize.
     from collections import Counter
 
     tensor_counter = Counter({v: unvariableify(v).numel * unvariableify(v).dtype.bytes for v in all_rematerializable})
     print(f"DEBUG: out of {len(saved_for_bw)} sfb, {len(all_rematerializable)} are recomputable")
     print(f"DEBUG: can save up to {tensor_counter.total()*1e-6:.3f} MB")
     top_one_third = len(saved_for_bw) // 3
-    print(f"DEBUG: remat {top_one_third} tensors")
+    print(f"DEBUG: remat {top_one_third} tensors (top one third)")
 
+    # Select the tensors that will be rematerialized
     rematerializable = {k for k, v in tensor_counter.most_common(top_one_third)}
 
-    # Now that we have the list of tensors that are going to be recomputed we can start to collect the computation needed to generate them.
-    prod_symbols = find_producer_symbols(fw_trace, tuple(unvariableify(i) for i in rematerializable), fw_trace.args)
+    producers = find_producer_symbols(fwd_trace, tuple(unvariableify(i) for i in rematerializable), fwd_trace.args)
 
-    # Now that everything is ready we can prepare the new saved for backward list
-    # To do so we need: the saved for backward that still needs to be carried on from the old list and the new required arguments from the forward.
-    # We need to check which inputs to the fw trace are used to compute the producer symbols
-    required_fw_args = fw_trace_args & old_saved_for_bw
+    required_fw_args = fwd_trace_args & old_saved_for_bwd
     recomputed_tensors_from_producers = set()
-    for p in prod_symbols:
-        for pa in p.flat_args:
-            if variableify(pa) in fw_trace_args:
-                required_fw_args.add(variableify(pa))
-        for po in p.flat_outs:
-            recomputed_tensors_from_producers.add(variableify(po))
+    for prod in producers:
+        for prod_arg in prod.flat_args:
+            prod_arg = variableify(prod_arg)
+            if prod_arg in fwd_trace_args:
+                required_fw_args.add(prod_arg)
+        for prod_out in prod.flat_outs:
+            recomputed_tensors_from_producers.add(variableify(prod_out))
 
-    # add the save for bw that wont be recomputed
-    required_saved_for_bw = all_rematerializable - rematerializable - recomputed_tensors_from_producers
+    required_saved_for_bwd = all_rematerializable - rematerializable - recomputed_tensors_from_producers
+    new_saved_for_backward = tuple(unvariableify(i) for i in required_fw_args | required_saved_for_bwd)
 
-    new_saved_for_backward = tuple(unvariableify(i) for i in required_fw_args | required_saved_for_bw)
+    new_fwd_trace = from_trace(fwd_trace)
+    new_fwd_trace.bound_symbols = fwd_trace.bound_symbols.copy()
+    new_return_args = (fwd_trace.output[0], (new_saved_for_backward, fwd_trace.output[1][1]))
+    new_fwd_trace.bound_symbols[-1] = prims.python_return.bind(new_return_args, output=())
 
-    # Everything is now ready and we can start to build the new traces.
-    new_fw_trace = from_trace(fw_trace)
-    new_fw_trace.bound_symbols = fw_trace.bound_symbols.copy()
-    new_return_args = (fw_trace.output[0], (new_saved_for_backward, fw_trace.output[1][1]))
-    new_fw_trace.bound_symbols[-1] = prims.python_return.bind(new_return_args, output=())
-
-    new_bw_trace = from_trace(bw_trace)
+    new_bwd_trace = from_trace(bwd_trace)
     new_bsym = bw_trace.bound_symbols.copy()
 
-    with tracectx(new_bw_trace):
+    with tracectx(new_bwd_trace):
         unpack_args = (CollectionProxy(new_saved_for_backward, name="C0"), len(new_saved_for_backward))
 
-    # Let's make sure the structure of the trace is as we expect it.
-    assert bw_trace.bound_symbols[4].sym.id == prims.PrimIDs.UNPACK_SEQUENCE
-    assert bw_trace.bound_symbols[4].args[0].name == "C0"
-    assert bw_trace.bound_symbols[5].sym.id == prims.PrimIDs.UNPACK_SEQUENCE
-    assert bw_trace.bound_symbols[5].args[0].name == "C1"
+    assert bwd_trace.bound_symbols[4].sym.id == prims.PrimIDs.UNPACK_SEQUENCE
+    assert bwd_trace.bound_symbols[4].args[0].name == "C0"
+    assert bwd_trace.bound_symbols[5].sym.id == prims.PrimIDs.UNPACK_SEQUENCE
+    assert bwd_trace.bound_symbols[5].args[0].name == "C1"
 
-    new_bsym[4] = prims.unpack_sequence.bind(*unpack_args, output=new_saved_for_backward)
-    # Attach the producer symbols
-    new_bsym[6:6] = prod_symbols
 
-    new_bw_trace.bound_symbols = new_bsym
-    new_bw_trace.args = [(new_saved_for_backward, fw_trace.output[1][1]), *new_bw_trace.args[1:]]
+    for idx, bsym in enumerate(bwd_trace.bound_symbols):
+        if idx == 4:
+            new_unpack = prims.unpack_sequence.bind(*unpack_args, output=new_saved_for_backward)
+            new_bwd_trace.bound_symbols.append(new_unpack)
+        elif idx == 6:
+            new_bwd_trace.bound_symbols.extend(producers)
+            new_bwd_trace.bound_symbols.append(bsym)
+        else:
+            new_bwd_trace.bound_symbols.append(bsym)
+
+    new_bwd_trace.args = [(new_saved_for_backward, fwd_trace.output[1][1]), *bwd_trace.args[1:]]
 
     elapsed_time_ns = time.perf_counter_ns() - start_time_ns
-    new_bw_trace.set_provenance(
+    new_bwd_trace.set_provenance(
         TraceProvenance(f"Saved for backward remat trace (took {elapsed_time_ns * 1e-6:.2f} milliseconds)")
     )
-    new_fw_trace.set_provenance(
+    new_fwd_trace.set_provenance(
         TraceProvenance(f"Saved for backward remat trace (took {elapsed_time_ns * 1e-6:.2f} milliseconds)")
     )
 
-    return new_fw_trace, new_bw_trace
+    return new_fwd_trace, new_bwd_trace
 
 
 # do we happen to want to register `ltorch` ops such as `ltorch.layer_norm` as well?
