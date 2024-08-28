@@ -1819,6 +1819,29 @@ def sub(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinitio
 
 register_supported(PrimIDs.SUB, sub, _elementwise_binary_check)
 
+
+#
+# Elementwise ternary operations
+#
+
+
+def _elementwise_ternary_check(a: Number | TensorProxy, b: Number | TensorProxy, c: Number | TensorProxy) -> bool:
+    return are_supported_tensors_or_numbers(a, b, c)
+
+
+def lerp(
+    start: TensorProxy, end: TensorProxy, weight: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict
+) -> Any:
+    nv_start = getnv(start, fd, lc_to_nv_map)
+    nv_end = getnv(end, fd, lc_to_nv_map)
+    nv_weight = getnv(weight, fd, lc_to_nv_map)
+
+    return fd.ops.lerp(nv_start, nv_end, nv_weight)
+
+
+register_supported(PrimIDs.LERP, lerp, _elementwise_ternary_check)
+
+
 #
 # Conditional operations
 #
