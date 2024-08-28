@@ -5635,9 +5635,11 @@ _torch_to_thunder_complete_map = {
     **{fn: fn for fn in _torch_noinline_functions},
 }
 
-
+# records the torch symbols that may return tensor views
 # ref: https://pytorch.org/docs/stable/tensor_view.html
-_syms_returning_runtime_dependently_views: set[Symbol] = {
+# NOTE Symbols that return tensor views can interfere with in-place operators
+# See :func:`thunder.core.functionalization.check_inplace_to_views` for the details.
+_syms_that_may_return_views: set[Symbol] = {
     reshape,
     contiguous,
     to,

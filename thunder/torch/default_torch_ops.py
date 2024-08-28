@@ -757,6 +757,10 @@ torch_auto_registered_ops = {
     ],
 }
 
+# Records all the auto-registered Torch operators that return tensor views
+# Ref: https://pytorch.org/docs/stable/tensor_view.html
+# NOTE this list is used to update the `_syms_returning_views`, so that the symbol returning tensor views can be processed correctly when they interact with in-place operators.
+# See :func:`thunder.core.functionalization.check_inplace_to_views` for the details.
 _auto_registered_operators_returning_views = [
     torch.adjoint,
     torch.Tensor.adjoint,
