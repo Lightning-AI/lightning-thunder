@@ -97,8 +97,6 @@ def default_alloc_memory(
 def track_alias_op_memory(
     bsym: BoundSymbol, tensor_to_memory_data: ProxyDict, name_to_alloc_memory: dict[str, int]
 ) -> int:
-    import thunder
-
     inp = bsym.flat_proxy_args[0]
     assert inp in tensor_to_memory_data
     for out in bsym.flat_proxy_outs:
@@ -146,7 +144,8 @@ def get_alloc_memory(trc: TraceCtx) -> tuple[int, dict[str, int]]:
 
     tensor_to_memory_data = ProxyDict()
     for arg in tree_iter((trc.args, trc.kwargs)):
-        # In addition to the arguments themselves, the interpreter holds references to the arguments
+        # In addition to the arguments themselves (n=1), the interpreter holds references to the arguments,
+        # accounting for n += 1
         tensor_to_memory_data[arg] = MemoryData(n=2, proxy=arg)
 
     for bsym in trc.bound_symbols:
