@@ -482,6 +482,8 @@ def from_trace(trace: TraceCtx) -> TraceCtx:
     t.name_ctr = trace.name_ctr
     t.obj_name_ctr = trace.obj_name_ctr
     t.names = trace.names
+    # This is a detail for enabling transformer_engine's autocast manager.
+    t._include_te_fp8_autocast = trace._include_te_fp8_autocast
 
     t._siginfo = trace._siginfo
     return t

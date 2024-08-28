@@ -168,6 +168,7 @@ zeros_like = _register_torch_operation("zeros_like")
 randn = _register_torch_operation("randn")
 empty = _register_torch_operation("empty")
 einsum = _register_torch_operation("einsum")
+clone = _register_torch_operation("clone")
 
 
 def _uniform_philox_like(
@@ -428,6 +429,10 @@ def _empty_prims_transform(
     return empty(shape, device=torch_device, dtype=torch_dtype)
 
 
+def _clone_prims_transform(a: TensorLike, **kwargs) -> TensorLike:
+    return clone(a)
+
+
 def _tensor_from_sequence_prims_transform(
     seq_or_number, *, device: devices.Device, dtype: None | dtypes.dtype
 ) -> TensorLike:
@@ -469,6 +474,7 @@ _register_implementation(
 _register_implementation(prims.get_and_update_rng_state, get_and_update_rng_state_impl, checker=_always_executable)
 _register_implementation(prims.randn, checker=_always_executable, execution_transform=_randn_prims_transform)
 _register_implementation(prims.empty, checker=_always_executable, execution_transform=_empty_prims_transform)
+_register_implementation(prims.clone, checker=_always_executable, execution_transform=_clone_prims_transform)
 _register_implementation(
     prims.tensor_from_sequence, checker=_always_executable, execution_transform=_tensor_from_sequence_prims_transform
 )

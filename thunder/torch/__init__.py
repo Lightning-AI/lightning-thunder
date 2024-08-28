@@ -2550,16 +2550,9 @@ def torch_max(
     return max_vals, argmax_vals
 
 
-# Clone is unique in that it's not registered as a symbol; as such we add it to
-# the appropriate maps manually, instead of through the @torchsymbol decorator.
-# This means that clone will not appear in the trace; instead, this basically
-# just gets inlined into the code.
+@torchsymbol(torch.clone, is_method=True)
 def clone(a: TensorProxy, *, memory_format=torch.preserve_format) -> TensorProxy:
-    """
-    Produce a copy of a tensor as a distinct new tensor.
-
-    Note: the implementation currently creates an alias instead of a copy.
-    """
+    """Produce a copy of a tensor as a distinct new tensor."""
     # Our implementation currently does not introduce a copy, and so nothing
     # except preserve_format is feasible to support.
     # If you're hitting this you could try commenting this check out; if your
@@ -2567,11 +2560,7 @@ def clone(a: TensorProxy, *, memory_format=torch.preserve_format) -> TensorProxy
     # be fine.
     if memory_format is not torch.preserve_format:
         raise NotImplementedError("only preserve_format is currently supported")
-    # This implementation just creates an alias instead of a copy. This may
-    # introduce problems; such problems would be fixable when we get to adding an
-    # SSA pass, but for now we do not expect that aliasing the tensor will
-    # introduce many problems.
-    return a
+    return prims.clone(a)
 
 
 # Because we do not use @torchsymbol, we need to manually register the
@@ -5453,6 +5442,7 @@ def register_default_torch_op(torchfn: Callable, torch_module):
         name=torchfn_name,
         meta=_fn,
         id=f"{torch_module.__name__}.{torchfn_name}",
+        tags=(prims.OpTags.AUTO_REGISTERED,),
     )
     _torch_to_thunder_function_map[torchfn] = sym
     from thunder.executors.torchex import _always_executable, ex
