@@ -162,6 +162,10 @@ def apply_rematerialization_for_consumer(
         filter(lambda x: x.name not in map(lambda x: x.name, new_consumer_args), consumer.args)
     )
 
+    # TODO add comment explaining why
+    if not rematerialized_inputs:
+        return consumer
+
     # Construct a temporary Trace object with subsymbols from the producer.
     trace = TraceCtx(None)
     trace.bound_symbols = producer.subsymbols
