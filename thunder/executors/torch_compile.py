@@ -42,7 +42,15 @@ def to_torch_translator(bsym: BoundSymbol) -> Callable:
                 return impl_info.execution_transform(*args, **kwargs)
 
         if torch_op is None:
-            torch_op = torchex.opmap[bsym.sym.name]
+            torch_op = torchex.opmap.get(bsym.sym.name)
+
+        # this should be really rare, but type_as has this,
+        # ideally we would be also handling more subsymbols here
+        if torch_op is None and len(bsym.subsymbols) == 1:
+            torch_op = torchex.opmap.get(bsym.subsymbols[0].sym.name)
+
+        if torch_op is None:
+            raise RuntimeError("op not found for {bsym.sym.name}")
 
         return torch_op(*args, **kwargs)
 
