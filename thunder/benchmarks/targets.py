@@ -35,8 +35,10 @@ from thunder.benchmarks import (
     thunder_executor,
     thunder_sdpa_torch_compile_nvfuser_executor,
     torch_compile_executor,
+    torch_compile_without_reset_executor,
     torch_executor,
     thunder_transformerengine_executor,
+    DynamoBackendBenchmarking,
 )
 from thunder.core.interpreter import interpret
 
@@ -883,3 +885,37 @@ def test_torchbench_canary(benchmark, module_name, executor, compute_type: Compu
     fn = executor(b.fn())
 
     benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
+
+
+@pytest.mark.parametrize(
+    "executor,",
+    (
+        torch_executor,
+        torch_compile_without_reset_executor,
+        thunder_executor,
+    ),
+    ids=(
+        "torch",
+        "torch.compile",
+        "thunder",
+    ),
+)
+def test_dynamo_LlamaMLPBenchmark(benchmark, executor: Callable):
+    backend = DynamoBackendBenchmarking(benchmark, executor)
+
+    bench: Benchmark = LlamaMLPBenchmark(
+        config="Llama-2-7b-hf",
+        batchdims=(2,),
+        device="cuda:0",
+        dtype=thunder.bfloat16,
+        requires_grad=True,
+    )
+
+    args, kwargs = bench.make_batch()
+    # Using torch.compile here fails with "TypeError: cannot pickle '_io.TextIOWrapper' object" in
+    # https://github.com/Lightning-AI/pytorch-lightning/blob/828fd998961f6a60f92c35254bb94d6e049ad069/src/lightning/fabric/wrappers.py#L421
+    fn = torch._dynamo.optimize(backend=backend)(bench.fn())
+    fn(*args, **kwargs)
+
+    # Avoid torch._dynamo hit config.cache_size_limit (8)
+    torch._dynamo.reset()
