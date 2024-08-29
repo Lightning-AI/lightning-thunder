@@ -1,4 +1,5 @@
 from collections.abc import Callable, MutableSequence, MutableMapping, MutableSet
+from functools import partial
 
 from thunder.core.prims import PrimIDs
 from thunder.core.proxies import CollectionProxy, FutureTensorProxy, Proxy, TensorProxy
@@ -119,9 +120,16 @@ def del_op_memory(bsym: BoundSymbol, tensor_to_memory_data: ProxyDict, name_to_a
     return memory_size
 
 
+@register_memory_calculate_function("clear_mutable_collection")
 def clear_mutable_collection_argument_memory(
-    bsym: BoundSymbol, tensor_to_memory_data: ProxyDict, name_to_alloc_memory: dict[str, int]
+    bsym: BoundSymbol, tensor_to_memory_data: ProxyDict, name_to_alloc_memory: dict[str, int], is_argument: bool
 ) -> int:
+    # Clearing the collection forces the interpreter to release references to its elements,
+    # even if the collection was an argument.
+    # So we cancel the n += 1 (see get_alloc_memory) for tensors contained in such a collection
+    if not is_argument:
+        return 0
+
     collection_proxy = bsym.flat_proxy_args[0]
     if not isinstance(collection_proxy.collection(), (MutableSequence, MutableMapping, MutableSet)):
         return 0
@@ -175,11 +183,9 @@ def get_alloc_memory(trc: TraceCtx) -> tuple[int, dict[str, int]]:
             continue
 
         impl = memory_calculate_impls.get(bsym.sym.id, default_alloc_memory)
-        if bsym.sym.id == "clear_mutable_collection" and bsym.flat_proxy_args[0].name in arg_names:
-            # Clearing the collection forces the interpreter to release references to its elements,
-            # even if the collection was an argument.
-            # So we cancel the n += 1 for the tensors contained
-            impl = clear_mutable_collection_argument_memory
+        if impl is clear_mutable_collection_argument_memory:
+            is_argument = bsym.flat_proxy_args[0].name in arg_names
+            impl = partial(impl, is_argument=is_argument)
 
         allocated += impl(bsym, tensor_to_memory_data, name_to_alloc_memory)
         max_allocated = max(max_allocated, allocated)
