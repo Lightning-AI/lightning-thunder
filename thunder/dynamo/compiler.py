@@ -196,15 +196,16 @@ class ThunderCompiler:
         is_split = False
         for node in split_gm.graph.nodes:
             if is_thunder_supported_partition(node):
-                # there is erase method on GraphModule
                 graph_module = getattr(split_gm, node.name)
                 jit_fn = self._thunder_jit(graph_module)
+                # Update the node name from "submod_*" to "thunder_*" for more user-friendly names
                 update_node_and_submodule(split_gm, node, node.name.replace("submod", "thunder"), jit_fn)
                 thunder_compiled_fns.append(jit_fn)
                 submodule_to_compiled_fns[graph_module] = CompiledFunction(jit_fn, CompilerType.THUNDER)
             elif node.name.startswith("submod"):  # For inductor
                 graph_module = getattr(split_gm, node.name)
                 jit_fn = self._torch_compile(graph_module)
+                # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
                 update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), jit_fn)
                 submodule_to_compiled_fns[graph_module] = CompiledFunction(jit_fn, CompilerType.TORCH_INDUCTOR)
                 is_split = True
