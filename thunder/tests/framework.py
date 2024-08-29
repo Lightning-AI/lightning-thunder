@@ -255,7 +255,8 @@ class DynamoThunderTestExecutor(TestExecutor):
     supported_dtypes = (datatypes.dtype,)
 
     def make_callable(self, fn, **kwargs):
-        return torch.compile(backend=ThunderCompiler(**kwargs))(fn)
+        # We assume all kwargs are for `thunder.jit` and not for `torch.compile` which is used in splitter.
+        return torch.compile(backend=ThunderCompiler(thunder_options=kwargs))(fn)
 
 
 # TODO Refactor these executors into the actual executor (sub)modules

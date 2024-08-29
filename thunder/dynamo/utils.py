@@ -260,3 +260,12 @@ def is_node_supported(node: torch.fx.Node) -> tuple[bool, SplitReason | None]:
         info=f"node with name: {node.name} and target: {node.target} didn't have any mapping in thunder.",
     )
     return False, split_reason
+
+
+def update_node_and_submodule(graph_module, node, new_name, new_callable):
+    assert graph_module.delete_submodule(
+        node.name
+    ), f"Didn't find a submodule named {node.name} in graph_module {graph_module}"
+    node.name = new_name
+    node.target = new_name
+    return graph_module.add_submodule(node.name, new_callable)
