@@ -707,6 +707,11 @@ def torch_compile_executor(fn: Callable) -> Callable:
     return torch.compile(fn)
 
 
+def torch_compile_without_reset_executor(fn: Callable) -> Callable:
+    torch.backends.cuda.matmul.allow_tf32 = True
+    return torch.compile(fn)
+
+
 def thunder_torch_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
     return thunder.jit(fn, executors=[thunder.pytorch_executor])
@@ -3011,3 +3016,33 @@ class TorchbenchBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 #     if args.listbenchmarks:
 #         list_benchmarks(use_classname=False)
 #         sys.exit(0)
+
+
+class DynamoBackendBenchmarking:
+    def __init__(self, bench, executor, **thunder_options):
+        self.thunder_options = thunder_options
+        self.bench = bench
+        self.executor = executor
+        self.gm2stats = {}
+        self.graph_idx = 0
+
+    def __call__(self, gm: torch.fx.GraphModule, sample_args: list[torch.SymInt, torch.Tensor]):
+        from thunder.benchmarks.targets import record_peak_allocated_memory
+
+        gm.real_recompile()
+
+        fn = self.executor(gm)
+        with record_peak_allocated_memory(self.bench):
+            self.bench(fn, *sample_args)
+        # BenchmarkFixture.stats is created each time bench is called (ref: https://github.com/pybenchmark/pytest-benchmark/blob/8c9a5faa1dd178b53ab7b2a66f5364a77e903d74/src/pytest_benchmark/fixture.py#L150)
+        # Adds the graph number to the name string
+        self.bench.stats.name = self.bench.stats.name + f"graph{self.graph_idx}"
+        self.gm2stats[gm] = self.bench.stats
+
+        # when the graph is segmented, the self.bench run multiple times, pybenchmark throws an error:
+        # `FixtureAlreadyUsed("Fixture can only be used once. Previously it was used in %s mode." % self._mode)`
+        # Ref: https://github.com/pybenchmark/pytest-benchmark/blob/8c9a5faa1dd178b53ab7b2a66f5364a77e903d74/src/pytest_benchmark/fixture.py#L115-L118
+        # Here manually set the BenchmarkFixture._mode=None to avoid it
+        self.bench._mode = None
+        self.graph_idx += 1
+        return gm
