@@ -16,7 +16,7 @@ from thunder.dynamo.utils import (
     CompilerType,
     SplitReason,
     SplitReasonType,
-    is_node_supported,
+    is_node_supported_by_thunder,
     get_nodes_in_unsupported_ctx_regions,
     update_node_and_submodule,
 )
@@ -157,6 +157,9 @@ class ThunderCompiler:
             ), f"fx.split_module should have only passed node.op=call_* but received {node.op}"
 
             if node in nodes_in_unsupported_ctx_regions:
+                # If node was in unsupported ctx region like `autocast`,
+                # even though the operation maybe supported, we pass it to `torch.compile`
+                # as `thunder` doesn't correctly work with these.
                 is_thunder_supported = False
                 split_reason = SplitReason(
                     SplitReasonType.UNSUPPORTED_NODE,
@@ -164,7 +167,7 @@ class ThunderCompiler:
                 )
                 split_reasons.append(split_reason)
             else:
-                is_thunder_supported, split_reason = is_node_supported(node)
+                is_thunder_supported, split_reason = is_node_supported_by_thunder(node)
                 if split_reason is not None:
                     split_reasons.append(split_reason)
 

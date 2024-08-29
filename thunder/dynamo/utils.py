@@ -89,7 +89,21 @@ class SubgraphInfo:
     split_reasons: list | None = None
 
 
-def try_execute_symbol(thunder_symbol: "Symbol", node: torch.fx.Node) -> tuple[bool, SplitReason | None]:
+def _concrete_shape(x):
+    """
+    Get the concrete shape for a FakeTensor if it has `torch.SymInt` in its shape.
+    """
+
+    def get_backed_value(s):
+        if isinstance(s, torch.SymInt):
+            return s.node.hint
+        # Value is already concrete.
+        return s
+
+    return tuple(map(get_backed_value, x.shape))
+
+
+def try_execute_thunder_symbol(thunder_symbol: "Symbol", node: torch.fx.Node) -> tuple[bool, SplitReason | None]:
     """
     Attempts to execute a given Thunder symbol within a tracing context, using proxies for the node's arguments.
 
@@ -116,7 +130,7 @@ def try_execute_symbol(thunder_symbol: "Symbol", node: torch.fx.Node) -> tuple[b
         # We need cache info here as the default dtype and device support
         # for factory functions like ones, zeros, etc expects these details to be present.
         # TODO: Move this to CompileData as well?
-        # This details are in cache info because `jit_ext.py`
+        # This details are in cache_info because `jit_ext.py`
         # adds checks in prologue for the details which are present in here.
         cache_info = thunder._get_cache_info()
         cache_info["default_dtype"] = torch.get_default_dtype()
@@ -128,7 +142,7 @@ def try_execute_symbol(thunder_symbol: "Symbol", node: torch.fx.Node) -> tuple[b
             try:
 
                 def make_tensor_proxy(arg_node):
-                    # This is a Node in the graph representing a Tensor.
+                    # This is a Node in the graph representing a Tensor or tuple of Tensors.
                     if isinstance(arg_node, torch.fx.Node):
                         example_value = arg_node.meta["example_value"]
 
@@ -138,22 +152,22 @@ def try_execute_symbol(thunder_symbol: "Symbol", node: torch.fx.Node) -> tuple[b
                             # get the concrete value from SymInt.
                             # Here, we only want to verify that thunder can run an operation.
                             # So, it is ok to verify with concrete value.
-                            def concrete_shape(x):
-                                def get_backed_value(s):
-                                    if isinstance(s, torch.SymInt):
-                                        return s.node.hint
-                                    return s
-
-                                shape = tuple(map(get_backed_value, x.shape))
-                                return shape
-
                             example_value = example_value.new_ones(
-                                concrete_shape(example_value), device=example_value.device, dtype=example_value.dtype
+                                _concrete_shape(example_value), device=example_value.device, dtype=example_value.dtype
+                            )
+                        elif isinstance(example_value, tuple):
+                            example_value = tuple(
+                                e_v.new_ones(_concrete_shape(e_v), device=e_v.device, dtype=e_v.dtype)
+                                for e_v in example_value
+                            )
+                        else:
+                            # NOTE - This will be caught will be caught and be part of the SplitReason.
+                            raise TypeError(
+                                f"Received `make_tensor_proxy` received example_value which wasn't Tensor or Tuple"
                             )
                         return proxy(example_value)
 
                     # This is int, float, etc.
-                    # TODO(kshitij12345) - verify the above line for more cases.
                     return arg_node
 
                 proxy_args = tuple(map(make_tensor_proxy, node.args))
@@ -205,7 +219,7 @@ def get_nodes_in_unsupported_ctx_regions(gm) -> set[torch.fx.Node]:
     return nodes_in_unsupported_ctx_regions
 
 
-def is_node_supported(node: torch.fx.Node) -> tuple[bool, SplitReason | None]:
+def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason | None]:
     """
     Determine whether thunder can execute the operation described by this node.
     """
@@ -251,7 +265,7 @@ def is_node_supported(node: torch.fx.Node) -> tuple[bool, SplitReason | None]:
     # We try to proxify the arguments and call these operations on them to see if they are supported.
     if target in _torch_to_thunder_function_map or inspect.isbuiltin(target):
         thunder_symbol_or_builtin = _torch_to_thunder_function_map.get(target, target)
-        did_run, opt_split_reason = try_execute_symbol(thunder_symbol_or_builtin, node)
+        did_run, opt_split_reason = try_execute_thunder_symbol(thunder_symbol_or_builtin, node)
         return did_run, opt_split_reason
 
     # We found no automatic fallback registration and no mapping to thunder symbol.
@@ -262,10 +276,26 @@ def is_node_supported(node: torch.fx.Node) -> tuple[bool, SplitReason | None]:
     return False, split_reason
 
 
-def update_node_and_submodule(graph_module, node, new_name, new_callable):
+def update_node_and_submodule(
+    graph_module: torch.fx.GraphModule, node: torch.fx.Node, new_name: str, new_callable: Callable
+):
+    """
+    Updates the graph module and the node in place with a new name and a new callable as the target.
+
+    This function removes the existing submodule associated with the node's current name in graph_module and replaces
+    it with a new submodule using the specified new name and callable. The node's name and target are updated accordingly.
+
+    Args:
+        graph_module (torch.fx.GraphModule): The graph module containing the node and submodules.
+        node (torch.fx.Node): The node to be updated within the graph module.
+        new_name (str): The new name to assign to the node and the submodule.
+        new_callable (Callable): The new callable to be used as the target for the submodule.
+    """
     assert graph_module.delete_submodule(
         node.name
     ), f"Didn't find a submodule named {node.name} in graph_module {graph_module}"
     node.name = new_name
     node.target = new_name
-    return graph_module.add_submodule(node.name, new_callable)
+    assert graph_module.add_submodule(
+        node.name, new_callable
+    ), f"Adding submodule with name {node.name} in graph_module {graph_module} failed"
