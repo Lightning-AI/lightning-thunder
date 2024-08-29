@@ -3539,8 +3539,13 @@ def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_fo
 
     cotangents = backward_trace.args[1]
     saved_tensors, saved_other = _split_saved_for_backward_into_tensors_and_other(saved_for_backward)
+
+    # When thunder.executors.torch_autograd.ThunderFunction.backward calls backward_fn, it copies
+    # collections into mutable ones, so that the tensors will be deallocated when deleted.
+    # See ThunderFunction.backward's notes for details
+    saved_tensors = list(saved_tensors)
     unpacking_trace = construct_trace(rename_proxies=False, use_dce=False)(
-        unpacking_fn, (saved_tensors, saved_other), cotangents
+        unpacking_fn, [saved_tensors, saved_other], cotangents
     )
     assert unpacking_trace.bound_symbols[-1].sym.id == prims.PrimIDs.RETURN
 
