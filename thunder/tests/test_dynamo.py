@@ -2,7 +2,6 @@ import torch.fx
 from thunder.tests.framework import instantiate, NOTHING, DynamoThunderExecutor
 from thunder import dtypes
 from thunder.dynamo import ThunderCompiler
-from thunder.dynamo.compiler import CompilerType
 from thunder import last_traces
 
 import torch
@@ -30,25 +29,16 @@ def test_basic(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None)
 
     # out should have grad_fn and its name should be ThunderFunctionBackward
     assert out.grad_fn is not None
-    if not dynamic:
-        # If dynamic, while trying to execute `x + 1`, we fail with
-        # "s0 had an unexpected type <class 'torch.SymInt'>. Supported types are (<class 'int'>, <class 'thunder.core.baseutils.NumberProxyInterface'>)")
-        # as the FakeTensor for `x` has shape with SymInt.
-        assert out.grad_fn.name() == "ThunderFunctionBackward"
+    assert out.grad_fn.name() == "ThunderFunctionBackward"
 
     # We record the GraphModules that was compiled by ThunderCompiler
-    assert len(backend.subgraph_infos) == 2
+    assert len(backend.subgraph_infos) == 2  # 2 due to data-dependent flow
 
-    subgraph_info = backend.subgraph_infos[0]
-    if dynamic:
-        assert len(subgraph_info.compiled_functions) == 2  # Due to Symint!
-    else:
-        assert len(subgraph_info.compiled_functions) == 1
-    idx = 1 if dynamic else 0
-    compiled_fn_info = subgraph_info.compiled_functions[idx]
-    assert compiled_fn_info.compiler == CompilerType.THUNDER
-    assert last_traces(compiled_fn_info.compiled_fn)
-    assert isinstance(compiled_fn_info.original_graph_module, torch.fx.GraphModule)
+    for subgraph_info in backend.subgraph_infos:
+        assert isinstance(subgraph_info.original_graph_module, torch.fx.GraphModule)
+        assert len(subgraph_info.thunder_compiled_fns)  # There was atleast one function compiled with thunder.
+        for thunder_fn in subgraph_info.thunder_compiled_fns:
+            assert last_traces(thunder_fn)  # Verify that we can fetch last_traces
 
 
 @instantiate(
@@ -78,7 +68,7 @@ def test_basic_splitter(executor, device: str, dtype: dtypes.dtype, dynamic: boo
     torch.testing.assert_close(actual_grad, expected_grad)
 
     assert len(backend.subgraph_infos) == 1
-    assert backend.subgraph_infos[0].is_split
+    assert len(backend.subgraph_infos[0].submodule_to_compiled_functions) > 1  # Verify that the subgraph was split.
     assert any(
         "automatic torch fallback" in split_reason.info for split_reason in backend.subgraph_infos[0].split_reasons
     )
@@ -112,7 +102,7 @@ def test_splitter_unsupported_ctx(executor, device: str, dtype: dtypes.dtype, dy
     torch.testing.assert_close(actual_grad, expected_grad)
 
     assert len(backend.subgraph_infos) == 1
-    assert backend.subgraph_infos[0].is_split
+    assert len(backend.subgraph_infos[0].submodule_to_compiled_functions) > 1  # Verify that the subgraph was split.
     assert any(
         "didn't have any mapping in thunder" in split_reason.info
         for split_reason in backend.subgraph_infos[0].split_reasons
@@ -146,9 +136,11 @@ def test_splitter_unsupported_ctx_with_graph_break(executor, device: str, dtype:
     expected_grad = torch.autograd.grad(expected, x, g)
     torch.testing.assert_close(actual_grad, expected_grad)
 
+    # 2 subgraphs due to graph-break
     assert len(backend.subgraph_infos) == 2
+
     for subgraph_info in backend.subgraph_infos:
-        assert subgraph_info.is_split
+        # Verify that for each subgraph we had split due to `autocast` being enabled.
         assert any(
             "didn't have any mapping in thunder" in split_reason.info for split_reason in subgraph_info.split_reasons
         )
