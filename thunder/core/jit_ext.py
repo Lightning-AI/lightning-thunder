@@ -1612,13 +1612,12 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
 
         assert isinstance(p.history, ProvenanceRecord), p.history
 
-        # To unpack p under p.name, we reset p.history.proxy and make sure that
-        # from_provenance(p.history) recurses at least once. This is necessary because
-        # previous unpackings may have set an irrelevant proxy as p.hisotry.proxy
-        # For example, when p is a TensorProxy, p.grad.history is
+        # We reset p.history.proxy to make sure from_provenance(p.history) calls unpack_fn on p.history.
+        # This is necessary because past recursive unpackings may have unpacked p.history and associated it
+        # with a different proxy.
+        # For example, if p is a TensorProxy, the history of p.grad is
         #     ProvenanceRecord(LOAD_ATTR, inputs=[p.history, <CONSTANT "grad">])
-        # and from_provenance(p.grad.history) recursively attaches new proxies to its sub-histories,
-        # including p.history
+        # and unpack(p.grad) attaches new proxies to all its sub-histories, including p.history
         p.history.proxy = None
 
         with tracectx(prologue_trace):
