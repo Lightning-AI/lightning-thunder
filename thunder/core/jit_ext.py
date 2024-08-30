@@ -1618,6 +1618,16 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             return res
 
         assert isinstance(p.history, ProvenanceRecord), p.history
+
+        # Previous unpackings may have set an irrelevant proxy to p.hisotry.proxy.
+        # For example, when p is a TensorProxy, p.grad.history is
+        #     ProvenanceRecord(LOAD_ATTR, inputs=[p.history, <CONSTANT "grad">])
+        # from_provenance(p.grad.history) recursively attaches new proxies to its sub-histories,
+        # including p.history.
+        # To unpack p under p.name, we reset p.history.proxy and make from_provenance(p.history)
+        # recurse at least once.
+        p.history.proxy = None
+
         with tracectx(prologue_trace):
             try:
                 from_provenance(p.history)
@@ -1647,19 +1657,13 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
         else:
             return x.proxy.name
 
-    # unpack tensor XX before XX_grad
-    sorted_pro_to_epi_inps = sorted(pro_to_epi_inps, key=lambda v: len(get_name(v)))
-    sorted_pro_to_comp_inps = sorted(pro_to_comp_inps, key=lambda v: len(get_name(v)))
-
-    pro_to_epi = tuple(sorted((unpack(v) for v in sorted_pro_to_epi_inps), key=lambda x: param_ordering[id(x)][1]))
-    pro_to_comp = tuple(sorted((unpack(v) for v in sorted_pro_to_comp_inps), key=lambda x: param_ordering[id(x)][1]))
+    pro_to_epi = tuple(sorted((unpack(v) for v in pro_to_epi_inps), key=lambda x: param_ordering[id(x)][1]))
+    pro_to_comp = tuple(sorted((unpack(v) for v in pro_to_comp_inps), key=lambda x: param_ordering[id(x)][1]))
 
     with tracectx(prologue_trace):
-        for prim, *args in reversed(ctx._constraints):
+        for prim, *args in ctx._constraints:
             for i, a in enumerate(args):
                 if isinstance(a, Proxy):
-                    # a may have been assigned a different proxy when unpacking other inputs, e.g. its gradient
-                    a.history.proxy = None
                     unpack(a)
             prim(*args)
 
