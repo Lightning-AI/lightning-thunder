@@ -61,7 +61,6 @@ from thunder.core.proxies import (
     AnyProxy,
     NumberProxy,
     StringProxy,
-    tensorproxy,
     TensorProxy,
     FutureTensorProxy,
     make_proxy_name,
@@ -587,7 +586,7 @@ class GeneralJitCtx(MinimalCtx):
             else:
                 name = None
 
-            p = tensorproxy(uvalue, name=name, history=value.provenance)
+            p = proxy(uvalue, name=name, history=value.provenance)
 
             # TensorProxy attributes should be considered derived quantities, so we flag TensorProxies here
             value.provenance.ext_flag |= EXT_FLAG_IS_TENSOR_PROXY
@@ -1613,13 +1612,13 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
 
         assert isinstance(p.history, ProvenanceRecord), p.history
 
-        # Previous unpackings may have set an irrelevant proxy to p.hisotry.proxy.
+        # To unpack p under p.name, we reset p.history.proxy and make sure that
+        # from_provenance(p.history) recurses at least once. This is necessary because
+        # previous unpackings may have set an irrelevant proxy as p.hisotry.proxy
         # For example, when p is a TensorProxy, p.grad.history is
         #     ProvenanceRecord(LOAD_ATTR, inputs=[p.history, <CONSTANT "grad">])
-        # from_provenance(p.grad.history) recursively attaches new proxies to its sub-histories,
-        # including p.history.
-        # To unpack p under p.name, we reset p.history.proxy and make from_provenance(p.history)
-        # recurse at least once.
+        # and from_provenance(p.grad.history) recursively attaches new proxies to its sub-histories,
+        # including p.history
         p.history.proxy = None
 
         with tracectx(prologue_trace):

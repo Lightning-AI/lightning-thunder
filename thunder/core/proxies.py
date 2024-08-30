@@ -1876,9 +1876,6 @@ _cls_to_number_proxy_map = {
 
 
 def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple = None) -> TensorProxy:
-    if t.is_sparse:
-        raise RuntimeError("thunder.jit not supported with sparse tensors")
-
     if hasattr(t, "_thunder_device"):
         torch_device = t._thunder_device
     else:
