@@ -8,7 +8,7 @@ import thunder.torch.default_torch_ops as ops
 from thunder.torch import _get_torch_function_name
 import torch
 
-from thunder.tests.framework import requiresCUDA, TorchExecutor
+from thunder.tests.framework import requiresCUDA, TorchExecutor, instantiate, NOTHING
 from thunder.tests.make_tensor import make_tensor
 from thunder.tests.opinfos import get_opinfo, OpInfo
 from thunder.tests.test_einops import skipIfNoCUDA
@@ -206,3 +206,22 @@ class TestFallbackToTorch:
         for op in _skip_ops_alexnet:
             vjp_op_name = f"{op.name}_vjp"
             assert any(bsym.sym.name == vjp_op_name for bsym in bwd_trcs[-1].bound_symbols)
+
+
+@instantiate(dtypes=NOTHING)
+def test_query_autoreg_ops(executor, device: str, _):
+    def fn(a):
+        x = torch.special.gammaln(torch.special.zeta(torch.special.gammaln(a), a))
+        return torch.special.erf(x)
+
+    def fn_none(a):
+        return torch.nn.functional.relu(a)
+
+    expected = ({"torch.special.erf", "torch.special.gammaln"}, set())
+    for fn, expect in zip((fn, fn_none), expected):
+        cfn = executor.make_callable(fn)
+
+        a = make_tensor((2, 2), device=device, dtype=torch.float32)
+        cfn(a)
+        ops = thunder.get_auto_registered_torch_op_names(cfn)
+        assert expect == ops

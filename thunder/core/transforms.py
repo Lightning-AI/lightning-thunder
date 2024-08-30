@@ -1,3 +1,4 @@
+from __future__ import annotations
 from collections import namedtuple
 from contextlib import nullcontext, contextmanager
 from dataclasses import dataclass, replace
@@ -6,22 +7,17 @@ from itertools import chain, compress
 from functools import lru_cache, partial, wraps
 import math
 from numbers import Number
-from typing import Any, Dict, Union, Optional
-from types import NoneType
+from typing import Any, TYPE_CHECKING
 from collections.abc import Callable
-from collections.abc import Hashable
 from collections.abc import Sequence
 import copy
 import inspect
 import time
-from collections import deque
-import os
 import dataclasses
 
 import thunder
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
-import thunder.core.devices as devices
 from thunder.core.devices import cpu, Device
 from thunder.core.proxies import (
     NumberProxy,
@@ -29,18 +25,15 @@ from thunder.core.proxies import (
     TensorProxy,
     FloatProxy,
     variableify,
-    unvariableify,
-    CollectionProxy,
     FutureTensorProxy,
 )
-from thunder.core.baseutils import default_dataclass_params
 from thunder.core.compile_data import get_compile_data
 from thunder.core.langctxs import langctx, Languages
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten, tree_flatten_with_dataclass
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol
-from thunder.core.trace import TraceCtx as Trace, tracectx
+from thunder.core.trace import TraceCtx as Trace
 from thunder.core.trace import VariableInterface as Variable
-from thunder.core.trace import detached_trace, get_tracectx, set_tracectx, reset_tracectx, from_trace, TraceProvenance
+from thunder.core.trace import detached_trace, set_tracectx, reset_tracectx, from_trace, TraceProvenance
 from thunder.core.utils import (
     check,
     flatten_func,
@@ -69,7 +62,8 @@ from thunder.extend import Executor
 import thunder.torch as ltorch
 
 import torch
-from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
+
+# from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
 import numpy as np
 
 
@@ -406,7 +400,6 @@ def add_transform(
     *,
     transform: Transform | list[Transform],
     disable_torch_autograd_support=False,
-    _legacy_copy_params=False,
 ) -> Callable:
     from thunder.common import CompileData
 
@@ -438,11 +431,6 @@ def add_transform(
         disable_torch_autograd=cd.disable_torch_autograd_support or disable_torch_autograd_support,
         **cd.compile_options,
     )
-    from thunder import ThunderModule
-
-    if _legacy_copy_params and isinstance(jfn, ThunderModule):
-        jfn._overrides_parameters = cfn._overrides_parameters
-        jfn._overrides_buffers = cfn._overrides_buffers
     return jfn
 
 
@@ -3076,6 +3064,39 @@ def index_put_aug_fwd(
         accumulate,
     )
     return VJPDual(primal, residuals)
+
+
+if torch.distributed.is_available():
+    from torch.distributed import ReduceOp
+    from torch.distributed import distributed_c10d as c10d
+    from torch._C._distributed_c10d import _resolve_process_group
+
+    if TYPE_CHECKING:
+        from torch.distributed import ProcessGroup
+        from thunder.distributed.prims import DistributedReduceOps
+
+    @register_augmented_forward("torch.ops._c10d_functional.all_reduce")
+    def functional_all_reduce_augmented_forward(
+        a: TensorProxy,
+        /,
+        op: str | ReduceOp | DistributedReduceOps = ReduceOp.SUM,
+        group: None | ProcessGroup | str = None,
+        async_op: bool = False,
+        **kwargs,
+    ) -> VJPDual:
+        from thunder.torch import all_reduce
+
+        if isinstance(group, str):
+            group = _resolve_process_group(group)
+        primal = all_reduce(a, op=op, group=group)
+        residuals = (op, group)
+        return VJPDual(primal, residuals)
+
+    @register_backward("torch.ops._c10d_functional.all_reduce")
+    def functional_all_backward(op, group, g) -> TensorProxy:
+        from thunder.torch import all_reduce
+
+        return all_reduce(g, op=op, group=group)
 
 
 def sum_to(a: TensorProxy, shape: Sequence[int]) -> TensorProxy:

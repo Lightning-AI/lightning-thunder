@@ -1263,3 +1263,25 @@ def test_matmul_nd_times_2d_runs_2d_gemm(device):
     # Check that prim.matmul outputs a 2d tensor
     assert matmul_prim_bsym is not None
     assert matmul_prim_bsym.output.ndim == 2
+
+
+def test_tag_static_memory_location():
+    # not much sense, but hey.
+    m = torch.nn.Sequential(torch.nn.Tanh(), torch.nn.Linear(2, 3), torch.nn.BatchNorm1d(3))
+    jm = thunder.jit(m)
+    jm(torch.randn(2, 2))
+    lt = thunder.last_traces(jm)[-1]
+
+    # input should not be tagged static
+    assert thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION not in lt.args[0].tags
+    # parameters and buffers should be tagged static
+    assert all(thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION in a.tags for a in lt.args[1:])
+
+    # outputs of operations should not be tagged static
+    for bsym in lt.bound_symbols:
+        if bsym.sym == thunder.core.prims.unpack_trivial:
+            continue
+        for a in bsym.flat_outs:
+            if isinstance(a, thunder.Proxy):
+                assert thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION not in a.tags
+    assert str(thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION) == "ProxyTag.STATIC_MEMORY_LOCATION"

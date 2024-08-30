@@ -1875,6 +1875,11 @@ def copysign_(a, b, /):
     return prims.copy_(copysign(a, b), a)
 
 
+@torchsymbol(torch.Tensor.copy_, is_method=True)  # , tags=(prims.OpTags.IN_PLACE,))
+def copy_(a, b, /):
+    return prims.copy_(b, a)
+
+
 # TODO Implement div
 @torchsymbol(torch.div, is_method=True)
 def div(
@@ -2550,16 +2555,9 @@ def torch_max(
     return max_vals, argmax_vals
 
 
-# Clone is unique in that it's not registered as a symbol; as such we add it to
-# the appropriate maps manually, instead of through the @torchsymbol decorator.
-# This means that clone will not appear in the trace; instead, this basically
-# just gets inlined into the code.
+@torchsymbol(torch.clone, is_method=True)
 def clone(a: TensorProxy, *, memory_format=torch.preserve_format) -> TensorProxy:
-    """
-    Produce a copy of a tensor as a distinct new tensor.
-
-    Note: the implementation currently creates an alias instead of a copy.
-    """
+    """Produce a copy of a tensor as a distinct new tensor."""
     # Our implementation currently does not introduce a copy, and so nothing
     # except preserve_format is feasible to support.
     # If you're hitting this you could try commenting this check out; if your
@@ -2567,11 +2565,7 @@ def clone(a: TensorProxy, *, memory_format=torch.preserve_format) -> TensorProxy
     # be fine.
     if memory_format is not torch.preserve_format:
         raise NotImplementedError("only preserve_format is currently supported")
-    # This implementation just creates an alias instead of a copy. This may
-    # introduce problems; such problems would be fixable when we get to adding an
-    # SSA pass, but for now we do not expect that aliasing the tensor will
-    # introduce many problems.
-    return a
+    return prims.clone(a)
 
 
 # Because we do not use @torchsymbol, we need to manually register the
@@ -5140,7 +5134,10 @@ if torch.distributed.is_available():
     DistributedReduceOpLike = str | torch.distributed.ReduceOp | dist_prims.DistributedReduceOps
 
     # string name, PyTorch enum value, thunder.jit enum value
-    _reduceop_triples = (("sum", torch.distributed.ReduceOp.SUM, dist_prims.DistributedReduceOps.SUM),)
+    _reduceop_triples = (
+        ("sum", torch.distributed.ReduceOp.SUM, dist_prims.DistributedReduceOps.SUM),
+        ("max", torch.distributed.ReduceOp.MAX, dist_prims.DistributedReduceOps.MAX),
+    )
 
     def to_thunder_distributed_reduce_op(op: DistributedReduceOpLike | None):
         if isinstance(op, str):
@@ -5217,6 +5214,7 @@ if torch.distributed.is_available():
     # This operation is based on torch.distributed.all_reduce, see:
     #   https://pytorch.org/docs/master/distributed.html#torch.distributed.all_reduce
     @torchsymbol(
+        torch.ops._c10d_functional.all_reduce,
         is_method=False,
         id="functional_all_reduce",
     )
@@ -5224,9 +5222,15 @@ if torch.distributed.is_available():
         a: TensorLike,
         /,
         op: DistributedReduceOpLike = torch.distributed.ReduceOp.SUM,
-        group: None | torch.distributed.ProcessGroup = None,
+        group: None | torch.distributed.ProcessGroup | str = None,
         async_op: bool = False,
+        **kwargs,
     ) -> TensorLike | FutureTensorLike:
+        # note: torch.ops._c10d_functional takes name of group
+        if isinstance(group, str):
+            from torch._C._distributed_c10d import _resolve_process_group
+
+            group = _resolve_process_group(group_name=group)
         op = to_thunder_distributed_reduce_op(op)
         group = group if group is not None else torch.distributed.new_group()
 
@@ -5311,6 +5315,7 @@ if torch.distributed.is_available():
         return prims.copy_(out.view(output.shape), output)
 
     @torchsymbol(
+        torch.ops._c10d_functional.wait_tensor,
         is_method=True,
         id="torch.Tensor.wait",
     )
@@ -5453,6 +5458,7 @@ def register_default_torch_op(torchfn: Callable, torch_module):
         name=torchfn_name,
         meta=_fn,
         id=f"{torch_module.__name__}.{torchfn_name}",
+        tags=(prims.OpTags.AUTO_REGISTERED,),
     )
     _torch_to_thunder_function_map[torchfn] = sym
     from thunder.executors.torchex import _always_executable, ex
