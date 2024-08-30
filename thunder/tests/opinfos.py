@@ -2500,6 +2500,7 @@ def lerp_sample_generator(op, device, dtype, requires_grad, **kwargs):
     S = 4
     # start_shape, end_shape, weight_shape
     cases = (
+        ((), (), ()),
         ((S,), (S,), (S,)),
         ((S, S), (S, S), (S, S)),
         ((S, 1), (1, S), (S, 1)),
@@ -2507,9 +2508,9 @@ def lerp_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
     number = partial(make_number, dtype=dtype)
     for start_shape, end_shape, weight_shape in cases:
-        yield SampleInput(make(start_shape), make(end_shape), make(weight_shape))
-        number_weight = number()
-        yield SampleInput(make(start_shape), make(end_shape), number_weight)
+        yield SampleInput(make(start_shape, **kwargs), make(end_shape, **kwargs), make(weight_shape, **kwargs))
+        number_weight = number(**kwargs)
+        yield SampleInput(make(start_shape, **kwargs), make(end_shape, **kwargs), number_weight)
 
 
 lerp_opinfo = OpInfo(
