@@ -54,6 +54,7 @@ from thunder.extend import Executor, add_default_executor
 from thunder.core.compile_data import compile_data_and_stats, get_compile_data
 from thunder.core.langctxs import LanguageContext
 import thunder.core.langctxs as langctxs
+from thunder.core.symbol import has_tags
 from thunder.core.baseutils import run_once, check
 from thunder.core.codeutils import Positions
 from thunder.core.proxies import (
@@ -1012,6 +1013,12 @@ def last_compile_options(fn: Callable, /) -> None:
 
     for option in unused:
         print(f"\t{option}")
+
+
+def get_auto_registered_torch_op_names(fn: Callable, /) -> set[str] | None:
+    """Returns a set of auto-registered Torch operator names present in the given JIT-compiled function."""
+    trc = last_traces(fn)[0]
+    return {bsym.sym.id for bsym in trc.bound_symbols if has_tags(bsym, {prims.OpTags.AUTO_REGISTERED})}
 
 
 # TODO (mruberry) Update this
