@@ -372,4 +372,3 @@ def test_lora_transform_linear():
     print(thunder.last_traces(jmodel)[-1])
 
     assert_close(actual, expected, atol=2e-1, rtol=2e-1)
-    assert False == True

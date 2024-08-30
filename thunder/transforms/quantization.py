@@ -364,7 +364,6 @@ class LORATransform(Transform):
 
         weight_name_full = f"{submodule_name}.weight"
         w = state_dict["weight"]
-        qw = self.lora_linear(w)
         state_dict = state_dict.copy()
         state_dict["weight"] = w.to(w.device)
 
@@ -376,10 +375,11 @@ class LORATransform(Transform):
 
         checks = get_checks(prologue_trace)
 
+        # do we need this?
         # prologue_proxy_map = {
         #     get_param_bsym.output.name: dict(
-        #         shape=self.lora_linear_states[model_weight_name]["loraA.shape"],
-        #         dtype=thunder.dtypes.to_dtype(self.lora_linear_states[model_weight_name]["loraA.dtype"]),
+        # shape=self.lora_linear_states[model_weight_name]["loraA.shape"],
+        # dtype=thunder.dtypes.to_dtype(self.lora_linear_states[model_weight_name]["loraA.dtype"]),
         #     )
         #     for model_weight_name, (check_bsym, get_param_bsym) in checks.items()
         #     if model_weight_name in self.lora_linear_states
@@ -448,7 +448,6 @@ class LORATransform(Transform):
                     additional_proxies[n_loraB] = proxy_loraB
 
         prologue_trace.bound_symbols[-1:-1] = new_bsyms
-        # print("prologue_trace: \n", prologue_trace, "\nprologue_trace")
 
         computation_proxy_map = {
             csym.name: dict(
@@ -480,42 +479,41 @@ class LORATransform(Transform):
         for bsym in bound_symbols[idx:]:
             if bsym.sym == thunder.torch.linear:
                 n = lora_linear_proxies[bsym.args[1].name]
+                with thunder.core.trace.tracectx(computation_trace):
+                    loraA_transpose_meta = prims.transpose.meta(additional_proxies[f"{n}.loraA"], (1, 0))
+                    loraA_bsym = prims.transpose.bind(
+                        additional_proxies[f"{n}.loraA"],
+                        (1, 0),
+                        output=(loraA_transpose_meta),
+                    )
+                    loraB_transpose_meta = prims.transpose.meta(additional_proxies[f"{n}.loraB"], (1, 0))
+                    loraB_bsym = prims.transpose.bind(
+                        additional_proxies[f"{n}.loraB"],
+                        (1, 0),
+                        output=(loraB_transpose_meta),
+                    )
+                    lora_meta_ = prims.matmul.meta(bsym.args[0], loraA_bsym.output)
+                    lora_bsym_ = prims.matmul.bind(bsym.args[0], loraA_bsym.output, output=lora_meta_)
+                    lora_meta = prims.matmul.meta(lora_bsym_.output, loraB_bsym.output)
+                    lora_bsym = prims.matmul.bind(lora_bsym_.output, loraB_bsym.output, output=lora_meta)
 
-                loraA_bsym = bsym.from_bsym(
-                    sym=thunder.torch.transpose,
-                    args=(additional_proxies[f"{n}.loraA"], 0, 1),
-                )
-                # loraA_bsym = thunder.torch.transpose.bind(
-                #     additional_proxies[f"{n}.loraA"],
-                #     0,
-                #     1,
-                #     output=(bsym.output),
-                # )
-                # loraB_bsym = thunder.torch.transpose.bind(
-                #     additional_proxies[f"{n}.loraB"],
-                #     0,
-                #     1,
-                #     output=(bsym.output),
-                # )
-                loraB_bsym = bsym.from_bsym(
-                    sym=thunder.torch.transpose,
-                    args=(additional_proxies[f"{n}.loraB"], 0, 1),
-                )
-                lora_bsym_ = bsym.from_bsym(sym=thunder.torch.matmul, args=(bsym.args[0], loraA_bsym.output))
-                print(f"lora_bsym : \n {lora_bsym_}")
-                lora_bsym = bsym.from_bsym(
-                    sym=thunder.torch.matmul,
-                    args=(lora_bsym_.output, loraB_bsym.output),
-                )
-                # print(f"lora_bsym 2: \n {lora_bsym_}")
+                    # Is there a better way?
+                    original_weight_meta = prims.linear.meta(*bsym.args[:3])
+                    original_weight = prims.linear.bind(*bsym.args[:3], output=original_weight_meta)
 
-                # new_computation_trace.bound_symbols.append(bsym.from_bsym())
+                    lora_sum_bsym = bsym.from_bsym(
+                        sym=prims.add,
+                        args=(original_weight.output, lora_bsym.output),
+                    )
+
                 new_computation_trace.bound_symbols.append(loraA_bsym)
                 new_computation_trace.bound_symbols.append(loraB_bsym)
                 new_computation_trace.bound_symbols.append(lora_bsym_)
                 new_computation_trace.bound_symbols.append(lora_bsym)
+                new_computation_trace.bound_symbols.append(original_weight)
+                new_computation_trace.bound_symbols.append(lora_sum_bsym)
             else:
                 new_computation_trace.bound_symbols.append(bsym.from_bsym())
 
-        new_computation_trace.set_provenance(thunder.core.trace.TraceProvenance("quant pass"))
+        new_computation_trace.set_provenance(thunder.core.trace.TraceProvenance("lora linear pass"))
         return prologue_trace, new_computation_trace, epilogue_trace
