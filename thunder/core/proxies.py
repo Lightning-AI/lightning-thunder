@@ -1589,9 +1589,6 @@ class TensorProxy(Proxy, TensorProxyInterface):
         unbound_tuple = self.unbind(0)
         return iter(unbound_tuple)
 
-    def __hash__(self):
-        return id(self)
-
     #
     # Default attribute
     #
@@ -1890,11 +1887,6 @@ def tensorproxy(
         torch_device = t.device
     device = devices.to_device(torch_device)
     dtype = dtypes.to_dtype(t.dtype)
-    grad = None
-    if t.grad is not None:
-        grad_pr = ProvenanceRecord(inst=PseudoInst.CONSTANT, inputs=[], value="grad")
-        t_grad_pr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[history, grad_pr])
-        grad = tensorproxy(t.grad, name=name + "_grad", history=t_grad_pr)
     # See Note [DistributedDataParallel and distparallel_type]
     distparallel_type = getattr(t, "distparallel_type", None)
     _thunder_fsdp_padding_size = getattr(t, "_thunder_fsdp_padding_size", None)

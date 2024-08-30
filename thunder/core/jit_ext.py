@@ -560,7 +560,7 @@ class GeneralJitCtx(MinimalCtx):
     def add_constraint(self, constraint):
         self._constraints.append(constraint)
 
-    def proxify(self, value: WrappedValue, grad: WrappedValue | None = None) -> Any:
+    def proxify(self, value: WrappedValue) -> Any:
         assert isinstance(value, WrappedValue)
         uvalue = value.value
         # Sequence / dict is not registered as Proxy
@@ -587,7 +587,14 @@ class GeneralJitCtx(MinimalCtx):
             else:
                 name = None
 
-            p = tensorproxy(uvalue, grad=grad, name=name, history=value.provenance)
+            grad_proxy = None
+            if uvalue.grad is not None:
+                attr_pr = ProvenanceRecord(inst=PseudoInst.CONSTANT, inputs=[], value="grad")
+                grad_pr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[value.provenance, attr_pr])
+                grad = WrappedValue(uvalue.grad, provenance=grad_pr)
+                grad_proxy = self.proxify(grad)
+
+            p = tensorproxy(uvalue, grad=grad_proxy, name=name, history=value.provenance)
 
             # TensorProxy attributes should be considered derived quantities, so we flag TensorProxies here
             value.provenance.ext_flag |= EXT_FLAG_IS_TENSOR_PROXY
@@ -1251,13 +1258,7 @@ def _general_jit_wrap_callback(value):
         value.provenance.ext_flag |= EXT_FLAG_IS_MODULE
     elif isinstance(uvalue, torch.Tensor):
         # we always want to proxy torch.Tensor, even const
-        grad_proxy = None
-        if uvalue.grad is not None:
-            attr_pr = ProvenanceRecord(inst=PseudoInst.CONSTANT, inputs=[], value="grad")
-            grad_pr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[value.provenance, attr_pr])
-            grad = WrappedValue(uvalue.grad, provenance=grad_pr)
-            grad_proxy = ctx.proxify(grad)
-        p = ctx.proxify(value, grad=grad_proxy)
+        p = ctx.proxify(value)
     elif value.provenance.inst is PseudoInst.CONSTANT:
         value.provenance.ext_flag |= EXT_FLAG_IS_PROXY_DERIVED
     elif callable(uvalue):
@@ -1651,18 +1652,12 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 assert n == "kwargs"
                 pro_kwargs_proxy = output
 
-    def get_name(x: Variable | Proxy):
-        if isinstance(x, Proxy):
-            return x.name
-        else:
-            return x.proxy.name
-
     pro_to_epi = tuple(sorted((unpack(v) for v in pro_to_epi_inps), key=lambda x: param_ordering[id(x)][1]))
     pro_to_comp = tuple(sorted((unpack(v) for v in pro_to_comp_inps), key=lambda x: param_ordering[id(x)][1]))
 
     with tracectx(prologue_trace):
         for prim, *args in ctx._constraints:
-            for i, a in enumerate(args):
+            for a in args:
                 if isinstance(a, Proxy):
                     unpack(a)
             prim(*args)
