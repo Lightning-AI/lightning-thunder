@@ -354,7 +354,7 @@ def test_lora_transform_linear():
             return x
 
     model = Model()
-    x = torch.randn(4, DIM)
+    x = torch.randn(DIM, DIM)
 
     loratransform = LORATransform(r=16, lora_alpha=32)
 

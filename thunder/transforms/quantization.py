@@ -376,16 +376,16 @@ class LORATransform(Transform):
 
         checks = get_checks(prologue_trace)
 
-        prologue_proxy_map = {
-            get_param_bsym.output.name: dict(
-                shape=self.lora_linear_states[model_weight_name]["loraA.shape"],
-                dtype=thunder.dtypes.to_dtype(self.lora_linear_states[model_weight_name]["loraA.dtype"]),
-            )
-            for model_weight_name, (check_bsym, get_param_bsym) in checks.items()
-            if model_weight_name in self.lora_linear_states
-        }
+        # prologue_proxy_map = {
+        #     get_param_bsym.output.name: dict(
+        #         shape=self.lora_linear_states[model_weight_name]["loraA.shape"],
+        #         dtype=thunder.dtypes.to_dtype(self.lora_linear_states[model_weight_name]["loraA.dtype"]),
+        #     )
+        #     for model_weight_name, (check_bsym, get_param_bsym) in checks.items()
+        #     if model_weight_name in self.lora_linear_states
+        # }
         # here we switch the prologue_trace to a copy with new metadata
-        prologue_trace = trace_with_replaced_proxy_metadata(prologue_trace, prologue_proxy_map)
+        # prologue_trace = trace_with_replaced_proxy_metadata(prologue_trace, prologue_proxy_map)
 
         checks = get_checks(prologue_trace)
         proglogue_to_compute_outputs = prologue_trace.output[0]
@@ -480,18 +480,40 @@ class LORATransform(Transform):
         for bsym in bound_symbols[idx:]:
             if bsym.sym == thunder.torch.linear:
                 n = lora_linear_proxies[bsym.args[1].name]
-                # qs = self.lora_linear_states[n]
-                new_args = (
-                    *bsym.args[0],
-                    additional_proxies[f"{n}.loraA"],
-                    additional_proxies[f"{n}.loraB"],
+
+                loraA_bsym = bsym.from_bsym(
+                    sym=thunder.torch.transpose,
+                    args=(additional_proxies[f"{n}.loraA"], 0, 1),
                 )
-                mm_bsym = bsym.from_bsym(
-                    sym=lora_linear,
-                    subsymbols=[],
-                    args=new_args,
+                # loraA_bsym = thunder.torch.transpose.bind(
+                #     additional_proxies[f"{n}.loraA"],
+                #     0,
+                #     1,
+                #     output=(bsym.output),
+                # )
+                # loraB_bsym = thunder.torch.transpose.bind(
+                #     additional_proxies[f"{n}.loraB"],
+                #     0,
+                #     1,
+                #     output=(bsym.output),
+                # )
+                loraB_bsym = bsym.from_bsym(
+                    sym=thunder.torch.transpose,
+                    args=(additional_proxies[f"{n}.loraB"], 0, 1),
                 )
-                new_computation_trace.bound_symbols.append(mm_bsym)
+                lora_bsym_ = bsym.from_bsym(sym=thunder.torch.matmul, args=(bsym.args[0], loraA_bsym.output))
+                print(f"lora_bsym : \n {lora_bsym_}")
+                lora_bsym = bsym.from_bsym(
+                    sym=thunder.torch.matmul,
+                    args=(lora_bsym_.output, loraB_bsym.output),
+                )
+                # print(f"lora_bsym 2: \n {lora_bsym_}")
+
+                # new_computation_trace.bound_symbols.append(bsym.from_bsym())
+                new_computation_trace.bound_symbols.append(loraA_bsym)
+                new_computation_trace.bound_symbols.append(loraB_bsym)
+                new_computation_trace.bound_symbols.append(lora_bsym_)
+                new_computation_trace.bound_symbols.append(lora_bsym)
             else:
                 new_computation_trace.bound_symbols.append(bsym.from_bsym())
 
