@@ -1,5 +1,5 @@
 import torch.fx
-from thunder.tests.framework import instantiate, NOTHING, DynamoThunderExecutor
+from thunder.tests.framework import instantiate, NOTHING, DynamoThunderExecutor, IS_WINDOWS
 from thunder import dtypes
 from thunder.dynamo import ThunderCompiler
 from thunder import last_traces
@@ -44,7 +44,14 @@ def test_basic(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None)
 @instantiate(
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
-    decorators=(pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),),
+    decorators=(
+        pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),
+        pytest.mark.xfail(
+            condition=IS_WINDOWS,
+            strict=True,
+            reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+        ),
+    ),
 )
 def test_basic_splitter(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
     x = torch.ones(2, 2, device=device, dtype=dtype, requires_grad=True)
@@ -52,7 +59,8 @@ def test_basic_splitter(executor, device: str, dtype: dtypes.dtype, dynamic: boo
     backend = ThunderCompiler()
 
     def func(x):
-        # torch.sinc has automatic fallback registered.
+        # torch.sinc has automatic fallback registered,
+        # so that operation will be given to inductor.
         x = x.exp()
         y = torch.sinc(x) + torch.cos(x)
         return y + 1
@@ -71,7 +79,7 @@ def test_basic_splitter(executor, device: str, dtype: dtypes.dtype, dynamic: boo
     assert len(backend.subgraph_infos[0].submodule_to_compiled_functions) > 1  # Verify that the subgraph was split.
     assert any(
         "automatic torch fallback" in split_reason.info for split_reason in backend.subgraph_infos[0].split_reasons
-    )
+    )  # Verify that we had a split because we detected an `automatic registered operator`
     targets = (node.target for node in backend.subgraph_infos[0].split_graph_module.graph.nodes)
     assert any(target.startswith("thunder_") for target in targets)  # Verify that the submodules have name `thunder_*`
 
@@ -79,7 +87,14 @@ def test_basic_splitter(executor, device: str, dtype: dtypes.dtype, dynamic: boo
 @instantiate(
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
-    decorators=(pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),),
+    decorators=(
+        pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),
+        pytest.mark.xfail(
+            condition=IS_WINDOWS,
+            strict=True,
+            reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+        ),
+    ),
 )
 def test_splitter_unsupported_ctx(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
     x = torch.rand(2, 2, device=device, dtype=dtype, requires_grad=True)
@@ -119,7 +134,14 @@ def test_splitter_unsupported_ctx(executor, device: str, dtype: dtypes.dtype, dy
 @instantiate(
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
-    decorators=(pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),),
+    decorators=(
+        pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),
+        pytest.mark.xfail(
+            condition=IS_WINDOWS,
+            strict=True,
+            reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+        ),
+    ),
 )
 def test_splitter_unsupported_ctx_with_graph_break(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
     x = torch.rand(2, 2, device=device, dtype=dtype, requires_grad=True)
