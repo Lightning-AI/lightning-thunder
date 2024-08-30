@@ -587,14 +587,7 @@ class GeneralJitCtx(MinimalCtx):
             else:
                 name = None
 
-            grad_proxy = None
-            if uvalue.grad is not None:
-                attr_pr = ProvenanceRecord(inst=PseudoInst.CONSTANT, inputs=[], value="grad")
-                grad_pr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[value.provenance, attr_pr])
-                grad = WrappedValue(uvalue.grad, provenance=grad_pr)
-                grad_proxy = self.proxify(grad)
-
-            p = tensorproxy(uvalue, grad=grad_proxy, name=name, history=value.provenance)
+            p = tensorproxy(uvalue, name=name, history=value.provenance)
 
             # TensorProxy attributes should be considered derived quantities, so we flag TensorProxies here
             value.provenance.ext_flag |= EXT_FLAG_IS_TENSOR_PROXY

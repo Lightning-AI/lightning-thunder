@@ -270,6 +270,55 @@ def test_grad_unpack(executor, device, dtype):
 
 
 @instantiate(dtypes=(thunder.float32,))
+def test_grad_no_recompile(executor, device, dtype):
+    # Checks that having .grad or not does not cause recompile
+
+    def foo(a):
+        return a * 2
+
+    cfoo = executor.make_callable(foo)
+
+    tdtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=tdtype, requires_grad=True)
+    a.grad = make_tensor((2, 2), device=device, dtype=tdtype)
+    cfoo(a)
+    assert thunder.cache_misses(cfoo) == 1
+
+    a.grad = None
+    cfoo(a)
+    assert thunder.cache_misses(cfoo) == 1
+
+    b = make_tensor((3, 3), device=device, dtype=tdtype, requires_grad=True)
+    cfoo(b)
+    assert thunder.cache_misses(cfoo) == 2
+
+    b.grad = make_tensor((3, 3), device=device, dtype=tdtype)
+    cfoo(b)
+    assert thunder.cache_misses(cfoo) == 2
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_grad_recompile(executor, device, dtype):
+    # Checks that change in the metadata of a.grad causes recompile
+
+    def foo(a):
+        return a.grad * 2
+
+    cfoo = executor.make_callable(foo)
+
+    tdtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=tdtype, requires_grad=True)
+    a.grad = make_tensor((2, 2), device=device, dtype=tdtype)
+    cfoo(a)
+    assert thunder.cache_misses(cfoo) == 1
+
+    b = make_tensor((3, 3), device=device, dtype=tdtype, requires_grad=True)
+    b.grad = make_tensor((3, 3), device=device, dtype=tdtype)
+    cfoo(b)
+    assert thunder.cache_misses(cfoo) == 2
+
+
+@instantiate(dtypes=(thunder.float32,))
 def test_optimizer_unpack(executor, device, dtype):
     class Optimizer:
         def __init__(self, params):

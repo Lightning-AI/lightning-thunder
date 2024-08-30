@@ -1875,9 +1875,7 @@ _cls_to_number_proxy_map = {
 }
 
 
-def tensorproxy(
-    t: torch.Tensor, /, *, grad: None | TensorProxy = None, name: None | str, history: None | tuple = None
-) -> TensorProxy:
+def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple = None) -> TensorProxy:
     if t.is_sparse:
         raise RuntimeError("thunder.jit not supported with sparse tensors")
 
@@ -1887,6 +1885,15 @@ def tensorproxy(
         torch_device = t.device
     device = devices.to_device(torch_device)
     dtype = dtypes.to_dtype(t.dtype)
+
+    grad = None
+    if t.grad is not None:
+        grad_pr = None
+        if history is not None:
+            attr_pr = ProvenanceRecord(inst=PseudoInst.CONSTANT, inputs=[], value="grad")
+            grad_pr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[history, attr_pr])
+        grad = tensorproxy(t.grad, name=f"{name}_grad", history=grad_pr)
+
     # See Note [DistributedDataParallel and distparallel_type]
     distparallel_type = getattr(t, "distparallel_type", None)
     _thunder_fsdp_padding_size = getattr(t, "_thunder_fsdp_padding_size", None)
