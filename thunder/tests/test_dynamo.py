@@ -72,6 +72,8 @@ def test_basic_splitter(executor, device: str, dtype: dtypes.dtype, dynamic: boo
     assert any(
         "automatic torch fallback" in split_reason.info for split_reason in backend.subgraph_infos[0].split_reasons
     )
+    targets = (node.target for node in backend.subgraph_infos[0].split_graph_module.graph.nodes)
+    assert any(target.startswith("thunder_") for target in targets)  # Verify that the submodules have name `thunder_*`
 
 
 @instantiate(
@@ -107,6 +109,11 @@ def test_splitter_unsupported_ctx(executor, device: str, dtype: dtypes.dtype, dy
         "didn't have any mapping in thunder" in split_reason.info
         for split_reason in backend.subgraph_infos[0].split_reasons
     )
+    targets = (node.target for node in backend.subgraph_infos[0].split_graph_module.graph.nodes)
+    assert any(target.startswith("thunder_") for target in targets)  # Verify that the submodules have name `thunder_*`
+    assert any(
+        target.startswith("inductor_") for target in targets
+    )  # Verify that the submodules have name `inductor_*`
 
 
 @instantiate(
