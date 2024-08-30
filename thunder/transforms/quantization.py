@@ -410,13 +410,6 @@ class LORATransform(Transform):
             if output_idx is not None:
                 with tracectx(prologue_trace):
                     # better way
-                    proxy_linear = thunder.TensorProxy(
-                        name=f"{get_param.output.name}",
-                        shape=qs["shape"],
-                        dtype=thunder.dtypes.to_dtype(qs["dtype"]),
-                        device=thunder.devices.to_device(device),
-                        requires_grad=False,
-                    )
                     proxy_loraA = thunder.TensorProxy(
                         name=f"{get_param.output.name}_loraA",
                         shape=qs["loraA.shape"],
@@ -431,19 +424,15 @@ class LORATransform(Transform):
                         device=thunder.devices.to_device(device),
                         requires_grad=requires_grad,
                     )
-                    new_bsyms.append(get_param.sym.bind(get_param.args[0], n_linear, output=proxy_linear))
                     new_bsyms.append(get_param.sym.bind(get_param.args[0], n_loraA, output=proxy_loraA))
                     new_bsyms.append(get_param.sym.bind(get_param.args[0], n_loraB, output=proxy_loraB))
 
-                    add_trace_output(prologue_trace, proxy_linear, subindex=0)
                     add_trace_output(prologue_trace, proxy_loraA, subindex=0)
                     add_trace_output(prologue_trace, proxy_loraB, subindex=0)
 
-                    new_compute_inputs.append(proxy_linear)
                     new_compute_inputs.append(proxy_loraA)
                     new_compute_inputs.append(proxy_loraB)
                     # this is not good, because we will have several traces...
-                    additional_proxies[n_linear] = proxy_linear
                     additional_proxies[n_loraA] = proxy_loraA
                     additional_proxies[n_loraB] = proxy_loraB
 
