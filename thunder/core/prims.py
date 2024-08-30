@@ -234,7 +234,6 @@ class PrimIDs(Enum):
     ZETA = auto()
     # Elementwise ternary prims
     LERP = auto()
-    # Conditional prims
     WHERE = auto()
     # Reduction prims
     AMAX = auto()
@@ -2574,10 +2573,6 @@ lerp = make_prim(
     method_name="lerp",
     meta=_lerp_meta,
 )
-
-#
-# Conditional prims
-#
 
 
 # TODO Restore Number x Number x Number support

@@ -1842,17 +1842,6 @@ def lerp(
 register_supported(PrimIDs.LERP, lerp, _elementwise_ternary_check)
 
 
-#
-# Conditional operations
-#
-
-
-# TODO Check supported dtypes
-# TODO Properly implement this check
-def _where_check(pred, a, b) -> bool:
-    return are_supported_tensors_or_numbers(pred, a, b)
-
-
 def where(
     pred: TensorProxy | Number,
     a: TensorProxy | Number,
@@ -1868,7 +1857,7 @@ def where(
     return fd.ops.where(nvpred, nva, nvb)
 
 
-register_supported(PrimIDs.WHERE, where, _where_check)
+register_supported(PrimIDs.WHERE, where, _elementwise_ternary_check)
 
 #
 # Reduction operations

@@ -2061,7 +2061,7 @@ def zeta(a, b):
 
 
 @clangop()
-def lerp(start, end, weight):
+def lerp(start: TensorLike, end: TensorLike, weight: Number | TensorLike) -> TensorLike:
     inputs = (start, end, weight)
     # torch.lerp does not promote types and only accepts floating-point inputs
     computation_dtype, result_dtype = utils.elementwise_type_promotion(
@@ -2075,11 +2075,6 @@ def lerp(start, end, weight):
     result = maybe_convert_to_dtype(result, result_dtype)
 
     return result
-
-
-#
-# Conditional operators
-#
 
 
 @clangop()

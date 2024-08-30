@@ -1033,9 +1033,11 @@ def _addcmul_transform(a: TensorLike, b: TensorLike, c: TensorLike, /, *, value:
 
 
 def _lerp_checker(start: TensorLike, end: TensorLike, weight: Number | TensorLike) -> TensorLike:
-    if not isinstance(weight, (Number, TensorLike)):
-        return False
-    return isinstance(start, TensorLike) and isinstance(end, TensorLike)
+    return (
+        isinstance(start, TensorLike)
+        and isinstance(end, TensorLike)
+        and isinstance(weight, (Number, NumberProxy, TensorLike))
+    )
 
 
 _register_implementation(ltorch.addcdiv, checker=_addcdiv_checker, execution_transform=_addcdiv_transform)
