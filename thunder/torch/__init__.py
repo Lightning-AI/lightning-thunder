@@ -1875,7 +1875,7 @@ def copysign_(a, b, /):
     return prims.copy_(copysign(a, b), a)
 
 
-@torchsymbol(torch.Tensor.copy_, is_method=True)  # , tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.Tensor.copy_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def copy_(a, b, /):
     return prims.copy_(b, a)
 
