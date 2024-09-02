@@ -34,6 +34,9 @@ def measure_fw_and_bw_memory_usage(fw_trace, bw_trace):
     return {f"fw_{k}": v for k, v in fw_results.items()} | {f"bw_{k}": v for k, v in bw_results.items()}
 
 
+# TODO: Test for nvFuserExecutor
+# nvFuserExecutor is skipped for now, because nvFuser and eager execution treat allocation and broadcast differently.
+# In the future, we need to update get_alloc_memory to support nvFuser and update tests accordingly.
 @requiresCUDA
 def test_view_ops():
     def test(func, *shapes):
