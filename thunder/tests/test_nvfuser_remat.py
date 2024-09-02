@@ -6,7 +6,7 @@ import torch
 import thunder
 from thunder import torch as ttorch
 
-from thunder.core import utils
+from thunder.core import utils, devices
 from thunder.core.rematerialization import (
     apply_rematerialization_for_consumer,
     apply_rematerialization_for_producer,
@@ -284,6 +284,60 @@ def test_find_filtered_producer_consumer_pairs_multiple_consumers(executor, devi
         producer_output_names = map(lambda x: x.name, utils.sequencify(producer.output))
         consumer_input_names = map(lambda x: x.name, consumer.args)
         assert set(producer_output_names).intersection(set(consumer_input_names))
+
+
+@instantiate(dtypes=NOTHING, executors=(nvFuserExecutor,), devicetypes=(devices.DeviceType.CUDA,))
+def test_find_fusion_producer_consumer_pairs_multiple_producers(executor, device, _):
+    from torch.nn.functional import layer_norm, linear
+
+    def func(
+        t0: "f32[2, 2, 2, 2]",
+        t1: "f32[4, 4]",
+        x: "f32[2, 2, 4]",
+        t2: "f32[4]",
+        t3: "f32[2, 4]",
+        t4: "f32[4, 2]",
+        t5: "f32[4]",
+        t6: "f32[2, 4]",
+    ):
+        y_1: "f32[2, 2, 4]" = t0.view(2, 2, 4)
+        linear_1: "f32[2, 2, 4]" = linear(y_1, t1, None)
+        x_1: "f32[2, 2, 4]" = x + linear_1
+        layer_norm_1: "f32[2, 2, 4]" = layer_norm(x_1, (4,), t2, None, 1e-05)
+        linear_2: "f32[2, 2, 2]" = linear(layer_norm_1, t3, None)
+        linear_3: "f32[2, 2, 4]" = linear(linear_2, t4, None)
+        x_2: "f32[2, 2, 4]" = x_1 + linear_3
+        layer_norm_2: "f32[2, 2, 4]" = layer_norm(x_2, (4,), t5, None, 1e-05)
+        linear_4: "f32[2, 2, 2]" = linear(layer_norm_2, t6, None)
+        split_1 = linear_4.split(4, dim=2)
+        return split_1
+
+    make = partial(make_tensor, device=device, dtype=torch.float32, requires_grad=True)
+    t0 = make((2, 2, 2, 2))
+    t1 = make((4, 4))
+    x = make(2, 2, 4)
+    t2 = make(4)
+    t3 = make((2, 4))
+    t4 = make((4, 2))
+    t5 = make(4)
+    t6 = make((2, 4))
+
+    from thunder.executors.torch_compile import torch_compile_cat_ex
+
+    try:
+        compiled_func = thunder.jit(func, executors=(torch_compile_cat_ex, thunder.nvfuser_executor))
+        _ = compiled_func(
+            t0,
+            t1,
+            x,
+            t2,
+            t3,
+            t4,
+            t5,
+            t6,
+        )
+    except Exception as e:
+        pytest.fail(f"Rematerialization fails (issue #1038): {e}")
 
 
 @instantiate(
