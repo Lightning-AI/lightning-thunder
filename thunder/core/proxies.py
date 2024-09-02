@@ -1531,6 +1531,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
             changes.get("device", self._device if like is None else None),
             changes.get("dtype", self._dtype if like is None else None),
             changes.get("requires_grad", self._requires_grad if like is None else None),
+            changes.get("grad", self._grad if like is None else None),
             changes.get("distparallel_type", self._distparallel_type if like is None else None),
             changes.get("thunder_fsdp_padding_size", self._thunder_fsdp_padding_size if like is None else None),
         )
