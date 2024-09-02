@@ -7,6 +7,7 @@ from thunder.core.symbol import BoundSymbol, Symbol
 from thunder.core.trace import TraceCtx
 from thunder.core.utils import check_type, ProxyDict
 from thunder.core.pytree import tree_iter
+from thunder.executors import pythonex
 
 # Arguments are considered independently, so we ignore all unpacking operations on them
 memory_calculate_skip_list = (PrimIDs.RETURN, PrimIDs.UNPACK_TRIVIAL, PrimIDs.UNPACK_SEQUENCE)
@@ -120,7 +121,7 @@ def del_op_memory(bsym: BoundSymbol, tensor_to_memory_data: ProxyDict, name_to_a
     return memory_size
 
 
-@register_memory_calculate_function("clear_mutable_collection")
+@register_memory_calculate_function(pythonex.clear_mutable_collection.id)
 def clear_mutable_collection_argument_memory(
     bsym: BoundSymbol, tensor_to_memory_data: ProxyDict, name_to_alloc_memory: dict[str, int], is_argument: bool
 ) -> int:
