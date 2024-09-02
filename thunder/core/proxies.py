@@ -1361,6 +1361,10 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
     def requires_grad(self):
         return self._requires_grad
 
+    @property
+    def grad(self):
+        return None  # FutureTensorProxies never require grad
+
     def __repr__(self):
         return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self.shape})>'
 
