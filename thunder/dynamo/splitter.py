@@ -141,7 +141,6 @@ def _splitter(
     # Call compile on the split region/s.
     thunder_compiled_fns = []
     submodule_to_compiled_fns = {}
-    is_split = False
     for node in split_gm.graph.nodes:
         if is_thunder_supported_partition(node):
             graph_module = getattr(split_gm, node.name)
@@ -156,7 +155,6 @@ def _splitter(
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), jit_fn)
             submodule_to_compiled_fns[graph_module] = CompiledFunction(jit_fn, CompilerType.TORCH_INDUCTOR)
-            is_split = True
         else:
             # Everything else is a glue code to call and pass outputs between the other partitions.
             pass
