@@ -2508,6 +2508,7 @@ def lerp_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
     number = partial(make_number, dtype=dtype)
     for start_shape, end_shape, weight_shape in cases:
+        # Generates two cases, one with a tensor weight using the shape from the case, one with a number weight
         yield SampleInput(make(start_shape, **kwargs), make(end_shape, **kwargs), make(weight_shape, **kwargs))
         number_weight = number(**kwargs)
         yield SampleInput(make(start_shape, **kwargs), make(end_shape, **kwargs), number_weight)
