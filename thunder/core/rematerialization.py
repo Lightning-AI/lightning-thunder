@@ -172,15 +172,42 @@ def apply_rematerialization_for_consumer(
     # Some recomputing_symbols might require producer's inputs, so we need to
     # add them to the consumer's inputs.
     # Probably find_min_cut should have returned this information.
-    all_args = tuple(
-        chain.from_iterable(
-            (x.name for x in bsym.flat_args if isinstance(x, ProxyInterface)) for bsym in new_subsymbols
-        )
-    )
+    all_args = set(chain.from_iterable((x.name for x in bsym.flat_proxy_args) for bsym in new_subsymbols))
+    all_outs = set(chain.from_iterable((x.name for x in bsym.flat_proxy_outs) for bsym in new_subsymbols))
     new_consumer_args += tuple(
-        x for x in producer.args if x.name in all_args and x.name not in (x.name for x in new_consumer_args)
+        x
+        for x in producer.args
+        if x.name in all_args and x.name not in (x.name for x in new_consumer_args) and x.name not in all_outs
     )
 
+    def sort_bsyms(bsyms, inps):
+        from collections import deque
+
+        indrg = []
+        new_bsyms = []
+        qu = deque()
+        consumers = utils.consumers(bsyms, _map_to_numbers=True)
+        inp_names = list(x.name for x in inps)
+        for bsym in bsyms:
+            indrg.append(0)
+            for varg in bsym.flat_proxy_args:
+                if not varg.name in inp_names:
+                    indrg[-1] += 1
+            if indrg[-1] == 0:
+                qu.append(len(indrg) - 1)
+        while qu:
+            idx = qu.popleft()
+            new_bsyms.append(bsyms[idx])
+            for out in bsyms[idx].flat_proxy_outs:
+                cons = consumers.get(out, [])
+                for c_idx in cons:
+                    indrg[c_idx] -= 1
+                    if indrg[c_idx] == 0:
+                        qu.append(c_idx)
+
+        return new_bsyms
+
+    new_subsymbols = sort_bsyms(list(new_subsymbols), new_consumer_args)
     proxy_order = order_proxies(new_subsymbols)
     new_consumer_args = tuple(sorted(new_consumer_args, key=lambda x: proxy_order[x.name]))
     new_consumer = replace(consumer, args=new_consumer_args, subsymbols=new_subsymbols)
