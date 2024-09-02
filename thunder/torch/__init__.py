@@ -52,6 +52,7 @@ from thunder.core.transforms import (
     _check_valid_autocast_dtype,
 )
 import thunder
+from thunder.torch.default_torch_ops import _auto_registered_operators_returning_views
 
 
 __all__ = [
@@ -5661,9 +5662,17 @@ _torch_to_thunder_complete_map = {
     **{fn: fn for fn in _torch_noinline_functions},
 }
 
-
+# records the torch symbols that may return tensor views
 # ref: https://pytorch.org/docs/stable/tensor_view.html
-_syms_returning_runtime_dependently_views: set[Symbol] = {reshape, contiguous, to, flatten}
+# NOTE Symbols that return tensor views can interfere with in-place operators
+# See :func:`thunder.core.functionalization.check_inplace_to_views` for the details.
+_syms_that_may_return_views: set[Symbol] = {
+    reshape,
+    contiguous,
+    to,
+    flatten,
+    _torch_to_thunder_function_map[torch.Tensor.reshape_as],
+}
 
 _syms_returning_views: set[Symbol] = {
     diagonal,
@@ -5687,3 +5696,6 @@ _syms_returning_views: set[Symbol] = {
     chunk,
     getitem,
 }
+
+# Add all auto-registered torch operators symbol that return tensor views to _syms_returning_views
+_syms_returning_views.update({_torch_to_thunder_function_map[x] for x in _auto_registered_operators_returning_views})
