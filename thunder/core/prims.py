@@ -1705,8 +1705,8 @@ def _put_grad_meta(grad_for: Number | NumberProxy | TensorProxy, grad: Number | 
 
     if isinstance(grad, TensorProxy):
         utils.check_type(grad_for, TensorProxy)
-        utils.check_same_shape(grad_for, grad)
-        utils.check_same_device(grad_for, grad)
+        utils.check_same_shape(grad_for, grad, allow_cpu_scalar_tensors=True)
+        utils.check_same_device(grad_for, grad, allow_cpu_scalar_tensors=True)
         utils.check_same_dtype(grad_for, grad)
     else:
         # NOTE isinstance(grad, (Number, NumberProxy)) == True in this branch
