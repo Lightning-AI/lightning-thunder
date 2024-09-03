@@ -146,13 +146,11 @@ executors = (
     torch_executor,
     torch_compile_executor,
     thunder_executor,
-    thunder_sdpa_torch_compile_nvfuser_executor,
 )
 executors_ids = (
     "torch",
     "torch.compile",
     "thunder",
-    "thunder+nvfuser+torch.compile",
 )
 
 apex_executors = (thunder_apex_executor, thunder_apex_nvfuser_executor)
