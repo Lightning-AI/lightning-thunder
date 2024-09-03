@@ -562,8 +562,10 @@ def same_shape(a: Sequence[int], b: Sequence[int], /) -> bool:
 
 
 # TODO: improve error message
-def check_same_shape(*args):
+def check_same_shape(*args, allow_cpu_scalar_tensors=False):
     shapes = tuple(x.shape for x in args if isinstance(x, TensorProxy))
+    if allow_cpu_scalar_tensors:
+        shapes = tuple(x.shape for x in args if isinstance(x, TensorProxy) and not is_cpu_scalar_tensor(x))
     if len(shapes) > 1:
         shape = shapes[0]
         for othershape in shapes[1:]:
@@ -658,6 +660,10 @@ def check_no_duplicates(dims: Sequence):
     check(len(dims) == len(set(dims)), lambda: f"Duplicate value in list of dimensions {dims}!")
 
 
+def is_cpu_scalar_tensor(a: Any) -> bool:
+    return isinstance(a, TensorProxyInterface) and a.ndim == 0 and a.device.devicetype == devices.DeviceType.CPU
+
+
 #
 # Device-related functions
 #
@@ -665,9 +671,14 @@ def check_no_duplicates(dims: Sequence):
 
 # TODO: improve device handling by canonicalizing devices and expressing them per langctx
 # TODO: should the comparison between devices be ==?
-def check_same_device(*args):
+def check_same_device(*args, allow_cpu_scalar_tensors=False):
     devices = tuple(x.device for x in args if isinstance(x, TensorProxyInterface) and x.device.type != "meta")
-
+    if allow_cpu_scalar_tensors:
+        devices = tuple(
+            x.device
+            for x in args
+            if isinstance(x, TensorProxyInterface) and x.device.type != "meta" and not is_cpu_scalar_tensor(x)
+        )
     if len(devices) > 1:
         device = devices[0]
         for otherdevice in devices[1:]:

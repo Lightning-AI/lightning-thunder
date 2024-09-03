@@ -2286,10 +2286,10 @@ def _elementwise_binary_meta_factory(
 
         # Checks same shape
         # NOTE: this doesn't verify a common shape if one or more inputs is a number
-        utils.check_same_shape(a, b)
+        utils.check_same_shape(a, b, allow_cpu_scalar_tensors=True)
 
         # Checks same device
-        utils.check_same_device(a, b)
+        utils.check_same_device(a, b, allow_cpu_scalar_tensors=True)
 
         tensor = a if isinstance(a, TensorProxy) else b
         requires_grad = (isinstance(a, TensorProxy) and a.requires_grad) or (
