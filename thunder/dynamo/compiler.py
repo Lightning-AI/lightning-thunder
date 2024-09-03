@@ -12,6 +12,14 @@ def _warn_thunder_compiler():
     )
 
 
+def recompile_graph(gm: torch.fx.GraphModule):
+    # NOTE - `gm` could also be the `_LazyGraphModule`, in which case calling `recompile` is not enough as it marks the `GraphModule`
+    # and actual recompilation happens when either `forward` or `code` (or when user tries to observe the GraphModule).
+    # See for more details - https://github.com/pytorch/pytorch/blob/39935e0fdef02c67ba808175dcc800d0695bfe1b/torch/fx/_lazy_graph_module.py#L65-L89
+    gm.recompile()
+    gm.code
+
+
 class ThunderCompiler:
     def __init__(self, **thunder_options):
         """
@@ -63,7 +71,7 @@ class ThunderCompiler:
 
         # Dynamo uses lazy generation of the underlying Python code, so we need to
         # force recompilation of the GraphModule before passing it to Thunder.
-        gm.real_recompile()
+        recompile_graph(gm)
 
         # Here in the future we could add some logic to check if the GraphModule
         # is executable by Thunder, but for now we simply compile it and return
