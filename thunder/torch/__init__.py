@@ -2236,8 +2236,13 @@ def _mask_tensor(a, mask, fill_value):
 # NOTE We have chosen not to emulate PyTorch's odd type promotion behavior for this operation
 @torchsymbol(torch.masked_fill, is_method=True)
 def masked_fill(a: TensorLike, /, mask: TensorLike, value: NumberLike | TensorLike) -> TensorLike:
-    result = where(mask, value, a)
-    return result
+    a_dtype = a.dtype
+    value_dtype = to_dtype(value, true_dtype=True)
+    if utils._elementwise_type_promotion(a_dtype, value_dtype) == value_dtype:
+        from thunder.core.dtypes import dtype_to_numbertype
+
+        value = dtype_to_numbertype(a_dtype)(value)
+    return where(mask, value, a)
 
 
 @torchsymbol(torch.Tensor.masked_fill_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
@@ -2274,7 +2279,10 @@ def tril_(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = No
 
 @torchsymbol(torch.where, is_method=True)
 def where(
-    pred: TensorLike, a: None | Number | TensorLike = None, b: None | Number | TensorLike = None, /
+    pred: TensorLike,
+    a: None | Number | TensorLike = None,
+    b: None | Number | TensorLike = None,
+    /,
 ) -> TensorLike:
     utils.check(
         isinstance(a, (Number, NumberProxy, TensorProxy)) and isinstance(b, (Number, NumberProxy, TensorProxy)),
