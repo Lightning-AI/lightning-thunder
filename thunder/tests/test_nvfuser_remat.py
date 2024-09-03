@@ -177,7 +177,8 @@ def test_apply_rematerialization_consumer(executor, device, _):
     assert new_consumer.subsymbols[2].sym.name == "exp"
     assert new_consumer.subsymbols[2].args[0].name == new_consumer.subsymbols[0].output.name
 
-    # The rest of the subsymbols should be the same as in the original consumer
+    # The subsymbols are reordered according to the topological order.
+    # The rest of the subsymbols should be the same as in the original consumer, in this case the symbols except at position 0 and 2.
     assert (new_consumer.subsymbols[1], *new_consumer.subsymbols[3:]) == tuple(consumer.subsymbols)
 
     # Test case when duplicated symbols appear in producer and consumer

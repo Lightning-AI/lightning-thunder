@@ -181,6 +181,9 @@ def apply_rematerialization_for_consumer(
         if x.name in all_args and x.name not in (x.name for x in new_consumer_args) and x.name not in all_outs
     )
 
+    # The recomputing_symbols may originate from multiple producers.
+    # Directly adding these symbols at the beginning of the consumer can disrupt the topological order of subsymbols. To ensure
+    # correct execution order, we reorder the new_subsymbols here.
     _, leaves = bsym_list_to_dag(list(new_subsymbols))
     new_subsymbols = toposort_bsym_dag(leaves, TOPOSORT_ORDER.BOTTOM_UP)
     proxy_order = order_proxies(new_subsymbols)
