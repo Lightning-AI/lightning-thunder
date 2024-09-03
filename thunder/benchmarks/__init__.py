@@ -2829,7 +2829,7 @@ class ResNet50Benchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     def __init__(
         self,
         batch_size: int,
-        input_shape: Sequence[int],
+        input_shape: tuple[int, int, int],
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.float32,
         requires_grad: bool = False,
@@ -2837,7 +2837,7 @@ class ResNet50Benchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         super().__init__()
 
         # the typical input image size of ResNet50 is (3, 224, 224)
-        self.shape: Sequence[int] = (batch_size,) + input_shape
+        self.shape: tuple[int, int, int, int] = (batch_size,) + input_shape
         self.device: str = device
         self.dtype: dtypes.dtype = dtype
         self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
