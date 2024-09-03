@@ -2,6 +2,7 @@ import math
 from dataclasses import dataclass
 from functools import partial
 import warnings
+from looseversion import LooseVersion
 
 import pytest
 import torch
@@ -25,7 +26,10 @@ import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
 # use the DynamoThunderExecutor. When there's more than one file that uses the
 # DynamoThunderExecutor, we should consider adding a separate list of executors
 # to the framework.py file.
-all_test_executors_and_dynamo = _all_test_executors() + [DynamoThunderExecutor]
+# NOTE: DynamoThunderExecutor is currently only supported for PyTorch version 2.4 or later.
+all_test_executors_and_dynamo = _all_test_executors() + (
+    [DynamoThunderExecutor] if LooseVersion(torch.__version__) > "2.4" else []
+)
 
 
 @instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)

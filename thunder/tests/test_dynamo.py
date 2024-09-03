@@ -1,11 +1,12 @@
+import pytest
+
+torch = pytest.importorskip("torch", minversion="2.4")
+
 import torch.fx
 from thunder.tests.framework import instantiate, NOTHING, DynamoThunderExecutor, IS_WINDOWS
 from thunder import dtypes
 from thunder.dynamo import ThunderCompiler
 from thunder import last_traces
-
-import torch
-import pytest
 
 
 # This will be applied to all tests in this file.
