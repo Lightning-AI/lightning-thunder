@@ -730,7 +730,8 @@ def test_interpreter_nanogpt_gpt2_fwd(benchmark, executor: Callable):
 # vision benchmarks
 #
 
-
+# Sample command to run this benchmark:
+# pytest thunder/benchmarks/targets.py -k "test_resnet50" --benchmark-group-by='param:compute_type'
 @pytest.mark.parametrize(
     "executor,",
     executors,
