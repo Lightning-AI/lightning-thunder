@@ -16,6 +16,7 @@ from thunder.core.proxies import TensorProxy, variableify, NumberProxy
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import has_tags
 from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
+from thunder.core.transforms import bsym_list_to_dag, toposort_bsym_dag, TOPOSORT_ORDER
 from thunder.core.transform_common import dce, order_proxies
 from thunder.executors.passes import update_fusion_call_ctx
 
@@ -180,38 +181,8 @@ def apply_rematerialization_for_consumer(
         if x.name in all_args and x.name not in (x.name for x in new_consumer_args) and x.name not in all_outs
     )
 
-    def sort_bsyms_by_dataflow(
-        bsyms: list[BoundSymbolInterface], inps: Sequence[ProxyInterface]
-    ) -> list[BoundSymbolInterface]:
-        from collections import deque
-
-        in_degree = []
-        new_bsyms = []
-        q = deque()
-        consumers = utils.consumers(bsyms, _map_to_numbers=True)
-        inp_names = tuple(x.name for x in inps)
-        for bsym in bsyms:
-            in_degree.append(0)
-            for arg in bsym.flat_proxy_args:
-                if not arg.name in inp_names:
-                    in_degree[-1] += 1
-            if in_degree[-1] == 0:
-                q.append(len(in_degree) - 1)
-        while q:
-            idx = q.popleft()
-            new_bsyms.append(bsyms[idx])
-            for out in bsyms[idx].flat_proxy_outs:
-                cons = consumers.get(out, [])
-                for c_idx in cons:
-                    in_degree[c_idx] -= 1
-                    if in_degree[c_idx] == 0:
-                        q.append(c_idx)
-
-        if len(new_bsyms) != len(bsyms):
-            raise RuntimeError("A cyclic dependency was detected in the list of bound symbols.")
-        return new_bsyms
-
-    new_subsymbols = sort_bsyms_by_dataflow(list(new_subsymbols), new_consumer_args)
+    _, leaves = bsym_list_to_dag(list(new_subsymbols))
+    new_subsymbols = toposort_bsym_dag(leaves, TOPOSORT_ORDER.BOTTOM_UP)
     proxy_order = order_proxies(new_subsymbols)
     new_consumer_args = tuple(sorted(new_consumer_args, key=lambda x: proxy_order[x.name]))
     new_consumer = replace(consumer, args=new_consumer_args, subsymbols=new_subsymbols)
