@@ -303,7 +303,7 @@ def compute_symbolic_shape(shape: torch.Size | Sequence[int]) -> tuple[int, ...]
     Returns:
         Tuple[int, ...]: The symbolic shape of the tensor.
     """
-    return tuple(1 if l == 1 else -1 for l in shape)
+    return tuple(-1 if isinstance(l, NumberProxy) else l for l in shape)
 
 
 def compute_contiguity(
