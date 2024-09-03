@@ -174,11 +174,11 @@ def test_apply_rematerialization_consumer(executor, device, _):
     assert new_consumer.subsymbols[0].sym.name == "exp"
     assert new_consumer.subsymbols[0].args[0].name == cut[0]
 
-    assert new_consumer.subsymbols[1].sym.name == "exp"
-    assert new_consumer.subsymbols[1].args[0].name == new_consumer.subsymbols[0].output.name
+    assert new_consumer.subsymbols[2].sym.name == "exp"
+    assert new_consumer.subsymbols[2].args[0].name == new_consumer.subsymbols[0].output.name
 
     # The rest of the subsymbols should be the same as in the original consumer
-    assert tuple(new_consumer.subsymbols[2:]) == tuple(consumer.subsymbols)
+    assert (new_consumer.subsymbols[1], *new_consumer.subsymbols[3:]) == tuple(consumer.subsymbols)
 
     # Test case when duplicated symbols appear in producer and consumer
     duplicated_sym = [sym for sym in producer.subsymbols if sym.output.name == "t3"]
