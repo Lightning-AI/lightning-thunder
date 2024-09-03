@@ -180,34 +180,38 @@ def apply_rematerialization_for_consumer(
         if x.name in all_args and x.name not in (x.name for x in new_consumer_args) and x.name not in all_outs
     )
 
-    def sort_bsyms(bsyms, inps):
+    def sort_bsyms_by_dataflow(
+        bsyms: list[BoundSymbolInterface], inps: Sequence[ProxyInterface]
+    ) -> list[BoundSymbolInterface]:
         from collections import deque
 
-        indrg = []
+        in_degree = []
         new_bsyms = []
-        qu = deque()
+        q = deque()
         consumers = utils.consumers(bsyms, _map_to_numbers=True)
-        inp_names = list(x.name for x in inps)
+        inp_names = tuple(x.name for x in inps)
         for bsym in bsyms:
-            indrg.append(0)
-            for varg in bsym.flat_proxy_args:
-                if not varg.name in inp_names:
-                    indrg[-1] += 1
-            if indrg[-1] == 0:
-                qu.append(len(indrg) - 1)
-        while qu:
-            idx = qu.popleft()
+            in_degree.append(0)
+            for arg in bsym.flat_proxy_args:
+                if not arg.name in inp_names:
+                    in_degree[-1] += 1
+            if in_degree[-1] == 0:
+                q.append(len(in_degree) - 1)
+        while q:
+            idx = q.popleft()
             new_bsyms.append(bsyms[idx])
             for out in bsyms[idx].flat_proxy_outs:
                 cons = consumers.get(out, [])
                 for c_idx in cons:
-                    indrg[c_idx] -= 1
-                    if indrg[c_idx] == 0:
-                        qu.append(c_idx)
+                    in_degree[c_idx] -= 1
+                    if in_degree[c_idx] == 0:
+                        q.append(c_idx)
 
+        if len(new_bsyms) != len(bsyms):
+            raise RuntimeError("A cyclic dependency was detected in the list of bound symbols.")
         return new_bsyms
 
-    new_subsymbols = sort_bsyms(list(new_subsymbols), new_consumer_args)
+    new_subsymbols = sort_bsyms_by_dataflow(list(new_subsymbols), new_consumer_args)
     proxy_order = order_proxies(new_subsymbols)
     new_consumer_args = tuple(sorted(new_consumer_args, key=lambda x: proxy_order[x.name]))
     new_consumer = replace(consumer, args=new_consumer_args, subsymbols=new_subsymbols)
