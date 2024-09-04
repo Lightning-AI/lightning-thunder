@@ -6,7 +6,6 @@ from thunder import last_traces
 
 import torch
 import pytest
-from unittest.mock import patch
 
 
 # This will be applied to all tests in this file.
