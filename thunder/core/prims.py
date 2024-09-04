@@ -2291,7 +2291,10 @@ def _elementwise_binary_meta_factory(
         # Checks same device
         utils.check_same_device(a, b, allow_cpu_scalar_tensors=True)
 
-        tensor = a if isinstance(a, TensorProxy) else b
+        if isinstance(a, TensorProxy) and isinstance(b, TensorProxy):
+            tensor = a if (isinstance(a, TensorProxy) and not utils.is_cpu_scalar_tensor(a)) else b
+        else:
+            tensor = a if isinstance(a, TensorProxy) else b
         requires_grad = (isinstance(a, TensorProxy) and a.requires_grad) or (
             isinstance(b, TensorProxy) and b.requires_grad
         )
