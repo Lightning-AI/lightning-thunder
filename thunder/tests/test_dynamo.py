@@ -190,3 +190,53 @@ def test_splitter_unsupported_ctx_with_graph_break(executor, device: str, dtype:
         assert any(
             "didn't have any mapping in thunder" in split_reason.info for split_reason in subgraph_info.split_reasons
         )
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=[DynamoThunderExecutor],
+    decorators=(
+        pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),
+        pytest.mark.xfail(
+            condition=IS_WINDOWS,
+            strict=True,
+            reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+        ),
+    ),
+)
+def test_splitter_autograd_function(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
+    x = torch.ones(2, device=device, dtype=dtype, requires_grad=True)
+
+    class Sin(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, x):
+            ctx.save_for_backward(x)
+            return torch.sin(x)
+
+        @staticmethod
+        def backward(ctx, g):
+            (x,) = ctx.saved_tensors
+            return g * torch.cos(x)
+
+    def func(x):
+        y = torch.cos(x) + Sin.apply(x)
+        return torch.matmul(x, y)
+
+    expected = torch.compile(func, dynamic=dynamic)(x)
+
+    backend = ThunderCompiler()
+    cfunc = torch.compile(func, backend=backend, dynamic=dynamic)
+    actual = cfunc(x)
+
+    targets = (node.target for node in backend.subgraph_infos[0].split_graph_module.graph.nodes)
+    assert any(target.startswith("thunder_") for target in targets)
+    assert any(target.startswith("inductor_") for target in targets)
+
+    # Verify forward pass
+    torch.testing.assert_close(actual, expected)
+
+    # Verify backward pass
+    g = torch.rand_like(actual)
+    actual_grad = torch.autograd.grad(actual, x, g)
+    expected_grad = torch.autograd.grad(expected, x, g)
+    torch.testing.assert_close(actual_grad, expected_grad)
