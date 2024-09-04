@@ -288,7 +288,9 @@ def create_fd(
     return fd
 
 
-def compute_symbolic_shape(proxy_shape: Sequence[int|NumberProxy], shape: torch.Size | Sequence[int]) -> tuple[int, ...]:
+def compute_symbolic_shape(
+    proxy_shape: Sequence[int | NumberProxy], shape: torch.Size | Sequence[int]
+) -> tuple[int, ...]:
     """
     Computes the symbolic shape of a tensor using nvFuser's notion of a symbolic
     shape, it's represented by 1s and -1s. 1s represent dimensions that are
@@ -341,7 +343,7 @@ def compute_contiguity(
 
 @lru_cache(maxsize=2048)
 def compute_tensor_descriptor(
-    proxy_shape: Sequence[int|NumberProxy], shape: torch.Size | Sequence[int], stride: Sequence[int]
+    proxy_shape: Sequence[int | NumberProxy], shape: torch.Size | Sequence[int], stride: Sequence[int]
 ) -> tuple[tuple[int, ...], tuple[bool, ...], tuple[int, ...]]:
     """
     Computes the symbolic shape, contiguity and stride_order of a tensor using
@@ -519,7 +521,14 @@ def create_fusion_definition_wrapper(
         # A closure over local trace and region
         return create_fd(bsyms, input_descriptors, sorted_unique_inputs, sorted_unique_outputs)
 
-    fdw = FusionDefinitionWrapper(get_fd, partial(to_descriptors, sorted_unique_inputs), name, get_fd.cache_info, get_fd.cache_clear, store_inputs=store_inputs)
+    fdw = FusionDefinitionWrapper(
+        get_fd,
+        partial(to_descriptors, sorted_unique_inputs),
+        name,
+        get_fd.cache_info,
+        get_fd.cache_clear,
+        store_inputs=store_inputs,
+    )
     return fdw
 
 
