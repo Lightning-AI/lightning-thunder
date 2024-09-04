@@ -2291,6 +2291,7 @@ def _elementwise_binary_meta_factory(
         # Checks same device
         utils.check_same_device(a, b, allow_cpu_scalar_tensors=True)
 
+        # If both inputs are tensors, choose the one that is not a CPU scalar tensor.
         if isinstance(a, TensorProxy) and isinstance(b, TensorProxy):
             tensor = a if (isinstance(a, TensorProxy) and not utils.is_cpu_scalar_tensor(a)) else b
         else:

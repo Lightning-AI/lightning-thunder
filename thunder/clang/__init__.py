@@ -1385,11 +1385,9 @@ def matrix_transpose(a: TensorProxy) -> TensorProxy:
     return transpose(a, permutation)
 
 
-from thunder.core.utils import is_cpu_scalar_tensor
-
-
 # TODO: add scalar support
 # TODO: review hasattr pattern
+# NOTE: the tensor is not broadcasted if it is a CPU scalar tensor and allow_cpu_scalar_tensors=True
 @clangop()
 def maybe_broadcast(*args, allow_cpu_scalar_tensors=False):
     """Returns tensors with the same shape, possibly broadcasting inputs to the result shape."""
@@ -1398,7 +1396,7 @@ def maybe_broadcast(*args, allow_cpu_scalar_tensors=False):
     common_shape = compute_broadcast_shape(*map(lambda t: t.shape if hasattr(t, "shape") else None, args))
 
     def _maybe_broadcast(x, shape):
-        if allow_cpu_scalar_tensors and is_cpu_scalar_tensor(x):
+        if allow_cpu_scalar_tensors and utils.is_cpu_scalar_tensor(x):
             return x
         if hasattr(x, "shape"):
             if not utils.same_shape(x.shape, common_shape):
