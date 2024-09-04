@@ -600,7 +600,7 @@ def full(
 ) -> TensorLike:
     device = to_device(maybe_get_default_device(device))
     dtype = _infer_full_dtype(fill_value, dtype)
-    return clang.full(tuple(shape), fill_value, device=device, dtype=dtype)
+    return clang.full(shape, fill_value, device=device, dtype=dtype)
 
 
 @torchsymbol(torch.full_like)
