@@ -3139,7 +3139,14 @@ def uniform_backward(primal, minval, maxval, g):
     return None, sum(g * (1 - unscaled_primal)), sum(g * unscaled_primal)
 
 
-nondifferentiable_vjp_symbols = (prims.PrimIDs.BITWISE_AND, prims.PrimIDs.SIGNBIT, prims.PrimIDs.FULL)
+nondifferentiable_vjp_symbols: set[prims.PrimIDs] = {
+    prims.PrimIDs.BITWISE_AND,
+    prims.PrimIDs.BITWISE_OR,
+    prims.PrimIDs.BITWISE_NOT,
+    prims.PrimIDs.BITWISE_XOR,
+    prims.PrimIDs.SIGNBIT,
+    prims.PrimIDs.FULL,
+}
 
 
 def is_constant_for_vjp(symbol: prims.Symbol) -> bool:
@@ -3568,8 +3575,13 @@ def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_fo
 
     cotangents = backward_trace.args[1]
     saved_tensors, saved_other = _split_saved_for_backward_into_tensors_and_other(saved_for_backward)
+
+    # When thunder.executors.torch_autograd.ThunderFunction.backward calls backward_fn, it copies
+    # collections into mutable ones, so that the tensors will be deallocated when deleted.
+    # See ThunderFunction.backward's notes for details
+    saved_tensors = list(saved_tensors)
     unpacking_trace = construct_trace(rename_proxies=False, use_dce=False)(
-        unpacking_fn, (saved_tensors, saved_other), cotangents
+        unpacking_fn, [saved_tensors, saved_other], cotangents
     )
     assert unpacking_trace.bound_symbols[-1].sym.id == prims.PrimIDs.RETURN
 
