@@ -1,7 +1,6 @@
 from typing import List, Dict, Optional, Tuple, Set
 from collections.abc import Callable
 from functools import partial
-from looseversion import LooseVersion
 
 import torch
 from torch.fx.passes.split_module import split_module
@@ -51,12 +50,6 @@ class ThunderCompiler:
         from thunder import ThunderModule, jit
 
         _warn_thunder_compiler()
-
-        if LooseVersion(torch.__version__) < LooseVersion("2.4.0"):
-            # NOTE: PyTorch 2.3 or lower has bug in `split_module` function used in splitter.
-            # See https://github.com/Lightning-AI/lightning-thunder/pull/1075#issuecomment-2324918409
-            err_msg = f"thunder.jit as torch.compile backend is only supported with PyTorch version 2.4 or later, found version {torch.__version__}"
-            raise RuntimeError(err_msg)
 
         # Thunder-compiled functions should be readily available for inspection
         # and testing, so we will store them in a list[SubgraphInfo]. The order of the
