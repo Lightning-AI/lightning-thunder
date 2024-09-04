@@ -2496,6 +2496,34 @@ addcdiv_opinfo = OpInfo(
 opinfos.append(addcdiv_opinfo)
 
 
+def lerp_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    S = 4
+    # start_shape, end_shape, weight_shape
+    cases = (
+        ((), (), ()),
+        ((S,), (S,), (S,)),
+        ((S, S), (S, S), (S, S)),
+        ((S, 1), (1, S), (S, 1)),
+    )
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    number = partial(make_number, dtype=dtype)
+    for start_shape, end_shape, weight_shape in cases:
+        # Generates two cases, one with a tensor weight using the shape from the case, one with a number weight
+        yield SampleInput(make(start_shape, **kwargs), make(end_shape, **kwargs), make(weight_shape, **kwargs))
+        number_weight = number(**kwargs)
+        yield SampleInput(make(start_shape, **kwargs), make(end_shape, **kwargs), number_weight)
+
+
+lerp_opinfo = OpInfo(
+    ltorch.lerp,
+    sample_input_generator=lerp_sample_generator,
+    torch_reference=torch.lerp,
+    dtypes=(datatypes.inexact,),
+    test_directives=(),
+)
+opinfos.append(lerp_opinfo)
+
+
 #
 # Conditional and masking operations
 #

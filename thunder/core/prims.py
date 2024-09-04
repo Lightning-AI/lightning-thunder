@@ -232,7 +232,8 @@ class PrimIDs(Enum):
     REMAINDER = auto()
     SUB = auto()
     ZETA = auto()
-    # Conditional prims
+    # Elementwise ternary prims
+    LERP = auto()
     WHERE = auto()
     # Reduction prims
     AMAX = auto()
@@ -2543,8 +2544,36 @@ zeta = _make_elementwise_binary_prim(
 )
 
 #
-# Conditional prims
+# Elementwise ternary prims
 #
+
+
+def _lerp_meta(start: TensorProxy, end: TensorProxy, weight: Number | TensorProxy, /) -> TensorProxy:
+    utils.check_type(start, TensorProxy)
+    utils.check_type(end, TensorProxy)
+    utils.check_type(weight, (TensorProxy, Number, NumberProxy))
+
+    numbertype, dtype = utils.check_same_dtype(start, end, weight)
+
+    utils.check(numbertype is None or numbertype in fp_math_dtypes, lambda: f"Unsupported number type {numbertype}")
+    utils.check(dtype is None or dtype in fp_math_dtypes, lambda: f"Unsupported input dtype {dtype}")
+
+    utils.check_same_shape(start, end, weight)
+    utils.check_same_device(start, end, weight)
+
+    requires_grad = (
+        start.requires_grad or end.requires_grad or (isinstance(weight, TensorProxy) and weight.requires_grad)
+    )
+
+    return TensorProxy(like=start, dtype=dtype, requires_grad=requires_grad)
+
+
+lerp = make_prim(
+    PrimIDs.LERP,
+    "lerp",
+    method_name="lerp",
+    meta=_lerp_meta,
+)
 
 
 # TODO Restore Number x Number x Number support

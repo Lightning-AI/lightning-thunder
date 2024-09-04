@@ -975,6 +975,7 @@ _register_elementwise_binary_implementation(ltorch.div, checker=_div_checker, ex
 
 addcdiv = _register_torch_operation("addcdiv")
 addcmul = _register_torch_operation("addcmul")
+lerp = _register_torch_operation("lerp")
 
 
 def _addcdiv_checker(a: TensorLike, b: TensorLike, c: TensorLike, /, *, value: None | Number = None) -> bool:
@@ -1031,8 +1032,17 @@ def _addcmul_transform(a: TensorLike, b: TensorLike, c: TensorLike, /, *, value:
     return addcmul(a, b, c, value=value)
 
 
+def _lerp_checker(start: TensorLike, end: TensorLike, weight: Number | TensorLike) -> TensorLike:
+    return (
+        isinstance(start, TensorLike)
+        and isinstance(end, TensorLike)
+        and isinstance(weight, (Number, NumberProxy, TensorLike))
+    )
+
+
 _register_implementation(ltorch.addcdiv, checker=_addcdiv_checker, execution_transform=_addcdiv_transform)
 _register_implementation(ltorch.addcmul, checker=_addcmul_checker, execution_transform=_addcmul_transform)
+_register_implementation(ltorch.lerp, lerp, checker=_lerp_checker)
 
 #
 # Conditional operations

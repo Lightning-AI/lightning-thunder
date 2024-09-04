@@ -1,5 +1,5 @@
 import math
-from functools import reduce
+from functools import partial, reduce
 from numbers import Number
 from typing import Union, List, Optional, Any
 from collections.abc import Callable
@@ -2056,8 +2056,25 @@ def zeta(a, b):
 
 
 #
-# Conditional operators
+# Elementwise ternary operations
 #
+
+
+@clangop()
+def lerp(start: TensorLike, end: TensorLike, weight: Number | TensorLike) -> TensorLike:
+    inputs = (start, end, weight)
+    # torch.lerp does not promote types and only accepts floating-point inputs
+    computation_dtype, result_dtype = utils.elementwise_type_promotion(
+        *inputs, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
+    )
+
+    inputs = maybe_broadcast(*inputs)
+    inputs = map(partial(maybe_convert_to_dtype, dtype=computation_dtype), inputs)
+
+    result = prims.lerp(*inputs)
+    result = maybe_convert_to_dtype(result, result_dtype)
+
+    return result
 
 
 @clangop()
