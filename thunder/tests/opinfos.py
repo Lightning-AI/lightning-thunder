@@ -5862,6 +5862,9 @@ def fixed_value_tensor_creation_op_sample_generator(op, device, dtype, requires_
         (4, 4),
         (8, 1, 6),
         (8, 7, 5, 1),
+        [
+            4,
+        ],  # Using `list[int]` should also work.
     )
 
     for shape in cases:
