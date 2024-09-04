@@ -277,7 +277,7 @@ def full(
         dtype = dtypes.numbertype_to_dtype(dtypes.to_dtype(fill_value))
     device = devices.to_device(device)
 
-    return prims.full(shape, fill_value, device=device, dtype=dtype)
+    return prims.full(tuple(shape), fill_value, device=device, dtype=dtype)
 
 
 @clangop()

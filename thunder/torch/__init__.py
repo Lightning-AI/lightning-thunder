@@ -750,7 +750,7 @@ def randn(
 
     device = to_device(maybe_get_default_device(device))
     dtype = to_dtype(maybe_get_default_dtype(dtype))
-    shape = utils.extract_shape_from_varargs(shape)
+    shape = tuple(utils.extract_shape_from_varargs(shape))
     return prims.randn(shape, device=device, dtype=dtype)
 
 

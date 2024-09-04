@@ -2645,7 +2645,9 @@ exogenous_like = make_prim(
 #   Logically these tensors are constructed intermediate to a trace, so there's no mechanism for a user to
 #   extract their grad, but we could support compiling forward and backward and accessing grad attributes
 #   in the future
-def _full_meta(shape: Sequence[int], fill_value: Number, *, device: devices.Device, dtype: dtypes.dtype) -> TensorProxy:
+def _full_meta(
+    shape: tuple[int, ...], fill_value: Number, *, device: devices.Device, dtype: dtypes.dtype
+) -> TensorProxy:
     # Checks inputs
     utils.check_type(fill_value, (Number, NumberProxy))
 
@@ -2656,6 +2658,8 @@ def _full_meta(shape: Sequence[int], fill_value: Number, *, device: devices.Devi
         lambda: f"Can't safely cast fill_value of numbertype {fill_value_dtype} to dtype {dtype}",
     )
 
+    utils.check_type(shape, tuple)
+    utils.check_valid_shape(shape)
     return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
 
 
