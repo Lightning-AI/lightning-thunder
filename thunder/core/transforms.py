@@ -140,7 +140,9 @@ def bsym_list_to_dag(
     for bsym_id, node in bsym_id_to_node_map.items():
         has_parents: bool = False
         for inp in node.bsym.flat_proxy_args:
-            producer = producers[inp]
+            producer = producers.get(inp, None)
+            if producer is None:
+                continue
             producer_node = bsym_id_to_node_map[producer]
             parent = bsym_id_to_node_map[producer]
 

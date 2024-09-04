@@ -983,6 +983,11 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
     assert top_down_reshape_bsym.sym.id == "torch.reshape"
     assert bottom_up_reshape_bsym.sym.id == "torch.reshape"
 
+    # Tests when the symbol list doesn't contain unpack operator
+    bsyms_without_unpack = trc.bound_symbols[1:]
+    roots, leaves = bsym_list_to_dag(bsyms_without_unpack)
+    assert len(leaves) == 1 and leaves[0].bsym.sym.id == prims.PrimIDs.RETURN
+
 
 # Verifies that using only some of the results of a function works as expected
 #   (the other results are dce'd)
