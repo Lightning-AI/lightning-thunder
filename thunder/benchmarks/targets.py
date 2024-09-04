@@ -23,6 +23,7 @@ from thunder.benchmarks import (
     NanoGPTCrossEntropyBenchmark,
     LitGPTGeluBenchmark,
     NanoGPTLayerNormBenchmark,
+    ResNet50Benchmark,
     thunder_apex_executor,
     thunder_apex_nvfuser_executor,
     thunder_cudnn_executor,
@@ -145,13 +146,11 @@ executors = (
     torch_executor,
     torch_compile_executor,
     thunder_executor,
-    thunder_sdpa_torch_compile_nvfuser_executor,
 )
 executors_ids = (
     "torch",
     "torch.compile",
     "thunder",
-    "thunder+nvfuser+torch.compile",
 )
 
 apex_executors = (thunder_apex_executor, thunder_apex_nvfuser_executor)
@@ -723,3 +722,27 @@ def test_interpreter_nanogpt_gpt2_fwd(benchmark, executor: Callable):
     fn = executor(bench.fn())
 
     benchmark(fn, *args, **kwargs)
+
+
+#
+# vision benchmarks
+#
+
+
+# Sample command to run this benchmark:
+# pytest thunder/benchmarks/targets.py -k "test_resnet50" --benchmark-group-by='param:compute_type'
+@pytest.mark.parametrize(
+    "executor,",
+    executors,
+    ids=executors_ids,
+)
+@parametrize_compute_type
+def test_resnet50(benchmark, executor: Callable, compute_type: ComputeType):
+    b = ResNet50Benchmark(
+        64, (3, 224, 224), device="cuda:0", dtype=torch.bfloat16, requires_grad=is_requires_grad(compute_type)
+    )
+
+    args, kwargs = b.make_batch()
+    fn = executor(b.fn())
+
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
