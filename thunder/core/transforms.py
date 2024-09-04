@@ -3139,7 +3139,14 @@ def uniform_backward(primal, minval, maxval, g):
     return None, sum(g * (1 - unscaled_primal)), sum(g * unscaled_primal)
 
 
-nondifferentiable_vjp_symbols = (prims.PrimIDs.BITWISE_AND, prims.PrimIDs.SIGNBIT, prims.PrimIDs.FULL)
+nondifferentiable_vjp_symbols: set[prims.PrimIDs] = {
+    prims.PrimIDs.BITWISE_AND,
+    prims.PrimIDs.BITWISE_OR,
+    prims.PrimIDs.BITWISE_NOT,
+    prims.PrimIDs.BITWISE_XOR,
+    prims.PrimIDs.SIGNBIT,
+    prims.PrimIDs.FULL,
+}
 
 
 def is_constant_for_vjp(symbol: prims.Symbol) -> bool:
