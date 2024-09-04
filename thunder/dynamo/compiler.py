@@ -1,4 +1,5 @@
 import torch
+from torch.fx._lazy_graph_module import _LazyGraphModule
 import warnings
 
 from thunder.core.baseutils import run_once
@@ -14,10 +15,11 @@ def _warn_thunder_compiler():
 
 def recompile_graph(gm: torch.fx.GraphModule):
     # NOTE - `gm` could also be the `_LazyGraphModule`, in which case calling `recompile` is not enough as it marks the `GraphModule`
-    # and actual recompilation happens when either `forward` or `code` (or when user tries to observe the GraphModule).
+    # and actual recompilation happens when `real_recompile` is called or either `forward` or `code` (or when user tries to observe the GraphModule).
     # See for more details - https://github.com/pytorch/pytorch/blob/39935e0fdef02c67ba808175dcc800d0695bfe1b/torch/fx/_lazy_graph_module.py#L65-L89
-    gm.recompile()
-    gm.code
+    if isinstance(gm, torch.fx._lazy_graph_module._LazyGraphModule):
+        return gm.real_recompile()
+    return gm.recompile()
 
 
 class ThunderCompiler:

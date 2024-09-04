@@ -62,7 +62,7 @@ def test_basic(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None)
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
 )
-def test_recompile(executor, device: str, dtype: dtypes.dtype):
+def test_force_skip_lazy_graph_module(executor, device: str, dtype: dtypes.dtype):
     with torch.fx._lazy_graph_module._force_skip_lazy_graph_module():
         backend = ThunderCompiler()
         x = torch.ones(2, dtype=dtype, device=device, requires_grad=True)
