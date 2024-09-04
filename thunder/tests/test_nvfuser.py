@@ -207,7 +207,7 @@ def test_redundant_cast_nvfusion(executor, device: str, dtype: dtypes.dtype):
     assert len(fusions[0].subsymbols) == 3
 
     # Verifies the intermediate consumer
-    assert fusions[1].subsymbols[-1].args[0].name == "t5"
+    assert fusions[1].subsymbols[-2].args[0].name == "t5"
 
 
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
