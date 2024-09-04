@@ -8,7 +8,6 @@ import os
 import time
 from copy import copy
 from itertools import chain, filterfalse
-from functools import partial
 import warnings
 
 from looseversion import LooseVersion
@@ -289,11 +288,11 @@ def create_fd(
     return fd
 
 
-def compute_symbolic_shape(shape: torch.Size | Sequence[int]) -> tuple[int, ...]:
+def compute_symbolic_shape(proxy_shape: Sequence[int|NumberProxy], shape: torch.Size | Sequence[int]) -> tuple[int, ...]:
     """
     Computes the symbolic shape of a tensor using nvFuser's notion of a symbolic
     shape, it's represented by 1s and -1s. 1s represent dimensions that are
-    known to be 1, and -1s represent dimensions that are not known to be 1.
+    known to be 1, and -1s represent dimensions that are known to be dynamic.
 
     For example, the symbolic shape of a tensor with shape (1, 2, 3) is (1, -1, -1).
 
@@ -303,7 +302,9 @@ def compute_symbolic_shape(shape: torch.Size | Sequence[int]) -> tuple[int, ...]
     Returns:
         Tuple[int, ...]: The symbolic shape of the tensor.
     """
-    return tuple(-1 if isinstance(l, NumberProxy) else l for l in shape)
+
+    # TODO: what's the expected behavior for the cache? if we see conflicting proxy_shape and shape, should we raise exception or quietly re-compile?
+    return tuple(1 if l == 1 else -1 if isinstance(p_l, NumberProxy) else l for p_l, l in zip(proxy_shape, shape))
 
 
 def compute_contiguity(
@@ -340,7 +341,7 @@ def compute_contiguity(
 
 @lru_cache(maxsize=2048)
 def compute_tensor_descriptor(
-    shape: torch.Size | Sequence[int], stride: Sequence[int]
+    proxy_shape: Sequence[int|NumberProxy], shape: torch.Size | Sequence[int], stride: Sequence[int]
 ) -> tuple[tuple[int, ...], tuple[bool, ...], tuple[int, ...]]:
     """
     Computes the symbolic shape, contiguity and stride_order of a tensor using
@@ -358,16 +359,16 @@ def compute_tensor_descriptor(
         Tuple[Tuple[int, ...], Tuple[bool, ...], Tuple[int, ...]]: The symbolic
         shape, contiguity and stride_order of the tensor.
     """
-    return compute_symbolic_shape(shape), *compute_contiguity(shape, stride)
+    return compute_symbolic_shape(proxy_shape, shape), *compute_contiguity(shape, stride)
 
 
-def get_tensor_descriptor(t: torch.Tensor) -> tuple[tuple[int, ...], tuple[bool, ...], tuple[int, ...]]:
-    return compute_tensor_descriptor(t.shape, t.stride())
+def get_tensor_descriptor(p: TensorProxy, t: torch.Tensor) -> tuple[tuple[int, ...], tuple[bool, ...], tuple[int, ...]]:
+    return compute_tensor_descriptor(p.shape, t.shape, t.stride())
 
 
 # TODO Inline the get_tensor_descriptor call
-def to_descriptors(args) -> tuple:
-    def to_descriptor(arg):
+def to_descriptors(proxy_args, args) -> tuple:
+    def to_descriptor(proxy_arg, arg):
         if isinstance(arg, Number):
             return type(arg)
         elif isinstance(arg, tuple):
@@ -380,11 +381,11 @@ def to_descriptors(args) -> tuple:
                 )
             return type(arg)
         elif isinstance(arg, torch.Tensor):
-            return (*get_tensor_descriptor(arg), arg.dtype)
+            return (*get_tensor_descriptor(proxy_arg, arg), arg.dtype)
 
         raise ValueError(f"unrecognized type in arguments: {type(arg)}")
 
-    return tuple(to_descriptor(arg) for arg in args)
+    return tuple(to_descriptor(proxy_arg, arg) for proxy_arg, arg in zip(proxy_args, args))
 
 
 # TODO Consider making this just a function, because it's faster to call a function than a callable class
@@ -395,6 +396,7 @@ class FusionDefinitionWrapper:
     """
 
     get_fd: Callable[[tuple[type | tuple[tuple[int, ...], tuple[bool, ...], tuple[int, ...]], ...]], FusionDefinition]
+    to_descriptors: Callable
     name: str
     cache_info: None | Callable = None
     cache_clear: None | Callable = None
@@ -403,7 +405,7 @@ class FusionDefinitionWrapper:
     store_inputs: bool = False
 
     def __call__(self, *args):
-        fd = self.get_fd(to_descriptors(args))
+        fd = self.get_fd(self.to_descriptors(args))
         self.last_used = fd
 
         if self.store_inputs:
@@ -517,7 +519,7 @@ def create_fusion_definition_wrapper(
         # A closure over local trace and region
         return create_fd(bsyms, input_descriptors, sorted_unique_inputs, sorted_unique_outputs)
 
-    fdw = FusionDefinitionWrapper(get_fd, name, get_fd.cache_info, get_fd.cache_clear, store_inputs=store_inputs)
+    fdw = FusionDefinitionWrapper(get_fd, partial(to_descriptors, sorted_unique_inputs), name, get_fd.cache_info, get_fd.cache_clear, store_inputs=store_inputs)
     return fdw
 
 
