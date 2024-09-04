@@ -293,16 +293,23 @@ def compute_symbolic_shape(
 ) -> tuple[int, ...]:
     """
     Computes the symbolic shape of a tensor using nvFuser's notion of a symbolic
-    shape, it's represented by 1s and -1s. 1s represent dimensions that are
-    known to be 1, and -1s represent dimensions that are known to be dynamic.
+    shape:
+        -1s represent symbolic shape in nvfuser;
+        1s represent broadcast dimensions;
+        other value represent static shapes in program.
 
-    For example, the symbolic shape of a tensor with shape (1, 2, 3) is (1, -1, -1).
+    Since nvfuser specializes on size-1 dimension for broadcast, we cannot allow all dimension to be dynamic. This function looks at TensorProxy.shape as well as Tensor.shape, and it tries to translate that for nvfuser's FusionDefinition:
+    1. if the Tensor.shape entry has value `1`, we translate it as a constant `1`;
+    2. else:
+       2.1 if the corresponding proxy_shape entry is a NumberProxy, we mark the dimension as dynamic `-1`, 
+       2.2. otherwise, Tensor.shape is translated as a static shape.
 
     Args:
+        proxy_shape (Sequence[int | NumberProxy]]): The shape property of the TensorProxy.
         shape (Union[torch.Size, Sequence[int]]): The shape of the tensor.
 
     Returns:
-        Tuple[int, ...]: The symbolic shape of the tensor.
+        Tuple[int, ...]: The shape of the tensor for FusionDefinition.
     """
 
     # TODO: what's the expected behavior for the cache? if we see conflicting proxy_shape and shape, should we raise exception or quietly re-compile?
