@@ -298,21 +298,28 @@ def compute_symbolic_shape(
         1s represent broadcast dimensions;
         other value represent static shapes in program.
 
-    Since nvfuser specializes on size-1 dimension for broadcast, we cannot allow all dimension to be dynamic. This function looks at TensorProxy.shape as well as Tensor.shape, and it tries to translate that for nvfuser's FusionDefinition:
-    1. if the Tensor.shape entry has value `1`, we translate it as a constant `1`;
-    2. else:
-       2.1 if the corresponding proxy_shape entry is a NumberProxy, we mark the dimension as dynamic `-1`,
-       2.2. otherwise, Tensor.shape is translated as a static shape.
+    Since nvfuser specializes on size-1 dimension for broadcast, we cannot allow
+    all dimension to be dynamic. This function looks at TensorProxy.shape as
+    well as Tensor.shape, and it tries to translate that for nvfuser's
+    FusionDefinition:
+        1. if the Tensor.shape entry has value `1`, we translate it as a
+           constant `1`;
+        2. else:
+           2.1 if the corresponding proxy_shape entry is a NumberProxy, we mark
+               the dimension as dynamic `-1`,
+           2.2. otherwise, Tensor.shape is translated as a static shape.
 
     Args:
-        proxy_shape (Sequence[int | NumberProxy]]): The shape property of the TensorProxy.
+        proxy_shape (Sequence[int | NumberProxy]]): The shape property of the
+        TensorProxy.
         shape (Union[torch.Size, Sequence[int]]): The shape of the tensor.
 
     Returns:
         Tuple[int, ...]: The shape of the tensor for FusionDefinition.
     """
 
-    # TODO: what's the expected behavior for the cache? if we see conflicting proxy_shape and shape, should we raise exception or quietly re-compile?
+    # TODO: what's the expected behavior for the cache?
+    # if we see conflicting proxy_shape and shape, should we raise exception or quietly re-compile?
     return tuple(1 if l == 1 else -1 if isinstance(p_l, NumberProxy) else l for p_l, l in zip(proxy_shape, shape))
 
 
