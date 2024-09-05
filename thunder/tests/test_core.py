@@ -320,7 +320,7 @@ def test_grad_recompile(executor, device, dtype):
 
 @instantiate(dtypes=(thunder.float32,))
 def test_optimizer_unpack(executor, device, dtype):
-    class Optimizer:
+    class Optimizer(torch.optim.Optimizer):
         def __init__(self, params):
             self.param_groups = [{"params": params}]
 
