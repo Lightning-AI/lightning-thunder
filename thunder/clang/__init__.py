@@ -1387,16 +1387,16 @@ def matrix_transpose(a: TensorProxy) -> TensorProxy:
 
 # TODO: add scalar support
 # TODO: review hasattr pattern
-# NOTE: the tensor is not broadcasted if it is a CPU scalar tensor and allow_cpu_scalar_tensors=True
+# NOTE: the tensor is not broadcasted if it is a CPU scalar tensor and treat_cpu_scalar_tensors_as_numbers=True
 @clangop()
-def maybe_broadcast(*args, allow_cpu_scalar_tensors=False):
+def maybe_broadcast(*args, treat_cpu_scalar_tensors_as_numbers=False):
     """Returns tensors with the same shape, possibly broadcasting inputs to the result shape."""
 
     # Computes common shape
     common_shape = compute_broadcast_shape(*map(lambda t: t.shape if hasattr(t, "shape") else None, args))
 
     def _maybe_broadcast(x, shape):
-        if allow_cpu_scalar_tensors and utils.is_cpu_scalar_tensor(x):
+        if treat_cpu_scalar_tensors_as_numbers and utils.is_cpu_scalar_tensor(x):
             return x
         if hasattr(x, "shape"):
             if not utils.same_shape(x.shape, common_shape):
@@ -1789,7 +1789,7 @@ def real(a: TensorProxy | Number):
 def _elementwise_binary_wrapper(a, b, *, prim, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT):
     computation_dtype, result_dtype = utils.elementwise_type_promotion(a, b, type_promotion_kind=type_promotion_kind)
 
-    a, b = maybe_broadcast(a, b, allow_cpu_scalar_tensors=True)
+    a, b = maybe_broadcast(a, b, treat_cpu_scalar_tensors_as_numbers=True)
     a, b = maybe_convert_to_dtype(a, computation_dtype), maybe_convert_to_dtype(b, computation_dtype)
 
     result = prim(a, b)

@@ -1705,8 +1705,8 @@ def _put_grad_meta(grad_for: Number | NumberProxy | TensorProxy, grad: Number | 
 
     if isinstance(grad, TensorProxy):
         utils.check_type(grad_for, TensorProxy)
-        utils.check_same_shape(grad_for, grad, allow_cpu_scalar_tensors=True)
-        utils.check_same_device(grad_for, grad, allow_cpu_scalar_tensors=True)
+        utils.check_same_shape(grad_for, grad)
+        utils.check_same_device(grad_for, grad)
         utils.check_same_dtype(grad_for, grad)
     else:
         # NOTE isinstance(grad, (Number, NumberProxy)) == True in this branch
@@ -2286,10 +2286,10 @@ def _elementwise_binary_meta_factory(
 
         # Checks same shape
         # NOTE: this doesn't verify a common shape if one or more inputs is a number
-        utils.check_same_shape(a, b, allow_cpu_scalar_tensors=True)
+        utils.check_same_shape(a, b)
 
         # Checks same device
-        utils.check_same_device(a, b, allow_cpu_scalar_tensors=True)
+        utils.check_same_device(a, b)
 
         # If both inputs are tensors, choose the one that is not a CPU scalar tensor.
         if isinstance(a, TensorProxy) and isinstance(b, TensorProxy):

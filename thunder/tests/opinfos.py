@@ -1829,6 +1829,16 @@ def elementwise_binary_prims_generator(op, device, dtype, requires_grad, **kwarg
 
     yield SampleInput(a, b)
 
+    a = make_tensor((4, 4), device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
+    b = make_tensor((), device="cpu", dtype=dtype, requires_grad=requires_grad, **kwargs)
+
+    yield SampleInput(a, b)
+
+    a = make_tensor((), device="cpu", dtype=dtype, requires_grad=requires_grad, **kwargs)
+    b = make_tensor((4, 4), device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
+
+    yield SampleInput(a, b)
+
 
 # TODO Extend this generator
 def elementwise_binary_generator(op, device, dtype, requires_grad, *, no_rhs_numbers: bool = False, **kwargs):
