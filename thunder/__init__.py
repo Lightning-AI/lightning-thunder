@@ -370,11 +370,15 @@ def jit(
         tensor_group_index_to_tensor_indices = defaultdict(list)
         for idx, t in enumerate(flat_args):
             if pytorch.is_tensor(t) and t.layout == pytorch.strided:
-                data_ptr = t.untyped_storage().data_ptr()
-                if data_ptr not in data_ptr_to_tensor_group_index:
-                    data_ptr_to_tensor_group_index[data_ptr] = len(data_ptr_to_tensor_group_index)
-                tgi = data_ptr_to_tensor_group_index[data_ptr]
-                tensor_group_index_to_tensor_indices[tgi].append(idx)
+                try:
+                    data_ptr = t.untyped_storage().data_ptr()
+                except RuntimeError:
+                    pass
+                else:
+                    if data_ptr not in data_ptr_to_tensor_group_index:
+                        data_ptr_to_tensor_group_index[data_ptr] = len(data_ptr_to_tensor_group_index)
+                    tgi = data_ptr_to_tensor_group_index[data_ptr]
+                    tensor_group_index_to_tensor_indices[tgi].append(idx)
         return tensor_group_index_to_tensor_indices
 
     def _alias_tensor_of_args_kwargs(*args, **kwargs) -> str:
