@@ -5466,8 +5466,8 @@ def register_default_torch_op(torchfn: Callable, torch_module):
 
     op = ex.register_operator(torchfn_name, module=torch_module, meta=fn_meta)
     ex.register_implementation(sym, op, checker=_always_executable)
-    if getattr(sys.modules['thunder.torch'], torchfn_name, None) is None:
-        object.__setattr__(sys.modules['thunder.torch'], torchfn_name, sym)
+    if getattr(sys.modules["thunder.torch"], torchfn_name, None) is None:
+        object.__setattr__(sys.modules["thunder.torch"], torchfn_name, sym)
 
     from thunder.core.transforms import augmented_forward_impls, backward_impls
 
