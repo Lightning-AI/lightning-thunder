@@ -763,6 +763,61 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     return custom_forward_result
 
 
+# ref: https://github.com/pytorch/pytorch/blob/b99ef1a/torch/_functorch/autograd_function.py#L715-L752
+@register_general_jit_lookaside(torch.ops.higher_order.autograd_function_apply)
+def _general_jit_torch_ops_autograd_function_apply_lookaside(fwd, bwd, *fwd_args, **fwd_kwargs):
+
+    def _generate_random_str_id() -> str:
+        import secrets
+        import string
+
+        length = 5
+        return "".join(secrets.choice(string.ascii_lowercase) for _ in range(length))
+
+    jit_ctx: GeneralJitCtx = get_general_jit_ctx()
+    start_idx_of_bsym = len(jit_ctx.computation_trace.bound_symbols)
+
+    args_tensor_mask = unwrap(fwd_kwargs["args_tensor_mask"])
+    non_differentiable_idx = fwd_kwargs.get("non_differentiable_idx")
+    length_of_tensor_args = sum(args_tensor_mask)
+    # Filter out the original tensor args from fwd_args,
+    # lifted freevars should not be args of ApplyTemplate.apply
+    # since we don't need to calculate the gradients of them.
+    new_fwd_args = (wrap_const(None),) + fwd_args[:length_of_tensor_args]
+
+    result = _interpret_call(fwd, *new_fwd_args)
+    output, saved_values = unwrap(result)
+    wrapped_output = wrap(output, provenance=result.provenance)
+
+    bsyms_of_fwd = jit_ctx.computation_trace.bound_symbols[start_idx_of_bsym:]
+
+    sym_id = _generate_random_str_id()
+    sym = Symbol(
+        name=f"autograd_function_apply_{sym_id}",
+        id=sym_id,
+        _module=bsyms_of_fwd[-1].sym.module,
+    )
+    bsym_of_custom_autograd_func = BoundSymbol(
+        sym,
+        args=bsyms_of_fwd[0].args,
+        kwargs=bsyms_of_fwd[0].kwargs,
+        output=output,
+        subsymbols=bsyms_of_fwd,
+        header=f"output of fwd_body: {output}, saved_values from fwd_body: {saved_values}",
+        source_filename=jit_ctx.computation_trace._current_source_filename,
+        source_positions=None,
+        _call_ctx=bsyms_of_fwd[0]._call_ctx,
+        _import_ctx=bsyms_of_fwd[0]._import_ctx,
+        _object_ctx=bsyms_of_fwd[0]._object_ctx,
+        _executor=bsyms_of_fwd[0]._executor,
+    )
+
+    jit_ctx.computation_trace.bound_symbols = jit_ctx.computation_trace.bound_symbols[:start_idx_of_bsym] + [
+        bsym_of_custom_autograd_func
+    ]
+    return wrapped_output
+
+
 @register_general_jit_lookaside(torch.finfo)
 @interpreter_needs_wrap
 def _general_jit_torch_finfo_lookaside(dtype: thunder.dtypes.dtype):
