@@ -36,7 +36,7 @@ import thunder.core.devices as devices
 from thunder.core.transform_common import (
     dce,
     Transform,
-    wrap_return_value_along_with_argments,
+    wrap_return_value_together_with_argments,
 )
 from thunder.core.functionalization import (
     check_inplace_to_views,
@@ -546,7 +546,7 @@ def jit(
             prologue_traces = [prologue_trc]
             computation_traces = [computation_trc]
 
-            computation_trc = wrap_return_value_along_with_argments(computation_trc)
+            computation_trc = wrap_return_value_together_with_argments(computation_trc)
             computation_traces.append(computation_trc)
 
             orig_to_view_swap_map = check_inplace_to_views(computation_trc)

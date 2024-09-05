@@ -436,7 +436,7 @@ def canonicalize_proxies(bsyms: Sequence[BoundSymbol]) -> Sequence[BoundSymbol]:
     return output
 
 
-def wrap_return_value_along_with_argments(trace: Trace) -> Trace:
+def wrap_return_value_together_with_argments(trace: Trace) -> Trace:
     last = trace.bound_symbols[-1]
     assert last.sym.id == prims.PrimIDs.RETURN
     flat_args, _ = tree_flatten((trace.args, trace.kwargs))

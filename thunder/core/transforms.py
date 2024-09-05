@@ -56,7 +56,7 @@ from thunder.clang import (
     reciprocal,
     convolution,
 )
-from thunder.core.transform_common import dce, Transform, wrap_return_value_along_with_argments, unwrap_return_value
+from thunder.core.transform_common import dce, Transform, wrap_return_value_together_with_argments, unwrap_return_value
 from thunder.core.vjp_utils import make_aug_forward_and_backward
 from thunder.extend import Executor
 import thunder.torch as ltorch
@@ -1426,7 +1426,7 @@ def grad(
                 grad(python_callable), *computation_trc.args, **computation_trc.kwargs
             )
 
-            gradtrc = wrap_return_value_along_with_argments(gradtrc)
+            gradtrc = wrap_return_value_together_with_argments(gradtrc)
             gradtrc = dce(gradtrc)
             return prologue_trc, gradtrc, epilogue_trc
 
@@ -3696,7 +3696,7 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
                 flat_output = forward_trace.output[0]["flat_output"]
                 cotangents = utils.sequencify(tree_map(lambda v: ones_like(v), flat_output))
             else:
-                cotangents = utils.sequencify(tree_map(lambda v: ones_like(v), trace.output))
+                cotangents = utils.sequencify(tree_map(lambda v: ones_like(v), trace.output["output"]))
     finally:
         reset_tracectx(tracectx_token)
 
