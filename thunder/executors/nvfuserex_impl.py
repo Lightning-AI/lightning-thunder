@@ -317,10 +317,26 @@ def compute_symbolic_shape(
     Returns:
         Tuple[int, ...]: The shape of the tensor for FusionDefinition.
     """
+    nvf_shape = []
+    for p_l, l in zip(proxy_shape, shape):
+        # loudly raise exception when runtime shape violates proxy_shape in the
+        # trace, which indicates issues with the cache. This isn't necessarily
+        # an exception. 
+        check(
+            isinstance(p_l, NumberProxy) or p_l == l,
+            lambda: f"inconsistent fusion definition with runtime shape {shape} and trace shape {proxy_shape}",
+            exception_type=AssertionError,
+        )
 
-    # TODO: what's the expected behavior for the cache?
-    # if we see conflicting proxy_shape and shape, should we raise exception or quietly re-compile?
-    return tuple(1 if l == 1 else -1 if isinstance(p_l, NumberProxy) else l for p_l, l in zip(proxy_shape, shape))
+        # broadcast is specialized in FusionDefinition, preserve it for correct broadcast semantics
+        if l == 1:
+            nvf_shape.append(l)
+        elif isinstance(p_l, NumberProxy):
+            nvf_shape.append(-1)
+        else:
+            nvf_shape.append(l)
+
+    return tuple(nvf_shape)
 
 
 def compute_contiguity(
