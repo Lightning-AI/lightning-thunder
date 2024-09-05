@@ -18,11 +18,13 @@ from thunder.benchmarks import (
     LitGPTBenchmark,
     LitGPTCausalSelfAttentionBenchmark,
     LitGPTSDPABenchmark,
+    LitGPTSwigluBenchmark,
     LlamaMLPBenchmark,
     NanoGPTBenchmark,
     NanoGPTCrossEntropyBenchmark,
     LitGPTGeluBenchmark,
     NanoGPTLayerNormBenchmark,
+    ResNet50Benchmark,
     thunder_apex_executor,
     thunder_apex_nvfuser_executor,
     thunder_cudnn_executor,
@@ -38,7 +40,7 @@ from thunder.core.interpreter import interpret
 from thunder.tests.litgpt_model import Config as LitGPTConfig
 from thunder.tests.make_tensor import make_tensor
 
-
+LIGER_FUSED_SWIGLU_AVAILABLE: bool = package_available("liger_kernel.ops.swiglu")
 APEX_FUSED_ROPE_AVAILABLE: bool = package_available("fused_rotary_positional_embedding")
 IMPORTANT_CONFIGS = [
     "Llama-2-13b-hf",
@@ -145,13 +147,11 @@ executors = (
     torch_executor,
     torch_compile_executor,
     thunder_executor,
-    thunder_sdpa_torch_compile_nvfuser_executor,
 )
 executors_ids = (
     "torch",
     "torch.compile",
     "thunder",
-    "thunder+nvfuser+torch.compile",
 )
 
 apex_executors = (thunder_apex_executor, thunder_apex_nvfuser_executor)
@@ -230,6 +230,68 @@ def test_litgpt_gelu(benchmark, executor: Callable, bs: int, compute_type: Compu
 
     args, kwargs = gelu_bench.make_batch()
     fn = executor(gelu_bench.fn())
+
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
+
+
+# There are many configurations but only the following parameters affect the swiglu benchmark:
+# - intermediate_size
+# - block_size
+# Let's select only the configurations that differ in these parameters
+def get_configs_for_swiglu():
+    return get_unique_configs(("intermediate_size", "block_size"))
+
+
+swiglu_executors = (
+    (torch_executor, False),
+    (torch_compile_executor, False),
+    (thunder_executor, False),
+    (torch_executor, True),
+    (torch_compile_executor, True),
+)
+swiglu_executors_ids = (
+    "torch",
+    "torch.compile",
+    "thunder",
+    "torch+liger",
+    "torch.compile+liger",
+)
+
+
+# Sample command to run this benchmark:
+# pytest thunder/benchmarks/targets.py -k "test_litgpt_swiglu" --benchmark-group-by='param:config,param:bs,param:compute_type'
+@pytest.mark.parametrize(
+    "executor,use_liger,",
+    swiglu_executors,
+    ids=swiglu_executors_ids,
+)
+# bs = batch size
+# It's typically small for LLMs
+@pytest.mark.parametrize(
+    "bs,",
+    (2**i for i in range(0, 2)),
+    ids=(f"bs{2**i}" for i in range(0, 2)),
+)
+@parametrize_compute_type
+@pytest.mark.parametrize(
+    "config,",
+    get_configs_for_swiglu(),
+)
+def test_litgpt_swiglu(benchmark, executor: Callable, use_liger: bool, bs: int, compute_type: ComputeType, config: str):
+    if use_liger and not LIGER_FUSED_SWIGLU_AVAILABLE:
+        pytest.skip("Liger fused swiglu is unavailable")
+
+    bench: Benchmark = LitGPTSwigluBenchmark(
+        config=config,
+        batchdims=(bs,),
+        device="cuda:0",
+        dtype=thunder.bfloat16,
+        requires_grad=is_requires_grad(compute_type),
+        use_liger=use_liger,
+    )
+
+    args, kwargs = bench.make_batch()
+    fn = executor(bench.fn())
 
     benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
@@ -723,3 +785,27 @@ def test_interpreter_nanogpt_gpt2_fwd(benchmark, executor: Callable):
     fn = executor(bench.fn())
 
     benchmark(fn, *args, **kwargs)
+
+
+#
+# vision benchmarks
+#
+
+
+# Sample command to run this benchmark:
+# pytest thunder/benchmarks/targets.py -k "test_resnet50" --benchmark-group-by='param:compute_type'
+@pytest.mark.parametrize(
+    "executor,",
+    executors,
+    ids=executors_ids,
+)
+@parametrize_compute_type
+def test_resnet50(benchmark, executor: Callable, compute_type: ComputeType):
+    b = ResNet50Benchmark(
+        64, (3, 224, 224), device="cuda:0", dtype=torch.bfloat16, requires_grad=is_requires_grad(compute_type)
+    )
+
+    args, kwargs = b.make_batch()
+    fn = executor(b.fn())
+
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)

@@ -1,3 +1,4 @@
+from __future__ import annotations
 from collections import namedtuple
 from contextlib import nullcontext, contextmanager
 from dataclasses import dataclass, replace
@@ -6,22 +7,17 @@ from itertools import chain, compress
 from functools import lru_cache, partial, wraps
 import math
 from numbers import Number
-from typing import Any, Dict, Union, Optional
-from types import NoneType
+from typing import Any, TYPE_CHECKING
 from collections.abc import Callable
-from collections.abc import Hashable
 from collections.abc import Sequence
 import copy
 import inspect
 import time
-from collections import deque
-import os
 import dataclasses
 
 import thunder
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
-import thunder.core.devices as devices
 from thunder.core.devices import cpu, Device
 from thunder.core.proxies import (
     NumberProxy,
@@ -29,18 +25,15 @@ from thunder.core.proxies import (
     TensorProxy,
     FloatProxy,
     variableify,
-    unvariableify,
-    CollectionProxy,
     FutureTensorProxy,
 )
-from thunder.core.baseutils import default_dataclass_params
 from thunder.core.compile_data import get_compile_data
 from thunder.core.langctxs import langctx, Languages
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten, tree_flatten_with_dataclass
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol
-from thunder.core.trace import TraceCtx as Trace, tracectx
+from thunder.core.trace import TraceCtx as Trace
 from thunder.core.trace import VariableInterface as Variable
-from thunder.core.trace import detached_trace, get_tracectx, set_tracectx, reset_tracectx, from_trace, TraceProvenance
+from thunder.core.trace import detached_trace, set_tracectx, reset_tracectx, from_trace, TraceProvenance
 from thunder.core.utils import (
     check,
     flatten_func,
@@ -69,7 +62,8 @@ from thunder.extend import Executor
 import thunder.torch as ltorch
 
 import torch
-from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
+
+# from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
 import numpy as np
 
 
@@ -146,7 +140,9 @@ def bsym_list_to_dag(
     for bsym_id, node in bsym_id_to_node_map.items():
         has_parents: bool = False
         for inp in node.bsym.flat_proxy_args:
-            producer = producers[inp]
+            producer = producers.get(inp, None)
+            if producer is None:
+                continue
             producer_node = bsym_id_to_node_map[producer]
             parent = bsym_id_to_node_map[producer]
 
@@ -3072,6 +3068,39 @@ def index_put_aug_fwd(
     return VJPDual(primal, residuals)
 
 
+if torch.distributed.is_available():
+    from torch.distributed import ReduceOp
+    from torch.distributed import distributed_c10d as c10d
+    from torch._C._distributed_c10d import _resolve_process_group
+
+    if TYPE_CHECKING:
+        from torch.distributed import ProcessGroup
+        from thunder.distributed.prims import DistributedReduceOps
+
+    @register_augmented_forward("torch.ops._c10d_functional.all_reduce")
+    def functional_all_reduce_augmented_forward(
+        a: TensorProxy,
+        /,
+        op: str | ReduceOp | DistributedReduceOps = ReduceOp.SUM,
+        group: None | ProcessGroup | str = None,
+        async_op: bool = False,
+        **kwargs,
+    ) -> VJPDual:
+        from thunder.torch import all_reduce
+
+        if isinstance(group, str):
+            group = _resolve_process_group(group)
+        primal = all_reduce(a, op=op, group=group)
+        residuals = (op, group)
+        return VJPDual(primal, residuals)
+
+    @register_backward("torch.ops._c10d_functional.all_reduce")
+    def functional_all_backward(op, group, g) -> TensorProxy:
+        from thunder.torch import all_reduce
+
+        return all_reduce(g, op=op, group=group)
+
+
 def sum_to(a: TensorProxy, shape: Sequence[int]) -> TensorProxy:
     if not shape:
         return a.sum()
@@ -3110,7 +3139,14 @@ def uniform_backward(primal, minval, maxval, g):
     return None, sum(g * (1 - unscaled_primal)), sum(g * unscaled_primal)
 
 
-nondifferentiable_vjp_symbols = (prims.PrimIDs.BITWISE_AND, prims.PrimIDs.SIGNBIT, prims.PrimIDs.FULL)
+nondifferentiable_vjp_symbols: set[prims.PrimIDs] = {
+    prims.PrimIDs.BITWISE_AND,
+    prims.PrimIDs.BITWISE_OR,
+    prims.PrimIDs.BITWISE_NOT,
+    prims.PrimIDs.BITWISE_XOR,
+    prims.PrimIDs.SIGNBIT,
+    prims.PrimIDs.FULL,
+}
 
 
 def is_constant_for_vjp(symbol: prims.Symbol) -> bool:
@@ -3539,8 +3575,13 @@ def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_fo
 
     cotangents = backward_trace.args[1]
     saved_tensors, saved_other = _split_saved_for_backward_into_tensors_and_other(saved_for_backward)
+
+    # When thunder.executors.torch_autograd.ThunderFunction.backward calls backward_fn, it copies
+    # collections into mutable ones, so that the tensors will be deallocated when deleted.
+    # See ThunderFunction.backward's notes for details
+    saved_tensors = list(saved_tensors)
     unpacking_trace = construct_trace(rename_proxies=False, use_dce=False)(
-        unpacking_fn, (saved_tensors, saved_other), cotangents
+        unpacking_fn, [saved_tensors, saved_other], cotangents
     )
     assert unpacking_trace.bound_symbols[-1].sym.id == prims.PrimIDs.RETURN
 

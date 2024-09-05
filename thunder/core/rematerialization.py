@@ -16,6 +16,7 @@ from thunder.core.proxies import TensorProxy, variableify, NumberProxy
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import has_tags
 from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
+from thunder.core.transforms import bsym_list_to_dag, toposort_bsym_dag, TOPOSORT_ORDER
 from thunder.core.transform_common import dce, order_proxies
 from thunder.executors.passes import update_fusion_call_ctx
 
@@ -172,15 +173,19 @@ def apply_rematerialization_for_consumer(
     # Some recomputing_symbols might require producer's inputs, so we need to
     # add them to the consumer's inputs.
     # Probably find_min_cut should have returned this information.
-    all_args = tuple(
-        chain.from_iterable(
-            (x.name for x in bsym.flat_args if isinstance(x, ProxyInterface)) for bsym in new_subsymbols
-        )
-    )
+    all_args = set(chain.from_iterable((x.name for x in bsym.flat_proxy_args) for bsym in new_subsymbols))
+    all_outs = set(chain.from_iterable((x.name for x in bsym.flat_proxy_outs) for bsym in new_subsymbols))
     new_consumer_args += tuple(
-        x for x in producer.args if x.name in all_args and x.name not in (x.name for x in new_consumer_args)
+        x
+        for x in producer.args
+        if x.name in all_args and x.name not in (x.name for x in new_consumer_args) and x.name not in all_outs
     )
 
+    # The recomputing_symbols may originate from multiple producers.
+    # Directly adding these symbols at the beginning of the consumer can disrupt the topological order of subsymbols. To ensure
+    # correct execution order, we reorder the new_subsymbols here.
+    _, leaves = bsym_list_to_dag(list(new_subsymbols))
+    new_subsymbols = toposort_bsym_dag(leaves, TOPOSORT_ORDER.BOTTOM_UP)
     proxy_order = order_proxies(new_subsymbols)
     new_consumer_args = tuple(sorted(new_consumer_args, key=lambda x: proxy_order[x.name]))
     new_consumer = replace(consumer, args=new_consumer_args, subsymbols=new_subsymbols)
