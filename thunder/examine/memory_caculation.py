@@ -1,13 +1,16 @@
-from collections.abc import Callable
+from collections.abc import Callable, MutableSequence, MutableMapping, MutableSet
+from functools import partial
 
 from thunder.core.prims import PrimIDs
-from thunder.core.proxies import FutureTensorProxy, Proxy, TensorProxy
+from thunder.core.proxies import CollectionProxy, FutureTensorProxy, Proxy, TensorProxy
 from thunder.core.symbol import BoundSymbol, Symbol
 from thunder.core.trace import TraceCtx
 from thunder.core.utils import check_type, ProxyDict
 from thunder.core.pytree import tree_iter
+from thunder.executors import pythonex
 
-memory_calculate_skip_list = (PrimIDs.RETURN, "clear_collection")
+# Arguments are considered independently, so we ignore all unpacking operations on them
+memory_calculate_skip_list = (PrimIDs.RETURN, PrimIDs.UNPACK_TRIVIAL, PrimIDs.UNPACK_SEQUENCE)
 
 # List of operators that considered no memory changes occurred in Thunder.
 # NOTE: for the operators have different input and output shape, such as expand,
@@ -21,6 +24,7 @@ thunder_alias_operator_list = (
     "torch_prims_reshape_impl",  # torchex implementation of prims.reshape.
     "permute",
     "contiguous",
+    "split",
     "torch_wait_prim_impl",
 )
 
@@ -78,8 +82,6 @@ def default_alloc_memory(
     Returns:
         int: The size of memory change caused by the input bsym
     """
-    # Skip CollectionProxy(output of input unpacking operators, such as unpack_sequence)
-    # and other negligible scalar types
     tensor_outs = [x for x in bsym.flat_proxy_outs if isinstance(x, (TensorProxy, FutureTensorProxy))]
     result = sum(t.numel * t.dtype.bytes for t in tensor_outs)
     for x in tensor_outs:
@@ -97,10 +99,10 @@ def track_alias_op_memory(
     bsym: BoundSymbol, tensor_to_memory_data: ProxyDict, name_to_alloc_memory: dict[str, int]
 ) -> int:
     inp = bsym.flat_proxy_args[0]
-    out = bsym.flat_proxy_outs[0]
     assert inp in tensor_to_memory_data
-    tensor_to_memory_data[inp].incr_ref()
-    tensor_to_memory_data[out] = tensor_to_memory_data[inp]
+    for out in bsym.flat_proxy_outs:
+        tensor_to_memory_data[inp].incr_ref()
+        tensor_to_memory_data[out] = tensor_to_memory_data[inp]
     return 0
 
 
@@ -116,6 +118,32 @@ def del_op_memory(bsym: BoundSymbol, tensor_to_memory_data: ProxyDict, name_to_a
             size_a = tensor_to_memory_data[a].get_memory_size()
             memory_size -= size_a
             name_to_alloc_memory[f"{bsym.sym.name} {a.name}"] = -size_a
+    return memory_size
+
+
+@register_memory_calculate_function(pythonex.clear_mutable_collection.id)
+def clear_mutable_collection_argument_memory(
+    bsym: BoundSymbol, tensor_to_memory_data: ProxyDict, name_to_alloc_memory: dict[str, int], is_argument: bool
+) -> int:
+    # Clearing the collection forces the interpreter to release references to its elements,
+    # even if the collection was an argument.
+    # So we cancel the n += 1 (see get_alloc_memory) for tensors contained in such a collection
+    if not is_argument:
+        return 0
+
+    collection_proxy = bsym.flat_proxy_args[0]
+    if not isinstance(collection_proxy.collection(), (MutableSequence, MutableMapping, MutableSet)):
+        return 0
+
+    memory_size = 0
+    for a in tree_iter(collection_proxy.collection()):
+        if not isinstance(a, (TensorProxy, FutureTensorProxy)):
+            continue
+        cnt_a = tensor_to_memory_data[a].decr_ref()
+        if cnt_a == 0:
+            size_a = tensor_to_memory_data[a].get_memory_size()
+            memory_size -= size_a
+            name_to_alloc_memory[f"clear_mutable_collection {a.name}"] = -size_a
     return memory_size
 
 
@@ -141,16 +169,26 @@ def get_alloc_memory(trc: TraceCtx) -> tuple[int, dict[str, int]]:
     max_allocated = 0
     allocated = 0
 
+    arg_names = {arginfo[0] for arginfo in trc.siginfo().args} | trc.siginfo().kwargs.keys()
     tensor_to_memory_data = ProxyDict()
     for arg in tree_iter((trc.args, trc.kwargs)):
+        # In addition to the arguments themselves (n=1), the interpreter holds references to the arguments,
+        # accounting for n += 1
         tensor_to_memory_data[arg] = MemoryData(n=2, proxy=arg)
+        mem_size = arg.numel * arg.dtype.bytes
+        allocated += mem_size
+        name_to_alloc_memory[f"argument {arg.name}"] = mem_size
 
     for bsym in trc.bound_symbols:
         if bsym.sym.id in memory_calculate_skip_list:
             continue
-        impl = memory_calculate_impls.get(bsym.sym.id, default_alloc_memory)
-        allocated += impl(bsym, tensor_to_memory_data, name_to_alloc_memory)
 
+        impl = memory_calculate_impls.get(bsym.sym.id, default_alloc_memory)
+        if impl is clear_mutable_collection_argument_memory:
+            is_argument = bsym.flat_proxy_args[0].name in arg_names
+            impl = partial(impl, is_argument=is_argument)
+
+        allocated += impl(bsym, tensor_to_memory_data, name_to_alloc_memory)
         max_allocated = max(max_allocated, allocated)
 
     return max_allocated, name_to_alloc_memory

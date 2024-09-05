@@ -42,13 +42,13 @@ class PrimIDs(Enum):
 #   the tensor across processes.
 class DistributedReduceOps(Enum):
     SUM = auto()
-    # AVG = auto()
-    # PRODUCT = auto()
-    # MIN = auto()
-    # MAX = auto()
-    # BAND = auto()
-    # BOR = auto()
-    # BXOR = auto()
+    AVG = auto()
+    PRODUCT = auto()
+    MIN = auto()
+    MAX = auto()
+    BAND = auto()
+    BOR = auto()
+    BXOR = auto()
     # PREMUL_SUM = auto()
 
 
