@@ -321,7 +321,7 @@ def compute_symbolic_shape(
     for p_l, l in zip(proxy_shape, shape):
         # loudly raise exception when runtime shape violates proxy_shape in the
         # trace, which indicates issues with the cache. This isn't necessarily
-        # an exception. 
+        # an exception.
         check(
             isinstance(p_l, NumberProxy) or p_l == l,
             lambda: f"inconsistent fusion definition with runtime shape {shape} and trace shape {proxy_shape}",
