@@ -161,13 +161,18 @@ def test_inplace_copy_dst_copy_returned_issue_1109(executor, device, dtype):
         T0.copy_(T1) # destination.copy_(source)
         T2 = torch.cos(T1)
         T0.copy_(T2)
+        # T1 & T2 should be returned as separate buffer, instead of sharing
+        # storage with T0
         return T1, T2
 
-    traced_foo = executor.make_callable(func)
+    tdtype = ttorch.to_torch_dtype(dtype)
+    # This pattern is unsafe in general. Disabling sanity check to silence
+    # exception for testing
+    traced_foo = executor.make_callable(func, disable_inplace_copy_check=True)
     a = make_tensor((4, 4), device=device, dtype=tdtype)
     a_ref = a.clone()
 
-    o_thunder = trace_foo(a)
+    o_thunder = traced_foo(a)
     o_eager = func(a_ref)
 
     assert_close(a_ref, a)
