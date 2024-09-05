@@ -158,7 +158,7 @@ def test_inplace_copy_sanity_check(executor, device, dtype):
 def test_inplace_copy_dst_copy_returned_issue_1109(executor, device, dtype):
     def func(T0):
         T1 = torch.sin(T0)
-        T0.copy_(T1) # destination.copy_(source)
+        T0.copy_(T1)  # destination.copy_(source)
         T2 = torch.cos(T1)
         T0.copy_(T2)
         # T1 & T2 should be returned as separate buffer, instead of sharing
