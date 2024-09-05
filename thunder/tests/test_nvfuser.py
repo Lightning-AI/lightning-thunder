@@ -205,7 +205,7 @@ def test_redundant_cast_nvfusion(executor, device: str, dtype: dtypes.dtype):
     t0 = fusions[0].output[0]
     assert fusions[1].args[2].name == "t0"
     assert t0.name == "t0"
-    assert extrace.output[0].name == "t0"
+    assert extrace.output["output"][0].name == "t0"
     assert len(fusions[0].subsymbols) == 3
 
     # Verifies the intermediate consumer
@@ -252,7 +252,7 @@ def test_redundant_no_op(executor, device: str, dtype: dtypes.dtype):
     assert len(fusion.subsymbols) == 1
 
     # Verifies that the trace outputs are updated properly
-    d, e, f, g = extrace.output
+    d, e, f, g = extrace.output["output"]
     assert d.name == "d"
     assert e.name == "d"
     assert f.name == "a"
