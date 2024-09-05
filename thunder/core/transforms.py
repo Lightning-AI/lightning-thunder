@@ -3698,7 +3698,9 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
         else:
             return None
 
-    forward_trace = construct_trace(rename_proxies=False)(augmented_forward_fn, *trace.args, **trace.kwargs)
+    forward_trace = construct_trace()(augmented_forward_fn, *trace.args, **trace.kwargs)
+    # We set forward trace to construct proxies because we need these proxies to
+    # have different names than the ones in the forward trace.
     try:
         tracectx_token = set_tracectx(forward_trace)
         # We don't want to record those ones_like calls in the forward trace.
