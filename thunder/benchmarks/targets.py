@@ -257,6 +257,7 @@ swiglu_executors_ids = (
     "torch.compile+liger",
 )
 
+
 # Sample command to run this benchmark:
 # pytest thunder/benchmarks/targets.py -k "test_litgpt_swiglu" --benchmark-group-by='param:config,param:bs,param:compute_type'
 @pytest.mark.parametrize(
@@ -276,9 +277,7 @@ swiglu_executors_ids = (
     "config,",
     get_configs_for_swiglu(),
 )
-def test_litgpt_swiglu(
-    benchmark, executor: Callable, use_liger: bool, bs: int, compute_type: ComputeType, config: str
-):
+def test_litgpt_swiglu(benchmark, executor: Callable, use_liger: bool, bs: int, compute_type: ComputeType, config: str):
     if use_liger and not LIGER_FUSED_SWIGLU_AVAILABLE:
         pytest.skip("Liger fused swiglu is unavailable")
 
