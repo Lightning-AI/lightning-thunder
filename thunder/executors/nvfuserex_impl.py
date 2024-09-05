@@ -1819,15 +1819,27 @@ def sub(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinitio
 
 register_supported(PrimIDs.SUB, sub, _elementwise_binary_check)
 
+
 #
-# Conditional operations
+# Elementwise ternary operations
 #
 
 
-# TODO Check supported dtypes
-# TODO Properly implement this check
-def _where_check(pred, a, b) -> bool:
-    return are_supported_tensors_or_numbers(pred, a, b)
+def _elementwise_ternary_check(a: Number | TensorProxy, b: Number | TensorProxy, c: Number | TensorProxy) -> bool:
+    return are_supported_tensors_or_numbers(a, b, c)
+
+
+def lerp(
+    start: TensorProxy, end: TensorProxy, weight: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict
+) -> Any:
+    nv_start = getnv(start, fd, lc_to_nv_map)
+    nv_end = getnv(end, fd, lc_to_nv_map)
+    nv_weight = getnv(weight, fd, lc_to_nv_map)
+
+    return fd.ops.lerp(nv_start, nv_end, nv_weight)
+
+
+register_supported(PrimIDs.LERP, lerp, _elementwise_ternary_check)
 
 
 def where(
@@ -1845,7 +1857,7 @@ def where(
     return fd.ops.where(nvpred, nva, nvb)
 
 
-register_supported(PrimIDs.WHERE, where, _where_check)
+register_supported(PrimIDs.WHERE, where, _elementwise_ternary_check)
 
 #
 # Reduction operations
