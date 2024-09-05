@@ -1143,6 +1143,7 @@ def test_forward_and_backward_from_trace(executor, device, _):
     from thunder.clang import cos, sin
     import thunder.torch as ltorch
     from thunder.core.transforms import forward_and_backward_from_trace, value_and_grad
+    from thunder.core.transform_common import wrap_return_value_together_with_argments
 
     def func(a, b, *, c):
         d = a + b + c
@@ -1155,14 +1156,15 @@ def test_forward_and_backward_from_trace(executor, device, _):
     b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     c = make_tensor((3,), device=device, dtype=torch.float64, requires_grad=True)
     trace = trace(inline_trace=False)(func, a, b, c=c)
+    trace = wrap_return_value_together_with_argments(trace)
     fw_trace, bw_trace = forward_and_backward_from_trace(trace)
     fw = executor.make_callable(fw_trace)
     bw = executor.make_callable(bw_trace)
     fw_out, saved_for_backward = fw(a, b, c=c)
     expected_fw_out, expected_grads = expected_vjp_func(a, b, c=c)
-    torch.testing.assert_close(fw_out, expected_fw_out)
+    torch.testing.assert_close(fw_out["output"], expected_fw_out)
 
-    output_grads = tree_map(lambda x: torch.ones_like(x), fw_out)
+    output_grads = tree_map(lambda x: torch.ones_like(x), fw_out["output"])
     bw_out = bw(saved_for_backward, output_grads)
     torch.testing.assert_close(bw_out, expected_grads)
 
