@@ -901,7 +901,7 @@ def test_torchbench_canary(benchmark, module_name, executor, compute_type: Compu
     ),
 )
 def test_dynamo_LlamaMLPBenchmark(benchmark, executor: Callable):
-    backend = DynamoBackendBenchmarking(benchmark, executor)
+    backend = DynamoBackendBenchmarking(benchmark, [executor])
 
     bench: Benchmark = LlamaMLPBenchmark(
         config="Llama-2-7b-hf",

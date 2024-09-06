@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from functools import partial
 from numbers import Number
 from typing import Any
+import pytest_benchmark
 
 import torch
 import torch.multiprocessing as mp
@@ -23,6 +24,7 @@ import thunder.core.dtypes as dtypes
 import thunder.executors as executors
 import thunder.torch as ltorch
 from thunder.core.transforms import grad, clear_grads, populate_grads
+from thunder.core.utils import check
 from thunder.executors.apexex import apex_ex, apex_entropy_available
 from thunder.executors.cudnn_layernormex import cudnn_layernorm_ex
 from thunder.executors.cudnnex import cudnn_ex, cudnn_available
@@ -3019,10 +3021,30 @@ class TorchbenchBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
 
 class DynamoBackendBenchmarking:
-    def __init__(self, bench, executor, **thunder_options):
+    _executors = {
+        "torch": torch_executor,
+        "torch.compile": torch_compile_without_reset_executor,
+        "thunder": thunder_executor,
+    }
+
+    def __init__(
+        self,
+        bench: pytest_benchmark.fixture.BenchmarkFixture,
+        executors: Sequence[str] | None = None,
+        **thunder_options,
+    ):
         self.thunder_options = thunder_options
         self.bench = bench
-        self.executor = executor
+        if not executors:
+            self.executors = DynamoBackendBenchmarking._executors.values()
+            self.executor_ids = list(DynamoBackendBenchmarking._executors.keys())
+        else:
+            check(
+                all(ex in DynamoBackendBenchmarking._executors for ex in executors),
+                lambda: f"DynamoBackendBenchmarking only supports the following executor names: {list(DynamoBackendBenchmarking._executors.keys())}  ",
+            )
+            self.executors = (DynamoBackendBenchmarking._executors[ex] for ex in executors)
+            self.executor_ids = executors
         self.gm2stats = {}
         self.graph_idx = 0
 
@@ -3031,18 +3053,19 @@ class DynamoBackendBenchmarking:
 
         gm.real_recompile()
 
-        fn = self.executor(gm)
-        with record_peak_allocated_memory(self.bench):
-            self.bench(fn, *sample_args)
-        # BenchmarkFixture.stats is created each time bench is called (ref: https://github.com/pybenchmark/pytest-benchmark/blob/8c9a5faa1dd178b53ab7b2a66f5364a77e903d74/src/pytest_benchmark/fixture.py#L150)
-        # Adds the graph number to the name string
-        self.bench.stats.name = self.bench.stats.name + f"graph{self.graph_idx}"
-        self.gm2stats[gm] = self.bench.stats
+        for idx, ex in enumerate(self.executors):
+            fn = ex(gm, **self.thunder_options) if self.executor_ids[idx] == "thunder" else ex(gm)
+            with record_peak_allocated_memory(self.bench):
+                self.bench(fn, *sample_args)
+            # BenchmarkFixture.stats is created each time bench is called (ref: https://github.com/pybenchmark/pytest-benchmark/blob/8c9a5faa1dd178b53ab7b2a66f5364a77e903d74/src/pytest_benchmark/fixture.py#L150)
+            # Adds the graph number to the name string
+            self.bench.stats.name = self.bench.stats.name + f"_{self.executor_ids[idx]}.graph{self.graph_idx}"
+            self.gm2stats[gm] = self.bench.stats
 
-        # when the graph is segmented, the self.bench run multiple times, pybenchmark throws an error:
-        # `FixtureAlreadyUsed("Fixture can only be used once. Previously it was used in %s mode." % self._mode)`
-        # Ref: https://github.com/pybenchmark/pytest-benchmark/blob/8c9a5faa1dd178b53ab7b2a66f5364a77e903d74/src/pytest_benchmark/fixture.py#L115-L118
-        # Here manually set the BenchmarkFixture._mode=None to avoid it
-        self.bench._mode = None
+            # when the graph is segmented, the self.bench run multiple times, pybenchmark throws an error:
+            # `FixtureAlreadyUsed("Fixture can only be used once. Previously it was used in %s mode." % self._mode)`
+            # Ref: https://github.com/pybenchmark/pytest-benchmark/blob/8c9a5faa1dd178b53ab7b2a66f5364a77e903d74/src/pytest_benchmark/fixture.py#L115-L118
+            # Here manually set the BenchmarkFixture._mode=None to avoid it
+            self.bench._mode = None
         self.graph_idx += 1
         return gm
