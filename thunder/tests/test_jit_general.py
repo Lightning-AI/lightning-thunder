@@ -1203,6 +1203,45 @@ def test_custom_autograd_function():
     gradcheck(jitted, (x,))
 
 
+def test_autograd_function_apply():
+
+    def forward(ctx, x):
+        saved_for_backward = (x,)
+        return x.sin(), saved_for_backward
+
+    def backward(ctx, grad_output, *saved_tensors):
+        (x,) = saved_tensors
+        return grad_output * x.cos()
+
+    def my_sin(x):
+        return torch.ops.higher_order.autograd_function_apply(
+            forward,
+            backward,
+            x,
+            args_tensor_mask=[True],
+        )
+
+    jitted = thunder.jit(my_sin)
+    x = torch.randn((2, 2), requires_grad=True)
+    x_ref = x.clone().detach().requires_grad_()
+
+    y = jitted(x)
+    y_ref = my_sin(x_ref)
+    torch.testing.assert_close(y, y_ref)
+
+    initial_computation_trace = thunder.last_traces(jitted)[0]
+    assert any(
+        bsym.sym.id.startswith("autograd_function_apply")
+        for bsym in initial_computation_trace.bound_symbols
+        if isinstance(bsym.sym.id, str)
+    )
+
+    grad = torch.rand_like(y)
+    actual_grad = torch.autograd.grad(y, x, grad)
+    expect_grad = torch.autograd.grad(y_ref, x_ref, grad)
+    torch.testing.assert_close(actual_grad, expect_grad)
+
+
 @requiresCUDA  # I have not found a good other object to use
 def test_cpp_property():
     def fn():
