@@ -247,8 +247,8 @@ def is_floating_point(a: TensorLike, /) -> bool:
 @torchsymbol(torch.Tensor.size)
 def size(a: TensorLike, /, dim: None | int = None) -> int | Sequence[int]:
     if dim is not None:
-        return prims.size(a)[dim]
-    return prims.size(a)
+        return prims.shape(a)[dim]
+    return prims.shape(a)
 
 
 register_method("size", size)
