@@ -247,14 +247,12 @@ swiglu_executors = (
     (torch_compile_executor, False),
     (thunder_executor, False),
     (torch_executor, True),
-    (torch_compile_executor, True),
 )
 swiglu_executors_ids = (
     "torch",
     "torch.compile",
     "thunder",
-    "torch+liger",
-    "torch.compile+liger",
+    "liger",
 )
 
 
