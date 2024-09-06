@@ -230,12 +230,12 @@ def _replace_none_with_zero(x, y):
     x = list(x)
     y = list(y)
     assert x[0] is not None or y[0] is not None, "Both x and y are None"
-    device = x[0].device if x[0] is not None else y[0].device
-    zero = torch.tensor(0.0, device=device, dtype=torch.float64)
     for i, (a, b) in enumerate(zip(x, y)):
         if a is None or b is None:
-            x[i] = zero
-            y[i] = zero
+            device = x[i].device if x[i] is not None else y[i].device
+            x[i] = torch.tensor(0.0, device=device, dtype=torch.float64)
+            y[i] = torch.tensor(0.0, device=device, dtype=torch.float64)
+
     return x, y
 
 

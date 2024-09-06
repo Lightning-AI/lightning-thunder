@@ -1225,7 +1225,7 @@ def index_put(
     )
 
     # broadcast all index tensors together
-    broadcast_indices = maybe_broadcast(*indices)
+    broadcast_indices = maybe_broadcast(*indices, treat_cpu_scalar_tensors_as_numbers=False)
 
     # expand values
     # the expand rule is: Left-align the input shape and the index shape,
@@ -1389,7 +1389,7 @@ def matrix_transpose(a: TensorProxy) -> TensorProxy:
 # TODO: review hasattr pattern
 # NOTE: the tensor is not broadcasted if it is a CPU scalar tensor and treat_cpu_scalar_tensors_as_numbers=True
 @clangop()
-def maybe_broadcast(*args, treat_cpu_scalar_tensors_as_numbers=False):
+def maybe_broadcast(*args, treat_cpu_scalar_tensors_as_numbers=True):
     """Returns tensors with the same shape, possibly broadcasting inputs to the result shape."""
 
     # Computes common shape
