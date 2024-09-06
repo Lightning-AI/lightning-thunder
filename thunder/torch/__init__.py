@@ -246,8 +246,8 @@ def is_floating_point(a: TensorLike, /) -> bool:
 # Handles the size method
 def size(a: TensorLike, /, dim: None | int = None) -> int | Sequence[int]:
     if dim is not None:
-        return a.shape[dim]
-    return a.shape
+        return prims.size(a)[dim]
+    return prims.size(a)
 
 
 register_method("size", size)

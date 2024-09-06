@@ -129,6 +129,7 @@ class PrimIDs(Enum):
     CONSTRUCT_TUPLE = auto()
     PACK_BUFFER = auto()
     PACK_SETITEM = auto()
+    SIZE = auto()
     # TODO: UNPACK_SET
     # Utility prims
     COMMENT = auto()
@@ -1238,6 +1239,17 @@ pack_setitem = make_prim(
 )
 
 
+def size_meta(t: TensorProxy) -> Sequence[int | NumberProxy]:
+    return t._shape
+
+
+size = make_prim(
+    PrimIDs.SIZE,
+    "size",
+    meta=size_meta,
+)
+
+
 # NOTE UNPACK_GETITEM is intended only to be bound to directly, and not called
 def unpack_getitem_meta(o: Any, key: Any) -> Any:
     raise NotImplementedError
@@ -1669,7 +1681,6 @@ python_return = make_prim(
     meta=_return_meta,
     python_printer=return_printer,
     python_impl=_return_impl,
-    tags=(OpTags.DONT_DCE,),
 )
 
 #

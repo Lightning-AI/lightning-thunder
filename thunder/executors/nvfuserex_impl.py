@@ -2239,6 +2239,25 @@ def matmul(
 register_supported(PrimIDs.MATMUL, matmul, _matmul_check)
 
 
+def _size_check(
+    a: TensorProxy,
+) -> bool:
+    return are_supported_tensors(a):
+
+
+def size(
+    a: TensorProxy,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    return fd.ops.shape(nva)
+
+
+register_supported(PrimIDs.SIZE, size, _size_check)
+
+
 # Registering SDPA operators for nvFuser
 # SDPA requires an execution and grad transform since the forward and backward passes are called through different implementations.
 # For both execution and grad transform, a new operator is registered with nvfuserex (ex.register_operator) and then added to the translation map (register_supported).
