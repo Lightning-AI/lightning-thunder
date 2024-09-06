@@ -2242,7 +2242,11 @@ register_supported(PrimIDs.MATMUL, matmul, _matmul_check)
 def _size_check(
     a: TensorProxy,
 ) -> bool:
-    return are_supported_tensors(a)
+    # TODO: currently we cannot support this yet. fusion_pass needs to be
+    # updated to ensure that the fused region consumes all NumberProxy within
+    # and not leak it out as a fusion output, since nvfuser cannot yet produce
+    # scalar outputs.
+    return False
 
 
 def size(

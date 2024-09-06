@@ -1367,6 +1367,7 @@ register_grad(pids.MAXIMUM, _maximum_grad)
 # This operation creates no grad associations
 register_grad(pids.ARGMAX, prims.argmax)
 
+# This operation creates no grad associations
 register_grad(pids.SIZE, prims.size)
 
 #

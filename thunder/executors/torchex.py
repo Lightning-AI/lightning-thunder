@@ -2151,7 +2151,7 @@ _register_implementation(prims.copy_, copy_, checker=_always_executable)
 
 
 def _size_impl(t):
-    return t.size
+    return t.size()
 
 
 size = ex.register_operator("size", meta=prims.size_meta, fn=_size_impl)
