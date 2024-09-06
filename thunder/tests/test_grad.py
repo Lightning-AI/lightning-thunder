@@ -243,7 +243,12 @@ def check_jvp(f, *primals, comp, executor):
     actual_p, actual_t = executor.make_callable(initial_trace_jvp_f.python_callable(), disable_torch_autograd=True)(
         primals, tangents
     )
-    expected_p, expected_t = numerical_jvp(executor.make_callable(f, disable_torch_autograd=True))(primals, tangents)
+
+    # dirty little trick for speed: skip the prologue
+    jf = executor.make_callable(f, disable_torch_autograd=True)
+    comp_f = thunder.compile_data(jf).get_computation_and_inputs(*primals)[0].computation_fn
+
+    expected_p, expected_t = numerical_jvp(comp_f)(primals, tangents)
     comp(expected_p, actual_p)
     comp(expected_t, actual_t)
 
