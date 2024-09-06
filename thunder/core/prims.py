@@ -1681,6 +1681,7 @@ python_return = make_prim(
     meta=_return_meta,
     python_printer=return_printer,
     python_impl=_return_impl,
+    tags=(OpTags.DONT_DCE,),
 )
 
 #

@@ -2242,7 +2242,7 @@ register_supported(PrimIDs.MATMUL, matmul, _matmul_check)
 def _size_check(
     a: TensorProxy,
 ) -> bool:
-    return are_supported_tensors(a):
+    return are_supported_tensors(a)
 
 
 def size(
