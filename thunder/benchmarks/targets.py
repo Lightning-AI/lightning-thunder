@@ -890,11 +890,6 @@ def test_torchbench_canary(benchmark, module_name, executor, compute_type: Compu
 @pytest.mark.parametrize(
     "executor,",
     (
-        torch_executor,
-        torch_compile_without_reset_executor,
-        thunder_executor,
-    ),
-    ids=(
         "torch",
         "torch.compile",
         "thunder",
