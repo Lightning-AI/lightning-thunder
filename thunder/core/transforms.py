@@ -1633,6 +1633,9 @@ def zeta_backward(x, y, g):
     # Therefore, we compute only the derivative wrt the second argument
     gy = g * -x * prims.zeta(x + 1.0, y)
 
+    # if x is CUDA tensor and y is CPU scalar tensor, gy should be on CPU
+    if gy is not None and gy.device.type != y.device.type:
+        gy = gy.to(device=y.device)
     # Return a mappping from the forward arguments to the gradients
     return {"y": gy}
 
@@ -2747,6 +2750,7 @@ def vjp(func):
         flat_func, flat_args, spec = flatten_func(func, primals, kwargs)
         trace = construct_trace()(flat_func, *flat_args)
         result, vjp_result = vjp_call(flat_args, cotangents, trace=trace)
+        # If the argument is a CPU scalar tensor, its gradient needs to be summed into a scalar tensor.
         vjp_result = tuple(
             (
                 sum_to(grad, arg.shape)
