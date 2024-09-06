@@ -1248,9 +1248,11 @@ def _infer_tensor_properties(
     # dynamic shape support is currently block by #471 https://github.com/Lightning-AI/lightning-thunder/issues/471
     if not using_symbolic_values():
         _shape = tuple(pyval(x) for x in _shape)
-
-    # Computes derived properties
-    _numel = reduce(operator.mul, _shape, 1)
+        # Computes derived properties
+        _numel = reduce(operator.mul, _shape, 1)
+    else:
+        # TODO: we need cleaner handling of _numel rather than a None here.
+        _numel = None
 
     # TODO Alias rank to ndim?
     _ndim = len(_shape)
