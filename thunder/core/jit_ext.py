@@ -767,10 +767,9 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
 @register_general_jit_lookaside(torch.ops.higher_order.autograd_function_apply)
 def _general_jit_torch_ops_autograd_function_apply_lookaside(fwd, bwd, *fwd_args, **fwd_kwargs):
     from thunder.core import utils
-    from thunder.core.pytree import tree_flatten, tree_map
-    from thunder.core.transforms import VJPDual
     from thunder.core.baseutils import sequencify
-    from thunder.core.transforms import augmented_forward_impls, backward_impls
+    from thunder.core.pytree import tree_flatten, tree_map
+    from thunder.core.transforms import VJPDual, augmented_forward_impls, backward_impls
 
     def _generate_random_str_id() -> str:
         import secrets
@@ -783,7 +782,9 @@ def _general_jit_torch_ops_autograd_function_apply_lookaside(fwd, bwd, *fwd_args
     start_idx_of_bsym = len(jit_ctx.computation_trace.bound_symbols)
 
     args_tensor_mask = unwrap(fwd_kwargs["args_tensor_mask"])
-    non_differentiable_idx = fwd_kwargs.get("non_differentiable_idx")
+    # TODO(crcrpar): Think about making use of `non_differentiable_idx`
+    # note that this key is quite new: https://github.com/pytorch/pytorch/pull/134087
+    # non_differentiable_idx = fwd_kwargs.get("non_differentiable_idx")
     length_of_tensor_args = sum(args_tensor_mask)
     new_fwd_args = (wrap_const(None),) + fwd_args[:length_of_tensor_args]
     old_scope = jit_ctx.computation_trace.scopes
@@ -805,9 +806,6 @@ def _general_jit_torch_ops_autograd_function_apply_lookaside(fwd, bwd, *fwd_args
             prod_bsym = producer_map[p]
             tensor_to_prod_bsym[variableify(p)] = prod_bsym
     prod_bsym_to_tensor = {v: unvariableify(k) for k, v in tensor_to_prod_bsym.items()}
-    utils.check(
-        len(tensor_to_prod_bsym) == len(prod_bsym_to_tensor), lambda: f"{tensor_to_prod_bsym}, {prod_bsym_to_tensor}"
-    )
 
     @wraps(fwd_bsyms[0].sym.meta)
     def meta_of_custom_func(*args, **kwargs):
@@ -843,18 +841,16 @@ def _general_jit_torch_ops_autograd_function_apply_lookaside(fwd, bwd, *fwd_args
         return tree_map(lambda t: TensorProxy(like=t), (output, saved_values))
 
     augmented_fwd_trace = TraceCtx()
-    with tracectx(augmented_fwd_trace):
-        for bsym in fwd_bsyms:
-            augmented_fwd_trace.add_bound_symbol(bsym)
-        augmented_fwd_trace.add_bound_symbol(prims.python_return.bind(output, saved_values, output=()))
+    for bsym in fwd_bsyms:
+        augmented_fwd_trace.add_bound_symbol(bsym)
+    augmented_fwd_trace.add_bound_symbol(prims.python_return.bind(output, saved_values, output=()))
     si = SigInfo(f"augmented_autograd_function_apply_{sym_id}")
     for a in bsym_of_custom_autograd_func.args:
         if isinstance(a, Proxy):
             si.args.append((a.name, None))
         else:
             pa = proxy(a)
-            with tracectx(augmented_fwd_trace):
-                si.args.append((pa.name, a))
+            si.args.append((pa.name, a))
     augmented_fwd_trace._siginfo = si
     augmented_fwd_callable = augmented_fwd_trace.python_callable(include_decorators=False)
 
