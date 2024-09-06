@@ -239,6 +239,20 @@ def _replace_none_with_zero(x, y):
     return x, y
 
 
+def _is_cpu_scalar_tensor(x):
+    return isinstance(x, torch.Tensor) and x.device.type == "cpu" and x.ndim == 0
+
+
+# If one tensor is a CPU scalar tensor and the other is on CUDA, move the scalar tensor to CUDA
+# Then do the ravel and dot operation
+def _tensor_dot(x, y):
+    if _is_cpu_scalar_tensor(x) and y.is_cuda:
+        x = x.cuda()
+    elif _is_cpu_scalar_tensor(y) and x.is_cuda:
+        y = y.cuda()
+    return torch.dot(x.ravel().type(torch.float64), y.ravel().type(torch.float64))
+
+
 def _dot(x, y):
     """Compute the dot product of two lists of tensors.
 
@@ -253,7 +267,7 @@ def _dot(x, y):
     assert all(
         isinstance(a, torch.Tensor) and isinstance(b, torch.Tensor) for a, b in zip(x, y)
     ), "Not all elements are torch.Tensor"
-    return sum([torch.dot(a.ravel().type(torch.float64), b.ravel().type(torch.float64)) for a, b in zip(x, y)])
+    return sum([_tensor_dot(a, b) for a, b in zip(x, y)])
 
 
 def check_vjp(f, *primals, comp, executor="torch"):

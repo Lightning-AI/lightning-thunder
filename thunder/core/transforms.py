@@ -2362,6 +2362,8 @@ if torch.distributed.is_available():
 
 
 def sum_to(a: TensorProxy, shape: Sequence[int]) -> TensorProxy:
+    if utils.same_shape(a.shape, shape):
+        return a
     if not shape:
         return a.sum()
     leading_dims = a.ndim - len(shape)
@@ -2745,6 +2747,14 @@ def vjp(func):
         flat_func, flat_args, spec = flatten_func(func, primals, kwargs)
         trace = construct_trace()(flat_func, *flat_args)
         result, vjp_result = vjp_call(flat_args, cotangents, trace=trace)
+        vjp_result = tuple(
+            (
+                sum_to(grad, arg.shape)
+                if (grad is not None and isinstance(arg, TensorProxy) and arg.device.type == "cpu")
+                else grad
+            )
+            for grad, arg in zip(vjp_result, flat_args)
+        )
         gprimals, gkwargs = tree_unflatten(vjp_result, spec)
         grads = gprimals + (gkwargs,) if len(gkwargs) != 0 else gprimals
         return result, grads
