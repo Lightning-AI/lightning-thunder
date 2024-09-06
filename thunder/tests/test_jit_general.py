@@ -1219,6 +1219,7 @@ def test_autograd_function_apply():
             backward,
             x,
             args_tensor_mask=[True],
+            non_differentiable_idx=[],
         )
 
     jitted = thunder.jit(my_sin)
