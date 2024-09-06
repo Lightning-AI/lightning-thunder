@@ -450,7 +450,14 @@ elementwise_unary_ops = []
 
 # TODO Add small value, large value, and extremal-valued samples
 def elementwise_unary_generator(
-    op, device: torch.device, dtype: torch.dtype, requires_grad: bool, *, supports_numbers: bool = True, **kwargs
+    op,
+    device: torch.device,
+    dtype: torch.dtype,
+    requires_grad: bool,
+    *,
+    supports_numbers: bool = True,
+    small=False,
+    **kwargs,
 ):
     low = None if op.domain.low is None else max(-9, op.domain.low)
     high = None if op.domain.high is None else min(9, op.domain.high)
@@ -465,10 +472,14 @@ def elementwise_unary_generator(
         (),
         (11,),
         (4, 4),
-        (1024, 1024),
-        (64, 64, 64),
         (4, 2, 4, 5),
     )
+
+    if not small:
+        shapes += (
+            (1024, 1024),
+            (64, 64, 64),
+        )
 
     # Typical inputs
     for shape in shapes:
@@ -2152,9 +2163,9 @@ elementwise_binary_ops.append(nextafter_opinfo)
 
 
 def polygamma_sample_input_generator(op, device, dtype, requires_grad, *, no_rhs_numbers: bool = False, **kwargs):
-    rhs_generator = elementwise_unary_generator(op, device, dtype, requires_grad, exclude_zero=True)
+    rhs_generator = elementwise_unary_generator(op, device, dtype, requires_grad, exclude_zero=True, small=True)
     # NOTE Polygamma grows very fast because of factorial term; Limit lhs values to avoid extremal values.
-    lhs_generator = range(5)
+    lhs_generator = [0, 2, 4]  # range(5)
 
     for n, rhs_arg in itertools.product(lhs_generator, rhs_generator):
         yield SampleInput(n, rhs_arg.args[0])

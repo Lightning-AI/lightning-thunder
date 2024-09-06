@@ -316,7 +316,12 @@ def check_vjp(f, *primals, comp, executor="torch"):
     make = partial(make_tensor_like, low=0, high=1)
 
     u = tree_map(make, primals)
-    outs_p, J_u = numerical_jvp(executor.make_callable(f, disable_torch_autograd=True))(primals, u)
+
+    # dirty little trick for speed: skip the prologue
+    jf = executor.make_callable(f, disable_torch_autograd=True)
+    comp_f = thunder.compile_data(jf).get_computation_and_inputs(*primals)[0].computation_fn
+
+    outs_p, J_u = numerical_jvp(comp_f)(primals, u)
 
     multiple_results = isinstance(outs_p, Sequence)
 
