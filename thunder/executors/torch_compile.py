@@ -7,14 +7,16 @@ import torch
 from lightning_utilities import compare_version
 
 from thunder.core import prims, utils
-from thunder.core.proxies import Proxy, unvariableify, Variable
+from thunder.core.proxies import Proxy, TensorProxy, unvariableify, Variable
 from thunder.core.rematerialization import rematerialize
 from thunder.core.symbol import BoundSymbol, Symbol
 from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
 from thunder.core.transform_common import dce
+from thunder.core.pytree import tree_flatten
 from thunder.executors.passes import update_fusion_call_ctx
 from thunder.executors.utils import Region
 from thunder.extend import FusionExecutor, register_executor, ImplInfo
+from thunder.core.compile_data import get_compile_option
 
 _TORCH_GREATER_EQUAL_2_3 = compare_version("torch", operator.ge, "2.3.0", use_base_version=True)
 
@@ -40,7 +42,15 @@ def to_torch_translator(bsym: BoundSymbol) -> Callable:
                 return impl_info.execution_transform(*args, **kwargs)
 
         if torch_op is None:
-            torch_op = torchex.opmap[bsym.sym.name]
+            torch_op = torchex.opmap.get(bsym.sym.name)
+
+        # this should be really rare, but type_as has this,
+        # ideally we would be also handling more subsymbols here
+        if torch_op is None and len(bsym.subsymbols) == 1:
+            torch_op = torchex.opmap.get(bsym.subsymbols[0].sym.name)
+
+        if torch_op is None:
+            raise RuntimeError("op not found for {bsym.sym.name}")
 
         return torch_op(*args, **kwargs)
 
@@ -83,7 +93,12 @@ def make_compiled(
     # torch.compile executor"
     torch_trace = trace(inline_trace=False)(torch_interpreted_func, *sorted_unique_inputs)
     trace_callable = torch_trace.python_callable(include_decorators=False)
-    compiled_func = torch.compile(trace_callable, fullgraph=True)
+    torch_compile_fullgraph: None | bool = get_compile_option(
+        "torch_compile_fullgraph", "Whether to enable `fullgraph` from `torch.compile`. Defaults to `True`."
+    )
+    if torch_compile_fullgraph is None:
+        torch_compile_fullgraph = True
+    compiled_func = torch.compile(trace_callable, fullgraph=torch_compile_fullgraph)
     # For each of `@torch.no_grad(), and `torch.autocast(device_type="cpu"|"cuda")` torch.compile
     # create caches with a guard for the wrapped function. Since the torch.compile caches are per code object, not
     # frame, all the dynamic copies of these context managers share the same code cache.
@@ -190,6 +205,16 @@ class TorchCompileExecutor(FusionExecutor):
 from thunder.executors.torchex import ex as pytorch_ex
 
 
+def cuda_device_checker(*args, **kwargs):
+    # We only want to compile if all the TensorProxy arguments are on the GPU
+    flat_args, _ = tree_flatten((args, kwargs))
+    flat_tensorproxy_args = [x for x in flat_args if isinstance(x, TensorProxy)]
+    for arg in flat_tensorproxy_args:
+        if arg.device.type != "cuda":
+            return False
+    return True
+
+
 # NOTE: [torch_compile_cat_ex vs torch_compile_ex]
 # The former only relies on `torch.compile` for the operators where it shines the most and is meant to be used
 # together with the nvfuser executor. Its current goal is only to fuse RoPE but the set of ops fused will change as each
@@ -200,14 +225,13 @@ from thunder.executors.torchex import ex as pytorch_ex
 required_ops = {
     "torch.cat",
     prims.cat.id,
-    prims.pad.id,
-    prims.slice_prim.id,
 }
 torch_compile_cat_ex = TorchCompileExecutor(name="torchcompile_cat", required_ops=required_ops)
 register_executor(torch_compile_cat_ex)
 # TODO: Carefully enable more ops checking that they do improve performance
 supported_ops = {
     "torch.split",
+    "torch.sum",
     prims.add.id,
     prims.broadcast_in_dim.id,
     prims.cat.id,
@@ -219,8 +243,14 @@ supported_ops = {
     prims.reshape.id,
     prims.slice_prim.id,
     prims.transpose.id,
+    # div and erf are used in GELU and are fused horizontally with RoPE when
+    # parallel residual paths are used in the transformer block
+    prims.div.id,
+    prims.erf.id,
 }
-torch_compile_cat_ex._implmap = {op: ImplInfo() for op in pytorch_ex.implmap if op in supported_ops}
+torch_compile_cat_ex._implmap = {
+    op: ImplInfo(checker=cuda_device_checker) for op in pytorch_ex.implmap if op in supported_ops
+}
 
 
 torch_compile_ex = TorchCompileExecutor(name="torchcompile")

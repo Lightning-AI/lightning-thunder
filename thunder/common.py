@@ -5,6 +5,7 @@ from collections import deque, defaultdict
 import time
 from functools import wraps
 from io import StringIO
+from weakref import WeakValueDictionary
 
 from thunder.core.options import (
     CACHE_OPTIONS,
@@ -83,12 +84,10 @@ class CompileStats:
         last_prologue_transformation_stop (int):
         last_prologue_execution_start (int):
         last_prologue_execution_stop (int):
-        last_computation_transformation_start (int):
-        last_computation_transformation_stop (int):
         last_computation_execution_start (int):
         last_computation_execution_stop (int):
         cache (dict):
-        interpreter_cashe (list):
+        interpreter_cache (list):
         calls (int):
         cache_hits (int):
         cache_misses (int):
@@ -121,8 +120,6 @@ class CompileStats:
         self.last_prologue_transformation_stop: int = -1
         self.last_prologue_execution_start: int = -1
         self.last_prologue_execution_stop: int = -1
-        self.last_computation_transformation_start: int = -1
-        self.last_computation_transformation_stop: int = -1
         self.last_computation_execution_start: int = -1
         self.last_computation_execution_stop: int = -1
 
@@ -163,11 +160,6 @@ class CompileStats:
         stop: int = self.last_prologue_execution_stop
         return self._time_template(start, stop, "prologue execution")
 
-    def last_computation_transformation_time(self, /) -> int:
-        start: int = self.last_computation_transformation_start
-        stop: int = self.last_computation_transformation_stop
-        return self._time_template(start, stop, "computation transformation")
-
     def last_computation_execution_time(self, /) -> int:
         start: int = self.last_computation_execution_start
         stop: int = self.last_computation_execution_stop
@@ -195,7 +187,6 @@ class CompileData:
         using_jit: bool = False,
         only_execute_prims: bool = False,
         disable_preprocessing: bool = False,
-        use_cudagraphs: bool = False,
         disable_torch_autograd_support: bool = False,
         use_rematerialization: bool = False,
         debug_log: None | StringIO = None,
@@ -253,7 +244,6 @@ class CompileData:
         self.only_execute_prims = only_execute_prims
         self.disable_preprocessing = disable_preprocessing
         self.use_rematerialization = use_rematerialization
-        self.use_cudagraphs = use_cudagraphs
         self.disable_torch_autograd_support = disable_torch_autograd_support
         self.debug_log = debug_log
 
@@ -262,9 +252,9 @@ class CompileData:
 
         self.is_module = isinstance(self.fn, torch.nn.Module)
 
-        # to not introduce (more) ref cycles, make this int->ThunderModule with
+        # to not introduce (more) ref cycles, use WeakValueDictionary and map from int->ThunderModule
         # but the accessor has to check if tmm[id(module)]._module is module
-        self._thunder_module_map = {}
+        self._thunder_module_map = WeakValueDictionary()
 
         # We set the process_group_for_ddp attribute on the module when
         # thunder.distributed.ddp(module) is called.

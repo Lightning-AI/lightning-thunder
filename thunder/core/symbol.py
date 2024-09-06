@@ -138,7 +138,6 @@ class Symbol:
     executor: None | Any = None
     python_impl: None | Callable = None
     _print_as_impl: bool = False  # If not None, w
-    _python_name: str | None = None
 
     # An optional postprocessing function to modify the bound symbol resulting from bind()
     _bind_postprocess: None | Callable = None
@@ -200,54 +199,45 @@ class Symbol:
             result = inspect.getmodule(fn_)
         return result
 
-    @classmethod
-    def lookup_from_module(cls, name: str, executor: Any, module: ModuleType) -> Symbol:  # For unpickling
-        if module not in sys.modules:
-            raise RuntimeError(f"Cannot find module {module} for symbol {name}.")
-
+    @staticmethod
+    def lookup_symbol(name: str, executor: Any, module: ModuleType) -> Symbol:  # for unpickling
         if executor is None:
+            if module not in sys.modules:
+                raise RuntimeError(f"Cannot find module {module} for symbol {name}.")
             not_found = object()
             sym = getattr(sys.modules[module], name, not_found)
             if sym is not_found:
                 raise RuntimeError(f"Could not find symbol {name} in module {module}.")
-            assert isinstance(sym, Symbol), (name, module, type(sym), sym)
-            return sym
+            assert isinstance(sym, Symbol), f"lookup {module}.{name} gave object of type {type(sym)} instead of Symbol"
         else:
-            # Try to find the executor in all_executors
-            import thunder.extend
+            import thunder
 
-            executors = thunder.extend.get_all_executors()
+            ex = thunder.get_executor(executor)
+            sym = ex.opmap.get(name)
 
-            for ex in executors:
-                implmap = ex.implmap.values()
+            if sym is None:
+                raise RuntimeError(f"Could not find symbol {name} in executor {executor}.")
+            assert isinstance(
+                sym, Symbol
+            ), f"lookup {name} in executor {executor} gave object of type {type(sym)} instead of Symbol"
 
-                for key, info in implmap:
-                    assert isinstance(key.id, str)
-                    if key.id == name:
-                        if (
-                            impl.symbol is not None
-                            and module is not None
-                            and impl.module is not None
-                            and module != impl.module
-                        ):
-                            continue
-                        return lookup_from_module(name, ex, module)
+        return sym
 
-            raise ValueError(f"Could not find an executor for symbol {name} from module {module.__qualname__}.")
+    def __reduce__(self):  # for pickling
+        import thunder
 
-    def __reduce__(self):  # For pickling
-        if self.module is None:
-            raise ValueError("Cannot serialize a symbol without a module.")
+        if self.module is None and self.executor is None:
+            raise ValueError("Cannot serialize a symbol without a module and executor.")
 
-        if hasattr(self, "_python_name") and not self._python_name is None:
-            name = self._python_name
+        if self.executor is None:
+            assert getattr(sys.modules[self.module.__name__], self.name, None) is self
         else:
-            name = self.name
+            assert thunder.get_executor(self.executor.name).opmap.get(self.name) is self
 
         return (
-            Symbol.lookup_from_module,
+            Symbol.lookup_symbol,
             (
-                name,
+                self.name,
                 None if self.executor is None else self.executor.name,
                 None if self.module is None else self.module.__name__,
             ),

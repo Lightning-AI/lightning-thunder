@@ -151,6 +151,7 @@ class PrimIDs(Enum):
     RANDN = auto()
     EMPTY = auto()
     TENSOR_FROM_SEQUENCE = auto()
+    CLONE = auto()
     # Probability distribution-related ops
     MULTINOMIAL = auto()
     GET_AND_UPDATE_RNG_STATE = auto()
@@ -231,7 +232,8 @@ class PrimIDs(Enum):
     REMAINDER = auto()
     SUB = auto()
     ZETA = auto()
-    # Conditional prims
+    # Elementwise ternary prims
+    LERP = auto()
     WHERE = auto()
     # Reduction prims
     AMAX = auto()
@@ -282,6 +284,7 @@ class OpTags(Enum):
     # Labels operations that should not be removed by the dead code elimination (DCE) pass
     DONT_DCE = auto()
     IN_PLACE = auto()
+    AUTO_REGISTERED = auto()
 
 
 # TODO RC1 Document this function and describe the parts of a primitive
@@ -297,7 +300,6 @@ def make_prim(
     method_name: None | str = None,
     _bind_postprocess: None | Callable = None,
     _print_as_impl: bool = False,
-    python_name: str | None = None,
 ):
     sym = Symbol(
         name=name,
@@ -309,7 +311,6 @@ def make_prim(
         python_impl=python_impl,
         _bind_postprocess=_bind_postprocess,
         _print_as_impl=_print_as_impl,
-        _python_name=python_name,
     )
 
     if method_name is not None:
@@ -485,10 +486,9 @@ def _check_tensor_shape_and_metadata_meta(
 
 check_tensor_shape_and_metadata = make_prim(
     PrimIDs.CHECK_TENSOR_SHAPE_AND_METADATA,
-    "check_tensor_metadata",
+    "check_tensor_shape_and_metadata",
     meta=_check_tensor_shape_and_metadata_meta,
     tags=(OpTags.DONT_DCE,),
-    python_name="check_tensor_shape_and_metadata",
 )
 
 
@@ -1188,7 +1188,7 @@ def pack_buffer_impl(o: Any, key: Any, v: Any) -> None:
 
 pack_buffer = make_prim(
     PrimIDs.PACK_BUFFER,
-    "unpack_buffer",
+    "pack_buffer",
     meta=pack_buffer_meta,
     python_printer=pack_buffer_printer,
     python_impl=pack_buffer_impl,
@@ -1230,7 +1230,7 @@ def pack_setitem_impl(o: Any, key: Any, v: Any) -> None:
 
 pack_setitem = make_prim(
     PrimIDs.PACK_SETITEM,
-    "unpack_setitem",
+    "pack_setitem",
     meta=pack_setitem_meta,
     python_printer=pack_setitem_printer,
     python_impl=pack_setitem_impl,
@@ -1560,12 +1560,11 @@ def python_print_printer(
 
 python_print = make_prim(
     PrimIDs.PRINT,
-    "print",
+    "python_print",
     meta=_print_meta,
     python_printer=python_print_printer,
     python_impl=print,
     tags=(OpTags.DONT_DCE,),
-    python_name="python_print",
 )
 
 
@@ -1630,11 +1629,10 @@ def _del_impl(x: Any, /) -> None:
 
 python_del = make_prim(
     PrimIDs.DEL,
-    "del",
+    "python_del",
     meta=_del_meta,
     python_printer=del_printer,
     python_impl=_del_impl,
-    python_name="python_del",
 )
 
 
@@ -1667,12 +1665,11 @@ def _return_impl(*args) -> Any:
 
 python_return = make_prim(
     PrimIDs.RETURN,
-    "return",
+    "python_return",
     meta=_return_meta,
     python_printer=return_printer,
     python_impl=_return_impl,
     tags=(OpTags.DONT_DCE,),
-    python_name="python_return",
 )
 
 #
@@ -2547,8 +2544,36 @@ zeta = _make_elementwise_binary_prim(
 )
 
 #
-# Conditional prims
+# Elementwise ternary prims
 #
+
+
+def _lerp_meta(start: TensorProxy, end: TensorProxy, weight: Number | TensorProxy, /) -> TensorProxy:
+    utils.check_type(start, TensorProxy)
+    utils.check_type(end, TensorProxy)
+    utils.check_type(weight, (TensorProxy, Number, NumberProxy))
+
+    numbertype, dtype = utils.check_same_dtype(start, end, weight)
+
+    utils.check(numbertype is None or numbertype in fp_math_dtypes, lambda: f"Unsupported number type {numbertype}")
+    utils.check(dtype is None or dtype in fp_math_dtypes, lambda: f"Unsupported input dtype {dtype}")
+
+    utils.check_same_shape(start, end, weight)
+    utils.check_same_device(start, end, weight)
+
+    requires_grad = (
+        start.requires_grad or end.requires_grad or (isinstance(weight, TensorProxy) and weight.requires_grad)
+    )
+
+    return TensorProxy(like=start, dtype=dtype, requires_grad=requires_grad)
+
+
+lerp = make_prim(
+    PrimIDs.LERP,
+    "lerp",
+    method_name="lerp",
+    meta=_lerp_meta,
+)
 
 
 # TODO Restore Number x Number x Number support
@@ -2649,7 +2674,9 @@ exogenous_like = make_prim(
 #   Logically these tensors are constructed intermediate to a trace, so there's no mechanism for a user to
 #   extract their grad, but we could support compiling forward and backward and accessing grad attributes
 #   in the future
-def _full_meta(shape: Sequence[int], fill_value: Number, *, device: devices.Device, dtype: dtypes.dtype) -> TensorProxy:
+def _full_meta(
+    shape: tuple[int, ...], fill_value: Number, *, device: devices.Device, dtype: dtypes.dtype
+) -> TensorProxy:
     # Checks inputs
     utils.check_type(fill_value, (Number, NumberProxy))
 
@@ -2660,6 +2687,8 @@ def _full_meta(shape: Sequence[int], fill_value: Number, *, device: devices.Devi
         lambda: f"Can't safely cast fill_value of numbertype {fill_value_dtype} to dtype {dtype}",
     )
 
+    utils.check_type(shape, tuple)
+    utils.check_valid_shape(shape)
     return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
 
 
@@ -2818,6 +2847,14 @@ def _empty_meta(
 
 
 empty = make_prim(PrimIDs.EMPTY, "empty", meta=_empty_meta)
+
+
+# TODO(crcrpar): Cover `memory_format` kwarg
+def _clone_meta(a: TensorProxy, **kwargs) -> TensorProxy:
+    return TensorProxy(like=a, requires_grad=a.requires_grad)
+
+
+clone = make_prim(PrimIDs.CLONE, "clone", meta=_clone_meta)
 
 
 # Prim to construct a Tensor from sequence/nested sequence of Numbers.

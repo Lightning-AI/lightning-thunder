@@ -18,7 +18,6 @@ import torch
 import math
 from looseversion import LooseVersion
 
-from thunder.core.langctxs import langctx, Languages
 import thunder.core.dtypes as dtypes
 from thunder.core.dtypes import to_torch_dtype, to_dtype
 import thunder.core.devices as devices
@@ -169,6 +168,7 @@ zeros_like = _register_torch_operation("zeros_like")
 randn = _register_torch_operation("randn")
 empty = _register_torch_operation("empty")
 einsum = _register_torch_operation("einsum")
+clone = _register_torch_operation("clone")
 
 
 def _uniform_philox_like(
@@ -429,6 +429,10 @@ def _empty_prims_transform(
     return empty(shape, device=torch_device, dtype=torch_dtype)
 
 
+def _clone_prims_transform(a: TensorLike, **kwargs) -> TensorLike:
+    return clone(a)
+
+
 def _tensor_from_sequence_prims_transform(
     seq_or_number, *, device: devices.Device, dtype: None | dtypes.dtype
 ) -> TensorLike:
@@ -470,6 +474,7 @@ _register_implementation(
 _register_implementation(prims.get_and_update_rng_state, get_and_update_rng_state_impl, checker=_always_executable)
 _register_implementation(prims.randn, checker=_always_executable, execution_transform=_randn_prims_transform)
 _register_implementation(prims.empty, checker=_always_executable, execution_transform=_empty_prims_transform)
+_register_implementation(prims.clone, checker=_always_executable, execution_transform=_clone_prims_transform)
 _register_implementation(
     prims.tensor_from_sequence, checker=_always_executable, execution_transform=_tensor_from_sequence_prims_transform
 )
@@ -970,6 +975,7 @@ _register_elementwise_binary_implementation(ltorch.div, checker=_div_checker, ex
 
 addcdiv = _register_torch_operation("addcdiv")
 addcmul = _register_torch_operation("addcmul")
+lerp = _register_torch_operation("lerp")
 
 
 def _addcdiv_checker(a: TensorLike, b: TensorLike, c: TensorLike, /, *, value: None | Number = None) -> bool:
@@ -1026,8 +1032,17 @@ def _addcmul_transform(a: TensorLike, b: TensorLike, c: TensorLike, /, *, value:
     return addcmul(a, b, c, value=value)
 
 
+def _lerp_checker(start: TensorLike, end: TensorLike, weight: Number | TensorLike) -> TensorLike:
+    return (
+        isinstance(start, TensorLike)
+        and isinstance(end, TensorLike)
+        and isinstance(weight, (Number, NumberProxy, TensorLike))
+    )
+
+
 _register_implementation(ltorch.addcdiv, checker=_addcdiv_checker, execution_transform=_addcdiv_transform)
 _register_implementation(ltorch.addcmul, checker=_addcmul_checker, execution_transform=_addcmul_transform)
+_register_implementation(ltorch.lerp, lerp, checker=_lerp_checker)
 
 #
 # Conditional operations
@@ -1234,12 +1249,10 @@ def _index_put_prim_transform(
     return index_put(a, indices, values, accumulate)
 
 
-@langctx(Languages.TORCH)
 def _gather_prim_transform(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
     return gather(a, dim, index)
 
 
-@langctx(Languages.TORCH)
 def _gather_transform(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
     return gather(a, dim, index)
 
@@ -1275,9 +1288,6 @@ def _scatter_transform(
 
 # NOTE torch.compile has a compilation issue with scatter add in bfloat16,
 #      hence the special case here.
-# NOTE The scatter add transforms must set the torch language context explicitly so the .to() method
-#   on tensors is resolved (alternatively they could explicitly call thunder.torch.to)
-@langctx(Languages.TORCH)
 def _scatter_add_prim_transform(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     if a.dtype == dtypes.bfloat16:
         a = a.to(torch.float32)
@@ -1289,7 +1299,6 @@ def _scatter_add_prim_transform(a: TensorProxy, /, index: TensorProxy, value: Te
 
 # NOTE torch.compile has a compilation issue with scatter add in bfloat16,
 #      hence the special case here.
-@langctx(Languages.TORCH)
 def _scatter_add_transform(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike) -> TensorLike:
     # NOTE scatter_add does not participate in type promotion, so if a has the bfloat16 dtype, then so does src
     if a.dtype == dtypes.bfloat16:

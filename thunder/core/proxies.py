@@ -87,10 +87,37 @@ def make_proxy_name(*, name: None | str = None, prefix: None | str = None) -> st
     return trc.make_name(prefix=prefix)
 
 
+class ProxyTag:
+    def __new__(cls, name, _register=False):
+        if _register:
+            if hasattr(cls, name):
+                raise AttributeError(f"{cls.__name__}.{name} is already registered")
+            res = super().__new__(cls)
+            res._value = name
+            setattr(cls, name, res)
+            return res
+
+        return getattr(cls, name)
+
+    @classmethod
+    def register_tag(cls, name):
+        ProxyTag(name, _register=True)
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}.{self._value}"
+
+
 # TODO Document this class
 # TODO Support multiple histories
 class Proxy(VariableInterface, ProxyInterface):
-    def __init__(self, name: str | None = None, *, prefix: None | str = None, history: None | tuple = None):
+    def __init__(
+        self,
+        name: str | None = None,
+        *,
+        prefix: None | str = None,
+        history: None | tuple = None,
+        tags: set | None = None,
+    ):
         # Determines the prefix
         if prefix is None:
             if isinstance(self, FloatProxy):
@@ -124,6 +151,11 @@ class Proxy(VariableInterface, ProxyInterface):
         self._name = make_proxy_name(name=name, prefix=prefix)
         self._has_weak_name: bool = name is None
         self.history = history
+        self._tags = set(tags) if tags is not None else set()
+
+    @property
+    def tags(self) -> set:
+        return self._tags
 
     @property
     def name(self) -> str:
@@ -138,6 +170,7 @@ class Proxy(VariableInterface, ProxyInterface):
         kwargs = dict(
             name=self.name,
             history=self.history,
+            tags=self.tags,
         )
         kwargs.update(changes)
         return Proxy(**kwargs)
@@ -376,8 +409,8 @@ class Proxy(VariableInterface, ProxyInterface):
 # Unlike many other proxies, this does not mimic the type of the object it wraps
 # TODO RC1 Rename ._o to ._value for consistency
 class AnyProxy(Proxy):
-    def __init__(self, o: Any, /, *, name: str | None = None, history: None | tuple = None):
-        super().__init__(name=name, history=history)
+    def __init__(self, o: Any, /, *, name: str | None = None, history: None | tuple = None, tags: set | None = None):
+        super().__init__(name=name, history=history, tags=tags)
         self._o = o
 
     def __repr__(self) -> str:
@@ -391,17 +424,18 @@ class AnyProxy(Proxy):
         kwargs = dict(
             name=self.name,
             history=self.history,
+            tags=self.tags,
         )
         kwargs.update(changes)
         return AnyProxy(self._o, **kwargs)
 
 
 class StringProxy(Proxy, str):
-    def __new__(cls, s: str, /, *, name: str | None = None, history: None | tuple = None):
+    def __new__(cls, s: str, /, *, name: str | None = None, history: None | tuple = None, tags: set | None = None):
         return str.__new__(cls, s)
 
-    def __init__(self, s: str, /, *, name: str | None = None, history: None | tuple = None):
-        Proxy.__init__(self, name=name, history=history)
+    def __init__(self, s: str, /, *, name: str | None = None, history: None | tuple = None, tags: set | None = None):
+        Proxy.__init__(self, name=name, history=history, tags=tags)
         self.value: str = s
 
     def __str__(self) -> str:
@@ -417,6 +451,7 @@ class StringProxy(Proxy, str):
         kwargs = dict(
             name=self.name,
             history=self.history,
+            tags=self.tags,
         )
         kwargs.update(changes)
         return StringProxy(self.value, **kwargs)
@@ -442,8 +477,8 @@ class StringProxy(Proxy, str):
 # The following class is DEPRECATED, and is only preserved her for experimental feature development
 #   that relies upon it.
 class CollectionProxy(Proxy):
-    def __init__(self, coll: Any, *, name: str | None = None):
-        Proxy.__init__(self, name=name)
+    def __init__(self, coll: Any, *, name: str | None = None, tags: set | None = None):
+        Proxy.__init__(self, name=name, tags=tags)
         self.coll = coll
 
     def collection(self) -> Any:
@@ -454,11 +489,11 @@ class CollectionProxy(Proxy):
 
 
 class TupleProxy(Proxy, tuple):
-    def __new__(cls, tup: tuple, *, name: None | str = None, history: None | tuple = None):
+    def __new__(cls, tup: tuple, *, name: None | str = None, history: None | tuple = None, tags: set | None = None):
         return tuple.__new__(cls, tup)
 
-    def __init__(self, tup: tuple, *, name: None | str = None, history: None | tuple = None):
-        Proxy.__init__(self, name=name, history=history)
+    def __init__(self, tup: tuple, *, name: None | str = None, history: None | tuple = None, tags: set | None = None):
+        Proxy.__init__(self, name=name, history=history, tags=tags)
         self._value = tup
 
     def type_string(self) -> str:
@@ -471,6 +506,7 @@ class TupleProxy(Proxy, tuple):
         kwargs = dict(
             name=self.name,
             history=self.history,
+            tags=self.tags,
         )
         kwargs.update(changes)
         return TupleProxy(self._value, **kwargs)
@@ -492,15 +528,15 @@ class TupleProxy(Proxy, tuple):
 
 
 class ListProxy(Proxy, list):
-    def __new__(cls, lst: list, *, name: None | str = None, history: None | tuple = None):
+    def __new__(cls, lst: list, *, name: None | str = None, history: None | tuple = None, tags: set | None = None):
         l = list.__new__(cls, lst)
 
         # NOTE This intentionally does not call the ListProxy.extend() method
         list.extend(l, lst)
         return l
 
-    def __init__(self, lst: list, *, name: None | str = None, history: None | tuple = None):
-        Proxy.__init__(self, name=name, history=history)
+    def __init__(self, lst: list, *, name: None | str = None, history: None | tuple = None, tags: set | None = None):
+        Proxy.__init__(self, name=name, history=history, tags=tags)
         self._value = lst
 
     def type_string(self, /) -> str:
@@ -513,6 +549,7 @@ class ListProxy(Proxy, list):
         kwargs = dict(
             name=self.name,
             history=self.history,
+            tags=self.tags,
         )
         kwargs.update(changes)
         return ListProxy(self._value, **kwargs)
@@ -552,13 +589,13 @@ class ListProxy(Proxy, list):
 
 
 class DictProxy(Proxy, dict):
-    def __new__(cls, d: dict, *, name: None | str = None, history: None | tuple = None):
+    def __new__(cls, d: dict, *, name: None | str = None, history: None | tuple = None, tags: set | None = None):
         nd = dict.__new__(cls, d)
         dict.update(nd, d)
         return nd
 
-    def __init__(self, d: dict, *, name: None | str = None, history: None | tuple = None):
-        Proxy.__init__(self, name=name, history=history)
+    def __init__(self, d: dict, *, name: None | str = None, history: None | tuple = None, tags: set | None = None):
+        Proxy.__init__(self, name=name, history=history, tags=tags)
         self._value = d
 
     def type_string(self, /) -> str:
@@ -571,6 +608,7 @@ class DictProxy(Proxy, dict):
         kwargs = dict(
             name=self.name,
             history=self.history,
+            tags=self.tags,
         )
         kwargs.update(changes)
         return DictProxy(self._value, **kwargs)
@@ -638,6 +676,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
         python_type: type,
         history: None | tuple = None,
         constraint: None | CONSTRAINT = None,
+        tags: set | None = None,
     ):
         self.value = value
         self.python_type = python_type
@@ -645,7 +684,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
             constraint = CONSTRAINT.DYNAMIC
         self.constraint = constraint
 
-        Proxy.__init__(self, name, history=history)
+        Proxy.__init__(self, name, history=history, tags=tags)
 
     # NOTE: Python numbers hash to themselves, and this mimics that behavior
     def __hash__(self) -> int:
@@ -658,6 +697,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
         kwargs = dict(
             name=self.name,
             history=self.history,
+            tags=self.tags,
             value=self.value,
             python_type=self.python_type,
             constraint=self.constraint,
@@ -1039,8 +1079,17 @@ def pytype(x: Proxy) -> type | None:
 
 # TODO RC1 Update Proxy number inits to be value, /, *, name, history
 class ComplexProxy(NumberProxy):
-    def __init__(self, name=None, value=None, history: None | tuple = None, constraint: None | CONSTRAINT = None):
-        NumberProxy.__init__(self, name=name, value=value, python_type=complex, history=history, constraint=constraint)
+    def __init__(
+        self,
+        name=None,
+        value=None,
+        history: None | tuple = None,
+        constraint: None | CONSTRAINT = None,
+        tags: set | None = None,
+    ):
+        NumberProxy.__init__(
+            self, name=name, value=value, python_type=complex, history=history, constraint=constraint, tags=tags
+        )
 
     def replace(self, **changes):
         r"""Return a copy of the ComplexProxy object with new values for the specified fields as given to the constructor as arguments.
@@ -1049,6 +1098,7 @@ class ComplexProxy(NumberProxy):
         kwargs = dict(
             name=self.name,
             history=self.history,
+            tags=self.tags,
             value=self.value,
             constraint=self.constraint,
             __class__=self.__class__,  # undocumented on purpose
@@ -1071,11 +1121,12 @@ class IntegerProxy(NumberProxy):
         value=None,
         history: None | tuple = None,
         constraint: None | CONSTRAINT = None,
+        tags: set | None = None,
     ):
         # NOTE bools are also integers in Python
         python_type = bool if isinstance(value, bool) else int
         NumberProxy.__init__(
-            self, name=name, value=value, python_type=python_type, history=history, constraint=constraint
+            self, name=name, value=value, python_type=python_type, history=history, constraint=constraint, tags=tags
         )
 
     def replace(self, **changes):
@@ -1085,6 +1136,7 @@ class IntegerProxy(NumberProxy):
         kwargs = dict(
             name=self.name,
             history=self.history,
+            tags=self.tags,
             value=self.value,
             constraint=self.constraint,
             __class__=self.__class__,
@@ -1109,8 +1161,17 @@ class IntegerProxy(NumberProxy):
 
 # TODO Review dtype conversions
 class FloatProxy(NumberProxy):
-    def __init__(self, name=None, value=None, history: None | tuple = None, constraint: None | CONSTRAINT = None):
-        NumberProxy.__init__(self, name=name, value=value, python_type=float, history=history, constraint=constraint)
+    def __init__(
+        self,
+        name=None,
+        value=None,
+        history: None | tuple = None,
+        constraint: None | CONSTRAINT = None,
+        tags: set | None = None,
+    ):
+        NumberProxy.__init__(
+            self, name=name, value=value, python_type=float, history=history, constraint=constraint, tags=tags
+        )
 
     def replace(self, **changes):
         r"""Return a copy of the FloatProxy object with new values for the specified fields as given to the constructor as arguments.
@@ -1119,6 +1180,7 @@ class FloatProxy(NumberProxy):
         kwargs = dict(
             name=self.name,
             history=self.history,
+            tags=self.tags,
             value=self.value,
             constraint=self.constraint,
             __class__=self.__class__,  # undocumented on purpose
@@ -1237,8 +1299,9 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
         dtype: dtypes.dtype | None = None,
         prefix: None | str = None,
         history: None | tuple = None,
+        tags: set | None = None,
     ):
-        super().__init__(name, prefix=prefix, history=history)
+        super().__init__(name, prefix=prefix, history=history, tags=tags)
 
         # NOTE FutureTensorProxies never require grad
         (
@@ -1329,8 +1392,10 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
         )
         name = changes.get("name", self.name)
         history = changes.get("history", self.history)
+        tags = changes.get("tags", self.tags)
         return FutureTensorProxy(
             name=name,
+            tags=tags,
             shape=shape,
             device=device,
             dtype=dtype,
@@ -1352,9 +1417,10 @@ class TensorProxy(Proxy, TensorProxyInterface):
         prefix: None | str = None,
         distparallel_type: DistParallelType | None = None,
         history: None | tuple = None,
+        tags: set | None = None,
         thunder_fsdp_padding_size: int | None = None,
     ):
-        super().__init__(name, prefix=prefix, history=history)
+        super().__init__(name, prefix=prefix, history=history, tags=tags)
 
         (
             self._shape,
@@ -1450,8 +1516,10 @@ class TensorProxy(Proxy, TensorProxyInterface):
         )
         name = changes.get("name", self.name)
         history = changes.get("history", self.history)
+        tags = changes.get("tags", self.tags)
         return TensorProxy(
             name=name,
+            tags=tags,
             shape=shape,
             device=device,
             dtype=dtype,
@@ -1475,6 +1543,23 @@ class TensorProxy(Proxy, TensorProxyInterface):
         baseutils.check(method_or_value is not None, lambda: f"Unknown attribute {attr}", exception_type=AttributeError)
 
         if callable(method_or_value):
+            # TODO: This is a temporary fix to allow for the `numel` attribute
+            # to be called without arguments. This is a workaround for the fact
+            # that the `numel` was initially in Thunder introduced not as a
+            # method but a property. Now a lot of code relies on it being a
+            # property. But PyTorch uses it as a method. We need to converge on
+            # one or the other.
+            # https://github.com/Lightning-AI/lightning-thunder/issues/925
+            class _Numel(int):
+                def __new__(cls, value):
+                    assert isinstance(value, int), f"Expected int, got {type(value)}"
+                    return int.__new__(cls, value)
+
+                def __call__(self):
+                    return int(self)
+
+            if attr == "numel":
+                return _Numel(self._numel)
             return partial(method_or_value, self)
 
         return method_or_value
@@ -1775,8 +1860,8 @@ _cls_to_number_proxy_map = {
 
 
 def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple = None) -> TensorProxy:
-    if hasattr(t, "__thunder_device"):
-        torch_device = t.__thunder_device
+    if hasattr(t, "_thunder_device"):
+        torch_device = t._thunder_device
     else:
         torch_device = t.device
     device = devices.to_device(torch_device)
@@ -1800,8 +1885,8 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
 def futuretensorproxy(
     t: torch.Tensor | TensorProxy | FutureTensorProxy, /, *, name: None | str, history: None | tuple = None
 ) -> FutureTensorProxy:
-    if hasattr(t, "__thunder_device"):
-        torch_device = t.__thunder_device
+    if hasattr(t, "_thunder_device"):
+        torch_device = t._thunder_device
     else:
         torch_device = t.device
     device = devices.to_device(torch_device)

@@ -208,7 +208,7 @@ def test_redundant_cast_nvfusion(executor, device: str, dtype: dtypes.dtype):
     assert len(fusions[0].subsymbols) == 3
 
     # Verifies the intermediate consumer
-    assert fusions[1].subsymbols[-1].args[0].name == "t5"
+    assert fusions[1].subsymbols[-2].args[0].name == "t5"
 
 
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
@@ -367,23 +367,23 @@ def test_cse_rematerialization(executor, device, _):
     # Nvfuser with recomputation should use precomputed cos and sin values.
     assert len(fusion_bsyms[1].args) == len(fusion_bsyms[6].args)
 
-    # Below, we check that freqs_sin and tos1 (the latter being freqs_cos) are used
+    # Below, we check that freqs_sin and freqs_cos are used
     # in the same operation in both fusions.
     (fusion1_freqs_sin_arg,) = (a for a in fusion_bsyms[1].args if a.name == "freqs_sin")
-    (fusion1_tos1_arg,) = (a for a in fusion_bsyms[1].args if a.name == "tos1")
+    (fusion1_freqs_cos_arg,) = (a for a in fusion_bsyms[1].args if a.name == "freqs_cos")
     (fusion6_freqs_sin_arg,) = (a for a in fusion_bsyms[6].args if a.name == "freqs_sin")
-    (fusion6_tos1_arg,) = (a for a in fusion_bsyms[6].args if a.name == "tos1")
+    (fusion6_freqs_cos_arg,) = (a for a in fusion_bsyms[6].args if a.name == "freqs_cos")
 
     (fusion1_freqs_sin_user,) = (s for s in fusion_bsyms[1].subsymbols if s.args[0] is fusion1_freqs_sin_arg)
     (fusion6_freqs_sin_user,) = (s for s in fusion_bsyms[6].subsymbols if s.args[0] is fusion6_freqs_sin_arg)
 
     assert fusion1_freqs_sin_user.sym is fusion6_freqs_sin_user.sym
     assert fusion1_freqs_sin_user.args[1:] == fusion6_freqs_sin_user.args[1:]
-    (fusion1_tos1_user,) = (s for s in fusion_bsyms[1].subsymbols if s.args[0] is fusion1_tos1_arg)
-    (fusion6_tos1_user,) = (s for s in fusion_bsyms[6].subsymbols if s.args[0] is fusion1_tos1_arg)
+    (fusion1_freqs_cos_user,) = (s for s in fusion_bsyms[1].subsymbols if s.args[0] is fusion1_freqs_cos_arg)
+    (fusion6_freqs_cos_user,) = (s for s in fusion_bsyms[6].subsymbols if s.args[0] is fusion1_freqs_cos_arg)
 
-    assert fusion1_tos1_user.sym is fusion6_tos1_user.sym
-    assert fusion1_tos1_user.args[1:] == fusion6_tos1_user.args[1:]
+    assert fusion1_freqs_cos_user.sym is fusion6_freqs_cos_user.sym
+    assert fusion1_freqs_cos_user.args[1:] == fusion6_freqs_cos_user.args[1:]
 
 
 # Tests that two separated nvFuser regions can be merged when they don't depend
@@ -992,3 +992,82 @@ def test_div_truediv_integer_tensors_consistency_nvfuser(executor, device, thund
         rout = f(x.cpu(), y.cpu()).to(device)
         jout = f(x, y)
         assert rout.equal(jout)
+
+
+@instantiate(
+    dtypes=(thunder.float16, thunder.bfloat16),
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(nvFuserExecutor,),
+    decorators=(
+        pytest.mark.skipif(
+            nvfuser_version() is None or nvfuser_version() < LooseVersion("0.2.10"),
+            reason="Requires nvFuser version 0.2.10 or later",
+        ),
+        pytest.mark.parametrize("dropout_p", [0.0, 0.2]),
+        pytest.mark.parametrize("is_causal", [False, True]),
+        pytest.mark.parametrize("scale", [None, 1e-3]),
+    ),
+)
+def test_sdpa(
+    executor,
+    device: str,
+    thunder_dtype: dtypes.dtype,
+    dropout_p: None | float,
+    is_causal: None | bool,
+    scale: None | float,
+):
+
+    def sdpa_fn(q, k, v, dropout_p, is_causal, scale):
+        return torch.nn.functional.scaled_dot_product_attention(
+            q, k, v, dropout_p=dropout_p, is_causal=is_causal, scale=scale
+        )
+
+    torch.manual_seed(0)
+    dtype = ltorch.to_torch_dtype(thunder_dtype)
+
+    N, H, L, S, E = 4, 8, 16, 16, 8
+    q = make_tensor((N, H, L, E), device=device, dtype=dtype, requires_grad=True)
+    k = make_tensor((N, H, S, E), device=device, dtype=dtype, requires_grad=True)
+    v = make_tensor((N, H, S, E), device=device, dtype=dtype, requires_grad=True)
+    grad_out = make_tensor((N, H, L, E), device=device, dtype=dtype)
+
+    tensor_inputs = [q, k, v]
+    scalar_inputs = [dropout_p, is_causal, scale]
+
+    compiled_func = thunder.jit(sdpa_fn, executors_list=executor.executors_list(), nv_enable_sdpa=True)
+    with torch.random.fork_rng(devices=[torch.cuda.current_device()]):
+        attn_out = compiled_func(*tensor_inputs, *scalar_inputs)
+    attn_out.backward(grad_out)
+    fwd_trace = thunder.last_traces(compiled_func)[-1]
+    bwd_trace = thunder.last_backward_traces(compiled_func)[-1]
+    fwd_fusion = examine.get_fusions(fwd_trace)
+    bwd_fusion = examine.get_fusions(bwd_trace)
+
+    assert len(fwd_fusion) == 1
+    assert len(bwd_fusion) == 1
+    assert "nv_sdpfa_fwd" in fwd_fusion[-1][-1].name
+
+    # Check nv_sdpfa_fwd is not in bwd_fusion -> that would indicate rematerialization
+    assert "nv_sdpfa_bwd" in bwd_fusion[-1][-1].name and "nv_sdpfa_fwd" not in bwd_fusion[-1][-1].name
+    assert (
+        bwd_fusion[-1][-1].last_used.getReproString().count("is_cpu=True") == 2
+    ), "Expected philox_seed and philox_offset inputs to be CPU scalar tensors."
+
+    # Torch reference computation
+    # Clone the inputs to verify gradients with torch reference
+    ref_tensor_inputs = []
+    for inp in tensor_inputs:
+        ref_inp = inp.clone().detach()
+        ref_inp.requires_grad = True
+        ref_tensor_inputs.append(ref_inp)
+
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+
+    with torch.random.fork_rng(devices=[torch.cuda.current_device()]) and sdpa_kernel(SDPBackend.FLASH_ATTENTION):
+        ref_attn_out = sdpa_fn(*ref_tensor_inputs, *scalar_inputs)
+    ref_attn_out.backward(grad_out)
+
+    nv_outputs = (attn_out, q.grad, k.grad, v.grad)
+    ref_outputs = (ref_attn_out, *(inp.grad for inp in ref_tensor_inputs))
+    for nv_out, ref_out in zip(nv_outputs, ref_outputs):
+        torch.testing.assert_close(nv_out, ref_out)

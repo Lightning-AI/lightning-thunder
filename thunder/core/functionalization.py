@@ -60,11 +60,11 @@ def check_inplace_to_views(computation_trace: Trace) -> dict[VariableInterface, 
             continue
 
         check(
-            prod_bsym.sym not in ltorch._syms_returning_runtime_dependently_views,
+            prod_bsym.sym not in ltorch._syms_that_may_return_views,
             lambda: (
                 f"in-place op of `{bsym.sym.id}` to `{prod_bsym.sym.id}` output `{in_tensor}` is not "
                 f"supported. It's unclear if the output of "
-                f"{tuple(s.id for s in ltorch._syms_returning_runtime_dependently_views)} is "
+                f"{tuple(s.id for s in ltorch._syms_that_may_return_views)} is "
                 f"a copy, a view, or the input itself, as per https://pytorch.org/docs/stable/tensor_view.html"
             ),
             NotImplementedError,
@@ -105,11 +105,29 @@ def _get_prod_bsym_with_arg(
     t: TensorProxy,
     producer_map: ProxyDict,
     trace_args: ProxyDict,
+    *,
+    orig_bsym_of_in_tensor: BoundSymbol,
+    in_tensor: TensorProxy,
 ) -> BoundSymbol | None:
     from thunder.torch import _syms_returning_views
+    from thunder.torch import _syms_that_may_return_views
 
     def inplace_or_view(bsym) -> bool:
         sym = bsym.sym
+        check(
+            sym not in _syms_that_may_return_views,
+            lambda: (
+                f"in-place op of `{orig_bsym_of_in_tensor.sym.id}` to `{bsym.sym.id}` output `{in_tensor.name}` is not "
+                f"supported. It's unclear if `{in_tensor.name}`, the output of "
+                f"{tuple(s.id for s in _syms_that_may_return_views)} is "
+                "a copy, a view, or the input itself, as per https://pytorch.org/docs/stable/tensor_view.html\n"
+                "Please use `torch.view` to create a view. Cloning the reshaped tensor before the in-place op is not currently supported.\n"
+                "This error can be skipped with `skip_inplace_functionalization=True` passed to `thunder.jit`.\n"
+                "If you believe this is a bug, please report it to the Lightning Thunder team in "
+                "https://github.com/Lightning-AI/lightning-thunder/issues/957."
+            ),
+            NotImplementedError,
+        )
         return (sym.tags and prims.OpTags.IN_PLACE in sym.tags) or sym in _syms_returning_views
 
     if t not in producer_map:
@@ -123,7 +141,13 @@ def _get_prod_bsym_with_arg(
         if first_tensor in trace_args:
             return prod_bsym
         else:
-            return _get_prod_bsym_with_arg(first_tensor, producer_map, trace_args)
+            return _get_prod_bsym_with_arg(
+                first_tensor,
+                producer_map,
+                trace_args,
+                orig_bsym_of_in_tensor=orig_bsym_of_in_tensor,
+                in_tensor=in_tensor,
+            )
     else:
         return None
 
@@ -303,6 +327,25 @@ def apply_functionalization_to_canonicalized_trace(
 ) -> Trace:
     from thunder.torch import _syms_returning_views
 
+    def _check_numel(src: TensorProxy, dst: TensorProxy) -> None:
+        check(
+            src.numel == dst.numel,
+            lambda: (
+                f"Fail to propagate the in-place change of `{src.name}` to `{dst.name}` "
+                f"because of the different number of elements: {src.numel} and {dst.numel}"
+            ),
+        )
+
+    def _reshape_bsym_ctor(src: TensorProxy, dst: TensorProxy, trace: Trace) -> tuple[BoundSymbol | None, TensorProxy]:
+        target = dst
+        if src.shape == dst.shape:
+            return None, target
+        with tracectx(trace):
+            target = prims.reshape.meta(src, dst.shape)
+            reshape_bsym = prims.reshape.bind(src, dst.shape, output=target)
+            reshape_bsym.header = f"`{new_t.name}` replaces `{dst.name}` due to in-place op into `{dst.name}`"
+        return reshape_bsym, target
+
     swap_map: dict[VariableInterface, TensorProxy] = {}
     flat_args = tuple(
         filter(
@@ -398,7 +441,11 @@ def apply_functionalization_to_canonicalized_trace(
             arg_copy_dst = copy_to
         elif (
             optional_prod_bsym := _get_prod_bsym_with_arg(
-                copy_to, producer_map_of_intermediate_trace, arg_to_copy_bsyms
+                copy_to,
+                producer_map_of_intermediate_trace,
+                arg_to_copy_bsyms,
+                orig_bsym_of_in_tensor=new_bsym,
+                in_tensor=copy_to,
             )
         ) is not None:
             new_copy_to = _get_first_tensor_arg(optional_prod_bsym)
@@ -431,43 +478,20 @@ def apply_functionalization_to_canonicalized_trace(
                     views = base_to_views[variableify(base)]
                     views_to_replace = list(filter(lambda t: variableify(t) != var_copy_to, views))
                 if [bsym for bsym in consumer_map_of_intermediate_trace[base] if bsym_to_idx[bsym] > idx]:
-                    check(
-                        copy_from.numel == base.numel,
-                        lambda: (
-                            f"Fail to propagate the in-place change of `{copy_from.name}` to `{base.name}` "
-                            f"because of the different number of elements: {copy_from.numel} and {base.numel}"
-                        ),
-                    )
-                    new_t: TensorProxy = copy_from
-                    if copy_from.shape != base.shape:
-                        with tracectx(canonicalized_trace):
-                            new_t = prims.reshape.meta(copy_from, base.shape)
-                            reshape_bsym = prims.reshape.bind(copy_from, base.shape, output=new_t)
-                            reshape_bsym.header = (
-                                f"`{new_t.name}` replaces `{base.name}` due to in-place op into `{copy_to.name}`"
-                            )
-                        new_bsyms.append(reshape_bsym)
+                    _check_numel(copy_from, base)
+                    optional_reshape_bsym, new_t = _reshape_bsym_ctor(copy_from, base, canonicalized_trace)
+                    if optional_reshape_bsym is not None:
+                        new_bsyms.append(optional_reshape_bsym)
                     swap_map[variableify(base)] = new_t
                 for v in views_to_replace:
                     if v in consumer_map_of_intermediate_trace and [
                         bsym for bsym in consumer_map_of_intermediate_trace[v] if bsym_to_idx[bsym] > idx
                     ]:
-                        check(
-                            copy_from.numel == v.numel,
-                            lambda: (
-                                f"Fail to propagate the in-place change of `{copy_from.name}` to `{v.name}` "
-                                f"because of the different number of elements: {copy_from.numel} and {v.numel}"
-                            ),
-                        )
+                        _check_numel(copy_from, v)
                         new_t: TensorProxy = copy_from
-                        if copy_from.shape != v.shape:
-                            with tracectx(canonicalized_trace):
-                                new_t = prims.reshape.meta(copy_from, v.shape)
-                                reshape_bsym = prims.reshape.bind(copy_from, v.shape, output=new_t)
-                                reshape_bsym.header = (
-                                    f"`{new_t.name}` replaces `{v.name}` due to in-place op into `{copy_to.name}`"
-                                )
-                            new_bsyms.append(reshape_bsym)
+                        optional_reshape_bsym, new_t = _reshape_bsym_ctor(copy_from, v, canonicalized_trace)
+                        if optional_reshape_bsym is not None:
+                            new_bsyms.append(optional_reshape_bsym)
                         swap_map[variableify(v)] = new_t
                 bsym_to_trigger_inplace_propagation[functional_bsym] = (copy_to, base, views_to_replace)
 
@@ -488,17 +512,12 @@ def apply_functionalization_to_canonicalized_trace(
                 for v in arg_to_copy_froms[var_arg_copy_dst]:
                     if v.name == copy_from.name:
                         continue
-                    check(
-                        v.numel == copy_from.numel,
-                        lambda: f"{v.name} has different number of elements from {copy_from.name}: {v.numel} and {copy_from.nymel}",
-                    )
+                    _check_numel(copy_from, v)
                     reshaped_copy_from_for_aliases = copy_from
-                    if v.shape != copy_from.shape:
-                        with tracectx(canonicalized_trace):
-                            reshaped_copy_from_for_aliases = prims.reshape.meta(copy_from, v.shape)
-                            new_bsyms.append(
-                                prims.reshape.bind(copy_from, v.shape, output=reshaped_copy_from_for_aliases)
-                            )
+                    optional_reshape_bsym, new_dst = _reshape_bsym_ctor(copy_from, v, canonicalized_trace)
+                    if optional_reshape_bsym is not None:
+                        reshaped_copy_from_for_aliases = new_dst
+                        new_bsyms.append(optional_reshape_bsym)
                     swap_map_for_tensor_alias_child[variableify(v)] = reshaped_copy_from_for_aliases
                     swap_map[variableify(v)] = reshaped_copy_from_for_aliases
                 arg_to_copy_froms[var_arg_copy_dst].append(copy_from)

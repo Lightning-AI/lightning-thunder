@@ -697,6 +697,9 @@ def test_litgpt_variants(name, device):
     actual_logits = tom(x)
     assert_close(actual_logits, expected_logits)
 
+    # small check that we do not leak internal var names
+    assert "tos" not in str(thunder.last_prologue_traces(tom)[0])
+
     actual_logits.sum().backward()
 
     for param1, param2 in zip(reference.parameters(), model.parameters()):
@@ -1220,3 +1223,65 @@ def test_failing_prologue_in_last_prologue_traces():
 
     # make sure that we have prologue traces in the last_prologue_traces
     assert len(thunder.last_prologue_traces(jfn)) > 0
+
+
+@pytest.mark.parametrize(
+    "device",
+    ("cpu", "cuda"),
+)
+def test_matmul_nd_times_2d_runs_2d_gemm(device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    def f(x, y):
+        return x @ y
+
+    jf = thunder.jit(f)
+
+    x = torch.rand(2, 3, 4, device=device)
+    y = torch.rand(4, 5, device=device)
+
+    thunder_res = jf(x, y)
+    torch_res = f(x, y)
+    assert_close(thunder_res, torch_res)
+
+    trace = thunder.last_traces(jf)[-1]
+
+    # Extract prims.matmul
+    matmul_prim_bsym = None
+    for bsym in trace.bound_symbols:
+        if bsym.sym.name == "matmul":
+            for subbsym in bsym.subsymbols:
+                if subbsym.sym.name == "matmul":
+                    for subsubbsym in subbsym.subsymbols:
+                        if subsubbsym.sym.id == prims.PrimIDs.MATMUL:
+                            matmul_prim_bsym = subsubbsym
+                            break
+                    break
+            break
+
+    # Check that prim.matmul outputs a 2d tensor
+    assert matmul_prim_bsym is not None
+    assert matmul_prim_bsym.output.ndim == 2
+
+
+def test_tag_static_memory_location():
+    # not much sense, but hey.
+    m = torch.nn.Sequential(torch.nn.Tanh(), torch.nn.Linear(2, 3), torch.nn.BatchNorm1d(3))
+    jm = thunder.jit(m)
+    jm(torch.randn(2, 2))
+    lt = thunder.last_traces(jm)[-1]
+
+    # input should not be tagged static
+    assert thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION not in lt.args[0].tags
+    # parameters and buffers should be tagged static
+    assert all(thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION in a.tags for a in lt.args[1:])
+
+    # outputs of operations should not be tagged static
+    for bsym in lt.bound_symbols:
+        if bsym.sym == thunder.core.prims.unpack_trivial:
+            continue
+        for a in bsym.flat_outs:
+            if isinstance(a, thunder.Proxy):
+                assert thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION not in a.tags
+    assert str(thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION) == "ProxyTag.STATIC_MEMORY_LOCATION"

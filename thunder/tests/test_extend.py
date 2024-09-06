@@ -8,7 +8,6 @@ from torch.testing import assert_close
 
 import thunder
 import thunder.core.devices as devices
-from thunder.core.langctxs import langctx
 from thunder.core.proxies import TensorProxy
 from thunder.core.transforms import grad, get_grad, put_grads
 from thunder.extend import (
@@ -33,7 +32,6 @@ def test_extend_core():
     ) -> tuple[torch.Tensor, torch.Tensor]:
         return np.multiply(a, b), np.multiply(c, d)
 
-    @langctx("torch")
     def multimul_like(
         a: Number | TensorProxy,
         b: Number | TensorProxy,
@@ -71,7 +69,6 @@ def test_extend_core():
 
         return all(is_cpu(x) for x in (a, b))
 
-    @langctx("torch")
     def mymul_grad(a: TensorProxy, b: TensorProxy) -> TensorProxy:
         fwd = a * b
 
@@ -137,7 +134,6 @@ def test_get_all_executors_includes_all_native_executors():
         "torchcompile_cat",
         "python",
         "transformer_engine",
-        "cudagraphex",
     }
     if package_available("triton"):
         # `triton` maybe installed on a system without GPU.

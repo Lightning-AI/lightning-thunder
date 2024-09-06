@@ -2180,6 +2180,10 @@ polygamma_opinfo = OpInfo(
             executors=("torch"),
             dtypes=(datatypes.complexfloating, datatypes.bfloat16, datatypes.float16),
         ),
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-6, rtol=1e-6)),
+            "test_vjp_correctness",
+        ),
     ),
 )
 elementwise_binary_ops.append(polygamma_opinfo)
@@ -2490,6 +2494,34 @@ addcdiv_opinfo = OpInfo(
     ),
 )
 opinfos.append(addcdiv_opinfo)
+
+
+def lerp_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    S = 4
+    # start_shape, end_shape, weight_shape
+    cases = (
+        ((), (), ()),
+        ((S,), (S,), (S,)),
+        ((S, S), (S, S), (S, S)),
+        ((S, 1), (1, S), (S, 1)),
+    )
+    make = partial(make_tensor, device=device, dtype=dtype, requires_grad=requires_grad)
+    number = partial(make_number, dtype=dtype)
+    for start_shape, end_shape, weight_shape in cases:
+        # Generates two cases, one with a tensor weight using the shape from the case, one with a number weight
+        yield SampleInput(make(start_shape, **kwargs), make(end_shape, **kwargs), make(weight_shape, **kwargs))
+        number_weight = number(**kwargs)
+        yield SampleInput(make(start_shape, **kwargs), make(end_shape, **kwargs), number_weight)
+
+
+lerp_opinfo = OpInfo(
+    ltorch.lerp,
+    sample_input_generator=lerp_sample_generator,
+    torch_reference=torch.lerp,
+    dtypes=(datatypes.inexact,),
+    test_directives=(),
+)
+opinfos.append(lerp_opinfo)
 
 
 #
@@ -2962,6 +2994,8 @@ def type_as_sample_generator(op, device, dtype, requires_grad, **kwargs):
     for a_shape, b_shape in itertools.product(shapes, shapes):
         yield SampleInput(make(a_shape), make(b_shape))
         yield SampleInput(make(a_shape), make(b_shape, dtype=torch.float32))
+        # Tests when inputs from different devices
+        yield SampleInput(make(a_shape), make(b_shape, device="cpu"))
 
 
 type_as_sample = OpInfo(
@@ -5781,6 +5815,8 @@ def full_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
     for shape, fill_value in cases:
         yield SampleInput(shape, fill_value, device=device, dtype=dtype)
+    # Tests dtype is inferred correctly
+    yield SampleInput(shape, fill_value, device=device)
 
 
 def full_error_generator(op, device, **kwargs):
@@ -5860,6 +5896,9 @@ def fixed_value_tensor_creation_op_sample_generator(op, device, dtype, requires_
         (4, 4),
         (8, 1, 6),
         (8, 7, 5, 1),
+        [
+            4,
+        ],  # Using `list[int]` should also work.
     )
 
     for shape in cases:
@@ -6238,6 +6277,10 @@ def matmul_sample_generator(op, device, dtype, requires_grad, **kwargs):
         ((M, N), (N, M)),
         ((B, M, N), (B, N, M)),
         ((B, B, M, N), (B, B, N, M)),
+        # cases nd @ 2d --> these should lower to 2d-gemms for efficiency
+        ((1, M, N), (N, N)),
+        ((B, M, N), (N, N)),
+        ((B, N, M), (M, N)),
     )
 
     for shape_a, shape_b in cases:

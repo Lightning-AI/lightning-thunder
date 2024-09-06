@@ -6,7 +6,7 @@ import torch
 import thunder
 from thunder import torch as ttorch
 
-from thunder.core import utils
+from thunder.core import utils, devices
 from thunder.core.rematerialization import (
     apply_rematerialization_for_consumer,
     apply_rematerialization_for_producer,
@@ -96,7 +96,7 @@ def test_find_producer_symbols(executor, device, _):
     # Get the producers of __c and __d
     # We should stop at __a, which is the input to the recomputed region
     a_proxy = flattened_trace.bound_symbols[0].output
-    assert a_proxy.name == "res"
+    assert a_proxy.name == "t0"
     stop_proxies = [a_proxy]
 
     recomputed_producers = utils.find_producer_symbols(flattened_trace, (c_proxy, d_proxy), stop_proxies)
@@ -125,7 +125,7 @@ def test_apply_rematerialization_producer(executor, device, _):
     # outputs of the first region
     producer = nvfuser_symbols[0]
 
-    cut = ("res", "t4")
+    cut = ("t0", "t4")
     assert cut[0] in map(lambda x: x.name, producer.args)
     assert cut[1] in map(lambda x: x.name, producer.output)
 
@@ -160,7 +160,7 @@ def test_apply_rematerialization_consumer(executor, device, _):
     producer = nvfuser_symbols[0]
     consumer = nvfuser_symbols[1]
 
-    cut = ("res", "t4")
+    cut = ("t0", "t4")
     assert cut[0] in map(lambda x: x.name, producer.args)
     assert cut[1] in map(lambda x: x.name, producer.output)
     assert cut[1] in map(lambda x: x.name, consumer.args)
@@ -177,11 +177,12 @@ def test_apply_rematerialization_consumer(executor, device, _):
     assert new_consumer.subsymbols[0].sym.name == "exp"
     assert new_consumer.subsymbols[0].args[0].name == cut[0]
 
-    assert new_consumer.subsymbols[1].sym.name == "exp"
-    assert new_consumer.subsymbols[1].args[0].name == new_consumer.subsymbols[0].output.name
+    assert new_consumer.subsymbols[2].sym.name == "exp"
+    assert new_consumer.subsymbols[2].args[0].name == new_consumer.subsymbols[0].output.name
 
-    # The rest of the subsymbols should be the same as in the original consumer
-    assert tuple(new_consumer.subsymbols[2:]) == tuple(consumer.subsymbols)
+    # The subsymbols are reordered according to the topological order.
+    # The rest of the subsymbols should be the same as in the original consumer, in this case the symbols except at position 0 and 2.
+    assert (new_consumer.subsymbols[1], *new_consumer.subsymbols[3:]) == tuple(consumer.subsymbols)
 
     # Test case when duplicated symbols appear in producer and consumer
     duplicated_sym = [sym for sym in producer.subsymbols if sym.output.name == "t3"]
@@ -290,6 +291,60 @@ def test_find_filtered_producer_consumer_pairs_multiple_consumers(executor, devi
         assert set(producer_output_names).intersection(set(consumer_input_names))
 
 
+@instantiate(dtypes=NOTHING, executors=(nvFuserExecutor,), devicetypes=(devices.DeviceType.CUDA,))
+def test_find_fusion_producer_consumer_pairs_multiple_producers(executor, device, _):
+    from torch.nn.functional import layer_norm, linear
+
+    def func(
+        t0: "f32[2, 2, 2, 2]",
+        t1: "f32[4, 4]",
+        x: "f32[2, 2, 4]",
+        t2: "f32[4]",
+        t3: "f32[2, 4]",
+        t4: "f32[4, 2]",
+        t5: "f32[4]",
+        t6: "f32[2, 4]",
+    ):
+        y_1: "f32[2, 2, 4]" = t0.view(2, 2, 4)
+        linear_1: "f32[2, 2, 4]" = linear(y_1, t1, None)
+        x_1: "f32[2, 2, 4]" = x + linear_1
+        layer_norm_1: "f32[2, 2, 4]" = layer_norm(x_1, (4,), t2, None, 1e-05)
+        linear_2: "f32[2, 2, 2]" = linear(layer_norm_1, t3, None)
+        linear_3: "f32[2, 2, 4]" = linear(linear_2, t4, None)
+        x_2: "f32[2, 2, 4]" = x_1 + linear_3
+        layer_norm_2: "f32[2, 2, 4]" = layer_norm(x_2, (4,), t5, None, 1e-05)
+        linear_4: "f32[2, 2, 2]" = linear(layer_norm_2, t6, None)
+        split_1 = linear_4.split(4, dim=2)
+        return split_1
+
+    make = partial(make_tensor, device=device, dtype=torch.float32, requires_grad=True)
+    t0 = make((2, 2, 2, 2))
+    t1 = make((4, 4))
+    x = make(2, 2, 4)
+    t2 = make(4)
+    t3 = make((2, 4))
+    t4 = make((4, 2))
+    t5 = make(4)
+    t6 = make((2, 4))
+
+    from thunder.executors.torch_compile import torch_compile_cat_ex
+
+    try:
+        compiled_func = thunder.jit(func, executors=(torch_compile_cat_ex, thunder.nvfuser_executor))
+        _ = compiled_func(
+            t0,
+            t1,
+            x,
+            t2,
+            t3,
+            t4,
+            t5,
+            t6,
+        )
+    except Exception as e:
+        pytest.fail(f"Rematerialization fails (issue #1038): {e}")
+
+
 @instantiate(
     dtypes=NOTHING,
     executors=(nvFuserExecutor,),
@@ -308,7 +363,7 @@ def test_find_cut(executor, device, _):
     consumer = nvfuser_symbols[1]
     ext_external_producer_outputs = find_external_producer_outputs(utils.consumers(trace), (), producer, consumer)
     cut = find_cut(ext_external_producer_outputs, producer, consumer)
-    assert cut == ("res", "t4")
+    assert cut == ("t0", "t4")
 
 
 @instantiate(
@@ -336,10 +391,9 @@ def test_find_cut_dropout(executor, device, _):
     ext_producer_outputs = find_external_producer_outputs(utils.consumers(trace), (), producer, consumer)
     cut = find_cut(ext_producer_outputs, producer, consumer)
     assert cut[0] == producer.args[0].name
-    # Note cut[2] is the boolean mask for dropout. It should
+    # Note cut[1] is the boolean mask for dropout. It should
     # be chosen over the float32 mask. See this issue: "The Recomputation
     # Algorithm on Dropout choses a float32 mask to save"
-    assert len(producer.output) == 3
     producer_output_names = tuple(o.name for o in producer.output)
     assert cut[1] in producer_output_names
     assert cut[2] in producer_output_names

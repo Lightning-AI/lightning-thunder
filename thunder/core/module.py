@@ -1,11 +1,30 @@
+from __future__ import annotations
 from contextlib import contextmanager
 import itertools
-from typing import Any
+from typing import TYPE_CHECKING
 import collections
 
 import torch as pytorch
+from torch.utils.weak import WeakTensorKeyDictionary
 
+import thunder
 from thunder.core.compile_data import get_compile_data
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from typing import Any
+    from thunder.core.transform_common import Transform
+
+
+def _convert_state_dict_to_per_module(state_dict: dict[str, Any], module_names: set[str]) -> dict[str, dict[str, Any]]:
+    state_dict_per_module = collections.defaultdict(dict)
+    for k, v in state_dict.items():
+        prefix, sep, _ = k.rpartition(".")
+        # not great but should not happen too often / deep
+        while prefix not in module_names:
+            prefix, sep, _ = prefix.rpartition(".")
+        state_dict_per_module[prefix][k[len(prefix) + len(sep) :]] = v
+    return state_dict_per_module
 
 
 class ThunderModule(pytorch.nn.Module):
@@ -64,7 +83,7 @@ class ThunderModule(pytorch.nn.Module):
     def _named_parameters_or_buffers(self, overrides, orig_iter, prefix="", recurse=True, remove_duplicate=True):
         seen_ids = set()
         seen_names = set()
-        for k, v in itertools.chain(overrides.items(), orig_iter(remove_duplicate=remove_duplicate)):
+        for k, v in itertools.chain(overrides.items(), orig_iter):
             if remove_duplicate:
                 id_v = id(v)
                 if id_v in seen_ids:
@@ -83,58 +102,237 @@ class ThunderModule(pytorch.nn.Module):
     def named_parameters(self, prefix="", recurse=True, remove_duplicate=True):
         yield from self._named_parameters_or_buffers(
             self._overrides_parameters,
-            self._model.named_parameters,
+            self._model.named_parameters(remove_duplicate=remove_duplicate),
             prefix=prefix,
             recurse=recurse,
             remove_duplicate=remove_duplicate,
         )
 
-    def named_buffers(self, prefix="", recurse=True, remove_duplicate=True):
+    def named_buffers(self, prefix="", recurse=True, remove_duplicate=True, *, persistent=None):
+        if persistent is not None:
+            orig_buffers = self._model.named_buffers(remove_duplicate=remove_duplicate, persistent=persistent)
+        else:
+            orig_buffers = self._model.named_buffers(remove_duplicate=remove_duplicate)
+
         yield from self._named_parameters_or_buffers(
             self._overrides_buffers,
-            self._model.named_buffers,
+            orig_buffers,
             prefix=prefix,
             recurse=recurse,
             remove_duplicate=remove_duplicate,
         )
+
+    def _get_shared_names(self):
+        parameters_to_names = WeakTensorKeyDictionary()
+        for name, v in itertools.chain(
+            self.named_parameters(remove_duplicate=False), self.named_buffers(remove_duplicate=False)
+        ):
+            parameters_to_names.setdefault(v, set()).add(name)
+        shared_names: dict[str, set[str]] = {}
+        for s in parameters_to_names.values():
+            for n in s:
+                shared_names[n] = s
+        return shared_names
 
     def load_original_state_dict(self, state_dict):
         # this loads the state dict incrementally to not exhaust memory
-        module_names = {n for n, _ in self._model.named_modules()}
-        sd_per_module = collections.defaultdict(dict)
-        for k, v in state_dict.items():
-            prefix, sep, _ = k.rpartition(".")
-            # not great but should not happen too often / deep
-            while prefix not in module_names:
-                prefix, sep, _ = prefix.rpartition(".")
-            sd_per_module[prefix][k[len(prefix) + len(sep) :]] = v
+        sd_per_module = _convert_state_dict_to_per_module(state_dict, {n for n, _ in self._model.named_modules()})
+
+        shared_names = self._get_shared_names()
+        processed_names = set()
 
         for submodule_name, sd_part in sd_per_module.items():
-            prefix = submodule_name + ("." if submodule_name else "")
-            for transform in self._lc_transforms:
-                sd_part = transform.transform_state_dict_for_submodule(self, submodule_name, sd_part)
-            for k, v in sd_part.items():
-                full_k = prefix + k
-                if full_k in self._overrides_parameters:
-                    p = self._overrides_parameters[full_k]
-                    if p.dtype == v.dtype and p.shape == v.shape:
-                        with pytorch.no_grad():
-                            p.copy_(v)
-                    else:
-                        with pytorch.no_grad():
-                            self._overrides_parameters[full_k] = pytorch.nn.Parameter(
-                                v.to(p.device), requires_grad=p.requires_grad
-                            )
+            self._transform_and_load_for_submodule(submodule_name, sd_part, shared_names, processed_names)
 
+    def _transform_and_load_for_submodule(self, submodule_name, sd_part, shared_names, processed_names):
+        prefix = submodule_name + ("." if submodule_name else "")
+        for transform in self._lc_transforms:
+            sd_part = transform.transform_state_dict_for_submodule(self, submodule_name, sd_part)
+
+        for k, v in sd_part.items():
+            full_k = prefix + k
+
+            # cater for shared parameters
+            processed_copies = shared_names[full_k] & processed_names
+            if processed_copies:
+                copy_name = next(iter(processed_copies))
+                if full_k in self._overrides_parameters:
+                    self._overrides_parameters[full_k] = self._overrides_parameters[copy_name]
                 elif full_k in self._overrides_buffers:
-                    if p.dtype == v.dtype and p.shape == v.shape:
-                        with pytorch.no_grad():
-                            self._overrides_buffers[full_k].copy_(v)
-                    else:
-                        with pytorch.no_grad():
-                            self._overrides_parameters[full_k] = v.to(p.device).requires_grad_(p.requires_grad)
+                    self._overrides_buffers[full_k] = self._overrides_buffers[copy_name]
                 else:
                     raise NotImplementedError(f"don't know how to handle {full_k}")
+                processed_names.add(full_k)
+                continue
+
+            if full_k in self._overrides_parameters:
+                p = self._overrides_parameters[full_k]
+                if p.dtype == v.dtype and p.shape == v.shape:
+                    with pytorch.no_grad():
+                        p.copy_(v)
+                else:
+                    with pytorch.no_grad():
+                        self._overrides_parameters[full_k] = pytorch.nn.Parameter(
+                            v.to(p.device), requires_grad=p.requires_grad
+                        )
+            elif full_k in self._overrides_buffers:
+                if p.dtype == v.dtype and p.shape == v.shape:
+                    with pytorch.no_grad():
+                        self._overrides_buffers[full_k].copy_(v)
+                else:
+                    with pytorch.no_grad():
+                        self._overrides_parameters[full_k] = v.to(p.device).requires_grad_(p.requires_grad)
+            else:
+                raise NotImplementedError(f"don't know how to handle {full_k}")
+            processed_names.add(full_k)
+
+    def state_dict(self, *, destination=None, prefix="", keep_vars=False):
+        """
+        Returns the state dict of the (transformed) Thunder module.
+
+        Args:
+            destination: if given, use this mutable mapping as the dict container.
+            prefix: a prefix for the keys.
+            keep_vars: do not detach
+
+        Note that this is similar but rather more rudimentary than the original state_dict (e.g. no hook suport yet).
+        """
+        if destination is None:
+            destination = collections.OrderedDict()
+            destination._metadata = collections.OrderedDict()
+
+        for name, param in self.named_parameters(prefix=prefix):
+            if param is not None:
+                destination[name] = param if keep_vars else param.detach()
+
+        non_persistent_buffers_set = set()
+        for name, submodule in self._model.named_modules(prefix=prefix):
+            subprefix = f"{name}." if name else name
+            non_persistent_buffers_set.update(f"{subprefix}{bname}" for bname in submodule._non_persistent_buffers_set)
+
+        for name, buf in self.named_buffers(prefix=prefix):
+            if buf is not None and name not in non_persistent_buffers_set:
+                destination[name] = buf if keep_vars else buf.detach()
+
+        for name, submodule in self._model.named_modules(prefix=prefix):
+            subprefix = f"{name}." if name else name
+            extra_state_key = subprefix + pytorch.nn.modules.module._EXTRA_STATE_KEY_SUFFIX
+            if (
+                getattr(self.__class__, "get_extra_state", pytorch.nn.Module.get_extra_state)
+                is not pytorch.nn.Module.get_extra_state
+            ):
+                destination[extra_state_key] = self.get_extra_state()
+        return destination
+
+    def original_state_dict(
+        self,
+        *,
+        destination: dict[str, Any] | None = None,
+        prefix: str = "",
+        keep_vars: bool = False,
+    ) -> dict[str, Any]:
+        """Returns the state dict of the transformed :class:`ThunderModule` with reverse transform applied.
+
+        For example, :func:`ThunderModule.state_dict` returns a state dict of sharded tensors if
+        a model is :func:`thunder.distributed.fsdp` applied while :func:`ThunderModule.original_state_dict`
+        returns a state dict of unsharded tensors.
+
+        Args:
+            destination: if given, use this mutable mapping as the dict container.
+            prefix: a prefix for the keys.
+            keep_vars: do not detach
+
+        """
+        module_names = {name for name, _ in self._model.named_modules()}
+        state_dict_per_submodule = _convert_state_dict_to_per_module(self.state_dict(), module_names)
+
+        if destination is None:
+            destination = collections.OrderedDict()
+            destination._metadata = collections.OrderedDict()
+
+        transform: Transform
+        for submodule_name, submodule_state_dict in state_dict_per_submodule.items():
+            for transform in reversed(self._lc_transforms):
+                submodule_state_dict = transform.reverse_transform_state_dict_for_submodule(
+                    self,
+                    submodule_name,
+                    submodule_state_dict,
+                )
+            destination.update({f"{prefix}{submodule_name}.{k}": v for k, v in submodule_state_dict.items()})
+        return destination
+
+    def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True, assign: bool = False):
+        """Loads the state dict to a transformed module.
+
+        Args:
+            state_dict: the state dict to load.
+            strict: error on missing / unused state dict members
+            assign: assign the state dict tensors instead of copying the data
+
+        This is similar much more simple than the original load_state_dict.
+        (Regarding hooks, customization etc.)
+        """
+        # non-persistent buffer overrides?
+        non_persistent_buffers_set = set()
+        for name, submodule in self._model.named_modules():
+            subprefix = f"{name}." if name else name
+            non_persistent_buffers_set.update(f"{subprefix}{bname}" for bname in submodule._non_persistent_buffers_set)
+
+        keys_unused = thunder.core.utils.OrderedSet(state_dict.keys())
+        keys_missing = thunder.core.utils.OrderedSet()
+        errors = []
+        for name, v in itertools.chain(self.named_parameters(), self.named_buffers()):
+            if name in non_persistent_buffers_set:
+                continue
+            if name not in state_dict:
+                keys_missing.add(name)
+                continue
+            keys_unused.remove(name)
+            sd_v = state_dict[name]
+            if not pytorch.overrides.is_tensor_like(sd_v):
+                errors.append(
+                    f'While copying the parameter named "{name}", '
+                    "expected torch.Tensor or Tensor-like object from checkpoint but "
+                    f"received {type(sd_v)}"
+                )
+                continue
+            if sd_v.shape != v.shape:
+                errors.append(
+                    f"size mismatch for {name}: copying a param with shape {sd_v.shape} from checkpoint, "
+                    f"the shape in current model is {v.shape}."
+                )
+                continue
+
+            # We don't check dtype because PyTorch also does dtype conversion on load.
+            with pytorch.no_grad():
+                if assign:
+                    if isinstance(v, pytorch.nn.Parameter):
+                        if not isinstance(sd_v, pytorch.nn.Parameter):
+                            sd_v = pytorch.nn.Parameter(sd_v, requires_grad=v.requires_grad)
+                        else:
+                            sd_v.requires_grad_(v.requires_grad)
+                        self._overrides_parameters[name] = sd_v
+                    else:
+                        self._overrides_buffers[name] = sd_v
+
+                else:
+                    v.copy_(sd_v)
+        if strict:
+            if keys_unused:
+                errors.insert(
+                    0,
+                    "Unexpected key(s) in state_dict: {}. ".format(", ".join(f'"{k}"' for k in keys_unused)),
+                )
+            if keys_missing:
+                errors.insert(
+                    0,
+                    "Missing key(s) in state_dict: {}. ".format(", ".join(f'"{k}"' for k in keys_missing)),
+                )
+
+        if errors:
+            raise RuntimeError("Error(s) in loading state_dict:\n\t{}".format("\n\t".join(errors)))
+
+        return pytorch.nn.modules.module._IncompatibleKeys(keys_missing, keys_unused)
 
     @contextmanager
     def no_sync(self):
@@ -184,14 +382,6 @@ class ThunderModule(pytorch.nn.Module):
         if name == "_model":
             return self._modules["_model"]
         return getattr(self._model, name)
-
-    def state_dict(self, *args: Any, **kwargs: Any) -> Any:
-        # this is broken for transformed modules!!!
-        return self._model.state_dict(*args, **kwargs)
-
-    def load_state_dict(self, *args: Any, **kwargs: Any) -> Any:
-        # this is broken for transformed modules!!!
-        return self._model.load_state_dict(*args, **kwargs)
 
 
 def get_thunder_module(model):
