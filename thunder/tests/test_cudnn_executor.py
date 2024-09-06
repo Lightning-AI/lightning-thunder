@@ -203,12 +203,15 @@ def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
             return result
 
 
+dtypes_for_grad_sdpa_cudnn = sorted(grad_sdpa_cudnn_opinfo.dtypes(), key=lambda x: str(x))
+
+
 @pytest.mark.skipif(
     LooseVersion(cudnn.backend_version_string()) < LooseVersion("8.9.5"),
     reason="cuDNN is required to be at least `8.9.5`",
 )
 @pytest.mark.parametrize("may_cat_grad_qkv", (True, False), ids=("may-cat-grad-qkv", "never-cat-grad-qkv"))
-@pytest.mark.parametrize("dtype", grad_sdpa_cudnn_opinfo.dtypes(), ids=tuple(map(str, grad_sdpa_cudnn_opinfo.dtypes())))
+@pytest.mark.parametrize("dtype", dtypes_for_grad_sdpa_cudnn, ids=tuple(map(str, dtypes_for_grad_sdpa_cudnn)))
 def test_vjp_correctness_cudnn_sdpa(dtype, may_cat_grad_qkv):
     from thunder.common import CompileData
     from thunder.core.compile_data import compile_data_and_stats

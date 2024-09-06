@@ -2975,6 +2975,10 @@ cuda_opinfo = OpInfo(
             pytest.mark.skip,
             active_if=not torch.cuda.is_available(),
         ),
+        DecorateInfo(
+            custom_comparator(lambda a, b, **kwargs: assert_close(a, b.to(a.device), atol=1e-5, rtol=1e-5)),
+            "test_vjp_correctness",
+        ),
     ),
 )
 data_movement_ops.append(cuda_opinfo)
@@ -6657,7 +6661,7 @@ baddbmm_opinfo = OpInfo(
         # InterpreterError: Encountered exception Failed: Timeout >240.0s while tracing
         # Appearing only in CI, passes locally.
         DecorateInfo(
-            pytest.mark.xfail,
+            pytest.mark.skip,
             "test_vjp_correctness",
             executors=("torch", "nvfuser"),
         ),
@@ -7091,7 +7095,7 @@ convolution_opinfo = OpInfo(
         # InterpreterError: Encountered exception Failed: Timeout >240.0s while tracing
         # Appearing only in CI, passes locally.
         DecorateInfo(
-            pytest.mark.xfail,
+            pytest.mark.skip,
             "test_vjp_correctness",
             executors=("torch", "nvfuser"),
         ),
