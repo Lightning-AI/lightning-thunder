@@ -2252,7 +2252,10 @@ def size(
     lc_to_nv_map: dict,
 ) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
-    return fd.ops.shape(nva)
+    ret = []
+    for i in range(a.ndim):
+        ret.append(fd.ops.size(nva, i))
+    return ret
 
 
 register_supported(PrimIDs.SIZE, size, _size_check)
