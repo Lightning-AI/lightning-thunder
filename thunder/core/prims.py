@@ -129,7 +129,7 @@ class PrimIDs(Enum):
     CONSTRUCT_TUPLE = auto()
     PACK_BUFFER = auto()
     PACK_SETITEM = auto()
-    SIZE = auto()
+    SHAPE = auto()
     # TODO: UNPACK_SET
     # Utility prims
     COMMENT = auto()
@@ -1239,14 +1239,14 @@ pack_setitem = make_prim(
 )
 
 
-def size_meta(t: TensorProxy) -> Sequence[int | NumberProxy]:
+def shape_meta(t: TensorProxy) -> Sequence[int | NumberProxy]:
     return t._shape
 
 
-size = make_prim(
-    PrimIDs.SIZE,
+shape = make_prim(
+    PrimIDs.SHAPE,
     "size",
-    meta=size_meta,
+    meta=shape_meta,
 )
 
 

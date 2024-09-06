@@ -2150,9 +2150,9 @@ copy_ = ex.register_operator("copy_", meta=prims.copy_, tags=(prims.OpTags.DONT_
 _register_implementation(prims.copy_, copy_, checker=_always_executable)
 
 
-def _size_impl(t):
-    return t.size()
+def _shape_impl(t):
+    return t.shape
 
 
-size = ex.register_operator("size", meta=prims.size_meta, fn=_size_impl)
-_register_implementation(prims.size, size, checker=_always_executable)
+shape = ex.register_operator("shape", meta=prims.shape_meta, fn=_shape_impl)
+_register_implementation(prims.shape, shape, checker=_always_executable)

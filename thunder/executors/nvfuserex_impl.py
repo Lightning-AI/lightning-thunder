@@ -2240,7 +2240,7 @@ def matmul(
 register_supported(PrimIDs.MATMUL, matmul, _matmul_check)
 
 
-def _size_check(
+def _shape_check(
     a: TensorProxy,
 ) -> bool:
     # TODO: currently we cannot support this yet. fusion_pass needs to be
@@ -2250,7 +2250,7 @@ def _size_check(
     return False
 
 
-def size(
+def shape(
     a: TensorProxy,
     *,
     fd: FusionDefinition,
@@ -2263,7 +2263,7 @@ def size(
     return ret
 
 
-register_supported(PrimIDs.SIZE, size, _size_check)
+register_supported(PrimIDs.SHAPE, shape, _shape_check)
 
 
 # Registering SDPA operators for nvFuser
