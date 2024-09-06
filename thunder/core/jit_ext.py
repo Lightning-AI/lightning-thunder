@@ -766,6 +766,9 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
 # ref: https://github.com/pytorch/pytorch/blob/b99ef1a/torch/_functorch/autograd_function.py#L715-L752
 @register_general_jit_lookaside(torch.ops.higher_order.autograd_function_apply)
 def _general_jit_torch_ops_autograd_function_apply_lookaside(fwd, bwd, *fwd_args, **fwd_kwargs):
+    from thunder.core import utils
+    from thunder.core.pytree import tree_flatten, tree_map
+    from thunder.core.transforms import VJPDual
 
     def _generate_random_str_id() -> str:
         import secrets
@@ -784,37 +787,122 @@ def _general_jit_torch_ops_autograd_function_apply_lookaside(fwd, bwd, *fwd_args
     # lifted freevars should not be args of ApplyTemplate.apply
     # since we don't need to calculate the gradients of them.
     new_fwd_args = (wrap_const(None),) + fwd_args[:length_of_tensor_args]
+    old_scope = jit_ctx.computation_trace.scopes
+    fwd_bsyms = []
+    jit_ctx.computation_trace.scopes = [fwd_bsyms]
 
     result = _interpret_call(fwd, *new_fwd_args)
     output, saved_values = unwrap(result)
     wrapped_output = wrap(output, provenance=result.provenance)
 
-    bsyms_of_fwd = jit_ctx.computation_trace.bound_symbols[start_idx_of_bsym:]
+    unwrapped_fwd_args = tree_map(lambda t: unwrap(t), new_fwd_args)[1:]
 
+    producer_map = utils.producers(fwd_bsyms)
+    tensor_to_prod_bsym: dict[Variable, BoundSymbol] = {}
+    for p in tree_flatten((output, saved_values))[0]:
+        if not isinstance(p, TensorProxy):
+            continue
+        prod_bsym = producer_map[p]
+        tensor_to_prod_bsym[variableify(p)] = prod_bsym
+    prod_bsym_to_tensor = {v: unvariableify(k) for k, v in tensor_to_prod_bsym.items()}
+    utils.check(
+        len(tensor_to_prod_bsym) == len(prod_bsym_to_tensor), lambda: f"{tensor_to_prod_bsym}, {prod_bsym_to_tensor}"
+    )
+
+    @wraps(fwd_bsyms[0].sym.meta)
+    def meta_of_custom_func(*args, **kwargs):
+        return tree_map(lambda t: TensorProxy(like=t), output)
+
+    # Encapsulate custom fwd into a bsym.
     sym_id = _generate_random_str_id()
     sym = Symbol(
         name=f"autograd_function_apply_{sym_id}",
         id=sym_id,
-        _module=bsyms_of_fwd[-1].sym.module,
+        meta=meta_of_custom_func,
+        _module=fwd_bsyms[-1].sym.module,
     )
     bsym_of_custom_autograd_func = BoundSymbol(
         sym,
-        args=bsyms_of_fwd[0].args,
-        kwargs=bsyms_of_fwd[0].kwargs,
+        args=unwrapped_fwd_args,
+        kwargs={},
         output=output,
-        subsymbols=bsyms_of_fwd,
-        header=f"output of fwd_body: {output}, saved_values from fwd_body: {saved_values}",
+        subsymbols=fwd_bsyms,
+        header=f"output of fwd_body: {output}, saved_values from fwd_body: {[t.name if isinstance(t, Proxy) else t for t in saved_values]}",
         source_filename=jit_ctx.computation_trace._current_source_filename,
         source_positions=None,
-        _call_ctx=bsyms_of_fwd[0]._call_ctx,
-        _import_ctx=bsyms_of_fwd[0]._import_ctx,
-        _object_ctx=bsyms_of_fwd[0]._object_ctx,
-        _executor=bsyms_of_fwd[0]._executor,
+        _call_ctx=fwd_bsyms[0]._call_ctx,
+        _import_ctx=fwd_bsyms[0]._import_ctx,
+        _object_ctx=fwd_bsyms[0]._object_ctx,
+        _executor=fwd_bsyms[0]._executor,
     )
+    old_scope[-1].append(bsym_of_custom_autograd_func)
+    # Define augmented fwd rule and backward rule on the fly.
 
-    jit_ctx.computation_trace.bound_symbols = jit_ctx.computation_trace.bound_symbols[:start_idx_of_bsym] + [
-        bsym_of_custom_autograd_func
-    ]
+    @wraps(fwd_bsyms[0].sym.meta)
+    def meta_of_augmented_custom_func(*args, **kwargs):
+        return tree_map(lambda t: TensorProxy(like=t), (output, saved_values))
+
+    augmented_fwd_sym = Symbol(
+        name=f"augmented_autograd_function_apply_{sym_id}",
+        id=sym_id,
+        meta=meta_of_augmented_custom_func,
+        _module=fwd_bsyms[-1].sym.module,
+    )
+    augmented_fwd_bsym = BoundSymbol(
+        augmented_fwd_sym,
+        args=unwrapped_fwd_args,
+        kwargs={},
+        output=(output, saved_values),
+        subsymbols=fwd_bsyms,
+        header=f"output of fwd_body: {output}, saved_values from fwd_body: {[t.name if isinstance(t, Proxy) else t for t in saved_values]}",
+        source_filename=jit_ctx.computation_trace._current_source_filename,
+        source_positions=None,
+        _call_ctx=fwd_bsyms[0]._call_ctx,
+        _import_ctx=fwd_bsyms[0]._import_ctx,
+        _object_ctx=fwd_bsyms[0]._object_ctx,
+        _executor=fwd_bsyms[0]._executor,
+    )
+    augmented_fwd_trace = TraceCtx()
+    with tracectx(augmented_fwd_trace):
+        for bsym in fwd_bsyms:
+            augmented_fwd_trace.add_bound_symbol(bsym)
+        augmented_fwd_trace.add_bound_symbol(prims.python_return.bind(output, saved_values, output=()))
+    si = SigInfo(augmented_fwd_bsym.sym.name)
+    for a in augmented_fwd_bsym.args:
+        if isinstance(a, Proxy):
+            si.args.append((a.name, None))
+        else:
+            pa = proxy(a)
+            with tracectx(augmented_fwd_trace):
+                si.args.append((pa.name, a))
+    augmented_fwd_trace._siginfo = si
+    augmented_fwd_callable = augmented_fwd_trace.python_callable(include_decorators=False, global_dicts={})
+    source = inspect.getsource(augmented_fwd_callable)
+
+    from thunder.core.baseutils import sequencify
+
+    def augmented_fwd_rule(*args):
+        # First arg is `None` or `FunctionCtx`
+        updated_output, updated_saved_values = augmented_fwd_callable(*args)
+        residuals = tuple(sequencify(updated_saved_values))
+        return VJPDual(primal=updated_output, residuals=residuals)
+
+    from thunder.core.transforms import augmented_forward_impls
+
+    augmented_forward_impls[sym.id] = augmented_fwd_rule
+
+    bwd_bsyms = []
+    jit_ctx.computation_trace.scopes = [bwd_bsyms]
+    bwd_trace = TraceCtx()
+    bwd_trace.bound_symbols = bwd_bsyms
+
+    grads = sequencify(tree_map(lambda t: TensorProxy(like=t), output))
+    bwd_args = (wrap_const(None),)
+    bwd_tensor_args = grads + tuple(saved_values)
+    wrapped_bwd_tensor_args = tree_map(lambda t: wrap(t, provenance=result.provenance), bwd_tensor_args)
+    bwd_result = unwrap(_interpret_call(bwd, *(bwd_args + wrapped_bwd_tensor_args)))
+
+    jit_ctx.computation_trace.scopes = old_scope
     return wrapped_output
 
 
