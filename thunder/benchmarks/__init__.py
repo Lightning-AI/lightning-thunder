@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from functools import partial
 from numbers import Number
 from typing import Any
-import pytest_benchmark
+from pytest_benchmark.fixture import BenchmarkFixture
 
 import torch
 import torch.multiprocessing as mp
@@ -3029,10 +3029,38 @@ class DynamoBackendBenchmarking:
 
     def __init__(
         self,
-        bench: pytest_benchmark.fixture.BenchmarkFixture,
+        bench: BenchmarkFixture,
         executors: Sequence[str] | None = None,
         **thunder_options,
     ):
+        """
+        This class acts as a backend for the `torch.compile` function, facilitating the benchmarking of each `fx.GraphModule`.
+        Each `fx.GraphModule` instance is executed by the specified executors and benchmarked using `pytest_benchmark`.
+
+        Keyword arguments:
+            bench: the BenchmarkFixture created by `pytest_benchmark`
+            executors: List of executors to use. Supported executors include: 'torch', 'torch.compile', and 'thunder'. If None, defaults to all available executors.
+            thunder_options: a dictionary of options to pass to `thunder.jit`.
+
+        Example:
+            >>> import torch
+            >>> import thunder
+            >>> from thunder.benchmarks import DynamoBackendBenchmarking
+            >>>
+            >>> def func(x):
+            ...     x = torch.sin(x)
+            ...     if x.sum() > 0:
+            ...         return x + 1
+            ...     else:
+            ...         return x - 1
+            ...
+            >>> def test_func(benchmark):
+            ...     backend = DynamoBackendBenchmarking(benchmark)
+            ...     compiled = torch.compile(backend=backend)(func)
+            ...     x = torch.ones(2, requires_grad=True).cuda()
+            ...     compiled(x)
+        Running the example with `pytest script.py  --benchmark-sort="name"` will produce benchmarking results.
+        """
         self.thunder_options = thunder_options
         self.bench = bench
         if not executors:
