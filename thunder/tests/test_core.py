@@ -1683,28 +1683,6 @@ def test_transforms_vmap_axis_size(executor, device, _):
 #     thunder._make_trace(vmap(identity(func)))(a)
 
 
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_jvp_eager(executor, device, _):
-#     from thunder.core.transforms import jvp_eager
-
-#     def func(a, b):
-#         c = tlang.sin(a)
-#         return tlang.mul(tlang.add(c, b), 1)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-#     primals = (a, b)
-#     tangents = (a, b)
-#     out_p, out_t = jvp_eager(func, primals, tangents, executor=executor)
-#     expected_out_p = torch.sin(a) + b
-#     expected_out_t = torch.cos(a) + b
-#     assert_close(out_p, expected_out_p)
-#     assert_close(out_t, expected_out_t)
-
-
 @instantiate(
     dtypes=NOTHING,
     decorators=(pytest.mark.xfail(reason='issue "flaky test: test_transforms_vjp_{2_1, 1_2}_nvfuser_cuda_None"'),),
@@ -1905,61 +1883,6 @@ def test_transforms_vjp_2_1(executor, device, _):
 #     out = vmap_eager(func, args, executor=executor)
 #     expected_out_p = torch.sin(a) + b
 #     assert_close(out, expected_out_p)
-
-
-@instantiate(
-    dtypes=NOTHING,
-)
-def test_transforms_inline_jvp_inline_vmap(executor, device, _):
-    pytest.xfail("AttributeError: 'NoneType' object has no attribute 'mul'")
-    from thunder.core.transforms import vmap, jvp, inline
-
-    if executor == nvFuserExecutor:
-        # Couldn't find metadata for 1.0 of type <class 'float'>
-        pytest.xfail("Something is failing with the nvFuser executor")
-
-    def func(a, b):
-        assert isinstance(a, proxies.TensorProxy)
-        assert isinstance(b, proxies.TensorProxy)
-        assert a.ndim == 1
-        assert a.shape == b.shape
-        c = clang.sin(a)
-        return clang.mul(clang.add(c, b), 1)
-
-    a = torch.ones(2, 3, device=device, dtype=torch.float32)
-    b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-    args = (a, b)
-    out_p, out_t = executor.make_callable(jvp(vmap(func)))(args, args)
-    expected_out_p = torch.sin(a) + b
-    assert_close(out_p, expected_out_p)
-    expected_out_t = torch.cos(a) + b
-    assert_close(out_t, expected_out_t)
-
-
-@instantiate(
-    dtypes=NOTHING,
-)
-def test_transforms_inline_vmap_inline_jvp(executor, device, _):
-    from thunder.core.transforms import vmap, jvp
-
-    def func(a, b):
-        assert isinstance(a, proxies.TensorProxy)
-        assert isinstance(b, proxies.TensorProxy)
-        assert a.ndim == 1
-        assert a.shape == b.shape
-        c = clang.sin(a)
-        return clang.mul(clang.add(c, b), 1)
-
-    a = torch.ones(2, 3, device=device, dtype=torch.float32)
-    b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-    args = (a, b)
-    out_p, out_t = executor.make_callable_legacy(vmap(jvp(func), out_dims=(0, 0)))(args, args)
-    expected_out_p = torch.sin(a) + b
-    assert_close(out_p, expected_out_p)
-    expected_out_t = torch.cos(a) + b
-    assert_close(out_t, expected_out_t)
 
 
 def test_traceback():
@@ -2411,100 +2334,6 @@ def test_default_method(executor, device: str, dtype: dtypes.dtype):
 # @instantiate(
 #     dtypes=NOTHING,
 # )
-# def test_transforms_vmap_jvp(executor, device, _):
-#     from thunder.core.transforms import vmap, jvp
-
-#     def func(a, b):
-#         assert isinstance(a, proxies.TensorProxy)
-#         assert isinstance(b, proxies.TensorProxy)
-#         assert a.ndim == 1
-#         assert a.shape == b.shape
-#         c = tlang.sin(a)
-#         return tlang.mul(tlang.add(c, b), 1)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-#     args = (a, b)
-#     out_p, out_t = thunder.make_traced(vmap(jvp(func), out_dims=(0, 0)), executor=executor)(args, args)
-#     expected_out_p = torch.sin(a) + b
-#     assert_close(out_p, expected_out_p)
-#     expected_out_t = torch.cos(a) + b
-#     assert_close(out_t, expected_out_t)
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_jvp_vmap(executor, device, _):
-#     from thunder.core.transforms import vmap, jvp
-
-#     def func(a, b):
-#         assert isinstance(a, proxies.TensorProxy)
-#         assert isinstance(b, proxies.TensorProxy)
-#         assert a.ndim == 1
-#         assert a.shape == b.shape
-#         c = tlang.sin(a)
-#         return tlang.mul(tlang.add(c, b), 1)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-#     args = (a, b)
-#     out_p, out_t = thunder.make_traced(jvp(vmap(func, out_dims=(0, 0))), executor=executor)(args, args)
-#     expected_out_p = torch.sin(a) + b
-#     assert_close(out_p, expected_out_p)
-#     expected_out_t = torch.cos(a) + b
-#     assert_close(out_t, expected_out_t)
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_jvp(executor, device, _):
-#     from thunder.core.transforms import jvp, inline, identity
-
-#     def func(a, b):
-#         c = tlang.sin(a)
-#         return tlang.mul(tlang.add(c, b), 1)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-#     primals = (a, b)
-#     tangents = (a, b)
-#     out_p, out_t = thunder.make_traced(identity(jvp(identity(func))), executor=executor)(primals, tangents)
-#     expected_out_p = torch.sin(a) + b
-#     expected_out_t = torch.cos(a) + b
-#     assert_close(out_p, expected_out_p)
-#     assert_close(out_t, expected_out_t)
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_jvp_no_inline(executor, device, _):
-#     from thunder.core.transforms import jvp, inline, identity
-
-#     def func(a, b):
-#         c = tlang.sin(a)
-#         return tlang.mul(tlang.add(c, b), 1)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-#     primals = (a, b)
-#     tangents = (a, b)
-#     out_p, out_t = thunder.make_traced(jvp(func), executor=executor)(primals, tangents)
-#     expected_out_p = torch.sin(a) + b
-#     expected_out_t = torch.cos(a) + b
-#     assert_close(out_p, expected_out_p)
-#     assert_close(out_t, expected_out_t)
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
 # def test_transforms_vmap_sum(executor, device, _):
 #     from thunder.core.transforms import vmap
 
@@ -2518,34 +2347,6 @@ def test_default_method(executor, device: str, dtype: dtypes.dtype):
 #     out = thunder.make_traced(vmap(func, out_dims=0), executor="torch")(a)
 #     expected_out = torch.sum(a, dim=1)
 #     assert_close(out, expected_out)
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_jvp_python_number(executor, device, _):
-#     from thunder.core.transforms import jvp, inline
-
-#     scalars = (
-#         2,
-#         2.0,
-#         True,
-#     )
-#     for scalar in scalars:
-
-#         def func(a):
-#             return tlang.mul(a, scalar)
-
-#         a = make_tensor((2, 3), device=device, dtype=torch.float32)
-
-#         primals = (a,)
-#         tangents = (a,)
-#         out_p, out_t = thunder.make_traced(jvp(func), executor=executor)(primals, tangents)
-
-#         expected_out_p = a * scalar
-#         expected_out_t = a * scalar
-#         assert_close(out_p, expected_out_p)
-#         assert_close(out_t, expected_out_t)
 
 
 # @instantiate(
