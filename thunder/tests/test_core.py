@@ -1556,28 +1556,6 @@ def test_eval_trace(executor, device, _):
     assert foo_trace2.bound_symbols[-2].sym.name == "mul"
 
 
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_jvp_eager(executor, device, _):
-#     from thunder.core.transforms import jvp_eager
-
-#     def func(a, b):
-#         c = tlang.sin(a)
-#         return tlang.mul(tlang.add(c, b), 1)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-#     primals = (a, b)
-#     tangents = (a, b)
-#     out_p, out_t = jvp_eager(func, primals, tangents, executor=executor)
-#     expected_out_p = torch.sin(a) + b
-#     expected_out_t = torch.cos(a) + b
-#     assert_close(out_p, expected_out_p)
-#     assert_close(out_t, expected_out_t)
-
-
 @instantiate(
     dtypes=NOTHING,
     decorators=(pytest.mark.xfail(reason='issue "flaky test: test_transforms_vjp_{2_1, 1_2}_nvfuser_cuda_None"'),),
@@ -2166,56 +2144,6 @@ def test_default_method(executor, device: str, dtype: dtypes.dtype):
     # torch.numel(a) and a.numel() will run on PyTorch contenxt
     # b.numel will fall back to the default implementation
     assert torch.numel(a) == a.numel() == b.numel
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_jvp_no_inline(executor, device, _):
-#     from thunder.core.transforms import jvp
-
-#     def func(a, b):
-#         c = tlang.sin(a)
-#         return tlang.mul(tlang.add(c, b), 1)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-#     primals = (a, b)
-#     tangents = (a, b)
-#     out_p, out_t = thunder.make_traced(jvp(func), executor=executor)(primals, tangents)
-#     expected_out_p = torch.sin(a) + b
-#     expected_out_t = torch.cos(a) + b
-#     assert_close(out_p, expected_out_p)
-#     assert_close(out_t, expected_out_t)
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_jvp_python_number(executor, device, _):
-#     from thunder.core.transforms import jvp, inline
-
-#     scalars = (
-#         2,
-#         2.0,
-#         True,
-#     )
-#     for scalar in scalars:
-
-#         def func(a):
-#             return tlang.mul(a, scalar)
-
-#         a = make_tensor((2, 3), device=device, dtype=torch.float32)
-
-#         primals = (a,)
-#         tangents = (a,)
-#         out_p, out_t = thunder.make_traced(jvp(func), executor=executor)(primals, tangents)
-
-#         expected_out_p = a * scalar
-#         expected_out_t = a * scalar
-#         assert_close(out_p, expected_out_p)
-#         assert_close(out_t, expected_out_t)
 
 
 # @instantiate(

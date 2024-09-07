@@ -1856,13 +1856,6 @@ add_opinfo = OpInfo(
     sample_input_generator=elementwise_binary_generator,
     torch_reference=torch.add,
     test_directives=(
-        # See issue "broadcast_in_dim: The size of contiguity must equal to the
-        # number of non-broadcasting IterDomains"
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_jvp_correctness",
-            executors=("nvfuser",),
-        ),
         DecorateInfo(
             pytest.mark.skip,
             "test_vjp_correctness",
@@ -2097,13 +2090,6 @@ mul_opinfo = OpInfo(
     sample_input_generator=elementwise_binary_generator,
     torch_reference=torch.mul,
     test_directives=(
-        # See issue "broadcast_in_dim: The size of contiguity must equal to the
-        # number of non-broadcasting IterDomains"
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_jvp_correctness",
-            executors=("nvfuser",),
-        ),
         DecorateInfo(
             pytest.mark.skip,
             "test_vjp_correctness",
@@ -3113,13 +3099,6 @@ broadcast_in_dim_opinfo = OpInfo(
             pytest.mark.xfail,
             "test_errors",
         ),
-        # See issue "broadcast_in_dim: The size of contiguity must equal to the number of
-        # non-broadcasting IterDomains"
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_jvp_correctness",
-            executors=("nvfuser",),
-        ),
         DecorateInfo(
             pytest.mark.skip,
             "test_vjp_correctness",
@@ -3296,9 +3275,8 @@ expand_opinfo = OpInfo(
     error_input_generator=expand_error_generator,
     torch_reference=torch.Tensor.expand,
     test_directives=(
-        # vjp and jvp not yet implemented
+        # vjp not yet implemented
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
-        DecorateInfo(pytest.mark.xfail, "test_jvp_correctness"),
     ),
 )
 shape_ops.append(expand_opinfo)
@@ -3345,9 +3323,8 @@ expand_as_opinfo = OpInfo(
     error_input_generator=expand_as_error_generator,
     torch_reference=torch.Tensor.expand_as,
     test_directives=(
-        # vjp and jvp not yet implemented
+        # vjp not yet implemented
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
-        DecorateInfo(pytest.mark.xfail, "test_jvp_correctness"),
     ),
 )
 shape_ops.append(expand_as_opinfo)
@@ -4376,10 +4353,6 @@ stack_opinfo = OpInfo(
     sample_input_generator=stack_sample_generator,
     error_input_generator=stack_error_generator,
     torch_reference=lambda *args, dim: torch.stack(args, dim=dim),
-    test_directives=(
-        # vjp and jvp not yet implemented
-        DecorateInfo(pytest.mark.xfail, "test_jvp_correctness"),
-    ),
 )
 shape_ops.append(stack_opinfo)
 
@@ -5073,13 +5046,6 @@ unsqueeze_opinfo = OpInfo(
     sample_input_generator=unsqueeze_sample_generator,
     jax_reference=jax.lax.expand_dims if JAX_AVAILABLE else None,
     test_directives=(
-        # See issue "broadcast_in_dim: The size of contiguity must equal to the
-        # number of non-broadcasting IterDomains"
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_jvp_correctness",
-            executors=("nvfuser",),
-        ),
         DecorateInfo(
             pytest.mark.skip,
             "test_vjp_correctness",
