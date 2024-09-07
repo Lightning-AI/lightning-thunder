@@ -1692,6 +1692,7 @@ def sigmoid(a):
 
 
 # TODO Review type promotionkind for sign
+@clangop()
 def sign(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.sign, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.PRESERVE
@@ -1699,6 +1700,7 @@ def sign(a):
 
 
 # TODO Add supported dtypes to exclude complex
+@clangop()
 def signbit(a):
     if dtypes.is_unsigned_dtype(dtypes.to_dtype(a)):
         return full_like(a, False, dtype=dtypes.bool8)
@@ -1748,6 +1750,7 @@ def tanh(a):
     )
 
 
+@clangop()
 def trunc(a: TensorLike | Number) -> TensorLike | Number:
     # Short-circuits on unsigned inputs (which are already trivially truncated)
     if dtypes.is_exact_dtype(dtypes.to_dtype(a)):

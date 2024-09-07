@@ -152,7 +152,7 @@ def test_redundant_intermediate_consumers(executor, device: str, dtype: dtypes.d
         d = b.to(torch.float16)
         return c, d
 
-    cfoo = thunder.functional.jit(foo)
+    cfoo = thunder.jit(foo)
     cfoo(a)
 
     traces = thunder.last_traces(cfoo)
@@ -192,7 +192,7 @@ def test_redundant_cast_nvfusion(executor, device: str, dtype: dtypes.dtype):
         y = i.to(torch.float64)
         return d, g, y, i, g2, g3
 
-    cfoo = thunder.functional.jit(foo)
+    cfoo = thunder.jit(foo)
     cfoo(a, x)
     traces = thunder.last_traces(cfoo)
 
@@ -202,13 +202,13 @@ def test_redundant_cast_nvfusion(executor, device: str, dtype: dtypes.dtype):
 
     # Verifies that the nvFusion inputs and outputs are updated properly
     t0 = fusions[0].output[0]
-    assert fusions[1].args[2].name == "t0"
-    assert t0.name == "t0"
-    assert extrace.output[0].name == "t0"
+    assert fusions[1].args[2].name == "b"
+    assert t0.name == "b"
+    assert extrace.output[0].name == "b"
     assert len(fusions[0].subsymbols) == 3
 
     # Verifies the intermediate consumer
-    assert fusions[1].subsymbols[-2].args[0].name == "t5"
+    assert fusions[1].subsymbols[-2].args[0].name == "g"
 
 
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
@@ -271,7 +271,7 @@ def test_cse_subsymbol_removal(executor, device, _):
         return t4
 
     x = make_tensor(5, 5, dtype=torch.float16, device=device)
-    compiled_func = thunder.functional.jit(func, executors=executor.executors_list())
+    compiled_func = thunder.jit(func, executors=executor.executors_list())
     compiled_func(x)
 
     fw_trace = thunder.last_traces(compiled_func)[-1]
@@ -307,7 +307,7 @@ def test_cse_subsymbol_redundant_args(executor, device, _):
     x = make_tensor(5, 5, dtype=torch.float16, device=device)
     y = make_tensor(5, 5, dtype=torch.float16, device=device)
     z = make_tensor(5, 5, dtype=torch.float16, device=device)
-    compiled_func = thunder.functional.jit(func, executors=executor.executors_list())
+    compiled_func = thunder.jit(func, executors=executor.executors_list())
     compiled_func(w, x, y, z)
 
     fw_trace = thunder.last_traces(compiled_func)[-1]
@@ -951,9 +951,8 @@ def test_rm_unused_inputs_of_nvfusion(executor, device, _):
     t = make_tensor(5, 3, device=device, dtype=torch.float32)
     ab = (slice(3, 1), slice(1, 2))
     # enable bookend would remove the error and let you look at the trace without fusion.
-    jfoo = thunder.functional.jit(
+    jfoo = thunder.jit(
         foo,
-        interpretation="python interpreter",
         cache="no caching",
         disable_torch_autograd=True,
         nv_enable_bookend=False,
