@@ -19,7 +19,7 @@ import thunder
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
 from thunder.core.devices import cpu, Device
-from thunder.core.trace_interpreter import eval_trace, transform_skip_list
+from thunder.core.trace_interpreter import eval_trace, trace_interpreter_skip_list
 from thunder.core.proxies import (
     NumberProxy,
     Proxy,
@@ -2872,7 +2872,7 @@ def iter_bound_symbols(bound_symbols):
         infrastructure
     """
     for symbol in bound_symbols:
-        if symbol.sym.id in transform_skip_list:
+        if symbol.sym.id in trace_interpreter_skip_list:
             continue
         elif symbol.output is None:
             continue
@@ -3165,7 +3165,7 @@ def check_bsym_for_vjp(bsym):
         bool: True if the bound symbol is supported by vjp, False otherwise.
     """
 
-    if bsym.sym.id in transform_skip_list:
+    if bsym.sym.id in trace_interpreter_skip_list:
         return True
 
     if bsym.sym.id in backward_impls and bsym.sym.id in augmented_forward_impls:

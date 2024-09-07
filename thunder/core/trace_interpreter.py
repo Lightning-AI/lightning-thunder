@@ -8,7 +8,7 @@ from thunder.core.utils import safe_map_flat, sequencify
 
 # TODO: Currently we use trace.args and trace.kwargs to get the arguments
 # Maybe we should use these instead
-transform_skip_list = (
+trace_interpreter_skip_list = (
     prims.PrimIDs.UNPACK_EMPTY_DICT,
     prims.PrimIDs.UNPACK_KEY,
     prims.PrimIDs.UNPACK_SEQUENCE,
@@ -51,7 +51,7 @@ def eval_trace(trace, *args, symbol_mapper=None, with_env=False, **kwargs):
     safe_map_flat(write, list(trace.kwargs.values()), list(kwargs.values()))
 
     for symbol in trace.bound_symbols:
-        if symbol.sym.id in transform_skip_list:
+        if symbol.sym.id in trace_interpreter_skip_list:
             continue
         args = tree_map(read, symbol.args)
         kwargs = tree_map(read, symbol.kwargs)
