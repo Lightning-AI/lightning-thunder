@@ -178,7 +178,7 @@ def test_te_with_autocast():
     w = torch.randn(16, 16, device=device, requires_grad=True)
 
     cfunc = thunder.jit(
-        thunder.core.transforms.autocast(foo, dtype=thunder.dtypes.bfloat16),
+        thunder.transforms.autocast(foo, dtype=thunder.dtypes.bfloat16),
         executors=[transformer_engine_ex],
         disable_preprocessing=True,
     )

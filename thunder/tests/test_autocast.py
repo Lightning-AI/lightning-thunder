@@ -17,7 +17,7 @@ from thunder.tests.framework import instantiate, TorchExecutor
     dtypes=dtypes.float_math_dtypes,
 )
 def test_thunder_autocast_transform(executor, device, dtype):
-    from thunder.core.transforms import autocast
+    from thunder.transforms import autocast
 
     # TODO: Consider adding support for device specific dtypes in the test
     # instantiator.
