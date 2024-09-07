@@ -677,74 +677,72 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
     d = make_tensor((2, 1), device=device, dtype=torch_dtype)
     e = make_tensor((2, 2), device=device, dtype=torch.bool)
 
-    for jit in (thunder.functional.jit, thunder.jit):
+    def foo(a, b):
+        return a + b
 
-        def foo(a, b):
-            return a + b
+    cfoo = thunder.jit(foo, cache_mode="constant values")
 
-        cfoo = jit(foo, cache_mode="constant values")
+    assert cache_option(cfoo) == thunder.CACHE_OPTIONS.CONSTANT_VALUES
 
-        assert cache_option(cfoo) == thunder.CACHE_OPTIONS.CONSTANT_VALUES
+    # Tensor x tensor
+    result = cfoo(a, b)
+    assert cache_misses(cfoo) == 1
+    assert cache_hits(cfoo) == 0
+    assert_close(result, a + b)
 
-        # Tensor x tensor
-        result = cfoo(a, b)
-        assert cache_misses(cfoo) == 1
-        assert cache_hits(cfoo) == 0
-        assert_close(result, a + b)
+    # Same tensors -- cache hit
+    result = cfoo(a, b)
+    assert cache_misses(cfoo) == 1
+    assert cache_hits(cfoo) == 1
+    assert_close(result, a + b)
 
-        # Same tensors -- cache hit
-        result = cfoo(a, b)
-        assert cache_misses(cfoo) == 1
-        assert cache_hits(cfoo) == 1
-        assert_close(result, a + b)
+    # Different tensor, same metadata -- cache hit
+    result = cfoo(a, c)
+    assert cache_misses(cfoo) == 1
+    assert cache_hits(cfoo) == 2
+    assert_close(result, a + c)
 
-        # Different tensor, same metadata -- cache hit
-        result = cfoo(a, c)
-        assert cache_misses(cfoo) == 1
-        assert cache_hits(cfoo) == 2
-        assert_close(result, a + c)
+    # Different tensor, different shape -- cache miss
+    result = cfoo(a, d)
+    assert cache_misses(cfoo) == 2
+    assert cache_hits(cfoo) == 2
+    assert_close(result, a + d)
 
-        # Different tensor, different shape -- cache miss
-        result = cfoo(a, d)
-        assert cache_misses(cfoo) == 2
-        assert cache_hits(cfoo) == 2
-        assert_close(result, a + d)
+    # Different tensor, different dtype -- cache miss
+    result = cfoo(a, e)
+    assert cache_misses(cfoo) == 3
+    assert cache_hits(cfoo) == 2
+    assert_close(result, a + e)
 
-        # Different tensor, different dtype -- cache miss
-        result = cfoo(a, e)
-        assert cache_misses(cfoo) == 3
-        assert cache_hits(cfoo) == 2
-        assert_close(result, a + e)
+    # Tensor x float number -- cache miss
+    result = cfoo(a, 1.0)
+    assert cache_misses(cfoo) == 4
+    assert cache_hits(cfoo) == 2
+    assert_close(result, a + 1.0)
 
-        # Tensor x float number -- cache miss
-        result = cfoo(a, 1.0)
-        assert cache_misses(cfoo) == 4
-        assert cache_hits(cfoo) == 2
-        assert_close(result, a + 1.0)
+    # Tensor x float number, different tensor data -- cache hit
+    result = cfoo(b, 1.0)
+    assert cache_misses(cfoo) == 4
+    assert cache_hits(cfoo) == 3
+    assert_close(result, b + 1.0)
 
-        # Tensor x float number, different tensor data -- cache hit
-        result = cfoo(b, 1.0)
-        assert cache_misses(cfoo) == 4
-        assert cache_hits(cfoo) == 3
-        assert_close(result, b + 1.0)
+    # Tensor x float number, different number value -- cache miss
+    result = cfoo(b, 3.0)
+    assert cache_misses(cfoo) == 5
+    assert cache_hits(cfoo) == 3
+    assert_close(result, b + 3.0)
 
-        # Tensor x float number, different number value -- cache miss
-        result = cfoo(b, 3.0)
-        assert cache_misses(cfoo) == 5
-        assert cache_hits(cfoo) == 3
-        assert_close(result, b + 3.0)
+    # Tensor x int number, different number type -- cache miss
+    result = cfoo(b, 3)
+    assert cache_misses(cfoo) == 6
+    assert cache_hits(cfoo) == 3
+    assert_close(result, b + 3)
 
-        # Tensor x int number, different number type -- cache miss
-        result = cfoo(b, 3)
-        assert cache_misses(cfoo) == 6
-        assert cache_hits(cfoo) == 3
-        assert_close(result, b + 3)
-
-        # Tensor x int number -- cache hit
-        result = cfoo(b, 3)
-        assert cache_misses(cfoo) == 6
-        assert cache_hits(cfoo) == 4
-        assert_close(result, b + 3)
+    # Tensor x int number -- cache hit
+    result = cfoo(b, 3)
+    assert cache_misses(cfoo) == 6
+    assert cache_hits(cfoo) == 4
+    assert_close(result, b + 3)
 
     def bar(a, b):
         return a, b
