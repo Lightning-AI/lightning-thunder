@@ -264,6 +264,7 @@ def disable_autocast():
 
 def maybe_apply_autocast(sym):
     from thunder import _get_cache_info
+
     # NOTE: torch.autocast support
     # In PyTorch eager, enabling autocast allows mixed inputs to operator like `linear`
     # which expect dtypes to be same. This works in PyTorch eager, as dispatcher applies the
