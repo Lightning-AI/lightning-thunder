@@ -24,6 +24,8 @@ def interpret_trace(trace, *args, symbol_mapper=None, with_env=False, **kwargs):
         trace: trace to interpret
         *args: arguments to interpret the trace with
         symbol_mapper: function that redirects the evaluation of a BoundSymbol to a different function
+        with_env: whether to return the environment after interpreting the trace. Environment is a dictionary
+            that maps VariableInterface objects to their values.
         **kwargs: keyword arguments to interpret the trace with
 
     Returns:
