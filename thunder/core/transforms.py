@@ -1431,7 +1431,6 @@ def grad(
 
 class Transforms(Enum):
     IdentityOp = auto()
-    VmapOp = auto()
     JvpOp = auto()
     VjpOp = auto()
 
