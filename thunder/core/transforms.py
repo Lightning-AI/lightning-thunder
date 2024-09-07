@@ -19,7 +19,7 @@ import thunder
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
 from thunder.core.devices import cpu, Device
-from thunder.core.trace_interpreter import eval_trace, trace_interpreter_skip_list
+from thunder.core.trace_interpreter import interpret_trace as eval_trace, trace_interpreter_skip_list
 from thunder.core.proxies import (
     NumberProxy,
     Proxy,

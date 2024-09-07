@@ -17,17 +17,17 @@ trace_interpreter_skip_list = (
 )
 
 
-def eval_trace(trace, *args, symbol_mapper=None, with_env=False, **kwargs):
-    """Evaluate a trace.
+def interpret_trace(trace, *args, symbol_mapper=None, with_env=False, **kwargs):
+    """Interpret a trace.
 
     Args:
-        trace: trace to evaluate
-        *args: arguments to evaluate the trace with
-        symbol_mapper: function that maps a symbol to a function that evaluates it
-        **kwargs: keyword arguments to evaluate the trace with
+        trace: trace to interpret
+        *args: arguments to interpret the trace with
+        symbol_mapper: function that maps a symbol to a new function that interprets it
+        **kwargs: keyword arguments to interpret the trace with
 
     Returns:
-        result of evaluating the trace
+        result of interpreting the trace
     """
     env = {}
 
