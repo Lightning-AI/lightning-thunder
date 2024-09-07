@@ -57,7 +57,7 @@ def interpret_trace(trace, *args, symbol_mapper=None, with_env=False, **kwargs):
             continue
         args = tree_map(read, symbol.args)
         kwargs = tree_map(read, symbol.kwargs)
-        prim_func = symbol_mapper(symbol)  if symbol_mapper is not None else symbol.sym
+        prim_func = symbol_mapper(symbol) if symbol_mapper is not None else symbol.sym
         if prim_func is None:
             continue
         result = prim_func(*args, **kwargs)
