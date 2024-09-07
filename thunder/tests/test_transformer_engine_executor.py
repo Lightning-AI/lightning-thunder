@@ -170,6 +170,8 @@ def test_te_linear_invalid_inputs():
 
 @requiresCUDA
 def test_te_with_autocast():
+    from thunder.transforms.autocast import autocast
+
     def foo(x, w):
         return thunder.torch.linear(x, w)
 
@@ -178,7 +180,7 @@ def test_te_with_autocast():
     w = torch.randn(16, 16, device=device, requires_grad=True)
 
     cfunc = thunder.jit(
-        thunder.transforms.autocast(foo, dtype=thunder.dtypes.bfloat16),
+        autocast(foo, dtype=thunder.dtypes.bfloat16),
         executors=[transformer_engine_ex],
         disable_preprocessing=True,
     )

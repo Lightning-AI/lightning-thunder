@@ -2172,7 +2172,7 @@ def test_inplace(executor, device, _):
 
 @instantiate(dtypes=NOTHING)
 def test_thunder_autocast_transform(executor, device, _):
-    from thunder.transforms import autocast
+    from thunder.transforms.autocast import autocast
 
     def f(a, b, c):
         return a @ (b + c)
