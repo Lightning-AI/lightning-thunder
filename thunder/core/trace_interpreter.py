@@ -29,7 +29,7 @@ def interpret_trace(trace, *args, symbol_mapper=None, with_env=False, **kwargs):
         **kwargs: keyword arguments to interpret the trace with
 
     Returns:
-        result of interpreting the trace
+        result of interpreting the trace, optionally with the environment that saves all intermediate values
     """
     env = {}
 
