@@ -12,7 +12,6 @@ Compiling functions and modules
     :toctree: generated/
 
     jit
-    functional.jit
 
 
 Querying information on compiled functions and modules
