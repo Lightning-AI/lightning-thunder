@@ -18,7 +18,7 @@ import thunder.clang as clang
 from thunder import torch as ltorch
 from thunder.core.dtypes import is_exact_dtype, to_dtype as thunder_dtype
 from thunder.core.pytree import tree_map, tree_flatten
-from thunder.core.transforms import jvp, vjp, grad, check_bsym_for_vjp
+from thunder.core.transforms import vjp, grad, check_bsym_for_vjp
 from thunder.core.utils import flatten_func
 from thunder.tests.framework import (
     instantiate,
@@ -116,15 +116,7 @@ def _generate_supported_op_list(checker):
                     yield opinfo.name
 
 
-def _jvp_symbol_checker(symbol):
-    from thunder.core.transforms import jvp_impls
-    from thunder.core.transforms import transform_skip_list
-
-    return symbol.sym.id in jvp_impls or symbol.sym.id in transform_skip_list
-
-
 supported_vjp_ops = set(_generate_supported_op_list(check_bsym_for_vjp)).union(vjp_op_force)
-supported_jvp_ops = set(_generate_supported_op_list(_jvp_symbol_checker))
 
 
 def _to_numpy(x):
@@ -171,7 +163,7 @@ def numerical_jvp(f):
     """Compute the numerical Jacobian-vector product of a function.
 
     It's a wrapper around fdm.jvp that converts the inputs and outputs to numpy.ndarray.
-    It's meant to be used for testing of transforms.jvp and transforms.vjp.
+    It's meant to be used for testing of transforms.vjp.
 
     Args:
         f (callable): The function to differentiate.
@@ -223,26 +215,6 @@ def numerical_jvp(f):
         return out_primals, out_tangents
 
     return jvp
-
-
-def check_jvp(f, *primals, comp, executor):
-    """Check that the Jacobian-vector product of a function is correct.
-
-    Args:
-        f (callable): The function to differentiate.
-        *primals (torch.Tensor): The input tensors.
-        executor (str): The executor to use. Defaults to "torch".
-        atol (float): Absolute tolerance. Defaults to None.
-        rtol (float): Relative tolerance. Defaults to None.
-
-    Raises:
-        AssertionError: If the Jacobian-vector product is not correct.
-    """
-    tangents = tree_map(make_tensor_like, primals)
-    actual_p, actual_t = executor.make_callable_legacy(jvp(f))(primals, tangents)
-    expected_p, expected_t = numerical_jvp(executor.make_callable_legacy(f))(primals, tangents)
-    comp(expected_p, actual_p)
-    comp(expected_t, actual_t)
 
 
 def _replace_none_with_zero(x, y):
@@ -372,40 +344,6 @@ def _make_differentiable_wrapper(func, args):
 
     filtered_args = tuple(arg for i, arg in enumerate(args) if i in differentiable_args_idx)
     return wrapper, filtered_args
-
-
-def snippet_jvp_correctness(func, args, comp, executor):
-    check_jvp(func, *args, comp=comp, executor=executor)
-
-
-# TODO Use the given comparator
-@ops((op for op in opinfos if op.name in supported_jvp_ops), supported_dtypes=(dtypes.float64,))
-def test_jvp_correctness(op, device, dtype, executor, comp):
-    at_least_one_differentiable_input = False
-    eps = 1e-2
-    for sample in op.sample_inputs(device, dtype, requires_grad=True):
-        flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
-        filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
-        if len(filtered_args) == 0:
-            continue
-        if op.singularity_fn is not None:
-            filtered_args = [push_away_from_singularities(arg, op.singularity_fn, eps) for arg in filtered_args]
-        at_least_one_differentiable_input = True
-        result = run_snippet(
-            snippet_jvp_correctness,
-            op,
-            device,
-            dtype,
-            filtered_op,
-            filtered_args,
-            comp,
-            executor,
-        )
-        if result is not None:
-            return result
-
-    if not at_least_one_differentiable_input:
-        raise pytest.skip("No differentiable inputs found")
 
 
 def snippet_vjp_correctness(func, args, comp, executor):
