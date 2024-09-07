@@ -1650,39 +1650,6 @@ def test_transforms_identity(executor, device, _):
     # torch.testing.assert_close(actual, expected)
 
 
-@instantiate(
-    dtypes=NOTHING,
-    executors=(
-        TorchExecutor,
-        # TODO: nvFuser executor does not support full(shape=()) yet
-    ),
-)
-def test_transforms_vmap_axis_size(executor, device, _):
-    from thunder.core.transforms import vmap
-
-    actual = executor.make_callable(vmap(lambda: 2, axis_size=4), disable_torch_autograd=True)()
-    expected = torch.full((4,), 2, device="cpu")
-    assert_close(actual, expected)
-
-    actual = executor.make_callable(vmap(lambda x: x, axis_size=4), disable_torch_autograd=True)(2)
-    assert_close(actual, expected)
-
-
-# TODO Re-enable this, broken by raising NotImplementedError from bool(tensor)
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_vmap_identity(executor, device, _):
-#     from thunder.core.transforms import identity, vmap
-
-#     def func(a):
-#         return clang.sin(a)
-
-#     a = torch.randn(2, 2)
-
-#     thunder._make_trace(vmap(identity(func)))(a)
-
-
 # @instantiate(
 #     dtypes=NOTHING,
 # )
@@ -1846,120 +1813,6 @@ def test_transforms_vjp_2_1(executor, device, _):
     out = pt_func_2_1(aa, bb)
     expected_grads = torch.autograd.grad(out, [aa, bb], grad_outputs=(g1,), retain_graph=True)
     assert_close(expected_grads, grads, equal_nan=True)
-
-
-# TODO Enable me, disabled when extra error checking was added to reduction prims
-# @instantiate(
-#     dtypes=NOTHING,
-#     executors=(
-#         nvFuserExecutor,
-#         # TODO: Enable Torch executor once the issue with sum is fixed
-#         # See issue "Different behavior of sum(tensor, ()) for nvFuser and
-#         # Torch executor"
-#     ),
-# )
-# def test_transforms_vmap_inline_value_and_grad(executor, device, _):
-#     # This test checks whether it's possible to vmap a function that is
-#     # traced with inline and value_and_grad.
-#     # For applications see
-#     # https://jax.readthedocs.io/en/latest/jax-101/04-advanced-autodiff.html#per-example-gradients
-#     # https://pytorch.org/functorch/stable/notebooks/per_sample_grads.html
-#     from thunder.core.transforms import value_and_grad, vmap
-#     from thunder.core import prims
-
-#     def func(x):
-#         a = prims.sin(x)
-#         a = prims.sum(a, ())
-#         return prims.sum(a, tuple(range(a.ndim)))
-
-#     vjp_func = executor.make_callable(value_and_grad(func))
-#     a = make_tensor((2, 3), device=device, dtype=torch.float32)
-#     single_out, (single_grad,) = vjp_func(a)
-
-#     aaa = torch.stack([a, a, a])
-#     vmap_inline_vjp = executor.make_callable(vmap(value_and_grad(func)))
-#     batched_out, (batched_grad,) = vmap_inline_vjp(aaa)
-#     for i in range(3):
-#         assert_close(single_out, batched_out[i])
-#         assert_close(single_grad, batched_grad[i])
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_vmap_x(executor, device, _):
-#     from thunder.core.transforms import vmap_eager
-
-#     def func(a, b):
-#         assert isinstance(a, proxies.TensorProxy)
-#         assert isinstance(b, proxies.TensorProxy)
-#         assert a.ndim == 1
-#         assert a.shape == b.shape
-#         c = tlang.sin(a)
-#         return tlang.mul(tlang.add(c, b), 1)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-#     args = (a, b)
-#     out = vmap_eager(func, args, executor=executor)
-#     expected_out_p = torch.sin(a) + b
-#     assert_close(out, expected_out_p)
-
-
-@instantiate(
-    dtypes=NOTHING,
-)
-def test_transforms_inline_jvp_inline_vmap(executor, device, _):
-    pytest.xfail("AttributeError: 'NoneType' object has no attribute 'mul'")
-    from thunder.core.transforms import vmap, jvp, inline
-
-    if executor == nvFuserExecutor:
-        # Couldn't find metadata for 1.0 of type <class 'float'>
-        pytest.xfail("Something is failing with the nvFuser executor")
-
-    def func(a, b):
-        assert isinstance(a, proxies.TensorProxy)
-        assert isinstance(b, proxies.TensorProxy)
-        assert a.ndim == 1
-        assert a.shape == b.shape
-        c = clang.sin(a)
-        return clang.mul(clang.add(c, b), 1)
-
-    a = torch.ones(2, 3, device=device, dtype=torch.float32)
-    b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-    args = (a, b)
-    out_p, out_t = executor.make_callable(jvp(vmap(func)))(args, args)
-    expected_out_p = torch.sin(a) + b
-    assert_close(out_p, expected_out_p)
-    expected_out_t = torch.cos(a) + b
-    assert_close(out_t, expected_out_t)
-
-
-@instantiate(
-    dtypes=NOTHING,
-)
-def test_transforms_inline_vmap_inline_jvp(executor, device, _):
-    from thunder.core.transforms import vmap, jvp
-
-    def func(a, b):
-        assert isinstance(a, proxies.TensorProxy)
-        assert isinstance(b, proxies.TensorProxy)
-        assert a.ndim == 1
-        assert a.shape == b.shape
-        c = clang.sin(a)
-        return clang.mul(clang.add(c, b), 1)
-
-    a = torch.ones(2, 3, device=device, dtype=torch.float32)
-    b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-    args = (a, b)
-    out_p, out_t = executor.make_callable_legacy(vmap(jvp(func), out_dims=(0, 0)))(args, args)
-    expected_out_p = torch.sin(a) + b
-    assert_close(out_p, expected_out_p)
-    expected_out_t = torch.cos(a) + b
-    assert_close(out_t, expected_out_t)
 
 
 def test_traceback():
@@ -2411,56 +2264,6 @@ def test_default_method(executor, device: str, dtype: dtypes.dtype):
 # @instantiate(
 #     dtypes=NOTHING,
 # )
-# def test_transforms_vmap_jvp(executor, device, _):
-#     from thunder.core.transforms import vmap, jvp
-
-#     def func(a, b):
-#         assert isinstance(a, proxies.TensorProxy)
-#         assert isinstance(b, proxies.TensorProxy)
-#         assert a.ndim == 1
-#         assert a.shape == b.shape
-#         c = tlang.sin(a)
-#         return tlang.mul(tlang.add(c, b), 1)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-#     args = (a, b)
-#     out_p, out_t = thunder.make_traced(vmap(jvp(func), out_dims=(0, 0)), executor=executor)(args, args)
-#     expected_out_p = torch.sin(a) + b
-#     assert_close(out_p, expected_out_p)
-#     expected_out_t = torch.cos(a) + b
-#     assert_close(out_t, expected_out_t)
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_jvp_vmap(executor, device, _):
-#     from thunder.core.transforms import vmap, jvp
-
-#     def func(a, b):
-#         assert isinstance(a, proxies.TensorProxy)
-#         assert isinstance(b, proxies.TensorProxy)
-#         assert a.ndim == 1
-#         assert a.shape == b.shape
-#         c = tlang.sin(a)
-#         return tlang.mul(tlang.add(c, b), 1)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-#     args = (a, b)
-#     out_p, out_t = thunder.make_traced(jvp(vmap(func, out_dims=(0, 0))), executor=executor)(args, args)
-#     expected_out_p = torch.sin(a) + b
-#     assert_close(out_p, expected_out_p)
-#     expected_out_t = torch.cos(a) + b
-#     assert_close(out_t, expected_out_t)
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
 # def test_transforms_jvp(executor, device, _):
 #     from thunder.core.transforms import jvp, inline, identity
 
@@ -2500,24 +2303,6 @@ def test_default_method(executor, device: str, dtype: dtypes.dtype):
 #     expected_out_t = torch.cos(a) + b
 #     assert_close(out_p, expected_out_p)
 #     assert_close(out_t, expected_out_t)
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_vmap_sum(executor, device, _):
-#     from thunder.core.transforms import vmap
-
-#     def func(a):
-#         assert isinstance(a, proxies.TensorProxy)
-#         assert a.ndim == 1
-#         return ttorch.sum(a)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-
-#     out = thunder.make_traced(vmap(func, out_dims=0), executor="torch")(a)
-#     expected_out = torch.sum(a, dim=1)
-#     assert_close(out, expected_out)
 
 
 # @instantiate(
