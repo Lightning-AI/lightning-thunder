@@ -202,13 +202,13 @@ def test_redundant_cast_nvfusion(executor, device: str, dtype: dtypes.dtype):
 
     # Verifies that the nvFusion inputs and outputs are updated properly
     t0 = fusions[0].output[0]
-    assert fusions[1].args[2].name == "t0"
-    assert t0.name == "t0"
-    assert extrace.output[0].name == "t0"
+    assert fusions[1].args[2].name == "b"
+    assert t0.name == "b"
+    assert extrace.output[0].name == "b"
     assert len(fusions[0].subsymbols) == 3
 
     # Verifies the intermediate consumer
-    assert fusions[1].subsymbols[-2].args[0].name == "t5"
+    assert fusions[1].subsymbols[-2].args[0].name == "g"
 
 
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
