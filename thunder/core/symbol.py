@@ -398,8 +398,10 @@ class BoundSymbol(BoundSymbolInterface):
         }
 
         self_kwargs.update(kwargs)
-
-        return BoundSymbol(**self_kwargs)
+        bsym = BoundSymbol(**self_kwargs)
+        if bsym.sym._bind_postprocess:
+            bsym.sym._bind_postprocess(bsym)
+        return bsym
 
     # NOTE coll must be a Container of "variableified" proxies
     def has_input(self, coll) -> bool:
