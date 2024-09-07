@@ -1558,155 +1558,6 @@ def test_eval_trace(executor, device, _):
 
 @instantiate(
     dtypes=NOTHING,
-    executors=[
-        TorchExecutor,
-        # TODO: nvFuser executor doesn't support duplicate outputs
-        # TODO: nvFuser executor doesn't support clashing input and output names
-    ],
-)
-def test_eval_trace_duplicate_output(executor, device, _):
-    # This test ensures that eval_trace() can evaluate a trace with duplicate
-    # outputs.
-    from thunder.core.transforms import eval_trace, identity
-
-    def foo1(a):
-        return a, a
-
-    a = torch.ones((2, 2), device=device, dtype=torch.float32)
-
-    foo_trace = thunder.trace()(foo1, a)
-    assert len(foo_trace.bound_symbols) == 2
-    assert foo_trace.bound_symbols[0].sym.name == "unpack_trivial"
-    assert len(foo_trace.output) == 2
-    assert foo_trace.output[0].name == foo_trace.output[1].name
-
-    def func(a):
-        return eval_trace(foo_trace, a)
-
-    actual = executor.make_callable(func)(a)
-    assert_close(actual, (a, a))
-
-    # Identity is needed to ensure that the duplicated outputs of a symbol
-    # don't cause problems.
-    def foo2(a):
-        a = 1.0 * a
-        return a, a
-
-    for foo in [foo1, foo2]:
-        foo_trace = thunder.trace()(identity(foo), a)
-        assert len(foo_trace.output) == 2
-        assert foo_trace.output[0].name == foo_trace.output[1].name
-
-    # TODO: enable this once executors can work with identity call
-    #     actual = executor.make_callable(partial(eval_trace, foo_trace))(a)
-    #     assert_close(actual, (a, a))
-
-
-@instantiate(
-    dtypes=NOTHING,
-    executors=[
-        TorchExecutor,
-    ],
-)
-def test_transforms_identity(executor, device, _):
-    # This test ensures that identity() can be called from within a traced
-    # function without leaking the trace context.
-    # Also tests that identity() can be nested.
-    # Also tests that identity() can be used with "torch" executor.
-    from thunder.core.transforms import identity, Transforms
-
-    # from thunder import _get_executor
-
-    def func(a, b, *, c=5):
-        return clang.mul(clang.mul(clang.add(a, b), 1), c)
-
-    nested_id_func = identity(identity(identity(func)))
-
-    a = make_tensor((2, 2), device=device, dtype=torch.float32)
-    b = make_tensor((2, 2), device=device, dtype=torch.float32)
-    c = 4.0
-
-    nested_id_trace = thunder.trace()(nested_id_func, a, b, c=c)
-    # one annotating symbol per input and one actual symbol
-    assert len(nested_id_trace.bound_symbols) == 6
-    assert nested_id_trace.bound_symbols[-2].sym.id == Transforms.IdentityOp
-
-    trace = nested_id_trace.bound_symbols[-2].kwargs.get("trace", None)
-    for _ in range(2):
-        assert len(trace.bound_symbols) == 6
-        assert trace.bound_symbols[-2].sym.id == Transforms.IdentityOp
-        trace = trace.bound_symbols[-2].kwargs.get("trace", None)
-
-    assert len(trace.bound_symbols) == 7
-    assert trace.bound_symbols[-4].sym.name == "add"
-    assert trace.bound_symbols[-3].sym.name == "mul"
-    assert trace.bound_symbols[-2].sym.name == "mul"
-
-    # TODO: RuntimeError: Could not find executor for bound symbol __f =
-    # thunder.core.transforms.identity_call
-    # fusion = executor.make_callable(nested_id_trace)
-    # actual = fusion(a, b, c=c)
-    # expected = executor.make_callable(func)(a, b, c=c)
-    # torch.testing.assert_close(actual, expected)
-
-
-@instantiate(
-    dtypes=NOTHING,
-    executors=(
-        TorchExecutor,
-        # TODO: nvFuser executor does not support full(shape=()) yet
-    ),
-)
-def test_transforms_vmap_axis_size(executor, device, _):
-    from thunder.core.transforms import vmap
-
-    actual = executor.make_callable(vmap(lambda: 2, axis_size=4), disable_torch_autograd=True)()
-    expected = torch.full((4,), 2, device="cpu")
-    assert_close(actual, expected)
-
-    actual = executor.make_callable(vmap(lambda x: x, axis_size=4), disable_torch_autograd=True)(2)
-    assert_close(actual, expected)
-
-
-# TODO Re-enable this, broken by raising NotImplementedError from bool(tensor)
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_vmap_identity(executor, device, _):
-#     from thunder.core.transforms import identity, vmap
-
-#     def func(a):
-#         return clang.sin(a)
-
-#     a = torch.randn(2, 2)
-
-#     thunder._make_trace(vmap(identity(func)))(a)
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_jvp_eager(executor, device, _):
-#     from thunder.core.transforms import jvp_eager
-
-#     def func(a, b):
-#         c = tlang.sin(a)
-#         return tlang.mul(tlang.add(c, b), 1)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-#     primals = (a, b)
-#     tangents = (a, b)
-#     out_p, out_t = jvp_eager(func, primals, tangents, executor=executor)
-#     expected_out_p = torch.sin(a) + b
-#     expected_out_t = torch.cos(a) + b
-#     assert_close(out_p, expected_out_p)
-#     assert_close(out_t, expected_out_t)
-
-
-@instantiate(
-    dtypes=NOTHING,
     decorators=(pytest.mark.xfail(reason='issue "flaky test: test_transforms_vjp_{2_1, 1_2}_nvfuser_cuda_None"'),),
 )
 def test_transforms_vjp_1_2(executor, device, _):
@@ -1724,12 +1575,12 @@ def test_transforms_vjp_1_2(executor, device, _):
     g1 = make_tensor((2, 3), device=device, dtype=torch.float32)
     g2 = make_tensor((2, 3), device=device, dtype=torch.float32)
 
-    vjp_eager = executor.make_callable_legacy(vjp(func_1_2))
-
     primals = (a,)
     cotangents = (g1, g2)
+    initial_trace = thunder.trace()(vjp(func_1_2), primals, cotangents)
+    vjp_eager = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
     out_p, grads = vjp_eager(primals, cotangents)
-    expected_out_p = executor.make_callable_legacy(func_1_2)(a)
+    expected_out_p = executor.make_callable(func_1_2)(a)
     assert_close(out_p, expected_out_p, equal_nan=True, atol=1e-3, rtol=1e-5)
 
     # Now check the gradients
@@ -1775,11 +1626,11 @@ def test_transforms_vjp_2_2_kwarg(executor, device, _):
     g1 = make_tensor((2, 3), device=device, dtype=torch.float64)
     g2 = make_tensor((2, 3), device=device, dtype=torch.float64)
 
-    vjp_eager = executor.make_callable_legacy(vjp(func_2_2))
-
     primals = (x, y)
     primal_kwargs = {"z": z}
     cotangents = (g1, g2)
+    initial_trace = thunder.trace()(vjp(func_2_2), primals, cotangents, **primal_kwargs)
+    vjp_eager = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
     out_p, grads = vjp_eager(primals, cotangents, **primal_kwargs)
     expected_out_p = executor.make_callable(func_2_2)(*primals, **primal_kwargs)
     assert_close(out_p, expected_out_p, equal_nan=True)
@@ -1831,14 +1682,15 @@ def test_transforms_vjp_2_1(executor, device, _):
         c = clang.asin(b)
         return c
 
-    vjp_eager = executor.make_callable_legacy(vjp(func_2_1))
     a = make_tensor((2, 3), device=device, dtype=torch.float32)
     b = make_tensor((2, 3), device=device, dtype=torch.float32)
     g1 = make_tensor((2, 3), device=device, dtype=torch.float32)
     primals = (a, b)
     cotangents = (g1,)
+    initial_trace = thunder.trace()(vjp(func_2_1), primals, cotangents)
+    vjp_eager = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
     out_p, grads = vjp_eager(primals, cotangents)
-    expected_out_p = executor.make_callable_legacy(func_2_1)(*primals)
+    expected_out_p = executor.make_callable(func_2_1)(*primals)
     assert_close(out_p, expected_out_p, equal_nan=True)
 
     aa = a.clone().requires_grad_(True)
@@ -1846,120 +1698,6 @@ def test_transforms_vjp_2_1(executor, device, _):
     out = pt_func_2_1(aa, bb)
     expected_grads = torch.autograd.grad(out, [aa, bb], grad_outputs=(g1,), retain_graph=True)
     assert_close(expected_grads, grads, equal_nan=True)
-
-
-# TODO Enable me, disabled when extra error checking was added to reduction prims
-# @instantiate(
-#     dtypes=NOTHING,
-#     executors=(
-#         nvFuserExecutor,
-#         # TODO: Enable Torch executor once the issue with sum is fixed
-#         # See issue "Different behavior of sum(tensor, ()) for nvFuser and
-#         # Torch executor"
-#     ),
-# )
-# def test_transforms_vmap_inline_value_and_grad(executor, device, _):
-#     # This test checks whether it's possible to vmap a function that is
-#     # traced with inline and value_and_grad.
-#     # For applications see
-#     # https://jax.readthedocs.io/en/latest/jax-101/04-advanced-autodiff.html#per-example-gradients
-#     # https://pytorch.org/functorch/stable/notebooks/per_sample_grads.html
-#     from thunder.core.transforms import value_and_grad, vmap
-#     from thunder.core import prims
-
-#     def func(x):
-#         a = prims.sin(x)
-#         a = prims.sum(a, ())
-#         return prims.sum(a, tuple(range(a.ndim)))
-
-#     vjp_func = executor.make_callable(value_and_grad(func))
-#     a = make_tensor((2, 3), device=device, dtype=torch.float32)
-#     single_out, (single_grad,) = vjp_func(a)
-
-#     aaa = torch.stack([a, a, a])
-#     vmap_inline_vjp = executor.make_callable(vmap(value_and_grad(func)))
-#     batched_out, (batched_grad,) = vmap_inline_vjp(aaa)
-#     for i in range(3):
-#         assert_close(single_out, batched_out[i])
-#         assert_close(single_grad, batched_grad[i])
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_vmap_x(executor, device, _):
-#     from thunder.core.transforms import vmap_eager
-
-#     def func(a, b):
-#         assert isinstance(a, proxies.TensorProxy)
-#         assert isinstance(b, proxies.TensorProxy)
-#         assert a.ndim == 1
-#         assert a.shape == b.shape
-#         c = tlang.sin(a)
-#         return tlang.mul(tlang.add(c, b), 1)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-#     args = (a, b)
-#     out = vmap_eager(func, args, executor=executor)
-#     expected_out_p = torch.sin(a) + b
-#     assert_close(out, expected_out_p)
-
-
-@instantiate(
-    dtypes=NOTHING,
-)
-def test_transforms_inline_jvp_inline_vmap(executor, device, _):
-    pytest.xfail("AttributeError: 'NoneType' object has no attribute 'mul'")
-    from thunder.core.transforms import vmap, jvp, inline
-
-    if executor == nvFuserExecutor:
-        # Couldn't find metadata for 1.0 of type <class 'float'>
-        pytest.xfail("Something is failing with the nvFuser executor")
-
-    def func(a, b):
-        assert isinstance(a, proxies.TensorProxy)
-        assert isinstance(b, proxies.TensorProxy)
-        assert a.ndim == 1
-        assert a.shape == b.shape
-        c = clang.sin(a)
-        return clang.mul(clang.add(c, b), 1)
-
-    a = torch.ones(2, 3, device=device, dtype=torch.float32)
-    b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-    args = (a, b)
-    out_p, out_t = executor.make_callable(jvp(vmap(func)))(args, args)
-    expected_out_p = torch.sin(a) + b
-    assert_close(out_p, expected_out_p)
-    expected_out_t = torch.cos(a) + b
-    assert_close(out_t, expected_out_t)
-
-
-@instantiate(
-    dtypes=NOTHING,
-)
-def test_transforms_inline_vmap_inline_jvp(executor, device, _):
-    from thunder.core.transforms import vmap, jvp
-
-    def func(a, b):
-        assert isinstance(a, proxies.TensorProxy)
-        assert isinstance(b, proxies.TensorProxy)
-        assert a.ndim == 1
-        assert a.shape == b.shape
-        c = clang.sin(a)
-        return clang.mul(clang.add(c, b), 1)
-
-    a = torch.ones(2, 3, device=device, dtype=torch.float32)
-    b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-    args = (a, b)
-    out_p, out_t = executor.make_callable_legacy(vmap(jvp(func), out_dims=(0, 0)))(args, args)
-    expected_out_p = torch.sin(a) + b
-    assert_close(out_p, expected_out_p)
-    expected_out_t = torch.cos(a) + b
-    assert_close(out_t, expected_out_t)
 
 
 def test_traceback():
@@ -2172,7 +1910,7 @@ def test_inplace(executor, device, _):
 
 @instantiate(dtypes=NOTHING)
 def test_thunder_autocast_transform(executor, device, _):
-    from thunder.core.transforms import autocast
+    from thunder.transforms.autocast import autocast
 
     def f(a, b, c):
         return a @ (b + c)
@@ -2188,13 +1926,8 @@ def test_thunder_autocast_transform(executor, device, _):
         dtype = thunder.bfloat16 if device == "cpu" else thunder.float16
         torch_dtype = ltorch.to_torch_dtype(dtype)
         x, y, z = (torch.randn((2, 2), device=device, dtype=torch.float32) for _ in range(3))
-        compiled = thunder.compile(
-            autocast(func, dtype=dtype),
-            executors_list=executor.executors_list(),
-            # NOTE(crcrpar): preprocessing needs to be disabled as this transform would introduce
-            # nonlocals that are not supported.
-            disable_preprocessing=True,
-        )
+        initial_trace = thunder.trace()(autocast(func, dtype=dtype), x, y, z)
+        compiled = thunder.jit(initial_trace.python_callable(), executors=executor.executors_list())
         out = compiled(x, y, z)
         traces = thunder.last_traces(compiled)
         assert out.dtype == (torch_dtype if should_autocast else torch.float32), traces[-1]
@@ -2256,7 +1989,11 @@ def test_no_passthrough_symbol(executor, device, _):
     assert initial_trace_with_dce.bound_symbols[1].sym.id == prims.PrimIDs.RETURN
 
 
-@instantiate(dtypes=NOTHING)
+@instantiate(
+    dtypes=NOTHING,
+    # https://github.com/Lightning-AI/lightning-thunder/issues/946
+    decorators=(pytest.mark.xfail(reason="Thunder JIT may rename variables differently, causing the test to fail."),),
+)
 def test_cse(executor, device, _):
     from thunder.core.pytree import tree_flatten
 
@@ -2275,10 +2012,11 @@ def test_cse(executor, device, _):
         return z, w, m, (a, b, c, d)
 
     x, y = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
-    compiled_func = thunder.compile(
-        func,
-        disable_preprocessing=True,
-        executors_list=executor.executors_list(),
+    initial_trace = thunder.trace()(func, x, y, device)
+    print(initial_trace)
+    compiled_func = thunder.jit(
+        initial_trace.python_callable(),
+        executors=executor.executors_list(),
     )
     compiled_func(x, y, device)
     traces = thunder.last_traces(compiled_func)
@@ -2294,7 +2032,7 @@ def test_cse(executor, device, _):
     assert len(flatten_cse_trace.bound_symbols) == len(flatten_dce_trace.bound_symbols) - 3
     assert len([bsym for bsym in flatten_cse_trace.bound_symbols if bsym.sym.id == prims.PrimIDs.UNIFORM]) == 4
 
-    assert [t.name for t in tree_flatten(flatten_cse_trace.output)[0]] == ["t4", "t4", "t6", "t7", "t8", "t9", "t10"]
+    assert [t.name for t in tree_flatten(flatten_cse_trace.output)[0]] == ["t4", "t4", "t6", "t14", "t15", "t16", "t17"]
 
 
 def test_symbol_flat_args():
@@ -2406,146 +2144,6 @@ def test_default_method(executor, device: str, dtype: dtypes.dtype):
     # torch.numel(a) and a.numel() will run on PyTorch contenxt
     # b.numel will fall back to the default implementation
     assert torch.numel(a) == a.numel() == b.numel
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_vmap_jvp(executor, device, _):
-#     from thunder.core.transforms import vmap, jvp
-
-#     def func(a, b):
-#         assert isinstance(a, proxies.TensorProxy)
-#         assert isinstance(b, proxies.TensorProxy)
-#         assert a.ndim == 1
-#         assert a.shape == b.shape
-#         c = tlang.sin(a)
-#         return tlang.mul(tlang.add(c, b), 1)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-#     args = (a, b)
-#     out_p, out_t = thunder.make_traced(vmap(jvp(func), out_dims=(0, 0)), executor=executor)(args, args)
-#     expected_out_p = torch.sin(a) + b
-#     assert_close(out_p, expected_out_p)
-#     expected_out_t = torch.cos(a) + b
-#     assert_close(out_t, expected_out_t)
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_jvp_vmap(executor, device, _):
-#     from thunder.core.transforms import vmap, jvp
-
-#     def func(a, b):
-#         assert isinstance(a, proxies.TensorProxy)
-#         assert isinstance(b, proxies.TensorProxy)
-#         assert a.ndim == 1
-#         assert a.shape == b.shape
-#         c = tlang.sin(a)
-#         return tlang.mul(tlang.add(c, b), 1)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-#     args = (a, b)
-#     out_p, out_t = thunder.make_traced(jvp(vmap(func, out_dims=(0, 0))), executor=executor)(args, args)
-#     expected_out_p = torch.sin(a) + b
-#     assert_close(out_p, expected_out_p)
-#     expected_out_t = torch.cos(a) + b
-#     assert_close(out_t, expected_out_t)
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_jvp(executor, device, _):
-#     from thunder.core.transforms import jvp, inline, identity
-
-#     def func(a, b):
-#         c = tlang.sin(a)
-#         return tlang.mul(tlang.add(c, b), 1)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-#     primals = (a, b)
-#     tangents = (a, b)
-#     out_p, out_t = thunder.make_traced(identity(jvp(identity(func))), executor=executor)(primals, tangents)
-#     expected_out_p = torch.sin(a) + b
-#     expected_out_t = torch.cos(a) + b
-#     assert_close(out_p, expected_out_p)
-#     assert_close(out_t, expected_out_t)
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_jvp_no_inline(executor, device, _):
-#     from thunder.core.transforms import jvp, inline, identity
-
-#     def func(a, b):
-#         c = tlang.sin(a)
-#         return tlang.mul(tlang.add(c, b), 1)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-#     primals = (a, b)
-#     tangents = (a, b)
-#     out_p, out_t = thunder.make_traced(jvp(func), executor=executor)(primals, tangents)
-#     expected_out_p = torch.sin(a) + b
-#     expected_out_t = torch.cos(a) + b
-#     assert_close(out_p, expected_out_p)
-#     assert_close(out_t, expected_out_t)
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_vmap_sum(executor, device, _):
-#     from thunder.core.transforms import vmap
-
-#     def func(a):
-#         assert isinstance(a, proxies.TensorProxy)
-#         assert a.ndim == 1
-#         return ttorch.sum(a)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-
-#     out = thunder.make_traced(vmap(func, out_dims=0), executor="torch")(a)
-#     expected_out = torch.sum(a, dim=1)
-#     assert_close(out, expected_out)
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_jvp_python_number(executor, device, _):
-#     from thunder.core.transforms import jvp, inline
-
-#     scalars = (
-#         2,
-#         2.0,
-#         True,
-#     )
-#     for scalar in scalars:
-
-#         def func(a):
-#             return tlang.mul(a, scalar)
-
-#         a = make_tensor((2, 3), device=device, dtype=torch.float32)
-
-#         primals = (a,)
-#         tangents = (a,)
-#         out_p, out_t = thunder.make_traced(jvp(func), executor=executor)(primals, tangents)
-
-#         expected_out_p = a * scalar
-#         expected_out_t = a * scalar
-#         assert_close(out_p, expected_out_p)
-#         assert_close(out_t, expected_out_t)
 
 
 # @instantiate(
