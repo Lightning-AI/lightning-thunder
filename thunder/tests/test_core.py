@@ -1660,11 +1660,14 @@ def test_transforms_identity(executor, device, _):
 def test_transforms_vmap_axis_size(executor, device, _):
     from thunder.core.transforms import vmap
 
-    actual = executor.make_callable(vmap(lambda: 2, axis_size=4), disable_torch_autograd=True)()
+    initial_trace = thunder.trace()(vmap(lambda: 2, axis_size=4))
+    actual = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)()
+    actual = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)()
     expected = torch.full((4,), 2, device="cpu")
     assert_close(actual, expected)
 
-    actual = executor.make_callable(vmap(lambda x: x, axis_size=4), disable_torch_autograd=True)(2)
+    initial_trace = thunder.trace()(vmap(lambda x: x, axis_size=4), 2)
+    actual = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(2)
     assert_close(actual, expected)
 
 
@@ -1724,12 +1727,12 @@ def test_transforms_vjp_1_2(executor, device, _):
     g1 = make_tensor((2, 3), device=device, dtype=torch.float32)
     g2 = make_tensor((2, 3), device=device, dtype=torch.float32)
 
-    vjp_eager = executor.make_callable_legacy(vjp(func_1_2))
-
     primals = (a,)
     cotangents = (g1, g2)
+    initial_trace = thunder.trace()(vjp(func_1_2), primals, cotangents)
+    vjp_eager = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
     out_p, grads = vjp_eager(primals, cotangents)
-    expected_out_p = executor.make_callable_legacy(func_1_2)(a)
+    expected_out_p = executor.make_callable(func_1_2)(a)
     assert_close(out_p, expected_out_p, equal_nan=True, atol=1e-3, rtol=1e-5)
 
     # Now check the gradients
@@ -1775,11 +1778,11 @@ def test_transforms_vjp_2_2_kwarg(executor, device, _):
     g1 = make_tensor((2, 3), device=device, dtype=torch.float64)
     g2 = make_tensor((2, 3), device=device, dtype=torch.float64)
 
-    vjp_eager = executor.make_callable_legacy(vjp(func_2_2))
-
     primals = (x, y)
     primal_kwargs = {"z": z}
     cotangents = (g1, g2)
+    initial_trace = thunder.trace()(vjp(func_2_2), primals, cotangents, **primal_kwargs)
+    vjp_eager = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
     out_p, grads = vjp_eager(primals, cotangents, **primal_kwargs)
     expected_out_p = executor.make_callable(func_2_2)(*primals, **primal_kwargs)
     assert_close(out_p, expected_out_p, equal_nan=True)
@@ -1831,14 +1834,15 @@ def test_transforms_vjp_2_1(executor, device, _):
         c = clang.asin(b)
         return c
 
-    vjp_eager = executor.make_callable_legacy(vjp(func_2_1))
     a = make_tensor((2, 3), device=device, dtype=torch.float32)
     b = make_tensor((2, 3), device=device, dtype=torch.float32)
     g1 = make_tensor((2, 3), device=device, dtype=torch.float32)
     primals = (a, b)
     cotangents = (g1,)
+    initial_trace = thunder.trace()(vjp(func_2_1), primals, cotangents)
+    vjp_eager = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
     out_p, grads = vjp_eager(primals, cotangents)
-    expected_out_p = executor.make_callable_legacy(func_2_1)(*primals)
+    expected_out_p = executor.make_callable(func_2_1)(*primals)
     assert_close(out_p, expected_out_p, equal_nan=True)
 
     aa = a.clone().requires_grad_(True)
@@ -1955,7 +1959,8 @@ def test_transforms_inline_vmap_inline_jvp(executor, device, _):
     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
 
     args = (a, b)
-    out_p, out_t = executor.make_callable_legacy(vmap(jvp(func), out_dims=(0, 0)))(args, args)
+    initial_trace = thunder.trace()(vmap(jvp(func), out_dims=(0, 0)), args, args)
+    out_p, out_t = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(args, args)
     expected_out_p = torch.sin(a) + b
     assert_close(out_p, expected_out_p)
     expected_out_t = torch.cos(a) + b
@@ -2188,13 +2193,8 @@ def test_thunder_autocast_transform(executor, device, _):
         dtype = thunder.bfloat16 if device == "cpu" else thunder.float16
         torch_dtype = ltorch.to_torch_dtype(dtype)
         x, y, z = (torch.randn((2, 2), device=device, dtype=torch.float32) for _ in range(3))
-        compiled = thunder.compile(
-            autocast(func, dtype=dtype),
-            executors_list=executor.executors_list(),
-            # NOTE(crcrpar): preprocessing needs to be disabled as this transform would introduce
-            # nonlocals that are not supported.
-            disable_preprocessing=True,
-        )
+        initial_trace = thunder.trace()(autocast(func, dtype=dtype), x, y, z)
+        compiled = thunder.jit(initial_trace.python_callable(), executors=executor.executors_list())
         out = compiled(x, y, z)
         traces = thunder.last_traces(compiled)
         assert out.dtype == (torch_dtype if should_autocast else torch.float32), traces[-1]
@@ -2256,7 +2256,11 @@ def test_no_passthrough_symbol(executor, device, _):
     assert initial_trace_with_dce.bound_symbols[1].sym.id == prims.PrimIDs.RETURN
 
 
-@instantiate(dtypes=NOTHING)
+@instantiate(
+    dtypes=NOTHING,
+    # https://github.com/Lightning-AI/lightning-thunder/issues/946
+    decorators=(pytest.mark.xfail(reason="Thunder JIT may rename variables differently, causing the test to fail."),),
+)
 def test_cse(executor, device, _):
     from thunder.core.pytree import tree_flatten
 
@@ -2275,10 +2279,11 @@ def test_cse(executor, device, _):
         return z, w, m, (a, b, c, d)
 
     x, y = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
-    compiled_func = thunder.compile(
-        func,
-        disable_preprocessing=True,
-        executors_list=executor.executors_list(),
+    initial_trace = thunder.trace()(func, x, y, device)
+    print(initial_trace)
+    compiled_func = thunder.jit(
+        initial_trace.python_callable(),
+        executors=executor.executors_list(),
     )
     compiled_func(x, y, device)
     traces = thunder.last_traces(compiled_func)
@@ -2294,7 +2299,7 @@ def test_cse(executor, device, _):
     assert len(flatten_cse_trace.bound_symbols) == len(flatten_dce_trace.bound_symbols) - 3
     assert len([bsym for bsym in flatten_cse_trace.bound_symbols if bsym.sym.id == prims.PrimIDs.UNIFORM]) == 4
 
-    assert [t.name for t in tree_flatten(flatten_cse_trace.output)[0]] == ["t4", "t4", "t6", "t7", "t8", "t9", "t10"]
+    assert [t.name for t in tree_flatten(flatten_cse_trace.output)[0]] == ["t4", "t4", "t6", "t14", "t15", "t16", "t17"]
 
 
 def test_symbol_flat_args():
