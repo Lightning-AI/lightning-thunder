@@ -23,7 +23,7 @@ def interpret_trace(trace, *args, symbol_mapper=None, with_env=False, **kwargs):
     Args:
         trace: trace to interpret
         *args: arguments to interpret the trace with
-        symbol_mapper: function that maps a symbol to a new function that interprets it
+        symbol_mapper: function that redirects the evaluation of a BoundSymbol to a different function
         **kwargs: keyword arguments to interpret the trace with
 
     Returns:
