@@ -46,11 +46,6 @@ from thunder.core.symbol import Symbol
 from thunder.core.transforms import register_grad
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.baseutils import run_once
-from thunder.core.transforms import (
-    _maybe_get_autocast_rule_for_symbol,
-    _get_downcast_dtype_from_str,
-    _check_valid_autocast_dtype,
-)
 import thunder
 from thunder.torch.default_torch_ops import _auto_registered_operators_returning_views
 
