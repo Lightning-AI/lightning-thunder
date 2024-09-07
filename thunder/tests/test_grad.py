@@ -99,7 +99,7 @@ def _generate_supported_op_list(checker):
     Returns:
         generator: A generator of operator info objects that support vjp.
     """
-    from thunder.core.transforms import transform_skip_list
+    from thunder.core.transforms import trace_interpreter_skip_list
 
     for opinfo in opinfos:
         if opinfo not in tensor_creation_ops and opinfo.name not in op_skip:
@@ -108,7 +108,7 @@ def _generate_supported_op_list(checker):
             samples = iter(opinfo.sample_inputs("cpu", dtypes.float64, requires_grad=True))
             while (sample := next(samples, None)) is not None:
                 trc = thunder.trace()(opinfo.op, *sample.args, **sample.kwargs)
-                all_skipped = all(s.sym.id in transform_skip_list for s in trc.bound_symbols)
+                all_skipped = all(s.sym.id in trace_interpreter_skip_list for s in trc.bound_symbols)
                 if all_skipped:
                     continue
                 all_supported = all(checker(s) for s in trc.bound_symbols)
