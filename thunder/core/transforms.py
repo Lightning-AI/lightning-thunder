@@ -1430,7 +1430,6 @@ def grad(
 
 
 class Transforms(Enum):
-    IdentityOp = auto()
     VmapOp = auto()
     JvpOp = auto()
     VjpOp = auto()
@@ -1513,48 +1512,6 @@ def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwa
         return tree_map(read, trace.output), env
 
     return tree_map(read, trace.output)
-
-
-def _identity_call_metafunc(*args, trace: Trace, **kwargs):
-    with detached_trace():
-        return eval_trace(trace, *args, **kwargs)
-
-
-identity_call = Symbol(id=Transforms.IdentityOp, name="identity_call", meta=_identity_call_metafunc)
-
-
-def identity(func):
-    """Identity transform for a Thunder function.
-
-    Args:
-        func (Callable): A Thunder function to be transformed.
-    """
-
-    def wrapper(*args, **kwargs):
-        trace = construct_trace()(func, *args, **kwargs)
-        return identity_call(*args, **kwargs, trace=trace)
-
-    return wrapper
-
-
-def _identity_call_pytorch(*args, trace: Trace, **kwargs):
-    import torch
-
-    def symbol_mapper(op):
-        if op.op == Transforms.IdentityOp:
-            return _identity_call_pytorch
-
-        torch_op = ops_to_torch_ops_map[op.op]
-        if isinstance(torch_op, str):
-            return getattr(torch, torch_op.strip("pytorch."))
-        return torch_op
-
-    with detached_trace():
-        return eval_trace(trace, *args, **kwargs, symbol_mapper=symbol_mapper)
-
-
-# Register the identity call for PyTorch executor.
-# ops_to_torch_ops_map[Transforms.IdentityOp] = _identity_call_pytorch
 
 
 # VMAP transform
@@ -1852,23 +1809,6 @@ def _vmap_call_metafunc(detached: bool, args, in_dims, out_dims, axis_size, func
 vmap_call = Symbol(id=Transforms.VmapOp, name="vmap_call", meta=partial(_vmap_call_metafunc, False))
 
 
-# TODO: how should we handle out_dims here?
-# although here we are calling vmap of identity, so we should know from the call to vmap
-# This should be fine. If we have vmap(identity(func), out_dims=N) then this rule is first used
-# to get the vmapped result of identity(func) in vmap_symbol_mapper, and out_dims is handled
-# after that in the outer _vmap_call_metafunc.
-def _identity_call_vmap(axis_size, *batched_args, trace: Trace, **kwargs):
-    args, in_dims = unzip2(batched_args)
-    out_dims = 0  # Fixme
-    outs, out_dims = _vmap_call_metafunc(False, args, in_dims, out_dims, axis_size, function_trace=trace, **kwargs)
-    if isinstance(outs, Sequence):
-        return safe_map(pair_to_batched_value, safe_zip(outs, out_dims))
-    return BatchedValue(outs, out_dims)
-
-
-vmap_impls[Transforms.IdentityOp] = _identity_call_vmap
-
-
 def _jvp_call_vmap(axis_size, batched_primals, batched_tangents, *, function_trace: Trace, **kwargs):
     primals, primals_bdims = safe_zip(*batched_primals)
     tangents, tangents_bdims = safe_zip(*batched_tangents)
@@ -2124,17 +2064,6 @@ def _jvp_call_metafunc(detached: bool, primals, tangents, *, function_trace: Tra
 
 
 jvp_call = Symbol(id=Transforms.JvpOp, name="jvp_call", meta=partial(_jvp_call_metafunc, False))
-
-
-def _identity_call_jvp(*args: JVPDual, trace: Trace, **kwargs):
-    primals, tangents = unzip2(args)
-    out_primals, out_tangents = _jvp_call_metafunc(False, primals, tangents, trace, **kwargs)
-    if isinstance(out_primals, Sequence):
-        return safe_map(pair_to_jvp_dual, safe_zip(out_primals, out_tangents))
-    return JVPDual(out_primals, out_tangents)
-
-
-jvp_impls[Transforms.IdentityOp] = _identity_call_jvp
 
 
 def _vmap_call_jvp(args: JVPDual, in_dims, out_dims, axis_size, trace: Trace, **kwargs):
