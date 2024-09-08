@@ -1245,7 +1245,7 @@ def shape_meta(t: TensorProxy) -> Sequence[int | NumberProxy]:
 
 shape = make_prim(
     PrimIDs.SHAPE,
-    "size",
+    "shape",
     meta=shape_meta,
 )
 

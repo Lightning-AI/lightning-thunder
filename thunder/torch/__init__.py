@@ -1287,7 +1287,7 @@ def transpose(a: TensorLike, /, dim0: int, dim1: int) -> TensorLike:
 @torchsymbol(torch.unbind, is_method=True)
 def unbind(a: TensorLike, /, dim: int = 0) -> tuple[TensorLike, ...]:
     utils.check(
-        len(a.size()) > 0,
+        a.ndim > 0,
         lambda: f"Dimension specified as={dim} but tensor has no dimensions.",
     )
     return tuple(s.squeeze(dim) for s in tensor_split(a, a.shape[dim], dim))
