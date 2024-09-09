@@ -449,6 +449,7 @@ class LORATransform(Transform):
                     additional_proxies[n_lora_b] = proxy_lora_b
 
         prologue_trace.bound_symbols[-1:-1] = new_bsyms
+        prologue_trace.set_provenance(thunder.core.trace.TraceProvenance("lora linear pass"))
 
         computation_proxy_map = {
             csym.name: dict(
@@ -498,14 +499,13 @@ class LORATransform(Transform):
                     lora_meta = prims.matmul(lora_bsym_.output, lora_b_bsym.output)
                     lora_bsym = prims.matmul.bind(lora_bsym_.output, lora_b_bsym.output, output=lora_meta)
 
-                    # Is there a better way?
-                    original_weight_meta = prims.linear(*bsym.args[:3])
-                    original_weight = prims.linear.bind(*bsym.args[:3], output=original_weight_meta)
-
-                    lora_sum_bsym = bsym.from_bsym(
-                        sym=prims.add,
-                        args=(original_weight.output, lora_bsym.output),
+                    original_weight = bsym.from_bsym(
+                        sym=prims.linear,
+                        args=(bsym.args[:3]),
                     )
+
+                    lora_sum_meta = prims.add(original_weight.output, lora_bsym.output)
+                    lora_sum_bsym = prims.add.bind(original_weight.output, lora_bsym.output, output=(lora_sum_meta))
 
                 new_computation_trace.bound_symbols.append(lora_a_bsym)
                 new_computation_trace.bound_symbols.append(lora_b_bsym)
