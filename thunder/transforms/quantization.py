@@ -316,6 +316,11 @@ class LORATransform(Transform):
         torch.nn.init.kaiming_uniform_(lora_a, a=math.sqrt(5))
         torch.nn.init.zeros_(lora_b)
 
+    def check_proxy(self, x: thunder.TensorProxy, shape, device, dtype):
+        assert x.shape == shape
+        assert x.device == device
+        assert x.dtype == dtype
+
     def transform_module(self, model: thunder.ThunderModule):
         self.thunder_module = model
         shared_names = model._get_shared_names()
@@ -419,7 +424,19 @@ class LORATransform(Transform):
                         requires_grad=requires_grad,
                     )
                     new_bsyms.append(get_param.sym.bind(get_param.args[0], n_lora_a, output=proxy_lora_a))
+                    self.check_proxy(
+                        proxy_lora_a,
+                        qs["lora_a.shape"],
+                        thunder.devices.to_device(device),
+                        thunder.dtypes.to_dtype(qs["lora_a.dtype"]),
+                    )
                     new_bsyms.append(get_param.sym.bind(get_param.args[0], n_lora_b, output=proxy_lora_b))
+                    self.check_proxy(
+                        proxy_lora_b,
+                        qs["lora_b.shape"],
+                        thunder.devices.to_device(device),
+                        thunder.dtypes.to_dtype(qs["lora_b.dtype"]),
+                    )
 
                     add_trace_output(prologue_trace, proxy_lora_a, subindex=0)
                     add_trace_output(prologue_trace, proxy_lora_b, subindex=0)
