@@ -300,16 +300,21 @@ class BitsAndBytesLinearQuant4bit(Transform):
 class LORATransform(Transform):
     def __init__(
         self,
+        *,
         r: int = 0,
         lora_alpha: int = 1,
         lora_dropout: float = 0.0,
-        **kwargs,
+        weights: list[str] = [],
     ):
         self.r = r
         self.lora_alpha = lora_alpha
         self.lora_dropout = lora_dropout
         self.lora_linear_names = set()
         self.lora_linear_states = {}
+
+    def init_lora_linear(self, lora_a, lora_b):
+        torch.nn.init.kaiming_uniform_(lora_a, a=math.sqrt(5))
+        torch.nn.init.zeros_(lora_b)
 
     def transform_module(self, model: thunder.ThunderModule):
         self.thunder_module = model
@@ -324,30 +329,29 @@ class LORATransform(Transform):
                 copy_name = next(iter(processed_copies))
                 self.lora_linear_states[weight_name] = self.lora_linear_states[copy_name]
                 tm._overrides_parameters[weight_name] = tm._overrides_parameters[copy_name]
-                tm._overrides_parameters[f"{weight_name}.loraA"] = tm._overrides_parameters[f"{copy_name}.loraA"]
-                tm._overrides_parameters[f"{weight_name}.loraB"] = tm._overrides_parameters[f"{copy_name}.loraB"]
+                tm._overrides_parameters[f"{weight_name}.lora_a"] = tm._overrides_parameters[f"{copy_name}.lora_a"]
+                tm._overrides_parameters[f"{weight_name}.lora_b"] = tm._overrides_parameters[f"{copy_name}.lora_b"]
                 processed_names.add(weight_name)
                 return
 
             w = tm.get_parameter(weight_name)
             in_features, out_features = w.shape[0], w.shape[1]
 
-            loraA = torch.nn.Parameter(torch.empty((r, in_features)))
-            torch.nn.init.kaiming_uniform_(loraA, a=math.sqrt(5))
-            loraB = torch.nn.Parameter(torch.empty((out_features, r)))
-            torch.nn.init.zeros_(loraB)
+            lora_a = torch.nn.Parameter(w.new_empty((r, in_features)))
+            lora_b = torch.nn.Parameter(w.new_empty((out_features, r)))
+            self.init_lora_linear(lora_a, lora_b)
 
             tm._overrides_parameters[weight_name] = w
-            tm._overrides_parameters[f"{weight_name}.loraA"] = loraA
-            tm._overrides_parameters[f"{weight_name}.loraB"] = loraB
+            tm._overrides_parameters[f"{weight_name}.lora_a"] = lora_a
+            tm._overrides_parameters[f"{weight_name}.lora_b"] = lora_b
 
             self.lora_linear_states[weight_name] = {
                 "dtype": w.dtype,
                 "shape": tuple(w.shape),
-                "loraA.dtype": loraA.dtype,
-                "loraA.shape": loraA.shape,
-                "loraB.dtype": loraB.dtype,
-                "loraB.shape": loraB.shape,
+                "lora_a.dtype": lora_a.dtype,
+                "lora_a.shape": lora_a.shape,
+                "lora_b.dtype": lora_b.dtype,
+                "lora_b.shape": lora_b.shape,
                 "device": getattr(w, "_thunder_device", w.device),
             }
             processed_names.add(name)
@@ -375,17 +379,7 @@ class LORATransform(Transform):
 
         checks = get_checks(prologue_trace)
 
-        # do we need this?
-        # prologue_proxy_map = {
-        #     get_param_bsym.output.name: dict(
-        # shape=self.lora_linear_states[model_weight_name]["loraA.shape"],
-        # dtype=thunder.dtypes.to_dtype(self.lora_linear_states[model_weight_name]["loraA.dtype"]),
-        #     )
-        #     for model_weight_name, (check_bsym, get_param_bsym) in checks.items()
-        #     if model_weight_name in self.lora_linear_states
-        # }
-        # here we switch the prologue_trace to a copy with new metadata
-        # prologue_trace = trace_with_replaced_proxy_metadata(prologue_trace, prologue_proxy_map)
+        prologue_trace = trace_with_replaced_proxy_metadata(prologue_trace, {})
 
         checks = get_checks(prologue_trace)
         proglogue_to_compute_outputs = prologue_trace.output[0]
@@ -398,8 +392,8 @@ class LORATransform(Transform):
         new_compute_inputs = []
         for n, qs in self.lora_linear_states.items():
             param = tm.get_parameter(n)
-            n_loraA = f"{n}.loraA"
-            n_loraB = f"{n}.loraB"
+            n_lora_a = f"{n}.lora_a"
+            n_lora_b = f"{n}.lora_b"
             n_linear = f"{n}"
             check, get_param = checks[n]
             lora_linear_proxies[get_param.output.name] = n
@@ -410,31 +404,31 @@ class LORATransform(Transform):
             if output_idx is not None:
                 with tracectx(prologue_trace):
                     # better way
-                    proxy_loraA = thunder.TensorProxy(
-                        name=f"{get_param.output.name}_loraA",
-                        shape=qs["loraA.shape"],
-                        dtype=thunder.dtypes.to_dtype(qs["loraA.dtype"]),
+                    proxy_lora_a = thunder.TensorProxy(
+                        name=f"{get_param.output.name}_lora_a",
+                        shape=qs["lora_a.shape"],
+                        dtype=thunder.dtypes.to_dtype(qs["lora_a.dtype"]),
                         device=thunder.devices.to_device(device),
                         requires_grad=requires_grad,
                     )
-                    proxy_loraB = thunder.TensorProxy(
-                        name=f"{get_param.output.name}_loraB",
-                        shape=qs["loraB.shape"],
-                        dtype=thunder.dtypes.to_dtype(qs["loraB.dtype"]),
+                    proxy_lora_b = thunder.TensorProxy(
+                        name=f"{get_param.output.name}_lora_b",
+                        shape=qs["lora_b.shape"],
+                        dtype=thunder.dtypes.to_dtype(qs["lora_b.dtype"]),
                         device=thunder.devices.to_device(device),
                         requires_grad=requires_grad,
                     )
-                    new_bsyms.append(get_param.sym.bind(get_param.args[0], n_loraA, output=proxy_loraA))
-                    new_bsyms.append(get_param.sym.bind(get_param.args[0], n_loraB, output=proxy_loraB))
+                    new_bsyms.append(get_param.sym.bind(get_param.args[0], n_lora_a, output=proxy_lora_a))
+                    new_bsyms.append(get_param.sym.bind(get_param.args[0], n_lora_b, output=proxy_lora_b))
 
-                    add_trace_output(prologue_trace, proxy_loraA, subindex=0)
-                    add_trace_output(prologue_trace, proxy_loraB, subindex=0)
+                    add_trace_output(prologue_trace, proxy_lora_a, subindex=0)
+                    add_trace_output(prologue_trace, proxy_lora_b, subindex=0)
 
-                    new_compute_inputs.append(proxy_loraA)
-                    new_compute_inputs.append(proxy_loraB)
+                    new_compute_inputs.append(proxy_lora_a)
+                    new_compute_inputs.append(proxy_lora_b)
                     # this is not good, because we will have several traces...
-                    additional_proxies[n_loraA] = proxy_loraA
-                    additional_proxies[n_loraB] = proxy_loraB
+                    additional_proxies[n_lora_a] = proxy_lora_a
+                    additional_proxies[n_lora_b] = proxy_lora_b
 
         prologue_trace.bound_symbols[-1:-1] = new_bsyms
 
@@ -469,22 +463,22 @@ class LORATransform(Transform):
             if bsym.sym == thunder.torch.linear:
                 n = lora_linear_proxies[bsym.args[1].name]
                 with thunder.core.trace.tracectx(computation_trace):
-                    loraA_transpose_meta = prims.transpose.meta(additional_proxies[f"{n}.loraA"], (1, 0))
-                    loraA_bsym = prims.transpose.bind(
-                        additional_proxies[f"{n}.loraA"],
+                    lora_a_transpose_meta = prims.transpose.meta(additional_proxies[f"{n}.lora_a"], (1, 0))
+                    lora_a_bsym = prims.transpose.bind(
+                        additional_proxies[f"{n}.lora_a"],
                         (1, 0),
-                        output=(loraA_transpose_meta),
+                        output=(lora_a_transpose_meta),
                     )
-                    loraB_transpose_meta = prims.transpose.meta(additional_proxies[f"{n}.loraB"], (1, 0))
-                    loraB_bsym = prims.transpose.bind(
-                        additional_proxies[f"{n}.loraB"],
+                    lora_b_transpose_meta = prims.transpose.meta(additional_proxies[f"{n}.lora_b"], (1, 0))
+                    lora_b_bsym = prims.transpose.bind(
+                        additional_proxies[f"{n}.lora_b"],
                         (1, 0),
-                        output=(loraB_transpose_meta),
+                        output=(lora_b_transpose_meta),
                     )
-                    lora_meta_ = prims.matmul.meta(bsym.args[0], loraA_bsym.output)
-                    lora_bsym_ = prims.matmul.bind(bsym.args[0], loraA_bsym.output, output=lora_meta_)
-                    lora_meta = prims.matmul.meta(lora_bsym_.output, loraB_bsym.output)
-                    lora_bsym = prims.matmul.bind(lora_bsym_.output, loraB_bsym.output, output=lora_meta)
+                    lora_meta_ = prims.matmul.meta(bsym.args[0], lora_a_bsym.output)
+                    lora_bsym_ = prims.matmul.bind(bsym.args[0], lora_a_bsym.output, output=lora_meta_)
+                    lora_meta = prims.matmul.meta(lora_bsym_.output, lora_b_bsym.output)
+                    lora_bsym = prims.matmul.bind(lora_bsym_.output, lora_b_bsym.output, output=lora_meta)
 
                     # Is there a better way?
                     original_weight_meta = prims.linear.meta(*bsym.args[:3])
@@ -495,8 +489,8 @@ class LORATransform(Transform):
                         args=(original_weight.output, lora_bsym.output),
                     )
 
-                new_computation_trace.bound_symbols.append(loraA_bsym)
-                new_computation_trace.bound_symbols.append(loraB_bsym)
+                new_computation_trace.bound_symbols.append(lora_a_bsym)
+                new_computation_trace.bound_symbols.append(lora_b_bsym)
                 new_computation_trace.bound_symbols.append(lora_bsym_)
                 new_computation_trace.bound_symbols.append(lora_bsym)
                 new_computation_trace.bound_symbols.append(original_weight)
