@@ -248,7 +248,7 @@ def size(a: TensorLike, /, dim: None | int = None) -> int | Sequence[int]:
 register_method("size", size)
 
 
-@torchsymbol(torch.numel(), torch.Tensor.numel(), is_method=True)
+@torchsymbol(torch.numel, torch.Tensor.numel, is_method=True)
 def numel(a: TensorLike, /) -> int:
     return a._numel
 
