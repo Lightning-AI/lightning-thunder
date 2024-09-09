@@ -13,6 +13,83 @@ if TYPE_CHECKING:
     from thunder.core.module import ThunderModule
 
 
+def module_init_from_original_module_init(
+    transform: MaterializationTransform, tm: ThunderModule, *, non_persistent_only: bool = False
+):
+    if non_persistent_only:
+        non_persistent_buffers_set = set()
+        for name, submodule in tm._model.named_modules():
+            prefix = f"{name}." if name else name
+            non_persistent_buffers_set.update(f"{prefix}{bname}" for bname in submodule._non_persistent_buffers_set)
+
+        def neg_filter(n):
+            return n not in non_persistent_buffers_set
+
+    else:
+
+        def neg_filter(n):
+            return False
+
+    shared_names = tm._get_shared_names()
+    processed_names = set()
+
+    # Shared parameters in PyTorch eager are parameters of module which have different name but share the underlying tensor.
+    # For shared parameter, we replace all occurence shared parameter with its corresponding `base` parameter.
+    # In our implementation `base` parameter is the parameter and corresponding name which we see the first time while
+    # iterating our parameters (see below). We track subsequent parameter which share the underlying Tensor with this `base` parameter
+    # in `shared_params_name` dictionary.
+
+    for module_name, _ in tm._model.named_modules():
+        prefix = module_name if not module_name else f"{module_name}."
+        submodule = tm.get_submodule(module_name)
+
+        # Materialize meta-parameters on-device if necessary.
+        # This is done before sharding in case the materialization logic depends on the tensor shape.
+        # The tradeoff is that all of a module's direct parameters need to fit in device.
+        # Each module only initializes its own parameters and not those of its children (recurse=False)
+        if any(
+            chain(
+                (
+                    (n in transform.have_materialized) and not neg_filter(n)
+                    for n, _ in submodule.named_parameters(recurse=False, prefix=module_name)
+                ),
+                (
+                    (n in transform.have_materialized) and not neg_filter(n)
+                    for n, _ in submodule.named_buffers(recurse=False, prefix=module_name)
+                ),
+            )
+        ):
+            # we use a copy to let the user's module alone
+            module_copy = copy.copy(submodule)
+            module_copy._parameters = module_copy._parameters.copy()
+            module_copy._buffers = module_copy._buffers.copy()
+            module_copy._modules = module_copy._modules.__class__()
+
+            # we need to initialize the module unless all parameters are duplicatess
+            need_init = not all(
+                bool(shared_names[n] & processed_names) | neg_filter(n)
+                for n, _ in chain(
+                    module_copy.named_parameters(prefix=module_name, recurse=False),
+                    module_copy.named_buffers(prefix=module_name, recurse=False),
+                )
+            )
+            if need_init:
+                # TODO: we could also support calling a "param_init_fn" argument like PyTorch
+                module_copy.to_empty(device=transform.device, recurse=False)
+                if not hasattr(module_copy, "reset_parameters"):
+                    raise TypeError(
+                        f"Materialization requires that the `{type(submodule).__name__}.reset_parameters` method is implemented."
+                        " This method is used to initialize any children parameters or buffers in this module."
+                    )
+                module_copy.reset_parameters()
+
+            sd = {
+                n: p
+                for n, p in chain(module_copy.named_parameters(recurse=False), module_copy.named_buffers(recurse=False))
+            }
+            tm._transform_and_load_for_submodule(module_name, sd, shared_names, processed_names)
+
+
 class MaterializationTransform(Transform):
     """Materialize a model that can fit on a device only after transforms applied.
 
@@ -66,9 +143,12 @@ class MaterializationTransform(Transform):
                     b, device=getattr(b, "_thunder_device", self.device), requires_grad=b.requires_grad
                 )
                 for n2 in shared_names[n]:
-                    model._overrides_parameters[n2] = b
+                    model._overrides_buffers[n2] = b
                     self.have_materialized.add(n2)
 
+        if self.init != module_init_from_original_module_init:
+            # initialize things not in the state dict
+            module_init_from_original_module_init(self, model, non_persistent_only=True)
         self.init(self, model)
 
     @staticmethod
@@ -89,69 +169,4 @@ class MaterializationTransform(Transform):
 
     @staticmethod
     def init_from_original_module_init():
-        def module_init_from_original_module_init(transform: MaterializationTransform, tm: ThunderModule):
-
-            shared_names = tm._get_shared_names()
-            processed_names = set()
-
-            # Shared parameters in PyTorch eager are parameters of module which have different name but share the underlying tensor.
-            # For shared parameter, we replace all occurence shared parameter with its corresponding `base` parameter.
-            # In our implementation `base` parameter is the parameter and corresponding name which we see the first time while
-            # iterating our parameters (see below). We track subsequent parameter which share the underlying Tensor with this `base` parameter
-            # in `shared_params_name` dictionary.
-
-            for module_name, _ in tm._model.named_modules():
-                prefix = module_name if not module_name else f"{module_name}."
-                submodule = tm.get_submodule(module_name)
-
-                # Materialize meta-parameters on-device if necessary.
-                # This is done before sharding in case the materialization logic depends on the tensor shape.
-                # The tradeoff is that all of a module's direct parameters need to fit in device.
-                # Each module only initializes its own parameters and not those of its children (recurse=False)
-                if any(
-                    chain(
-                        (
-                            transform.have_materialized
-                            for n, _ in submodule.named_parameters(recurse=False, prefix=module_name)
-                        ),
-                        (
-                            transform.have_materialized
-                            for n, _ in submodule.named_buffers(recurse=False, prefix=module_name)
-                        ),
-                    )
-                ):
-                    # we use a copy to let the user's module alone
-                    module_copy = copy.copy(submodule)
-                    module_copy._parameters = module_copy._parameters.copy()
-                    module_copy._buffers = module_copy._buffers.copy()
-                    module_copy._modules = module_copy._modules.__class__()
-
-                    # we need to initialize the module unless all parameters are duplicatess
-                    need_init = not all(
-                        shared_names[n] & processed_names
-                        for n, _ in chain(
-                            module_copy.named_parameters(prefix=module_name, recurse=False),
-                            module_copy.named_buffers(prefix=module_name, recurse=False),
-                        )
-                    )
-
-                    if need_init:
-                        # TODO: we could also support calling a "param_init_fn" argument like PyTorch
-                        module_copy.to_empty(device=transform.device, recurse=False)
-                        if not hasattr(module_copy, "reset_parameters"):
-                            raise TypeError(
-                                f"Materialization requires that the `{type(submodule).__name__}.reset_parameters` method is implemented."
-                                " This method is used to initialize any children parameters or buffers in this module."
-                            )
-                        module_copy.reset_parameters()
-
-                    # TODO: non-persistent buffers?
-                    sd = {
-                        n: p
-                        for n, p in chain(
-                            module_copy.named_parameters(recurse=False), module_copy.named_buffers(recurse=False)
-                        )
-                    }
-                    tm._transform_and_load_for_submodule(module_name, sd, shared_names, processed_names)
-
         return module_init_from_original_module_init
