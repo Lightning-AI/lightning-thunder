@@ -151,7 +151,7 @@ def sort_waits(execution_trace):
                     return len(order_in_trace)
                 case reduce_scatter_prim_impl.id | all_reduce_prim_impl.id | all_gather_prim_impl.id:
                     # Prefer larger communication ops over smaller ones
-                    return -node.bsym.args[0].numel
+                    return -node.bsym.args[0].numel()
                 # note(crcrpar): When a dist collective comm is applied on a func arg and the arg is not included in return,
                 # this sort could put `wait` after `return` stmt.
                 case prims.PrimIDs.RETURN | prims.python_return.id:

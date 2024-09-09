@@ -73,10 +73,10 @@ def check_inplace_to_views(computation_trace: Trace) -> dict[VariableInterface, 
             continue
 
         check(
-            orig_tensor.numel == in_tensor.numel,
+            orig_tensor.numel() == in_tensor.numel(),
             lambda: (
                 f"in-place op of `{bsym.sym.id}` to `{in_tensor}`, a view tensor of "
-                f"`{orig_tensor}` is not supported because {in_tensor.numel} != {orig_tensor.numel}"
+                f"`{orig_tensor}` is not supported because {in_tensor.numel()} != {orig_tensor.numel()}"
             ),
             NotImplementedError,
         )
@@ -329,10 +329,10 @@ def apply_functionalization_to_canonicalized_trace(
 
     def _check_numel(src: TensorProxy, dst: TensorProxy) -> None:
         check(
-            src.numel == dst.numel,
+            src.numel() == dst.numel(),
             lambda: (
                 f"Fail to propagate the in-place change of `{src.name}` to `{dst.name}` "
-                f"because of the different number of elements: {src.numel} and {dst.numel}"
+                f"because of the different number of elements: {src.numel()} and {dst.numel()}"
             ),
         )
 

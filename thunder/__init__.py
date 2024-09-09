@@ -540,7 +540,7 @@ def jit(
                     for bsym in filter(lambda b: b.sym.id == prims.PrimIDs.COPY_, computation_trc.bound_symbols):
                         t = bsym.flat_proxy_args[1]
                         index = arg_to_idx[t]
-                        numel = t.numel
+                        numel = t.numel()
                         tensor_args_consumed_by_inplace_grouped_by_numel[numel].append(index)
                         tensor_indices.append(index)
                     if len(tensor_args_consumed_by_inplace_grouped_by_numel) > 1:

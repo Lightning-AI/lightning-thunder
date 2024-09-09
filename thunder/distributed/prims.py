@@ -201,7 +201,7 @@ def pack_meta(
     utils.check_same_dtype(*tensors)
     utils.check_same_device(*tensors)
     return TensorProxy(
-        shape=(sum(t.numel for t in tensors),),
+        shape=(sum(t.numel() for t in tensors),),
         device=tensors[0].device,
         dtype=tensors[0].dtype,
         requires_grad=False,
@@ -252,13 +252,13 @@ def unpack_for_fsdp_meta(
     match mode:
         case "gather":
             utils.check(
-                buffer.numel == sum(t.numel for t in tensors) * world_size,
-                lambda: f"{buffer.numel=}, but {sum(t.numel for t in tensors) * world_size = }",
+                buffer.numel() == sum(t.numel() for t in tensors) * world_size,
+                lambda: f"{buffer.numel()=}, but {sum(t.numel() for t in tensors) * world_size = }",
             )
         case "scatter":
             utils.check(
-                buffer.numel == sum(t.numel for t in tensors) // world_size,
-                lambda: f"{buffer.numel=}, but {sum(t.numel for t in tensors) // world_size = }",
+                buffer.numel() == sum(t.numel() for t in tensors) // world_size,
+                lambda: f"{buffer.numel()=}, but {sum(t.numel() for t in tensors) // world_size = }",
             )
         case _:
             utils.check(False, lambda: f"Invalid {mode=}, `gather` and `scatter` are supported")

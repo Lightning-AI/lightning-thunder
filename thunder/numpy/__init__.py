@@ -48,7 +48,7 @@ register_method("len", compute_len)
 
 
 def size(a: TensorProxy, /) -> int:
-    return a.numel
+    return a.numel()
 
 
 register_method("size", size)

@@ -248,7 +248,7 @@ def size(a: TensorLike, /, dim: None | int = None) -> int | Sequence[int]:
 register_method("size", size)
 
 
-@torchsymbol(torch.numel, torch.Tensor.numel, is_method=True)
+@torchsymbol(torch.numel(), torch.Tensor.numel(), is_method=True)
 def numel(a: TensorLike, /) -> int:
     return a._numel
 
@@ -4586,11 +4586,11 @@ def group_norm(
     )
     utils.check(
         weight is None or (weight.ndim == 1 and weight.numel() == num_channels),
-        lambda: f"group_norm: {weight.ndim=} should be equal to 1 and {weight.numel=} to {num_channels=}",
+        lambda: f"group_norm: {weight.ndim=} should be equal to 1 and {weight.numel()=} to {num_channels=}",
     )
     utils.check(
         bias is None or (bias.ndim == 1 and bias.numel() == num_channels),
-        lambda: f"group_norm: {bias.ndim=} should be equal to 1 and {bias.numel=} to {num_channels=}",
+        lambda: f"group_norm: {bias.ndim=} should be equal to 1 and {bias.numel()=} to {num_channels=}",
     )
 
     # Empty `a` implies empty result.
@@ -4744,7 +4744,7 @@ def interpolate(
     )
 
     utils.check(a.ndim >= 3, lambda: f"Expected {a.ndim=} >= 3")
-    utils.check(a.numel() > 0, lambda: f"Expected {a.numel=} to be greater than 0")
+    utils.check(a.numel() > 0, lambda: f"Expected {a.numel()=} to be greater than 0")
     utils.check(
         align_corners == None,
         lambda: f"Thunder does not yet support 'align_corners'.",
@@ -5087,7 +5087,7 @@ def _softmax(
     computation_dtype = utils.get_computation_dtype(result_dtype)
     a_ = a.to(computation_dtype)
 
-    if a.numel == 0:
+    if a.numel() == 0:
         a_exp = exp(a_)
     else:
         a_max = amax(a_, dim, keepdim=True)

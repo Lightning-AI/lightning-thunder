@@ -178,7 +178,7 @@ def _cross_entropy_checker(
     if a.shape[0] != target.shape[0]:
         return False
 
-    if a.numel == 0:
+    if a.numel() == 0:
         return False
 
     # Xentropy kernel produces incorrect results if a.shape[1] is less

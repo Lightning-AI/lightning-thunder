@@ -18,7 +18,7 @@ __all__ = [
 
 
 def calc_bytes(tensor: TensorProxy) -> int:
-    return tensor.numel * tensor.dtype.bytes
+    return tensor.numel() * tensor.dtype.bytes
 
 
 def name_bucket(tensors: list[TensorProxy]) -> str:

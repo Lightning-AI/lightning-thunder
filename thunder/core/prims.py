@@ -2945,7 +2945,7 @@ def _multinomial_meta(
     utils.check_type(seed, (int, type(None)))
 
     utils.check(
-        input.numel != 0,
+        input.numel() != 0,
         lambda: f"Expected probability weights to be non-empty",
     )
     utils.check(
@@ -3078,7 +3078,7 @@ cat = make_prim(
 def item_meta(a: TensorProxy, /) -> NumberProxy:
     utils.check_type(a, TensorProxy)
 
-    utils.check(a.numel == 1, lambda: f"Expects input with numel=1 but got {a.numel=} instead", ValueError)
+    utils.check(a.numel() == 1, lambda: f"Expects input with numel=1 but got {a.numel()=} instead", ValueError)
 
     numbertype = dtypes.dtype_to_numbertype(a.dtype)
     return numberproxy(numbertype, value=None)
@@ -3148,8 +3148,8 @@ def reshape_meta(a: TensorProxy, /, shape: tuple[int, ...]) -> TensorProxy:
 
     numel = reduce(operator.mul, shape, 1)
     utils.check(
-        numel == a.numel,
-        lambda: f"Attempting to reshape a.shape={a.shape} to shape={shape}, but a.numel={a.numel} is different from the number of elements in shape, {numel}",
+        numel == a.numel(),
+        lambda: f"Attempting to reshape a.shape={a.shape} to shape={shape}, but a.numel()={a.numel()} is different from the number of elements in shape, {numel}",
     )
 
     return TensorProxy(like=a, shape=shape)
@@ -3255,7 +3255,7 @@ def take_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
     utils.validate_idx(a.ndim, dim)
 
     utils.check(
-        not (a.shape[dim] == 0 and index.numel > 0),
+        not (a.shape[dim] == 0 and index.numel() > 0),
         lambda: "Attempting to index a 0-length dimension {dim=} with a non-empty index",
     )
 
@@ -3283,7 +3283,7 @@ def index_add_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, di
     utils.check(index.ndim <= 1, lambda: f"Expected index to a 1-D or 0-D tensor, but index.ndim={index.ndim}!")
     utils.validate_idx(a.ndim, dim)
     utils.check(
-        index.numel == value.shape[dim],
+        index.numel() == value.shape[dim],
         lambda: f"Expected index={index} to have size equal to value.shape[dim]={value.shape[dim]}!",
     )
 
@@ -3616,7 +3616,7 @@ def _argmin_argmax_meta(a: TensorProxy, /, dim: int | None) -> TensorProxy:
     utils.check_type(a, TensorProxy)
     utils.check_type(dim, (int, IntegerProxy, NoneType))
 
-    if a.numel == 0:
+    if a.numel() == 0:
         utils.check(dim is not None, lambda: f"Expected reduction dim to be specified for a.numel() == 0.")
 
     if dim is not None and a.ndim > 0:
@@ -3873,8 +3873,8 @@ def convolution_meta(
         out_channels % groups == 0, lambda: f"out_channels (i.e. {weight.shape[0]=}) should be divisible by {groups=}"
     )
     utils.check(
-        bias is None or (bias.ndim == 1 and bias.numel == out_channels),
-        lambda: f"{bias.ndim=} should be 1 and {bias.numel=} should match " f"out_channels, (i.e. {weight.shape[0]=})",
+        bias is None or (bias.ndim == 1 and bias.numel() == out_channels),
+        lambda: f"{bias.ndim=} should be 1 and {bias.numel()=} should match " f"out_channels, (i.e. {weight.shape[0]=})",
     )
 
     # Check sequences (stride, padding, dilation, output_padding)

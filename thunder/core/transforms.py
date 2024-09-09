@@ -1212,7 +1212,7 @@ def _sort_prim_grad(
 register_grad(pids.SORT, _sort_prim_grad)
 
 
-# TODO Fix division by zero when n_elem_reduced == 0 or when mean.numel == 0
+# TODO Fix division by zero when n_elem_reduced == 0 or when mean.numel() == 0
 #   by returning zeros_like(a) or similar.
 # TODO Fix grad when correction > n_elem_reduced.
 def _var_mean_prim_grad(a: TensorProxy, /, dims: Sequence[int], *, correction: Number) -> TensorProxy:
@@ -1674,7 +1674,7 @@ def var_aug_fwd(a, dim, *, correction):
     return VJPDual((v,), (a, dim, correction, v))
 
 
-# TODO: fix division by zero when n_elem_reduced == 0 or when v.numel == 0
+# TODO: fix division by zero when n_elem_reduced == 0 or when v.numel() == 0
 # by returning zeros_like(a) or similar.
 # TODO: fix grad when correction > n_elem_reduced.
 @register_backward(prims.PrimIDs.VAR)

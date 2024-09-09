@@ -389,7 +389,7 @@ def create_map_from_unsharded_grad_to_bucket(
         bsym_of_reduce_scatter = get_bsym_of_reduce_scatter(sharded_grad_tensor_proxy, producers)
         unsharded_grad: TensorProxy = bsym_of_reduce_scatter.flat_proxy_args[0]
         utils.check(
-            unsharded_grad.numel == sharded_grad_tensor_proxy.numel * group.size(),
+            unsharded_grad.numel() == sharded_grad_tensor_proxy.numel() * group.size(),
             lambda: f"{unsharded_grad.shape=}, {sharded_grad_tensor_proxy.shape=}",
         )
         if new_bucket_name not in clusters:

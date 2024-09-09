@@ -615,10 +615,10 @@ def numel_sample_generator(op, device, dtype, requires_grad, **kwargs):
 
 
 numel_opinfo = OpInfo(
-    ltorch.numel,
+    ltorch.numel(),
     dtypes=(datatypes.floating,),
     sample_input_generator=numel_sample_generator,
-    torch_reference=torch.numel,
+    torch_reference=torch.numel(),
 )
 tensor_properties.append(numel_opinfo)
 
@@ -3933,7 +3933,7 @@ def unflatten_error_generator(op, device, dtype=torch.float32, **kwargs):
     input_tensor = make(4, 4)
     yield (SampleInput(input_tensor, 0, ()), RuntimeError, r"unflatten\(\) sizes must be non-empty")
 
-    err_msg = rf"Attempting to reshape a.shape=(.*?) to shape=(.*?), but a.numel=.* is different from the number of elements in shape, .*"
+    err_msg = rf"Attempting to reshape a.shape=(.*?) to shape=(.*?), but a.numel()=.* is different from the number of elements in shape, .*"
     yield (SampleInput(input_tensor, 1, (2, 3)), RuntimeError, err_msg)
 
     err_msg = rf"Trying to reshape, but can't infer how to reshape (.*?) to (.*?)"
@@ -5559,7 +5559,7 @@ def argmin_argmax_error_generator(op, device, **kwargs):
     err_msg = r"Expected reduction dim .* to have non-zero size."
     yield (SampleInput(make(3, 0), 1), RuntimeError, err_msg)
 
-    err_msg = r"Expected reduction dim to be specified for a.numel\(\) == 0."
+    err_msg = r"Expected reduction dim to be specified for a.numel()\(\) == 0."
     yield (SampleInput(make(3, 0)), RuntimeError, err_msg)
 
 
@@ -7469,7 +7469,7 @@ def group_norm_error_generator(op, device, **kwargs):
         yield (
             SampleInput(make((2, 3)), 1, **{param: make((4,))}),
             RuntimeError,
-            f"{param}.numel=(.*?) to num_channels=3",
+            f"{param}.numel()=(.*?) to num_channels=3",
         )
 
 

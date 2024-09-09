@@ -2140,8 +2140,8 @@ def test_default_method(executor, device: str, dtype: dtypes.dtype):
         )
 
     # torch.numel(a) and a.numel() will run on PyTorch contenxt
-    # b.numel will fall back to the default implementation
-    assert torch.numel(a) == a.numel() == b.numel
+    # b.numel() will fall back to the default implementation
+    assert torch.numel(a) == a.numel() == b.numel()
 
 
 # @instantiate(

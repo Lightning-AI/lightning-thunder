@@ -65,7 +65,7 @@ class MemoryData:
 
     def get_memory_size(self):
         check_type(self._proxy, Proxy)
-        return self._proxy.numel * self._proxy.dtype.bytes
+        return self._proxy.numel() * self._proxy.dtype.bytes
 
 
 def default_alloc_memory(
@@ -83,7 +83,7 @@ def default_alloc_memory(
         int: The size of memory change caused by the input bsym
     """
     tensor_outs = [x for x in bsym.flat_proxy_outs if isinstance(x, (TensorProxy, FutureTensorProxy))]
-    result = sum(t.numel * t.dtype.bytes for t in tensor_outs)
+    result = sum(t.numel() * t.dtype.bytes for t in tensor_outs)
     for x in tensor_outs:
         # skip when the function returns its own input
         if x not in tensor_to_memory_data:
@@ -175,7 +175,7 @@ def get_alloc_memory(trc: TraceCtx) -> tuple[int, dict[str, int]]:
         # In addition to the arguments themselves (n=1), the interpreter holds references to the arguments,
         # accounting for n += 1
         tensor_to_memory_data[arg] = MemoryData(n=2, proxy=arg)
-        mem_size = arg.numel * arg.dtype.bytes
+        mem_size = arg.numel() * arg.dtype.bytes
         allocated += mem_size
         name_to_alloc_memory[f"argument {arg.name}"] = mem_size
 
