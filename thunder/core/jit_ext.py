@@ -709,7 +709,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     bwd_trace_impl = TraceCtx()
     for bsym in custom_bwd_bsyms:
         bwd_trace_impl.add_bound_symbol(bsym)
-    bwd_trace_impl.add_bound_symbol(prims.python_return.bind(*unwrap(custom_backward_result), output=()))
+    bwd_trace_impl.add_bound_symbol(prims.python_return.bind(*sequencify(unwrap(custom_backward_result)), output=()))
     bwd_trace_impl._siginfo = bwd_si
     bwd_impl_callable = bwd_trace_impl.python_callable(include_decorators=False)
 

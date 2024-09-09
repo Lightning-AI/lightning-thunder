@@ -1167,7 +1167,8 @@ def test_custom_autograd_function():
     model = Model().to(dtype=torch.float64)
     jitted = thunder.jit(model)
 
-    gradcheck(jitted, (x,))
+    with pytest.raises(GradcheckError):
+        gradcheck(jitted, (x,))
     with pytest.raises(GradcheckError):
         gradcheck(model, (x,))
 
