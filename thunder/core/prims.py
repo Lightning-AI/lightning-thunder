@@ -3148,8 +3148,8 @@ def reshape_meta(a: TensorProxy, /, shape: tuple[int, ...]) -> TensorProxy:
 
     numel = reduce(operator.mul, shape, 1)
     utils.check(
-        numel == a.numel(),
-        lambda: f"Attempting to reshape a.shape={a.shape} to shape={shape}, but a.numel()={a.numel()} is different from the number of elements in shape, {numel}",
+        numel == a.numel,
+        lambda: f"Attempting to reshape a.shape={a.shape} to shape={shape}, but a.numel()={a.numel} is different from the number of elements in shape, {numel}",
     )
 
     return TensorProxy(like=a, shape=shape)
