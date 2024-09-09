@@ -778,7 +778,7 @@ def _general_jit_torch_ops_autograd_function_apply_lookaside(fwd, bwd, *fwd_args
         length = 5
         return "".join(secrets.choice(string.ascii_lowercase) for _ in range(length))
 
-    jit_ctx: GeneralJitCtx = get_general_jit_ctx()
+    jit_ctx: JitCtx = get_jit_ctx()
 
     args_tensor_mask = unwrap(fwd_kwargs["args_tensor_mask"])
     # TODO(crcrpar): Think about making use of `non_differentiable_idx`
