@@ -3874,7 +3874,8 @@ def convolution_meta(
     )
     utils.check(
         bias is None or (bias.ndim == 1 and bias.numel() == out_channels),
-        lambda: f"{bias.ndim=} should be 1 and {bias.numel()=} should match " f"out_channels, (i.e. {weight.shape[0]=})",
+        lambda: f"{bias.ndim=} should be 1 and {bias.numel()=} should match "
+        f"out_channels, (i.e. {weight.shape[0]=})",
     )
 
     # Check sequences (stride, padding, dilation, output_padding)
