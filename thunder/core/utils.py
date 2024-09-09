@@ -662,8 +662,11 @@ def check_no_duplicates(dims: Sequence):
     check(len(dims) == len(set(dims)), lambda: f"Duplicate value in list of dimensions {dims}!")
 
 
-def is_cpu_scalar_tensor(a: Any) -> bool:
-    return isinstance(a, TensorProxyInterface) and a.ndim == 0 and a.device.devicetype == devices.DeviceType.CPU
+def is_cpu_scalar_tensor(a: Any, /) -> bool:
+    """
+    Returns True if the input is a Thunder TensorProxy or torch.tensor and is a scalar tensor on the CPU.
+    """
+    return isinstance(a, (TensorProxyInterface, torch.Tensor)) and a.ndim == 0 and a.device.type == "cpu"
 
 
 #

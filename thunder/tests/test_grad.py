@@ -19,7 +19,7 @@ from thunder import torch as ltorch
 from thunder.core.dtypes import is_exact_dtype, to_dtype as thunder_dtype
 from thunder.core.pytree import tree_map, tree_flatten
 from thunder.core.transforms import vjp, grad, check_bsym_for_vjp
-from thunder.core.utils import flatten_func
+from thunder.core.utils import flatten_func, is_cpu_scalar_tensor
 from thunder.tests.framework import (
     instantiate,
     NOTHING,
@@ -239,16 +239,12 @@ def _replace_none_with_zero(x, y):
     return x, y
 
 
-def _is_cpu_scalar_tensor(x):
-    return isinstance(x, torch.Tensor) and x.device.type == "cpu" and x.ndim == 0
-
-
 # If one tensor is a CPU scalar tensor and the other is on CUDA, move the scalar tensor to CUDA
 # Then do the ravel and dot operation
 def _tensor_dot(x, y):
-    if _is_cpu_scalar_tensor(x) and y.is_cuda:
+    if is_cpu_scalar_tensor(x) and y.is_cuda:
         x = x.cuda()
-    elif _is_cpu_scalar_tensor(y) and x.is_cuda:
+    elif is_cpu_scalar_tensor(y) and x.is_cuda:
         y = y.cuda()
     return torch.dot(x.ravel().type(torch.float64), y.ravel().type(torch.float64))
 

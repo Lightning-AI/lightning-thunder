@@ -1829,6 +1829,7 @@ def elementwise_binary_prims_generator(op, device, dtype, requires_grad, **kwarg
 
     yield SampleInput(a, b)
 
+    # Tests the inputs are a CPU scalar tensor and a CUDA tensor
     a = make_tensor((4, 4), device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
     b = make_tensor((), device="cpu", dtype=dtype, requires_grad=requires_grad, **kwargs)
 
