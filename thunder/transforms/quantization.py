@@ -372,10 +372,15 @@ class LORATransform(Transform):
         if submodule_name not in self.lora_linear_names:
             return state_dict
 
-        weight_name_full = f"{submodule_name}.weight"
         w = state_dict["weight"]
+        in_features, out_features = w.shape[0], w.shape[1]
+        lora_a = torch.nn.Parameter(w.new_empty((self.r, in_features)))
+        lora_b = torch.nn.Parameter(w.new_empty((out_features, self.r)))
+        self.init_lora_linear(lora_a, lora_b)
+
         state_dict = state_dict.copy()
-        state_dict["weight"] = w.to(w.device)
+        state_dict[f"weight.lora_a"] = lora_a
+        state_dict[f"weight.lora_b"] = lora_b
 
         return state_dict
 
