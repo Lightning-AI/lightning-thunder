@@ -163,10 +163,8 @@ def apply_rematerialization_for_consumer(
         filter(lambda x: x.name not in map(lambda x: x.name, new_consumer_args), consumer.args)
     )
 
-    # TODO: better investigate. In the case where there are no tensors to rematerialize it is
-    # possible to terminate early and return the consumer as it was. What needs investigation
-    # is the situation when the cut information contains tensors that are not needed for the
-    # rematerialization. Probably due to the graph being used to find multiple cuts.
+    # In the case where there are no tensors to rematerialize it is
+    # possible to terminate early and return the consumer as it was.
     if not rematerialized_inputs:
         return consumer
 
