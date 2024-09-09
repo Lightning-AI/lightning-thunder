@@ -463,25 +463,25 @@ class LORATransform(Transform):
             if bsym.sym == thunder.torch.linear:
                 n = lora_linear_proxies[bsym.args[1].name]
                 with thunder.core.trace.tracectx(computation_trace):
-                    lora_a_transpose_meta = prims.transpose.meta(additional_proxies[f"{n}.lora_a"], (1, 0))
+                    lora_a_transpose_meta = prims.transpose(additional_proxies[f"{n}.lora_a"], (1, 0))
                     lora_a_bsym = prims.transpose.bind(
                         additional_proxies[f"{n}.lora_a"],
                         (1, 0),
                         output=(lora_a_transpose_meta),
                     )
-                    lora_b_transpose_meta = prims.transpose.meta(additional_proxies[f"{n}.lora_b"], (1, 0))
+                    lora_b_transpose_meta = prims.transpose(additional_proxies[f"{n}.lora_b"], (1, 0))
                     lora_b_bsym = prims.transpose.bind(
                         additional_proxies[f"{n}.lora_b"],
                         (1, 0),
                         output=(lora_b_transpose_meta),
                     )
-                    lora_meta_ = prims.matmul.meta(bsym.args[0], lora_a_bsym.output)
+                    lora_meta_ = prims.matmul(bsym.args[0], lora_a_bsym.output)
                     lora_bsym_ = prims.matmul.bind(bsym.args[0], lora_a_bsym.output, output=lora_meta_)
-                    lora_meta = prims.matmul.meta(lora_bsym_.output, lora_b_bsym.output)
+                    lora_meta = prims.matmul(lora_bsym_.output, lora_b_bsym.output)
                     lora_bsym = prims.matmul.bind(lora_bsym_.output, lora_b_bsym.output, output=lora_meta)
 
                     # Is there a better way?
-                    original_weight_meta = prims.linear.meta(*bsym.args[:3])
+                    original_weight_meta = prims.linear(*bsym.args[:3])
                     original_weight = prims.linear.bind(*bsym.args[:3], output=original_weight_meta)
 
                     lora_sum_bsym = bsym.from_bsym(
