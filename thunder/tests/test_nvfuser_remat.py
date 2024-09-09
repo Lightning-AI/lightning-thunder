@@ -19,6 +19,7 @@ from thunder.core.transforms import value_and_grad
 from thunder.examine import get_fusions
 from thunder.tests.framework import instantiate, NOTHING, nvFuserExecutor, TorchExecutor
 from thunder.tests.make_tensor import make_tensor
+import thunder.torch as ltorch
 
 
 @value_and_grad
@@ -197,6 +198,41 @@ def test_apply_rematerialization_consumer(executor, device, _):
     new_consumer_case2 = apply_rematerialization_for_consumer(producer, consumer_with_duplicated_syms_as_producer, cut)
     # The new_consumer_case2 generated with duplicated subsymbols between producer and consumer is the same as the previous new_consumer
     assert tuple(new_consumer.subsymbols) == tuple(new_consumer_case2.subsymbols)
+
+
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.bfloat16,))
+def test_apply_rematerialization_consumer_early_exit(executor, device, dtype):
+    torch.backends.cuda.matmul.allow_tf32 = True
+
+    # Values from nanogpt - gpt2-xl
+    batchdims = (16,)
+    seq_len = 128
+    vocab_size = 50304
+
+    indices_tdtype = torch.int64
+    logits_dtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+
+    make = partial(make_tensor, low=0, high=255, device=device, requires_grad=True)
+    logits_shape = batchdims + (seq_len, vocab_size)
+    logits = make(logits_shape, dtype=logits_dtype)
+
+    targets_shape = batchdims + (seq_len,)
+    targets = make(targets_shape, dtype=indices_tdtype, requires_grad=False)
+
+    logits = logits.view(-1, logits.size(-1))
+    targets = targets.view(-1)
+
+    # Cross entropy creates a situation where the cut information includes extra symbols
+    # that are actually not to be found in the consumer.
+    def foo(logits, targets):
+        return torch.nn.functional.cross_entropy(
+            logits,
+            targets,
+            ignore_index=-1,
+        )
+
+    jfoo = thunder.jit(foo)
+    jfoo(logits, targets)
 
 
 @instantiate(
