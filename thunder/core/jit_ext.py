@@ -53,6 +53,7 @@ from types import (
 )
 
 import torch
+import torch.utils.checkpoint
 from thunder.core.proxies import (
     DistParallelType,
     proxy,
@@ -615,6 +616,25 @@ def _general_jit_torch_finfo_lookaside(dtype: thunder.dtypes.dtype):
     torch_dtype = thunder.dtypes.to_torch_dtype(dtype)
     res = torch.finfo(torch_dtype)
     return res
+
+
+@register_general_jit_lookaside(torch.utils.checkpoint.checkpoint)
+def _general_jit_torch_checkpoint_lookaside(
+    function: Callable,
+    *args,
+    **kwargs: Any,
+):
+    from thunder.torch import checkpoint
+
+    # It should be possible to call the general_thunder_jit here to handle the
+    # conversion from torch to thunder but it doesn't work now
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/1126
+    # TODO: Convert the function to a Thunder function
+    def thunder_function(*args, **kwargs):
+        return unwrap(function)(*args, **kwargs)
+
+    wrapped_thunder_function = wrap_const(thunder_function)
+    return interpreter_needs_wrap(checkpoint)(wrapped_thunder_function, *args, **kwargs)
 
 
 # Adds proxy methods
