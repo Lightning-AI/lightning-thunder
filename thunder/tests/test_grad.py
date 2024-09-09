@@ -1687,6 +1687,7 @@ def test_torch_checkpoint():
     )
 
     for checkpoint_fn in checkpoint_fns:
+
         def f(x):
             return checkpoint_fn(fn_to_checkpoint, x)
 
