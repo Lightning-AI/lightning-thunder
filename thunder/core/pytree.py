@@ -6,6 +6,7 @@ import torch
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 from thunder.core.baseutils import ProxyInterface
+from types import FunctionType
 
 OPTREE_NAMESPACE = "thunder"
 
@@ -24,6 +25,7 @@ def tree_flatten(args, namespace=""):
     if (
         type(args)
         not in {
+            FunctionType,
             dict,
             list,
             str,
