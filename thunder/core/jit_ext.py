@@ -806,16 +806,11 @@ def _general_jit_torch_ops_autograd_function_apply_lookaside(fwd, bwd, *fwd_args
             tensor_to_prod_bsym[variableify(p)] = prod_bsym
     prod_bsym_to_tensor = {v: unvariableify(k) for k, v in tensor_to_prod_bsym.items()}
 
-    @wraps(fwd_bsyms[0].sym.meta)
-    def meta_of_custom_func(*args, **kwargs):
-        return tree_map(lambda t: TensorProxy(like=t), output)
-
     # Encapsulate custom fwd into a bsym.
     sym_id = f"autograd_function_apply_{_generate_random_str_id()}"
     sym = Symbol(
         name=sym_id,
         id=sym_id,
-        meta=meta_of_custom_func,
         _module=fwd_bsyms[-1].sym.module,
     )
     bsym_of_custom_autograd_func = BoundSymbol(
@@ -824,7 +819,10 @@ def _general_jit_torch_ops_autograd_function_apply_lookaside(fwd, bwd, *fwd_args
         kwargs={},
         output=output,
         subsymbols=fwd_bsyms,
-        header=f"output of fwd_body: {output}, saved_values from fwd_body: {[t.name if isinstance(t, Proxy) else t for t in saved_values]}",
+        header=(
+            f"output of fwd_body: {output}, saved_values from fwd_body: "
+            f"{[t.name if isinstance(t, Proxy) else t for t in saved_values]}"
+        ),
         source_filename=jit_ctx.computation_trace._current_source_filename,
         source_positions=None,
         _call_ctx=fwd_bsyms[0]._call_ctx,
@@ -834,10 +832,6 @@ def _general_jit_torch_ops_autograd_function_apply_lookaside(fwd, bwd, *fwd_args
     )
     old_scope[-1].append(bsym_of_custom_autograd_func)
     # Define augmented fwd rule and backward rule on the fly.
-
-    @wraps(fwd_bsyms[0].sym.meta)
-    def meta_of_augmented_custom_func(*args, **kwargs):
-        return tree_map(lambda t: TensorProxy(like=t), (output, saved_values))
 
     augmented_fwd_trace = TraceCtx()
     for bsym in fwd_bsyms:
