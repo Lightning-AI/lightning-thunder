@@ -239,10 +239,11 @@ def _apex_cross_entropy_grad(
     return fwd
 
 
-# Registers the implementation for torch.nn.functional.cross_entropy
-apex_ex.register_implementation(
-    ltorch.cross_entropy,
-    checker=_cross_entropy_checker,
-    execution_transform=_cross_entropy_transform,
-    grad_transform=_apex_cross_entropy_grad,
-)
+if apex_entropy_available():
+    # Registers the implementation for torch.nn.functional.cross_entropy
+    apex_ex.register_implementation(
+        ltorch.cross_entropy,
+        checker=_cross_entropy_checker,
+        execution_transform=_cross_entropy_transform,
+        grad_transform=_apex_cross_entropy_grad,
+    )

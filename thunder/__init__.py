@@ -177,6 +177,7 @@ get_always_executors = extend.get_always_executors
 cudnn_executor: None | extend.Executor = extend.get_executor("cudnn")
 sdpa_executor: None | extend.Executor = extend.get_executor("sdpa")
 torchcompile_cat_executor: None | extend.Executor = extend.get_executor("torchcompile_cat")
+apex_executor: None | extend.Executor = extend.get_executor("apex")
 nvfuser_executor: None | extend.Executor = extend.get_executor("nvfuser")
 pytorch_executor: None | extend.Executor = extend.get_executor("torch")
 
@@ -193,6 +194,9 @@ if sdpa_executor:
 
 if cudnn_executor:
     add_default_executor(cudnn_executor)
+
+if apex_executor:
+    add_default_executor(apex_executor)
 
 #
 # Promoted debugging functions
