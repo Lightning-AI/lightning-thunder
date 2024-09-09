@@ -1,4 +1,5 @@
 from functools import partial
+from types import FunctionType
 import dataclasses
 
 import optree
@@ -24,6 +25,7 @@ def tree_flatten(args, namespace=""):
     if (
         type(args)
         not in {
+            FunctionType,
             dict,
             list,
             str,
