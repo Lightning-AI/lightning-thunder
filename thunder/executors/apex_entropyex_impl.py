@@ -5,7 +5,7 @@ import torch
 from lightning_utilities.core.imports import package_available
 
 import thunder.torch as ltorch
-from thunder.core.devices import DeviceType
+from thunder.core.devices import DeviceType, to_device
 from thunder.core.proxies import TensorProxy
 from thunder.core.utils import check, same_shape
 from thunder.core.transforms import get_grad, put_grad, mean_backward, restore_reduced_dims
@@ -147,7 +147,7 @@ def _cross_entropy_checker(
     if use_apex_cross_entropy == False:  # User explicitly disabled this.
         return False
 
-    if a.device.type != DeviceType.CUDA and target.device.type != DeviceType.CUDA:
+    if to_device(a.device).devicetype != DeviceType.CUDA and to_device(target.device).devicetype != DeviceType.CUDA:
         return False
 
     probability_target: bool = same_shape(a.shape, target.shape)
