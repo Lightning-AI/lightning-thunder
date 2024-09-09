@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 
 import thunder
+from thunder.core.proxies import TensorProxy
 from thunder.core.transform_common import Transform
 from thunder.core.trace import TraceCtx
 from thunder.core.pytree import tree_map
@@ -316,7 +317,7 @@ class LORATransform(Transform):
         torch.nn.init.kaiming_uniform_(lora_a, a=math.sqrt(5))
         torch.nn.init.zeros_(lora_b)
 
-    def check_proxy(self, x: thunder.TensorProxy, shape, device, dtype):
+    def check_proxy(self, x: TensorProxy, shape, device, dtype):
         assert x.shape == shape
         assert x.device == device
         assert x.dtype == dtype
@@ -477,7 +478,7 @@ class LORATransform(Transform):
         new_computation_trace.bound_symbols += new_bindings
 
         for bsym in bound_symbols[idx:]:
-            if bsym.sym == thunder.torch.linear:
+            if bsym.sym == thunder.torch.linear and bsym.args[1].name in lora_linear_proxies:
                 n = lora_linear_proxies[bsym.args[1].name]
                 with thunder.core.trace.tracectx(computation_trace):
                     lora_a_transpose_meta = prims.transpose(additional_proxies[f"{n}.lora_a"], (1, 0))
