@@ -1067,9 +1067,9 @@ def reshape(a: TensorLike, shape: Sequence[int]) -> TensorLike:
 
     # Constructs the inferred shape, replacing -1 with the necessary length
     utils.check(
-        a.numel() % numel == 0, lambda: f"Trying to reshape, but can't infer how to reshape {a.shape} to {shape}"
+        a.numel % numel == 0, lambda: f"Trying to reshape, but can't infer how to reshape {a.shape} to {shape}"
     )
-    remaining = a.numel() // numel
+    remaining = a.numel // numel
     shape = list(shape)
     shape[neg_one_idx] = remaining
     shape = tuple(shape)
