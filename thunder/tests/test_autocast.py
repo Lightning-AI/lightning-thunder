@@ -17,7 +17,7 @@ from thunder.tests.framework import instantiate, TorchExecutor
     dtypes=dtypes.float_math_dtypes,
 )
 def test_thunder_autocast_transform(executor, device, dtype):
-    from thunder.core.transforms import autocast
+    from thunder.transforms.autocast import autocast
 
     # TODO: Consider adding support for device specific dtypes in the test
     # instantiator.
@@ -53,7 +53,8 @@ def test_thunder_autocast_transform(executor, device, dtype):
     ):
         autocast_torch_dtype = ltorch.to_torch_dtype(autocast_dtype)
         x, y, z = (torch.randn((2, 2), device=device, dtype=torch_dtype) for _ in range(3))
-        compiled = executor.make_callable_legacy(autocast(func, dtype=autocast_dtype))
+        initial_trace = thunder.trace()(autocast(func, dtype=autocast_dtype), x, y, z)
+        compiled = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
         out = compiled(x, y, z)
 
         devicetype = torch.device(device).type

@@ -175,7 +175,6 @@ torch_auto_registered_ops = {
         torch.kthvalue,
         torch.lcm,
         torch.ldexp,
-        torch.lerp,
         torch.less,
         torch.less_equal,
         torch.logaddexp,
@@ -526,7 +525,6 @@ torch_auto_registered_ops = {
         torch.Tensor.kthvalue,
         torch.Tensor.lcm,
         torch.Tensor.ldexp,
-        torch.Tensor.lerp,
         torch.Tensor.less,
         torch.Tensor.less_equal,
         torch.Tensor.logaddexp,
@@ -756,3 +754,32 @@ torch_auto_registered_ops = {
         torch.fft.rfftn,
     ],
 }
+
+# Records all the auto-registered Torch operators that return tensor views
+# Ref: https://pytorch.org/docs/stable/tensor_view.html
+# NOTE this list is used to update the `_syms_returning_views`, so that the symbol returning tensor views can be processed correctly when they interact with in-place operators.
+# See :func:`thunder.core.functionalization.check_inplace_to_views` for the details.
+_auto_registered_operators_returning_views = [
+    torch.adjoint,
+    torch.Tensor.adjoint,
+    torch.Tensor.as_strided,
+    torch.detach,
+    torch.Tensor.detach,
+    torch.narrow,
+    torch.Tensor.narrow,
+    torch.imag,
+    torch.view_as_real,
+    torch.nn.functional.unfold,
+    torch.Tensor.hsplit,
+    torch.hsplit,
+    torch.Tensor.vsplit,
+    torch.vsplit,
+    torch.Tensor.split_with_sizes,
+    torch.split_with_sizes,
+    torch.Tensor.swapaxes,
+    torch.swapaxes,
+    torch.Tensor.swapdims,
+    torch.swapdims,
+    torch.Tensor.indices,
+    torch.Tensor.values,
+]
