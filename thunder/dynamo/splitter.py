@@ -1,11 +1,8 @@
-from typing import List, Dict, Optional, Tuple, Set
+from typing import List, Tuple, Set
 from collections.abc import Callable
-from functools import partial
 
 import torch
 from torch.fx.passes.split_module import split_module
-import warnings
-from collections.abc import Mapping
 
 from thunder.core.baseutils import run_once
 
@@ -18,6 +15,7 @@ from thunder.dynamo.utils import (
     is_node_supported_by_thunder,
     get_nodes_in_unsupported_ctx_regions,
     update_node_and_submodule,
+    recompile_graph,
 )
 
 
@@ -26,7 +24,7 @@ def _splitter(
     thunder_jit: Callable,
     torch_inductor: Callable,
     _unused_sample_args: list[torch.SymInt, torch.Tensor],
-) -> torch.fx.GraphModule:
+) -> tuple[torch.fx.GraphModule, SubgraphInfo]:
     """
     This method will split graph into multiple graph modules based on thunder supported operations.
     This function will try to split the graph in contiguous partitions.
@@ -160,7 +158,7 @@ def _splitter(
             pass
 
     # We update the GraphModule in `update_node_and_submodule`, so we need to recompile.
-    split_gm.recompile()
+    recompile_graph(split_gm)
 
     return split_gm, SubgraphInfo(
         gm,

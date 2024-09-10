@@ -240,3 +240,33 @@ def test_splitter_autograd_function(executor, device: str, dtype: dtypes.dtype, 
     actual_grad = torch.autograd.grad(actual, x, g)
     expected_grad = torch.autograd.grad(expected, x, g)
     torch.testing.assert_close(actual_grad, expected_grad)
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=[DynamoThunderExecutor],
+)
+def test_force_skip_lazy_graph_module(executor, device: str, dtype: dtypes.dtype):
+    with torch.fx._lazy_graph_module._force_skip_lazy_graph_module():
+        backend = ThunderCompiler()
+        x = torch.ones(2, dtype=dtype, device=device, requires_grad=True)
+
+        @torch.compile(backend=backend)
+        def func(x):
+            x = torch.sin(x)
+            return x + 2
+
+        out = func(x)
+
+        # out should have grad_fn and its name should be ThunderFunctionBackward
+        assert out.grad_fn is not None
+        assert out.grad_fn.name() == "ThunderFunctionBackward"
+
+        # We record the GraphModules that was compiled by ThunderCompiler
+        assert len(backend.subgraph_infos) == 1
+
+        for subgraph_info in backend.subgraph_infos:
+            assert isinstance(subgraph_info.original_graph_module, torch.fx.GraphModule)
+            assert len(subgraph_info.thunder_compiled_fns)  # There was atleast one function compiled with thunder.
+            for thunder_fn in subgraph_info.thunder_compiled_fns:
+                assert last_traces(thunder_fn)  # Verify that we can fetch last_traces

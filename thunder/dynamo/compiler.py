@@ -1,16 +1,14 @@
-from typing import List, Dict, Optional, Tuple, Set
-from collections.abc import Callable
+from typing import List, Dict
 from functools import partial
 from looseversion import LooseVersion
 
 import torch
 from torch.fx.passes.split_module import split_module
 import warnings
-from collections.abc import Mapping
 
 from thunder.core.baseutils import run_once
 
-from thunder.dynamo.utils import SubgraphInfo
+from thunder.dynamo.utils import SubgraphInfo, recompile_graph
 from thunder.dynamo.splitter import _splitter
 
 
@@ -74,7 +72,7 @@ class ThunderCompiler:
     def __call__(self, gm: torch.fx.GraphModule, sample_args: list[torch.SymInt, torch.Tensor]):
         # Dynamo uses lazy generation of the underlying Python code, so we need to
         # force recompilation of the GraphModule before passing it to Thunder.
-        gm.real_recompile()
+        recompile_graph(gm)
 
         # The whole graph may not be supported by `thunder`, so we split it in `thunder` supported sections
         # and unsupported sections which are passed to `torch.compile(backend='inductor')`

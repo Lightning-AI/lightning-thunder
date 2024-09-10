@@ -8,7 +8,7 @@ import copy
 import inspect
 
 import torch
-from torch.fx.passes.split_module import split_module
+from torch.fx._lazy_graph_module import _LazyGraphModule
 import warnings
 from collections.abc import Mapping
 
@@ -299,3 +299,12 @@ def update_node_and_submodule(
     assert graph_module.add_submodule(
         node.name, new_callable
     ), f"Adding submodule with name {node.name} in graph_module {graph_module} failed"
+
+
+def recompile_graph(gm: torch.fx.GraphModule):
+    # NOTE - `gm` could also be the `_LazyGraphModule`, in which case calling `recompile` is not enough as it marks the `GraphModule`
+    # and actual recompilation happens when `real_recompile` is called or either `forward` or `code` (or when user tries to observe the GraphModule).
+    # See for more details - https://github.com/pytorch/pytorch/blob/39935e0fdef02c67ba808175dcc800d0695bfe1b/torch/fx/_lazy_graph_module.py#L65-L89
+    if isinstance(gm, torch.fx._lazy_graph_module._LazyGraphModule):
+        return gm.real_recompile()
+    return gm.recompile()

@@ -46,11 +46,6 @@ from thunder.core.symbol import Symbol
 from thunder.core.transforms import register_grad
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.baseutils import run_once
-from thunder.core.transforms import (
-    _maybe_get_autocast_rule_for_symbol,
-    _get_downcast_dtype_from_str,
-    _check_valid_autocast_dtype,
-)
 import thunder
 from thunder.torch.default_torch_ops import _auto_registered_operators_returning_views
 
@@ -750,7 +745,7 @@ def randn(
 
     device = to_device(maybe_get_default_device(device))
     dtype = to_dtype(maybe_get_default_dtype(dtype))
-    shape = utils.extract_shape_from_varargs(shape)
+    shape = tuple(utils.extract_shape_from_varargs(shape))
     return prims.randn(shape, device=device, dtype=dtype)
 
 
@@ -1331,7 +1326,7 @@ def abs(a: NumberLike | TensorLike, /) -> Number | TensorLike:
     return clang.abs(a)
 
 
-@torchsymbol(torch.Tensor.abs_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.abs_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def abs_(a: NumberLike | TensorLike, /) -> Number | TensorLike:
     return prims.copy_(abs(a), a)
 
@@ -1341,7 +1336,7 @@ def acos(a: NumberLike | TensorLike, /) -> Number | TensorLike:
     return clang.acos(a)
 
 
-@torchsymbol(torch.Tensor.acos_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.acos_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def acos_(a: TensorLike, /) -> TensorLike:
     return prims.copy_(acos(a), a)
 
@@ -1351,7 +1346,7 @@ def acosh(a):
     return clang.acosh(a)
 
 
-@torchsymbol(torch.Tensor.acosh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.acosh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def acosh_(a):
     return prims.copy_(acosh(a), a)
 
@@ -1361,7 +1356,7 @@ def asin(a):
     return clang.asin(a)
 
 
-@torchsymbol(torch.Tensor.asin_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.asin_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def asin_(a):
     return prims.copy_(asin(a), a)
 
@@ -1371,7 +1366,7 @@ def asinh(a):
     return clang.asinh(a)
 
 
-@torchsymbol(torch.Tensor.asinh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.asinh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def asinh_(a):
     return prims.copy_(asinh(a), a)
 
@@ -1381,7 +1376,7 @@ def atan(a):
     return clang.atan(a)
 
 
-@torchsymbol(torch.Tensor.atan_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.atan_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def atan_(a):
     return prims.copy_(atan(a), a)
 
@@ -1391,7 +1386,7 @@ def atanh(a):
     return clang.atanh(a)
 
 
-@torchsymbol(torch.Tensor.atanh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.atanh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def atanh_(a):
     return prims.copy_(atanh(a), a)
 
@@ -1411,7 +1406,7 @@ def ceil(a):
     return clang.ceil(a)
 
 
-@torchsymbol(torch.Tensor.ceil_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.ceil_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def ceil_(a):
     return prims.copy_(ceil(a), a)
 
@@ -1421,7 +1416,7 @@ def cos(a):
     return clang.cos(a)
 
 
-@torchsymbol(torch.Tensor.cos_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.cos_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def cos_(a):
     return prims.copy_(cos(a), a)
 
@@ -1431,7 +1426,7 @@ def cosh(a):
     return clang.cosh(a)
 
 
-@torchsymbol(torch.Tensor.cosh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.cosh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def cosh_(a):
     return prims.copy_(cosh(a), a)
 
@@ -1451,7 +1446,7 @@ def erf(a):
     return clang.erf(a)
 
 
-@torchsymbol(torch.Tensor.erf_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.erf_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def erf_(a):
     return prims.copy_(erf(a), a)
 
@@ -1461,7 +1456,7 @@ def erfc(a):
     return clang.erfc(a)
 
 
-@torchsymbol(torch.Tensor.erfc_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.erfc_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def erfc_(a):
     return prims.copy_(erfc(a), a)
 
@@ -1481,7 +1476,7 @@ def exp(a):
     return clang.exp(a)
 
 
-@torchsymbol(torch.Tensor.exp_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.exp_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def exp_(a):
     return prims.copy_(exp(a), a)
 
@@ -1491,7 +1486,7 @@ def exp2(a):
     return clang.exp2(a)
 
 
-@torchsymbol(torch.Tensor.exp2_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.exp2_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def exp2_(a):
     return prims.copy_(exp2(a), a)
 
@@ -1501,7 +1496,7 @@ def expm1(a):
     return clang.expm1(a)
 
 
-@torchsymbol(torch.Tensor.expm1_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.expm1_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def expm1_(a):
     return prims.copy_(expm1(a), a)
 
@@ -1511,7 +1506,7 @@ def floor(a):
     return clang.floor(a)
 
 
-@torchsymbol(torch.Tensor.floor_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.floor_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def floor_(a):
     return prims.copy_(floor(a), a)
 
@@ -1536,7 +1531,7 @@ def log(a):
     return clang.log(a)
 
 
-@torchsymbol(torch.Tensor.log_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.log_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def log_(a):
     return prims.copy_(log(a), a)
 
@@ -1546,7 +1541,7 @@ def log10(a):
     return clang.log10(a)
 
 
-@torchsymbol(torch.Tensor.log10_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.log10_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def log10_(a):
     return prims.copy_(log10(a), a)
 
@@ -1556,7 +1551,7 @@ def log1p(a):
     return clang.log1p(a)
 
 
-@torchsymbol(torch.Tensor.log1p_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.log1p_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def log1p_(a):
     return prims.copy_(log1p(a), a)
 
@@ -1566,7 +1561,7 @@ def log2(a):
     return clang.log2(a)
 
 
-@torchsymbol(torch.Tensor.log2_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.log2_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def log2_(a):
     return prims.copy_(log2(a), a)
 
@@ -1582,7 +1577,7 @@ def neg(a):
     return clang.neg(a)
 
 
-@torchsymbol(torch.Tensor.neg_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.neg_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def neg_(a):
     return prims.copy_(neg(a), a)
 
@@ -1592,7 +1587,7 @@ def reciprocal(a):
     return clang.reciprocal(a)
 
 
-@torchsymbol(torch.Tensor.reciprocal_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.reciprocal_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def reciprocal_(a):
     return prims.copy_(reciprocal(a), a)
 
@@ -1602,7 +1597,7 @@ def round(a):
     return clang.round(a)
 
 
-@torchsymbol(torch.Tensor.round_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.round_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def round_(a):
     return prims.copy_(round(a), a)
 
@@ -1612,7 +1607,7 @@ def rsqrt(a):
     return clang.rsqrt(a)
 
 
-@torchsymbol(torch.Tensor.rsqrt_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.rsqrt_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def rsqrt_(a):
     return prims.copy_(rsqrt(a), a)
 
@@ -1639,7 +1634,7 @@ def sin(a):
     return clang.sin(a)
 
 
-@torchsymbol(torch.Tensor.sin_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.sin_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def sin_(a):
     return prims.copy_(sin(a), a)
 
@@ -1649,7 +1644,7 @@ def sinh(a):
     return clang.sinh(a)
 
 
-@torchsymbol(torch.Tensor.sinh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.sinh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def sinh_(a):
     return prims.copy_(sinh(a), a)
 
@@ -1659,7 +1654,7 @@ def sqrt(a):
     return clang.sqrt(a)
 
 
-@torchsymbol(torch.Tensor.sqrt_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.sqrt_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def sqrt_(a):
     return prims.copy_(sqrt(a), a)
 
@@ -1669,7 +1664,7 @@ def tan(a):
     return clang.tan(a)
 
 
-@torchsymbol(torch.Tensor.tan_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.tan_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def tan_(a):
     return prims.copy_(tan(a), a)
 
@@ -1679,7 +1674,7 @@ def tanh(a):
     return clang.tanh(a)
 
 
-@torchsymbol(torch.Tensor.tanh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.tanh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def tanh_(a):
     return prims.copy_(tanh(a), a)
 
@@ -1689,7 +1684,7 @@ def trunc(a):
     return clang.trunc(a)
 
 
-@torchsymbol(torch.Tensor.trunc_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.trunc_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def trunc_(a):
     return prims.copy_(trunc(a), a)
 
@@ -2170,6 +2165,16 @@ def addcdiv_(a: TensorLike, b: TensorLike, c: TensorLike, /, *, value: None | Nu
     return prims.copy_(addcdiv(a, b, c, value=value), a)
 
 
+@torchsymbol(torch.lerp, is_method=True)
+def lerp(start: TensorLike, end: TensorLike, weight: Number | TensorLike) -> TensorLike:
+    return clang.lerp(start, end, weight)
+
+
+@torchsymbol(torch.Tensor.lerp_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def lerp_(start: TensorLike, end: TensorLike, weight: Number | TensorLike) -> TensorLike:
+    return prims.copy_(lerp(start, end, weight), start)
+
+
 #
 # Conditional operations and masking operations
 #
@@ -2210,7 +2215,7 @@ def clamp(
     return a
 
 
-@torchsymbol(torch.Tensor.clamp_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.clamp_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def clamp_(
     a: TensorLike, /, min: None | Number | TensorLike = None, max: None | Number | TensorLike = None
 ) -> TensorLike:
@@ -2873,7 +2878,7 @@ def index_put(
     return clang.index_put(a, indices, values, accumulate)
 
 
-@torchsymbol(torch.Tensor.index_put_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.index_put_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def index_put_(
     a: TensorLike,
     /,
@@ -4153,6 +4158,23 @@ def adaptive_avg_pool2d_backward(g: TensorProxy, a: TensorProxy, /) -> TensorPro
             lambda: f"adaptive_avg_pool2d_backward: Expected grad to have non-zero size for non-batch dimensions, but grad has sizes {g.shape} with dimension {i} being empty",
         )
     return TensorProxy(like=a)
+
+
+def _adaptive_avg_pool2d_grad(
+    a: TensorProxy,
+    /,
+    output_size: int | Sequence[int],
+) -> TensorProxy:
+    primals = adaptive_avg_pool2d(a, output_size)
+
+    grad = get_grad(primals)
+    grad_a = adaptive_avg_pool2d_backward(grad, a)
+    put_grad(a, grad_a)
+
+    return primals
+
+
+register_grad(adaptive_avg_pool2d, _adaptive_avg_pool2d_grad)
 
 
 @torchsymbol(torch.max_pool1d, torch.nn.functional.max_pool1d, id="torch.nn.functional.max_pool1d", is_method=False)

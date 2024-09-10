@@ -1,5 +1,5 @@
 import math
-from functools import reduce
+from functools import partial, reduce
 from numbers import Number
 from typing import Union, List, Optional, Any
 from collections.abc import Callable
@@ -277,7 +277,7 @@ def full(
         dtype = dtypes.numbertype_to_dtype(dtypes.to_dtype(fill_value))
     device = devices.to_device(device)
 
-    return prims.full(shape, fill_value, device=device, dtype=dtype)
+    return prims.full(tuple(shape), fill_value, device=device, dtype=dtype)
 
 
 @clangop()
@@ -1692,6 +1692,7 @@ def sigmoid(a):
 
 
 # TODO Review type promotionkind for sign
+@clangop()
 def sign(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.sign, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.PRESERVE
@@ -1699,6 +1700,7 @@ def sign(a):
 
 
 # TODO Add supported dtypes to exclude complex
+@clangop()
 def signbit(a):
     if dtypes.is_unsigned_dtype(dtypes.to_dtype(a)):
         return full_like(a, False, dtype=dtypes.bool8)
@@ -1748,6 +1750,7 @@ def tanh(a):
     )
 
 
+@clangop()
 def trunc(a: TensorLike | Number) -> TensorLike | Number:
     # Short-circuits on unsigned inputs (which are already trivially truncated)
     if dtypes.is_exact_dtype(dtypes.to_dtype(a)):
@@ -2056,8 +2059,25 @@ def zeta(a, b):
 
 
 #
-# Conditional operators
+# Elementwise ternary operations
 #
+
+
+@clangop()
+def lerp(start: TensorLike, end: TensorLike, weight: Number | TensorLike) -> TensorLike:
+    inputs = (start, end, weight)
+    # torch.lerp does not promote types and only accepts floating-point inputs
+    computation_dtype, result_dtype = utils.elementwise_type_promotion(
+        *inputs, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
+    )
+
+    inputs = maybe_broadcast(*inputs)
+    inputs = map(partial(maybe_convert_to_dtype, dtype=computation_dtype), inputs)
+
+    result = prims.lerp(*inputs)
+    result = maybe_convert_to_dtype(result, result_dtype)
+
+    return result
 
 
 @clangop()
