@@ -3099,6 +3099,10 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
     with tracectx(new_bwd_trace):
         unpack_args = (CollectionProxy(new_saved_for_backward, name="C0"), len(new_saved_for_backward))
 
+    # Here we make sure that the signature of the backward trace is the same as the one we expect.
+    # This part of the trace is the unpacking of the tuple passed from the forward trace,
+    # more specifically, C0 unpacks into the saved for backward tensors and C1 into the cotangents
+    # used to compute the Jacobian.
     assert bwd_trace.bound_symbols[4].sym.id == prims.PrimIDs.UNPACK_SEQUENCE
     assert bwd_trace.bound_symbols[4].args[0].name == "C0"
     assert bwd_trace.bound_symbols[5].sym.id == prims.PrimIDs.UNPACK_SEQUENCE
