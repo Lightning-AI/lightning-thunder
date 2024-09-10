@@ -624,6 +624,21 @@ def _general_jit_torch_checkpoint_lookaside(
     *args,
     **kwargs: Any,
 ):
+    """
+    This function does preprocessing of the `function` argument before
+    dispatching the call to `thunder.torch.checkpoint`. This is necessary
+    because the `function` is potentially calling into PyTorch functions that
+    are not yet translated to Thunder. `thunder.torch.checkpoint` is a Thunder
+    function that can handle only Thunder functions as input.
+
+    Args:
+        function: The function to be checkpointed. *args: Arguments to the
+        function. **kwargs: Keyword arguments to the function.
+
+    Returns:
+        The result of calling `thunder.torch.checkpoint` with the preprocessed
+        `function` and its arguments.
+    """
     from thunder.torch import checkpoint
 
     # It should be possible to call the general_thunder_jit here to handle the
