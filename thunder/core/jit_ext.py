@@ -592,7 +592,17 @@ def _general_jit_named_buffers_lookaside(obj: Any, *args, **kwargs):
 
 @register_general_jit_lookaside(torch.autograd.function.Function.apply.__func__)
 def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwargs):
-    from thunder.core.baseutils import sequencify
+    """Encapsulate forward into a bsym, define and register augmented fwd and bwd.
+
+    This lookaside does three things:
+        1. Encapsulate ``MyFunc(torch.autograd.Function).forward`` into :class:`~thunder.core.symbol.BoundSymbol`
+        2. Define an augmented forward which is different from ``MyFunc.forward`` in its return values: returning
+           ``ctx.saved_tensors`` as residuals.
+        3. Trace ``MyFunc.backward``, define :class:`~thunder.core.trace.TraceCtx` whose args are ``(*residuals, *grads)``.
+           So far, non-tensor ``ctx`` attributes seem to be folded into a trace.
+    """
+    from thunder.core.baseutils import check, sequencify
+    from thunder.core.transforms import augmented_forward_impls, backward_impls, VJPDual
 
     jit_ctx: JitCtx = get_jit_ctx()
 
@@ -608,7 +618,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     wrapped_ctx = wrap_const(ctx_proxy)
     custom_forward_result = _interpret_call(custom_forward, wrapped_ctx, *args, **kwargs)
 
-    # Create a BoundSymbol representing custom forward.
+    # Forward.
     unwrapped_custom_forward_args = tree_map(lambda a: unwrap(a), args)
     unwrapped_custom_forward_result = unwrap(custom_forward_result)
     symbol_name = custom_autograd_function_cls.__name__
@@ -636,25 +646,12 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         tuple(sequencify(unwrapped_custom_forward_result)),
         ctx_proxy.saved_tensors,
     )
-    bsym_of_augmented_fwd = BoundSymbol(
-        custom_fwd_sym,  # technically wrong, but sym here is rather a placeholder.
-        args=unwrapped_custom_forward_args,
-        kwargs={},
-        output=augmented_bsym_output,
-        subsymbols=custom_fwd_bsyms,
-        source_filename=jit_ctx.computation_trace._current_source_filename,
-        source_positions=None,
-        _call_ctx=custom_fwd_bsyms[0]._call_ctx,
-        _import_ctx=custom_fwd_bsyms[0]._import_ctx,
-        _object_ctx=custom_fwd_bsyms[0]._object_ctx,
-        _executor=custom_fwd_bsyms[0]._executor,
-    )
     trace_of_augmented_fwd = TraceCtx()
     for bsym in custom_fwd_bsyms:
         trace_of_augmented_fwd.add_bound_symbol(bsym)
     trace_of_augmented_fwd.add_bound_symbol(prims.python_return.bind(augmented_bsym_output, output=()))
     si = SigInfo(custom_fwd_sym.name)
-    for a in bsym_of_augmented_fwd.args:
+    for a in unwrapped_custom_forward_args:
         if isinstance(a, Proxy):
             si.args.append((a.name, None))
         else:
@@ -662,10 +659,6 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
             si.args.append((pa.name, None))
     trace_of_augmented_fwd._siginfo = si
     core_of_augmented_forward = trace_of_augmented_fwd.python_callable(include_decorators=False)
-
-    from thunder.core.baseutils import check
-    from thunder.core.transforms import augmented_forward_impls
-    from thunder.core.transforms import VJPDual
 
     @wraps(core_of_augmented_forward)
     def augmented_custom_forward_rule(*args, **kwargs):
@@ -718,8 +711,6 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         check(not kwargs, lambda: f"{kwargs} expected to be empty")
         new_args = ctx_proxy.saved_consts + args
         return bwd_impl_callable(*new_args)
-
-    from thunder.core.transforms import backward_impls
 
     backward_impls[custom_fwd_sym.name] = backward_impl
 
