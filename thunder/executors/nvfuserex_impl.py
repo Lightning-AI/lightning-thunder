@@ -159,7 +159,7 @@ def is_supported_dtype(dtype: type | dtypes.dtype, *, allow_low_precision_floats
 
 def is_supported_tensor(a: TensorProxy, *, allow_low_precision_floats: bool = True) -> bool:
     utils.check_type(a, TensorProxy)
-    devicetype_supported = a.device.devicetype is DeviceType.CUDA
+    devicetype_supported = a.device.devicetype is DeviceType.CUDA or utils.is_cpu_scalar_tensor(a)
     dtype_supported = is_supported_dtype(a.dtype)
 
     if not allow_low_precision_floats:
