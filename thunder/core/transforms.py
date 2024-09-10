@@ -2998,7 +2998,9 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
             out = tree_flatten(out)[0]
         return out
 
-    backward_trace = construct_trace(rename_proxies=False)(backward_fn, saved_for_backward, cotangents)
+    backward_trace = construct_trace(rename_proxies=False, _used_names=forward_trace.names)(
+        backward_fn, saved_for_backward, cotangents
+    )
 
     # We are done with constructing the forward and backward passes at this
     # stage. The following is not strictly necessary, but it's good to filter

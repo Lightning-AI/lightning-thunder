@@ -498,6 +498,9 @@ def cache_get(
 #   been constructed.
 # If include_return_statement is True then the trace will terminate with a RETURN operation
 # If include_return_statement is False then the trace will end without an explicit RETURN
+# If `_used_names` is provided, then these names will not appear in the newly constructed trace.
+# This arguments is useful, if we don't want certain names to appear in the new trace
+# Example: We don't want names from forward trace to appear in backward trace unless passed as input.
 # TODO Consider modeling additional calls to trace()
 # TODO RC1 Change the way this is called to be trace(langctx, inline_trace, rename_proxies...)(fn, *args, **kwargs)
 #   to separate the traced function's args and kwargs from this function's kwargs
@@ -511,6 +514,7 @@ def trace(
     include_return_statement: bool = True,
     use_dce: bool = True,
     insert_ddp_syncs: bool = False,
+    _used_names: set[str] | None = None,
 ) -> Callable:
     @make_opaque
     def _trace(
@@ -533,6 +537,14 @@ def trace(
                 return fn(*args, **kwargs)
 
             trace = TraceCtx(fn)
+
+            # Add `_used_names` to the trace, so that
+            # they won't be used for proxies generated
+            # while tracing.
+            if _used_names is not None:
+                for name in _used_names:
+                    trace.add_name(name)
+
             tracectx_tok = set_tracectx(trace)
 
             proxyargs, proxykwargs = args, kwargs
