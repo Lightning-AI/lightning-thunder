@@ -632,8 +632,9 @@ def _general_jit_torch_checkpoint_lookaside(
     function that can handle only Thunder functions as input.
 
     Args:
-        function: The function to be checkpointed. *args: Arguments to the
-        function. **kwargs: Keyword arguments to the function.
+        function: The function to be checkpointed.
+        args: Arguments to the function.
+        kwargs: Keyword arguments to the function.
 
     Returns:
         The result of calling `thunder.torch.checkpoint` with the preprocessed
