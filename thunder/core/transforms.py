@@ -21,21 +21,22 @@ from thunder.core import dtypes, prims
 from thunder.core.devices import cpu, Device
 from thunder.core.trace_interpreter import interpret_trace as eval_trace, trace_interpreter_skip_list
 from thunder.core.proxies import (
+    CollectionProxy,
     NumberProxy,
     Proxy,
     TensorProxy,
     FloatProxy,
     variableify,
+    unvariableify,
     FutureTensorProxy,
 )
-from thunder.core.baseutils import default_dataclass_params
 from thunder.core.compile_data import get_compile_data, get_compile_option
 from thunder.core.langctxs import langctx, Languages
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten, tree_flatten_with_dataclass
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol
 from thunder.core.trace import TraceCtx as Trace
 from thunder.core.trace import VariableInterface as Variable
-from thunder.core.trace import detached_trace, set_tracectx, reset_tracectx, from_trace, TraceProvenance
+from thunder.core.trace import detached_trace, set_tracectx, reset_tracectx, from_trace, TraceProvenance, tracectx
 from thunder.core.utils import (
     check,
     flatten_func,
@@ -3067,17 +3068,11 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
 
     all_rematerializable = old_saved_for_bwd - fwd_trace_args
 
-    # Here will come the selection logic for what to materialize.
-    from collections import Counter
-
-    tensor_counter = Counter({v: unvariableify(v).numel * unvariableify(v).dtype.bytes for v in all_rematerializable})
-    print(f"DEBUG: out of {len(saved_for_bw)} sfb, {len(all_rematerializable)} are recomputable")
-    print(f"DEBUG: can save up to {tensor_counter.total()*1e-6:.3f} MB")
-    top_one_third = len(saved_for_bw) // 3
-    print(f"DEBUG: remat {top_one_third} tensors (top one third)")
-
-    # Select the tensors that will be rematerialized
-    rematerializable = {k for k, v in tensor_counter.most_common(top_one_third)}
+    cd = get_compile_data()
+    if (remat_policy := cd.rematerialization_policy):
+        rematerializable = remat_policy(all_rematerializable)
+    else:
+        rematerializable = all_rematerializable
 
     producers = find_producer_symbols(fwd_trace, tuple(unvariableify(i) for i in rematerializable), fwd_trace.args)
 

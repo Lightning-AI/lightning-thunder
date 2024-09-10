@@ -193,6 +193,7 @@ class CompileData:
         compile_options: dict[str, Any] = {},
         get_computation_and_inputs: Callable | None = None,
         executor_lookasides: dict[Callable, Callable] | None = None,
+        rematerialization_policy: Callable | None = None,
     ):
         # Records whether we're using the thunder.jit() entrypoint or not
         #   The thunder.jit() entrypoint introduces important architectural updates,
@@ -246,6 +247,7 @@ class CompileData:
         self.use_rematerialization = use_rematerialization
         self.disable_torch_autograd_support = disable_torch_autograd_support
         self.debug_log = debug_log
+        self.rematerialization_policy = rematerialization_policy
 
         # TODO Consider validating that this dict has exclusively string keys
         self.compile_options = compile_options

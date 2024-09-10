@@ -65,6 +65,7 @@ from thunder.core.proxies import (
     ListProxy,
     DictProxy,
     AnyProxy,
+    Variable,
 )
 from thunder.core.interpreter import print_interpreter_log, print_to_log
 from thunder.core.jit_ext import thunder_general_jit
@@ -260,6 +261,7 @@ def jit(
     disable_torch_autograd: bool = False,  # TODO Revisit this UX for RC1
     transforms: list[Transform] | None = None,
     record_history: bool = False,
+    rematerialization_policy: Callable[[set[Variable]], Variable] | None = None,
     **compile_options,  # TODO RC1 Make this explicit -- dict of options
 ) -> Callable:
     """Just-in-time compile a callable (function or model).
@@ -332,6 +334,7 @@ def jit(
         disable_preprocessing=True,
         compile_options=compile_options,
         executor_lookasides=executor_lookasides,
+        rematerialization_policy=rematerialization_policy,
     )
     cs = CompileStats()
 
