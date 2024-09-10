@@ -22,12 +22,12 @@ def module_init_from_original_module_init(
             prefix = f"{name}." if name else name
             non_persistent_buffers_set.update(f"{prefix}{bname}" for bname in submodule._non_persistent_buffers_set)
 
-        def neg_filter(n):
+        def should_skip_materialization(n):
             return n not in non_persistent_buffers_set
 
     else:
 
-        def neg_filter(n):
+        def should_skip_materialization(n):
             return False
 
     shared_names = tm._get_shared_names()
@@ -50,11 +50,11 @@ def module_init_from_original_module_init(
         if any(
             chain(
                 (
-                    (n in transform.have_materialized) and not neg_filter(n)
+                    (n in transform.have_materialized) and not should_skip_materialization(n)
                     for n, _ in submodule.named_parameters(recurse=False, prefix=module_name)
                 ),
                 (
-                    (n in transform.have_materialized) and not neg_filter(n)
+                    (n in transform.have_materialized) and not should_skip_materialization(n)
                     for n, _ in submodule.named_buffers(recurse=False, prefix=module_name)
                 ),
             )
@@ -67,7 +67,7 @@ def module_init_from_original_module_init(
 
             # we need to initialize the module unless all parameters are duplicatess
             need_init = not all(
-                bool(shared_names[n] & processed_names) | neg_filter(n)
+                (shared_names[n] & processed_names) or should_skip_materialization(n)
                 for n, _ in chain(
                     module_copy.named_parameters(prefix=module_name, recurse=False),
                     module_copy.named_buffers(prefix=module_name, recurse=False),
@@ -146,15 +146,14 @@ class MaterializationTransform(Transform):
                     model._overrides_buffers[n2] = b
                     self.have_materialized.add(n2)
 
-        if self.init != module_init_from_original_module_init:
-            # initialize things not in the state dict
-            module_init_from_original_module_init(self, model, non_persistent_only=True)
         self.init(self, model)
 
     @staticmethod
     def init_from_original_state_dict(state_dict):
         def module_init_from_original_state_dict(transform: MaterializationTransform, model: ThunderModule):
-            # transform is unused
+            # initialize things not persisted in the state dict
+            module_init_from_original_module_init(transform, model, non_persistent_only=True)
+            # load (and implicitly transform) the original state dict
             model.load_original_state_dict(state_dict)
 
         return module_init_from_original_state_dict
@@ -162,7 +161,9 @@ class MaterializationTransform(Transform):
     @staticmethod
     def init_from_transformed_state_dict(state_dict):
         def module_init_from_transformed_state_dict(transform: MaterializationTransform, model: ThunderModule):
-            # transform is unused
+            # initialize things not persisted in the state dict
+            module_init_from_original_module_init(transform, model, non_persistent_only=True)
+            # load the state dict
             model.load_state_dict(state_dict)
 
         return module_init_from_transformed_state_dict
