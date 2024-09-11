@@ -2181,13 +2181,14 @@ def softmax_aug_fwd(a: Proxy, dim: int, dtype: dtypes.dtype | None = None) -> VJ
     from thunder.torch import softmax
 
     primal = softmax(a, dim, dtype=dtype)
-    residuals = (primal, dim)
+    residuals = (primal, dim, a.dtype)
     return VJPDual(primal, residuals)
 
 
 @register_backward("torch.softmax")
-def softmax_backward(primal, dim, g):
-    return primal * (g - (primal * g).sum(dim, keepdim=True))
+def softmax_backward(primal, dim, input_dtype, g):
+    grad = primal * (g - (primal * g).sum(dim, keepdim=True))
+    return grad.to(input_dtype) if grad.dtype != input_dtype else grad
 
 
 def iter_bound_symbols(bound_symbols):
