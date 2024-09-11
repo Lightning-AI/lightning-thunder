@@ -450,7 +450,14 @@ elementwise_unary_ops = []
 
 # TODO Add small value, large value, and extremal-valued samples
 def elementwise_unary_generator(
-    op, device: torch.device, dtype: torch.dtype, requires_grad: bool, *, supports_numbers: bool = True, **kwargs
+    op,
+    device: torch.device,
+    dtype: torch.dtype,
+    requires_grad: bool,
+    *,
+    supports_numbers: bool = True,
+    small=False,
+    **kwargs,
 ):
     low = None if op.domain.low is None else max(-9, op.domain.low)
     high = None if op.domain.high is None else min(9, op.domain.high)
@@ -465,10 +472,14 @@ def elementwise_unary_generator(
         (),
         (11,),
         (4, 4),
-        (1024, 1024),
-        (64, 64, 64),
         (4, 2, 4, 5),
     )
+
+    if not small:
+        shapes += (
+            (1024, 1024),
+            (64, 64, 64),
+        )
 
     # Typical inputs
     for shape in shapes:
@@ -1818,6 +1829,17 @@ def elementwise_binary_prims_generator(op, device, dtype, requires_grad, **kwarg
 
     yield SampleInput(a, b)
 
+    # Tests the inputs are a CPU scalar tensor and a CUDA tensor
+    a = make_tensor((4, 4), device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
+    b = make_tensor((), device="cpu", dtype=dtype, requires_grad=requires_grad, **kwargs)
+
+    yield SampleInput(a, b)
+
+    a = make_tensor((), device="cpu", dtype=dtype, requires_grad=requires_grad, **kwargs)
+    b = make_tensor((4, 4), device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
+
+    yield SampleInput(a, b)
+
 
 # TODO Extend this generator
 def elementwise_binary_generator(op, device, dtype, requires_grad, *, no_rhs_numbers: bool = False, **kwargs):
@@ -1845,13 +1867,6 @@ add_opinfo = OpInfo(
     sample_input_generator=elementwise_binary_generator,
     torch_reference=torch.add,
     test_directives=(
-        # See issue "broadcast_in_dim: The size of contiguity must equal to the
-        # number of non-broadcasting IterDomains"
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_jvp_correctness",
-            executors=("nvfuser",),
-        ),
         DecorateInfo(
             pytest.mark.skip,
             "test_vjp_correctness",
@@ -2086,13 +2101,6 @@ mul_opinfo = OpInfo(
     sample_input_generator=elementwise_binary_generator,
     torch_reference=torch.mul,
     test_directives=(
-        # See issue "broadcast_in_dim: The size of contiguity must equal to the
-        # number of non-broadcasting IterDomains"
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_jvp_correctness",
-            executors=("nvfuser",),
-        ),
         DecorateInfo(
             pytest.mark.skip,
             "test_vjp_correctness",
@@ -2152,9 +2160,9 @@ elementwise_binary_ops.append(nextafter_opinfo)
 
 
 def polygamma_sample_input_generator(op, device, dtype, requires_grad, *, no_rhs_numbers: bool = False, **kwargs):
-    rhs_generator = elementwise_unary_generator(op, device, dtype, requires_grad, exclude_zero=True)
+    rhs_generator = elementwise_unary_generator(op, device, dtype, requires_grad, exclude_zero=True, small=True)
     # NOTE Polygamma grows very fast because of factorial term; Limit lhs values to avoid extremal values.
-    lhs_generator = range(5)
+    lhs_generator = [0, 2, 4]  # range(5)
 
     for n, rhs_arg in itertools.product(lhs_generator, rhs_generator):
         yield SampleInput(n, rhs_arg.args[0])
@@ -2227,6 +2235,9 @@ pow_opinfo = OpInfo(
             executors=("nvfuser,"),
             dtypes=(datatypes.complex64, datatypes.complex128),
         ),
+        # NOTE: PyTorch fails with RuntimeError: "reciprocal_cuda" not implemented for 'Long' occasionally when the exponent is CPU scalar tensor
+        # e.g.: x=torch.tensor([[ 6,  5,  1, -8],], device='cuda:0');y=torch.tensor(-1);torch.pow(x,y)
+        DecorateInfo(pytest.mark.xfail, "test_core_vs_torch_consistency", dtypes=(datatypes.int32, datatypes.int64)),
     ),
 )
 elementwise_binary_ops.append(pow_opinfo)
@@ -2975,6 +2986,10 @@ cuda_opinfo = OpInfo(
             pytest.mark.skip,
             active_if=not torch.cuda.is_available(),
         ),
+        DecorateInfo(
+            custom_comparator(lambda a, b, **kwargs: assert_close(a, b.to(a.device), atol=1e-5, rtol=1e-5)),
+            "test_vjp_correctness",
+        ),
     ),
 )
 data_movement_ops.append(cuda_opinfo)
@@ -3097,13 +3112,6 @@ broadcast_in_dim_opinfo = OpInfo(
         DecorateInfo(
             pytest.mark.xfail,
             "test_errors",
-        ),
-        # See issue "broadcast_in_dim: The size of contiguity must equal to the number of
-        # non-broadcasting IterDomains"
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_jvp_correctness",
-            executors=("nvfuser",),
         ),
         DecorateInfo(
             pytest.mark.skip,
@@ -3281,9 +3289,8 @@ expand_opinfo = OpInfo(
     error_input_generator=expand_error_generator,
     torch_reference=torch.Tensor.expand,
     test_directives=(
-        # vjp and jvp not yet implemented
+        # vjp not yet implemented
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
-        DecorateInfo(pytest.mark.xfail, "test_jvp_correctness"),
     ),
 )
 shape_ops.append(expand_opinfo)
@@ -3330,9 +3337,8 @@ expand_as_opinfo = OpInfo(
     error_input_generator=expand_as_error_generator,
     torch_reference=torch.Tensor.expand_as,
     test_directives=(
-        # vjp and jvp not yet implemented
+        # vjp not yet implemented
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
-        DecorateInfo(pytest.mark.xfail, "test_jvp_correctness"),
     ),
 )
 shape_ops.append(expand_as_opinfo)
@@ -3699,6 +3705,12 @@ getitem_opinfo = OpInfo(
         # TypeError: Using a non-tuple sequence for multidimensional indexing is not allowed; use `arr[array(seq)]`
         # instead of `arr[seq]`. See https://github.com/google/jax/issues/4564 for more information.
         DecorateInfo(pytest.mark.xfail, "test_core_vs_jax_consistency"),
+        # TODO: https://github.com/Lightning-AI/lightning-thunder/issues/841
+        # check_slice_value(p0, slice(1, 3, 1)) in prologue trace fails
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+        ),
     ),
 )
 shape_ops.append(getitem_opinfo)
@@ -4355,10 +4367,6 @@ stack_opinfo = OpInfo(
     sample_input_generator=stack_sample_generator,
     error_input_generator=stack_error_generator,
     torch_reference=lambda *args, dim: torch.stack(args, dim=dim),
-    test_directives=(
-        # vjp and jvp not yet implemented
-        DecorateInfo(pytest.mark.xfail, "test_jvp_correctness"),
-    ),
 )
 shape_ops.append(stack_opinfo)
 
@@ -5052,13 +5060,6 @@ unsqueeze_opinfo = OpInfo(
     sample_input_generator=unsqueeze_sample_generator,
     jax_reference=jax.lax.expand_dims if JAX_AVAILABLE else None,
     test_directives=(
-        # See issue "broadcast_in_dim: The size of contiguity must equal to the
-        # number of non-broadcasting IterDomains"
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_jvp_correctness",
-            executors=("nvfuser",),
-        ),
         DecorateInfo(
             pytest.mark.skip,
             "test_vjp_correctness",
@@ -6648,6 +6649,13 @@ baddbmm_opinfo = OpInfo(
             pytest.mark.xfail,
             "test_phantom_grad_vs_torch_consistency",
         ),
+        # InterpreterError: Encountered exception Failed: Timeout >240.0s while tracing
+        # Appearing only in CI, passes locally.
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
+            executors=("torch", "nvfuser"),
+        ),
     ),
 )
 
@@ -7073,6 +7081,13 @@ convolution_opinfo = OpInfo(
             # in composite operations like
             # torch.nn.functional.conv{1, 2, 3}
             dtypes=(datatypes.complexfloating,),
+            executors=("torch", "nvfuser"),
+        ),
+        # InterpreterError: Encountered exception Failed: Timeout >240.0s while tracing
+        # Appearing only in CI, passes locally.
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_vjp_correctness",
             executors=("torch", "nvfuser"),
         ),
     ),

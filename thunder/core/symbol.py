@@ -297,7 +297,7 @@ class Symbol:
         baseutils.check(not trace._complete, lambda: f"Trying to add {self} to a trace that is complete!")
 
         # Import here to avoid cyclical import issues.
-        from thunder.core.transforms import maybe_apply_autocast
+        from thunder.transforms.autocast import maybe_apply_autocast
 
         # See NOTE: torch.autocast support - for more details on why we apply autocast here.
         if (autocast_impl := maybe_apply_autocast(self)) is not None:
@@ -398,8 +398,10 @@ class BoundSymbol(BoundSymbolInterface):
         }
 
         self_kwargs.update(kwargs)
-
-        return BoundSymbol(**self_kwargs)
+        bsym = BoundSymbol(**self_kwargs)
+        if bsym.sym._bind_postprocess:
+            bsym.sym._bind_postprocess(bsym)
+        return bsym
 
     # NOTE coll must be a Container of "variableified" proxies
     def has_input(self, coll) -> bool:

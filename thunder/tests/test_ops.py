@@ -65,10 +65,9 @@ def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executo
         comp = sample.comp if sample.comp is not None else comp
 
         tfn: Callable
-        tfn = thunder.functional.jit(
+        tfn = thunder.jit(
             op.op,
             executors=executor.executors_list(),
-            interpretation="python interpreter",
             cache="no caching",
             disable_torch_autograd=True,
         )

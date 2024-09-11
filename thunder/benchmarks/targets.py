@@ -69,6 +69,11 @@ parametrize_compute_type = pytest.mark.parametrize(
     (ComputeType.INFERENCE, ComputeType.TRAINING_FORWARD, ComputeType.TRAINING_BACKWARD),
     ids=("inference", "forward", "backward"),
 )
+parametrize_compute_type_only_training = pytest.mark.parametrize(
+    "compute_type,",
+    (ComputeType.TRAINING_FORWARD, ComputeType.TRAINING_BACKWARD),
+    ids=("forward", "backward"),
+)
 
 
 import functools
@@ -247,14 +252,12 @@ swiglu_executors = (
     (torch_compile_executor, False),
     (thunder_executor, False),
     (torch_executor, True),
-    (torch_compile_executor, True),
 )
 swiglu_executors_ids = (
     "torch",
     "torch.compile",
     "thunder",
-    "torch+liger",
-    "torch.compile+liger",
+    "liger",
 )
 
 
@@ -272,7 +275,7 @@ swiglu_executors_ids = (
     (2**i for i in range(0, 2)),
     ids=(f"bs{2**i}" for i in range(0, 2)),
 )
-@parametrize_compute_type
+@parametrize_compute_type_only_training
 @pytest.mark.parametrize(
     "config,",
     get_configs_for_swiglu(),
