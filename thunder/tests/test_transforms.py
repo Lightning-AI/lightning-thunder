@@ -372,7 +372,7 @@ def test_saved_for_backward_recomputation():
     cs = thunder.compile_stats(jmodel)
 
     # Do not recompute any
-    cd.recomputation_policy = lambda x: set()
+    cd.compile_options["recomputation_policy"] = lambda x: set()
     with compile_data_and_stats(cd, cs):
         new_fwd, new_bwd = recompute_saved_for_backward(fwd_trace, bwd_trace)
 
@@ -402,7 +402,7 @@ def test_saved_for_backward_recomputation():
 
     all_rematerializable = old_saved_for_bwd - fwd_trace_args
 
-    cd.recomputation_policy = lambda x: x
+    cd.compile_options["recomputation_policy"] = lambda x: x
     with compile_data_and_stats(cd, cs):
         _, new_bwd = recompute_saved_for_backward(fwd_trace, bwd_trace)
 
@@ -418,7 +418,7 @@ def test_saved_for_backward_recomputation():
         assert rematerializable in bwd_bsym_out
 
     # Recompute only one tensor
-    cd.recomputation_policy = lambda x: set(filter(lambda i: unvariableify(i).name == "t7", x))
+    cd.compile_options["recomputation_policy"] = lambda x: set(filter(lambda i: unvariableify(i).name == "t7", x))
     t7 = set(filter(lambda x: unvariableify(x).name == "t7", all_rematerializable))
     with compile_data_and_stats(cd, cs):
         _, new_bwd = recompute_saved_for_backward(fwd_trace, bwd_trace)
