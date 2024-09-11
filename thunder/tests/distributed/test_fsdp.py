@@ -718,6 +718,11 @@ class FSDPTest(DistributedParallelTestCase):
         with torch.device("meta"):
             model = GPT(config)
         jitted = fsdp(thunder.jit(model), device=device)
+        with device:
+            model_ref = GPT(config)
+        jitted_ref = fsdp(thunder.jit(model_ref), device=device)
+
+        jitted_ref.load_state_dict(jitted.state_dict())
 
         t = config.block_size
         data = torch.randint(
@@ -731,13 +736,9 @@ class FSDPTest(DistributedParallelTestCase):
         )
         x = data[:, :t]
         x = x.to(device=device)
-        with self.assertRaisesRegex(
-            AssertionError,
-            re.escape(
-                f"expected tensor with (4096, 32), cuda:{self.rank}, torch.float32, requires_grad=False, got (4096, 32), meta, torch.float32, False"
-            ),
-        ):
-            jitted(x)
+        result = jitted(x)
+        expected = jitted_ref(x)
+        assert_close(result, expected)
 
 
 common_utils.instantiate_parametrized_tests(FSDPTest)
