@@ -65,7 +65,6 @@ from thunder.core.proxies import (
     ListProxy,
     DictProxy,
     AnyProxy,
-    Variable,
 )
 from thunder.core.interpreter import print_interpreter_log, print_to_log
 from thunder.core.jit_ext import thunder_general_jit
@@ -261,7 +260,6 @@ def jit(
     disable_torch_autograd: bool = False,  # TODO Revisit this UX for RC1
     transforms: list[Transform] | None = None,
     record_history: bool = False,
-    recomputation_policy: Callable[[set[Variable]], set[Variable]] | None = None,
     **compile_options,  # TODO RC1 Make this explicit -- dict of options
 ) -> Callable:
     """Just-in-time compile a callable (function or model).
@@ -288,7 +286,6 @@ def jit(
                - ``"same input"`` - don't check, but just assume that a cached function works if it exists.
 
         transforms: List of transforms to be applied. It should be an instance :class:`thunder.core.transforms.Transform`. Default: ``None``
-        recomputation_policy: A callable that accepts a set of variables and returns a set of the variables that are allowed to be recomputed from the forward in the backward trace. The compile option `enable_saved_for_backward_recomputation` needs to be true for this policy to take effect.
     """
 
     if "executors_list" in compile_options:
@@ -335,7 +332,6 @@ def jit(
         disable_preprocessing=True,
         compile_options=compile_options,
         executor_lookasides=executor_lookasides,
-        recomputation_policy=recomputation_policy,
     )
     cs = CompileStats()
 
