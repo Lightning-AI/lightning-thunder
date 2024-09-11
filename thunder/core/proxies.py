@@ -1949,5 +1949,7 @@ def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> A
         return AnyProxy(x, name=name, history=history)
     if isinstance(x, torch.device):
         return AnyProxy(x, name=name, history=history)
+    if isinstance(x, torch.memory_format):
+        return AnyProxy(x, name=name, history=history)
 
     return x
