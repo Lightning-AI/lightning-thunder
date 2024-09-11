@@ -34,6 +34,7 @@ from thunder.core.transform_common import (
     dce,
     Transform,
     wrap_return_value_together_with_argments,
+    unwrap_return_value,
 )
 from thunder.core.functionalization import (
     check_inplace_to_views,
@@ -672,13 +673,16 @@ def jit(
                         backward_trc = new_backward_trc
                         backward_traces.append(backward_trc)
 
-            computation_trc = transform_to_torch_types(computation_trc)
-            comp = computation_trc.python_callable()
-
             if backward_trc is not None:
                 backward_fn = backward_trc.python_callable()
             else:
                 backward_fn = None
+                # We do not have to return auxiliary tensors, which will only be useful in backward pass
+                computation_trc = unwrap_return_value(computation_trc)
+                computation_traces.append(computation_trc)
+
+            computation_trc = transform_to_torch_types(computation_trc)
+            comp = computation_trc.python_callable()
 
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(
@@ -728,7 +732,7 @@ def jit(
 
         if cache_entry.backward_fn:
             # Run the compiled forward function
-            result, (saved_tensors, saved_other) = result
+            data_for_autograd, (saved_tensors, saved_other) = result
 
             # Connect produced tensors with PyTorch's autograd graph
             ThunderFunction.apply(
@@ -736,11 +740,10 @@ def jit(
                 cache_entry.backward_fn,
                 saved_tensors,
                 saved_other,
-                result["flat_output"],
-                *result["flat_args"],
+                data_for_autograd["flat_output"],
+                *data_for_autograd["flat_args"],
             )
-
-        result = result["output"]
+            result = data_for_autograd["output"]
 
         if cache_entry.epilogue_fn:
             result, comp_to_epi = result
