@@ -1721,6 +1721,7 @@ def test_inconsistent_output_length_grad_transform():
 
 
 @pytest.mark.parametrize("device", ("cuda", "cpu"))
+@requiresCUDA
 def test_grad_softmax_dtype(device):
     def forward(x):
         topk, _idxs = x.topk(2)
@@ -1728,7 +1729,7 @@ def test_grad_softmax_dtype(device):
 
     jforward = thunder.jit(forward)
 
-    x = torch.randn([8, 2], dtype=torch.bfloat16, device="cuda", requires_grad=True)
+    x = torch.randn([8, 2], dtype=torch.bfloat16, device=device, requires_grad=True)
 
     actual = jforward(x)
     expected = forward(x)
