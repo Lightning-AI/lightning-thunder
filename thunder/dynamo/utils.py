@@ -1,16 +1,10 @@
 from enum import Enum, auto
 import dataclasses
-from typing import List, Dict, Optional, Tuple, Set
 from collections.abc import Callable
-import pprint
 import itertools
-import copy
 import inspect
 
 import torch
-from torch.fx._lazy_graph_module import _LazyGraphModule
-import warnings
-from collections.abc import Mapping
 
 from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
@@ -28,7 +22,7 @@ class CompilerType(Enum):
     TORCH_INDUCTOR = auto()
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class CompiledFunction:
     """
     A dataclass representing a compiled function along with its original graph module and compiler type.
@@ -53,7 +47,7 @@ class SplitReasonType(Enum):
     EXCEPTION_META_THUNDER_OP = auto()
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class SplitReason:
     """
     A dataclass containing information about a split.
@@ -69,7 +63,7 @@ class SplitReason:
     exception: Exception | None = None
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class SubgraphInfo:
     """
     A dataclass containing information about a subgraph.
@@ -85,7 +79,7 @@ class SubgraphInfo:
     original_graph_module: torch.fx.GraphModule
     split_graph_module: torch.fx.GraphModule
     thunder_compiled_fns: list[Callable]
-    submodule_to_compiled_functions: Mapping[torch.fx.GraphModule, CompiledFunction]
+    submodule_to_compiled_functions: dict[torch.fx.GraphModule, CompiledFunction]
     split_reasons: list | None = None
 
 
@@ -194,7 +188,7 @@ def try_execute_thunder_symbol(thunder_symbol: "Symbol", node: torch.fx.Node) ->
     return _run_with_cache_info()
 
 
-def get_nodes_in_unsupported_ctx_regions(gm) -> set[torch.fx.Node]:
+def get_nodes_in_unsupported_ctx_regions(gm: torch.fx.GraphModule) -> set[torch.fx.Node]:
     """
     Finds the node within `autocast` or other supported context and marks them as unsupported.
     Even though, thunder may support the operation within the reason, it doesn't correctly apply the change

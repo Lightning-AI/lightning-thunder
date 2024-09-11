@@ -1,10 +1,7 @@
-from typing import List, Tuple, Set
 from collections.abc import Callable
 
 import torch
 from torch.fx.passes.split_module import split_module
-
-from thunder.core.baseutils import run_once
 
 from thunder.dynamo.utils import (
     SubgraphInfo,

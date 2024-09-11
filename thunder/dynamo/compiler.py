@@ -1,9 +1,7 @@
-from typing import List, Dict
 from functools import partial
 from looseversion import LooseVersion
 
 import torch
-from torch.fx.passes.split_module import split_module
 import warnings
 
 from thunder.core.baseutils import run_once
