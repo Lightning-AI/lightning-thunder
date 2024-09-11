@@ -3085,7 +3085,8 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
     all_rematerializable = old_saved_for_bwd - fwd_trace_args
 
     remat_policy: None | Callable[[set[Variable]], set[Variable]] = get_compile_option(
-        "recomputation_policy", "A callable that accepts a set of variables and returns a set of the variables that are allowed to be recomputed from the forward in the backward trace. The compile option `enable_saved_for_backward_recomputation` needs to be true for this policy to take effect."
+        "recomputation_policy",
+        "A callable that accepts a set of variables and returns a set of the variables that are allowed to be recomputed from the forward in the backward trace. The compile option `enable_saved_for_backward_recomputation` needs to be true for this policy to take effect.",
     )
 
     if remat_policy:
