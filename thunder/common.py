@@ -247,6 +247,7 @@ class CompileData:
         self.disable_torch_autograd_support = disable_torch_autograd_support
         self.debug_log = debug_log
 
+        # TODO Consider validating that this dict has exclusively string keys
         self.compile_options = compile_options
 
         self.is_module = isinstance(self.fn, torch.nn.Module)
