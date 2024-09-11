@@ -204,15 +204,15 @@ def test_apply_rematerialization_consumer(executor, device, _):
 def test_apply_rematerialization_consumer_early_exit(executor, device, dtype):
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    # Values from nanogpt - gpt2-xl
-    batchdims = (16,)
-    seq_len = 128
-    vocab_size = 50304
+    # Values scaled down from nanogpt - gpt2-xl
+    batchdims = (8,)
+    seq_len = 8
+    vocab_size = 16
 
     indices_tdtype = torch.int64
     logits_dtype: torch.dtype = ltorch.to_torch_dtype(dtype)
 
-    make = partial(make_tensor, low=0, high=255, device=device, requires_grad=True)
+    make = partial(make_tensor, low=0, high=16, device=device, requires_grad=True)
     logits_shape = batchdims + (seq_len, vocab_size)
     logits = make(logits_shape, dtype=logits_dtype)
 
@@ -231,7 +231,7 @@ def test_apply_rematerialization_consumer_early_exit(executor, device, dtype):
             ignore_index=-1,
         )
 
-    jfoo = thunder.jit(foo)
+    jfoo = thunder.jit(foo, executors=executor.executors_list())
     jfoo(logits, targets)
 
 
