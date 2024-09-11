@@ -23,7 +23,6 @@ from thunder.core.dtypes import to_torch_dtype, to_dtype
 import thunder.core.devices as devices
 from thunder.core.devices import to_torch_device, to_device
 import thunder.core.prims as prims
-from thunder.core.prims import PrimIDs
 from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, from_trace
 from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy, variableify, pytype
 from thunder.core.pytree import tree_flatten, tree_unflatten
@@ -1730,28 +1729,7 @@ ex.register_implementation(
 ex.register_implementation(
     ltorch.max_pool3d, max_pool3d, checker=_always_executable, grad_transform=max_pool3d_bwd_wrapper
 )
-
-
-def adaptive_avg_pool2d_bwd_wrapper(
-    a: TensorProxy,
-    /,
-    output_size: int | Sequence[int],
-) -> TensorProxy:
-    primals = adaptive_avg_pool2d(a, output_size)
-
-    grad = get_grad(primals)
-    grad_a = adaptive_avg_pool2d_backward(grad, a)
-    put_grad(a, grad_a)
-
-    return primals
-
-
-ex.register_implementation(
-    ltorch.adaptive_avg_pool2d,
-    adaptive_avg_pool2d,
-    checker=_always_executable,
-    grad_transform=adaptive_avg_pool2d_bwd_wrapper,
-)
+_register_implementation(ltorch.adaptive_avg_pool2d, adaptive_avg_pool2d, checker=_always_executable)
 _register_implementation(ltorch.adaptive_avg_pool2d_backward, adaptive_avg_pool2d_backward, checker=_always_executable)
 _register_implementation(ltorch.nll_loss, checker=_always_executable, execution_transform=_nll_loss_transform)
 nll_loss_backward = ex.register_operator(
@@ -2149,3 +2127,11 @@ def _copy__impl(copy_from, copy_to):
 
 copy_ = ex.register_operator("copy_", meta=prims.copy_, tags=(prims.OpTags.DONT_DCE,), fn=_copy__impl)
 _register_implementation(prims.copy_, copy_, checker=_always_executable)
+
+
+def _shape_impl(t):
+    return t.shape
+
+
+shape = ex.register_operator("shape", meta=prims.shape_meta, fn=_shape_impl)
+_register_implementation(prims.shape, shape, checker=_always_executable)

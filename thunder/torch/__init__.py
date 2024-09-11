@@ -46,11 +46,6 @@ from thunder.core.symbol import Symbol
 from thunder.core.transforms import register_grad
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.baseutils import run_once
-from thunder.core.transforms import (
-    _maybe_get_autocast_rule_for_symbol,
-    _get_downcast_dtype_from_str,
-    _check_valid_autocast_dtype,
-)
 import thunder
 from thunder.torch.default_torch_ops import _auto_registered_operators_returning_views
 
@@ -246,8 +241,8 @@ def is_floating_point(a: TensorLike, /) -> bool:
 # Handles the size method
 def size(a: TensorLike, /, dim: None | int = None) -> int | Sequence[int]:
     if dim is not None:
-        return a.shape[dim]
-    return a.shape
+        return prims.shape(a)[dim]
+    return prims.shape(a)
 
 
 register_method("size", size)
@@ -1291,7 +1286,7 @@ def transpose(a: TensorLike, /, dim0: int, dim1: int) -> TensorLike:
 @torchsymbol(torch.unbind, is_method=True)
 def unbind(a: TensorLike, /, dim: int = 0) -> tuple[TensorLike, ...]:
     utils.check(
-        len(a.size()) > 0,
+        a.ndim > 0,
         lambda: f"Dimension specified as={dim} but tensor has no dimensions.",
     )
     return tuple(s.squeeze(dim) for s in tensor_split(a, a.shape[dim], dim))
@@ -4163,6 +4158,23 @@ def adaptive_avg_pool2d_backward(g: TensorProxy, a: TensorProxy, /) -> TensorPro
             lambda: f"adaptive_avg_pool2d_backward: Expected grad to have non-zero size for non-batch dimensions, but grad has sizes {g.shape} with dimension {i} being empty",
         )
     return TensorProxy(like=a)
+
+
+def _adaptive_avg_pool2d_grad(
+    a: TensorProxy,
+    /,
+    output_size: int | Sequence[int],
+) -> TensorProxy:
+    primals = adaptive_avg_pool2d(a, output_size)
+
+    grad = get_grad(primals)
+    grad_a = adaptive_avg_pool2d_backward(grad, a)
+    put_grad(a, grad_a)
+
+    return primals
+
+
+register_grad(adaptive_avg_pool2d, _adaptive_avg_pool2d_grad)
 
 
 @torchsymbol(torch.max_pool1d, torch.nn.functional.max_pool1d, id="torch.nn.functional.max_pool1d", is_method=False)

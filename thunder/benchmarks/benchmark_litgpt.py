@@ -407,9 +407,7 @@ class Benchmark_litGPT:
             }
 
     def init_model(self):
-        init_device = self.device
-        if self.distributed_mode in FSDP_MODES and (self.compile in ("eager", "inductor") or "dynamo" in self.compile):
-            init_device = torch.device("meta")
+        init_device = torch.device("meta") if self.distributed_mode in FSDP_MODES else self.device
         with init_device:
             model = GPT(self.config)
         model.to(dtype=torch.bfloat16)

@@ -13,7 +13,6 @@ import platform
 import torch
 
 import thunder.core.prims as prims
-from thunder.core.prims import PrimIDs
 from thunder.core.proxies import NumberProxy, NumberLike, TensorProxy, CollectionProxy
 from thunder.core.symbol import Symbol, BoundSymbol
 from thunder.core import baseutils

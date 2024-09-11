@@ -129,6 +129,7 @@ class PrimIDs(Enum):
     CONSTRUCT_TUPLE = auto()
     PACK_BUFFER = auto()
     PACK_SETITEM = auto()
+    SHAPE = auto()
     # TODO: UNPACK_SET
     # Utility prims
     COMMENT = auto()
@@ -1238,6 +1239,17 @@ pack_setitem = make_prim(
 )
 
 
+def shape_meta(t: TensorProxy) -> Sequence[int | NumberProxy]:
+    return t._shape
+
+
+shape = make_prim(
+    PrimIDs.SHAPE,
+    "shape",
+    meta=shape_meta,
+)
+
+
 # NOTE UNPACK_GETITEM is intended only to be bound to directly, and not called
 def unpack_getitem_meta(o: Any, key: Any) -> Any:
     raise NotImplementedError
@@ -2291,7 +2303,11 @@ def _elementwise_binary_meta_factory(
         # Checks same device
         utils.check_same_device(a, b)
 
-        tensor = a if isinstance(a, TensorProxy) else b
+        # If both inputs are tensors, choose the one that is not a CPU scalar tensor.
+        if isinstance(a, TensorProxy) and isinstance(b, TensorProxy):
+            tensor = a if (isinstance(a, TensorProxy) and not utils.is_cpu_scalar_tensor(a)) else b
+        else:
+            tensor = a if isinstance(a, TensorProxy) else b
         requires_grad = (isinstance(a, TensorProxy) and a.requires_grad) or (
             isinstance(b, TensorProxy) and b.requires_grad
         )

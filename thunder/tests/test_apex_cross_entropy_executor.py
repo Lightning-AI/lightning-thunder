@@ -93,6 +93,8 @@ def test_apex_torch_consistency(device: str, dtype: torch.dtype):
 @requiresCUDA
 def test_apex_cross_entropy_backward(device, dtype):
     from thunder.core.transforms import value_and_grad
+    from thunder.common import CompileData
+    from thunder.core.compile_data import compile_data_and_stats
 
     logits = torch.randn([2048, 50257], device=device, dtype=thunder.torch.to_torch_dtype(dtype), requires_grad=True)
     labels = torch.randint(0, 50257, [2048], device=device)
@@ -108,11 +110,28 @@ def test_apex_cross_entropy_backward(device, dtype):
         def test(logits, labels):
             return thunder.torch.cross_entropy(logits, labels, reduction="mean", ignore_index=ignore_index)
 
-        ctest = thunder.compile(
-            test,
+        cd = CompileData(
+            fn=test,
             executors_list=[apex_ex],
             disable_preprocessing=True,
-            disable_torch_autograd_support=True,
+        )
+        with compile_data_and_stats(cd, None):
+            initial_trace = thunder.trace()(test, logits, labels)
+
+        from thunder.executors.apex_entropyex import apex_xentropy, apex_xentropy_bwd
+
+        # This is a workaround for the issue with python_ctx replacing symbols
+        # with their "call_ctx" values which are not traceable and accept only
+        # regular torch tensors
+        initial_trace.python_ctx = lambda: {
+            "apex_cross_entropy": apex_xentropy,
+            "apex_cross_entropy_backward": apex_xentropy_bwd,
+        }
+
+        ctest = thunder.jit(
+            initial_trace.python_callable(),
+            executors_list=[apex_ex],
+            disable_torch_autograd=True,
         )
         actual = ctest(logits, labels)
         expected = torch.nn.functional.cross_entropy(logits, labels, reduction="mean", ignore_index=ignore_index)
@@ -227,3 +246,20 @@ def test_apex_cross_entropy_phantom_grad(device, dtype):
     reference_logits.grad = None
 
     assert_closer(reference=reference_grad, candidate=thunder_grad, competitor=torch_grad, comparator=comp)
+
+
+@pytest.mark.parametrize("device,", ["cuda"])
+@requiresCUDA
+def test_apex_cross_entropy_default_executor(device):
+    # apex_ex is default executor. Verify that we use apex's cross_entropy,
+    # even when it is not explicitly passed in `executors` to `thunder.jit`.
+    @thunder.jit
+    def cross_ent(pred, targets):
+        return torch.nn.functional.cross_entropy(pred, targets)
+
+    preds = torch.randn(2, 64, requires_grad=True, device="cuda")
+    targets = torch.randint(64, (2,), dtype=torch.int64, device="cuda")
+    cross_ent(preds, targets)
+
+    exec_trace = thunder.last_traces(cross_ent)[-1]
+    assert any(bsym.sym.id == "apex_cross_entropy" for bsym in exec_trace.bound_symbols)

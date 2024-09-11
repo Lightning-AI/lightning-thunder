@@ -17,7 +17,7 @@ from thunder.core.rematerialization import (
 )
 from thunder.core.transforms import value_and_grad
 from thunder.examine import get_fusions
-from thunder.tests.framework import instantiate, NOTHING, nvFuserExecutor, TorchExecutor
+from thunder.tests.framework import instantiate, NOTHING, nvFuserExecutor, TorchExecutor, requiresCUDA
 from thunder.tests.make_tensor import make_tensor
 
 
@@ -62,13 +62,14 @@ def disable_rematerialization_in_nvfuser_fusion(func):
 def test_find_producer_symbols(executor, device, _):
     # We will try to find a subgraph for rematerializing __c and __d
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
-    compiled_func = thunder.compile(func, disable_preprocessing=True)
+    initial_trace = thunder.trace()(func, t0)
+    compiled_func = thunder.jit(initial_trace.python_callable())
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
     fusions = get_fusions(trace)
 
-    assert len(fusions) == 3
+    assert len(fusions) == 2
 
     # TODO Update this to use the fusions returned from get_fusions
     nvfuser_symbols = tuple(filter(lambda x: x.sym.is_fusion, trace.bound_symbols))
@@ -94,7 +95,7 @@ def test_find_producer_symbols(executor, device, _):
 
     # Get the producers of __c and __d
     # We should stop at __a, which is the input to the recomputed region
-    a_proxy = flattened_trace.bound_symbols[0].output.collection()[0]
+    a_proxy = flattened_trace.bound_symbols[0].output
     assert a_proxy.name == "t0"
     stop_proxies = [a_proxy]
 
@@ -111,17 +112,18 @@ def test_find_producer_symbols(executor, device, _):
 )
 def test_apply_rematerialization_producer(executor, device, _):
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
-    compiled_func = thunder.compile(func, disable_preprocessing=True)
+    initial_trace = thunder.trace()(func, t0)
+    compiled_func = thunder.jit(initial_trace.python_callable())
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
     nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
-    assert len(nvfuser_symbols) == 3
+    assert len(nvfuser_symbols) == 2
 
     # Let's consider a pair of the first and the last nvFuser regions
     # We call them producer and consumer because the last region consumes some
     # outputs of the first region
-    producer = nvfuser_symbols[1]
+    producer = nvfuser_symbols[0]
 
     cut = ("t0", "t4")
     assert cut[0] in map(lambda x: x.name, producer.args)
@@ -132,7 +134,7 @@ def test_apply_rematerialization_producer(executor, device, _):
     assert new_producer.sym.name == producer.sym.name
     assert new_producer.args == producer.args
     assert new_producer.subsymbols == producer.subsymbols
-    assert len(new_producer.output) == 1
+    assert len(new_producer.output) == 2
     assert cut[1] in (x.name for x in new_producer.output)
     assert external_producer_outputs[0].name in (x.name for x in new_producer.output)
 
@@ -144,18 +146,19 @@ def test_apply_rematerialization_producer(executor, device, _):
 @disable_rematerialization_in_nvfuser_fusion
 def test_apply_rematerialization_consumer(executor, device, _):
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
-    compiled_func = thunder.compile(func, disable_preprocessing=True)
+    initial_trace = thunder.trace()(func, t0)
+    compiled_func = thunder.jit(initial_trace.python_callable())
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
     nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
-    assert len(nvfuser_symbols) == 3
+    assert len(nvfuser_symbols) == 2
 
     # Let's consider a pair of the first and the last nvFuser regions
     # We call them producer and consumer because the last region consumes some
     # outputs of the first region
-    producer = nvfuser_symbols[1]
-    consumer = nvfuser_symbols[2]
+    producer = nvfuser_symbols[0]
+    consumer = nvfuser_symbols[1]
 
     cut = ("t0", "t4")
     assert cut[0] in map(lambda x: x.name, producer.args)
@@ -214,7 +217,8 @@ def test_find_nvfuser_producer_consumer_pairs(executor, device, _):
         return t4
 
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
-    compiled_func = thunder.compile(func, disable_preprocessing=True)
+    initial_trace = thunder.trace()(func, t0)
+    compiled_func = thunder.jit(initial_trace.python_callable())
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
@@ -347,15 +351,16 @@ def test_find_fusion_producer_consumer_pairs_multiple_producers(executor, device
 )
 def test_find_cut(executor, device, _):
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
-    compiled_func = thunder.compile(func, disable_preprocessing=True)
+    intial_trace = thunder.trace()(func, t0)
+    compiled_func = thunder.jit(intial_trace.python_callable())
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
     nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
-    assert len(nvfuser_symbols) == 3
+    assert len(nvfuser_symbols) == 2
 
-    producer = nvfuser_symbols[1]
-    consumer = nvfuser_symbols[2]
+    producer = nvfuser_symbols[0]
+    consumer = nvfuser_symbols[1]
     ext_external_producer_outputs = find_external_producer_outputs(utils.consumers(trace), (), producer, consumer)
     cut = find_cut(ext_external_producer_outputs, producer, consumer)
     assert cut == ("t0", "t4")
@@ -373,15 +378,16 @@ def test_find_cut_dropout(executor, device, _):
     replace_uniform_mock = MagicMock(side_effect=lambda trc: trc)
 
     with patch("thunder.core.rematerialization.replace_uniform", new=replace_uniform_mock):
-        compiled_func = thunder.compile(func_with_dropout, disable_preprocessing=True)
+        intial_trace = thunder.trace()(func_with_dropout, t0)
+        compiled_func = thunder.jit(intial_trace.python_callable())
         _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
     nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
-    assert len(nvfuser_symbols) == 3
+    assert len(nvfuser_symbols) == 2
 
-    producer = nvfuser_symbols[1]
-    consumer = nvfuser_symbols[2]
+    producer = nvfuser_symbols[0]
+    consumer = nvfuser_symbols[1]
     ext_producer_outputs = find_external_producer_outputs(utils.consumers(trace), (), producer, consumer)
     cut = find_cut(ext_producer_outputs, producer, consumer)
     assert cut[0] == producer.args[0].name
@@ -413,17 +419,33 @@ def test_rematerialization(executor, device, _):
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
 
     # Result with rematerialization and without rematerialization should match
-    result_with_remat = thunder.compile(
-        func,
-        disable_preprocessing=True,
-        use_rematerialization=True,
-    )(t0)
+    initial_trace = thunder.trace()(func, t0)
+    result_with_remat = thunder.jit(initial_trace.python_callable())(t0)
     assert not isinstance(result_with_remat, Exception)
 
-    result_without_remat = thunder.compile(
-        func,
-        disable_preprocessing=True,
-        use_rematerialization=False,
-    )(t0)
+    result_without_remat = disable_rematerialization_in_nvfuser_fusion(thunder.jit(initial_trace.python_callable()))(t0)
 
     torch.testing.assert_close(result_with_remat, result_without_remat)
+
+
+@requiresCUDA
+def test_rematerialization_name_collision():
+    # This test is to verify that we don't have name collision in forward and backward trace
+    # (which used to produce an error in remat pass)
+    def forward(x):
+        return x.softmax(dim=1, dtype=torch.float)
+
+    jforward = thunder.jit(forward)
+
+    x = torch.randn([32768, 8], dtype=torch.bfloat16, device="cuda", requires_grad=True)
+
+    actual = jforward(x)
+    expected = forward(x)
+
+    torch.testing.assert_close(actual, expected)
+
+    grad_output = torch.randn_like(actual)
+    actual_grad = torch.autograd.grad(actual, x, grad_output)
+    expected_grad = torch.autograd.grad(expected, x, grad_output)
+
+    torch.testing.assert_close(actual_grad, expected_grad)

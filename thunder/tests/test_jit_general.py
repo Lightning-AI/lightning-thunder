@@ -20,7 +20,7 @@ from thunder.core.interpreter import is_jitting, InterpreterError
 from thunder.tests import litgpt_model
 from thunder.tests.framework import version_between, requiresCUDA
 import thunder.clang as clang
-from thunder.core.options import INTERPRETATION_OPTIONS, CACHE_OPTIONS
+from thunder.core.options import CACHE_OPTIONS
 import thunder.torch as ltorch
 import thunder.core.prims as prims
 from thunder import pytorch_executor, nvfuser_executor

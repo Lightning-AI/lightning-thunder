@@ -1225,7 +1225,7 @@ def index_put(
     )
 
     # broadcast all index tensors together
-    broadcast_indices = maybe_broadcast(*indices)
+    broadcast_indices = maybe_broadcast(*indices, treat_cpu_scalar_tensors_as_numbers=False)
 
     # expand values
     # the expand rule is: Left-align the input shape and the index shape,
@@ -1387,14 +1387,17 @@ def matrix_transpose(a: TensorProxy) -> TensorProxy:
 
 # TODO: add scalar support
 # TODO: review hasattr pattern
+# NOTE: the tensor is not broadcasted if it is a CPU scalar tensor and treat_cpu_scalar_tensors_as_numbers=True
 @clangop()
-def maybe_broadcast(*args):
+def maybe_broadcast(*args, treat_cpu_scalar_tensors_as_numbers=True):
     """Returns tensors with the same shape, possibly broadcasting inputs to the result shape."""
 
     # Computes common shape
     common_shape = compute_broadcast_shape(*map(lambda t: t.shape if hasattr(t, "shape") else None, args))
 
     def _maybe_broadcast(x, shape):
+        if treat_cpu_scalar_tensors_as_numbers and utils.is_cpu_scalar_tensor(x):
+            return x
         if hasattr(x, "shape"):
             if not utils.same_shape(x.shape, common_shape):
                 return expand(x, common_shape)
@@ -1692,6 +1695,7 @@ def sigmoid(a):
 
 
 # TODO Review type promotionkind for sign
+@clangop()
 def sign(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.sign, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.PRESERVE
@@ -1699,6 +1703,7 @@ def sign(a):
 
 
 # TODO Add supported dtypes to exclude complex
+@clangop()
 def signbit(a):
     if dtypes.is_unsigned_dtype(dtypes.to_dtype(a)):
         return full_like(a, False, dtype=dtypes.bool8)
@@ -1748,6 +1753,7 @@ def tanh(a):
     )
 
 
+@clangop()
 def trunc(a: TensorLike | Number) -> TensorLike | Number:
     # Short-circuits on unsigned inputs (which are already trivially truncated)
     if dtypes.is_exact_dtype(dtypes.to_dtype(a)):
