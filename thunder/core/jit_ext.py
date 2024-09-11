@@ -132,344 +132,6 @@ MODULE_MEMBER_DICT_ATTRS = {
 }
 
 
-#
-# Functions and objects related to type properties
-#
-
-_atomic_copy_types = {
-    type(None),
-    type(Ellipsis),
-    type(NotImplemented),
-    int,
-    float,
-    bool,
-    complex,
-    bytes,
-    str,
-    CodeType,
-    type,
-    range,
-    BuiltinFunctionType,
-    weakref.ref,
-    property,
-}
-
-_immutable_types = {
-    type(None),
-    type(Ellipsis),
-    type(NotImplemented),
-    int,
-    float,
-    bool,
-    complex,
-    bytes,
-    str,
-    type,
-    range,
-    BuiltinFunctionType,
-    weakref.ref,
-    property,
-    FunctionType,
-    tuple,
-    frozenset,
-    slice,
-}
-
-
-def is_immutable(val: Any, /) -> bool:
-    return type(val) in _immutable_types
-
-
-_uncopyable_types = {
-    ModuleType,
-    contextvars.ContextVar,
-}
-
-
-def is_uncopyable(val: Any, /) -> bool:
-    return type(val) in _uncopyable_types
-
-
-#
-# Minimal thunder extension
-#
-# This extension remaps operations to thunder operations and prevents the interpreter from tracing
-#   into symbols
-# This extension supports detecting and warning or erroring on "sharp edges" -- behavior in the
-#   original Python program that cannot be translated to the thunder program
-
-# TODO RC1 Add all symbols + methods
-# TODO RC1 Reuse minimal objects in other executors
-# TODO RC1 Detect additional sharp edges
-#   - inputs that are not function arguments (or their derivatives)
-#   - modifying an input
-#   - calling a function with a side effect (e.g. randn, print)
-# TODO RC1 What kind of error should a sharp edge raise?
-# TODO RC1 Improve sharp edges warnings and errors to show the source line
-#   See issue "jit: Improve "sharp edges" errors and warnings to show the sharp
-#       edge's source location"
-
-
-# Context for the minimal interpreter
-class MinimalCtx:
-    def __init__(self, *, sharp_edges: SHARP_EDGES_OPTIONS):
-        self._sharp_edges: SHARP_EDGES_OPTIONS = sharp_edges
-
-    @property
-    def sharp_edges(self) -> SHARP_EDGES_OPTIONS:
-        return self._sharp_edges
-
-
-_minimal_ctx = contextvars.ContextVar("minimalctx")
-
-
-def set_minimal_ctx(ctx: MinimalCtx) -> Any:
-    return _minimal_ctx.set(ctx)
-
-
-def get_minimal_ctx() -> MinimalCtx:
-    return _minimal_ctx.get()
-
-
-def reset_minimal_ctx(token) -> None:
-    _minimal_ctx.reset(token)
-
-
-# Minimal lookasides
-
-
-def _lookaside_sharp_edge(lookaside: Callable, lookaside_name: str):
-    def wrapped_lookaside(*args, **kwargs):
-        res = _sharp_edge(f"Calling {lookaside_name}()", lookaside)
-        if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
-            return res
-        else:
-            return res(*args, **kwargs)
-
-    return wrapped_lookaside
-
-
-# Accessing these attributes for these specific types are sharp edges
-_attr_sharp_edge_map = {
-    "__globals__": (FunctionType,),
-}
-
-
-def _getattr_lookaside_sharp_edge(obj: Any, attr_name: str, *default):
-    default_getattr_lookaside = default_lookaside(getattr)
-    getattr_res = default_getattr_lookaside(obj, attr_name, *default)
-
-    types_with_name_attr = _attr_sharp_edge_map.get(unwrap(attr_name), ())
-    for py_type in types_with_name_attr:
-        if isinstance(unwrap(obj), py_type):
-            return _sharp_edge(f"Accessing attribute '{attr_name}' of type {py_type}", getattr_res)
-
-    return getattr_res
-
-
-_minimal_lookaside_map = {
-    globals: _lookaside_sharp_edge(globals, "globals"),
-    locals: _lookaside_sharp_edge(locals, "locals"),
-    vars: _lookaside_sharp_edge(vars, "vars"),
-    input: _lookaside_sharp_edge(input, "input"),
-    print: _lookaside_sharp_edge(print, "print"),
-    getattr: _getattr_lookaside_sharp_edge,
-    open: _lookaside_sharp_edge(open, "open"),
-}
-
-# Translates actual torch functions to their corresponding thunder functions
-_minimal_lookaside_map.update(_torch_to_thunder_function_map)
-
-
-# NOTE: [SharpEdge - random]
-# We want to mark functions from `random` module as Sharp Edges.
-# These functions are actually method of a hidden/global `random.Random` object
-# which manages the required state. Also, note that we want to allow these methods
-# on an user instantiated `random.Random` object.
-# So, we need to know the method being called and the object it is bound to, to figure out
-# if that call is valid or not (within SharpEdge context).
-#
-# By the time, we get the function to lookaside in `_minimal_lookaside`,
-# we get the function and `self` is passed as the first argument.
-# We check if `self` is same as the id of the hidden/global object, in which case,
-# we wrap it as a SharpEdge otherwise it is from a user's instance which is ok.
-#
-# Reference:
-# 1. Defintion of random.Random : https://github.com/python/cpython/blob/418e72041349dccdd2bf6ad58643fec3314b1691/Lib/random.py#L110
-# 2. Instantiation of global random.Random: https://github.com/python/cpython/blob/418e72041349dccdd2bf6ad58643fec3314b1691/Lib/random.py#L913-L920
-_RANDOM_MODULE_DETAILS: dict[str, Any] = {}
-
-
-# Populate the functions present in `random` module and also get reference to the hidden/global `random.Random`
-# object.
-# See NOTE: [SharpEdge - random] for more information
-def _populate_random_module_details() -> None:
-    random_classes_and_members = filter(lambda x: not x.startswith("_"), dir(random))
-    random_functions = []
-    random_global_obj = None
-    for attr in random_classes_and_members:
-        random_attr = getattr(random, attr)
-        if hasattr(random_attr, "__func__"):
-            random_functions.append(random_attr.__func__)
-
-            # `__self__` on method points to bound object.
-            if hasattr(random_attr, "__self__"):
-                if random_global_obj is None:
-                    random_global_obj = random_attr.__self__
-                assert random_global_obj == random_attr.__self__
-
-    _RANDOM_MODULE_DETAILS["random_global_obj"] = random_global_obj
-    _RANDOM_MODULE_DETAILS["random_functions"] = frozenset(random_functions)
-
-
-_populate_random_module_details()
-
-
-# Calling functions from random is a sharp edge.
-# See NOTE: [SharpEdge - random] for more information
-def _random_module_lookaside(
-    lookaside: Callable, args: tuple[Any, ...]
-) -> Callable | None | Literal[INTERPRETER_SIGNALS.EXCEPTION_RAISED]:
-    # Calls for `random` function will always have the global object or
-    # user's `random.Random` object passed as first argument
-    # (except for something like `random.Random.__init__` which is ok)
-    if len(args) == 0:
-        return None
-
-    # These methods are resolved to method of parent `_random.Random` class
-    SPECIAL_METHODS = ["getrandbits", "random"]
-
-    # grab the bound object for the passed method.
-    bound_obj = args[0]
-    # if we can match the bound object to be the global object
-    # then any calls to it's method is a sharp edge.
-    # NOTE: Use `is` for checking the global object, if we use `==` and bound_obj is a Proxy
-    #       then we take a path where `random.Random` global object shouldn't
-    #       show up and it errors with found `random.Random` but expected
-    #       `TensorProxy` or `NumberProxy`.
-    if bound_obj is _RANDOM_MODULE_DETAILS["random_global_obj"]:
-        # Sanity assertion.
-        if not (lookaside in _RANDOM_MODULE_DETAILS["random_functions"] or lookaside.__name__ in SPECIAL_METHODS):
-            return do_raise(AssertionError(f"Found an unexpected function {lookaside} in random."))
-        return _lookaside_sharp_edge(lookaside, lookaside_name=f"random.{lookaside.__qualname__}")
-
-
-def _minimal_lookaside(fn, *args, **kwargs) -> None | Callable:
-    # Identifies the lookaside
-    lookaside: None | Callable
-    if is_traceable(fn):
-        # Performs symbol lookasides
-        # NOTE Symbols "lookaside" to themselves; this just prevents their internals from being jitted
-        # NOTE clang operations are not symbols, but we still prevent their internals from being jitted
-        lookaside = fn
-    elif (minimal_lookaside := _minimal_lookaside_map.get(fn, None)) is not None:
-        lookaside = minimal_lookaside
-    elif (random_lookaside := _random_module_lookaside(fn, args)) is not None:
-        lookaside = random_lookaside
-    else:
-        # Falls through to the interpreter's default lookaside
-        lookaside = default_lookaside(fn, *args, **kwargs)
-
-    return lookaside
-
-
-# Minimal callbacks (necessary for sharp edges)
-
-
-class ThunderSharpEdgeError(RuntimeError):
-    """
-    Thrown when the user program cannot be safely translated to a thunder program,
-    unless using interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON.
-    Such cases are referred to as "sharp edges".
-    """
-
-    pass
-
-
-def _sharp_edge(desc: str, value: Any, /) -> Any | INTERPRETER_SIGNALS:
-    sharp_edges: SHARP_EDGES_OPTIONS = get_minimal_ctx().sharp_edges
-
-    s: str = (
-        f"{desc} is a sharp edge that cannot be translated to a thunder program unless using interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON."
-    )
-
-    if sharp_edges is SHARP_EDGES_OPTIONS.ERROR:
-        return do_raise(ThunderSharpEdgeError(s))
-
-    # Warn and return value anyway
-    if sharp_edges is SHARP_EDGES_OPTIONS.WARN:
-        warnings.warn(s)
-
-    return value
-
-
-def _minimal_store_global_callback(orig_value: Any, name: str) -> Any:
-    return _sharp_edge(f"Storing a global variable `{name}`", orig_value)
-
-
-def _minimal_store_deref_callback(orig_value: Any, name: str, co_cellsvars: tuple[str], co_freevars: tuple[str]) -> Any:
-    # ShapeEdge Description: Writing a non-local outside of current scope is a SharpEdge.
-    # code_obj.co_freevars contains the names of free variables in a function.
-    # Free variables are non-local variables defined in an outer function
-    # and used in an inner function.
-    # So if the STORE_DEREF is updating a variable in `co_freevars`,
-    # it means we are mutating a captured variable.
-    if name in co_freevars:
-        return _sharp_edge(f"Storing into a nonlocal variable `{name}`", orig_value)
-    return orig_value
-
-
-# TODO: we need the builtins for impl functions...
-safe_builtins = {id(bi): bi for bi in builtins.__dict__.values()}
-
-
-def _minimal_global_callback(orig_value: Any, name: str) -> Any:
-    value: Any = orig_value
-
-    # Allows loading global modules.
-    #   Some global loads, like these, are so essential that they have to be part of any Python program
-    #   translation scheme.
-    # TODO RC1 Review this check. There may be other types we want to allow. This essentially assumes that
-    #   the module is captured at interpretation time, or that global module names will not change for
-    #   the lifetime of the program.
-    #   We could consider adding a check that the name refers to the same module as it did previously.
-    if id(value) in safe_builtins:
-        return value
-
-    if not isinstance(value, ModuleType):
-        return _sharp_edge("Loading a global that is not a module", value)
-
-    return value
-
-
-_minimal_callbacks: dict[INTERPRETER_CALLBACKS, Callable] = {
-    INTERPRETER_CALLBACKS.STORE_GLOBAL_CALLBACK: _minimal_store_global_callback,
-    INTERPRETER_CALLBACKS.GLOBAL_CALLBACK: _minimal_global_callback,
-    INTERPRETER_CALLBACKS.STORE_DEREF_CALLBACK: _minimal_store_deref_callback,
-}
-_minimal_callbacks = default_callbacks | _minimal_callbacks
-
-
-# TODO RC1 Add debug_log
-def minimal_thunder_jit(fn: Callable, /, *, record_history: bool = False, sharp_edges: SHARP_EDGES_OPTIONS) -> Callable:
-    ctx: MinimalCtx = MinimalCtx(sharp_edges=sharp_edges)
-    jfn = interpret(fn, fn_lookaside=_minimal_lookaside, callbacks=_minimal_callbacks, record_history=record_history)
-
-    def fn_(*args, **kwargs):
-        try:
-            tok = set_minimal_ctx(ctx)
-            return jfn(*args, **kwargs)
-        finally:
-            reset_minimal_ctx(tok)
-
-    return fn_
-
-
-#
-# Objects and functions related to the general thunder jit
-#
-
-
 class JITSharpEdgeError(RuntimeError):
     """
     Thrown when the program cannot be safely translated to a thunder program,
@@ -481,7 +143,7 @@ class JITSharpEdgeError(RuntimeError):
 
 
 def _general_jit_sharp_edge(desc: str, value: Any, /) -> Any | INTERPRETER_SIGNALS:
-    sharp_edges: SHARP_EDGES_OPTIONS = get_minimal_ctx().sharp_edges
+    sharp_edges: SHARP_EDGES_OPTIONS = get_jit_ctx().sharp_edges
 
     s: str = (
         f"{desc} This is currently considered a sharp edge even with interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON. For cases in which we are overly strict, please file an issue. Thank you!"
@@ -528,7 +190,7 @@ def _infer_name_postfix_from_provenance(pr: ProvenanceRecord) -> str:
     return "_".join(get_postfix(pr))
 
 
-class GeneralJitCtx(MinimalCtx):
+class JitCtx:
     def __init__(
         self,
         prologue_trace,
@@ -538,8 +200,7 @@ class GeneralJitCtx(MinimalCtx):
         process_group_for_ddp=None,
         executor_lookasides,
     ):
-        super().__init__(sharp_edges=sharp_edges)
-
+        self._sharp_edges: SHARP_EDGES_OPTIONS = sharp_edges
         self._prologue_trace = prologue_trace
         self._computation_trace: TraceCtx = computation_trace
         self._constraints = []
@@ -547,6 +208,10 @@ class GeneralJitCtx(MinimalCtx):
         self._additional_outputs = collections.defaultdict(list)
         self._proxy_swapmap: dict[Variable, Proxy] = {}
         self._executor_lookasides: dict[Callable, Callable] = executor_lookasides
+
+    @property
+    def sharp_edges(self) -> SHARP_EDGES_OPTIONS:
+        return self._sharp_edges
 
     @property
     def prologue_trace(self) -> TraceCtx:
@@ -669,6 +334,21 @@ class GeneralJitCtx(MinimalCtx):
             raise ValueError("cannot proxify value of {type(uvalue).__type} objects")
 
 
+_jit_ctx = contextvars.ContextVar("jitctx")
+
+
+def set_jit_ctx(ctx: JitCtx) -> Any:
+    return _jit_ctx.set(ctx)
+
+
+def get_jit_ctx() -> JitCtx:
+    return _jit_ctx.get()
+
+
+def reset_jit_ctx(token) -> None:
+    _jit_ctx.reset(token)
+
+
 general_jit_callbacks: dict[INTERPRETER_CALLBACKS, Callable] = {}
 
 
@@ -702,7 +382,7 @@ def record_source_loc_in_symbol_header(fn):
     def wrapper(*args, **kwargs):
         runtimectx: Interpreterruntimectx = get_interpreterruntimectx()
         filename, positions = runtimectx.get_current_user_source_location()
-        ctx: GeneralJitCtx = get_general_jit_ctx()
+        ctx: JitCtx = get_jit_ctx()
         ctx._computation_trace.set_current_source_location(filename, positions)
         return fn(*args, **kwargs)
 
@@ -775,7 +455,7 @@ def _general_jit_dict_setitem(d, key, value):
     assert dict_setitem_lookaside is not None
 
     if d.provenance.ext_flag & EXT_FLAG_IS_MODULE_MEMBER_DICT:
-        ctx: GeneralJitCtx = get_general_jit_ctx()
+        ctx: JitCtx = get_jit_ctx()
         if d.original_value is d.nothing:
             ctx.proxify(d)
         ctx._additional_outputs[d].append((PseudoInst.STORE_SUBSCR, d, key, value))
@@ -789,7 +469,7 @@ def _general_jit_ordered_dict_setitem(d, key, value):
     assert dict_setitem_lookaside is not None
 
     if d.provenance.ext_flag & EXT_FLAG_IS_MODULE_MEMBER_DICT:
-        ctx: GeneralJitCtx = get_general_jit_ctx()
+        ctx: JitCtx = get_jit_ctx()
         if d.original_value is d.nothing:
             ctx.proxify(d)
         ctx._additional_outputs[d].append((PseudoInst.STORE_SUBSCR, d, key, value))
@@ -1037,7 +717,7 @@ def recursively_proxy(*args, **kwargs):
         else:
             need_proxy = isinstance(v.value, torch.Tensor)
         if need_proxy:
-            ctx: GeneralJitCtx = get_general_jit_ctx()
+            ctx: JitCtx = get_jit_ctx()
             ctx.proxify(v)
         is_proxied = v.original_value is not v.nothing
         return is_proxied
@@ -1053,7 +733,7 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
     # Identifies the lookaside
     lookaside: None | Callable
 
-    ctx: GeneralJitCtx = get_general_jit_ctx()
+    ctx: JitCtx = get_jit_ctx()
 
     if thunder.core.utils.is_hashable(fn):  # see issue #889
         if (executor_lookaside := ctx._executor_lookasides.get(fn, None)) is not None:
@@ -1110,19 +790,17 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
 
 
 #
-# general_jit callbacks and callback utilities
+# callbacks and callback utilities
 #
-
-get_general_jit_ctx = get_minimal_ctx
 
 
 @contextmanager
-def general_jit_ctx(ctx: MinimalCtx):
-    token = set_minimal_ctx(ctx)
+def jit_ctx(ctx: JitCtx):
+    token = set_jit_ctx(ctx)
     try:
         yield
     finally:
-        reset_minimal_ctx(token)
+        reset_jit_ctx(token)
 
 
 def _general_jit_const_callback(value: Any) -> WrappedValue:
@@ -1152,7 +830,7 @@ def _maybe_update_proxy_name(orig_value: Any, name: str, is_internal: bool | Non
         and not is_internal
     ):
         uvalue_var = variableify(uvalue)
-        rename_proxy_swapmap = get_general_jit_ctx()._proxy_swapmap
+        rename_proxy_swapmap = get_jit_ctx()._proxy_swapmap
         if uvalue_var not in rename_proxy_swapmap:
             uvalue_renamed = uvalue.replace_name(name)
             rename_proxy_swapmap[uvalue_var] = uvalue_renamed
@@ -1162,7 +840,7 @@ def _apply_trace_proxy_rename(
     trace: TraceCtx, rename_proxy_swapmap: None | dict[Variable, Proxy] = None, name: str | None = None
 ) -> TraceCtx:
     if rename_proxy_swapmap is None:
-        rename_proxy_swapmap = get_general_jit_ctx()._proxy_swapmap
+        rename_proxy_swapmap = get_jit_ctx()._proxy_swapmap
 
     new_trace = from_trace(trace)
 
@@ -1230,7 +908,7 @@ def should_register_for_prologue(pr):
 
 
 def _general_jit_wrap_callback(value):
-    ctx: GeneralJitCtx = get_general_jit_ctx()
+    ctx: JitCtx = get_jit_ctx()
 
     uvalue = value.value
     # for modules, rewrite m.__dict__["key"] to m.key
@@ -1786,7 +1464,7 @@ def thunder_general_jit(
     executor_lookasides = {k: interpreter_needs_wrap(v) for k, v in compile_data.executor_lookasides.items()}
 
     process_group_for_ddp: Optional["ProcessGroup"] = _get_process_group_from(fn, *args, *kwargs.values())
-    ctx: GeneralJitCtx = GeneralJitCtx(
+    ctx: JitCtx = JitCtx(
         prologue_trace,
         computation_trace,
         sharp_edges=sharp_edges,
@@ -1802,7 +1480,7 @@ def thunder_general_jit(
         record_history=record_history,
     )
 
-    with general_jit_ctx(ctx):
+    with jit_ctx(ctx):
         with tracectx(computation_trace):
             result = jfn(*args, **kwargs)
             prims.python_return(result)

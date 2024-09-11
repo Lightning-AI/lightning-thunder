@@ -14,8 +14,6 @@ from looseversion import LooseVersion
 from thunder.core.module import ThunderModule
 from thunder.core.interpreter import InterpreterLogItem
 from thunder.core.options import (
-    INTERPRETATION_OPTIONS,
-    resolve_interpretation_option,
     resolve_sharp_edges_option,
     CACHE_OPTIONS,
     SHARP_EDGES_OPTIONS,
@@ -29,7 +27,6 @@ from thunder.core.trace import (
     is_tracing,
 )
 
-from thunder import functional as functional
 import thunder.core.prims as prims
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
@@ -44,7 +41,6 @@ from thunder.core.functionalization import (
 from thunder.common import (
     CompileData,
     CompileStats,
-    _create_callable,
     trace,
     transform_for_execution,
     transform_to_torch_types,
@@ -177,6 +173,7 @@ get_always_executors = extend.get_always_executors
 cudnn_executor: None | extend.Executor = extend.get_executor("cudnn")
 sdpa_executor: None | extend.Executor = extend.get_executor("sdpa")
 torchcompile_cat_executor: None | extend.Executor = extend.get_executor("torchcompile_cat")
+apex_executor: None | extend.Executor = extend.get_executor("apex")
 nvfuser_executor: None | extend.Executor = extend.get_executor("nvfuser")
 pytorch_executor: None | extend.Executor = extend.get_executor("torch")
 
@@ -194,6 +191,9 @@ if sdpa_executor:
 if cudnn_executor:
     add_default_executor(cudnn_executor)
 
+if apex_executor:
+    add_default_executor(apex_executor)
+
 #
 # Promoted debugging functions
 #
@@ -203,19 +203,6 @@ if cudnn_executor:
 from thunder.core.trace import _set_execution_file
 
 set_execution_callback_file = _set_execution_file
-
-
-# Translates the Python function to a thunder program using the thunder interpreter
-def _general_frontend(
-    fn: Callable,
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
-    /,
-    *,
-    record_history: bool,
-    sharp_edges: SHARP_EDGES_OPTIONS,
-) -> TraceResults:
-    return thunder_general_jit(fn, args, kwargs, sharp_edges=sharp_edges, record_history=record_history)
 
 
 # this captures the information needed to decide whether a cached function
@@ -273,7 +260,6 @@ def jit(
     langctx: None | str | Any | LanguageContext = None,
     executors: None | Sequence[Executor | str] = None,
     sharp_edges: None | SHARP_EDGES_OPTIONS | str = None,
-    interpretation: None | INTERPRETATION_OPTIONS | str = None,
     cache: None | CACHE_OPTIONS | str = None,
     disable_torch_autograd: bool = False,  # TODO Revisit this UX for RC1
     transforms: list[Transform] | None = None,
@@ -302,7 +288,6 @@ def jit(
                - ``"no caching"`` - disable caching and always recompute,
                - ``"constant values"`` - require Tensors to be of the same shape, device, dtype etc., and integers and strings to match exactly,
                - ``"same input"`` - don't check, but just assume that a cached function works if it exists.
-        interpretation: (deprecated: don't use this, use the thunder.functional.jit entry point to get the functional jit)
 
         transforms: List of transforms to be applied. It should be an instance :class:`thunder.core.transforms.Transform`. Default: ``None``
     """
@@ -317,16 +302,6 @@ def jit(
 
     if compile_options.get("use_cudagraphs") is not None:
         raise RuntimeError("use_cudagraphs is replaced by using thunder.transforms.CUDAGraphTransform")
-
-    # Resolves interpreter option
-    interpretation = resolve_interpretation_option(interpretation)
-    interpreter: Callable
-    if interpretation is INTERPRETATION_OPTIONS.PYTHON_INTERPRETER:
-        interpreter = functional._python_interpreter
-    elif interpretation is INTERPRETATION_OPTIONS.TRANSLATE_FUNCTIONS:
-        interpreter = functional._translate_functions_interpreter
-    elif interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
-        interpreter = _general_frontend
 
     if transforms is None:
         transforms = []
@@ -460,11 +435,7 @@ def jit(
                     ) = cache_entry
                     try:
                         cs.last_prologue_execution_start = time.perf_counter_ns()
-                        if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
-                            inps, pro_to_epi = pro(*args, **kwargs)
-                        else:
-                            inps = pro(*args, **kwargs)
-                            pro_to_epi = None
+                        inps, pro_to_epi = pro(*args, **kwargs)
                         cs.last_prologue_execution_stop = time.perf_counter_ns()
                     except Exception as _:
                         continue
@@ -501,11 +472,7 @@ def jit(
                 ) = cache_entry
 
                 cs.last_prologue_execution_start = time.perf_counter_ns()
-                if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
-                    inps, pro_to_epi = pro(*args, **kwargs)
-                else:
-                    inps = pro(*args, **kwargs)
-                    pro_to_epi = None
+                inps, pro_to_epi = pro(*args, **kwargs)
                 cs.last_prologue_execution_stop = time.perf_counter_ns()
 
                 cs.last_trace_host_tracing_start = time.perf_counter_ns()
@@ -534,7 +501,7 @@ def jit(
 
             prologue_trc: TraceCtx
             computation_trc: TraceCtx
-            jit_results: TraceResults = interpreter(
+            jit_results: TraceResults = thunder_general_jit(
                 fn, args, kwargs, record_history=record_history, sharp_edges=cd.sharp_edges
             )
             prologue_trc = jit_results.prologue_trace
@@ -638,11 +605,7 @@ def jit(
             cs.last_interpreted_instructions = (i for i in last_interpreter_log if isinstance(i, dis.Instruction))
 
             cs.last_prologue_execution_start = time.perf_counter_ns()
-            if interpretation is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
-                inps, pro_to_epi = pro(*args, **kwargs)
-            else:
-                inps = pro(*args, **kwargs)
-                pro_to_epi = None
+            inps, pro_to_epi = pro(*args, **kwargs)
             cs.last_prologue_execution_stop = time.perf_counter_ns()
 
             computation_trc = dce(computation_trc)
@@ -805,35 +768,6 @@ def jit(
         fn_._lc_transforms = transforms[:]
 
     return fn_
-
-
-def compile(
-    fn: Callable,
-    *,
-    langctx: None | Any = None,
-    executors_list: None | Sequence[Executor] = None,
-    cache_mode: None | str | CACHE_OPTIONS = None,
-    disable_torch_autograd_support: bool = False,
-    use_rematerialization: bool = False,
-    only_execute_prims: bool = False,
-    disable_preprocessing: bool = False,
-    **kwargs,
-) -> Callable:
-    cd = CompileData(
-        fn=fn,
-        langctx=langctx,
-        executors_list=executors_list,
-        cache_option=cache_mode,
-        disable_torch_autograd_support=disable_torch_autograd_support,
-        use_rematerialization=use_rematerialization,
-        only_execute_prims=only_execute_prims,
-        disable_preprocessing=disable_preprocessing,
-        compile_options=kwargs,
-    )
-
-    cs = CompileStats()
-    _fn = _create_callable(cd, cs)
-    return _fn
 
 
 def compile_data(fn) -> CompileData | None:
