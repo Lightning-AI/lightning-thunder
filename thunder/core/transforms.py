@@ -1633,6 +1633,9 @@ def zeta_backward(x, y, g):
     # Therefore, we compute only the derivative wrt the second argument
     gy = g * -x * prims.zeta(x + 1.0, y)
 
+    # if x is CUDA tensor and y is CPU scalar tensor, gy should be on CPU
+    if gy is not None and gy.device.type != y.device.type:
+        gy = gy.to(device=y.device)
     # Return a mappping from the forward arguments to the gradients
     return {"y": gy}
 
@@ -2362,6 +2365,8 @@ if torch.distributed.is_available():
 
 
 def sum_to(a: TensorProxy, shape: Sequence[int]) -> TensorProxy:
+    if utils.same_shape(a.shape, shape):
+        return a
     if not shape:
         return a.sum()
     leading_dims = a.ndim - len(shape)
@@ -2745,6 +2750,15 @@ def vjp(func):
         flat_func, flat_args, spec = flatten_func(func, primals, kwargs)
         trace = construct_trace()(flat_func, *flat_args)
         result, vjp_result = vjp_call(flat_args, cotangents, trace=trace)
+        # If the argument is a CPU scalar tensor, its gradient needs to be summed into a scalar tensor.
+        vjp_result = tuple(
+            (
+                sum_to(grad, arg.shape)
+                if (grad is not None and isinstance(arg, TensorProxy) and arg.device.type == "cpu")
+                else grad
+            )
+            for grad, arg in zip(vjp_result, flat_args)
+        )
         gprimals, gkwargs = tree_unflatten(vjp_result, spec)
         grads = gprimals + (gkwargs,) if len(gkwargs) != 0 else gprimals
         return result, grads
@@ -2998,7 +3012,9 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
             out = tree_flatten(out)[0]
         return out
 
-    backward_trace = construct_trace(rename_proxies=False)(backward_fn, saved_for_backward, cotangents)
+    backward_trace = construct_trace(rename_proxies=False, _used_names=forward_trace.names)(
+        backward_fn, saved_for_backward, cotangents
+    )
 
     # We are done with constructing the forward and backward passes at this
     # stage. The following is not strictly necessary, but it's good to filter

@@ -19,7 +19,7 @@ from thunder import torch as ltorch
 from thunder.core.dtypes import is_exact_dtype, to_dtype as thunder_dtype
 from thunder.core.pytree import tree_map, tree_flatten
 from thunder.core.transforms import vjp, grad, check_bsym_for_vjp
-from thunder.core.utils import flatten_func
+from thunder.core.utils import flatten_func, is_cpu_scalar_tensor
 from thunder.tests.framework import (
     instantiate,
     NOTHING,
@@ -230,13 +230,23 @@ def _replace_none_with_zero(x, y):
     x = list(x)
     y = list(y)
     assert x[0] is not None or y[0] is not None, "Both x and y are None"
-    device = x[0].device if x[0] is not None else y[0].device
-    zero = torch.tensor(0.0, device=device, dtype=torch.float64)
     for i, (a, b) in enumerate(zip(x, y)):
         if a is None or b is None:
-            x[i] = zero
-            y[i] = zero
+            device = x[i].device if x[i] is not None else y[i].device
+            x[i] = torch.tensor(0.0, device=device, dtype=torch.float64)
+            y[i] = torch.tensor(0.0, device=device, dtype=torch.float64)
+
     return x, y
+
+
+# If one tensor is a CPU scalar tensor and the other is on CUDA, move the scalar tensor to CUDA
+# Then do the ravel and dot operation
+def _tensor_dot(x, y):
+    if is_cpu_scalar_tensor(x) and y.is_cuda:
+        x = x.cuda()
+    elif is_cpu_scalar_tensor(y) and x.is_cuda:
+        y = y.cuda()
+    return torch.dot(x.ravel().type(torch.float64), y.ravel().type(torch.float64))
 
 
 def _dot(x, y):
@@ -253,7 +263,7 @@ def _dot(x, y):
     assert all(
         isinstance(a, torch.Tensor) and isinstance(b, torch.Tensor) for a, b in zip(x, y)
     ), "Not all elements are torch.Tensor"
-    return sum([torch.dot(a.ravel().type(torch.float64), b.ravel().type(torch.float64)) for a, b in zip(x, y)])
+    return sum([_tensor_dot(a, b) for a, b in zip(x, y)])
 
 
 def check_vjp(f, *primals, comp, executor="torch"):
