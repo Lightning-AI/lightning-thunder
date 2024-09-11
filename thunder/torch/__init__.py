@@ -241,8 +241,8 @@ def is_floating_point(a: TensorLike, /) -> bool:
 # Handles the size method
 def size(a: TensorLike, /, dim: None | int = None) -> int | Sequence[int]:
     if dim is not None:
-        return a.shape[dim]
-    return a.shape
+        return prims.shape(a)[dim]
+    return prims.shape(a)
 
 
 register_method("size", size)
@@ -1286,7 +1286,7 @@ def transpose(a: TensorLike, /, dim0: int, dim1: int) -> TensorLike:
 @torchsymbol(torch.unbind, is_method=True)
 def unbind(a: TensorLike, /, dim: int = 0) -> tuple[TensorLike, ...]:
     utils.check(
-        len(a.size()) > 0,
+        a.ndim > 0,
         lambda: f"Dimension specified as={dim} but tensor has no dimensions.",
     )
     return tuple(s.squeeze(dim) for s in tensor_split(a, a.shape[dim], dim))

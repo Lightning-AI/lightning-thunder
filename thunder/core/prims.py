@@ -129,6 +129,7 @@ class PrimIDs(Enum):
     CONSTRUCT_TUPLE = auto()
     PACK_BUFFER = auto()
     PACK_SETITEM = auto()
+    SHAPE = auto()
     # TODO: UNPACK_SET
     # Utility prims
     COMMENT = auto()
@@ -1235,6 +1236,17 @@ pack_setitem = make_prim(
     python_printer=pack_setitem_printer,
     python_impl=pack_setitem_impl,
     tags=(OpTags.DONT_DCE,),
+)
+
+
+def shape_meta(t: TensorProxy) -> Sequence[int | NumberProxy]:
+    return t._shape
+
+
+shape = make_prim(
+    PrimIDs.SHAPE,
+    "shape",
+    meta=shape_meta,
 )
 
 
