@@ -267,16 +267,26 @@ def _insert_extend_list(l: list, start: int, extension: Sequence[Any]) -> None:
         l.insert(start + offset, arg)
 
 
-# Calls the function fn (which must have the signature fn() -> Any), recording any
-#   symbols called into the given trace, starting at the specified index into its
-#   list of bound symbols.
 # NOTE This operation is inplace. It will modify the trace's bound_symbols.
 # NOTE Because this operation is explicitly inplace, it will disregard the trace being "complete".
 def insert_inplace(
     trc: Trace,
     idx: int,
-    fn: Callable,
+    fn: Callable[[], Any],
 ) -> None:
+    r"""Calls ``fn`` and record any symbols called into ``trc``, starting at ``idx``.
+
+    Args:
+        trc: Trace to insert :class:`~thunder.core.symbol.BoundSymbol`\s representing ``fn``.
+        idx: Starting index of ``trc.bound_symbols`` to insert :class:`~thunder.core.symbol.BoundSymbol`\s representing ``fn``.
+        fn:
+
+    .. note::
+        This operation is inplace. It will modify the given ``trc``'s :attr:`~thunder.core.trace.TraceCtx.bound_symbols`.
+
+    .. note::
+        Because this operation is explicitly inplace, it will disregard whether or not :func:`~thunder.core.trace.TraceCtx.mark_complete` has been called on ``trc`` already.
+    """
     try:
         tracectx_tok = set_tracectx(trc)
         trc._complete = False
@@ -295,17 +305,26 @@ def insert_inplace(
         reset_tracectx(tracectx_tok)
 
 
-# Removes the BoundSymbol at index from the given trace, then calls fn with it
-#   (which must have the signature fn(bsym: BoundSymbol) -> Any) and records
-#   any symbols called into the trace, starting at the specified index (the position
-#   of the replaced BoundSymbol)
 # NOTE This operation is inplace. It will modify the trace's bound_symbols.
 # NOTE Because this operation is explicitly inplace, it will disregard the trace being "complete".
 def replace_inplace(
     trc: Trace,
     idx: int,
-    fn: Callable,
+    fn: Callable[[BoundSymbol], Any],
 ) -> None:
+    r"""Removes ``idx``-th :class:`~thunder.core.symbol.BoundSymbol` of ``trc`` and replace it ``bsyms`` representing ``fn``.
+
+    Args:
+        trc: Trace to insert :class:`~thunder.core.symbol.BoundSymbol`\s representing ``fn``.
+        idx: Index of :class:`~thunder.core.symbol.BoundSymbol` of ``trc``.
+        fn: Callable to bake into ``trc``, instead of ``idx``-th :class:`~thunder.core.symbol.BoundSymbol`.
+
+    .. note::
+        This operation is inplace. It will modify the given ``trc``'s :attr:`~thunder.core.trace.TraceCtx.bound_symbols`.
+
+    .. note::
+        Because this operation is explicitly inplace, it will disregard whether or not :func:`~thunder.core.trace.TraceCtx.mark_complete` has been called on ``trc`` already.
+    """
     try:
         tracectx_tok = set_tracectx(trc)
         trc._complete = False
