@@ -253,7 +253,7 @@ def test_redundant_no_op(executor, device: str, dtype: dtypes.dtype):
     assert len(fusion.subsymbols) == 1
 
     # Verifies that the trace outputs are updated properly
-    d, e, f, g = extrace.output["output"]
+    d, e, f, g = extrace.output
     assert d.name == "d"
     assert e.name == "d"
     assert f.name == "a"
