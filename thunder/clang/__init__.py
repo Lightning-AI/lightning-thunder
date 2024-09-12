@@ -946,6 +946,16 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
     return res
 
 
+@clangop()
+def copy_with_setitem(a: TensorLike, key, value: TensorLike) -> TensorLike:
+    sig = _get_indexing_signature(key)
+    utils.check(
+        (a.ndim == 0 and (len(sig.basic) + len(sig.advanced)) <= 1) or (a.ndim >= len(sig.basic) + len(sig.advanced)),
+        lambda: f"{key=} tries to index more dimensions than {a.ndim=}",
+    )
+    return prims.copy_with_setitem(a, key, value)
+
+
 # NOTE Advanced indexing is triggered whenever:
 #   - key is a sequence but not a tuple
 #   - key is an tensor

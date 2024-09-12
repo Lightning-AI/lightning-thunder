@@ -1336,6 +1336,19 @@ _register_implementation(ltorch.scatter, checker=_always_executable, execution_t
 _register_implementation(ltorch.scatter_add, checker=_always_executable, execution_transform=_scatter_add_transform)
 _register_implementation(ltorch.take_along_dim, take_along_dim, checker=_always_executable)
 
+# out of place setitem helper
+
+
+def _copy_with_setitem_impl(a, key, value):
+    c = a.clone()
+    c[key] = value
+    return c
+
+
+copy_with_setitem_impl = ex.register_operator(
+    "copy_with_setitem_impl", meta=prims.copy_with_setitem_meta, fn=_copy_with_setitem_impl
+)
+_register_implementation(prims.copy_with_setitem, copy_with_setitem_impl, checker=_always_executable)
 
 #
 # Linear algebra operations

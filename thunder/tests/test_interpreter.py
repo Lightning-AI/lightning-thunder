@@ -3324,6 +3324,33 @@ def test_class_setattr():
     assert A.FOO
 
 
+def test_setitem_setattr():
+    class A:
+        def __init__(self, l):
+            super().__setattr__("l", l)  # avoid hitting our setattr
+
+        def __setattr__(self, name, val):
+            self.l.append((name, val))
+            return (name, val)  # unexpected
+
+        def __setitem__(self, idx, val):
+            self.l.append((idx, val))
+            return (idx, val)  # unexpected
+
+    def foo():
+        l = []
+        a = A(l)
+        a.attr = 3
+        a[1] = 2
+        return l
+
+    jfoo = thunder.jit(foo)
+    res = jfoo()
+    expected = foo()
+
+    assert res == expected
+
+
 def test_freeing_of_tensors():
     # this guards against ref cycles preventing reeing of tensors
     # see https://github.com/Lightning-AI/lightning-thunder/issues/886
