@@ -951,6 +951,17 @@ def flip(a: TensorLike, /, *dims: int) -> TensorLike:
     return clang.flip(a, dims)
 
 
+# fake out of place variant
+@torchsymbol(id="setitem")
+def setitem(inp, idx, val):
+    return clang.copy_with_setitem(inp, idx, val)
+
+
+@torchsymbol(torch.Tensor.__setitem__, id="setitem_", is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def setitem_(inp, idx, val):
+    prims.copy_(setitem(inp, idx, val), inp)
+
+
 @torchsymbol(torch.Tensor.__getitem__, id="torch.Tensor.__getitem__", method_name="getitem")
 def getitem(a: TensorLike, /, key) -> TensorLike:
     return clang.getitem(a, key)

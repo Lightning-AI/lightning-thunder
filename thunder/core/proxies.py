@@ -1597,6 +1597,10 @@ class TensorProxy(Proxy, TensorProxyInterface):
         method = resolve_method("getitem", self, key)
         return method(self, key)
 
+    def __setitem__(self, key, value):
+        method = resolve_method("setitem_", self, key, value)
+        return method(self, key, value)
+
     #
     # Elementwise unary operators
     #
