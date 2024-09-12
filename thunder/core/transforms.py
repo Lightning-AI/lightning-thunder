@@ -1368,6 +1368,9 @@ register_grad(pids.MAXIMUM, _maximum_grad)
 # This operation creates no grad associations
 register_grad(pids.ARGMAX, prims.argmax)
 
+# This operation creates no grad associations
+register_grad(pids.SHAPE, prims.shape)
+
 #
 # Phantom grad transform helpers
 #
@@ -1548,6 +1551,7 @@ augmented_forward_impls = {
     prims.PrimIDs.ZETA: lambda x, y: (prims.zeta(x, y), (x, y)),
     prims.PrimIDs.FMOD: lambda x, y: (prims.fmod(x, y), (x, y)),
     prims.PrimIDs.COPY_: lambda x, y: (prims.copy_(x, y), tuple()),
+    prims.PrimIDs.CLONE: lambda x: (prims.clone(x), tuple()),
 }
 
 
@@ -1577,6 +1581,7 @@ backward_impls = {
     prims.PrimIDs.FMOD: lambda x, y, g: (g, -g * prims.trunc(x / y)),
     # The copy should not be differentiable. We return None to enable the generation of the backward graph through them.
     prims.PrimIDs.COPY_: lambda g: (None, None),
+    prims.PrimIDs.CLONE: lambda g: g,
 }
 
 
@@ -2187,13 +2192,14 @@ def softmax_aug_fwd(a: Proxy, dim: int, dtype: dtypes.dtype | None = None) -> VJ
     from thunder.torch import softmax
 
     primal = softmax(a, dim, dtype=dtype)
-    residuals = (primal, dim)
+    residuals = (primal, dim, a.dtype)
     return VJPDual(primal, residuals)
 
 
 @register_backward("torch.softmax")
-def softmax_backward(primal, dim, g):
-    return primal * (g - (primal * g).sum(dim, keepdim=True))
+def softmax_backward(primal, dim, input_dtype, g):
+    grad = primal * (g - (primal * g).sum(dim, keepdim=True))
+    return grad.to(input_dtype) if grad.dtype != input_dtype else grad
 
 
 def iter_bound_symbols(bound_symbols):
