@@ -85,7 +85,7 @@ class FSDPTest(DistributedParallelTestCase):
         traces = thunder.last_traces(cfunc)
 
         del_last_used_indices = [
-            i for i, trace in enumerate(traces) if "Delete Last Used" in trace.get_provenance().pss
+            i for i, trace in enumerate(traces) if (tp := trace.get_provenance()) is not None and "Delete Last Used" in tp.pss
         ]
         assert del_last_used_indices and del_last_used_indices[0] >= 1
         trace_before_del_last_used = traces[del_last_used_indices[0] - 1]
