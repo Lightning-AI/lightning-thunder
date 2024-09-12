@@ -206,7 +206,7 @@ def test_redundant_cast_nvfusion(executor, device: str, dtype: dtypes.dtype):
     t0 = fusions[0].output[0]
     assert fusions[1].args[2].name == "b"
     assert t0.name == "b"
-    assert extrace.output["output"][0].name == "b"
+    assert extrace.output[0].name == "b"
     assert len(fusions[0].subsymbols) == 3
 
     # Verifies the intermediate consumer
