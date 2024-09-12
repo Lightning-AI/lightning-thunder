@@ -1285,3 +1285,29 @@ def test_tag_static_memory_location():
             if isinstance(a, thunder.Proxy):
                 assert thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION not in a.tags
     assert str(thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION) == "ProxyTag.STATIC_MEMORY_LOCATION"
+
+
+def test_refcycle_stopiteration():
+    import weakref
+    import torch
+    import thunder
+    import refcycle  # pip install refcycle
+
+    class Identity(torch.nn.Module):
+        def forward(self, x):
+            for p in self.parameters():
+                pass
+            return x
+
+    def main():
+        model = torch.nn.Sequential(thunder.jit(Identity()))
+        x = torch.randn(16, 16)
+
+        model(x)
+        return weakref.ref(x)
+
+    weak_x = main()
+    snap = refcycle.snapshot()
+    assert weak_x() is None
+    for t in snap.find_by(lambda t: isinstance(t, torch.Tensor)):
+        assert t.shape != (16, 16)

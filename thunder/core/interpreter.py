@@ -1480,8 +1480,11 @@ def eval_exec_helper(
     except Exception as e:
         # We need to cheat a bit to get a Python frame here...
         python_frame = frame.get_or_make_python_frame()
-        tb = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
-        raise e.with_traceback(tb)
+        e.__traceback__ = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
+        # avoid reference cycle
+        del python_frame
+        del e
+        raise
 
     if mode == "eval":
         return res
@@ -6242,7 +6245,8 @@ def make_generator(
                 if status is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                     e = runtimectx.curexc
                     assert isinstance(e, BaseException)
-                    runtimectx.curexc = None
+                    # avoid reference cycles
+                    runtimectx.__dict__.clear()
                     if isinstance(e, StopIteration):
                         return unwrap(e.value)
                     raise e
@@ -6272,7 +6276,8 @@ def make_async_generator(
                 if status is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                     e = runtimectx.curexc
                     assert isinstance(e, BaseException)
-                    runtimectx.curexc = None
+                    # avoid reference cycles
+                    runtimectx.__dict__.clear()
                     if isinstance(e, StopIteration):
                         return
                     raise e
@@ -6302,7 +6307,8 @@ def make_coroutine(
                 if status is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                     e = runtimectx.curexc
                     assert isinstance(e, BaseException)
-                    runtimectx.curexc = None
+                    # avoid reference cycles
+                    runtimectx.__dict__.clear()
                     if isinstance(e, StopIteration):
                         return unwrap(e.value)
                     raise e
@@ -6779,8 +6785,11 @@ def _setup_frame_and_run_python_function(
     except Exception as e:
         # We need to cheat a bit to get a Python frame here...
         python_frame = frame.get_or_make_python_frame()
-        tb = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
-        raise e.with_traceback(tb)
+        e.__traceback__ = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
+        # avoid ref cycles
+        del python_frame
+        del e
+        raise
     return res
 
 
@@ -6928,9 +6937,15 @@ def _run_frame(
                     e = current_exception
                     # We need to cheat a bit to get a Python frame here...
                     python_frame = frame.get_or_make_python_frame()
-                    tb = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
-                    e = e.with_traceback(tb)
+                    e.__traceback__ = TracebackType(
+                        e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno
+                    )
                     runtimectx.curexc = e
+                    # avoid reference cycles
+                    del python_frame
+                    del e
+                    del current_exception
+                    del runtimectx
                     return INTERPRETER_SIGNALS.EXCEPTION_RAISED, INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
             # TODO Improve this error message
@@ -7125,9 +7140,12 @@ def interpret(
             if interpretation_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                 e = runtimectx.curexc
                 assert isinstance(e, BaseException), e
-                runtimectx.curexc = None
+                # avoid reference cycles
+                runtimectx.__dict__.clear()
                 raise e
 
+            # avoid reference cycles
+            runtimectx.__dict__.clear()
             return interpretation_result
 
     fn_.__thunder_interpreter_orig_fn = fn  # type: ignore
