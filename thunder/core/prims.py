@@ -3382,7 +3382,7 @@ take_along_axis = make_prim(PrimIDs.TAKE_ALONG_AXIS, "take_along_axis", meta=tak
 
 
 def copy_with_setitem_meta(a: TensorProxy, index, value: TensorProxy) -> TensorProxy:
-    # TOO: port checks from clang, currently there  because of the utilities they need
+    # TODO: port checks from clang, currently there  because of the utilities they need
     return TensorProxy(like=a)
 
 

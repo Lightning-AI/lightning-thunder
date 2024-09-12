@@ -297,7 +297,6 @@ def create_functional_bsym_from(inplace_bsym: BoundSymbol) -> BoundSymbol:
         # setitem does not return a value, take the output of the setitem subsymbol
         assert inplace_bsym.subsymbols[0].sym is setitem
         functional_output = inplace_bsym.subsymbols[0].output
-    print("########", inplace_bsym)
     functional_bsym = functional_sym.bind(
         *args,
         **kwargs,
