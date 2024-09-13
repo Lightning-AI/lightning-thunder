@@ -111,6 +111,19 @@ def test_torch_ops_trace(device, requires_grad, op_info):
                     )
 
 
+def test_pickle_auto_registered_ops():
+    import dill as pickle
+
+    def fn(x):
+        return torch.positive(x)
+
+    jfn = thunder.jit(fn)
+    jfn(torch.randn(1))
+    trace = thunder.last_traces(jfn)[0]
+
+    assert str(pickle.loads(pickle.dumps(trace))) == str(trace)
+
+
 # Replace manual registration of some operations with automatic registration for network test cases
 _skip_ops_nanogpt = [
     get_opinfo("layer_norm"),
