@@ -97,10 +97,10 @@ class FSDPTest(DistributedParallelTestCase):
 
         # assert that there is at least one node between the all_reduce and wait
         all_reduce_idx = sorted_trace.bound_symbols.index(
-            next(filter(lambda n: n.sym.name == "torch_all_reduce_prim_impl", execution_trace.bound_symbols))
+            next(filter(lambda n: n.sym.name == "torch_all_reduce_prim_impl", sorted_trace.bound_symbols))
         )
         wait_idx = sorted_trace.bound_symbols.index(
-            next(filter(lambda n: n.sym.name == "torch_wait_prim_impl", execution_trace.bound_symbols))
+            next(filter(lambda n: n.sym.name == "torch_wait_prim_impl", sorted_trace.bound_symbols))
         )
         self.assertGreater(wait_idx - all_reduce_idx, 1)
         self.assertEqual(wait_idx, len(sorted_trace.bound_symbols) - 2)
