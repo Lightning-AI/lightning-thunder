@@ -57,7 +57,7 @@ from thunder.clang import (
     reciprocal,
     convolution,
 )
-from thunder.core.transform_common import dce, Transform
+from thunder.core.transform_common import dce, Transform, wrap_return_value_together_with_argments, unwrap_return_value
 from thunder.core.vjp_utils import make_aug_forward_and_backward
 from thunder.extend import Executor
 import thunder.torch as ltorch
@@ -1423,9 +1423,15 @@ def grad(
 
             @wraps(computation_trc.python_callable())
             def python_callable(*args, **kwargs):
-                return eval_trace(computation_trc, *args, **kwargs)
+                return eval_trace(computation_trc, *args, **kwargs)["output"]
 
-            gradtrc = construct_trace()(grad(python_callable), *computation_trc.args, **computation_trc.kwargs)
+            # Don't DCE yet to keep argument unpackings
+            gradtrc = construct_trace(use_dce=False)(
+                grad(python_callable), *computation_trc.args, **computation_trc.kwargs
+            )
+
+            gradtrc = wrap_return_value_together_with_argments(gradtrc)
+            gradtrc = dce(gradtrc)
             return prologue_trc, gradtrc, epilogue_trc
 
     cfn._using_grad_transform = True
@@ -2880,17 +2886,6 @@ def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_fo
     backward_trace.bound_symbols = list((*unpacking_trace.bound_symbols[:-1], *backward_trace_bsyms_without_unpacking))
 
 
-# NOTE: Returning namedtuples from compiled functions doesn't work. See:
-# "Allow returning namedtuples from compiled functions"
-# Note [Grad forward output spec]
-# If it did work it would be nice to use this namedtuple
-# instead of the plain tuple or dict that we're using now.
-TorchAutogradForwardData = namedtuple(
-    "TorchAutogradForwardData",
-    ["output", "flat_args", "flat_output"],
-)
-
-
 def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> ForwardBackwardTraces:
     """Generates the forward and backward passes from a trace.
 
@@ -2952,17 +2947,9 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
         saved_for_backward = deconstruct_forward_env_for_backward(trace, env)
         if torch_autograd:
             nonlocal output_spec
-            flat_args, _ = tree_flatten((args, kwargs))
             # The custom torch.autograd.Function only considers Tensors in the input/output (not ones that are nested inside python data structures)
-            flat_output, output_spec = tree_flatten_with_dataclass(result)
-            flat_output = tuple(flat_output)
-            # See Note [Grad forward output spec]
-            for_autograd = TorchAutogradForwardData(
-                result,
-                flat_args,
-                flat_output,
-            )._asdict()
-            return (for_autograd, saved_for_backward)
+            flat_output, output_spec = tree_flatten_with_dataclass(result["output"])
+            result["flat_output"] = tuple(flat_output)
         return result, saved_for_backward
 
     # Copy the signature of the original function so that the arguments are
@@ -2986,16 +2973,16 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
         # We don't want to record those ones_like calls in the forward trace.
         with detached_trace():
             if torch_autograd:
-                # It's assumed that forward_trace.output[0] is a dict from TorchAutogradForwardData
                 flat_output = forward_trace.output[0]["flat_output"]
                 cotangents = utils.sequencify(tree_map(lambda v: ones_like(v), flat_output))
             else:
-                cotangents = utils.sequencify(tree_map(lambda v: ones_like(v), trace.output))
+                cotangents = utils.sequencify(tree_map(lambda v: ones_like(v), trace.output["output"]))
     finally:
         reset_tracectx(tracectx_token)
 
     saved_for_backward = forward_trace.output[1]
     flat_saves, _ = tree_flatten(saved_for_backward)
+    trace_with_unwrapped_return = unwrap_return_value(trace)
 
     def backward_fn(saved_for_backward, cotangents):
         # trace converts all saved_for_backward into proxy, we want to restore number scalars afterwards.
@@ -3005,15 +2992,15 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
             for proxified, entry in zip(flat_saves_proxified, flat_saves)
         ]
         saved_for_backward = tree_unflatten(flat_filtered, saves_spec)
-        env = reconstruct_forward_env_for_backward(trace, saved_for_backward)
+        env = reconstruct_forward_env_for_backward(trace_with_unwrapped_return, saved_for_backward)
 
         if torch_autograd:
             cotangents = tree_unflatten(cotangents, output_spec)
-        out = backward_pass(env, trace, cotangents)
+        out = backward_pass(env, trace_with_unwrapped_return, cotangents)
         if torch_autograd:
             gkwargs = out[-1] if isinstance(out[-1], dict) else {}
             gargs = out[:-1] if isinstance(out[-1], dict) else out
-            gkwargs = {k: gkwargs.get(k, None) for k in trace.kwargs}
+            gkwargs = {k: gkwargs.get(k, None) for k in trace_with_unwrapped_return.kwargs}
             out = (*gargs, gkwargs)
             out = tree_flatten(out)[0]
         return out

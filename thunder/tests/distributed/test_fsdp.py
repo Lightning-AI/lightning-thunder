@@ -82,17 +82,28 @@ class FSDPTest(DistributedParallelTestCase):
         b = make_tensor((2, 2), device=device, dtype=torch.float32)
         process_group = c10d.new_group()
         _ = cfunc(a, b, process_group)
-        execution_trace = thunder.last_traces(cfunc)[-2]
-        sorted_execution_trace = sort_waits(execution_trace)
+        traces = thunder.last_traces(cfunc)
+
+        del_last_used_indices = [
+            i
+            for i, trace in enumerate(traces)
+            if (tp := trace.get_provenance()) is not None and "Delete Last Used" in tp.pss
+        ]
+        assert del_last_used_indices and del_last_used_indices[0] >= 1
+        trace_before_del_last_used = traces[del_last_used_indices[0] - 1]
+
+        # sort_waits is supposed to be called just before del_last_used
+        sorted_trace = sort_waits(trace_before_del_last_used)
+
         # assert that there is at least one node between the all_reduce and wait
-        all_reduce_idx = sorted_execution_trace.bound_symbols.index(
-            next(filter(lambda n: n.sym.name == "torch_all_reduce_prim_impl", execution_trace.bound_symbols))
+        all_reduce_idx = sorted_trace.bound_symbols.index(
+            next(filter(lambda n: n.sym.name == "torch_all_reduce_prim_impl", sorted_trace.bound_symbols))
         )
-        wait_idx = sorted_execution_trace.bound_symbols.index(
-            next(filter(lambda n: n.sym.name == "torch_wait_prim_impl", execution_trace.bound_symbols))
+        wait_idx = sorted_trace.bound_symbols.index(
+            next(filter(lambda n: n.sym.name == "torch_wait_prim_impl", sorted_trace.bound_symbols))
         )
         self.assertGreater(wait_idx - all_reduce_idx, 1)
-        self.assertEqual(wait_idx, len(sorted_execution_trace.bound_symbols) - 2)
+        self.assertEqual(wait_idx, len(sorted_trace.bound_symbols) - 2)
 
     def test_rematerialize_all_gather(self):
         device = torch.device("cuda", self.rank)
