@@ -75,6 +75,10 @@ class TensorProxyInterface:
     pass
 
 
+class TorchAutogradFunctionXtxProxyInterface:
+    pass
+
+
 class SymbolInterface:
     name: str
     is_prim: bool

@@ -17,7 +17,7 @@ from thunder.core.rematerialization import (
 )
 from thunder.core.transforms import value_and_grad
 from thunder.examine import get_fusions
-from thunder.tests.framework import instantiate, NOTHING, nvFuserExecutor, TorchExecutor
+from thunder.tests.framework import instantiate, NOTHING, nvFuserExecutor, TorchExecutor, requiresCUDA
 from thunder.tests.make_tensor import make_tensor
 
 
@@ -426,3 +426,26 @@ def test_rematerialization(executor, device, _):
     result_without_remat = disable_rematerialization_in_nvfuser_fusion(thunder.jit(initial_trace.python_callable()))(t0)
 
     torch.testing.assert_close(result_with_remat, result_without_remat)
+
+
+@requiresCUDA
+def test_rematerialization_name_collision():
+    # This test is to verify that we don't have name collision in forward and backward trace
+    # (which used to produce an error in remat pass)
+    def forward(x):
+        return x.softmax(dim=1, dtype=torch.float)
+
+    jforward = thunder.jit(forward)
+
+    x = torch.randn([32768, 8], dtype=torch.bfloat16, device="cuda", requires_grad=True)
+
+    actual = jforward(x)
+    expected = forward(x)
+
+    torch.testing.assert_close(actual, expected)
+
+    grad_output = torch.randn_like(actual)
+    actual_grad = torch.autograd.grad(actual, x, grad_output)
+    expected_grad = torch.autograd.grad(expected, x, grad_output)
+
+    torch.testing.assert_close(actual_grad, expected_grad)

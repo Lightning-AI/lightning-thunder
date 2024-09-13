@@ -5,6 +5,7 @@ import math
 import operator
 import collections
 import re
+import sys
 from collections.abc import Sequence
 from enum import Enum
 from functools import partial, reduce, wraps
@@ -241,8 +242,8 @@ def is_floating_point(a: TensorLike, /) -> bool:
 # Handles the size method
 def size(a: TensorLike, /, dim: None | int = None) -> int | Sequence[int]:
     if dim is not None:
-        return a.shape[dim]
-    return a.shape
+        return prims.shape(a)[dim]
+    return prims.shape(a)
 
 
 register_method("size", size)
@@ -951,6 +952,17 @@ def flip(a: TensorLike, /, *dims: int) -> TensorLike:
     return clang.flip(a, dims)
 
 
+# fake out of place variant
+@torchsymbol(id="setitem")
+def setitem(inp, idx, val):
+    return clang.copy_with_setitem(inp, idx, val)
+
+
+@torchsymbol(torch.Tensor.__setitem__, id="setitem_", is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def setitem_(inp, idx, val):
+    prims.copy_(setitem(inp, idx, val), inp)
+
+
 @torchsymbol(torch.Tensor.__getitem__, id="torch.Tensor.__getitem__", method_name="getitem")
 def getitem(a: TensorLike, /, key) -> TensorLike:
     return clang.getitem(a, key)
@@ -1286,7 +1298,7 @@ def transpose(a: TensorLike, /, dim0: int, dim1: int) -> TensorLike:
 @torchsymbol(torch.unbind, is_method=True)
 def unbind(a: TensorLike, /, dim: int = 0) -> tuple[TensorLike, ...]:
     utils.check(
-        len(a.size()) > 0,
+        a.ndim > 0,
         lambda: f"Dimension specified as={dim} but tensor has no dimensions.",
     )
     return tuple(s.squeeze(dim) for s in tensor_split(a, a.shape[dim], dim))
@@ -5496,6 +5508,9 @@ def register_default_torch_op(torchfn: Callable, torch_module):
 
     op = ex.register_operator(torchfn_name, module=torch_module, meta=fn_meta)
     ex.register_implementation(sym, op, checker=_always_executable)
+    # TODO: convert to an assert after #1140 is fixed
+    if torchfn_name not in __builtins__ and not hasattr(sys.modules["thunder.torch"], torchfn_name):
+        setattr(sys.modules["thunder.torch"], torchfn_name, sym)
 
     from thunder.core.transforms import augmented_forward_impls, backward_impls
 

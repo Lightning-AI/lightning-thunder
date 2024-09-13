@@ -1,3 +1,4 @@
+from __future__ import annotations
 import os
 from contextvars import ContextVar
 from contextlib import contextmanager
@@ -44,7 +45,33 @@ class TraceProvenance:
 #   ... but maybe we still need the naming context?
 # TODO Allow the function signature to be modified by transforms
 class TraceCtx:
-    def __init__(self, fn: None | Callable = None, *, prologue=None, is_prologue: bool = False):
+    """Trace representing ``fn``.
+
+    Args:
+        fn: Callable to represent.
+
+    Keyword Args:
+        prologue: Prologue trace that verifies metadata of args and kwargs with real values.
+        is_prologue:
+
+    Attributes:
+        fn (Callable | None): Callable to represent. It's either a callable
+            written with pytorch functions or :class:`~torch.nn.Module`.
+        args (Any): Arguments of ``fn``. Elements are proxified, e.g., :class:`torch.Tensor` is converted to
+            :class:`~thunder.core.proxies.TensorProxy`.
+        kwargs (dict[str, Any]): Keyword arguments of ``fn``. Values are converted to
+            :class:`~thunder.core.proxies.Proxy` if possible.
+        bound_symbols (list[BoundSymbol]): Each :class:`~thunder.core.symbol.BoundSymbol` represents one line of trace.
+        scopes (list[list[BoundSymbol]]): In most cases, same as ``[self.bound_symbols]``.
+            Direct modification of this attribute would provide better flexibility to trace transformation
+            as in :func:`~thunder.core.transforms.insert_inplace` and :func:`~thunder.core.transforms.replace_inplace`.
+            Also
+            `[tutorial] How to Implement CPU Offloading as Trace Transform <https://lightning-thunder.readthedocs.io/en/latest/notebooks/writing_a_trace_transform_cpu_offloading.html>`_
+            would be a great read.
+
+    """
+
+    def __init__(self, fn: None | Callable = None, *, prologue: TraceCtx | None = None, is_prologue: bool = False):
         self.fn: None | Callable = fn
 
         self._prologue = prologue

@@ -5,6 +5,7 @@ import torch
 from lightning_utilities.core.imports import package_available
 
 import thunder.torch as ltorch
+from thunder.core.devices import DeviceType, to_device
 from thunder.core.proxies import TensorProxy
 from thunder.core.utils import check, same_shape
 from thunder.core.transforms import get_grad, put_grad, mean_backward, restore_reduced_dims
@@ -146,6 +147,9 @@ def _cross_entropy_checker(
     if use_apex_cross_entropy == False:  # User explicitly disabled this.
         return False
 
+    if to_device(a.device).devicetype != DeviceType.CUDA and to_device(target.device).devicetype != DeviceType.CUDA:
+        return False
+
     probability_target: bool = same_shape(a.shape, target.shape)
     if probability_target or label_smoothing > 0.0:
         return False
@@ -239,10 +243,11 @@ def _apex_cross_entropy_grad(
     return fwd
 
 
-# Registers the implementation for torch.nn.functional.cross_entropy
-apex_ex.register_implementation(
-    ltorch.cross_entropy,
-    checker=_cross_entropy_checker,
-    execution_transform=_cross_entropy_transform,
-    grad_transform=_apex_cross_entropy_grad,
-)
+if apex_entropy_available():
+    # Registers the implementation for torch.nn.functional.cross_entropy
+    apex_ex.register_implementation(
+        ltorch.cross_entropy,
+        checker=_cross_entropy_checker,
+        execution_transform=_cross_entropy_transform,
+        grad_transform=_apex_cross_entropy_grad,
+    )

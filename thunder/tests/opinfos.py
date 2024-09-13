@@ -1809,6 +1809,15 @@ real_opinfo = OpInfo(
 elementwise_unary_ops.append(real_opinfo)
 
 
+clone_opinfo = OpInfo(
+    ltorch.clone,
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.clone),
+    test_directives=(),
+)
+elementwise_unary_ops.append(clone_opinfo)
+
+
 # Puts all opinfos into the "opinfos" list
 opinfos.extend(elementwise_unary_ops)
 
@@ -1825,6 +1834,17 @@ elementwise_binary_ops = []
 # Generates sample inputs compatible with the elementwise binary primitives
 def elementwise_binary_prims_generator(op, device, dtype, requires_grad, **kwargs):
     a = make_tensor((4, 4), device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
+    b = make_tensor((4, 4), device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
+
+    yield SampleInput(a, b)
+
+    # Tests the inputs are a CPU scalar tensor and a CUDA tensor
+    a = make_tensor((4, 4), device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
+    b = make_tensor((), device="cpu", dtype=dtype, requires_grad=requires_grad, **kwargs)
+
+    yield SampleInput(a, b)
+
+    a = make_tensor((), device="cpu", dtype=dtype, requires_grad=requires_grad, **kwargs)
     b = make_tensor((4, 4), device=device, dtype=dtype, requires_grad=requires_grad, **kwargs)
 
     yield SampleInput(a, b)
@@ -2224,6 +2244,9 @@ pow_opinfo = OpInfo(
             executors=("nvfuser,"),
             dtypes=(datatypes.complex64, datatypes.complex128),
         ),
+        # NOTE: PyTorch fails with RuntimeError: "reciprocal_cuda" not implemented for 'Long' occasionally when the exponent is CPU scalar tensor
+        # e.g.: x=torch.tensor([[ 6,  5,  1, -8],], device='cuda:0');y=torch.tensor(-1);torch.pow(x,y)
+        DecorateInfo(pytest.mark.xfail, "test_core_vs_torch_consistency", dtypes=(datatypes.int32, datatypes.int64)),
     ),
 )
 elementwise_binary_ops.append(pow_opinfo)
