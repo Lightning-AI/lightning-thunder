@@ -3,6 +3,7 @@ from collections.abc import Callable
 import numpy as np
 import pytest
 import torch
+from torch.testing import assert_close
 
 import thunder
 import thunder.core.dtypes as dtypes
@@ -65,10 +66,9 @@ def test_core_vs_torch_consistency(op, device: str, dtype: dtypes.dtype, executo
         comp = sample.comp if sample.comp is not None else comp
 
         tfn: Callable
-        tfn = thunder.functional.jit(
+        tfn = thunder.jit(
             op.op,
             executors=executor.executors_list(),
-            interpretation="python interpreter",
             cache="no caching",
             disable_torch_autograd=True,
         )
@@ -237,3 +237,17 @@ def test_notimplemented_interpolate_antialias():
     with pytest.raises(NotImplementedError, match="not yet support"):
         tfoo = thunder.jit(foo)
         tfoo()
+
+
+def test_setitem():
+    def fn(a):
+        a[:3] = 2
+        return a * 2
+
+    a_ref = torch.ones(5)
+    out_ref = fn(a_ref)
+    a = torch.ones(5)
+    jf = thunder.jit(fn)
+    out = jf(a)
+    assert_close(a, a_ref)
+    assert_close(out, out_ref)

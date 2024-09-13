@@ -287,10 +287,6 @@ class BitsAndBytesLinearQuant4bit(Transform):
                 )
 
                 new_computation_trace.bound_symbols.append(mm_bsym)
-                # we need the postprocess to set the internal state (call_ctx) because we do not bind / execute the new symbol to
-                # preserve the "meta"-info like source location, header, etc.
-                # TODO: switch to a better solution when it is there
-                bnb_matmul_nf4._bind_postprocess(mm_bsym)
             else:
                 new_computation_trace.bound_symbols.append(bsym.from_bsym())
 

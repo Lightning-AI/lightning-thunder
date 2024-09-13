@@ -20,56 +20,6 @@ def _unknown_option(option_name: str, allowed: Sequence[str], default: str, unkn
 
 
 #
-# Interpretation options
-#
-# These options control how the function will be interpreted.
-# PYTHON_INTERPRETER uses the actual Python interpreter to construct the thunder program.
-# TRANSLATE_FUNCTIONS is the default option. It uses the thunder interpreter to translate PyTorch operation
-#   to thunder operations. For example, torch.add becomes thunder.torch.add.
-# TRANSLATE_PYTHON is an experimental option. It lets the thunder interpreter translate
-#   the entire function a thunder program.
-
-
-class INTERPRETATION_OPTIONS(Enum):
-    PYTHON_INTERPRETER = auto()
-    TRANSLATE_FUNCTIONS = auto()
-    TRANSLATE_PYTHON = auto()
-
-
-_str_to_interpretation_option_map: dict[str, INTERPRETATION_OPTIONS] = {
-    "python interpreter": INTERPRETATION_OPTIONS.PYTHON_INTERPRETER,
-    "translate functions": INTERPRETATION_OPTIONS.TRANSLATE_FUNCTIONS,
-    "translate python": INTERPRETATION_OPTIONS.TRANSLATE_PYTHON,
-}
-
-
-def _str_to_interpretation_option(s: str, /) -> None | INTERPRETATION_OPTIONS:
-    return _str_to_interpretation_option_map.get(s.lower(), None)
-
-
-# Resolves a specified interpretation option, defaulting to TRANSLATE_FUNCTIONS
-def resolve_interpretation_option(x: Any, /) -> INTERPRETATION_OPTIONS:
-    io: None | INTERPRETATION_OPTIONS
-
-    if x is None:
-        io = INTERPRETATION_OPTIONS.TRANSLATE_PYTHON
-    elif isinstance(x, INTERPRETATION_OPTIONS):
-        io = x
-    elif isinstance(x, str):
-        io = _str_to_interpretation_option(x)
-
-    if io is None:
-        _unknown_option("interpretation", _str_to_interpretation_option_map.keys(), "translate functions", x)
-
-    # if io is INTERPRETATION_OPTIONS.TRANSLATE_PYTHON:
-    #     warnings.warn(
-    #         "The 'translate python' interpretation option is experimental and still in development. It may not work as expected."
-    #     )
-
-    return io
-
-
-#
 # Cache options
 #
 # These options control how thunder caches programs (quickly mapping inputs to thunder programs)

@@ -407,9 +407,7 @@ class Benchmark_litGPT:
             }
 
     def init_model(self):
-        init_device = self.device
-        if self.distributed_mode in FSDP_MODES and (self.compile in ("eager", "inductor") or "dynamo" in self.compile):
-            init_device = torch.device("meta")
+        init_device = torch.device("meta") if self.distributed_mode in FSDP_MODES else self.device
         with init_device:
             model = GPT(self.config)
         model.to(dtype=torch.bfloat16)
@@ -875,8 +873,11 @@ if __name__ == "__main__":
 
     from jsonargparse import CLI
 
-    CLI(benchmark_main)
-
-    # ref: https://github.com/pytorch/pytorch/blob/3af12447/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp#L1110-L1116
-    if world_size > 1:
-        torch_dist.destroy_process_group()
+    try:
+        CLI(benchmark_main)
+    except Exception:
+        raise
+    finally:
+        # ref: https://github.com/pytorch/pytorch/blob/3af12447/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp#L1110-L1116
+        if world_size > 1:
+            torch_dist.destroy_process_group()

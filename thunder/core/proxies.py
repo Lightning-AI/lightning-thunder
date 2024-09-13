@@ -1597,6 +1597,10 @@ class TensorProxy(Proxy, TensorProxyInterface):
         method = resolve_method("getitem", self, key)
         return method(self, key)
 
+    def __setitem__(self, key, value):
+        method = resolve_method("setitem_", self, key, value)
+        return method(self, key, value)
+
     #
     # Elementwise unary operators
     #
@@ -1948,6 +1952,8 @@ def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> A
     if isinstance(x, torch.dtype):
         return AnyProxy(x, name=name, history=history)
     if isinstance(x, torch.device):
+        return AnyProxy(x, name=name, history=history)
+    if isinstance(x, torch.memory_format):
         return AnyProxy(x, name=name, history=history)
 
     return x

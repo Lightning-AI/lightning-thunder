@@ -142,15 +142,12 @@ _tmp_general_jit_lookaside_map = dict(thunder.core.jit_ext._general_jit_lookasid
 list(_tmp_general_jit_lookaside_map.pop(k.torch_reference, None) for k in _disable_opinfos)
 _tmp_torch_to_thunder_function_map = dict(thunder.torch._torch_to_thunder_function_map)
 list(_tmp_torch_to_thunder_function_map.pop(k.torch_reference, None) for k in _disable_opinfos)
-_tmp_minimal_lookaside_map = dict(thunder.core.jit_ext._minimal_lookaside_map)
-list(_tmp_minimal_lookaside_map.pop(k.torch_reference, None) for k in _disable_opinfos)
 from thunder.torch import register_default_torch_op
 
 
 # mock all the global variables that are modified during registration
 @patch.dict(thunder.core.jit_ext._general_jit_lookaside_map, _tmp_general_jit_lookaside_map, clear=True)
 @patch.dict(thunder.torch._torch_to_thunder_function_map, _tmp_torch_to_thunder_function_map, clear=True)
-@patch.dict(thunder.core.jit_ext._minimal_lookaside_map, _tmp_minimal_lookaside_map, clear=True)
 @patch.dict(thunder.executors.torchex.ex._implmap, {})
 @patch.dict(thunder.executors.torchex.ex._opmap, {})
 @patch.dict(thunder.core.transforms.augmented_forward_impls, {})
