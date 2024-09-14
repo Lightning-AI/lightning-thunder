@@ -75,7 +75,7 @@ class TensorProxyInterface:
     pass
 
 
-class TorchAutogradFunctionXtxProxyInterface:
+class TorchAutogradFunctionCtxProxyInterface:
     pass
 
 
