@@ -1242,6 +1242,35 @@ def test_autograd_function_apply():
     expect_grad = torch.autograd.grad(y_ref, x_ref, grad)
     torch.testing.assert_close(actual_grad, expect_grad)
 
+    def wrong_backward(ctx, grad_output, *saved_tensors):
+        (x,) = saved_tensors
+        return grad_output * x.sin()
+
+    def my_sin_with_wrong_backward(x):
+        return torch.ops.higher_order.autograd_function_apply(
+            forward,
+            wrong_backward,
+            x,
+            args_tensor_mask=[True],
+            non_differentiable_idx=[],
+        )
+
+    jitted = thunder.jit(my_sin_with_wrong_backward)
+    x = torch.randn((2, 2), requires_grad=True)
+    x_ref = x.clone().detach().requires_grad_()
+
+    y = jitted(x)
+    y_ref = my_sin_with_wrong_backward(x_ref)
+    actual_grad = torch.autograd.grad(y, x, grad)
+    expect_grad = torch.autograd.grad(y_ref, x_ref, grad)
+    torch.testing.assert_close(actual_grad, expect_grad)
+
+    from torch.autograd.gradcheck import GradcheckError
+    from torch.testing._internal.common_utils import gradcheck
+
+    with pytest.raises(GradcheckError):
+        gradcheck(jitted, (x,))
+
 
 @requiresCUDA  # I have not found a good other object to use
 def test_cpp_property():
