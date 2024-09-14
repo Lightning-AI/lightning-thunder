@@ -20,7 +20,7 @@ from thunder.core.baseutils import (
     ProxyInterface,
     NumberProxyInterface,
     TensorProxyInterface,
-    TorchAutogradFunctionXtxProxyInterface,
+    TorchAutogradFunctionCtxProxyInterface,
 )
 import thunder.core.baseutils as baseutils
 from thunder.core.langctxs import resolve_method, get_langctx
@@ -1858,7 +1858,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(self)
 
 
-class TorchAutogradFunctionCtxProxy(Proxy, TorchAutogradFunctionXtxProxyInterface):
+class TorchAutogradFunctionCtxProxy(Proxy, TorchAutogradFunctionCtxProxyInterface):
     def __init__(
         self,
         ctx: torch.autograd.function.FunctionCtx,
