@@ -9,7 +9,6 @@ import torch
 from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
 
-
 auto_register_ops = set(itertools.chain(*torch_auto_registered_ops.values()))
 
 
@@ -164,8 +163,8 @@ def try_execute_thunder_symbol(thunder_symbol: "Symbol", node: torch.fx.Node) ->
                     # This is int, float, etc.
                     return arg_node
 
-                proxy_args = tuple(map(make_tensor_proxy, node.args))
-                proxy_kwargs = {k: make_tensor_proxy(v) for k, v in node.kwargs.items()}
+                proxy_args = torch.fx.map_arg(node.args, make_tensor_proxy)
+                proxy_kwargs = {k: torch.fx.map_arg(v, make_tensor_proxy) for k, v in node.kwargs.items()}
             except Exception as e:
                 return False, SplitReason(
                     SplitReasonType.EXCEPTION_PROXY_THUNDER_OP,
