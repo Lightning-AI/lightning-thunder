@@ -1505,7 +1505,7 @@ def exp2_(a):
 # fake out of place variant
 @torchsymbol(id="exponential")
 def exponential(a, rate):
-    uniform_val = uniform_like(a)
+    uniform_val = uniform(a.shape, dtype=a.dtype, device=a.device)
 
     # copying numerics of transformation::exponential see comment:
     # curand_uniform has (0,1] bounds. log(1) is 0 and exponential excludes 0.
