@@ -275,8 +275,9 @@ def test_force_skip_lazy_graph_module(executor, device: str, dtype: dtypes.dtype
 @instantiate(
     dtypes=NOTHING, executors=[DynamoThunderExecutor], decorators=(pytest.mark.parametrize("cat_kwarg", (True, False)),)
 )
-def test_cat(executor, device: str, dtype: dtypes.dtype, cat_kwarg):
-
+def test_cat_no_split(executor, device: str, dtype: dtypes.dtype, cat_kwarg):
+    # fx.Node for `torch.cat` receives `torch.fx.immutable_collections.immutable_list` as Node.args.
+    # This test verifies that we don't cause a split because of this.
     backend = ThunderCompiler()
     x = torch.ones(2, dtype=dtype, device=device, requires_grad=True)
 
