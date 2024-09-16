@@ -1502,6 +1502,27 @@ def exp2(a):
 def exp2_(a):
     return prims.copy_(exp2(a), a)
 
+# fake out of place variant
+@torchsymbol(id="exponential")
+def exponential(a, rate):
+    uniform_val = uniform_like(a)
+
+    # copying numerics of transformation::exponential see comment:
+    # curand_uniform has (0,1] bounds. log(1) is 0 and exponential excludes 0.
+    # we need log to be not 0, and not underflow when converted to half
+    # fast __logf approximation can underflow, so set log to -epsilon/2 for 1 or close to 1 args
+    epsilon = torch.finfo(thunder.dtypes.to_torch_dtype(a.dtype)).eps / 2
+    condition = uniform_val >= 1.0 - epsilon
+    log_uniform = where(condition, -epsilon, log(uniform_val))
+
+    return -1 / rate * log_uniform
+
+
+
+@torchsymbol(torch.Tensor.exponential_, id="exponential_", is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def exponential_(a, l):
+    return prims.copy_(exponential(a, l), a)
+
 
 @torchsymbol(torch.expm1, is_method=True)
 def expm1(a):
