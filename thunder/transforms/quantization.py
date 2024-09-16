@@ -232,6 +232,17 @@ class BitsAndBytesLinearQuant4bit(Transform):
                     add_trace_output(prologue_trace, proxy_code, subindex=0)
                     new_compute_inputs.append(proxy_absmax)
                     new_compute_inputs.append(proxy_code)
+                    # add checks
+                    new_bsyms.append(
+                        prims.check_tensor_shape_and_metadata.bind(
+                            proxy_absmax, qs["absmax.shape"], device, qs["absmax.dtype"], False, output=None
+                        )
+                    )
+                    new_bsyms.append(
+                        prims.check_tensor_shape_and_metadata.bind(
+                            proxy_code, qs["code.shape"], device, qs["code.dtype"], False, output=None
+                        )
+                    )
                     # this is not good, because we will have several traces...
                     additional_proxies[n_absmax] = proxy_absmax
                     additional_proxies[n_code] = proxy_code
