@@ -266,19 +266,9 @@ def test_exponential():
         a = torch.ones(size)
         torch.manual_seed(seed)
 
-        # nbfuser fuses prims.uniform, which is used by exponential resulting in differing numerics.
-        executors = thunder.get_default_executors()
-        fuser_i = None
-        for i, e in enumerate(executors):
-            if e.name == "nvfuser":
-                fuser_i = i
-                break
-
-        executors = executors[:fuser_i]+ executors[fuser_i+1:] if fuser_i is not None else executors
-        jf = thunder.jit(fn, executors=executors)
+        # nbfuser fuses prims.uniform, which is used by our exponential resulting in differing numerics.
+        jf = thunder.jit(fn, executors={})
         a = jf(a)
 
         assert_close(a, a_ref)
 
-
-test_exponential()

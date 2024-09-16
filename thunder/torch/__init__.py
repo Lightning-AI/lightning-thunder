@@ -1502,10 +1502,23 @@ def exp2(a):
 def exp2_(a):
     return prims.copy_(exp2(a), a)
 
+
 # fake out of place variant
 @torchsymbol(id="exponential")
-def exponential(a, rate):
-    uniform_val = uniform(a.shape, dtype=a.dtype, device=a.device)
+def exponential(a, rate=1, generator=None):
+    assert generator is None
+    utils.check(
+        not thunder.dtypes.is_complex_dtype(a.dtype)
+        and not thunder.dtypes.is_integer_dtype(a.dtype)
+        and not thunder.dtypes.is_boolean_dtype(a.dtype),
+        lambda: f"Exponential distribution is a continuous probability distribution. \
+        dtype must be a floating point but you specified {self.dtype}",
+    )
+    utils.check(
+        rate > 0.0,
+        lambda: f"exponential_ expects lambda > 0.0, but found lambda={rate}",
+    )
+    uniform_val = uniform_like(a)
 
     # copying numerics of transformation::exponential see comment:
     # curand_uniform has (0,1] bounds. log(1) is 0 and exponential excludes 0.
@@ -1518,10 +1531,9 @@ def exponential(a, rate):
     return -1 / rate * log_uniform
 
 
-
 @torchsymbol(torch.Tensor.exponential_, id="exponential_", is_method=True, tags=(prims.OpTags.IN_PLACE,))
-def exponential_(a, l):
-    return prims.copy_(exponential(a, l), a)
+def exponential_(a, rate=1, generator=None):
+    return prims.copy_(exponential(a, rate, generator), a)
 
 
 @torchsymbol(torch.expm1, is_method=True)

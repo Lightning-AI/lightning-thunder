@@ -325,7 +325,7 @@ def uniform(
 
 # TODO Handle a being a number
 @clangop()
-def fassert(
+def uniform_like(
     a: TensorProxy,
     minval: NumberLike = 0.0,
     maxval: NumberLike = 1.0,
