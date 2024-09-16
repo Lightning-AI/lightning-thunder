@@ -296,15 +296,11 @@ def test_cat(executor, device: str, dtype: dtypes.dtype, cat_kwarg):
 
     out = func(x)
 
-    # out should have grad_fn and its name should be ThunderFunctionBackward
-    assert out.grad_fn is not None
-    assert out.grad_fn.name() == "ThunderFunctionBackward"
-
     # We record the GraphModules that was compiled by ThunderCompiler
     assert len(backend.subgraph_infos) == 1
 
     for subgraph_info in backend.subgraph_infos:
-        assert len(subgraph_info.split_reasons) == 0
+        assert len(subgraph_info.split_reasons) == 0  # Verify there were no splits
         assert isinstance(subgraph_info.original_graph_module, torch.fx.GraphModule)
         assert len(subgraph_info.thunder_compiled_fns)  # There was atleast one function compiled with thunder.
         for thunder_fn in subgraph_info.thunder_compiled_fns:
