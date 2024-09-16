@@ -677,7 +677,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     custom_bwd_bsyms: list[BoundSymbol] = []
     jit_ctx.computation_trace.scopes = [custom_bwd_bsyms]
     grads = tree_map(
-        lambda a: TensorProxy(like=a).replace_name(f"grad_{a.name}"),
+        lambda a: a.replace_name(f"grad_{a.name}"),
         sequencify(unwrapped_custom_forward_result),
     )
     wrapped_grads = tree_map(lambda g: wrap(g, provenance=custom_forward_result.provenance), grads)
