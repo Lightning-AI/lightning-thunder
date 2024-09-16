@@ -617,6 +617,10 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     ctx_proxy = proxy(ctx, name=None, history=None)
     wrapped_ctx = wrap_const(ctx_proxy)
     custom_forward_result = _interpret_call(custom_forward, wrapped_ctx, *args, **kwargs)
+    check(
+        custom_forward_result != INTERPRETER_SIGNALS.EXCEPTION_RAISED,
+        lambda: f"{custom_autograd_function_cls}.forward could not be traced by Thunder.",
+    )
 
     # Forward.
     unwrapped_custom_forward_args = tree_map(lambda a: unwrap(a), args)
@@ -673,10 +677,15 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     custom_bwd_bsyms: list[BoundSymbol] = []
     jit_ctx.computation_trace.scopes = [custom_bwd_bsyms]
     grads = tree_map(
-        lambda a: TensorProxy(like=a).replace_name(f"grad_{a.name}"), sequencify(unwrapped_custom_forward_result)
+        lambda a: TensorProxy(like=a).replace_name(f"grad_{a.name}"),
+        sequencify(unwrapped_custom_forward_result),
     )
     wrapped_grads = tree_map(lambda g: wrap(g, provenance=custom_forward_result.provenance), grads)
     custom_backward_result = _interpret_call(custom_backward, wrapped_ctx, *wrapped_grads)
+    check(
+        custom_backward_result != INTERPRETER_SIGNALS.EXCEPTION_RAISED,
+        lambda: f"{custom_autograd_function_cls}.backward could not be traced by Thunder.",
+    )
 
     trace_of_backward = TraceCtx()
     for bsym in custom_bwd_bsyms:
