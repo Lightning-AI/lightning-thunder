@@ -256,31 +256,29 @@ def test_exponential():
     def fn(a):
         return a.exponential_(1)
 
-    size = 1000000
+    size = 1000
+    seed = 1234
+    with torch.device("cuda"):
+        a_ref = torch.ones(size)
+        torch.manual_seed(seed)
+        a_ref = fn(a_ref)
 
-    a_ref = torch.ones(size)
-    out_ref = a_ref.geometric_(0.4)
-    a = torch.ones(size)
-    jf = thunder.jit(fn)
-    out = jf(a)
-    print(a, a_ref)
+        a = torch.ones(size)
+        torch.manual_seed(seed)
 
+        # nbfuser fuses prims.uniform, which is used by exponential resulting in differing numerics.
+        executors = thunder.get_default_executors()
+        fuser_i = None
+        for i, e in enumerate(executors):
+            if e.name == "nvfuser":
+                fuser_i = i
+                break
 
-    import torch.nn.functional as F
-    def js_divergence(p, q):
-        # Convert tensors to probabilities using softmax
-        p_prob = F.softmax(p, dim=0)
-        q_prob = F.softmax(q, dim=0)
-        
-        # Average of the two distributions
-        m = 0.5 * (p_prob + q_prob)
-        
-        # Compute KL divergence for each part and average them
-        jsd = 0.5 * (F.kl_div(F.log_softmax(p, dim=0), m, reduction='batchmean') +
-                    F.kl_div(F.log_softmax(q, dim=0), m, reduction='batchmean'))
-        return jsd
+        executors = executors[:fuser_i]+ executors[fuser_i+1:] if fuser_i is not None else executors
+        jf = thunder.jit(fn, executors=executors)
+        a = jf(a)
 
-    print(js_divergence(a, a_ref))
+        assert_close(a, a_ref)
 
 
 test_exponential()
