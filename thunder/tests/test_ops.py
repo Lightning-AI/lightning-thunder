@@ -251,3 +251,36 @@ def test_setitem():
     out = jf(a)
     assert_close(a, a_ref)
     assert_close(out, out_ref)
+
+def test_exponential():
+    def fn(a):
+        return a.exponential_(1)
+
+    size = 1000000
+
+    a_ref = torch.ones(size)
+    out_ref = a_ref.geometric_(0.4)
+    a = torch.ones(size)
+    jf = thunder.jit(fn)
+    out = jf(a)
+    print(a, a_ref)
+
+
+    import torch.nn.functional as F
+    def js_divergence(p, q):
+        # Convert tensors to probabilities using softmax
+        p_prob = F.softmax(p, dim=0)
+        q_prob = F.softmax(q, dim=0)
+        
+        # Average of the two distributions
+        m = 0.5 * (p_prob + q_prob)
+        
+        # Compute KL divergence for each part and average them
+        jsd = 0.5 * (F.kl_div(F.log_softmax(p, dim=0), m, reduction='batchmean') +
+                    F.kl_div(F.log_softmax(q, dim=0), m, reduction='batchmean'))
+        return jsd
+
+    print(js_divergence(a, a_ref))
+
+
+test_exponential()
