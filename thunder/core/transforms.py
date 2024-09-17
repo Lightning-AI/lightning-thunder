@@ -2984,7 +2984,7 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
 
     assert forward_trace.bound_symbols.pop(-1).sym is prims.python_return
     with tracectx(forward_trace):
-        prims.python_return(result, saved_for_backward)
+        prims.python_return((result, saved_for_backward))
 
     def ones_like(x):
         if isinstance(x, TensorProxy):
