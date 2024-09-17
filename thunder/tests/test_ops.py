@@ -252,6 +252,7 @@ def test_setitem():
     assert_close(a, a_ref)
     assert_close(out, out_ref)
 
+
 # TODO: Add random operator support to OpInfo
 # https://github.com/Lightning-AI/lightning-thunder/issues/1163
 @requiresCUDA
@@ -281,4 +282,3 @@ def test_exponential():
 
         assert_close(a, a_ref)
         assert_close(b, b_ref)
-
