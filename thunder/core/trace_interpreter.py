@@ -147,6 +147,14 @@ def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, *
 
             safe_map_flat(add_to_swap_map, list(sequencify(bsym.output)), list(sequencify(result)))
 
+            def do_swap(v):
+                if isinstance(v, VJPDual):
+                    v.primal = tree_map(do_swap, v.primal)
+                    v.residuals = tree_map(do_swap, v.residuals)
+                if not isinstance(v, ProxyInterface):
+                    return v
+                return swap_map.get(variableify(v), v)
+
             for new_bsym in new_bsyms:
                 # TODO: what to do with bsym header? Maybe have a combined from_bsym_swap_proxies and from_bsym?
                 new_trace.bound_symbols.append(
@@ -154,6 +162,8 @@ def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, *
                         source_filename=bsym.source_filename, source_positions=bsym.source_positions
                     )
                 )
+
+            result = tree_map(do_swap, result)
 
             try:
                 safe_map_flat(write, list(sequencify(bsym.output)), list(sequencify(result)))
