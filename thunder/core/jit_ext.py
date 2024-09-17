@@ -1254,7 +1254,8 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             raise NotImplementedError(f"unpacking from OPAQUE {fn.value} {provenance}")
 
         def from_provenance(provenance, *, new_output=False):
-            if (p := getattr(provenance, "proxy", None)) is not None:
+            p = getattr(provenance, "proxy", None)
+            if p is not None:
                 return p
 
             inst = provenance.inst
