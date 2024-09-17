@@ -270,3 +270,39 @@ def test_force_skip_lazy_graph_module(executor, device: str, dtype: dtypes.dtype
             assert len(subgraph_info.thunder_compiled_fns)  # There was atleast one function compiled with thunder.
             for thunder_fn in subgraph_info.thunder_compiled_fns:
                 assert last_traces(thunder_fn)  # Verify that we can fetch last_traces
+
+
+@instantiate(
+    dtypes=NOTHING, executors=[DynamoThunderExecutor], decorators=(pytest.mark.parametrize("cat_kwarg", (True, False)),)
+)
+def test_cat_no_split(executor, device: str, dtype: dtypes.dtype, cat_kwarg):
+    # fx.Node for `torch.cat` receives `torch.fx.immutable_collections.immutable_list` as Node.args.
+    # This test verifies that we don't cause a split because of this.
+    backend = ThunderCompiler()
+    x = torch.ones(2, dtype=dtype, device=device, requires_grad=True)
+
+    if not cat_kwarg:
+
+        @torch.compile(backend=backend)
+        def func(x):
+            x = torch.cat([x, x])
+            return x + 2
+
+    else:
+
+        @torch.compile(backend=backend)
+        def func(x):
+            x = torch.cat(tensors=[x, x])
+            return x + 2
+
+    out = func(x)
+
+    # We record the GraphModules that was compiled by ThunderCompiler
+    assert len(backend.subgraph_infos) == 1
+
+    for subgraph_info in backend.subgraph_infos:
+        assert len(subgraph_info.split_reasons) == 0  # Verify there were no splits
+        assert isinstance(subgraph_info.original_graph_module, torch.fx.GraphModule)
+        assert len(subgraph_info.thunder_compiled_fns)  # There was atleast one function compiled with thunder.
+        for thunder_fn in subgraph_info.thunder_compiled_fns:
+            assert last_traces(thunder_fn)  # Verify that we can fetch last_traces
