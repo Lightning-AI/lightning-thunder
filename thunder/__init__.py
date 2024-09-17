@@ -33,6 +33,8 @@ import thunder.core.devices as devices
 from thunder.core.transform_common import (
     dce,
     Transform,
+    wrap_return_value_together_with_argments,
+    unwrap_return_value,
 )
 from thunder.core.functionalization import (
     check_inplace_to_views,
@@ -511,6 +513,10 @@ def jit(
 
             prologue_traces = [prologue_trc]
             computation_traces = [computation_trc]
+
+            computation_trc = wrap_return_value_together_with_argments(computation_trc)
+            computation_traces.append(computation_trc)
+
             orig_to_view_swap_map = check_inplace_to_views(computation_trc)
             vanilla_tensor_args: set[int] | None = None
             if not compile_options.get("skip_inplace_functionalization", False):
@@ -667,13 +673,16 @@ def jit(
                         backward_trc = new_backward_trc
                         backward_traces.append(backward_trc)
 
-            computation_trc = transform_to_torch_types(computation_trc)
-            comp = computation_trc.python_callable()
-
             if backward_trc is not None:
                 backward_fn = backward_trc.python_callable()
             else:
                 backward_fn = None
+                # We do not have to return auxiliary tensors, which will only be useful in backward pass
+                computation_trc = unwrap_return_value(computation_trc)
+                computation_traces.append(computation_trc)
+
+            computation_trc = transform_to_torch_types(computation_trc)
+            comp = computation_trc.python_callable()
 
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(

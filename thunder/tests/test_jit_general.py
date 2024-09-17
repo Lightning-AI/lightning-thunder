@@ -1167,23 +1167,26 @@ def test_custom_autograd_function():
     model = Model().to(dtype=torch.float64)
     jitted = thunder.jit(model)
 
-    gradcheck(jitted, (x,))
+    with pytest.raises(GradcheckError):
+        gradcheck(jitted, (x,))
     with pytest.raises(GradcheckError):
         gradcheck(model, (x,))
 
     class MyLinear(torch.autograd.Function):
         @staticmethod
-        def forward(ctx, x: torch.Tensor, weight: torch.Tensor, shape: tuple) -> torch.Tensor:
+        def forward(ctx, x: torch.Tensor, weight: torch.Tensor, shape: tuple[int, int]) -> torch.Tensor:
             ctx.shape = shape
             ctx.save_for_backward(x, weight)
             ctx.pretty_attr = 100
+            ctx.scaler = 1.0
             return torch.matmul(x, weight.t())
 
         @staticmethod
         def backward(ctx, grad_output):
             (x, weight) = ctx.saved_tensors
             assert weight.shape == ctx.shape  # really bogus, just to use ctx.shape
-            return torch.matmul(grad_output, weight), torch.matmul(grad_output.t(), x)
+            scaler2 = ctx.shape[0] / ctx.shape[1]
+            return torch.matmul(grad_output, weight) * ctx.scaler, torch.matmul(grad_output.t(), x) / scaler2
 
     class Model(torch.nn.Module):
         def __init__(self):

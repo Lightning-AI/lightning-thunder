@@ -23,7 +23,6 @@ from thunder.core.dtypes import to_torch_dtype, to_dtype
 import thunder.core.devices as devices
 from thunder.core.devices import to_torch_device, to_device
 import thunder.core.prims as prims
-from thunder.core.prims import PrimIDs
 from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, from_trace
 from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy, variableify, pytype
 from thunder.core.pytree import tree_flatten, tree_unflatten
@@ -1337,6 +1336,19 @@ _register_implementation(ltorch.scatter, checker=_always_executable, execution_t
 _register_implementation(ltorch.scatter_add, checker=_always_executable, execution_transform=_scatter_add_transform)
 _register_implementation(ltorch.take_along_dim, take_along_dim, checker=_always_executable)
 
+# out of place setitem helper
+
+
+def _copy_with_setitem_impl(a, key, value):
+    c = a.clone()
+    c[key] = value
+    return c
+
+
+copy_with_setitem_impl = ex.register_operator(
+    "copy_with_setitem_impl", meta=prims.copy_with_setitem_meta, fn=_copy_with_setitem_impl
+)
+_register_implementation(prims.copy_with_setitem, copy_with_setitem_impl, checker=_always_executable)
 
 #
 # Linear algebra operations
@@ -2128,3 +2140,11 @@ def _copy__impl(copy_from, copy_to):
 
 copy_ = ex.register_operator("copy_", meta=prims.copy_, tags=(prims.OpTags.DONT_DCE,), fn=_copy__impl)
 _register_implementation(prims.copy_, copy_, checker=_always_executable)
+
+
+def _shape_impl(t):
+    return t.shape
+
+
+shape = ex.register_operator("shape", meta=prims.shape_meta, fn=_shape_impl)
+_register_implementation(prims.shape, shape, checker=_always_executable)
