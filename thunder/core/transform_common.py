@@ -434,3 +434,27 @@ def canonicalize_proxies(bsyms: Sequence[BoundSymbol]) -> Sequence[BoundSymbol]:
         process_bound_symbols(bsyms, output)
 
     return output
+
+
+def wrap_return_value_together_with_argments(trace: Trace) -> Trace:
+    last = trace.bound_symbols[-1]
+    assert last.sym.id == prims.PrimIDs.RETURN
+    flat_args, _ = tree_flatten((trace.args, trace.kwargs))
+    new_return_value = {"output": last.args[0], "flat_args": flat_args}
+    new_return_bsym = last.from_bsym(args=(new_return_value,))
+
+    new_trace = from_trace(trace)
+    new_trace.bound_symbols = trace.bound_symbols[:-1] + [new_return_bsym]
+    new_trace.set_provenance(TraceProvenance("Return arguments to track copies onto them"))
+    return new_trace
+
+
+def unwrap_return_value(trace: Trace) -> Trace:
+    last = trace.bound_symbols[-1]
+    assert last.sym.id == prims.PrimIDs.RETURN
+    new_return_bsym = last.from_bsym(args=(last.args[0]["output"],))
+
+    new_trace = from_trace(trace)
+    new_trace.bound_symbols = trace.bound_symbols[:-1] + [new_return_bsym]
+    new_trace.set_provenance(TraceProvenance("Unwrap the actual return value"))
+    return new_trace

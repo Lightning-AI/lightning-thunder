@@ -592,23 +592,138 @@ def _general_jit_named_buffers_lookaside(obj: Any, *args, **kwargs):
     )
 
 
-@run_once
-def _warn_custom_autograd_function():
-    warnings.warn(
-        "Currently `backward` of custom `torch.autograd.function.Function` is ignored by `thunder.jit`. "
-        "`thunder.jit` generates backward based on the forward."
-    )
-
-
 @register_general_jit_lookaside(torch.autograd.function.Function.apply.__func__)
 def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwargs):
-    _warn_custom_autograd_function()
+    """Encapsulate forward into a bsym, define and register augmented fwd and bwd.
+
+    This lookaside does three things:
+        1. Encapsulate ``MyFunc(torch.autograd.Function).forward`` into :class:`~thunder.core.symbol.BoundSymbol`
+        2. Define an augmented forward which is different from ``MyFunc.forward`` in its return values: returning
+           ``ctx.saved_tensors`` as residuals.
+        3. Trace ``MyFunc.backward``, define :class:`~thunder.core.trace.TraceCtx` whose args are ``(*residuals, *grads)``.
+           So far, non-tensor ``ctx`` attributes seem to be folded into a trace.
+    """
+    from thunder.core.baseutils import check, sequencify
+    from thunder.core.transforms import augmented_forward_impls, backward_impls, VJPDual
+
+    jit_ctx: JitCtx = get_jit_ctx()
+
+    custom_fwd_bsyms: list[BoundSymbol] = []
+    orig_scopes = jit_ctx.computation_trace.scopes
+
+    jit_ctx.computation_trace.scopes = [custom_fwd_bsyms]
 
     custom_autograd_function_cls = unwrap(obj)
     custom_forward = custom_autograd_function_cls.forward
     ctx = torch.autograd.function.FunctionCtx()
-    wrapped_ctx = wrap_const(ctx)
-    return _interpret_call(custom_forward, wrapped_ctx, *args, **kwargs)
+    ctx_proxy = proxy(ctx, name=None, history=None)
+    wrapped_ctx = wrap_const(ctx_proxy)
+    custom_forward_result = _interpret_call(custom_forward, wrapped_ctx, *args, **kwargs)
+    if custom_forward_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return custom_forward_result
+
+    # Forward.
+    unwrapped_custom_forward_args = tree_map(lambda a: unwrap(a), args)
+    unwrapped_custom_forward_result = unwrap(custom_forward_result)
+    symbol_name = custom_autograd_function_cls.__name__
+    custom_fwd_sym = Symbol(
+        name=symbol_name,
+        id=symbol_name,
+        meta=lambda *unwrapped_custom_forward_args: unwrapped_custom_forward_result,
+    )
+    bsym_of_custom_fwd = BoundSymbol(
+        custom_fwd_sym,
+        args=unwrapped_custom_forward_args,
+        kwargs={},
+        output=unwrapped_custom_forward_result,
+        subsymbols=custom_fwd_bsyms,
+        source_filename=jit_ctx.computation_trace._current_source_filename,
+        source_positions=None,
+        _call_ctx=custom_fwd_bsyms[0]._call_ctx,
+        _import_ctx=custom_fwd_bsyms[0]._import_ctx,
+        _object_ctx=custom_fwd_bsyms[0]._object_ctx,
+        _executor=custom_fwd_bsyms[0]._executor,
+    )
+    orig_scopes[-1].append(bsym_of_custom_fwd)
+
+    augmented_bsym_output: tuple[tuple[TensorProxy, ...], tuple[TensorProxy, ...]] = (
+        tuple(sequencify(unwrapped_custom_forward_result)),
+        ctx_proxy.saved_tensors,
+    )
+    trace_of_augmented_fwd = TraceCtx()
+    for bsym in custom_fwd_bsyms:
+        trace_of_augmented_fwd.add_bound_symbol(bsym)
+    trace_of_augmented_fwd.add_bound_symbol(prims.python_return.bind(augmented_bsym_output, output=()))
+    si = SigInfo(custom_fwd_sym.name)
+    for a in unwrapped_custom_forward_args:
+        if isinstance(a, Proxy):
+            si.args.append((a.name, None))
+        else:
+            pa = proxy(a)
+            si.args.append((pa.name, None))
+    trace_of_augmented_fwd._siginfo = si
+    core_of_augmented_forward = trace_of_augmented_fwd.python_callable(include_decorators=False)
+
+    @wraps(core_of_augmented_forward)
+    def augmented_custom_forward_rule(*args, **kwargs):
+        primal, residulas = core_of_augmented_forward(*args, **kwargs)
+        check(len(primal) == 1, lambda f: "{primal=} has {len(primal)} proxies but expected 1")
+        return VJPDual(primal=primal[0], residuals=residulas)
+
+    augmented_forward_impls[custom_fwd_sym.name] = augmented_custom_forward_rule
+
+    # Backward definition
+    custom_backward = custom_autograd_function_cls.backward
+    custom_bwd_bsyms: list[BoundSymbol] = []
+    jit_ctx.computation_trace.scopes = [custom_bwd_bsyms]
+    grads = tree_map(
+        lambda a: a.replace_name(f"grad_{a.name}"),
+        sequencify(unwrapped_custom_forward_result),
+    )
+    wrapped_grads = tree_map(lambda g: wrap(g, provenance=custom_forward_result.provenance), grads)
+    custom_backward_result = _interpret_call(custom_backward, wrapped_ctx, *wrapped_grads)
+    if custom_backward_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return custom_backward_result
+
+    trace_of_backward = TraceCtx()
+    for bsym in custom_bwd_bsyms:
+        trace_of_backward.add_bound_symbol(bsym)
+    trace_of_backward.add_bound_symbol(prims.python_return.bind(*unwrap(custom_backward_result), output=()))
+    bwd_si = SigInfo(f"{custom_fwd_sym.name}_backward")
+    for a in ctx_proxy.saved_tensors + grads:
+        if isinstance(a, Proxy):
+            bwd_si.args.append((a.name, None))
+        else:
+            pa = proxy(a)
+            bwd_si.args.append((pa.name, None))
+    trace_of_backward._siginfo = bwd_si
+    bwd_trace_callable_interface = trace_of_backward.python_callable(include_decorators=False)
+
+    bwd_si = SigInfo("backward_impl")
+    for a in ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads:
+        if isinstance(a, Proxy):
+            bwd_si.args.append((a.name, None))
+        else:
+            pa = proxy(a)
+            bwd_si.args.append((pa.name, None))
+    bwd_trace_impl = TraceCtx()
+    for bsym in custom_bwd_bsyms:
+        bwd_trace_impl.add_bound_symbol(bsym)
+    bwd_trace_impl.add_bound_symbol(prims.python_return.bind(*sequencify(unwrap(custom_backward_result)), output=()))
+    bwd_trace_impl._siginfo = bwd_si
+    bwd_impl_callable = bwd_trace_impl.python_callable(include_decorators=False)
+
+    @wraps(bwd_trace_callable_interface)
+    def backward_impl(*args, **kwargs):
+        check(not kwargs, lambda: f"{kwargs} expected to be empty")
+        new_args = ctx_proxy.saved_consts + args
+        return bwd_impl_callable(*new_args)
+
+    backward_impls[custom_fwd_sym.name] = backward_impl
+
+    # Cosmetic
+    jit_ctx.computation_trace.scopes = orig_scopes
+    return custom_forward_result
 
 
 @register_general_jit_lookaside(torch.finfo)

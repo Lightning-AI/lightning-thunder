@@ -5,6 +5,7 @@ import math
 import operator
 import collections
 import re
+import sys
 from collections.abc import Sequence
 from enum import Enum
 from functools import partial, reduce, wraps
@@ -951,6 +952,17 @@ def flip(a: TensorLike, /, *dims: int) -> TensorLike:
     return clang.flip(a, dims)
 
 
+# fake out of place variant
+@torchsymbol(id="setitem")
+def setitem(inp, idx, val):
+    return clang.copy_with_setitem(inp, idx, val)
+
+
+@torchsymbol(torch.Tensor.__setitem__, id="setitem_", is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def setitem_(inp, idx, val):
+    prims.copy_(setitem(inp, idx, val), inp)
+
+
 @torchsymbol(torch.Tensor.__getitem__, id="torch.Tensor.__getitem__", method_name="getitem")
 def getitem(a: TensorLike, /, key) -> TensorLike:
     return clang.getitem(a, key)
@@ -1489,6 +1501,40 @@ def exp2(a):
 @torchsymbol(torch.exp2_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def exp2_(a):
     return prims.copy_(exp2(a), a)
+
+
+# fake out of place variant
+@torchsymbol(id="exponential")
+def exponential(a: Tensor, rate: float = 1, *, generator: None | torch.Generator = None) -> Tensor:
+    utils.check(
+        generator is None,
+        lambda: "exponential: generator is not None which is currently unsupported",
+    )
+    utils.check(
+        thunder.dtypes.is_float_dtype(a.dtype),
+        lambda: f"Exponential distribution is a continuous probability distribution. \
+        dtype must be a floating point but you specified {a.dtype}",
+    )
+    utils.check(
+        rate > 0.0,
+        lambda: f"exponential_ expects lambda > 0.0, but found lambda={rate}",
+    )
+    uniform_val = uniform_like(a)
+
+    # copying numerics of transformation::exponential see comment:
+    # curand_uniform has (0,1] bounds. log(1) is 0 and exponential excludes 0.
+    # we need log to be not 0, and not underflow when converted to half
+    # fast __logf approximation can underflow, so set log to -epsilon/2 for 1 or close to 1 args
+    epsilon = torch.finfo(thunder.dtypes.to_torch_dtype(a.dtype)).eps / 2
+    condition = uniform_val >= (1.0 - epsilon)
+    log_uniform = where(condition, -epsilon, log(uniform_val))
+
+    return (-1 / rate) * log_uniform
+
+
+@torchsymbol(torch.Tensor.exponential_, id="exponential_", is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def exponential_(a: Tensor, rate: float = 1, *, generator: None | torch.Generator = None) -> Tensor:
+    return prims.copy_(exponential(a, rate=rate, generator=generator), a)
 
 
 @torchsymbol(torch.expm1, is_method=True)
@@ -5496,6 +5542,9 @@ def register_default_torch_op(torchfn: Callable, torch_module):
 
     op = ex.register_operator(torchfn_name, module=torch_module, meta=fn_meta)
     ex.register_implementation(sym, op, checker=_always_executable)
+    # TODO: convert to an assert after #1140 is fixed
+    if torchfn_name not in __builtins__ and not hasattr(sys.modules["thunder.torch"], torchfn_name):
+        setattr(sys.modules["thunder.torch"], torchfn_name, sym)
 
     from thunder.core.transforms import augmented_forward_impls, backward_impls
 
