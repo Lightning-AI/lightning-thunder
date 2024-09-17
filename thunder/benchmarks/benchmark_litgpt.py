@@ -486,6 +486,7 @@ class Benchmark_litGPT:
                 _apply_fully_shard(model.lm_head)
                 _apply_fully_shard(model.transformer["wte"])
                 _apply_fully_shard(model.transformer["ln_f"])
+                _apply_fully_shard(model)
                 model.to_empty(device=self.device)
                 model.apply(model._init_weights)
 
