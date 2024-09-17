@@ -1505,14 +1505,15 @@ def exp2_(a):
 
 # fake out of place variant
 @torchsymbol(id="exponential")
-def exponential(a, rate=1, generator=None):
-    assert generator is None
+def exponential(a: Tensor, rate: float = 1, *, generator: None | torch.Generator = None) -> Tensor:
     utils.check(
-        not thunder.dtypes.is_complex_dtype(a.dtype)
-        and not thunder.dtypes.is_integer_dtype(a.dtype)
-        and not thunder.dtypes.is_boolean_dtype(a.dtype),
+        generator is None,
+        lambda: "exponential: generator is not None which is currently unsupported",
+    )
+    utils.check(
+        thunder.dtypes.is_float_dtype(a.dtype),
         lambda: f"Exponential distribution is a continuous probability distribution. \
-        dtype must be a floating point but you specified {self.dtype}",
+        dtype must be a floating point but you specified {a.dtype}",
     )
     utils.check(
         rate > 0.0,
@@ -1525,15 +1526,15 @@ def exponential(a, rate=1, generator=None):
     # we need log to be not 0, and not underflow when converted to half
     # fast __logf approximation can underflow, so set log to -epsilon/2 for 1 or close to 1 args
     epsilon = torch.finfo(thunder.dtypes.to_torch_dtype(a.dtype)).eps / 2
-    condition = uniform_val >= 1.0 - epsilon
+    condition = uniform_val >= (1.0 - epsilon)
     log_uniform = where(condition, -epsilon, log(uniform_val))
 
-    return -1 / rate * log_uniform
+    return (-1 / rate) * log_uniform
 
 
 @torchsymbol(torch.Tensor.exponential_, id="exponential_", is_method=True, tags=(prims.OpTags.IN_PLACE,))
-def exponential_(a, rate=1, generator=None):
-    return prims.copy_(exponential(a, rate, generator), a)
+def exponential_(a: Tensor, rate: float = 1, *, generator: None | torch.Generator = None) -> Tensor:
+    return prims.copy_(exponential(a, rate=rate, generator=generator), a)
 
 
 @torchsymbol(torch.expm1, is_method=True)
