@@ -3128,6 +3128,12 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
 
     new_bwd_trace = from_trace(bwd_trace)
 
+    # In cases where C0 name is carried from previous trace it must be removed
+    # as the proxy needs to register with that specific name to follow the backward
+    # trace standard signature.
+    if "C0" in new_bwd_trace.names:
+        new_bwd_trace.names.remove("C0")
+
     with tracectx(new_bwd_trace):
         unpack_args = (CollectionProxy(new_saved_for_backward, name="C0"), len(new_saved_for_backward))
 
