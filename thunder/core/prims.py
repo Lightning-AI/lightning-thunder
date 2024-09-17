@@ -129,6 +129,7 @@ class PrimIDs(Enum):
     CONSTRUCT_TUPLE = auto()
     PACK_BUFFER = auto()
     PACK_SETITEM = auto()
+    SHAPE = auto()
     # TODO: UNPACK_SET
     # Utility prims
     COMMENT = auto()
@@ -256,6 +257,7 @@ class PrimIDs(Enum):
     SCATTER_ADD = auto()
     TAKE = auto()
     TAKE_ALONG_AXIS = auto()
+    COPY_WITH_SETITEM = auto()
     # Linear algebra prims (Mostly experimental)
     MATMUL = auto()
     # NN prims (Experimental!)
@@ -1235,6 +1237,17 @@ pack_setitem = make_prim(
     python_printer=pack_setitem_printer,
     python_impl=pack_setitem_impl,
     tags=(OpTags.DONT_DCE,),
+)
+
+
+def shape_meta(t: TensorProxy) -> Sequence[int | NumberProxy]:
+    return t._shape
+
+
+shape = make_prim(
+    PrimIDs.SHAPE,
+    "shape",
+    meta=shape_meta,
 )
 
 
@@ -3366,6 +3379,14 @@ def take_along_axis_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> Ten
 
 
 take_along_axis = make_prim(PrimIDs.TAKE_ALONG_AXIS, "take_along_axis", meta=take_along_axis_meta)
+
+
+def copy_with_setitem_meta(a: TensorProxy, index, value: TensorProxy) -> TensorProxy:
+    # TODO: port checks from clang, currently there  because of the utilities they need
+    return TensorProxy(like=a)
+
+
+copy_with_setitem = make_prim(PrimIDs.COPY_WITH_SETITEM, "copy_with_setitem", meta=copy_with_setitem_meta)
 
 
 def gather_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:

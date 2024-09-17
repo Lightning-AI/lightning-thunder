@@ -16,7 +16,12 @@ import torch
 from thunder.core.compile_data import using_symbolic_values, using_jit
 from thunder.core.interpreter import is_jitting, ProvenanceRecord, PseudoInst
 from thunder.core.trace import VariableInterface, get_tracectx, TraceCtx
-from thunder.core.baseutils import ProxyInterface, NumberProxyInterface, TensorProxyInterface
+from thunder.core.baseutils import (
+    ProxyInterface,
+    NumberProxyInterface,
+    TensorProxyInterface,
+    TorchAutogradFunctionCtxProxyInterface,
+)
 import thunder.core.baseutils as baseutils
 from thunder.core.langctxs import resolve_method, get_langctx
 import thunder.core.devices as devices
@@ -145,6 +150,8 @@ class Proxy(VariableInterface, ProxyInterface):
                 prefix = "lst"
             elif isinstance(self, DictProxy):
                 prefix = "d"
+            elif isinstance(self, TorchAutogradFunctionCtxProxy):
+                prefix = "fc"
             else:
                 prefix = "p"
 
@@ -1618,6 +1625,10 @@ class TensorProxy(Proxy, TensorProxyInterface):
         method = resolve_method("getitem", self, key)
         return method(self, key)
 
+    def __setitem__(self, key, value):
+        method = resolve_method("setitem_", self, key, value)
+        return method(self, key, value)
+
     #
     # Elementwise unary operators
     #
@@ -1868,6 +1879,63 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(self)
 
 
+class TorchAutogradFunctionCtxProxy(Proxy, TorchAutogradFunctionCtxProxyInterface):
+    def __init__(
+        self,
+        ctx: torch.autograd.function.FunctionCtx,
+        /,
+        *,
+        name: str | None = None,
+        history: tuple[Any, ...] | None = None,
+        tags: set[ProxyTag, ...] | None = None,
+    ):
+        self._ctx = ctx
+        self._tensors: list[TensorProxy] = []
+        self._const_for_backward: dict[str, Any] = {}
+        super().__init__(name=name, history=history, tags=tags)
+
+    def type_string(self) -> str:
+        return "TorchAutogradFunctionCtxProxy"
+
+    def __repr__(self) -> str:
+        return f"<TorchAutogradFunctionCtxProxy '{self.name}', '{self.saved_tensors=}', '{self._const_for_backward=}'>"
+
+    def replace(self, **changes):
+        kwargs = dict(
+            name=self.name,
+            history=self.history,
+            tags=self.tags,
+        )
+        kwargs.update(**changes)
+        return TorchAutogradFunctionCtxProxy(
+            self._ctx,
+            **kwargs,
+        )
+
+    @property
+    def saved_tensors(self) -> tuple[TensorProxy, ...]:
+        return tuple(self._tensors)
+
+    @property
+    def saved_consts(self) -> tuple[Any, ...]:
+        return tuple(self._const_for_backward.values())
+
+    def save_for_backward(self, *tensors):
+        self._tensors.extend(tensors)
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if hasattr(self, "_const_for_backward") and name not in {
+            "_name",
+            "_has_weak_name",
+            "history",
+            "_tags",
+            "_const_for_backward",
+            "_tensors",
+        }:
+            self._const_for_backward[name] = value
+
+
 #
 # Helpers for creating and working with proxies
 #
@@ -1979,6 +2047,10 @@ def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> A
     if isinstance(x, torch.dtype):
         return AnyProxy(x, name=name, history=history)
     if isinstance(x, torch.device):
+        return AnyProxy(x, name=name, history=history)
+    if isinstance(x, torch.autograd.function.FunctionCtx):
+        return TorchAutogradFunctionCtxProxy(x, name=name, history=history)
+    if isinstance(x, torch.memory_format):
         return AnyProxy(x, name=name, history=history)
 
     return x

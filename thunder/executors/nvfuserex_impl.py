@@ -2281,6 +2281,32 @@ def matmul(
 register_supported(PrimIDs.MATMUL, matmul, _matmul_check)
 
 
+def _shape_check(
+    a: TensorProxy,
+) -> bool:
+    # TODO: currently we cannot support this yet. fusion_pass needs to be
+    # updated to ensure that the fused region consumes all NumberProxy within
+    # and not leak it out as a fusion output, since nvfuser cannot yet produce
+    # scalar outputs.
+    return False
+
+
+def shape(
+    a: TensorProxy,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    ret = []
+    for i in range(a.ndim):
+        ret.append(fd.ops.size(nva, i))
+    return ret
+
+
+register_supported(PrimIDs.SHAPE, shape, _shape_check)
+
+
 # Registering SDPA operators for nvFuser
 # SDPA requires an execution and grad transform since the forward and backward passes are called through different implementations.
 # For both execution and grad transform, a new operator is registered with nvfuserex (ex.register_operator) and then added to the translation map (register_supported).

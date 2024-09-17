@@ -1809,6 +1809,15 @@ real_opinfo = OpInfo(
 elementwise_unary_ops.append(real_opinfo)
 
 
+clone_opinfo = OpInfo(
+    ltorch.clone,
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.clone),
+    test_directives=(),
+)
+elementwise_unary_ops.append(clone_opinfo)
+
+
 # Puts all opinfos into the "opinfos" list
 opinfos.extend(elementwise_unary_ops)
 
