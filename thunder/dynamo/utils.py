@@ -8,6 +8,7 @@ import torch
 
 from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
+from thunder.torch.langctx import torchctx
 
 auto_register_ops = set(itertools.chain(*torch_auto_registered_ops.values()))
 
@@ -96,6 +97,52 @@ def _concrete_shape(x):
     return tuple(map(get_backed_value, x.shape))
 
 
+def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
+    """Creates proxy inputs from a torch.fx.Node for use with Thunder.
+
+    This function generates proxy inputs for a given torch.fx.Node
+
+    Args:
+        node (torch.fx.Node): The FX graph node to create proxy inputs for.
+    """
+    import thunder
+    from thunder.core.trace import TraceCtx
+    from thunder.core.proxies import proxy
+
+    # We need to be under trace context to generate proxies.
+    with thunder.core.trace.tracectx(TraceCtx()):
+
+        def make_tensor_proxy(arg_node):
+            # This is a Node in the graph representing a Tensor or tuple of Tensors.
+            if isinstance(arg_node, torch.fx.Node):
+                example_value = arg_node.meta["example_value"]
+
+                if isinstance(example_value, torch.Tensor):
+                    # If `dynamic` shapes are enabled, we may see a FakeTensor
+                    # where shape has SymInt. In that case, we check if we can
+                    # get the concrete value from SymInt.
+                    # Here, we only want to verify that thunder can run an operation.
+                    # So, it is ok to verify with concrete value.
+                    example_value = example_value.new_ones(
+                        _concrete_shape(example_value), device=example_value.device, dtype=example_value.dtype
+                    )
+                elif isinstance(example_value, tuple):
+                    example_value = tuple(
+                        e_v.new_ones(_concrete_shape(e_v), device=e_v.device, dtype=e_v.dtype) for e_v in example_value
+                    )
+                else:
+                    # NOTE - This will be caught will be caught and be part of the SplitReason.
+                    raise TypeError(f"Received `make_tensor_proxy` received example_value which wasn't Tensor or Tuple")
+                return proxy(example_value)
+
+            # This is int, float, etc.
+            return arg_node
+
+        proxy_args = torch.fx.map_arg(node.args, make_tensor_proxy)
+        proxy_kwargs = {k: torch.fx.map_arg(v, make_tensor_proxy) for k, v in node.kwargs.items()}
+        return proxy_args, proxy_kwargs
+
+
 def try_execute_thunder_symbol(thunder_symbol: "Symbol", node: torch.fx.Node) -> tuple[bool, SplitReason | None]:
     """
     Attempts to execute a given Thunder symbol within a tracing context, using proxies for the node's arguments.
@@ -115,7 +162,6 @@ def try_execute_thunder_symbol(thunder_symbol: "Symbol", node: torch.fx.Node) ->
     """
     import thunder
     from thunder.core.trace import TraceCtx
-    from thunder.core.proxies import proxy
 
     @thunder._with_cache_info_ctx
     def _run_with_cache_info():
@@ -129,49 +175,17 @@ def try_execute_thunder_symbol(thunder_symbol: "Symbol", node: torch.fx.Node) ->
         cache_info["default_dtype"] = torch.get_default_dtype()
         cache_info["default_device"] = torch.get_default_device()
 
-        trc = TraceCtx()
+        try:
+            proxy_args, proxy_kwargs = get_proxy_inputs_from_node(node)
+        except Exception as e:
+            return False, SplitReason(
+                SplitReasonType.EXCEPTION_PROXY_THUNDER_OP,
+                f"Failed while creating proxy for node with name: {node.name} and target: {node.target}, see exception field",
+                exception=e,
+            )
+
         # We need to be under trace context to generate proxies.
-        with thunder.core.trace.tracectx(trc):
-            try:
-
-                def make_tensor_proxy(arg_node):
-                    # This is a Node in the graph representing a Tensor or tuple of Tensors.
-                    if isinstance(arg_node, torch.fx.Node):
-                        example_value = arg_node.meta["example_value"]
-
-                        if isinstance(example_value, torch.Tensor):
-                            # If `dynamic` shapes are enabled, we may see a FakeTensor
-                            # where shape has SymInt. In that case, we check if we can
-                            # get the concrete value from SymInt.
-                            # Here, we only want to verify that thunder can run an operation.
-                            # So, it is ok to verify with concrete value.
-                            example_value = example_value.new_ones(
-                                _concrete_shape(example_value), device=example_value.device, dtype=example_value.dtype
-                            )
-                        elif isinstance(example_value, tuple):
-                            example_value = tuple(
-                                e_v.new_ones(_concrete_shape(e_v), device=e_v.device, dtype=e_v.dtype)
-                                for e_v in example_value
-                            )
-                        else:
-                            # NOTE - This will be caught will be caught and be part of the SplitReason.
-                            raise TypeError(
-                                f"Received `make_tensor_proxy` received example_value which wasn't Tensor or Tuple"
-                            )
-                        return proxy(example_value)
-
-                    # This is int, float, etc.
-                    return arg_node
-
-                proxy_args = torch.fx.map_arg(node.args, make_tensor_proxy)
-                proxy_kwargs = {k: torch.fx.map_arg(v, make_tensor_proxy) for k, v in node.kwargs.items()}
-            except Exception as e:
-                return False, SplitReason(
-                    SplitReasonType.EXCEPTION_PROXY_THUNDER_OP,
-                    f"Failed while creating proxy for node with name: {node.name} and target: {node.target}, see exception field",
-                    exception=e,
-                )
-
+        with thunder.core.trace.tracectx(TraceCtx()):
             try:
                 thunder_symbol(*proxy_args, **proxy_kwargs)
             except Exception as e:
@@ -259,6 +273,25 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
     if target in _torch_to_thunder_function_map or inspect.isbuiltin(target):
         thunder_symbol_or_builtin = _torch_to_thunder_function_map.get(target, target)
         did_run, opt_split_reason = try_execute_thunder_symbol(thunder_symbol_or_builtin, node)
+        return did_run, opt_split_reason
+
+    # There are few operations which are registered only as method in `torchctx` and hence they don't exist
+    # in `_torch_to_thunder_function_map` (eg. `float`)
+    # For these method, we try to look them up with `torchctx` language context.
+    # NOTE: We pass `node.target` which is a `str` (and not `target` from above which is actually function object).
+    if torchctx.has_method(node.target):
+        # `torchctx.get_method` requires args and kwargs to resolve which overload of the method is picked.
+        try:
+            args, kwargs = get_proxy_inputs_from_node(node)
+        except Exception as e:
+            return False, SplitReason(
+                SplitReasonType.EXCEPTION_PROXY_THUNDER_OP,
+                f"Failed while creating proxy for node with name: {node.name} and target: {node.target}, see exception field",
+                exception=e,
+            )
+        # NOTE: `get_method` may throw if relevant method is not found, so we have guarded it with `has_method`.
+        method = torchctx.get_method(node.target, args, kwargs)
+        did_run, opt_split_reason = try_execute_thunder_symbol(method, node)
         return did_run, opt_split_reason
 
     # We found no automatic fallback registration and no mapping to thunder symbol.
