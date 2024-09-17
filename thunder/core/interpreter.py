@@ -4246,6 +4246,7 @@ def _for_iter_handler(
     if r is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         ctx = get_interpreterruntimectx()
         if isinstance(ctx.curexc, StopIteration):
+            ctx.curexc = None
             if sys.version_info >= (3, 12):
                 # 3.12 uses jumps relative to the next instruction offset and does not pop here
                 #      instead it pushes a fake value?!
