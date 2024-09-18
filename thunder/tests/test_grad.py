@@ -528,7 +528,7 @@ def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
     from thunder.common import CompileData
     from thunder.core.compile_data import compile_data_and_stats
 
-    if version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"):
+    if version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.6.0a99"):
         raise pytest.skip(
             "https://github.com/Lightning-AI/lightning-thunder/issues/703",
         )

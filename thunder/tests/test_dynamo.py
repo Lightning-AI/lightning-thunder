@@ -306,3 +306,29 @@ def test_cat_no_split(executor, device: str, dtype: dtypes.dtype, cat_kwarg):
         assert len(subgraph_info.thunder_compiled_fns)  # There was atleast one function compiled with thunder.
         for thunder_fn in subgraph_info.thunder_compiled_fns:
             assert last_traces(thunder_fn)  # Verify that we can fetch last_traces
+
+
+@instantiate(dtypes=NOTHING, executors=[DynamoThunderExecutor])
+def test_method_only_registrations(executor, device: str, dtype: dtypes.dtype):
+    # In thunder, some operations are registered only as methods and put in a different map (accessible via torchctx).
+    # This test is to verify that we consider those methods as supported in `thunder` and don't cause a split because of them.
+
+    backend = ThunderCompiler()
+
+    @torch.compile(backend=backend)
+    def func(x):
+        y = x.float()
+        return y.sin()
+
+    x = torch.randn(3, 3, device=device, dtype=dtype)
+    o = func(x)
+
+    # We record the GraphModules that was compiled by ThunderCompiler
+    assert len(backend.subgraph_infos) == 1
+
+    for subgraph_info in backend.subgraph_infos:
+        assert len(subgraph_info.split_reasons) == 0  # Verify there were no splits
+        assert isinstance(subgraph_info.original_graph_module, torch.fx.GraphModule)
+        assert len(subgraph_info.thunder_compiled_fns)  # There was atleast one function compiled with thunder.
+        for thunder_fn in subgraph_info.thunder_compiled_fns:
+            assert last_traces(thunder_fn)  # Verify that we can fetch last_traces
