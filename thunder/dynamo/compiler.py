@@ -1,13 +1,20 @@
+from __future__ import annotations
 from functools import partial
-from looseversion import LooseVersion
+import os
+from typing import TYPE_CHECKING
 
+from looseversion import LooseVersion
 import torch
 import warnings
 
 from thunder.core.baseutils import run_once
 
-from thunder.dynamo.utils import SubgraphInfo, recompile_graph
+from thunder.dynamo.utils import SubgraphInfo, recompile_graph, CompilerType
 from thunder.dynamo.splitter import _splitter
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from typing import Any
 
 
 @run_once
@@ -77,3 +84,15 @@ class ThunderCompiler:
         split_module, subgraph_info = _splitter(gm, self._thunder_jit, self._torch_compile, sample_args)
         self.subgraph_infos.append(subgraph_info)
         return split_module
+
+    @property
+    def graph_to_thunder_fn_maps(self) -> list[dict[torch.fx.GraphModule, Callable[[Any], Any]]]:
+        subgraph: SubgraphInfo
+        list_of_graph_to_thunder_fn_map: list[dict[torch.fx.GraphModule, Callable[[Any], Any]]] = []
+        for subgraph in self.subgraph_infos:
+            graph_to_thunder_fn = {}
+            for graph_module, cf in subgraph.submodule_to_compiled_functions.items():
+                if cf.compiler is CompilerType.THUNDER:
+                    graph_to_thunder_fn[graph_module] = cf.compiled_fn
+            list_of_graph_to_thunder_fn_map.append(graph_to_thunder_fn)
+        return list_of_graph_to_thunder_fn_map
