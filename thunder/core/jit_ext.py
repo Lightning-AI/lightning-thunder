@@ -614,6 +614,10 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     custom_autograd_function_cls = unwrap(obj)
     custom_forward = custom_autograd_function_cls.forward
     ctx = torch.autograd.function.FunctionCtx()
+    # note(crcrpar): [Why it's okay to have `history=None`]
+    # `history=None` violates `unpack_inputs`, especially
+    # https://github.com/Lightning-AI/lightning-thunder/blob/ea96657/thunder/core/jit_ext.py#L1215-L1226
+    # but here it's safe to keep `history=None` as we basically would not pass this to `unpack_inputs`.
     ctx_proxy = proxy(ctx, name=None, history=None)
     wrapped_ctx = wrap_const(ctx_proxy)
     custom_forward_result = _interpret_call(custom_forward, wrapped_ctx, *args, **kwargs)
@@ -629,7 +633,10 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
             get_compile_data().executors_list,
         ):
             if bsym.sym.name in op_executor.opmap and bsym.sym.id in op_executor.implmap:
-                wrapped_ctx = wrap_const(torch.autograd.function.FunctionCtx())
+                # see the note about `history=None`. It could look redundant, but
+                # as we cannot keep proxy with `None` history in a trace, we override
+                # `wrapped_ctx` here with the bare ctx, w/o proxified.
+                wrapped_ctx = wrap_const(ctx)
                 jit_ctx.computation_trace.scopes = orig_scopes
                 return _interpret_call(custom_forward, wrapped_ctx, *args, **kwargs)
 
