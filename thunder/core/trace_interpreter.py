@@ -111,6 +111,30 @@ def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, *
             raise ValueError(f"Variable {v.name} is being overwritten this is not allowed")
         env[v.name] = val
 
+    def add_to_swap_map(old, new):
+        if isinstance(old, ProxyInterface):
+            if isinstance(new, VJPDual):
+                swap_map[variableify(new.primal)] = old
+                new.primal = old
+            else:
+                assert isinstance(new, ProxyInterface), (old, new)
+                swap_map[variableify(new)] = old
+
+    def do_swap(v):
+        if isinstance(v, VJPDual):
+            v.primal = tree_map(do_swap, v.primal)
+            v.residuals = tree_map(do_swap, v.residuals)
+            return v
+        if not isinstance(v, ProxyInterface):
+            return v
+        return swap_map.get(variableify(v), v)
+
+    swap_map = {}
+
+    safe_map_flat(add_to_swap_map, list(trace.args), list(args))
+    safe_map_flat(add_to_swap_map, list(trace.kwargs.values()), list(kwargs.values()))
+    args, kwargs = tree_map(do_swap, (args, kwargs))
+
     safe_map_flat(write, list(trace.args), list(args))
     safe_map_flat(write, list(trace.kwargs.values()), list(kwargs.values()))
 
@@ -131,29 +155,18 @@ def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, *
             new_trace.push_scope([])
             result = prim_func(*args, **kwargs)
             new_bsyms = new_trace.pop_scope()
-            # TODO: empty new_bsyms?
-            ### replace bsyms
+
             swap_map = {}
 
-            def add_to_swap_map(old, new):
-                if isinstance(old, ProxyInterface):
-                    # result.primal if isinstance(result, VJPDual) else
-                    if isinstance(new, VJPDual):
-                        swap_map[variableify(new.primal)] = old
-                        new.primal = old
-                    else:
-                        assert isinstance(new, ProxyInterface), (old, new)
-                        swap_map[variableify(new)] = old
+            # TODO: if inputs are returned, the old outputs should be mapped on the new ones (= the inputs) instead of the other way round
+            if not new_bsyms:
+                # empty result means we want to swap references to the old
+                # result to the new result (which will be one of the args)
+                safe_map_flat(add_to_swap_map, list(sequencify(result)), list(sequencify(bsym.output)))
+            else:
+                safe_map_flat(add_to_swap_map, list(sequencify(bsym.output)), list(sequencify(result)))
 
-            safe_map_flat(add_to_swap_map, list(sequencify(bsym.output)), list(sequencify(result)))
-
-            def do_swap(v):
-                if isinstance(v, VJPDual):
-                    v.primal = tree_map(do_swap, v.primal)
-                    v.residuals = tree_map(do_swap, v.residuals)
-                if not isinstance(v, ProxyInterface):
-                    return v
-                return swap_map.get(variableify(v), v)
+            ### replace bsyms
 
             for new_bsym in new_bsyms:
                 # TODO: what to do with bsym header? Maybe have a combined from_bsym_swap_proxies and from_bsym?
