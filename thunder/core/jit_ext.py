@@ -644,6 +644,31 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     )
     orig_scopes[-1].append(bsym_of_custom_fwd)
 
+    # not augmented for when we don't need grad
+    trace_of_fwd = TraceCtx()
+    for bsym in custom_fwd_bsyms:
+        trace_of_fwd.add_bound_symbol(bsym)
+    with tracectx(trace_of_fwd):
+        prims.python_return(unwrapped_custom_forward_result)
+
+    si = SigInfo(custom_fwd_sym.name)
+    for a in unwrapped_custom_forward_args:
+        if isinstance(a, Proxy):
+            si.args.append((a.name, None))
+        else:
+            pa = proxy(a)
+            si.args.append((pa.name, None))
+    trace_of_fwd._siginfo = si
+    trace_of_fwd.args = unwrapped_custom_forward_args
+
+    @wraps(trace_of_fwd.python_callable())
+    def core_of_forward(*args, **kwargs):
+        return thunder.core.trace_interpreter.interpret_trace(trace_of_fwd, *args, **kwargs)
+
+    thunder.executors.torchex._register_implementation(
+        custom_fwd_sym, core_of_forward, checker=thunder.executors.torchex._always_executable
+    )
+
     augmented_bsym_output: tuple[tuple[TensorProxy, ...], tuple[TensorProxy, ...]] = (
         tuple(sequencify(unwrapped_custom_forward_result)),
         ctx_proxy.saved_tensors,
@@ -707,8 +732,6 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     def bwd_trace_callable_interface(*args, **kwargs):
         return thunder.core.trace_interpreter.interpret_trace(trace_of_backward, *args, **kwargs)
 
-    # bwd_trace_callable_interface = trace_of_backward.python_callable(include_decorators=False)
-
     bwd_si = SigInfo("backward_impl")
     for a in ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads:
         if isinstance(a, Proxy):
@@ -726,8 +749,6 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     @wraps(bwd_trace_impl.python_callable())
     def bwd_impl_callable(*args, **kwargs):
         return thunder.core.trace_interpreter.interpret_trace(bwd_trace_impl, *args, **kwargs)
-
-    # bwd_impl_callable = bwd_trace_impl.python_callable(include_decorators=False)
 
     @wraps(bwd_trace_callable_interface)
     def backward_impl(*args, **kwargs):
