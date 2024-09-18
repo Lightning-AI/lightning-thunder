@@ -809,7 +809,7 @@ def test_exception_no_leak(jit):
         def forward(self, x):
             try:
                 raises()
-            except RuntimeException:
+            except RuntimeError:
                 pass
             return x
 
