@@ -1259,7 +1259,7 @@ def _infer_tensor_properties(
         _numel = reduce(operator.mul, _shape, 1)
     else:
         # TODO: we need cleaner handling of _numel rather than a None here.
-        _numel = None
+        _numel = lambda tp : reduce(operator.mul, tp.shape, 1)
 
     # TODO Alias rank to ndim?
     _ndim = len(_shape)
@@ -1571,7 +1571,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
             if attr == "numel":
                 if isinstance(self._numel, int):
                     return _Numel(self._numel)
-                return reduce(operator.mul, self.shape, 1)
+                return method_or_value(self)
             return partial(method_or_value, self)
 
         return method_or_value
