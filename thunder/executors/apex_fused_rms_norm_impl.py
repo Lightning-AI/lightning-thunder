@@ -24,6 +24,52 @@ def apex_fused_norms_available() -> bool:
     return APEX_FUSED_NORMS_AVAILABLE
 
 
+def apex_fused_rms_norm_forward_affine_meta(
+    input: TensorLike, normalized_shape: Sequence[int], weight: TensorLike, eps: float
+):
+    output_or_input = TensorProxy(like=input)
+    weight = TensorProxy(like=input, shape=normalized_shape)
+    unnormalized_dims = len(input.shape) - len(normalized_shape)
+    invvar = TensorProxy(like=input, shape=(math.prod(input.shape[:unnormalized_dims]),))
+    return TensorProxy(like=input), invvar
+
+
+apex_fused_rms_norm_forward_affine = apex_ex.register_operator(
+    "apex_fused_rms_norm_forward_affine",
+    meta=apex_fused_rms_norm_forward_affine_meta,
+    fn=fused_layer_norm_cuda.rms_forward_affine,
+    replaces=fused_layer_norm_cuda.rms_forward_affine,
+)
+
+
+apex_fused_rms_norm_forward_affine_mixed_dtypes = apex_ex.register_operator(
+    "apex_fused_rms_norm_forward_affine_mixed_dtypes",
+    meta=apex_fused_rms_norm_forward_affine_meta,
+    fn=fused_layer_norm_cuda.rms_forward_affine_mixed_dtypes,
+    replaces=fused_layer_norm_cuda.rms_forward_affine_mixed_dtypes,
+)
+
+
+def apex_fused_rms_norm_backward_affine_meta(
+    grad_output: TensorLike,
+    invvar: TensorLike,
+    input_or_output: TensorLike,
+    normalized_shape: Sequence[int],
+    weight_,
+    eps: float,
+    memory_efficient: bool,
+):
+    return TensorProxy(like=grad_output), TensorProxy(like=weight_)
+
+
+apex_fused_rms_norm_backward_affine = apex_ex.register_operator(
+    "apex_fused_rms_norm_backward_affine",
+    meta=apex_fused_rms_norm_backward_affine_meta,
+    fn=fused_layer_norm_cuda.rms_backward_affine,
+    replaces=fused_layer_norm_cuda.rms_backward_affine,
+)
+
+
 def meta_impl_fn(
     input: TensorLike, weight: TensorLike, normalized_shape: Sequence[int], eps: float, memory_efficient: bool
 ):
@@ -42,7 +88,7 @@ def fused_rms_norm_impl(
     return output, ctx.pop_saved_tensors(), ctx
 
 
-fused_rms_norm_fwd = apex_ex.register_operator("fused_rms_norm_fwd", meta=meta_impl_fn, fn=fused_rms_norm_impl)
+# fused_rms_norm_fwd = apex_ex.register_operator("fused_rms_norm_fwd", meta=meta_impl_fn, fn=fused_rms_norm_impl)
 
 
 def fused_rms_norm_backward_meta(saved_tensors: Sequence[torch.Tensor], ctx: Context, g: TensorLike):
@@ -56,9 +102,9 @@ def fused_rms_norm_backward_impl(saved_tensors: Sequence[torch.Tensor], ctx: Con
         return FusedRMSNormAffineMixedDtypesFunction.backward(ctx, g)[:2]
 
 
-fused_rms_norm_backward = apex_ex.register_operator(
-    "fused_rms_norm_backward", meta=fused_rms_norm_backward_meta, fn=fused_rms_norm_backward_impl
-)
+# fused_rms_norm_backward = apex_ex.register_operator(
+#    "fused_rms_norm_backward", meta=fused_rms_norm_backward_meta, fn=fused_rms_norm_backward_impl
+# )
 
 
 def fused_rms_norm_grad_rule(
@@ -107,13 +153,14 @@ if apex_fused_norms_available():
 
     # Symbol which will be used by lookaside.
     fused_rms_norm = apex_ex.register_operator(
-        "fused_rms_norm", meta=meta_fn, replaces=FusedRMSNormAffineMixedDtypesFunction.forward
+        "fused_rms_norm",
+        meta=meta_fn,  # replaces=FusedRMSNormAffineMixedDtypesFunction.forward
     )
 
-    apex_ex.register_implementation(
-        fused_rms_norm,
-        execution_transform=execution_tfms,
-        grad_transform=fused_rms_norm_grad_rule,
-        checker=_fused_rms_norm_checker,
-    )
-    apex_ex.register_implementation(fused_rms_norm_backward, fused_rms_norm_backward)
+    # apex_ex.register_implementation(
+    #    fused_rms_norm,
+    #    execution_transform=execution_tfms,
+    #    grad_transform=fused_rms_norm_grad_rule,
+    #    checker=_fused_rms_norm_checker,
+    # )
+    # apex_ex.register_implementation(fused_rms_norm_backward, fused_rms_norm_backward)

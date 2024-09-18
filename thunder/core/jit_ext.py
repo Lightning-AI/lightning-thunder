@@ -660,7 +660,13 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
             pa = proxy(a)
             si.args.append((pa.name, None))
     trace_of_augmented_fwd._siginfo = si
-    core_of_augmented_forward = trace_of_augmented_fwd.python_callable(include_decorators=False)
+    trace_of_augmented_fwd.args = unwrapped_custom_forward_args
+
+    @wraps(trace_of_augmented_fwd.python_callable())
+    def core_of_augmented_forward(*args, **kwargs):
+        return thunder.core.trace_interpreter.interpret_trace(trace_of_augmented_fwd, *args, **kwargs)
+
+    # core_of_augmented_forward = trace_of_augmented_fwd.python_callable(include_decorators=False)
 
     @wraps(core_of_augmented_forward)
     def augmented_custom_forward_rule(*args, **kwargs):
@@ -695,7 +701,13 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
             pa = proxy(a)
             bwd_si.args.append((pa.name, None))
     trace_of_backward._siginfo = bwd_si
-    bwd_trace_callable_interface = trace_of_backward.python_callable(include_decorators=False)
+    trace_of_backward.args = tuple(ctx_proxy.saved_tensors + grads)
+
+    @wraps(trace_of_backward.python_callable())
+    def bwd_trace_callable_interface(*args, **kwargs):
+        return thunder.core.trace_interpreter.interpret_trace(trace_of_backward, *args, **kwargs)
+
+    # bwd_trace_callable_interface = trace_of_backward.python_callable(include_decorators=False)
 
     bwd_si = SigInfo("backward_impl")
     for a in ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads:
@@ -709,7 +721,13 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         bwd_trace_impl.add_bound_symbol(bsym)
     bwd_trace_impl.add_bound_symbol(prims.python_return.bind(*sequencify(unwrap(custom_backward_result)), output=()))
     bwd_trace_impl._siginfo = bwd_si
-    bwd_impl_callable = bwd_trace_impl.python_callable(include_decorators=False)
+    bwd_trace_impl.args = tuple(ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads)
+
+    @wraps(bwd_trace_impl.python_callable())
+    def bwd_impl_callable(*args, **kwargs):
+        return thunder.core.trace_interpreter.interpret_trace(bwd_trace_impl, *args, **kwargs)
+
+    # bwd_impl_callable = bwd_trace_impl.python_callable(include_decorators=False)
 
     @wraps(bwd_trace_callable_interface)
     def backward_impl(*args, **kwargs):
