@@ -619,6 +619,19 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     custom_forward_result = _interpret_call(custom_forward, wrapped_ctx, *args, **kwargs)
     if custom_forward_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return custom_forward_result
+    if len(custom_fwd_bsyms) == 1:
+        from thunder.extend import OperatorExecutor
+
+        bsym = custom_fwd_bsyms[0]
+        op_executor: OperatorExecutor
+        for op_executor in filter(
+            lambda ex: isinstance(ex, OperatorExecutor),
+            get_compile_data().executors_list,
+        ):
+            if bsym.sym.name in op_executor.opmap and bsym.sym.id in op_executor.implmap:
+                wrapped_ctx = wrap_const(torch.autograd.function.FunctionCtx())
+                jit_ctx.computation_trace.scopes = orig_scopes
+                return _interpret_call(custom_forward, wrapped_ctx, *args, **kwargs)
 
     # Forward.
     unwrapped_custom_forward_args = tree_map(lambda a: unwrap(a), args)
