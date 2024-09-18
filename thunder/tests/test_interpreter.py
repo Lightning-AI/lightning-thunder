@@ -803,6 +803,7 @@ def test_stop_exception_no_leak(jit):
 def test_exception_no_leak(jit):
 
     class Identity(torch.nn.Module):
+        @staticmethod
         def raises():
             raise RuntimeError("Exc")
 
