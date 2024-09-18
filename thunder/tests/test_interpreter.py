@@ -786,13 +786,13 @@ def test_stop_exception_no_leak(jit):
             for p in self.parameters():
                 pass
             return x
-    
+
     def foo():
         model = thunder.jit(Identity())
         x = torch.randn(16, 16)
-    
+
         model(x)
-    
+
         return weakref.ref(x)
 
     weak_x = foo()
@@ -803,19 +803,22 @@ def test_stop_exception_no_leak(jit):
 def test_exception_no_leak(jit):
 
     class Identity(torch.nn.Module):
-        def forward(self, x):
+        def raises():
             raise RuntimeError("Exc")
+
+        def forward(self, x):
+            try:
+                raises()
+            except RuntimeException:
+                pass
             return x
-    
+
     def foo():
         model = thunder.jit(Identity())
         x = torch.randn(16, 16)
-    
-        try:
-            model(x)
-        except RuntimeError:
-            pass
-    
+
+        model(x)
+
         return weakref.ref(x)
 
     weak_x = foo()
@@ -3419,4 +3422,3 @@ def test_freeing_of_tensors():
         foo(i)
 
     assert l == ["run 0", "free 0", "run 1", "free 1", "run 2", "free 2"]
-
