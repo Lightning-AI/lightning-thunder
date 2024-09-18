@@ -1569,7 +1569,9 @@ class TensorProxy(Proxy, TensorProxyInterface):
                     return int(self)
 
             if attr == "numel":
-                return _Numel(self._numel)
+                if isinstance(self._numel, int):
+                    return _Numel(self._numel)
+                return reduce(operator.mul, self.shape, 1)
             return partial(method_or_value, self)
 
         return method_or_value
