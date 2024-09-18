@@ -1259,7 +1259,7 @@ def _infer_tensor_properties(
         _numel = reduce(operator.mul, _shape, 1)
     else:
         # TODO: we need cleaner handling of _numel rather than a None here.
-        _numel = lambda tp : reduce(operator.mul, tp.shape, 1)
+        _numel = lambda tp: reduce(operator.mul, tp.shape, 1)
 
     # TODO Alias rank to ndim?
     _ndim = len(_shape)
