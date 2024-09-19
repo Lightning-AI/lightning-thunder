@@ -1667,6 +1667,10 @@ def thunder_general_jit(
     else:
         epilogue_trace = None
 
+    # FIXME: unpack_inputs needs to figure out the proper order of resolving shape and tensor
+    # This is a hack to unblock my toy example
+    pro_to_comp.reverse()
+
     pro_to_comp_proxies, pro_to_epi_proxies = unpack_inputs(ctx, prologue_trace, pro_to_comp, pro_to_epi, args, kwargs)
 
     proxy_order = {id(p): i for i, p in enumerate(pro_to_comp_proxies)}
