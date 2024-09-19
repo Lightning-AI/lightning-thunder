@@ -594,6 +594,8 @@ class Benchmark_litGPT:
                 # using __wrapped__ to access the original torch.compile function did not work
                 # so we are using the lower level torch._dynamo.optimize function
                 model = torch._dynamo.optimize(backend=backend)(model)
+                self._thunder_fx = backend
+                self.is_thunder_as_torchcompile_backend = True
             else:
                 model = thunder.jit(model, executors=executors)
 
@@ -842,21 +844,34 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
 
         if benchmark.dump_thunder_traces:
             if benchmark.is_thunder_as_torchcompile_backend:
-                print(f"{len(benchmark.thunder_as_torch_compile_backend.gm_to_thunder)} ThunderModule's are created")
-                fwd_traces, bwd_traces = [], []
-                for jitted in benchmark.thunder_as_torch_compile_backend.gm_to_thunder.values():
-                    fwd_traces.append(thunder.last_traces(jitted))
-                    bwd_traces.append(thunder.last_backward_traces(jitted))
+                for ith_graph2thunderfn, graph_to_thunder_fn_map in enumerate(
+                    benchmark._thunder_fx.graph_to_thunder_fn_maps
+                ):
+                    with open(
+                        f"./{benchmark.model_name}_{benchmark.compile}_{benchmark.distributed_mode}_{benchmark.shard_mode}_{ith_graph2thunderfn}.py",
+                        "w",
+                    ) as f:
+                        for ith_key, key in enumerate(graph_to_thunder_fn_map):
+                            f.write(key.print_readable(print_output=False, include_stride=True, include_device=True))
+                            fn = graph_to_thunder_fn_map[key]
+                            f.write(str(thunder.last_traces(fn)[-1]))
+                            try:
+                                f.write(str(thunder.last_backward_traces(fn)[-1]))
+                            except Exception:
+                                warnings.warn(
+                                    f"{ith_graph2thunderfn}'s {ith_key} does not seem to have backward traces"
+                                )
+                                pass
             else:
                 fwd_traces = [thunder.last_traces(benchmark.model)]
                 bwd_traces = [thunder.last_backward_traces(benchmark.model)]
 
-            for i, f_traces in enumerate(fwd_traces, start=1):
-                print(f"##########\n#{i}-th ThunderModule\n##########")
-                print(f_traces[-1])
-            for i, b_traces in enumerate(bwd_traces, start=1):
-                print(f"##########\n#{i}-th ThunderModule\n##########")
-                print(b_traces[-1])
+                for i, f_traces in enumerate(fwd_traces, start=1):
+                    print(f"##########\n#{i}-th ThunderModule\n##########")
+                    print(f_traces[-1])
+                for i, b_traces in enumerate(bwd_traces, start=1):
+                    print(f"##########\n#{i}-th ThunderModule\n##########")
+                    print(b_traces[-1])
 
     if global_rank in [0, None]:
         if return_metrics_as_json:
