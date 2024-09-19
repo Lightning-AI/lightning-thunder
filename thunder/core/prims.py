@@ -480,7 +480,7 @@ def _check_tensor_shape_and_metadata_meta(
 ) -> None:
     # Validates types
     baseutils.check_type(t, TensorProxy)
-    baseutils.check_valid_shape(shape)
+    # we don't need to validate shape here, because we use `-1` for dynamic shape
     baseutils.check_type(device, str)
     baseutils.check_type(dtype, torch.dtype)
     baseutils.check_type(requires_grad, bool)

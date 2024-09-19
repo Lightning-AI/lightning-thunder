@@ -1258,7 +1258,8 @@ def _infer_tensor_properties(
         # Computes derived properties
         _numel = reduce(operator.mul, _shape, 1)
     else:
-        # TODO: we need cleaner handling of _numel rather than a None here.
+        # deferred computation of numel
+        # TODO: similar to how `shape` is handled, this should be CSE or lifted for efficiency
         _numel = lambda tp: reduce(operator.mul, tp.shape, 1)
 
     # TODO Alias rank to ndim?
