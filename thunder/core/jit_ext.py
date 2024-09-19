@@ -1205,46 +1205,6 @@ def propagate_constraints(ctx, inputs, intermediates, computation_trace):
                     front.append(variableify(inp))
 
 
-# lift shape computational logic into top level trace
-# Maybe: replace usage of shape NumberProxy with prim?
-def lift_shape_logic(computation_trace):
-    # import thunder.core.utils as utils
-    # consumers = utils.consumers(computation_trace)
-    # for bsym in computation_trace.bound_symbols:
-
-    # from thunder.core.transform_common import dce
-    # return dce(computation_trace)
-
-    # TODO: two things needs to be done here:
-    # 1. replace all uses of tensor shape
-    # 2. hoising all computation logic on shapes.
-
-    # for simplicity for now, we'll just inline everything.
-    idx = 0
-    bound_symbols = []
-    for sym in computation_trace.bound_symbols:
-        if len(sym.subsymbols) > 0:
-            produced = set()
-            should_lift = False
-            # TODO: numel of new tensor proxy is inside prim logic, needs to expose that as well
-            for subsym in sym.subsymbols:
-                # TODO: errr. how does lambda work with local variable?!
-                # map(lambda x: produced.add(x), subsym.flat_variableified_proxy_outs)
-                for v_out in subsym.flat_variableified_proxy_outs:
-                    produced.add(v_out)
-            for proxy_out in sym.flat_proxy_outs:
-                if isinstance(proxy_out, TensorProxy) and any(variableify(s) in produced for s in proxy_out.shape):
-                    should_lift = True
-                    break
-
-            if should_lift:
-                bound_symbols.extend(sym.subsymbols)
-                continue
-        bound_symbols.append(sym)
-
-    computation_trace.bound_symbols = bound_symbols
-
-
 def get_computation_inputs_and_intermediates(computation_trace):
     inputs_list = []
     inputs_set = set()
@@ -1677,7 +1637,6 @@ def thunder_general_jit(
             process_recorded_modifications(ctx, epilogue_trace)
             last_interpreter_log = jfn._last_interpreter_log
 
-    lift_shape_logic(computation_trace)
     pro_to_comp, computation_intermediates = get_computation_inputs_and_intermediates(computation_trace)
     epilogue_inputs, _ = get_computation_inputs_and_intermediates(epilogue_trace)
 
