@@ -824,7 +824,7 @@ def test_exception_no_leak(jit):
 
     weak_x = foo()
 
-    assert weak_x is None
+    assert weak_x() is None
 
 
 def test_walrus_operator(jit):
