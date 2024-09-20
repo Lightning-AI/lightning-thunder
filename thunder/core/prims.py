@@ -665,7 +665,7 @@ def unpack_trivial_printer(
         exception_type=AssertionError,
     )
 
-    result_str = "_" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)}"
+    result_str = "_" if bsym.output is None else codeutils.prettyprint(out_printables, with_type=True)
     s = f"# {result_str}{' (unused)' if bsym.output is None else ''}"
     return s
 
@@ -711,7 +711,7 @@ def unpack_function_obj_printer(
         exception_type=AssertionError,
     )
 
-    result_str = "_" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)}"
+    result_str = "_" if bsym.output is None else codeutils.prettyprint(out_printables, with_type=True)
     s = f"{result_str} = globals()['__function_obj']"
     return s
 
@@ -752,7 +752,7 @@ def unpack_thunder_module_printer(
         exception_type=AssertionError,
     )
 
-    result_str = "_" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)}"
+    result_str = "_" if bsym.output is None else codeutils.prettyprint(out_printables, with_type=True)
     arg_str = codeutils.prettyprint(arg_printables[0])
     s = f"{result_str} = thunder.core.module.get_thunder_module({arg_str})"
     return s
@@ -789,7 +789,7 @@ def unpack_cache_info_printer(
         exception_type=AssertionError,
     )
 
-    result_str = "_" if bsym.output is None else f"{codeutils.prettyprint(out_printables, with_type=True)}"
+    result_str = "_" if bsym.output is None else codeutils.prettyprint(out_printables, with_type=True)
     s = f"{result_str} = thunder._get_cache_info()"
     return s
 
@@ -856,7 +856,7 @@ def unpack_sequence_printer(
     utils.check_type(bsym.output, Sequence)
 
     x, l = arg_printables
-    call_str = f"{codeutils.prettyprint(x)}"
+    call_str = codeutils.prettyprint(x)
 
     # Short-circuits if there's nothing to unpack:
     if len(bsym.output) == 0:
@@ -912,7 +912,7 @@ def _unpack_tuple_printer(
     utils.check_type(bsym.output, tuple)
 
     (x,) = arg_printables
-    call_str = f"{codeutils.prettyprint(x)}"
+    call_str = codeutils.prettyprint(x)
 
     # Short-circuits if there's nothing to unpack:
     if len(bsym.output) == 0:
@@ -963,7 +963,7 @@ def _unpack_list_printer(
     utils.check_type(bsym.output, list)
 
     (x,) = arg_printables
-    call_str = f"{codeutils.prettyprint(x)}"
+    call_str = codeutils.prettyprint(x)
 
     # Short-circuits if there's nothing to unpack:
     if len(bsym.output) == 0:

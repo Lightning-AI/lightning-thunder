@@ -46,11 +46,6 @@ def module_shortname(module):
     return _modules_to_shortnames_map.get(module, module)
 
 
-def indent_string(indent):
-    tab = "  "
-    return f"{tab * indent}"
-
-
 def is_simple_printable_collection(x: Any) -> bool:
     simple_printable_collection_types = (
         tuple,

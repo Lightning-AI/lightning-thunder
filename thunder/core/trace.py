@@ -444,20 +444,22 @@ class TraceCtx:
             filename = None
             lineno = None
             for i, bsym in enumerate(self.bound_symbols):
+                source_filename = bsym.source_filename
+                source_positions = bsym.source_positions
+                source_positions_lineno = source_positions.lineno if source_positions is not None else None
                 if (
-                    bsym.source_filename is not None
-                    and bsym.source_positions is not None
-                    and bsym.source_positions.lineno is not None
-                ) and (filename != bsym.source_filename or lineno != bsym.source_positions.lineno):
+                    source_filename is not None
+                    and source_positions is not None
+                    and source_positions_lineno is not None
+                ) and (filename != source_filename or lineno != source_positions_lineno):
                     if i > 0:
                         program.append("")
-                    src_line = get_source_line(bsym.source_filename, bsym.source_positions.lineno)
-                    program.append(f"""  # {bsym.source_filename}:{bsym.source_positions.lineno}: \t{src_line}""")
-                filename = bsym.source_filename
+                    src_line = get_source_line(source_filename, source_positions_lineno)
+                    program.append(f"""  # {source_filename}:{source_positions_lineno}: \t{src_line}""")
+                filename = source_filename
                 lineno = bsym.source_positions and bsym.source_positions.lineno
 
-                lines = bsym.python(indent=1, print_depth=print_depth)
-                program.extend(lines)
+                program.extend(bsym.python(indent=1, print_depth=print_depth))
 
             python = "\n".join(program)
 
