@@ -1288,3 +1288,18 @@ def test_tag_static_memory_location():
             if isinstance(a, thunder.Proxy):
                 assert thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION not in a.tags
     assert str(thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION) == "ProxyTag.STATIC_MEMORY_LOCATION"
+
+
+def test_args_order():
+    @thunder.jit
+    def fn(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10):
+        # do not skip functionalization process
+        a9 += 1
+        # do not drop arguments by dce
+        return a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10
+
+    args = [torch.zeros(()) for _ in range(11)]
+    args[0] = args[1] = torch.zeros((2,))
+    fn(*args)
+
+    assert [a.name for a in thunder.last_traces(fn)[-1].args] == [f"a{i}" for i in range(11)]
