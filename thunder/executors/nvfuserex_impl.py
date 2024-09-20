@@ -2048,9 +2048,27 @@ def _copy__check(
     return are_supported_tensors(copy_from, copy_to)
 
 
+# prims.copy_(copy_from, copy_to)
 def copy_(
     copy_from: TensorProxy,
     copy_to: TensorProxy,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
+    nvcopy_from = getnv(copy_from, fd, lc_to_nv_map)
+    nvcopy_to = getnv(copy_to, fd, lc_to_nv_map)
+    fd.add_output(nvcopy_from, alias_input=nvcopy_to)
+    return nvcopy_to
+
+
+register_supported(PrimIDs.COPY_, copy_, _copy__check)
+
+
+# copy_to.copy_(copy_from)
+def ltorch_copy_(
+    copy_to: TensorProxy,
+    copy_from: TensorProxy,
     *,
     fd: FusionDefinition,
     lc_to_nv_map: dict,
@@ -2062,7 +2080,7 @@ def copy_(
     return nvcopy_to
 
 
-register_supported(PrimIDs.COPY_, copy_, _copy__check)
+register_supported(ltorch.copy_.id, ltorch_copy_, _copy__check)
 
 
 # Removes excessive float casts, like those that occur when autocasting

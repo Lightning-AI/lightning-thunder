@@ -1861,6 +1861,11 @@ def copysign(a, b):
     return maybe_convert_to_dtype(result, result_dtype)
 
 
+@clangop()
+def copy_(src, dst):
+    return prims.copy_(src, dst)
+
+
 @clangop(method_name="eq")
 def eq(a, b):
     return _elementwise_binary_wrapper(

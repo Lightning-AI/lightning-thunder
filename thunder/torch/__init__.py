@@ -1917,9 +1917,11 @@ def copysign_(a, b, /):
     return prims.copy_(copysign(a, b), a)
 
 
-@torchsymbol(torch.Tensor.copy_, is_method=True)  # , tags=(prims.OpTags.IN_PLACE,))
-def copy_(a, b, /):
-    return prims.copy_(b, a)
+# Currently copy_ is not treated as an inplace op
+@torchsymbol(torch.Tensor.copy_, is_method=True)
+def copy_(dst, src, /):
+    # dst.copy_(src) translates into clang.copy_(src, dst)
+    return prims.copy_(src, dst)
 
 
 # TODO Implement div
