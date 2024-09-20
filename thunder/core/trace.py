@@ -448,9 +448,7 @@ class TraceCtx:
                 source_positions = bsym.source_positions
                 source_positions_lineno = source_positions.lineno if source_positions is not None else None
                 if (
-                    source_filename is not None
-                    and source_positions is not None
-                    and source_positions_lineno is not None
+                    source_filename is not None and source_positions is not None and source_positions_lineno is not None
                 ) and (filename != source_filename or lineno != source_positions_lineno):
                     if i > 0:
                         program.append("")
