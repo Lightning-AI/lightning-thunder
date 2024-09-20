@@ -113,6 +113,19 @@ def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, *
 
     def add_to_swap_map(old, new):
         if isinstance(old, ProxyInterface):
+            if isinstance(new, ProxyInterface) and variableify(new) in env:
+                # the new isn't new, but something returned the input
+                # this means we need to map the old to the new
+                old, new = new, old
+            else:
+                # should we have a fix shapes pass? the sharding
+                # (FSDP, tensor parallel) transforms do "break" shape metadata
+                new_trace.names.remove(old.name)  # taken by the .replace proxy
+                if isinstance(new, VJPDual):
+                    old = old.replace(shape=new.primal.shape)
+                else:
+                    old = old.replace(shape=new.shape)
+
             if isinstance(new, VJPDual):
                 swap_map[variableify(new.primal)] = old
                 new.primal = old
@@ -129,18 +142,17 @@ def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, *
             return v
         return swap_map.get(variableify(v), v)
 
-    swap_map = {}
-
-    safe_map_flat(add_to_swap_map, list(trace.args), list(args))
-    safe_map_flat(add_to_swap_map, list(trace.kwargs.values()), list(kwargs.values()))
-    args, kwargs = tree_map(do_swap, (args, kwargs))
-
-    safe_map_flat(write, list(trace.args), list(args))
-    safe_map_flat(write, list(trace.kwargs.values()), list(kwargs.values()))
-
     new_trace = from_trace(trace)
-
     with tracectx(new_trace):
+        swap_map = {}
+
+        safe_map_flat(add_to_swap_map, list(trace.args), list(args))
+        safe_map_flat(add_to_swap_map, list(trace.kwargs.values()), list(kwargs.values()))
+        args, kwargs = tree_map(do_swap, (args, kwargs))
+
+        safe_map_flat(write, list(trace.args), list(args))
+        safe_map_flat(write, list(trace.kwargs.values()), list(kwargs.values()))
+
         for bsym in trace.bound_symbols:
             if bsym.sym.id in trace_interpreter_skip_list:
                 new_trace.bound_symbols.append(bsym.from_bsym())
@@ -187,7 +199,6 @@ def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, *
                     f" The original symbol has {len(bsym.output)} outputs and the dispatched function has {len(sequencify(result))} outputs."
                 ) from e
 
-    # TODO: remove excess names from trace?
     if with_env:
         return new_trace, tree_map(read, trace.output), env
 
