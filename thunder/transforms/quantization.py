@@ -500,17 +500,20 @@ class LORATransform(Transform):
                 n = lora_linear_proxies[bsym.args[1].name]
                 with tracectx(new_computation_trace):
                     new_computation_trace.push_scope(new_computation_trace.bound_symbols)
-                    lora_a_bsym = thunder.torch.transpose(additional_proxies[f"{n}.lora_a"], 1, 0)
-                    lora_b_bsym = thunder.torch.transpose(additional_proxies[f"{n}.lora_b"], 1, 0)
-                    lora_bsym_1 = thunder.torch.matmul(bsym.args[0], lora_a_bsym)
-                    lora_bsym = thunder.torch.matmul(lora_bsym_1, lora_b_bsym)
+                    lora_a_transpose = thunder.torch.transpose(additional_proxies[f"{n}.lora_a"], 1, 0)
+                    lora_b_transpose = thunder.torch.transpose(additional_proxies[f"{n}.lora_b"], 1, 0)
+                    lora_matmul1 = thunder.torch.matmul(bsym.args[0], lora_a_transpose)
+                    lora_matmul2 = thunder.torch.matmul(lora_matmul1, lora_b_transpose)
                     original_weight = thunder.torch.linear(*bsym.args[:3])
-                    lora_sum = thunder.torch.add(original_weight, lora_bsym)
-                    new_scope = new_computation_trace.pop_scope()
+                    lora_sum = thunder.torch.add(original_weight, lora_matmul2)
                     var_original_bsym_output = variableify(bsym.flat_proxy_outs[0])
-                    swap_map[var_original_bsym_output] = lora_sum
+                    new_computation_trace.bound_symbols.append(
+                        thunder.torch.add.bind(original_weight, lora_matmul2, output=var_original_bsym_output)
+                    )
+                    new_scope = new_computation_trace.pop_scope()
             else:
-                new_computation_trace.bound_symbols.append(bsym.from_bsym_swap_proxies(swap_map))
+                # new_computation_trace.bound_symbols.append(bsym.from_bsym_swap_proxies(swap_map))
+                new_computation_trace.bound_symbols.append(bsym.from_bsym())
 
         new_computation_trace.set_provenance(thunder.core.trace.TraceProvenance("lora linear pass"))
         return prologue_trace, new_computation_trace, epilogue_trace
