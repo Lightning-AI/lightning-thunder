@@ -4183,7 +4183,12 @@ def adaptive_avg_pool2d(
     return TensorProxy(like=a, shape=output_shape_)
 
 
-@torchsymbol("adaptive_avg_pool2d_backward", id="adaptive_avg_pool2d_backward", is_prim=True)
+@torchsymbol(
+    torch.ops.aten._adaptive_avg_pool2d_backward,
+    "adaptive_avg_pool2d_backward",
+    id="adaptive_avg_pool2d_backward",
+    is_prim=True,
+)
 def adaptive_avg_pool2d_backward(g: TensorProxy, a: TensorProxy, /) -> TensorProxy:
     # Followed the cuda implementation in Pytorch for adaptive_avg_pool2d_backward here
     # short cut for empty tensor
