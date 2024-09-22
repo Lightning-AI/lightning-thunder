@@ -1468,6 +1468,18 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 assert n == "kwargs"
                 pro_kwargs_proxy = output
 
+    def sort_tensor_proxy_first(v: Variable | Proxy) -> Proxy:
+        p: Proxy
+        if isinstance(v, Proxy):
+            p = v
+        else:
+            p = v.proxy
+
+        return not isinstance(p, TensorProxy)
+
+    pro_to_epi_inps = sorted(pro_to_epi_inps, key=sort_tensor_proxy_first)
+    pro_to_comp_inps = sorted(pro_to_comp_inps, key=sort_tensor_proxy_first)
+
     pro_to_epi = tuple(sorted((unpack(v) for v in pro_to_epi_inps), key=lambda x: param_ordering[id(x)][1]))
     pro_to_comp = tuple(sorted((unpack(v) for v in pro_to_comp_inps), key=lambda x: param_ordering[id(x)][1]))
 
@@ -1666,10 +1678,6 @@ def thunder_general_jit(
             prims.python_return(None)
     else:
         epilogue_trace = None
-
-    # FIXME: unpack_inputs needs to figure out the proper order of resolving shape and tensor
-    # This is a hack to unblock my toy example
-    pro_to_comp.reverse()
 
     pro_to_comp_proxies, pro_to_epi_proxies = unpack_inputs(ctx, prologue_trace, pro_to_comp, pro_to_epi, args, kwargs)
 
