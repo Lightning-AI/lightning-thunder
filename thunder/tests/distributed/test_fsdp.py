@@ -24,7 +24,6 @@ from thunder.tests.framework import instantiate, TorchExecutor
 from thunder.executors.transformer_engineex import (
     transformer_engine_ex,
     TE_AVAILABLE,
-    TE_VERSION_1_8_PLUS,
 )
 
 
@@ -1073,7 +1072,7 @@ def test_native_fsdp(executor, devices, dtype, fsdp_bucketing_strategy):
                 (FSDPType.ZERO2, False),
                 (FSDPType.ZERO3, False),
                 # Intermediate sharding is only availabe TE v1.8 onwards
-                *(((FSDPType.ZERO3, True),) if TE_VERSION_1_8_PLUS else ()),
+                (FSDPType.ZERO3, True),
             ),
         ),
         pytest.mark.skipif(not TE_AVAILABLE, reason="TransformerEngine is not installed."),
