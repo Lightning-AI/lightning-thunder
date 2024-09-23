@@ -1,7 +1,7 @@
-# NOTE: The code for CPU quantization in this file has been adapted from a not-yet-merged branch of the 
+# NOTE: The code for CPU quantization in this file has been adapted from a not-yet-merged branch of the
 # bitsandbytes library (https://github.com/bitsandbytes-foundation/bitsandbytes/tree/multi-backend-refactor).
-# Once the changes in that branch are merged into the main bitsandbytes repository, this implementation 
-# should be replaced with the official, upstream version to ensure better compatibility, performance, 
+# Once the changes in that branch are merged into the main bitsandbytes repository, this implementation
+# should be replaced with the official, upstream version to ensure better compatibility, performance,
 # and future updates.
 # Please track the progress of the bitsandbytes library and update this file when necessary.
 
@@ -46,20 +46,21 @@ FP4_QUANT_TABLE = {
     0.8333333: 3,  # 0b0011
 }
 
+
 def get_4bit_type(typename, device=None, blocksize=64):
     if device is None:
         device = "cuda"
     data = None
     if typename == "nf4":
-        """ Implements the NF4 data type.
+        """Implements the NF4 data type.
 
-            Constructs a quantization data type where each bin has equal area under a standard normal distribution N(0, 1) that
-            is normalized into the range [-1, 1].
+        Constructs a quantization data type where each bin has equal area under a standard normal distribution N(0, 1) that
+        is normalized into the range [-1, 1].
 
-            For more information read the paper: QLoRA: Efficient Finetuning of Quantized LLMs (https://arxiv.org/abs/2305.14314)
+        For more information read the paper: QLoRA: Efficient Finetuning of Quantized LLMs (https://arxiv.org/abs/2305.14314)
 
-            Implementation of the NF4 data type in bitsandbytes can be found in the `create_normal_map` function in
-            the `functional.py` file: https://github.com/TimDettmers/bitsandbytes/blob/main/bitsandbytes/functional.py#L236.
+        Implementation of the NF4 data type in bitsandbytes can be found in the `create_normal_map` function in
+        the `functional.py` file: https://github.com/TimDettmers/bitsandbytes/blob/main/bitsandbytes/functional.py#L236.
         """
         data = [
             -1.0,
@@ -126,6 +127,7 @@ def get_4bit_type(typename, device=None, blocksize=64):
     assert data.numel() == 16
 
     return data
+
 
 def quantize_4bit_impl(
     A: Tensor,

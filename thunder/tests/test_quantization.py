@@ -2,12 +2,13 @@ import torch
 import time
 from thunder.transforms.quantization import BitsAndBytesLinearQuant4bit
 
+
 def test_cpu_quantization():
     # Initialize quantization transform
     quant_transform = BitsAndBytesLinearQuant4bit()
 
     # Create a tensor on CPU
-    weight = torch.randn(3, 3, device='cpu')
+    weight = torch.randn(3, 3, device="cpu")
 
     # Quantize weight (expect only the quantized tensor, not a tuple)
     quantized_weight = quant_transform.quantize_weight(weight)
@@ -15,9 +16,12 @@ def test_cpu_quantization():
     # Check that the quantized tensor has fewer or equal elements due to compression
     original_num_elements = weight.numel()
     quantized_num_elements = quantized_weight.numel()
-    
+
     assert quantized_weight is not None, "Quantized weight is None"
-    assert quantized_num_elements <= original_num_elements, "Quantized tensor should have fewer or equal elements due to compression"
+    assert (
+        quantized_num_elements <= original_num_elements
+    ), "Quantized tensor should have fewer or equal elements due to compression"
+
 
 def test_gpu_quantization():
     if not torch.cuda.is_available():
@@ -27,7 +31,7 @@ def test_gpu_quantization():
     quant_transform = BitsAndBytesLinearQuant4bit()
 
     # Create a tensor on GPU
-    weight = torch.randn(3, 3, device='cuda')
+    weight = torch.randn(3, 3, device="cuda")
 
     # Quantize weight (expect only the quantized tensor, not a tuple)
     quantized_weight = quant_transform.quantize_weight(weight)[0]
@@ -37,16 +41,19 @@ def test_gpu_quantization():
     quantized_num_elements = quantized_weight.numel()
 
     assert quantized_weight is not None, "Quantized weight is None"
-    assert quantized_num_elements <= original_num_elements, "Quantized tensor should have fewer or equal elements due to compression"
+    assert (
+        quantized_num_elements <= original_num_elements
+    ), "Quantized tensor should have fewer or equal elements due to compression"
+
 
 # Optional: Performance tests
 def measure_time(device_type):
     quant_transform = BitsAndBytesLinearQuant4bit()
 
-    if device_type == 'cuda' and torch.cuda.is_available():
-        device = torch.device('cuda')
+    if device_type == "cuda" and torch.cuda.is_available():
+        device = torch.device("cuda")
     else:
-        device = torch.device('cpu')
+        device = torch.device("cpu")
 
     weight = torch.randn(1000, 1000, device=device)
 
@@ -55,6 +62,7 @@ def measure_time(device_type):
     end_time = time.time()
 
     print(f"Quantization time on {device_type}: {end_time - start_time:.4f} seconds")
+
 
 # Run functional tests
 print("Testing CPU quantization:")
@@ -68,6 +76,6 @@ else:
 
 # Run performance tests
 print("\nMeasuring performance:")
-measure_time('cpu')
+measure_time("cpu")
 if torch.cuda.is_available():
-    measure_time('cuda')
+    measure_time("cuda")
