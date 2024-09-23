@@ -1372,7 +1372,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                     idx = int(idx)
                 elif isinstance(idx, str):
                     idx = str(idx)
-                param_ordering[id(output)] = (output, param_ordering[id(obj)][1] + [math.inf, "[" + str(idx) + "]"])
+                param_ordering[id(output)] = (output, param_ordering[id(obj)][1] + [math.inf, "[", idx])
                 bsym = prims.unpack_getitem.bind(obj, idx, output=output)
                 prologue_trace.bound_symbols.append(bsym)
             else:

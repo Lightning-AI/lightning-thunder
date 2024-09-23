@@ -14,7 +14,7 @@ from types import ModuleType
 import thunder
 import thunder.core.codeutils as codeutils
 import thunder.core.baseutils as baseutils
-from thunder.core.baseutils import ProxyInterface, BoundSymbolInterface
+from thunder.core.baseutils import ProxyInterface, BoundSymbolInterface, TagBase
 import thunder.core.devices as devices
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.codeutils import ContextObject, get_source_line, Positions
@@ -34,6 +34,10 @@ class TraceProvenance:
 
     def __repr__(self) -> str:
         return f"# Constructed by {self.pss}"
+
+
+class TraceTag(TagBase):
+    pass
 
 
 # TODO Should traces be BoundSymbols?
@@ -114,6 +118,9 @@ class TraceCtx:
         # NOTE SigInfo is here because we only want to construct one SigInfo for the trace
         self._siginfo = None
 
+        # TraceTags
+        self._tags = set()
+
         # TODO Improve "freezing" traces
         self._complete = False
 
@@ -122,6 +129,10 @@ class TraceCtx:
         # This is a detail for enabling transformer_engine's autocast manager.
         # We only want the forward function to be called with ctx manager.
         self._include_te_fp8_autocast = False
+
+    @property
+    def tags(self):
+        return self._tags
 
     @property
     def prologue(self):
@@ -511,6 +522,7 @@ def from_trace(trace: TraceCtx) -> TraceCtx:
     t.names = trace.names
     # This is a detail for enabling transformer_engine's autocast manager.
     t._include_te_fp8_autocast = trace._include_te_fp8_autocast
+    t._tags = trace._tags.copy()
 
     t._siginfo = trace._siginfo
     return t
