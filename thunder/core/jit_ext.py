@@ -54,7 +54,6 @@ from types import (
 
 import torch
 from thunder.core.proxies import (
-    CONSTRAINT,
     DistParallelType,
     proxy,
     Proxy,
