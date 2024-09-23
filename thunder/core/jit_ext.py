@@ -1468,16 +1468,6 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 assert n == "kwargs"
                 pro_kwargs_proxy = output
 
-    # TODO: This is just a WAR to get things working. We'll revisit this when we deal with cosntraints in prologue trace.
-    #
-    # We sort variables to before `unpack` to put TensorProxy before others. Because we could have TensorProxy.shape be part of `pro_to_xxx` along with the TensorProxy. If we unpack the shape first, we'll ended up unpack the tensor with a wrong name.
-    # e.g. A shape would have a history as:
-    #   ProvenanceRecord(
-    #     i1 = INPUT_ARGS()
-    #     i2 = BINARY_SUBSCR(i1, 0)    # This is the TensorProxy
-    #     i3 = LOAD_ATTR(i2, 'shape')
-    #     i4 = BINARY_SUBSCR(i3, 1)
-    #   )
     def sort_tensor_proxy_first(v: Variable | Proxy) -> Proxy:
         p: Proxy
         if isinstance(v, Proxy):
@@ -1487,6 +1477,19 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
 
         return not isinstance(p, TensorProxy)
 
+    # TODO: This is just a WAR to get things working. We'll revisit this when
+    # we deal with cosntraints in prologue trace.
+    #
+    # We sort variables to before `unpack` to put TensorProxy before others.
+    # Because we could have TensorProxy.shape be part of `pro_to_xxx` along with
+    # the TensorProxy. If we unpack the shape first, we'll ended up unpack the
+    # tensor with a wrong name. e.g. A shape would have a history as:
+    #   ProvenanceRecord(
+    #     i1 = INPUT_ARGS()
+    #     i2 = BINARY_SUBSCR(i1, 0)    # This is the TensorProxy
+    #     i3 = LOAD_ATTR(i2, 'shape')
+    #     i4 = BINARY_SUBSCR(i3, 1)
+    #   )
     pro_to_epi_inps = sorted(pro_to_epi_inps, key=sort_tensor_proxy_first)
     pro_to_comp_inps = sorted(pro_to_comp_inps, key=sort_tensor_proxy_first)
 
