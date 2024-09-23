@@ -14,6 +14,7 @@ from .utils import (
     add_trace_output,
 )
 
+from .quantization_cpu import quantize_4bit_impl
 
 bitsandbytes_executor = None
 
@@ -91,10 +92,20 @@ class BitsAndBytesLinearQuant4bit(Transform):
         get_bitsandbytes_executor()
 
     def quantize_weight(self, w):
-        # todo: revisit staying on CPU when bnb supports it
         if w.device.type == "meta":
-            w_work = torch.zeros_like(w, device="cuda")
-        elif w.device.type != "cuda":
+            num_elements = w.numel()
+            return torch.empty((num_elements, 1), device="meta", dtype=torch.uint8)
+        
+        # CPU quantization without returning the quantization state.
+        # Currently, the quantization state is omitted for CPU as the primary goal is to optimize 
+        # for inference. If the use case involves fine-tuning or dequantizing weights back to 
+        # their original precision, it may be necessary to return the state. This can be revisited
+        # if future use cases require more flexibility, such as further model training or analysis 
+        # of quantization effects on the CPU.
+        if w.device.type == "cpu":
+            return quantize_4bit_impl(w, quant_type="nf4")[0]
+        
+        if w.device.type != "cuda":
             with torch.no_grad():
                 w_work = w.to("cuda")
         else:
