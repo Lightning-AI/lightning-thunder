@@ -1572,7 +1572,7 @@ def process_recorded_modifications(ctx, epilogue_trace):
 
 
 def bind_inputs(name, trace, input_vars, input_proxies):
-
+    # restore `scopes` so the unpack below would be appended to the trace
     trace.scopes = [trace.bound_symbols]
     # Unpacks inputs into the computation trace
     # TODO This currently does the unpacks at the end of the trace, then moves them to the beginning, there's
@@ -1680,6 +1680,7 @@ def thunder_general_jit(
     pro_to_epi = tuple(pro_to_epi)
 
     if epilogue_trace.bound_symbols:
+        # restore `scopes` so the return would be appended to the trace
         computation_trace.scopes = [computation_trace.bound_symbols]
         with tracectx(computation_trace):
             last = computation_trace.bound_symbols.pop(-1)
