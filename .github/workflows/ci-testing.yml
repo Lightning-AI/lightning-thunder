@@ -93,7 +93,7 @@ jobs:
               --ignore=thunder/tests/distributed \
               -v --datefmt="%Y%m%d-%H:%M:%S.%f" \
               --random-order-seed=$GITHUB_RUN_ID \
-              -n 2 --durations=250
+              -n 4 --durations=250
 
       - name: Testing Distributed
         # run all found tests in given past as standalone

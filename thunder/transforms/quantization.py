@@ -217,6 +217,7 @@ class BitsAndBytesLinearQuant4bit(Transform):
                         dtype=thunder.dtypes.to_dtype(qs["absmax.dtype"]),
                         device=thunder.devices.to_device(device),
                         requires_grad=False,
+                        tags={thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION},
                     )
                     proxy_code = thunder.TensorProxy(
                         name=f"{get_param.output.name}_code",
@@ -224,6 +225,7 @@ class BitsAndBytesLinearQuant4bit(Transform):
                         dtype=thunder.dtypes.to_dtype(qs["code.dtype"]),
                         device=thunder.devices.to_device(device),
                         requires_grad=False,
+                        tags={thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION},
                     )
                     # get_param.sym = unpack_buffer/parameter as needed
                     new_bsyms.append(get_param.sym.bind(get_param.args[0], n_absmax, output=proxy_absmax))
@@ -232,6 +234,17 @@ class BitsAndBytesLinearQuant4bit(Transform):
                     add_trace_output(prologue_trace, proxy_code, subindex=0)
                     new_compute_inputs.append(proxy_absmax)
                     new_compute_inputs.append(proxy_code)
+                    # add checks
+                    new_bsyms.append(
+                        prims.check_tensor_shape_and_metadata.bind(
+                            proxy_absmax, qs["absmax.shape"], device, qs["absmax.dtype"], False, output=None
+                        )
+                    )
+                    new_bsyms.append(
+                        prims.check_tensor_shape_and_metadata.bind(
+                            proxy_code, qs["code.shape"], device, qs["code.dtype"], False, output=None
+                        )
+                    )
                     # this is not good, because we will have several traces...
                     additional_proxies[n_absmax] = proxy_absmax
                     additional_proxies[n_code] = proxy_code
@@ -287,10 +300,6 @@ class BitsAndBytesLinearQuant4bit(Transform):
                 )
 
                 new_computation_trace.bound_symbols.append(mm_bsym)
-                # we need the postprocess to set the internal state (call_ctx) because we do not bind / execute the new symbol to
-                # preserve the "meta"-info like source location, header, etc.
-                # TODO: switch to a better solution when it is there
-                bnb_matmul_nf4._bind_postprocess(mm_bsym)
             else:
                 new_computation_trace.bound_symbols.append(bsym.from_bsym())
 

@@ -247,11 +247,10 @@ class FusionExecutor(Executor):
             return tuple(outputs)
 
         def _bind_postprocess(bsym: BoundSymbol) -> None:
-            bsym.subsymbols = tuple(bsyms)
             bsym._call_ctx = {name: fn}
 
         sym = Symbol(name=name, meta=_meta, is_fusion=True, _bind_postprocess=_bind_postprocess, executor=self)
-        return sym.bind(*inputs, output=outputs)
+        return sym.bind(*inputs, output=outputs, subsymbols=tuple(bsyms))
 
 
 class OperatorExecutor(Executor):

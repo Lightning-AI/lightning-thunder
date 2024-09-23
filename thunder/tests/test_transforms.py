@@ -87,7 +87,6 @@ def test_materialization():
     # the kvcache is not in the state dict, so it must be cuda to start
     m.set_kv_cache(1, device="cuda", dtype=torch.bfloat16)
     m.max_seq_length = 20
-    m.cos, m.sin = ref_m.cos.clone(), ref_m.sin.clone()
 
     for p in m.parameters():
         p._thunder_device = torch.device("cuda")

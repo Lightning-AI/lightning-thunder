@@ -5780,6 +5780,7 @@ def _store_attr_handler(
     res = _interpret_call(impl, tos, name, tos1)
     if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
+    # otherwise, the return value is discarded
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-STORE_DEREF
@@ -5906,7 +5907,10 @@ def _store_slice_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
     def impl(container, start, end, values):
         return container.__setitem__(slice(start, end), values)
 
-    return _interpret_call_with_unwrapping(impl, container, start, end, values)
+    res = _interpret_call_with_unwrapping(impl, container, start, end, values)
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return res
+    # otherwise, the return value is discarded
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-STORE_SUBSCR
@@ -5919,7 +5923,10 @@ def _store_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **k
     def impl(tos, tos1, tos2):
         return tos1.__setitem__(tos, tos2)
 
-    return _interpret_call_with_unwrapping(impl, tos, tos1, tos2)
+    res = _interpret_call_with_unwrapping(impl, tos, tos1, tos2)
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return res
+    # otherwise, the return value is discarded
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNARY_INVERT

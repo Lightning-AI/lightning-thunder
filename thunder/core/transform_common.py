@@ -1,11 +1,10 @@
 from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
-from abc import ABC, abstractmethod
-from collections import defaultdict
+from abc import ABC
 from collections.abc import Sequence
-from collections import defaultdict
-from itertools import filterfalse, chain
+import dataclasses
+from itertools import filterfalse
 from functools import partial
 
 import thunder
@@ -15,17 +14,36 @@ from thunder.core.proxies import Proxy, variableify, Variable, TensorProxy, unva
 from thunder.core.pytree import tree_flatten, tree_iter, tree_map, tree_unflatten
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, has_tags
 from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace, tracectx
-from thunder.core.utils import ProxyDict, producers, check, consumers
+from thunder.core.utils import ProxyDict, producers, check
 
 if TYPE_CHECKING:
-    from thunder.core.proxies import ProxyInterface
-    from thunder.core.symbol import Symbol, VariableInterface
+    from typing import Any
+    from thunder.core.module import ThunderModule
 
 
 #
 # Common optimization and transform passes
 #
 # NOTE This file avoids transforms depending on passes, since passes depend on transforms
+@dataclasses.dataclass  # (frozen=True)
+class VJPDual:
+    """A pair of primal and saved information for backward (residuals).
+
+    Args:
+        primal (Union[Proxy, Number]): Primal value, i.e., the value being differentiated.
+        residuals (Tuple[Proxy, ...]): Residuals, i.e., the values that are
+            saved for the backward.
+
+    Yields:
+        Tuple[Variable, Tuple[Variable, ...], Callable]: Primal and residuals
+    """
+
+    primal: Proxy | Number
+    residuals: tuple[Proxy, ...]
+
+    def __iter__(self):
+        yield self.primal
+        yield self.residuals
 
 
 # Modifies an existing BoundSymbol, removing its "no-op" subsymbols (recursively) which perform no operations
@@ -346,13 +364,16 @@ class Transform(ABC):
         # default to noop
         return prologue_trace, computation_trace, epilogue_trace
 
-    def transform_module(self, model: thunder.ThunderModule):
+    def transform_module(self, model: ThunderModule) -> None:
         """Transforms the ThunderModule. This is executed once on application of the transform"""
         pass
 
     def transform_state_dict_for_submodule(
-        self, model: thunder.ThunderModule, submodule_name: str, state_dict: dict
-    ) -> dict:
+        self,
+        model: ThunderModule,
+        submodule_name: str,
+        state_dict: dict[str, Any],
+    ) -> dict[str, Any]:
         """
         Implement this to transform the state dict (mostly parameters and buffers) of a module, e.g. when loading
         from a state dict of the original model.
@@ -369,6 +390,14 @@ class Transform(ABC):
         Note that this transform will also be applied to the backward trace if the the autograd transform was enabled.
         """
         return computation_trace
+
+    def reverse_transform_state_dict_for_submodule(
+        self,
+        model: ThunderModule,
+        submodule_name: str,
+        state_dict: dict[str, Any],
+    ) -> dict[str, Any]:
+        return state_dict
 
 
 def order_proxies(bsyms: Sequence[BoundSymbol]) -> dict[str, int]:
@@ -425,3 +454,27 @@ def canonicalize_proxies(bsyms: Sequence[BoundSymbol]) -> Sequence[BoundSymbol]:
         process_bound_symbols(bsyms, output)
 
     return output
+
+
+def wrap_return_value_together_with_argments(trace: Trace) -> Trace:
+    last = trace.bound_symbols[-1]
+    assert last.sym.id == prims.PrimIDs.RETURN
+    flat_args, _ = tree_flatten((trace.args, trace.kwargs))
+    new_return_value = {"output": last.args[0], "flat_args": flat_args}
+    new_return_bsym = last.from_bsym(args=(new_return_value,))
+
+    new_trace = from_trace(trace)
+    new_trace.bound_symbols = trace.bound_symbols[:-1] + [new_return_bsym]
+    new_trace.set_provenance(TraceProvenance("Return arguments to track copies onto them"))
+    return new_trace
+
+
+def unwrap_return_value(trace: Trace) -> Trace:
+    last = trace.bound_symbols[-1]
+    assert last.sym.id == prims.PrimIDs.RETURN
+    new_return_bsym = last.from_bsym(args=(last.args[0]["output"],))
+
+    new_trace = from_trace(trace)
+    new_trace.bound_symbols = trace.bound_symbols[:-1] + [new_return_bsym]
+    new_trace.set_provenance(TraceProvenance("Unwrap the actual return value"))
+    return new_trace

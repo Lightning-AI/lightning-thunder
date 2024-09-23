@@ -125,21 +125,21 @@ def test_inplace_copy_sanity_check(executor, device, dtype):
 
     def func1(x, y):
         z = x * y
-        thunder.core.prims.copy_(z, x)
-        thunder.core.prims.copy_(y, x)
-        return x
+        o1 = thunder.core.prims.copy_(z, x)
+        o2 = thunder.core.prims.copy_(y, x)
+        return x, o1, o2
 
     def func2(x, y):
         z = x * y
-        thunder.core.prims.copy_(z, x)
-        thunder.core.prims.copy_(x, y)
-        return y
+        o1 = thunder.core.prims.copy_(z, x)
+        o2 = thunder.core.prims.copy_(x, y)
+        return y, o1, o2
 
     def func3(x, y):
         z = x * y
-        o = thunder.core.prims.copy_(z, x)
-        thunder.core.prims.copy_(o, y)
-        return y
+        o1 = thunder.core.prims.copy_(z, x)
+        o2 = thunder.core.prims.copy_(o1, y)
+        return y, o2
 
     for foo in (func0, func1, func2, func3):
         traced_foo = executor.make_callable(foo)
@@ -152,3 +152,29 @@ def test_inplace_copy_sanity_check(executor, device, dtype):
             match=r"If you are sure you don't want to use this check, it can be disabled by setting `disable_inplace_copy_check=True` in `thunder.jit`.$",
         ):
             traced_foo(a, b)
+
+
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
+def test_inplace_copy_dst_copy_returned_issue_1109(executor, device, dtype):
+    def func(T0):
+        T1 = torch.sin(T0)
+        T0.copy_(T1)  # destination.copy_(source)
+        T2 = torch.cos(T1)
+        T0.copy_(T2)
+        # T1 & T2 should be returned as separate buffer, instead of sharing
+        # storage with T0
+        return T1, T2
+
+    tdtype = ttorch.to_torch_dtype(dtype)
+    # This pattern is unsafe in general. Disabling sanity check to silence
+    # exception for testing
+    traced_foo = executor.make_callable(func, disable_inplace_copy_check=True)
+    a = make_tensor((4, 4), device=device, dtype=tdtype)
+    a_ref = a.clone()
+
+    o_thunder = traced_foo(a)
+    o_eager = func(a_ref)
+
+    assert_close(a_ref, a)
+    for o, o_ref in zip(o_thunder, o_eager):
+        assert_close(o, o_ref)

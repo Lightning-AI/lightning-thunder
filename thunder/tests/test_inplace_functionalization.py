@@ -177,7 +177,6 @@ def test_parse_resnet18(executor, device, dtype, turn_off_tf32_and_set_seed, tra
         out1 = ref_model(x)
         out2 = jitted(x)
         torch.testing.assert_close(out1, out2)
-        # Backward fails with nvfuserExecutor, RuntimeError: Unsupported iterable object type for define_vector! Index:0
         # Numerical accuracy error when TorchExecutor, `train=True` and dtype is fp32.
         # with RTX6000 Ada and CUDA 12.3, I see somewhat huge error:
         # E   AssertionError: Tensor-likes are not close!
@@ -186,7 +185,7 @@ def test_parse_resnet18(executor, device, dtype, turn_off_tf32_and_set_seed, tra
         # E   Greatest absolute difference: 0.07035164535045624 at index (4, 1, 0, 3) (up to 1e-05 allowed)
         # E   Greatest relative difference: 343.7076110839844 at index (5, 0, 5, 4) (up to 1.3e-06 allowed)
         # E   The failure occurred for item [0]
-        if train and executor == TorchExecutor and dtype == thunder.float64:
+        if train and dtype == thunder.float64:
             torch_grads = torch.autograd.grad(out1, ref_model.parameters(), torch.ones_like(out1))
             thunder_grads = torch.autograd.grad(out2, jitted.parameters(), torch.ones_like(out2))
             torch.testing.assert_close(torch_grads, thunder_grads)
@@ -359,11 +358,30 @@ def test_multiple_inplace_to_args(executor, device, _):
     torch.testing.assert_close(actual, expected)
     torch.testing.assert_close(x, x_ref)
 
+    def f(a):
+        return a.exp_().sin_()
+
+    x = make_tensor((2, 2), device=device, dtype=torch.float32)
+    x_ref = x.clone().detach()
+    expected = f(x_ref)
+    jitted = executor.make_callable(f)
+    actual = jitted(x)
+    torch.testing.assert_close(actual, expected)
+    assert x.data_ptr() == actual.data_ptr()
+
 
 @instantiate(
     dtypes=NOTHING,
 )
 def test_multiple_views_before_inplace_to_base(executor, device, _):
+    from thunder.tests.framework import nvFuserTestExecutor
+
+    if type(executor) is nvFuserTestExecutor:
+        pytest.skip(
+            "nvFuser doesn't enforce the order between `z=x.view(-1)` and "
+            "`x.add_(1)`, so the behavior is undefined due to this "
+            "race condition. See https://github.com/NVIDIA/Fuser/issues/2839."
+        )
 
     # ref: https://github.com/pytorch/pytorch/blob/29e2e2a/test/test_functionalization.py#L159-L169
     def f(x):
@@ -580,9 +598,9 @@ def test_inplace_copy_on_fusion_inputs_issue_791(executor, device, _):
     jitted = executor.make_callable(f)
     o = jitted(a, b, idx, src)
 
-    assert a.allclose(a_)
-    assert b.allclose(b_)
-    assert o.allclose(o_)
+    torch.testing.assert_close(a, a_)
+    torch.testing.assert_close(b, b_)
+    torch.testing.assert_close(o, o_)
 
 
 @instantiate(
@@ -687,9 +705,25 @@ def test_reshape_flatten_error_out(executor, device, _):
         y.add_(1)
         return y
 
-    for fn in (f, g):
+    def h(x):
+        tmp = torch.randn((6, 4))
+        y = x.reshape_as(tmp)
+        y.add_(1)
+        return y
+
+    for fn in (f, g, h):
         x = make_tensor((3, 2, 4), device=device, dtype=torch.float32)
         jitted = executor.make_callable(fn)
 
         with pytest.raises(NotImplementedError, match="in-place op of"):
             jitted(x)
+
+    def f_with_clone(a):
+        y = x.reshape(6, 4)
+        z = y.clone()
+        z = z + 1
+        return z
+
+    x = make_tensor((3, 2, 4), device=device, dtype=torch.float32)
+    jitted = executor.make_callable(f_with_clone)
+    jitted(x)
