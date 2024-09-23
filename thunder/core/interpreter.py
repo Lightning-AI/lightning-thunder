@@ -1175,8 +1175,6 @@ class InterpreterFrame:
             return self.code._varname_from_oparg(idx)  # type: ignore
 
     def get_or_make_python_frame(self) -> FrameType:
-        def fn():
-            pass
 
         assert self.positions is not None
         lineno = self.positions.lineno
@@ -1184,31 +1182,48 @@ class InterpreterFrame:
             lineno = self.code.co_firstlineno
 
         rel_lineno = lineno - self.code.co_firstlineno + 1
+        filename = self.code.co_filename
+        firstlineno = self.code.co_firstlineno
+        name = self.code.co_name
+        qualname = self.qualname
 
-        # we prefer this code object over fn.__code__ to get the first lineno and the current lineno right,
-        # which the following does by inserting so many empty lines that relative to the start line
-        # the exception is raised at the right line
-        code = compile((rel_lineno - 1) * "\n" + "raise ValueError()", self.code.co_filename, "exec")
+        def get_frame(l, rel_lineno, filename, firstlineno, name, qualname):
+            def fn():
+                pass
 
-        replacements = dict(
-            co_filename=self.code.co_filename, co_firstlineno=self.code.co_firstlineno, co_name=self.code.co_name
-        )
+            # we prefer this code object over fn.__code__ to get the first lineno and the current lineno right,
+            # which the following does by inserting so many empty lines that relative to the start line
+            # the exception is raised at the right line
+            code = compile((rel_lineno - 1) * "\n" + "raise ValueError()", filename, "exec")
 
-        if hasattr(fn.__code__, "co_qualname"):
-            replacements["co_qualname"] = self.qualname
+            replacements = dict(co_filename=filename, co_firstlineno=firstlineno, co_name=name)
 
-        fn.__code__ = code.replace(**replacements)  # type: ignore (The replaced fields are the correct types)
+            if hasattr(fn.__code__, "co_qualname"):
+                replacements["co_qualname"] = qualname
 
-        try:
-            fn()
-            assert False, "Unreachable."
-        except ValueError as e:
-            tb = e.__traceback__
+            fn.__code__ = code.replace(**replacements)  # type: ignore (The replaced fields are the correct types)
 
-        assert tb is not None
-        while tb.tb_next is not None:
-            tb = tb.tb_next
-        return tb.tb_frame
+            try:
+                fn()
+                assert False, "Unreachable."
+            except ValueError as e:
+                tb = e.__traceback__
+
+            assert tb is not None
+            while tb.tb_next is not None:
+                tb = tb.tb_next
+            l.append(tb.tb_frame)
+
+        # we run the getting of the frame in a separate thread because
+        # we want to avoid having f_back pointing to the function
+        # handling the error
+        import _thread
+
+        result_container = []
+        _thread.start_new_thread(get_frame, (result_container, rel_lineno, filename, firstlineno, name, qualname))
+        while not result_container:
+            pass
+        return result_container[0]
 
 
 #
@@ -4246,6 +4261,7 @@ def _for_iter_handler(
     if r is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         ctx = get_interpreterruntimectx()
         if isinstance(ctx.curexc, StopIteration):
+            ctx.curexc = None
             if sys.version_info >= (3, 12):
                 # 3.12 uses jumps relative to the next instruction offset and does not pop here
                 #      instead it pushes a fake value?!
@@ -6779,8 +6795,9 @@ def _setup_frame_and_run_python_function(
     except Exception as e:
         # We need to cheat a bit to get a Python frame here...
         python_frame = frame.get_or_make_python_frame()
-        tb = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
-        raise e.with_traceback(tb)
+        e.__traceback__ = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
+        del e  # avoid memory leak
+        raise
     return res
 
 
