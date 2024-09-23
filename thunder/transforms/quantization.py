@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 
 import thunder
-from thunder.core.proxies import TensorProxy, variableify
+from thunder.core.proxies import TensorProxy
 from thunder.core.transform_common import Transform
 from thunder.core.trace import TraceCtx
 from thunder.core.pytree import tree_map
@@ -493,8 +493,6 @@ class LORATransform(Transform):
             new_computation_trace.bound_symbols.append(bsym.from_bsym())
         new_computation_trace.bound_symbols += new_bindings
 
-        swap_map = dict()
-
         for bsym in bound_symbols[idx:]:
             if bsym.sym == thunder.torch.linear and bsym.args[1].name in lora_linear_proxies:
                 n = lora_linear_proxies[bsym.args[1].name]
@@ -505,15 +503,12 @@ class LORATransform(Transform):
                     lora_matmul1 = thunder.torch.matmul(bsym.args[0], lora_a_transpose)
                     lora_matmul2 = thunder.torch.matmul(lora_matmul1, lora_b_transpose)
                     original_weight = thunder.torch.linear(*bsym.args[:3])
-                    lora_sum = thunder.torch.add(original_weight, lora_matmul2)
-                    var_original_bsym_output = variableify(bsym.flat_proxy_outs[0])
+                    original_proxy_output = bsym.flat_proxy_outs[0]
                     new_computation_trace.bound_symbols.append(
-                        thunder.torch.add.bind(original_weight, lora_matmul2, output=var_original_bsym_output)
+                        prims.add.bind(original_weight, lora_matmul2, output=original_proxy_output)
                     )
                     new_scope = new_computation_trace.pop_scope()
             else:
-                # new_computation_trace.bound_symbols.append(bsym.from_bsym_swap_proxies(swap_map))
                 new_computation_trace.bound_symbols.append(bsym.from_bsym())
-
         new_computation_trace.set_provenance(thunder.core.trace.TraceProvenance("lora linear pass"))
         return prologue_trace, new_computation_trace, epilogue_trace
