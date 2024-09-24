@@ -1466,13 +1466,12 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 assert n == "kwargs"
                 pro_kwargs_proxy = output
 
-    def sort_tensor_proxy_first(v: Variable | Proxy) -> Proxy:
+    def is_variableified_tensorproxy(v: Variable | Proxy) -> Proxy:
         p: Proxy
         if isinstance(v, Proxy):
             p = v
         else:
             p = v.proxy
-
         return not isinstance(p, TensorProxy)
 
     # TODO: This is just a WAR to get things working. We'll revisit this when
@@ -1488,8 +1487,8 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
     #     i3 = LOAD_ATTR(i2, 'shape')
     #     i4 = BINARY_SUBSCR(i3, 1)
     #   )
-    pro_to_epi_inps = sorted(pro_to_epi_inps, key=sort_tensor_proxy_first)
-    pro_to_comp_inps = sorted(pro_to_comp_inps, key=sort_tensor_proxy_first)
+    pro_to_epi_inps = sorted(pro_to_epi_inps, key=is_variableified_tensorproxy)
+    pro_to_comp_inps = sorted(pro_to_comp_inps, key=is_variableified_tensorproxy)
 
     pro_to_epi = tuple(sorted((unpack(v) for v in pro_to_epi_inps), key=lambda x: param_ordering[id(x)][1]))
     pro_to_comp = tuple(sorted((unpack(v) for v in pro_to_comp_inps), key=lambda x: param_ordering[id(x)][1]))
