@@ -1500,6 +1500,12 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             for a in args:
                 if isinstance(a, Proxy):
                     unpack(a)
+            # unpacking Proxy in TensorProxy.shape which is used in `check_tensor_shape_and_metadata`
+            if prim == clang.check_tensor_shape_and_metadata:
+                for s in a.shape:
+                    if isinstance(s, Proxy):
+                        unpack(s)
+
             prim(*args)
 
         cache_info = thunder._get_cache_info()

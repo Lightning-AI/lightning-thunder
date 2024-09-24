@@ -72,7 +72,7 @@ def check_tensor_shape_and_metadata(t: TensorProxy, /) -> None:
         t,
         # replace Proxy entries with `-1`s as wild card, as we any value is
         # allowed for proxy entries
-        tuple(-1 if isinstance(s, Proxy) else s for s in t.shape),
+        tuple(t.shape),
         t.device.device_str(),
         dtypes.to_torch_dtype(t.dtype),
         t.requires_grad,
