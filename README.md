@@ -67,7 +67,7 @@ Thunder also supports distributed strategies such as DDP and FSDP for training m
 
 ## Get started
 
-The easiest way to get started with Thunder, requiring no extra installations or setups, is by using our [Zero to Thunder Tutorial Studio](https://lightning.ai/lightning-ai/studios/zero-to-thunder-tutorial).
+The easiest way to get started with Thunder, requiring no extra installations or setups, is by using our [Zero to Thunder Tutorial Studio](https://lightning.ai/lightning-ai/studios/zero-to-thunder).
 
 &#160;
 

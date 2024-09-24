@@ -779,6 +779,54 @@ def test_cross_function_exceptions(jit):
     assert jit(cross_function_exceptions)() == True
 
 
+def test_stop_exception_no_leak(jit):
+
+    class Identity(torch.nn.Module):
+        def forward(self, x):
+            for p in self.parameters():
+                pass
+            return x
+
+    def foo():
+        model = thunder.jit(Identity())
+        x = torch.randn(16, 16)
+
+        model(x)
+
+        return weakref.ref(x)
+
+    weak_x = foo()
+
+    assert weak_x() is None
+
+
+def test_exception_no_leak(jit):
+
+    class Identity(torch.nn.Module):
+        @staticmethod
+        def raises():
+            raise RuntimeError("Exc")
+
+        def forward(self, x):
+            try:
+                self.raises()
+            except RuntimeError:
+                pass
+            return x
+
+    def foo():
+        model = thunder.jit(Identity())
+        x = torch.randn(16, 16)
+
+        model(x)
+
+        return weakref.ref(x)
+
+    weak_x = foo()
+
+    assert weak_x() is None
+
+
 def test_walrus_operator(jit):
     def foo(a, b):
         c = (a := b)

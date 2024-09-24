@@ -19,7 +19,11 @@ import thunder
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
 from thunder.core.devices import cpu, Device
-from thunder.core.trace_interpreter import interpret_trace as eval_trace, trace_interpreter_skip_list
+from thunder.core.trace_interpreter import (
+    interpret_trace as eval_trace,
+    interpret_trace_to_trace,
+    trace_interpreter_skip_list,
+)
 from thunder.core.proxies import (
     CollectionProxy,
     NumberProxy,
@@ -36,7 +40,15 @@ from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten, tree_fla
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol
 from thunder.core.trace import TraceCtx as Trace
 from thunder.core.trace import VariableInterface as Variable
-from thunder.core.trace import detached_trace, set_tracectx, reset_tracectx, from_trace, TraceProvenance, tracectx
+from thunder.core.trace import (
+    detached_trace,
+    tracectx,
+    set_tracectx,
+    reset_tracectx,
+    from_trace,
+    TraceProvenance,
+    TraceTag,
+)
 from thunder.core.utils import (
     check,
     flatten_func,
@@ -60,7 +72,13 @@ from thunder.clang import (
     reciprocal,
     convolution,
 )
-from thunder.core.transform_common import dce, Transform, wrap_return_value_together_with_argments, unwrap_return_value
+from thunder.core.transform_common import (
+    dce,
+    Transform,
+    wrap_return_value_together_with_argments,
+    unwrap_return_value,
+    VJPDual,
+)
 from thunder.core.vjp_utils import make_aug_forward_and_backward, get_saved_for_backward_tensors
 from thunder.extend import Executor
 import thunder.torch as ltorch
@@ -69,6 +87,9 @@ import torch
 
 # from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
 import numpy as np
+
+
+TraceTag.register_tag("AUGMENTED_FORWARD")
 
 
 # TODO This should be a partial of thunder.trace, but that would cause a circular import
@@ -1461,11 +1482,6 @@ def grad(
     return add_transform(cfn, transform=_grad_transform, disable_torch_autograd_support=True)
 
 
-class Transforms(Enum):
-    VmapOp = auto()
-    VjpOp = auto()
-
-
 @lru_cache(maxsize=None)
 def symbol_to_eval(bound_symbol):
     """Map a BoundSymbol to a function that evaluates it.
@@ -1489,27 +1505,6 @@ def unwrap_one_level_of_subsymbols(trace):
 
 # VJP transform
 # =============
-@dataclass(frozen=True)
-class VJPDual:
-    """A pair of primal and saved information for backward (residuals).
-
-    Args:
-        primal (Union[Proxy, Number]): Primal value, i.e., the value being differentiated.
-        residuals (Tuple[Proxy, ...]): Residuals, i.e., the values that are
-            saved for the backward.
-
-    Yields:
-        Tuple[Variable, Tuple[Variable, ...], Callable]: Primal and residuals
-    """
-
-    primal: Proxy | Number
-    residuals: tuple[Proxy, ...]
-
-    def __iter__(self):
-        yield self.primal
-        yield self.residuals
-
-
 class NoPullback:
     """A dummy pullback function that returns None or raises an error."""
 
@@ -2509,7 +2504,6 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
     def _vjp_impl(*args, **kwargs):
         primals, kwargs = tree_map(lambda x: x.primal if isinstance(x, VJPDual) else x, (args, kwargs))
         out_primal, out_residuals = vjp_impl(*primals, **kwargs)
-
         # We are saving the residuals and pullback only in the first output
         # backward_pass then retrieves the residuals and pullback from the first output
         if isinstance(out_primal, Sequence):
@@ -2577,6 +2571,34 @@ def augmented_forward_pass(*args, trace: Trace, **kwargs):
     )
     result = tree_map(lambda x: x.primal if isinstance(x, VJPDual) else x, result)
     return result, env
+
+
+def augmented_forward_pass_trace(trace: Trace, /, *args, **kwargs):
+    """Augmented forward pass for the VJP transform.
+
+    The augmented forward pass is a forward pass that returns the residuals
+    of the forward pass.
+    These residuals are used in the backward pass to compute the VJP and they
+    are recorded in the environment dictionary for each variable.
+
+    Args:
+        args (Tuple[Variable]): Arguments to the function.
+        trace (Trace): Trace of the function.
+        kwargs (Dict[str, Variable]): Keyword arguments to the function.
+
+    Returns:
+        Tuple[Any, Dict[str, Any]]: Tuple of the primal outputs and the environment.
+    """
+    args, kwargs = tree_map(lambda x: VJPDual(x, tuple()), (args, kwargs))
+    trace, result, env = interpret_trace_to_trace(
+        trace,
+        *args,
+        **kwargs,
+        with_env=True,
+        symbol_mapper=vjp_symbol_mapper,
+    )
+    result = tree_map(lambda x: x.primal if isinstance(x, VJPDual) else x, result)
+    return trace, result, env
 
 
 # TODO: Instead of using the environment dictionary, we could use the trace
@@ -2749,28 +2771,18 @@ def backward_pass(forward_env, trace, init_cotangents):
     return gargs + (gkwargs,) if len(gkwargs) != 0 else gargs
 
 
-def vjp_call_metafunc(detached: bool, primals, cotangents, trace: Trace, **kwargs):
+def vjp_call(primals, cotangents, trace: Trace, **kwargs):
     # Assuming primals is flat
 
     if not isinstance(primals, Sequence):
         primals = (primals,)
 
-    ctx = detached_trace() if detached else nullcontext()
-    with ctx:
-        result, env = augmented_forward_pass(*primals, trace=trace, **kwargs)
-        check(
-            len(result) == len(cotangents) if isinstance(result, Sequence) else True,
-            lambda: f"Expected cotangents to be a sequence of length {len(result)}, got a sequence of length {len(cotangents)}",
-        )
-        return result, backward_pass(env, trace, cotangents)
-
-
-# TODO: Can't use a Symbol here because mixed executor sybsymbols seem to be
-# unsupported. See issue "Could not find an executor for bound symbol when its subsymbols
-# are not fully supported by a single executor"
-vjp_call = partial(
-    vjp_call_metafunc, False
-)  # Symbol(id=Transforms.VjpOp, name="vjp_call", meta=partial(vjp_call_metafunc, False))
+    result, env = augmented_forward_pass(*primals, trace=trace, **kwargs)
+    check(
+        len(result) == len(cotangents) if isinstance(result, Sequence) else True,
+        lambda: f"Expected cotangents to be a sequence of length {len(result)}, got a sequence of length {len(cotangents)}",
+    )
+    return result, backward_pass(env, trace, cotangents)
 
 
 def vjp(func):
@@ -2863,7 +2875,7 @@ def _update_forward_with_new_saved_for_backward(forward_trace: Trace, saved_for_
     saved_tensors, saved_other = _split_saved_for_backward_into_tensors_and_other(saved_for_backward)
     assert forward_trace.bound_symbols[-1].sym.id == prims.PrimIDs.RETURN
     new_return = (forward_trace.output[0], (saved_tensors, saved_other))
-    forward_trace.bound_symbols[-1] = replace(forward_trace.bound_symbols[-1], args=new_return)
+    forward_trace.bound_symbols[-1] = replace(forward_trace.bound_symbols[-1], args=new_return, output=new_return)
 
 
 def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_for_backward: Sequence[Variable]) -> None:
@@ -2962,22 +2974,19 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
         ...   return (t2,))
     """
 
-    output_spec = None
+    forward_trace, result, env = augmented_forward_pass_trace(trace, *trace.args, **trace.kwargs)
+    forward_trace.tags.add(TraceTag.AUGMENTED_FORWARD)
+    saved_for_backward = deconstruct_forward_env_for_backward(trace, env)
 
-    def augmented_forward_fn(*args, **kwargs):
-        result, env = augmented_forward_pass(*args, trace=trace, **kwargs)
-        saved_for_backward = deconstruct_forward_env_for_backward(trace, env)
-        if torch_autograd:
-            nonlocal output_spec
-            # The custom torch.autograd.Function only considers Tensors in the input/output (not ones that are nested inside python data structures)
-            flat_output, output_spec = tree_flatten_with_dataclass(result["output"])
-            result["flat_output"] = tuple(flat_output)
-        return result, saved_for_backward
+    # The custom torch.autograd.Function only considers Tensors in the input/output (not ones that are nested inside python data structures)
+    flat_output, output_spec = tree_flatten_with_dataclass(result["output"])
+    if not torch_autograd:  # needed?
+        output_spec = None
+    result["flat_output"] = tuple(flat_output)
 
-    # Copy the signature of the original function so that the arguments are
-    # named correctly in the augmented forward pass instead of being named
-    # "args" and "kwargs".
-    augmented_forward_fn.__signature__ = inspect.signature(trace.fn or trace.python_callable())
+    assert forward_trace.bound_symbols.pop(-1).sym is prims.python_return
+    with tracectx(forward_trace):
+        prims.python_return((result, saved_for_backward))
 
     def ones_like(x):
         if isinstance(x, TensorProxy):
@@ -2987,7 +2996,6 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
         else:
             return None
 
-    forward_trace = construct_trace()(augmented_forward_fn, *trace.args, **trace.kwargs)
     # We set forward trace to construct proxies because we need these proxies to
     # have different names than the ones in the forward trace.
     try:
