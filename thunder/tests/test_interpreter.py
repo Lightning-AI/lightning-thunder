@@ -827,6 +827,29 @@ def test_exception_no_leak(jit):
     assert weak_x() is None
 
 
+def test_uncaught_exception_no_leak():
+
+    class Identity(torch.nn.Module):
+        def forward(self, x):
+            raise RuntimeError("FOOBAR")
+            return x
+
+    def main():
+        with torch.device("cpu"):
+            model = thunder.jit(Identity())
+            x = torch.randn(16, 16)
+
+        try:
+            model(x)
+        except:
+            pass
+        return weakref.ref(x)
+
+    weak_x = main()
+
+    assert weak_x() is None
+
+
 def test_walrus_operator(jit):
     def foo(a, b):
         c = (a := b)
