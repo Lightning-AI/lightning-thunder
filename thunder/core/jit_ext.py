@@ -270,6 +270,8 @@ class JitCtx:
                 p = p_new
             else:
                 p_orig = p
+            if p is not uvalue:
+                value.register_proxy(p)
             # TODO: other caching modes
             co: CACHE_OPTIONS = get_cache_option()
             if co is CACHE_OPTIONS.CONSTANT_VALUES:
@@ -279,9 +281,6 @@ class JitCtx:
                 self.add_constraint((clang.check_tensor_shape_and_metadata, p_orig))
             elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
                 raise NotImplementedError(f"Unsupported cache option {co}")
-
-            if p is not uvalue:
-                value.register_proxy(p)
             return p
 
         elif isinstance(uvalue, (float, int, complex, str, slice)):
