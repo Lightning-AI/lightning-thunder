@@ -172,6 +172,64 @@ def test_inplace_copy_sanity_check(executor, device, dtype):
 
 
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
+def test_copy_to_out_sanity_check_on_computed(executor, device, dtype):
+    tdtype = ttorch.to_torch_dtype(dtype)
+    a = make_tensor((4, 4), device=device, dtype=tdtype)
+    b = make_tensor((4, 4), device=device, dtype=tdtype)
+    a_ref = a.detach().clone()
+    b_ref = b.detach().clone()
+
+    def torch_good(x, y):
+        z = x * y
+        o = x.copy_(z)
+        return o
+
+    def good(x, y):
+        z = x * y
+        o = thunder.core.prims.copy_to_out_(z, out=x)
+        return o
+
+    def bad1(x, y):
+        z = x * y
+        o = thunder.core.prims.copy_to_out_(z, out=x)
+        return o, z
+
+    def bad2(x, y):
+        z = x * y
+        o = thunder.core.prims.copy_to_out_(z, out=x)
+        return o + z
+
+    def bad3(x, y):
+        o = thunder.core.prims.copy_to_out_(y, out=x)
+        return o
+
+    def bad4(x, y):
+        z = x * y
+        o = thunder.core.prims.copy_to_out_(z, out=x)
+        return o, torch.concat((z, z))  # not fused
+
+    def bad5(x, y):
+        x2 = torch.concat((x, x))
+        y2 = torch.concat((y, y))  # not fused
+        o = thunder.core.prims.copy_to_out_(y2, out=x2)
+        return o
+
+    traced_good = executor.make_callable(good)
+    out = traced_good(a, b)
+    out_ref = torch_good(a_ref, b_ref)
+    assert_close([a, b, out], [a_ref, b_ref, out_ref])
+
+    for foo in [bad1, bad2, bad3, bad4, bad5]:
+        print(foo.__name__)
+        traced_foo = executor.make_callable(foo)
+        with pytest.raises(
+            NotImplementedError,
+            match=r"If you are sure you don't want to use this check, it can be disabled by setting `disable_inplace_copy_check=True` in `thunder.jit`.$",
+        ):
+            traced_foo(a, b)
+
+
+@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_nvfuser_add_output_alias(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
 
