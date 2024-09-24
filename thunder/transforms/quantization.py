@@ -489,6 +489,7 @@ class LORATransform(Transform):
         new_computation_trace.bound_symbols = []
 
         new_computation_trace.args = (*new_computation_trace.args, *new_compute_inputs)
+        new_computation_trace.names.update(i.name for i in new_compute_inputs)
         new_computation_trace._siginfo.args = [(a.name, None) for a in new_computation_trace.args]
 
         with tracectx(new_computation_trace):
