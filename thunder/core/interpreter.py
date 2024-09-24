@@ -1175,8 +1175,6 @@ class InterpreterFrame:
             return self.code._varname_from_oparg(idx)  # type: ignore
 
     def get_or_make_python_frame(self) -> FrameType:
-        def fn():
-            pass
 
         assert self.positions is not None
         lineno = self.positions.lineno
@@ -1184,31 +1182,48 @@ class InterpreterFrame:
             lineno = self.code.co_firstlineno
 
         rel_lineno = lineno - self.code.co_firstlineno + 1
+        filename = self.code.co_filename
+        firstlineno = self.code.co_firstlineno
+        name = self.code.co_name
+        qualname = self.qualname
 
-        # we prefer this code object over fn.__code__ to get the first lineno and the current lineno right,
-        # which the following does by inserting so many empty lines that relative to the start line
-        # the exception is raised at the right line
-        code = compile((rel_lineno - 1) * "\n" + "raise ValueError()", self.code.co_filename, "exec")
+        def get_frame(l, rel_lineno, filename, firstlineno, name, qualname):
+            def fn():
+                pass
 
-        replacements = dict(
-            co_filename=self.code.co_filename, co_firstlineno=self.code.co_firstlineno, co_name=self.code.co_name
-        )
+            # we prefer this code object over fn.__code__ to get the first lineno and the current lineno right,
+            # which the following does by inserting so many empty lines that relative to the start line
+            # the exception is raised at the right line
+            code = compile((rel_lineno - 1) * "\n" + "raise ValueError()", filename, "exec")
 
-        if hasattr(fn.__code__, "co_qualname"):
-            replacements["co_qualname"] = self.qualname
+            replacements = dict(co_filename=filename, co_firstlineno=firstlineno, co_name=name)
 
-        fn.__code__ = code.replace(**replacements)  # type: ignore (The replaced fields are the correct types)
+            if hasattr(fn.__code__, "co_qualname"):
+                replacements["co_qualname"] = qualname
 
-        try:
-            fn()
-            assert False, "Unreachable."
-        except ValueError as e:
-            tb = e.__traceback__
+            fn.__code__ = code.replace(**replacements)  # type: ignore (The replaced fields are the correct types)
 
-        assert tb is not None
-        while tb.tb_next is not None:
-            tb = tb.tb_next
-        return tb.tb_frame
+            try:
+                fn()
+                assert False, "Unreachable."
+            except ValueError as e:
+                tb = e.__traceback__
+
+            assert tb is not None
+            while tb.tb_next is not None:
+                tb = tb.tb_next
+            l.append(tb.tb_frame)
+
+        # we run the getting of the frame in a separate thread because
+        # we want to avoid having f_back pointing to the function
+        # handling the error
+        import _thread
+
+        result_container = []
+        _thread.start_new_thread(get_frame, (result_container, rel_lineno, filename, firstlineno, name, qualname))
+        while not result_container:
+            pass
+        return result_container[0]
 
 
 #
@@ -1327,7 +1342,12 @@ def is_jitting_with_raise():
 
     # Guard against opaque functions which interrupt jitting.
     if (ctx := get_interpretercompilectx_if_available()) is not None:
-        raise InterpreterError(f"Lookaside was not triggered, but there is an active compile context: {ctx}")
+        # nested try to delete ctx from locals
+        try:
+            raise InterpreterError(f"Lookaside was not triggered, but there is an active compile context: {ctx}")
+        except InterpreterError:
+            del ctx
+            raise
 
     return False
 
@@ -1480,8 +1500,9 @@ def eval_exec_helper(
     except Exception as e:
         # We need to cheat a bit to get a Python frame here...
         python_frame = frame.get_or_make_python_frame()
-        tb = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
-        raise e.with_traceback(tb)
+        e.__traceback__ = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
+        del e
+        raise  # re-raises e
 
     if mode == "eval":
         return res
@@ -4246,6 +4267,7 @@ def _for_iter_handler(
     if r is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         ctx = get_interpreterruntimectx()
         if isinstance(ctx.curexc, StopIteration):
+            ctx.curexc = None
             if sys.version_info >= (3, 12):
                 # 3.12 uses jumps relative to the next instruction offset and does not pop here
                 #      instead it pushes a fake value?!
@@ -6238,14 +6260,24 @@ def make_generator(
                     res, status = _run_frame(frame, compilectx, runtimectx, send_value=send_value)
                 except Exception as e:
                     msg = f"Encountered exception {type(e).__name__}: {e}"
-                    raise InterpreterError(msg) from e
+                    # nested try ... raise to delete e from locals
+                    try:
+                        raise InterpreterError(msg) from e
+                    except InterpreterError:
+                        del e
+                        raise
                 if status is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                     e = runtimectx.curexc
                     assert isinstance(e, BaseException)
                     runtimectx.curexc = None
                     if isinstance(e, StopIteration):
                         return unwrap(e.value)
-                    raise e
+                    # nested try except to delete e from locals
+                    try:
+                        raise e
+                    except BaseException:
+                        del e
+                        raise
             if status == INTERPRETER_SIGNALS.RETURN_VALUE:
                 return  # TODO: should this return res?
             assert status == INTERPRETER_SIGNALS.YIELD_VALUE
@@ -6268,14 +6300,24 @@ def make_async_generator(
                     res, status = _run_frame(frame, compilectx, runtimectx, send_value=send_value)
                 except Exception as e:
                     msg = f"Encountered exception {type(e).__name__}: {e}"
-                    raise InterpreterError(msg) from e
+                    # nested try ... raise to delete e from locals
+                    try:
+                        raise InterpreterError(msg) from e
+                    except InterpreterError:
+                        del e
+                        raise
                 if status is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                     e = runtimectx.curexc
                     assert isinstance(e, BaseException)
                     runtimectx.curexc = None
                     if isinstance(e, StopIteration):
                         return
-                    raise e
+                    # nested try except to delete e from locals
+                    try:
+                        raise e
+                    except BaseException:
+                        del e
+                        raise
             if status == INTERPRETER_SIGNALS.RETURN_VALUE:
                 return  # TODO: should this return res?
             assert status == INTERPRETER_SIGNALS.YIELD_VALUE
@@ -6298,14 +6340,24 @@ def make_coroutine(
                     res, status = _run_frame(frame, compilectx, runtimectx, send_value=send_value)
                 except Exception as e:
                     msg = f"Encountered exception {type(e).__name__}: {e}"
-                    raise InterpreterError(msg) from e
+                    # nested try ... raise to delete e from locals
+                    try:
+                        raise InterpreterError(msg) from e
+                    except InterpreterError:
+                        del e
+                        raise
                 if status is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                     e = runtimectx.curexc
                     assert isinstance(e, BaseException)
                     runtimectx.curexc = None
                     if isinstance(e, StopIteration):
                         return unwrap(e.value)
-                    raise e
+                    # nested try except to delete e from locals
+                    try:
+                        raise e
+                    except BaseException:
+                        del e
+                        raise
             if status == INTERPRETER_SIGNALS.RETURN_VALUE:
                 return unwrap(res)
             assert status == INTERPRETER_SIGNALS.YIELD_VALUE
@@ -6779,8 +6831,9 @@ def _setup_frame_and_run_python_function(
     except Exception as e:
         # We need to cheat a bit to get a Python frame here...
         python_frame = frame.get_or_make_python_frame()
-        tb = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
-        raise e.with_traceback(tb)
+        e.__traceback__ = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
+        del e  # avoid memory leak
+        raise
     return res
 
 
@@ -7117,7 +7170,12 @@ def interpret(
                 msg = (
                     f"Encountered exception {type(e).__name__}: {e} while tracing {fn}:{os.linesep}" f"{traceback_str}"
                 )
-                raise InterpreterError(msg) from e
+                # nested try ... raise to delete e from locals
+                try:
+                    raise InterpreterError(msg) from e
+                except InterpreterError:
+                    del e
+                    raise
 
             # NOTE: Wrapped functions are valid to assign new attributes to.
             fn_._last_interpreter_log = runtimectx.interp_log  # type: ignore
@@ -7126,7 +7184,12 @@ def interpret(
                 e = runtimectx.curexc
                 assert isinstance(e, BaseException), e
                 runtimectx.curexc = None
-                raise e
+                # The below is "raise e" but deleting e from the scope
+                try:
+                    raise e
+                except Exception:
+                    del e
+                    raise
 
             return interpretation_result
 

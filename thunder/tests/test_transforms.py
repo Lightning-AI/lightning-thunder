@@ -336,6 +336,102 @@ def test_materialization_init():
     assert jm._get_shared_names()["0.weight"] == {"0.weight", "4.weight"}
 
 
+def test_saved_for_backward_recomputation():
+    import torch.nn as nn
+    from thunder.core.compile_data import compile_data_and_stats
+    from thunder.core.proxies import variableify, TensorProxy, unvariableify
+    from thunder.core.transforms import recompute_saved_for_backward
+    from thunder.core.vjp_utils import get_saved_for_backward_tensors
+
+    class MyModel(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.layers = nn.Sequential(nn.Linear(10, 15), nn.ReLU(), nn.Linear(15, 15), nn.ReLU(), nn.Linear(15, 10))
+
+        def forward(self, x):
+            return self.layers(x)
+
+    a = torch.randn((10, 10), requires_grad=True)
+    model = MyModel()
+
+    # Do not recompute anything
+    jmodel = thunder.jit(model)
+    jmodel(a)
+
+    fwd_trace = None
+
+    for trace in thunder.last_traces(jmodel):
+        if str(trace.get_provenance()) == "# Constructed by Augmented forward pass":
+            fwd_trace = trace
+            break
+
+    assert fwd_trace is not None, "Unable to find augmented forward pass trace"
+
+    bwd_trace = thunder.last_backward_traces(jmodel)[0]
+    cd = thunder.compile_data(jmodel)
+    cs = thunder.compile_stats(jmodel)
+
+    # Do not recompute any
+    cd.compile_options["recomputation_policy"] = lambda x: set()
+    with compile_data_and_stats(cd, cs):
+        new_fwd, new_bwd = recompute_saved_for_backward(fwd_trace, bwd_trace)
+
+    # Check that the return in the fwd is the same
+    new_out = variableify(new_fwd.output[0]["output"])
+    old_out = variableify(fwd_trace.output[0]["output"])
+    assert new_out == old_out, f"New fwd output differs from the old, expected {old_out}, found {new_out}."
+
+    new_flat_args = new_fwd.output[0]["flat_args"]
+    old_flat_args = fwd_trace.output[0]["flat_args"]
+    for new, old in zip(new_flat_args, old_flat_args):
+        new = variableify(new)
+        old = variableify(old)
+        assert new == old, f"Return arguments expected to be the same, expected {old} but found {new}"
+
+    # Check that the unpack in the bwd is also the same, making a set as the order might differ
+    new_unpack_outs = set(map(lambda x: variableify(x), new_bwd.bound_symbols[4].flat_outs))
+    old_unpack_outs = set(map(lambda x: variableify(x), bwd_trace.bound_symbols[4].flat_outs))
+    assert (
+        len(new_unpack_outs - old_unpack_outs) == 0
+    ), f"Unpack arguments expected to be the same, expected {old_unpack_outs} but found {new_unpack_outs}"
+
+    # Recompute all tensors
+    saved_for_bw = get_saved_for_backward_tensors(fwd_trace)
+    fwd_trace_args = {variableify(j) for j in fwd_trace.args}
+    old_saved_for_bwd = {variableify(j) for j in saved_for_bw}
+
+    all_rematerializable = old_saved_for_bwd - fwd_trace_args
+
+    cd.compile_options["recomputation_policy"] = lambda x: x
+    with compile_data_and_stats(cd, cs):
+        _, new_bwd = recompute_saved_for_backward(fwd_trace, bwd_trace)
+
+    # List the outputs after the unpacks
+    bwd_bsym_out = set(
+        map(
+            lambda x: variableify(x.output),
+            filter(lambda x: isinstance(x.output, TensorProxy), new_bwd.bound_symbols[6:]),
+        )
+    )
+    # check that all the fwd are recomputed
+    for rematerializable in all_rematerializable:
+        assert rematerializable in bwd_bsym_out
+
+    # Recompute only one tensor
+    cd.compile_options["recomputation_policy"] = lambda x: set(filter(lambda i: unvariableify(i).name == "t7", x))
+    t7 = set(filter(lambda x: unvariableify(x).name == "t7", all_rematerializable))
+    with compile_data_and_stats(cd, cs):
+        _, new_bwd = recompute_saved_for_backward(fwd_trace, bwd_trace)
+
+    bwd_bsym_out = set(
+        map(
+            lambda x: variableify(x.output),
+            filter(lambda x: isinstance(x.output, TensorProxy), new_bwd.bound_symbols[6:]),
+        )
+    )
+    assert t7 not in bwd_bsym_out, "Unexpected tensor rematerialized in the backward."
+
+
 def test_lora_transform_linear():
     from thunder.transforms import LORATransform
 
