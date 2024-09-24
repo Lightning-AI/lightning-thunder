@@ -2065,6 +2065,30 @@ def copy_(
 register_supported(PrimIDs.COPY_, copy_, _copy__check)
 
 
+def _copy_to_out__check(
+    result: TensorProxy,
+    *,
+    out: TensorProxy,
+) -> bool:
+    return are_supported_tensors(result, out)
+
+
+def copy_to_out_(
+    result: TensorProxy,
+    *,
+    out: TensorProxy,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
+    nvresult = getnv(result, fd, lc_to_nv_map)
+    nvout = getnv(out, fd, lc_to_nv_map)
+    fd.add_output(nvresult, alias_input=nvout)
+    return nvout
+
+
+register_supported(PrimIDs.COPY_TO_OUT_, copy_to_out_, _copy_to_out__check)
+
+
 # Removes excessive float casts, like those that occur when autocasting
 # NOTE This passes actually changes a program's semantics, because it will take a sequence like
 #   fp32 -> fp16 -> fp32 and remove all the operations, but casting fp32 values to fp16 can

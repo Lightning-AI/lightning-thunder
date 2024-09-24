@@ -2142,6 +2142,17 @@ copy_ = ex.register_operator("copy_", meta=prims.copy_, tags=(prims.OpTags.DONT_
 _register_implementation(prims.copy_, copy_, checker=_always_executable)
 
 
+def _copy_to_out__impl(result, *, out):
+    out.copy_(result)
+    return out
+
+
+copy_to_out_ = ex.register_operator(
+    "copy_to_out_", meta=prims.copy_to_out_, tags=(prims.OpTags.DONT_DCE,), fn=_copy_to_out__impl
+)
+_register_implementation(prims.copy_to_out_, copy_to_out_, checker=_always_executable)
+
+
 def _shape_impl(t):
     return t.shape
 

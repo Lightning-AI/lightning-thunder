@@ -179,6 +179,31 @@ def maybe_convert_to_dtype(a, dtype, *, enforce_safe_casting=False):
     return a
 
 
+# Quote:
+# > When the output tensor of an arithmetic operation is specified, we allow casting to its dtype except that:
+# > * An integral output tensor cannot accept a floating point tensor.
+# > * A boolean output tensor cannot accept a non-boolean tensor.
+# > * A non-complex output tensor cannot accept a complex tensor
+# (https://pytorch.org/docs/stable/tensor_attributes.html#type-promotion-doc)
+# NOTE this casting rule differs from those of Tensor.copy_, which accepts any combination of dtypes
+@clangop()
+def convert_to_out_dtype(result_tensor, out_dtype):
+    utils.check(utils.is_dtype(out_dtype), lambda: f"Unknown dtype {out_dtype}!")
+
+    result_dtype = result_tensor.dtype
+    if utils.are_same_dtypes(result_dtype, out_dtype):
+        return result_tensor
+
+    kind_tests = [dtypes.is_integer_dtype, dtypes.is_boolean_dtype, dtypes.is_complex_dtype]
+    for kind_test in kind_tests:
+        utils.check(
+            not kind_test(out_dtype) or kind_test(result_dtype),
+            lambda: "Result type {result_dtype} can't be cast to the desired output type {out_dtype}",
+        )
+
+    return prims.convert_element_type(result_tensor, out_dtype)
+
+
 # TODO Consider maybe_device_put analogous to maybe_convert_to_dtype above
 @clangop()
 def device_put(a, device):
@@ -1859,6 +1884,15 @@ def copysign(a, b):
 
     result = where(signbit(b), -abs(compute_a), abs(compute_a))
     return maybe_convert_to_dtype(result, result_dtype)
+
+
+# WARN: `computed` must be an intermediate tensor used solely for this `copy_to_out_` call,
+# e.g. copy_to_out_(add(a, b), out=a). Thunder does not guarantee that `computed` remains to have
+# the correct values after copy_to_out_ returns. For general-purpose copy, use prims.copy_ instead
+@clangop()
+def copy_to_out_(computed, *, out):
+    computed = convert_to_out_dtype(computed, out.dtype)
+    return prims.copy_to_out_(computed, out=out)
 
 
 @clangop(method_name="eq")

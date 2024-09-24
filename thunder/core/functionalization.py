@@ -90,7 +90,9 @@ def is_functionalizable(bsym: BoundSymbol) -> bool:
     from thunder.torch import _inplace_to_out_of_place
 
     return (
-        bsym.sym in _inplace_to_out_of_place and bsym.subsymbols and bsym.subsymbols[-1].sym.id == prims.PrimIDs.COPY_
+        bsym.sym in _inplace_to_out_of_place
+        and bsym.subsymbols
+        and bsym.subsymbols[-1].sym.id == prims.PrimIDs.COPY_TO_OUT_
     )
 
 
@@ -252,15 +254,15 @@ def canonicalize_bsym_args(
             new_bsym = new_bsym.from_bsym_swap_proxies(cur_orig_to_view_swap_map, skip_output=True)
 
         # non in-place bsyms would only need to update its outputs.
-        # but in-place bsyms would, as it needs to make sure they return `prims.copy_`'s return value.
+        # but in-place bsyms would, as it needs to make sure they return `prims.copy_to_out_`'s return value.
         if not is_functionalizable(new_bsym):
             bsyms.append(new_bsym)
         else:
             copy_bsym = bsym.subsymbols[-1]
-            copy_out = copy_bsym.flat_proxy_outs[0]
-            copy_dst = copy_bsym.flat_proxy_args[1]
-            swap_map[variableify(copy_dst)] = copy_out
-            # make sure an in-place bsym returns `prims.copy_` output
+            copy_return = copy_bsym.flat_proxy_outs[0]
+            out = copy_bsym.flat_proxy_args[1]
+            swap_map[variableify(out)] = copy_return
+            # make sure an in-place bsym returns `prims.copy_to_out_` output
             new_bsym = new_bsym.from_bsym_swap_proxies(swap_map, skip_inputs=True, skip_subsymbols=True)
             bsyms.append(new_bsym)
         if cur_orig_to_view_swap_map:
@@ -304,26 +306,11 @@ def create_functional_bsym_from(inplace_bsym: BoundSymbol) -> BoundSymbol:
         subsymbols=inplace_bsym.subsymbols,
         _call_ctx=inplace_bsym._call_ctx,
     )
-    if functional_bsym.subsymbols[-1].sym.id == prims.PrimIDs.COPY_:
+    if functional_bsym.subsymbols[-1].sym.id == prims.PrimIDs.COPY_TO_OUT_:
         functional_bsym.subsymbols = functional_bsym.subsymbols[:-1]
     if len(functional_bsym.subsymbols) == 1 and functional_bsym.rhs == functional_bsym.subsymbols[0].rhs:
         functional_bsym.subsymbols = functional_bsym.subsymbols[0].subsymbols
     return functional_bsym
-
-
-def needs_replace_of_sibling_views(
-    var_copy_to: VariableInterface,
-    bsym: BoundSymbol,
-    reverse_swap_map_for_canonicalization: dict[BoundSymbol, dict[VariableInterface, TensorProxy]],
-) -> dict[VariableInterface, TensorProxy]:
-    if (
-        (swap_map_from_canonicalization := reverse_swap_map_for_canonicalization.get(bsym, None))
-        and swap_map_from_canonicalization is not None
-        and var_copy_to in swap_map_from_canonicalization
-    ):
-        return swap_map_from_canonicalization
-    else:
-        return {}
 
 
 def apply_functionalization_to_canonicalized_trace(
@@ -364,18 +351,18 @@ def apply_functionalization_to_canonicalized_trace(
     bsym_to_idx = {bsym: i for i, bsym in enumerate(canonicalized_trace.bound_symbols)}
     consumer_map_of_intermediate_trace = consumers(canonicalized_trace)
     producer_map_of_intermediate_trace = producers(canonicalized_trace)
-    copy_from_to_copy_bsyms: dict[VariableInterface, list[BoundSymbol]] = {}
+    computed_to_copy_bsyms: dict[VariableInterface, list[BoundSymbol]] = {}
     base_to_views: dict[VariableInterface, list[TensorProxy]] = defaultdict(list)
     view_to_base: dict[VariableInterface, TensorProxy] = {}
     bsym_to_trigger_inplace_propagation: dict[BoundSymbol, tuple[TensorProxy, ...]] = {}
 
-    arg_to_copy_froms: dict[VariableInterface, list[TensorProxy]] = {}
+    arg_to_computeds: dict[VariableInterface, list[TensorProxy]] = {}
     swap_map_for_tensor_alias_child: dict[VariableInterface, TensorProxy] = {}
 
     new_bsyms: list[BoundSymbol] = []
     for idx, bsym in enumerate(canonicalized_trace.bound_symbols):
         # `new_bsym` is new in the sense that its args/kwargs do not use a tensor proxy
-        # returned from `prims.copy_`, at this point.
+        # returned from `prims.copy_to_out_`, at this point.
         new_bsym = bsym.from_bsym_swap_proxies(swap_map, skip_output=True)
 
         if new_bsym.sym in _syms_returning_views:
@@ -404,30 +391,30 @@ def apply_functionalization_to_canonicalized_trace(
                     new_bsym.header = f"{keys} are replaced by {values}, respectively"
             continue
 
-        # If `bsym` is functionalizable, i.e., its last subsymbol is `prims.copy_`,
+        # If `bsym` is functionalizable, i.e., its last subsymbol is `prims.copy_to_out_`,
         # this transform creates a semantically equivalent functional bsym that's different from
         # `new_bsym` / `bsym` in
-        #     - does not have `prims.copy_` as one of its subsymbols
-        #     - Output tensor is `copy_from` i.e., the output of last subsymbol
+        #     - does not have `prims.copy_to_out_` as one of its subsymbols
+        #     - Output tensor is `computed` i.e., the output of last subsymbol
 
         # We use `bsym.subsymbols[-1]` instead of `new_bsym.subsymbols[-1]` because the latter
         # would be modified using `swap_map`, i.e., the signature could be broken.
         copy_bsym = bsym.subsymbols[-1]
         copy_return = copy_bsym.flat_proxy_outs[0]
-        copy_from = copy_bsym.flat_proxy_args[0]
-        copy_to = copy_bsym.flat_proxy_args[1]
-        swap_map[variableify(copy_return)] = copy_from
+        computed = copy_bsym.flat_proxy_args[0]
+        out = copy_bsym.flat_proxy_args[1]
+        swap_map[variableify(copy_return)] = computed
 
-        # The last subsymbol is `prims.copy_`, so the new_bsym shouldn't have it.
+        # The last subsymbol is `prims.copy_to_out_`, so the new_bsym shouldn't have it.
         new_bsym = new_bsym.from_bsym_swap_proxies(swap_map)
         functional_bsym = create_functional_bsym_from(new_bsym)
-        out = ",".join([a.name if isinstance(a, ProxyInterface) else str(a) for a in bsym.flat_outs])
-        args = ",".join([a.name if isinstance(a, ProxyInterface) else str(a) for a in bsym.flat_args])
-        functional_bsym.header = f"Functionalized from `{out} = {bsym.sym.name}({args})`"
+        bsym_outs = ",".join([a.name if isinstance(a, ProxyInterface) else str(a) for a in bsym.flat_outs])
+        bsym_args = ",".join([a.name if isinstance(a, ProxyInterface) else str(a) for a in bsym.flat_args])
+        functional_bsym.header = f"Functionalized from `{bsym_outs} = {bsym.sym.name}({bsym_args})`"
         new_bsyms.append(functional_bsym)
 
         # If trace's arguments and/or their views are consumed by an in-place op,
-        # we'd have to have pairs of `prims.copy_` and auxiliary `prims.reshape` in the functionalized trace
+        # we'd have to have pairs of `prims.copy_to_out_` and auxiliary `prims.reshape` in the functionalized trace
         # in order to preserve the semantics of the original trace.
         #
         # If the modified operand is a function input, we just reuse the copy bsym removed above. -- `if`
@@ -439,39 +426,39 @@ def apply_functionalization_to_canonicalized_trace(
         # or a view whose base has other view tensors (sibling views), we'd need to propagate
         # the value to them in any way. Here, we realize that by replacing each of them
         # with the functionalized bsym's output after a reshape is applied. -- `else`
-        arg_copy_dst: TensorProxy
+        arg_out: TensorProxy
         copy_bsyms: list[BoundSymbol] = []
-        if copy_to in arg_to_copy_bsyms:
+        if out in arg_to_copy_bsyms:
             copy_bsyms.append(copy_bsym)
-            arg_copy_dst = copy_to
+            arg_out = out
         elif (
             optional_prod_bsym := _get_prod_bsym_with_arg(
-                copy_to,
+                out,
                 producer_map_of_intermediate_trace,
                 arg_to_copy_bsyms,
                 orig_bsym_of_in_tensor=new_bsym,
-                in_tensor=copy_to,
+                in_tensor=out,
             )
         ) is not None:
-            new_copy_to = _get_first_tensor_arg(optional_prod_bsym)
-            arg_copy_dst = new_copy_to
+            new_out = _get_first_tensor_arg(optional_prod_bsym)
+            arg_out = new_out
 
             with tracectx(canonicalized_trace):
-                copy_from_for_new_copy: TensorProxy
-                if copy_from.shape != new_copy_to.shape:
-                    dst_shape = new_copy_to.shape
-                    reshaped_copy_from = prims.reshape.meta(copy_from, dst_shape)
-                    reshape_bsym = prims.reshape.bind(copy_from, dst_shape, output=reshaped_copy_from)
+                new_computed: TensorProxy
+                if computed.shape != new_out.shape:
+                    dst_shape = new_out.shape
+                    reshaped_computed = prims.reshape.meta(computed, dst_shape)
+                    reshape_bsym = prims.reshape.bind(computed, dst_shape, output=reshaped_computed)
                     copy_bsyms.append(reshape_bsym)
 
-                    copy_from_for_new_copy = reshaped_copy_from
+                    new_computed = reshaped_computed
                 else:
-                    copy_from_for_new_copy = copy_from
-                new_copy_return = prims.copy_.meta(copy_from_for_new_copy, new_copy_to)
-                new_copy_bsym = prims.copy_.bind(copy_from_for_new_copy, new_copy_to, output=new_copy_return)
+                    new_computed = computed
+                new_copy_return = prims.copy_to_out_.meta(new_computed, out=new_out)
+                new_copy_bsym = prims.copy_to_out_.bind(new_computed, out=new_out, output=new_copy_return)
                 copy_bsyms.append(new_copy_bsym)
         else:
-            var_copy_to = variableify(copy_to)
+            var_copy_to = variableify(out)
             if var_copy_to in base_to_views or var_copy_to in view_to_base:
                 base: TensorProxy
                 views_to_replace: list[TensorProxy]
@@ -483,8 +470,8 @@ def apply_functionalization_to_canonicalized_trace(
                     views = base_to_views[variableify(base)]
                     views_to_replace = list(filter(lambda t: variableify(t) != var_copy_to, views))
                 if [bsym for bsym in consumer_map_of_intermediate_trace[base] if bsym_to_idx[bsym] > idx]:
-                    _check_numel(copy_from, base)
-                    optional_reshape_bsym, new_t = _reshape_bsym_ctor(copy_from, base, canonicalized_trace)
+                    _check_numel(computed, base)
+                    optional_reshape_bsym, new_t = _reshape_bsym_ctor(computed, base, canonicalized_trace)
                     if optional_reshape_bsym is not None:
                         new_bsyms.append(optional_reshape_bsym)
                     swap_map[variableify(base)] = new_t
@@ -492,40 +479,40 @@ def apply_functionalization_to_canonicalized_trace(
                     if v in consumer_map_of_intermediate_trace and [
                         bsym for bsym in consumer_map_of_intermediate_trace[v] if bsym_to_idx[bsym] > idx
                     ]:
-                        _check_numel(copy_from, v)
-                        new_t: TensorProxy = copy_from
-                        optional_reshape_bsym, new_t = _reshape_bsym_ctor(copy_from, v, canonicalized_trace)
+                        _check_numel(computed, v)
+                        new_t: TensorProxy = computed
+                        optional_reshape_bsym, new_t = _reshape_bsym_ctor(computed, v, canonicalized_trace)
                         if optional_reshape_bsym is not None:
                             new_bsyms.append(optional_reshape_bsym)
                         swap_map[variableify(v)] = new_t
-                bsym_to_trigger_inplace_propagation[functional_bsym] = (copy_to, base, views_to_replace)
+                bsym_to_trigger_inplace_propagation[functional_bsym] = (out, base, views_to_replace)
 
         if copy_bsyms:
-            if arg_copy_dst in arg_to_copy_bsyms and (value := arg_to_copy_bsyms[arg_copy_dst]) is not None:
+            if arg_out in arg_to_copy_bsyms and (value := arg_to_copy_bsyms[arg_out]) is not None:
                 prev_functional_bsym, prev_copy_bsyms = value
-                prev_copy_from = _get_first_tensor_arg(prev_copy_bsyms[0])
-                del copy_from_to_copy_bsyms[variableify(prev_copy_from)]
-            arg_to_copy_bsyms[arg_copy_dst] = functional_bsym, copy_bsyms
-            copy_from_for_copy_bsyms = _get_first_tensor_arg(copy_bsyms[0])
-            copy_from_to_copy_bsyms[variableify(copy_from_for_copy_bsyms)] = copy_bsyms
+                prev_computed = _get_first_tensor_arg(prev_copy_bsyms[0])
+                del computed_to_copy_bsyms[variableify(prev_computed)]
+            arg_to_copy_bsyms[arg_out] = functional_bsym, copy_bsyms
+            computed_for_copy_bsyms = _get_first_tensor_arg(copy_bsyms[0])
+            computed_to_copy_bsyms[variableify(computed_for_copy_bsyms)] = copy_bsyms
 
             # Handling of in-place ops to alias tensor args.
-            if (var_arg_copy_dst := variableify(arg_copy_dst)) not in arg_to_copy_froms:
-                arg_to_copy_froms[var_arg_copy_dst] = [copy_from]
+            if (var_arg_out := variableify(arg_out)) not in arg_to_computeds:
+                arg_to_computeds[var_arg_out] = [computed]
             else:
-                arg_to_copy_froms[var_arg_copy_dst].append(copy_from)
-                for v in arg_to_copy_froms[var_arg_copy_dst]:
-                    if v.name == copy_from.name:
+                arg_to_computeds[var_arg_out].append(computed)
+                for v in arg_to_computeds[var_arg_out]:
+                    if v.name == computed.name:
                         continue
-                    _check_numel(copy_from, v)
-                    reshaped_copy_from_for_aliases = copy_from
-                    optional_reshape_bsym, new_dst = _reshape_bsym_ctor(copy_from, v, canonicalized_trace)
+                    _check_numel(computed, v)
+                    reshaped_computed_for_aliases = computed
+                    optional_reshape_bsym, new_dst = _reshape_bsym_ctor(computed, v, canonicalized_trace)
                     if optional_reshape_bsym is not None:
-                        reshaped_copy_from_for_aliases = new_dst
+                        reshaped_computed_for_aliases = new_dst
                         new_bsyms.append(optional_reshape_bsym)
-                    swap_map_for_tensor_alias_child[variableify(v)] = reshaped_copy_from_for_aliases
-                    swap_map[variableify(v)] = reshaped_copy_from_for_aliases
-                arg_to_copy_froms[var_arg_copy_dst].append(copy_from)
+                    swap_map_for_tensor_alias_child[variableify(v)] = reshaped_computed_for_aliases
+                    swap_map[variableify(v)] = reshaped_computed_for_aliases
+                arg_to_computeds[var_arg_out].append(computed)
 
         for k in swap_map:
             v = swap_map[k]
@@ -537,26 +524,24 @@ def apply_functionalization_to_canonicalized_trace(
             if v.name != cur_v.name:
                 swap_map[k] = cur_v
 
-    # For nvfuser to be comfortably create fusion regions, we put each `prims.copy_` after the last
-    # use of `copy_from`. We don't take the return value of `prims.copy_` because it's already
+    # For nvfuser to be comfortably create fusion regions, we put each `prims.copy_to_out_` after the last
+    # use of `computed`. We don't take the return value of `prims.copy_to_out_` because it's already
     # obviated by the functionalization above.
     consumer_map_of_functionalized_bsyms = consumers(new_bsyms)
     producer_map_of_functionalized_bsyms = producers(new_bsyms)
     bsym_to_copy_bsyms: dict[BoundSymbol, list[BoundSymbol]] = defaultdict(list)
-    for var_copy_from, copy_bsyms in copy_from_to_copy_bsyms.items():
-        copy_from = unvariableify(var_copy_from)
-        key_bsym: BoundSymbol = producer_map_of_functionalized_bsyms[copy_from]
-        # Make sure `copy_from` has no consumers other than `prims.return`.
-        if copy_from in consumer_map_of_functionalized_bsyms:
+    for var_computed, copy_bsyms in computed_to_copy_bsyms.items():
+        computed = unvariableify(var_computed)
+        key_bsym: BoundSymbol = producer_map_of_functionalized_bsyms[computed]
+        # Make sure `computed` has no consumers other than `prims.return`.
+        if computed in consumer_map_of_functionalized_bsyms:
             consumer_bsyms = list(
-                filter(
-                    lambda bsym: bsym.sym.id != prims.PrimIDs.RETURN, consumer_map_of_functionalized_bsyms[copy_from]
-                )
+                filter(lambda bsym: bsym.sym.id != prims.PrimIDs.RETURN, consumer_map_of_functionalized_bsyms[computed])
             )
             if consumer_bsyms:
                 check(
-                    all(bsym.sym.id != prims.PrimIDs.COPY_ for bsym in consumer_bsyms),
-                    lambda: f"Unexpected `prims.copy_` found in {[bsym.sym for bsym in consumer_bsyms]} for {var_copy_from}",
+                    all(bsym.sym.id != prims.PrimIDs.COPY_TO_OUT_ for bsym in consumer_bsyms),
+                    lambda: f"Unexpected `prims.copy_to_out_` found in {[bsym.sym for bsym in consumer_bsyms]} for {var_computed}",
                 )
                 key_bsym = consumer_bsyms[-1]
         bsym_to_copy_bsyms[key_bsym].extend(copy_bsyms)
@@ -590,7 +575,7 @@ def functionalize_inplace_ops(
 
     This function is skipped if kwarg of ``skip_inplace_functionalization=True`` is passed to :func:`thunder.jit`.
 
-    In thunder, an in-place is a pair of an out-of-place or functional op followed by :func:`thunder.core.prims.copy_`.
+    In thunder, an in-place is a pair of an out-of-place or functional op followed by :func:`thunder.core.prims.copy_to_out_`.
     This function replaces in-place ops with out-of-place ops.
 
     This function returns an empty list if no in-place ops are found in ``computation_trace``.
@@ -601,9 +586,9 @@ def functionalize_inplace_ops(
     The second step is to canonicalize the trace by making sure that any operands of in-place ops have
     only one consumer.
     The final step is to replace in-place ops with their out-of-place versions, i.e.,
-    to remove ``prims.copy_`` from the trace as much as possible.
-    This step also inserts the required ``prims.copy_``\s right after its destination's last use.
-    The inserted ``prims.copy_``\s are ones whose destination is ``computation_trace``'s args/kwargs.
+    to remove ``prims.copy_to_out_`` from the trace as much as possible.
+    This step also inserts the required ``prims.copy_to_out_``\s right after its destination's last use.
+    The inserted ``prims.copy_to_out_``\s are ones whose destination is ``computation_trace``'s args/kwargs.
 
 
     .. seealso::
@@ -616,7 +601,7 @@ def functionalize_inplace_ops(
     Let's take a look at how the functionalization is working for the following ``f``.
     This function applies in-place ``exp`` to ``a`` which does not share
     the storage of the argument ``x``, thus the functionalized trace would be
-    free from ``prims.copy_``.
+    free from ``prims.copy_to_out_``.
 
     .. code-block:: python
         :name: input-func
@@ -639,7 +624,7 @@ def functionalize_inplace_ops(
 
           t2 = ltorch.exp_(a)  # t2: "cpu f32[2, 2]"
             # t1 = ltorch.exp(a)  # t1: "cpu f32[2, 2]"
-            # t2 = prims.copy_(t1, a)  # t2: "cpu f32[2, 2]"
+            # t2 = prims.copy_to_out_(t1, a)  # t2: "cpu f32[2, 2]"
 
           t3 = ltorch.cos(a)  # t3: "cpu f32[2, 2]"
             # t3 = prims.cos(a)  # t3: "cpu f32[2, 2]"
@@ -660,14 +645,14 @@ def functionalize_inplace_ops(
           t2 = ltorch.exp_(a)  # t2: "cpu f32[2, 2]"
             # t1 = ltorch.exp(a)  # t1: "cpu f32[2, 2]"
               # t1 = prims.exp(a)  # t1: "cpu f32[2, 2]"
-            # t2 = prims.copy_(t1, a)  # t2: "cpu f32[2, 2]"
+            # t2 = prims.copy_to_out_(t1, a)  # t2: "cpu f32[2, 2]"
 
           # `a` is replaced by `t2`
           t3 = ltorch.cos(t2)  # t3: "cpu f32[2, 2]"
             # t3 = prims.cos(t2)  # t3: "cpu f32[2, 2]"
           return t3
 
-    The functionalized trace is as follows. Notice that this trace has no ``prims.copy_``\s
+    The functionalized trace is as follows. Notice that this trace has no ``prims.copy_to_out_``\s
     and the operand of ``ltorch.cos`` is updated to ``t1`` from ``t2``.
 
     .. code-block:: python
@@ -690,7 +675,7 @@ def functionalize_inplace_ops(
 
     Another example to take a look at would be a function with one or more in-place ops to
     its argument(s) and/or their views.
-    The ``g`` defined below cannot be functionalized with appropriate ``prims.copy_`` to ``x`` because ``a`` shares
+    The ``g`` defined below cannot be functionalized with appropriate ``prims.copy_to_out_`` to ``x`` because ``a`` shares
     its storage with ``x``.
 
     .. code-block:: python
@@ -715,11 +700,11 @@ def functionalize_inplace_ops(
 
           t2 = ltorch.exp_(a)  # t2: "cpu f32[4]"
             # t1 = ltorch.exp(a)  # t1: "cpu f32[4]"
-            # t2 = prims.copy_(t1, a)  # t2: "cpu f32[4]"
+            # t2 = prims.copy_to_out_(t1, a)  # t2: "cpu f32[4]"
 
           t4 = ltorch.sin_(a)  # t4: "cpu f32[4]"
             # t3 = ltorch.sin(a)  # t3: "cpu f32[4]"
-            # t4 = prims.copy_(t3, a)  # t4: "cpu f32[4]"
+            # t4 = prims.copy_to_out_(t3, a)  # t4: "cpu f32[4]"
 
           t5 = ltorch.cos(a)  # t5: "cpu f32[4]"
             # t5 = prims.cos(a)  # t5: "cpu f32[4]"
@@ -730,7 +715,7 @@ def functionalize_inplace_ops(
     Below are the outputs of this function. The top is "canonicalized" (see the change
     of ``ltorch.sin_``'s operand).
     The bottom is the functionalized trace. Since ``a`` has a different shape from ``x``,
-    there are ``prims.reshape(t3, (2, 2))`` and ``prims.copy_(t8, x)``.
+    there are ``prims.reshape(t3, (2, 2))`` and ``prims.copy_to_out_(t8, x)``.
 
     .. code-block:: python
         :name: functionalization-output-traces
@@ -743,12 +728,12 @@ def functionalize_inplace_ops(
 
           t2 = ltorch.exp_(a)  # t2: "cpu f32[4]"
             # t1 = ltorch.exp(a)  # t1: "cpu f32[4]"
-            # t2 = prims.copy_(t1, a)  # t2: "cpu f32[4]"
+            # t2 = prims.copy_to_out_(t1, a)  # t2: "cpu f32[4]"
 
           # `a` is replaced by `t2`
           t4 = ltorch.sin_(t2)  # t4: "cpu f32[4]"
             # t3 = ltorch.sin(t2)  # t3: "cpu f32[4]"
-            # t4 = prims.copy_(t3, t2)  # t4: "cpu f32[4]"
+            # t4 = prims.copy_to_out_(t3, t2)  # t4: "cpu f32[4]"
 
           # `a` is replaced by `t4`
           t5 = ltorch.cos(t4)  # t5: "cpu f32[4]"
@@ -774,7 +759,7 @@ def functionalize_inplace_ops(
           t5 = ltorch.cos(t3)  # t5: "cpu f32[4]"
             # t5 = prims.cos(t3)  # t5: "cpu f32[4]"
           t8 = prims.reshape(t3, (2, 2))  # t8: "cpu f32[2, 2]"
-          t9 = prims.copy_(t8, x)  # t9: "cpu f32[2, 2]"
+          t9 = prims.copy_to_out_(t8, x)  # t9: "cpu f32[2, 2]"
 
           return t5
 
@@ -809,13 +794,13 @@ def functionalize_inplace_ops(
           c = ltorch.exp_(a)  # t1: "cpu f32[2, 2]"
             # t0 = ltorch.exp(a)  # t0: "cpu f32[2, 2]"
               # t0 = prims.exp(a)  # t0: "cpu f32[2, 2]"
-            # c = prims.copy_(t0, a)  # t1: "cpu f32[2, 2]"
+            # c = prims.copy_to_out_(t0, a)  # t1: "cpu f32[2, 2]"
           # inplace_and_aliases.py:8:         d = b.exp_()
           # [alias tensor args] `b` is replaced by `a`
           d = ltorch.exp_(a)  # t3: "cpu f32[2, 2]"
             # t2 = ltorch.exp(a)  # t2: "cpu f32[2, 2]"
               # t2 = prims.exp(a)  # t2: "cpu f32[2, 2]"
-            # d = prims.copy_(t2, a)  # t3: "cpu f32[2, 2]"
+            # d = prims.copy_to_out_(t2, a)  # t3: "cpu f32[2, 2]"
           # inplace_and_aliases.py:9:         return c + d
           result = ltorch.add(c, d, alpha=None)  # result: "cpu f32[2, 2]"
             # result = prims.add(c, d)  # result: "cpu f32[2, 2]"
@@ -835,13 +820,13 @@ def functionalize_inplace_ops(
           t1 = ltorch.exp_(a)  # t1: "cpu f32[2, 2]"
             # t0 = ltorch.exp(a)  # t0: "cpu f32[2, 2]"
               # t0 = prims.exp(a)  # t0: "cpu f32[2, 2]"
-            # t1 = prims.copy_(t0, a)  # t1: "cpu f32[2, 2]"
+            # t1 = prims.copy_to_out_(t0, a)  # t1: "cpu f32[2, 2]"
           # inplace_and_aliases.py:8:         d = b.exp_()
           # `a` is replaced by `c`
           d = ltorch.exp_(c)  # t3: "cpu f32[2, 2]"
             # t2 = ltorch.exp(c)  # t2: "cpu f32[2, 2]"
               # t2 = prims.exp(c)  # t2: "cpu f32[2, 2]"
-            # d = prims.copy_(t2, c)  # t3: "cpu f32[2, 2]"
+            # d = prims.copy_to_out_(t2, c)  # t3: "cpu f32[2, 2]"
           # inplace_and_aliases.py:9:         return c + d
           result = ltorch.add(c, d, alpha=None)  # result: "cpu f32[2, 2]"
             # result = prims.add(c, d)  # result: "cpu f32[2, 2]"
@@ -865,7 +850,7 @@ def functionalize_inplace_ops(
           # [`c`, `d`] are replaced by [`t2`, `t2`], respectively
           result = ltorch.add(t2, t2, alpha=None)  # result: "cpu f32[2, 2]"
             # result = prims.add(t2, t2)  # result: "cpu f32[2, 2]"
-          t5 = prims.copy_(t2, a)  # t5: "cpu f32[2, 2]"
+          t5 = prims.copy_to_out_(t2, a)  # t5: "cpu f32[2, 2]"
 
           return result
 
@@ -888,8 +873,8 @@ def functionalize_inplace_ops(
         no_implicit_alias_trace, orig_to_view_swap_map
     )
 
-    # Step 2: Remove `prims.copy_` if it's the last one of `bsym.subsymbols`,
-    # unless `copy_to` is `computation_trace.args` or `computation_trace.kwargs`
+    # Step 2: Remove `prims.copy_to_out_` if it's the last one of `bsym.subsymbols`,
+    # unless `out` is `computation_trace.args` or `computation_trace.kwargs`
     functionalized_computation_trace = apply_functionalization_to_canonicalized_trace(
         intermediate_trace,
         reverse_swap_map_for_canonicalization,

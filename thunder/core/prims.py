@@ -269,6 +269,7 @@ class PrimIDs(Enum):
     # Memory access methods
     ITEM = auto()
     COPY_ = auto()
+    COPY_TO_OUT_ = auto()
     #
     SINK = auto()
 
@@ -4028,6 +4029,22 @@ def copy__meta(
 
 
 copy_ = make_prim(PrimIDs.COPY_, "copy_", meta=copy__meta, tags=(OpTags.DONT_DCE,))
+
+
+def copy_to_out__meta(
+    computed: TensorProxy,
+    *,
+    out: TensorProxy,
+):
+    utils.check_type(computed, TensorProxy)
+    utils.check_type(out, TensorProxy)
+    utils.check_same_device(computed, out)
+    utils.check_same_shape(computed, out)
+    utils.check_same_dtype(computed, out)
+    return TensorProxy(like=out)
+
+
+copy_to_out_ = make_prim(PrimIDs.COPY_TO_OUT_, "copy_to_out_", meta=copy_to_out__meta, tags=(OpTags.DONT_DCE,))
 
 
 def sink_meta(*args, **kwargs):

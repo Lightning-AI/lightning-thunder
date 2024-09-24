@@ -62,7 +62,7 @@ def _remove_noop_subsymbols(bsym: BoundSymbol) -> None:
 
 def _inplace_copy_sanity_check(extrace: Trace):
     """The sanity check is based on the sharp edge of nvfuser's `add_ouput(output, input)` interface,
-    it makes sure that the `copy_to` argument of `prims.copy_` is not used as input for any of its subsequent operators in a nvFusion fused operator
+    it makes sure that the `copy_to` argument of `prims.copy_` and the `out` argument of `prims.copy_to_out_` are not used as input for any of its subsequent operators in a nvFusion fused operator
 
     Anti-pattern:
 
@@ -88,7 +88,11 @@ def _inplace_copy_sanity_check(extrace: Trace):
     nvfuser_symbols = (bsym for bsym in extrace.bound_symbols if bsym.sym.name.startswith("nvFusion"))
     for bsym in nvfuser_symbols:
         consumer_dict = consumers(list(bsym.subsymbols), _map_to_numbers=True)
-        inplace_copy_idx = ((idx, sym) for idx, sym in enumerate(bsym.subsymbols) if sym.sym.id == prims.PrimIDs.COPY_)
+        inplace_copy_idx = (
+            (idx, sym)
+            for idx, sym in enumerate(bsym.subsymbols)
+            if sym.sym.id in (prims.PrimIDs.COPY_, prims.PrimIDs.COPY_TO_OUT_)
+        )
         for idx, subbsym in inplace_copy_idx:
             copy_to_arg = subbsym.flat_args[1]
             copy_to_out = subbsym.output

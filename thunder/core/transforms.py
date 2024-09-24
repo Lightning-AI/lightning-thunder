@@ -1565,6 +1565,7 @@ augmented_forward_impls = {
     prims.PrimIDs.ZETA: lambda x, y: (prims.zeta(x, y), (x, y)),
     prims.PrimIDs.FMOD: lambda x, y: (prims.fmod(x, y), (x, y)),
     prims.PrimIDs.COPY_: lambda x, y: (prims.copy_(x, y), tuple()),
+    prims.PrimIDs.COPY_TO_OUT_: lambda computed, out: (prims.copy_to_out_(computed, out=out), tuple()),
     prims.PrimIDs.CLONE: lambda x: (prims.clone(x), tuple()),
 }
 
@@ -1595,6 +1596,7 @@ backward_impls = {
     prims.PrimIDs.FMOD: lambda x, y, g: (g, -g * prims.trunc(x / y)),
     # The copy should not be differentiable. We return None to enable the generation of the backward graph through them.
     prims.PrimIDs.COPY_: lambda g: (None, None),
+    prims.PrimIDs.COPY_TO_OUT_: lambda g: (None, None),
     prims.PrimIDs.CLONE: lambda g: g,
 }
 
