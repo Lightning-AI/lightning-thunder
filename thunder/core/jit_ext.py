@@ -1576,9 +1576,11 @@ def _get_process_group_from(*fn_and_args) -> Optional["ProcessGroup"]:
             raise NotImplementedError("jitting modules with different ProcessGroup is not supported currently.")
     return found_pg
 
+
 def update_tags(proxy_swapmap: dict[Variable, Proxy]) -> None:
     for old, new in proxy_swapmap.items():
         new.tags.update(unvariableify(old).tags)
+
 
 def thunder_general_jit(
     fn: Callable,
