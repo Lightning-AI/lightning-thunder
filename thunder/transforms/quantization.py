@@ -265,6 +265,7 @@ class BitsAndBytesLinearQuant4bit(Transform):
         new_computation_trace.bound_symbols = []
 
         new_computation_trace.args = (*new_computation_trace.args, *new_compute_inputs)
+        new_computation_trace.names.update(i.name for i in new_compute_inputs)
         new_computation_trace._siginfo.args = [(a.name, None) for a in new_computation_trace.args]
 
         with tracectx(new_computation_trace):
@@ -315,12 +316,15 @@ class LORATransform(Transform):
         lora_alpha: int = 1,
         lora_dropout: float = 0.0,
         weights: list[str] = [],
+        merged: bool = False,
     ):
         self.r = r
         self.lora_alpha = lora_alpha
         self.lora_dropout = lora_dropout
+        self.scaling = self.lora_alpha / self.r
         self.lora_linear_names = set()
         self.lora_linear_states = {}
+        self.merged = merged
 
     def init_lora_linear(self, lora_a, lora_b):
         torch.nn.init.kaiming_uniform_(lora_a, a=math.sqrt(5))
@@ -508,14 +512,16 @@ class LORATransform(Transform):
                 n = lora_linear_proxies[bsym.args[1].name]
                 with tracectx(new_computation_trace):
                     new_computation_trace.push_scope(new_computation_trace.bound_symbols)
+                    dropout_output = thunder.torch.dropout(bsym.args[0], p=self.lora_dropout)
                     lora_a_transpose = thunder.torch.transpose(additional_proxies[f"{n}.lora_a"], 1, 0)
                     lora_b_transpose = thunder.torch.transpose(additional_proxies[f"{n}.lora_b"], 1, 0)
-                    lora_matmul1 = thunder.torch.matmul(bsym.args[0], lora_a_transpose)
+                    lora_matmul1 = thunder.torch.matmul(dropout_output, lora_a_transpose)
                     lora_matmul2 = thunder.torch.matmul(lora_matmul1, lora_b_transpose)
+                    lora_scaled = thunder.torch.mul(lora_matmul2, self.scaling)
                     original_weight = thunder.torch.linear(*bsym.args[:3])
                     original_proxy_output = bsym.flat_proxy_outs[0]
                     new_computation_trace.bound_symbols.append(
-                        prims.add.bind(original_weight, lora_matmul2, output=original_proxy_output)
+                        prims.add.bind(original_weight, lora_scaled, output=original_proxy_output)
                     )
                     new_scope = new_computation_trace.pop_scope()
             else:
