@@ -476,11 +476,11 @@ def _collectify(x: Any, *, name: str | None = None) -> Any:
 # TODO RC1 Align with ASSERT_TENSOR_METADATA
 # NOTE The device is stored as a string for easier, more readable comparisons
 def _check_tensor_shape_and_metadata_meta(
-    t: TensorProxy, shape: tuple[int, ...], device: str, dtype: torch.dtype, requires_grad: bool
+    t: TensorProxy, shape: tuple[int, NumberProxy, ...], device: str, dtype: torch.dtype, requires_grad: bool
 ) -> None:
     # Validates types
     baseutils.check_type(t, TensorProxy)
-    # we don't need to validate shape here, because we use `-1` for dynamic shape
+    baseutils.check_valid_shape(shape)
     baseutils.check_type(device, str)
     baseutils.check_type(dtype, torch.dtype)
     baseutils.check_type(requires_grad, bool)

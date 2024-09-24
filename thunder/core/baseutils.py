@@ -138,7 +138,7 @@ def check_valid_length(length: int):
         check(length >= 0, lambda: f"Found invalid length {length}!")
 
 
-def check_valid_shape(shape: tuple[int, ...] | list[int]):
+def check_valid_shape(shape: tuple[int, NumberProxy, ...] | list[int]):
     """Validates that a sequence represents a valid shape."""
 
     check_type(shape, (tuple, list))
