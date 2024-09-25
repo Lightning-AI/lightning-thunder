@@ -1,5 +1,5 @@
 from .materialization import MaterializationTransform
-from .quantization import LORATransform
+from .qlora import LORATransform
 
 
 __all__ = [
