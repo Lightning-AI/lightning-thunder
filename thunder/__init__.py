@@ -652,9 +652,6 @@ def jit(
 
             if backward_trc is None:
                 computation_trc = thunder.executors.passes.del_last_used(computation_trc)
-
-            if not compile_options.get("disable_inplace_copy_check", False):
-                thunder.core.transform_common._inplace_copy_sanity_check(computation_trc)
                 computation_traces.append(computation_trc)
 
             for transform in transforms:
@@ -680,6 +677,9 @@ def jit(
                 # We do not have to return auxiliary tensors, which will only be useful in backward pass
                 computation_trc = unwrap_return_value(computation_trc)
                 computation_traces.append(computation_trc)
+
+            if not compile_options.get("disable_inplace_copy_check", False):
+                thunder.core.transform_common._inplace_copy_sanity_check(computation_trc)
 
             computation_trc = transform_to_torch_types(computation_trc)
             comp = computation_trc.python_callable()

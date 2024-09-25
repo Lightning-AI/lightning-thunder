@@ -177,56 +177,54 @@ def test_copy_to_out_sanity_check_on_computed(executor, device, dtype):
     a = make_tensor((4, 4), device=device, dtype=tdtype)
     b = make_tensor((4, 4), device=device, dtype=tdtype)
     a_ref = a.detach().clone()
-    b_ref = b.detach().clone()
+    idx = torch.arange(4).to(device=device)
+    src = make_tensor((4, 4), device=device, dtype=torch.float32)
 
-    def torch_good(x, y):
-        z = x * y
+    def torch_good(x, idx, src):
+        z = torch.index_copy(x, 0, idx, src)
         o = x.copy_(z)
         return o
 
-    def good(x, y):
-        z = x * y
+    def good(x, idx, src):
+        z = torch.index_copy(x, 0, idx, src)
+        # `computed` comes from outside of the fused region, which is inevitable
         o = thunder.core.prims.copy_to_out_(z, out=x)
         return o
 
     def bad1(x, y):
-        z = x * y
+        z = x + x
         o = thunder.core.prims.copy_to_out_(z, out=x)
-        return o, z
+        return o, z + z  # `computed` consumed after `copy_to_out_`
 
     def bad2(x, y):
-        z = x * y
+        z = x + x
         o = thunder.core.prims.copy_to_out_(z, out=x)
-        return o + z
+        return o, z  # `computed` consumed outside of the fused region
 
     def bad3(x, y):
-        o = thunder.core.prims.copy_to_out_(y, out=x)
+        o = thunder.core.prims.copy_to_out_(y, out=x)  # `computed` is a function argument
         return o
 
-    def bad4(x, y):
-        z = x * y
-        o = thunder.core.prims.copy_to_out_(z, out=x)
-        return o, torch.concat((z, z))  # not fused
-
-    def bad5(x, y):
-        x2 = torch.concat((x, x))
-        y2 = torch.concat((y, y))  # not fused
-        o = thunder.core.prims.copy_to_out_(y2, out=x2)
-        return o
+    # This is not checked
+    # def bad4(x, y):
+    #     y2 = y.view(-1).view(x.shape)
+    #     o = thunder.core.prims.copy_to_out_(y2, out=x) # `computed` aliases a function argument
+    #     return o
 
     traced_good = executor.make_callable(good)
-    out = traced_good(a, b)
-    out_ref = torch_good(a_ref, b_ref)
-    assert_close([a, b, out], [a_ref, b_ref, out_ref])
+    out = traced_good(a, idx, src)
+    out_ref = torch_good(a_ref, idx, src)
+    assert_close(a, a_ref)
+    assert_close(out, out_ref)
+    assert (a.data_ptr() == out.data_ptr()) == (a_ref.data_ptr() == out_ref.data_ptr())
 
-    for foo in [bad1, bad2, bad3, bad4, bad5]:
-        print(foo.__name__)
-        traced_foo = executor.make_callable(foo)
+    for bad in [bad1, bad2, bad3]:
+        traced_bad = executor.make_callable(bad)
         with pytest.raises(
             NotImplementedError,
             match=r"If you are sure you don't want to use this check, it can be disabled by setting `disable_inplace_copy_check=True` in `thunder.jit`.$",
         ):
-            traced_foo(a, b)
+            traced_bad(a, b)
 
 
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))

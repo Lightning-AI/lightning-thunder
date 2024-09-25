@@ -62,7 +62,7 @@ def _remove_noop_subsymbols(bsym: BoundSymbol) -> None:
 
 def _inplace_copy_sanity_check(extrace: Trace):
     """The sanity check is based on the sharp edge of nvfuser's `add_ouput(output, input)` interface.
-    It makes sure that the `copy_to` argument of `prims.copy_` and the both arguments of `prims.copy_to_out_` are not used as input for any of its subsequent operators in a nvFusion fused operator. It also checks that the `computed` argument of `prims.copy_to_out_` is used only within the nvFusion region.
+    It makes sure that the `copy_to` argument of `prims.copy_` and the both arguments of `prims.copy_to_out_` are not used as input for any of its subsequent operators in a nvFusion fused operator. It also checks that the `computed` argument of `prims.copy_to_out_` is created within the trace and not used even beyond the nvFusion region.
 
     Anti-patterns:
 
@@ -93,15 +93,13 @@ def _inplace_copy_sanity_check(extrace: Trace):
             # a = prims.copy_(result, x)
             # t2 = prims.add(result, y)
     """
-    # The checks on prims.copy_to_output_ are rather conservative and technical, but they will not be exposed
-    # as long as users use prims.copy_to_output_ in a standard way, to copy outputs of intermediate arithmetic ops.
-
     from thunder.core.utils import consumers
 
+    trace_args = {p.name for p in tree_iter((extrace.args, extrace.kwargs))}
+    trace_consumers = consumers(extrace)
     nvfuser_symbols = (bsym for bsym in extrace.bound_symbols if bsym.sym.name.startswith("nvFusion"))
     for bsym in nvfuser_symbols:
-        consumer_dict = consumers(list(bsym.subsymbols), _map_to_numbers=True)
-        region_args = {p.name for p in bsym.flat_proxy_args}
+        region_consumers = consumers(list(bsym.subsymbols), _map_to_numbers=True)
         region_outputs = {p.name for p in bsym.flat_proxy_outs}
         inplace_copy_idx = (
             (idx, sym)
@@ -112,8 +110,8 @@ def _inplace_copy_sanity_check(extrace: Trace):
             instruction = "If you are sure you don't want to use this check, it can be disabled by setting `disable_inplace_copy_check=True` in `thunder.jit`."
 
             def check(inp, description):
-                if inp is not None and inp in consumer_dict:
-                    last_used_idx = max(consumer_dict[inp])
+                if inp is not None and inp in region_consumers:
+                    last_used_idx = max(region_consumers[inp])
                     if last_used_idx > idx:
                         raise NotImplementedError(
                             f"{bsym.subsymbols[last_used_idx]} trying to use {inp} (the {description}) as input, which is not safe. There is a risk of accessing the wrong memory. "
@@ -133,17 +131,23 @@ def _inplace_copy_sanity_check(extrace: Trace):
                 check(out, "'out' argument of 'prims.copy_to_out_")
                 check(output, "output of 'prims.copy_to_out_")
 
-                if computed.name in region_args:
+                if computed.name in trace_args:
                     raise NotImplementedError(
-                        f"{computed} (the 'computed' argument of 'prims.copy_to_out_') is defined outside of the nvFuser region. "
+                        f"{computed} (the 'computed' argument of 'prims.copy_to_out_') is created outside of the execution trace. "
                         f"Copies onto {out} or {output} in the region may propagate to {computed}. " + instruction
                     )
 
-                if computed.name in region_outputs:
-                    raise NotImplementedError(
-                        f"{computed} (the 'computed' argument of 'prims.copy_to_out_') is used outside of the nvFuser region. "
-                        f"Copies onto {out} or {output} in the region may propagate to {computed}. " + instruction
-                    )
+                if computed in trace_consumers:
+                    for consumer in trace_consumers[computed]:
+                        # If the bsym creating the `computed` tensor cannot be fused, it will be put outside
+                        # of the fused region, and the created `computed` tensor will be passed to the fused
+                        # region. The tensor should be deleted immediately after the region
+                        # These are the only consumers of the `computed` tensor in a normal setting
+                        if consumer.sym.name != bsym.sym.name and consumer.sym != prims.python_del:
+                            raise NotImplementedError(
+                                f"{consumer} trying to use {computed} (the 'computed' argument of 'prims.copy_to_out_') as input, which is not safe. There is a risk of accessing the wrong memory. "
+                                + instruction
+                            )
 
 
 # TODO This calls variableify(), but we could directly construct Variable objects instead, which might slightly
