@@ -1303,3 +1303,35 @@ def test_args_order():
     fn(*args)
 
     assert [a.name for a in thunder.last_traces(fn)[-1].args] == [f"a{i}" for i in range(11)]
+
+
+@pytest.mark.parametrize(
+    "device",
+    ("cpu", "cuda"),
+)
+def test_cache_symbolic_values_dynamic_shape(device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    def foo(a):
+        return a.relu()
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+
+    a = torch.randn((2, 2, 2), device=device)
+
+    actual = jfoo(a)
+    expected = foo(a)
+
+    assert_close(actual, expected)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    a = torch.randn((3, 4, 5), device=device)
+
+    actual = jfoo(a)
+    expected = foo(a)
+
+    assert_close(actual, expected)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1
