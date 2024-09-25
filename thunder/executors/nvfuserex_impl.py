@@ -1091,8 +1091,6 @@ def uniform_philox(
     nv_minval = getnv(minval, fd, lc_to_nv_map)
     nv_maxval = getnv(maxval, fd, lc_to_nv_map)
 
-    nvshape = list(getnv(x, fd, lc_to_nv_map) for x in shape)
-
     nv_rng_seed = getnv(seed, fd, lc_to_nv_map)
     nv_rng_offset = getnv(offset, fd, lc_to_nv_map)
 
@@ -1101,7 +1099,7 @@ def uniform_philox(
     return fd.ops.uniform(
         nv_minval,
         nv_maxval,
-        nvshape,
+        shape,
         dtype=nvdtype,
         rng_seed=nv_rng_seed,
         rng_offset=nv_rng_offset,
@@ -1214,9 +1212,8 @@ def _reshape_check(a: TensorProxy, shape: list[int]) -> bool:
 
 def reshape(a: TensorProxy, shape: list[int], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nv_a = getnv(a, fd, lc_to_nv_map)
-    nv_shape = getnv(shape, fd, lc_to_nv_map)
 
-    return fd.ops.reshape(nv_a, nv_shape)
+    return fd.ops.reshape(nv_a, shape)
 
 
 register_supported(PrimIDs.RESHAPE, reshape, _reshape_check)
