@@ -35,7 +35,6 @@ from thunder.benchmarks import (
     thunder_executor,
     thunder_sdpa_torch_compile_nvfuser_executor,
     torch_compile_executor,
-    torch_compile_without_reset_executor,
     torch_executor,
     thunder_transformerengine_executor,
     DynamoBackendBenchmarking,
@@ -887,16 +886,8 @@ def test_torchbench_canary(benchmark, module_name, executor, compute_type: Compu
     benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
-@pytest.mark.parametrize(
-    "executor,",
-    (
-        "torch",
-        "torch.compile",
-        "thunder",
-    ),
-)
-def test_dynamo_LlamaMLPBenchmark(benchmark, executor: Callable):
-    backend = DynamoBackendBenchmarking(benchmark, [executor])
+def test_dynamo_LlamaMLPBenchmark(benchmark):
+    backend = DynamoBackendBenchmarking(benchmark)
 
     bench: Benchmark = LlamaMLPBenchmark(
         config="Llama-2-7b-hf",
