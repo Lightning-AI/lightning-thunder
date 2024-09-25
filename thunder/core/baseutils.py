@@ -281,6 +281,12 @@ def _print_complex_number(c: complex) -> str:
     return f"complex({real_str}, {imag_str})"
 
 
+def _print_slice(s: slice) -> str:
+    val = (s.start, s.stop, s.step)
+
+    return f"slice({','.join(map(lambda x: x.name if isinstance(x, ProxyInterface) else str(x), val))})"
+
+
 def print_number(n: Number) -> str:
     if isinstance(n, complex):
         return _print_complex_number(n)
@@ -389,7 +395,7 @@ _printable_value_types = {
     int: lambda b: str(b),
     float: _print_float_number,
     complex: _print_complex_number,
-    slice: lambda slc: str(slc),
+    slice: _print_slice,
 }
 
 
