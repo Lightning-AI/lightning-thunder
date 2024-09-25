@@ -346,11 +346,6 @@ class Benchmark_litGPT:
                 self.global_batch_size % self.micro_batch_size * world_size == 0
             ), f"Global Batch Size {self.global_batch_size} should be a multiple Micro Batch Size {self.micro_batch_size} * World Size {world_size}."
 
-        if self.checkpoint_activations and "thunder" in self.compile:
-            warnings.warn(
-                "Activations checkpointing is configured, but Thunder does not support checkpointing. Checkpointing will be ignored."
-            )
-            self.checkpoint_activations = False
         self.skip_data_sync = skip_data_sync
 
         # Profiling Args
@@ -534,6 +529,10 @@ class Benchmark_litGPT:
         return model
 
     def setup_activation_checkpointing(self):
+        if "thunder" in self.compile:
+            # checkpointing is an option to thunder.jit
+            return
+
         if any(isinstance(mod, CheckpointWrapper) for mod in self.model.modules()):
             warnings.warn(
                 "FSDP checkpointing is configured, but the model already contains checkpointed layers."
@@ -569,6 +568,11 @@ class Benchmark_litGPT:
 
                 executors.insert(0, transformer_engine_ex)
 
+            jit_options = {
+                "enable_saved_for_backward_recomputation": self.checkpoint_activations,
+                "recomputation_policy": None,
+            }
+
             if "dynamo" in self.compile:
                 if self.distributed_mode == "fsdp2":
                     print("Resetting cache size for when fsdp2 and using thunder as backend torch.compile")
@@ -588,14 +592,14 @@ class Benchmark_litGPT:
                         raise ValueError(
                             "TransformerEngine executor cannot be used as an executor of Thunder when Thunder is used as torch.compile backend"
                         )
-                backend = ThunderCompiler(executors=executors)
+                backend = ThunderCompiler(executors=executors, **jit_options)
                 # Because Lightning Fabric is imported in this script it monkey patches the torch.compile function
                 # https://github.com/Lightning-AI/pytorch-lightning/blob/828fd998961f6a60f92c35254bb94d6e049ad069/src/lightning/fabric/wrappers.py#L421
                 # using __wrapped__ to access the original torch.compile function did not work
                 # so we are using the lower level torch._dynamo.optimize function
                 model = torch._dynamo.optimize(backend=backend)(model)
             else:
-                model = thunder.jit(model, executors=executors)
+                model = thunder.jit(model, executors=executors, **jit_options)
 
         elif self.compile != "eager":
             raise ValueError(f"Invalid compile option: {self.compile}")

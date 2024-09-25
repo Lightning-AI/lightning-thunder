@@ -1466,6 +1466,30 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 assert n == "kwargs"
                 pro_kwargs_proxy = output
 
+    def is_variableified_tensorproxy(v: Variable | Proxy) -> Proxy:
+        p: Proxy
+        if isinstance(v, Proxy):
+            p = v
+        else:
+            p = v.proxy
+        return not isinstance(p, TensorProxy)
+
+    # TODO: This is just a WAR to get things working. We'll revisit this when
+    # we deal with cosntraints in prologue trace.
+    #
+    # We sort variables to before `unpack` to put TensorProxy before others.
+    # Because we could have TensorProxy.shape be part of `pro_to_xxx` along with
+    # the TensorProxy. If we unpack the shape first, we'll ended up unpack the
+    # tensor with a wrong name. e.g. A shape would have a history as:
+    #   ProvenanceRecord(
+    #     i1 = INPUT_ARGS()
+    #     i2 = BINARY_SUBSCR(i1, 0)    # This is the TensorProxy
+    #     i3 = LOAD_ATTR(i2, 'shape')
+    #     i4 = BINARY_SUBSCR(i3, 1)
+    #   )
+    pro_to_epi_inps = sorted(pro_to_epi_inps, key=is_variableified_tensorproxy)
+    pro_to_comp_inps = sorted(pro_to_comp_inps, key=is_variableified_tensorproxy)
+
     pro_to_epi = tuple(sorted((unpack(v) for v in pro_to_epi_inps), key=lambda x: param_ordering[id(x)][1]))
     pro_to_comp = tuple(sorted((unpack(v) for v in pro_to_comp_inps), key=lambda x: param_ordering[id(x)][1]))
 
@@ -1474,6 +1498,12 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             for a in args:
                 if isinstance(a, Proxy):
                     unpack(a)
+            # unpacking Proxy in TensorProxy.shape which is used in `check_tensor_shape_and_metadata`
+            if prim == clang.check_tensor_shape_and_metadata:
+                for s in a.shape:
+                    if isinstance(s, Proxy):
+                        unpack(s)
+
             prim(*args)
 
         cache_info = thunder._get_cache_info()
@@ -1546,6 +1576,8 @@ def process_recorded_modifications(ctx, epilogue_trace):
 
 
 def bind_inputs(name, trace, input_vars, input_proxies):
+    # restore `scopes` so the unpack below would be appended to the trace
+    trace.scopes = [trace.bound_symbols]
     # Unpacks inputs into the computation trace
     # TODO This currently does the unpacks at the end of the trace, then moves them to the beginning, there's
     #   almost certainly a more elegant way to do this
@@ -1575,6 +1607,11 @@ def _get_process_group_from(*fn_and_args) -> Optional["ProcessGroup"]:
         elif pg is not None and pg != found_pg:
             raise NotImplementedError("jitting modules with different ProcessGroup is not supported currently.")
     return found_pg
+
+
+def update_tags(proxy_swapmap: dict[Variable, Proxy]) -> None:
+    for old, new in proxy_swapmap.items():
+        new.tags.update(unvariableify(old).tags)
 
 
 def thunder_general_jit(
@@ -1652,6 +1689,8 @@ def thunder_general_jit(
     pro_to_epi = tuple(pro_to_epi)
 
     if epilogue_trace.bound_symbols:
+        # restore `scopes` so the return would be appended to the trace
+        computation_trace.scopes = [computation_trace.bound_symbols]
         with tracectx(computation_trace):
             last = computation_trace.bound_symbols.pop(-1)
             assert last.sym.id == prims.PrimIDs.RETURN
@@ -1681,6 +1720,8 @@ def thunder_general_jit(
 
     # Update prologue trace by renaming proxies which are passed from prologue to the computation trace
     prologue_trace = _apply_trace_proxy_rename(prologue_trace, restrict_proxy_swapmap(pro_to_comp_proxies))
+
+    update_tags(ctx._proxy_swapmap)
 
     # Update computation trace by renaming proxies which are in the ctx._proxy_swapmap
     computation_trace = _apply_trace_proxy_rename(computation_trace, ctx._proxy_swapmap, "computation")
