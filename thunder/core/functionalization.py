@@ -529,7 +529,7 @@ def apply_functionalization_to_canonicalized_trace(
     # obviated by the functionalization above.
     consumer_map_of_functionalized_bsyms = consumers(new_bsyms)
     producer_map_of_functionalized_bsyms = producers(new_bsyms)
-    bsym_to_copy_bsyms: dict[BoundSymbol, list[BoundSymbol]] = defaultdict(list)
+    bsym_to_copy_bsyms: dict[BoundSymbol, list[list[BoundSymbol]]] = defaultdict(list)
     for var_computed, copy_bsyms in computed_to_copy_bsyms.items():
         computed = unvariableify(var_computed)
         key_bsym: BoundSymbol = producer_map_of_functionalized_bsyms[computed]
@@ -544,7 +544,7 @@ def apply_functionalization_to_canonicalized_trace(
                     lambda: f"Unexpected `prims.copy_to_out_` found in {[bsym.sym for bsym in consumer_bsyms]} for {var_computed}",
                 )
                 key_bsym = consumer_bsyms[-1]
-        bsym_to_copy_bsyms[key_bsym].extend(copy_bsyms)
+        bsym_to_copy_bsyms[key_bsym].append(copy_bsyms)
 
     functionalized_computation_trace = from_trace(canonicalized_trace)
     functionalized_computation_trace.set_provenance(TraceProvenance("Functionalize in-place ops"))
@@ -554,12 +554,13 @@ def apply_functionalization_to_canonicalized_trace(
     for bsym in new_bsyms[:-1]:
         functionalized_bsyms.append(bsym)
         if bsym in bsym_to_copy_bsyms:
-            functionalized_bsyms.extend(bsym_to_copy_bsyms[bsym])
-            copy_bsym = functionalized_bsyms[-1]
-            # wrap_return_value_together_with_argments places all the arguments in the return value
-            # We swap these arguments in the return value with the outputs of copies onto them
-            # This prevents subsequent transforms from ordering the return statement before those copies
-            swap_map_for_return[variableify(copy_bsym.flat_proxy_args[0])] = copy_bsym.flat_proxy_outs[0]
+            for copy_bsyms in bsym_to_copy_bsyms[bsym]:
+                functionalized_bsyms.extend(copy_bsyms)
+                copy_bsym = functionalized_bsyms[-1]
+                # wrap_return_value_together_with_argments places all the arguments in the return value
+                # We swap these arguments in the return value with the outputs of copies onto them
+                # This prevents subsequent transforms from ordering the return statement before those copies
+                swap_map_for_return[variableify(copy_bsym.flat_proxy_args[0])] = copy_bsym.flat_proxy_outs[0]
     functionalized_bsyms.append(new_bsyms[-1].from_bsym_swap_proxies(swap_map_for_return))
 
     functionalized_computation_trace.bound_symbols = functionalized_bsyms
