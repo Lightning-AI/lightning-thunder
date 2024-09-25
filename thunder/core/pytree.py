@@ -22,7 +22,7 @@ optree.register_pytree_node(
 
 optree.register_pytree_node(
     slice,
-    lambda s: (list(s.start, s.stop, s.step), None, None),
+    lambda s: ([s.start, s.stop, s.step], None, None),
     lambda _, children: slice(*children),
     namespace=OPTREE_NAMESPACE,
 )
