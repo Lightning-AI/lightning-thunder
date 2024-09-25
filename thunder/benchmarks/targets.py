@@ -37,7 +37,7 @@ from thunder.benchmarks import (
     torch_compile_executor,
     torch_executor,
     thunder_transformerengine_executor,
-    DynamoBackendBenchmarking,
+    ThunderCompilerGraphBenchmarking,
 )
 from thunder.core.interpreter import interpret
 
@@ -886,8 +886,12 @@ def test_torchbench_canary(benchmark, module_name, executor, compute_type: Compu
     benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
 
 
+#
+# Thunder dynamo graph-by-graph benchmarks
+#
+
 def test_dynamo_LlamaMLPBenchmark(benchmark):
-    backend = DynamoBackendBenchmarking(benchmark)
+    backend = ThunderCompilerGraphBenchmarking(benchmark)
 
     bench: Benchmark = LlamaMLPBenchmark(
         config="Llama-2-7b-hf",
