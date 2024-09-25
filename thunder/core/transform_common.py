@@ -96,9 +96,11 @@ def _inplace_copy_sanity_check(extrace: Trace):
     from thunder.core.utils import consumers
 
     trace_args = {p.name for p in tree_iter((extrace.args, extrace.kwargs))}
-    trace_consumers = consumers(extrace)
-    nvfuser_symbols = (bsym for bsym in extrace.bound_symbols if bsym.sym.name.startswith("nvFusion"))
-    for bsym in nvfuser_symbols:
+    trace_consumers = consumers(extrace, _map_to_numbers=True)
+    nvfuser_symbols = (
+        (idx, bsym) for idx, bsym in enumerate(extrace.bound_symbols) if bsym.sym.name.startswith("nvFusion")
+    )
+    for region_idx, bsym in nvfuser_symbols:
         region_consumers = consumers(list(bsym.subsymbols), _map_to_numbers=True)
         region_outputs = {p.name for p in bsym.flat_proxy_outs}
         inplace_copy_idx = (
@@ -138,12 +140,9 @@ def _inplace_copy_sanity_check(extrace: Trace):
                     )
 
                 if computed in trace_consumers:
-                    for consumer in trace_consumers[computed]:
-                        # If the bsym creating the `computed` tensor cannot be fused, it will be put outside
-                        # of the fused region, and the created `computed` tensor will be passed to the fused
-                        # region. The tensor should be deleted immediately after the region
-                        # These are the only consumers of the `computed` tensor in a normal setting
-                        if consumer.sym.name != bsym.sym.name and consumer.sym != prims.python_del:
+                    for consumer_idx in trace_consumers[computed]:
+                        consumer = extrace.bound_symbols[consumer_idx]
+                        if consumer_idx > region_idx and consumer.sym != prims.python_del:
                             raise NotImplementedError(
                                 f"{consumer} trying to use {computed} (the 'computed' argument of 'prims.copy_to_out_') as input, which is not safe. There is a risk of accessing the wrong memory. "
                                 + instruction
