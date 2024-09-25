@@ -24,7 +24,6 @@ from thunder.tests.framework import instantiate, TorchExecutor
 from thunder.executors.transformer_engineex import (
     transformer_engine_ex,
     TE_AVAILABLE,
-    TE_VERSION_1_8_PLUS,
 )
 
 
@@ -82,17 +81,28 @@ class FSDPTest(DistributedParallelTestCase):
         b = make_tensor((2, 2), device=device, dtype=torch.float32)
         process_group = c10d.new_group()
         _ = cfunc(a, b, process_group)
-        execution_trace = thunder.last_traces(cfunc)[-2]
-        sorted_execution_trace = sort_waits(execution_trace)
+        traces = thunder.last_traces(cfunc)
+
+        del_last_used_indices = [
+            i
+            for i, trace in enumerate(traces)
+            if (tp := trace.get_provenance()) is not None and "Delete Last Used" in tp.pss
+        ]
+        assert del_last_used_indices and del_last_used_indices[0] >= 1
+        trace_before_del_last_used = traces[del_last_used_indices[0] - 1]
+
+        # sort_waits is supposed to be called just before del_last_used
+        sorted_trace = sort_waits(trace_before_del_last_used)
+
         # assert that there is at least one node between the all_reduce and wait
-        all_reduce_idx = sorted_execution_trace.bound_symbols.index(
-            next(filter(lambda n: n.sym.name == "torch_all_reduce_prim_impl", execution_trace.bound_symbols))
+        all_reduce_idx = sorted_trace.bound_symbols.index(
+            next(filter(lambda n: n.sym.name == "torch_all_reduce_prim_impl", sorted_trace.bound_symbols))
         )
-        wait_idx = sorted_execution_trace.bound_symbols.index(
-            next(filter(lambda n: n.sym.name == "torch_wait_prim_impl", execution_trace.bound_symbols))
+        wait_idx = sorted_trace.bound_symbols.index(
+            next(filter(lambda n: n.sym.name == "torch_wait_prim_impl", sorted_trace.bound_symbols))
         )
         self.assertGreater(wait_idx - all_reduce_idx, 1)
-        self.assertEqual(wait_idx, len(sorted_execution_trace.bound_symbols) - 2)
+        self.assertEqual(wait_idx, len(sorted_trace.bound_symbols) - 2)
 
     def test_rematerialize_all_gather(self):
         device = torch.device("cuda", self.rank)
@@ -116,8 +126,8 @@ class FSDPTest(DistributedParallelTestCase):
         #       in the original trace and are inputs to all_gather, the unshard are the outputs fo the corresponding wait
         #       If you fix this to be dynamically discerned, you'll be my hero.
         sharded_param_names = ("t_net1_weight", "t_net2_weight")
-        # t3 and t16 are all-gather'ed t_net1_weight and t_net2_weight, respectively.
-        unshard_param_names = ("t3", "t16")
+        # t5 and t20 are all-gather'ed t_net1_weight and t_net2_weight, respectively.
+        unshard_param_names = ("t5", "t20")
         result_saved_for_bwd = [x.name for x in fwd_trc.bound_symbols[-1].args[1][0]]
         self.assertTrue(all(t not in sharded_param_names for t in result_saved_for_bwd))
         self.assertTrue(all(t in result_saved_for_bwd for t in unshard_param_names))
@@ -638,6 +648,108 @@ class FSDPTest(DistributedParallelTestCase):
 
         _test_model_output_and_gradients(fsdp_jit_model, x, duplicate_all_gather=False)
 
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
+    @common_utils.parametrize("model_device", ["cuda", "meta"])
+    def test_memory_consumption(self, model_device):
+        import gc
+
+        device = torch.device("cuda", self.rank)
+        with device:
+            x_1 = torch.randn((2, ToyModel.N_IN))
+        with torch.device(model_device):
+            model = ToyModel()
+        jit_fsdp_model = thunder.jit(fsdp(model, device=device))
+        y_1 = jit_fsdp_model(x_1)
+        active_mem_jit_fsdp = torch.cuda.memory_stats()["active_bytes.all.current"]
+
+        del x_1, y_1, jit_fsdp_model, model
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        with device:
+            x_2 = torch.randn((2, ToyModel.N_IN))
+        with torch.device(model_device):
+            model = ToyModel()
+        fsdp_jit_model = fsdp(thunder.jit(model), device=device)
+        y_2 = fsdp_jit_model(x_2)
+        active_mem_fsdp_jit = torch.cuda.memory_stats()["active_bytes.all.current"]
+        self.assertAlmostEqual(active_mem_fsdp_jit, active_mem_jit_fsdp)
+
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
+    def test_load_original_state_dict(self):
+        device = torch.device("cuda", self.rank)
+        with device:
+            x = torch.randn((2, ToyModel.N_IN))
+        with torch.device("cuda"):
+            model1 = ToyModel()
+            model2 = ToyModel()
+
+        sd = {k: v.clone() for k, v in model1.state_dict().items()}
+
+        jm1 = fsdp(thunder.jit(model1), device=device)
+        jm2 = fsdp(thunder.jit(model2), device=device)
+        jm2.load_original_state_dict(sd)
+
+        y_1 = jm1(x)
+        y_2 = jm2(x)
+
+        torch.testing.assert_close(y_1, y_2)
+
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
+    def test_original_state_dict(self):
+        device = torch.device("cuda", self.rank)
+
+        for move_state_dict_to_cpu in (False, True):
+            with torch.device("cuda"):
+                model = ToyModel()
+
+            init_state_dict = model.state_dict()
+            jitted = fsdp(thunder.jit(model), device=device, move_state_dict_to_cpu=move_state_dict_to_cpu)
+
+            sharded_state_dict = jitted.state_dict()
+            original_state_dict = jitted.original_state_dict()
+            for key, unsharded in original_state_dict.items():
+                self.assertTrue(key in init_state_dict and key in sharded_state_dict)
+                self.assertEqual(len(init_state_dict[key]), len(unsharded))
+                self.assertGreater(len(unsharded), len(sharded_state_dict[key]))
+                if move_state_dict_to_cpu:
+                    self.assertEqual(unsharded.device, torch.device("cpu"))
+                else:
+                    self.assertEqual(unsharded.device, device)
+
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="Requires 2 devices")
+    def test_fsdpv2_with_1layer_llama_meta_init(self):
+        import re
+        from thunder.tests.litgpt_model import Config, GPT
+
+        device = torch.device("cuda", self.rank)
+        config = Config("Llama-2-7b-hf")
+        config.n_layer = 1
+        with torch.device("meta"):
+            model = GPT(config)
+        jitted = fsdp(thunder.jit(model), device=device)
+        with device:
+            model_ref = GPT(config)
+        jitted_ref = fsdp(thunder.jit(model_ref), device=device)
+
+        jitted_ref.load_state_dict(jitted.state_dict())
+
+        t = config.block_size
+        data = torch.randint(
+            0,
+            100,
+            (
+                1,
+                t + 1,
+            ),
+            dtype=torch.int64,
+        )
+        x = data[:, :t]
+        x = x.to(device=device)
+        result = jitted(x)
+        expected = jitted_ref(x)
+        assert_close(result, expected)
+
 
 common_utils.instantiate_parametrized_tests(FSDPTest)
 
@@ -960,7 +1072,7 @@ def test_native_fsdp(executor, devices, dtype, fsdp_bucketing_strategy):
                 (FSDPType.ZERO2, False),
                 (FSDPType.ZERO3, False),
                 # Intermediate sharding is only availabe TE v1.8 onwards
-                *(((FSDPType.ZERO3, True),) if TE_VERSION_1_8_PLUS else ()),
+                (FSDPType.ZERO3, True),
             ),
         ),
         pytest.mark.skipif(not TE_AVAILABLE, reason="TransformerEngine is not installed."),

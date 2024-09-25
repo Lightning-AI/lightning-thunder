@@ -21,7 +21,6 @@ from thunder.executors.transformer_engineex import (
     transformer_engine_ex,
     TE_AVAILABLE,
     te_sync_fp8_meta_bwd,
-    TE_VERSION_1_8_PLUS,
 )
 
 
@@ -51,8 +50,11 @@ from torch.testing._internal import common_utils
 
 
 @unittest.skipUnless(
-    torch.cuda.is_available() and torch.distributed.is_available() and torch.distributed.is_nccl_available(),
-    "DDP test requires CUDA and NCCL `torch.distributed` backend",
+    torch.cuda.is_available()
+    and torch.distributed.is_available()
+    and torch.distributed.is_nccl_available()
+    and torch.cuda.device_count() >= 2,
+    "DDP test requires CUDA and NCCL `torch.distributed` backend, and at least 2 GPUs",
 )
 class DDPTest(DistributedParallelTestCase):
     # Reference issue "Add an example of DDP(compile(model)) to tests"

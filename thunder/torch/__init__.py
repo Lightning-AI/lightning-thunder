@@ -5,12 +5,13 @@ import math
 import operator
 import collections
 import re
+import sys
 from collections.abc import Sequence
 from enum import Enum
 from functools import partial, reduce, wraps
 from numbers import Number
 from typing import Any, overload
-from types import NoneType
+from types import NoneType, ModuleType
 from collections.abc import Callable
 
 import opt_einsum
@@ -46,12 +47,8 @@ from thunder.core.symbol import Symbol
 from thunder.core.transforms import register_grad
 from thunder.core.prims import get_grad, put_grad
 from thunder.core.baseutils import run_once
-from thunder.core.transforms import (
-    _maybe_get_autocast_rule_for_symbol,
-    _get_downcast_dtype_from_str,
-    _check_valid_autocast_dtype,
-)
 import thunder
+from thunder.torch.default_torch_ops import _auto_registered_operators_returning_views
 
 
 __all__ = [
@@ -245,8 +242,8 @@ def is_floating_point(a: TensorLike, /) -> bool:
 # Handles the size method
 def size(a: TensorLike, /, dim: None | int = None) -> int | Sequence[int]:
     if dim is not None:
-        return a.shape[dim]
-    return a.shape
+        return prims.shape(a)[dim]
+    return prims.shape(a)
 
 
 register_method("size", size)
@@ -749,7 +746,7 @@ def randn(
 
     device = to_device(maybe_get_default_device(device))
     dtype = to_dtype(maybe_get_default_dtype(dtype))
-    shape = utils.extract_shape_from_varargs(shape)
+    shape = tuple(utils.extract_shape_from_varargs(shape))
     return prims.randn(shape, device=device, dtype=dtype)
 
 
@@ -953,6 +950,17 @@ def flip(a: TensorLike, /, *dims: int) -> TensorLike:
         return clang.flip(a, ())
 
     return clang.flip(a, dims)
+
+
+# fake out of place variant
+@torchsymbol(id="setitem")
+def setitem(inp, idx, val):
+    return clang.copy_with_setitem(inp, idx, val)
+
+
+@torchsymbol(torch.Tensor.__setitem__, id="setitem_", is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def setitem_(inp, idx, val):
+    prims.copy_(setitem(inp, idx, val), inp)
 
 
 @torchsymbol(torch.Tensor.__getitem__, id="torch.Tensor.__getitem__", method_name="getitem")
@@ -1290,7 +1298,7 @@ def transpose(a: TensorLike, /, dim0: int, dim1: int) -> TensorLike:
 @torchsymbol(torch.unbind, is_method=True)
 def unbind(a: TensorLike, /, dim: int = 0) -> tuple[TensorLike, ...]:
     utils.check(
-        len(a.size()) > 0,
+        a.ndim > 0,
         lambda: f"Dimension specified as={dim} but tensor has no dimensions.",
     )
     return tuple(s.squeeze(dim) for s in tensor_split(a, a.shape[dim], dim))
@@ -1330,7 +1338,7 @@ def abs(a: NumberLike | TensorLike, /) -> Number | TensorLike:
     return clang.abs(a)
 
 
-@torchsymbol(torch.Tensor.abs_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.abs_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def abs_(a: NumberLike | TensorLike, /) -> Number | TensorLike:
     return prims.copy_(abs(a), a)
 
@@ -1340,7 +1348,7 @@ def acos(a: NumberLike | TensorLike, /) -> Number | TensorLike:
     return clang.acos(a)
 
 
-@torchsymbol(torch.Tensor.acos_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.acos_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def acos_(a: TensorLike, /) -> TensorLike:
     return prims.copy_(acos(a), a)
 
@@ -1350,7 +1358,7 @@ def acosh(a):
     return clang.acosh(a)
 
 
-@torchsymbol(torch.Tensor.acosh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.acosh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def acosh_(a):
     return prims.copy_(acosh(a), a)
 
@@ -1360,7 +1368,7 @@ def asin(a):
     return clang.asin(a)
 
 
-@torchsymbol(torch.Tensor.asin_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.asin_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def asin_(a):
     return prims.copy_(asin(a), a)
 
@@ -1370,7 +1378,7 @@ def asinh(a):
     return clang.asinh(a)
 
 
-@torchsymbol(torch.Tensor.asinh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.asinh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def asinh_(a):
     return prims.copy_(asinh(a), a)
 
@@ -1380,7 +1388,7 @@ def atan(a):
     return clang.atan(a)
 
 
-@torchsymbol(torch.Tensor.atan_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.atan_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def atan_(a):
     return prims.copy_(atan(a), a)
 
@@ -1390,7 +1398,7 @@ def atanh(a):
     return clang.atanh(a)
 
 
-@torchsymbol(torch.Tensor.atanh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.atanh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def atanh_(a):
     return prims.copy_(atanh(a), a)
 
@@ -1410,7 +1418,7 @@ def ceil(a):
     return clang.ceil(a)
 
 
-@torchsymbol(torch.Tensor.ceil_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.ceil_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def ceil_(a):
     return prims.copy_(ceil(a), a)
 
@@ -1420,7 +1428,7 @@ def cos(a):
     return clang.cos(a)
 
 
-@torchsymbol(torch.Tensor.cos_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.cos_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def cos_(a):
     return prims.copy_(cos(a), a)
 
@@ -1430,7 +1438,7 @@ def cosh(a):
     return clang.cosh(a)
 
 
-@torchsymbol(torch.Tensor.cosh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.cosh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def cosh_(a):
     return prims.copy_(cosh(a), a)
 
@@ -1450,7 +1458,7 @@ def erf(a):
     return clang.erf(a)
 
 
-@torchsymbol(torch.Tensor.erf_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.erf_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def erf_(a):
     return prims.copy_(erf(a), a)
 
@@ -1460,7 +1468,7 @@ def erfc(a):
     return clang.erfc(a)
 
 
-@torchsymbol(torch.Tensor.erfc_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.erfc_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def erfc_(a):
     return prims.copy_(erfc(a), a)
 
@@ -1480,7 +1488,7 @@ def exp(a):
     return clang.exp(a)
 
 
-@torchsymbol(torch.Tensor.exp_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.exp_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def exp_(a):
     return prims.copy_(exp(a), a)
 
@@ -1490,9 +1498,43 @@ def exp2(a):
     return clang.exp2(a)
 
 
-@torchsymbol(torch.Tensor.exp2_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.exp2_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def exp2_(a):
     return prims.copy_(exp2(a), a)
+
+
+# fake out of place variant
+@torchsymbol(id="exponential")
+def exponential(a: Tensor, rate: float = 1, *, generator: None | torch.Generator = None) -> Tensor:
+    utils.check(
+        generator is None,
+        lambda: "exponential: generator is not None which is currently unsupported",
+    )
+    utils.check(
+        thunder.dtypes.is_float_dtype(a.dtype),
+        lambda: f"Exponential distribution is a continuous probability distribution. \
+        dtype must be a floating point but you specified {a.dtype}",
+    )
+    utils.check(
+        rate > 0.0,
+        lambda: f"exponential_ expects lambda > 0.0, but found lambda={rate}",
+    )
+    uniform_val = uniform_like(a)
+
+    # copying numerics of transformation::exponential see comment:
+    # curand_uniform has (0,1] bounds. log(1) is 0 and exponential excludes 0.
+    # we need log to be not 0, and not underflow when converted to half
+    # fast __logf approximation can underflow, so set log to -epsilon/2 for 1 or close to 1 args
+    epsilon = torch.finfo(thunder.dtypes.to_torch_dtype(a.dtype)).eps / 2
+    condition = uniform_val >= (1.0 - epsilon)
+    log_uniform = where(condition, -epsilon, log(uniform_val))
+
+    return (-1 / rate) * log_uniform
+
+
+@torchsymbol(torch.Tensor.exponential_, id="exponential_", is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def exponential_(a: Tensor, rate: float = 1, *, generator: None | torch.Generator = None) -> Tensor:
+    return prims.copy_(exponential(a, rate=rate, generator=generator), a)
 
 
 @torchsymbol(torch.expm1, is_method=True)
@@ -1500,7 +1542,7 @@ def expm1(a):
     return clang.expm1(a)
 
 
-@torchsymbol(torch.Tensor.expm1_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.expm1_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def expm1_(a):
     return prims.copy_(expm1(a), a)
 
@@ -1510,7 +1552,7 @@ def floor(a):
     return clang.floor(a)
 
 
-@torchsymbol(torch.Tensor.floor_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.floor_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def floor_(a):
     return prims.copy_(floor(a), a)
 
@@ -1535,7 +1577,7 @@ def log(a):
     return clang.log(a)
 
 
-@torchsymbol(torch.Tensor.log_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.log_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def log_(a):
     return prims.copy_(log(a), a)
 
@@ -1545,7 +1587,7 @@ def log10(a):
     return clang.log10(a)
 
 
-@torchsymbol(torch.Tensor.log10_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.log10_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def log10_(a):
     return prims.copy_(log10(a), a)
 
@@ -1555,7 +1597,7 @@ def log1p(a):
     return clang.log1p(a)
 
 
-@torchsymbol(torch.Tensor.log1p_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.log1p_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def log1p_(a):
     return prims.copy_(log1p(a), a)
 
@@ -1565,7 +1607,7 @@ def log2(a):
     return clang.log2(a)
 
 
-@torchsymbol(torch.Tensor.log2_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.log2_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def log2_(a):
     return prims.copy_(log2(a), a)
 
@@ -1581,7 +1623,7 @@ def neg(a):
     return clang.neg(a)
 
 
-@torchsymbol(torch.Tensor.neg_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.neg_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def neg_(a):
     return prims.copy_(neg(a), a)
 
@@ -1591,7 +1633,7 @@ def reciprocal(a):
     return clang.reciprocal(a)
 
 
-@torchsymbol(torch.Tensor.reciprocal_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.reciprocal_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def reciprocal_(a):
     return prims.copy_(reciprocal(a), a)
 
@@ -1601,7 +1643,7 @@ def round(a):
     return clang.round(a)
 
 
-@torchsymbol(torch.Tensor.round_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.round_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def round_(a):
     return prims.copy_(round(a), a)
 
@@ -1611,7 +1653,7 @@ def rsqrt(a):
     return clang.rsqrt(a)
 
 
-@torchsymbol(torch.Tensor.rsqrt_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.rsqrt_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def rsqrt_(a):
     return prims.copy_(rsqrt(a), a)
 
@@ -1638,7 +1680,7 @@ def sin(a):
     return clang.sin(a)
 
 
-@torchsymbol(torch.Tensor.sin_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.sin_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def sin_(a):
     return prims.copy_(sin(a), a)
 
@@ -1648,7 +1690,7 @@ def sinh(a):
     return clang.sinh(a)
 
 
-@torchsymbol(torch.Tensor.sinh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.sinh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def sinh_(a):
     return prims.copy_(sinh(a), a)
 
@@ -1658,7 +1700,7 @@ def sqrt(a):
     return clang.sqrt(a)
 
 
-@torchsymbol(torch.Tensor.sqrt_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.sqrt_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def sqrt_(a):
     return prims.copy_(sqrt(a), a)
 
@@ -1668,7 +1710,7 @@ def tan(a):
     return clang.tan(a)
 
 
-@torchsymbol(torch.Tensor.tan_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.tan_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def tan_(a):
     return prims.copy_(tan(a), a)
 
@@ -1678,7 +1720,7 @@ def tanh(a):
     return clang.tanh(a)
 
 
-@torchsymbol(torch.Tensor.tanh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.tanh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def tanh_(a):
     return prims.copy_(tanh(a), a)
 
@@ -1688,7 +1730,7 @@ def trunc(a):
     return clang.trunc(a)
 
 
-@torchsymbol(torch.Tensor.trunc_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.trunc_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def trunc_(a):
     return prims.copy_(trunc(a), a)
 
@@ -1873,6 +1915,11 @@ def copysign(a, b, /):
 @torchsymbol(torch.Tensor.copysign_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def copysign_(a, b, /):
     return prims.copy_(copysign(a, b), a)
+
+
+@torchsymbol(torch.Tensor.copy_, is_method=True)  # , tags=(prims.OpTags.IN_PLACE,))
+def copy_(a, b, /):
+    return prims.copy_(b, a)
 
 
 # TODO Implement div
@@ -2164,6 +2211,16 @@ def addcdiv_(a: TensorLike, b: TensorLike, c: TensorLike, /, *, value: None | Nu
     return prims.copy_(addcdiv(a, b, c, value=value), a)
 
 
+@torchsymbol(torch.lerp, is_method=True)
+def lerp(start: TensorLike, end: TensorLike, weight: Number | TensorLike) -> TensorLike:
+    return clang.lerp(start, end, weight)
+
+
+@torchsymbol(torch.Tensor.lerp_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def lerp_(start: TensorLike, end: TensorLike, weight: Number | TensorLike) -> TensorLike:
+    return prims.copy_(lerp(start, end, weight), start)
+
+
 #
 # Conditional operations and masking operations
 #
@@ -2204,7 +2261,7 @@ def clamp(
     return a
 
 
-@torchsymbol(torch.Tensor.clamp_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.clamp_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def clamp_(
     a: TensorLike, /, min: None | Number | TensorLike = None, max: None | Number | TensorLike = None
 ) -> TensorLike:
@@ -2230,8 +2287,13 @@ def _mask_tensor(a, mask, fill_value):
 # NOTE We have chosen not to emulate PyTorch's odd type promotion behavior for this operation
 @torchsymbol(torch.masked_fill, is_method=True)
 def masked_fill(a: TensorLike, /, mask: TensorLike, value: NumberLike | TensorLike) -> TensorLike:
-    result = where(mask, value, a)
-    return result
+    a_dtype = a.dtype
+    value_dtype = to_dtype(value, true_dtype=True)
+    if utils._elementwise_type_promotion(a_dtype, value_dtype) == value_dtype:
+        from thunder.core.dtypes import dtype_to_numbertype
+
+        value = dtype_to_numbertype(a_dtype)(value)
+    return where(mask, value, a)
 
 
 @torchsymbol(torch.Tensor.masked_fill_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
@@ -2268,7 +2330,10 @@ def tril_(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = No
 
 @torchsymbol(torch.where, is_method=True)
 def where(
-    pred: TensorLike, a: None | Number | TensorLike = None, b: None | Number | TensorLike = None, /
+    pred: TensorLike,
+    a: None | Number | TensorLike = None,
+    b: None | Number | TensorLike = None,
+    /,
 ) -> TensorLike:
     utils.check(
         isinstance(a, (Number, NumberProxy, TensorProxy)) and isinstance(b, (Number, NumberProxy, TensorProxy)),
@@ -2550,16 +2615,9 @@ def torch_max(
     return max_vals, argmax_vals
 
 
-# Clone is unique in that it's not registered as a symbol; as such we add it to
-# the appropriate maps manually, instead of through the @torchsymbol decorator.
-# This means that clone will not appear in the trace; instead, this basically
-# just gets inlined into the code.
+@torchsymbol(torch.clone, is_method=True)
 def clone(a: TensorProxy, *, memory_format=torch.preserve_format) -> TensorProxy:
-    """
-    Produce a copy of a tensor as a distinct new tensor.
-
-    Note: the implementation currently creates an alias instead of a copy.
-    """
+    """Produce a copy of a tensor as a distinct new tensor."""
     # Our implementation currently does not introduce a copy, and so nothing
     # except preserve_format is feasible to support.
     # If you're hitting this you could try commenting this check out; if your
@@ -2567,11 +2625,7 @@ def clone(a: TensorProxy, *, memory_format=torch.preserve_format) -> TensorProxy
     # be fine.
     if memory_format is not torch.preserve_format:
         raise NotImplementedError("only preserve_format is currently supported")
-    # This implementation just creates an alias instead of a copy. This may
-    # introduce problems; such problems would be fixable when we get to adding an
-    # SSA pass, but for now we do not expect that aliasing the tensor will
-    # introduce many problems.
-    return a
+    return prims.clone(a)
 
 
 # Because we do not use @torchsymbol, we need to manually register the
@@ -2870,7 +2924,7 @@ def index_put(
     return clang.index_put(a, indices, values, accumulate)
 
 
-@torchsymbol(torch.Tensor.index_put_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.index_put_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def index_put_(
     a: TensorLike,
     /,
@@ -4152,6 +4206,23 @@ def adaptive_avg_pool2d_backward(g: TensorProxy, a: TensorProxy, /) -> TensorPro
     return TensorProxy(like=a)
 
 
+def _adaptive_avg_pool2d_grad(
+    a: TensorProxy,
+    /,
+    output_size: int | Sequence[int],
+) -> TensorProxy:
+    primals = adaptive_avg_pool2d(a, output_size)
+
+    grad = get_grad(primals)
+    grad_a = adaptive_avg_pool2d_backward(grad, a)
+    put_grad(a, grad_a)
+
+    return primals
+
+
+register_grad(adaptive_avg_pool2d, _adaptive_avg_pool2d_grad)
+
+
 @torchsymbol(torch.max_pool1d, torch.nn.functional.max_pool1d, id="torch.nn.functional.max_pool1d", is_method=False)
 def max_pool1d(
     a: TensorProxy,
@@ -5140,7 +5211,10 @@ if torch.distributed.is_available():
     DistributedReduceOpLike = str | torch.distributed.ReduceOp | dist_prims.DistributedReduceOps
 
     # string name, PyTorch enum value, thunder.jit enum value
-    _reduceop_triples = (("sum", torch.distributed.ReduceOp.SUM, dist_prims.DistributedReduceOps.SUM),)
+    _reduceop_triples = (
+        ("sum", torch.distributed.ReduceOp.SUM, dist_prims.DistributedReduceOps.SUM),
+        ("max", torch.distributed.ReduceOp.MAX, dist_prims.DistributedReduceOps.MAX),
+    )
 
     def to_thunder_distributed_reduce_op(op: DistributedReduceOpLike | None):
         if isinstance(op, str):
@@ -5217,6 +5291,7 @@ if torch.distributed.is_available():
     # This operation is based on torch.distributed.all_reduce, see:
     #   https://pytorch.org/docs/master/distributed.html#torch.distributed.all_reduce
     @torchsymbol(
+        torch.ops._c10d_functional.all_reduce,
         is_method=False,
         id="functional_all_reduce",
     )
@@ -5224,9 +5299,15 @@ if torch.distributed.is_available():
         a: TensorLike,
         /,
         op: DistributedReduceOpLike = torch.distributed.ReduceOp.SUM,
-        group: None | torch.distributed.ProcessGroup = None,
+        group: None | torch.distributed.ProcessGroup | str = None,
         async_op: bool = False,
+        **kwargs,
     ) -> TensorLike | FutureTensorLike:
+        # note: torch.ops._c10d_functional takes name of group
+        if isinstance(group, str):
+            from torch._C._distributed_c10d import _resolve_process_group
+
+            group = _resolve_process_group(group_name=group)
         op = to_thunder_distributed_reduce_op(op)
         group = group if group is not None else torch.distributed.new_group()
 
@@ -5311,6 +5392,7 @@ if torch.distributed.is_available():
         return prims.copy_(out.view(output.shape), output)
 
     @torchsymbol(
+        torch.ops._c10d_functional.wait_tensor,
         is_method=True,
         id="torch.Tensor.wait",
     )
@@ -5422,19 +5504,47 @@ def register_default_torch_ops():
             register_default_torch_op(fn, m)
 
 
+def _get_torch_function_name(torch_module: ModuleType, torchfn: Callable):
+    # Handle special cases where torchfn.__name__ differs from the name used to call it in Python,
+    # e.g., `torch.nn.functional.logsigmoid.__name__` is 'log_sigmoid'.
+    special_cases = {torch.nn.functional.logsigmoid: "logsigmoid"}
+    # Operators in the following namespace have an extra prefix in their __name__ attribute compared to their Python call name.
+    # e.g., `torch.special.xlogy.__name__` is 'special_xlogy' instead of just 'xlogy'.
+    name_prefix_map = {torch.special: "special_", torch.linalg: "linalg_", torch.fft: "fft_"}
+    if function_name := special_cases.get(torchfn, None):
+        return function_name
+    if not (function_name := getattr(torchfn, "__name__", None)):
+        raise RuntimeError(
+            f"The function {torchfn} from the module {torch_module} does not have a __name__ attribute. Please ensure that you are passing a valid PyTorch function."
+        )
+    prefix = name_prefix_map.get(torch_module, None)
+    if prefix and function_name.startswith(prefix):
+        function_name = function_name[len(prefix) :]
+    utils.check(
+        getattr(torch_module, function_name, None),
+        lambda: f"Incorrect function name {function_name} inferred for PyTorch function {torchfn} from module {torch_module}.",
+    )
+    return function_name
+
+
 def register_default_torch_op(torchfn: Callable, torch_module):
     fn_meta = meta_adaptor(torchfn)
     _fn = langctx(Languages.TORCH)(fn_meta)
+    torchfn_name = _get_torch_function_name(torch_module, torchfn)
     sym = Symbol(
-        name=torchfn.__name__,
+        name=torchfn_name,
         meta=_fn,
-        id=f"{torch_module.__name__}.{torchfn.__name__}",
+        id=f"{torch_module.__name__}.{torchfn_name}",
+        tags=(prims.OpTags.AUTO_REGISTERED,),
     )
     _torch_to_thunder_function_map[torchfn] = sym
     from thunder.executors.torchex import _always_executable, ex
 
-    op = ex.register_operator(torchfn.__name__, module=torch_module, meta=fn_meta)
+    op = ex.register_operator(torchfn_name, module=torch_module, meta=fn_meta)
     ex.register_implementation(sym, op, checker=_always_executable)
+    # TODO: convert to an assert after #1140 is fixed
+    if torchfn_name not in __builtins__ and not hasattr(sys.modules["thunder.torch"], torchfn_name):
+        setattr(sys.modules["thunder.torch"], torchfn_name, sym)
 
     from thunder.core.transforms import augmented_forward_impls, backward_impls
 
@@ -5447,7 +5557,7 @@ def register_default_torch_op(torchfn: Callable, torch_module):
 
     _vjp_impl_wrapper = partial(_vjp_impl, torchfn)
 
-    bwd_op = ex.register_operator(torchfn.__name__ + "_vjp", meta=backward_adaptor(torchfn), fn=_vjp_impl_wrapper)
+    bwd_op = ex.register_operator(torchfn_name + "_vjp", meta=backward_adaptor(torchfn), fn=_vjp_impl_wrapper)
     ex.register_implementation(bwd_op.id, bwd_op, checker=_always_executable)
     backward_impls[sym.id] = bwd_op
 
@@ -5621,9 +5731,17 @@ _torch_to_thunder_complete_map = {
     **{fn: fn for fn in _torch_noinline_functions},
 }
 
-
+# records the torch symbols that may return tensor views
 # ref: https://pytorch.org/docs/stable/tensor_view.html
-_syms_returning_runtime_dependently_views: set[Symbol] = {reshape, contiguous, to, flatten}
+# NOTE Symbols that return tensor views can interfere with in-place operators
+# See :func:`thunder.core.functionalization.check_inplace_to_views` for the details.
+_syms_that_may_return_views: set[Symbol] = {
+    reshape,
+    contiguous,
+    to,
+    flatten,
+    _torch_to_thunder_function_map[torch.Tensor.reshape_as],
+}
 
 _syms_returning_views: set[Symbol] = {
     diagonal,
@@ -5647,3 +5765,6 @@ _syms_returning_views: set[Symbol] = {
     chunk,
     getitem,
 }
+
+# Add all auto-registered torch operators symbol that return tensor views to _syms_returning_views
+_syms_returning_views.update({_torch_to_thunder_function_map[x] for x in _auto_registered_operators_returning_views})

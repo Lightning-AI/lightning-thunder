@@ -104,10 +104,22 @@ class BitsAndBytesLinearQuant4bit(Transform):
 
     def transform_module(self, model: thunder.ThunderModule):
         self.thunder_module = model
+        shared_names = model._get_shared_names()
+        processed_names = set()
 
         def convert_linear_submodule(tm, name):
             self.quantized_submodule_names.add(name)
             weight_name = f"{name}.weight"
+            processed_copies = shared_names[weight_name] & processed_names
+            if processed_copies:
+                copy_name = next(iter(processed_copies))
+                self.quant_states[weight_name] = self.quant_states[copy_name]
+                tm._overrides_parameters[weight_name] = tm._overrides_parameters[copy_name]
+                tm._overrides_parameters[f"{weight_name}.absmax"] = tm._overrides_parameters[f"{copy_name}.absmax"]
+                tm._overrides_parameters[f"{weight_name}.code"] = tm._overrides_parameters[f"{copy_name}.code"]
+                processed_names.add(weight_name)
+                return
+
             w = tm.get_parameter(weight_name)
             # TODO: double quant support
 
@@ -127,6 +139,7 @@ class BitsAndBytesLinearQuant4bit(Transform):
                 "code.shape": tuple(qs.code.shape),
                 "device": getattr(w, "_thunder_device", w.device),
             }
+            processed_names.add(weight_name)
 
         for n, submodule in model._model.named_modules():
             if isinstance(submodule, torch.nn.Linear):
@@ -202,6 +215,7 @@ class BitsAndBytesLinearQuant4bit(Transform):
                         dtype=thunder.dtypes.to_dtype(qs["absmax.dtype"]),
                         device=thunder.devices.to_device(device),
                         requires_grad=False,
+                        tags={thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION},
                     )
                     proxy_code = thunder.TensorProxy(
                         name=f"{get_param.output.name}_code",
@@ -209,6 +223,7 @@ class BitsAndBytesLinearQuant4bit(Transform):
                         dtype=thunder.dtypes.to_dtype(qs["code.dtype"]),
                         device=thunder.devices.to_device(device),
                         requires_grad=False,
+                        tags={thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION},
                     )
                     # get_param.sym = unpack_buffer/parameter as needed
                     new_bsyms.append(get_param.sym.bind(get_param.args[0], n_absmax, output=proxy_absmax))
@@ -217,6 +232,17 @@ class BitsAndBytesLinearQuant4bit(Transform):
                     add_trace_output(prologue_trace, proxy_code, subindex=0)
                     new_compute_inputs.append(proxy_absmax)
                     new_compute_inputs.append(proxy_code)
+                    # add checks
+                    new_bsyms.append(
+                        prims.check_tensor_shape_and_metadata.bind(
+                            proxy_absmax, qs["absmax.shape"], device, qs["absmax.dtype"], False, output=None
+                        )
+                    )
+                    new_bsyms.append(
+                        prims.check_tensor_shape_and_metadata.bind(
+                            proxy_code, qs["code.shape"], device, qs["code.dtype"], False, output=None
+                        )
+                    )
                     # this is not good, because we will have several traces...
                     additional_proxies[n_absmax] = proxy_absmax
                     additional_proxies[n_code] = proxy_code
@@ -272,10 +298,6 @@ class BitsAndBytesLinearQuant4bit(Transform):
                 )
 
                 new_computation_trace.bound_symbols.append(mm_bsym)
-                # we need the postprocess to set the internal state (call_ctx) because we do not bind / execute the new symbol to
-                # preserve the "meta"-info like source location, header, etc.
-                # TODO: switch to a better solution when it is there
-                bnb_matmul_nf4._bind_postprocess(mm_bsym)
             else:
                 new_computation_trace.bound_symbols.append(bsym.from_bsym())
 
