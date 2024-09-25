@@ -3,6 +3,7 @@ import time
 from typing import TYPE_CHECKING
 from abc import ABC
 from collections.abc import Sequence
+import dataclasses
 from itertools import filterfalse
 from functools import partial
 
@@ -24,6 +25,25 @@ if TYPE_CHECKING:
 # Common optimization and transform passes
 #
 # NOTE This file avoids transforms depending on passes, since passes depend on transforms
+@dataclasses.dataclass  # (frozen=True)
+class VJPDual:
+    """A pair of primal and saved information for backward (residuals).
+
+    Args:
+        primal (Union[Proxy, Number]): Primal value, i.e., the value being differentiated.
+        residuals (Tuple[Proxy, ...]): Residuals, i.e., the values that are
+            saved for the backward.
+
+    Yields:
+        Tuple[Variable, Tuple[Variable, ...], Callable]: Primal and residuals
+    """
+
+    primal: Proxy | Number
+    residuals: tuple[Proxy, ...]
+
+    def __iter__(self):
+        yield self.primal
+        yield self.residuals
 
 
 # Modifies an existing BoundSymbol, removing its "no-op" subsymbols (recursively) which perform no operations

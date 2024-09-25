@@ -568,3 +568,23 @@ def init_colors(force_enable: bool | None = None) -> dict[str, str]:
         init_windows_terminal()
 
     return {k.name: k.value if colors_enabled else "" for k in TermColors}
+
+
+class TagBase:
+    def __new__(cls, name, _register=False):
+        if _register:
+            if hasattr(cls, name):
+                raise AttributeError(f"{cls.__name__}.{name} is already registered")
+            res = super().__new__(cls)
+            res._value = name
+            setattr(cls, name, res)
+            return res
+
+        return getattr(cls, name)
+
+    @classmethod
+    def register_tag(cls, name):
+        cls(name, _register=True)
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}.{self._value}"

@@ -21,6 +21,7 @@ from thunder.core.baseutils import (
     NumberProxyInterface,
     TensorProxyInterface,
     TorchAutogradFunctionCtxProxyInterface,
+    TagBase,
 )
 import thunder.core.baseutils as baseutils
 from thunder.core.langctxs import resolve_method, get_langctx
@@ -92,24 +93,8 @@ def make_proxy_name(*, name: None | str = None, prefix: None | str = None) -> st
     return trc.make_name(prefix=prefix)
 
 
-class ProxyTag:
-    def __new__(cls, name, _register=False):
-        if _register:
-            if hasattr(cls, name):
-                raise AttributeError(f"{cls.__name__}.{name} is already registered")
-            res = super().__new__(cls)
-            res._value = name
-            setattr(cls, name, res)
-            return res
-
-        return getattr(cls, name)
-
-    @classmethod
-    def register_tag(cls, name):
-        ProxyTag(name, _register=True)
-
-    def __repr__(self):
-        return f"{self.__class__.__name__}.{self._value}"
+class ProxyTag(TagBase):
+    pass
 
 
 # TODO Document this class

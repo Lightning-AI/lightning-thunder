@@ -1370,7 +1370,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                     idx = int(idx)
                 elif isinstance(idx, str):
                     idx = str(idx)
-                param_ordering[id(output)] = (output, param_ordering[id(obj)][1] + [math.inf, "[" + str(idx) + "]"])
+                param_ordering[id(output)] = (output, param_ordering[id(obj)][1] + [math.inf, "[", idx])
                 bsym = prims.unpack_getitem.bind(obj, idx, output=output)
                 prologue_trace.bound_symbols.append(bsym)
             else:
@@ -1587,6 +1587,11 @@ def _get_process_group_from(*fn_and_args) -> Optional["ProcessGroup"]:
     return found_pg
 
 
+def update_tags(proxy_swapmap: dict[Variable, Proxy]) -> None:
+    for old, new in proxy_swapmap.items():
+        new.tags.update(unvariableify(old).tags)
+
+
 def thunder_general_jit(
     fn: Callable,
     args: tuple[Any, ...],
@@ -1691,6 +1696,8 @@ def thunder_general_jit(
 
     # Update prologue trace by renaming proxies which are passed from prologue to the computation trace
     prologue_trace = _apply_trace_proxy_rename(prologue_trace, restrict_proxy_swapmap(pro_to_comp_proxies))
+
+    update_tags(ctx._proxy_swapmap)
 
     # Update computation trace by renaming proxies which are in the ctx._proxy_swapmap
     computation_trace = _apply_trace_proxy_rename(computation_trace, ctx._proxy_swapmap, "computation")
