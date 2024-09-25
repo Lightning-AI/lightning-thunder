@@ -1238,10 +1238,14 @@ def _infer_tensor_properties(
 
     # dynamic shape not yet enabled, otherwise, the bake in should be guarded with if not using_symbolic_values():
     # dynamic shape support is currently block by #471 https://github.com/Lightning-AI/lightning-thunder/issues/471
-    _shape = tuple(pyval(x) for x in _shape)
-
-    # Computes derived properties
-    _numel = reduce(operator.mul, _shape, 1)
+    if not using_symbolic_values():
+        _shape = tuple(pyval(x) for x in _shape)
+        # Computes derived properties
+        _numel = reduce(operator.mul, _shape, 1)
+    else:
+        # deferred computation of numel
+        # TODO: similar to how `shape` is handled, this should be CSE or lifted for efficiency
+        _numel = lambda tp: reduce(operator.mul, tp.shape, 1)
 
     # TODO Alias rank to ndim?
     _ndim = len(_shape)
@@ -1551,7 +1555,9 @@ class TensorProxy(Proxy, TensorProxyInterface):
                     return int(self)
 
             if attr == "numel":
-                return _Numel(self._numel)
+                if isinstance(self._numel, int):
+                    return _Numel(self._numel)
+                return method_or_value(self)
             return partial(method_or_value, self)
 
         return method_or_value
@@ -1912,7 +1918,10 @@ _cls_to_number_proxy_map = {
 }
 
 
+# TODO: move this function to jit_ext.py
 def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple = None) -> TensorProxy:
+    from thunder.core.interpreter import ProvenanceRecord, PseudoInst, wrap_const
+
     if hasattr(t, "_thunder_device"):
         torch_device = t._thunder_device
     else:
@@ -1922,10 +1931,23 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
     # See Note [DistributedDataParallel and distparallel_type]
     distparallel_type = getattr(t, "distparallel_type", None)
     _thunder_fsdp_padding_size = getattr(t, "_thunder_fsdp_padding_size", None)
+    if using_symbolic_values():
+        shape_attr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[history, wrap_const("shape").provenance])
+        shape = tuple(
+            IntegerProxy(
+                None,
+                s,
+                history=ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[shape_attr, wrap_const(idx).provenance]),
+                constraint=CONSTRAINT.CONSTRAINABLE,
+            )
+            for idx, s in enumerate(t.shape)
+        )
+    else:
+        shape = tuple(t.shape)
     # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
     return TensorProxy(
         name,
-        shape=tuple(t.shape),
+        shape=tuple(shape),
         device=device,
         dtype=dtype,
         requires_grad=t.requires_grad,
