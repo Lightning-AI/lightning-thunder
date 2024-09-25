@@ -19,6 +19,13 @@ optree.register_pytree_node(
     namespace=OPTREE_NAMESPACE,
 )
 
+optree.register_pytree_node(
+    slice,
+    lambda s: (list(s.start, s.stop, s.step), None, None),
+    lambda _, children: slice(*children),
+    namespace="",
+)
+
 
 def tree_flatten(args, namespace=""):
     if (
