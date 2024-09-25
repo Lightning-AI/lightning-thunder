@@ -1,5 +1,7 @@
 import torch
 from torch.testing import assert_close
+from lightning_utilities.core.imports import package_available
+import pytest
 
 import thunder
 from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform, nvtx_push, nvtx_pop
@@ -110,6 +112,7 @@ def test_materialization():
     assert_close(actual, expected, rtol=1e-2, atol=1e-2)
 
 
+@pytest.mark.skipif(not package_available("bitsandbytes"), reason="`bitsandbytes` is not available")
 @requiresCUDA
 def test_quantization_on_meta():
     from thunder.transforms import MaterializationTransform
@@ -180,6 +183,7 @@ def test_quantization_on_meta():
     assert_close(actual, actual2)
 
 
+@pytest.mark.skipif(not package_available("bitsandbytes"), reason="`bitsandbytes` is not available")
 @requiresCUDA
 def test_nvfuser_cse():
     with torch.device("cuda"):
@@ -283,6 +287,7 @@ def test_cudagraph_warmup_runs_with_correct_buffers():
     jf(weights)
 
 
+@pytest.mark.skipif(not package_available("bitsandbytes"), reason="`bitsandbytes` is not available")
 @requiresCUDA
 def test_materialization_init():
     from thunder.transforms import MaterializationTransform
