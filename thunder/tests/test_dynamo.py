@@ -353,7 +353,7 @@ def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
     assert len(backend.subgraph_infos) == 2  # There were 2 graphs.
 
     for subgraph_info in backend.subgraph_infos:
-        assert len(subgraph_info.split_reasons) == 0  # Verify there were no splits
+        assert len(subgraph_info.split_reasons) == 0  # Verify there were no splits in the subgraph.
         assert isinstance(subgraph_info.original_graph_module, torch.fx.GraphModule)
         assert len(subgraph_info.thunder_compiled_fns)  # There was atleast one function compiled with thunder.
         for thunder_fn in subgraph_info.thunder_compiled_fns:
