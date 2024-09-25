@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from enum import auto, Enum
 from numbers import Number
 from typing import Type, Optional, Any, Tuple, List, Union
@@ -1932,7 +1933,7 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
     distparallel_type = getattr(t, "distparallel_type", None)
     _thunder_fsdp_padding_size = getattr(t, "_thunder_fsdp_padding_size", None)
     if using_symbolic_values():
-        shape_attr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[history, wrap_const("shape").provenance])
+        shape_attr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[copy.copy(history), wrap_const("shape").provenance])
         shape = tuple(
             IntegerProxy(
                 None,
