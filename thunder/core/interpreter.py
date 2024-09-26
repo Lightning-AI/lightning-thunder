@@ -6984,6 +6984,7 @@ def _run_frame(
                     tb = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
                     e = e.with_traceback(tb)
                     runtimectx.curexc = e
+                    del current_exception, python_frame, tb, e, runtimectx
                     return INTERPRETER_SIGNALS.EXCEPTION_RAISED, INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
             # TODO Improve this error message
