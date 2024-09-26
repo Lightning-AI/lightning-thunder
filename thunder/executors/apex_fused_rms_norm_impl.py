@@ -16,7 +16,7 @@ APEX_FUSED_NORMS_AVAILABLE = True
 try:
     import fused_layer_norm_cuda
     from apex.normalization.fused_layer_norm import FusedRMSNormAffineMixedDtypesFunction
-except:
+except ImportError:
     APEX_FUSED_NORMS_AVAILABLE = False
 
 
