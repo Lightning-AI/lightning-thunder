@@ -4183,7 +4183,12 @@ def adaptive_avg_pool2d(
     return TensorProxy(like=a, shape=output_shape_)
 
 
-@torchsymbol("adaptive_avg_pool2d_backward", id="adaptive_avg_pool2d_backward", is_prim=True)
+@torchsymbol(
+    torch.ops.aten._adaptive_avg_pool2d_backward,
+    "adaptive_avg_pool2d_backward",
+    id="adaptive_avg_pool2d_backward",
+    is_prim=True,
+)
 def adaptive_avg_pool2d_backward(g: TensorProxy, a: TensorProxy, /) -> TensorProxy:
     # Followed the cuda implementation in Pytorch for adaptive_avg_pool2d_backward here
     # short cut for empty tensor
@@ -4204,23 +4209,6 @@ def adaptive_avg_pool2d_backward(g: TensorProxy, a: TensorProxy, /) -> TensorPro
             lambda: f"adaptive_avg_pool2d_backward: Expected grad to have non-zero size for non-batch dimensions, but grad has sizes {g.shape} with dimension {i} being empty",
         )
     return TensorProxy(like=a)
-
-
-def _adaptive_avg_pool2d_grad(
-    a: TensorProxy,
-    /,
-    output_size: int | Sequence[int],
-) -> TensorProxy:
-    primals = adaptive_avg_pool2d(a, output_size)
-
-    grad = get_grad(primals)
-    grad_a = adaptive_avg_pool2d_backward(grad, a)
-    put_grad(a, grad_a)
-
-    return primals
-
-
-register_grad(adaptive_avg_pool2d, _adaptive_avg_pool2d_grad)
 
 
 @torchsymbol(torch.max_pool1d, torch.nn.functional.max_pool1d, id="torch.nn.functional.max_pool1d", is_method=False)
@@ -5530,6 +5518,7 @@ def _get_torch_function_name(torch_module: ModuleType, torchfn: Callable):
 def register_default_torch_op(torchfn: Callable, torch_module):
     fn_meta = meta_adaptor(torchfn)
     _fn = langctx(Languages.TORCH)(fn_meta)
+    _fn.__torchfn = torchfn
     torchfn_name = _get_torch_function_name(torch_module, torchfn)
     sym = Symbol(
         name=torchfn_name,
