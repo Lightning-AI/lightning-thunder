@@ -1224,7 +1224,7 @@ def reshape(a: TensorProxy, shape: list[int, NumberProxy, ...], *, fd: FusionDef
     nv_a = getnv(a, fd, lc_to_nv_map)
     if any(map(lambda x: isinstance(x, NumberProxy), shape)):
         nv_shape = getnv(shape, fd, lc_to_nv_map)
-    else: 
+    else:
         nv_shape = shape
 
     return fd.ops.reshape(nv_a, nv_shape)
