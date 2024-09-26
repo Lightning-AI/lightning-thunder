@@ -1408,8 +1408,9 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             raise NotImplementedError(f"unpacking from OPAQUE {fn.value} {provenance}")
 
         def from_provenance(provenance, *, new_output=False):
-            if hasattr(provenance, "proxy"):
-                return provenance.proxy  # bind?
+            p = getattr(provenance, "proxy", None)
+            if p is not None:
+                return p
 
             inst = provenance.inst
             if isinstance(inst, dis.Instruction):
@@ -1443,6 +1444,15 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             return res
 
         assert isinstance(p.history, ProvenanceRecord), p.history
+
+        # We reset p.history.proxy to make sure from_provenance(p.history) calls unpack_fn on p.history.
+        # This is necessary because past recursive unpackings may have unpacked p.history and associated it
+        # with a different proxy.
+        # For example, if p is a TensorProxy, the history of p.grad is
+        #     ProvenanceRecord(LOAD_ATTR, inputs=[p.history, <CONSTANT "grad">])
+        # and unpack(p.grad) attaches new proxies to all its sub-histories, including p.history
+        p.history.proxy = None
+
         with tracectx(prologue_trace):
             try:
                 from_provenance(p.history)
