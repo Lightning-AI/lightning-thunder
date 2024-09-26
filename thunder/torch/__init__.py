@@ -2513,7 +2513,7 @@ def _reduction(
     return result
 
 
-@torchsymbol(torch.all, is_method=True, id="torch.all")
+@torchsymbol(torch.all, torch.Tensor.all, is_method=True, id="torch.all")
 def all_tensor(
     a: TensorLike, /, dim: None | int | Sequence[int] = None, keepdim: bool = False, *, out: None | TensorLike = None
 ) -> TensorLike:
@@ -2528,7 +2528,7 @@ def all_tensor(
     return result
 
 
-@torchsymbol(torch.any, is_method=True, id="torch.any")
+@torchsymbol(torch.any, torch.Tensor.all, is_method=True, id="torch.any")
 def any_tensor(a: TensorLike, /, dim: None | int | Sequence[int] = None, keepdim: bool = False) -> TensorLike:
     # named as any_tensor to avoid confusion with python's built-in any function
     a_ = clang.maybe_convert_to_dtype(a, dtypes.bool8)
@@ -2584,7 +2584,7 @@ def torch_max(a: TensorLike, /, dim: NumberLike, keepdim: bool = False) -> tuple
 def torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike: ...
 
 
-@torchsymbol(torch.max, is_method=True, id="torch.max")
+@torchsymbol(torch.max, torch.Tensor.max, is_method=True, id="torch.max")
 def torch_max(
     a, /, dim: NumberLike | TensorLike | None = None, keepdim: bool = False
 ) -> TensorLike | tuple[TensorLike, TensorLike]:
@@ -2912,7 +2912,7 @@ def scatter_add_(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike)
     return prims.copy_(scatter_add(a, dim, index, src), a)
 
 
-@torchsymbol(torch.take_along_dim)
+@torchsymbol(torch.take_along_dim, torch.Tensor.take_along_dim, is_method=True)
 def take_along_dim(a: TensorLike, /, indices: TensorLike, dim: int) -> TensorLike:
     return clang.take_along_axis(a, indices, dim)
 
@@ -3480,7 +3480,7 @@ def matmul(a: TensorLike, b: TensorLike, /) -> TensorLike:
     return prims.matmul(a, b)
 
 
-@torchsymbol(torch.outer)
+@torchsymbol(torch.outer, torch.Tensor.outer, is_method=True)
 def outer(a: TensorLike, b: TensorLike, /) -> TensorLike:
     utils.check_types((a, b), TensorProxy)
 
