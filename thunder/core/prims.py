@@ -3155,7 +3155,7 @@ pad = make_prim(
 )
 
 
-def reshape_meta(a: TensorProxy, /, shape: tuple[int, ...]) -> TensorProxy:
+def reshape_meta(a: TensorProxy, /, shape: tuple[int, NumberProxy, ...]) -> TensorProxy:
     # Validates inputs
     utils.check_type(a, TensorProxy)
     utils.check_valid_shape(shape)

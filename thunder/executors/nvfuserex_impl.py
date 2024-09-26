@@ -1220,10 +1220,14 @@ def _reshape_check(a: TensorProxy, shape: list[int]) -> bool:
     return is_supported_tensor(a)
 
 
-def reshape(a: TensorProxy, shape: list[int], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def reshape(a: TensorProxy, shape: list[int, NumberProxy, ...], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nv_a = getnv(a, fd, lc_to_nv_map)
+    if any(map(lambda x: isinstance(x, NumberProxy), shape)):
+        nv_shape = getnv(shape, fd, lc_to_nv_map)
+    else: 
+        nv_shape = shape
 
-    return fd.ops.reshape(nv_a, shape)
+    return fd.ops.reshape(nv_a, nv_shape)
 
 
 register_supported(PrimIDs.RESHAPE, reshape, _reshape_check)
