@@ -1758,6 +1758,10 @@ def test_grad_split_unused_output(device):
     # Test to verify that the grad rule for split is
     # correct even if few of the outputs are unused
     # (leading to `grad=None` for them).
+
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+
     def forward(x):
         x_1, x_2, x_3 = torch.split(x, 2)
         return x_1
