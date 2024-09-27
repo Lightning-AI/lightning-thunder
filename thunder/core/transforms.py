@@ -2138,14 +2138,26 @@ def nll_loss_backward(input, target, weight, reduction, ignore_index, total_weig
 def split_aug_fwd(a: TensorProxy, split_size_or_sections: int | Sequence[int], dim: int = 0) -> VJPDual:
     from thunder.torch import split
 
-    primal = split(a, split_size_or_sections, dim)
-    residuals = (dim,)
-    return VJPDual(primal, residuals)
+    primals = split(a, split_size_or_sections, dim)
+    # save `dtype, device and output shape` as few output can be unused user function
+    # leading to incoming gradients being `None`
+    # in which case we will create zeros as gradient to be passed to `cat`
+    residuals = (dim, a.dtype, a.device, tuple(primal.shape for primal in primals))
+    return VJPDual(primals, residuals)
 
 
 @register_backward("torch.split")
-def split_backward(dim, *grads):
-    from thunder.torch import cat
+def split_backward(dim, dtype, device, out_shapes, *grads):
+    from thunder.torch import cat, zeros
+
+    assert len(out_shapes) == len(grads)
+
+    def make_zeros_like(shape):
+        return zeros(shape, dtype=dtype, device=device)
+
+    grads = tuple(
+        grad if grad is not None else make_zeros_like(out_shape) for grad, out_shape in zip(grads, out_shapes)
+    )
 
     return cat(grads, dim)
 
