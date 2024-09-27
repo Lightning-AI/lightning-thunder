@@ -56,6 +56,7 @@ IMPORTANT_CONFIGS = [
     "phi-2",
 ]
 RUN_ALL_CONFIGS = os.environ.get("THUNDER_BENCH_RUN_ALL_CONFIGS", "0") == "1"
+MAX_ALLOCATED_MEMORY_KEYWORD = "max_allocated_memory_MB"
 
 
 class ComputeType(Enum):
@@ -113,7 +114,7 @@ def timer_and_memory_stats(benchmark) -> float:
         @functools.wraps(old_timer)
         def timer():
             ret = old_timer()
-            benchmark.extra_info["max_allocated_memory_MB"] = torch.cuda.max_memory_allocated() / (1024 * 1024.0)
+            benchmark.extra_info[MAX_ALLOCATED_MEMORY_KEYWORD] = torch.cuda.max_memory_allocated() / (1024 * 1024.0)
             torch.cuda.reset_peak_memory_stats()
             return ret
 

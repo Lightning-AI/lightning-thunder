@@ -3116,7 +3116,7 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
         self.graph_idx = 0
 
     def run_bench(self, gm: torch.fx.GraphModule, name: str, *sample_args) -> None:
-        from thunder.benchmarks.targets import record_peak_allocated_memory
+        from thunder.benchmarks.targets import record_peak_allocated_memory, MAX_ALLOCATED_MEMORY_KEYWORD
 
         for ex in self.executors:
             # Uses the already compiled module if it is compiled with the expected executor
@@ -3135,6 +3135,13 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
             # Adds the graph number, split module name and executor suffix to the name string
             self.bench.stats.name = (
                 self.bench.stats.name + f"_GraphId[{self.graph_idx+1}]_SplitModuleName[{name}]" + f"_{ex}"
+            )
+            assert MAX_ALLOCATED_MEMORY_KEYWORD in self.bench.extra_info
+            assert f"{self.bench.stats.name}_{MAX_ALLOCATED_MEMORY_KEYWORD}" not in self.bench.extra_info
+            # NOTE: A benchmark can include multiple stats, but only one extra_info field is allowed per benchmark.
+            # Therefore, we use the current stats name as a prefix to distinguish memory usage for each stats.
+            self.bench.extra_info[f"{self.bench.stats.name}_{MAX_ALLOCATED_MEMORY_KEYWORD}"] = (
+                self.bench.extra_info.pop(MAX_ALLOCATED_MEMORY_KEYWORD)
             )
 
             # when the graph is segmented, the self.bench run multiple times, pybenchmark throws an error:
