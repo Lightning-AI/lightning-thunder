@@ -6,23 +6,28 @@ import operator
 import collections
 import re
 import sys
+from collections.abc import Callable
 from collections.abc import Sequence
 from enum import Enum
 from functools import partial, reduce, wraps
 from numbers import Number
-from typing import Any, overload
 from types import NoneType, ModuleType
-from collections.abc import Callable
+from typing import Any, overload
+import builtins
+import collections
+import itertools
+import math
+import operator
+import re
 
 import opt_einsum
 
 # Initializes the language context
 from thunder.torch.langctx import register_method, register_property
-
 from thunder.core.baseutils import run_once
 import thunder.clang as clang
 import thunder.core.devices as devices
-from thunder.core.devices import to_device, device_from_string
+from thunder.core.devices import to_device
 import thunder.core.dtypes as dtypes
 from thunder.core.dtypes import to_torch_dtype, to_dtype, _thunder_to_torch_dtype_map, _torch_to_thunder_dtype_map
 import thunder.core.prims as prims
@@ -44,9 +49,8 @@ from thunder.core.proxies import (
 )
 from thunder.core.pytree import tree_map, tree_flatten, tree_unflatten
 from thunder.core.symbol import Symbol
-from thunder.core.transforms import register_grad
+from thunder.core.transforms import register_grad, register_augmented_forward, register_backward
 from thunder.core.prims import get_grad, put_grad
-from thunder.core.baseutils import run_once
 import thunder
 from thunder.torch.default_torch_ops import _auto_registered_operators_returning_views
 
@@ -5450,6 +5454,46 @@ else:
 
     def wait(slf) -> None:
         utils.check(False, lambda: "torch.distributed is not available")
+
+
+# ref: https://github.com/pytorch/pytorch/blob/b99ef1a/torch/_functorch/autograd_function.py#L715-L752
+@torchsymbol(
+    torch.ops.higher_order.autograd_function_apply,
+    id="torch.ops.higher_order.autograd_function_apply",
+    is_method=False,
+)
+def autograd_function_apply(
+    fwd: Callable[list[TensorProxy], TensorProxy | tuple[TensorProxy, ...]],
+    bwd: Callable[list[TensorProxy], TensorProxy | tuple[TensorProxy, ...]],
+    *args: Any,
+    args_tensor_mask: Sequence[bool] | None,
+    non_differentiable_idx: Sequence[int] | None = None,
+) -> TensorProxy | tuple[TensorProxy, ...]:
+    result, saved_for_backward = fwd(None, *args)
+    return result
+
+
+@register_augmented_forward("torch.ops.higher_order.autograd_function_apply")
+def augmented_forward_autograd_function_apply(
+    fwd: Callable[list[Any | TensorProxy], TensorProxy | tuple[TensorProxy, ...]],
+    bwd: Callable[list[Any | TensorProxy], tuple[TensorProxy, ...]],
+    *args: Any,
+    args_tensor_mask: Sequence[bool],
+    non_differentiable_idx: Sequence[int] | None = None,
+) -> tuple[TensorProxy | tuple[TensorProxy, ...], tuple[Any, ...]]:
+    result, saved_for_backward = fwd(None, *args)
+    return result, (saved_for_backward, bwd, args_tensor_mask, non_differentiable_idx)
+
+
+@register_backward("torch.ops.higher_order.autograd_function_apply")
+def backward_autograd_function_apply(
+    saved_for_backward: tuple[Any, ...],
+    bwd: Callable[list[Any | TensorProxy], tuple[TensorProxy, ...]],
+    args_tensor_mask: Sequence[bool],
+    non_differentiable_idx: Sequence[int] | None = None,
+    *grad_output: Sequence[TensorProxy],
+) -> tuple[Any, ...]:
+    return bwd(None, *grad_output, *saved_for_backward)
 
 
 #
