@@ -1,11 +1,20 @@
+import pytest
+import torch
 import torch.fx
-from thunder.tests.framework import instantiate, NOTHING, DynamoThunderExecutor, IS_WINDOWS
+
 from thunder import dtypes
 from thunder.dynamo import ThunderCompiler
 from thunder import last_traces
-
-import torch
-import pytest
+from thunder.tests.bf16 import device_supports_bf16
+from thunder.tests.framework import (
+    instantiate,
+    NOTHING,
+    DynamoThunderExecutor,
+    IS_WINDOWS,
+    nvFuserExecutor,
+    requiresCUDA,
+)
+from thunder.tests.make_tensor import make_tensor
 
 
 # This will be applied to all tests in this file.
@@ -365,3 +374,72 @@ def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
     actual_grad = torch.autograd.grad(actual, x, g)
     expected_grad = torch.autograd.grad(expected, x, g)
     torch.testing.assert_close(actual_grad, expected_grad)
+
+
+@instantiate(
+    dtypes=(dtypes.float32,),
+    executors=(nvFuserExecutor,),
+    decorators=(
+        pytest.mark.parametrize(
+            "optim",
+            (
+                torch.optim.SGD,
+                torch.optim.Adam,
+                torch.optim.AdamW,
+            ),
+            ids=(
+                "sgd",
+                "adam",
+                "adamw",
+            ),
+        ),
+        pytest.mark.skipif(
+            IS_WINDOWS,
+            reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+        ),
+    ),
+)
+@requiresCUDA
+def test_optimizer_step_with_resnet18(executor, device, dtype, optim):
+    torchvision = pytest.importorskip("torchvision")
+    if not device_supports_bf16(device):
+        pytest.skip(f"{device} does not support bf16")
+
+    tdtype = dtypes.to_torch_dtype(dtype)
+    model = torchvision.models.resnet18(weights=None).to(device=device, dtype=tdtype)
+    optimizer = optim(model.parameters())
+    jitted_step = torch.compile(backend=ThunderCompiler(executors=executor.executors_list()))(optimizer.step)
+
+    ref_model = torchvision.models.resnet18(weights=None).to(device=device, dtype=tdtype)
+    ref_model.load_state_dict(model.state_dict())
+    ref_optimizer = optim(ref_model.parameters())
+    ref_optimizer.load_state_dict(optimizer.state_dict())
+
+    for i in range(2):
+        x = make_tensor((1, 3, 224, 224), dtype=tdtype, device=device)
+        x_ref = x.clone().detach()
+
+        y = model(x)
+        y.mean().backward()
+        jitted_step()
+        optimizer.zero_grad()
+
+        y_ref = ref_model(x_ref)
+        y_ref.mean().backward()
+        ref_optimizer.step()
+        ref_optimizer.zero_grad()
+
+        # ref: https://github.com/NVIDIA/Fuser/issues/2664
+        if optim in (torch.optim.Adam, torch.optim.AdamW):
+            with pytest.raises(AssertionError, match="Tensor-likes are not close!"):
+                torch.testing.assert_close(
+                    tuple(model.parameters()),
+                    tuple(ref_model.parameters()),
+                    msg=lambda s: f"{i+1}-iter {s}",
+                )
+        else:
+            torch.testing.assert_close(
+                tuple(model.parameters()),
+                tuple(ref_model.parameters()),
+                msg=lambda s: f"{i+1}-iter {s}",
+            )
