@@ -2517,7 +2517,7 @@ def _reduction(
     return result
 
 
-@torchsymbol(torch.all, is_method=True, id="torch.all")
+@torchsymbol(torch.all, is_method=True, method_name="all", id="torch.all")
 def all_tensor(
     a: TensorLike, /, dim: None | int | Sequence[int] = None, keepdim: bool = False, *, out: None | TensorLike = None
 ) -> TensorLike:
@@ -2532,7 +2532,7 @@ def all_tensor(
     return result
 
 
-@torchsymbol(torch.any, is_method=True, id="torch.any")
+@torchsymbol(torch.any, is_method=True, method_name="any", id="torch.any")
 def any_tensor(a: TensorLike, /, dim: None | int | Sequence[int] = None, keepdim: bool = False) -> TensorLike:
     # named as any_tensor to avoid confusion with python's built-in any function
     a_ = clang.maybe_convert_to_dtype(a, dtypes.bool8)
@@ -2588,7 +2588,7 @@ def torch_max(a: TensorLike, /, dim: NumberLike, keepdim: bool = False) -> tuple
 def torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike: ...
 
 
-@torchsymbol(torch.max, is_method=True, id="torch.max")
+@torchsymbol(torch.max, is_method=True, method_name="max", id="torch.max")
 def torch_max(
     a, /, dim: NumberLike | TensorLike | None = None, keepdim: bool = False
 ) -> TensorLike | tuple[TensorLike, TensorLike]:
