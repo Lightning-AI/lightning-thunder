@@ -2916,7 +2916,7 @@ def scatter_add_(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike)
     return prims.copy_(scatter_add(a, dim, index, src), a)
 
 
-@torchsymbol(torch.take_along_dim)
+@torchsymbol(torch.take_along_dim, is_method=True)
 def take_along_dim(a: TensorLike, /, indices: TensorLike, dim: int) -> TensorLike:
     return clang.take_along_axis(a, indices, dim)
 
@@ -3484,7 +3484,7 @@ def matmul(a: TensorLike, b: TensorLike, /) -> TensorLike:
     return prims.matmul(a, b)
 
 
-@torchsymbol(torch.outer)
+@torchsymbol(torch.outer, is_method=True)
 def outer(a: TensorLike, b: TensorLike, /) -> TensorLike:
     utils.check_types((a, b), TensorProxy)
 
@@ -5560,6 +5560,9 @@ def _get_torch_function_name(torch_module: ModuleType, torchfn: Callable):
 
 
 def register_default_torch_op(torchfn: Callable, torch_module):
+    from thunder.core.transforms import augmented_forward_impls, backward_impls
+    from thunder.executors.torchex import _always_executable, ex
+
     fn_meta = meta_adaptor(torchfn)
     _fn = langctx(Languages.TORCH)(fn_meta)
     _fn.__torchfn = torchfn
@@ -5570,22 +5573,34 @@ def register_default_torch_op(torchfn: Callable, torch_module):
         id=f"{torch_module.__name__}.{torchfn_name}",
         tags=(prims.OpTags.AUTO_REGISTERED,),
     )
-    _torch_to_thunder_function_map[torchfn] = sym
-    from thunder.executors.torchex import _always_executable, ex
 
-    op = ex.register_operator(torchfn_name, module=torch_module, meta=fn_meta)
-    ex.register_implementation(sym, op, checker=_always_executable)
+    # NOTE: We follow the manual registration approach, where functions with the same name in both torch and torch.Tensor share the same symbol.
+    # Therefore, we reuse the existing symbol instead of creating a new one.
+    sym_exist = False
+    if torch_module in (torch, torch.Tensor):
+        other_module = torch.Tensor if torch_module is torch else torch
+        if (torch_fn := getattr(other_module, torchfn_name, None)) and torch_fn in _torch_to_thunder_function_map:
+            sym = _torch_to_thunder_function_map[torch_fn]
+            sym_exist = True
+
+    _torch_to_thunder_function_map[torchfn] = sym
+
     # TODO: convert to an assert after #1140 is fixed
     if torchfn_name not in __builtins__ and not hasattr(sys.modules["thunder.torch"], torchfn_name):
         setattr(sys.modules["thunder.torch"], torchfn_name, sym)
-
-    from thunder.core.transforms import augmented_forward_impls, backward_impls
 
     # We need to invoke `register_method` on methods
     # so that `x.method` is registered to the TensorProxy.
     if torch_module is torch.Tensor:
         register_method(torchfn.__name__, sym)
 
+    # If the function exists either in the torch or torch.Tensor namespace and is already registered,
+    # return early to prevent overwriting the existing mapping.
+    if sym_exist:
+        return
+
+    op = ex.register_operator(torchfn_name, module=torch_module, meta=fn_meta)
+    ex.register_implementation(sym, op, checker=_always_executable)
     augmented_forward_impls[sym.id] = augmented_forward_adaptor(op)
 
     _vjp_impl_wrapper = partial(_vjp_impl, torchfn)
