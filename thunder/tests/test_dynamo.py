@@ -15,6 +15,7 @@ from thunder.tests.framework import (
     requiresCUDA,
 )
 from thunder.tests.make_tensor import make_tensor
+from thunder.tests.litgpt_model import Config, GPT
 
 
 # This will be applied to all tests in this file.
@@ -400,23 +401,30 @@ def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
     ),
 )
 @requiresCUDA
-def test_optimizer_step_with_resnet18(executor, device, dtype, optim):
-    torchvision = pytest.importorskip("torchvision")
+def test_thundercompiler_optim_step(executor, device, dtype, optim):
     if not device_supports_bf16(device):
         pytest.skip(f"{device} does not support bf16")
 
     tdtype = dtypes.to_torch_dtype(dtype)
-    model = torchvision.models.resnet18(weights=None).to(device=device, dtype=tdtype)
+    config = Config.from_name("open_llama_3b")
+    config.n_layer = 1
+    model = GPT(config).to(device=device, dtype=tdtype)
     optimizer = optim(model.parameters())
     jitted_step = torch.compile(backend=ThunderCompiler(executors=executor.executors_list()))(optimizer.step)
 
-    ref_model = torchvision.models.resnet18(weights=None).to(device=device, dtype=tdtype)
+    ref_model = GPT(config).to(device=device, dtype=tdtype)
     ref_model.load_state_dict(model.state_dict())
     ref_optimizer = optim(ref_model.parameters())
     ref_optimizer.load_state_dict(optimizer.state_dict())
 
     for i in range(2):
-        x = make_tensor((1, 3, 224, 224), dtype=tdtype, device=device)
+        x = make_tensor(
+            (1, config.block_size),
+            dtype=torch.int64,
+            device=device,
+            low=0,
+            high=config.vocab_size,
+        )
         x_ref = x.clone().detach()
 
         y = model(x)
@@ -429,17 +437,9 @@ def test_optimizer_step_with_resnet18(executor, device, dtype, optim):
         ref_optimizer.step()
         ref_optimizer.zero_grad()
 
-        # ref: https://github.com/NVIDIA/Fuser/issues/2664
-        if optim in (torch.optim.Adam, torch.optim.AdamW):
-            with pytest.raises(AssertionError, match="Tensor-likes are not close!"):
-                torch.testing.assert_close(
-                    tuple(model.parameters()),
-                    tuple(ref_model.parameters()),
-                    msg=lambda s: f"{i+1}-iter {s}",
-                )
-        else:
-            torch.testing.assert_close(
-                tuple(model.parameters()),
-                tuple(ref_model.parameters()),
-                msg=lambda s: f"{i+1}-iter {s}",
-            )
+        # There could be numerical error, see https://github.com/NVIDIA/Fuser/issues/2664
+        torch.testing.assert_close(
+            tuple(model.parameters()),
+            tuple(ref_model.parameters()),
+            msg=lambda s: f"{i+1}-iter {s}",
+        )
