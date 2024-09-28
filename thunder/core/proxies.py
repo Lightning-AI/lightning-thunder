@@ -1951,7 +1951,7 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
     dtype = dtypes.to_dtype(t.dtype)
 
     grad = None
-    if t.grad is not None:
+    if t.is_leaf and t.grad is not None:
         grad_pr = None
         if history is not None:
             attr_pr = ProvenanceRecord(inst=PseudoInst.CONSTANT, inputs=[], value="grad")

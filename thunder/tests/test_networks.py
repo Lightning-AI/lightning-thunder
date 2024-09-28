@@ -28,8 +28,9 @@ import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
 all_test_executors_and_dynamo = _all_test_executors() + [DynamoThunderExecutor]
 
 
+# see https://docs.pytest.org/en/stable/how-to/capture-warnings.html#recwarn for the recwarn fixture
 @instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
-def test_nanogpt_complete(executor, device, dtype):
+def test_nanogpt_complete(executor, device, dtype, recwarn):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=torch.int64, device=device)
 
@@ -45,6 +46,10 @@ def test_nanogpt_complete(executor, device, dtype):
     thunder_result = tom(idx)
 
     assert_close(torch_result, thunder_result)
+
+    if recwarn:
+        for r in recwarn:
+            assert "The .grad attribute of a Tensor that is not a leaf Tensor is being accessed." not in str(r.message)
 
 
 # TODO Investigate grad inconsistency
