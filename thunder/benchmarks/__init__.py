@@ -3018,6 +3018,8 @@ from thunder.dynamo.utils import _concrete_shape
 from thunder.dynamo.compiler import ThunderCompiler
 from itertools import chain
 
+GRAPH_BY_GRAPH_BENCHMARK_PARAMS_KEYS = ("GraphID", "SplitModuleName", "executor")
+
 
 def _get_example_inputs_from_placeholder(node) -> tuple[torch.Tensor]:
     check(node.op == "placeholder", lambda: f"The node must be placeholder type", ValueError)
@@ -3045,7 +3047,7 @@ def _get_example_inputs_from_placeholder(node) -> tuple[torch.Tensor]:
         )
     else:
         raise TypeError(
-            f"The 'example_value' in the placeholder node is expected to be either a Tensor or a Tuple of Tensors."
+            "The 'example_value' in the placeholder node is expected to be either a Tensor or a Tuple of Tensors."
         )
 
 
@@ -3074,34 +3076,55 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
                              is not supported by thunder.
 
         Example:
-            >>> import torch
-            >>> import thunder
-            >>> from thunder.benchmarks import ThunderCompilerGraphBenchmarking
-            >>>
-            >>> def func(x):
-            ...     x = torch.sin(x)
-            ...     if x.sum() > 0:
-            ...         return x + 1
-            ...     else:
-            ...         return x - 1
-            ...
-            >>> def test_func(benchmark):
-            ...     backend = ThunderCompilerGraphBenchmarking(benchmark, executors=["eager"])
-            ...     compiled = torch.compile(backend=backend)(func)
-            ...     x = torch.ones(2, requires_grad=True).cuda()
-            ...     compiled(x)
-        Running the example with `pytest script.py  --benchmark-sort="name"` will produce benchmarking results.
+            ```
+            # script.py
+            import torch
+            import thunder
+            from thunder.benchmarks import ThunderCompilerGraphBenchmarking
 
-        # Dynamo segments the graph into two subgraphs, each identified by the 'GraphId[id]' field in the test name.
-        # Each subgraph contains a single split module, processed by the Thunder-defined splitter,
-        # which corresponds to the 'SplitModuleName[split_module_name]' field.
-        # The currently active executor is indicated by the '_eager' suffix.
-        ----------------------------------------------------------------------------------------------------- benchmark: 2 tests -----------------------------------------------------------------------------------------------------
-        Name (time in us)                                             Min                Max               Mean            StdDev             Median               IQR            Outliers  OPS (Kops/s)            Rounds  Iterations
-        ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-        test_func_GraphId[1]_SplitModuleName[thunder_1]_eager     11.8791 (2.23)     14.2842 (1.95)     12.2122 (2.23)     0.3507 (1.05)     12.1247 (2.25)     0.1275 (2.36)        46;71       81.8853 (0.45)        841         100
-        test_func_GraphId[2]_SplitModuleName[thunder_1]_eager      5.3239 (1.0)       7.3174 (1.0)       5.4771 (1.0)      0.3326 (1.0)       5.3976 (1.0)      0.0540 (1.0)        94;157      182.5784 (1.0)        1879         100
-        ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+            def func(x):
+                x = torch.sin(x)
+                if x.sum() > 0:
+                    return x + 1
+                else:
+                    return x - 1
+
+            def test_func(benchmark):
+                backend = ThunderCompilerGraphBenchmarking(benchmark, executors=["eager", "thunder"])
+                compiled = torch.compile(backend=backend)(func)
+                x = torch.ones(2, requires_grad=True).cuda()
+                compiled(x)
+            ```
+
+            Note: Ensure the pytest configuration file (`thunder/benchmarks/conftest.py`) is present in the same directory as `script.py` to provide the grouping customization.
+            .
+            ├── script.py
+            ├── conftest.py
+
+        Usage:
+        To run the benchmark test and group the results by split module, execute the following command:
+        `pytest script.py  --benchmark-group-by='graph-by-graph:param:GraphID,param:SplitModuleName'`
+
+        Dynamo segments the graph into two subgraphs, each identified by the 'GraphID[id]' field in the test name.
+        Each subgraph contains a single split module, processed by the Thunder-defined splitter,
+        which corresponds to the 'SplitModuleName[split_module_name]' field.
+        The currently active executor is indicated by the 'executor[executor_name]'.
+        With `--benchmark-group-by='graph-by-graph:param:GraphID,param:SplitModuleName'`, the test cases are grouped based on GraphID and SplitModuleName,
+        allowing for performance comparison between different executors (e.g., 'eager' vs. 'thunder').
+
+        --------------------------------------------------------------------------- benchmark 'GraphID=GraphID[1] SplitModuleName=SplitModuleName[thunder_1]': 2 tests ---------------------------------------------------------------------------
+        Name (time in us)                                                         Min                Max               Mean            StdDev             Median               IQR            Outliers  OPS (Kops/s)            Rounds  Iterations
+        ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        test_func-GraphID[1]-SplitModuleName[thunder_1]-executor[eager]       12.6325 (1.0)      14.6452 (1.0)      12.8461 (1.0)      0.3345 (1.0)      12.7634 (1.0)      0.0794 (1.0)         44;56       77.8446 (1.0)         795         100
+        test_func-GraphID[1]-SplitModuleName[thunder_1]-executor[thunder]     67.3176 (5.33)     97.5824 (6.66)     70.5751 (5.49)     4.5239 (13.53)    69.3277 (5.43)     1.3885 (17.48)     114;125       14.1693 (0.18)       1501          10
+        ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+        --------------------------------------------------------------------------- benchmark 'GraphID=GraphID[2] SplitModuleName=SplitModuleName[thunder_1]': 2 tests ---------------------------------------------------------------------------
+        Name (time in us)                                                         Min                Max               Mean            StdDev             Median               IQR            Outliers  OPS (Kops/s)            Rounds  Iterations
+        ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+        test_func-GraphID[2]-SplitModuleName[thunder_1]-executor[eager]        5.6229 (1.0)       7.6670 (1.0)       5.7683 (1.0)      0.3353 (1.0)       5.6884 (1.0)      0.0291 (1.0)        88;146      173.3627 (1.0)        1793         100
+        test_func-GraphID[2]-SplitModuleName[thunder_1]-executor[thunder]     63.2247 (11.24)    85.5654 (11.16)    66.3187 (11.50)    3.5975 (10.73)    65.4071 (11.50)    1.3760 (47.28)      97;117       15.0787 (0.09)       1584          10
+        ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
         """
         super().__init__(**thunder_options)
         self.bench = bench
@@ -3133,9 +3156,8 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
                 self.bench(fn, *sample_args)
             # BenchmarkFixture.stats is created each time bench is called (ref: https://github.com/pybenchmark/pytest-benchmark/blob/8c9a5faa1dd178b53ab7b2a66f5364a77e903d74/src/pytest_benchmark/fixture.py#L150)
             # Adds the graph number, split module name and executor suffix to the name string
-            self.bench.stats.name = (
-                self.bench.stats.name + f"-GraphId[{self.graph_idx+1}]-SplitModuleName[{name}]" + f"-{ex}"
-            )
+            gid_key, module_name_key, ex_key = GRAPH_BY_GRAPH_BENCHMARK_PARAMS_KEYS
+            self.bench.stats.name += f"-{gid_key}[{self.graph_idx+1}]-{module_name_key}[{name}]-{ex_key}[{ex}]"
             assert MAX_ALLOCATED_MEMORY_KEYWORD in self.bench.extra_info
             assert f"{self.bench.stats.name}_{MAX_ALLOCATED_MEMORY_KEYWORD}" not in self.bench.extra_info
             # NOTE: A benchmark can include multiple stats, but only one extra_info field is allowed per benchmark.
