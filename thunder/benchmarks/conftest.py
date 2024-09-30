@@ -1,13 +1,20 @@
 import pytest
 from collections import defaultdict
 import pytest_benchmark
+from thunder.benchmarks import GRAPH_BY_GRAPH_BENCHMARK_PARAMS_KEYS
 
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_benchmark_group_stats(config, benchmarks, group_by):
-    param_keys = ("GraphID", "SplitModuleName", "executor")
+    """
+    The function customize the behavior for ThunderCompilerGraphBenchmarking.
+    The custom grouping function is only invoked when the `--benchmark-group-by`
+    option is set to 'graph-by-graph:param:GraphID,param:SplitModuleName'.
+    For an example, refer to the comment section in `ThunderCompilerGraphBenchmarking`.
+
+    Reference: https://pytest-benchmark.readthedocs.io/en/latest/hooks.html#pytest_benchmark.hookspec.pytest_benchmark_group_stats
+    """
     prefix = "graph-by-graph:"
-    # import pdb;pdb.set_trace()
     outcome = yield
     if group_by.startswith(prefix):
         group_by = group_by[len(prefix) :]
@@ -24,7 +31,8 @@ def pytest_benchmark_group_stats(config, benchmarks, group_by):
             name = bench["name"]
             gid, module_name, ex = name.split("-")[-3:]
             # Add the "GraphID", "SplitModuleName","executor" as params in benchmark
-            bench["params"].update({"GraphID": gid, "SplitModuleName": module_name, "executor": ex})
+            gid_key, module_name_key, ex_key = GRAPH_BY_GRAPH_BENCHMARK_PARAMS_KEYS
+            bench["params"].update({gid_key: gid, module_name_key: module_name, ex_key: ex})
             bench["param"] += f"-{gid}-{module_name}-{ex}"
 
     result = pytest_benchmark.plugin.pytest_benchmark_group_stats(config, benchmarks, group_by)
