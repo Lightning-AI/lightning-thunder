@@ -3134,7 +3134,7 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
             # BenchmarkFixture.stats is created each time bench is called (ref: https://github.com/pybenchmark/pytest-benchmark/blob/8c9a5faa1dd178b53ab7b2a66f5364a77e903d74/src/pytest_benchmark/fixture.py#L150)
             # Adds the graph number, split module name and executor suffix to the name string
             self.bench.stats.name = (
-                self.bench.stats.name + f"_GraphId[{self.graph_idx+1}]_SplitModuleName[{name}]" + f"_{ex}"
+                self.bench.stats.name + f"-GraphId[{self.graph_idx+1}]-SplitModuleName[{name}]" + f"-{ex}"
             )
             assert MAX_ALLOCATED_MEMORY_KEYWORD in self.bench.extra_info
             assert f"{self.bench.stats.name}_{MAX_ALLOCATED_MEMORY_KEYWORD}" not in self.bench.extra_info
