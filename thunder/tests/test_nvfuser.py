@@ -1053,15 +1053,14 @@ def test_sdpa(
 
     nvf_fd = bwd_fusion[-1][-1].last_used
     repro_script = None
+    # Legacy repro script API
     if nvfuser_version() < LooseVersion("0.2.14"):
         repro_script = nvf_fd.getReproString()
     else:
         repro_script = nvf_fd.repro_script_for()
-    if nvfuser_version() < LooseVersion("0.2.14"):
-       assert (
-           repro_script.count("is_cpu=True") == 2
-       ), "Expected philox_seed and philox_offset inputs to be CPU scalar tensors."
-    else :
+    assert (
+        repro_script.count("is_cpu=True") == 2
+    ), "Expected philox_seed and philox_offset inputs to be CPU scalar tensors."
 
     # Torch reference computation
     # Clone the inputs to verify gradients with torch reference
