@@ -818,22 +818,20 @@ def test_resnet50(benchmark, executor: Callable, compute_type: ComputeType):
 
 
 #
-# Huggingface benchmarks
+# Torchbench benchmarks
 #
 
-hf_models = []
+torchbench_models = []
 if importlib.util.find_spec("torchbenchmark"):
     import torchbenchmark
-
-    all_torchbench_models = dir(torchbenchmark.models)
-    hf_models = list(filter(lambda x: "hf" in x, all_torchbench_models))
+    torchbench_models = dir(torchbenchmark.models)
 
 
-@pytest.mark.skipif(not hf_models, reason="requires torchbenchmark to be installed.")
+@pytest.mark.skipif(not torchbench_models, reason="requires torchbenchmark to be installed.")
 @pytest.mark.parametrize(
-    "hf_module_name,",
-    hf_models,
-    ids=hf_models,
+    "module_name,",
+    torchbench_models,
+    ids=torchbench_models,
 )
 @pytest.mark.parametrize(
     "executor,",
@@ -841,10 +839,10 @@ if importlib.util.find_spec("torchbenchmark"):
     ids=executors_ids,
 )
 @parametrize_compute_type
-def test_hf_torchbench(benchmark, hf_module_name, executor, compute_type: ComputeType):
+def test_torchbench(benchmark, module_name, executor, compute_type: ComputeType):
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=FutureWarning)
-        b = TorchbenchBenchmark(hf_module_name, device="cuda", requires_grad=is_requires_grad(compute_type))
+        b = TorchbenchBenchmark(module_name, device="cuda", requires_grad=is_requires_grad(compute_type))
 
     args, kwargs = b.make_batch()
     fn = executor(b.fn())
