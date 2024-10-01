@@ -402,29 +402,23 @@ def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
 )
 @requiresCUDA
 def test_thundercompiler_optim_step(executor, device, dtype, optim):
+    from thunder.tests.distributed.helper import ToyModel
+
     if not device_supports_bf16(device):
         pytest.skip(f"{device} does not support bf16")
 
     tdtype = dtypes.to_torch_dtype(dtype)
-    config = Config.from_name("open_llama_3b")
-    config.n_layer = 1
-    model = GPT(config).to(device=device, dtype=tdtype)
+    model = ToyModel().to(device=device, dtype=tdtype)
     optimizer = optim(model.parameters())
     jitted_step = torch.compile(backend=ThunderCompiler(executors=executor.executors_list()))(optimizer.step)
 
-    ref_model = GPT(config).to(device=device, dtype=tdtype)
+    ref_model = ToyModel().to(device=device, dtype=tdtype)
     ref_model.load_state_dict(model.state_dict())
     ref_optimizer = optim(ref_model.parameters())
     ref_optimizer.load_state_dict(optimizer.state_dict())
 
     for i in range(2):
-        x = make_tensor(
-            (1, config.block_size),
-            dtype=torch.int64,
-            device=device,
-            low=0,
-            high=config.vocab_size,
-        )
+        x = make_tensor((1, ToyModel.N_IN), dtype=tdtype, device=device)
         x_ref = x.clone().detach()
 
         y = model(x)
