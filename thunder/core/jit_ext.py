@@ -85,7 +85,6 @@ from thunder.core.interpreter import (
     get_interpreterruntimectx,
     InterpreterRuntimeCtx,
     is_opaque,
-    is_pycapsule,
     Py_NULL,
     member_descriptor,
     WrappedValue,
@@ -655,7 +654,12 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     def core_of_forward(*args, **kwargs):
         return thunder.core.trace_interpreter.interpret_trace(trace_of_fwd, *args, **kwargs)
 
-    custom_fwd_meta = lambda *unwrapped_custom_forward_args: unwrapped_custom_forward_result
+    def custom_forward_meta(*args, **kwargs):
+        trace = thunder.core.trace.get_tracectx()
+        trace.push_scope([])  # don't record symbol calls
+        res = core_of_forward(*args, **kwargs)
+        trace.pop_scope()
+        return res
 
     def bind_postprocess(bsym):
         bsym._call_ctx = {}
@@ -898,6 +902,9 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
     if thunder.core.utils.is_hashable(fn):  # see issue #889
         if (executor_lookaside := ctx._executor_lookasides.get(fn, None)) is not None:
             lookaside = executor_lookaside
+        # the ad hoc executor may be extended during compilation
+        elif (executor_lookaside := ctx.ad_hoc_executor._lookasides.get(fn, None)) is not None:
+            lookaside = jit_needs_wrap(executor_lookaside)
         elif isinstance(fn, Symbol) or fn in _clang_fn_set:
             # Performs symbol lookasides
             # NOTE Symbols "lookaside" to themselves; this just prevents their internals from being jitted
@@ -915,7 +922,14 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
     if lookaside is None:
 
         def is_from_torch(fn):
-            return hasattr(fn, "__module__") and fn.__module__ and fn.__module__.startswith("torch")
+            module = getattr(fn, "__module__", None)
+            if module is None:
+                module = getattr(getattr(fn, "__objclass__", None), "__module__", None)
+            if module is None:
+                return False
+            if module.startswith("torch"):
+                return module
+            return False
 
         has_tensor_arg = False
         for a in args:
@@ -927,8 +941,8 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
                     has_tensor_arg = True
                     break
 
-        if is_opaque(fn) and is_from_torch(fn) and has_tensor_arg:
-            if fn.__module__.startswith("torch._C"):
+        if is_opaque(fn) and (torch_module_name := is_from_torch(fn)) and has_tensor_arg:
+            if torch_module_name.startswith("torch._C"):
                 return lookaside
 
             # Torch functions have __name__ defined
@@ -946,8 +960,8 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
 
             return do_raise(NotImplementedError(calling_opaque_torch_msg))
 
-        elif is_opaque(fn) and has_tensor_arg:  # and is_pycapsule(getattr(fn, "__self__", None)):
-            # We whitelist a few things
+        elif is_opaque(fn) and has_tensor_arg:
+            # We whitelist a few built-in things
             if fn.__name__ == "__new__":
                 objectclass = fn.__self__
             else:
@@ -959,11 +973,9 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
             if module is not None:
                 module, *_ = module.split(".", 1)
             if module not in {"builtins", "_operator", "optree"}:
-                raise (
-                    NotImplementedError(
-                        f"Trying to call function {fn.__qualname__} {fn} {dir(fn)} {getattr(fn, '__objclass__', None)}, {getattr(fn, '__module__', None)}, but it is not yet supported. "
-                    )
-                )
+                # TODO: warn?
+                ctx.ad_hoc_executor.register_operator_for_opaque_function(fn)
+                return interpreter_needs_wrap(ctx.ad_hoc_executor._lookasides[fn])
 
     return lookaside
 

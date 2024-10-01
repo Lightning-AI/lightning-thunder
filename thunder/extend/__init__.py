@@ -16,8 +16,11 @@ import torch.cuda
 from thunder.core.utils import check
 from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
 from thunder.core.trace import TraceCtx
-from thunder.core.proxies import Proxy
+from thunder.core.proxies import Proxy, TensorProxy, proxy
 from thunder.core.baseutils import run_once
+from thunder.core.dtypes import to_torch_dtype
+from thunder.core.devices import to_torch_device
+from thunder.core.pytree import tree_map
 
 __all__ = [
     "register_executor",
@@ -310,6 +313,47 @@ class AdHocExecutor(OperatorExecutor):
         )
         self.counter += 1
         return op
+
+    def register_operator_for_opaque_function(self, fn):
+        def get_name(fn):
+            mod = sys.modules[fn.__module__]
+            if getattr(mod, fn.__name__) == fn:
+                return f"{fn.__module__}.{fn.__name__}"
+            raise RuntimeError("could not find name")
+
+        def auto_meta(fn):
+            def meta(*args, **kwargs):
+                concrete_args = []
+                for a in args:
+                    if isinstance(a, TensorProxy):
+                        dtype = to_torch_dtype(a.dtype)
+                        if dtype.is_floating_point:
+                            t = torch.randn(
+                                a.shape,
+                                dtype=dtype,
+                                device=to_torch_device(a.device),
+                                requires_grad=a.requires_grad,
+                            )
+                        else:
+                            t = torch.ones(
+                                a.shape,
+                                dtype=dtype,
+                                device=to_torch_device(a.device),
+                                requires_grad=a.requires_grad,
+                            )
+                        concrete_args.append(t)
+                    else:
+                        concrete_args.append(a)
+                results = fn(*concrete_args, **kwargs)
+                meta_results = tree_map(lambda r: proxy(r) if isinstance(r, torch.Tensor) else r, results)
+                return meta_results
+
+            return meta
+
+        name = get_name(fn).replace(".", "_")
+        meta = auto_meta(fn)
+        symbol = self.register_operator(name, fn=fn, meta=meta, replaces=fn)
+        return symbol
 
     def __repr__(self) -> str:
         return f"<thunder.extend.AdHocExecutor object {id(self)}>"
