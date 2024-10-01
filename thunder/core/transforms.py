@@ -2279,12 +2279,10 @@ def decomposed_fn_aug_fwd_rule(*args, decomposed_fn, **kwargs):
     """
     trace = construct_trace()(decomposed_fn, *args, **kwargs)
     trace = unwrap_one_level_of_subsymbols(trace)
-    print("trace 0\n", trace)
     # There may be a dead node like "_ = prims.convert_element_type(0, float)"
     # in the trace. We need to remove it before we can use the trace for
     # augmented_forward_pass.
     trace = dce(trace)
-    print("trace 1\n", trace)
     result, env = augmented_forward_pass(*args, trace=trace, **kwargs)
     saved_for_backward = deconstruct_forward_env_for_backward(trace, env)
     # Static caching does not with with kwargs dicts, so we're converting them

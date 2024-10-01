@@ -52,8 +52,6 @@ def interpret_trace(trace, *args, symbol_mapper=None, with_env=False, **kwargs):
             raise ValueError(f"Variable {v.name} is being overwritten this is not allowed")
         env[v.name] = val
 
-    breakpoint()
-
     safe_map_flat(write, list(trace.args), list(args))
     safe_map_flat(write, list(trace.kwargs.values()), list(kwargs.values()))
 
