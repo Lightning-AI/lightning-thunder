@@ -79,7 +79,7 @@ class Executor:
         return self._opmap
 
     def __repr__(self) -> str:
-        return f"thunder.extend.OperatorExecutor('{str(self.name)}')"
+        return f"{self.__class__.__module__}.{self.__class__.__name__}('{str(self.name)}')"
 
     def __hash__(self) -> int:
         return hash(self.name)
@@ -275,6 +275,44 @@ class OperatorExecutor(Executor):
 
         _id = sym_or_id.id if isinstance(sym_or_id, Symbol) else sym_or_id
         self.implmap[_id] = impl
+
+
+class AdHocExecutor(OperatorExecutor):
+    """An "Anonymous" executor to be used for temporary registrations"""
+
+    def __init__(self):
+        super().__init__(f"__ad_hoc_executor_{id(self)}")
+        self.counter = 0  # a counter to disambiguate names
+
+    def register_operator(
+        self,
+        name: str,
+        *,
+        like: None | Symbol = None,
+        meta: None | Callable = None,
+        tags: None | list[Any] = None,
+        module: None | type | ModuleType = None,
+        fn: None | Callable = None,
+        bind_postprocess: None | Callable = None,
+        replaces: None | Callable = None,
+        python_printer: Callable = default_python_printer,
+    ) -> Symbol:
+        op = super().register_operator(
+            f"{name}_{id(self)}_{self.counter}",
+            like=like,
+            meta=meta,
+            tags=tags,
+            module=module,
+            fn=fn,
+            bind_postprocess=bind_postprocess,
+            replaces=replaces,
+            python_printer=python_printer,
+        )
+        self.counter += 1
+        return op
+
+    def __repr__(self) -> str:
+        return f"<thunder.extend.AdHocExecutor object {id(self)}>"
 
 
 def single_op_executor(
