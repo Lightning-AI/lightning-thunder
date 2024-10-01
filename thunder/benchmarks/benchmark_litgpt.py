@@ -238,6 +238,7 @@ class Benchmark_litGPT:
         use_torchao_fp8_linear: bool = False,
         use_torchao_fp8_allgather: bool = False,
         use_torchao_fp8_precompute_scale_for_fsdp: bool = False,
+        fp8_shard_intermediate_activation: bool = False,
     ):
         seed = 1337
         torch.manual_seed(seed)
@@ -271,6 +272,7 @@ class Benchmark_litGPT:
         self.is_thunder_as_torchcompile_backend = False
         self.dump_thunder_traces = dump_thunder_traces
         self.dump_memory_snapshot = dump_memory_snapshot
+        self.fp8_shard_intermediate_activation = fp8_shard_intermediate_activation
 
         if use_torchao_fp8_linear:
 
@@ -588,6 +590,7 @@ class Benchmark_litGPT:
                 # so we are using the lower level torch._dynamo.optimize function
                 model = torch._dynamo.optimize(backend=backend)(model)
             else:
+                jit_options["fp8_shard_intermediate_activation"] = self.fp8_shard_intermediate_activation
                 model = thunder.jit(model, executors=executors, **jit_options)
 
         elif self.compile != "eager":
