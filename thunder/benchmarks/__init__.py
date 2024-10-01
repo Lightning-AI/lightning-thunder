@@ -2944,11 +2944,11 @@ class TorchbenchBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
             name="module_name",
-            description="The module name str",
+            description="The torchbenchmark module name (str).",
         ),
         BenchmarkArg(
             name="device",
-            description="A device (str) to run on. Default is 'cuda'.",
+            description="A device (str) to run on {'cpu' | 'cuda'}. Default is 'cuda'.",
         ),
         BenchmarkArg(
             name="requires_grad",
