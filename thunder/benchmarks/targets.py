@@ -824,6 +824,7 @@ def test_resnet50(benchmark, executor: Callable, compute_type: ComputeType):
 torchbench_models = []
 if importlib.util.find_spec("torchbenchmark"):
     import torchbenchmark
+
     torchbench_models = dir(torchbenchmark.models)
 
 
