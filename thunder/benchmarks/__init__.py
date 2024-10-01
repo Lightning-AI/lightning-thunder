@@ -3061,7 +3061,7 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
     def __init__(
         self,
         bench: BenchmarkFixture,
-        executors: Sequence[str] = None,
+        executors: Sequence[str],
         **thunder_options,
     ):
         """
