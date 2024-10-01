@@ -1051,7 +1051,7 @@ def test_sdpa(
     # Check nv_sdpfa_fwd is not in bwd_fusion -> that would indicate rematerialization
     assert "nv_sdpfa_bwd" in bwd_fusion[-1][-1].name and "nv_sdpfa_fwd" not in bwd_fusion[-1][-1].name
 
-    nvf_fd = bwd_fusion[-1][-1].last_used 
+    nvf_fd = bwd_fusion[-1][-1].last_used
     repro_script = None
     if nvfuser_version() < LooseVersion("0.2.14"):
         repro_script = nvf_fd.getReproString()
