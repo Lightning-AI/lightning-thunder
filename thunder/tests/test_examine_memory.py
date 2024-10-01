@@ -98,11 +98,8 @@ def test_view_ops():
 
 @requiresCUDA
 def test_nanogpt_block():
-    from thunder.tests.test_sdpaex_executor import device_version_support, CudaVersion
-
-    torch_device = torch.device("cuda")
     # The estimated memory usage is not the same as actual peak memory usage on Hopper
-    if device_version_support(torch_device, CudaVersion(9, 0), CudaVersion(9, 0)):
+    if torch.cuda.get_device_capability() >= (9, 0):
         pytest.skip(
             f"the estimated memory usage is not the same as actual peak memory usage on {torch.cuda.get_device_name()}"
         )
