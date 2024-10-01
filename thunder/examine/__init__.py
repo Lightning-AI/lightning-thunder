@@ -263,6 +263,9 @@ def get_nvfuser_repro(trace: TraceCtx, fusion_name: str, /) -> str:
         )
 
     fd = fusion.last_used
+    # The API for nvFuser version >=2.14
+    get_repro = getattr(fd, "repro_script_for", None)
+    # The legacy nvFuser API
     get_repro = getattr(fd, "getReproString", None)
     if get_repro is None:
         raise RuntimeError("The installed version of nvFuser does not support repro generation unless on crash.")

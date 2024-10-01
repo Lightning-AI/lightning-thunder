@@ -1050,9 +1050,18 @@ def test_sdpa(
 
     # Check nv_sdpfa_fwd is not in bwd_fusion -> that would indicate rematerialization
     assert "nv_sdpfa_bwd" in bwd_fusion[-1][-1].name and "nv_sdpfa_fwd" not in bwd_fusion[-1][-1].name
-    assert (
-        bwd_fusion[-1][-1].last_used.getReproString().count("is_cpu=True") == 2
-    ), "Expected philox_seed and philox_offset inputs to be CPU scalar tensors."
+
+    nvf_fd = bwd_fusion[-1][-1].last_used 
+    repro_script = None
+    if nvfuser_version() < LooseVersion("0.2.14"):
+        repro_script = nvf_fd.getReproString()
+    else:
+        repro_script = nvf_fd.repro_script_for()
+    if nvfuser_version() < LooseVersion("0.2.14"):
+       assert (
+           repro_script.count("is_cpu=True") == 2
+       ), "Expected philox_seed and philox_offset inputs to be CPU scalar tensors."
+    else :
 
     # Torch reference computation
     # Clone the inputs to verify gradients with torch reference
