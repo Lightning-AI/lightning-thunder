@@ -3546,10 +3546,6 @@ def shallow_copy_meta(a: TensorProxy, /) -> TensorProxy:
 shallow_copy = make_prim(PrimIDs.SHALLOW_COPY, "shallow_copy", meta=shallow_copy_meta, tags=(OpTags.SHAPE_OP,))
 
 
-def shallow_copy_meta(a: TensorProxy, /) -> TensorProxy:
-    return TensorProxy(like=a)
-
-
 def unfold_meta(a: TensorProxy, /, dim: int, size: int, step: int) -> TensorProxy:
     dim = utils.canonicalize_dim(a.ndim, dim)
     max_size = 1 if a.ndim == 0 else a.shape[dim]
