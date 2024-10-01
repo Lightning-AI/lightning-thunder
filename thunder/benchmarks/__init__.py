@@ -2971,7 +2971,7 @@ class TorchbenchBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     def args(cls) -> tuple[BenchmarkArg, ...]:
         return cls._args
 
-    def __init__(self, module_name, device: str, requires_grad: bool = True):
+    def __init__(self, module_name, device: str = "cuda", requires_grad: bool = True):
         import importlib
 
         module = importlib.import_module(f"torchbenchmark.models.{module_name}")
