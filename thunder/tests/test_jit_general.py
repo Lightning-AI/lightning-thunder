@@ -1272,6 +1272,41 @@ def test_autograd_function_apply():
         gradcheck(jitted, (x,))
 
 
+def test_autograd_function_empty_forward():
+
+    class Fn(torch.autograd.Function):
+        @staticmethod
+        def forward(self, x):
+            return x
+
+        @staticmethod
+        def backward(self, grad_x):
+            return 2 * grad_x
+
+    def fn(x):
+        # TODO: there still is a bug when the result is directly returned
+        return Fn.apply(x) * 3
+
+    a = torch.randn(2)
+    jfn = thunder.jit(fn)
+
+    ref = fn(a)
+    out = jfn(a)
+
+    assert_close(out, ref)
+
+    a = torch.randn(2, requires_grad=True)
+    go = torch.randn_like(a)
+
+    ref = fn(a)
+    out = jfn(a)
+    (grad,) = torch.autograd.grad(out, a, go)
+    (grad_ref,) = torch.autograd.grad(ref, a, go)
+
+    assert_close(out, ref)
+    assert_close(grad, grad_ref)
+
+
 @requiresCUDA  # I have not found a good other object to use
 def test_cpp_property():
     def fn():

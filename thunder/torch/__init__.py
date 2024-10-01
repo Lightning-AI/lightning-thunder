@@ -5812,6 +5812,7 @@ _syms_returning_views: set[Symbol] = {
     tensor_split,
     chunk,
     getitem,
+    prims.shallow_copy,
 }
 
 # Add all auto-registered torch operators symbol that return tensor views to _syms_returning_views
