@@ -28,7 +28,8 @@ optree.register_pytree_node(
 )
 
 
-def tree_flatten(args, namespace=""):
+#def tree_flatten(args, namespace=""):
+def tree_flatten(args, namespace=OPTREE_NAMESPACE):
     if (
         type(args)
         not in {
