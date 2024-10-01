@@ -25,6 +25,7 @@ from thunder.benchmarks import (
     LitGPTGeluBenchmark,
     NanoGPTLayerNormBenchmark,
     ResNet50Benchmark,
+    TorchbenchBenchmark,
     thunder_apex_executor,
     thunder_apex_nvfuser_executor,
     thunder_cudnn_executor,
@@ -807,6 +808,40 @@ def test_resnet50(benchmark, executor: Callable, compute_type: ComputeType):
     b = ResNet50Benchmark(
         64, (3, 224, 224), device="cuda:0", dtype=torch.bfloat16, requires_grad=is_requires_grad(compute_type)
     )
+
+    args, kwargs = b.make_batch()
+    fn = executor(b.fn())
+
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
+
+
+#
+# Huggingface benchmarks
+#
+
+import torchbenchmark
+
+all_torchbench_models = dir(torchbenchmark.models)
+hf_models = list(filter(lambda x: "hf" in x, all_torchbench_models))
+
+import warnings
+
+
+@pytest.mark.parametrize(
+    "hf_module_name,",
+    hf_models,
+    ids=hf_models,
+)
+@pytest.mark.parametrize(
+    "executor,",
+    executors,
+    ids=executors_ids,
+)
+@parametrize_compute_type
+def test_hf_torchbench(benchmark, hf_module_name, executor, compute_type: ComputeType):
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FutureWarning)
+        b = TorchbenchBenchmark(hf_module_name, device="cuda", requires_grad=is_requires_grad(compute_type))
 
     args, kwargs = b.make_batch()
     fn = executor(b.fn())
