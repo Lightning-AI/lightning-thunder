@@ -1,3 +1,5 @@
+import importlib
+import warnings
 import os
 from collections.abc import Callable
 from enum import auto, Enum
@@ -819,14 +821,15 @@ def test_resnet50(benchmark, executor: Callable, compute_type: ComputeType):
 # Huggingface benchmarks
 #
 
-import torchbenchmark
+hf_models = []
+if importlib.util.find_spec("torchbenchmark"):
+    import torchbenchmark
 
-all_torchbench_models = dir(torchbenchmark.models)
-hf_models = list(filter(lambda x: "hf" in x, all_torchbench_models))
-
-import warnings
+    all_torchbench_models = dir(torchbenchmark.models)
+    hf_models = list(filter(lambda x: "hf" in x, all_torchbench_models))
 
 
+@pytest.mark.skipif(not hf_models, reason="requires torchbenchmark to be installed.")
 @pytest.mark.parametrize(
     "hf_module_name,",
     hf_models,
