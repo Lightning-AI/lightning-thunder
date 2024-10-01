@@ -2984,13 +2984,11 @@ class TorchbenchBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         self.example_input = example
 
     def make_batch(self) -> tuple[list, dict]:
-        return [], self.example_input
+        if isinstance(self.example_input, dict):
+            return [], self.example_input
+        return self.example_input, {}
 
     def fn(self) -> Callable:
-        # if hasattr(self.model, "enable_bf16"):
-        # self.model.enable_bf16()
-        self.model.to(torch.bfloat16)
-
         return self.model
 
 
