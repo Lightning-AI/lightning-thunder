@@ -892,7 +892,7 @@ def test_torchbench_canary(benchmark, module_name, executor, compute_type: Compu
 #
 
 def test_dynamo_LlamaMLPBenchmark(benchmark):
-    backend = ThunderCompilerGraphBenchmarking(benchmark)
+    backend = ThunderCompilerGraphBenchmarking(benchmark, executors=["thunder", "inductor", "eager"])
 
     bench: Benchmark = LlamaMLPBenchmark(
         config="Llama-2-7b-hf",
