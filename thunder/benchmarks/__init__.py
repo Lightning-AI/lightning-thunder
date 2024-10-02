@@ -17,6 +17,7 @@ from lightning_utilities.core.imports import package_available
 from torch.testing import make_tensor
 
 import thunder
+import thunder.dynamo
 import thunder.core.devices as Devices
 import thunder.core.dtypes as dtypes
 import thunder.executors as executors
@@ -704,6 +705,12 @@ def torch_compile_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
     torch._dynamo.reset()
     return torch.compile(fn)
+
+
+def thunderfx_executor(fn: Callable) -> Callable:
+    torch.backends.cuda.matmul.allow_tf32 = True
+    backend = thunder.dynamo.ThunderCompiler()
+    return torch.compile(fn, backend=backend)
 
 
 def thunder_torch_executor(fn: Callable) -> Callable:
