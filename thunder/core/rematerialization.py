@@ -369,13 +369,11 @@ def find_cut(
     g = nx.DiGraph()
     g.add_edges_from(edges)
 
-    _, (set_a, set_b) = nx.minimum_cut(g, "source", "sink")
+    _, (reachable, non_reachable) = nx.minimum_cut(g, "source", "sink")
 
-    cut_edges = []
-    for u in set_a:
-        for v in g.successors(u):
-            if v in set_b:
-                cut_edges.append((u, v))
+    cut_edges = set()
+    for u, nbrs in ((n, g[n]) for n in reachable):
+        cut_edges.update((u, v) for v in nbrs if v in non_reachable)
 
     cut_nodes = set()
     for node_in, node_out in cut_edges:
