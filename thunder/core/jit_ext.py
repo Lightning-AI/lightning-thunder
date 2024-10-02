@@ -590,6 +590,9 @@ def _general_jit_named_buffers_lookaside(obj: Any, *args, **kwargs):
     )
 
 
+autograd_counter = 0
+
+
 @register_general_jit_lookaside(torch.autograd.function.Function.apply.__func__)
 def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwargs):
     """Encapsulate forward into a bsym, define and register augmented fwd and bwd.
@@ -601,17 +604,19 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         3. Trace ``MyFunc.backward``, define :class:`~thunder.core.trace.TraceCtx` whose args are ``(*residuals, *grads)``.
            So far, non-tensor ``ctx`` attributes seem to be folded into a trace.
     """
+    global autograd_counter
+
     from thunder.core.baseutils import check, sequencify
     from thunder.core.transforms import augmented_forward_impls, backward_impls, VJPDual
 
     jit_ctx: JitCtx = get_jit_ctx()
 
-    custom_fwd_bsyms: list[BoundSymbol] = []
-    orig_scopes = jit_ctx.computation_trace.scopes
-
-    jit_ctx.computation_trace.scopes = [custom_fwd_bsyms]
+    jit_ctx.computation_trace.push_scope([])
 
     custom_autograd_function_cls = unwrap(obj)
+    autograd_counter += 1
+    symbol_name = f"{custom_autograd_function_cls.__name__}_{autograd_counter}"
+
     custom_forward = custom_autograd_function_cls.forward
     ctx = torch.autograd.function.FunctionCtx()
     ctx_proxy = proxy(ctx, name=None, history=None)
@@ -623,26 +628,11 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     # Forward.
     unwrapped_custom_forward_args = tree_map(lambda a: unwrap(a), args)
     unwrapped_custom_forward_result = unwrap(custom_forward_result)
-    symbol_name = custom_autograd_function_cls.__name__
-    custom_fwd_sym = Symbol(
-        name=symbol_name,
-        id=symbol_name,
-        meta=lambda *unwrapped_custom_forward_args: unwrapped_custom_forward_result,
+    # autograd.Function produces views of the tensor to attache the autograd node to
+    unwrapped_custom_forward_result = tree_map(
+        lambda x: prims.shallow_copy(x) if isinstance(x, TensorProxy) else x, unwrapped_custom_forward_result
     )
-    bsym_of_custom_fwd = BoundSymbol(
-        custom_fwd_sym,
-        args=unwrapped_custom_forward_args,
-        kwargs={},
-        output=unwrapped_custom_forward_result,
-        subsymbols=custom_fwd_bsyms,
-        source_filename=jit_ctx.computation_trace._current_source_filename,
-        source_positions=None,
-        _call_ctx=custom_fwd_bsyms[0]._call_ctx,
-        _import_ctx=custom_fwd_bsyms[0]._import_ctx,
-        _object_ctx=custom_fwd_bsyms[0]._object_ctx,
-        _executor=custom_fwd_bsyms[0]._executor,
-    )
-    orig_scopes[-1].append(bsym_of_custom_fwd)
+    custom_fwd_bsyms: list[BoundSymbol] = jit_ctx.computation_trace.pop_scope()
 
     # not augmented for when we don't need grad
     trace_of_fwd = TraceCtx()
@@ -651,7 +641,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     with tracectx(trace_of_fwd):
         prims.python_return(unwrapped_custom_forward_result)
 
-    si = SigInfo(custom_fwd_sym.name)
+    si = SigInfo(symbol_name)
     for a in unwrapped_custom_forward_args:
         if isinstance(a, Proxy):
             si.args.append((a.name, None))
@@ -665,6 +655,24 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     def core_of_forward(*args, **kwargs):
         return thunder.core.trace_interpreter.interpret_trace(trace_of_fwd, *args, **kwargs)
 
+    custom_fwd_meta = lambda *unwrapped_custom_forward_args: unwrapped_custom_forward_result
+
+    def bind_postprocess(bsym):
+        bsym._call_ctx = {}
+
+    custom_fwd_sym = Symbol(
+        name=symbol_name,
+        id=symbol_name,
+        meta=core_of_forward,
+        _bind_postprocess=bind_postprocess,
+    )
+
+    unwrapped_forward_result = custom_fwd_sym(*unwrapped_custom_forward_args)
+    forward_result = wrap(
+        unwrapped_forward_result,
+        provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[obj.provenance, custom_forward_result.provenance]),
+    )
+
     thunder.executors.torchex._register_implementation(
         custom_fwd_sym, core_of_forward, checker=thunder.executors.torchex._always_executable
     )
@@ -676,7 +684,8 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     trace_of_augmented_fwd = TraceCtx()
     for bsym in custom_fwd_bsyms:
         trace_of_augmented_fwd.add_bound_symbol(bsym)
-    trace_of_augmented_fwd.add_bound_symbol(prims.python_return.bind(augmented_bsym_output, output=()))
+    with tracectx(trace_of_augmented_fwd):
+        prims.python_return(augmented_bsym_output)
     si = SigInfo(custom_fwd_sym.name)
     for a in unwrapped_custom_forward_args:
         if isinstance(a, Proxy):
@@ -691,8 +700,6 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     def core_of_augmented_forward(*args, **kwargs):
         return thunder.core.trace_interpreter.interpret_trace(trace_of_augmented_fwd, *args, **kwargs)
 
-    # core_of_augmented_forward = trace_of_augmented_fwd.python_callable(include_decorators=False)
-
     @wraps(core_of_augmented_forward)
     def augmented_custom_forward_rule(*args, **kwargs):
         primal, residulas = core_of_augmented_forward(*args, **kwargs)
@@ -703,21 +710,12 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
 
     # Backward definition
     custom_backward = custom_autograd_function_cls.backward
-    custom_bwd_bsyms: list[BoundSymbol] = []
-    jit_ctx.computation_trace.scopes = [custom_bwd_bsyms]
+
     grads = tree_map(
         lambda a: a.replace_name(f"grad_{a.name}"),
         sequencify(unwrapped_custom_forward_result),
     )
-    wrapped_grads = tree_map(lambda g: wrap(g, provenance=custom_forward_result.provenance), grads)
-    custom_backward_result = _interpret_call(custom_backward, wrapped_ctx, *wrapped_grads)
-    if custom_backward_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
-        return custom_backward_result
-
     trace_of_backward = TraceCtx()
-    for bsym in custom_bwd_bsyms:
-        trace_of_backward.add_bound_symbol(bsym)
-    trace_of_backward.add_bound_symbol(prims.python_return.bind(*unwrap(custom_backward_result), output=()))
     bwd_si = SigInfo(f"{custom_fwd_sym.name}_backward")
     for a in ctx_proxy.saved_tensors + grads:
         if isinstance(a, Proxy):
@@ -727,6 +725,19 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
             bwd_si.args.append((pa.name, None))
     trace_of_backward._siginfo = bwd_si
     trace_of_backward.args = tuple(ctx_proxy.saved_tensors + grads)
+
+    jit_ctx.computation_trace.push_scope([])
+    wrapped_grads = tree_map(lambda g: wrap(g, provenance=custom_forward_result.provenance), grads)
+    custom_backward_result = _interpret_call(custom_backward, wrapped_ctx, *wrapped_grads)
+    if custom_backward_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return custom_backward_result
+
+    custom_bwd_bsyms: list[BoundSymbol] = jit_ctx.computation_trace.pop_scope()
+
+    for bsym in custom_bwd_bsyms:
+        trace_of_backward.add_bound_symbol(bsym)
+    with tracectx(trace_of_backward):
+        prims.python_return.bind(*unwrap(custom_backward_result), output=())
 
     @wraps(trace_of_backward.python_callable())
     def bwd_trace_callable_interface(*args, **kwargs):
@@ -757,10 +768,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         return bwd_impl_callable(*new_args)
 
     backward_impls[custom_fwd_sym.name] = backward_impl
-
-    # Cosmetic
-    jit_ctx.computation_trace.scopes = orig_scopes
-    return custom_forward_result
+    return forward_result
 
 
 @register_general_jit_lookaside(torch.finfo)
@@ -1408,8 +1416,9 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             raise NotImplementedError(f"unpacking from OPAQUE {fn.value} {provenance}")
 
         def from_provenance(provenance, *, new_output=False):
-            if hasattr(provenance, "proxy"):
-                return provenance.proxy  # bind?
+            p = getattr(provenance, "proxy", None)
+            if p is not None:
+                return p
 
             inst = provenance.inst
             if isinstance(inst, dis.Instruction):
@@ -1443,6 +1452,15 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             return res
 
         assert isinstance(p.history, ProvenanceRecord), p.history
+
+        # We reset p.history.proxy to make sure from_provenance(p.history) calls unpack_fn on p.history.
+        # This is necessary because past recursive unpackings may have unpacked p.history and associated it
+        # with a different proxy.
+        # For example, if p is a TensorProxy, the history of p.grad is
+        #     ProvenanceRecord(LOAD_ATTR, inputs=[p.history, <CONSTANT "grad">])
+        # and unpack(p.grad) attaches new proxies to all its sub-histories, including p.history
+        p.history.proxy = None
+
         with tracectx(prologue_trace):
             try:
                 from_provenance(p.history)
@@ -1466,6 +1484,30 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 assert n == "kwargs"
                 pro_kwargs_proxy = output
 
+    def is_variableified_tensorproxy(v: Variable | Proxy) -> Proxy:
+        p: Proxy
+        if isinstance(v, Proxy):
+            p = v
+        else:
+            p = v.proxy
+        return not isinstance(p, TensorProxy)
+
+    # TODO: This is just a WAR to get things working. We'll revisit this when
+    # we deal with cosntraints in prologue trace.
+    #
+    # We sort variables to before `unpack` to put TensorProxy before others.
+    # Because we could have TensorProxy.shape be part of `pro_to_xxx` along with
+    # the TensorProxy. If we unpack the shape first, we'll ended up unpack the
+    # tensor with a wrong name. e.g. A shape would have a history as:
+    #   ProvenanceRecord(
+    #     i1 = INPUT_ARGS()
+    #     i2 = BINARY_SUBSCR(i1, 0)    # This is the TensorProxy
+    #     i3 = LOAD_ATTR(i2, 'shape')
+    #     i4 = BINARY_SUBSCR(i3, 1)
+    #   )
+    pro_to_epi_inps = sorted(pro_to_epi_inps, key=is_variableified_tensorproxy)
+    pro_to_comp_inps = sorted(pro_to_comp_inps, key=is_variableified_tensorproxy)
+
     pro_to_epi = tuple(sorted((unpack(v) for v in pro_to_epi_inps), key=lambda x: param_ordering[id(x)][1]))
     pro_to_comp = tuple(sorted((unpack(v) for v in pro_to_comp_inps), key=lambda x: param_ordering[id(x)][1]))
 
@@ -1474,6 +1516,12 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             for a in args:
                 if isinstance(a, Proxy):
                     unpack(a)
+            # unpacking Proxy in TensorProxy.shape which is used in `check_tensor_shape_and_metadata`
+            if prim == clang.check_tensor_shape_and_metadata:
+                for s in a.shape:
+                    if isinstance(s, Proxy):
+                        unpack(s)
+
             prim(*args)
 
         cache_info = thunder._get_cache_info()
@@ -1546,6 +1594,8 @@ def process_recorded_modifications(ctx, epilogue_trace):
 
 
 def bind_inputs(name, trace, input_vars, input_proxies):
+    # restore `scopes` so the unpack below would be appended to the trace
+    trace.scopes = [trace.bound_symbols]
     # Unpacks inputs into the computation trace
     # TODO This currently does the unpacks at the end of the trace, then moves them to the beginning, there's
     #   almost certainly a more elegant way to do this
@@ -1575,6 +1625,11 @@ def _get_process_group_from(*fn_and_args) -> Optional["ProcessGroup"]:
         elif pg is not None and pg != found_pg:
             raise NotImplementedError("jitting modules with different ProcessGroup is not supported currently.")
     return found_pg
+
+
+def update_tags(proxy_swapmap: dict[Variable, Proxy]) -> None:
+    for old, new in proxy_swapmap.items():
+        new.tags.update(unvariableify(old).tags)
 
 
 def thunder_general_jit(
@@ -1652,6 +1707,8 @@ def thunder_general_jit(
     pro_to_epi = tuple(pro_to_epi)
 
     if epilogue_trace.bound_symbols:
+        # restore `scopes` so the return would be appended to the trace
+        computation_trace.scopes = [computation_trace.bound_symbols]
         with tracectx(computation_trace):
             last = computation_trace.bound_symbols.pop(-1)
             assert last.sym.id == prims.PrimIDs.RETURN
@@ -1681,6 +1738,8 @@ def thunder_general_jit(
 
     # Update prologue trace by renaming proxies which are passed from prologue to the computation trace
     prologue_trace = _apply_trace_proxy_rename(prologue_trace, restrict_proxy_swapmap(pro_to_comp_proxies))
+
+    update_tags(ctx._proxy_swapmap)
 
     # Update computation trace by renaming proxies which are in the ctx._proxy_swapmap
     computation_trace = _apply_trace_proxy_rename(computation_trace, ctx._proxy_swapmap, "computation")

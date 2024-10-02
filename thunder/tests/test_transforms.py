@@ -1,10 +1,13 @@
 import torch
 from torch.testing import assert_close
+from lightning_utilities.core.imports import package_available
+import pytest
 
 import thunder
 from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform, nvtx_push, nvtx_pop
 from thunder.tests.framework import requiresCUDA
 from thunder.tests import litgpt_model
+from litgpt.lora import LoRALinear
 
 
 @requiresCUDA
@@ -109,6 +112,7 @@ def test_materialization():
     assert_close(actual, expected, rtol=1e-2, atol=1e-2)
 
 
+@pytest.mark.skipif(not package_available("bitsandbytes"), reason="`bitsandbytes` is not available")
 @requiresCUDA
 def test_quantization_on_meta():
     from thunder.transforms import MaterializationTransform
@@ -179,6 +183,7 @@ def test_quantization_on_meta():
     assert_close(actual, actual2)
 
 
+@pytest.mark.skipif(not package_available("bitsandbytes"), reason="`bitsandbytes` is not available")
 @requiresCUDA
 def test_nvfuser_cse():
     with torch.device("cuda"):
@@ -282,6 +287,7 @@ def test_cudagraph_warmup_runs_with_correct_buffers():
     jf(weights)
 
 
+@pytest.mark.skipif(not package_available("bitsandbytes"), reason="`bitsandbytes` is not available")
 @requiresCUDA
 def test_materialization_init():
     from thunder.transforms import MaterializationTransform
@@ -429,3 +435,65 @@ def test_saved_for_backward_recomputation():
         )
     )
     assert t7 not in bwd_bsym_out, "Unexpected tensor rematerialized in the backward."
+
+
+def test_lora_transform_linear():
+    from thunder.transforms import LORATransform
+
+    DIM = 512
+    rank = 16
+    alpha = 32
+
+    seed = torch.manual_seed(0)
+
+    class Model(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fc1 = torch.nn.Linear(DIM, DIM)
+            self.fc2 = torch.nn.Linear(DIM, DIM)
+
+        def forward(self, x):
+            x = self.fc1(x)
+            x = torch.nn.functional.relu(x)
+            x = self.fc2(x)
+            return x
+
+    class Original(torch.nn.Module):
+        def __init__(self, rank, alpha) -> None:
+            super().__init__()
+            self.fc1 = LoRALinear(DIM, DIM, r=rank, lora_alpha=alpha)
+            self.fc2 = LoRALinear(DIM, DIM, r=rank, lora_alpha=alpha)
+
+        def forward(self, x):
+            x = self.fc1(x)
+            x = torch.nn.functional.relu(x)
+            x = self.fc2(x)
+            return x
+
+    model = Model()
+    x = torch.randn(DIM, DIM)
+
+    loratransform = LORATransform(r=rank, lora_alpha=alpha)
+
+    jmodel = thunder.jit(
+        model,
+        transforms=[
+            loratransform,
+        ],
+    )
+    actual = jmodel(x)
+    original_jmodel = thunder.jit(model)
+    expected = original_jmodel(x)
+    assert_close(actual, expected, atol=2e-1, rtol=2e-1)
+
+    # rename tensor names
+    rename_state_dict = {}
+    for k, v in model.state_dict().items():
+        name = k.split(".")[0]
+        weight_type = k.split(".")[1]
+        rename_state_dict[f"{name}.linear.{weight_type}"] = v
+
+    original_model = Original(rank, alpha)
+    original_model.load_state_dict(rename_state_dict, strict=False)
+    litgpt_lora_output = original_model(x)
+    assert_close(actual, litgpt_lora_output, atol=2e-1, rtol=2e-1)
