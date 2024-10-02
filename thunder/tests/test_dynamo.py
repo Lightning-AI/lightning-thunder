@@ -11,11 +11,9 @@ from thunder.tests.framework import (
     NOTHING,
     DynamoThunderExecutor,
     IS_WINDOWS,
-    nvFuserExecutor,
     requiresCUDA,
 )
 from thunder.tests.make_tensor import make_tensor
-from thunder.tests.litgpt_model import Config, GPT
 
 
 # This will be applied to all tests in this file.
@@ -379,7 +377,7 @@ def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
 
 @instantiate(
     dtypes=(dtypes.float32,),
-    executors=(nvFuserExecutor,),
+    executors=(DynamoThunderExecutor,),
     decorators=(
         pytest.mark.parametrize(
             "optim",
@@ -410,7 +408,7 @@ def test_thundercompiler_optim_step(executor, device, dtype, optim):
     tdtype = dtypes.to_torch_dtype(dtype)
     model = ToyModel().to(device=device, dtype=tdtype)
     optimizer = optim(model.parameters())
-    jitted_step = torch.compile(backend=ThunderCompiler(executors=executor.executors_list()))(optimizer.step)
+    jitted_step = executor.make_callable(optimizer.step)
 
     ref_model = ToyModel().to(device=device, dtype=tdtype)
     ref_model.load_state_dict(model.state_dict())
