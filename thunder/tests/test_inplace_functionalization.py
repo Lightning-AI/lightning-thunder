@@ -775,3 +775,21 @@ def test_aliases_and_functionalizable_inplace(executor, device, _):
     expected = f(a, x, y)
     actual = jitted(a, x, y)
     torch.testing.assert_close(actual, expected)
+
+    
+# ref: https://github.com/Lightning-AI/lightning-thunder/issues/1236
+@instantiate(dtypes=NOTHING)
+def test_unused_view_input(executor, device, _):
+
+    def f(a, x, unused):
+        return a.exp().add_(x)
+
+    x = make_tensor((2, 2), device=device, dtype=torch.float32)
+    a = x.clone()
+    unused = x[0]
+
+    jitted = executor.make_callable(f)
+
+    expected = f(a, x, unused)
+    actual = jitted(a, x, unused)
+    torch.testing.assert_close(actual, expected)

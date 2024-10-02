@@ -164,7 +164,7 @@ def replace_args_with_alias_map(
     arg_to_optional_bsyms: dict[VariableInterface, BoundSymbol] = {}
     for indices in alias_tensor_indices:
         arg = flat_args[indices[0]]
-        for idx in indices[1:]:
+        for idx in filter(lambda idx: idx < len(flat_args), indices[1:]):
             arg_to_replace = flat_args[idx]
             reshaped_arg = arg
             if arg_to_replace.shape != arg.shape:
