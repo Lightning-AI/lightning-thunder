@@ -758,3 +758,20 @@ def test_reshape_flatten_error_out(executor, device, _):
     x = make_tensor((3, 2, 4), device=device, dtype=torch.float32)
     jitted = executor.make_callable(f_with_clone)
     jitted(x)
+
+
+@instantiate(dtypes=NOTHING)
+def test_aliases_and_functionalizable_inplace(executor, device, _):
+
+    def f(a, x, y):
+        return a.exp().add_(x) + y.exp()
+
+    jitted = executor.make_callable(f)
+
+    x = make_tensor((2, 2), device=device, dtype=torch.float32)
+    a = x.clone()
+    y = x.view(1, 2, 2)
+
+    expected = f(a, x, y)
+    actual = jitted(a, x, y)
+    torch.testing.assert_close(actual, expected)

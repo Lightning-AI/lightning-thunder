@@ -178,7 +178,7 @@ def replace_args_with_alias_map(
             swap_map_for_aliases[variableify(arg_to_replace)] = reshaped_arg
     for bsym in computation_trace.bound_symbols:
         for arg in filter(lambda p: isinstance(p, TensorProxy), bsym.flat_args):
-            if v_arg := variableify(arg) in arg_to_optional_bsyms:
+            if (v_arg := variableify(arg)) in arg_to_optional_bsyms:
                 bsyms.append(arg_to_optional_bsyms[v_arg])
         if replaced_args_map := {
             x.name: swap_map_for_aliases[variableify(x)].name
