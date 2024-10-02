@@ -776,7 +776,7 @@ def test_aliases_and_functionalizable_inplace(executor, device, _):
     actual = jitted(a, x, y)
     torch.testing.assert_close(actual, expected)
 
-    
+
 # ref: https://github.com/Lightning-AI/lightning-thunder/issues/1236
 @instantiate(dtypes=NOTHING)
 def test_unused_view_input(executor, device, _):
