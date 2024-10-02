@@ -179,7 +179,8 @@ def replace_args_with_alias_map(
     appended_bsyms = {}
     for bsym in computation_trace.bound_symbols:
         for arg in filter(lambda p: isinstance(p, TensorProxy), bsym.flat_args):
-            if (reshape_bsym := arg_to_optional_bsyms.get(variableify(arg))) is not None:
+            reshape_bsym = arg_to_optional_bsyms.get(variableify(arg))
+            if reshape_bsym is not None:
                 if reshape_bsym not in appended_bsyms:
                     bsyms.append(reshape_bsym)
                     appended_bsyms[reshape_bsym] = arg
