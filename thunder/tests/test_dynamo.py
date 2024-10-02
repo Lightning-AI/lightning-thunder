@@ -332,3 +332,36 @@ def test_method_only_registrations(executor, device: str, dtype: dtypes.dtype):
         assert len(subgraph_info.thunder_compiled_fns)  # There was atleast one function compiled with thunder.
         for thunder_fn in subgraph_info.thunder_compiled_fns:
             assert last_traces(thunder_fn)  # Verify that we can fetch last_traces
+
+
+@instantiate(dtypes=NOTHING, executors=[DynamoThunderExecutor])
+def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
+    # Verify that `torch.where(cond)` leads to graph break and `torch.where(cond, x, y)`
+    # is correctly passed to `thunder`.
+    backend = ThunderCompiler()
+
+    def func(x):
+        y = x[torch.where(x > 0.5)]  # This will lead to graph-break
+        y = torch.where(y > 1, y, 0)
+        return y.sin()
+
+    x = torch.randn(3, 3, device=device, dtype=dtype, requires_grad=True)
+    actual = torch.compile(func, backend=backend)(x)
+    expected = torch.compile(func, backend="eager")(x)
+
+    # We record the GraphModules that was compiled by ThunderCompiler
+    assert len(backend.subgraph_infos) == 2  # There were 2 graphs.
+
+    for subgraph_info in backend.subgraph_infos:
+        assert len(subgraph_info.split_reasons) == 0  # Verify there were no splits in the subgraph.
+        assert isinstance(subgraph_info.original_graph_module, torch.fx.GraphModule)
+        assert len(subgraph_info.thunder_compiled_fns)  # There was atleast one function compiled with thunder.
+        for thunder_fn in subgraph_info.thunder_compiled_fns:
+            assert last_traces(thunder_fn)  # Verify that we can fetch last_traces
+
+    torch.testing.assert_close(actual, expected)
+
+    g = torch.randn_like(actual)
+    actual_grad = torch.autograd.grad(actual, x, g)
+    expected_grad = torch.autograd.grad(expected, x, g)
+    torch.testing.assert_close(actual_grad, expected_grad)

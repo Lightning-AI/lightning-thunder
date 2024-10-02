@@ -239,6 +239,124 @@ def test_nested_empty_tuple_unpack(executor, device, dtype):
 
 
 @instantiate(dtypes=(thunder.float32,))
+def test_grad_unpack(executor, device, dtype):
+    tdtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=tdtype, requires_grad=True)
+    a.grad = make_tensor((2, 2), device=device, dtype=tdtype)
+
+    def get_grad_times_two(a):
+        return a.grad * 2
+
+    jitted_get_grad_times_two = executor.make_callable(get_grad_times_two)
+    actual = jitted_get_grad_times_two(a)
+    expected = a.grad * 2
+    assert_close(actual, expected)
+
+    # a.grad is unpacked before a
+    def grad_first(a):
+        return a.grad + a
+
+    # a.grad is unpacked after a
+    def grad_second(a):
+        return a + a.grad
+
+    jitted_grad_first = executor.make_callable(grad_first)
+    jitted_grad_second = executor.make_callable(grad_second)
+    actual_first = jitted_grad_first(a)
+    actual_second = jitted_grad_second(a)
+    expected = a + a.grad
+    assert_close(actual_first, expected)
+    assert_close(actual_second, expected)
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_grad_no_recompile(executor, device, dtype):
+    # Checks that having .grad or not does not cause recompile
+
+    def foo(a):
+        return a * 2
+
+    cfoo = executor.make_callable(foo)
+
+    tdtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=tdtype, requires_grad=True)
+    a.grad = make_tensor((2, 2), device=device, dtype=tdtype)
+    cfoo(a)
+    assert thunder.cache_misses(cfoo) == 1
+
+    a.grad = None
+    cfoo(a)
+    assert thunder.cache_misses(cfoo) == 1
+
+    b = make_tensor((3, 3), device=device, dtype=tdtype, requires_grad=True)
+    cfoo(b)
+    assert thunder.cache_misses(cfoo) == 2
+
+    b.grad = make_tensor((3, 3), device=device, dtype=tdtype)
+    cfoo(b)
+    assert thunder.cache_misses(cfoo) == 2
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_grad_recompile(executor, device, dtype):
+    # Checks that change in the metadata of a.grad causes recompile
+
+    def foo(a):
+        return a.grad * 2
+
+    cfoo = executor.make_callable(foo)
+
+    tdtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=tdtype, requires_grad=True)
+    a.grad = make_tensor((2, 2), device=device, dtype=tdtype)
+    cfoo(a)
+    assert thunder.cache_misses(cfoo) == 1
+
+    b = make_tensor((3, 3), device=device, dtype=tdtype, requires_grad=True)
+    b.grad = make_tensor((3, 3), device=device, dtype=tdtype)
+    cfoo(b)
+    assert thunder.cache_misses(cfoo) == 2
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_optimizer_unpack(executor, device, dtype):
+    class Optimizer(torch.optim.Optimizer):
+        def __init__(self, params):
+            self.param_groups = [{"params": params}]
+
+        def _init_group(self, group, params, grads):
+            for p in group["params"]:
+                if p.grad is not None:
+                    params.append(p)
+                    grads.append(p.grad)
+
+        def step(self):
+            for group in self.param_groups:
+                params = []
+                grads = []
+                self._init_group(group, params, grads)
+                for param, grad in zip(params, grads):
+                    param -= 0.1 * grad
+
+    tdtype = ltorch.to_torch_dtype(dtype)
+
+    a = make_tensor((2, 2), device=device, dtype=tdtype, requires_grad=True)
+    ref_a = a.detach().clone()
+    a.grad = make_tensor((2, 2), device=device, dtype=tdtype)
+
+    b = make_tensor((2, 2), device=device, dtype=tdtype)
+    ref_b = b.detach().clone()
+
+    optimizer = Optimizer([a, b])
+    cstep = executor.make_callable(optimizer.step)
+    cstep()
+
+    expected_a = ref_a - 0.1 * a.grad
+    assert_close(a, expected_a)
+    assert_close(b, ref_b)
+
+
+@instantiate(dtypes=(thunder.float32,))
 def test_varargs(executor, device, dtype):
     def foo(*args):
         return reduce(operator.add, args)
