@@ -200,39 +200,38 @@ def test_apply_rematerialization_consumer(executor, device, _):
     assert tuple(new_consumer.subsymbols) == tuple(new_consumer_case2.subsymbols)
 
 
-@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.bfloat16,))
-def test_apply_rematerialization_consumer_early_exit(executor, device, dtype):
-    torch.backends.cuda.matmul.allow_tf32 = True
+@instantiate(
+    dtypes=NOTHING,
+    executors=(nvFuserExecutor,),
+)
+@disable_rematerialization_in_nvfuser_fusion
+def test_apply_rematerialization_consumer_early_exit(executor, device, _):
+    @value_and_grad
+    def foo(t0):
+        t1 = ttorch.exp(t0)
+        t2 = ttorch.matmul(t1, t1)
+        return t2
 
-    # Values scaled down from nanogpt - gpt2-xl
-    batchdims = (8,)
-    seq_len = 8
-    vocab_size = 16
+    t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
+    initial_trace = thunder.trace()(foo, t0)
+    compiled_func = thunder.jit(initial_trace.python_callable())
+    _ = compiled_func(t0)
+    traces = thunder.last_traces(compiled_func)
+    trace = traces[-1]
+    nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
+    assert len(nvfuser_symbols) == 2
 
-    indices_tdtype = torch.int64
-    logits_dtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+    producer = nvfuser_symbols[0]
+    consumer = nvfuser_symbols[1]
 
-    make = partial(make_tensor, low=0, high=16, device=device, requires_grad=True)
-    logits_shape = batchdims + (seq_len, vocab_size)
-    logits = make(logits_shape, dtype=logits_dtype)
+    # Create a cut that has t0 as extra information and
+    # that contains all arguments(t2) from consumer.
+    cut = ("t0", "t2")
+    new_consumer = apply_rematerialization_for_consumer(producer, consumer, cut)
 
-    targets_shape = batchdims + (seq_len,)
-    targets = make(targets_shape, dtype=indices_tdtype, requires_grad=False)
-
-    logits = logits.view(-1, logits.size(-1))
-    targets = targets.view(-1)
-
-    # Cross entropy creates a situation where the cut information includes extra symbols
-    # that are actually not to be found in the consumer.
-    def foo(logits, targets):
-        return torch.nn.functional.cross_entropy(
-            logits,
-            targets,
-            ignore_index=-1,
-        )
-
-    jfoo = thunder.jit(foo, executors=executor.executors_list())
-    jfoo(logits, targets)
+    # Check that the new consumer is the old consumer
+    assert id(new_consumer) == id(consumer)
+    assert tuple(new_consumer.subsymbols) == tuple(consumer.subsymbols)
 
 
 @instantiate(
