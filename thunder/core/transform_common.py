@@ -61,10 +61,10 @@ def _remove_noop_subsymbols(bsym: BoundSymbol) -> None:
 
 
 def _inplace_copy_sanity_check(extrace: Trace):
-    """The sanity check is based on the sharp edge of nvfuser's `add_ouput(output, input)` interface,
-    it makes sure that the `copy_to` argument of `prims.copy_` is not used as input for any of its subsequent operators in a nvFusion fused operator
+    """The sanity check is based on the sharp edge of nvfuser's `add_ouput(output, input)` interface.
+    It makes sure that the `copy_to` argument of `prims.copy_` and the both arguments of `prims.copy_to_out_` are not used as input for any of its subsequent operators in a nvFusion fused operator. It also checks that the `computed` argument of `prims.copy_to_out_` is created within the trace and not used even beyond the nvFusion region.
 
-    Anti-pattern:
+    Anti-patterns:
 
     .. code-block:: python
 
@@ -73,7 +73,18 @@ def _inplace_copy_sanity_check(extrace: Trace):
             # a = prims.copy_(result, x)
             # t2 = prims.add(a, y) or t2 = prims.add(x, y)
 
-    Do not use the `copy_to` variable `x` or `a` after it has been updated, use the `copy_from` variable `result` instead to reflect the dependency:
+    Do not use the `copy_to` variable `x` or `a` after it has been updated, use the `copy_from` variable `result` instead to reflect the dependency.
+
+    .. code-block:: python
+
+        [t2] = nvFusion0(x, y)
+            # result = prims.mul(x, y)
+            # a = prims.copy_to_out_(result, out=x)
+            # t2 = prims.add(result, y)
+
+    Do not use `result` after it has been passed to `prims.copy_to_output_`, because subsequent copies onto `x` may propagate to `t2`. Use `prims.copy_` instead.
+
+    Correct:
 
     .. code-block:: python
 
@@ -82,28 +93,60 @@ def _inplace_copy_sanity_check(extrace: Trace):
             # a = prims.copy_(result, x)
             # t2 = prims.add(result, y)
     """
-
     from thunder.core.utils import consumers
 
-    nvfuser_symbols = (bsym for bsym in extrace.bound_symbols if bsym.sym.name.startswith("nvFusion"))
-    for bsym in nvfuser_symbols:
-        consumer_dict = consumers(list(bsym.subsymbols), _map_to_numbers=True)
-        inplace_copy_idx = ((idx, sym) for idx, sym in enumerate(bsym.subsymbols) if sym.sym.id == prims.PrimIDs.COPY_)
+    trace_args = {p.name for p in tree_iter((extrace.args, extrace.kwargs))}
+    trace_consumers = consumers(extrace, _map_to_numbers=True)
+    nvfuser_symbols = (
+        (idx, bsym) for idx, bsym in enumerate(extrace.bound_symbols) if bsym.sym.name.startswith("nvFusion")
+    )
+    for region_idx, bsym in nvfuser_symbols:
+        region_consumers = consumers(list(bsym.subsymbols), _map_to_numbers=True)
+        region_outputs = {p.name for p in bsym.flat_proxy_outs}
+        inplace_copy_idx = (
+            (idx, sym)
+            for idx, sym in enumerate(bsym.subsymbols)
+            if sym.sym.id in (prims.PrimIDs.COPY_, prims.PrimIDs.COPY_TO_OUT_)
+        )
         for idx, subbsym in inplace_copy_idx:
-            copy_to_arg = subbsym.flat_args[1]
-            copy_to_out = subbsym.output
+            instruction = "If you are sure you don't want to use this check, it can be disabled by setting `disable_inplace_copy_check=True` in `thunder.jit`."
 
-            def check(inp, log_str):
-                if inp is not None and inp in consumer_dict:
-                    last_used_idx = max(consumer_dict[inp])
+            def check(inp, description):
+                if inp is not None and inp in region_consumers:
+                    last_used_idx = max(region_consumers[inp])
                     if last_used_idx > idx:
                         raise NotImplementedError(
-                            f"{bsym.subsymbols[last_used_idx]} trying to use {inp} (the {log_str} of 'prims.copy_') as input, which is not safe."
-                            f" There is a risk of accessing the wrong memory. If you are sure you don't want to use this check, it can be disabled by setting `disable_inplace_copy_check=True` in `thunder.jit`."
+                            f"{bsym.subsymbols[last_used_idx]} trying to use {inp} (the {description}) as input, which is not safe. There is a risk of accessing the wrong memory. "
+                            + instruction
                         )
 
-            check(copy_to_arg, "'copy_to' argument")
-            check(copy_to_out, "output")
+            if subbsym.sym.id == prims.PrimIDs.COPY_:
+                copy_to = subbsym.flat_args[1]
+                output = subbsym.output
+                check(copy_to, "'copy_to' argument of 'prims.copy_'")
+                check(output, "output of 'prims.copy_'")
+            else:
+                computed = subbsym.flat_args[0]
+                out = subbsym.flat_args[1]
+                output = subbsym.output
+                check(computed, "'computed' argument of 'prims.copy_to_out_'")
+                check(out, "'out' argument of 'prims.copy_to_out_")
+                check(output, "output of 'prims.copy_to_out_")
+
+                if computed.name in trace_args:
+                    raise NotImplementedError(
+                        f"{computed} (the 'computed' argument of 'prims.copy_to_out_') is created outside of the execution trace. "
+                        f"Copies onto {out} or {output} in the region may propagate to {computed}. " + instruction
+                    )
+
+                if computed in trace_consumers:
+                    for consumer_idx in trace_consumers[computed]:
+                        consumer = extrace.bound_symbols[consumer_idx]
+                        if consumer_idx > region_idx and consumer.sym != prims.python_del:
+                            raise NotImplementedError(
+                                f"{consumer} trying to use {computed} (the 'computed' argument of 'prims.copy_to_out_') as input, which is not safe. There is a risk of accessing the wrong memory. "
+                                + instruction
+                            )
 
 
 # TODO This calls variableify(), but we could directly construct Variable objects instead, which might slightly
