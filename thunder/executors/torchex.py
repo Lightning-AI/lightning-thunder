@@ -1742,7 +1742,28 @@ ex.register_implementation(
 ex.register_implementation(
     ltorch.max_pool3d, max_pool3d, checker=_always_executable, grad_transform=max_pool3d_bwd_wrapper
 )
-_register_implementation(ltorch.adaptive_avg_pool2d, adaptive_avg_pool2d, checker=_always_executable)
+
+
+def adaptive_avg_pool2d_bwd_wrapper(
+    a: TensorProxy,
+    /,
+    output_size: int | Sequence[int],
+) -> TensorProxy:
+    primals = adaptive_avg_pool2d(a, output_size)
+
+    grad = get_grad(primals)
+    grad_a = adaptive_avg_pool2d_backward(grad, a)
+    put_grad(a, grad_a)
+
+    return primals
+
+
+ex.register_implementation(
+    ltorch.adaptive_avg_pool2d,
+    adaptive_avg_pool2d,
+    checker=_always_executable,
+    grad_transform=adaptive_avg_pool2d_bwd_wrapper,
+)
 _register_implementation(ltorch.adaptive_avg_pool2d_backward, adaptive_avg_pool2d_backward, checker=_always_executable)
 _register_implementation(ltorch.nll_loss, checker=_always_executable, execution_transform=_nll_loss_transform)
 nll_loss_backward = ex.register_operator(
@@ -2148,3 +2169,6 @@ def _shape_impl(t):
 
 shape = ex.register_operator("shape", meta=prims.shape_meta, fn=_shape_impl)
 _register_implementation(prims.shape, shape, checker=_always_executable)
+
+shallow_copy = ex.register_operator("shallow_copy", meta=prims.shallow_copy, fn=lambda x: x)
+_register_implementation(prims.shallow_copy, shallow_copy, checker=_always_executable)

@@ -164,7 +164,7 @@ def replace_args_with_alias_map(
     arg_to_optional_bsyms: dict[VariableInterface, BoundSymbol] = {}
     for indices in alias_tensor_indices:
         arg = flat_args[indices[0]]
-        for idx in indices[1:]:
+        for idx in filter(lambda idx: idx < len(flat_args), indices[1:]):
             arg_to_replace = flat_args[idx]
             reshaped_arg = arg
             if arg_to_replace.shape != arg.shape:
@@ -176,10 +176,14 @@ def replace_args_with_alias_map(
                         output=reshaped_arg,
                     )
             swap_map_for_aliases[variableify(arg_to_replace)] = reshaped_arg
+    appended_bsyms = {}
     for bsym in computation_trace.bound_symbols:
         for arg in filter(lambda p: isinstance(p, TensorProxy), bsym.flat_args):
-            if v_arg := variableify(arg) in arg_to_optional_bsyms:
-                bsyms.append(arg_to_optional_bsyms[v_arg])
+            reshape_bsym = arg_to_optional_bsyms.get(variableify(arg))
+            if reshape_bsym is not None:
+                if reshape_bsym not in appended_bsyms:
+                    bsyms.append(reshape_bsym)
+                    appended_bsyms[reshape_bsym] = arg
         if replaced_args_map := {
             x.name: swap_map_for_aliases[variableify(x)].name
             for x in filter(lambda p: isinstance(p, TensorProxy), bsym.flat_args)

@@ -238,6 +238,7 @@ class Benchmark_litGPT:
         use_torchao_fp8_linear: bool = False,
         use_torchao_fp8_allgather: bool = False,
         use_torchao_fp8_precompute_scale_for_fsdp: bool = False,
+        fp8_shard_intermediate_activation: bool = False,
     ):
         seed = 1337
         torch.manual_seed(seed)
@@ -271,6 +272,7 @@ class Benchmark_litGPT:
         self.is_thunder_as_torchcompile_backend = False
         self.dump_thunder_traces = dump_thunder_traces
         self.dump_memory_snapshot = dump_memory_snapshot
+        self.fp8_shard_intermediate_activation = fp8_shard_intermediate_activation
 
         if use_torchao_fp8_linear:
 
@@ -346,11 +348,6 @@ class Benchmark_litGPT:
                 self.global_batch_size % self.micro_batch_size * world_size == 0
             ), f"Global Batch Size {self.global_batch_size} should be a multiple Micro Batch Size {self.micro_batch_size} * World Size {world_size}."
 
-        if self.checkpoint_activations and "thunder" in self.compile:
-            warnings.warn(
-                "Activations checkpointing is configured, but Thunder does not support checkpointing. Checkpointing will be ignored."
-            )
-            self.checkpoint_activations = False
         self.skip_data_sync = skip_data_sync
 
         # Profiling Args
@@ -458,6 +455,7 @@ class Benchmark_litGPT:
                 )
             elif self.distributed_mode == "fsdp2":
                 # reference: https://github.com/pytorch/torchtitan/blob/6e7a183/docs/fsdp.md
+                from functools import partial
                 from torch.distributed._composable.fsdp import fully_shard, MixedPrecisionPolicy
 
                 if self.bucketing_mode != "none":
@@ -472,25 +470,25 @@ class Benchmark_litGPT:
 
                 reshard_after_forward: bool = self.shard_mode == "zero3"
 
+                _apply_fully_shard = partial(
+                    fully_shard,
+                    mesh=mesh,
+                    reshard_after_forward=reshard_after_forward,
+                    mp_policy=MixedPrecisionPolicy(
+                        param_dtype=torch.bfloat16,
+                        reduce_dtype=torch.bfloat16,
+                    ),
+                )
+
                 # for transformer_block in model.transformer.modules():
                 for transformer_block in model.modules():
                     if isinstance(transformer_block, Block):
-                        fully_shard(
-                            transformer_block,
-                            mesh=mesh,
-                            reshard_after_forward=reshard_after_forward,
-                            mp_policy=MixedPrecisionPolicy(
-                                param_dtype=torch.bfloat16,
-                                reduce_dtype=torch.bfloat16,
-                            ),
-                        )
+                        _apply_fully_shard(transformer_block)
 
-                fully_shard(
-                    model,
-                    mesh=mesh,
-                    reshard_after_forward=reshard_after_forward,
-                    mp_policy=MixedPrecisionPolicy(param_dtype=torch.bfloat16, reduce_dtype=torch.bfloat16),
-                )
+                _apply_fully_shard(model.lm_head)
+                _apply_fully_shard(model.transformer["wte"])
+                _apply_fully_shard(model.transformer["ln_f"])
+                _apply_fully_shard(model)
                 model.to_empty(device=self.device)
                 model.apply(model._init_weights)
 
@@ -534,6 +532,10 @@ class Benchmark_litGPT:
         return model
 
     def setup_activation_checkpointing(self):
+        if "thunder" in self.compile:
+            # checkpointing is an option to thunder.jit
+            return
+
         if any(isinstance(mod, CheckpointWrapper) for mod in self.model.modules()):
             warnings.warn(
                 "FSDP checkpointing is configured, but the model already contains checkpointed layers."
@@ -569,33 +571,27 @@ class Benchmark_litGPT:
 
                 executors.insert(0, transformer_engine_ex)
 
+            jit_options = {
+                "enable_saved_for_backward_recomputation": self.checkpoint_activations,
+                "recomputation_policy": None,
+            }
+
             if "dynamo" in self.compile:
                 if self.distributed_mode == "fsdp2":
                     print("Resetting cache size for when fsdp2 and using thunder as backend torch.compile")
                     import torch._dynamo.config as dynamo_config
 
                     dynamo_config.cache_size_limit = 64
-                    if "transformerengine" in self.compile:
-                        # [rank0]:   File "/opt/pytorch/lightning-thunder/thunder/executors/transformer_engineex.py", line 410, in _te_functional_linear_backward_impl
-                        # [rank0]:     grads = _Linear.backward(ctx, g)
-                        # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/transformer_engine/pytorch/module/linear.py", line 449, in backward
-                        # [rank0]:     weight_fp8.transpose_2d(),
-                        # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/transformer_engine/pytorch/float8_tensor.py", line 625, in transpose_2d
-                        # [rank0]:     if self._transpose is None:
-                        # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/transformer_engine/pytorch/float8_tensor.py", line 39, in get_func
-                        # [rank0]:     return self._fp8_attrs[name]
-                        # [rank0]: AttributeError: 'Float8Tensor' object has no attribute '_fp8_attrs'
-                        raise ValueError(
-                            "TransformerEngine executor cannot be used as an executor of Thunder when Thunder is used as torch.compile backend"
-                        )
-                backend = ThunderCompiler(executors=executors)
+
+                backend = ThunderCompiler(executors=executors, **jit_options)
                 # Because Lightning Fabric is imported in this script it monkey patches the torch.compile function
                 # https://github.com/Lightning-AI/pytorch-lightning/blob/828fd998961f6a60f92c35254bb94d6e049ad069/src/lightning/fabric/wrappers.py#L421
                 # using __wrapped__ to access the original torch.compile function did not work
                 # so we are using the lower level torch._dynamo.optimize function
                 model = torch._dynamo.optimize(backend=backend)(model)
             else:
-                model = thunder.jit(model, executors=executors)
+                jit_options["fp8_shard_intermediate_activation"] = self.fp8_shard_intermediate_activation
+                model = thunder.jit(model, executors=executors, **jit_options)
 
         elif self.compile != "eager":
             raise ValueError(f"Invalid compile option: {self.compile}")

@@ -239,6 +239,7 @@ def create_fd(
                 python_type = y
                 nvdtype = lcdtype_to_nvdtype(python_type)
                 nv = fd.define_scalar(nvdtype)
+                lc_to_nv_map[x] = nv
             elif isinstance(x, TensorProxy):
                 utils.check_type(y, tuple)
                 symbolic_shape, contiguity, stride_order, dtype = y
@@ -247,17 +248,23 @@ def create_fd(
                 nv = fd.define_tensor(
                     shape=symbolic_shape, contiguity=contiguity, dtype=nvdtype, stride_order=stride_order, is_cpu=is_cpu
                 )
+                lc_to_nv_map[x] = nv
+
+                for idx, s in enumerate(x.shape):
+                    if isinstance(s, Proxy):
+                        lc_to_nv_map[s] = nv.size(idx)
             elif isinstance(x, TupleProxy):
                 # TODO: discuss the contract here on baked in number from a tuple
                 # TODO: validate x is a tuple of int
                 utils.check_type(y, type)
                 nv = fd.define_vector(len(x._value))
+                lc_to_nv_map[x] = nv
             elif isinstance(x, Proxy):
                 utils.check(False, lambda: f"Unsupported proxy type {type(x)} in fusion", exception_type=AssertionError)
             else:
                 nv = x
+                lc_to_nv_map[x] = nv
 
-            lc_to_nv_map[x] = nv
             return nv
 
         for pinp, inp in zip(sorted_unique_inputs, input_descriptors):
@@ -1128,8 +1135,9 @@ def broadcast_in_dim(
     a: TensorProxy, shape: list[int], broadcast_dimensions: list[int], *, fd: FusionDefinition, lc_to_nv_map: dict
 ) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
+    nv_shape = getnv(shape, fd, lc_to_nv_map)
 
-    return fd.ops.broadcast_in_dim(nva, shape, broadcast_dimensions)
+    return fd.ops.broadcast_in_dim(nva, nv_shape, broadcast_dimensions)
 
 
 register_supported(PrimIDs.BROADCAST_IN_DIM, broadcast_in_dim, _broadcast_in_dim_check)
@@ -1212,9 +1220,12 @@ def _reshape_check(a: TensorProxy, shape: list[int]) -> bool:
     return is_supported_tensor(a)
 
 
-def reshape(a: TensorProxy, shape: list[int], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def reshape(a: TensorProxy, shape: list[int, NumberProxy, ...], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nv_a = getnv(a, fd, lc_to_nv_map)
-    nv_shape = getnv(shape, fd, lc_to_nv_map)
+    if any(map(lambda x: isinstance(x, NumberProxy), shape)):
+        nv_shape = getnv(shape, fd, lc_to_nv_map)
+    else:
+        nv_shape = shape
 
     return fd.ops.reshape(nv_a, nv_shape)
 

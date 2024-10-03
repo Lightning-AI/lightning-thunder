@@ -166,6 +166,7 @@ class PrimIDs(Enum):
     TRANSPOSE = auto()
     UNFOLD = auto()
     VIEW = auto()
+    SHALLOW_COPY = auto()  # a view copy
     # Memory layout prims (Experimental)
     STRIDE_ORDER = auto()
     # Elementwise unary prims
@@ -476,7 +477,7 @@ def _collectify(x: Any, *, name: str | None = None) -> Any:
 # TODO RC1 Align with ASSERT_TENSOR_METADATA
 # NOTE The device is stored as a string for easier, more readable comparisons
 def _check_tensor_shape_and_metadata_meta(
-    t: TensorProxy, shape: tuple[int, ...], device: str, dtype: torch.dtype, requires_grad: bool
+    t: TensorProxy, shape: tuple[int, NumberProxy, ...], device: str, dtype: torch.dtype, requires_grad: bool
 ) -> None:
     # Validates types
     baseutils.check_type(t, TensorProxy)
@@ -1658,7 +1659,7 @@ def return_printer(
 ):
     utils.check(
         len(kwarg_printables) == 0,
-        lambda: f"Expected no kwargs for del but got {kwarg_printables}",
+        lambda: f"Expected no kwargs for return but got {kwarg_printables}",
         exception_type=AssertionError,
     )
 
@@ -3155,7 +3156,7 @@ pad = make_prim(
 )
 
 
-def reshape_meta(a: TensorProxy, /, shape: tuple[int, ...]) -> TensorProxy:
+def reshape_meta(a: TensorProxy, /, shape: tuple[int, NumberProxy, ...]) -> TensorProxy:
     # Validates inputs
     utils.check_type(a, TensorProxy)
     utils.check_valid_shape(shape)
@@ -3536,6 +3537,13 @@ transpose = make_prim(PrimIDs.TRANSPOSE, "transpose", meta=transpose_meta, tags=
 
 
 view = make_prim(PrimIDs.VIEW, "view", meta=reshape_meta, tags=(OpTags.SHAPE_OP,))
+
+
+def shallow_copy_meta(a: TensorProxy, /) -> TensorProxy:
+    return TensorProxy(like=a)
+
+
+shallow_copy = make_prim(PrimIDs.SHALLOW_COPY, "shallow_copy", meta=shallow_copy_meta, tags=(OpTags.SHAPE_OP,))
 
 
 def unfold_meta(a: TensorProxy, /, dim: int, size: int, step: int) -> TensorProxy:
