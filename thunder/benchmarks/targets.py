@@ -820,6 +820,8 @@ def test_resnet50(benchmark, executor: Callable, compute_type: ComputeType):
 #
 # Torchbench benchmarks
 #
+# To setup torchbenchmark please follow the instructions to
+# install it as a libraty here https://github.com/pytorch/benchmark
 
 torchbench_models = []
 if importlib.util.find_spec("torchbenchmark"):
