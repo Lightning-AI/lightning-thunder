@@ -3,6 +3,7 @@ import sys
 import tempfile
 import textwrap
 import time
+from collections import UserDict
 from collections.abc import Callable
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -2984,7 +2985,7 @@ class TorchbenchBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         self.example_input = example
 
     def make_batch(self) -> tuple[list, dict]:
-        if isinstance(self.example_input, dict):
+        if isinstance(self.example_input, (dict, UserDict)):
             return [], self.example_input
         return self.example_input, {}
 
