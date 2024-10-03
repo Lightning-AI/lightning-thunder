@@ -1412,10 +1412,11 @@ def _enumerate_lookaside(obj: Iterable, start: int = 0):
 
     return _interpret_call(impl, obj, wrap_const(start))
 
+
 def _zip_lookaside(*obj: Iterable):
-    
+
     def zip(*obj):
-    # zip('ABCD', 'xy') --> Ax By
+        # zip('ABCD', 'xy') --> Ax By
         sentinel = object()
         iterators = [iter(it) for it in obj]
         while iterators:
@@ -1428,6 +1429,7 @@ def _zip_lookaside(*obj: Iterable):
             yield tuple(result)
 
     return _interpret_call(zip, *obj)
+
 
 @interpreter_needs_wrap
 def eval_lookaside(
@@ -2759,7 +2761,7 @@ _default_lookaside_map: dict[Callable, Callable] = {
     any: _any_lookaside,
     bool: _bool_lookaside,
     enumerate: _enumerate_lookaside,
-    zip:_zip_lookaside,
+    zip: _zip_lookaside,
     exec: exec_lookaside,
     eval: eval_lookaside,
     getattr: _getattr_lookaside,
