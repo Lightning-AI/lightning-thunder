@@ -291,10 +291,12 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs, *, rename_proxies: bool
             return proxy(x, name=name)
 
         if isinstance(x, Proxy):
-            # register proxy name used by shape in TensorProxy
+            # register proxy name used by NumberProxies in TensorProxy.shape
             if isinstance(x, TensorProxy):
                 for s_p in filter(lambda s: isinstance(s, Proxy), x.shape):
-                    # TODO need to avoid name conflict here, since s_p.name could have conflicted with something defined earlier in the trace.
+                    # TODO need to avoid name conflict here, since s_p.name
+                    # could have conflicted with something defined earlier in
+                    # the trace.
                     get_tracectx().names.add(s_p.name)
             if not rename_proxies:
                 get_tracectx().names.add(x.name)
