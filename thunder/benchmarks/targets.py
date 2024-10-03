@@ -825,12 +825,12 @@ def test_resnet50(benchmark, executor: Callable, compute_type: ComputeType):
 
 torchbench_models = []
 if importlib.util.find_spec("torchbenchmark"):
-    import torchbenchmark
+    from torchbenchmark import _list_canary_model_paths, _list_model_paths
 
-    torchbench_models = dir(torchbenchmark.models)
+    torchbench_models = [os.path.basename(x) for x in _list_model_paths()]
 
 
-@pytest.mark.skipif(not torchbench_models, reason="requires torchbenchmark to be installed.")
+@pytest.mark.skipif(not torchbench_models, reason="requires torchbenchmark to be installed")
 @pytest.mark.parametrize(
     "module_name,",
     torchbench_models,
@@ -843,6 +843,9 @@ if importlib.util.find_spec("torchbenchmark"):
 )
 @parametrize_compute_type
 def test_torchbench(benchmark, module_name, executor, compute_type: ComputeType):
+    if not importlib.util.find_spec("torchbenchmark.models." + module_name):
+        pytest.skip(f"model {module_name} not installed")
+
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=FutureWarning)
         b = TorchbenchBenchmark(module_name, device="cuda", requires_grad=is_requires_grad(compute_type))
@@ -851,3 +854,4 @@ def test_torchbench(benchmark, module_name, executor, compute_type: ComputeType)
     fn = executor(b.fn())
 
     benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
+
