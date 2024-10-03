@@ -124,6 +124,19 @@ def test_pickle_auto_registered_ops():
     assert str(pickle.loads(pickle.dumps(trace))) == str(trace)
 
 
+# Tests the same function name in torch and torch.Tensor namespace uses the same symbol
+def test_same_symbol_for_same_function_name():
+    def fn(a):
+        return torch.positive(a.positive())
+
+    jf = thunder.jit(fn)
+    jf(torch.randn(1))
+    lt = thunder.last_traces(jf)[0]
+    s1 = lt.bound_symbols[1].sym  # symbol of torch.Tensor.positive
+    s2 = lt.bound_symbols[2].sym  # symbol of torch.positive
+    assert s1 == s2, f"{s1} != {s2}"
+
+
 # Replace manual registration of some operations with automatic registration for network test cases
 _skip_ops_nanogpt = [
     get_opinfo("layer_norm"),

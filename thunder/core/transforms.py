@@ -25,14 +25,16 @@ from thunder.core.trace_interpreter import (
     trace_interpreter_skip_list,
 )
 from thunder.core.proxies import (
+    CollectionProxy,
     NumberProxy,
     Proxy,
     TensorProxy,
     FloatProxy,
     variableify,
+    unvariableify,
     FutureTensorProxy,
 )
-from thunder.core.compile_data import get_compile_data
+from thunder.core.compile_data import get_compile_data, get_compile_option
 from thunder.core.langctxs import langctx, Languages
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten, tree_flatten_with_dataclass
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol
@@ -57,6 +59,7 @@ from thunder.core.utils import (
     const_as,
     sequencify,
     ProxyDict,
+    find_producer_symbols,
 )
 import thunder.clang as clang
 from thunder.clang import (
@@ -76,7 +79,7 @@ from thunder.core.transform_common import (
     unwrap_return_value,
     VJPDual,
 )
-from thunder.core.vjp_utils import make_aug_forward_and_backward
+from thunder.core.vjp_utils import make_aug_forward_and_backward, get_saved_for_backward_tensors
 from thunder.extend import Executor
 import thunder.torch as ltorch
 
@@ -2135,14 +2138,26 @@ def nll_loss_backward(input, target, weight, reduction, ignore_index, total_weig
 def split_aug_fwd(a: TensorProxy, split_size_or_sections: int | Sequence[int], dim: int = 0) -> VJPDual:
     from thunder.torch import split
 
-    primal = split(a, split_size_or_sections, dim)
-    residuals = (dim,)
-    return VJPDual(primal, residuals)
+    primals = split(a, split_size_or_sections, dim)
+    # save `dtype, device and output shape` as few output can be unused user function
+    # leading to incoming gradients being `None`
+    # in which case we will create zeros as gradient to be passed to `cat`
+    residuals = (dim, a.dtype, a.device, tuple(primal.shape for primal in primals))
+    return VJPDual(primals, residuals)
 
 
 @register_backward("torch.split")
-def split_backward(dim, *grads):
-    from thunder.torch import cat
+def split_backward(dim, dtype, device, out_shapes, *grads):
+    from thunder.torch import cat, zeros
+
+    assert len(out_shapes) == len(grads)
+
+    def make_zeros_like(shape):
+        return zeros(shape, dtype=dtype, device=device)
+
+    grads = tuple(
+        grad if grad is not None else make_zeros_like(out_shape) for grad, out_shape in zip(grads, out_shapes)
+    )
 
     return cat(grads, dim)
 
@@ -3073,4 +3088,100 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
     _update_backward_with_new_saved_for_backward(backward_trace, only_used_bw_saved_for_backward)
     forward_trace.set_provenance(TraceProvenance("Augmented forward pass"))
     backward_trace.set_provenance(TraceProvenance("Backward pass"))
+
+    enable_saved_for_backward_recomputation: None | bool = get_compile_option(
+        "enable_saved_for_backward_recomputation", "Enable save for backward tensors recomputation."
+    )
+    if enable_saved_for_backward_recomputation:
+        forward_trace, backward_trace = recompute_saved_for_backward(forward_trace, backward_trace)
+
     return ForwardBackwardTraces(forward_trace, backward_trace)
+
+
+def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Trace, Trace]:
+    """Generates the pair of traces with rematerializaion of the saved-for-backward tensors.
+    Args:
+        fwd_trace (Trace): forward trace where to get the saved for backward from.
+        bwd_trace (Trace): backward trace where to recompute the saved for backward to.
+
+    Returns:
+        tuple[Trace, Trace]: A tuple containing the new forward and backward traces.
+    """
+
+    start_time_ns = time.perf_counter_ns()
+
+    saved_for_bw = get_saved_for_backward_tensors(fwd_trace)
+    fwd_trace_args = {variableify(j) for j in fwd_trace.args}
+    old_saved_for_bwd = {variableify(j) for j in saved_for_bw}
+
+    all_rematerializable = old_saved_for_bwd - fwd_trace_args
+
+    remat_policy: None | Callable[[set[Variable]], set[Variable]] = get_compile_option(
+        "recomputation_policy",
+        "A callable that accepts a set of variables and returns a set of the variables that are allowed to be recomputed from the forward in the backward trace. The compile option `enable_saved_for_backward_recomputation` needs to be true for this policy to take effect.",
+    )
+
+    if remat_policy:
+        rematerializable = remat_policy(all_rematerializable)
+    else:
+        rematerializable = all_rematerializable
+
+    producers = find_producer_symbols(fwd_trace, tuple(unvariableify(i) for i in rematerializable), fwd_trace.args)
+
+    required_fw_args = fwd_trace_args & old_saved_for_bwd
+    recomputed_tensors_from_producers = set()
+    for prod in producers:
+        for prod_arg in prod.flat_args:
+            prod_arg = variableify(prod_arg)
+            if prod_arg in fwd_trace_args:
+                required_fw_args.add(prod_arg)
+        for prod_out in prod.flat_outs:
+            recomputed_tensors_from_producers.add(variableify(prod_out))
+
+    required_saved_for_bwd = all_rematerializable - rematerializable - recomputed_tensors_from_producers
+    new_saved_for_backward = tuple(unvariableify(i) for i in required_fw_args | required_saved_for_bwd)
+
+    new_fwd_trace = from_trace(fwd_trace)
+    new_fwd_trace.bound_symbols = fwd_trace.bound_symbols.copy()
+    new_return_args = (fwd_trace.output[0], (new_saved_for_backward, fwd_trace.output[1][1]))
+    new_fwd_trace.bound_symbols[-1] = prims.python_return.bind(*new_return_args, output=())
+
+    new_bwd_trace = from_trace(bwd_trace)
+    # In cases where C0 name is carried from previous trace it must be removed
+    # as the proxy needs to register with that specific name to follow the backward
+    # trace standard signature.
+    new_bwd_trace.names.discard("C0")
+
+    with tracectx(new_bwd_trace):
+        unpack_args = (CollectionProxy(new_saved_for_backward, name="C0"), len(new_saved_for_backward))
+
+    # Here we make sure that the signature of the backward trace is the same as the one we expect.
+    # This part of the trace is the unpacking of the tuple passed from the forward trace,
+    # more specifically, C0 unpacks into the saved for backward tensors and C1 into the cotangents
+    # used to compute the vector-Jacobian product.
+    assert bwd_trace.bound_symbols[4].sym.id == prims.PrimIDs.UNPACK_SEQUENCE
+    assert bwd_trace.bound_symbols[4].args[0].name == "C0"
+    assert bwd_trace.bound_symbols[5].sym.id == prims.PrimIDs.UNPACK_SEQUENCE
+    assert bwd_trace.bound_symbols[5].args[0].name == "C1"
+
+    for idx, bsym in enumerate(bwd_trace.bound_symbols):
+        if idx == 4:
+            new_unpack = prims.unpack_sequence.bind(*unpack_args, output=new_saved_for_backward)
+            new_bwd_trace.bound_symbols.append(new_unpack)
+        elif idx == 6:
+            new_bwd_trace.bound_symbols.extend(producers)
+            new_bwd_trace.bound_symbols.append(bsym)
+        else:
+            new_bwd_trace.bound_symbols.append(bsym)
+
+    new_bwd_trace.args = [(new_saved_for_backward, fwd_trace.output[1][1]), *bwd_trace.args[1:]]
+
+    elapsed_time_ns = time.perf_counter_ns() - start_time_ns
+    new_bwd_trace.set_provenance(
+        TraceProvenance(f"Saved for backward remat trace (took {elapsed_time_ns * 1e-6:.2f} milliseconds)")
+    )
+    new_fwd_trace.set_provenance(
+        TraceProvenance(f"Saved for backward remat trace (took {elapsed_time_ns * 1e-6:.2f} milliseconds)")
+    )
+
+    return new_fwd_trace, new_bwd_trace

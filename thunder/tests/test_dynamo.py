@@ -1,11 +1,19 @@
+import pytest
+import torch
 import torch.fx
-from thunder.tests.framework import instantiate, NOTHING, DynamoThunderExecutor, IS_WINDOWS
+
 from thunder import dtypes
 from thunder.dynamo import ThunderCompiler
 from thunder import last_traces
-
-import torch
-import pytest
+from thunder.tests.bf16 import device_supports_bf16
+from thunder.tests.framework import (
+    instantiate,
+    NOTHING,
+    DynamoThunderExecutor,
+    IS_WINDOWS,
+    requiresCUDA,
+)
+from thunder.tests.make_tensor import make_tensor
 
 
 # This will be applied to all tests in this file.
@@ -332,3 +340,98 @@ def test_method_only_registrations(executor, device: str, dtype: dtypes.dtype):
         assert len(subgraph_info.thunder_compiled_fns)  # There was atleast one function compiled with thunder.
         for thunder_fn in subgraph_info.thunder_compiled_fns:
             assert last_traces(thunder_fn)  # Verify that we can fetch last_traces
+
+
+@instantiate(dtypes=NOTHING, executors=[DynamoThunderExecutor])
+def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
+    # Verify that `torch.where(cond)` leads to graph break and `torch.where(cond, x, y)`
+    # is correctly passed to `thunder`.
+    backend = ThunderCompiler()
+
+    def func(x):
+        y = x[torch.where(x > 0.5)]  # This will lead to graph-break
+        y = torch.where(y > 1, y, 0)
+        return y.sin()
+
+    x = torch.randn(3, 3, device=device, dtype=dtype, requires_grad=True)
+    actual = torch.compile(func, backend=backend)(x)
+    expected = torch.compile(func, backend="eager")(x)
+
+    # We record the GraphModules that was compiled by ThunderCompiler
+    assert len(backend.subgraph_infos) == 2  # There were 2 graphs.
+
+    for subgraph_info in backend.subgraph_infos:
+        assert len(subgraph_info.split_reasons) == 0  # Verify there were no splits in the subgraph.
+        assert isinstance(subgraph_info.original_graph_module, torch.fx.GraphModule)
+        assert len(subgraph_info.thunder_compiled_fns)  # There was atleast one function compiled with thunder.
+        for thunder_fn in subgraph_info.thunder_compiled_fns:
+            assert last_traces(thunder_fn)  # Verify that we can fetch last_traces
+
+    torch.testing.assert_close(actual, expected)
+
+    g = torch.randn_like(actual)
+    actual_grad = torch.autograd.grad(actual, x, g)
+    expected_grad = torch.autograd.grad(expected, x, g)
+    torch.testing.assert_close(actual_grad, expected_grad)
+
+
+@instantiate(
+    dtypes=(dtypes.float32,),
+    executors=(DynamoThunderExecutor,),
+    decorators=(
+        pytest.mark.parametrize(
+            "optim",
+            (
+                torch.optim.SGD,
+                torch.optim.Adam,
+                torch.optim.AdamW,
+            ),
+            ids=(
+                "sgd",
+                "adam",
+                "adamw",
+            ),
+        ),
+        pytest.mark.skipif(
+            IS_WINDOWS,
+            reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+        ),
+    ),
+)
+@requiresCUDA
+def test_thundercompiler_optim_step(executor, device, dtype, optim):
+    from thunder.tests.distributed.helper import ToyModel
+
+    if not device_supports_bf16(device):
+        pytest.skip(f"{device} does not support bf16")
+
+    tdtype = dtypes.to_torch_dtype(dtype)
+    model = ToyModel().to(device=device, dtype=tdtype)
+    optimizer = optim(model.parameters())
+    jitted_step = executor.make_callable(optimizer.step)
+
+    ref_model = ToyModel().to(device=device, dtype=tdtype)
+    ref_model.load_state_dict(model.state_dict())
+    ref_optimizer = optim(ref_model.parameters())
+    ref_optimizer.load_state_dict(optimizer.state_dict())
+
+    for i in range(2):
+        x = make_tensor((1, ToyModel.N_IN), dtype=tdtype, device=device)
+        x_ref = x.clone().detach()
+
+        y = model(x)
+        y.mean().backward()
+        jitted_step()
+        optimizer.zero_grad()
+
+        y_ref = ref_model(x_ref)
+        y_ref.mean().backward()
+        ref_optimizer.step()
+        ref_optimizer.zero_grad()
+
+        # There could be numerical error, see https://github.com/NVIDIA/Fuser/issues/2664
+        torch.testing.assert_close(
+            tuple(model.parameters()),
+            tuple(ref_model.parameters()),
+            msg=lambda s: f"{i+1}-iter {s}",
+        )

@@ -132,12 +132,13 @@ def check_types(xs: Sequence[Any], types: type | Sequence[type]):
 def check_valid_length(length: int):
     """Validates that an object represents a valid dimension length."""
 
-    # maybe we should skip the check for IntegerProxy in general
-    check_type(length, (int, NumberProxyInterface))
-    check(length >= 0, lambda: f"Found invalid length {length}!")
+    # skip the check for NumberProxy in general
+    if not isinstance(length, NumberProxyInterface):
+        check_type(length, (int))
+        check(length >= 0, lambda: f"Found invalid length {length}!")
 
 
-def check_valid_shape(shape: tuple[int, ...] | list[int]):
+def check_valid_shape(shape: tuple[int, NumberProxy, ...] | list[int]):
     """Validates that a sequence represents a valid shape."""
 
     check_type(shape, (tuple, list))
@@ -280,6 +281,12 @@ def _print_complex_number(c: complex) -> str:
     return f"complex({real_str}, {imag_str})"
 
 
+def _print_slice(s: slice) -> str:
+    val = (s.start, s.stop, s.step)
+
+    return f"slice({','.join(map(lambda x: x.name if isinstance(x, ProxyInterface) else str(x), val))})"
+
+
 def print_number(n: Number) -> str:
     if isinstance(n, complex):
         return _print_complex_number(n)
@@ -388,7 +395,7 @@ _printable_value_types = {
     int: lambda b: str(b),
     float: _print_float_number,
     complex: _print_complex_number,
-    slice: lambda slc: str(slc),
+    slice: _print_slice,
 }
 
 

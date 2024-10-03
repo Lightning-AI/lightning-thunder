@@ -1342,7 +1342,12 @@ def is_jitting_with_raise():
 
     # Guard against opaque functions which interrupt jitting.
     if (ctx := get_interpretercompilectx_if_available()) is not None:
-        raise InterpreterError(f"Lookaside was not triggered, but there is an active compile context: {ctx}")
+        # nested try to delete ctx from locals
+        try:
+            raise InterpreterError(f"Lookaside was not triggered, but there is an active compile context: {ctx}")
+        except InterpreterError:
+            del ctx
+            raise
 
     return False
 
@@ -1495,8 +1500,9 @@ def eval_exec_helper(
     except Exception as e:
         # We need to cheat a bit to get a Python frame here...
         python_frame = frame.get_or_make_python_frame()
-        tb = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
-        raise e.with_traceback(tb)
+        e.__traceback__ = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
+        del e
+        raise  # re-raises e
 
     if mode == "eval":
         return res
@@ -6254,14 +6260,24 @@ def make_generator(
                     res, status = _run_frame(frame, compilectx, runtimectx, send_value=send_value)
                 except Exception as e:
                     msg = f"Encountered exception {type(e).__name__}: {e}"
-                    raise InterpreterError(msg) from e
+                    # nested try ... raise to delete e from locals
+                    try:
+                        raise InterpreterError(msg) from e
+                    except InterpreterError:
+                        del e
+                        raise
                 if status is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                     e = runtimectx.curexc
                     assert isinstance(e, BaseException)
                     runtimectx.curexc = None
                     if isinstance(e, StopIteration):
                         return unwrap(e.value)
-                    raise e
+                    # nested try except to delete e from locals
+                    try:
+                        raise e
+                    except BaseException:
+                        del e
+                        raise
             if status == INTERPRETER_SIGNALS.RETURN_VALUE:
                 return  # TODO: should this return res?
             assert status == INTERPRETER_SIGNALS.YIELD_VALUE
@@ -6284,14 +6300,24 @@ def make_async_generator(
                     res, status = _run_frame(frame, compilectx, runtimectx, send_value=send_value)
                 except Exception as e:
                     msg = f"Encountered exception {type(e).__name__}: {e}"
-                    raise InterpreterError(msg) from e
+                    # nested try ... raise to delete e from locals
+                    try:
+                        raise InterpreterError(msg) from e
+                    except InterpreterError:
+                        del e
+                        raise
                 if status is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                     e = runtimectx.curexc
                     assert isinstance(e, BaseException)
                     runtimectx.curexc = None
                     if isinstance(e, StopIteration):
                         return
-                    raise e
+                    # nested try except to delete e from locals
+                    try:
+                        raise e
+                    except BaseException:
+                        del e
+                        raise
             if status == INTERPRETER_SIGNALS.RETURN_VALUE:
                 return  # TODO: should this return res?
             assert status == INTERPRETER_SIGNALS.YIELD_VALUE
@@ -6314,14 +6340,24 @@ def make_coroutine(
                     res, status = _run_frame(frame, compilectx, runtimectx, send_value=send_value)
                 except Exception as e:
                     msg = f"Encountered exception {type(e).__name__}: {e}"
-                    raise InterpreterError(msg) from e
+                    # nested try ... raise to delete e from locals
+                    try:
+                        raise InterpreterError(msg) from e
+                    except InterpreterError:
+                        del e
+                        raise
                 if status is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                     e = runtimectx.curexc
                     assert isinstance(e, BaseException)
                     runtimectx.curexc = None
                     if isinstance(e, StopIteration):
                         return unwrap(e.value)
-                    raise e
+                    # nested try except to delete e from locals
+                    try:
+                        raise e
+                    except BaseException:
+                        del e
+                        raise
             if status == INTERPRETER_SIGNALS.RETURN_VALUE:
                 return unwrap(res)
             assert status == INTERPRETER_SIGNALS.YIELD_VALUE
@@ -6948,6 +6984,7 @@ def _run_frame(
                     tb = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
                     e = e.with_traceback(tb)
                     runtimectx.curexc = e
+                    del current_exception, python_frame, tb, e, runtimectx
                     return INTERPRETER_SIGNALS.EXCEPTION_RAISED, INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
             # TODO Improve this error message
@@ -7134,7 +7171,12 @@ def interpret(
                 msg = (
                     f"Encountered exception {type(e).__name__}: {e} while tracing {fn}:{os.linesep}" f"{traceback_str}"
                 )
-                raise InterpreterError(msg) from e
+                # nested try ... raise to delete e from locals
+                try:
+                    raise InterpreterError(msg) from e
+                except InterpreterError:
+                    del e
+                    raise
 
             # NOTE: Wrapped functions are valid to assign new attributes to.
             fn_._last_interpreter_log = runtimectx.interp_log  # type: ignore
@@ -7143,7 +7185,12 @@ def interpret(
                 e = runtimectx.curexc
                 assert isinstance(e, BaseException), e
                 runtimectx.curexc = None
-                raise e
+                # The below is "raise e" but deleting e from the scope
+                try:
+                    raise e
+                except Exception:
+                    del e
+                    raise
 
             return interpretation_result
 
