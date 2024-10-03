@@ -975,6 +975,11 @@ def getitem(a: TensorLike, /, key) -> TensorLike:
         lambda: f"{key=} tries to index more dimensions than {a.ndim=}",
     )
 
+    # FIXME: This is a quick WAR to avoid accessing shape attribute of a without
+    # definition. This needs to be done properly somewhere else. See issue
+    # github.com/Lightning-AI/lightning-thunder/issues/1253
+    old_shape = prims.shape(a)
+
     # We do not support mixing basic and advanced indexing together yet,
     # but a very special case when there is a single advanced index which
     # is a sequence of length 1.
