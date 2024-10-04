@@ -3,6 +3,7 @@ import sys
 import tempfile
 import textwrap
 import time
+from collections import UserDict
 from collections.abc import Callable
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -2946,6 +2947,58 @@ class ResNet50Benchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         model = resnet50()
         model = model.to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
         return model
+
+
+class TorchbenchBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="module_name",
+            description="The torchbenchmark module name (str).",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A device (str) to run on {'cpu' | 'cuda'}. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the model parameters require grad. Default is True.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "torchbench"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "Torchbench fixture"
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(self, module_name, device: str = "cuda", requires_grad: bool = True):
+        import importlib
+
+        module = importlib.import_module(f"torchbenchmark.models.{module_name}")
+        self.benchmark_cls = getattr(module, "Model", None)
+
+        benchmark = self.benchmark_cls(test="train" if requires_grad else "eval", device=device)
+
+        model, example = benchmark.get_module()
+        self.model = model
+        self.example_input = example
+
+    def make_batch(self) -> tuple[list, dict]:
+        if isinstance(self.example_input, (dict, UserDict)):
+            return [], self.example_input
+        return self.example_input, {}
+
+    def fn(self) -> Callable:
+        return self.model
 
 
 # TODO Add descriptions to the executors when listed, and list them alphabetically

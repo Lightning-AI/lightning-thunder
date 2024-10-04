@@ -1,3 +1,5 @@
+import importlib
+import warnings
 import os
 from collections.abc import Callable
 from enum import auto, Enum
@@ -25,6 +27,7 @@ from thunder.benchmarks import (
     LitGPTGeluBenchmark,
     NanoGPTLayerNormBenchmark,
     ResNet50Benchmark,
+    TorchbenchBenchmark,
     thunder_apex_executor,
     thunder_apex_nvfuser_executor,
     thunder_cudnn_executor,
@@ -810,6 +813,74 @@ def test_resnet50(benchmark, executor: Callable, compute_type: ComputeType):
     b = ResNet50Benchmark(
         64, (3, 224, 224), device="cuda:0", dtype=torch.bfloat16, requires_grad=is_requires_grad(compute_type)
     )
+
+    args, kwargs = b.make_batch()
+    fn = executor(b.fn())
+
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
+
+
+#
+# Torchbench benchmarks
+#
+# To setup torchbenchmark please follow the instructions to
+# install it as a libraty here https://github.com/pytorch/benchmark .
+# To install canary models make sure to add `--canary` to `python install.py`.
+
+torchbench_models = []
+torchbench_canary_models = []
+if importlib.util.find_spec("torchbenchmark"):
+    from torchbenchmark import _list_canary_model_paths, _list_model_paths
+
+    torchbench_models = [os.path.basename(x) for x in _list_model_paths()]
+    torchbench_canary_models = [os.path.basename(x) for x in _list_canary_model_paths()]
+
+
+@pytest.mark.skipif(not torchbench_models, reason="requires torchbenchmark to be installed")
+@pytest.mark.parametrize(
+    "module_name,",
+    torchbench_models,
+    ids=torchbench_models,
+)
+@pytest.mark.parametrize(
+    "executor,",
+    executors,
+    ids=executors_ids,
+)
+@parametrize_compute_type
+def test_torchbench(benchmark, module_name, executor, compute_type: ComputeType):
+    if not importlib.util.find_spec("torchbenchmark.models." + module_name):
+        pytest.skip(f"model {module_name} not installed")
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FutureWarning)
+        b = TorchbenchBenchmark(module_name, device="cuda", requires_grad=is_requires_grad(compute_type))
+
+    args, kwargs = b.make_batch()
+    fn = executor(b.fn())
+
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
+
+
+@pytest.mark.skipif(not torchbench_canary_models, reason="requires torchbenchmark to be installed with flag --canary")
+@pytest.mark.parametrize(
+    "module_name,",
+    torchbench_canary_models,
+    ids=torchbench_canary_models,
+)
+@pytest.mark.parametrize(
+    "executor,",
+    executors,
+    ids=executors_ids,
+)
+@parametrize_compute_type
+def test_torchbench_canary(benchmark, module_name, executor, compute_type: ComputeType):
+    if not importlib.util.find_spec("torchbenchmark.models." + module_name):
+        pytest.skip(f"model {module_name} not installed")
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FutureWarning)
+        b = TorchbenchBenchmark(module_name, device="cuda", requires_grad=is_requires_grad(compute_type))
 
     args, kwargs = b.make_batch()
     fn = executor(b.fn())
