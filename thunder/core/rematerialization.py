@@ -163,6 +163,11 @@ def apply_rematerialization_for_consumer(
         filter(lambda x: x.name not in map(lambda x: x.name, new_consumer_args), consumer.args)
     )
 
+    # In the case where there are no tensors to rematerialize it is
+    # possible to terminate early and return the consumer as it was.
+    if not rematerialized_inputs:
+        return consumer
+
     # Construct a temporary Trace object with subsymbols from the producer.
     trace = TraceCtx(None)
     trace.bound_symbols = producer.subsymbols
