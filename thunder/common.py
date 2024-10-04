@@ -293,7 +293,7 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs, *, rename_proxies: bool
         if isinstance(x, Proxy):
             # register proxy name used by NumberProxies in TensorProxy.shape
             if isinstance(x, TensorProxy):
-                for s_p in filter(lambda s: isinstance(s, Proxy), x.shape):
+                for s_p in filter(lambda s: isinstance(s, Proxy), x._shape):
                     # TODO need to avoid name conflict here, since s_p.name
                     # could have conflicted with something defined earlier in
                     # the trace.
