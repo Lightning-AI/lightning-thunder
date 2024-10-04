@@ -1116,7 +1116,7 @@ def test_isinstance_parameter():
     ("cpu", "cuda"),
 )
 def test_cache_symbolic_values_reshape(device):
-    if not torch.cuda.is_available():
+    if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
 
     a = torch.randn((4, 8, 6), device=device)
