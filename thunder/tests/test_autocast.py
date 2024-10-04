@@ -9,7 +9,7 @@ import thunder.tests.bf16
 import thunder.torch as ltorch
 from thunder.core import dtypes
 from thunder.executors.torchex import no_autocast
-from thunder.tests.framework import instantiate, TorchExecutor
+from thunder.tests.framework import instantiate, TorchExecutor, requiresCUDA
 
 
 # TODO This test currently ignores the "should_autocast" argument enumerated in it
@@ -293,6 +293,37 @@ def test_autocast_trace(requires_grad, device, b_dtype):
         go = torch.ones_like(autocast_actual) / autocast_actual.numel()
         eager_grads = torch.autograd.grad(autocast_expected, [a, b], go)
         jit_grads = torch.autograd.grad(autocast_actual, [a, b], go)
+
+        for eg, jg in zip(eager_grads, jit_grads):
+            torch.testing.assert_close(eg, jg, rtol=5e-3, atol=5e-3)
+
+
+@pytest.mark.parametrize("requires_grad", [False, True])
+@pytest.mark.parametrize("b_dtype", (torch.float, torch.bfloat16))
+@requiresCUDA
+def test_autocast_cpu_and_cuda(requires_grad, b_dtype):
+    def foo(a, b, c, d):
+        with torch.autocast("cpu", torch.bfloat16):
+            cpu_output = torch.matmul(a, b)
+            with torch.autocast("cuda", torch.bfloat16):
+                cuda_output = torch.matmul(c, d)
+        return cpu_output, cuda_output
+
+    a = torch.rand([3, 1, 2], dtype=torch.float, device="cpu", requires_grad=requires_grad)
+    b = torch.rand([2, 3], dtype=b_dtype, device="cpu", requires_grad=requires_grad)
+    c = torch.rand([3, 1, 2], dtype=torch.float, device="cuda", requires_grad=requires_grad)
+    d = torch.rand([2, 3], dtype=b_dtype, device="cuda", requires_grad=requires_grad)
+
+    cpu_expected, cuda_expected = foo(a, b, c, d)
+    cpu_actual, cuda_actual = thunder.jit(foo)(a, b, c, d)
+
+    torch.testing.assert_close(cpu_actual, cpu_expected)
+    torch.testing.assert_close(cuda_actual, cuda_expected)
+
+    if requires_grad:
+        go = torch.ones_like(cpu_actual) / cpu_actual.numel()
+        eager_grads = torch.autograd.grad(cpu_expected, [a, b], go)
+        jit_grads = torch.autograd.grad(cpu_actual, [a, b], go)
 
         for eg, jg in zip(eager_grads, jit_grads):
             torch.testing.assert_close(eg, jg, rtol=5e-3, atol=5e-3)
