@@ -4,7 +4,8 @@ from collections.abc import Callable
 from collections.abc import Sequence
 
 from thunder.core import dtypes, prims
-from thunder.core.pytree import tree_map
+from thunder.core.pytree import tree_map, tree_flatten
+from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import BoundSymbolInterface, Symbol
 from thunder.core.proxies import TensorProxy
 from thunder.core.transforms import construct_trace, eval_trace
@@ -272,16 +273,19 @@ def maybe_apply_autocast(sym):
     # To mimick similar behavior, here we replace the `sym` for all operators which have
     # autocast rule, to apply the autocast conversion rule if autocast was enabled.
 
-    # Cache info may not be available in case of legacy `thunder.compile`
-    # which is still used for cases.
-    try:
-        cache_info = _get_cache_info()
-    except LookupError:
-        cache_info = {}
+    from thunder.core.compile_data import get_compile_data
+
+    # If user has actually enabled autocast in their code
+    # AND we are not under `disable_autocast`
+    cd = get_compile_data()
+    if cd is None:
+        user_enabled_autocast = False
+    else:
+        user_enabled_autocast = not cd.autocast_stack.is_empty()
 
     if (
-        cache_info.get("is_autocast_enabled", False)  # If user has actually enabled autocast in their code
-        and is_autocast_enabled()  # we are not under `disable_autocast`
+        (user_enabled_autocast)
+        and is_autocast_enabled()
         and (autocast_impl := _maybe_get_autocast_rule_for_symbol(sym)) is not None
     ):  # symbol has autocast impl.
 
@@ -289,8 +293,19 @@ def maybe_apply_autocast(sym):
         def wrapper(*args, **kwargs):
             # See NOTE: Disable Autocast
             with disable_autocast():
-                thunder_autocast_dtype = _get_downcast_dtype_from_str(cache_info["autocast_thunder_dtype"])
-                return partial(autocast_impl, dtype=thunder_autocast_dtype)(*args, **kwargs)
+
+                def is_cpu(p):
+                    if isinstance(p, TensorProxy):
+                        return p.device.type == "cpu"
+                    return False
+
+                is_cpu = any(tree_flatten(tree_map(is_cpu, (args, kwargs)))[0])
+                thunder_autocast_dtype = cd.autocast_stack.get_dtype_for_device_if_enabled("cpu" if is_cpu else "cuda")
+                if (
+                    thunder_autocast_dtype is None
+                ):  # autocast could be explicitly disabled or enabled for another device.
+                    return sym(*args, **kwargs)
+                return partial(autocast_impl, dtype=dtypes.to_dtype(thunder_autocast_dtype))(*args, **kwargs)
 
         return wrapper
 

@@ -47,6 +47,30 @@ import torch as torch
 import numpy as np
 import thunder
 
+
+class AutocastStack:
+    def __init__(self):
+        self.stack = deque()
+
+    def push(self, device: str, dtype, enabled: bool, cache_enabled: bool):
+        self.stack.append((device, dtype, enabled, cache_enabled))
+
+    def pop(self) -> None:
+        self.stack.pop()
+
+    def is_empty(self) -> bool:
+        return len(self.stack) == 0
+
+    def get_dtype_for_device_if_enabled(self, device_str: str):
+        for autocast_state in reversed(self.stack):
+            device, dtype, enabled, _ = autocast_state
+            if device == device_str:
+                if enabled:
+                    return dtype
+                return None
+        return None
+
+
 #
 # Datastructures for compiled functions
 #
@@ -208,6 +232,9 @@ class CompileData:
 
         # Resolves cache option
         self.cache_option = resolve_cache_option(cache_option)
+
+        # State for autocast
+        self.autocast_stack: AutocastStack = AutocastStack()
 
         #
         # Gathers additional metadata

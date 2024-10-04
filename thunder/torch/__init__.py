@@ -5496,6 +5496,29 @@ def backward_autograd_function_apply(
     return bwd(None, *grad_output, *saved_for_backward)
 
 
+from thunder.core.compile_data import get_compile_data
+
+
+@torchsymbol(
+    torch.amp.autocast_mode._enter_autocast, id="torch.amp.autocast_mode._enter_autocast", tags=(prims.OpTags.DONT_DCE,)
+)
+def autocast_enter(device_type, dtype, enabled, cache_enabled):
+    cd = get_compile_data()
+    print("ENTER PUSH")
+    cd.autocast_stack.push(device_type, dtype, enabled, cache_enabled)
+    # push()
+
+
+@torchsymbol(
+    torch.amp.autocast_mode._exit_autocast, id="torch.amp.autocast_mode._exit_autocast", tags=(prims.OpTags.DONT_DCE,)
+)
+def autocast_exit(*args):
+    cd = get_compile_data()
+    cd.autocast_stack.pop()
+    print("EXIT POP")
+    # pop()
+
+
 #
 # The automatically registered torch operators
 #
