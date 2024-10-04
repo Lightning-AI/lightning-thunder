@@ -1464,6 +1464,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
             return self._shape
         else:
             from thunder.core.prims import shape
+
             return shape(self)
 
     @property
