@@ -177,6 +177,10 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
     import thunder
     from thunder.core.trace import TraceCtx
 
+    # `tag_activation_checkpoint` has function input that get_proxy_inputs_from_node can not handle
+    if node.target is torch.ops.higher_order.tag_activation_checkpoint:
+        return True, None
+
     @thunder._with_cache_info_ctx
     def _run_with_cache_info():
 
