@@ -5507,7 +5507,6 @@ def autocast_enter(device_type, dtype=None, enabled=True, cache_enabled=True):
         dtype = torch.get_autocast_dtype(device_type)
     cd = get_compile_data()
     cd.autocast_stack.push(device_type, dtype, enabled, cache_enabled)
-    # push()
 
 
 @torchsymbol(
@@ -5516,7 +5515,6 @@ def autocast_enter(device_type, dtype=None, enabled=True, cache_enabled=True):
 def autocast_exit(*args):
     cd = get_compile_data()
     cd.autocast_stack.pop()
-    # pop()
 
 
 #

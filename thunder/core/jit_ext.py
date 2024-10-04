@@ -774,7 +774,6 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
 
 
 @register_general_jit_lookaside(torch.autocast.__enter__)
-@interpreter_needs_wrap
 def autocast_enter(autocast_obj):
     unwrap_autocast_obj = unwrap(autocast_obj)
     device = unwrap_autocast_obj.device
@@ -782,15 +781,16 @@ def autocast_enter(autocast_obj):
     enabled = unwrap_autocast_obj._enabled
     cache_enabled = unwrap_autocast_obj._cache_enabled
     thunder_fn = _torch_to_thunder_function_map[torch.amp.autocast_mode._enter_autocast]
-    return thunder_fn(device, dtype, enabled, cache_enabled)
+    thunder_fn(device, dtype, enabled, cache_enabled)
+    return wrap(None, provenance=autocast_obj.provenance)
 
 
 @register_general_jit_lookaside(torch.autocast.__exit__)
-@interpreter_needs_wrap
 def autocast_exit(autocast_obj, exc_type, exc_val, exc_tb):
     unwrap_autocast_obj = unwrap(autocast_obj)
     thunder_fn = _torch_to_thunder_function_map[torch.amp.autocast_mode._exit_autocast]
-    return thunder_fn()
+    thunder_fn()
+    return wrap(None, provenance=autocast_obj.provenance)
 
 
 @register_general_jit_lookaside(torch.finfo)
