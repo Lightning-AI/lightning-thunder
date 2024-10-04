@@ -361,120 +361,120 @@ class TraceCtx:
         try:
             # Acquires ctx and imports from the BoundSymbols...
             import_ctx, call_ctx, object_ctx = self._gather_ctxs()
-
-            # ... and from the signature
-            if self._siginfo is None and self.fn is None:
-                signature_str = f"# No signature available"
-            else:
-                si = self.siginfo()
-                signature_str = si.prettyprint(trace=self, import_ctx=import_ctx, object_ctx=object_ctx)
-
-            # Constructs program strings
-            program = []
-
-            # Prints provenance (if any) first
-            if self._provenance is not None:
-                provenance_str = f"{str(self._provenance)}"
-                program.append(provenance_str)
-
-            # NOTE torch is explicitly imported because we always run in the no_grad() ctx (see below)
-            import torch
-
-            import_ctx["torch"] = torch
-
-            # Prints imports, sorted by name
-
-            def keyfn(class_or_module: type | ModuleType) -> str:
-                if isinstance(class_or_module, ModuleType):
-                    return class_or_module.__name__
-                return class_or_module.__module__
-
-            name: str
-            class_or_module: type | ModuleType
-            for name, class_or_module in sorted(import_ctx.items(), key=lambda x: keyfn(x[1])):
-                import_str: str
-
-                # Handles class imports
-                if not isinstance(class_or_module, ModuleType):
-                    cls: type = class_or_module
-                    import_str = f"from {cls.__module__} import {cls.__name__}"
-                else:
-                    # class_or_module is a module
-                    module: ModuleType = class_or_module
-                    if module.__name__ == name:
-                        import_str = f"import {module.__name__}"
-                    else:
-                        import_str = f"import {module.__name__} as {name}"
-                program.append(import_str)
-
-            if include_decorators:
-                program.append("from thunder.executors.torchex import no_autocast")
-
-            # Separates imports from the function for readability
-            if len(import_ctx) > 0:
-                program.append("")
-
-            if include_decorators:
-                # NOTE: For TransformerEngine executor, we want to wrap the generated
-                # forward function in fp8_autocast ctx manager.
-                # In the future, if other executor has similar requirements, we should
-                # add a new extension point for executors
-                # NOTE: For TE v1.6 onwards, `fp8_autocast` checks if `torch.is_grad_enabled` for updating
-                # the FP8 scales/inverses. So this decorator should be applied before `torch.no_grad` (so that
-                # it is in grad enabled part).
-                from thunder.executors.transformer_engineex import _is_te_linear_enabled, _get_te_wrapper_string
-
-                if self._include_te_fp8_autocast and _is_te_linear_enabled(import_ctx, object_ctx):
-                    program.append(_get_te_wrapper_string())
-
-                # Disable gradients since Thunder takes care of this (for when calling torch operations)
-                program.append("@torch.no_grad()")
-                # Disable autocast since we already generated the trace with it in consideration (for when calling torch
-                # operations)
-                program.append("@no_autocast")
-
-            # Prints the signature
-            program.append(signature_str)
-
-            # TODO Print objects from context
-            # Prints constants (if any) upfront
-            # constants = tuple(om for om in self._object_meta_map.values() if om.is_constant)
-            # if len(constants) > 0:
-            #     const_comment_str = f"{indent}# Initializes constants"
-            #     program.append(const_comment_str)
-            # for c in constants:
-            #     constant_python = c.python(indent=1)
-            #     program.extend(constant_python)
-
-            # Separates constants from operations
-            # if len(constants) > 0:
-            #     program.append("")
-
-            # Prints operations
-
-            filename = None
-            lineno = None
-            for i, bsym in enumerate(self.bound_symbols):
-                if (
-                    bsym.source_filename is not None
-                    and bsym.source_positions is not None
-                    and bsym.source_positions.lineno is not None
-                ) and (filename != bsym.source_filename or lineno != bsym.source_positions.lineno):
-                    if i > 0:
-                        program.append("")
-                    src_line = get_source_line(bsym.source_filename, bsym.source_positions.lineno)
-                    program.append(f"""  # {bsym.source_filename}:{bsym.source_positions.lineno}: \t{src_line}""")
-                filename = bsym.source_filename
-                lineno = bsym.source_positions and bsym.source_positions.lineno
-
-                lines = bsym.python(indent=1, print_depth=print_depth)
-                program.extend(lines)
-
-            python = "\n".join(program)
-
-            return python
         finally:
             reset_tracectx(token)
+
+        # ... and from the signature
+        if self._siginfo is None and self.fn is None:
+            signature_str = f"# No signature available"
+        else:
+            si = self.siginfo()
+            signature_str = si.prettyprint(trace=self, import_ctx=import_ctx, object_ctx=object_ctx)
+
+        # Constructs program strings
+        program = []
+
+        # Prints provenance (if any) first
+        if self._provenance is not None:
+            provenance_str = f"{str(self._provenance)}"
+            program.append(provenance_str)
+
+        # NOTE torch is explicitly imported because we always run in the no_grad() ctx (see below)
+        import torch
+
+        import_ctx["torch"] = torch
+
+        # Prints imports, sorted by name
+
+        def keyfn(class_or_module: type | ModuleType) -> str:
+            if isinstance(class_or_module, ModuleType):
+                return class_or_module.__name__
+            return class_or_module.__module__
+
+        name: str
+        class_or_module: type | ModuleType
+        for name, class_or_module in sorted(import_ctx.items(), key=lambda x: keyfn(x[1])):
+            import_str: str
+
+            # Handles class imports
+            if not isinstance(class_or_module, ModuleType):
+                cls: type = class_or_module
+                import_str = f"from {cls.__module__} import {cls.__name__}"
+            else:
+                # class_or_module is a module
+                module: ModuleType = class_or_module
+                if module.__name__ == name:
+                    import_str = f"import {module.__name__}"
+                else:
+                    import_str = f"import {module.__name__} as {name}"
+            program.append(import_str)
+
+        if include_decorators:
+            program.append("from thunder.executors.torchex import no_autocast")
+
+        # Separates imports from the function for readability
+        if len(import_ctx) > 0:
+            program.append("")
+
+        if include_decorators:
+            # NOTE: For TransformerEngine executor, we want to wrap the generated
+            # forward function in fp8_autocast ctx manager.
+            # In the future, if other executor has similar requirements, we should
+            # add a new extension point for executors
+            # NOTE: For TE v1.6 onwards, `fp8_autocast` checks if `torch.is_grad_enabled` for updating
+            # the FP8 scales/inverses. So this decorator should be applied before `torch.no_grad` (so that
+            # it is in grad enabled part).
+            from thunder.executors.transformer_engineex import _is_te_linear_enabled, _get_te_wrapper_string
+
+            if self._include_te_fp8_autocast and _is_te_linear_enabled(import_ctx, object_ctx):
+                program.append(_get_te_wrapper_string())
+
+            # Disable gradients since Thunder takes care of this (for when calling torch operations)
+            program.append("@torch.no_grad()")
+            # Disable autocast since we already generated the trace with it in consideration (for when calling torch
+            # operations)
+            program.append("@no_autocast")
+
+        # Prints the signature
+        program.append(signature_str)
+
+        # TODO Print objects from context
+        # Prints constants (if any) upfront
+        # constants = tuple(om for om in self._object_meta_map.values() if om.is_constant)
+        # if len(constants) > 0:
+        #     const_comment_str = f"{indent}# Initializes constants"
+        #     program.append(const_comment_str)
+        # for c in constants:
+        #     constant_python = c.python(indent=1)
+        #     program.extend(constant_python)
+
+        # Separates constants from operations
+        # if len(constants) > 0:
+        #     program.append("")
+
+        # Prints operations
+
+        filename = None
+        lineno = None
+        for i, bsym in enumerate(self.bound_symbols):
+            if (
+                bsym.source_filename is not None
+                and bsym.source_positions is not None
+                and bsym.source_positions.lineno is not None
+            ) and (filename != bsym.source_filename or lineno != bsym.source_positions.lineno):
+                if i > 0:
+                    program.append("")
+                src_line = get_source_line(bsym.source_filename, bsym.source_positions.lineno)
+                program.append(f"""  # {bsym.source_filename}:{bsym.source_positions.lineno}: \t{src_line}""")
+            filename = bsym.source_filename
+            lineno = bsym.source_positions and bsym.source_positions.lineno
+
+            lines = bsym.python(indent=1, print_depth=print_depth)
+            program.extend(lines)
+
+        python = "\n".join(program)
+
+        return python
 
     # Returns a Python callable that executes the trace
     # TODO issue "Create a mechanism for freezing TraceCtx objects"
