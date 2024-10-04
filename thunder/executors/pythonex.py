@@ -13,7 +13,6 @@ import platform
 import torch
 
 import thunder.core.prims as prims
-from thunder.core.prims import PrimIDs
 from thunder.core.proxies import NumberProxy, NumberLike, TensorProxy, CollectionProxy
 from thunder.core.symbol import Symbol, BoundSymbol
 from thunder.core import baseutils
@@ -46,11 +45,15 @@ def _never_executable(*args, **kwargs) -> bool:
 # Unpacking primitives
 #
 def _check_tensor_shape_and_metadata_impl(
-    t: torch.Tensor, shape: tuple[int, ...], device: str, dtype: torch.dtype, requires_grad: bool
+    t: torch.Tensor, shape: tuple[int, NumberProxy, ...], device: str, dtype: torch.dtype, requires_grad: bool
 ) -> None:
     assert isinstance(t, torch.Tensor), f"expected Tensor, got {type(t).__name__}"
     assert (
-        tuple(t.shape) == shape and str(t.device) == device and t.dtype == dtype and t.requires_grad == requires_grad
+        len(t.shape) == len(shape)
+        and all(map(lambda x, ref: isinstance(ref, NumberProxy) or x == ref, t.shape, shape))
+        and str(t.device) == device
+        and t.dtype == dtype
+        and t.requires_grad == requires_grad
     ), f"expected tensor with {shape}, {device}, {dtype}, {requires_grad=}, got {tuple(t.shape)}, {str(t.device)}, {t.dtype}, {requires_grad}"
 
 

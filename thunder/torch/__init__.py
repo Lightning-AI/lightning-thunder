@@ -5,23 +5,29 @@ import math
 import operator
 import collections
 import re
+import sys
+from collections.abc import Callable
 from collections.abc import Sequence
 from enum import Enum
 from functools import partial, reduce, wraps
 from numbers import Number
-from typing import Any, overload
 from types import NoneType, ModuleType
-from collections.abc import Callable
+from typing import Any, overload
+import builtins
+import collections
+import itertools
+import math
+import operator
+import re
 
 import opt_einsum
 
 # Initializes the language context
 from thunder.torch.langctx import register_method, register_property
-
 from thunder.core.baseutils import run_once
 import thunder.clang as clang
 import thunder.core.devices as devices
-from thunder.core.devices import to_device, device_from_string
+from thunder.core.devices import to_device
 import thunder.core.dtypes as dtypes
 from thunder.core.dtypes import to_torch_dtype, to_dtype, _thunder_to_torch_dtype_map, _torch_to_thunder_dtype_map
 import thunder.core.prims as prims
@@ -45,7 +51,6 @@ from thunder.core.pytree import tree_map, tree_flatten, tree_unflatten
 from thunder.core.symbol import Symbol
 from thunder.core.transforms import register_grad, register_augmented_forward, register_backward
 from thunder.core.prims import get_grad, put_grad
-from thunder.core.baseutils import run_once
 import thunder
 from thunder.torch.default_torch_ops import _auto_registered_operators_returning_views
 
@@ -243,8 +248,8 @@ def is_floating_point(a: TensorLike, /) -> bool:
 # Handles the size method
 def size(a: TensorLike, /, dim: None | int = None) -> int | Sequence[int]:
     if dim is not None:
-        return a.shape[dim]
-    return a.shape
+        return prims.shape(a)[dim]
+    return prims.shape(a)
 
 
 register_method("size", size)
@@ -953,6 +958,17 @@ def flip(a: TensorLike, /, *dims: int) -> TensorLike:
     return clang.flip(a, dims)
 
 
+# fake out of place variant
+@torchsymbol(id="setitem")
+def setitem(inp, idx, val):
+    return clang.copy_with_setitem(inp, idx, val)
+
+
+@torchsymbol(torch.Tensor.__setitem__, id="setitem_", is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def setitem_(inp, idx, val):
+    prims.copy_(setitem(inp, idx, val), inp)
+
+
 @torchsymbol(torch.Tensor.__getitem__, id="torch.Tensor.__getitem__", method_name="getitem")
 def getitem(a: TensorLike, /, key) -> TensorLike:
     return clang.getitem(a, key)
@@ -1288,7 +1304,7 @@ def transpose(a: TensorLike, /, dim0: int, dim1: int) -> TensorLike:
 @torchsymbol(torch.unbind, is_method=True)
 def unbind(a: TensorLike, /, dim: int = 0) -> tuple[TensorLike, ...]:
     utils.check(
-        len(a.size()) > 0,
+        a.ndim > 0,
         lambda: f"Dimension specified as={dim} but tensor has no dimensions.",
     )
     return tuple(s.squeeze(dim) for s in tensor_split(a, a.shape[dim], dim))
@@ -1491,6 +1507,40 @@ def exp2(a):
 @torchsymbol(torch.exp2_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def exp2_(a):
     return prims.copy_(exp2(a), a)
+
+
+# fake out of place variant
+@torchsymbol(id="exponential")
+def exponential(a: Tensor, rate: float = 1, *, generator: None | torch.Generator = None) -> Tensor:
+    utils.check(
+        generator is None,
+        lambda: "exponential: generator is not None which is currently unsupported",
+    )
+    utils.check(
+        thunder.dtypes.is_float_dtype(a.dtype),
+        lambda: f"Exponential distribution is a continuous probability distribution. \
+        dtype must be a floating point but you specified {a.dtype}",
+    )
+    utils.check(
+        rate > 0.0,
+        lambda: f"exponential_ expects lambda > 0.0, but found lambda={rate}",
+    )
+    uniform_val = uniform_like(a)
+
+    # copying numerics of transformation::exponential see comment:
+    # curand_uniform has (0,1] bounds. log(1) is 0 and exponential excludes 0.
+    # we need log to be not 0, and not underflow when converted to half
+    # fast __logf approximation can underflow, so set log to -epsilon/2 for 1 or close to 1 args
+    epsilon = torch.finfo(thunder.dtypes.to_torch_dtype(a.dtype)).eps / 2
+    condition = uniform_val >= (1.0 - epsilon)
+    log_uniform = where(condition, -epsilon, log(uniform_val))
+
+    return (-1 / rate) * log_uniform
+
+
+@torchsymbol(torch.Tensor.exponential_, id="exponential_", is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def exponential_(a: Tensor, rate: float = 1, *, generator: None | torch.Generator = None) -> Tensor:
+    return prims.copy_(exponential(a, rate=rate, generator=generator), a)
 
 
 @torchsymbol(torch.expm1, is_method=True)
@@ -2469,7 +2519,7 @@ def _reduction(
     return result
 
 
-@torchsymbol(torch.all, is_method=True, id="torch.all")
+@torchsymbol(torch.all, is_method=True, method_name="all", id="torch.all")
 def all_tensor(
     a: TensorLike, /, dim: None | int | Sequence[int] = None, keepdim: bool = False, *, out: None | TensorLike = None
 ) -> TensorLike:
@@ -2484,7 +2534,7 @@ def all_tensor(
     return result
 
 
-@torchsymbol(torch.any, is_method=True, id="torch.any")
+@torchsymbol(torch.any, is_method=True, method_name="any", id="torch.any")
 def any_tensor(a: TensorLike, /, dim: None | int | Sequence[int] = None, keepdim: bool = False) -> TensorLike:
     # named as any_tensor to avoid confusion with python's built-in any function
     a_ = clang.maybe_convert_to_dtype(a, dtypes.bool8)
@@ -2540,7 +2590,7 @@ def torch_max(a: TensorLike, /, dim: NumberLike, keepdim: bool = False) -> tuple
 def torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike: ...
 
 
-@torchsymbol(torch.max, is_method=True, id="torch.max")
+@torchsymbol(torch.max, is_method=True, method_name="max", id="torch.max")
 def torch_max(
     a, /, dim: NumberLike | TensorLike | None = None, keepdim: bool = False
 ) -> TensorLike | tuple[TensorLike, TensorLike]:
@@ -2868,7 +2918,7 @@ def scatter_add_(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike)
     return prims.copy_(scatter_add(a, dim, index, src), a)
 
 
-@torchsymbol(torch.take_along_dim)
+@torchsymbol(torch.take_along_dim, is_method=True)
 def take_along_dim(a: TensorLike, /, indices: TensorLike, dim: int) -> TensorLike:
     return clang.take_along_axis(a, indices, dim)
 
@@ -3436,7 +3486,7 @@ def matmul(a: TensorLike, b: TensorLike, /) -> TensorLike:
     return prims.matmul(a, b)
 
 
-@torchsymbol(torch.outer)
+@torchsymbol(torch.outer, is_method=True)
 def outer(a: TensorLike, b: TensorLike, /) -> TensorLike:
     utils.check_types((a, b), TensorProxy)
 
@@ -4139,7 +4189,12 @@ def adaptive_avg_pool2d(
     return TensorProxy(like=a, shape=output_shape_)
 
 
-@torchsymbol("adaptive_avg_pool2d_backward", id="adaptive_avg_pool2d_backward", is_prim=True)
+@torchsymbol(
+    torch.ops.aten._adaptive_avg_pool2d_backward,
+    "adaptive_avg_pool2d_backward",
+    id="adaptive_avg_pool2d_backward",
+    is_prim=True,
+)
 def adaptive_avg_pool2d_backward(g: TensorProxy, a: TensorProxy, /) -> TensorProxy:
     # Followed the cuda implementation in Pytorch for adaptive_avg_pool2d_backward here
     # short cut for empty tensor
@@ -4160,23 +4215,6 @@ def adaptive_avg_pool2d_backward(g: TensorProxy, a: TensorProxy, /) -> TensorPro
             lambda: f"adaptive_avg_pool2d_backward: Expected grad to have non-zero size for non-batch dimensions, but grad has sizes {g.shape} with dimension {i} being empty",
         )
     return TensorProxy(like=a)
-
-
-def _adaptive_avg_pool2d_grad(
-    a: TensorProxy,
-    /,
-    output_size: int | Sequence[int],
-) -> TensorProxy:
-    primals = adaptive_avg_pool2d(a, output_size)
-
-    grad = get_grad(primals)
-    grad_a = adaptive_avg_pool2d_backward(grad, a)
-    put_grad(a, grad_a)
-
-    return primals
-
-
-register_grad(adaptive_avg_pool2d, _adaptive_avg_pool2d_grad)
 
 
 @torchsymbol(torch.max_pool1d, torch.nn.functional.max_pool1d, id="torch.nn.functional.max_pool1d", is_method=False)
@@ -5510,6 +5548,46 @@ else:
         utils.check(False, lambda: "torch.distributed is not available")
 
 
+# ref: https://github.com/pytorch/pytorch/blob/b99ef1a/torch/_functorch/autograd_function.py#L715-L752
+@torchsymbol(
+    torch.ops.higher_order.autograd_function_apply,
+    id="torch.ops.higher_order.autograd_function_apply",
+    is_method=False,
+)
+def autograd_function_apply(
+    fwd: Callable[list[TensorProxy], TensorProxy | tuple[TensorProxy, ...]],
+    bwd: Callable[list[TensorProxy], TensorProxy | tuple[TensorProxy, ...]],
+    *args: Any,
+    args_tensor_mask: Sequence[bool] | None,
+    non_differentiable_idx: Sequence[int] | None = None,
+) -> TensorProxy | tuple[TensorProxy, ...]:
+    result, saved_for_backward = fwd(None, *args)
+    return result
+
+
+@register_augmented_forward("torch.ops.higher_order.autograd_function_apply")
+def augmented_forward_autograd_function_apply(
+    fwd: Callable[list[Any | TensorProxy], TensorProxy | tuple[TensorProxy, ...]],
+    bwd: Callable[list[Any | TensorProxy], tuple[TensorProxy, ...]],
+    *args: Any,
+    args_tensor_mask: Sequence[bool],
+    non_differentiable_idx: Sequence[int] | None = None,
+) -> tuple[TensorProxy | tuple[TensorProxy, ...], tuple[Any, ...]]:
+    result, saved_for_backward = fwd(None, *args)
+    return result, (saved_for_backward, bwd, args_tensor_mask, non_differentiable_idx)
+
+
+@register_backward("torch.ops.higher_order.autograd_function_apply")
+def backward_autograd_function_apply(
+    saved_for_backward: tuple[Any, ...],
+    bwd: Callable[list[Any | TensorProxy], tuple[TensorProxy, ...]],
+    args_tensor_mask: Sequence[bool],
+    non_differentiable_idx: Sequence[int] | None = None,
+    *grad_output: Sequence[TensorProxy],
+) -> tuple[Any, ...]:
+    return bwd(None, *grad_output, *saved_for_backward)
+
+
 #
 # The automatically registered torch operators
 #
@@ -5574,8 +5652,12 @@ def _get_torch_function_name(torch_module: ModuleType, torchfn: Callable):
 
 
 def register_default_torch_op(torchfn: Callable, torch_module):
+    from thunder.core.transforms import augmented_forward_impls, backward_impls
+    from thunder.executors.torchex import _always_executable, ex
+
     fn_meta = meta_adaptor(torchfn)
     _fn = langctx(Languages.TORCH)(fn_meta)
+    _fn.__torchfn = torchfn
     torchfn_name = _get_torch_function_name(torch_module, torchfn)
     sym = Symbol(
         name=torchfn_name,
@@ -5583,19 +5665,34 @@ def register_default_torch_op(torchfn: Callable, torch_module):
         id=f"{torch_module.__name__}.{torchfn_name}",
         tags=(prims.OpTags.AUTO_REGISTERED,),
     )
+
+    # NOTE: We follow the manual registration approach, where functions with the same name in both torch and torch.Tensor share the same symbol.
+    # Therefore, we reuse the existing symbol instead of creating a new one.
+    sym_exist = False
+    if torch_module in (torch, torch.Tensor):
+        other_module = torch.Tensor if torch_module is torch else torch
+        if (torch_fn := getattr(other_module, torchfn_name, None)) and torch_fn in _torch_to_thunder_function_map:
+            sym = _torch_to_thunder_function_map[torch_fn]
+            sym_exist = True
+
     _torch_to_thunder_function_map[torchfn] = sym
-    from thunder.executors.torchex import _always_executable, ex
 
-    op = ex.register_operator(torchfn_name, module=torch_module, meta=fn_meta)
-    ex.register_implementation(sym, op, checker=_always_executable)
-
-    from thunder.core.transforms import augmented_forward_impls, backward_impls
+    # TODO: convert to an assert after #1140 is fixed
+    if torchfn_name not in __builtins__ and not hasattr(sys.modules["thunder.torch"], torchfn_name):
+        setattr(sys.modules["thunder.torch"], torchfn_name, sym)
 
     # We need to invoke `register_method` on methods
     # so that `x.method` is registered to the TensorProxy.
     if torch_module is torch.Tensor:
         register_method(torchfn.__name__, sym)
 
+    # If the function exists either in the torch or torch.Tensor namespace and is already registered,
+    # return early to prevent overwriting the existing mapping.
+    if sym_exist:
+        return
+
+    op = ex.register_operator(torchfn_name, module=torch_module, meta=fn_meta)
+    ex.register_implementation(sym, op, checker=_always_executable)
     augmented_forward_impls[sym.id] = augmented_forward_adaptor(op)
 
     _vjp_impl_wrapper = partial(_vjp_impl, torchfn)
@@ -5807,6 +5904,7 @@ _syms_returning_views: set[Symbol] = {
     tensor_split,
     chunk,
     getitem,
+    prims.shallow_copy,
 }
 
 # Add all auto-registered torch operators symbol that return tensor views to _syms_returning_views

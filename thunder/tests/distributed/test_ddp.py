@@ -21,7 +21,6 @@ from thunder.executors.transformer_engineex import (
     transformer_engine_ex,
     TE_AVAILABLE,
     te_sync_fp8_meta_bwd,
-    TE_VERSION_1_8_PLUS,
 )
 
 

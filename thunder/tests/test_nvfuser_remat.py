@@ -17,8 +17,9 @@ from thunder.core.rematerialization import (
 )
 from thunder.core.transforms import value_and_grad
 from thunder.examine import get_fusions
-from thunder.tests.framework import instantiate, NOTHING, nvFuserExecutor, TorchExecutor
+from thunder.tests.framework import instantiate, NOTHING, nvFuserExecutor, TorchExecutor, requiresCUDA
 from thunder.tests.make_tensor import make_tensor
+import thunder.torch as ltorch
 
 
 @value_and_grad
@@ -197,6 +198,40 @@ def test_apply_rematerialization_consumer(executor, device, _):
     new_consumer_case2 = apply_rematerialization_for_consumer(producer, consumer_with_duplicated_syms_as_producer, cut)
     # The new_consumer_case2 generated with duplicated subsymbols between producer and consumer is the same as the previous new_consumer
     assert tuple(new_consumer.subsymbols) == tuple(new_consumer_case2.subsymbols)
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=(nvFuserExecutor,),
+)
+@disable_rematerialization_in_nvfuser_fusion
+def test_apply_rematerialization_consumer_early_exit(executor, device, _):
+    @value_and_grad
+    def foo(t0):
+        t1 = ttorch.exp(t0)
+        t2 = ttorch.matmul(t1, t1)
+        return t2
+
+    t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
+    initial_trace = thunder.trace()(foo, t0)
+    compiled_func = thunder.jit(initial_trace.python_callable())
+    _ = compiled_func(t0)
+    traces = thunder.last_traces(compiled_func)
+    trace = traces[-1]
+    nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
+    assert len(nvfuser_symbols) == 2
+
+    producer = nvfuser_symbols[0]
+    consumer = nvfuser_symbols[1]
+
+    # Create a cut that has t0 as extra information and
+    # that contains all arguments(t2) from consumer.
+    cut = ("t0", "t2")
+    new_consumer = apply_rematerialization_for_consumer(producer, consumer, cut)
+
+    # Check that the new consumer is the old consumer
+    assert id(new_consumer) == id(consumer)
+    assert tuple(new_consumer.subsymbols) == tuple(consumer.subsymbols)
 
 
 @instantiate(
@@ -426,3 +461,26 @@ def test_rematerialization(executor, device, _):
     result_without_remat = disable_rematerialization_in_nvfuser_fusion(thunder.jit(initial_trace.python_callable()))(t0)
 
     torch.testing.assert_close(result_with_remat, result_without_remat)
+
+
+@requiresCUDA
+def test_rematerialization_name_collision():
+    # This test is to verify that we don't have name collision in forward and backward trace
+    # (which used to produce an error in remat pass)
+    def forward(x):
+        return x.softmax(dim=1, dtype=torch.float)
+
+    jforward = thunder.jit(forward)
+
+    x = torch.randn([32768, 8], dtype=torch.bfloat16, device="cuda", requires_grad=True)
+
+    actual = jforward(x)
+    expected = forward(x)
+
+    torch.testing.assert_close(actual, expected)
+
+    grad_output = torch.randn_like(actual)
+    actual_grad = torch.autograd.grad(actual, x, grad_output)
+    expected_grad = torch.autograd.grad(expected, x, grad_output)
+
+    torch.testing.assert_close(actual_grad, expected_grad)

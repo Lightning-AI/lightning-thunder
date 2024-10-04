@@ -53,6 +53,7 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor: TestEx
     from thunder.clang import cos, sin
     import thunder.torch as ltorch
     from thunder.core.transforms import forward_and_backward_from_trace, value_and_grad
+    from thunder.core.transform_common import wrap_return_value_together_with_argments
     from thunder.common import transform_for_execution
     from thunder.core.rematerialization import rematerialize_forward_and_backward
 
@@ -73,6 +74,7 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor: TestEx
         requires_grad=True,
     )
     trace = trace(inline_trace=False)(func, a, b, c=c)
+    trace = wrap_return_value_together_with_argments(trace)
     fw_trace, bw_trace = forward_and_backward_from_trace(trace)
 
     fw_extraces = transform_for_execution(
@@ -91,9 +93,9 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor: TestEx
     initial_trace = thunder.trace()(value_and_grad(func), a, b, c=c)
     expected_vjp_func = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
     expected_fw_out, expected_grads = expected_vjp_func(a, b, c=c)
-    torch.testing.assert_close(fw_out, expected_fw_out)
+    torch.testing.assert_close(fw_out["output"], expected_fw_out)
 
-    output_grads = tree_map(lambda x: torch.ones_like(x), fw_out)
+    output_grads = tree_map(lambda x: torch.ones_like(x), fw_out["output"])
     bw_out = bw(saved_for_backward, output_grads)
     torch.testing.assert_close(bw_out, expected_grads)
 
@@ -208,7 +210,7 @@ def test_redundant_cast_nvfusion(executor, device: str, dtype: dtypes.dtype):
     assert len(fusions[0].subsymbols) == 3
 
     # Verifies the intermediate consumer
-    assert fusions[1].subsymbols[-2].args[0].name == "g"
+    assert fusions[1].subsymbols[-1].args[0].name == "g"
 
 
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
@@ -1048,8 +1050,16 @@ def test_sdpa(
 
     # Check nv_sdpfa_fwd is not in bwd_fusion -> that would indicate rematerialization
     assert "nv_sdpfa_bwd" in bwd_fusion[-1][-1].name and "nv_sdpfa_fwd" not in bwd_fusion[-1][-1].name
+
+    nvf_fd = bwd_fusion[-1][-1].last_used
+    repro_script = None
+    # Legacy repro script API
+    if nvfuser_version() < LooseVersion("0.2.14"):
+        repro_script = nvf_fd.getReproString()
+    else:
+        repro_script = nvf_fd.repro_script_for()
     assert (
-        bwd_fusion[-1][-1].last_used.getReproString().count("is_cpu=True") == 2
+        repro_script.count("is_cpu=True") == 2
     ), "Expected philox_seed and philox_offset inputs to be CPU scalar tensors."
 
     # Torch reference computation

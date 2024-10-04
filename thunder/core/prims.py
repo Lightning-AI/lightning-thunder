@@ -129,6 +129,7 @@ class PrimIDs(Enum):
     CONSTRUCT_TUPLE = auto()
     PACK_BUFFER = auto()
     PACK_SETITEM = auto()
+    SHAPE = auto()
     # TODO: UNPACK_SET
     # Utility prims
     COMMENT = auto()
@@ -165,6 +166,7 @@ class PrimIDs(Enum):
     TRANSPOSE = auto()
     UNFOLD = auto()
     VIEW = auto()
+    SHALLOW_COPY = auto()  # a view copy
     # Memory layout prims (Experimental)
     STRIDE_ORDER = auto()
     # Elementwise unary prims
@@ -256,6 +258,7 @@ class PrimIDs(Enum):
     SCATTER_ADD = auto()
     TAKE = auto()
     TAKE_ALONG_AXIS = auto()
+    COPY_WITH_SETITEM = auto()
     # Linear algebra prims (Mostly experimental)
     MATMUL = auto()
     # NN prims (Experimental!)
@@ -467,6 +470,8 @@ def _collectify(x: Any, *, name: str | None = None) -> Any:
         return x
     if baseutils.is_collection(x):
         return CollectionProxy(x, name=name)
+    if isinstance(x, slice):
+        return CollectionProxy((x.start, x.stop, x.step), name=name)
 
     return x
 
@@ -474,7 +479,7 @@ def _collectify(x: Any, *, name: str | None = None) -> Any:
 # TODO RC1 Align with ASSERT_TENSOR_METADATA
 # NOTE The device is stored as a string for easier, more readable comparisons
 def _check_tensor_shape_and_metadata_meta(
-    t: TensorProxy, shape: tuple[int, ...], device: str, dtype: torch.dtype, requires_grad: bool
+    t: TensorProxy, shape: tuple[int, NumberProxy, ...], device: str, dtype: torch.dtype, requires_grad: bool
 ) -> None:
     # Validates types
     baseutils.check_type(t, TensorProxy)
@@ -1238,6 +1243,17 @@ pack_setitem = make_prim(
 )
 
 
+def shape_meta(t: TensorProxy) -> Sequence[int | NumberProxy]:
+    return t._shape
+
+
+shape = make_prim(
+    PrimIDs.SHAPE,
+    "shape",
+    meta=shape_meta,
+)
+
+
 # NOTE UNPACK_GETITEM is intended only to be bound to directly, and not called
 def unpack_getitem_meta(o: Any, key: Any) -> Any:
     raise NotImplementedError
@@ -1645,7 +1661,7 @@ def return_printer(
 ):
     utils.check(
         len(kwarg_printables) == 0,
-        lambda: f"Expected no kwargs for del but got {kwarg_printables}",
+        lambda: f"Expected no kwargs for return but got {kwarg_printables}",
         exception_type=AssertionError,
     )
 
@@ -2291,7 +2307,11 @@ def _elementwise_binary_meta_factory(
         # Checks same device
         utils.check_same_device(a, b)
 
-        tensor = a if isinstance(a, TensorProxy) else b
+        # If both inputs are tensors, choose the one that is not a CPU scalar tensor.
+        if isinstance(a, TensorProxy) and isinstance(b, TensorProxy):
+            tensor = a if (isinstance(a, TensorProxy) and not utils.is_cpu_scalar_tensor(a)) else b
+        else:
+            tensor = a if isinstance(a, TensorProxy) else b
         requires_grad = (isinstance(a, TensorProxy) and a.requires_grad) or (
             isinstance(b, TensorProxy) and b.requires_grad
         )
@@ -3138,7 +3158,7 @@ pad = make_prim(
 )
 
 
-def reshape_meta(a: TensorProxy, /, shape: tuple[int, ...]) -> TensorProxy:
+def reshape_meta(a: TensorProxy, /, shape: tuple[int, NumberProxy, ...]) -> TensorProxy:
     # Validates inputs
     utils.check_type(a, TensorProxy)
     utils.check_valid_shape(shape)
@@ -3364,6 +3384,14 @@ def take_along_axis_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> Ten
 take_along_axis = make_prim(PrimIDs.TAKE_ALONG_AXIS, "take_along_axis", meta=take_along_axis_meta)
 
 
+def copy_with_setitem_meta(a: TensorProxy, index, value: TensorProxy) -> TensorProxy:
+    # TODO: port checks from clang, currently there  because of the utilities they need
+    return TensorProxy(like=a)
+
+
+copy_with_setitem = make_prim(PrimIDs.COPY_WITH_SETITEM, "copy_with_setitem", meta=copy_with_setitem_meta)
+
+
 def gather_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
     utils.check_type(a, TensorProxy)
     utils.check_type(index, TensorProxy)
@@ -3511,6 +3539,13 @@ transpose = make_prim(PrimIDs.TRANSPOSE, "transpose", meta=transpose_meta, tags=
 
 
 view = make_prim(PrimIDs.VIEW, "view", meta=reshape_meta, tags=(OpTags.SHAPE_OP,))
+
+
+def shallow_copy_meta(a: TensorProxy, /) -> TensorProxy:
+    return TensorProxy(like=a)
+
+
+shallow_copy = make_prim(PrimIDs.SHALLOW_COPY, "shallow_copy", meta=shallow_copy_meta, tags=(OpTags.SHAPE_OP,))
 
 
 def unfold_meta(a: TensorProxy, /, dim: int, size: int, step: int) -> TensorProxy:

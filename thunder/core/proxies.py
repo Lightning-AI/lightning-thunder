@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from enum import auto, Enum
 from numbers import Number
 from typing import Type, Optional, Any, Tuple, List, Union
@@ -14,9 +15,15 @@ import math
 import torch
 
 from thunder.core.compile_data import using_symbolic_values, using_jit
-from thunder.core.interpreter import is_jitting
+from thunder.core.interpreter import is_jitting, ProvenanceRecord, PseudoInst
 from thunder.core.trace import VariableInterface, get_tracectx, TraceCtx
-from thunder.core.baseutils import ProxyInterface, NumberProxyInterface, TensorProxyInterface
+from thunder.core.baseutils import (
+    ProxyInterface,
+    NumberProxyInterface,
+    TensorProxyInterface,
+    TorchAutogradFunctionCtxProxyInterface,
+    TagBase,
+)
 import thunder.core.baseutils as baseutils
 from thunder.core.langctxs import resolve_method, get_langctx
 import thunder.core.devices as devices
@@ -87,24 +94,8 @@ def make_proxy_name(*, name: None | str = None, prefix: None | str = None) -> st
     return trc.make_name(prefix=prefix)
 
 
-class ProxyTag:
-    def __new__(cls, name, _register=False):
-        if _register:
-            if hasattr(cls, name):
-                raise AttributeError(f"{cls.__name__}.{name} is already registered")
-            res = super().__new__(cls)
-            res._value = name
-            setattr(cls, name, res)
-            return res
-
-        return getattr(cls, name)
-
-    @classmethod
-    def register_tag(cls, name):
-        ProxyTag(name, _register=True)
-
-    def __repr__(self):
-        return f"{self.__class__.__name__}.{self._value}"
+class ProxyTag(TagBase):
+    pass
 
 
 # TODO Document this class
@@ -145,6 +136,8 @@ class Proxy(VariableInterface, ProxyInterface):
                 prefix = "lst"
             elif isinstance(self, DictProxy):
                 prefix = "d"
+            elif isinstance(self, TorchAutogradFunctionCtxProxy):
+                prefix = "fc"
             else:
                 prefix = "p"
 
@@ -1212,6 +1205,7 @@ def _infer_tensor_properties(
     device: devices.Device | None = None,
     dtype: dtypes.dtype | None = None,
     requires_grad: bool | None = None,
+    grad: TensorProxy | None = None,
     distparallel_type: DistParallelType | None = None,
     thunder_fsdp_padding_size: int | None = None,
 ):
@@ -1219,6 +1213,7 @@ def _infer_tensor_properties(
     _device = None
     _dtype = None
     _requires_grad: None | bool = None
+    _grad = None
     _dist_parallel_type = DistParallelType.NONE
     _thunder_fsdp_padding_size = None
 
@@ -1228,6 +1223,7 @@ def _infer_tensor_properties(
         _device = like.device
         _dtype = like.true_dtype
         _requires_grad = like.requires_grad
+        _grad = like.grad
         _dist_parallel_type = getattr(like, "distparallel_type", DistParallelType.NONE)
 
     if shape is not None:
@@ -1239,6 +1235,8 @@ def _infer_tensor_properties(
     _dtype = dtypes.numbertype_to_dtype(_dtype) if dtypes.is_numbertype(_dtype) else _dtype
     _requires_grad = requires_grad if requires_grad is not None else _requires_grad
     _requires_grad = False if not dtypes.is_inexact_dtype(_dtype) else _requires_grad
+    _grad = grad if grad is not None else _grad
+    _grad = None if not _requires_grad else _grad
     _dist_parallel_type = distparallel_type if distparallel_type is not None else _dist_parallel_type
     _thunder_fsdp_padding_size = (
         thunder_fsdp_padding_size if thunder_fsdp_padding_size is not None else _thunder_fsdp_padding_size
@@ -1246,10 +1244,14 @@ def _infer_tensor_properties(
 
     # dynamic shape not yet enabled, otherwise, the bake in should be guarded with if not using_symbolic_values():
     # dynamic shape support is currently block by #471 https://github.com/Lightning-AI/lightning-thunder/issues/471
-    _shape = tuple(pyval(x) for x in _shape)
-
-    # Computes derived properties
-    _numel = reduce(operator.mul, _shape, 1)
+    if not using_symbolic_values():
+        _shape = tuple(pyval(x) for x in _shape)
+        # Computes derived properties
+        _numel = reduce(operator.mul, _shape, 1)
+    else:
+        # deferred computation of numel
+        # TODO: similar to how `shape` is handled, this should be CSE or lifted for efficiency
+        _numel = lambda tp: reduce(operator.mul, tp.shape, 1)
 
     # TODO Alias rank to ndim?
     _ndim = len(_shape)
@@ -1282,6 +1284,7 @@ def _infer_tensor_properties(
         _numel,
         _ndim,
         _requires_grad,
+        _grad,
         _dist_parallel_type,
         _thunder_fsdp_padding_size,
     )
@@ -1312,6 +1315,7 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
             self._numel,
             self._ndim,
             self._requires_grad,
+            _,  # grad
             _,  # distparallel_type
             _,  # thunder_fsdp_padding_size
         ) = _infer_tensor_properties(
@@ -1354,6 +1358,10 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
     def requires_grad(self):
         return self._requires_grad
 
+    @property
+    def grad(self):
+        return None  # FutureTensorProxies never require grad
+
     def __repr__(self):
         return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self.shape})>'
 
@@ -1381,6 +1389,7 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
             numel,
             ndim,
             requires_grad,
+            _,  # grad
             _,  # distparallel_type
             _,  # thunder_fsdp_padding_size
         ) = _infer_tensor_properties(
@@ -1414,6 +1423,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         device: devices.Device | None = None,
         dtype: dtypes.dtype | None = None,
         requires_grad: bool | None = None,
+        grad: TensorProxy | None = None,
         prefix: None | str = None,
         distparallel_type: DistParallelType | None = None,
         history: None | tuple = None,
@@ -1430,6 +1440,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
             self._numel,
             self._ndim,
             self._requires_grad,
+            self._grad,
             self._distparallel_type,
             self._thunder_fsdp_padding_size,
         ) = _infer_tensor_properties(
@@ -1438,6 +1449,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
             device,
             dtype,
             requires_grad,
+            grad,
             distparallel_type,
             thunder_fsdp_padding_size,
         )
@@ -1468,6 +1480,10 @@ class TensorProxy(Proxy, TensorProxyInterface):
     @property
     def requires_grad(self):
         return self._requires_grad
+
+    @property
+    def grad(self):
+        return self._grad
 
     @property
     def distparallel_type(self):
@@ -1503,6 +1519,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
             numel,
             ndim,
             requires_grad,
+            grad,
             distparallel_type,
             thunder_fsdp_padding_size,
         ) = _infer_tensor_properties(
@@ -1511,6 +1528,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
             changes.get("device", self._device if like is None else None),
             changes.get("dtype", self._dtype if like is None else None),
             changes.get("requires_grad", self._requires_grad if like is None else None),
+            changes.get("grad", self._grad if like is None else None),
             changes.get("distparallel_type", self._distparallel_type if like is None else None),
             changes.get("thunder_fsdp_padding_size", self._thunder_fsdp_padding_size if like is None else None),
         )
@@ -1559,7 +1577,9 @@ class TensorProxy(Proxy, TensorProxyInterface):
                     return int(self)
 
             if attr == "numel":
-                return _Numel(self._numel)
+                if isinstance(self._numel, int):
+                    return _Numel(self._numel)
+                return method_or_value(self)
             return partial(method_or_value, self)
 
         return method_or_value
@@ -1596,6 +1616,10 @@ class TensorProxy(Proxy, TensorProxyInterface):
     def __getitem__(self, key):
         method = resolve_method("getitem", self, key)
         return method(self, key)
+
+    def __setitem__(self, key, value):
+        method = resolve_method("setitem_", self, key, value)
+        return method(self, key, value)
 
     #
     # Elementwise unary operators
@@ -1847,6 +1871,63 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(self)
 
 
+class TorchAutogradFunctionCtxProxy(Proxy, TorchAutogradFunctionCtxProxyInterface):
+    def __init__(
+        self,
+        ctx: torch.autograd.function.FunctionCtx,
+        /,
+        *,
+        name: str | None = None,
+        history: tuple[Any, ...] | None = None,
+        tags: set[ProxyTag, ...] | None = None,
+    ):
+        self._ctx = ctx
+        self._tensors: list[TensorProxy] = []
+        self._const_for_backward: dict[str, Any] = {}
+        super().__init__(name=name, history=history, tags=tags)
+
+    def type_string(self) -> str:
+        return "TorchAutogradFunctionCtxProxy"
+
+    def __repr__(self) -> str:
+        return f"<TorchAutogradFunctionCtxProxy '{self.name}', '{self.saved_tensors=}', '{self._const_for_backward=}'>"
+
+    def replace(self, **changes):
+        kwargs = dict(
+            name=self.name,
+            history=self.history,
+            tags=self.tags,
+        )
+        kwargs.update(**changes)
+        return TorchAutogradFunctionCtxProxy(
+            self._ctx,
+            **kwargs,
+        )
+
+    @property
+    def saved_tensors(self) -> tuple[TensorProxy, ...]:
+        return tuple(self._tensors)
+
+    @property
+    def saved_consts(self) -> tuple[Any, ...]:
+        return tuple(self._const_for_backward.values())
+
+    def save_for_backward(self, *tensors):
+        self._tensors.extend(tensors)
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if hasattr(self, "_const_for_backward") and name not in {
+            "_name",
+            "_has_weak_name",
+            "history",
+            "_tags",
+            "_const_for_backward",
+            "_tensors",
+        }:
+            self._const_for_backward[name] = value
+
+
 #
 # Helpers for creating and working with proxies
 #
@@ -1859,23 +1940,49 @@ _cls_to_number_proxy_map = {
 }
 
 
+# TODO: move this function to jit_ext.py
 def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple = None) -> TensorProxy:
+    from thunder.core.interpreter import ProvenanceRecord, PseudoInst, wrap_const
+
     if hasattr(t, "_thunder_device"):
         torch_device = t._thunder_device
     else:
         torch_device = t.device
     device = devices.to_device(torch_device)
     dtype = dtypes.to_dtype(t.dtype)
+
+    grad = None
+    if t.is_leaf and t.grad is not None:
+        grad_pr = None
+        if history is not None:
+            attr_pr = ProvenanceRecord(inst=PseudoInst.CONSTANT, inputs=[], value="grad")
+            grad_pr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[history, attr_pr])
+        grad = tensorproxy(t.grad, name=f"{name}_grad", history=grad_pr)
+
     # See Note [DistributedDataParallel and distparallel_type]
     distparallel_type = getattr(t, "distparallel_type", None)
     _thunder_fsdp_padding_size = getattr(t, "_thunder_fsdp_padding_size", None)
+    if using_symbolic_values():
+        shape_attr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[copy.copy(history), wrap_const("shape").provenance])
+        shape = tuple(
+            IntegerProxy(
+                None,
+                s,
+                history=ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[shape_attr, wrap_const(idx).provenance]),
+                constraint=CONSTRAINT.CONSTRAINABLE,
+            )
+            for idx, s in enumerate(t.shape)
+        )
+    else:
+        shape = tuple(t.shape)
     # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
     return TensorProxy(
         name,
-        shape=tuple(t.shape),
+        shape=tuple(shape),
         device=device,
         dtype=dtype,
         requires_grad=t.requires_grad,
+        grad=grad,
         distparallel_type=distparallel_type,
         history=history,
         thunder_fsdp_padding_size=_thunder_fsdp_padding_size,
@@ -1948,6 +2055,10 @@ def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> A
     if isinstance(x, torch.dtype):
         return AnyProxy(x, name=name, history=history)
     if isinstance(x, torch.device):
+        return AnyProxy(x, name=name, history=history)
+    if isinstance(x, torch.autograd.function.FunctionCtx):
+        return TorchAutogradFunctionCtxProxy(x, name=name, history=history)
+    if isinstance(x, torch.memory_format):
         return AnyProxy(x, name=name, history=history)
 
     return x

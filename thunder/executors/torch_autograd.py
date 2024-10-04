@@ -148,6 +148,10 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     if _rematerialize_params_in_backward:
         fw_trace, bw_trace = rematerialize_all_gather(fw_trace, bw_trace)
 
+    # evil, but we really, really don't want to have the same name for different things
+    fw_trace.names.update(bw_trace.names)
+    bw_trace.names = fw_trace.names
+
     # Update the backward trace to only compute gradients for the
     # inputs that require gradients
     assert bw_trace.bound_symbols[-1].sym.id == PrimIDs.RETURN

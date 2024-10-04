@@ -75,6 +75,10 @@ class TensorProxyInterface:
     pass
 
 
+class TorchAutogradFunctionCtxProxyInterface:
+    pass
+
+
 class SymbolInterface:
     name: str
     is_prim: bool
@@ -128,12 +132,13 @@ def check_types(xs: Sequence[Any], types: type | Sequence[type]):
 def check_valid_length(length: int):
     """Validates that an object represents a valid dimension length."""
 
-    # maybe we should skip the check for IntegerProxy in general
-    check_type(length, (int, NumberProxyInterface))
-    check(length >= 0, lambda: f"Found invalid length {length}!")
+    # skip the check for NumberProxy in general
+    if not isinstance(length, NumberProxyInterface):
+        check_type(length, (int))
+        check(length >= 0, lambda: f"Found invalid length {length}!")
 
 
-def check_valid_shape(shape: tuple[int, ...] | list[int]):
+def check_valid_shape(shape: tuple[int, NumberProxy, ...] | list[int]):
     """Validates that a sequence represents a valid shape."""
 
     check_type(shape, (tuple, list))
@@ -276,6 +281,12 @@ def _print_complex_number(c: complex) -> str:
     return f"complex({real_str}, {imag_str})"
 
 
+def _print_slice(s: slice) -> str:
+    val = (s.start, s.stop, s.step)
+
+    return f"slice({','.join(map(lambda x: x.name if isinstance(x, ProxyInterface) else str(x), val))})"
+
+
 def print_number(n: Number) -> str:
     if isinstance(n, complex):
         return _print_complex_number(n)
@@ -384,7 +395,7 @@ _printable_value_types = {
     int: lambda b: str(b),
     float: _print_float_number,
     complex: _print_complex_number,
-    slice: lambda slc: str(slc),
+    slice: _print_slice,
 }
 
 
@@ -564,3 +575,23 @@ def init_colors(force_enable: bool | None = None) -> dict[str, str]:
         init_windows_terminal()
 
     return {k.name: k.value if colors_enabled else "" for k in TermColors}
+
+
+class TagBase:
+    def __new__(cls, name, _register=False):
+        if _register:
+            if hasattr(cls, name):
+                raise AttributeError(f"{cls.__name__}.{name} is already registered")
+            res = super().__new__(cls)
+            res._value = name
+            setattr(cls, name, res)
+            return res
+
+        return getattr(cls, name)
+
+    @classmethod
+    def register_tag(cls, name):
+        cls(name, _register=True)
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}.{self._value}"

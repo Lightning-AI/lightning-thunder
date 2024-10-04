@@ -176,12 +176,13 @@ class ThunderModule(pytorch.nn.Module):
                             v.to(p.device), requires_grad=p.requires_grad
                         )
             elif full_k in self._overrides_buffers:
-                if p.dtype == v.dtype and p.shape == v.shape:
+                b = self._overrides_buffers[full_k]
+                if b.dtype == v.dtype and b.shape == v.shape:
                     with pytorch.no_grad():
-                        self._overrides_buffers[full_k].copy_(v)
+                        b.copy_(v)
                 else:
                     with pytorch.no_grad():
-                        self._overrides_parameters[full_k] = v.to(p.device).requires_grad_(p.requires_grad)
+                        self._overrides_parameters[full_k] = v.to(b.device).requires_grad_(b.requires_grad)
             else:
                 raise NotImplementedError(f"don't know how to handle {full_k}")
             processed_names.add(full_k)

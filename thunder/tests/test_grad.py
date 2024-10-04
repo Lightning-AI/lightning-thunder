@@ -19,7 +19,7 @@ from thunder import torch as ltorch
 from thunder.core.dtypes import is_exact_dtype, to_dtype as thunder_dtype
 from thunder.core.pytree import tree_map, tree_flatten
 from thunder.core.transforms import vjp, grad, check_bsym_for_vjp
-from thunder.core.utils import flatten_func
+from thunder.core.utils import flatten_func, is_cpu_scalar_tensor
 from thunder.tests.framework import (
     instantiate,
     NOTHING,
@@ -230,13 +230,23 @@ def _replace_none_with_zero(x, y):
     x = list(x)
     y = list(y)
     assert x[0] is not None or y[0] is not None, "Both x and y are None"
-    device = x[0].device if x[0] is not None else y[0].device
-    zero = torch.tensor(0.0, device=device, dtype=torch.float64)
     for i, (a, b) in enumerate(zip(x, y)):
         if a is None or b is None:
-            x[i] = zero
-            y[i] = zero
+            device = x[i].device if x[i] is not None else y[i].device
+            x[i] = torch.tensor(0.0, device=device, dtype=torch.float64)
+            y[i] = torch.tensor(0.0, device=device, dtype=torch.float64)
+
     return x, y
+
+
+# If one tensor is a CPU scalar tensor and the other is on CUDA, move the scalar tensor to CUDA
+# Then do the ravel and dot operation
+def _tensor_dot(x, y):
+    if is_cpu_scalar_tensor(x) and y.is_cuda:
+        x = x.cuda()
+    elif is_cpu_scalar_tensor(y) and x.is_cuda:
+        y = y.cuda()
+    return torch.dot(x.ravel().type(torch.float64), y.ravel().type(torch.float64))
 
 
 def _dot(x, y):
@@ -253,10 +263,10 @@ def _dot(x, y):
     assert all(
         isinstance(a, torch.Tensor) and isinstance(b, torch.Tensor) for a, b in zip(x, y)
     ), "Not all elements are torch.Tensor"
-    return sum([torch.dot(a.ravel().type(torch.float64), b.ravel().type(torch.float64)) for a, b in zip(x, y)])
+    return sum([_tensor_dot(a, b) for a, b in zip(x, y)])
 
 
-def check_vjp(f, *primals, comp, executor="torch"):
+def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = False):
     """Check that the vector-Jacobian product of a function is correct.
 
     Args:
@@ -295,7 +305,11 @@ def check_vjp(f, *primals, comp, executor="torch"):
     multiple_results = isinstance(outs_p, Sequence)
 
     v = tree_map(make, outs_p)
-    initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
+    if set_compile_data:
+        with thunder.core.compile_data.compile_data_and_stats(thunder.compile_data(jf), None):
+            initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
+    else:
+        initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
     _, J_star_v = executor.make_callable(initial_trace_vjp_f.python_callable(), disable_torch_autograd=True)(primals, v)
 
     if not multiple_results:
@@ -352,11 +366,15 @@ def _make_differentiable_wrapper(func, args):
     return wrapper, filtered_args
 
 
-def snippet_vjp_correctness(func, args, comp, executor):
-    check_vjp(func, *args, comp=comp, executor=executor)
+def snippet_vjp_correctness(func, args, comp, executor, set_compile_data):
+    check_vjp(func, *args, comp=comp, executor=executor, set_compile_data=set_compile_data)
 
 
 # TODO Use the given comparator
+# TODO(crcrpar): Reason special-casing `adaptive_avg_pool2d` -- https://github.com/Lightning-AI/lightning-thunder/issues/1178
+# With the slight revert for the mentioned issue, the VJP rule for `adaptive_avg_pool2d` is unavailable
+# unless compile data is available, as it's registered to `TorchExecutor.implmap` but not to
+# `thunder.core.transforms.augmented_forward_impls`.
 @ops((op for op in opinfos if op.name in supported_vjp_ops), supported_dtypes=(dtypes.float64,))
 def test_vjp_correctness(op, device, dtype, executor, comp):
     at_least_one_differentiable_input = False
@@ -391,6 +409,7 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
             filtered_args,
             comp,
             executor,
+            "adaptive_avg_pool2d" in op.name,
         )
         if result is not None:
             return result
@@ -518,7 +537,7 @@ def test_vjp_correctness_sdpa_manual(op, device, dtype, executor, comp):
     from thunder.common import CompileData
     from thunder.core.compile_data import compile_data_and_stats
 
-    if version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.5.0a99"):
+    if version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.6.0a99"):
         raise pytest.skip(
             "https://github.com/Lightning-AI/lightning-thunder/issues/703",
         )
@@ -1117,6 +1136,7 @@ def test_forward_and_backward_from_trace(executor, device, _):
     from thunder.clang import cos, sin
     import thunder.torch as ltorch
     from thunder.core.transforms import forward_and_backward_from_trace, value_and_grad
+    from thunder.core.transform_common import wrap_return_value_together_with_argments
 
     def func(a, b, *, c):
         d = a + b + c
@@ -1127,7 +1147,8 @@ def test_forward_and_backward_from_trace(executor, device, _):
     b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     c = make_tensor((3,), device=device, dtype=torch.float64, requires_grad=True)
     initial_trace = trace(inline_trace=False)(func, a, b, c=c)
-    fw_trace, bw_trace = forward_and_backward_from_trace(initial_trace)
+    wrapped_trace = wrap_return_value_together_with_argments(initial_trace)
+    fw_trace, bw_trace = forward_and_backward_from_trace(wrapped_trace)
     fw = executor.make_callable(fw_trace)
     bw = executor.make_callable(bw_trace)
     fw_out, saved_for_backward = fw(a, b, c=c)
@@ -1136,9 +1157,9 @@ def test_forward_and_backward_from_trace(executor, device, _):
     expected_vjp_func = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
 
     expected_fw_out, expected_grads = expected_vjp_func(a, b, c=c)
-    torch.testing.assert_close(fw_out, expected_fw_out)
+    torch.testing.assert_close(fw_out["output"], expected_fw_out)
 
-    output_grads = tree_map(lambda x: torch.ones_like(x), fw_out)
+    output_grads = tree_map(lambda x: torch.ones_like(x), fw_out["output"])
     bw_out = bw(saved_for_backward, output_grads)
     torch.testing.assert_close(bw_out, expected_grads)
 
@@ -1439,6 +1460,9 @@ def test_populate_grads_mlp(executor, device, dtype):
 
 @instantiate(dtypes=(thunder.float32,))
 def test_populate_grads_csa(executor, device, dtype):
+    if version_between(torch.__version__, min_ver="2.6.0a0", max_ver="2.6.0"):
+        pytest.skip("https://github.com/Lightning-AI/lightning-thunder/issues/1254")
+
     from thunder.benchmarks import NanoGPTCSABenchmark, NanoGPTConfig
 
     # NOTE Currently setting dropout to zero for reproducibility, other settings taken from gpt2 config
@@ -1466,6 +1490,9 @@ def test_populate_grads_csa(executor, device, dtype):
 
 @instantiate(dtypes=(thunder.float32,))
 def test_populate_grads_block(executor, device, dtype):
+    if version_between(torch.__version__, min_ver="2.6.0a0", max_ver="2.6.0"):
+        pytest.skip("https://github.com/Lightning-AI/lightning-thunder/issues/1254")
+
     from thunder.benchmarks import NanoGPTBlockBenchmark, NanoGPTConfig
 
     # NOTE Currently setting dropout to zero for reproducibility, other settings taken from gpt2 config
@@ -1744,3 +1771,53 @@ def test_inconsistent_output_length_grad_transform():
         match="number of outputs of the original forward function must be the same as the number of primal outputs",
     ):
         _ = jf(a)
+
+
+@pytest.mark.parametrize("device", ("cuda", "cpu"))
+@requiresCUDA
+def test_grad_softmax_dtype(device):
+    def forward(x):
+        topk, _idxs = x.topk(2)
+        return topk.softmax(dim=1, dtype=torch.float)
+
+    jforward = thunder.jit(forward)
+
+    x = torch.randn([8, 2], dtype=torch.bfloat16, device=device, requires_grad=True)
+
+    actual = jforward(x)
+    expected = forward(x)
+    torch.testing.assert_close(actual, expected)
+
+    grad_o = torch.randn_like(actual)
+
+    actual_grad = torch.autograd.grad(actual, x, grad_o)
+    expected_grad = torch.autograd.grad(expected, x, grad_o)
+    torch.testing.assert_close(actual_grad, expected_grad)
+
+
+@pytest.mark.parametrize("device", ("cuda", "cpu"))
+def test_grad_split_unused_output(device):
+    # Test to verify that the grad rule for split is
+    # correct even if few of the outputs are unused
+    # (leading to `grad=None` for them).
+
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+
+    def forward(x):
+        x_1, x_2, x_3 = torch.split(x, 2)
+        return x_1
+
+    jforward = thunder.jit(forward)
+
+    x = torch.randn([5, 2], dtype=torch.bfloat16, device=device, requires_grad=True)
+
+    actual = jforward(x)
+    expected = forward(x)
+    torch.testing.assert_close(actual, expected)
+
+    grad_o = torch.randn_like(actual)
+
+    actual_grad = torch.autograd.grad(actual, x, grad_o)
+    expected_grad = torch.autograd.grad(expected, x, grad_o)
+    torch.testing.assert_close(actual_grad, expected_grad)
