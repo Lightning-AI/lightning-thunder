@@ -64,7 +64,7 @@ class AutocastStack:
     def get_dtype_for_device_if_enabled(self, device_str: str):
         for autocast_state in reversed(self.stack):
             device, dtype, enabled, _ = autocast_state
-            if device == device_str:
+            if device.startswith(device_str):  # TODO - Do this correctly.
                 if enabled:
                     return dtype
                 return None

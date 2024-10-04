@@ -5502,9 +5502,10 @@ from thunder.core.compile_data import get_compile_data
 @torchsymbol(
     torch.amp.autocast_mode._enter_autocast, id="torch.amp.autocast_mode._enter_autocast", tags=(prims.OpTags.DONT_DCE,)
 )
-def autocast_enter(device_type, dtype, enabled, cache_enabled):
+def autocast_enter(device_type, dtype=None, enabled=True, cache_enabled=True):
+    if dtype is None:
+        dtype = torch.get_autocast_dtype(device_type)
     cd = get_compile_data()
-    print("ENTER PUSH")
     cd.autocast_stack.push(device_type, dtype, enabled, cache_enabled)
     # push()
 
@@ -5515,7 +5516,6 @@ def autocast_enter(device_type, dtype, enabled, cache_enabled):
 def autocast_exit(*args):
     cd = get_compile_data()
     cd.autocast_stack.pop()
-    print("EXIT POP")
     # pop()
 
 
