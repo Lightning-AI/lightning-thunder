@@ -470,6 +470,8 @@ def _collectify(x: Any, *, name: str | None = None) -> Any:
         return x
     if baseutils.is_collection(x):
         return CollectionProxy(x, name=name)
+    if isinstance(x, slice):
+        return CollectionProxy((x.start, x.stop, x.step), name=name)
 
     return x
 
