@@ -1251,7 +1251,7 @@ def _infer_tensor_properties(
     else:
         # deferred computation of numel
         # TODO: similar to how `shape` is handled, this should be CSE or lifted for efficiency
-        _numel = lambda tp: reduce(operator.mul, tp.shape, 1)
+        _numel = lambda *args: reduce(operator.mul, _shape, 1)
 
     # TODO Alias rank to ndim?
     _ndim = len(_shape)
@@ -1459,7 +1459,12 @@ class TensorProxy(Proxy, TensorProxyInterface):
     #   outside of a trace or language context
     @property
     def shape(self):
-        return self._shape
+        trace: None | TraceCtx = get_tracectx()
+        if trace is None:
+            return self._shape
+        else:
+            from thunder.core.prims import shape
+            return shape(self)
 
     @property
     def ndim(self):
