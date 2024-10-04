@@ -782,7 +782,7 @@ def autocast_enter(autocast_obj):
     cache_enabled = unwrap_autocast_obj._cache_enabled
     thunder_fn = _torch_to_thunder_function_map[torch.amp.autocast_mode._enter_autocast]
     thunder_fn(device, dtype, enabled, cache_enabled)
-    return wrap(None, provenance=autocast_obj.provenance)
+    return wrap(None, provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[autocast_obj.provenance]))
 
 
 @register_general_jit_lookaside(torch.autocast.__exit__)
@@ -790,7 +790,7 @@ def autocast_exit(autocast_obj, exc_type, exc_val, exc_tb):
     unwrap_autocast_obj = unwrap(autocast_obj)
     thunder_fn = _torch_to_thunder_function_map[torch.amp.autocast_mode._exit_autocast]
     thunder_fn()
-    return wrap(None, provenance=autocast_obj.provenance)
+    return wrap(None, provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[autocast_obj.provenance]))
 
 
 @register_general_jit_lookaside(torch.finfo)
