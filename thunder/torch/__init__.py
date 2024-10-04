@@ -5266,6 +5266,29 @@ def _backward_checkpoint(
     return result
 
 
+def _FXGraph_converter(g):
+    new_g = torch.fx.Graph()
+    # new_g.graph_copy(g)
+    node_map: dict = {}
+    for n in g.graph.nodes:
+        if n.op == "call_function":
+            assert isinstance(n.target, Callable)
+            assert n.target in _torch_to_thunder_function_map
+            # target = n.target if isinstance(n.target, str) else n.target.__name__
+            # with new_g.inserting_before(n):
+            # assert hasattr(thunder.torch, target)
+            new_args = tuple(node_map[arg] for arg in n.args)
+            thunder_node = new_g.call_function(_torch_to_thunder_function_map[n.target], args=new_args)
+            node_map[n] = thunder_node
+            # graph.create_node('call_method', operator.add, args=(b, c))
+        else:
+            node_map[n] = new_g.node_copy(n, lambda nod: node_map[nod])
+    # for torch_node, thunder_node in node_map.items():
+    #     torch_node.replace_all_uses_with(thunder_node)
+    g.graph = new_g
+    return
+
+
 #
 # Distributed operations
 #
