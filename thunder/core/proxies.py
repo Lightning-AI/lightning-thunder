@@ -16,7 +16,12 @@ import torch
 
 from thunder.core.compile_data import using_symbolic_values, using_jit
 from thunder.core.interpreter import is_jitting, ProvenanceRecord, PseudoInst
-from thunder.core.trace import VariableInterface, get_tracectx, TraceCtx
+from thunder.core.trace import (
+    VariableInterface,
+    get_tracectx,
+    is_tracing,
+    TraceCtx,
+)
 from thunder.core.baseutils import (
     ProxyInterface,
     NumberProxyInterface,
@@ -1459,8 +1464,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
     #   outside of a trace or language context
     @property
     def shape(self):
-        trace: None | TraceCtx = get_tracectx()
-        if trace is None:
+        if not using_symbolic_values() or not is_tracing():
             return self._shape
         else:
             from thunder.core.prims import shape
