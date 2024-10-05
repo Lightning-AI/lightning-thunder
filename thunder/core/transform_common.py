@@ -115,6 +115,7 @@ def _inplace_copy_sanity_check(extrace: Trace):
 #   all the needed proxies of the input trace
 def dce(trace: Trace, needed_proxies: None | set[Variable] = None) -> Trace:
     start_time_ns = time.perf_counter_ns()
+    print(trace)
 
     producer_map: ProxyDict = producers(trace)
 
