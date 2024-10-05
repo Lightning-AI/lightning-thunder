@@ -1000,8 +1000,9 @@ class ProxyDict:
         return str(self._dict)
 
 
-# NOTE That this pass does not assume that the bound symbols are in a reasonable order,
-#   but it does assume that each proxy is uniquely constructed once
+# NOTE That this pass does not assume that the bound symbols are in a reasonable order.
+#   For bound symbols with multiple producers, this pass returns the first producer of
+#   in order of the presented bound symbols
 # Returns a proxy -> producer mapping
 #   If _map_to_numbers is True then producers are represented by their position in the trace (their "line number")
 def producers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface], *, _map_to_numbers: bool = False) -> ProxyDict:
@@ -1021,6 +1022,10 @@ def producers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface], *, _map_to_
             continue
 
         for out in bsym.flat_proxy_outs:
+            # if a producer has already been traversed, skip
+            if producers.get(out, None) != None:
+                continue
+
             vout = variableify(out)
 
             # Checks if the proxy was also an input (in which case this is not its producers)
