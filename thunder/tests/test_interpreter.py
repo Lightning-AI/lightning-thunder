@@ -1694,8 +1694,8 @@ def test_unhashable_lookaside(jit):
 def test_zip_lookaside(jit):
     jitting = False
 
-    def foo(*a,strict=False):
-        return list(zip(*a,strict=strict))
+    def foo(*a, strict=False):
+        return list(zip(*a, strict=strict))
 
     jfoo = jit(foo)
     jitting = False
@@ -1703,26 +1703,27 @@ def test_zip_lookaside(jit):
     res1 = foo([1, 2, 3], [4, 5, 6])
     res2 = foo([1, 2, 3], [4, 5, 6], [7, 8, 9])
     res3 = foo([1, 2], [4, 5, 6])
-    res4 = foo("abc","xyz")
-    #, match="zip() argument 2 is longer than argument 1"
+    res4 = foo("abc", "xyz")
+    # , match="zip() argument 2 is longer than argument 1"
     with pytest.raises(ValueError):
-        res5 = foo([1, 2], [4, 5, 6],strict=True)
+        res5 = foo([1, 2], [4, 5, 6], strict=True)
 
     jitting = True
     jres1 = jfoo([1, 2, 3], [4, 5, 6])
     jres2 = jfoo([1, 2, 3], [4, 5, 6], [7, 8, 9])
     jres3 = jfoo([1, 2], [4, 5, 6])
-    jres4 = jfoo("abc","xyz")
+    jres4 = jfoo("abc", "xyz")
 
-    #, match=" zip() argument 2 is longer than argument 1"
+    # , match=" zip() argument 2 is longer than argument 1"
     with pytest.raises(ValueError):
-        jres5 = jfoo([1, 2], [4, 5, 6],strict=True)
+        jres5 = jfoo([1, 2], [4, 5, 6], strict=True)
 
     assert res1 == jres1
     assert res2 == jres2
     assert res3 == jres3
     assert res4 == jres4
     assert res5 == jres5
+
 
 def test_enumerate_lookaside(jit):
     jitting = False
