@@ -310,6 +310,8 @@ def jit(
 
     # Resolve names of executors
     executors = resolve_executors(executors)
+    ad_hoc_executor = extend.AdHocExecutor()
+    executors = (*executors, ad_hoc_executor)
 
     # TODO: verify that tutorials don't have false positives and enable warning by default
     # # Make sharp_edges == warn default if not supplied and if in the general jit
@@ -504,7 +506,12 @@ def jit(
             prologue_trc: TraceCtx
             computation_trc: TraceCtx
             jit_results: TraceResults = thunder_general_jit(
-                fn, args, kwargs, record_history=record_history, sharp_edges=cd.sharp_edges
+                fn,
+                args,
+                kwargs,
+                ad_hoc_executor=ad_hoc_executor,
+                record_history=record_history,
+                sharp_edges=cd.sharp_edges,
             )
             prologue_trc = jit_results.prologue_trace
             computation_trc = jit_results.computation_trace
