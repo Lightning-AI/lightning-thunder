@@ -2213,6 +2213,7 @@ def pow_sample_input_generator(op, device, dtype, requires_grad, *, no_rhs_numbe
     #   torch.pow(t_0, t_1)
     # which raise an issue with
     # RuntimeError: "reciprocal_cuda" not implemented for 'Char'
+    # see issue: github.com/pytorch/pytorch/issues/137440
     default_generator = partial(elementwise_binary_generator, no_rhs_numbers=True, exclude_zero=True)
     yield from default_generator(op, device, dtype, requires_grad, **kwargs)
 
