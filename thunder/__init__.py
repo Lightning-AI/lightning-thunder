@@ -723,6 +723,23 @@ def jit(
             if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
                 cs.interpreter_cache.append(cache_entry)
 
+            # TODO(crcrpar): Ideally we should disable `__torch_dispatch__`s.
+            # But it feels like a temporary necessary evil to let them working if all of the
+            # executors are capable of obeying `__torch_dispatch__`s.
+            non_compat_executors: set[extend.Executor] = {
+                ex for ex in (cudnn_executor, sdpa_executor, apex_executor, nvfuser_executor) if ex is not None
+            }
+            if (set(cd.executors_list) & non_compat_executors) or ad_hoc_executor.opmap:
+                from thunder.core.pytree import tree_flatten
+
+                check(
+                    not any(
+                        pytorch.utils._python_dispatch.is_traceable_wrapper_subclass(a)
+                        for a in tree_flatten((args, kwargs))[0]
+                    ),
+                    lambda: f"Traceable tensor subclasses are not supported",
+                )
+
         return cache_entry, inps, pro_to_epi
 
     cd.get_computation_and_inputs = get_computation_and_inputs
