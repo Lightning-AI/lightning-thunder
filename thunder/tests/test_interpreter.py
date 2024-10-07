@@ -1722,7 +1722,6 @@ def test_zip_lookaside(jit):
     assert res2 == jres2
     assert res3 == jres3
     assert res4 == jres4
-    
 
 
 def test_enumerate_lookaside(jit):
