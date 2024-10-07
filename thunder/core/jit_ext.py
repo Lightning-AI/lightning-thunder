@@ -618,10 +618,18 @@ def _general_jit_torch_finfo_lookaside(dtype: thunder.dtypes.dtype):
     return res
 
 
+from torch.utils.checkpoint import noop_context_fn
+
+
 @register_general_jit_lookaside(torch.utils.checkpoint.checkpoint)
+@register_general_jit_lookaside(torch.ops.higher_order.tag_activation_checkpoint)
 def _general_jit_torch_checkpoint_lookaside(
     function: Callable,
     *args,
+    use_reentrant=None,
+    context_fn=noop_context_fn,
+    determinism_check="default",
+    debug=False,
     **kwargs: Any,
 ):
     """
@@ -640,17 +648,69 @@ def _general_jit_torch_checkpoint_lookaside(
         The result of calling `thunder.torch.checkpoint` with the preprocessed
         `function` and its arguments.
     """
-    from thunder.torch import checkpoint
+    # from thunder.torch import checkpoint
+
+    jit_ctx: JitCtx = get_jit_ctx()
+
+    jit_ctx.computation_trace.push_scope([])
+    func = unwrap(function)
+    result = _interpret_call(func, *args, **kwargs)
+
+    if result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return result
+
+    bsyms: list[BoundSymbol] = jit_ctx.computation_trace.pop_scope()
+    unwrapped_result = unwrap(result)
+    trace_of_checkpoint = TraceCtx()
+    for bsym in bsyms:
+        trace_of_checkpoint.add_bound_symbol(bsym)
+    with tracectx(trace_of_checkpoint):
+        prims.python_return(unwrapped_result)
+
+    unwrapped_args = tree_map(lambda a: unwrap(a), args)
+
+    si = SigInfo("activation_checkpoint")
+    si.args.append(("function", None))
+    for a in unwrapped_args:
+        if isinstance(a, Proxy):
+            si.args.append((a.name, None))
+        else:
+            pa = proxy(a)
+            si.args.append((pa.name, None))
+    trace_of_checkpoint._siginfo = si
+    trace_of_checkpoint.args = unwrapped_args
+
+    @wraps(trace_of_checkpoint.python_callable())
+    def core_of_forward(*args, **kwargs):
+        return thunder.core.trace_interpreter.interpret_trace(trace_of_checkpoint, *args, **kwargs)
+
+    custom_fwd_meta = lambda *unwrapped_args: unwrapped_result
+
+    def bind_postprocess(bsym):
+        bsym._call_ctx = {}
+
+    custom_fwd_sym = Symbol(
+        name="activation_checkpoint",
+        id="activation_checkpoint",
+        meta=core_of_forward,
+        _bind_postprocess=bind_postprocess,
+    )
+    unwrapped_forward_result = custom_fwd_sym(*unwrapped_args)
+    forward_result = wrap(
+        unwrapped_forward_result,
+        provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[function.provenance, result.provenance]),
+    )
+    return forward_result
 
     # It should be possible to call the general_thunder_jit here to handle the
     # conversion from torch to thunder but it doesn't work now
     # See https://github.com/Lightning-AI/lightning-thunder/issues/1126
     # TODO: Convert the function to a Thunder function
-    def thunder_function(*args, **kwargs):
-        return unwrap(function)(*args, **kwargs)
+    # def thunder_function(*args, **kwargs):
+    #     return unwrap(function)(*args, **kwargs)
 
-    wrapped_thunder_function = wrap_const(thunder_function)
-    return interpreter_needs_wrap(checkpoint)(wrapped_thunder_function, *args, **kwargs)
+    # wrapped_thunder_function = wrap_const(thunder_function)
+    # return interpreter_needs_wrap(checkpoint)(wrapped_thunder_function, *args, **kwargs)
 
 
 # Adds proxy methods

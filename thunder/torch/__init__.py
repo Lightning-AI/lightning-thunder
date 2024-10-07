@@ -5154,36 +5154,36 @@ def _unwrap_if_dead(tensor):
 register_function(torch._C._functorch.unwrap_if_dead, _unwrap_if_dead)
 
 
-@torchsymbol(
-    torch.utils.checkpoint.checkpoint,
-    torch.ops.higher_order.tag_activation_checkpoint,
-    id="activation_checkpoint",
-)
-def checkpoint(
-    function: Callable[..., TensorLike],
-    *args: TensorLike,
-    context_fn: None | Callable[..., Any] = None,
-    debug: None | bool = None,
-    determinism_check: None | str = None,
-    preserve_rng_state: None | bool = None,
-    use_reentrant: bool = False,
-    **kwargs: Any,
-) -> TensorLike:
-    utils.check(
-        not use_reentrant,
-        lambda: "torch.checkpoint: use_reentrant=True is not supported in Thunder",
-    )
-    # NOTE: Thunder currently ignores the context_fn, debug, determinism_check, preserve_rng_state arguments
-    # Let's raise a warning if any of these arguments are passed
-    if context_fn is not None:
-        warnings.warn("torch.checkpoint: context_fn is not supported in Thunder and will be ignored")
-    if debug is not None:
-        warnings.warn("torch.checkpoint: debug is not supported in Thunder and will be ignored")
-    if determinism_check is not None:
-        warnings.warn("torch.checkpoint: determinism_check is not supported in Thunder and will be ignored")
-    if preserve_rng_state is not None:
-        warnings.warn("torch.checkpoint: preserve_rng_state is not supported in Thunder and will be ignored")
-    return function(*args, **kwargs)
+# @torchsymbol(
+#     torch.utils.checkpoint.checkpoint,
+#     torch.ops.higher_order.tag_activation_checkpoint,
+#     id="activation_checkpoint",
+# )
+# def checkpoint(
+#     function: Callable[..., TensorLike],
+#     *args: TensorLike,
+#     context_fn: None | Callable[..., Any] = None,
+#     debug: None | bool = None,
+#     determinism_check: None | str = None,
+#     preserve_rng_state: None | bool = None,
+#     use_reentrant: bool = False,
+#     **kwargs: Any,
+# ) -> TensorLike:
+#     utils.check(
+#         not use_reentrant,
+#         lambda: "torch.checkpoint: use_reentrant=True is not supported in Thunder",
+#     )
+#     # NOTE: Thunder currently ignores the context_fn, debug, determinism_check, preserve_rng_state arguments
+#     # Let's raise a warning if any of these arguments are passed
+#     if context_fn is not None:
+#         warnings.warn("torch.checkpoint: context_fn is not supported in Thunder and will be ignored")
+#     if debug is not None:
+#         warnings.warn("torch.checkpoint: debug is not supported in Thunder and will be ignored")
+#     if determinism_check is not None:
+#         warnings.warn("torch.checkpoint: determinism_check is not supported in Thunder and will be ignored")
+#     if preserve_rng_state is not None:
+#         warnings.warn("torch.checkpoint: preserve_rng_state is not supported in Thunder and will be ignored")
+#     return function(*args, **kwargs)
 
 
 @register_augmented_forward(

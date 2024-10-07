@@ -1676,12 +1676,15 @@ def test_get_saved_for_backward_tensors_error():
 def test_torch_checkpoint():
     import torch.utils.checkpoint
     import torch._higher_order_ops.wrap
+    from thunder.dynamo import ThunderCompiler
 
     def fn_to_checkpoint(x):
-        return x.sin().cos().exp()
+        # return x.sin()#.cos().exp()
+        return torch.sin(x)
 
     checkpoint_fns = (
-        thunder.torch.checkpoint,
+        # torch.utils.checkpoint.checkpoint,
+        # thunder.torch.checkpoint,
         partial(torch.utils.checkpoint.checkpoint, use_reentrant=False),
         torch.ops.higher_order.tag_activation_checkpoint,
     )
@@ -1689,11 +1692,15 @@ def test_torch_checkpoint():
     for checkpoint_fn in checkpoint_fns:
 
         def f(x):
-            return checkpoint_fn(fn_to_checkpoint, x)
+            return checkpoint_fn(fn_to_checkpoint, x, use_reentrant=False)
 
         x = make_tensor((2, 2), device="cpu", dtype=torch.float32, requires_grad=True)
+        # backend = ThunderCompiler()
+        # jf = torch.compile(backend=backend)(f)
         jf = thunder.jit(f)
         out = jf(x)
+        print(thunder.last_traces(jf)[0])
+        print(thunder.last_backward_traces(jf)[0])
 
         # With activation checkpointing, we are saving only the original input.
         # The intermediate values are recomputed during backward pass.
