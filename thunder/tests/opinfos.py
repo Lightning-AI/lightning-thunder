@@ -2207,14 +2207,7 @@ elementwise_binary_ops.append(polygamma_opinfo)
 
 
 def pow_sample_input_generator(op, device, dtype, requires_grad, *, no_rhs_numbers: bool = False, **kwargs):
-    # exclude_zero avoids having
-    #   t_0 = tensor([...], device="cuda", dtype=torch.int8)
-    #   t_1 = tensor(-1, dtype=torch.int8)
-    #   torch.pow(t_0, t_1)
-    # which raise an issue with
-    # RuntimeError: "reciprocal_cuda" not implemented for 'Char'
-    # see issue: github.com/pytorch/pytorch/issues/137440
-    default_generator = partial(elementwise_binary_generator, no_rhs_numbers=True, exclude_zero=True)
+    default_generator = partial(elementwise_binary_generator, no_rhs_numbers=True)
     yield from default_generator(op, device, dtype, requires_grad, **kwargs)
 
     # For backward of pow, we need to make sure that when the base is zero, the
@@ -2253,7 +2246,7 @@ pow_opinfo = OpInfo(
         ),
         # NOTE: PyTorch fails with RuntimeError: "reciprocal_cuda" not implemented for 'Long' occasionally when the exponent is CPU scalar tensor
         # e.g.: x=torch.tensor([[ 6,  5,  1, -8],], device='cuda:0');y=torch.tensor(-1);torch.pow(x,y)
-        DecorateInfo(pytest.mark.xfail, "test_core_vs_torch_consistency", dtypes=(datatypes.int32, datatypes.int64)),
+        DecorateInfo(pytest.mark.xfail, "test_core_vs_torch_consistency", dtypes=(datatypes.int8, datatype.int16, datatypes.int32, datatypes.int64)),
     ),
 )
 elementwise_binary_ops.append(pow_opinfo)
