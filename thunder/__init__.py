@@ -424,7 +424,7 @@ def jit(
             no_grad_sync = get_skip_data_parallel_grad_sync()
         cache_info["no_grad_sync"] = no_grad_sync
         return_none_instead_of_grads = is_fsdp_enabled and no_grad_sync
-        pytorch.cuda.nvtx.range_pop() # get_c_and_i part 1
+        pytorch.cuda.nvtx.range_pop()  # get_c_and_i part 1
 
         pytorch.cuda.nvtx.range_push("thunder alias_tensor_of_args_kwargs")
         # NOTE(crcrpar): If a callable is free from in-place ops whose operand is args and/or their views
