@@ -143,6 +143,7 @@ API reference
    reference/torch/index
    reference/extend/index
    reference/transforms/index
+   reference/dynamo/index
 
 
 Indices and tables
