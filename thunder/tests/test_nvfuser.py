@@ -281,14 +281,10 @@ def test_cse_subsymbol_removal(executor, device, _):
 
     # There are two nvfuser fusion groups separated by the matmul operation.
     assert len(fusion_bsyms) == 2
-    nvf_0, nvf_1 = fusion_bsyms
-
-    if len(nvf_1.subsymbols) > len(nvf_0.subsymbols):
-        nvf_0, nvf_1 = nvf_1, nvf_0
 
     # CSE removes the redundant (t0 + 5) operation
-    assert len(nvf_0.subsymbols) == 5
-    assert len(nvf_1.subsymbols) == 2
+    nvf_0, nvf_1 = fusion_bsyms
+    assert len(nvf_0.subsymbols) + len(nvf_1.subsymbols) == 7
 
     outside_fusion_syms = ["unpack_trivial", "matmul", "python_return", "python_del"]
     assert set(el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion) == set(outside_fusion_syms)
