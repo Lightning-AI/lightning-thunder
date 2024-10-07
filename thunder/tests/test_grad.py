@@ -1700,6 +1700,82 @@ def test_get_saved_for_backward_tensors_error():
         get_saved_for_backward_tensors(execution_trace)
 
 
+def test_torch_checkpoint():
+    import torch.utils.checkpoint
+    import torch._higher_order_ops.wrap
+
+    def fn_to_checkpoint(x):
+        return x.sin().cos().exp()
+
+    checkpoint_fns = (
+        thunder.torch.checkpoint,
+        partial(torch.utils.checkpoint.checkpoint, use_reentrant=False),
+        torch.ops.higher_order.tag_activation_checkpoint,
+    )
+
+    for checkpoint_fn in checkpoint_fns:
+
+        def f(x):
+            return checkpoint_fn(fn_to_checkpoint, x)
+
+        x = make_tensor((2, 2), device="cpu", dtype=torch.float32, requires_grad=True)
+        jf = thunder.jit(f)
+        out = jf(x)
+
+        # With activation checkpointing, we are saving only the original input.
+        # The intermediate values are recomputed during backward pass.
+        assert len(out.grad_fn.saved_tensors) == 1
+        assert out.grad_fn.saved_tensors[0] is x
+
+        g = torch.ones_like(out)
+        out.backward(g)
+
+        x_ref = x.detach().requires_grad_()
+        out_ref = fn_to_checkpoint(x_ref)
+        out_ref.backward(g)
+        torch.testing.assert_close(x.grad, x_ref.grad)
+
+
+def test_torch_checkpoint_dynamo():
+    import torch.utils.checkpoint as checkpoint
+    import torch.nn as nn
+    from thunder.dynamo import ThunderCompiler
+
+    class SimpleModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.layer1 = nn.Linear(10, 20)  # nn.ReLU() #
+            self.layer2 = nn.Linear(20, 20)
+            self.layer3 = nn.ReLU()  # nn.ReLU() #
+
+        def forward(self, x):
+            # Use checkpointing for layers where you want to save memory
+            x = torch.sin(x)
+            x = checkpoint.checkpoint(self.layer1, x)  # Checkpoint layer1 self.layer1(x) #
+            x = checkpoint.checkpoint(self.layer2, x)  # Checkpoint layer2
+            x = self.layer3(x)  # No checkpoint for layer3
+            return x
+
+    # Input tensor
+    x = torch.randn(5, 10).requires_grad_()
+    model = SimpleModel().train()
+    backend = ThunderCompiler()
+    jf = torch.compile(backend=backend)(model)
+    # jf = thunder.jit(f)
+    out = jf(x)
+    # print(thunder.last_traces(jf)[0])
+    print(thunder.last_traces(backend.subgraph_infos[0].thunder_compiled_fns[0])[0])
+    print(thunder.last_backward_traces(backend.subgraph_infos[0].thunder_compiled_fns[0])[0])
+
+    g = torch.ones_like(out)
+    out.backward(g)
+
+    x_ref = x.detach().requires_grad_()
+    out_ref = model(x_ref)
+    out_ref.backward(g)
+    torch.testing.assert_close(x.grad, x_ref.grad)
+
+
 def test_inconsistent_output_length_grad_transform():
     from thunder.extend import OperatorExecutor
     from thunder.core.proxies import AnyProxy, TensorProxy
