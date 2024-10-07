@@ -228,16 +228,23 @@ _cache_info_ctx = ContextVar("cache_info_ctx")
 def _torch_nvtx_push(msg: str) -> None:
     m: str = f"thunder {msg}"
     pytorch.cuda.nvtx.range_push(m)
+
+
 def _torch_nvtx_pop() -> None:
     pytorch.cuda.nvtx.range_pop()
 
+
 def _nvtx_nvtx_push(msg: str) -> None:
     nvtx.push_range(msg, domain="thunder")
+
+
 def _nvtx_nvtx_pop() -> None:
     nvtx.pop_range(domain="thunder")
 
+
 try:
     import nvtx
+
     _nvtx_push = _nvtx_nvtx_push
     _nvtx_pop = _nvtx_nvtx_pop
 except ImportError:
@@ -245,8 +252,13 @@ except ImportError:
         _nvtx_push = _torch_nvtx_push
         _nvtx_pop = _torch_nvtx_pop
     else:
-        def no_op_push(msg: str) -> None: pass
-        def no_op_pop() -> None: pass
+
+        def no_op_push(msg: str) -> None:
+            pass
+
+        def no_op_pop() -> None:
+            pass
+
         _nvtx_push = no_op_push
         _nvtx_pop = no_op_pop
 
