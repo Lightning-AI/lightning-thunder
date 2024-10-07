@@ -287,7 +287,7 @@ def test_cse_subsymbol_removal(executor, device, _):
     assert len(nvf_0.subsymbols) + len(nvf_1.subsymbols) == 7
 
     outside_fusion_syms = ["unpack_trivial", "matmul", "python_return", "python_del"]
-    assert set(el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion) == set(outside_fusion_syms)
+    assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == set(outside_fusion_syms)
 
 
 @instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))
