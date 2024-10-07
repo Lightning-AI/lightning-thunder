@@ -383,6 +383,7 @@ def jit(
     @langctxs.langctx(cd.langctx)
     @_with_cache_info_ctx
     def get_computation_and_inputs(*args, **kwargs):
+        pytorch.cuda.nvtx.range_push("thunder get_computation_and_inputs part 1")
         # set up a record of things in the current environment that impact caching / prologues
         # this could be replaced by the respective querying in the prologues
         cache_info = _get_cache_info()
@@ -423,12 +424,15 @@ def jit(
             no_grad_sync = get_skip_data_parallel_grad_sync()
         cache_info["no_grad_sync"] = no_grad_sync
         return_none_instead_of_grads = is_fsdp_enabled and no_grad_sync
+        pytorch.cuda.nvtx.range_pop() # get_c_and_i part 1
 
+        pytorch.cuda.nvtx.range_push("thunder alias_tensor_of_args_kwargs")
         # NOTE(crcrpar): If a callable is free from in-place ops whose operand is args and/or their views
         # alaises wouldn't matter, thus it'd be better to nullify this entry in such cases.
         # It however would require the functionalized computation trace to interact with `cache_info`,
         # which seems to break the consistency of cache_info, leading to a failure in cache_info check.
         cache_info["alias_tensor_indices"] = _alias_tensor_of_args_kwargs(*args, **kwargs)
+        pytorch.cuda.nvtx.range_pop()
 
         # TODO RC1 Add module and function checks to prologue (make it a compile option)
 
@@ -487,9 +491,11 @@ def jit(
                     backward_traces,
                 ) = cache_entry
 
+                pytorch.cuda.nvtx.range_push("thunder prologue same input")
                 cs.last_prologue_execution_start = time.perf_counter_ns()
                 inps, pro_to_epi = pro(*args, **kwargs)
                 cs.last_prologue_execution_stop = time.perf_counter_ns()
+                pytorch.cuda.nvtx.range_pop()
 
                 cs.last_trace_host_tracing_start = time.perf_counter_ns()
                 cs.last_trace_host_tracing_stop = time.perf_counter_ns()
@@ -517,6 +523,7 @@ def jit(
 
             prologue_trc: TraceCtx
             computation_trc: TraceCtx
+            pytorch.cuda.nvtx.range_push("thunder general jit")
             jit_results: TraceResults = thunder_general_jit(
                 fn,
                 args,
@@ -525,6 +532,7 @@ def jit(
                 record_history=record_history,
                 sharp_edges=cd.sharp_edges,
             )
+            pytorch.cuda.nvtx.range_pop()
             prologue_trc = jit_results.prologue_trace
             computation_trc = jit_results.computation_trace
             epilogue_trc = jit_results.epilogue_trace
@@ -536,7 +544,9 @@ def jit(
             computation_trc = wrap_return_value_together_with_argments(computation_trc)
             computation_traces.append(computation_trc)
 
+            pytorch.cuda.nvtx.range_push("thunder check_inplace_to_views")
             orig_to_view_swap_map = check_inplace_to_views(computation_trc)
+            pytorch.cuda.nvtx.range_pop()
             vanilla_tensor_args: set[int] | None = None
             if not compile_options.get("skip_inplace_functionalization", False):
                 orig_len = len(computation_traces)
@@ -545,6 +555,7 @@ def jit(
                     alias_tensor_indices: list[list[int]] = [
                         [int(i) for i in s.split(",")] for s in alias_tensor_indices_str.split("-")
                     ]
+                pytorch.cuda.nvtx.range_push("thunder functionalize_inplace_ops")
                 computation_traces.extend(
                     functionalize_inplace_ops(
                         computation_trace=computation_trc,
@@ -552,6 +563,7 @@ def jit(
                         alias_tensor_indices=alias_tensor_indices,
                     )
                 )
+                pytorch.cuda.nvtx.range_pop()
                 computation_trc = computation_traces[-1]
                 if len(computation_traces) > orig_len:
                     from thunder.core.pytree import tree_flatten
@@ -607,16 +619,22 @@ def jit(
                     if epilogue_trc is not None:
                         epilogue_traces.append(epilogue_trc)
 
+            pytorch.cuda.nvtx.range_push("thunder transform_for_execution")
             prologue_traces += transform_for_execution(
                 prologue_trc,
                 executors_list=(pythonex,),
                 use_del_last_used=False,
             )
+            pytorch.cuda.nvtx.range_pop()
             prologue_trc = prologue_traces[-1]
+            pytorch.cuda.nvtx.range_push("thunder python_callable prologue")
             pro = prologue_trc.python_callable(include_decorators=False)
+            pytorch.cuda.nvtx.range_pop()
 
             if epilogue_trc is not None:
+                pytorch.cuda.nvtx.range_push("thunder python_callable epilogue")
                 epilogue = epilogue_trc.python_callable()
+                pytorch.cuda.nvtx.range_pop()
             else:
                 epilogue = None
 
@@ -629,11 +647,15 @@ def jit(
             cs.last_interpreter_log = last_interpreter_log
             cs.last_interpreted_instructions = (i for i in last_interpreter_log if isinstance(i, dis.Instruction))
 
+            pytorch.cuda.nvtx.range_push("thunder prologue")
             cs.last_prologue_execution_start = time.perf_counter_ns()
             inps, pro_to_epi = pro(*args, **kwargs)
             cs.last_prologue_execution_stop = time.perf_counter_ns()
+            pytorch.cuda.nvtx.range_pop()
 
+            pytorch.cuda.nvtx.range_push("thunder DCE")
             computation_trc = dce(computation_trc)
+            pytorch.cuda.nvtx.range_pop()
             computation_traces.append(computation_trc)
 
             backward_trc = None
@@ -701,7 +723,9 @@ def jit(
                 computation_traces.append(computation_trc)
 
             computation_trc = transform_to_torch_types(computation_trc)
+            pytorch.cuda.nvtx.range_push("thunder python_callable main")
             comp = computation_trc.python_callable()
+            pytorch.cuda.nvtx.range_pop()
 
             # TODO RC1 Update the cache
             cache_entry = CacheEntry(
@@ -747,13 +771,16 @@ def jit(
                     NotImplementedError,
                 )
 
+        pytorch.cuda.nvtx.range_push("thunder computation_fn")
         result = cache_entry.computation_fn(*inps)
+        pytorch.cuda.nvtx.range_pop()
 
         if cache_entry.backward_fn:
             # Run the compiled forward function
             data_for_autograd, (saved_tensors, saved_other) = result
 
             # Connect produced tensors with PyTorch's autograd graph
+            pytorch.cuda.nvtx.range_push("thunder connect autograd")
             ThunderFunction.apply(
                 cache_entry.return_none_instead_of_grads,
                 cache_entry.backward_fn,
@@ -763,10 +790,13 @@ def jit(
                 *data_for_autograd["flat_args"],
             )
             result = data_for_autograd["output"]
+            pytorch.cuda.nvtx.range_pop()
 
         if cache_entry.epilogue_fn:
             result, comp_to_epi = result
+            pytorch.cuda.nvtx.range_push("thunder epilogue")
             cache_entry.epilogue_fn(*pro_to_epi, *comp_to_epi)
+            pytorch.cuda.nvtx.range_pop()
 
         cs.last_trace_host_execution_stop = time.perf_counter_ns()
         cs.last_computation_execution_stop = cs.last_trace_host_execution_stop
