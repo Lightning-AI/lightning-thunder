@@ -1451,7 +1451,7 @@ def _zip_lookaside(*obj: Iterable, strict=False):
                 msg = f"zip() argument {i+1} is longer than argument{plural}{i}"
                 raise ValueError(msg)
 
-    return _interpret_call(zip, *obj, wrap(strict))
+    return _interpret_call(zip, *obj, strict = wrap_const(strict))
 
 
 @interpreter_needs_wrap
