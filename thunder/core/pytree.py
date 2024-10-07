@@ -21,7 +21,15 @@ optree.register_pytree_node(
 )
 
 
-def tree_flatten(args, namespace=""):
+optree.register_pytree_node(
+    slice,
+    lambda s: ([s.start, s.stop, s.step], None, None),
+    lambda _, children: slice(*children),
+    namespace=OPTREE_NAMESPACE,
+)
+
+
+def tree_flatten(args, namespace=OPTREE_NAMESPACE):
     if (
         type(args)
         not in {

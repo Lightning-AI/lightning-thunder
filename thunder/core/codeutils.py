@@ -140,7 +140,8 @@ def to_printable(
         return x
 
     if is_collection(x):
-        flat, spec = tree_flatten(x)
+        # specify namespace="" to avoid flattening dataclasses
+        flat, spec = tree_flatten(x, namespace="")
         if flat and flat[0] is x:
             raise RuntimeError(f"Don't know how to flatten object of {type(x)}")
         printables = []
@@ -232,7 +233,8 @@ def prettyprint(
         return m(f"{name}({call_repr_str})")
 
     if is_collection(x):
-        flat, spec = tree_flatten(x)
+        # specify namespace="" to avoid flattening dataclasses
+        flat, spec = tree_flatten(x, namespace="")
         printed = tuple(
             prettyprint(x, with_type=False, literals_as_underscores=literals_as_underscores, _quote_markers=True)
             for x in flat

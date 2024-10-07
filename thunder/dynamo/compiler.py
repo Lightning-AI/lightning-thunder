@@ -1,13 +1,17 @@
+from __future__ import annotations
 from functools import partial
 from looseversion import LooseVersion
-
-import torch
+from typing import TYPE_CHECKING
 import warnings
 
-from thunder.core.baseutils import run_once
+import torch
 
-from thunder.dynamo.utils import SubgraphInfo, recompile_graph
+from thunder.core.baseutils import run_once
+from thunder.dynamo.utils import recompile_graph
 from thunder.dynamo.splitter import _splitter
+
+if TYPE_CHECKING:
+    from thunder.dynamo.utils import SubgraphInfo
 
 
 @run_once
@@ -21,12 +25,12 @@ def _warn_thunder_compiler():
 class ThunderCompiler:
     def __init__(self, **thunder_options):
         """
-        A class that compiles a `fx.GraphModule` to a `thunder.ThunderModule`.
-        This class is meant to be used as a backend for the `torch.compile`
+        A class that compiles a :class:`torch.fx.GraphModule` to a :class:`thunder.ThunderModule`.
+        This class is meant to be used as a backend for the :func:`torch.compile`
         function.
 
         Keyword arguments:
-            thunder_options: a dictionary of options to pass to `thunder.jit`. Besides all the arguments to `thunder.jit`,
+            thunder_options: a dictionary of options to pass to :func:`thunder.jit`. Besides all the arguments to :func:`thunder.jit`,
                              it accepts `torch_inductor_options` which are passed to `torch.compile` if part of the graph
                              is not supported by thunder.
 
@@ -44,7 +48,7 @@ class ThunderCompiler:
             ...         return x - 1
             >>> out = func(x)
         """
-        from thunder import ThunderModule, jit
+        from thunder import jit
 
         _warn_thunder_compiler()
 
