@@ -2246,7 +2246,11 @@ pow_opinfo = OpInfo(
         ),
         # NOTE: PyTorch fails with RuntimeError: "reciprocal_cuda" not implemented for 'Long' occasionally when the exponent is CPU scalar tensor
         # e.g.: x=torch.tensor([[ 6,  5,  1, -8],], device='cuda:0');y=torch.tensor(-1);torch.pow(x,y)
-        DecorateInfo(pytest.mark.xfail, "test_core_vs_torch_consistency", dtypes=(datatypes.int8, datatype.int16, datatypes.int32, datatypes.int64)),
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.int8, datatype.int16, datatypes.int32, datatypes.int64),
+        ),
     ),
 )
 elementwise_binary_ops.append(pow_opinfo)
