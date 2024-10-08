@@ -1422,7 +1422,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 output = Proxy("subscr")  # name? collectify?
             else:
                 output = p
-            if isinstance(idx, (int, str)):
+            if isinstance(idx, (int, str, Proxy)):
                 if isinstance(idx, int):
                     idx = int(idx)
                 elif isinstance(idx, str):
