@@ -1,4 +1,5 @@
-from collections.abc import Callable
+from __future__ import annotations
+from typing import TYPE_CHECKING
 
 import torch
 from torch.fx.passes.split_module import split_module
@@ -14,6 +15,9 @@ from thunder.dynamo.utils import (
     update_node_and_submodule,
     recompile_graph,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def _splitter(
