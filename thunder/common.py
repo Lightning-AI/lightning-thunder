@@ -47,7 +47,6 @@ import torch as torch
 import numpy as np
 import thunder
 
-
 #
 # Datastructures for compiled functions
 #
