@@ -96,7 +96,7 @@ class TensorSubclassForTest(torch.Tensor):
 
 
 @instantiate(
-    executors=(nvFuserExecutor, TorchExecutor, TorchCompileCatExecutor, TorchCompileExecutor),
+    executors=(nvFuserExecutor, TorchExecutor, TorchCompileCatExecutor, TorchCompileExecutor, DynamoThunderExecutor),
     dtypes=(dtypes.float32,),
     devicetypes=(devices.DeviceType.CUDA,),
 )
@@ -107,15 +107,11 @@ def test_subclass(executor, device, _):
 
     x = TensorSubclassForTest.from_tensor(make_tensor((2, 2), device=device, dtype=torch.float32))
     y = TensorSubclassForTest.from_tensor(make_tensor((2, 2), device=device, dtype=torch.float32))
-
-    out = f(x, y)
-
-    torch_compiled = torch.compile(f)
-    expected = torch_compiled(x, y)
+    expected = f(x, y)
 
     jitted = executor.make_callable(f)
-    if executor == nvFuserExecutor:
-        with pytest.raises(RuntimeError, match="Traceable tensor subclasses are not supported"):
+    if executor in {nvFuserExecutor, DynamoThunderExecutor}:
+        with pytest.raises(RuntimeError, match="Traceable tensor subclasses are not supported because of executors of"):
             jitted(x, y)
             torch.cuda.synchronize()
     else:
