@@ -1854,7 +1854,7 @@ _inplace_to_out_of_place[silu] = silu, 1
 def add(
     a: NumberLike | TensorLike, b: NumberLike | TensorLike, /, *, alpha: Number | TensorLike = 1
 ) -> Number | TensorLike:
-    if isinstance(alpha, torch.Tensor) or alpha != 1:
+    if isinstance(alpha, TensorProxy) or alpha != 1:
         b = b * alpha
 
     return clang.add(a, b)
@@ -1866,7 +1866,7 @@ def add_(
     b: NumberLike | TensorLike,
     /,
     *,
-    alpha: None | Number | TensorLike = None,
+    alpha: Number | TensorLike = 1,
 ) -> TensorLike:
     return prims.copy_(add(a, b, alpha=alpha), a)
 
@@ -2144,15 +2144,15 @@ def remainder_(a, b, /):
 
 
 @torchsymbol(torch.sub, is_method=True)
-def sub(a, b, /, *, alpha=None):
-    if alpha is not None:
+def sub(a, b, /, *, alpha: NumberLike | TensorLike = 1):
+    if isinstance(alpha, TensorProxy) or alpha != 1:
         b = b * alpha
 
     return clang.sub(a, b)
 
 
 @torchsymbol(torch.Tensor.sub_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
-def sub_(a, b, /, *, alpha=None):
+def sub_(a, b, /, *, alpha: NumberLike | TensorLike = 1):
     return prims.copy_(sub(a, b, alpha=alpha), a)
 
 
