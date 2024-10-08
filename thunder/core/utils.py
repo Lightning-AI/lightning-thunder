@@ -1189,3 +1189,40 @@ def make_hashable(a: Any, /) -> tuple | FrozenDict:
     if isinstance(a, dict):
         return FrozenDict(map(lambda item: (item[0], make_hashable(item[1])), a.items()))
     return id(a)
+
+
+class AutocastStack:
+    """
+    This class provides functionality to keep track of active
+    autocast state which can be triggered with `torch.autocast` context manager.
+    This is used to enable tracking the autocast state for a trace so that the rules
+    can be applied correctly within the active region.
+
+    Each `torch.autocast.__enter__` should be mapped to `push` with relevant state information
+    and corresponding `torch.autocast.__exit__` should be mapped to `pop`.
+    See - `autocast_enter` and `autocast_exit` to see how they use this stack.
+    """
+
+    def __init__(self):
+        self.stack = deque()
+
+    def push(self, device: str, dtype: dtypes.dtype | torch.dtype, enabled: bool, cache_enabled: bool):
+        self.stack.append((device, dtype, enabled, cache_enabled))
+
+    def pop(self) -> None:
+        self.stack.pop()
+
+    def is_empty(self) -> bool:
+        return len(self.stack) == 0
+
+    def get_dtype_for_device_if_enabled(self, device_str: str):
+        for autocast_state in reversed(self.stack):
+            device, dtype, enabled, _ = autocast_state
+            if device.startswith(device_str):  # TODO - Do this correctly.
+                if enabled:
+                    return dtype
+                # Explicitly disabled with ctx manager.
+                return None
+
+        # Not found on the stack.
+        return None

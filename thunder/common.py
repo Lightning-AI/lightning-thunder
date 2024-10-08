@@ -13,7 +13,7 @@ from thunder.core.options import (
     SHARP_EDGES_OPTIONS,
     resolve_sharp_edges_option,
 )
-from thunder.core.utils import check, is_collection
+from thunder.core.utils import check, is_collection, AutocastStack
 from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.compile_data import compile_data_and_stats
 import thunder.core.langctxs as langctxs
@@ -46,29 +46,6 @@ from thunder.core.dtypes import to_dtype
 import torch as torch
 import numpy as np
 import thunder
-
-
-class AutocastStack:
-    def __init__(self):
-        self.stack = deque()
-
-    def push(self, device: str, dtype, enabled: bool, cache_enabled: bool):
-        self.stack.append((device, dtype, enabled, cache_enabled))
-
-    def pop(self) -> None:
-        self.stack.pop()
-
-    def is_empty(self) -> bool:
-        return len(self.stack) == 0
-
-    def get_dtype_for_device_if_enabled(self, device_str: str):
-        for autocast_state in reversed(self.stack):
-            device, dtype, enabled, _ = autocast_state
-            if device.startswith(device_str):  # TODO - Do this correctly.
-                if enabled:
-                    return dtype
-                return None
-        return None
 
 
 #
@@ -233,7 +210,7 @@ class CompileData:
         # Resolves cache option
         self.cache_option = resolve_cache_option(cache_option)
 
-        # State for autocast
+        # State for pytorch autocast context managers.
         self.autocast_stack: AutocastStack = AutocastStack()
 
         #

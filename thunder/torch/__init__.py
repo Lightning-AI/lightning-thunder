@@ -34,6 +34,7 @@ import thunder.core.prims as prims
 import thunder.core.utils as utils
 import thunder.distributed.prims as dist_prims
 from thunder.core.langctxs import langctx, Languages, get_langctx
+from thunder.core.compile_data import get_compile_data
 from thunder.core.proxies import (
     FloatProxy,
     IntegerProxy,
@@ -5496,25 +5497,20 @@ def backward_autograd_function_apply(
     return bwd(None, *grad_output, *saved_for_backward)
 
 
-from thunder.core.compile_data import get_compile_data
-
-
 @torchsymbol(
     torch.amp.autocast_mode._enter_autocast, id="torch.amp.autocast_mode._enter_autocast", tags=(prims.OpTags.DONT_DCE,)
 )
 def autocast_enter(device_type, dtype=None, enabled=True, cache_enabled=True):
     if dtype is None:
         dtype = torch.get_autocast_dtype(device_type)
-    cd = get_compile_data()
-    cd.autocast_stack.push(device_type, dtype, enabled, cache_enabled)
+    get_compile_data().autocast_stack.push(device_type, dtype, enabled, cache_enabled)
 
 
 @torchsymbol(
     torch.amp.autocast_mode._exit_autocast, id="torch.amp.autocast_mode._exit_autocast", tags=(prims.OpTags.DONT_DCE,)
 )
 def autocast_exit(*args):
-    cd = get_compile_data()
-    cd.autocast_stack.pop()
+    get_compile_data().autocast_stack.pop()
 
 
 #
