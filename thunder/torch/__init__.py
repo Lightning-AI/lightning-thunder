@@ -5186,37 +5186,37 @@ register_function(torch._C._functorch.unwrap_if_dead, _unwrap_if_dead)
 #     return function(*args, **kwargs)
 
 
-@register_augmented_forward(
-    "activation_checkpoint",
-)
-def _augmented_forward_checkpoint(
-    function: Callable[..., TensorLike],
-    *args: TensorLike,
-    context_fn: None | Callable[..., Any] = None,
-    debug: None | bool = None,
-    determinism_check: None | str = None,
-    preserve_rng_state: None | bool = None,
-    use_reentrant: bool = False,
-    **kwargs: Any,
-) -> TensorLike:
-    result = function(*args, **kwargs)
-    saved_for_backward = (function, args, kwargs)
-    return result, saved_for_backward
+# @register_augmented_forward(
+#     "activation_checkpoint",
+# )
+# def _augmented_forward_checkpoint(
+#     function: Callable[..., TensorLike],
+#     *args: TensorLike,
+#     # context_fn: None | Callable[..., Any] = None,
+#     # debug: None | bool = None,
+#     # determinism_check: None | str = None,
+#     # preserve_rng_state: None | bool = None,
+#     # use_reentrant: bool = False,
+#     **kwargs: Any,
+# ) -> TensorLike:
+#     result = function(*args, **kwargs)
+#     saved_for_backward = (function, args, kwargs)
+#     return result, saved_for_backward
 
 
-@register_backward(
-    "activation_checkpoint",
-)
-def _backward_checkpoint(
-    function,
-    args,
-    kwargs,
-    *grad_outputs,
-) -> tuple[None | TensorLike, ...]:
-    from thunder.core.transforms import vjp
+# @register_backward(
+#     "activation_checkpoint",
+# )
+# def _backward_checkpoint(
+#     function,
+#     args,
+#     kwargs,
+#     *grad_outputs,
+# ) -> tuple[None | TensorLike, ...]:
+#     from thunder.core.transforms import vjp
 
-    result = vjp(function)(args, grad_outputs, **kwargs)
-    return result
+#     result, grad = vjp(function)(args, grad_outputs, **kwargs)
+#     return grad #result
 
 
 #
