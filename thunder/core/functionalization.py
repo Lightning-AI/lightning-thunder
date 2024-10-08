@@ -60,11 +60,11 @@ def check_inplace_to_views(computation_trace: Trace) -> dict[VariableInterface, 
             continue
 
         check(
-            prod_bsym.sym not in ltorch._syms_returning_runtime_dependently_views,
+            prod_bsym.sym not in ltorch._syms_that_may_return_views,
             lambda: (
                 f"in-place op of `{bsym.sym.id}` to `{prod_bsym.sym.id}` output `{in_tensor}` is not "
                 f"supported. It's unclear if the output of "
-                f"{tuple(s.id for s in ltorch._syms_returning_runtime_dependently_views)} is "
+                f"{tuple(s.id for s in ltorch._syms_that_may_return_views)} is "
                 f"a copy, a view, or the input itself, as per https://pytorch.org/docs/stable/tensor_view.html"
             ),
             NotImplementedError,
@@ -110,16 +110,16 @@ def _get_prod_bsym_with_arg(
     in_tensor: TensorProxy,
 ) -> BoundSymbol | None:
     from thunder.torch import _syms_returning_views
-    from thunder.torch import _syms_returning_runtime_dependently_views
+    from thunder.torch import _syms_that_may_return_views
 
     def inplace_or_view(bsym) -> bool:
         sym = bsym.sym
         check(
-            sym not in _syms_returning_runtime_dependently_views,
+            sym not in _syms_that_may_return_views,
             lambda: (
                 f"in-place op of `{orig_bsym_of_in_tensor.sym.id}` to `{bsym.sym.id}` output `{in_tensor.name}` is not "
                 f"supported. It's unclear if `{in_tensor.name}`, the output of "
-                f"{tuple(s.id for s in _syms_returning_runtime_dependently_views)} is "
+                f"{tuple(s.id for s in _syms_that_may_return_views)} is "
                 "a copy, a view, or the input itself, as per https://pytorch.org/docs/stable/tensor_view.html\n"
                 "Please use `torch.view` to create a view. Cloning the reshaped tensor before the in-place op is not currently supported.\n"
                 "This error can be skipped with `skip_inplace_functionalization=True` passed to `thunder.jit`.\n"
@@ -164,7 +164,7 @@ def replace_args_with_alias_map(
     arg_to_optional_bsyms: dict[VariableInterface, BoundSymbol] = {}
     for indices in alias_tensor_indices:
         arg = flat_args[indices[0]]
-        for idx in indices[1:]:
+        for idx in filter(lambda idx: idx < len(flat_args), indices[1:]):
             arg_to_replace = flat_args[idx]
             reshaped_arg = arg
             if arg_to_replace.shape != arg.shape:
@@ -176,10 +176,14 @@ def replace_args_with_alias_map(
                         output=reshaped_arg,
                     )
             swap_map_for_aliases[variableify(arg_to_replace)] = reshaped_arg
+    appended_bsyms = {}
     for bsym in computation_trace.bound_symbols:
         for arg in filter(lambda p: isinstance(p, TensorProxy), bsym.flat_args):
-            if v_arg := variableify(arg) in arg_to_optional_bsyms:
-                bsyms.append(arg_to_optional_bsyms[v_arg])
+            reshape_bsym = arg_to_optional_bsyms.get(variableify(arg))
+            if reshape_bsym is not None:
+                if reshape_bsym not in appended_bsyms:
+                    bsyms.append(reshape_bsym)
+                    appended_bsyms[reshape_bsym] = arg
         if replaced_args_map := {
             x.name: swap_map_for_aliases[variableify(x)].name
             for x in filter(lambda p: isinstance(p, TensorProxy), bsym.flat_args)
@@ -283,7 +287,7 @@ def canonicalize_bsym_args(
 
 
 def create_functional_bsym_from(inplace_bsym: BoundSymbol) -> BoundSymbol:
-    from thunder.torch import _inplace_to_out_of_place
+    from thunder.torch import _inplace_to_out_of_place, setitem_, setitem
 
     functional_sym, optional_inplace_arg_index = _inplace_to_out_of_place[inplace_bsym.sym]
     args, kwargs = inplace_bsym.args, inplace_bsym.kwargs
@@ -292,10 +296,15 @@ def create_functional_bsym_from(inplace_bsym: BoundSymbol) -> BoundSymbol:
         flat_args, flat_args_spec = tree_flatten((args, kwargs))
         flat_args[optional_inplace_arg_index] = False
         args, kwargs = tree_unflatten(flat_args, flat_args_spec)
+    functional_output = inplace_bsym.output
+    if inplace_bsym.sym is setitem_:
+        # setitem does not return a value, take the output of the setitem subsymbol
+        assert inplace_bsym.subsymbols[0].sym is setitem
+        functional_output = inplace_bsym.subsymbols[0].output
     functional_bsym = functional_sym.bind(
         *args,
         **kwargs,
-        output=inplace_bsym.output,
+        output=functional_output,
         subsymbols=inplace_bsym.subsymbols,
         _call_ctx=inplace_bsym._call_ctx,
     )
@@ -566,7 +575,10 @@ def apply_functionalization_to_canonicalized_trace(
         if bsym in bsym_to_copy_bsyms:
             functionalized_bsyms.extend(bsym_to_copy_bsyms[bsym])
             copy_bsym = functionalized_bsyms[-1]
-            swap_map_for_return[variableify(copy_bsym.flat_proxy_args[0])] = copy_bsym.flat_proxy_args[1]
+            # wrap_return_value_together_with_argments places all the arguments in the return value
+            # We swap these arguments in the return value with the outputs of copies onto them
+            # This prevents subsequent transforms from ordering the return statement before those copies
+            swap_map_for_return[variableify(copy_bsym.flat_proxy_args[0])] = copy_bsym.flat_proxy_outs[0]
     functionalized_bsyms.append(new_bsyms[-1].from_bsym_swap_proxies(swap_map_for_return))
 
     functionalized_computation_trace.bound_symbols = functionalized_bsyms

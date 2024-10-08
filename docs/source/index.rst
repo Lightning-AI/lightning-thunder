@@ -89,7 +89,6 @@ The compiled function ``jitted_foo`` takes and returns PyTorch tensors, just lik
    Thunder step by step <basic/inspecting_traces>
    The sharp edges <basic/sharp_edges>
    Train a MLP on MNIST <basic/mlp_mnist>
-   Functional jit <notebooks/functional_jit>
    FAQ <basic/faq>
 
 .. toctree::
@@ -144,6 +143,7 @@ API reference
    reference/torch/index
    reference/extend/index
    reference/transforms/index
+   reference/dynamo/index
 
 
 Indices and tables

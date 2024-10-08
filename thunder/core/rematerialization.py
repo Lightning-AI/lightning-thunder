@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from collections import defaultdict
 import time
 
-from igraph import Graph
+import networkx as nx
 
 from thunder.core import prims, utils
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
@@ -16,6 +16,7 @@ from thunder.core.proxies import TensorProxy, variableify, NumberProxy
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import has_tags
 from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
+from thunder.core.transforms import bsym_list_to_dag, toposort_bsym_dag, TOPOSORT_ORDER
 from thunder.core.transform_common import dce, order_proxies
 from thunder.executors.passes import update_fusion_call_ctx
 
@@ -162,6 +163,11 @@ def apply_rematerialization_for_consumer(
         filter(lambda x: x.name not in map(lambda x: x.name, new_consumer_args), consumer.args)
     )
 
+    # In the case where there are no tensors to rematerialize it is
+    # possible to terminate early and return the consumer as it was.
+    if not rematerialized_inputs:
+        return consumer
+
     # Construct a temporary Trace object with subsymbols from the producer.
     trace = TraceCtx(None)
     trace.bound_symbols = producer.subsymbols
@@ -172,15 +178,19 @@ def apply_rematerialization_for_consumer(
     # Some recomputing_symbols might require producer's inputs, so we need to
     # add them to the consumer's inputs.
     # Probably find_min_cut should have returned this information.
-    all_args = tuple(
-        chain.from_iterable(
-            (x.name for x in bsym.flat_args if isinstance(x, ProxyInterface)) for bsym in new_subsymbols
-        )
-    )
+    all_args = set(chain.from_iterable((x.name for x in bsym.flat_proxy_args) for bsym in new_subsymbols))
+    all_outs = set(chain.from_iterable((x.name for x in bsym.flat_proxy_outs) for bsym in new_subsymbols))
     new_consumer_args += tuple(
-        x for x in producer.args if x.name in all_args and x.name not in (x.name for x in new_consumer_args)
+        x
+        for x in producer.args
+        if x.name in all_args and x.name not in (x.name for x in new_consumer_args) and x.name not in all_outs
     )
 
+    # The recomputing_symbols may originate from multiple producers.
+    # Directly adding these symbols at the beginning of the consumer can disrupt the topological order of subsymbols. To ensure
+    # correct execution order, we reorder the new_subsymbols here.
+    _, leaves = bsym_list_to_dag(list(new_subsymbols))
+    new_subsymbols = toposort_bsym_dag(leaves, TOPOSORT_ORDER.BOTTOM_UP)
     proxy_order = order_proxies(new_subsymbols)
     new_consumer_args = tuple(sorted(new_consumer_args, key=lambda x: proxy_order[x.name]))
     new_consumer = replace(consumer, args=new_consumer_args, subsymbols=new_subsymbols)
@@ -307,12 +317,9 @@ def find_cut(
 
     # Create a graph
     edges = []
-    name_to_id = {}
-    capacities = []
 
     def add_edge(src, dst, capacity):
-        edges.append((name_to_id.setdefault(src, len(name_to_id)), name_to_id.setdefault(dst, len(name_to_id))))
-        capacities.append(capacity)
+        edges.append((src, dst, {"capacity": capacity}))
 
     utils.check(
         len(required_consumer_vars) > 0,
@@ -364,23 +371,17 @@ def find_cut(
         for var in symbol.flat_proxy_outs:
             add_edges(var)
 
-    g = Graph(
-        n=len(name_to_id),
-        edges=edges,
-        directed=True,
-        edge_attrs={"capacity": capacities},
-    )
-    source = name_to_id["source"]
-    sink = name_to_id["sink"]
+    g = nx.DiGraph()
+    g.add_edges_from(edges)
 
-    id_to_name = dict(map(reversed, name_to_id.items()))
+    _, (reachable, non_reachable) = nx.minimum_cut(g, "source", "sink")
 
-    g_edges = g.get_edgelist()
-    cut = g.mincut(source, sink, "capacity").cut
+    cut_edges = set()
+    for u, nbrs in ((n, g[n]) for n in reachable):
+        cut_edges.update((u, v) for v in nbrs if v in non_reachable)
+
     cut_nodes = set()
-    for cut_edge_id in cut:
-        u, v = g_edges[cut_edge_id]
-        node_in, node_out = id_to_name[u], id_to_name[v]
+    for node_in, node_out in cut_edges:
         if node_out == "sink":
             continue
         assert node_in.endswith("_in"), node_in

@@ -3,6 +3,7 @@ import sys
 import tempfile
 import textwrap
 import time
+from collections import UserDict
 from collections.abc import Callable
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -1238,6 +1239,88 @@ class LitGPTGeluBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             return torch.nn.functional.gelu(a, approximate=self.config.gelu_approximate)
 
         return foo
+
+
+class LitGPTSwigluBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="config",
+            description="The LitGPT config (str, LitGPTConfig) to use. See the litgpt_model.py for details.",
+        ),
+        BenchmarkArg(
+            name="batchdims",
+            description="The shape (Sequence[int]) of input batch dimensions. The input will have innermost dimensions of (config.seq_len,). Default is (16,).",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A string representing the device to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype of the tensors. Default is thunder.float32.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the input tensors require grad. Default is False.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "litgpt-swiglu"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "LitGPT's 'swiglu' elementwise unary operation."
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(
+        self,
+        config: str | LitGPTConfig,
+        batchdims: Sequence[int],
+        device: str,
+        dtype: dtypes.dtype,
+        requires_grad: bool,
+        use_liger: bool = False,
+    ) -> None:
+        super().__init__()
+
+        self.config = LitGPTConfig.from_name(config) if not isinstance(config, LitGPTConfig) else config
+        self.batchdims = batchdims
+        self.shape: Sequence[int] = batchdims + (self.config.block_size, self.config.intermediate_size)
+        self.device: str = device
+        self.dtype: dtypes.dtype = dtype
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+        self.requires_grad: bool = requires_grad
+        self.devices: list[str] = [device]
+        self.use_liger: bool = use_liger
+
+    def make_batch(self) -> tuple[list, dict]:
+        return (
+            make_tensor(self.shape, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad),
+            make_tensor(self.shape, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad),
+        ), {}
+
+    def fn(self) -> Callable:
+        # https://github.com/Lightning-AI/litgpt/blob/fdf6a120056d1363287285599eb84907f6c589b9/litgpt/model.py#L372
+        def fn(x_fc_1, x_fc_2):
+            return torch.nn.functional.silu(x_fc_1) * x_fc_2
+
+        if self.use_liger:
+            try:
+                from liger_kernel.ops.swiglu import LigerSiLUMulFunction
+
+                return LigerSiLUMulFunction.apply
+            except ImportError:
+                raise ImportError("Requested to use the Liger SiLU Mul function, but the Liger kernel is not available")
+
+        return fn
 
 
 class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
@@ -2823,6 +2906,91 @@ class BatchNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             )
 
         return foo
+
+
+class ResNet50Benchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    def __init__(
+        self,
+        batch_size: int,
+        input_shape: tuple[int, int, int],
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = False,
+    ) -> None:
+        super().__init__()
+
+        # the typical input image size of ResNet50 is (3, 224, 224)
+        self.shape: tuple[int, int, int, int] = (batch_size,) + input_shape
+        self.device: str = device
+        self.dtype: dtypes.dtype = dtype
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+        self.requires_grad: bool = requires_grad
+
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+        a = make(self.shape)
+        return (a,), {}
+
+    def fn(self) -> Callable:
+        from torchvision.models import resnet50
+
+        model = resnet50()
+        model = model.to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
+        return model
+
+
+class TorchbenchBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="module_name",
+            description="The torchbenchmark module name (str).",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A device (str) to run on {'cpu' | 'cuda'}. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the model parameters require grad. Default is True.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "torchbench"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "Torchbench fixture"
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(self, module_name, device: str = "cuda", requires_grad: bool = True):
+        import importlib
+
+        module = importlib.import_module(f"torchbenchmark.models.{module_name}")
+        self.benchmark_cls = getattr(module, "Model", None)
+
+        benchmark = self.benchmark_cls(test="train" if requires_grad else "eval", device=device)
+
+        model, example = benchmark.get_module()
+        self.model = model
+        self.example_input = example
+
+    def make_batch(self) -> tuple[list, dict]:
+        if isinstance(self.example_input, (dict, UserDict)):
+            return [], self.example_input
+        return self.example_input, {}
+
+    def fn(self) -> Callable:
+        return self.model
 
 
 # TODO Add descriptions to the executors when listed, and list them alphabetically

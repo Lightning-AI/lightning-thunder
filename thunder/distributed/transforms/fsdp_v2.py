@@ -62,7 +62,7 @@ class FSDPParamUnpaddingVisitor:
             self.swap_map[variableify(padded_tensor)] = unpadded_tensor
             return VISIT_TYPE.INSERT_AFTER
 
-        if not any(variableify(a) in self.swap_map for a in bsym.flat_args):
+        if not any(variableify(a) in self.swap_map for a in bsym.flat_proxy_args if isinstance(a, TensorProxy)):
             return VISIT_TYPE.NO_OP
         updated_bsym = bsym.from_bsym_swap_proxies(self.swap_map)
         get_tracectx().scopes[-1].append(updated_bsym)
@@ -196,7 +196,7 @@ class FSDPTransform(Transform):
             elif b.device != self.device:
                 new_b = b.to(device=self.device)
                 for n2 in shared_names[n]:
-                    thunder_model._overrides_buffers[n2] = new_p
+                    thunder_model._overrides_buffers[n2] = new_b
                     device_adjustments[n2] = self.device
 
         # Broadcast parameters if requested

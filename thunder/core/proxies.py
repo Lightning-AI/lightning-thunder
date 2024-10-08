@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from enum import auto, Enum
 from numbers import Number
 from typing import Type, Optional, Any, Tuple, List, Union
@@ -14,9 +15,15 @@ import math
 import torch
 
 from thunder.core.compile_data import using_symbolic_values, using_jit
-from thunder.core.interpreter import is_jitting
+from thunder.core.interpreter import is_jitting, ProvenanceRecord, PseudoInst
 from thunder.core.trace import VariableInterface, get_tracectx, TraceCtx
-from thunder.core.baseutils import ProxyInterface, NumberProxyInterface, TensorProxyInterface
+from thunder.core.baseutils import (
+    ProxyInterface,
+    NumberProxyInterface,
+    TensorProxyInterface,
+    TorchAutogradFunctionCtxProxyInterface,
+    TagBase,
+)
 import thunder.core.baseutils as baseutils
 from thunder.core.langctxs import resolve_method, get_langctx
 import thunder.core.devices as devices
@@ -87,10 +94,21 @@ def make_proxy_name(*, name: None | str = None, prefix: None | str = None) -> st
     return trc.make_name(prefix=prefix)
 
 
+class ProxyTag(TagBase):
+    pass
+
+
 # TODO Document this class
 # TODO Support multiple histories
 class Proxy(VariableInterface, ProxyInterface):
-    def __init__(self, name: str | None = None, *, prefix: None | str = None, history: None | tuple = None):
+    def __init__(
+        self,
+        name: str | None = None,
+        *,
+        prefix: None | str = None,
+        history: None | tuple = None,
+        tags: set | None = None,
+    ):
         # Determines the prefix
         if prefix is None:
             if isinstance(self, FloatProxy):
@@ -118,12 +136,19 @@ class Proxy(VariableInterface, ProxyInterface):
                 prefix = "lst"
             elif isinstance(self, DictProxy):
                 prefix = "d"
+            elif isinstance(self, TorchAutogradFunctionCtxProxy):
+                prefix = "fc"
             else:
                 prefix = "p"
 
         self._name = make_proxy_name(name=name, prefix=prefix)
         self._has_weak_name: bool = name is None
         self.history = history
+        self._tags = set(tags) if tags is not None else set()
+
+    @property
+    def tags(self) -> set:
+        return self._tags
 
     @property
     def name(self) -> str:
@@ -138,6 +163,7 @@ class Proxy(VariableInterface, ProxyInterface):
         kwargs = dict(
             name=self.name,
             history=self.history,
+            tags=self.tags,
         )
         kwargs.update(changes)
         return Proxy(**kwargs)
@@ -376,8 +402,8 @@ class Proxy(VariableInterface, ProxyInterface):
 # Unlike many other proxies, this does not mimic the type of the object it wraps
 # TODO RC1 Rename ._o to ._value for consistency
 class AnyProxy(Proxy):
-    def __init__(self, o: Any, /, *, name: str | None = None, history: None | tuple = None):
-        super().__init__(name=name, history=history)
+    def __init__(self, o: Any, /, *, name: str | None = None, history: None | tuple = None, tags: set | None = None):
+        super().__init__(name=name, history=history, tags=tags)
         self._o = o
 
     def __repr__(self) -> str:
@@ -391,17 +417,18 @@ class AnyProxy(Proxy):
         kwargs = dict(
             name=self.name,
             history=self.history,
+            tags=self.tags,
         )
         kwargs.update(changes)
         return AnyProxy(self._o, **kwargs)
 
 
 class StringProxy(Proxy, str):
-    def __new__(cls, s: str, /, *, name: str | None = None, history: None | tuple = None):
+    def __new__(cls, s: str, /, *, name: str | None = None, history: None | tuple = None, tags: set | None = None):
         return str.__new__(cls, s)
 
-    def __init__(self, s: str, /, *, name: str | None = None, history: None | tuple = None):
-        Proxy.__init__(self, name=name, history=history)
+    def __init__(self, s: str, /, *, name: str | None = None, history: None | tuple = None, tags: set | None = None):
+        Proxy.__init__(self, name=name, history=history, tags=tags)
         self.value: str = s
 
     def __str__(self) -> str:
@@ -417,6 +444,7 @@ class StringProxy(Proxy, str):
         kwargs = dict(
             name=self.name,
             history=self.history,
+            tags=self.tags,
         )
         kwargs.update(changes)
         return StringProxy(self.value, **kwargs)
@@ -442,8 +470,8 @@ class StringProxy(Proxy, str):
 # The following class is DEPRECATED, and is only preserved her for experimental feature development
 #   that relies upon it.
 class CollectionProxy(Proxy):
-    def __init__(self, coll: Any, *, name: str | None = None):
-        Proxy.__init__(self, name=name)
+    def __init__(self, coll: Any, *, name: str | None = None, tags: set | None = None):
+        Proxy.__init__(self, name=name, tags=tags)
         self.coll = coll
 
     def collection(self) -> Any:
@@ -454,11 +482,11 @@ class CollectionProxy(Proxy):
 
 
 class TupleProxy(Proxy, tuple):
-    def __new__(cls, tup: tuple, *, name: None | str = None, history: None | tuple = None):
+    def __new__(cls, tup: tuple, *, name: None | str = None, history: None | tuple = None, tags: set | None = None):
         return tuple.__new__(cls, tup)
 
-    def __init__(self, tup: tuple, *, name: None | str = None, history: None | tuple = None):
-        Proxy.__init__(self, name=name, history=history)
+    def __init__(self, tup: tuple, *, name: None | str = None, history: None | tuple = None, tags: set | None = None):
+        Proxy.__init__(self, name=name, history=history, tags=tags)
         self._value = tup
 
     def type_string(self) -> str:
@@ -471,6 +499,7 @@ class TupleProxy(Proxy, tuple):
         kwargs = dict(
             name=self.name,
             history=self.history,
+            tags=self.tags,
         )
         kwargs.update(changes)
         return TupleProxy(self._value, **kwargs)
@@ -492,15 +521,15 @@ class TupleProxy(Proxy, tuple):
 
 
 class ListProxy(Proxy, list):
-    def __new__(cls, lst: list, *, name: None | str = None, history: None | tuple = None):
+    def __new__(cls, lst: list, *, name: None | str = None, history: None | tuple = None, tags: set | None = None):
         l = list.__new__(cls, lst)
 
         # NOTE This intentionally does not call the ListProxy.extend() method
         list.extend(l, lst)
         return l
 
-    def __init__(self, lst: list, *, name: None | str = None, history: None | tuple = None):
-        Proxy.__init__(self, name=name, history=history)
+    def __init__(self, lst: list, *, name: None | str = None, history: None | tuple = None, tags: set | None = None):
+        Proxy.__init__(self, name=name, history=history, tags=tags)
         self._value = lst
 
     def type_string(self, /) -> str:
@@ -513,6 +542,7 @@ class ListProxy(Proxy, list):
         kwargs = dict(
             name=self.name,
             history=self.history,
+            tags=self.tags,
         )
         kwargs.update(changes)
         return ListProxy(self._value, **kwargs)
@@ -552,13 +582,13 @@ class ListProxy(Proxy, list):
 
 
 class DictProxy(Proxy, dict):
-    def __new__(cls, d: dict, *, name: None | str = None, history: None | tuple = None):
+    def __new__(cls, d: dict, *, name: None | str = None, history: None | tuple = None, tags: set | None = None):
         nd = dict.__new__(cls, d)
         dict.update(nd, d)
         return nd
 
-    def __init__(self, d: dict, *, name: None | str = None, history: None | tuple = None):
-        Proxy.__init__(self, name=name, history=history)
+    def __init__(self, d: dict, *, name: None | str = None, history: None | tuple = None, tags: set | None = None):
+        Proxy.__init__(self, name=name, history=history, tags=tags)
         self._value = d
 
     def type_string(self, /) -> str:
@@ -571,6 +601,7 @@ class DictProxy(Proxy, dict):
         kwargs = dict(
             name=self.name,
             history=self.history,
+            tags=self.tags,
         )
         kwargs.update(changes)
         return DictProxy(self._value, **kwargs)
@@ -638,6 +669,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
         python_type: type,
         history: None | tuple = None,
         constraint: None | CONSTRAINT = None,
+        tags: set | None = None,
     ):
         self.value = value
         self.python_type = python_type
@@ -645,7 +677,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
             constraint = CONSTRAINT.DYNAMIC
         self.constraint = constraint
 
-        Proxy.__init__(self, name, history=history)
+        Proxy.__init__(self, name, history=history, tags=tags)
 
     # NOTE: Python numbers hash to themselves, and this mimics that behavior
     def __hash__(self) -> int:
@@ -658,6 +690,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
         kwargs = dict(
             name=self.name,
             history=self.history,
+            tags=self.tags,
             value=self.value,
             python_type=self.python_type,
             constraint=self.constraint,
@@ -1039,8 +1072,17 @@ def pytype(x: Proxy) -> type | None:
 
 # TODO RC1 Update Proxy number inits to be value, /, *, name, history
 class ComplexProxy(NumberProxy):
-    def __init__(self, name=None, value=None, history: None | tuple = None, constraint: None | CONSTRAINT = None):
-        NumberProxy.__init__(self, name=name, value=value, python_type=complex, history=history, constraint=constraint)
+    def __init__(
+        self,
+        name=None,
+        value=None,
+        history: None | tuple = None,
+        constraint: None | CONSTRAINT = None,
+        tags: set | None = None,
+    ):
+        NumberProxy.__init__(
+            self, name=name, value=value, python_type=complex, history=history, constraint=constraint, tags=tags
+        )
 
     def replace(self, **changes):
         r"""Return a copy of the ComplexProxy object with new values for the specified fields as given to the constructor as arguments.
@@ -1049,6 +1091,7 @@ class ComplexProxy(NumberProxy):
         kwargs = dict(
             name=self.name,
             history=self.history,
+            tags=self.tags,
             value=self.value,
             constraint=self.constraint,
             __class__=self.__class__,  # undocumented on purpose
@@ -1071,11 +1114,12 @@ class IntegerProxy(NumberProxy):
         value=None,
         history: None | tuple = None,
         constraint: None | CONSTRAINT = None,
+        tags: set | None = None,
     ):
         # NOTE bools are also integers in Python
         python_type = bool if isinstance(value, bool) else int
         NumberProxy.__init__(
-            self, name=name, value=value, python_type=python_type, history=history, constraint=constraint
+            self, name=name, value=value, python_type=python_type, history=history, constraint=constraint, tags=tags
         )
 
     def replace(self, **changes):
@@ -1085,6 +1129,7 @@ class IntegerProxy(NumberProxy):
         kwargs = dict(
             name=self.name,
             history=self.history,
+            tags=self.tags,
             value=self.value,
             constraint=self.constraint,
             __class__=self.__class__,
@@ -1109,8 +1154,17 @@ class IntegerProxy(NumberProxy):
 
 # TODO Review dtype conversions
 class FloatProxy(NumberProxy):
-    def __init__(self, name=None, value=None, history: None | tuple = None, constraint: None | CONSTRAINT = None):
-        NumberProxy.__init__(self, name=name, value=value, python_type=float, history=history, constraint=constraint)
+    def __init__(
+        self,
+        name=None,
+        value=None,
+        history: None | tuple = None,
+        constraint: None | CONSTRAINT = None,
+        tags: set | None = None,
+    ):
+        NumberProxy.__init__(
+            self, name=name, value=value, python_type=float, history=history, constraint=constraint, tags=tags
+        )
 
     def replace(self, **changes):
         r"""Return a copy of the FloatProxy object with new values for the specified fields as given to the constructor as arguments.
@@ -1119,6 +1173,7 @@ class FloatProxy(NumberProxy):
         kwargs = dict(
             name=self.name,
             history=self.history,
+            tags=self.tags,
             value=self.value,
             constraint=self.constraint,
             __class__=self.__class__,  # undocumented on purpose
@@ -1150,6 +1205,7 @@ def _infer_tensor_properties(
     device: devices.Device | None = None,
     dtype: dtypes.dtype | None = None,
     requires_grad: bool | None = None,
+    grad: TensorProxy | None = None,
     distparallel_type: DistParallelType | None = None,
     thunder_fsdp_padding_size: int | None = None,
 ):
@@ -1157,6 +1213,7 @@ def _infer_tensor_properties(
     _device = None
     _dtype = None
     _requires_grad: None | bool = None
+    _grad = None
     _dist_parallel_type = DistParallelType.NONE
     _thunder_fsdp_padding_size = None
 
@@ -1166,6 +1223,7 @@ def _infer_tensor_properties(
         _device = like.device
         _dtype = like.true_dtype
         _requires_grad = like.requires_grad
+        _grad = like.grad
         _dist_parallel_type = getattr(like, "distparallel_type", DistParallelType.NONE)
 
     if shape is not None:
@@ -1177,6 +1235,8 @@ def _infer_tensor_properties(
     _dtype = dtypes.numbertype_to_dtype(_dtype) if dtypes.is_numbertype(_dtype) else _dtype
     _requires_grad = requires_grad if requires_grad is not None else _requires_grad
     _requires_grad = False if not dtypes.is_inexact_dtype(_dtype) else _requires_grad
+    _grad = grad if grad is not None else _grad
+    _grad = None if not _requires_grad else _grad
     _dist_parallel_type = distparallel_type if distparallel_type is not None else _dist_parallel_type
     _thunder_fsdp_padding_size = (
         thunder_fsdp_padding_size if thunder_fsdp_padding_size is not None else _thunder_fsdp_padding_size
@@ -1184,10 +1244,14 @@ def _infer_tensor_properties(
 
     # dynamic shape not yet enabled, otherwise, the bake in should be guarded with if not using_symbolic_values():
     # dynamic shape support is currently block by #471 https://github.com/Lightning-AI/lightning-thunder/issues/471
-    _shape = tuple(pyval(x) for x in _shape)
-
-    # Computes derived properties
-    _numel = reduce(operator.mul, _shape, 1)
+    if not using_symbolic_values():
+        _shape = tuple(pyval(x) for x in _shape)
+        # Computes derived properties
+        _numel = reduce(operator.mul, _shape, 1)
+    else:
+        # deferred computation of numel
+        # TODO: similar to how `shape` is handled, this should be CSE or lifted for efficiency
+        _numel = lambda tp: reduce(operator.mul, tp.shape, 1)
 
     # TODO Alias rank to ndim?
     _ndim = len(_shape)
@@ -1220,6 +1284,7 @@ def _infer_tensor_properties(
         _numel,
         _ndim,
         _requires_grad,
+        _grad,
         _dist_parallel_type,
         _thunder_fsdp_padding_size,
     )
@@ -1237,8 +1302,9 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
         dtype: dtypes.dtype | None = None,
         prefix: None | str = None,
         history: None | tuple = None,
+        tags: set | None = None,
     ):
-        super().__init__(name, prefix=prefix, history=history)
+        super().__init__(name, prefix=prefix, history=history, tags=tags)
 
         # NOTE FutureTensorProxies never require grad
         (
@@ -1249,6 +1315,7 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
             self._numel,
             self._ndim,
             self._requires_grad,
+            _,  # grad
             _,  # distparallel_type
             _,  # thunder_fsdp_padding_size
         ) = _infer_tensor_properties(
@@ -1291,6 +1358,10 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
     def requires_grad(self):
         return self._requires_grad
 
+    @property
+    def grad(self):
+        return None  # FutureTensorProxies never require grad
+
     def __repr__(self):
         return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self.shape})>'
 
@@ -1318,6 +1389,7 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
             numel,
             ndim,
             requires_grad,
+            _,  # grad
             _,  # distparallel_type
             _,  # thunder_fsdp_padding_size
         ) = _infer_tensor_properties(
@@ -1329,8 +1401,10 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
         )
         name = changes.get("name", self.name)
         history = changes.get("history", self.history)
+        tags = changes.get("tags", self.tags)
         return FutureTensorProxy(
             name=name,
+            tags=tags,
             shape=shape,
             device=device,
             dtype=dtype,
@@ -1349,12 +1423,14 @@ class TensorProxy(Proxy, TensorProxyInterface):
         device: devices.Device | None = None,
         dtype: dtypes.dtype | None = None,
         requires_grad: bool | None = None,
+        grad: TensorProxy | None = None,
         prefix: None | str = None,
         distparallel_type: DistParallelType | None = None,
         history: None | tuple = None,
+        tags: set | None = None,
         thunder_fsdp_padding_size: int | None = None,
     ):
-        super().__init__(name, prefix=prefix, history=history)
+        super().__init__(name, prefix=prefix, history=history, tags=tags)
 
         (
             self._shape,
@@ -1364,6 +1440,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
             self._numel,
             self._ndim,
             self._requires_grad,
+            self._grad,
             self._distparallel_type,
             self._thunder_fsdp_padding_size,
         ) = _infer_tensor_properties(
@@ -1372,6 +1449,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
             device,
             dtype,
             requires_grad,
+            grad,
             distparallel_type,
             thunder_fsdp_padding_size,
         )
@@ -1402,6 +1480,10 @@ class TensorProxy(Proxy, TensorProxyInterface):
     @property
     def requires_grad(self):
         return self._requires_grad
+
+    @property
+    def grad(self):
+        return self._grad
 
     @property
     def distparallel_type(self):
@@ -1437,6 +1519,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
             numel,
             ndim,
             requires_grad,
+            grad,
             distparallel_type,
             thunder_fsdp_padding_size,
         ) = _infer_tensor_properties(
@@ -1445,13 +1528,16 @@ class TensorProxy(Proxy, TensorProxyInterface):
             changes.get("device", self._device if like is None else None),
             changes.get("dtype", self._dtype if like is None else None),
             changes.get("requires_grad", self._requires_grad if like is None else None),
+            changes.get("grad", self._grad if like is None else None),
             changes.get("distparallel_type", self._distparallel_type if like is None else None),
             changes.get("thunder_fsdp_padding_size", self._thunder_fsdp_padding_size if like is None else None),
         )
         name = changes.get("name", self.name)
         history = changes.get("history", self.history)
+        tags = changes.get("tags", self.tags)
         return TensorProxy(
             name=name,
+            tags=tags,
             shape=shape,
             device=device,
             dtype=dtype,
@@ -1491,7 +1577,9 @@ class TensorProxy(Proxy, TensorProxyInterface):
                     return int(self)
 
             if attr == "numel":
-                return _Numel(self._numel)
+                if isinstance(self._numel, int):
+                    return _Numel(self._numel)
+                return method_or_value(self)
             return partial(method_or_value, self)
 
         return method_or_value
@@ -1528,6 +1616,10 @@ class TensorProxy(Proxy, TensorProxyInterface):
     def __getitem__(self, key):
         method = resolve_method("getitem", self, key)
         return method(self, key)
+
+    def __setitem__(self, key, value):
+        method = resolve_method("setitem_", self, key, value)
+        return method(self, key, value)
 
     #
     # Elementwise unary operators
@@ -1779,6 +1871,63 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(self)
 
 
+class TorchAutogradFunctionCtxProxy(Proxy, TorchAutogradFunctionCtxProxyInterface):
+    def __init__(
+        self,
+        ctx: torch.autograd.function.FunctionCtx,
+        /,
+        *,
+        name: str | None = None,
+        history: tuple[Any, ...] | None = None,
+        tags: set[ProxyTag, ...] | None = None,
+    ):
+        self._ctx = ctx
+        self._tensors: list[TensorProxy] = []
+        self._const_for_backward: dict[str, Any] = {}
+        super().__init__(name=name, history=history, tags=tags)
+
+    def type_string(self) -> str:
+        return "TorchAutogradFunctionCtxProxy"
+
+    def __repr__(self) -> str:
+        return f"<TorchAutogradFunctionCtxProxy '{self.name}', '{self.saved_tensors=}', '{self._const_for_backward=}'>"
+
+    def replace(self, **changes):
+        kwargs = dict(
+            name=self.name,
+            history=self.history,
+            tags=self.tags,
+        )
+        kwargs.update(**changes)
+        return TorchAutogradFunctionCtxProxy(
+            self._ctx,
+            **kwargs,
+        )
+
+    @property
+    def saved_tensors(self) -> tuple[TensorProxy, ...]:
+        return tuple(self._tensors)
+
+    @property
+    def saved_consts(self) -> tuple[Any, ...]:
+        return tuple(self._const_for_backward.values())
+
+    def save_for_backward(self, *tensors):
+        self._tensors.extend(tensors)
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if hasattr(self, "_const_for_backward") and name not in {
+            "_name",
+            "_has_weak_name",
+            "history",
+            "_tags",
+            "_const_for_backward",
+            "_tensors",
+        }:
+            self._const_for_backward[name] = value
+
+
 #
 # Helpers for creating and working with proxies
 #
@@ -1791,23 +1940,49 @@ _cls_to_number_proxy_map = {
 }
 
 
+# TODO: move this function to jit_ext.py
 def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple = None) -> TensorProxy:
+    from thunder.core.interpreter import ProvenanceRecord, PseudoInst, wrap_const
+
     if hasattr(t, "_thunder_device"):
         torch_device = t._thunder_device
     else:
         torch_device = t.device
     device = devices.to_device(torch_device)
     dtype = dtypes.to_dtype(t.dtype)
+
+    grad = None
+    if t.is_leaf and t.grad is not None:
+        grad_pr = None
+        if history is not None:
+            attr_pr = ProvenanceRecord(inst=PseudoInst.CONSTANT, inputs=[], value="grad")
+            grad_pr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[history, attr_pr])
+        grad = tensorproxy(t.grad, name=f"{name}_grad", history=grad_pr)
+
     # See Note [DistributedDataParallel and distparallel_type]
     distparallel_type = getattr(t, "distparallel_type", None)
     _thunder_fsdp_padding_size = getattr(t, "_thunder_fsdp_padding_size", None)
+    if using_symbolic_values():
+        shape_attr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[copy.copy(history), wrap_const("shape").provenance])
+        shape = tuple(
+            IntegerProxy(
+                None,
+                s,
+                history=ProvenanceRecord(PseudoInst.BINARY_SUBSCR, inputs=[shape_attr, wrap_const(idx).provenance]),
+                constraint=CONSTRAINT.CONSTRAINABLE,
+            )
+            for idx, s in enumerate(t.shape)
+        )
+    else:
+        shape = tuple(t.shape)
     # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
     return TensorProxy(
         name,
-        shape=tuple(t.shape),
+        shape=tuple(shape),
         device=device,
         dtype=dtype,
         requires_grad=t.requires_grad,
+        grad=grad,
         distparallel_type=distparallel_type,
         history=history,
         thunder_fsdp_padding_size=_thunder_fsdp_padding_size,
@@ -1880,6 +2055,10 @@ def proxy(x: Any, *, name: str | None = None, history: None | tuple = None) -> A
     if isinstance(x, torch.dtype):
         return AnyProxy(x, name=name, history=history)
     if isinstance(x, torch.device):
+        return AnyProxy(x, name=name, history=history)
+    if isinstance(x, torch.autograd.function.FunctionCtx):
+        return TorchAutogradFunctionCtxProxy(x, name=name, history=history)
+    if isinstance(x, torch.memory_format):
         return AnyProxy(x, name=name, history=history)
 
     return x

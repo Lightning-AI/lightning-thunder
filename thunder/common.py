@@ -5,6 +5,7 @@ from collections import deque, defaultdict
 import time
 from functools import wraps
 from io import StringIO
+from weakref import WeakValueDictionary
 
 from thunder.core.options import (
     CACHE_OPTIONS,
@@ -39,7 +40,7 @@ import thunder.distributed as dist
 import thunder.torch as ltorch  # we need to import thunder.torch before the below for import ordering...
 from thunder.extend import Executor, get_default_executors, get_always_executors, OperatorExecutor, add_executor_lists
 import thunder.executors as executors
-from thunder.core.transforms import autocast
+from thunder.transforms.autocast import autocast
 from thunder.core.dtypes import to_dtype
 
 import torch as torch
@@ -86,7 +87,7 @@ class CompileStats:
         last_computation_execution_start (int):
         last_computation_execution_stop (int):
         cache (dict):
-        interpreter_cashe (list):
+        interpreter_cache (list):
         calls (int):
         cache_hits (int):
         cache_misses (int):
@@ -251,9 +252,9 @@ class CompileData:
 
         self.is_module = isinstance(self.fn, torch.nn.Module)
 
-        # to not introduce (more) ref cycles, make this int->ThunderModule with
+        # to not introduce (more) ref cycles, use WeakValueDictionary and map from int->ThunderModule
         # but the accessor has to check if tmm[id(module)]._module is module
-        self._thunder_module_map = {}
+        self._thunder_module_map = WeakValueDictionary()
 
         # We set the process_group_for_ddp attribute on the module when
         # thunder.distributed.ddp(module) is called.
@@ -290,6 +291,13 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs, *, rename_proxies: bool
             return proxy(x, name=name)
 
         if isinstance(x, Proxy):
+            # register proxy name used by NumberProxies in TensorProxy.shape
+            if isinstance(x, TensorProxy):
+                for s_p in filter(lambda s: isinstance(s, Proxy), x.shape):
+                    # TODO need to avoid name conflict here, since s_p.name
+                    # could have conflicted with something defined earlier in
+                    # the trace.
+                    get_tracectx().names.add(s_p.name)
             if not rename_proxies:
                 get_tracectx().names.add(x.name)
                 return x
@@ -497,6 +505,9 @@ def cache_get(
 #   been constructed.
 # If include_return_statement is True then the trace will terminate with a RETURN operation
 # If include_return_statement is False then the trace will end without an explicit RETURN
+# If `_used_names` is provided, then these names will not appear in the newly constructed trace.
+# This arguments is useful, if we don't want certain names to appear in the new trace
+# Example: We don't want names from forward trace to appear in backward trace unless passed as input.
 # TODO Consider modeling additional calls to trace()
 # TODO RC1 Change the way this is called to be trace(langctx, inline_trace, rename_proxies...)(fn, *args, **kwargs)
 #   to separate the traced function's args and kwargs from this function's kwargs
@@ -510,6 +521,7 @@ def trace(
     include_return_statement: bool = True,
     use_dce: bool = True,
     insert_ddp_syncs: bool = False,
+    _used_names: set[str] | None = None,
 ) -> Callable:
     @make_opaque
     def _trace(
@@ -532,6 +544,14 @@ def trace(
                 return fn(*args, **kwargs)
 
             trace = TraceCtx(fn)
+
+            # Add `_used_names` to the trace, so that
+            # they won't be used for proxies generated
+            # while tracing.
+            if _used_names is not None:
+                for name in _used_names:
+                    trace.add_name(name)
+
             tracectx_tok = set_tracectx(trace)
 
             proxyargs, proxykwargs = args, kwargs
@@ -675,178 +695,6 @@ def _execute_trace(
 #   Today all tensor outputs will be torch tensors, even if the input was NumPy arrays
 #   provided in the NumPy language ctx -- what should the outputs be?  Should we provide
 #   a helper to convert torch tensors to NumPy arrays on output?
-
-
-# NOTE: Do not use this function and do not update it.
-# Use `thunder.jit` instead.
-def _create_callable(
-    cd: CompileData,
-    cs: CompileStats,
-) -> Callable:
-    transforms = []
-    transforms = []
-    _using_grad_transform = False
-
-    @wraps(cd.fn)
-    def _fn(*args, **kwargs) -> tuple[Any, list[TraceCtx]]:
-        cs.last_trace_host_start = time.perf_counter_ns()
-        cs.calls += 1
-
-        # autocast related operations
-        is_autocast_enabled = False
-        autocast_key = None
-        if torch.is_autocast_enabled() or torch.is_autocast_cpu_enabled():
-            if torch.is_autocast_enabled() and torch.is_autocast_cpu_enabled():
-                raise NotImplementedError(
-                    "thunder.autocast does not support torch.is_autocast_enabled() and torch.is_autocast_cpu_enabled() simultaneously at this moment."
-                )
-            is_autocast_enabled = True
-            autocast_gpu_dtype = to_dtype(torch.get_autocast_gpu_dtype())
-            autocast_cpu_dtype = to_dtype(torch.get_autocast_cpu_dtype())
-            autocast_key = _make_autocast_cache_key(
-                torch.is_autocast_enabled(), torch.is_autocast_cpu_enabled(), autocast_gpu_dtype, autocast_cpu_dtype
-            )
-            autocast_thunder_dtype = autocast_cpu_dtype if torch.is_autocast_cpu_enabled() else autocast_gpu_dtype
-
-        is_ddp_enabled = getattr(cd.fn, "use_ddp", False)
-        is_fsdp_enabled = getattr(cd.fn, "use_fsdp", False)
-        no_grad_sync = False
-        if is_ddp_enabled or is_fsdp_enabled:
-            from thunder.distributed import get_skip_data_parallel_grad_sync
-
-            no_grad_sync = get_skip_data_parallel_grad_sync()
-        distributed_key = _make_distributed_cache_key(no_grad_sync)
-
-        # Tries to lookup a callable in a cache
-        # TODO Return the previous traces when caching
-        cs.last_trace_cache_start = time.perf_counter_ns()
-        if cd.cache_option is CACHE_OPTIONS.SAME_INPUT and cs.last_executed is not None:
-            # TODO Update _last_traces?
-            # Updates statistics before early termination
-            cs.cache_hits += 1
-            cs.last_trace_cache_stop = time.perf_counter_ns()
-            cs.last_trace_tracing_start = -1
-            cs.last_trace_tracing_stop = -1
-            cs.last_trace_host_execution_start = time.perf_counter_ns()
-            result = cs.last_executed(*args, **kwargs)
-            cs.last_trace_host_execution_stop = time.perf_counter_ns()
-            cs.last_trace_host_stop = cs.last_trace_host_execution_stop
-            return result
-        if cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES:
-            c, _ = cache_get(cs.cache, args[cd.num_constant_args :], kwargs, autocast_key, distributed_key)
-            if c is not None:
-                # Updates statistics before early termination
-                cs.cache_hits += 1
-                cs.last_executed = c
-                cs.last_trace_cache_stop = time.perf_counter_ns()
-                cs.last_trace_tracing_start = -1
-                cs.last_trace_tracing_stop = -1
-                cs.last_trace_host_execution_start = time.perf_counter_ns()
-                result = c(*args, **kwargs)
-                cs.last_trace_host_execution_stop = time.perf_counter_ns()
-                cs.last_trace_host_stop = cs.last_trace_host_execution_stop
-                return result
-        cs.cache_misses += 1
-        cs.last_trace_cache_stop = time.perf_counter_ns()
-
-        # Applies the autocast transform if PyTorch's autocast behavior is enabled
-        processed_function = cd.fn if not is_autocast_enabled else autocast(cd.fn, dtype=autocast_thunder_dtype)
-
-        # Resets use of compile flags
-        cs.last_compile_reasons = defaultdict(list)
-        with compile_data_and_stats(cd, cs):
-            traces: list[TraceCtx] = []
-            cs.last_traces = traces
-            cs.last_backward_traces = []
-            # Determines whether to use autograd.Function or not
-            # autograd.Function (which supports calling .backward() in PyTorch) is used when:
-            #   1) The grad() transform is not applied
-            #   2) At least one input tensor (or tensor proxy) requires grad
-            if not _using_grad_transform:
-                flat_args, _ = tree_flatten((args, kwargs))
-                tensor_cls = (torch.Tensor, TensorProxy)
-                requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in flat_args)
-                if not cd.disable_torch_autograd_support and requires_grad:
-                    raise NotImplementedError(
-                        "torch.autograd.Function integration is not supported in thunder.compile(). "
-                        "Please use thunder.jit() to compile functions that require torch.autograd.Function."
-                    )
-
-            # TODO Revisit jit() behavior when hit in a trace ctx
-            #   This will inline the invocation of compile into the current
-            #   trace (UNLESS there was a cache hit, per above)
-            #   This interaction between the cache and tracing seems odd
-            # TODO Support a practitioner who wants to explicitly and separately compile
-            #   part of the program
-
-            # Acquires the trace OR inlines the trace into an existing trace and
-            #   returns the (proxied) result of the operation
-            cs.last_trace_tracing_start = time.perf_counter_ns()
-            trc_or_result = trace(compile_data=cd)(processed_function, *args, **kwargs)
-            cs.last_trace_tracing_stop = time.perf_counter_ns()
-
-            # Checks for inlined transforms
-            current_trace = get_tracectx()
-            check(
-                current_trace is None or len(transforms) == 0,
-                lambda: f"Inlining transformed traces is not yet supported",
-                exception_type=NotImplementedError,
-            )
-
-            # Returns the (proxied) result if this call to compile was inlined
-            if current_trace is not None:
-                result = trc_or_result
-                return result
-
-            # Starts recording a sequence of traces (this is not inlined)
-            trc: TraceCtx = trc_or_result
-            traces.append(trc)
-
-            # Applies transforms
-            for transform in transforms:
-                trc = transform.transform_trace(trc, executors_list=cd.executors_list)
-                traces.append(trc)
-
-            #
-            # Executes the trace, then updates the CompiledData and possibly
-            #   updates a cache
-            #
-            cs.last_trace_host_execution_start = time.perf_counter_ns()
-            result, c, extraces = _execute_trace(
-                trc,
-                args=args,
-                kwargs=kwargs,
-                compile_data=cd,
-                transforms=transforms,
-            )
-            cs.last_trace_host_execution_stop = time.perf_counter_ns()
-
-            traces.extend(extraces)
-            cs.last_traces = traces
-            cs.last_executed = c
-
-            # (Possibly) Updates the cache
-            if cd.cache_option is CACHE_OPTIONS.CONSTANT_VALUES:
-                cache_put(
-                    cs.cache,
-                    c,
-                    traces,
-                    args[cd.num_constant_args :],
-                    kwargs,
-                    autocast_key=None,
-                    distributed_key=distributed_key,
-                )
-
-            cs.last_trace_host_stop = time.perf_counter_ns()
-            return result
-
-    # NOTE is_module is False
-    _fn._lc_cd = cd
-    _fn._lc_cs = cs
-    _fn._lc_transforms = transforms
-    _fn._using_grad_transform = _using_grad_transform
-
-    return _fn
 
 
 def transform_to_torch_types(trace: TraceCtx):

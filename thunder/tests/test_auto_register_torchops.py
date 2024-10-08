@@ -8,7 +8,7 @@ import thunder.torch.default_torch_ops as ops
 from thunder.torch import _get_torch_function_name
 import torch
 
-from thunder.tests.framework import requiresCUDA, TorchExecutor
+from thunder.tests.framework import requiresCUDA, TorchExecutor, instantiate, NOTHING
 from thunder.tests.make_tensor import make_tensor
 from thunder.tests.opinfos import get_opinfo, OpInfo
 from thunder.tests.test_einops import skipIfNoCUDA
@@ -111,6 +111,32 @@ def test_torch_ops_trace(device, requires_grad, op_info):
                     )
 
 
+def test_pickle_auto_registered_ops():
+    import dill as pickle
+
+    def fn(x):
+        return torch.positive(x)
+
+    jfn = thunder.jit(fn)
+    jfn(torch.randn(1))
+    trace = thunder.last_traces(jfn)[0]
+
+    assert str(pickle.loads(pickle.dumps(trace))) == str(trace)
+
+
+# Tests the same function name in torch and torch.Tensor namespace uses the same symbol
+def test_same_symbol_for_same_function_name():
+    def fn(a):
+        return torch.positive(a.positive())
+
+    jf = thunder.jit(fn)
+    jf(torch.randn(1))
+    lt = thunder.last_traces(jf)[0]
+    s1 = lt.bound_symbols[1].sym  # symbol of torch.Tensor.positive
+    s2 = lt.bound_symbols[2].sym  # symbol of torch.positive
+    assert s1 == s2, f"{s1} != {s2}"
+
+
 # Replace manual registration of some operations with automatic registration for network test cases
 _skip_ops_nanogpt = [
     get_opinfo("layer_norm"),
@@ -129,15 +155,12 @@ _tmp_general_jit_lookaside_map = dict(thunder.core.jit_ext._general_jit_lookasid
 list(_tmp_general_jit_lookaside_map.pop(k.torch_reference, None) for k in _disable_opinfos)
 _tmp_torch_to_thunder_function_map = dict(thunder.torch._torch_to_thunder_function_map)
 list(_tmp_torch_to_thunder_function_map.pop(k.torch_reference, None) for k in _disable_opinfos)
-_tmp_minimal_lookaside_map = dict(thunder.core.jit_ext._minimal_lookaside_map)
-list(_tmp_minimal_lookaside_map.pop(k.torch_reference, None) for k in _disable_opinfos)
 from thunder.torch import register_default_torch_op
 
 
 # mock all the global variables that are modified during registration
 @patch.dict(thunder.core.jit_ext._general_jit_lookaside_map, _tmp_general_jit_lookaside_map, clear=True)
 @patch.dict(thunder.torch._torch_to_thunder_function_map, _tmp_torch_to_thunder_function_map, clear=True)
-@patch.dict(thunder.core.jit_ext._minimal_lookaside_map, _tmp_minimal_lookaside_map, clear=True)
 @patch.dict(thunder.executors.torchex.ex._implmap, {})
 @patch.dict(thunder.executors.torchex.ex._opmap, {})
 @patch.dict(thunder.core.transforms.augmented_forward_impls, {})
@@ -206,3 +229,22 @@ class TestFallbackToTorch:
         for op in _skip_ops_alexnet:
             vjp_op_name = f"{op.name}_vjp"
             assert any(bsym.sym.name == vjp_op_name for bsym in bwd_trcs[-1].bound_symbols)
+
+
+@instantiate(dtypes=NOTHING)
+def test_query_autoreg_ops(executor, device: str, _):
+    def fn(a):
+        x = torch.special.gammaln(torch.special.zeta(torch.special.gammaln(a), a))
+        return torch.special.erf(x)
+
+    def fn_none(a):
+        return torch.nn.functional.relu(a)
+
+    expected = ({"torch.special.erf", "torch.special.gammaln"}, set())
+    for fn, expect in zip((fn, fn_none), expected):
+        cfn = executor.make_callable(fn)
+
+        a = make_tensor((2, 2), device=device, dtype=torch.float32)
+        cfn(a)
+        ops = thunder.get_auto_registered_torch_op_names(cfn)
+        assert expect == ops

@@ -1,5 +1,5 @@
 import math
-from functools import reduce
+from functools import partial, reduce
 from numbers import Number
 from typing import Union, List, Optional, Any
 from collections.abc import Callable
@@ -65,11 +65,13 @@ class clangop:
 #
 
 
-# Checks a tensor's shape and metadata (for use with "constant value" caching)
+# Checks a tensor's shape and metadata (for use with cache check)
 @clangop()
 def check_tensor_shape_and_metadata(t: TensorProxy, /) -> None:
     return prims.check_tensor_shape_and_metadata(
         t,
+        # replace Proxy entries with `-1`s as wild card, as we any value is
+        # allowed for proxy entries
         tuple(t.shape),
         t.device.device_str(),
         dtypes.to_torch_dtype(t.dtype),
@@ -277,7 +279,7 @@ def full(
         dtype = dtypes.numbertype_to_dtype(dtypes.to_dtype(fill_value))
     device = devices.to_device(device)
 
-    return prims.full(shape, fill_value, device=device, dtype=dtype)
+    return prims.full(tuple(shape), fill_value, device=device, dtype=dtype)
 
 
 @clangop()
@@ -946,6 +948,16 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
     return res
 
 
+@clangop()
+def copy_with_setitem(a: TensorLike, key, value: TensorLike) -> TensorLike:
+    sig = _get_indexing_signature(key)
+    utils.check(
+        (a.ndim == 0 and (len(sig.basic) + len(sig.advanced)) <= 1) or (a.ndim >= len(sig.basic) + len(sig.advanced)),
+        lambda: f"{key=} tries to index more dimensions than {a.ndim=}",
+    )
+    return prims.copy_with_setitem(a, key, value)
+
+
 # NOTE Advanced indexing is triggered whenever:
 #   - key is a sequence but not a tuple
 #   - key is an tensor
@@ -962,6 +974,11 @@ def getitem(a: TensorLike, /, key) -> TensorLike:
         (a.ndim == 0 and (len(sig.basic) + len(sig.advanced)) <= 1) or (a.ndim >= len(sig.basic) + len(sig.advanced)),
         lambda: f"{key=} tries to index more dimensions than {a.ndim=}",
     )
+
+    # FIXME: This is a quick WAR to avoid accessing shape attribute of a without
+    # definition. This needs to be done properly somewhere else. See issue
+    # github.com/Lightning-AI/lightning-thunder/issues/1253
+    old_shape = prims.shape(a)
 
     # We do not support mixing basic and advanced indexing together yet,
     # but a very special case when there is a single advanced index which
@@ -1225,7 +1242,7 @@ def index_put(
     )
 
     # broadcast all index tensors together
-    broadcast_indices = maybe_broadcast(*indices)
+    broadcast_indices = maybe_broadcast(*indices, treat_cpu_scalar_tensors_as_numbers=False)
 
     # expand values
     # the expand rule is: Left-align the input shape and the index shape,
@@ -1387,14 +1404,17 @@ def matrix_transpose(a: TensorProxy) -> TensorProxy:
 
 # TODO: add scalar support
 # TODO: review hasattr pattern
+# NOTE: the tensor is not broadcasted if it is a CPU scalar tensor and treat_cpu_scalar_tensors_as_numbers=True
 @clangop()
-def maybe_broadcast(*args):
+def maybe_broadcast(*args, treat_cpu_scalar_tensors_as_numbers=True):
     """Returns tensors with the same shape, possibly broadcasting inputs to the result shape."""
 
     # Computes common shape
     common_shape = compute_broadcast_shape(*map(lambda t: t.shape if hasattr(t, "shape") else None, args))
 
     def _maybe_broadcast(x, shape):
+        if treat_cpu_scalar_tensors_as_numbers and utils.is_cpu_scalar_tensor(x):
+            return x
         if hasattr(x, "shape"):
             if not utils.same_shape(x.shape, common_shape):
                 return expand(x, common_shape)
@@ -1692,6 +1712,7 @@ def sigmoid(a):
 
 
 # TODO Review type promotionkind for sign
+@clangop()
 def sign(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.sign, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.PRESERVE
@@ -1699,6 +1720,7 @@ def sign(a):
 
 
 # TODO Add supported dtypes to exclude complex
+@clangop()
 def signbit(a):
     if dtypes.is_unsigned_dtype(dtypes.to_dtype(a)):
         return full_like(a, False, dtype=dtypes.bool8)
@@ -1748,6 +1770,7 @@ def tanh(a):
     )
 
 
+@clangop()
 def trunc(a: TensorLike | Number) -> TensorLike | Number:
     # Short-circuits on unsigned inputs (which are already trivially truncated)
     if dtypes.is_exact_dtype(dtypes.to_dtype(a)):
@@ -2056,8 +2079,25 @@ def zeta(a, b):
 
 
 #
-# Conditional operators
+# Elementwise ternary operations
 #
+
+
+@clangop()
+def lerp(start: TensorLike, end: TensorLike, weight: Number | TensorLike) -> TensorLike:
+    inputs = (start, end, weight)
+    # torch.lerp does not promote types and only accepts floating-point inputs
+    computation_dtype, result_dtype = utils.elementwise_type_promotion(
+        *inputs, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
+    )
+
+    inputs = maybe_broadcast(*inputs)
+    inputs = map(partial(maybe_convert_to_dtype, dtype=computation_dtype), inputs)
+
+    result = prims.lerp(*inputs)
+    result = maybe_convert_to_dtype(result, result_dtype)
+
+    return result
 
 
 @clangop()

@@ -20,7 +20,7 @@ from thunder.core.interpreter import is_jitting, InterpreterError
 from thunder.tests import litgpt_model
 from thunder.tests.framework import version_between, requiresCUDA
 import thunder.clang as clang
-from thunder.core.options import INTERPRETATION_OPTIONS, CACHE_OPTIONS
+from thunder.core.options import CACHE_OPTIONS
 import thunder.torch as ltorch
 import thunder.core.prims as prims
 from thunder import pytorch_executor, nvfuser_executor
@@ -1167,23 +1167,26 @@ def test_custom_autograd_function():
     model = Model().to(dtype=torch.float64)
     jitted = thunder.jit(model)
 
-    gradcheck(jitted, (x,))
+    with pytest.raises(GradcheckError):
+        gradcheck(jitted, (x,))
     with pytest.raises(GradcheckError):
         gradcheck(model, (x,))
 
     class MyLinear(torch.autograd.Function):
         @staticmethod
-        def forward(ctx, x: torch.Tensor, weight: torch.Tensor, shape: tuple) -> torch.Tensor:
+        def forward(ctx, x: torch.Tensor, weight: torch.Tensor, shape: tuple[int, int]) -> torch.Tensor:
             ctx.shape = shape
             ctx.save_for_backward(x, weight)
             ctx.pretty_attr = 100
+            ctx.scaler = 1.0
             return torch.matmul(x, weight.t())
 
         @staticmethod
         def backward(ctx, grad_output):
             (x, weight) = ctx.saved_tensors
             assert weight.shape == ctx.shape  # really bogus, just to use ctx.shape
-            return torch.matmul(grad_output, weight), torch.matmul(grad_output.t(), x)
+            scaler2 = ctx.shape[0] / ctx.shape[1]
+            return torch.matmul(grad_output, weight) * ctx.scaler, torch.matmul(grad_output.t(), x) / scaler2
 
     class Model(torch.nn.Module):
         def __init__(self):
@@ -1198,6 +1201,110 @@ def test_custom_autograd_function():
     jitted = thunder.jit(model)
 
     gradcheck(jitted, (x,))
+
+
+def test_autograd_function_apply():
+
+    def forward(ctx, x):
+        saved_for_backward = (x,)
+        return x.sin(), saved_for_backward
+
+    def backward(ctx, grad_output, *saved_tensors):
+        (x,) = saved_tensors
+        return grad_output * x.cos()
+
+    def my_sin(x):
+        return torch.ops.higher_order.autograd_function_apply(
+            forward,
+            backward,
+            x,
+            args_tensor_mask=[True],
+            non_differentiable_idx=[],
+        )
+
+    jitted = thunder.jit(my_sin)
+    x = torch.randn((2, 2), requires_grad=True)
+    x_ref = x.clone().detach().requires_grad_()
+
+    y = jitted(x)
+    y_ref = my_sin(x_ref)
+    torch.testing.assert_close(y, y_ref)
+
+    initial_computation_trace = thunder.last_traces(jitted)[0]
+    assert any(
+        bsym.sym.id == "torch.ops.higher_order.autograd_function_apply"
+        for bsym in initial_computation_trace.bound_symbols
+        if isinstance(bsym.sym.id, str)
+    )
+
+    grad = torch.rand_like(y)
+    actual_grad = torch.autograd.grad(y, x, grad)
+    expect_grad = torch.autograd.grad(y_ref, x_ref, grad)
+    torch.testing.assert_close(actual_grad, expect_grad)
+
+    def wrong_backward(ctx, grad_output, *saved_tensors):
+        (x,) = saved_tensors
+        return grad_output * x.sin()
+
+    def my_sin_with_wrong_backward(x):
+        return torch.ops.higher_order.autograd_function_apply(
+            forward,
+            wrong_backward,
+            x,
+            args_tensor_mask=[True],
+            non_differentiable_idx=[],
+        )
+
+    jitted = thunder.jit(my_sin_with_wrong_backward)
+    x = torch.randn((2, 2), requires_grad=True)
+    x_ref = x.clone().detach().requires_grad_()
+
+    y = jitted(x)
+    y_ref = my_sin_with_wrong_backward(x_ref)
+    actual_grad = torch.autograd.grad(y, x, grad)
+    expect_grad = torch.autograd.grad(y_ref, x_ref, grad)
+    torch.testing.assert_close(actual_grad, expect_grad)
+
+    from torch.autograd.gradcheck import GradcheckError
+    from torch.testing._internal.common_utils import gradcheck
+
+    with pytest.raises(GradcheckError):
+        gradcheck(jitted, (x,))
+
+
+def test_autograd_function_empty_forward():
+
+    class Fn(torch.autograd.Function):
+        @staticmethod
+        def forward(self, x):
+            return x
+
+        @staticmethod
+        def backward(self, grad_x):
+            return 2 * grad_x
+
+    def fn(x):
+        # TODO: there still is a bug when the result is directly returned
+        return Fn.apply(x) * 3
+
+    a = torch.randn(2)
+    jfn = thunder.jit(fn)
+
+    ref = fn(a)
+    out = jfn(a)
+
+    assert_close(out, ref)
+
+    a = torch.randn(2, requires_grad=True)
+    go = torch.randn_like(a)
+
+    ref = fn(a)
+    out = jfn(a)
+    (grad,) = torch.autograd.grad(out, a, go)
+    (grad_ref,) = torch.autograd.grad(ref, a, go)
+
+    assert_close(out, ref)
+    assert_close(grad, grad_ref)
 
 
 @requiresCUDA  # I have not found a good other object to use
@@ -1263,3 +1370,72 @@ def test_matmul_nd_times_2d_runs_2d_gemm(device):
     # Check that prim.matmul outputs a 2d tensor
     assert matmul_prim_bsym is not None
     assert matmul_prim_bsym.output.ndim == 2
+
+
+def test_tag_static_memory_location():
+    # not much sense, but hey.
+    m = torch.nn.Sequential(torch.nn.Tanh(), torch.nn.Linear(2, 3), torch.nn.BatchNorm1d(3))
+    jm = thunder.jit(m)
+    jm(torch.randn(2, 2))
+    lt = thunder.last_traces(jm)[-1]
+
+    # input should not be tagged static
+    assert thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION not in lt.args[0].tags
+    # parameters and buffers should be tagged static
+    assert all(thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION in a.tags for a in lt.args[1:])
+
+    # outputs of operations should not be tagged static
+    for bsym in lt.bound_symbols:
+        if bsym.sym == thunder.core.prims.unpack_trivial:
+            continue
+        for a in bsym.flat_outs:
+            if isinstance(a, thunder.Proxy):
+                assert thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION not in a.tags
+    assert str(thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION) == "ProxyTag.STATIC_MEMORY_LOCATION"
+
+
+def test_args_order():
+    @thunder.jit
+    def fn(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10):
+        # do not skip functionalization process
+        a9 += 1
+        # do not drop arguments by dce
+        return a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10
+
+    args = [torch.zeros(()) for _ in range(11)]
+    args[0] = args[1] = torch.zeros((2,))
+    fn(*args)
+
+    assert [a.name for a in thunder.last_traces(fn)[-1].args] == [f"a{i}" for i in range(11)]
+
+
+@pytest.mark.parametrize(
+    "device",
+    ("cpu", "cuda"),
+)
+def test_cache_symbolic_values_dynamic_shape(device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    def foo(a):
+        return a.relu()
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+
+    a = torch.randn((2, 2, 2), device=device)
+
+    actual = jfoo(a)
+    expected = foo(a)
+
+    assert_close(actual, expected)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    a = torch.randn((3, 4, 5), device=device)
+
+    actual = jfoo(a)
+    expected = foo(a)
+
+    assert_close(actual, expected)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1

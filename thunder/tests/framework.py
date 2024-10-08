@@ -14,7 +14,6 @@ import torch
 from torch._dynamo import is_inductor_supported
 from torch.testing import assert_close
 
-from looseversion import LooseVersion
 from lightning_utilities.core.imports import package_available
 
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
@@ -117,7 +116,7 @@ def assert_closer(*, reference, candidate, competitor, comparator):
             competitor_dist = torch.abs(ref - com)
             minimum_dist = torch.minimum(candidate_dist, competitor_dist)
 
-            signed_minimum_dist = torch.where(candidate_dist < 0, -minimum_dist, minimum_dist)
+            signed_minimum_dist = torch.where(ref > cand, -minimum_dist, minimum_dist)
             target = ref + signed_minimum_dist
 
             comparator(cand, target, check_dtype=False)
@@ -150,18 +149,6 @@ class TestExecutor:
         return []
 
     @singledispatchmethod
-    def make_callable_legacy(self, fn, **kwargs):
-        assert kwargs.pop("disable_preprocessing", True)
-        assert kwargs.pop("disable_torch_autograd_support", True)
-        return thunder.compile(
-            fn,
-            executors_list=self.executors_list(),
-            disable_preprocessing=True,
-            disable_torch_autograd_support=True,
-            **kwargs,
-        )
-
-    @singledispatchmethod
     def make_callable(self, fn, **kwargs):
         return thunder.jit(fn, executors=self.executors_list(), **kwargs)
 
@@ -192,7 +179,7 @@ class nvFuserTestExecutor(TestExecutor):
         return [executors.get_nvfuser_executor()]
 
     def version(self):
-        return executors.get_nvfuser_executor().version()
+        return executors.get_nvfuser_executor().version
 
 
 # TODO Convert to singletons or just add to executor logic

@@ -1,3 +1,4 @@
+from __future__ import annotations
 from collections import namedtuple
 from contextlib import nullcontext, contextmanager
 from dataclasses import dataclass, replace
@@ -6,41 +7,48 @@ from itertools import chain, compress
 from functools import lru_cache, partial, wraps
 import math
 from numbers import Number
-from typing import Any, Dict, Union, Optional
-from types import NoneType
+from typing import Any, TYPE_CHECKING
 from collections.abc import Callable
-from collections.abc import Hashable
 from collections.abc import Sequence
 import copy
 import inspect
 import time
-from collections import deque
-import os
 import dataclasses
 
 import thunder
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
-import thunder.core.devices as devices
 from thunder.core.devices import cpu, Device
+from thunder.core.trace_interpreter import (
+    interpret_trace as eval_trace,
+    interpret_trace_to_trace,
+    trace_interpreter_skip_list,
+)
 from thunder.core.proxies import (
+    CollectionProxy,
     NumberProxy,
     Proxy,
     TensorProxy,
     FloatProxy,
     variableify,
     unvariableify,
-    CollectionProxy,
     FutureTensorProxy,
 )
-from thunder.core.baseutils import default_dataclass_params
-from thunder.core.compile_data import get_compile_data
+from thunder.core.compile_data import get_compile_data, get_compile_option
 from thunder.core.langctxs import langctx, Languages
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten, tree_flatten_with_dataclass
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol
-from thunder.core.trace import TraceCtx as Trace, tracectx
+from thunder.core.trace import TraceCtx as Trace
 from thunder.core.trace import VariableInterface as Variable
-from thunder.core.trace import detached_trace, get_tracectx, set_tracectx, reset_tracectx, from_trace, TraceProvenance
+from thunder.core.trace import (
+    detached_trace,
+    tracectx,
+    set_tracectx,
+    reset_tracectx,
+    from_trace,
+    TraceProvenance,
+    TraceTag,
+)
 from thunder.core.utils import (
     check,
     flatten_func,
@@ -51,6 +59,7 @@ from thunder.core.utils import (
     const_as,
     sequencify,
     ProxyDict,
+    find_producer_symbols,
 )
 import thunder.clang as clang
 from thunder.clang import (
@@ -63,14 +72,24 @@ from thunder.clang import (
     reciprocal,
     convolution,
 )
-from thunder.core.transform_common import dce, Transform
-from thunder.core.vjp_utils import make_aug_forward_and_backward
+from thunder.core.transform_common import (
+    dce,
+    Transform,
+    wrap_return_value_together_with_argments,
+    unwrap_return_value,
+    VJPDual,
+)
+from thunder.core.vjp_utils import make_aug_forward_and_backward, get_saved_for_backward_tensors
 from thunder.extend import Executor
 import thunder.torch as ltorch
 
 import torch
-from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
+
+# from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
 import numpy as np
+
+
+TraceTag.register_tag("AUGMENTED_FORWARD")
 
 
 # TODO This should be a partial of thunder.trace, but that would cause a circular import
@@ -146,7 +165,9 @@ def bsym_list_to_dag(
     for bsym_id, node in bsym_id_to_node_map.items():
         has_parents: bool = False
         for inp in node.bsym.flat_proxy_args:
-            producer = producers[inp]
+            producer = producers.get(inp, None)
+            if producer is None:
+                continue
             producer_node = bsym_id_to_node_map[producer]
             parent = bsym_id_to_node_map[producer]
 
@@ -270,16 +291,26 @@ def _insert_extend_list(l: list, start: int, extension: Sequence[Any]) -> None:
         l.insert(start + offset, arg)
 
 
-# Calls the function fn (which must have the signature fn() -> Any), recording any
-#   symbols called into the given trace, starting at the specified index into its
-#   list of bound symbols.
 # NOTE This operation is inplace. It will modify the trace's bound_symbols.
 # NOTE Because this operation is explicitly inplace, it will disregard the trace being "complete".
 def insert_inplace(
     trc: Trace,
     idx: int,
-    fn: Callable,
+    fn: Callable[[], Any],
 ) -> None:
+    r"""Calls ``fn`` and record any symbols called into ``trc``, starting at ``idx``.
+
+    Args:
+        trc: Trace to insert :class:`~thunder.core.symbol.BoundSymbol`\s representing ``fn``.
+        idx: Starting index of ``trc.bound_symbols`` to insert :class:`~thunder.core.symbol.BoundSymbol`\s representing ``fn``.
+        fn:
+
+    .. note::
+        This operation is inplace. It will modify the given ``trc``'s :attr:`~thunder.core.trace.TraceCtx.bound_symbols`.
+
+    .. note::
+        Because this operation is explicitly inplace, it will disregard whether or not :func:`~thunder.core.trace.TraceCtx.mark_complete` has been called on ``trc`` already.
+    """
     try:
         tracectx_tok = set_tracectx(trc)
         trc._complete = False
@@ -298,17 +329,26 @@ def insert_inplace(
         reset_tracectx(tracectx_tok)
 
 
-# Removes the BoundSymbol at index from the given trace, then calls fn with it
-#   (which must have the signature fn(bsym: BoundSymbol) -> Any) and records
-#   any symbols called into the trace, starting at the specified index (the position
-#   of the replaced BoundSymbol)
 # NOTE This operation is inplace. It will modify the trace's bound_symbols.
 # NOTE Because this operation is explicitly inplace, it will disregard the trace being "complete".
 def replace_inplace(
     trc: Trace,
     idx: int,
-    fn: Callable,
+    fn: Callable[[BoundSymbol], Any],
 ) -> None:
+    r"""Removes ``idx``-th :class:`~thunder.core.symbol.BoundSymbol` of ``trc`` and replace it ``bsyms`` representing ``fn``.
+
+    Args:
+        trc: Trace to insert :class:`~thunder.core.symbol.BoundSymbol`\s representing ``fn``.
+        idx: Index of :class:`~thunder.core.symbol.BoundSymbol` of ``trc``.
+        fn: Callable to bake into ``trc``, instead of ``idx``-th :class:`~thunder.core.symbol.BoundSymbol`.
+
+    .. note::
+        This operation is inplace. It will modify the given ``trc``'s :attr:`~thunder.core.trace.TraceCtx.bound_symbols`.
+
+    .. note::
+        Because this operation is explicitly inplace, it will disregard whether or not :func:`~thunder.core.trace.TraceCtx.mark_complete` has been called on ``trc`` already.
+    """
     try:
         tracectx_tok = set_tracectx(trc)
         trc._complete = False
@@ -406,7 +446,6 @@ def add_transform(
     *,
     transform: Transform | list[Transform],
     disable_torch_autograd_support=False,
-    _legacy_copy_params=False,
 ) -> Callable:
     from thunder.common import CompileData
 
@@ -438,11 +477,6 @@ def add_transform(
         disable_torch_autograd=cd.disable_torch_autograd_support or disable_torch_autograd_support,
         **cd.compile_options,
     )
-    from thunder import ThunderModule
-
-    if _legacy_copy_params and isinstance(jfn, ThunderModule):
-        jfn._overrides_parameters = cfn._overrides_parameters
-        jfn._overrides_buffers = cfn._overrides_buffers
     return jfn
 
 
@@ -1377,6 +1411,9 @@ register_grad(pids.MAXIMUM, _maximum_grad)
 # This operation creates no grad associations
 register_grad(pids.ARGMAX, prims.argmax)
 
+# This operation creates no grad associations
+register_grad(pids.SHAPE, prims.shape)
+
 #
 # Phantom grad transform helpers
 #
@@ -1429,21 +1466,20 @@ def grad(
 
             @wraps(computation_trc.python_callable())
             def python_callable(*args, **kwargs):
-                return eval_trace(computation_trc, *args, **kwargs)
+                return eval_trace(computation_trc, *args, **kwargs)["output"]
 
-            gradtrc = construct_trace()(grad(python_callable), *computation_trc.args, **computation_trc.kwargs)
+            # Don't DCE yet to keep argument unpackings
+            gradtrc = construct_trace(use_dce=False)(
+                grad(python_callable), *computation_trc.args, **computation_trc.kwargs
+            )
+
+            gradtrc = wrap_return_value_together_with_argments(gradtrc)
+            gradtrc = dce(gradtrc)
             return prologue_trc, gradtrc, epilogue_trc
 
     cfn._using_grad_transform = True
     _grad_transform = _GradTransform()
     return add_transform(cfn, transform=_grad_transform, disable_torch_autograd_support=True)
-
-
-class Transforms(Enum):
-    IdentityOp = auto()
-    VmapOp = auto()
-    JvpOp = auto()
-    VjpOp = auto()
 
 
 @lru_cache(maxsize=None)
@@ -1457,254 +1493,6 @@ def symbol_to_eval(bound_symbol):
     return bound_symbol.sym
 
 
-# TODO: Currently we use trace.args and trace.kwargs to get the arguments
-# Maybe we should use these instead
-transform_skip_list = (
-    prims.PrimIDs.UNPACK_EMPTY_DICT,
-    prims.PrimIDs.UNPACK_KEY,
-    prims.PrimIDs.UNPACK_SEQUENCE,
-    prims.PrimIDs.UNPACK_TRIVIAL,
-    prims.PrimIDs.RETURN,
-)
-
-
-def eval_trace(trace, *args, symbol_mapper=symbol_to_eval, with_env=False, **kwargs):
-    """Evaluate a trace.
-
-    Args:
-        trace: trace to evaluate
-        *args: arguments to evaluate the trace with
-        symbol_mapper: function that maps a symbol to a function that evaluates it
-        **kwargs: keyword arguments to evaluate the trace with
-
-    Returns:
-        result of evaluating the trace
-    """
-    env = {}
-
-    def read(x: Variable):
-        if isinstance(x, Variable):
-            return env[x.name]
-        else:
-            return x
-
-    def write(v: Variable, val: Any, allow_duplicates=False) -> None:
-        if not isinstance(v, Variable):
-            return
-        # Duplicates are allowed and overwritten
-        if v.name in env:
-            if allow_duplicates:
-                return
-            raise ValueError(f"Variable {v.name} is being overwritten this is not allowed")
-        env[v.name] = val
-
-    safe_map_flat(write, list(trace.args), list(args))
-    safe_map_flat(write, list(trace.kwargs.values()), list(kwargs.values()))
-
-    for symbol in trace.bound_symbols:
-        if symbol.sym.id in transform_skip_list:
-            continue
-        args = tree_map(read, symbol.args)
-        kwargs = tree_map(read, symbol.kwargs)
-        prim_func = symbol_mapper(symbol)
-        if prim_func is None:
-            continue
-        result = prim_func(*args, **kwargs)
-        try:
-            safe_map_flat(write, list(sequencify(symbol.output)), list(sequencify(result)))
-        except AssertionError as e:
-            raise RuntimeError(
-                f"Error while assigning the result of dispatched function {prim_func} to the output of the original symbol {symbol}."
-                " This is likely due to a mismatch in the number of outputs."
-                f" The original symbol has {len(symbol.output)} outputs and the dispatched function has {len(sequencify(result))} outputs."
-            ) from e
-
-    if with_env:
-        return tree_map(read, trace.output), env
-
-    return tree_map(read, trace.output)
-
-
-def _identity_call_metafunc(*args, trace: Trace, **kwargs):
-    with detached_trace():
-        return eval_trace(trace, *args, **kwargs)
-
-
-identity_call = Symbol(id=Transforms.IdentityOp, name="identity_call", meta=_identity_call_metafunc)
-
-
-def identity(func):
-    """Identity transform for a Thunder function.
-
-    Args:
-        func (Callable): A Thunder function to be transformed.
-    """
-
-    def wrapper(*args, **kwargs):
-        trace = construct_trace()(func, *args, **kwargs)
-        return identity_call(*args, **kwargs, trace=trace)
-
-    return wrapper
-
-
-def _identity_call_pytorch(*args, trace: Trace, **kwargs):
-    import torch
-
-    def symbol_mapper(op):
-        if op.op == Transforms.IdentityOp:
-            return _identity_call_pytorch
-
-        torch_op = ops_to_torch_ops_map[op.op]
-        if isinstance(torch_op, str):
-            return getattr(torch, torch_op.strip("pytorch."))
-        return torch_op
-
-    with detached_trace():
-        return eval_trace(trace, *args, **kwargs, symbol_mapper=symbol_mapper)
-
-
-# Register the identity call for PyTorch executor.
-# ops_to_torch_ops_map[Transforms.IdentityOp] = _identity_call_pytorch
-
-
-# VMAP transform
-# -------------
-
-
-class NotMapped:
-    """Represents a non-batched dimension."""
-
-    def __repr__(self):
-        return "not_mapped"
-
-
-@dataclass(frozen=True)
-class BatchedValue:
-    """Batched value for the vmap transform.
-
-    Attributes:
-        value: Batched value.
-        batch_dim: Batching dimension or not_mapped
-    """
-
-    value: Any
-    batch_dim: int | NotMapped
-
-    def __iter__(self):
-        yield self.value
-        yield self.batch_dim
-
-
-def pair_to_batched_value(pair):
-    """Converts a pair to a BatchedValue.
-
-    Args:
-        pair (Sequence): Pair to convert.
-
-    Returns:
-        BatchedValue: BatchedValue representation of the pair.
-    """
-    if isinstance(pair, BatchedValue):
-        return pair
-    else:
-        assert isinstance(pair, Sequence) and len(pair) == 2
-        return BatchedValue(*pair)
-
-
-def vectorized_batcher(prim, axis_size, batched_values, **kwargs):
-    batch_dim = batched_values[0].batch_dim
-    assert all(
-        batch_dim == bv.batch_dim for bv in batched_values[1:]
-    ), f"`vectorized_batcher` got different batched dimensions {[bv.batch_dim for bv in batched_values]}"
-    return BatchedValue(prim(*[bv.value for bv in batched_values], **kwargs), batch_dim)
-
-
-not_mapped = NotMapped()
-
-
-def movedim(x, src: int, dst: int):
-    perm = [i for i in range(x.ndim) if i != src]
-    perm.insert(dst, src)
-    return prims.transpose(x, tuple(perm))
-
-
-def move_batch_dim(axis_size, src, dst, x):
-    if src is not_mapped:
-        if isinstance(x, Number):
-            return x
-        target_shape = list(x.shape)
-        target_shape.insert(dst, axis_size)
-        bcast_dims = list(range(len(target_shape)))
-        bcast_dims.pop(dst)
-        return prims.broadcast_in_dim(x, target_shape, bcast_dims)
-    elif src == dst:
-        return x
-    else:
-        return movedim(x, src, dst)
-
-
-def binary_op_batching_rule(op: prims.PrimIDs, axis_size: int, vals_in: BatchedValue):
-    ((x, x_bdim), (y, y_bdim)) = vals_in
-    if x_bdim != y_bdim:
-        if x_bdim is not_mapped:
-            x = move_batch_dim(axis_size, x_bdim, y_bdim, x)
-            x_bdim = y_bdim
-        else:
-            y = move_batch_dim(axis_size, y_bdim, x_bdim, y)
-    return BatchedValue(op(x, y), x_bdim)
-
-
-def sin_vmap(axis_size: int, a: BatchedValue) -> BatchedValue:
-    return vectorized_batcher(prims.sin, axis_size, (a,))
-
-
-def cos_vmap(axis_size: int, a: BatchedValue) -> BatchedValue:
-    return vectorized_batcher(prims.cos, axis_size, (a,))
-
-
-def mul_vmap(axis_size: int, a: BatchedValue, b: BatchedValue) -> BatchedValue:
-    return binary_op_batching_rule(prims.mul, axis_size, (a, b))
-
-
-def add_vmap(axis_size: int, a: BatchedValue, b: BatchedValue) -> BatchedValue:
-    return binary_op_batching_rule(prims.add, axis_size, (a, b))
-
-
-def sum_vmap(axis_size: int, a: BatchedValue, dims: Sequence[int], **kwargs) -> BatchedValue:
-    bdim = a.batch_dim
-    # TODO: remove this when dims becomes a mandatory kwarg
-    if len(dims) > 0:
-        dims, _ = safe_zip(*dims)
-    dims_before = tuple(el for el in dims if el < bdim)
-    dims_after = tuple(el + 1 for el in dims if el >= bdim)
-    batched_dims = dims_before + dims_after
-    return vectorized_batcher(prims.sum, axis_size, (a,), dims=batched_dims, **kwargs)
-
-
-# TODO: Please test this extensively
-def broadcast_in_dim_vmap(
-    axis_size: int, a: BatchedValue, shape: Sequence[BatchedValue], broadcast_dimensions: Sequence[BatchedValue]
-) -> BatchedValue:
-    bdim = a.batch_dim
-    # TODO: remove this when shape and broadcast_dimensions become mandatory kwargs
-    shape, _ = safe_zip(*shape)
-    if len(broadcast_dimensions) > 0:
-        broadcast_dimensions, _ = safe_zip(*broadcast_dimensions)
-    if bdim is not_mapped:
-        return BatchedValue(prims.broadcast_in_dim(a.value, shape, broadcast_dimensions), bdim)
-    else:
-        new_bdim = bdim + sum(1 for dim in broadcast_dimensions if dim < bdim)
-        new_shape = list(shape)
-        new_shape.insert(new_bdim, axis_size)
-        new_broadcast_dimensions = (0,) + tuple(dim + 1 if dim >= bdim else dim for dim in broadcast_dimensions)
-        if broadcast_dimensions == ():
-            new_broadcast_dimensions = ()
-        return BatchedValue(prims.broadcast_in_dim(a.value, new_shape, new_broadcast_dimensions), new_bdim)
-
-
-vmap_impls: dict[prims.Symbol, Callable] = dict()
-
-
 def unwrap_one_level_of_subsymbols(trace):
     new_symbols_iter = (
         bound_symbol.subsymbols if len(bound_symbol.subsymbols) > 0 else [bound_symbol]
@@ -1715,520 +1503,8 @@ def unwrap_one_level_of_subsymbols(trace):
     return trace
 
 
-def decomposed_fn_vmap_rule(axis_size, *args, fn, **kwargs):
-    args, in_dims = unzip2(args)
-    unbatched_args = tree_map(lambda x: remove_batch_dim(x) if isinstance(x, TensorProxy) else x, args)
-    trace = construct_trace()(fn, *unbatched_args, **kwargs)
-    trace = unwrap_one_level_of_subsymbols(trace)
-    outs = _vmap_call_metafunc(False, args, in_dims, 0, axis_size, function_trace=trace, **kwargs)
-    if isinstance(outs, Sequence):
-        out_dims = (0,) * len(outs)
-        return safe_map(pair_to_batched_value, safe_zip(outs, out_dims))
-    return BatchedValue(outs, 0)
-
-
-vmap_impls[prims.PrimIDs.SIN] = sin_vmap
-vmap_impls[prims.PrimIDs.COS] = cos_vmap
-vmap_impls[prims.PrimIDs.MUL] = mul_vmap
-vmap_impls[prims.PrimIDs.ADD] = add_vmap
-vmap_impls[prims.PrimIDs.SUM] = sum_vmap
-vmap_impls[prims.PrimIDs.BROADCAST_IN_DIM] = broadcast_in_dim_vmap
-
-
-def vmap_symbol_mapper(symbol: prims.Symbol, *, axis_size: int):
-    """Maps a symbol to a vmap function that evaluates it.
-
-    Args:
-        symbol (prims.Symbol): Symbol to evaluate.
-
-    Raises:
-        NotImplementedError: If the vmap for the symbol is not implemented.
-
-    Returns:
-        Callable: vmap function that evaluates the symbol.
-    """
-
-    def wrap_arg(x):
-        if isinstance(x, BatchedValue):
-            return x
-        elif isinstance(x, (Number, NumberProxy)):
-            return BatchedValue(x, not_mapped)
-        else:
-            raise ValueError(f"vmap wrap_arg got an unsupported type {type(x)}")
-
-    if symbol.are_all_args_constant:
-
-        def _vmap_impl_const(symbol, *args, **kwargs):
-            out = symbol_to_eval(symbol)(*args, **kwargs)
-
-            if isinstance(out, Sequence):
-                return safe_map(pair_to_batched_value, safe_zip(args, [not_mapped] * len(out)))
-
-            return BatchedValue(out, not_mapped)
-
-        return partial(_vmap_impl_const, symbol)
-
-    vmap_impl = vmap_impls.get(symbol.sym.id)
-    if vmap_impl is None:
-        if len(symbol.subsymbols) > 0:
-            vmap_impl = partial(decomposed_fn_vmap_rule, fn=symbol.sym)
-        else:
-            raise NotImplementedError(f"vmap for {symbol.sym.id} is not implemented")
-
-    def _vmap_impl(*args, **kwargs):
-        args = tree_map(wrap_arg, args)
-        assert all(isinstance(arg, BatchedValue) for arg in tree_flatten(args)[0])
-        return vmap_impl(axis_size, *args, **kwargs)
-
-    return _vmap_impl
-
-
-def remove_batch_dim(tensor: TensorProxy, batch_dim: int = 0) -> TensorProxy:
-    """Removes the batch dimension from a tensor.
-
-    Args:
-        tensor (TensorProxy): Tensor to remove the batch dimension from.
-
-    Returns:
-        TensorProxy: Tensor with the batch dimension removed.
-    """
-    new_shape = tensor.shape[:batch_dim] + tensor.shape[batch_dim + 1 :]
-    return TensorProxy(like=tensor, shape=new_shape)
-
-
-# TODO: in JAX args, in_dims are flattened the same way
-# TODO: in JAX out_dims are flattened as well
-def _vmap_call_metafunc(detached: bool, args, in_dims, out_dims, axis_size, function_trace: Trace, **kwargs):
-    """Metafunction for vmap call.
-
-    Args:
-        detached (bool): Whether to detach the trace.
-        args (Tuple[Proxy]): Arguments to the function.
-        in_dims (Tuple[int]): Batch dimension for each argument.
-        out_dims (Tuple[int]): Batch dimension for return values.
-        function_trace (Trace): Trace to use for the function.
-        kwargs: Keyword arguments.
-
-    Raises:
-        AssertionError: If the vmap for keyword arguments is not implemented.
-
-    Returns:
-        Result of the vmap transform.
-    """
-    common_device = {x.device for x in args if isinstance(x, TensorProxy)}
-    assert len(common_device) <= 1, "vmap for multiple devices is not implemented"
-    (common_device,) = common_device if len(common_device) == 1 else (cpu,)
-
-    if axis_size is None:
-        (axis_size,) = {x.shape[ax] for x, ax in zip(args, in_dims) if ax is not not_mapped}
-    in_dims = in_dims if isinstance(in_dims, Sequence) else (in_dims,)
-    in_dims = tuple(not_mapped if isinstance(a, (Number, NumberProxy)) else d for a, d in safe_zip(args, in_dims))
-    out_dims = out_dims if isinstance(out_dims, Sequence) else (out_dims,)
-
-    ctx = detached_trace() if detached else nullcontext()
-    with ctx:
-        # We propagate the BatchValue through the trace, and then unwrap it at the end
-        batched_args = safe_map(pair_to_batched_value, safe_zip(args, in_dims))
-        result = eval_trace(
-            function_trace, *batched_args, symbol_mapper=partial(vmap_symbol_mapper, axis_size=axis_size), **kwargs
-        )
-        # Unwrapping the BatchedValue's
-        if isinstance(result, Sequence):
-            flat_result, spec = tree_flatten(result)
-            assert all(isinstance(x, BatchedValue) for x in flat_result)
-            outs, bdims = unzip2(flat_result)
-            # TODO: handle the case where out_dims is a single value better
-            if len(out_dims) == 1:
-                out_dims = out_dims * len(outs)
-            outs = safe_map(partial(move_batch_dim, axis_size), bdims, out_dims, outs)
-            return tree_unflatten(outs, spec)
-        if isinstance(result, (Number, NumberProxy)) and axis_size is not None:
-            # TODO: fetch the default device from the context
-            result = ltorch.full(shape=(), fill_value=result, device=common_device)
-            result = BatchedValue(result, not_mapped)
-        elif (
-            isinstance(result, BatchedValue)
-            and isinstance(result.value, (Number, NumberProxy))
-            and axis_size is not None
-        ):
-            result = BatchedValue(
-                ltorch.full(shape=(), fill_value=result.value, device=common_device), result.batch_dim
-            )
-        assert isinstance(result, BatchedValue)
-        out = move_batch_dim(axis_size, result.batch_dim, out_dims[0], result.value)
-        return out
-
-
-vmap_call = Symbol(id=Transforms.VmapOp, name="vmap_call", meta=partial(_vmap_call_metafunc, False))
-
-
-# TODO: how should we handle out_dims here?
-# although here we are calling vmap of identity, so we should know from the call to vmap
-# This should be fine. If we have vmap(identity(func), out_dims=N) then this rule is first used
-# to get the vmapped result of identity(func) in vmap_symbol_mapper, and out_dims is handled
-# after that in the outer _vmap_call_metafunc.
-def _identity_call_vmap(axis_size, *batched_args, trace: Trace, **kwargs):
-    args, in_dims = unzip2(batched_args)
-    out_dims = 0  # Fixme
-    outs, out_dims = _vmap_call_metafunc(False, args, in_dims, out_dims, axis_size, function_trace=trace, **kwargs)
-    if isinstance(outs, Sequence):
-        return safe_map(pair_to_batched_value, safe_zip(outs, out_dims))
-    return BatchedValue(outs, out_dims)
-
-
-vmap_impls[Transforms.IdentityOp] = _identity_call_vmap
-
-
-def _jvp_call_vmap(axis_size, batched_primals, batched_tangents, *, function_trace: Trace, **kwargs):
-    primals, primals_bdims = safe_zip(*batched_primals)
-    tangents, tangents_bdims = safe_zip(*batched_tangents)
-    jvp_func = partial(_jvp_call_metafunc, False, function_trace=function_trace)
-    vmapped_jvp_func = vmap(jvp_func, in_dims=(primals_bdims, tangents_bdims), axis_size=axis_size)
-    result = vmapped_jvp_func(primals, tangents, **kwargs)
-    return tree_map(lambda x: BatchedValue(x, 0), result)
-
-
-vmap_impls[Transforms.JvpOp] = _jvp_call_vmap
-
-
-def vmap(func, in_dims=0, out_dims=0, axis_size=None):
-    """Vectorizing transform for a Thunder function.
-
-    Args:
-        func (Callable): A Thunder function to be transformed.
-
-    Returns:
-        Callable: A vmapped version of the function.
-    """
-
-    # TODO: flatten
-    # In JAX flattening of in_dims is rather complicated because it can optionally be
-    # specified as a “prefix” pytree, meaning that a single leaf value can be applied
-    # to an entire sub-pytree.
-
-    def flatten_func_for_vmap(func, args, kwargs):
-        flat_args, spec = tree_flatten((args, kwargs))
-
-        def flat_func(*flat_args):
-            fn_args, fn_kwargs = tree_unflatten(flat_args, spec)
-            return func(*fn_args, **fn_kwargs)
-
-        return flat_func, flat_args, spec
-
-    def wrapper(*args, **kwargs):
-        func_flat, args_flat, args_spec = flatten_func_for_vmap(func, args, kwargs)
-        if isinstance(in_dims, int):
-            in_dims_flat = (in_dims,) * len(args_flat)
-        else:
-            in_dims_flat, in_dims_spec = tree_flatten(in_dims)
-            assert len(in_dims_flat) == len(args_flat), "in_dims must have the same length as args, kwargs"
-        unbatched_args_flat = [remove_batch_dim(arg) if isinstance(arg, TensorProxy) else arg for arg in args_flat]
-        trace = construct_trace()(func_flat, *unbatched_args_flat)
-        outs = vmap_call(args_flat, in_dims_flat, out_dims, axis_size=axis_size, function_trace=trace)
-        return outs
-
-    return wrapper
-
-
-# TODO This function commented out because it calls make_traced, which does not exist
-# def vmap_eager(func, args, in_dims=0, out_dims=0, axis_size=None, executor="torch"):
-#     """Computes the vmap of a Thunder function.
-
-#     Args:
-#         func (Callable): A Thunder function to be transformed.
-#         args (_type_): Args of the function.
-#         executor (str, optional): Executor to use. Defaults to "torch".
-
-#     Returns:
-#         The result of the vmapped function.
-#     """
-#     # TODO: fix this - not all args may be batched
-#     # TODO: here we assume batch axis is 0
-#     vmap_trace = make_trace(
-#         vmap(func, in_dims=in_dims, out_dims=out_dims, axis_size=axis_size), executor=executor,
-#         *args)
-#     vmap_traced = make_traced(partial(eval_trace, vmap_trace), executor=executor)
-#     return vmap_traced(*args)
-
-
-# JVP transform
-# -------------
-
-
-@dataclass(frozen=True)
-class JVPDual:
-    """Dual number for the JVP transform.
-
-    Attributes:
-        primal: Primal value.
-        tangent: Tangent value.
-    """
-
-    primal: Any
-    tangent: Any
-
-    def __iter__(self):
-        yield self.primal
-        yield self.tangent
-
-
-def pair_to_jvp_dual(pair):
-    """Converts a pair to a JVPDual.
-
-    Args:
-        pair (Sequence): Pair to convert.
-
-    Returns:
-        JVPDual: JVPDual representation of the pair.
-    """
-    if isinstance(pair, JVPDual):
-        return pair
-    else:
-        assert isinstance(pair, Sequence) and len(pair) == 2
-        return JVPDual(*pair)
-
-
-def sin_jvp(a: JVPDual):
-    x, xd = a
-    return JVPDual(prims.sin(x), prims.cos(x) * xd)
-
-
-def mul_jvp(a: JVPDual, b: JVPDual):
-    x, xd = a
-    y, yd = b
-    return JVPDual(x * y, x * yd + y * xd)
-
-
-def add_jvp(a: JVPDual, b: JVPDual):
-    x, xd = a
-    y, yd = b
-    return JVPDual(x + y, xd + yd)
-
-
-def broadcast_in_dim_jvp(a: JVPDual, shape: tuple[JVPDual, ...], broadcast_dimensions: tuple[JVPDual, ...]) -> JVPDual:
-    x, xd = a
-    # TODO: shape and broadcast_dimensions should be tuples of ints
-    # but for now it's a tuple of JVPDuals
-    if len(shape) > 0 and isinstance(shape[0], JVPDual):
-        shape, _ = safe_zip(*shape)
-    if len(broadcast_dimensions) > 0 and isinstance(broadcast_dimensions[0], JVPDual):
-        broadcast_dimensions, _ = safe_zip(*broadcast_dimensions)
-    return JVPDual(
-        prims.broadcast_in_dim(x, shape, broadcast_dimensions), prims.broadcast_in_dim(xd, shape, broadcast_dimensions)
-    )
-
-
-def unpack_sequence_jvp(sequence: JVPDual, length: JVPDual) -> JVPDual:
-    x = tree_map(lambda x: x.primal, sequence)
-    xd = tree_map(lambda x: x.tangent, sequence)
-    length, _ = length
-    primals = prims.unpack_sequence(x, length)
-    tangents = prims.unpack_sequence(xd, length)
-    return safe_map(pair_to_jvp_dual, safe_zip(primals, tangents))
-
-
-def unpack_trivial_jvp(x: JVPDual) -> JVPDual:
-    return x
-
-
-jvp_impls: dict[prims.Symbol, Callable] = dict()
-
-jvp_impls[prims.PrimIDs.SIN] = sin_jvp
-jvp_impls[prims.PrimIDs.MUL] = mul_jvp
-jvp_impls[prims.PrimIDs.ADD] = add_jvp
-jvp_impls[prims.PrimIDs.BROADCAST_IN_DIM] = broadcast_in_dim_jvp
-# jvp_impls[prims.PrimIDs.UNPACK_SEQUENCE] = unpack_sequence_jvp
-# jvp_impls[prims.PrimIDs.UNPACK_TRIVIAL] = unpack_trivial_jvp
-
-
-def jvp_symbol_mapper(symbol: prims.Symbol):
-    """Maps a symbol to a JVP function that evaluates it.
-
-    Args:
-        symbol (prims.Symbol): Symbol to evaluate.
-
-    Raises:
-        NotImplementedError: If the JVP for the symbol is not implemented.
-
-    Returns:
-        Callable: JVP function that evaluates the symbol.
-    """
-
-    def wrap_arg(x):
-        if isinstance(x, JVPDual):
-            return x
-        elif isinstance(x, Number):
-            return JVPDual(x, type(x)(0))
-        else:
-            raise ValueError(f"JVP wrap_arg got an unsupported type {type(x)}")
-
-    # If symbol.args doesn't have subclasses of Variable, then we need to return a zero tangent
-    # TODO: there may be a better way to detect constants in the trace
-    if symbol.are_all_args_constant:
-
-        def zeros_like(x):
-            if isinstance(x, TensorProxy):
-                return full_like(x, fill_value=0)
-            elif isinstance(x, NumberProxy):
-                return type(x.value)(0)
-            elif isinstance(x, Number):
-                return type(x)(0)
-            else:
-                raise ValueError(f"zeros_like inside JVP got an unsupported type {type(x)}")
-
-        def jvp_impl_const(symbol, *args, **kwargs):
-            primals = symbol_to_eval(symbol)(*args, **kwargs)
-            if isinstance(primals, Sequence):
-                tangents = tuple(zeros_like(p) for p in primals)
-                return safe_map(pair_to_jvp_dual, safe_zip(primals, tangents))
-            return JVPDual(primals, zeros_like(primals))
-
-        return partial(jvp_impl_const, symbol)
-
-    # Normal case, we have a proxy tangent
-    jvp_impl = jvp_impls.get(symbol.sym.id)
-    if jvp_impl is None:
-        raise NotImplementedError(f"JVP for {symbol.sym.id} is not implemented")
-
-    def _jvp_impl(*args, **kwargs):
-        args = tree_map(wrap_arg, args)
-        # Expecting JVPDuals wrapping pairs of primals and tangents
-        assert all(isinstance(arg, JVPDual) for arg in tree_flatten(args)[0])
-        return jvp_impl(*args, **kwargs)
-
-    return _jvp_impl
-
-
-def _jvp_call_metafunc(detached: bool, primals, tangents, *, function_trace: Trace, **kwargs):
-    """Metafunction for the JVP transform.
-
-    Args:
-        detached (bool): Whether to detach the trace.
-        primals (Tuple[Proxy]): Primal values.
-        tangents (Tuple[Proxy]): Tangent values.
-        function_trace (Trace): Trace of the function to be transformed.
-        kwargs: Keyword arguments.
-
-    Raises:
-        AssertionError: If the JVP for keyword arguments is not implemented.
-
-    Returns:
-        Result of the JVP transform.
-    """
-    assert len(kwargs) == 0, "JVP for kwargs is not implemented"
-
-    ctx = detached_trace() if detached else nullcontext()
-    with ctx:
-        # Wrapping the primals and tangents in JVPDuals is not strictly necessary, but it makes
-        # the code more readable
-        # We propagate the JVPDuals through the trace, and then unwrap them at the end
-        primals_tangents_duals = safe_map(pair_to_jvp_dual, safe_zip(primals, tangents))
-        result = eval_trace(function_trace, *primals_tangents_duals, symbol_mapper=jvp_symbol_mapper)
-        # Unwrapping the JVPDuals
-        if isinstance(result, Sequence):
-            assert all(isinstance(x, JVPDual) for x in result)
-            primals, tangents = unzip2(result)
-            return primals, tangents
-        assert isinstance(result, JVPDual)
-        return result.primal, result.tangent
-
-
-jvp_call = Symbol(id=Transforms.JvpOp, name="jvp_call", meta=partial(_jvp_call_metafunc, False))
-
-
-def _identity_call_jvp(*args: JVPDual, trace: Trace, **kwargs):
-    primals, tangents = unzip2(args)
-    out_primals, out_tangents = _jvp_call_metafunc(False, primals, tangents, trace, **kwargs)
-    if isinstance(out_primals, Sequence):
-        return safe_map(pair_to_jvp_dual, safe_zip(out_primals, out_tangents))
-    return JVPDual(out_primals, out_tangents)
-
-
-jvp_impls[Transforms.IdentityOp] = _identity_call_jvp
-
-
-def _vmap_call_jvp(args: JVPDual, in_dims, out_dims, axis_size, trace: Trace, **kwargs):
-    primals, tangents = safe_zip(*args)
-    in_dims, _ = safe_zip(*in_dims)
-    out_dims, _ = safe_zip(*out_dims)
-    vmapped_trace = construct_trace()(
-        vmap(partial(eval_trace, trace), in_dims=in_dims, out_dims=out_dims, axis_size=axis_size), *primals
-    )
-    vmapped_func = partial(eval_trace, vmapped_trace)
-    out_primals, out_tangents = jvp(vmapped_func)(primals, tangents, **kwargs)
-    if isinstance(out_primals, Sequence):
-        return safe_map(pair_to_jvp_dual, safe_zip(out_primals, out_tangents))
-    return JVPDual(out_primals, out_tangents)
-
-
-jvp_impls[Transforms.VmapOp] = _vmap_call_jvp
-
-
-def jvp(func):
-    """Jacobian-vector product transform for a Thunder function.
-
-    Args:
-        func (Callable): A Thunder function to be transformed.
-
-    Returns:
-        Callable: A function that computes the Jacobian-vector product
-            taking primals and tangents as arguments.
-    """
-
-    def wrapper(primals, tangents):
-        trace = construct_trace()(func, *primals)
-        return jvp_call(primals, tangents, function_trace=trace)
-
-    return wrapper
-
-
-# TODO This function commented out because it calls make_traced, which does not exist
-# def jvp_eager(func, primals, tangents, executor="torch"):
-#     """Computes the Jacobian-vector product of a Thunder function.
-
-#     Args:
-#         func (Callable): A Thunder function to be transformed.
-#         primals (_type_): Primals of the function.
-#         tangents (_type_): Tangents of the function.
-#         executor (str, optional): Executor to use. Defaults to "torch".
-
-#     Returns:
-#         The result of the Jacobian-vector product.
-#     """
-#     trace = make_trace(func, executor=executor, *primals)
-
-#     def jvp_func(*primals_and_tangents):
-#         _primals, _tangents = primals_and_tangents[: len(primals)], primals_and_tangents[len(primals) :]
-#         return _jvp_call_metafunc(_primals, _tangents, trace, detached=False)
-
-#     jvp_trace = make_trace(jvp_func, executor=executor)(*primals, *tangents)
-#     jvp_traced = make_traced(partial(eval_trace, jvp_trace), executor=executor)
-#     return jvp_traced(*primals, *tangents)
-
-
 # VJP transform
 # =============
-@dataclass(frozen=True)
-class VJPDual:
-    """A pair of primal and saved information for backward (residuals).
-
-    Args:
-        primal (Union[Proxy, Number]): Primal value, i.e., the value being differentiated.
-        residuals (Tuple[Proxy, ...]): Residuals, i.e., the values that are
-            saved for the backward.
-
-    Yields:
-        Tuple[Variable, Tuple[Variable, ...], Callable]: Primal and residuals
-    """
-
-    primal: Proxy | Number
-    residuals: tuple[Proxy, ...]
-
-    def __iter__(self):
-        yield self.primal
-        yield self.residuals
-
-
 class NoPullback:
     """A dummy pullback function that returns None or raises an error."""
 
@@ -2292,6 +1568,7 @@ augmented_forward_impls = {
     prims.PrimIDs.ZETA: lambda x, y: (prims.zeta(x, y), (x, y)),
     prims.PrimIDs.FMOD: lambda x, y: (prims.fmod(x, y), (x, y)),
     prims.PrimIDs.COPY_: lambda x, y: (prims.copy_(x, y), tuple()),
+    prims.PrimIDs.CLONE: lambda x: (prims.clone(x), tuple()),
 }
 
 
@@ -2321,6 +1598,7 @@ backward_impls = {
     prims.PrimIDs.FMOD: lambda x, y, g: (g, -g * prims.trunc(x / y)),
     # The copy should not be differentiable. We return None to enable the generation of the backward graph through them.
     prims.PrimIDs.COPY_: lambda g: (None, None),
+    prims.PrimIDs.CLONE: lambda g: g,
 }
 
 
@@ -2383,6 +1661,9 @@ def zeta_backward(x, y, g):
     # Therefore, we compute only the derivative wrt the second argument
     gy = g * -x * prims.zeta(x + 1.0, y)
 
+    # if x is CUDA tensor and y is CPU scalar tensor, gy should be on CPU
+    if gy is not None and gy.device.type != y.device.type:
+        gy = gy.to(device=y.device)
     # Return a mappping from the forward arguments to the gradients
     return {"y": gy}
 
@@ -2857,14 +2138,26 @@ def nll_loss_backward(input, target, weight, reduction, ignore_index, total_weig
 def split_aug_fwd(a: TensorProxy, split_size_or_sections: int | Sequence[int], dim: int = 0) -> VJPDual:
     from thunder.torch import split
 
-    primal = split(a, split_size_or_sections, dim)
-    residuals = (dim,)
-    return VJPDual(primal, residuals)
+    primals = split(a, split_size_or_sections, dim)
+    # save `dtype, device and output shape` as few output can be unused user function
+    # leading to incoming gradients being `None`
+    # in which case we will create zeros as gradient to be passed to `cat`
+    residuals = (dim, a.dtype, a.device, tuple(primal.shape for primal in primals))
+    return VJPDual(primals, residuals)
 
 
 @register_backward("torch.split")
-def split_backward(dim, *grads):
-    from thunder.torch import cat
+def split_backward(dim, dtype, device, out_shapes, *grads):
+    from thunder.torch import cat, zeros
+
+    assert len(out_shapes) == len(grads)
+
+    def make_zeros_like(shape):
+        return zeros(shape, dtype=dtype, device=device)
+
+    grads = tuple(
+        grad if grad is not None else make_zeros_like(out_shape) for grad, out_shape in zip(grads, out_shapes)
+    )
 
     return cat(grads, dim)
 
@@ -2928,13 +2221,14 @@ def softmax_aug_fwd(a: Proxy, dim: int, dtype: dtypes.dtype | None = None) -> VJ
     from thunder.torch import softmax
 
     primal = softmax(a, dim, dtype=dtype)
-    residuals = (primal, dim)
+    residuals = (primal, dim, a.dtype)
     return VJPDual(primal, residuals)
 
 
 @register_backward("torch.softmax")
-def softmax_backward(primal, dim, g):
-    return primal * (g - (primal * g).sum(dim, keepdim=True))
+def softmax_backward(primal, dim, input_dtype, g):
+    grad = primal * (g - (primal * g).sum(dim, keepdim=True))
+    return grad.to(input_dtype) if grad.dtype != input_dtype else grad
 
 
 def iter_bound_symbols(bound_symbols):
@@ -2949,7 +2243,7 @@ def iter_bound_symbols(bound_symbols):
         infrastructure
     """
     for symbol in bound_symbols:
-        if symbol.sym.id in transform_skip_list:
+        if symbol.sym.id in trace_interpreter_skip_list:
             continue
         elif symbol.output is None:
             continue
@@ -3078,7 +2372,42 @@ def index_put_aug_fwd(
     return VJPDual(primal, residuals)
 
 
+if torch.distributed.is_available():
+    from torch.distributed import ReduceOp
+    from torch.distributed import distributed_c10d as c10d
+    from torch._C._distributed_c10d import _resolve_process_group
+
+    if TYPE_CHECKING:
+        from torch.distributed import ProcessGroup
+        from thunder.distributed.prims import DistributedReduceOps
+
+    @register_augmented_forward("torch.ops._c10d_functional.all_reduce")
+    def functional_all_reduce_augmented_forward(
+        a: TensorProxy,
+        /,
+        op: str | ReduceOp | DistributedReduceOps = ReduceOp.SUM,
+        group: None | ProcessGroup | str = None,
+        async_op: bool = False,
+        **kwargs,
+    ) -> VJPDual:
+        from thunder.torch import all_reduce
+
+        if isinstance(group, str):
+            group = _resolve_process_group(group)
+        primal = all_reduce(a, op=op, group=group)
+        residuals = (op, group)
+        return VJPDual(primal, residuals)
+
+    @register_backward("torch.ops._c10d_functional.all_reduce")
+    def functional_all_backward(op, group, g) -> TensorProxy:
+        from thunder.torch import all_reduce
+
+        return all_reduce(g, op=op, group=group)
+
+
 def sum_to(a: TensorProxy, shape: Sequence[int]) -> TensorProxy:
+    if utils.same_shape(a.shape, shape):
+        return a
     if not shape:
         return a.sum()
     leading_dims = a.ndim - len(shape)
@@ -3116,7 +2445,14 @@ def uniform_backward(primal, minval, maxval, g):
     return None, sum(g * (1 - unscaled_primal)), sum(g * unscaled_primal)
 
 
-nondifferentiable_vjp_symbols = (prims.PrimIDs.BITWISE_AND, prims.PrimIDs.SIGNBIT, prims.PrimIDs.FULL)
+nondifferentiable_vjp_symbols: set[prims.PrimIDs] = {
+    prims.PrimIDs.BITWISE_AND,
+    prims.PrimIDs.BITWISE_OR,
+    prims.PrimIDs.BITWISE_NOT,
+    prims.PrimIDs.BITWISE_XOR,
+    prims.PrimIDs.SIGNBIT,
+    prims.PrimIDs.FULL,
+}
 
 
 def is_constant_for_vjp(symbol: prims.Symbol) -> bool:
@@ -3180,7 +2516,6 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
     def _vjp_impl(*args, **kwargs):
         primals, kwargs = tree_map(lambda x: x.primal if isinstance(x, VJPDual) else x, (args, kwargs))
         out_primal, out_residuals = vjp_impl(*primals, **kwargs)
-
         # We are saving the residuals and pullback only in the first output
         # backward_pass then retrieves the residuals and pullback from the first output
         if isinstance(out_primal, Sequence):
@@ -3202,7 +2537,7 @@ def check_bsym_for_vjp(bsym):
         bool: True if the bound symbol is supported by vjp, False otherwise.
     """
 
-    if bsym.sym.id in transform_skip_list:
+    if bsym.sym.id in trace_interpreter_skip_list:
         return True
 
     if bsym.sym.id in backward_impls and bsym.sym.id in augmented_forward_impls:
@@ -3248,6 +2583,34 @@ def augmented_forward_pass(*args, trace: Trace, **kwargs):
     )
     result = tree_map(lambda x: x.primal if isinstance(x, VJPDual) else x, result)
     return result, env
+
+
+def augmented_forward_pass_trace(trace: Trace, /, *args, **kwargs):
+    """Augmented forward pass for the VJP transform.
+
+    The augmented forward pass is a forward pass that returns the residuals
+    of the forward pass.
+    These residuals are used in the backward pass to compute the VJP and they
+    are recorded in the environment dictionary for each variable.
+
+    Args:
+        args (Tuple[Variable]): Arguments to the function.
+        trace (Trace): Trace of the function.
+        kwargs (Dict[str, Variable]): Keyword arguments to the function.
+
+    Returns:
+        Tuple[Any, Dict[str, Any]]: Tuple of the primal outputs and the environment.
+    """
+    args, kwargs = tree_map(lambda x: VJPDual(x, tuple()), (args, kwargs))
+    trace, result, env = interpret_trace_to_trace(
+        trace,
+        *args,
+        **kwargs,
+        with_env=True,
+        symbol_mapper=vjp_symbol_mapper,
+    )
+    result = tree_map(lambda x: x.primal if isinstance(x, VJPDual) else x, result)
+    return trace, result, env
 
 
 # TODO: Instead of using the environment dictionary, we could use the trace
@@ -3420,28 +2783,18 @@ def backward_pass(forward_env, trace, init_cotangents):
     return gargs + (gkwargs,) if len(gkwargs) != 0 else gargs
 
 
-def vjp_call_metafunc(detached: bool, primals, cotangents, trace: Trace, **kwargs):
+def vjp_call(primals, cotangents, trace: Trace, **kwargs):
     # Assuming primals is flat
 
     if not isinstance(primals, Sequence):
         primals = (primals,)
 
-    ctx = detached_trace() if detached else nullcontext()
-    with ctx:
-        result, env = augmented_forward_pass(*primals, trace=trace, **kwargs)
-        check(
-            len(result) == len(cotangents) if isinstance(result, Sequence) else True,
-            lambda: f"Expected cotangents to be a sequence of length {len(result)}, got a sequence of length {len(cotangents)}",
-        )
-        return result, backward_pass(env, trace, cotangents)
-
-
-# TODO: Can't use a Symbol here because mixed executor sybsymbols seem to be
-# unsupported. See issue "Could not find an executor for bound symbol when its subsymbols
-# are not fully supported by a single executor"
-vjp_call = partial(
-    vjp_call_metafunc, False
-)  # Symbol(id=Transforms.VjpOp, name="vjp_call", meta=partial(vjp_call_metafunc, False))
+    result, env = augmented_forward_pass(*primals, trace=trace, **kwargs)
+    check(
+        len(result) == len(cotangents) if isinstance(result, Sequence) else True,
+        lambda: f"Expected cotangents to be a sequence of length {len(result)}, got a sequence of length {len(cotangents)}",
+    )
+    return result, backward_pass(env, trace, cotangents)
 
 
 def vjp(func):
@@ -3455,6 +2808,15 @@ def vjp(func):
         flat_func, flat_args, spec = flatten_func(func, primals, kwargs)
         trace = construct_trace()(flat_func, *flat_args)
         result, vjp_result = vjp_call(flat_args, cotangents, trace=trace)
+        # If the argument is a CPU scalar tensor, its gradient needs to be summed into a scalar tensor.
+        vjp_result = tuple(
+            (
+                sum_to(grad, arg.shape)
+                if (grad is not None and isinstance(arg, TensorProxy) and arg.device.type == "cpu")
+                else grad
+            )
+            for grad, arg in zip(vjp_result, flat_args)
+        )
         gprimals, gkwargs = tree_unflatten(vjp_result, spec)
         grads = gprimals + (gkwargs,) if len(gkwargs) != 0 else gprimals
         return result, grads
@@ -3525,7 +2887,7 @@ def _update_forward_with_new_saved_for_backward(forward_trace: Trace, saved_for_
     saved_tensors, saved_other = _split_saved_for_backward_into_tensors_and_other(saved_for_backward)
     assert forward_trace.bound_symbols[-1].sym.id == prims.PrimIDs.RETURN
     new_return = (forward_trace.output[0], (saved_tensors, saved_other))
-    forward_trace.bound_symbols[-1] = replace(forward_trace.bound_symbols[-1], args=new_return)
+    forward_trace.bound_symbols[-1] = replace(forward_trace.bound_symbols[-1], args=new_return, output=new_return)
 
 
 def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_for_backward: Sequence[Variable]) -> None:
@@ -3545,8 +2907,13 @@ def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_fo
 
     cotangents = backward_trace.args[1]
     saved_tensors, saved_other = _split_saved_for_backward_into_tensors_and_other(saved_for_backward)
+
+    # When thunder.executors.torch_autograd.ThunderFunction.backward calls backward_fn, it copies
+    # collections into mutable ones, so that the tensors will be deallocated when deleted.
+    # See ThunderFunction.backward's notes for details
+    saved_tensors = list(saved_tensors)
     unpacking_trace = construct_trace(rename_proxies=False, use_dce=False)(
-        unpacking_fn, (saved_tensors, saved_other), cotangents
+        unpacking_fn, [saved_tensors, saved_other], cotangents
     )
     assert unpacking_trace.bound_symbols[-1].sym.id == prims.PrimIDs.RETURN
 
@@ -3563,17 +2930,6 @@ def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_fo
         )
     )
     backward_trace.bound_symbols = list((*unpacking_trace.bound_symbols[:-1], *backward_trace_bsyms_without_unpacking))
-
-
-# NOTE: Returning namedtuples from compiled functions doesn't work. See:
-# "Allow returning namedtuples from compiled functions"
-# Note [Grad forward output spec]
-# If it did work it would be nice to use this namedtuple
-# instead of the plain tuple or dict that we're using now.
-TorchAutogradForwardData = namedtuple(
-    "TorchAutogradForwardData",
-    ["output", "flat_args", "flat_output"],
-)
 
 
 def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> ForwardBackwardTraces:
@@ -3630,30 +2986,19 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
         ...   return (t2,))
     """
 
-    output_spec = None
+    forward_trace, result, env = augmented_forward_pass_trace(trace, *trace.args, **trace.kwargs)
+    forward_trace.tags.add(TraceTag.AUGMENTED_FORWARD)
+    saved_for_backward = deconstruct_forward_env_for_backward(trace, env)
 
-    def augmented_forward_fn(*args, **kwargs):
-        result, env = augmented_forward_pass(*args, trace=trace, **kwargs)
-        saved_for_backward = deconstruct_forward_env_for_backward(trace, env)
-        if torch_autograd:
-            nonlocal output_spec
-            flat_args, _ = tree_flatten((args, kwargs))
-            # The custom torch.autograd.Function only considers Tensors in the input/output (not ones that are nested inside python data structures)
-            flat_output, output_spec = tree_flatten_with_dataclass(result)
-            flat_output = tuple(flat_output)
-            # See Note [Grad forward output spec]
-            for_autograd = TorchAutogradForwardData(
-                result,
-                flat_args,
-                flat_output,
-            )._asdict()
-            return (for_autograd, saved_for_backward)
-        return result, saved_for_backward
+    # The custom torch.autograd.Function only considers Tensors in the input/output (not ones that are nested inside python data structures)
+    flat_output, output_spec = tree_flatten_with_dataclass(result["output"])
+    if not torch_autograd:  # needed?
+        output_spec = None
+    result["flat_output"] = tuple(flat_output)
 
-    # Copy the signature of the original function so that the arguments are
-    # named correctly in the augmented forward pass instead of being named
-    # "args" and "kwargs".
-    augmented_forward_fn.__signature__ = inspect.signature(trace.fn or trace.python_callable())
+    assert forward_trace.bound_symbols.pop(-1).sym is prims.python_return
+    with tracectx(forward_trace):
+        prims.python_return((result, saved_for_backward))
 
     def ones_like(x):
         if isinstance(x, TensorProxy):
@@ -3663,7 +3008,6 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
         else:
             return None
 
-    forward_trace = construct_trace()(augmented_forward_fn, *trace.args, **trace.kwargs)
     # We set forward trace to construct proxies because we need these proxies to
     # have different names than the ones in the forward trace.
     try:
@@ -3671,16 +3015,16 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
         # We don't want to record those ones_like calls in the forward trace.
         with detached_trace():
             if torch_autograd:
-                # It's assumed that forward_trace.output[0] is a dict from TorchAutogradForwardData
                 flat_output = forward_trace.output[0]["flat_output"]
                 cotangents = utils.sequencify(tree_map(lambda v: ones_like(v), flat_output))
             else:
-                cotangents = utils.sequencify(tree_map(lambda v: ones_like(v), trace.output))
+                cotangents = utils.sequencify(tree_map(lambda v: ones_like(v), trace.output["output"]))
     finally:
         reset_tracectx(tracectx_token)
 
     saved_for_backward = forward_trace.output[1]
     flat_saves, _ = tree_flatten(saved_for_backward)
+    trace_with_unwrapped_return = unwrap_return_value(trace)
 
     def backward_fn(saved_for_backward, cotangents):
         # trace converts all saved_for_backward into proxy, we want to restore number scalars afterwards.
@@ -3690,20 +3034,22 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
             for proxified, entry in zip(flat_saves_proxified, flat_saves)
         ]
         saved_for_backward = tree_unflatten(flat_filtered, saves_spec)
-        env = reconstruct_forward_env_for_backward(trace, saved_for_backward)
+        env = reconstruct_forward_env_for_backward(trace_with_unwrapped_return, saved_for_backward)
 
         if torch_autograd:
             cotangents = tree_unflatten(cotangents, output_spec)
-        out = backward_pass(env, trace, cotangents)
+        out = backward_pass(env, trace_with_unwrapped_return, cotangents)
         if torch_autograd:
             gkwargs = out[-1] if isinstance(out[-1], dict) else {}
             gargs = out[:-1] if isinstance(out[-1], dict) else out
-            gkwargs = {k: gkwargs.get(k, None) for k in trace.kwargs}
+            gkwargs = {k: gkwargs.get(k, None) for k in trace_with_unwrapped_return.kwargs}
             out = (*gargs, gkwargs)
             out = tree_flatten(out)[0]
         return out
 
-    backward_trace = construct_trace(rename_proxies=False)(backward_fn, saved_for_backward, cotangents)
+    backward_trace = construct_trace(rename_proxies=False, _used_names=forward_trace.names)(
+        backward_fn, saved_for_backward, cotangents
+    )
 
     # We are done with constructing the forward and backward passes at this
     # stage. The following is not strictly necessary, but it's good to filter
@@ -3742,286 +3088,100 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
     _update_backward_with_new_saved_for_backward(backward_trace, only_used_bw_saved_for_backward)
     forward_trace.set_provenance(TraceProvenance("Augmented forward pass"))
     backward_trace.set_provenance(TraceProvenance("Backward pass"))
+
+    enable_saved_for_backward_recomputation: None | bool = get_compile_option(
+        "enable_saved_for_backward_recomputation", "Enable save for backward tensors recomputation."
+    )
+    if enable_saved_for_backward_recomputation:
+        forward_trace, backward_trace = recompute_saved_for_backward(forward_trace, backward_trace)
+
     return ForwardBackwardTraces(forward_trace, backward_trace)
 
 
-# do we happen to want to register `ltorch` ops such as `ltorch.layer_norm` as well?
-autocast_impls: dict[prims.PrimIDs, Callable] = {}
-
-
-# NOTE: Rules which are registered ltorch symbols should match the type signature
-#       of those symbols as we use this rule for translating from `torch` -> `thunder.torch`
-#       if autocast is enabled while jitting. See also `NOTE: torch.autocast support`.
-def register_autocast_rule(op):
-    def decorator(func):
-        autocast_impls[op] = func
-        return func
-
-    return decorator
-
-
-_allowed_downcast_types = {dtypes.float16, dtypes.bfloat16}
-_allowed_downcast_types_str_to_dtype_map = {str(dtype): dtype for dtype in _allowed_downcast_types}
-
-
-def _check_valid_autocast_dtype(dtype):
-    if dtype not in _allowed_downcast_types:
-        raise ValueError(
-            f"autocast: `dtype` is expected to be either `thunder.float16` or `thunder.bfloat16`, but {dtype}"
-        )
-
-
-def _get_downcast_dtype_from_str(str_dtype):
-    return _allowed_downcast_types_str_to_dtype_map[str_dtype]
-
-
-def maybe_downcast_to(dtype, args):
-    allowed_downcast_types = (dtypes.float16, dtypes.bfloat16, dtypes.float32)
-
-    def map_fn(a):
-        if isinstance(a, TensorProxy) and a.dtype in allowed_downcast_types:
-            return maybe_convert_to_dtype(a, dtype)
-        return a
-
-    return tree_map(map_fn, args)
-
-
-@register_autocast_rule("torch.matmul")
-def autocast_torch_matmul_rule(a, b, dtype):
-    """Autocast rule for matmul"""
-    return ltorch.matmul(*(maybe_downcast_to(dtype, (a, b))))
-
-
-@register_autocast_rule(prims.PrimIDs.MATMUL)
-def autocast_matmul_rule(a, b, dtype):
-    """Autocast rule for matmul"""
-    return prims.matmul(*(maybe_downcast_to(dtype, (a, b))))
-
-
-def _linear_autocast_impl(a, w, bias, dtype):
-    if bias is None:
-        # Don't pass `bias` to maybe_downcast_to.
-        downcast_args = maybe_downcast_to(dtype, (a, w)) + (bias,)
-    else:
-        downcast_args = maybe_downcast_to(dtype, (a, w, bias))
-
-    return prims.linear(*downcast_args)
-
-
-@register_autocast_rule("torch.nn.functional.linear")
-def autocast_ltorch_linear_rule(a, w, bias=None, *, dtype):
-    return _linear_autocast_impl(a, w, bias, dtype)
-
-
-@register_autocast_rule(prims.PrimIDs.LINEAR)
-def autocast_linear_rule(a, w, bias, dtype):
-    return _linear_autocast_impl(a, w, bias, dtype)
-
-
-def _convolution_autocast_impl(a, w, bias, *other_args, dtype):
-    if bias is None:
-        # Don't pass `bias` to maybe_downcast_to.
-        downcast_args = maybe_downcast_to(dtype, (a, w)) + (bias,)
-    else:
-        downcast_args = maybe_downcast_to(dtype, (a, w, bias))
-
-    return prims.convolution(*downcast_args, *other_args)
-
-
-@register_autocast_rule("torch.nn.functional.conv1d")
-def autocast_ltorch_conv1d_rule(
-    a: TensorProxy,
-    /,
-    weight: TensorProxy,
-    bias: TensorProxy | None = None,
-    stride: int | Sequence[int] = 1,
-    padding: int | Sequence[int] | str = 0,
-    dilation: int = 1,
-    groups: int = 1,
-    *,
-    dtype,
-) -> TensorProxy:
-    from thunder.torch import _conv_helper
-
-    return _conv_helper(
-        1,
-        a,
-        weight,
-        bias,
-        stride,
-        padding,
-        dilation,
-        groups,
-        conv_function=partial(_convolution_autocast_impl, dtype=dtype),
-    )
-
-
-@register_autocast_rule("torch.nn.functional.conv2d")
-def autocast_ltorch_conv2d_rule(
-    a: TensorProxy,
-    /,
-    weight: TensorProxy,
-    bias: TensorProxy | None = None,
-    stride: int | Sequence[int] = 1,
-    padding: int | Sequence[int] | str = 0,
-    dilation: int = 1,
-    groups: int = 1,
-    *,
-    dtype,
-) -> TensorProxy:
-    from thunder.torch import _conv_helper
-
-    return _conv_helper(
-        2,
-        a,
-        weight,
-        bias,
-        stride,
-        padding,
-        dilation,
-        groups,
-        conv_function=partial(_convolution_autocast_impl, dtype=dtype),
-    )
-
-
-@register_autocast_rule("torch.nn.functional.conv3d")
-def autocast_ltorch_conv3d_rule(
-    a: TensorProxy,
-    /,
-    weight: TensorProxy,
-    bias: TensorProxy | None = None,
-    stride: int | Sequence[int] = 1,
-    padding: int | Sequence[int] | str = 0,
-    dilation: int = 1,
-    groups: int = 1,
-    *,
-    dtype,
-) -> TensorProxy:
-    from thunder.torch import _conv_helper
-
-    return _conv_helper(
-        3,
-        a,
-        weight,
-        bias,
-        stride,
-        padding,
-        dilation,
-        groups,
-        conv_function=partial(_convolution_autocast_impl, dtype=dtype),
-    )
-
-
-@register_autocast_rule("torch.nn.functional.scaled_dot_product_attention")
-def autocast_scaled_dot_product_attention(
-    query,
-    key,
-    value,
-    attn_mask=None,
-    dropout_p=0.0,
-    is_causal=False,
-    *,
-    dtype,
-    scale=None,
-):
-    from thunder.torch import scaled_dot_product_attention
-
-    q, k, v = maybe_downcast_to(dtype, (query, key, value))
-    return scaled_dot_product_attention(q, k, v, attn_mask, dropout_p, is_causal, scale=scale)
-
-
-def _maybe_get_autocast_rule_for_symbol(sym: Symbol):
-    return autocast_impls.get(sym.id)
-
-
-def autocast_symbol_mapper(bound_symbol: BoundSymbolInterface, dtype: dtypes.dtype):
-    """Return the callable implementing the autocast rule for the symbol.
-
+def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Trace, Trace]:
+    """Generates the pair of traces with rematerializaion of the saved-for-backward tensors.
     Args:
-        bound_symbol: Mapped to its autocast rule.
+        fwd_trace (Trace): forward trace where to get the saved for backward from.
+        bwd_trace (Trace): backward trace where to recompute the saved for backward to.
 
     Returns:
-        Callable: The callable implementing the autocast rule for the symbol.
-    """
-    autocast_impl: Callable | None = _maybe_get_autocast_rule_for_symbol(bound_symbol.sym)
-    return bound_symbol.sym if autocast_impl is None else partial(autocast_impl, dtype=dtype)
-
-
-def autocast(func: Callable, dtype: dtypes.dtype):
-    """Transforms a function to autocast certain operations.
-
-    Args:
-        func: The function to be transformed.
-        dtype: The data type to which arguments of the function or sub functions could get cast if
-            they are `dtypes.float32`.
-
-    Returns:
-        Callable: The transformed function
+        tuple[Trace, Trace]: A tuple containing the new forward and backward traces.
     """
 
-    if not isinstance(dtype, dtypes.dtype):
-        raise ValueError(f"`dtype` is expected to be `thunder.dtype.dtype` but {type(dtype)}")
-    _check_valid_autocast_dtype(dtype)
+    start_time_ns = time.perf_counter_ns()
 
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        trace = construct_trace()(func, *args, **kwargs)
-        return eval_trace(trace, *args, **kwargs, symbol_mapper=partial(autocast_symbol_mapper, dtype=dtype))
+    saved_for_bw = get_saved_for_backward_tensors(fwd_trace)
+    fwd_trace_args = {variableify(j) for j in fwd_trace.args}
+    old_saved_for_bwd = {variableify(j) for j in saved_for_bw}
 
-    return wrapper
+    all_rematerializable = old_saved_for_bwd - fwd_trace_args
 
+    remat_policy: None | Callable[[set[Variable]], set[Variable]] = get_compile_option(
+        "recomputation_policy",
+        "A callable that accepts a set of variables and returns a set of the variables that are allowed to be recomputed from the forward in the backward trace. The compile option `enable_saved_for_backward_recomputation` needs to be true for this policy to take effect.",
+    )
 
-# State to enable and disable autocast (while interpreter is generating the computation trace).
-_autocast_enabled = True
+    if remat_policy:
+        rematerializable = remat_policy(all_rematerializable)
+    else:
+        rematerializable = all_rematerializable
 
+    producers = find_producer_symbols(fwd_trace, tuple(unvariableify(i) for i in rematerializable), fwd_trace.args)
 
-def is_autocast_enabled():
-    return _autocast_enabled
+    required_fw_args = fwd_trace_args & old_saved_for_bwd
+    recomputed_tensors_from_producers = set()
+    for prod in producers:
+        for prod_arg in prod.flat_args:
+            prod_arg = variableify(prod_arg)
+            if prod_arg in fwd_trace_args:
+                required_fw_args.add(prod_arg)
+        for prod_out in prod.flat_outs:
+            recomputed_tensors_from_producers.add(variableify(prod_out))
 
+    required_saved_for_bwd = all_rematerializable - rematerializable - recomputed_tensors_from_producers
+    new_saved_for_backward = tuple(unvariableify(i) for i in required_fw_args | required_saved_for_bwd)
 
-# NOTE: Disable Autocast
-# Once the autocast rule has been applied, we disable autocast as the autocast_rule usually converts the inputs
-# and calls the same symbol.
-# Without disabling autocast we will have infinite recursion.
-@contextmanager
-def disable_autocast():
-    global _autocast_enabled
-    default = _autocast_enabled
-    _autocast_enabled = False
-    try:
-        yield
-    finally:
-        _autocast_enabled = default
+    new_fwd_trace = from_trace(fwd_trace)
+    new_fwd_trace.bound_symbols = fwd_trace.bound_symbols.copy()
+    new_return_args = (fwd_trace.output[0], (new_saved_for_backward, fwd_trace.output[1][1]))
+    new_fwd_trace.bound_symbols[-1] = prims.python_return.bind(*new_return_args, output=())
 
+    new_bwd_trace = from_trace(bwd_trace)
+    # In cases where C0 name is carried from previous trace it must be removed
+    # as the proxy needs to register with that specific name to follow the backward
+    # trace standard signature.
+    new_bwd_trace.names.discard("C0")
 
-def maybe_apply_autocast(sym):
-    # NOTE: torch.autocast support
-    # In PyTorch eager, enabling autocast allows mixed inputs to operator like `linear`
-    # which expect dtypes to be same. This works in PyTorch eager, as dispatcher applies the
-    # conversion first and then passes the converted input to the operator.
-    # To mimick similar behavior, here we replace the `sym` for all operators which have
-    # autocast rule, to apply the autocast conversion rule if autocast was enabled.
+    with tracectx(new_bwd_trace):
+        unpack_args = (CollectionProxy(new_saved_for_backward, name="C0"), len(new_saved_for_backward))
 
-    # Cache info may not be available in case of legacy `thunder.compile`
-    # which is still used for cases.
-    try:
-        cache_info = thunder._get_cache_info()
-    except LookupError:
-        cache_info = {}
+    # Here we make sure that the signature of the backward trace is the same as the one we expect.
+    # This part of the trace is the unpacking of the tuple passed from the forward trace,
+    # more specifically, C0 unpacks into the saved for backward tensors and C1 into the cotangents
+    # used to compute the vector-Jacobian product.
+    assert bwd_trace.bound_symbols[4].sym.id == prims.PrimIDs.UNPACK_SEQUENCE
+    assert bwd_trace.bound_symbols[4].args[0].name == "C0"
+    assert bwd_trace.bound_symbols[5].sym.id == prims.PrimIDs.UNPACK_SEQUENCE
+    assert bwd_trace.bound_symbols[5].args[0].name == "C1"
 
-    if (
-        cache_info.get("is_autocast_enabled", False)  # If user has actually enabled autocast in their code
-        and is_autocast_enabled()  # we are not under `disable_autocast`
-        and (autocast_impl := _maybe_get_autocast_rule_for_symbol(sym)) is not None
-    ):  # symbol has autocast impl.
+    for idx, bsym in enumerate(bwd_trace.bound_symbols):
+        if idx == 4:
+            new_unpack = prims.unpack_sequence.bind(*unpack_args, output=new_saved_for_backward)
+            new_bwd_trace.bound_symbols.append(new_unpack)
+        elif idx == 6:
+            new_bwd_trace.bound_symbols.extend(producers)
+            new_bwd_trace.bound_symbols.append(bsym)
+        else:
+            new_bwd_trace.bound_symbols.append(bsym)
 
-        @wraps(sym)
-        def wrapper(*args, **kwargs):
-            # See NOTE: Disable Autocast
-            with disable_autocast():
-                thunder_autocast_dtype = _get_downcast_dtype_from_str(cache_info["autocast_thunder_dtype"])
-                return partial(autocast_impl, dtype=thunder_autocast_dtype)(*args, **kwargs)
+    new_bwd_trace.args = [(new_saved_for_backward, fwd_trace.output[1][1]), *bwd_trace.args[1:]]
 
-        return wrapper
+    elapsed_time_ns = time.perf_counter_ns() - start_time_ns
+    new_bwd_trace.set_provenance(
+        TraceProvenance(f"Saved for backward remat trace (took {elapsed_time_ns * 1e-6:.2f} milliseconds)")
+    )
+    new_fwd_trace.set_provenance(
+        TraceProvenance(f"Saved for backward remat trace (took {elapsed_time_ns * 1e-6:.2f} milliseconds)")
+    )
 
-    return None
+    return new_fwd_trace, new_bwd_trace

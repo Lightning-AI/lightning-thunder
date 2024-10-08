@@ -9,7 +9,9 @@ import thunder.core.utils as utils
 from thunder.core.trace import TraceCtx
 from thunder.core.symbol import BoundSymbol
 from thunder.core.proxies import variableify, Proxy
+import thunder.core.prims as prims
 from thunder.core.prims import PrimIDs
+from thunder.executors import torchex
 
 
 # Represents a region and its parents (regions it consumes the output of) and
@@ -89,7 +91,6 @@ class Graph:
         # as it appears to be far off from being universal.
         # We use indices as hash values instead.
         bsym_id_to_node_map: list[int] = []
-        copy_nodes: list[Node] = []
         for bsym_id, bsym in enumerate(trace.bound_symbols):
             node = Node(bsym_id, [bsym], [bsym_id], bsym_id, bsym_id)
             bsym_id_to_node_map.append(node)
@@ -100,11 +101,6 @@ class Graph:
                     lambda: f"Found multiple RETURN nodes while converting a list of bound symbols to a dag",
                 )
                 self.return_node = node
-                for copy_node in copy_nodes:
-                    node.parents.add(copy_node)
-                    copy_node.children.add(node)
-            elif bsym.sym.id is PrimIDs.COPY_:
-                copy_nodes.append(node)
 
         for bsym_id, node in enumerate(bsym_id_to_node_map):
             bsym = node.group_bsyms[0]

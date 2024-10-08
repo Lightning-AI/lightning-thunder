@@ -3,6 +3,7 @@ import time
 from typing import TYPE_CHECKING
 from abc import ABC
 from collections.abc import Sequence
+import dataclasses
 from itertools import filterfalse
 from functools import partial
 
@@ -24,6 +25,25 @@ if TYPE_CHECKING:
 # Common optimization and transform passes
 #
 # NOTE This file avoids transforms depending on passes, since passes depend on transforms
+@dataclasses.dataclass  # (frozen=True)
+class VJPDual:
+    """A pair of primal and saved information for backward (residuals).
+
+    Args:
+        primal (Union[Proxy, Number]): Primal value, i.e., the value being differentiated.
+        residuals (Tuple[Proxy, ...]): Residuals, i.e., the values that are
+            saved for the backward.
+
+    Yields:
+        Tuple[Variable, Tuple[Variable, ...], Callable]: Primal and residuals
+    """
+
+    primal: Proxy | Number
+    residuals: tuple[Proxy, ...]
+
+    def __iter__(self):
+        yield self.primal
+        yield self.residuals
 
 
 # Modifies an existing BoundSymbol, removing its "no-op" subsymbols (recursively) which perform no operations
@@ -434,3 +454,27 @@ def canonicalize_proxies(bsyms: Sequence[BoundSymbol]) -> Sequence[BoundSymbol]:
         process_bound_symbols(bsyms, output)
 
     return output
+
+
+def wrap_return_value_together_with_argments(trace: Trace) -> Trace:
+    last = trace.bound_symbols[-1]
+    assert last.sym.id == prims.PrimIDs.RETURN
+    flat_args, _ = tree_flatten((trace.args, trace.kwargs))
+    new_return_value = {"output": last.args[0], "flat_args": flat_args}
+    new_return_bsym = last.from_bsym(args=(new_return_value,))
+
+    new_trace = from_trace(trace)
+    new_trace.bound_symbols = trace.bound_symbols[:-1] + [new_return_bsym]
+    new_trace.set_provenance(TraceProvenance("Return arguments to track copies onto them"))
+    return new_trace
+
+
+def unwrap_return_value(trace: Trace) -> Trace:
+    last = trace.bound_symbols[-1]
+    assert last.sym.id == prims.PrimIDs.RETURN
+    new_return_bsym = last.from_bsym(args=(last.args[0]["output"],))
+
+    new_trace = from_trace(trace)
+    new_trace.bound_symbols = trace.bound_symbols[:-1] + [new_return_bsym]
+    new_trace.set_provenance(TraceProvenance("Unwrap the actual return value"))
+    return new_trace

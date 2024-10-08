@@ -203,13 +203,19 @@ def test_cudnn_vs_torch_consistency(op, device, dtype, *_):
             return result
 
 
+dtypes_for_grad_sdpa_cudnn = sorted(grad_sdpa_cudnn_opinfo.dtypes(), key=lambda x: str(x))
+
+
 @pytest.mark.skipif(
     LooseVersion(cudnn.backend_version_string()) < LooseVersion("8.9.5"),
     reason="cuDNN is required to be at least `8.9.5`",
 )
 @pytest.mark.parametrize("may_cat_grad_qkv", (True, False), ids=("may-cat-grad-qkv", "never-cat-grad-qkv"))
-@pytest.mark.parametrize("dtype", grad_sdpa_cudnn_opinfo.dtypes(), ids=tuple(map(str, grad_sdpa_cudnn_opinfo.dtypes())))
+@pytest.mark.parametrize("dtype", dtypes_for_grad_sdpa_cudnn, ids=tuple(map(str, dtypes_for_grad_sdpa_cudnn)))
 def test_vjp_correctness_cudnn_sdpa(dtype, may_cat_grad_qkv):
+    from thunder.common import CompileData
+    from thunder.core.compile_data import compile_data_and_stats
+
     _maybe_xfail()
 
     for sample in grad_sdpa_cudnn_opinfo.reference_inputs("cuda", dtype, requires_grad=True):
@@ -235,11 +241,28 @@ def test_vjp_correctness_cudnn_sdpa(dtype, may_cat_grad_qkv):
         flat_op, flat_args, spec = flatten_func(grad_sdpa_cudnn_opinfo.op, sample.args, sample.kwargs)
         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
 
-        cfoo = thunder.compile(
-            vjp(filtered_op),
-            disable_torch_autograd_support=True,
-            disable_preprocessing=True,
+        cd = CompileData(
+            fn=vjp(filtered_op),
             executors_list=[cudnn_ex],
+            disable_preprocessing=True,
+        )
+        with compile_data_and_stats(cd, None):
+            initial_trace = thunder.trace()(vjp(filtered_op), filtered_args, (v,))
+
+        from thunder.executors.cudnnex import cudnn_sdpa_fwd, cudnn_sdpa_bwd
+
+        # This is a workaround for the issue with python_ctx replacing symbols
+        # with their "call_ctx" values which are not traceable and accept only
+        # regular torch tensors
+        initial_trace.python_ctx = lambda: {
+            "cudnn_sdpa_fwd": cudnn_sdpa_fwd,
+            "cudnn_sdpa_bwd": cudnn_sdpa_bwd,
+        }
+
+        cfoo = thunder.jit(
+            initial_trace.python_callable(),
+            disable_torch_autograd=True,
+            executors=[cudnn_ex],
             cudnn_sdpa_bwd_may_cat_grad_qkv=may_cat_grad_qkv,
         )
 

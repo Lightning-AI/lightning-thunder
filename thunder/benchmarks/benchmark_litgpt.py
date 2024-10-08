@@ -1,8 +1,11 @@
+from __future__ import annotations
 from datetime import timedelta
 import os
 import time
 import warnings
 from contextlib import nullcontext
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import torch
 import functools
@@ -22,15 +25,25 @@ from thunder.dynamo import ThunderCompiler
 from thunder.tests.litgpt_model import Config, GPT, Block
 from lightning.fabric.utilities.throughput import measure_flops
 from lightning.fabric.utilities import Throughput
+from lightning_utilities.core.imports import package_available
 
+transformer_engine_available = package_available("transformer_engine")
+torchao_available = package_available("torchao")
 
-try:
+if transformer_engine_available:
     import transformer_engine.pytorch as te
-    from lightning.fabric.plugins.precision.transformer_engine import TransformerEnginePrecision
 
-    transformer_engine_available = True
-except ImportError:
-    transformer_engine_available = False
+if torchao_available:
+    from torchao.float8.config import CastConfig, Float8LinearConfig, ScalingType
+    from torchao.float8 import precompute_float8_dynamic_scale_for_fsdp
+    from torchao.float8.float8_linear_utils import (
+        convert_to_float8_training,
+        sync_float8_amax_and_scale_history,
+        get_float8_layers,
+    )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
 
 
 FSDP_MODES: set[str] = {"fsdp", "fsdp2"}
@@ -62,7 +75,128 @@ def check_fp8_compute_capability() -> None:
 
 
 def is_transformer_engine(low_precision_mode: str) -> bool:
-    return low_precision_mode == "fp8-delayed-te"
+    return low_precision_mode in ["fp8-delayed-te", "fp8-delayed-te-wo_layernorm"]
+
+
+def check_and_update_config_for_te_if_needed(config: Config) -> None:
+    updates_info = []
+
+    def update_if_not_divisible(attr_name, divisor):
+        current_value = getattr(config, attr_name, 0)
+        if current_value % divisor != 0:
+            new_value = current_value + (divisor - current_value % divisor)
+            setattr(config, attr_name, new_value)
+            updates_info.append((attr_name, new_value))
+            return True
+        return False
+
+    updated = False
+    updated |= update_if_not_divisible("padded_vocab_size", 16)
+    updated |= update_if_not_divisible("n_embd", 8)
+
+    if updated:
+        print("Configuration was updated with the following changes:")
+        for key, value in updates_info:
+            print(f"{key} updated to {value}")
+    else:
+        print("No updates were necessary.")
+
+
+def swap_linear_layers_for_te(model: torch.nn.Module, device: Any, swap_layernorm: bool = True) -> None:
+
+    def parameters_cnt(model: torch.nn.Module) -> int:
+        return sum(p.numel() for p in model.parameters())
+
+    def _resursively_swap_linear_layers_for_te(module: torch.nn.Module) -> None:
+        for n, m in module.named_children():
+            if len(list(m.children())) > 0:
+                _resursively_swap_linear_layers_for_te(m)
+
+            if isinstance(m, torch.nn.Linear):
+                has_bias = m.bias is not None
+                new_linear = te.Linear(m.in_features, m.out_features, bias=has_bias, device=device)
+                setattr(module, n, new_linear)
+
+            if swap_layernorm and isinstance(m, torch.nn.LayerNorm):
+                new_layernorm = te.LayerNorm(m.normalized_shape[0], eps=m.eps, device=device)
+                setattr(module, n, new_layernorm)
+
+    initial_params_cnt = parameters_cnt(model)
+
+    _resursively_swap_linear_layers_for_te(model)
+    assert initial_params_cnt == parameters_cnt(model)
+    for m in model.modules():
+        assert not isinstance(m, torch.nn.Linear)
+        if swap_layernorm:
+            assert not isinstance(m, torch.nn.LayerNorm)
+
+
+# FIXME(crcrpar): Recompilation warning after 2 iterations
+#     [rank0]:[rank0]:W0819 05:54:10.552000 31473 torch/_dynamo/convert_frame.py:831] [2/256] torch._dynamo hit config.accumulated_cache_size_limit (256)
+#     [rank0]:[rank0]:W0819 05:54:10.552000 31473 torch/_dynamo/convert_frame.py:831] [2/256]    function: 'torch_dynamo_resume_in_fsdp_hook_wrapper_at_66' (/usr/local/lib/python3.10/dist-packages/torch/distributed/_composable/fsdp/_fsdp_state.py:66)
+#     [rank0]:[rank0]:W0819 05:54:10.552000 31473 torch/_dynamo/convert_frame.py:831] [2/256]    last reason: Unable to find recompilation reasons
+#     [rank0]:[rank0]:W0819 05:54:10.552000 31473 torch/_dynamo/convert_frame.py:831] [2/256] To log all recompilation reasons, use TORCH_LOGS="recompiles".
+#     [rank0]:[rank0]:W0819 05:54:10.552000 31473 torch/_dynamo/convert_frame.py:831] [2/256] To diagnose recompilation issues, see https://pytorch.org/docs/main/torch.compiler_troubleshooting.html.
+# TODO(crcrpar): support delayed scaling. I couldn't manage to make delayed scaling work.
+@dataclass
+class TorchAOFP8Handler:
+    is_fsdp2: bool
+    use_fp8_linear: bool
+    use_fp8_allgather: bool
+    use_torchao_fp8_precompute_float8_dynamic_scale_for_fsdp: bool
+    use_torch_compile: bool
+    fp8_layers: list[torch.nn.Module] = field(
+        init=False,
+        default_factory=list,
+        repr=False,
+    )
+    _sync_float8_amax_and_scale_history: None | Callable[[torch.nn.Module, Sequence[torch.nn.Module]], None] = field(
+        init=False,
+        default=None,
+        repr=False,
+    )
+
+    def __post_init__(self) -> None:
+        self._enabled = self.use_fp8_linear
+        if not self._enabled:
+            return
+        if torch.cuda.get_device_capability() < (8, 9):
+            raise ValueError(f"torchao float8 requires {torch.cuda.get_device_capability()=} >= (8, 9)")
+        self.fp8_linear_config = Float8LinearConfig(
+            cast_config_input=CastConfig(ScalingType.DYNAMIC),
+            cast_config_weight=CastConfig(ScalingType.DYNAMIC),
+            cast_config_grad_output=CastConfig(ScalingType.DYNAMIC),
+            enable_fsdp_float8_all_gather=self.use_fp8_allgather and self.is_fsdp2,
+            enable_pre_and_post_forward=False,
+        )
+        self.precompute_scale = (
+            self.is_fsdp2 and self.use_fp8_allgather and self.use_torchao_fp8_precompute_float8_dynamic_scale_for_fsdp
+        )
+
+    def convert_model_to_fp8(self, model: torch.nn.Module) -> torch.nn.Module:
+        if not self._enabled:
+            return model
+        model = convert_to_float8_training(
+            model,
+            module_filter_fn=lambda _, fqn: "lm_head" != fqn,
+            config=self.fp8_linear_config,
+        )
+        self.fp8_layers = get_float8_layers(model)
+        return model
+
+    def sync_float8_amax_and_scale_history_for_delayed_scaling(self, model: torch.nn.Module) -> None:
+        # NOTE(crcrpar): Delayed scaling is not supported in this script.
+        if False:
+            if self._sync_float8_amax_and_scale_history is None:
+                if self.use_torch_compile:
+                    self._sync_float8_amax_and_scale_history = torch.compile(sync_float8_amax_and_scale_history)
+                else:
+                    self._sync_float8_amax_and_scale_history = sync_float8_amax_and_scale_history
+            self._sync_float8_amax_and_scale_history(model, self.fp8_layers)
+
+    def precompute_fp8_dynamic_scale_for_fsdp(self, model: torch.nn.Module) -> None:
+        if self._enabled and self.precompute_scale:
+            precompute_float8_dynamic_scale_for_fsdp(model)
 
 
 def configure_optimizers(model, weight_decay, learning_rate, betas, device_type):
@@ -101,6 +235,10 @@ class Benchmark_litGPT:
         warmup_iters: int = 25,
         dump_thunder_traces: bool = False,
         dump_memory_snapshot: bool = False,
+        use_torchao_fp8_linear: bool = False,
+        use_torchao_fp8_allgather: bool = False,
+        use_torchao_fp8_precompute_scale_for_fsdp: bool = False,
+        fp8_shard_intermediate_activation: bool = False,
     ):
         seed = 1337
         torch.manual_seed(seed)
@@ -134,6 +272,21 @@ class Benchmark_litGPT:
         self.is_thunder_as_torchcompile_backend = False
         self.dump_thunder_traces = dump_thunder_traces
         self.dump_memory_snapshot = dump_memory_snapshot
+        self.fp8_shard_intermediate_activation = fp8_shard_intermediate_activation
+
+        if use_torchao_fp8_linear:
+
+            if not torchao_available:
+                raise ValueError("`torchao` is not available")
+            if self.distributed_mode not in ("none", "fsdp2"):
+                raise ValueError(f"torchao fp8 requires {self.distributed_mode=} to be `none` or `fsdp2`")
+        self._torchao_fp8_handler = TorchAOFP8Handler(
+            is_fsdp2=self.distributed_mode == "fsdp2",
+            use_fp8_linear=use_torchao_fp8_linear,
+            use_fp8_allgather=use_torchao_fp8_allgather,
+            use_torchao_fp8_precompute_float8_dynamic_scale_for_fsdp=use_torchao_fp8_precompute_scale_for_fsdp,
+            use_torch_compile=self.compile == "inductor",
+        )
 
         # Clarify benchmark assumptions
         if self.sharding_size is not None:
@@ -195,11 +348,6 @@ class Benchmark_litGPT:
                 self.global_batch_size % self.micro_batch_size * world_size == 0
             ), f"Global Batch Size {self.global_batch_size} should be a multiple Micro Batch Size {self.micro_batch_size} * World Size {world_size}."
 
-        if self.checkpoint_activations and "thunder" in self.compile:
-            warnings.warn(
-                "Activations checkpointing is configured, but Thunder does not support checkpointing. Checkpointing will be ignored."
-            )
-            self.checkpoint_activations = False
         self.skip_data_sync = skip_data_sync
 
         # Profiling Args
@@ -213,12 +361,15 @@ class Benchmark_litGPT:
         # Initialize the model
         t0 = time.perf_counter()
         print(f"Loading model with {self.config.__dict__}")
+        if is_transformer_engine(self.low_precision_mode):
+            check_and_update_config_for_te_if_needed(self.config)
         self.model = self.init_model()
         print(f"Time to instantiate model: {time.perf_counter() - t0:.02f} seconds.")
 
         if self.use_te_fp8_autocast:
-            te_precision = TransformerEnginePrecision(weights_dtype=torch.bfloat16, replace_layers=True)
-            self.model = te_precision.convert_module(self.model)
+            is_wo_layernorm = self.low_precision_mode == "fp8-delayed-te-wo_layernorm"
+            swap_linear_layers_for_te(self.model, device, swap_layernorm=not is_wo_layernorm)
+            self.model.to(torch.bfloat16)
 
         # Setup the distributed algorithm choices
         if distributed_first := (self.compile in ("eager", "inductor") or "dynamo" in self.compile):
@@ -257,6 +408,7 @@ class Benchmark_litGPT:
         with init_device:
             model = GPT(self.config)
         model.to(dtype=torch.bfloat16)
+        model = self._torchao_fp8_handler.convert_model_to_fp8(model)
         return model
 
     def setup_distributed(self, model):
@@ -303,6 +455,7 @@ class Benchmark_litGPT:
                 )
             elif self.distributed_mode == "fsdp2":
                 # reference: https://github.com/pytorch/torchtitan/blob/6e7a183/docs/fsdp.md
+                from functools import partial
                 from torch.distributed._composable.fsdp import fully_shard, MixedPrecisionPolicy
 
                 if self.bucketing_mode != "none":
@@ -317,24 +470,25 @@ class Benchmark_litGPT:
 
                 reshard_after_forward: bool = self.shard_mode == "zero3"
 
-                for transformer_block in model.modules():
-                    if isinstance(transformer_block, Block):
-                        fully_shard(
-                            transformer_block,
-                            mesh=mesh,
-                            reshard_after_forward=reshard_after_forward,
-                            mp_policy=MixedPrecisionPolicy(
-                                param_dtype=torch.bfloat16,
-                                reduce_dtype=torch.bfloat16,
-                            ),
-                        )
-
-                fully_shard(
-                    model,
+                _apply_fully_shard = partial(
+                    fully_shard,
                     mesh=mesh,
                     reshard_after_forward=reshard_after_forward,
-                    mp_policy=MixedPrecisionPolicy(param_dtype=torch.bfloat16, reduce_dtype=torch.bfloat16),
+                    mp_policy=MixedPrecisionPolicy(
+                        param_dtype=torch.bfloat16,
+                        reduce_dtype=torch.bfloat16,
+                    ),
                 )
+
+                # for transformer_block in model.transformer.modules():
+                for transformer_block in model.modules():
+                    if isinstance(transformer_block, Block):
+                        _apply_fully_shard(transformer_block)
+
+                _apply_fully_shard(model.lm_head)
+                _apply_fully_shard(model.transformer["wte"])
+                _apply_fully_shard(model.transformer["ln_f"])
+                _apply_fully_shard(model)
                 model.to_empty(device=self.device)
                 model.apply(model._init_weights)
 
@@ -378,6 +532,10 @@ class Benchmark_litGPT:
         return model
 
     def setup_activation_checkpointing(self):
+        if "thunder" in self.compile:
+            # checkpointing is an option to thunder.jit
+            return
+
         if any(isinstance(mod, CheckpointWrapper) for mod in self.model.modules()):
             warnings.warn(
                 "FSDP checkpointing is configured, but the model already contains checkpointed layers."
@@ -388,6 +546,8 @@ class Benchmark_litGPT:
         check_fn = lambda submodule: isinstance(submodule, Block)
         apply_activation_checkpointing(self.model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=check_fn)
 
+    # TODO(crcrpar): Think of apply `torch.compile` or `thunder.jit` per block/module
+    # like https://github.com/pytorch/torchtitan/blob/cfc0f4e/torchtitan/parallelisms/parallelize_llama.py#L275-L284
     def setup_compile(self, model):
         if self.compile == "inductor":
             print("Resetting cache size for torch.compile")
@@ -411,33 +571,27 @@ class Benchmark_litGPT:
 
                 executors.insert(0, transformer_engine_ex)
 
+            jit_options = {
+                "enable_saved_for_backward_recomputation": self.checkpoint_activations,
+                "recomputation_policy": None,
+            }
+
             if "dynamo" in self.compile:
                 if self.distributed_mode == "fsdp2":
                     print("Resetting cache size for when fsdp2 and using thunder as backend torch.compile")
                     import torch._dynamo.config as dynamo_config
 
                     dynamo_config.cache_size_limit = 64
-                    if "transformerengine" in self.compile:
-                        # [rank0]:   File "/opt/pytorch/lightning-thunder/thunder/executors/transformer_engineex.py", line 410, in _te_functional_linear_backward_impl
-                        # [rank0]:     grads = _Linear.backward(ctx, g)
-                        # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/transformer_engine/pytorch/module/linear.py", line 449, in backward
-                        # [rank0]:     weight_fp8.transpose_2d(),
-                        # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/transformer_engine/pytorch/float8_tensor.py", line 625, in transpose_2d
-                        # [rank0]:     if self._transpose is None:
-                        # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/transformer_engine/pytorch/float8_tensor.py", line 39, in get_func
-                        # [rank0]:     return self._fp8_attrs[name]
-                        # [rank0]: AttributeError: 'Float8Tensor' object has no attribute '_fp8_attrs'
-                        raise ValueError(
-                            "TransformerEngine executor cannot be used as an executor of Thunder when Thunder is used as torch.compile backend"
-                        )
-                backend = ThunderCompiler(executors=executors)
+
+                backend = ThunderCompiler(executors=executors, **jit_options)
                 # Because Lightning Fabric is imported in this script it monkey patches the torch.compile function
                 # https://github.com/Lightning-AI/pytorch-lightning/blob/828fd998961f6a60f92c35254bb94d6e049ad069/src/lightning/fabric/wrappers.py#L421
                 # using __wrapped__ to access the original torch.compile function did not work
                 # so we are using the lower level torch._dynamo.optimize function
                 model = torch._dynamo.optimize(backend=backend)(model)
             else:
-                model = thunder.jit(model, executors=executors)
+                jit_options["fp8_shard_intermediate_activation"] = self.fp8_shard_intermediate_activation
+                model = thunder.jit(model, executors=executors, **jit_options)
 
         elif self.compile != "eager":
             raise ValueError(f"Invalid compile option: {self.compile}")
@@ -540,9 +694,13 @@ class Benchmark_litGPT:
             )
             loss.backward()
 
+            self._torchao_fp8_handler.sync_float8_amax_and_scale_history_for_delayed_scaling(self.model)
+
             # Simple Gradient Accumulation Implementation
             self.optimizer.step()
             self.optimizer.zero_grad(set_to_none=True)
+
+            self._torchao_fp8_handler.precompute_fp8_dynamic_scale_for_fsdp(self.model)
 
             if self.nsys_enabled and i == self.profiler_stop and global_rank in [0, None]:
                 print("=====Stop NSYS Profiling======")
@@ -650,6 +808,15 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
             print(f"DDP Bucketing Size: {benchmark.ddp_bucket_size} MB")
         print(f"Compiler: {benchmark.compile}")
         print(f"Low Precision Mode: {benchmark.low_precision_mode}")
+        if benchmark._torchao_fp8_handler._enabled:
+            msg = "linear"
+            if benchmark._torchao_fp8_handler.use_fp8_allgather:
+                msg += ", all-gather"
+            if benchmark._torchao_fp8_handler.precompute_scale:
+                msg += ", single all-reduce of AMAX/scales for dynamic scaling"
+            msg += " are enabled"
+            print(f"[torchao float8] {msg}")
+
         print(f"Average iter time: {benchmark.perf_metrics['average_iter_time']:.2f} ms")
         print(f"Memory used: {benchmark.perf_metrics['memory_used_GB']:.02f} GB")
         print(f"Tokens/s: {benchmark.perf_metrics['tokens_per_sec']:.02f}")
@@ -702,8 +869,11 @@ if __name__ == "__main__":
 
     from jsonargparse import CLI
 
-    CLI(benchmark_main)
-
-    # ref: https://github.com/pytorch/pytorch/blob/3af12447/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp#L1110-L1116
-    if world_size > 1:
-        torch_dist.destroy_process_group()
+    try:
+        CLI(benchmark_main)
+    except Exception:
+        raise
+    finally:
+        # ref: https://github.com/pytorch/pytorch/blob/3af12447/torch/csrc/distributed/c10d/ProcessGroupNCCL.cpp#L1110-L1116
+        if world_size > 1:
+            torch_dist.destroy_process_group()
