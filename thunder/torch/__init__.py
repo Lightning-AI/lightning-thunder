@@ -1854,7 +1854,7 @@ _inplace_to_out_of_place[silu] = silu, 1
 def add(
     a: NumberLike | TensorLike, b: NumberLike | TensorLike, /, *, alpha: Number | TensorLike = 1
 ) -> Number | TensorLike:
-    if alpha != 1:
+    if isinstance(alpha, torch.Tensor) or alpha != 1:
         b = b * alpha
 
     return clang.add(a, b)
