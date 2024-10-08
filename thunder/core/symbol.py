@@ -658,10 +658,10 @@ class BoundSymbol(BoundSymbolInterface):
         comment = "# " if commented else ""
 
         if isinstance(s, str):
-            lines.append(f"{codeutils.indent_string(indent)}{comment}{s}")
+            lines.append(f"{'  ' * indent}{comment}{s}")
         else:
             for line in s:
-                lines.append(f"{codeutils.indent_string(indent)}{comment}{line}")
+                lines.append(f"{'  ' * indent}{comment}{line}")
         return lines
 
     def python(self, indent: int, commented: bool = False, print_depth: int = 1) -> list[str]:
