@@ -58,11 +58,11 @@ class BitsAndBytesLinearQuant4bit(Transform):
         if w.device.type == "meta":
             n = w.numel()
             output_shape = ((n + 1) // 2,)
-            blocksize=64
+            blocksize = 64
             blocks = n // blocksize
             blocks += 1 if n % blocksize > 0 else 0
             absmax = torch.zeros((blocks,), device=w.device, dtype=w.dtype)
-            quant_type="nf4"
+            quant_type = "nf4"
             code = get_4bit_type(quant_type, device=w.device)
 
             # Return only shape and dtype for meta tensors without calculation
@@ -78,7 +78,7 @@ class BitsAndBytesLinearQuant4bit(Transform):
 
         if w.device.type == "cpu":
             return quantize_4bit_cpu(w, quant_type="nf4")
-        
+
         if w.device.type != "cuda":
             with torch.no_grad():
                 w_work = w.to("cuda")

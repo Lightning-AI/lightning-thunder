@@ -4,7 +4,7 @@ Derivied from
 
 The code for CPU quantization in this file has been adapted from a not-yet-merged
 multi-backend-refactor branch
-    
+
 MIT License:
     https://github.com/bitsandbytes-foundation/bitsandbytes/blob/main/LICENSE
 
@@ -58,10 +58,12 @@ except BaseException:
 
 Tensor = torch.Tensor
 
+
 def _torch_version_prereq(major, minor):
     ver_major = int(torch.__version__.split(".")[0])
     ver_minor = int(torch.__version__.split(".")[1])
     return ver_major * 32 + ver_minor >= major * 32 + minor
+
 
 def _maybe_torch_compile(func):
     # torch.compile requires g++ and pytorch >= 2.0
@@ -72,6 +74,7 @@ def _maybe_torch_compile(func):
             options.update({"fx_graph_cache": True})
         return torch.compile(func, dynamic=True, options=options)
     return func
+
 
 NF4_QUANT_TABLE = [
     -1.0 - 1e-2,  # 0b0000
@@ -103,6 +106,7 @@ FP4_QUANT_TABLE = {
     0.8333333: 3,  # 0b0011
 }
 
+
 def assert_on_cpu(tensors):
     on_cpu = True
     for t in tensors:
@@ -116,20 +120,22 @@ def assert_on_cpu(tensors):
         )
     return on_cpu
 
+
 def quantize_4bit_cpu(
     A: torch.Tensor,
-    absmax: Optional[torch.Tensor] = None,
-    out: Optional[torch.Tensor] = None,
+    absmax: torch.Tensor | None = None,
+    out: torch.Tensor | None = None,
     blocksize=64,
     compress_statistics=False,
     quant_type: Literal["fp4", "nf4"] = "fp4",
     quant_storage=torch.uint8,
-) -> Tuple[torch.Tensor, QuantState]:
+) -> tuple[torch.Tensor, QuantState]:
     if blocksize is None:
         blocksize = 64
     assert_on_cpu([A, absmax, out])
     assert quant_storage == torch.uint8, "CPU backend only supports uint8 quant_storage"
     return quantize_4bit_impl(A, absmax, out, blocksize, compress_statistics, quant_type)
+
 
 @_maybe_torch_compile
 def quantize_4bit_impl(
