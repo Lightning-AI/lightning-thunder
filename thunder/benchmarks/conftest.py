@@ -1,9 +1,21 @@
+import warnings
 import platform
 import psutil
 from typing import Any
+import os
 
-from asvdb import utils, BenchmarkInfo, BenchmarkResult, ASVDb
+try:
+    from asvdb import utils, BenchmarkInfo, BenchmarkResult, ASVDb
+    HAS_ASVDB = True
+except ImportError:
+    warnings.warn("asvdb is not imported, results won't be saved as asv")
+    HAS_ASVDB = False
 
+if not (bench_dir := os.getenv("THUNDER_BENCH_DIR")):
+    bench_dir = "./asv"
+
+def pytest_addoption(parser):
+    parser.addoption("--asv_bench_dir", action="store", default=bench_dir)
 
 def sanitize_params(benchmark_params: list[tuple[str, Any]]) -> list[tuple[str, Any]]:
     sane_params = []
@@ -16,7 +28,7 @@ def sanitize_params(benchmark_params: list[tuple[str, Any]]) -> list[tuple[str, 
 
 
 def pytest_sessionfinish(session, exitstatus):
-    if not hasattr(session.config, "_benchmarksession"):
+    if not HAS_ASVDB or not hasattr(session.config, "_benchmarksession"):
         return
 
     benchmarks = session.config._benchmarksession.benchmarks
@@ -38,7 +50,7 @@ def pytest_sessionfinish(session, exitstatus):
         ram=memory_size,
     )
 
-    db = ASVDb(dbDir="./asv", repo=repo_name, branches=[current_branch])
+    db = ASVDb(dbDir=session.config.option.asv_bench_dir, repo=repo_name, branches=[current_branch])
 
     for bench in benchmarks:
         name = bench.name.split("[")[0]
