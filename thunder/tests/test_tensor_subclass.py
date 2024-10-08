@@ -19,14 +19,28 @@ if TYPE_CHECKING:
     from typing import Any
 
 
-class TensorSubclassForTest(torch.Tensor):
+@torch._dynamo.allow_in_graph
+class Converter(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x):
+        return ScaleTensorSubclass.from_tensor(x)
+
+    @staticmethod
+    def backward(ctx, g):
+        return g
+
+
+def to_scale_tensor_subclass(t: torch.Tensor) -> ScaleTensorSubclass:
+    return Converter.apply(t)
+
+
+class ScaleTensorSubclass(torch.Tensor):
     _x: torch.Tensor
     _scale: torch.Tensor
     __slots__ = ["_x", "_scale"]
 
     def __new__(cls, x: torch.Tensor, scale: torch.Tensor):
-        if scale.numel() != 1:
-            raise ValueError(f"Invalid `scale`: {scale}")
+        assert scale.numel() == 1, f"Invalid `scale`: {scale}"
         self = torch.Tensor._make_wrapper_subclass(
             cls,
             x.size(),
@@ -46,21 +60,24 @@ class TensorSubclassForTest(torch.Tensor):
     __torch_function__ = torch._C._disabled_torch_function_impl
 
     def __repr__(self):
-        return f"TensorSubclassForTest(dtype={self._x.dtype}, scale={self._scale})"
+        return f"ScaleTensorSubclass(dtype={self._x.dtype}, device={self._x.device}, x={self._x}, scale={self._scale})"
 
-    def __tensor_flatten__(self):
+    def __tensor_flatten__(self) -> tuple[list[str], dict[str, Any]]:
         return ["_x", "_scale"], {}
 
     @staticmethod
     def __tensor_unflatten__(
-        inner_tensors: dict[str, torch.Tensor], metadata: dict[str, Any], outer_size, outer_stride
-    ):
-        return TensorSubclassForTest(inner_tensors["_x"], inner_tensors["_scale"])
+        inner_tensors: dict[str, torch.Tensor],
+        metadata: dict[str, Any],
+        outer_size,
+        outer_stride,
+    ) -> ScaleTensorSubclass:
+        return ScaleTensorSubclass(inner_tensors["_x"], inner_tensors["_scale"])
 
     @staticmethod
-    def from_tensor(x: torch.Tensor):
+    def from_tensor(x: torch.Tensor) -> ScaleTensorSubclass:
         scale = x.abs().max()
-        return TensorSubclassForTest(x, scale)
+        return ScaleTensorSubclass(x, scale)
 
     @classmethod
     def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
@@ -72,8 +89,8 @@ class TensorSubclassForTest(torch.Tensor):
                 or issubclass(torch._subclasses.functional_tensor.FunctionalTensor, typ)
             )
 
-        def maybe_unwrap(t: TensorSubclassForTest | Any):
-            if isinstance(t, TensorSubclassForTest):
+        def maybe_unwrap(t: ScaleTensorSubclass | Any):
+            if isinstance(t, ScaleTensorSubclass):
                 if t.is_floating_point():
                     return t._x * t._scale
                 else:
@@ -83,7 +100,7 @@ class TensorSubclassForTest(torch.Tensor):
         if not all(allowed_subclass(t) for t in types):
             return NotImplementedError(f"Unsupported types are included: {types}")
 
-        scales = tuple(t._scale for t in pytree.tree_flatten((args, kwargs))[0] if isinstance(t, TensorSubclassForTest))
+        scales = tuple(t._scale for t in pytree.tree_flatten((args, kwargs))[0] if isinstance(t, ScaleTensorSubclass))
 
         unwrapped_args, unwrapped_kwargs = pytree.tree_map(maybe_unwrap, (args, kwargs))
         out = func(*unwrapped_args, **unwrapped_kwargs)
@@ -91,7 +108,7 @@ class TensorSubclassForTest(torch.Tensor):
             return out
         else:
             out = cast(torch.Tensor, out)
-            return TensorSubclassForTest(out, scales[0])
+            return ScaleTensorSubclass(out, scales[0])
 
 
 @instantiate(
@@ -99,13 +116,13 @@ class TensorSubclassForTest(torch.Tensor):
     dtypes=(dtypes.float32,),
     devicetypes=(devices.DeviceType.CUDA,),
 )
-def test_subclass(executor, device, _):
+def test_subclass_inputs(executor, device, _):
 
     def f(a, b):
         return a + b
 
-    x = TensorSubclassForTest.from_tensor(make_tensor((2, 2), device=device, dtype=torch.float32))
-    y = TensorSubclassForTest.from_tensor(make_tensor((2, 2), device=device, dtype=torch.float32))
+    x = ScaleTensorSubclass.from_tensor(make_tensor((2, 2), device=device, dtype=torch.float32))
+    y = ScaleTensorSubclass.from_tensor(make_tensor((2, 2), device=device, dtype=torch.float32))
     expected = f(x, y)
 
     jitted = executor.make_callable(f)
@@ -116,3 +133,28 @@ def test_subclass(executor, device, _):
     else:
         actual = jitted(x, y)
         torch.testing.assert_close(actual, expected)
+
+
+@instantiate(
+    executors=(nvFuserExecutor, TorchExecutor, TorchCompileCatExecutor, TorchCompileExecutor, DynamoThunderExecutor),
+    dtypes=(dtypes.float32,),
+    devicetypes=(devices.DeviceType.CUDA,),
+)
+def test_conversion_to_subclass(executor, device, _):
+
+    def f(a, b, c):
+        d = a + b
+        e = to_scale_tensor_subclass(d)
+        return e - c
+
+    x = make_tensor((2, 2), device=device, dtype=torch.float32)
+    y = make_tensor((2, 2), device=device, dtype=torch.float32)
+    z = ScaleTensorSubclass.from_tensor(make_tensor((2, 2), device=device, dtype=torch.float32))
+
+    jitted = executor.make_callable(f)
+    if executor == DynamoThunderExecutor:
+        with pytest.raises(RuntimeError, match="Traceable tensor subclasses are not supported because of executors of"):
+            jitted(x, y, z)
+    else:
+        with pytest.raises(AttributeError, match="Unknown attribute stride"):
+            jitted(x, y, z)
