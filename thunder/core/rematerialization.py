@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from collections import defaultdict
 import time
 
-from igraph import Graph
+import networkx as nx
 
 from thunder.core import prims, utils
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
@@ -163,6 +163,11 @@ def apply_rematerialization_for_consumer(
         filter(lambda x: x.name not in map(lambda x: x.name, new_consumer_args), consumer.args)
     )
 
+    # In the case where there are no tensors to rematerialize it is
+    # possible to terminate early and return the consumer as it was.
+    if not rematerialized_inputs:
+        return consumer
+
     # Construct a temporary Trace object with subsymbols from the producer.
     trace = TraceCtx(None)
     trace.bound_symbols = producer.subsymbols
@@ -312,12 +317,9 @@ def find_cut(
 
     # Create a graph
     edges = []
-    name_to_id = {}
-    capacities = []
 
     def add_edge(src, dst, capacity):
-        edges.append((name_to_id.setdefault(src, len(name_to_id)), name_to_id.setdefault(dst, len(name_to_id))))
-        capacities.append(capacity)
+        edges.append((src, dst, {"capacity": capacity}))
 
     utils.check(
         len(required_consumer_vars) > 0,
@@ -369,23 +371,17 @@ def find_cut(
         for var in symbol.flat_proxy_outs:
             add_edges(var)
 
-    g = Graph(
-        n=len(name_to_id),
-        edges=edges,
-        directed=True,
-        edge_attrs={"capacity": capacities},
-    )
-    source = name_to_id["source"]
-    sink = name_to_id["sink"]
+    g = nx.DiGraph()
+    g.add_edges_from(edges)
 
-    id_to_name = dict(map(reversed, name_to_id.items()))
+    _, (reachable, non_reachable) = nx.minimum_cut(g, "source", "sink")
 
-    g_edges = g.get_edgelist()
-    cut = g.mincut(source, sink, "capacity").cut
+    cut_edges = set()
+    for u, nbrs in ((n, g[n]) for n in reachable):
+        cut_edges.update((u, v) for v in nbrs if v in non_reachable)
+
     cut_nodes = set()
-    for cut_edge_id in cut:
-        u, v = g_edges[cut_edge_id]
-        node_in, node_out = id_to_name[u], id_to_name[v]
+    for node_in, node_out in cut_edges:
         if node_out == "sink":
             continue
         assert node_in.endswith("_in"), node_in
