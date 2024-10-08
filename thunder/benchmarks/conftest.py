@@ -1,23 +1,31 @@
-import warnings
+import os
 import platform
 import psutil
 from typing import Any
-import os
+import warnings
 
 try:
     from asvdb import utils, BenchmarkInfo, BenchmarkResult, ASVDb
+
     HAS_ASVDB = True
 except ImportError:
-    warnings.warn("asvdb is not imported, results won't be saved as asv")
     HAS_ASVDB = False
 
-if not (bench_dir := os.getenv("THUNDER_BENCH_DIR")):
-    bench_dir = "./asv"
 
 def pytest_addoption(parser):
-    parser.addoption("--asv_bench_dir", action="store", default=bench_dir)
+    # CLI option to specify where to store the benchmark results in asv format.
+    # If not set or None, results won't be saved in asv.
+    parser.addoption("--asv_bench_dir", action="store", default=os.getenv("THUNDER_BENCH_DIR"))
+
+
+def pytest_sessionfinish(session, exitstatus):
+    # Save result only if the pytest session was a benchmark.
+    if hasattr(session.config, "_benchmarksession"):
+        save_benchmark_results_asv(session.config)
+
 
 def sanitize_params(benchmark_params: list[tuple[str, Any]]) -> list[tuple[str, Any]]:
+    """Util function that takes a list of params and removes serialization information. E.g. given '<function torch_executor at 0xffffffffff>' returns 'torch_executor'."""
     sane_params = []
     for k, v in benchmark_params:
         if k == "executor":
@@ -27,12 +35,19 @@ def sanitize_params(benchmark_params: list[tuple[str, Any]]) -> list[tuple[str, 
     return sane_params
 
 
-def pytest_sessionfinish(session, exitstatus):
-    if not HAS_ASVDB or not hasattr(session.config, "_benchmarksession"):
+def save_benchmark_results_asv(config):
+    """Save the benchmark results after a pytest session in the asv format.
+    User must specify the --asv_bench_dir flag to store the results.
+    """
+
+    bench_dir = config.option.asv_bench_dir
+    if not HAS_ASVDB or not bench_dir:
+        warnings.warn("asvdb is not imported or 'asv_bench_dir' not set. Results won't be saved in asv format.")
         return
 
-    benchmarks = session.config._benchmarksession.benchmarks
+    benchmarks = config._benchmarksession.benchmarks
 
+    # Get system information to store alongside the results.
     uname = platform.uname()
     commit_hash, commit_time = utils.getCommitInfo()
     repo_name, current_branch = utils.getRepoInfo()
@@ -50,8 +65,10 @@ def pytest_sessionfinish(session, exitstatus):
         ram=memory_size,
     )
 
-    db = ASVDb(dbDir=session.config.option.asv_bench_dir, repo=repo_name, branches=[current_branch])
+    # Create the asv result database.
+    db = ASVDb(dbDir=bench_dir, repo=repo_name, branches=[current_branch])
 
+    # Add all the benchmarks to the database.
     for bench in benchmarks:
         name = bench.name.split("[")[0]
         params_pairs = sanitize_params(bench.params.items())
