@@ -1852,9 +1852,9 @@ _inplace_to_out_of_place[silu] = silu, 1
 
 @torchsymbol(torch.add, is_method=True)
 def add(
-    a: NumberLike | TensorLike, b: NumberLike | TensorLike, /, *, alpha: None | Number | TensorLike = None
+    a: NumberLike | TensorLike, b: NumberLike | TensorLike, /, *, alpha: Number | TensorLike = 1
 ) -> Number | TensorLike:
-    if alpha is not None:
+    if alpha != 1:
         b = b * alpha
 
     return clang.add(a, b)
