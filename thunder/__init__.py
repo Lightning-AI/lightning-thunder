@@ -730,7 +730,7 @@ def jit(
             non_compat_executors: set[extend.Executor] = {
                 ex for ex in (cudnn_executor, sdpa_executor, apex_executor, nvfuser_executor) if ex is not None
             }
-            if (set(cd.executors_list) & non_compat_executors) or ad_hoc_executor.opmap:
+            if (enabled_fusion_exs := set(cd.executors_list) & non_compat_executors) or ad_hoc_executor.opmap:
                 from thunder.core.pytree import tree_flatten
 
                 check(
@@ -738,7 +738,11 @@ def jit(
                         pytorch.utils._python_dispatch.is_traceable_wrapper_subclass(a)
                         for a in tree_flatten((args, kwargs))[0]
                     ),
-                    lambda: f"Traceable tensor subclasses are not supported",
+                    lambda: (
+                        f"Traceable tensor subclasses are not supported because of "
+                        f"executors of {[e.name for e in enabled_fusion_exs]} and "
+                        f"ad hoc ops of {list(ad_hoc_executor.opmap.keys())}"
+                    ),
                 )
 
         return cache_entry, inps, pro_to_epi
