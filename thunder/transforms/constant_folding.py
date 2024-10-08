@@ -73,6 +73,9 @@ class ConstantFolding(thunder.Transform):
                     # eg.
                     # known_tensor = torch.tensor(2)
                     # t = known_tensor + 1 --> t = torch.tensor(3)
+
+                    # For `ndim==0`, we need to use full as `tensor_from_sequence` expects
+                    # a sequence (and not plain numbers).
                     if new_concrete_output.ndim == 0:
                         new_bsym = BoundSymbol(
                             thunder.prims.full,

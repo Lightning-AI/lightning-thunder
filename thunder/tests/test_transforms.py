@@ -497,3 +497,71 @@ def test_lora_transform_linear():
     original_model.load_state_dict(rename_state_dict, strict=False)
     litgpt_lora_output = original_model(x)
     assert_close(actual, litgpt_lora_output, atol=2e-1, rtol=2e-1)
+
+
+def test_constant_folding():
+
+    # Helper to verify we see the expected constant tensors
+    # in exec_trace.
+    def assert_in_trace(exec_trace, sym, arg_vals):
+        for bsym in exec_trace.bound_symbols:
+            if bsym.sym.id == sym and bsym.args == arg_vals:
+                return
+
+        err = f"Expected to find symbol {sym} with arguments {arg_vals} in execution trace but didn't find any."
+        raise RuntimeError(err)
+
+    from thunder.transforms.constant_folding import ConstantFolding
+
+    def forward():
+        const_t = torch.tensor([2])
+        getitem = (const_t * 2)[0]
+        return (getitem, const_t)  # (4, [2])
+
+    jforward = thunder.jit(forward, transforms=[ConstantFolding()])
+    actual = jforward()
+    expected = forward()
+    torch.testing.assert_close(actual, expected)
+    exec_trace = thunder.last_traces(jforward)[-1]
+    assert_in_trace(exec_trace, "tensor", ([2],))
+    assert_in_trace(exec_trace, "full", ((), 4))
+
+    def forward(x):
+        const_t = torch.tensor([2])
+        getitem = const_t[0]  # 2
+        getitem_2 = (
+            torch.zeros(
+                2,
+            )
+            + 1
+        )[
+            0
+        ]  # 1
+        return x + getitem + getitem_2
+
+    jforward = thunder.jit(forward, transforms=[ConstantFolding()])
+    x = torch.randn(3, 3)
+    actual = jforward(x)
+    expected = forward(x)
+    torch.testing.assert_close(actual, expected)
+    exec_trace = thunder.last_traces(jforward)[-1]
+    assert_in_trace(exec_trace, "full", ((), 2))
+    assert_in_trace(exec_trace, "full", ((), 1.0))
+
+    def forward(x):
+        const_t = torch.tensor([2], dtype=torch.float16)
+        ones_t = torch.ones(1, dtype=torch.float32)
+        s1 = const_t * 2  # 4
+        s2 = const_t / 1  # 2
+        s3 = s1 * s2 + 10  # 18
+        ones_mul_10 = ones_t * 10  # 10
+        return x[0, 0] + s3 + ones_mul_10
+
+    jforward = thunder.jit(forward, transforms=[ConstantFolding()])
+    x = torch.randn(3, 3)
+    actual = jforward(x)
+    expected = forward(x)
+    torch.testing.assert_close(actual, expected)
+    exec_trace = thunder.last_traces(jforward)[-1]
+    assert_in_trace(exec_trace, "tensor", ([18.0],))
+    assert_in_trace(exec_trace, "tensor", ([10.0],))
