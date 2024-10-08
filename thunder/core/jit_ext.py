@@ -654,6 +654,7 @@ def _general_jit_torch_checkpoint_lookaside(
 
     jit_ctx: JitCtx = get_jit_ctx()
 
+    # Construct computation trace(trace_of_checkpoint), checkpoint_fwd_sym
     jit_ctx.computation_trace.push_scope([])
     func = unwrap(function)
     result = _interpret_call(func, *args, **kwargs)
@@ -689,28 +690,29 @@ def _general_jit_torch_checkpoint_lookaside(
     def bind_postprocess(bsym):
         bsym._call_ctx = {}
 
-    custom_fwd_sym = Symbol(
+    checkpoint_fwd_sym = Symbol(
         name="activation_checkpoint",
         id="activation_checkpoint",
         meta=core_of_forward,
         _bind_postprocess=bind_postprocess,
     )
-    # custom_fwd_sym = jit_ctx.ad_hoc_executor.register_operator(
+    # checkpoint_fwd_sym = jit_ctx.ad_hoc_executor.register_operator(
     #     "activation_checkpoint",
     #     like=core_of_forward,
     #     bind_postprocess=bind_postprocess,
     # )
-    unwrapped_forward_result = custom_fwd_sym(func, *unwrapped_args)
+    unwrapped_forward_result = checkpoint_fwd_sym(func, *unwrapped_args)
     # return value
     forward_result = wrap(
         unwrapped_forward_result,
         provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[function.provenance, result.provenance]),
     )
-    # jit_ctx.ad_hoc_executor.register_implementation(custom_fwd_sym, execution_transform=core_of_forward)
+    # jit_ctx.ad_hoc_executor.register_implementation(checkpoint_fwd_sym, execution_transform=core_of_forward)
     thunder.executors.torchex._register_implementation(
-        custom_fwd_sym, core_of_forward, checker=thunder.executors.torchex._always_executable
+        checkpoint_fwd_sym, core_of_forward, checker=thunder.executors.torchex._always_executable
     )
 
+    # construct checkpoint augmented forward(trace_of_augmented_fwd), augmented forward meta function
     augmented_bsym_output: tuple[tuple[TensorProxy, ...], tuple[TensorProxy, ...]] = (
         tuple(sequencify(unwrapped_result)),
         ((func, *sequencify(unwrapped_args)), {}),
@@ -720,7 +722,7 @@ def _general_jit_torch_checkpoint_lookaside(
         trace_of_augmented_fwd.add_bound_symbol(bsym)
     with tracectx(trace_of_augmented_fwd):
         prims.python_return(augmented_bsym_output)
-    si = SigInfo(custom_fwd_sym.name)
+    si = SigInfo(checkpoint_fwd_sym.name)
     si.args.append(("function", None))
     for a in unwrapped_args:
         if isinstance(a, Proxy):
@@ -740,16 +742,14 @@ def _general_jit_torch_checkpoint_lookaside(
     def augmented_custom_forward_rule(f, *args, **kwargs):
         primal, residulas = core_of_augmented_forward(f, *args, **kwargs)
         # import pdb;pdb.set_trace()
-        # check(len(primal) == 1, lambda f: "{primal=} has {len(primal)} proxies but expected 1")
         return VJPDual(primal=primal, residuals=residulas)
 
-    augmented_forward_impls[custom_fwd_sym.name] = augmented_custom_forward_rule
+    augmented_forward_impls[checkpoint_fwd_sym.name] = augmented_custom_forward_rule
 
-    # bwd
-    # TODO kwargs?
+    # construct backward, has problem
     from thunder.core.transforms import vjp
 
-    def custom_backward(
+    def checkpoint_backward(
         function,
         args,
         kwargs,
@@ -763,7 +763,7 @@ def _general_jit_torch_checkpoint_lookaside(
         sequencify(unwrapped_forward_result),
     )
     trace_of_backward = TraceCtx()
-    bwd_si = SigInfo(f"{custom_fwd_sym.name}_backward")
+    bwd_si = SigInfo(f"{checkpoint_fwd_sym.name}_backward")
     bwd_si.args.append(("function", None))
     for a in unwrapped_args + grads:
         if isinstance(a, Proxy):
@@ -776,56 +776,60 @@ def _general_jit_torch_checkpoint_lookaside(
 
     jit_ctx.computation_trace.push_scope([])
     wrapped_grads = tree_map(lambda g: wrap(g, provenance=result.provenance), grads)
+
+    # pr1 = ProvenanceRecord(PseudoInst.BUILD_TUPLE, inputs=[v.provenance for v in args])  # other inst?
+    # pr2 = ProvenanceRecord(PseudoInst.BUILD_TUPLE, inputs=[v.provenance for v in wrapped_grads])
+    # res = _interpret_call(func, *args, **kwargs)
+    tmp = vjp(checkpoint_fwd_sym)
+    import pdb
+
+    pdb.set_trace()
     # TODO How to call vjp on forward symbol, currently:
     # TypeError: decomposed_fn_backward_rule(decomposed_fn, args, kwargs, saved_for_backward, *grads) doesn't match the signature of
     # result = backward(*residuals, *cotangents) when activation_checkpoint augforward symbol is registered but backward is not and use decomposition
     # residules are saved_for_backward here??
-    # pr1 = ProvenanceRecord(PseudoInst.BUILD_TUPLE, inputs=[v.provenance for v in args])  # other inst?
-    # pr2 = ProvenanceRecord(PseudoInst.BUILD_TUPLE, inputs=[v.provenance for v in wrapped_grads])
-    # res = _interpret_call(func, *args, **kwargs)
-    tmp = vjp(custom_fwd_sym)
-    custom_backward_result = tmp((func, *unwrapped_args), grads, **kwargs)
+    checkpoint_backward_result = tmp((func, *unwrapped_args), grads, **kwargs)
 
-    if custom_backward_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
-        return custom_backward_result
+    if checkpoint_backward_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return checkpoint_backward_result
 
-    custom_bwd_bsyms: list[BoundSymbol] = jit_ctx.computation_trace.pop_scope()
+    checkpoint_bwd_sym: list[BoundSymbol] = jit_ctx.computation_trace.pop_scope()
 
-    for bsym in custom_bwd_bsyms:
+    for bsym in checkpoint_bwd_sym:
         trace_of_backward.add_bound_symbol(bsym)
     with tracectx(trace_of_backward):
-        prims.python_return.bind(*unwrap(custom_backward_result)[1], output=())
+        prims.python_return.bind(*unwrap(checkpoint_backward_result)[1], output=())
 
-    @wraps(trace_of_backward.python_callable())
-    def bwd_trace_callable_interface(f, *args, **kwargs):
-        return thunder.core.trace_interpreter.interpret_trace(trace_of_backward, f, *args, **kwargs)
+    # @wraps(trace_of_backward.python_callable())
+    # def bwd_trace_callable_interface(f, *args, **kwargs):
+    #     return thunder.core.trace_interpreter.interpret_trace(trace_of_backward, f, *args, **kwargs)
 
-    bwd_si = SigInfo("backward_impl")
-    bwd_si.args.append(("function", None))
-    for a in unwrapped_args + grads:
-        if isinstance(a, Proxy):
-            bwd_si.args.append((a.name, None))
-        else:
-            pa = proxy(a)
-            bwd_si.args.append((pa.name, None))
-    bwd_trace_impl = TraceCtx()
-    for bsym in custom_bwd_bsyms:
-        bwd_trace_impl.add_bound_symbol(bsym)
-    bwd_trace_impl.add_bound_symbol(prims.python_return.bind(*sequencify(unwrap(custom_backward_result)), output=()))
-    bwd_trace_impl._siginfo = bwd_si
-    bwd_trace_impl.args = tuple(func + unwrapped_args + grads)
+    # bwd_si = SigInfo("backward_impl")
+    # bwd_si.args.append(("function", None))
+    # for a in unwrapped_args + grads:
+    #     if isinstance(a, Proxy):
+    #         bwd_si.args.append((a.name, None))
+    #     else:
+    #         pa = proxy(a)
+    #         bwd_si.args.append((pa.name, None))
+    # bwd_trace_impl = TraceCtx()
+    # for bsym in checkpoint_bwd_sym:
+    #     bwd_trace_impl.add_bound_symbol(bsym)
+    # bwd_trace_impl.add_bound_symbol(prims.python_return.bind(*unwrap(checkpoint_backward_result)[1], output=()))
+    # bwd_trace_impl._siginfo = bwd_si
+    # bwd_trace_impl.args = tuple(func + unwrapped_args + grads)
 
-    @wraps(bwd_trace_impl.python_callable())
-    def bwd_impl_callable(f, *args, **kwargs):
-        return thunder.core.trace_interpreter.interpret_trace(bwd_trace_impl, f, *args, **kwargs)
+    # @wraps(bwd_trace_impl.python_callable())
+    # def bwd_impl_callable(f, *args, **kwargs):
+    #     return thunder.core.trace_interpreter.interpret_trace(bwd_trace_impl, f, *args, **kwargs)
 
-    @wraps(bwd_trace_callable_interface)
-    def backward_impl(f, *args, **kwargs):
-        # check(not kwargs, lambda: f"{kwargs} expected to be empty")
-        # new_args = ctx_proxy.saved_consts + args
-        return bwd_impl_callable(f, *args, **kwargs)
+    # @wraps(bwd_trace_callable_interface)
+    # def backward_impl(f, *args, **kwargs):
+    #     # check(not kwargs, lambda: f"{kwargs} expected to be empty")
+    #     # new_args = ctx_proxy.saved_consts + args
+    #     return bwd_impl_callable(f, *args, **kwargs)
 
-    backward_impls[custom_fwd_sym.name] = backward_impl
+    # backward_impls[checkpoint_fwd_sym.name] = backward_impl
     return forward_result
 
     # It should be possible to call the general_thunder_jit here to handle the
