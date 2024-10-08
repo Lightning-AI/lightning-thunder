@@ -14,7 +14,8 @@ from .utils import (
     trace_with_replaced_proxy_metadata,
 )
 
-from .quantization_cpu import quantize_4bit_impl
+from .quantization_cpu import quantize_4bit_cpu
+from bitsandbytes.functional import QuantState, get_4bit_type
 
 bitsandbytes_executor = None
 
@@ -55,17 +56,28 @@ class BitsAndBytesLinearQuant4bit(Transform):
 
     def quantize_weight(self, w):
         if w.device.type == "meta":
-            num_elements = w.numel()
-            return torch.empty((num_elements, 1), device="meta", dtype=torch.uint8)
-        
-        # CPU quantization without returning the quantization state.
-        # Currently, the quantization state is omitted for CPU as the primary goal is to optimize 
-        # for inference. If the use case involves fine-tuning or dequantizing weights back to 
-        # their original precision, it may be necessary to return the state. This can be revisited
-        # if future use cases require more flexibility, such as further model training or analysis 
-        # of quantization effects on the CPU.
+            n = w.numel()
+            output_shape = ((n + 1) // 2,)
+            blocksize=64
+            blocks = n // blocksize
+            blocks += 1 if n % blocksize > 0 else 0
+            absmax = torch.zeros((blocks,), device=w.device, dtype=w.dtype)
+            quant_type="nf4"
+            code = get_4bit_type(quant_type, device=w.device)
+
+            # Return only shape and dtype for meta tensors without calculation
+            state = QuantState(
+                absmax=absmax,
+                shape=w.shape,
+                dtype=w.dtype,
+                blocksize=64,
+                code=code,
+                quant_type=quant_type,
+            )
+            return torch.empty(output_shape, device="meta", dtype=torch.uint8), state
+
         if w.device.type == "cpu":
-            return quantize_4bit_impl(w, quant_type="nf4")[0]
+            return quantize_4bit_cpu(w, quant_type="nf4")
         
         if w.device.type != "cuda":
             with torch.no_grad():

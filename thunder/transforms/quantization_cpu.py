@@ -1,12 +1,37 @@
-# NOTE: The code for CPU quantization in this file has been adapted from a not-yet-merged branch of the 
-# bitsandbytes library (https://github.com/bitsandbytes-foundation/bitsandbytes/tree/multi-backend-refactor).
-# Once the changes in that branch are merged into the main bitsandbytes repository, this implementation 
-# should be replaced with the official, upstream version to ensure better compatibility, performance, 
-# and future updates.
-# Please track the progress of the bitsandbytes library and update this file when necessary.
+"""
+Derivied from
+    https://github.com/bitsandbytes-foundation/bitsandbytes
 
+The code for CPU quantization in this file has been adapted from a not-yet-merged
+multi-backend-refactor branch
+    
+MIT License:
+    https://github.com/bitsandbytes-foundation/bitsandbytes/blob/main/LICENSE
+
+Copyright (c) Facebook, Inc. and its affiliates.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
+
+import subprocess
+from typing import Literal, Optional, Tuple
 import warnings
-
 import torch
 
 from bitsandbytes.functional import (
@@ -14,7 +39,39 @@ from bitsandbytes.functional import (
     get_4bit_type,
 )
 
+try:
+    # to support Intel CPU/GPU (XPU) backend
+    import intel_extension_for_pytorch as ipex
+
+    ipex_cpu = ipex if ipex._C._has_cpu() else None
+    ipex_xpu = ipex if ipex._C._has_xpu() else None
+except BaseException:
+    ipex_cpu = None
+    ipex_xpu = None
+
+gxx_available = False
+try:
+    subprocess.run(["g++", "--version"])
+    gxx_available = True
+except BaseException:
+    warnings.warn("g++ not found, torch.compile disabled for CPU/XPU.")
+
 Tensor = torch.Tensor
+
+def _torch_version_prereq(major, minor):
+    ver_major = int(torch.__version__.split(".")[0])
+    ver_minor = int(torch.__version__.split(".")[1])
+    return ver_major * 32 + ver_minor >= major * 32 + minor
+
+def _maybe_torch_compile(func):
+    # torch.compile requires g++ and pytorch >= 2.0
+    if gxx_available and _torch_version_prereq(2, 0):
+        options = {}
+        # fx_graph_cache requires pytorch >= 2.2
+        if _torch_version_prereq(2, 2):
+            options.update({"fx_graph_cache": True})
+        return torch.compile(func, dynamic=True, options=options)
+    return func
 
 NF4_QUANT_TABLE = [
     -1.0 - 1e-2,  # 0b0000
@@ -46,87 +103,35 @@ FP4_QUANT_TABLE = {
     0.8333333: 3,  # 0b0011
 }
 
-def get_4bit_type(typename, device=None, blocksize=64):
-    if device is None:
-        device = "cuda"
-    data = None
-    if typename == "nf4":
-        """ Implements the NF4 data type.
+def assert_on_cpu(tensors):
+    on_cpu = True
+    for t in tensors:
+        if t is None:
+            continue  # NULL pointers are fine
+        on_cpu &= t.device.type == "cpu"
+    if not on_cpu:
+        raise TypeError(
+            "All input tensors need to be on CPU, but found some tensors to not be on CPU:\n"
+            f" {[(t.shape, t.device) if isinstance(t, Tensor) else None for t in tensors]}"
+        )
+    return on_cpu
 
-            Constructs a quantization data type where each bin has equal area under a standard normal distribution N(0, 1) that
-            is normalized into the range [-1, 1].
+def quantize_4bit_cpu(
+    A: torch.Tensor,
+    absmax: Optional[torch.Tensor] = None,
+    out: Optional[torch.Tensor] = None,
+    blocksize=64,
+    compress_statistics=False,
+    quant_type: Literal["fp4", "nf4"] = "fp4",
+    quant_storage=torch.uint8,
+) -> Tuple[torch.Tensor, QuantState]:
+    if blocksize is None:
+        blocksize = 64
+    assert_on_cpu([A, absmax, out])
+    assert quant_storage == torch.uint8, "CPU backend only supports uint8 quant_storage"
+    return quantize_4bit_impl(A, absmax, out, blocksize, compress_statistics, quant_type)
 
-            For more information read the paper: QLoRA: Efficient Finetuning of Quantized LLMs (https://arxiv.org/abs/2305.14314)
-
-            Implementation of the NF4 data type in bitsandbytes can be found in the `create_normal_map` function in
-            the `functional.py` file: https://github.com/TimDettmers/bitsandbytes/blob/main/bitsandbytes/functional.py#L236.
-        """
-        data = [
-            -1.0,
-            -0.6961928009986877,
-            -0.5250730514526367,
-            -0.39491748809814453,
-            -0.28444138169288635,
-            -0.18477343022823334,
-            -0.09105003625154495,
-            0.0,
-            0.07958029955625534,
-            0.16093020141124725,
-            0.24611230194568634,
-            0.33791524171829224,
-            0.44070982933044434,
-            0.5626170039176941,
-            0.7229568362236023,
-            1.0,
-        ]
-    elif typename == "fp4":
-        # 0b000 = 0
-        # 0b001 = 0.0625
-        # 0b010 = 8
-        # 0b011 = 12
-        # 0b100 = 4
-        # 0b101 = 6
-        # 0b110 = 2
-        # 0b111 = 3
-        # can also be created with bnb.functional.create_fp8_map(signed=True, exponent_bits=2, precision_bits=1, total_bits=4)
-        data = [0, 0.0625, 8.0, 12.0, 4.0, 6.0, 2.0, 3.0, -0, -0.0625, -8.0, -12.0, -4.0, -6.0, -2.0, -3.0]
-    elif typename == "int4":
-        data = [7, 6, 5, 4, 3, 2, 1, 0, -0, -1, -2, -3, -4, -5, -6, -7]
-    elif typename == "af4":
-        # Taken from: NF4 Isn't Information Theoretically Optimal (and that's Good)
-        # https://arxiv.org/abs/2306.06965
-        if blocksize == 64:
-            data = [
-                -1.0,
-                -0.69441008,
-                -0.51243739,
-                -0.3736951,
-                -0.25607552,
-                -0.14982478,
-                -0.04934812,
-                0.0,
-                0.04273164,
-                0.12934483,
-                0.21961274,
-                0.31675666,
-                0.42563882,
-                0.55496234,
-                0.72424863,
-                1.0,
-            ][::-1]
-        else:
-            raise NotImplementedError("4-bit AbnormalFloats currently only support blocksize 64.")
-
-    if data is None:
-        raise NotImplementedError(f"Typename {typename} not supported")
-
-    data = torch.tensor(data, device=device)
-    data.div_(data.abs().max())
-
-    assert data.numel() == 16
-
-    return data
-
+@_maybe_torch_compile
 def quantize_4bit_impl(
     A: Tensor,
     absmax: Tensor = None,
