@@ -686,8 +686,6 @@ def _general_jit_torch_checkpoint_lookaside(
     def core_of_forward(f, *args, **kwargs):
         return thunder.core.trace_interpreter.interpret_trace(trace_of_checkpoint, f, *args, **kwargs)
 
-    custom_fwd_meta = lambda *unwrapped_args: unwrapped_result
-
     def bind_postprocess(bsym):
         bsym._call_ctx = {}
 
@@ -703,6 +701,7 @@ def _general_jit_torch_checkpoint_lookaside(
     #     bind_postprocess=bind_postprocess,
     # )
     unwrapped_forward_result = custom_fwd_sym(func, *unwrapped_args)
+    # return value
     forward_result = wrap(
         unwrapped_forward_result,
         provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[function.provenance, result.provenance]),
@@ -713,8 +712,8 @@ def _general_jit_torch_checkpoint_lookaside(
     )
 
     augmented_bsym_output: tuple[tuple[TensorProxy, ...], tuple[TensorProxy, ...]] = (
-        tuple(sequencify(unwrapped_forward_result)),
-        (func, *sequencify(unwrapped_forward_result)),
+        tuple(sequencify(unwrapped_result)),
+        ((func, *sequencify(unwrapped_args)), {}),
     )
     trace_of_augmented_fwd = TraceCtx()
     for bsym in bsyms:
@@ -740,6 +739,7 @@ def _general_jit_torch_checkpoint_lookaside(
     @wraps(core_of_augmented_forward)
     def augmented_custom_forward_rule(f, *args, **kwargs):
         primal, residulas = core_of_augmented_forward(f, *args, **kwargs)
+        # import pdb;pdb.set_trace()
         # check(len(primal) == 1, lambda f: "{primal=} has {len(primal)} proxies but expected 1")
         return VJPDual(primal=primal, residuals=residulas)
 
@@ -776,13 +776,16 @@ def _general_jit_torch_checkpoint_lookaside(
 
     jit_ctx.computation_trace.push_scope([])
     wrapped_grads = tree_map(lambda g: wrap(g, provenance=result.provenance), grads)
-    # TODO How to call interpret_call on vjp, currently:
-    # TypeError: sin(): argument 'input' (position 1) must be Tensor, not TensorProxy
-    pr1 = ProvenanceRecord(PseudoInst.BUILD_TUPLE, inputs=[v.provenance for v in args])  # other inst?
-    pr2 = ProvenanceRecord(PseudoInst.BUILD_TUPLE, inputs=[v.provenance for v in wrapped_grads])
-    custom_backward_result = _interpret_call(
-        vjp(func), wrap(unwrapped_args, provenance=pr1), wrap(grads, provenance=pr2)
-    )
+    # TODO How to call vjp on forward symbol, currently:
+    # TypeError: decomposed_fn_backward_rule(decomposed_fn, args, kwargs, saved_for_backward, *grads) doesn't match the signature of
+    # result = backward(*residuals, *cotangents) when activation_checkpoint augforward symbol is registered but backward is not and use decomposition
+    # residules are saved_for_backward here??
+    # pr1 = ProvenanceRecord(PseudoInst.BUILD_TUPLE, inputs=[v.provenance for v in args])  # other inst?
+    # pr2 = ProvenanceRecord(PseudoInst.BUILD_TUPLE, inputs=[v.provenance for v in wrapped_grads])
+    # res = _interpret_call(func, *args, **kwargs)
+    tmp = vjp(custom_fwd_sym)
+    custom_backward_result = tmp((func, *unwrapped_args), grads, **kwargs)
+
     if custom_backward_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return custom_backward_result
 
