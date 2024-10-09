@@ -601,7 +601,7 @@ def jit(
                 use_del_last_used=False,
             )
             prologue_trc = prologue_traces[-1]
-            pro = prologue_trc.python_callable()
+            pro = prologue_trc.python_callable(include_decorators=False)
 
             if epilogue_trc is not None:
                 epilogue = epilogue_trc.python_callable()
