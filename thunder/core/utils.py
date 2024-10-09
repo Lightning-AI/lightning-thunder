@@ -1215,10 +1215,10 @@ class AutocastStack:
     def is_empty(self) -> bool:
         return len(self.stack) == 0
 
-    def get_dtype_for_device_if_enabled(self, device_str: str):
+    def get_dtype_for_device_if_enabled(self, query_device_str: str):
         for autocast_state in reversed(self.stack):
             device, dtype, enabled = autocast_state
-            if device.startswith(device_str):  # TODO - Do this correctly.
+            if device == query_device_str:
                 if enabled:
                     return dtype
                 # Explicitly disabled with ctx manager i.e. torch.autocast("cuda", enabled=False)
