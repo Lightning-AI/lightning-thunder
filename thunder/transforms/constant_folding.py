@@ -1,6 +1,10 @@
+from numbers import Number
+
+import torch
+
 import thunder
-from thunder.core.trace import from_trace
-from thunder.core.proxies import variableify, Variable, TensorProxy, NumberProxy
+from thunder.core.trace import from_trace, tracectx
+from thunder.core.proxies import variableify, Variable, TensorProxy, NumberProxy, proxy
 from thunder.core.symbol import BoundSymbol
 from thunder.core.dtypes import to_dtype
 from thunder.core.devices import to_device
@@ -20,7 +24,7 @@ TENSOR_FACTORY = (
 def compute_with_concrete_tensor_and_pytorch_eager(bsym, const_values):
 
     def materialize_args(a):
-        if isinstance(a, TensorProxy):
+        if isinstance(a, (TensorProxy, NumberProxy)):
             return const_values[variableify(a)]
         elif isinstance(a, NumberProxy):
             return a.value
@@ -28,6 +32,8 @@ def compute_with_concrete_tensor_and_pytorch_eager(bsym, const_values):
 
     new_args = tuple(map(materialize_args, bsym.args))
     new_kwargs = {k: materialize_args(v) for k, v in bsym.kwargs.items()}
+    from thunder.executors.pythonex import ex as pythonex
+
     torch_fn = _thunder_to_torch_function_map.get(bsym.sym, None)
     if torch_fn is None:
         return
@@ -36,11 +42,12 @@ def compute_with_concrete_tensor_and_pytorch_eager(bsym, const_values):
 
 class ConstantFolding(thunder.Transform):
     def transform_traces_pre_prologue(self, prologue_trc, computation_trc, epilogue_trc, **kwargs):
+        # print(computation_trc)
         # Create a new trace
         const_folded_trace = from_trace(computation_trc)
         const_folded_trace.bound_symbols = computation_trc.bound_symbols
 
-        const_tensors: dict[Variable, BoundSymbol] = {}
+        const_tensors: dict[Variable, torch.Tensor | Number] = {}
 
         # Tag output from factory functions as constant value.
         for bsym in const_folded_trace.bound_symbols:
@@ -55,10 +62,13 @@ class ConstantFolding(thunder.Transform):
         def is_constant(proxy):
             if isinstance(proxy, TensorProxy) and variableify(proxy) in const_tensors:
                 return True
+            elif isinstance(proxy, NumberProxy) and variableify(proxy) in const_tensors:
+                return True
             elif isinstance(proxy, NumberProxy) and proxy.is_static_constrained():
                 return True
             return False
 
+        const_number_swapmap = {}
         for bsym in const_folded_trace.bound_symbols:
             # If bsym has constant inputs, try to compute the output.
             if all(map(is_constant, bsym.flat_proxy_args)) and bsym.sym.id not in TENSOR_FACTORY:
@@ -76,7 +86,13 @@ class ConstantFolding(thunder.Transform):
 
                     # For `ndim==0`, we need to use full as `tensor_from_sequence` expects
                     # a sequence (and not plain numbers).
-                    if new_concrete_output.ndim == 0:
+                    if isinstance(new_concrete_output, Number):
+                        # with tracectx(computation_trc):
+                        #     new_output = proxy(new_concrete_output)
+                        # new_bsym = bsym.from_bsym(output=new_output)
+                        new_bsym = bsym
+                    elif new_concrete_output.ndim == 0:
+                        isinstance(new_concrete_output, torch.Tensor)
                         new_bsym = BoundSymbol(
                             thunder.prims.full,
                             args=(
@@ -90,6 +106,7 @@ class ConstantFolding(thunder.Transform):
                             output=bsym.output,
                         )
                     else:
+                        assert isinstance(new_concrete_output, torch.Tensor)
                         new_bsym = BoundSymbol(
                             thunder.prims.tensor_from_sequence,
                             args=(new_concrete_output.tolist(),),
@@ -116,6 +133,6 @@ class ConstantFolding(thunder.Transform):
         del const_tensors
 
         const_folded_trace.bound_symbols = new_bsyms
-
+        # print(const_folded_trace)
         const_folded_trace.set_provenance("Constant Folding pass")
         return prologue_trc, const_folded_trace, epilogue_trc
