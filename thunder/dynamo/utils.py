@@ -11,6 +11,7 @@ import torch
 from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.torch.langctx import torchctx
+from thunder.core.utils import check
 
 if TYPE_CHECKING:
     from thunder.core.symbol import Symbol
@@ -377,3 +378,35 @@ def recompile_graph(gm: torch.fx.GraphModule):
     if isinstance(gm, torch.fx._lazy_graph_module._LazyGraphModule):
         return gm.real_recompile()
     return gm.recompile()
+
+
+def _get_example_inputs_from_placeholder(node) -> tuple[torch.Tensor]:
+    from thunder.tests.make_tensor import make_tensor
+
+    check(node.op == "placeholder", lambda: f"The node must be placeholder type", ValueError)
+    check("example_value" in node.meta, lambda: "example_value does not exist in the meta of {node}", ValueError)
+    example_value = node.meta["example_value"]
+
+    if isinstance(example_value, torch.Tensor):
+        return (
+            make_tensor(
+                _concrete_shape(example_value),
+                dtype=example_value.dtype,
+                device=example_value.device,
+                requires_grad=example_value.requires_grad,
+            ),
+        )
+    elif isinstance(example_value, tuple):
+        return tuple(
+            make_tensor(
+                _concrete_shape(e_v),
+                dtype=e_v.dtype,
+                device=e_v.device,
+                requires_grad=e_v.requires_grad,
+            )
+            for e_v in example_value
+        )
+    else:
+        raise TypeError(
+            "The 'example_value' in the placeholder node is expected to be either a Tensor or a Tuple of Tensors."
+        )

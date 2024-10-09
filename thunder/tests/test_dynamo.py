@@ -3,7 +3,7 @@ import torch
 import torch.fx
 
 from thunder import dtypes
-from thunder.dynamo import ThunderCompiler
+from thunder.dynamo import ThunderCompiler, ThunderCompilerGraphBenchmarking
 from thunder import last_traces
 from thunder.tests.bf16 import device_supports_bf16
 from thunder.tests.framework import (
@@ -465,3 +465,53 @@ def test_no_grad_ctx_manager(executor, device: str, dtype: dtypes.dtype):
     actual_grad = torch.autograd.grad(actual, x, g)
     expected_grad = torch.autograd.grad(expected, x, g)
     torch.testing.assert_close(actual_grad, expected_grad)
+
+
+# Sample command to run the benchmark using ThunderCompilerGraphBenchmarking
+# pytest thunder/tests/test_dynamo.py -k test_ThunderCompilerGraphBenchmarking_groupby --benchmark-group-by='graph-by-graph:param:GraphID,param:SplitModuleName'
+# For more details, see :class:`thunder.dynamo.ThunderCompilerGraphBenchmarking`
+# NOTE: The conftest.py file customizes the benchmark grouping behavior for ThunderCompilerGraphBenchmarking.
+# It must be located in the same folder as the test file to ensure the configuration.
+@requiresCUDA
+def test_ThunderCompilerGraphBenchmarking_LlamaMLPBenchmark(benchmark):
+    backend = ThunderCompilerGraphBenchmarking(benchmark, executors=["thunder", "inductor", "eager"])
+    from thunder.benchmarks import LlamaMLPBenchmark, Benchmark
+
+    bench: Benchmark = LlamaMLPBenchmark(
+        config="Llama-2-7b-hf",
+        batchdims=(2,),
+        device="cuda:0",
+        requires_grad=True,
+    )
+
+    args, kwargs = bench.make_batch()
+    # Using torch.compile here fails with "TypeError: cannot pickle '_io.TextIOWrapper' object" in
+    # https://github.com/Lightning-AI/pytorch-lightning/blob/828fd998961f6a60f92c35254bb94d6e049ad069/src/lightning/fabric/wrappers.py#L421
+    fn = torch._dynamo.optimize(backend=backend)(bench.fn())
+    fn(*args, **kwargs)
+
+    # Avoid torch._dynamo hit config.cache_size_limit (8)
+    torch._dynamo.reset()
+
+
+@requiresCUDA
+def test_ThunderCompilerGraphBenchmarking_groupby(benchmark):
+    def f(x, y):
+        x = torch.sin(x)
+        if x.sum() > 0:
+            x = x.exp()
+            y = torch.sinc(x) + torch.cos(y)
+            return y + 1
+        else:
+            y = y.exp()
+            x = torch.sinc(y) + torch.cos(x)
+            return x - 1
+
+    backend = ThunderCompilerGraphBenchmarking(benchmark, executors=["thunder", "inductor", "eager"])
+    compiled = torch.compile(backend=backend)(f)
+    x = torch.ones(2, requires_grad=True).cuda()
+    y = torch.ones(2, requires_grad=True).cuda()
+    compiled(x, y)
+
+    # Avoid torch._dynamo hit config.cache_size_limit (8)
+    torch._dynamo.reset()
