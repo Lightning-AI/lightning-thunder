@@ -779,12 +779,11 @@ def autocast_enter(autocast_obj):
     device = unwrap_autocast_obj.device
     dtype = unwrap_autocast_obj.fast_dtype
     enabled = unwrap_autocast_obj._enabled
-    cache_enabled = unwrap_autocast_obj._cache_enabled
     # NOTE - We manually map `torch.autocast.__enter__` to `torch.amp.autocast_mode._enter_autocast`
     #        as it is functional variant of the same. This also allows the symbol to appear in trace
     #        for better inspectibility.
     thunder_fn = _torch_to_thunder_function_map[torch.amp.autocast_mode._enter_autocast]
-    thunder_fn(device, dtype, enabled, cache_enabled)
+    thunder_fn(device, dtype, enabled)
     return wrap(None, provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[autocast_obj.provenance]))
 
 

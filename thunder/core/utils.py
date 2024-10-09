@@ -1206,8 +1206,8 @@ class AutocastStack:
     def __init__(self):
         self.stack = deque()
 
-    def push(self, device: str, dtype: dtypes.dtype | torch.dtype, enabled: bool, cache_enabled: bool):
-        self.stack.append((device, dtype, enabled, cache_enabled))
+    def push(self, device: str, dtype: dtypes.dtype | torch.dtype, enabled: bool):
+        self.stack.append((device, dtype, enabled))
 
     def pop(self) -> None:
         self.stack.pop()
@@ -1217,7 +1217,7 @@ class AutocastStack:
 
     def get_dtype_for_device_if_enabled(self, device_str: str):
         for autocast_state in reversed(self.stack):
-            device, dtype, enabled, _ = autocast_state
+            device, dtype, enabled = autocast_state
             if device.startswith(device_str):  # TODO - Do this correctly.
                 if enabled:
                     return dtype

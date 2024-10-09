@@ -5500,10 +5500,10 @@ def backward_autograd_function_apply(
 @torchsymbol(
     torch.amp.autocast_mode._enter_autocast, id="torch.amp.autocast_mode._enter_autocast", tags=(prims.OpTags.DONT_DCE,)
 )
-def autocast_enter(device_type, dtype=None, enabled=True, cache_enabled=True):
+def autocast_enter(device_type, dtype=None, enabled=True):
     if dtype is None:
         dtype = torch.get_autocast_dtype(device_type)
-    get_compile_data().autocast_stack.push(device_type, dtype, enabled, cache_enabled)
+    get_compile_data().autocast_stack.push(device_type, dtype, enabled)
 
 
 @torchsymbol(

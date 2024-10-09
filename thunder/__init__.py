@@ -401,7 +401,7 @@ def jit(
             cache_info.update(autocast_thunder_dtype=str(autocast_thunder_dtype))
             device = "cuda" if pytorch.is_autocast_enabled() else "cpu"
             dtype = autocast_thunder_dtype
-            cd.autocast_stack.push(device, dtype, True, True)
+            cd.autocast_stack.push(device, dtype, is_autocast_enabled)
 
         cache_info["is_autocast_enabled"] = is_autocast_enabled
 
