@@ -1,4 +1,5 @@
-from thunder.dynamo.compiler import ThunderCompiler, ThunderCompilerGraphBenchmarking
+from thunder.dynamo.compiler import ThunderCompiler
+from thunder.dynamo.compiler_graph_benchmark import ThunderCompilerGraphBenchmarking
 
 
 __all__ = [
