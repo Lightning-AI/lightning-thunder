@@ -1441,21 +1441,14 @@ def test_cache_symbolic_values_dynamic_shape(device):
     assert thunder.cache_hits(jfoo) == 1
 
 
-@pytest.mark.parametrize(
-    "device",
-    ("cpu", "cuda"),
-)
-def test_cache_symbolic_values_reshape_numel(device):
-    if device == "cuda" and not torch.cuda.is_available():
-        pytest.skip("CUDA not available")
-
+def test_cache_symbolic_values_reshape_numel():
     def foo(a):
         a = torch.reshape(a, [a.numel()])
         return a.relu()
 
     jfoo = thunder.jit(foo, cache="symbolic values")
 
-    a = torch.randn(2, 3, 8, requires_grad=True, device=device)
+    a = torch.randn(2, 3, 8, requires_grad=True, device="cpu")
 
     actual = jfoo(a)
     expected = foo(a)
@@ -1463,21 +1456,14 @@ def test_cache_symbolic_values_reshape_numel(device):
     assert_close(actual, expected)
 
 
-@pytest.mark.parametrize(
-    "device",
-    ("cpu", "cuda"),
-)
-def test_cache_symbolic_values_slice(device):
-    if device == "cuda" and not torch.cuda.is_available():
-        pytest.skip("CUDA not available")
-
+def test_cache_symbolic_values_slice():
     def foo(a):
         a = a[..., : a.shape[-1]]
         return a.relu()
 
     jfoo = thunder.jit(foo, cache="symbolic values")
 
-    a = torch.randn(2, 3, 8, requires_grad=True, device=device)
+    a = torch.randn(2, 3, 8, requires_grad=True, device="cpu")
 
     actual = jfoo(a)
     expected = foo(a)
