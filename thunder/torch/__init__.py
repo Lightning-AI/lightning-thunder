@@ -5221,33 +5221,7 @@ def checkpoint(
         warnings.warn("torch.checkpoint: determinism_check is not supported in Thunder and will be ignored")
     if preserve_rng_state is not None:
         warnings.warn("torch.checkpoint: preserve_rng_state is not supported in Thunder and will be ignored")
-    if isinstance(function, torch.fx.GraphModule):
-        _FXGraph_converter(function)
     return function(*args, **kwargs)
-
-
-def _FXGraph_converter(g):
-    new_g = torch.fx.Graph()
-    node_map: dict = {}
-    for n in g.graph.nodes:
-        if n.op == "call_function":
-            assert isinstance(n.target, Callable)
-            if n.target.__module__ in ("_operator", "builtins"):
-                node_map[n] = new_g.node_copy(n, lambda nod: node_map[nod])
-                continue
-            utils.check(
-                n.target in _torch_to_thunder_function_map, lambda: f"Unexpected {n.target}, not registered in Thunder"
-            )
-            new_args = tree_map(lambda x: node_map[x] if x in node_map else x, (n.args, n.kwargs))
-            thunder_node = new_g.call_function(
-                _torch_to_thunder_function_map[n.target], args=new_args[0], kwargs=new_args[1]
-            )
-            node_map[n] = thunder_node
-        else:
-            node_map[n] = new_g.node_copy(n, lambda nod: node_map[nod])
-
-    g.graph = new_g
-    return
 
 
 @register_augmented_forward(
