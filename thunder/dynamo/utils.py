@@ -13,6 +13,7 @@ from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.torch.langctx import torchctx
 from thunder.core.utils import check
+from thunder.core.pytree import tree_map
 
 if TYPE_CHECKING:
     from thunder.core.symbol import Symbol
@@ -422,3 +423,39 @@ def _get_example_inputs_from_placeholder(node) -> tuple[torch.Tensor]:
         raise TypeError(
             "The 'example_value' in the placeholder node is expected to be either a Tensor or a Tuple of Tensors."
         )
+    
+
+def _checkpoint_function_converter(gm: torch.fx.GraphModule):
+    """Replace the torch operators in the function called by activation checkpoint with the corresponding Thunder symbols"""
+    new_g = torch.fx.Graph()
+    node_map: dict = {}
+    for n in gm.graph.nodes:
+        if n.op == "call_function":
+            assert isinstance(n.target, Callable)
+            if n.target.__module__ in ("_operator", "builtins"):
+                node_map[n] = new_g.node_copy(n, lambda nod: node_map[nod])
+                continue
+            check(
+                n.target in _torch_to_thunder_function_map, lambda: f"Unexpected {n.target}, not registered in Thunder"
+            )
+            new_args = tree_map(lambda x: node_map[x] if x in node_map else x, (n.args, n.kwargs))
+            thunder_node = new_g.call_function(
+                _torch_to_thunder_function_map[n.target], args=new_args[0], kwargs=new_args[1]
+            )
+            node_map[n] = thunder_node
+        else:
+            node_map[n] = new_g.node_copy(n, lambda nod: node_map[nod])
+
+    gm.graph = new_g
+    return
+
+
+def checkpoint_converter(gm: torch.fx.GraphModule):
+    """Utility function to convert the GraphModule that uses activation checkpointing into a Thunder-traceable GraphModule."""
+    for n in gm.graph.nodes:
+        if n.op == "call_function":
+            if n.target in (torch.ops.higher_order.tag_activation_checkpoint,):
+                name = n.args[0].name
+                assert hasattr(gm, name)
+                function_module = getattr(gm, name)
+                _checkpoint_function_converter(function_module)
