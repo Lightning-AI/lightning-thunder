@@ -781,8 +781,8 @@ def autocast_enter(autocast_obj):
     enabled = unwrap_autocast_obj._enabled
     cache_enabled = unwrap_autocast_obj._cache_enabled
     # NOTE - We manually map `torch.autocast.__enter__` to `torch.amp.autocast_mode._enter_autocast`
-    #        as it is functional variant of the same and it also shows-up in dynamo provided FX-Graphs
-    #        via thunderFX path.
+    #        as it is functional variant of the same. This also allows the symbol to appear in trace
+    #        for better inspectibility.
     thunder_fn = _torch_to_thunder_function_map[torch.amp.autocast_mode._enter_autocast]
     thunder_fn(device, dtype, enabled, cache_enabled)
     return wrap(None, provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[autocast_obj.provenance]))
@@ -793,8 +793,8 @@ def autocast_exit(autocast_obj, exc_type, exc_val, exc_tb):
     thunder_fn = _torch_to_thunder_function_map[torch.amp.autocast_mode._exit_autocast]
     thunder_fn()
     # NOTE - We manually map `torch.autocast.__exit__` to `torch.amp.autocast_mode._exit_autocast`
-    #        as it is functional variant of the same and it also shows-up in dynamo provided FX-Graphs
-    #        via thunderFX path.
+    #        as it is functional variant of the same. This also allows the symbol to appear in trace
+    #        for better inspectibility.
     return wrap(None, provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[autocast_obj.provenance]))
 
 
