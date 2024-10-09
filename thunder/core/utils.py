@@ -1221,7 +1221,7 @@ class AutocastStack:
             if device.startswith(device_str):  # TODO - Do this correctly.
                 if enabled:
                     return dtype
-                # Explicitly disabled with ctx manager.
+                # Explicitly disabled with ctx manager i.e. torch.autocast("cuda", enabled=False)
                 return None
 
         # Not found on the stack.
