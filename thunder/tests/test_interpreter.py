@@ -1692,6 +1692,7 @@ def test_unhashable_lookaside(jit):
 
 
 def test_zip_lookaside(jit):
+    import re
     jitting = False
 
     def foo(*a, strict=False):
@@ -1705,7 +1706,8 @@ def test_zip_lookaside(jit):
     res3 = foo([1, 2], [4, 5, 6])
     res4 = foo("abc", "xyz")
     # , match="zip() argument 2 is longer than argument 1"
-    with pytest.raises(ValueError):
+    
+    with pytest.raises(ValueError,match=re.escape("zip() argument 2 is longer than argument 1")):
         res5 = foo([1, 2], [4, 5, 6], strict=True)
 
     jitting = True
@@ -1715,7 +1717,7 @@ def test_zip_lookaside(jit):
     jres4 = jfoo("abc", "xyz")
 
     # , match=" zip() argument 2 is longer than argument 1"
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError,match=re.escape("zip() argument 2 is longer than argument 1")):
         jres5 = jfoo([1, 2], [4, 5, 6], strict=True)
 
     assert res1 == jres1
