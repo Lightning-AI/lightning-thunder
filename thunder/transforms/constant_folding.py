@@ -1,4 +1,6 @@
 from numbers import Number
+from typing import Any
+from collections.abc import Callable
 
 import torch
 
@@ -21,7 +23,29 @@ TENSOR_FACTORY = (
 )
 
 
-def compute_with_concrete_tensor_and_pytorch_eager(bsym, const_values):
+def get_python_operator(bsym) -> None | Callable:
+    from thunder.executors.pythonex import ex as pythonex
+
+    if pythonex.can_execute(bsym):
+        # TODO - Is there a better way to do the same?
+        # This seems brittle and tailored towards
+        # current implementation of pythonex.
+        impl = pythonex.implmap[bsym.sym.id]
+        module = impl.symbol.module
+        op = getattr(module, impl.symbol.id)
+        return op
+    return None
+
+
+def compute_with_constant_tensors(bsym, const_values) -> None | Any:
+    """
+    This function is used to compute the concrete output of the computation
+    represented by BoundSymbol if it's inputs are known to be constant.
+
+    To run the computation, it will use PyTorch eager functions
+    from _torch_to_thunder_function_map or registered operator from
+    `pythonex` executor.
+    """
 
     def materialize_args(a):
         if isinstance(a, (TensorProxy, NumberProxy)):
@@ -32,12 +56,17 @@ def compute_with_concrete_tensor_and_pytorch_eager(bsym, const_values):
 
     new_args = tuple(map(materialize_args, bsym.args))
     new_kwargs = {k: materialize_args(v) for k, v in bsym.kwargs.items()}
-    from thunder.executors.pythonex import ex as pythonex
 
+    # Try to see if the symbol is torch function
     torch_fn = _thunder_to_torch_function_map.get(bsym.sym, None)
-    if torch_fn is None:
-        return
-    return torch_fn(*new_args, **new_kwargs)
+    if torch_fn is not None:
+        return torch_fn(*new_args, **new_kwargs)
+
+    # Try to see if the symbol is a Python function
+    python_fn = get_python_operator(bsym)
+    if python_fn is not None:
+        return python_fn(*new_args, **new_kwargs)
+    return None
 
 
 class ConstantFolding(thunder.Transform):
@@ -47,22 +76,22 @@ class ConstantFolding(thunder.Transform):
         const_folded_trace = from_trace(computation_trc)
         const_folded_trace.bound_symbols = computation_trc.bound_symbols
 
-        const_tensors: dict[Variable, torch.Tensor | Number] = {}
+        const_values: dict[Variable, torch.Tensor | Number] = {}
 
         # Tag output from factory functions as constant value.
         for bsym in const_folded_trace.bound_symbols:
             if bsym.sym.id in TENSOR_FACTORY:
                 torch_fn = _thunder_to_torch_function_map[bsym.sym]
                 t = torch_fn(*bsym.args, **bsym.kwargs)
-                const_tensors[variableify(bsym.output)] = t
+                const_values[variableify(bsym.output)] = t
 
         new_bsyms = []
         symbol_to_last_used_variables = get_symbols_to_last_used_variables(const_folded_trace.bound_symbols, ignore=())
 
         def is_constant(proxy):
-            if isinstance(proxy, TensorProxy) and variableify(proxy) in const_tensors:
+            if isinstance(proxy, TensorProxy) and variableify(proxy) in const_values:
                 return True
-            elif isinstance(proxy, NumberProxy) and variableify(proxy) in const_tensors:
+            elif isinstance(proxy, NumberProxy) and variableify(proxy) in const_values:
                 return True
             elif isinstance(proxy, NumberProxy) and proxy.is_static_constrained():
                 return True
@@ -74,7 +103,7 @@ class ConstantFolding(thunder.Transform):
             if all(map(is_constant, bsym.flat_proxy_args)) and bsym.sym.id not in TENSOR_FACTORY:
                 if bsym.flat_args == []:  # eg, unpack_trivial
                     continue
-                new_concrete_output = compute_with_concrete_tensor_and_pytorch_eager(bsym, const_tensors)
+                new_concrete_output = compute_with_constant_tensors(bsym, const_values)
                 if (
                     new_concrete_output is not None
                 ):  # Might happen for `python_return` as it won't have mapping in `_thunder_to_torch_map`.
@@ -87,9 +116,7 @@ class ConstantFolding(thunder.Transform):
                     # For `ndim==0`, we need to use full as `tensor_from_sequence` expects
                     # a sequence (and not plain numbers).
                     if isinstance(new_concrete_output, Number):
-                        # with tracectx(computation_trc):
-                        #     new_output = proxy(new_concrete_output)
-                        # new_bsym = bsym.from_bsym(output=new_output)
+                        const_number_swapmap[variableify(bsym.output)] = new_concrete_output
                         new_bsym = bsym
                     elif new_concrete_output.ndim == 0:
                         isinstance(new_concrete_output, torch.Tensor)
@@ -119,20 +146,21 @@ class ConstantFolding(thunder.Transform):
                     new_bsyms.append(new_bsym)
 
                     # Update const_tensors (so that usage of the output of this symbol will also be used for further computation.)
-                    const_tensors[variableify(bsym.output)] = new_concrete_output
+                    const_values[variableify(bsym.output)] = new_concrete_output
 
                     # Clear tensors which won't be used further.
                     for proxy_v in symbol_to_last_used_variables[bsym]:
-                        const_tensors.pop(proxy_v, None)
+                        const_values.pop(proxy_v, None)
 
                     continue
 
             # BoundSymbol with non-constant inputs, keep it as-is
             new_bsyms.append(bsym)
 
-        del const_tensors
+        # Update all input NumberProxies by constant numbers if possible.
+        const_folded_trace.bound_symbols = [
+            bsym.from_bsym_swap_proxies(const_number_swapmap, skip_output=True) for bsym in new_bsyms
+        ]
 
-        const_folded_trace.bound_symbols = new_bsyms
-        # print(const_folded_trace)
         const_folded_trace.set_provenance("Constant Folding pass")
         return prologue_trc, const_folded_trace, epilogue_trc

@@ -565,3 +565,29 @@ def test_constant_folding():
     exec_trace = thunder.last_traces(jforward)[-1]
     assert_in_trace(exec_trace, "tensor", ([18.0],))
     assert_in_trace(exec_trace, "tensor", ([10.0],))
+
+    # Constant folding of Python constants.
+    def forward(x):
+        t = torch.tensor(2.0)
+        return x + (t.item() + (t + 1).item())
+
+    jforward = thunder.jit(forward, transforms=[ConstantFolding()])
+    x = torch.randn(3, 3)
+    actual = jforward(x)
+    expected = forward(x)
+    torch.testing.assert_close(actual, expected)
+    exec_trace = thunder.last_traces(jforward)[-1]
+    # exec_trace will look something like this
+    # def computation(x):
+    #     # x: "cpu f32[3]"
+    #     t5 = torch.add(x, 5.0, alpha=1)  # t5: "cpu f32[3]"
+    #         # t5 = ltorch.add(x, 5.0, alpha=1)  # t5: "cpu f32[3]"
+    #         # t5 = prims.add(x, 5.0)  # t5: "cpu f32[3]"
+    #     return t5
+
+    # So we check that torch.add has 5.0 in it's arguments.
+    for bsym in exec_trace.bound_symbols:
+        if bsym.sym.id == "add":
+            assert bsym.args[1] == 5.0
+    else:
+        raise RuntimeError("Failed to find `add` symbol in trace")
