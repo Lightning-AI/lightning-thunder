@@ -589,5 +589,6 @@ def test_constant_folding():
     for bsym in exec_trace.bound_symbols:
         if bsym.sym.id == "add":
             assert bsym.args[1] == 5.0
+            break
     else:
         raise RuntimeError("Failed to find `add` symbol in trace")
