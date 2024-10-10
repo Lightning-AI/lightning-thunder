@@ -47,6 +47,17 @@ import torch as torch
 import numpy as np
 import thunder
 
+
+__all__ = [
+    "CompileStats",
+    "CompileData",
+    "cache_put",
+    "cache_get",
+    "trace",
+    "transform_for_execution",
+    "transform_to_torch_types",
+]
+
 #
 # Datastructures for compiled functions
 #
