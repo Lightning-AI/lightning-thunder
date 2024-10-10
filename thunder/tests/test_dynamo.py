@@ -455,7 +455,7 @@ def test_no_grad_ctx_manager(executor, device: str, dtype: dtypes.dtype):
     assert len(backend.subgraph_infos) == 1
 
     for subgraph_info in backend.subgraph_infos:
-        assert len(subgraph_info.split_reasons) > 1  # Verify there were no splits in the subgraph.
+        assert len(subgraph_info.split_reasons) > 1  # Verify there were splits in the subgraph.
         assert isinstance(subgraph_info.original_graph_module, torch.fx.GraphModule)
         assert any("has been manually disabled" in split_reason.info for split_reason in subgraph_info.split_reasons)
 
