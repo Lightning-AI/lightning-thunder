@@ -7,3 +7,4 @@ thunder.dynamo
     :toctree:
 
     ThunderCompiler
+    ThunderCompilerGraphBenchmarking

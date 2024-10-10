@@ -29,14 +29,14 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
         **thunder_options,
     ):
         """
-        This class acts as a backend for the `torch.compile` function, facilitating the benchmarking of each `fx.GraphModule` produced by Thunder dynamo splitter.
-        Each `fx.GraphModule` instance is executed by the specified executors and benchmarked using `pytest-benchmark`.
+        This class acts as a backend for the :func:`torch.compile` function, facilitating the benchmarking of each :class:`torch.fx.GraphModule` produced by Thunder dynamo splitter.
+        Each :class:`torch.fx.GraphModule` instance is executed by the specified executors and benchmarked using `pytest-benchmark`.
 
         Keyword arguments:
             bench: the BenchmarkFixture created by `pytest_benchmark`
             executors: List of executors to compare. Supported executors include: 'eager', 'inductor', and 'thunder'. If None, defaults to all available executors.
-            thunder_options: a dictionary of options to pass to `thunder.jit`. Besides all the arguments to `thunder.jit`,
-                             it accepts `torch_inductor_options` which are passed to `torch.compile` if part of the graph
+            thunder_options: a dictionary of options to pass to :func:`thunder.jit`. Besides all the arguments to :func:`thunder.jit`,
+                             it accepts `torch_inductor_options` which are passed to :func:`torch.compile` if part of the graph
                              is not supported by thunder.
 
         Example:
