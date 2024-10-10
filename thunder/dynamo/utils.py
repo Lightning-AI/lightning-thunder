@@ -18,6 +18,11 @@ if TYPE_CHECKING:
 auto_register_ops = set(itertools.chain(*torch_auto_registered_ops.values()))
 
 
+# Currently, thunder as mapping torch these function but they
+# just throw warning.
+UNSUPPORTED_THUNDER_FUNCTION = (torch._C._set_grad_enabled,)
+
+
 class CompilerType(Enum):
     """
     An enumeration representing different types of compilers.
@@ -221,10 +226,25 @@ def get_nodes_in_unsupported_ctx_regions(gm: torch.fx.GraphModule) -> set[torch.
 
     # We want to mark nodes with `_enter_autocast` and `_exit_autocast`
     # as unsupported as `thunder` doesn't correctly deal with these stateful functions.
+
+    def is_no_grad_ctx_enter(node):
+        arg: bool = node.args[0]
+        assert isinstance(arg, bool)
+        return node.target == torch._C._set_grad_enabled and not arg  # arg is False (i.e. grad was disabled)
+
+    def is_no_grad_ctx_exit(node):
+        arg: bool = node.args[0]
+        assert isinstance(arg, bool)
+        return node.target == torch._C._set_grad_enabled and arg  # arg is True (i.e. grad was enabled)
+
     for node in gm.graph.nodes:
-        if node.op == "call_function" and node.target in (torch.amp.autocast_mode._enter_autocast,):
+        if node.op == "call_function" and (
+            node.target in (torch.amp.autocast_mode._enter_autocast,) or is_no_grad_ctx_enter(node)
+        ):
             ctx_cnt += 1
-        elif node.op == "call_function" and node.target in (torch.amp.autocast_mode._exit_autocast,):
+        elif node.op == "call_function" and (
+            node.target in (torch.amp.autocast_mode._exit_autocast,) or is_no_grad_ctx_exit(node)
+        ):
             ctx_cnt -= 1
         else:
             if ctx_cnt > 0:
@@ -268,6 +288,15 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
         split_reason = SplitReason(
             SplitReasonType.MISSING_OP_SUPPORT,
             info=f"node with name: {node.name} and target: {node.target} only has an automatic torch fallback in thunder.",
+        )
+        return False, split_reason
+
+    # These functions are present in `_torch_to_thunder_function_map` but don't mimic exact behavior.
+    # Eg. torch._C._set_grad_enabled's thunder implementation just throws warning that this is unsupported.
+    if target in UNSUPPORTED_THUNDER_FUNCTION:
+        split_reason = SplitReason(
+            SplitReasonType.UNSUPPORTED_NODE,
+            info=f"node with name: {node.name} and target: {node.target} has been manually disabled.",
         )
         return False, split_reason
 
