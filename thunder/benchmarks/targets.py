@@ -33,6 +33,7 @@ from thunder.benchmarks import (
     thunder_cudnn_executor,
     thunder_cudnn_nvfuser_executor,
     thunder_executor,
+    thunderfx_executor,
     thunder_sdpa_torch_compile_nvfuser_executor,
     torch_compile_executor,
     torch_executor,
@@ -155,11 +156,13 @@ executors = (
     torch_executor,
     torch_compile_executor,
     thunder_executor,
+    thunderfx_executor,
 )
 executors_ids = (
     "torch",
     "torch.compile",
     "thunder",
+    "thunderfx",
 )
 
 apex_executors = (thunder_apex_executor, thunder_apex_nvfuser_executor)
