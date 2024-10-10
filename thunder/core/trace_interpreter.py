@@ -122,9 +122,9 @@ def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, *
                 # (FSDP, tensor parallel) transforms do "break" shape metadata
                 new_trace.names.remove(old.name)  # taken by the .replace proxy
                 if isinstance(new, VJPDual):
-                    old = old.replace(shape=new.primal.shape)
+                    old = old.replace(shape=new.primal._shape)
                 else:
-                    old = old.replace(shape=new.shape)
+                    old = old.replace(shape=new._shape)
 
             if isinstance(new, VJPDual):
                 swap_map[variableify(new.primal)] = old
