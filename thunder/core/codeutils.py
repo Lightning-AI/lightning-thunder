@@ -133,23 +133,23 @@ def to_printable(
     if isinstance(x, ProxyInterface):
         return x
 
-    if is_collection(x):
-        flat, spec = tree_flatten(x)
-        printables = []
-        for f in flat:
-            printables.append(to_printable(trace, f, import_ctx=import_ctx, object_ctx=object_ctx))
-
-        printable = tree_unflatten(printables, spec)
-        return printable
-
     if dataclasses.is_dataclass(x):
         # Add `class` to the object_ctx so that we can reuse it during the trace execution.
         object_ctx[_generate_dataclass_class_name(x)] = x.__class__
         # Return the instance as printable object (as function `prettyprint` knows how to deal with it).
         return x
 
-    # NOTE In this case the object is not a collection, and
-    #   it may require an import or additional context to print
+    if is_collection(x):
+        # specify namespace="" to avoid flattening dataclasses
+        flat, spec = tree_flatten(x, namespace="")
+        if flat and flat[0] is x:
+            raise RuntimeError(f"Don't know how to flatten object of {type(x)}")
+        printables = []
+        for f in flat:
+            printables.append(to_printable(trace, f, import_ctx=import_ctx, object_ctx=object_ctx))
+
+        printable = tree_unflatten(printables, spec)
+        return printable
 
     # TODO Instead of constant names, maybe "context names"?
     printable, module_info = _to_printable(trace, x)
@@ -212,29 +212,7 @@ def prettyprint(
 
     if isinstance(x, ContextObject):
         return m(x.name)
-    if is_collection(x):
-        flat, spec = tree_flatten(x)
-        printed = tuple(
-            prettyprint(x, with_type=False, literals_as_underscores=literals_as_underscores, _quote_markers=True)
-            for x in flat
-        )
-        unflattened = tree_unflatten(printed, spec)
-        unflattened_str = str(unflattened)
-        # NOTE Collections of strings (so collections of names) print like this --
-        #   ('a', 'b') -- but we want them to print like this -- (a, b) --
-        #   so this just removes all the single quotes -- this seems super hacky
-        unflattened_str = unflattened_str.replace(f"{_quote_marker}'", "")
-        unflattened_str = unflattened_str.replace(f"'{_quote_marker}", "")
-        return unflattened_str
-    if isinstance(x, dtypes.dtype):
-        # str(x) -> thunder.dtypes.foo
-        # For consistency with previous repr,
-        # remove `thunder.` from the representation.
-        return m(f"{str(x).replace('thunder.', '')}")
-    if isinstance(x, devices.Device):
-        return m(f'devices.Device("{x.device_str()}")')
-    if type(x) is type:
-        return m(f"{baseutils.print_type(x, with_quotes=False)}")
+
     if dataclasses.is_dataclass(x):
         # For a dataclass instance of class
         # class MyContainer:
@@ -248,12 +226,38 @@ def prettyprint(
         name = _generate_dataclass_class_name(x)
         call_repr = []
         for k, v in x.__dict__.items():
-            try:
-                call_repr.append(f"{k}={v.name}")
-            except:
-                call_repr.append(f"{k}={v}")
+            call_repr.append(
+                f"{k}={prettyprint(v, with_type=False, literals_as_underscores=literals_as_underscores, _quote_markers=False)}"
+            )
         call_repr_str = ",".join(call_repr)
         return m(f"{name}({call_repr_str})")
+
+    if is_collection(x):
+        # specify namespace="" to avoid flattening dataclasses
+        flat, spec = tree_flatten(x, namespace="")
+        printed = tuple(
+            prettyprint(x, with_type=False, literals_as_underscores=literals_as_underscores, _quote_markers=True)
+            for x in flat
+        )
+        unflattened = tree_unflatten(printed, spec)
+        unflattened_str = str(unflattened)
+        # NOTE Collections of strings (so collections of names) print like this --
+        #   ('a', 'b') -- but we want them to print like this -- (a, b) --
+        #   so this just removes all the quotes -- this seems super hacky
+        unflattened_str = unflattened_str.replace(f"{_quote_marker}'", "")
+        unflattened_str = unflattened_str.replace(f"'{_quote_marker}", "")
+        unflattened_str = unflattened_str.replace(f'{_quote_marker}"', "")
+        unflattened_str = unflattened_str.replace(f'"{_quote_marker}', "")
+        return unflattened_str
+    if isinstance(x, dtypes.dtype):
+        # str(x) -> thunder.dtypes.foo
+        # For consistency with previous repr,
+        # remove `thunder.` from the representation.
+        return m(f"{str(x).replace('thunder.', '')}")
+    if isinstance(x, devices.Device):
+        return m(f'devices.Device("{x.device_str()}")')
+    if type(x) is type:
+        return m(f"{baseutils.print_type(x, with_quotes=False)}")
 
     # Handles objects that this doesn't know how to serialize as a string
     return m(f"(object of type {print_type(type(x), with_quotes=False)})")

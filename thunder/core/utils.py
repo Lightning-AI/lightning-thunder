@@ -562,8 +562,12 @@ def same_shape(a: Sequence[int], b: Sequence[int], /) -> bool:
 
 
 # TODO: improve error message
-def check_same_shape(*args):
-    shapes = tuple(x.shape for x in args if isinstance(x, TensorProxy))
+# NOTE: the tensors in args have different shapes is only allowed if the tensor is a CPU scalar tensor and treat_cpu_scalar_tensors_as_numbers=True
+def check_same_shape(*args, treat_cpu_scalar_tensors_as_numbers=True):
+    if treat_cpu_scalar_tensors_as_numbers:
+        shapes = tuple(x.shape for x in args if isinstance(x, TensorProxy) and not is_cpu_scalar_tensor(x))
+    else:
+        shapes = tuple(x.shape for x in args if isinstance(x, TensorProxy))
     if len(shapes) > 1:
         shape = shapes[0]
         for othershape in shapes[1:]:
@@ -658,6 +662,13 @@ def check_no_duplicates(dims: Sequence):
     check(len(dims) == len(set(dims)), lambda: f"Duplicate value in list of dimensions {dims}!")
 
 
+def is_cpu_scalar_tensor(a: Any, /) -> bool:
+    """
+    Returns True if the input is a Thunder TensorProxy or torch.tensor and is a scalar tensor on the CPU.
+    """
+    return isinstance(a, (TensorProxyInterface, torch.Tensor)) and a.ndim == 0 and a.device.type == "cpu"
+
+
 #
 # Device-related functions
 #
@@ -665,8 +676,16 @@ def check_no_duplicates(dims: Sequence):
 
 # TODO: improve device handling by canonicalizing devices and expressing them per langctx
 # TODO: should the comparison between devices be ==?
-def check_same_device(*args):
-    devices = tuple(x.device for x in args if isinstance(x, TensorProxyInterface))
+# NOTE: the tensors in args have different devices is only allowed if the tensor is a CPU scalar tensor and treat_cpu_scalar_tensors_as_numbers=True
+def check_same_device(*args, treat_cpu_scalar_tensors_as_numbers=True):
+    if treat_cpu_scalar_tensors_as_numbers:
+        devices = tuple(
+            x.device
+            for x in args
+            if isinstance(x, TensorProxyInterface) and x.device.type != "meta" and not is_cpu_scalar_tensor(x)
+        )
+    else:
+        devices = tuple(x.device for x in args if isinstance(x, TensorProxyInterface) and x.device.type != "meta")
     if len(devices) > 1:
         device = devices[0]
         for otherdevice in devices[1:]:
@@ -726,6 +745,17 @@ class _OrderedSet(Generic[T, T1], Iterable[T]):
 
     def add(self, x: T | T1):
         self.d[self.canonicalize(x)] = None
+
+    def discard(self, x: T | T1):
+        c = self.canonicalize(x)
+        if c in self.d:
+            del self.d[c]
+
+    def issubset(self, other):
+        return all((e in other) for e in self)
+
+    def union(self, *others: "Sequence[_OrderedSet]") -> Self:
+        return self.__class__(itertools.chain(self, *others))
 
     def update(self, x: Iterable[T | T1]) -> None:
         for i in x:

@@ -3,6 +3,7 @@ import sys
 import tempfile
 import textwrap
 import time
+from collections import UserDict
 from collections.abc import Callable
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -22,11 +23,13 @@ import thunder.core.dtypes as dtypes
 import thunder.executors as executors
 import thunder.torch as ltorch
 from thunder.core.transforms import grad, clear_grads, populate_grads
-from thunder.executors.apex_entropyex import apex_ex, apex_available
+from thunder.executors.apexex import apex_ex, apex_entropy_available
 from thunder.executors.cudnn_layernormex import cudnn_layernorm_ex
 from thunder.executors.cudnnex import cudnn_ex, cudnn_available
+from thunder.executors.transformer_engineex import transformer_engine_ex, TE_AVAILABLE
 from thunder.executors.sdpaex import sdpa_ex
 from thunder.executors.torch_compile import torch_compile_cat_ex, torch_compile_ex
+from thunder.transforms.cudagraph import CUDAGraphTransform
 from thunder.tests import nanogpt_model, hf_bart_self_attn, litgpt_model
 from thunder.tests.litgpt_model import Config as LitGPTConfig
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
@@ -253,7 +256,7 @@ def _benchmark(
         args, kwargs = benchmark.make_batch()
         wait_for_computation()
         called_backward: bool = False
-        start: int = time.time_ns()
+        start: int = time.perf_counter_ns()
         result = fn(*args, **kwargs)
         if compile_backward:
             # NOTE In this case backward has been compiled, so nothing more to be done
@@ -273,9 +276,9 @@ def _benchmark(
                 grad_tensor.backward(torch.ones_like(grad_tensor))
                 called_backward = True
 
-        host_stop: int = time.time_ns()
+        host_stop: int = time.perf_counter_ns()
         wait_for_computation()
-        stop: int = time.time_ns()
+        stop: int = time.perf_counter_ns()
         if isinstance(fn, torch.nn.Module):
             clear_grads(fn)
 
@@ -497,7 +500,7 @@ def _run_benchmark(
     #   to finish its work just incase
     benchmark_fn = benchmark.fn()
     wait_for_computation_fn()
-    start_time: int = time.time_ns()
+    start_time: int = time.perf_counter_ns()
 
     assert not use_grad_transform or not compile_backward, "Can't set both use_grad_transform and compile_backward!"
     if use_grad_transform:
@@ -515,7 +518,7 @@ def _run_benchmark(
         benchmark_callable = constructor(benchmark_fn)
 
     wait_for_computation_fn()
-    stop_time: int = time.time_ns()
+    stop_time: int = time.perf_counter_ns()
     callable_construction_time: int = stop_time - start_time
     my_benchmark = partial(
         _benchmark,
@@ -716,7 +719,7 @@ def thunder_torch_compile_executor(fn: Callable) -> Callable:
 
 thunder_apex_executor: None | Callable = None
 thunder_apex_nvfuser_executor: None | Callable = None
-if apex_available():
+if apex_entropy_available():
 
     def thunder_apex_executor(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -748,6 +751,14 @@ if cudnn_available():
     def thunder_cudnn_layer_norm_nvfuser_executor(fn: Callable) -> Callable:
         torch.backends.cuda.matmul.allow_tf32 = True
         return thunder.jit(fn, executors=[cudnn_layernorm_ex, thunder.nvfuser_executor])
+
+
+thunder_transformerengine_executor: None | Callable = None
+
+if TE_AVAILABLE:
+
+    def thunder_transformerengine_executor(fn: Callable):
+        return thunder.jit(fn, executors=(transformer_engine_ex,) + thunder.get_default_executors())
 
 
 def thunder_sdpa_executor(fn: Callable) -> Callable:
@@ -908,7 +919,7 @@ def default_thunder_apex_executor(fn: Callable) -> Callable:
     APEX_CROSS_ENTROPY_AVAILABLE = package_available("xentropy_cuda")
     assert APEX_CROSS_ENTROPY_AVAILABLE, "Trying to benchmark with the thunder+apex executor, but apex is not available"
 
-    from thunder.executors.apex_entropyex import register_apex_entropyex
+    from thunder.executors.apex_entropyex_impl import register_apex_entropyex
 
     register_apex_entropyex(add_to_default_executors=False)
 
@@ -939,13 +950,14 @@ def default_thunder_cudagraphs_executor(fn: Callable) -> Callable:
     # Adds the Apex executor, if available
     APEX_CROSS_ENTROPY_AVAILABLE = package_available("xentropy_cuda")
     if APEX_CROSS_ENTROPY_AVAILABLE:
-        from thunder.executors.apex_entropyex import register_apex_entropyex
+        from thunder.executors.apex_entropyex_impl import register_apex_entropyex
 
         register_apex_entropyex(add_to_default_executors=False)
         executors_list.append("apex_xentropy")
 
     executors_list.extend((executors.NVFUSER, executors.TORCH))
-    return thunder.jit(fn, executors=executors_list, use_cudagraphs=True, disable_torch_autograd=True)
+    transforms = [CUDAGraphTransform()]
+    return thunder.jit(fn, executors=executors_list, transforms=transforms, disable_torch_autograd=True)
 
 
 #
@@ -1160,11 +1172,11 @@ def _extract_nanogpt_config(config: str | NanoGPTConfig):
     return result
 
 
-class NanoGPTGeLUBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+class LitGPTGeluBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
             name="config",
-            description="The nanoGPT config (str, NanoGPTConfig) to use. String options are 'gpt2', 'gpt2-medium', 'gpt2-large', and 'gpt2-xl'. Default is 'gpt2-medium'. See the NanoGPT model for details.",
+            description="The LitGPT config (str, LitGPTConfig) to use. See the litgpt_model.py for details.",
         ),
         BenchmarkArg(
             name="batchdims",
@@ -1201,17 +1213,17 @@ class NanoGPTGeLUBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def __init__(
         self,
-        config: str | NanoGPTConfig = "gpt2-medium",
-        batchdims: Sequence[int] = (16,),
-        device: str = "cuda",
-        dtype: dtypes.dtype = thunder.float32,
-        requires_grad: bool = False,
+        config: str | LitGPTConfig,
+        batchdims: Sequence[int],
+        device: str,
+        dtype: dtypes.dtype,
+        requires_grad: bool,
     ) -> None:
         super().__init__()
 
-        self.config = _extract_nanogpt_config(config)
+        self.config = LitGPTConfig.from_name(config) if not isinstance(config, LitGPTConfig) else config
         self.batchdims = batchdims
-        self.shape: Sequence[int] = batchdims + (self.config.seq_len, 4 * self.config.n_embd)
+        self.shape: Sequence[int] = batchdims + (self.config.block_size, self.config.intermediate_size)
         self.device: str = device
         self.dtype: dtypes.dtype = dtype
         self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
@@ -1224,9 +1236,91 @@ class NanoGPTGeLUBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def fn(self) -> Callable:
         def foo(a):
-            return torch.nn.functional.gelu(a, approximate="tanh")
+            return torch.nn.functional.gelu(a, approximate=self.config.gelu_approximate)
 
         return foo
+
+
+class LitGPTSwigluBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="config",
+            description="The LitGPT config (str, LitGPTConfig) to use. See the litgpt_model.py for details.",
+        ),
+        BenchmarkArg(
+            name="batchdims",
+            description="The shape (Sequence[int]) of input batch dimensions. The input will have innermost dimensions of (config.seq_len,). Default is (16,).",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A string representing the device to run on. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="dtype",
+            description="The dtype of the tensors. Default is thunder.float32.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the input tensors require grad. Default is False.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "litgpt-swiglu"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "LitGPT's 'swiglu' elementwise unary operation."
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(
+        self,
+        config: str | LitGPTConfig,
+        batchdims: Sequence[int],
+        device: str,
+        dtype: dtypes.dtype,
+        requires_grad: bool,
+        use_liger: bool = False,
+    ) -> None:
+        super().__init__()
+
+        self.config = LitGPTConfig.from_name(config) if not isinstance(config, LitGPTConfig) else config
+        self.batchdims = batchdims
+        self.shape: Sequence[int] = batchdims + (self.config.block_size, self.config.intermediate_size)
+        self.device: str = device
+        self.dtype: dtypes.dtype = dtype
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+        self.requires_grad: bool = requires_grad
+        self.devices: list[str] = [device]
+        self.use_liger: bool = use_liger
+
+    def make_batch(self) -> tuple[list, dict]:
+        return (
+            make_tensor(self.shape, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad),
+            make_tensor(self.shape, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad),
+        ), {}
+
+    def fn(self) -> Callable:
+        # https://github.com/Lightning-AI/litgpt/blob/fdf6a120056d1363287285599eb84907f6c589b9/litgpt/model.py#L372
+        def fn(x_fc_1, x_fc_2):
+            return torch.nn.functional.silu(x_fc_1) * x_fc_2
+
+        if self.use_liger:
+            try:
+                from liger_kernel.ops.swiglu import LigerSiLUMulFunction
+
+                return LigerSiLUMulFunction.apply
+            except ImportError:
+                raise ImportError("Requested to use the Liger SiLU Mul function, but the Liger kernel is not available")
+
+        return fn
 
 
 class NanoGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
@@ -2677,8 +2771,7 @@ class HuggingFaceSelfAttnBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta)
         return bart_model
 
 
-# TODO this benchmark doesn't seem to be called by any target and is almost the same
-# as benchmarks/nvfuser_benchmarks.py::GPTBlockBenchmark
+# TODO this benchmark doesn't seem to be called by any target
 class GPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     _args = (
         BenchmarkArg(
@@ -2813,6 +2906,91 @@ class BatchNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             )
 
         return foo
+
+
+class ResNet50Benchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    def __init__(
+        self,
+        batch_size: int,
+        input_shape: tuple[int, int, int],
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = False,
+    ) -> None:
+        super().__init__()
+
+        # the typical input image size of ResNet50 is (3, 224, 224)
+        self.shape: tuple[int, int, int, int] = (batch_size,) + input_shape
+        self.device: str = device
+        self.dtype: dtypes.dtype = dtype
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+        self.requires_grad: bool = requires_grad
+
+        self.devices: list[str] = [device]
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
+        a = make(self.shape)
+        return (a,), {}
+
+    def fn(self) -> Callable:
+        from torchvision.models import resnet50
+
+        model = resnet50()
+        model = model.to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
+        return model
+
+
+class TorchbenchBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="module_name",
+            description="The torchbenchmark module name (str).",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A device (str) to run on {'cpu' | 'cuda'}. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the model parameters require grad. Default is True.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "torchbench"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "Torchbench fixture"
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(self, module_name, device: str = "cuda", requires_grad: bool = True):
+        import importlib
+
+        module = importlib.import_module(f"torchbenchmark.models.{module_name}")
+        self.benchmark_cls = getattr(module, "Model", None)
+
+        benchmark = self.benchmark_cls(test="train" if requires_grad else "eval", device=device)
+
+        model, example = benchmark.get_module()
+        self.model = model
+        self.example_input = example
+
+    def make_batch(self) -> tuple[list, dict]:
+        if isinstance(self.example_input, (dict, UserDict)):
+            return [], self.example_input
+        return self.example_input, {}
+
+    def fn(self) -> Callable:
+        return self.model
 
 
 # TODO Add descriptions to the executors when listed, and list them alphabetically

@@ -18,13 +18,11 @@ import torch
 import math
 from looseversion import LooseVersion
 
-from thunder.core.langctxs import langctx, Languages
 import thunder.core.dtypes as dtypes
 from thunder.core.dtypes import to_torch_dtype, to_dtype
 import thunder.core.devices as devices
 from thunder.core.devices import to_torch_device, to_device
 import thunder.core.prims as prims
-from thunder.core.prims import PrimIDs
 from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, from_trace
 from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy, variableify, pytype
 from thunder.core.pytree import tree_flatten, tree_unflatten
@@ -170,6 +168,7 @@ zeros_like = _register_torch_operation("zeros_like")
 randn = _register_torch_operation("randn")
 empty = _register_torch_operation("empty")
 einsum = _register_torch_operation("einsum")
+clone = _register_torch_operation("clone")
 
 
 def _uniform_philox_like(
@@ -430,6 +429,10 @@ def _empty_prims_transform(
     return empty(shape, device=torch_device, dtype=torch_dtype)
 
 
+def _clone_prims_transform(a: TensorLike, **kwargs) -> TensorLike:
+    return clone(a)
+
+
 def _tensor_from_sequence_prims_transform(
     seq_or_number, *, device: devices.Device, dtype: None | dtypes.dtype
 ) -> TensorLike:
@@ -448,8 +451,8 @@ def _get_and_update_rng_state_impl(seed, offset, device):
     # We follow the nvFuser way here. pytorch_new_offset = (nvfuser_offset + 1) * 4
     # See Note [Divide offset by 4] https://github.com/NVIDIA/Fuser/blob/729f36c/csrc/rng.cpp#L54
     new_offset = (offset + 1) * 4
-    seed_portion = torch.tensor([seed]).view(torch.uint8)
-    offset_portion = torch.tensor([new_offset]).view(torch.uint8)
+    seed_portion = torch.tensor([seed], device="cpu").view(torch.uint8)
+    offset_portion = torch.tensor([new_offset], device="cpu").view(torch.uint8)
     new_state = torch.cat([seed_portion, offset_portion])
     torch.cuda.set_rng_state(new_state, device)
     return seed, offset
@@ -471,6 +474,7 @@ _register_implementation(
 _register_implementation(prims.get_and_update_rng_state, get_and_update_rng_state_impl, checker=_always_executable)
 _register_implementation(prims.randn, checker=_always_executable, execution_transform=_randn_prims_transform)
 _register_implementation(prims.empty, checker=_always_executable, execution_transform=_empty_prims_transform)
+_register_implementation(prims.clone, checker=_always_executable, execution_transform=_clone_prims_transform)
 _register_implementation(
     prims.tensor_from_sequence, checker=_always_executable, execution_transform=_tensor_from_sequence_prims_transform
 )
@@ -573,36 +577,16 @@ def _squeeze_transform(a: TensorLike, /, dim: None | int | Sequence[int] = None)
     return squeeze(a, dim)
 
 
-def _empty_transform(
-    shape: Sequence[int],
-    device: None | DeviceLike = None,
-    dtype: None | dtypeLike = None,
-    out: None | TensorLike = None,
-    layout: torch.layout = torch.strided,
-    requires_grad: bool = False,
-    pin_memory: bool = False,
-    memory_format: torch.memory_format = torch.contiguous_format,
-):
-    torch_device: None | torch.device = to_torch_device(device)
-    torch_dtype: None | torch.dtype = to_torch_dtype(dtype)
-    return empty(
-        shape,
-        device=torch_device,
-        dtype=torch_dtype,
-        out=out,
-        layout=layout,
-        requires_grad=requires_grad,
-        pin_memory=pin_memory,
-        memory_format=memory_format,
-    )
-
-
 _register_implementation(
     prims.broadcast_in_dim, checker=_always_executable, execution_transform=_broadcast_in_dim_prim_transform
 )
 _register_implementation(prims.cat, cat, checker=_always_executable)
 _register_implementation(prims.flip, flip, checker=_always_executable)
-_register_implementation(prims.reshape, reshape, checker=_always_executable)
+# NOTE - `ltorch.reshape` short circuits when new shape is same as original shape and returns the input proxy as output.
+#        `prims.reshape` doesn't do that and returns a new proxy. So we add `torch_prims_reshape_impl` which is consistent
+#        with `prims.reshape` semantics otherwise this can lead incorrectness.
+torch_prims_reshape_impl = ex.register_operator("torch_prims_reshape_impl", meta=prims.reshape.meta, fn=torch.reshape)
+_register_implementation(prims.reshape, torch_prims_reshape_impl, checker=_always_executable)
 slice_prim_impl = ex.register_operator("torch_slice_prim_impl", meta=prims.slice_prim.meta, fn=_slice_prim_impl)
 _register_implementation(prims.slice_prim, slice_prim_impl, checker=_always_executable)
 _register_implementation(prims.squeeze, checker=_always_executable, execution_transform=_squeeze_transform)
@@ -632,7 +616,6 @@ _register_implementation(ltorch.unfold, unfold, checker=_always_executable)
 _register_implementation(ltorch.unsqueeze, unsqueeze, checker=_always_executable)
 _register_implementation(ltorch.view, view, checker=_always_executable)
 _register_implementation(ltorch.view_as, view_as, checker=_always_executable)
-_register_implementation(ltorch.empty, empty, checker=_always_executable, execution_transform=_empty_transform)
 _register_implementation(ltorch.all_tensor, all_tensor, checker=_always_executable)
 _register_implementation(ltorch.any_tensor, any_tensor, checker=_always_executable)
 
@@ -992,6 +975,7 @@ _register_elementwise_binary_implementation(ltorch.div, checker=_div_checker, ex
 
 addcdiv = _register_torch_operation("addcdiv")
 addcmul = _register_torch_operation("addcmul")
+lerp = _register_torch_operation("lerp")
 
 
 def _addcdiv_checker(a: TensorLike, b: TensorLike, c: TensorLike, /, *, value: None | Number = None) -> bool:
@@ -1048,8 +1032,17 @@ def _addcmul_transform(a: TensorLike, b: TensorLike, c: TensorLike, /, *, value:
     return addcmul(a, b, c, value=value)
 
 
+def _lerp_checker(start: TensorLike, end: TensorLike, weight: Number | TensorLike) -> TensorLike:
+    return (
+        isinstance(start, TensorLike)
+        and isinstance(end, TensorLike)
+        and isinstance(weight, (Number, NumberProxy, TensorLike))
+    )
+
+
 _register_implementation(ltorch.addcdiv, checker=_addcdiv_checker, execution_transform=_addcdiv_transform)
 _register_implementation(ltorch.addcmul, checker=_addcmul_checker, execution_transform=_addcmul_transform)
+_register_implementation(ltorch.lerp, lerp, checker=_lerp_checker)
 
 #
 # Conditional operations
@@ -1118,6 +1111,14 @@ var_mean = _register_torch_operation("var_mean")
 argmax = _register_torch_operation("argmax")
 argmin = _register_torch_operation("argmin")
 topk = _register_torch_operation("topk")
+
+
+#
+# Sort and dim permutations operations
+#
+
+
+sort = _register_torch_operation("sort")
 
 
 # NOTE The following transforms are necessary because thunder uses the parameter name 'dims' while PyTorch
@@ -1195,13 +1196,38 @@ _register_implementation(ltorch.argmax, argmax, checker=_always_executable)
 _register_implementation(ltorch.argmin, argmin, checker=_always_executable)
 _register_implementation(ltorch.topk, topk, checker=_always_executable, execution_transform=_topk_transform)
 
+
+#
+# Sort and dim permutations operations
+#
+
+
+# NOTE this transform translates number proxies to boolean values
+# and handles dim = None
+def _sort_transform(
+    a: TensorProxy, /, dim: int | None = None, descending: bool = False, stable: bool = False, *, out=None
+):
+    if dim is None:
+        dim = a.ndim - 1 if a.ndim > 0 else 0
+
+    # NOTE: args past `a` are passed as kwargs to avoid issues with multiple `torch.sort` overloadings
+    return sort(a, dim=dim, descending=bool(descending), stable=bool(stable), out=out)
+
+
+_register_implementation(prims.sort, checker=_always_executable, execution_transform=_sort_transform)
+
+_register_implementation(ltorch.sort, checker=_always_executable, execution_transform=_sort_transform)
+
+
 #
 # Scatter and gather operations
 #
 
 gather = _register_torch_operation("gather")
 index_add = _register_torch_operation("index_add")
+index_copy = _register_torch_operation("index_copy")
 index_put = _register_torch_operation("index_put")
+scatter = _register_torch_operation("scatter")
 scatter_add = _register_torch_operation("scatter_add")
 index_select = _register_torch_operation("index_select")
 take_along_dim = _register_torch_operation("take_along_dim")
@@ -1212,27 +1238,56 @@ def _index_add_prim_transform(a: TensorProxy, /, index: TensorProxy, value: Tens
     return index_add(a, dim, index, value)
 
 
+# NOTE PyTorch has a different order for and names of the parameters
+def _index_copy_prim_transform(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
+    return index_copy(a, dim, index, value)
+
+
 def _index_put_prim_transform(
     a: TensorLike, /, indices: Sequence[TensorLike], values: TensorLike, accumulate: bool = False
 ) -> TensorLike:
     return index_put(a, indices, values, accumulate)
 
 
-@langctx(Languages.TORCH)
 def _gather_prim_transform(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
     return gather(a, dim, index)
 
 
-@langctx(Languages.TORCH)
 def _gather_transform(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
     return gather(a, dim, index)
 
 
+def _scatter_prim_transform(a: TensorProxy, /, index: TensorProxy, src: TensorProxy, dim: int) -> TensorProxy:
+    return scatter(a, dim, index, src)
+
+
+def _scatter_transform(
+    a: TensorProxy,
+    /,
+    dim: int,
+    index: TensorProxy,
+    src: TensorProxy | None = None,
+    *,
+    value: Number | None = None,
+    reduce: None | str = None,
+) -> TensorProxy:
+    utils.check(
+        reduce is None, lambda: "scatter: `reduce` argument other than None is not supported", NotImplementedError
+    )
+
+    utils.check(
+        (src is not None) ^ (value is not None),
+        lambda: "scatter: only one of the arguments ('src', 'value') can be non-None",
+    )
+
+    if src is not None:
+        return scatter(a, dim, index, src)
+    else:
+        return scatter(a, dim, index, value)
+
+
 # NOTE torch.compile has a compilation issue with scatter add in bfloat16,
 #      hence the special case here.
-# NOTE The scatter add transforms must set the torch language context explicitly so the .to() method
-#   on tensors is resolved (alternatively they could explicitly call thunder.torch.to)
-@langctx(Languages.TORCH)
 def _scatter_add_prim_transform(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     if a.dtype == dtypes.bfloat16:
         a = a.to(torch.float32)
@@ -1244,7 +1299,6 @@ def _scatter_add_prim_transform(a: TensorProxy, /, index: TensorProxy, value: Te
 
 # NOTE torch.compile has a compilation issue with scatter add in bfloat16,
 #      hence the special case here.
-@langctx(Languages.TORCH)
 def _scatter_add_transform(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike) -> TensorLike:
     # NOTE scatter_add does not participate in type promotion, so if a has the bfloat16 dtype, then so does src
     if a.dtype == dtypes.bfloat16:
@@ -1265,7 +1319,9 @@ def _take_along_axis_prim_transform(a: TensorProxy, /, index: TensorProxy, dim: 
 
 _register_implementation(prims.gather, checker=_always_executable, execution_transform=_gather_prim_transform)
 _register_implementation(prims.index_add, checker=_always_executable, execution_transform=_index_add_prim_transform)
+_register_implementation(prims.index_copy, checker=_always_executable, execution_transform=_index_copy_prim_transform)
 _register_implementation(prims.index_put, checker=_always_executable, execution_transform=_index_put_prim_transform)
+_register_implementation(prims.scatter, checker=_always_executable, execution_transform=_scatter_prim_transform)
 _register_implementation(prims.scatter_add, checker=_always_executable, execution_transform=_scatter_add_prim_transform)
 _register_implementation(prims.take, checker=_always_executable, execution_transform=_take_prim_transform)
 _register_implementation(
@@ -1274,11 +1330,26 @@ _register_implementation(
 
 _register_implementation(ltorch.gather, checker=_always_executable, execution_transform=_gather_transform)
 _register_implementation(ltorch.index_add, index_add, checker=_always_executable)
+_register_implementation(ltorch.index_copy, index_copy, checker=_always_executable)
 _register_implementation(ltorch.index_put, index_put, checker=_always_executable)
 _register_implementation(ltorch.index_select, index_select, checker=_always_executable)
+_register_implementation(ltorch.scatter, checker=_always_executable, execution_transform=_scatter_transform)
 _register_implementation(ltorch.scatter_add, checker=_always_executable, execution_transform=_scatter_add_transform)
 _register_implementation(ltorch.take_along_dim, take_along_dim, checker=_always_executable)
 
+# out of place setitem helper
+
+
+def _copy_with_setitem_impl(a, key, value):
+    c = a.clone()
+    c[key] = value
+    return c
+
+
+copy_with_setitem_impl = ex.register_operator(
+    "copy_with_setitem_impl", meta=prims.copy_with_setitem_meta, fn=_copy_with_setitem_impl
+)
+_register_implementation(prims.copy_with_setitem, copy_with_setitem_impl, checker=_always_executable)
 
 #
 # Linear algebra operations
@@ -1353,9 +1424,9 @@ def _max_pool_with_indices_helper(
 
     def pooling_output_shape(in_, kernel_, pad_, stride_, dilation_, ceil_mode_: bool):
         out_size = (
-            div_rtn(in_ + 2 * pad_ - dilation_ * (kernel_ - 1) - 1 + (stride - 1 if ceil_mode else 0), stride) + 1
+            div_rtn(in_ + 2 * pad_ - dilation_ * (kernel_ - 1) - 1 + (stride_ - 1 if ceil_mode else 0), stride_) + 1
         )
-        if ceil_mode and (out_size - 1) * stride >= in_ + pad_:
+        if ceil_mode and (out_size - 1) * stride_ >= in_ + pad_:
             out_size -= 1
         return out_size
 
@@ -1629,6 +1700,8 @@ def max_pool2d_bwd_wrapper(
     return_indices: bool = False,
     ceil_mode: bool = False,
 ) -> tuple[TensorProxy, TensorProxy] | TensorProxy:
+    if stride is None:
+        stride = kernel_size
     primals = max_pool2d_with_indices(a, kernel_size, stride, padding, dilation, ceil_mode)
 
     grad = get_grad(primals[0])
@@ -1762,7 +1835,7 @@ if torch.distributed.is_available():
             result_shape[dim] *= group.size()
         else:
             result_shape[0] *= group.size()
-        out: torch.Tensor = torch.empty(result_shape, dtype=a.dtype, device=a.device)
+        out = torch.empty(result_shape, dtype=a.dtype, device=a.device)
         do_async: bool = bool(do_async)
 
         handle: None | torch.distributed.distributed_c10d.Work = torch.distributed.all_gather_into_tensor(
@@ -2058,6 +2131,8 @@ _register_implementation(prims.item, item, checker=_always_executable)
 
 has_einops = importlib.util.find_spec("einops") is not None
 if has_einops:
+    has_einops = importlib.util.find_spec("einops._backends") is not None
+if has_einops:
     import einops
     from einops._backends import TorchBackend
 
@@ -2115,3 +2190,13 @@ connect_to_autograd_impl = ex.register_operator(
     "connect_to_autograd_impl", meta=torch_autograd_function_meta, fn=_torch_autograd_function_impl
 )
 _register_implementation(connect_to_torch_autograd, connect_to_autograd_impl, checker=_always_executable)
+
+def _shape_impl(t):
+    return t.shape
+
+
+shape = ex.register_operator("shape", meta=prims.shape_meta, fn=_shape_impl)
+_register_implementation(prims.shape, shape, checker=_always_executable)
+
+shallow_copy = ex.register_operator("shallow_copy", meta=prims.shallow_copy, fn=lambda x: x)
+_register_implementation(prims.shallow_copy, shallow_copy, checker=_always_executable)

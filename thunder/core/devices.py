@@ -118,7 +118,7 @@ class Device(metaclass=DeviceMeta):
     #   converting Thunder devices to PyTorch devices
     def __repr__(self) -> str:
         if self.devicetype == DeviceType.CUDA:
-            return f"thunder.devices.Device(type='{devicetype_string(self.devicetype)}:{self.index}')"
+            return f"thunder.devices.Device(type='{self.type}', index={self.index})"
         # note: self.devicetype == DeviceType.CPU, .META
         return f"thunder.devices.Device(type='{devicetype_string(self.devicetype)}')"
 
@@ -132,6 +132,9 @@ class Device(metaclass=DeviceMeta):
             return f"{devicetype_string(self.devicetype)}:{self.index}"
         # note: self.devicetype == DeviceType.CPU, .META
         return devicetype_string(self.devicetype)
+
+    def __reduce__(self):
+        return (Device, (self.device_str(),))
 
 
 cpu = Device(DeviceType.CPU, None)

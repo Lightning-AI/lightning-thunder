@@ -26,8 +26,13 @@ comment_symbols = {prims.PrimIDs.COMMENT, prims.PrimIDs.UNPACK_TRIVIAL}
 
 
 # Transforms a trace by determining which execution transforms to call given the list of executors in priority order
+# This pass tries to preserve the original trace and proxies.
+# Implementation Steps -
+# 1. The trace is updated with `visitor_transform` with `visit_helper_` (where executors try to claim the symbols). Note that this replaces the output proxies in the trace.
+# 2. `visit_helper_` also creates a swapmap from the new symbols back to old one.
+# 3. After the `visitor_transform`, it iterates over the updated trace and puts back the old proxies.
 def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: Sequence[Executor]) -> TraceCtx:
-    start_time_ns = time.time_ns()
+    start_time_ns = time.perf_counter_ns()
 
     swapmap: dict[Variable, Proxy] = {}
 
@@ -119,7 +124,7 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
 
     extrace.bound_symbols = bound_symbols
 
-    end_time_ns = time.time_ns()
+    end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
     extrace.set_provenance(
@@ -131,7 +136,7 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
 def transform_for_execution(trace: TraceCtx, executors_list: Sequence[Executor]) -> TraceCtx:
     import torch
 
-    start_time_ns = time.time_ns()
+    start_time_ns = time.perf_counter_ns()
 
     if torch.distributed.is_available():
         # Apply AllReduce bucketing if possible & needed
@@ -162,7 +167,7 @@ def transform_for_execution(trace: TraceCtx, executors_list: Sequence[Executor])
     # NOTE This occurs if a fusion executor declines to execute a symbol after running its fusion pass
     extrace = _transform_for_operator_executor_execution(extrace, get_always_executors())
 
-    end_time_ns = time.time_ns()
+    end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
 
@@ -219,7 +224,7 @@ def update_fusion_call_ctx(trace: TraceCtx) -> TraceCtx:
     Returns:
         (TraceCtx): transformed trace
     """
-    start_time_ns = time.time_ns()
+    start_time_ns = time.perf_counter_ns()
 
     new_trace = from_trace(trace)
     new_trace.bound_symbols = []
@@ -229,42 +234,29 @@ def update_fusion_call_ctx(trace: TraceCtx) -> TraceCtx:
         else:
             new_trace.bound_symbols.append(bsym)
 
-    end_time_ns = time.time_ns()
+    end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
     new_trace.set_provenance(TraceProvenance(f"Update Call Context (took {elapsed_time_millis} milliseconds)"))
     return new_trace
 
 
-# TODO Review deleting non-proxies
-def del_last_used(trace: TraceCtx, *, clear_mutable_collections=False) -> TraceCtx:
-    """Mark last used intermediates to be deleted. This lets the Python garbage collector free
-        unused tensor memory.
-
-    Args:
-        trace: trace to be transformed
-        clear_mutable_collections: whether to clear collections
-    Returns:
-        list: transformed trace
-    """
-    start_time_ns = time.time_ns()
-
-    del_trace = from_trace(trace)
+def _del_last_used(bound_symbols, flattened_final_output, *, clear_mutable_collections=False):
     bsyms = deque()
-
-    outs = cutils.sequencify(trace.output)
-    flat_outs, _ = tree_flatten(outs)
-
     # TODO Replace with ProxySet (which does not exist at the time of this writing)
     handled = ProxyDict()
-    for out in flat_outs:
+    for out in flattened_final_output:
         if isinstance(out, Proxy):
             handled[out] = None
 
     bsym: BoundSymbol
-    for bsym in reversed(trace.bound_symbols):
+    for bsym in reversed(bound_symbols):
         if bsym.sym.id in comment_symbols:
             bsyms.appendleft(bsym)
+            continue
+
+        if bsym.sym.id == prims.PrimIDs.DEL:
+            # we will skip old dels and generate new ones
             continue
 
         to_del = []
@@ -291,9 +283,32 @@ def del_last_used(trace: TraceCtx, *, clear_mutable_collections=False) -> TraceC
 
         bsyms.appendleft(bsym)
 
-    del_trace.bound_symbols = list(bsyms)
+    return list(bsyms)
 
-    end_time_ns = time.time_ns()
+
+# TODO Review deleting non-proxies
+def del_last_used(trace: TraceCtx, *, clear_mutable_collections=False) -> TraceCtx:
+    """Mark last used intermediates to be deleted. This lets the Python garbage collector free
+        unused tensor memory.
+
+    Args:
+        trace: trace to be transformed
+        clear_mutable_collections: whether to clear collections
+    Returns:
+        list: transformed trace
+    """
+    start_time_ns = time.perf_counter_ns()
+
+    del_trace = from_trace(trace)
+
+    outs = cutils.sequencify(trace.output)
+    flat_outs, _ = tree_flatten(outs)
+
+    del_trace.bound_symbols = _del_last_used(
+        trace.bound_symbols, flat_outs, clear_mutable_collections=clear_mutable_collections
+    )
+
+    end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
 

@@ -9,7 +9,9 @@ import thunder.core.utils as utils
 from thunder.core.trace import TraceCtx
 from thunder.core.symbol import BoundSymbol
 from thunder.core.proxies import variableify, Proxy
+import thunder.core.prims as prims
 from thunder.core.prims import PrimIDs
+from thunder.executors import torchex
 
 
 # Represents a region and its parents (regions it consumes the output of) and
@@ -24,8 +26,8 @@ class Node:
         self.stop = stop
         self.group_bsyms = group_bsyms
         self.group_indices = group_indices
-        self.parents: set[Node] = set()
-        self.children: set[Node] = set()
+        self.parents: utils.OrderedSet[Node] = utils.OrderedSet()
+        self.children: utils.OrderedSet[Node] = utils.OrderedSet()
 
     def __repr__(self) -> str:
         s = f"node ID {self.ID} : "
@@ -101,8 +103,6 @@ class Graph:
                 self.return_node = node
 
         for bsym_id, node in enumerate(bsym_id_to_node_map):
-            has_parents: bool = False
-
             bsym = node.group_bsyms[0]
             for inp in bsym.flat_args:
                 if not isinstance(inp, Proxy):
@@ -111,9 +111,8 @@ class Graph:
                 producer_id = producers[inp]
                 parent = bsym_id_to_node_map[producer_id]
                 node.parents.add(parent)
-                has_parents = True
 
-            if not has_parents:
+            if not node.parents:
                 self.roots.append(node)
 
             for out in bsym.flat_outs:

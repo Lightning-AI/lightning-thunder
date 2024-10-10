@@ -53,6 +53,7 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor: TestEx
     from thunder.clang import cos, sin
     import thunder.torch as ltorch
     from thunder.core.transforms import forward_and_backward_from_trace, value_and_grad
+    from thunder.core.transform_common import wrap_return_value_together_with_argments
     from thunder.common import transform_for_execution
     from thunder.core.rematerialization import rematerialize_forward_and_backward
 
@@ -60,8 +61,6 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor: TestEx
         d = a + b + c
         e = d * a + d * b + d * c
         return sin(e) + cos(e), e, ltorch.sin(e) + ltorch.cos(e)
-
-    expected_vjp_func = executor.make_callable_legacy(value_and_grad(func))
 
     a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
@@ -75,6 +74,7 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor: TestEx
         requires_grad=True,
     )
     trace = trace(inline_trace=False)(func, a, b, c=c)
+    trace = wrap_return_value_together_with_argments(trace)
     fw_trace, bw_trace = forward_and_backward_from_trace(trace)
 
     fw_extraces = transform_for_execution(
@@ -89,10 +89,13 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor: TestEx
     bw = bw_extrace.python_callable()
 
     fw_out, saved_for_backward = fw(a, b, c=c)
-    expected_fw_out, expected_grads = expected_vjp_func(a, b, c=c)
-    torch.testing.assert_close(fw_out, expected_fw_out)
 
-    output_grads = tree_map(lambda x: torch.ones_like(x), fw_out)
+    initial_trace = thunder.trace()(value_and_grad(func), a, b, c=c)
+    expected_vjp_func = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
+    expected_fw_out, expected_grads = expected_vjp_func(a, b, c=c)
+    torch.testing.assert_close(fw_out["output"], expected_fw_out)
+
+    output_grads = tree_map(lambda x: torch.ones_like(x), fw_out["output"])
     bw_out = bw(saved_for_backward, output_grads)
     torch.testing.assert_close(bw_out, expected_grads)
 
@@ -151,7 +154,7 @@ def test_redundant_intermediate_consumers(executor, device: str, dtype: dtypes.d
         d = b.to(torch.float16)
         return c, d
 
-    cfoo = thunder.functional.jit(foo)
+    cfoo = thunder.jit(foo)
     cfoo(a)
 
     traces = thunder.last_traces(cfoo)
@@ -191,7 +194,7 @@ def test_redundant_cast_nvfusion(executor, device: str, dtype: dtypes.dtype):
         y = i.to(torch.float64)
         return d, g, y, i, g2, g3
 
-    cfoo = thunder.functional.jit(foo)
+    cfoo = thunder.jit(foo)
     cfoo(a, x)
     traces = thunder.last_traces(cfoo)
 
@@ -200,14 +203,14 @@ def test_redundant_cast_nvfusion(executor, device: str, dtype: dtypes.dtype):
     assert len(fusions) == 2
 
     # Verifies that the nvFusion inputs and outputs are updated properly
-    t0 = fusions[0].output
-    assert fusions[1].args[0].name == "t0"
-    assert t0[0].name == "t0"
-    assert extrace.output[0].name == "t0"
+    t0 = fusions[0].output[0]
+    assert fusions[1].args[2].name == "b"
+    assert t0.name == "b"
+    assert extrace.output[0].name == "b"
     assert len(fusions[0].subsymbols) == 3
 
     # Verifies the intermediate consumer
-    assert fusions[1].subsymbols[-1].args[0].name == "t5"
+    assert fusions[1].subsymbols[-1].args[0].name == "g"
 
 
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
@@ -270,7 +273,7 @@ def test_cse_subsymbol_removal(executor, device, _):
         return t4
 
     x = make_tensor(5, 5, dtype=torch.float16, device=device)
-    compiled_func = thunder.functional.jit(func, executors=executor.executors_list())
+    compiled_func = thunder.jit(func, executors=executor.executors_list())
     compiled_func(x)
 
     fw_trace = thunder.last_traces(compiled_func)[-1]
@@ -278,16 +281,13 @@ def test_cse_subsymbol_removal(executor, device, _):
 
     # There are two nvfuser fusion groups separated by the matmul operation.
     assert len(fusion_bsyms) == 2
-    nvf_0, nvf_1 = fusion_bsyms
 
     # CSE removes the redundant (t0 + 5) operation
-    assert len(nvf_0.subsymbols) == 5
-    # Return t0 and t1 from the first fusion
-    assert [t.name for t in tree_flatten(nvf_0.output)[0]] == ["t1", "t4"]
+    nvf_0, nvf_1 = fusion_bsyms
+    assert len(nvf_0.subsymbols) + len(nvf_1.subsymbols) == 7
 
-    # CSE does not change the second fusion
-    assert len(nvf_1.subsymbols) == 2
-    assert [t.name for t in tree_flatten(nvf_1.output)[0]] == ["t10"]
+    outside_fusion_syms = ["unpack_trivial", "matmul", "python_return", "python_del"]
+    assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == set(outside_fusion_syms)
 
 
 @instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))
@@ -306,7 +306,7 @@ def test_cse_subsymbol_redundant_args(executor, device, _):
     x = make_tensor(5, 5, dtype=torch.float16, device=device)
     y = make_tensor(5, 5, dtype=torch.float16, device=device)
     z = make_tensor(5, 5, dtype=torch.float16, device=device)
-    compiled_func = thunder.functional.jit(func, executors=executor.executors_list())
+    compiled_func = thunder.jit(func, executors=executor.executors_list())
     compiled_func(w, x, y, z)
 
     fw_trace = thunder.last_traces(compiled_func)[-1]
@@ -316,7 +316,7 @@ def test_cse_subsymbol_redundant_args(executor, device, _):
     assert len(fusion_bsyms) == 1
     nvf_0 = fusion_bsyms[0]
 
-    assert [t.name for t in tree_flatten(nvf_0.args)[0]] == ["t0", "w", "z"]
+    assert [t.name for t in tree_flatten(nvf_0.args)[0]] == ["t0", "z", "w"]
     assert len(nvf_0.subsymbols) == 7
     assert [t.name for t in tree_flatten(nvf_0.output)[0]] == ["t13"]
 
@@ -365,10 +365,24 @@ def test_cse_rematerialization(executor, device, _):
     # fusion groups 1 and 6 correspond with the apply_rotary_emb function
     # Nvfuser with recomputation should use precomputed cos and sin values.
     assert len(fusion_bsyms[1].args) == len(fusion_bsyms[6].args)
-    assert fusion_bsyms[1].subsymbols[0].output.name == "freqs_cos"
-    assert fusion_bsyms[1].subsymbols[1].output.name == "freqs_sin"
-    assert fusion_bsyms[6].subsymbols[0].output.name == "freqs_cos"
-    assert fusion_bsyms[6].subsymbols[1].output.name == "freqs_sin"
+
+    # Below, we check that freqs_sin and freqs_cos are used
+    # in the same operation in both fusions.
+    (fusion1_freqs_sin_arg,) = (a for a in fusion_bsyms[1].args if a.name == "freqs_sin")
+    (fusion1_freqs_cos_arg,) = (a for a in fusion_bsyms[1].args if a.name == "freqs_cos")
+    (fusion6_freqs_sin_arg,) = (a for a in fusion_bsyms[6].args if a.name == "freqs_sin")
+    (fusion6_freqs_cos_arg,) = (a for a in fusion_bsyms[6].args if a.name == "freqs_cos")
+
+    (fusion1_freqs_sin_user,) = (s for s in fusion_bsyms[1].subsymbols if s.args[0] is fusion1_freqs_sin_arg)
+    (fusion6_freqs_sin_user,) = (s for s in fusion_bsyms[6].subsymbols if s.args[0] is fusion6_freqs_sin_arg)
+
+    assert fusion1_freqs_sin_user.sym is fusion6_freqs_sin_user.sym
+    assert fusion1_freqs_sin_user.args[1:] == fusion6_freqs_sin_user.args[1:]
+    (fusion1_freqs_cos_user,) = (s for s in fusion_bsyms[1].subsymbols if s.args[0] is fusion1_freqs_cos_arg)
+    (fusion6_freqs_cos_user,) = (s for s in fusion_bsyms[6].subsymbols if s.args[0] is fusion1_freqs_cos_arg)
+
+    assert fusion1_freqs_cos_user.sym is fusion6_freqs_cos_user.sym
+    assert fusion1_freqs_cos_user.args[1:] == fusion6_freqs_cos_user.args[1:]
 
 
 # Tests that two separated nvFuser regions can be merged when they don't depend
@@ -376,7 +390,7 @@ def test_cse_rematerialization(executor, device, _):
 # TODO Create a testing operator that can only be executed by PyTorch so that
 #   these tests don't rely on matmul not being executable by nvFuser
 # TODO Explicitly use the nvFuserExecutor in these tests
-#   (by creating executor.make_callable_with_info?)
+#   (by creating executor.make_callable?)
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
 def test_nvfuser_toposort_basic(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
@@ -936,9 +950,8 @@ def test_rm_unused_inputs_of_nvfusion(executor, device, _):
     t = make_tensor(5, 3, device=device, dtype=torch.float32)
     ab = (slice(3, 1), slice(1, 2))
     # enable bookend would remove the error and let you look at the trace without fusion.
-    jfoo = thunder.functional.jit(
+    jfoo = thunder.jit(
         foo,
-        interpretation="python interpreter",
         cache="no caching",
         disable_torch_autograd=True,
         nv_enable_bookend=False,
@@ -947,3 +960,120 @@ def test_rm_unused_inputs_of_nvfusion(executor, device, _):
     out_ref = foo(t, ab)
 
     assert out.equal(out_ref)
+
+
+# TODO: we should improve our consistency testing
+# to also include checks for the result of meta functions.
+@instantiate(
+    dtypes=(thunder.int64, thunder.int32),
+    executors=(nvFuserExecutor,),
+)
+def test_div_truediv_integer_tensors_consistency_nvfuser(executor, device, thunder_dtype):
+    dtype = ltorch.to_torch_dtype(thunder_dtype)
+
+    def div(a, b):
+        return thunder.prims.div(a, b)
+
+    def truediv(a, b):
+        return a // b
+
+    def make_integer_tensor():
+        half_len = 5
+        t = torch.tensor([*range(-half_len, 0), *range(1, half_len + 1)], device=device, dtype=dtype)
+        perm = torch.randperm(2 * half_len)
+        return t[perm]
+
+    x = make_integer_tensor()
+    y = make_integer_tensor()
+
+    for f in (thunder.jit(div), thunder.jit(truediv)):
+        rout = f(x.cpu(), y.cpu()).to(device)
+        jout = f(x, y)
+        assert rout.equal(jout)
+
+
+@instantiate(
+    dtypes=(thunder.float16, thunder.bfloat16),
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(nvFuserExecutor,),
+    decorators=(
+        pytest.mark.skipif(
+            nvfuser_version() is None or nvfuser_version() < LooseVersion("0.2.10"),
+            reason="Requires nvFuser version 0.2.10 or later",
+        ),
+        pytest.mark.parametrize("dropout_p", [0.0, 0.2]),
+        pytest.mark.parametrize("is_causal", [False, True]),
+        pytest.mark.parametrize("scale", [None, 1e-3]),
+    ),
+)
+def test_sdpa(
+    executor,
+    device: str,
+    thunder_dtype: dtypes.dtype,
+    dropout_p: None | float,
+    is_causal: None | bool,
+    scale: None | float,
+):
+
+    def sdpa_fn(q, k, v, dropout_p, is_causal, scale):
+        return torch.nn.functional.scaled_dot_product_attention(
+            q, k, v, dropout_p=dropout_p, is_causal=is_causal, scale=scale
+        )
+
+    torch.manual_seed(0)
+    dtype = ltorch.to_torch_dtype(thunder_dtype)
+
+    N, H, L, S, E = 4, 8, 16, 16, 8
+    q = make_tensor((N, H, L, E), device=device, dtype=dtype, requires_grad=True)
+    k = make_tensor((N, H, S, E), device=device, dtype=dtype, requires_grad=True)
+    v = make_tensor((N, H, S, E), device=device, dtype=dtype, requires_grad=True)
+    grad_out = make_tensor((N, H, L, E), device=device, dtype=dtype)
+
+    tensor_inputs = [q, k, v]
+    scalar_inputs = [dropout_p, is_causal, scale]
+
+    compiled_func = thunder.jit(sdpa_fn, executors_list=executor.executors_list(), nv_enable_sdpa=True)
+    with torch.random.fork_rng(devices=[torch.cuda.current_device()]):
+        attn_out = compiled_func(*tensor_inputs, *scalar_inputs)
+    attn_out.backward(grad_out)
+    fwd_trace = thunder.last_traces(compiled_func)[-1]
+    bwd_trace = thunder.last_backward_traces(compiled_func)[-1]
+    fwd_fusion = examine.get_fusions(fwd_trace)
+    bwd_fusion = examine.get_fusions(bwd_trace)
+
+    assert len(fwd_fusion) == 1
+    assert len(bwd_fusion) == 1
+    assert "nv_sdpfa_fwd" in fwd_fusion[-1][-1].name
+
+    # Check nv_sdpfa_fwd is not in bwd_fusion -> that would indicate rematerialization
+    assert "nv_sdpfa_bwd" in bwd_fusion[-1][-1].name and "nv_sdpfa_fwd" not in bwd_fusion[-1][-1].name
+
+    nvf_fd = bwd_fusion[-1][-1].last_used
+    repro_script = None
+    # Legacy repro script API
+    if nvfuser_version() < LooseVersion("0.2.14"):
+        repro_script = nvf_fd.getReproString()
+    else:
+        repro_script = nvf_fd.repro_script_for()
+    assert (
+        repro_script.count("is_cpu=True") == 2
+    ), "Expected philox_seed and philox_offset inputs to be CPU scalar tensors."
+
+    # Torch reference computation
+    # Clone the inputs to verify gradients with torch reference
+    ref_tensor_inputs = []
+    for inp in tensor_inputs:
+        ref_inp = inp.clone().detach()
+        ref_inp.requires_grad = True
+        ref_tensor_inputs.append(ref_inp)
+
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+
+    with torch.random.fork_rng(devices=[torch.cuda.current_device()]) and sdpa_kernel(SDPBackend.FLASH_ATTENTION):
+        ref_attn_out = sdpa_fn(*ref_tensor_inputs, *scalar_inputs)
+    ref_attn_out.backward(grad_out)
+
+    nv_outputs = (attn_out, q.grad, k.grad, v.grad)
+    ref_outputs = (ref_attn_out, *(inp.grad for inp in ref_tensor_inputs))
+    for nv_out, ref_out in zip(nv_outputs, ref_outputs):
+        torch.testing.assert_close(nv_out, ref_out)

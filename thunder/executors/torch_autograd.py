@@ -13,7 +13,8 @@ from thunder.core.proxies import TensorProxy, variableify
 from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import TraceCtx, tracectx, from_trace, set_tracectx, reset_tracectx
-from thunder.core.transform_common import replace_redundant_inputs, PostOptimizationTransform
+from thunder.core.transform_common import replace_redundant_inputs
+from thunder.core.vjp_utils import get_saved_for_backward_tensors
 
 if TYPE_CHECKING:
     from thunder.core.trace import VariableInterface
@@ -196,6 +197,10 @@ def transform_for_torch_autograd(computation_trc: TraceCtx, compile_data, compil
     if _rematerialize_params_in_backward:
         fw_trace, bw_trace = rematerialize_all_gather(fw_trace, bw_trace)
 
+    # evil, but we really, really don't want to have the same name for different things
+    fw_trace.names.update(bw_trace.names)
+    bw_trace.names = fw_trace.names
+
     # Update the backward trace to only compute gradients for the
     # inputs that require gradients
     assert bw_trace.bound_symbols[-1].sym.id == PrimIDs.RETURN
@@ -226,16 +231,27 @@ def transform_for_torch_autograd(computation_trc: TraceCtx, compile_data, compil
     # We do this only if connect_to_autograd_impl was not removed by
     # the optimization passes
     original_bw_saved_tensors_for_backward = bw_trace.args[0][0]
+    original_bw_saved_meta_for_backward = bw_trace.args[0][1]
     if any(bsym.sym.name == "connect_to_autograd_impl" for bsym in reversed(fw_extrace.bound_symbols)):
         assert fw_extrace.bound_symbols[-2].sym.name == "connect_to_autograd_impl"
         new_fw_saved_tensors_for_backward = fw_extrace.bound_symbols[-2].kwargs["saved_tensors"]
+        new_fw_saved_meta_for_backward = fw_extrace.bound_symbols[-2].kwargs["saved_other"]
     else:
         new_fw_saved_tensors_for_backward = original_bw_saved_tensors_for_backward
-    swap_map = {
+        new_fw_saved_meta_for_backward = original_bw_saved_meta_for_backward
+    saved_tensors_swap_map = {
         variableify(x): y
         for x, y in zip(original_bw_saved_tensors_for_backward, new_fw_saved_tensors_for_backward)
         if variableify(x) != variableify(y)
     }
+
+    saved_metadata_swap_map = {
+        variableify(x): y
+        for x, y in zip(original_bw_saved_meta_for_backward, new_fw_saved_meta_for_backward)
+        if variableify(x) != variableify(y)
+    }
+    swap_map = saved_tensors_swap_map | saved_metadata_swap_map
+
     new_bsyms = replace_redundant_inputs(swap_map, bw_trace.bound_symbols)
     # replace_redundant_inputs doesn't replace the output of
     # UNPACK_SEQUENCE so we do it manually. Here we have certain
@@ -244,7 +260,15 @@ def transform_for_torch_autograd(computation_trc: TraceCtx, compile_data, compil
     assert bw_trace.bound_symbols[0].kwargs["name"] == "saved_for_backward"
     assert bw_trace.bound_symbols[4].sym.id == PrimIDs.UNPACK_SEQUENCE
     assert bw_trace.bound_symbols[4].args[0].name == "C0"
+    assert bw_trace.bound_symbols[5].sym.id == PrimIDs.UNPACK_SEQUENCE
+    assert bw_trace.bound_symbols[5].args[0].name == "C1"
     new_bsyms[4] = new_bsyms[4].from_bsym_swap_proxies(
+        swap_map,
+        skip_inputs=False,
+        skip_output=False,
+        skip_subsymbols=False,
+    )
+    new_bsyms[5] = new_bsyms[5].from_bsym_swap_proxies(
         swap_map,
         skip_inputs=False,
         skip_output=False,
@@ -272,7 +296,8 @@ def transform_for_torch_autograd(computation_trc: TraceCtx, compile_data, compil
     # For performance we need the wait_prim_impl nodes in the execution trace to be as far from the
     # communication ops as possible. But it causes the all_gather_prim_impl nodes gathered at the start of
     # backward trace and increases the peak allocated memory
-    if getattr(compile_data.fn, "use_fsdp", False):
+    use_fsdp: bool = getattr(compile_data.fn, "use_fsdp", False)
+    if use_fsdp:
         assert hasattr(compile_data.fn, "sharding_strategy")
         if getattr(compile_data.fn, "sharding_strategy") == FSDPType.ZERO3:
             from thunder.distributed import FSDPBucketingStrategy
@@ -304,8 +329,14 @@ def transform_for_torch_autograd(computation_trc: TraceCtx, compile_data, compil
                 compile_data.fn.bucketing_strategy != FSDPBucketingStrategy.NONE,
             )
             bw_extrace = sort_waits(bw_extrace)
-    if getattr(compile_data.fn, "use_ddp", False):
+    use_ddp: bool = getattr(compile_data.fn, "use_ddp", False)
+    if use_ddp:
         bw_extrace = sort_waits(bw_extrace)
+    if (not use_ddp) and (not use_fsdp):
+        from thunder.distributed.utils import maybe_sort_waits
+
+        _, fw_extrace = maybe_sort_waits(fw_extrace)
+        _, bw_extrace = maybe_sort_waits(bw_extrace)
 
     # Importing here to avoid cyclical dependencies in future.
     from thunder.executors.transformer_engineex import _transformer_engine_bwd_fp8_meta_sync, transformer_engine_ex
@@ -320,16 +351,16 @@ def transform_for_torch_autograd(computation_trc: TraceCtx, compile_data, compil
     bw_extrace._include_te_fp8_autocast = False
     bw_traces.append(bw_extrace)
 
-    if compile_data.use_cudagraphs:
-        from thunder.executors.cudagraphex import cudagraphex
+    # if compile_data.use_cudagraphs:
+    #     from thunder.executors.cudagraphex import cudagraphex
 
-        bw_extrace = cudagraphex.fusion_pass(bw_extrace, num_static_inputs=len(bw_extrace.args[0][0]))
-        bw_traces.append(bw_extrace)
+    #     bw_extrace = cudagraphex.fusion_pass(bw_extrace, num_static_inputs=len(bw_extrace.args[0][0]))
+    #     bw_traces.append(bw_extrace)
 
-    for transform in compile_data.post_optimization_transforms:
-        utils.check_type(transform, PostOptimizationTransform)
-        bw_extrace = transform.transform_trace(bw_extrace, executors_list=compile_data.executors_list)
-        bw_traces.append(bw_extrace)
+    # for transform in compile_data.post_optimization_transforms:
+    #     utils.check_type(transform, PostOptimizationTransform)
+    #     bw_extrace = transform.transform_trace(bw_extrace, executors_list=compile_data.executors_list)
+    #     bw_traces.append(bw_extrace)
 
     # Update the forward trace with the correct backward function
     if any(bsym.sym.name == "connect_to_autograd_impl" for bsym in reversed(fw_extrace.bound_symbols)):

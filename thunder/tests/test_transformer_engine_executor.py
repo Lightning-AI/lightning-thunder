@@ -170,6 +170,8 @@ def test_te_linear_invalid_inputs():
 
 @requiresCUDA
 def test_te_with_autocast():
+    from thunder.transforms.autocast import autocast
+
     def foo(x, w):
         return thunder.torch.linear(x, w)
 
@@ -178,7 +180,7 @@ def test_te_with_autocast():
     w = torch.randn(16, 16, device=device, requires_grad=True)
 
     cfunc = thunder.jit(
-        thunder.core.transforms.autocast(foo, dtype=thunder.dtypes.bfloat16),
+        autocast(foo, dtype=thunder.dtypes.bfloat16),
         executors=[transformer_engine_ex],
         disable_preprocessing=True,
     )
@@ -186,4 +188,58 @@ def test_te_with_autocast():
 
     fwd_traces = thunder.last_traces(cfunc)
     # Verify that we have replaced `prims.linear` with `te_linear`
+    assert any(bsym.sym.name.startswith("te_linear") for bsym in fwd_traces[-1].bound_symbols)
+
+
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="Retain graph is not supported by TE")
+@requiresCUDA
+def test_te_with_retain_graph():
+    def foo(x, w):
+        return thunder.torch.linear(x, w)
+
+    device = "cuda"
+    x = torch.randn(16, 16, device=device, requires_grad=True)
+    w = torch.randn(16, 16, device=device, requires_grad=True)
+
+    cfunc = thunder.jit(
+        foo,
+        executors=[transformer_engine_ex],
+    )
+    out = cfunc(x, w)
+
+    # Retain graph is not supported correctly by TE
+    # https://github.com/NVIDIA/TransformerEngine/issues/990
+    out.backward(torch.randn_like(out), retain_graph=True)
+    out.backward(torch.randn_like(out))
+
+
+@requiresCUDA
+def test_te_trace_metadata_propagation():
+    # This test is to verify that we correctly propagate metadata `_include_te_fp8_autocast` on
+    # trace using `from_trace`. `_include_te_fp8_autocast` is used to enable wrapping forward trace with `fp8_autocast`.
+    def foo(x, w):
+        return torch.nn.functional.linear(x, w)
+
+    device = "cuda"
+    x = torch.randn(16, 16, device=device, requires_grad=True)
+    w = torch.randn(16, 16, device=device, requires_grad=True)
+
+    class MyNoopTransform(thunder.core.transforms.Transform):
+        def transform_trace_post_optimization(self, computation_trace, **kwargs):
+            new_trace = thunder.core.trace.from_trace(computation_trace)
+            new_trace.bound_symbols = computation_trace.bound_symbols
+            return new_trace
+
+    cfunc = thunder.jit(
+        foo,
+        executors=[transformer_engine_ex],
+        transforms=[
+            MyNoopTransform(),
+        ],
+    )
+    out = cfunc(x, w)
+
+    fwd_traces = thunder.last_traces(cfunc)
+
+    # Verify that we have `te_linear` in the trace.
     assert any(bsym.sym.name.startswith("te_linear") for bsym in fwd_traces[-1].bound_symbols)

@@ -1,4 +1,5 @@
 from functools import partial
+from types import FunctionType
 import dataclasses
 
 import optree
@@ -20,10 +21,19 @@ optree.register_pytree_node(
 )
 
 
-def tree_flatten(args, namespace=""):
+optree.register_pytree_node(
+    slice,
+    lambda s: ([s.start, s.stop, s.step], None, None),
+    lambda _, children: slice(*children),
+    namespace=OPTREE_NAMESPACE,
+)
+
+
+def tree_flatten(args, namespace=OPTREE_NAMESPACE):
     if (
         type(args)
         not in {
+            FunctionType,
             dict,
             list,
             str,
@@ -42,9 +52,16 @@ def tree_flatten(args, namespace=""):
             type,
             type(Ellipsis),
             torch.Size,
+            torch.finfo,
+            dtypes.signedinteger,
+            # FakeTensor type is used for automatic registration of torch ops
+            torch._subclasses.fake_tensor.FakeTensor,
+            torch.device,
+            torch.autograd.function.FunctionCtx,
         }
         and not isinstance(args, (ProxyInterface))
         and not dataclasses.is_dataclass(args)
+        and not type(args).__module__.startswith("torch.return_types")
     ):
         raise TypeError(f"tree_flatten of type {type(args)} is not supported.")
     return optree.tree_flatten(args, none_is_leaf=True, namespace=namespace)
@@ -54,6 +71,8 @@ def tree_flatten(args, namespace=""):
 # We want to be able to inspect `dataclass` containers to see if they contain proxy
 # while generating the split functions.
 tree_map = partial(optree.tree_map, none_is_leaf=True, namespace=OPTREE_NAMESPACE)
+
+tree_iter = partial(optree.tree_iter, none_is_leaf=True, namespace=OPTREE_NAMESPACE)
 
 
 def tree_unflatten(values, spec):

@@ -129,6 +129,7 @@ class PrimIDs(Enum):
     CONSTRUCT_TUPLE = auto()
     PACK_BUFFER = auto()
     PACK_SETITEM = auto()
+    SHAPE = auto()
     # TODO: UNPACK_SET
     # Utility prims
     COMMENT = auto()
@@ -151,6 +152,7 @@ class PrimIDs(Enum):
     RANDN = auto()
     EMPTY = auto()
     TENSOR_FROM_SEQUENCE = auto()
+    CLONE = auto()
     # Probability distribution-related ops
     MULTINOMIAL = auto()
     GET_AND_UPDATE_RNG_STATE = auto()
@@ -164,6 +166,7 @@ class PrimIDs(Enum):
     TRANSPOSE = auto()
     UNFOLD = auto()
     VIEW = auto()
+    SHALLOW_COPY = auto()  # a view copy
     # Memory layout prims (Experimental)
     STRIDE_ORDER = auto()
     # Elementwise unary prims
@@ -231,7 +234,8 @@ class PrimIDs(Enum):
     REMAINDER = auto()
     SUB = auto()
     ZETA = auto()
-    # Conditional prims
+    # Elementwise ternary prims
+    LERP = auto()
     WHERE = auto()
     # Reduction prims
     AMAX = auto()
@@ -243,13 +247,18 @@ class PrimIDs(Enum):
     ARGMAX = auto()
     ARGMIN = auto()
     TOPK = auto()
+    # Sort and dim permutations prims
+    SORT = auto()
     # Scatter and gather prims (Experimental!)
     GATHER = auto()
+    SCATTER = auto()
     INDEX_ADD = auto()
+    INDEX_COPY = auto()
     INDEX_PUT = auto()
     SCATTER_ADD = auto()
     TAKE = auto()
     TAKE_ALONG_AXIS = auto()
+    COPY_WITH_SETITEM = auto()
     # Linear algebra prims (Mostly experimental)
     MATMUL = auto()
     # NN prims (Experimental!)
@@ -278,6 +287,7 @@ class OpTags(Enum):
     # Labels operations that should not be removed by the dead code elimination (DCE) pass
     DONT_DCE = auto()
     IN_PLACE = auto()
+    AUTO_REGISTERED = auto()
 
 
 # TODO RC1 Document this function and describe the parts of a primitive
@@ -460,6 +470,8 @@ def _collectify(x: Any, *, name: str | None = None) -> Any:
         return x
     if baseutils.is_collection(x):
         return CollectionProxy(x, name=name)
+    if isinstance(x, slice):
+        return CollectionProxy((x.start, x.stop, x.step), name=name)
 
     return x
 
@@ -467,7 +479,7 @@ def _collectify(x: Any, *, name: str | None = None) -> Any:
 # TODO RC1 Align with ASSERT_TENSOR_METADATA
 # NOTE The device is stored as a string for easier, more readable comparisons
 def _check_tensor_shape_and_metadata_meta(
-    t: TensorProxy, shape: tuple[int, ...], device: str, dtype: torch.dtype, requires_grad: bool
+    t: TensorProxy, shape: tuple[int, NumberProxy, ...], device: str, dtype: torch.dtype, requires_grad: bool
 ) -> None:
     # Validates types
     baseutils.check_type(t, TensorProxy)
@@ -479,7 +491,7 @@ def _check_tensor_shape_and_metadata_meta(
 
 check_tensor_shape_and_metadata = make_prim(
     PrimIDs.CHECK_TENSOR_SHAPE_AND_METADATA,
-    "check_tensor_metadata",
+    "check_tensor_shape_and_metadata",
     meta=_check_tensor_shape_and_metadata_meta,
     tags=(OpTags.DONT_DCE,),
 )
@@ -663,6 +675,10 @@ def unpack_trivial_printer(
 
 # Removes the inputs from unpack_trivial, so it appears to have no input
 def _unpack_trivial_bind_postprocess(bsym: BoundSymbol) -> None:
+    utils.check(
+        bsym.kwargs["name"] is not None,
+        lambda: "Expected name keyword argument not to be None for unpack_trivial.bind().",
+    )
     bsym.args = ()
 
 
@@ -703,13 +719,17 @@ def unpack_function_obj_printer(
     return s
 
 
+def _unpack_function_obj_bind_postprocess(bsym: BoundSymbol) -> None:
+    bsym.args = ()
+
+
 unpack_function_obj = make_prim(
     PrimIDs.UNPACK_FUNCTION_OBJ,
     "unpack_function_obj",
     meta=unpack_function_obj_meta,
     python_printer=unpack_function_obj_printer,
     python_impl=unpack_function_obj_impl,
-    _bind_postprocess=_unpack_trivial_bind_postprocess,
+    _bind_postprocess=_unpack_function_obj_bind_postprocess,
 )
 
 
@@ -777,13 +797,17 @@ def unpack_cache_info_printer(
     return s
 
 
+def _unpack_cache_info_bind_postprocess(bsym: BoundSymbol) -> None:
+    bsym.args = ()
+
+
 unpack_cache_info = make_prim(
     PrimIDs.UNPACK_CACHE_INFO,
     "unpack_cache_info",
     meta=unpack_cache_info_meta,
     python_printer=unpack_cache_info_printer,
     python_impl=unpack_cache_info_impl,
-    _bind_postprocess=_unpack_trivial_bind_postprocess,
+    _bind_postprocess=_unpack_cache_info_bind_postprocess,
 )
 
 
@@ -1169,7 +1193,7 @@ def pack_buffer_impl(o: Any, key: Any, v: Any) -> None:
 
 pack_buffer = make_prim(
     PrimIDs.PACK_BUFFER,
-    "unpack_buffer",
+    "pack_buffer",
     meta=pack_buffer_meta,
     python_printer=pack_buffer_printer,
     python_impl=pack_buffer_impl,
@@ -1211,11 +1235,22 @@ def pack_setitem_impl(o: Any, key: Any, v: Any) -> None:
 
 pack_setitem = make_prim(
     PrimIDs.PACK_SETITEM,
-    "unpack_setitem",
+    "pack_setitem",
     meta=pack_setitem_meta,
     python_printer=pack_setitem_printer,
     python_impl=pack_setitem_impl,
     tags=(OpTags.DONT_DCE,),
+)
+
+
+def shape_meta(t: TensorProxy) -> Sequence[int | NumberProxy]:
+    return t._shape
+
+
+shape = make_prim(
+    PrimIDs.SHAPE,
+    "shape",
+    meta=shape_meta,
 )
 
 
@@ -1505,7 +1540,7 @@ def unpack(x: Any) -> Any:
             return unpack_dict(x)
         baseutils.check(False, lambda: f"unpack encountered an unsupported collection type {type(coll)}")
 
-    return unpack_trivial(x)
+    return unpack_trivial(x, name=x.name)
 
 
 #
@@ -1541,7 +1576,7 @@ def python_print_printer(
 
 python_print = make_prim(
     PrimIDs.PRINT,
-    "print",
+    "python_print",
     meta=_print_meta,
     python_printer=python_print_printer,
     python_impl=print,
@@ -1610,7 +1645,7 @@ def _del_impl(x: Any, /) -> None:
 
 python_del = make_prim(
     PrimIDs.DEL,
-    "del",
+    "python_del",
     meta=_del_meta,
     python_printer=del_printer,
     python_impl=_del_impl,
@@ -1626,7 +1661,7 @@ def return_printer(
 ):
     utils.check(
         len(kwarg_printables) == 0,
-        lambda: f"Expected no kwargs for del but got {kwarg_printables}",
+        lambda: f"Expected no kwargs for return but got {kwarg_printables}",
         exception_type=AssertionError,
     )
 
@@ -1646,7 +1681,7 @@ def _return_impl(*args) -> Any:
 
 python_return = make_prim(
     PrimIDs.RETURN,
-    "return",
+    "python_return",
     meta=_return_meta,
     python_printer=return_printer,
     python_impl=_return_impl,
@@ -2272,7 +2307,11 @@ def _elementwise_binary_meta_factory(
         # Checks same device
         utils.check_same_device(a, b)
 
-        tensor = a if isinstance(a, TensorProxy) else b
+        # If both inputs are tensors, choose the one that is not a CPU scalar tensor.
+        if isinstance(a, TensorProxy) and isinstance(b, TensorProxy):
+            tensor = a if (isinstance(a, TensorProxy) and not utils.is_cpu_scalar_tensor(a)) else b
+        else:
+            tensor = a if isinstance(a, TensorProxy) else b
         requires_grad = (isinstance(a, TensorProxy) and a.requires_grad) or (
             isinstance(b, TensorProxy) and b.requires_grad
         )
@@ -2525,8 +2564,36 @@ zeta = _make_elementwise_binary_prim(
 )
 
 #
-# Conditional prims
+# Elementwise ternary prims
 #
+
+
+def _lerp_meta(start: TensorProxy, end: TensorProxy, weight: Number | TensorProxy, /) -> TensorProxy:
+    utils.check_type(start, TensorProxy)
+    utils.check_type(end, TensorProxy)
+    utils.check_type(weight, (TensorProxy, Number, NumberProxy))
+
+    numbertype, dtype = utils.check_same_dtype(start, end, weight)
+
+    utils.check(numbertype is None or numbertype in fp_math_dtypes, lambda: f"Unsupported number type {numbertype}")
+    utils.check(dtype is None or dtype in fp_math_dtypes, lambda: f"Unsupported input dtype {dtype}")
+
+    utils.check_same_shape(start, end, weight)
+    utils.check_same_device(start, end, weight)
+
+    requires_grad = (
+        start.requires_grad or end.requires_grad or (isinstance(weight, TensorProxy) and weight.requires_grad)
+    )
+
+    return TensorProxy(like=start, dtype=dtype, requires_grad=requires_grad)
+
+
+lerp = make_prim(
+    PrimIDs.LERP,
+    "lerp",
+    method_name="lerp",
+    meta=_lerp_meta,
+)
 
 
 # TODO Restore Number x Number x Number support
@@ -2627,7 +2694,9 @@ exogenous_like = make_prim(
 #   Logically these tensors are constructed intermediate to a trace, so there's no mechanism for a user to
 #   extract their grad, but we could support compiling forward and backward and accessing grad attributes
 #   in the future
-def _full_meta(shape: Sequence[int], fill_value: Number, *, device: devices.Device, dtype: dtypes.dtype) -> TensorProxy:
+def _full_meta(
+    shape: tuple[int, ...], fill_value: Number, *, device: devices.Device, dtype: dtypes.dtype
+) -> TensorProxy:
     # Checks inputs
     utils.check_type(fill_value, (Number, NumberProxy))
 
@@ -2638,6 +2707,8 @@ def _full_meta(shape: Sequence[int], fill_value: Number, *, device: devices.Devi
         lambda: f"Can't safely cast fill_value of numbertype {fill_value_dtype} to dtype {dtype}",
     )
 
+    utils.check_type(shape, tuple)
+    utils.check_valid_shape(shape)
     return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
 
 
@@ -2796,6 +2867,14 @@ def _empty_meta(
 
 
 empty = make_prim(PrimIDs.EMPTY, "empty", meta=_empty_meta)
+
+
+# TODO(crcrpar): Cover `memory_format` kwarg
+def _clone_meta(a: TensorProxy, **kwargs) -> TensorProxy:
+    return TensorProxy(like=a, requires_grad=a.requires_grad)
+
+
+clone = make_prim(PrimIDs.CLONE, "clone", meta=_clone_meta)
 
 
 # Prim to construct a Tensor from sequence/nested sequence of Numbers.
@@ -3079,7 +3158,7 @@ pad = make_prim(
 )
 
 
-def reshape_meta(a: TensorProxy, /, shape: tuple[int, ...]) -> TensorProxy:
+def reshape_meta(a: TensorProxy, /, shape: tuple[int, NumberProxy, ...]) -> TensorProxy:
     # Validates inputs
     utils.check_type(a, TensorProxy)
     utils.check_valid_shape(shape)
@@ -3239,6 +3318,17 @@ def index_add_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, di
 index_add = make_prim(PrimIDs.INDEX_ADD, "index_add", meta=index_add_meta)
 
 
+def index_copy_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
+    utils.check(
+        dtypes.to_dtype(index) is dtypes.int64,
+        lambda: f"index_copy: only indices of type int64 are supported",
+    )
+    return index_add_meta(a, index, value, dim)
+
+
+index_copy = make_prim(PrimIDs.INDEX_COPY, "index_copy", meta=index_add_meta)
+
+
 def index_put_meta(
     a: TensorProxy, /, indices: Sequence[TensorProxy], values: TensorProxy, accumulate: bool
 ) -> TensorProxy:
@@ -3292,6 +3382,14 @@ def take_along_axis_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> Ten
 
 
 take_along_axis = make_prim(PrimIDs.TAKE_ALONG_AXIS, "take_along_axis", meta=take_along_axis_meta)
+
+
+def copy_with_setitem_meta(a: TensorProxy, index, value: TensorProxy) -> TensorProxy:
+    # TODO: port checks from clang, currently there  because of the utilities they need
+    return TensorProxy(like=a)
+
+
+copy_with_setitem = make_prim(PrimIDs.COPY_WITH_SETITEM, "copy_with_setitem", meta=copy_with_setitem_meta)
 
 
 def gather_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
@@ -3351,6 +3449,30 @@ def scatter_add_meta(a: TensorProxy, /, index: TensorProxy, value: TensorProxy, 
 scatter_add = make_prim(PrimIDs.SCATTER_ADD, "scatter_add", meta=scatter_add_meta)
 
 
+def scatter_meta(a: TensorProxy, /, index: TensorProxy, src: TensorProxy | Number, dim: int) -> TensorProxy:
+    utils.check_type(src, (TensorProxy, Number, NumberProxy))
+
+    if isinstance(src, TensorProxy):
+        return scatter_add_meta(a, index, src, dim)
+
+    # scatter_add_meta reuse when `src` is a scalar,
+    # which is being replaced with a TensorProxy(like=a) and
+    # shape[dim] = index.shape[dim
+    utils.validate_idx(a.ndim, dim)
+    utils.check(
+        index.ndim == a.ndim, lambda: f"Expected index (rank={index.ndim}) to have the same rank as a (rank={a.ndim})"
+    )
+
+    dummy_src_shape = list(a.shape)
+    dummy_src_shape[dim] = index.shape[dim]
+    dummy_src = TensorProxy(like=a, shape=dummy_src_shape)
+
+    return scatter_add_meta(a, index, dummy_src, dim)
+
+
+scatter = make_prim(PrimIDs.SCATTER, "scatter", meta=scatter_meta)
+
+
 def topk_meta(
     a: TensorProxy, /, k: int, dim: int, largest: Number, sorted: Number, *, out: None | TensorProxy
 ) -> (TensorProxy, TensorProxy):
@@ -3378,6 +3500,25 @@ def topk_meta(
 topk = make_prim(PrimIDs.TOPK, "topk", meta=topk_meta, tags=(OpTags.REDUCTION_OP,))
 
 
+def sort_meta(
+    a: TensorProxy, /, dim: int, descending: Number, sorted: Number, *, out: None | TensorProxy
+) -> (TensorProxy, TensorProxy):
+    utils.check(
+        out is None,
+        lambda: "Only `out` which is None is currently supported",
+    )
+
+    utils.check_type(a, TensorProxy)
+    utils.check_type(dim, (int, IntegerProxy))
+    utils.check(pytype(descending) is bool, lambda: f"Expected {descending=} to be a boolean type")
+    utils.check(pytype(sorted) is bool, lambda: f"Expected {sorted=} to be a boolean type")
+
+    return TensorProxy(like=a), TensorProxy(like=a, dtype=dtypes.int64)
+
+
+sort = make_prim(PrimIDs.SORT, "sort", meta=sort_meta)
+
+
 def transpose_meta(a: TensorProxy, /, permutation: tuple[int, ...]) -> TensorProxy:
     utils.check_type(a, TensorProxy)
     utils.check_type(permutation, tuple)
@@ -3398,6 +3539,13 @@ transpose = make_prim(PrimIDs.TRANSPOSE, "transpose", meta=transpose_meta, tags=
 
 
 view = make_prim(PrimIDs.VIEW, "view", meta=reshape_meta, tags=(OpTags.SHAPE_OP,))
+
+
+def shallow_copy_meta(a: TensorProxy, /) -> TensorProxy:
+    return TensorProxy(like=a)
+
+
+shallow_copy = make_prim(PrimIDs.SHALLOW_COPY, "shallow_copy", meta=shallow_copy_meta, tags=(OpTags.SHAPE_OP,))
 
 
 def unfold_meta(a: TensorProxy, /, dim: int, size: int, step: int) -> TensorProxy:
@@ -3578,7 +3726,7 @@ def linear_meta(a: TensorProxy, w: TensorProxy, bias: None | TensorProxy) -> Ten
     utils.check(isinstance(w, TensorProxy), lambda: f"w={w} was not a TensorProxy!")
 
     # Checks that required arguments are on the same device
-    utils.check(a.device == w.device, lambda: f"Expected a.device={a.device} and w.device={w.device} to be the same!")
+    utils.check_same_device(a, w)
 
     # Acquires the computation dtype and checks that a and w have the same dtype
     dtype = a.dtype
@@ -3638,7 +3786,7 @@ def matmul_meta(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
     if a.ndim < 1 or b.ndim < 1:
         raise NotImplementedError
 
-    utils.check(a.device == b.device, lambda: f"Expected a.device={a.device} and b.device={b.device} to be the same")
+    utils.check_same_device(a, b)
 
     utils.check(
         dtypes.are_same_dtypes(a, b), lambda: f"Expected a.dtype={a.dtype} and b.dtype={b.dtype} to be the same"
@@ -3671,7 +3819,7 @@ def matmul_meta(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
 
     utils.check(
         utils.same_shape(a.shape[:-2], b.shape[:-2]),
-        lambda: f"Expected the batch dimensions of a ({a.shape[:-2],}) and the batch dimensions of b ({b.shape[:-2]}) to be the same",
+        lambda: f"Expected the batch dimensions of a {a.shape[:-2]} and the batch dimensions of b {b.shape[:-2]} to be the same",
     )
 
     utils.check(

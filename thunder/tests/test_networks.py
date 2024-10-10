@@ -1,6 +1,7 @@
 import math
 from dataclasses import dataclass
 from functools import partial
+import warnings
 
 import pytest
 import torch
@@ -10,7 +11,7 @@ from torch.testing import assert_close, make_tensor
 
 import thunder
 import thunder.torch as ttorch
-from thunder.tests.framework import instantiate, requiresCUDA
+from thunder.tests.framework import instantiate, requiresCUDA, DynamoThunderExecutor, _all_test_executors
 import thunder.tests.nanogpt_model as nanogpt_model
 import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
 
@@ -18,9 +19,18 @@ import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
 # nanoGPT tests
 #
 
+# NOTE: DynamoThunderExecutor is not included in the _all_test_executors() list
+# because we don't want to run all the tests with the DynamoThunderExecutor by
+# default. We only want to run it with the tests that are explicitly marked to
+# use the DynamoThunderExecutor. When there's more than one file that uses the
+# DynamoThunderExecutor, we should consider adding a separate list of executors
+# to the framework.py file.
+all_test_executors_and_dynamo = _all_test_executors() + [DynamoThunderExecutor]
 
-@instantiate(dtypes=(thunder.float32,))
-def test_nanogpt_complete(executor, device, dtype):
+
+# see https://docs.pytest.org/en/stable/how-to/capture-warnings.html#recwarn for the recwarn fixture
+@instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
+def test_nanogpt_complete(executor, device, dtype, recwarn):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=torch.int64, device=device)
 
@@ -37,12 +47,16 @@ def test_nanogpt_complete(executor, device, dtype):
 
     assert_close(torch_result, thunder_result)
 
+    if recwarn:
+        for r in recwarn:
+            assert "The .grad attribute of a Tensor that is not a leaf Tensor is being accessed." not in str(r.message)
+
 
 # TODO Investigate grad inconsistency
 # TODO: Add float16 and bfloat16 comparison tests here and to all other tests in
 # this file.
 # See issue "Add half precision dtype tests to test_networks.py"
-@instantiate(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
 def test_nanogpt_complete_autograd(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
 
@@ -78,16 +92,13 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
 
     # Creates a nanoGPT model with a smaller size than any of the default options for testing
     # NOTE Sets dropout to zero for reproducibility
-    config = nanogpt_model.GPTConfig(dropout=0, block_size=512, n_layer=6, n_head=6, n_embd=768)
-    gpt = nanogpt_model.GPT(config).to(device=device, dtype=tdtype)
+    config = nanogpt_model.GPTConfig(dropout=0, block_size=512, n_layer=4, n_head=6, n_embd=768)
+    gpt = nanogpt_model.GPT(config).to(device=device, dtype=tdtype).requires_grad_(False).eval()
 
-    tom = executor.make_callable(gpt, use_cudagraphs=True, disable_torch_autograd=True)
+    from thunder.transforms.cudagraph import CUDAGraphTransform
 
-    # Checking graph cache stats
-    from thunder.executors.cudagraphex import build_cuda_graph
-
-    # Cache stats before test runs
-    build_graph_stats_old = build_cuda_graph.cache_info()
+    cgtransform = CUDAGraphTransform()
+    tom = executor.make_callable(gpt, transforms=[cgtransform], disable_torch_autograd=True)
 
     for _ in range(2):
         idx = make((4, 64), dtype=torch.int64, low=0, high=255)
@@ -96,39 +107,28 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
         thunder_result = tom(idx)
         assert_close(torch_result, thunder_result)
 
-    # Cache stats after test runs
-    build_graph_stats_new = build_cuda_graph.cache_info()
     # We ran only a single (forward) graph several times.
-    # Test that at most 1 cache miss happened after the runs.
-    assert (build_graph_stats_new.misses - build_graph_stats_old.misses) <= 1
+    # Test that at only 1 cache entry was created during the runs.
+    assert len(cgtransform.cuda_graph_runner.cuda_graph_cache) == 1
 
-    # Check we really run CUDAGraphExecutor {
-    assert tom._lc_cd.use_cudagraphs == True
+    # Check we really use CUDA graphs
     assert _there_is_cudagraph_sym(thunder.last_traces(tom)[-1])
-    # }
-
-    # Let's clear cache if run only in tests
-    # TODO: merge with the cache of the thunder.jit callable
-    if build_graph_stats_old.misses == 0:
-        build_cuda_graph.cache_clear()
 
 
 @instantiate(dtypes=(thunder.float32,), devicetypes=(thunder.devices.DeviceType.CUDA,))
 @requiresCUDA
-def test_nanogpt_complete_cuda_graphs_autograd(executor, device, dtype):
+def test_nanogpt_complete_cudagraphs_autograd(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
 
     # Creates a nanoGPT model with a smaller size than any of the default options for testing
     # NOTE Sets dropout to zero for reproducibility
     config = nanogpt_model.GPTConfig(dropout=0, block_size=512, n_layer=6, n_head=6, n_embd=768)
     gpt = nanogpt_model.GPT(config).to(device=device, dtype=tdtype)
-    cmodel = executor.make_callable(gpt, use_cudagraphs=True)
 
-    # Checking graph cache stats
-    from thunder.executors.cudagraphex import build_cuda_graph
+    from thunder.transforms.cudagraph import CUDAGraphTransform
 
-    # Cache stats before test runs
-    build_graph_stats_old = build_cuda_graph.cache_info()
+    cgtransform = CUDAGraphTransform()
+    cmodel = executor.make_callable(gpt, transforms=[cgtransform])
 
     # Multiple runs to test whether static buffers are properly updated
     for i in range(3):
@@ -144,26 +144,17 @@ def test_nanogpt_complete_cuda_graphs_autograd(executor, device, dtype):
         assert_close(torch_result, thunder_result)
         assert_close(torch_grads, thunder_grads)
 
-    # Cache stats after test runs
-    build_graph_stats_new = build_cuda_graph.cache_info()
     # We ran only at most two (forward and backward) graphs several times.
     # Test that at most 2 cache misses happened after the runs
     # (at most one per each graph)
-    assert (build_graph_stats_new.misses - build_graph_stats_old.misses) <= 2
+    assert len(cgtransform.cuda_graph_runner.cuda_graph_cache) == 2
 
-    # Check we really run CUDAGraphExecutor {
-    assert cmodel._lc_cd.use_cudagraphs == True
+    # Check we have CUDAGraph symbols in forward and backward
     assert _there_is_cudagraph_sym(thunder.last_traces(cmodel)[-1])
     assert _there_is_cudagraph_sym(thunder.last_backward_traces(cmodel)[-1])
-    # }
-
-    # Let's clear cache if run only in tests
-    # TODO: merge with the cache of the thunder.jit callable
-    if build_graph_stats_old.misses == 0:
-        build_cuda_graph.cache_clear()
 
 
-@instantiate(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
 def test_nanogpt_csa(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=tdtype, device=device)
@@ -187,7 +178,7 @@ def test_nanogpt_csa(executor, device, dtype):
     assert_close(torch_result, thunder_result)
 
 
-@instantiate(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
 def test_nanogpt_block(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=tdtype, device=device)
@@ -205,7 +196,7 @@ def test_nanogpt_block(executor, device, dtype):
     assert_close(torch_result, thunder_result)
 
 
-@instantiate(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
 def test_nanogpt_mlp(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=tdtype, device=device)
@@ -223,7 +214,7 @@ def test_nanogpt_mlp(executor, device, dtype):
     assert_close(torch_result, thunder_result)
 
 
-@instantiate(dtypes=(thunder.float32,))
+@instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
 def test_nanogpt_gelu(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=tdtype, device=device)
@@ -254,6 +245,42 @@ def test_hf_bart_self_attn():
     assert_close(torch_result, thunder_result)
 
 
+def test_hf_bert():
+    import transformers
+
+    @thunder.core.jit_ext.register_general_jit_lookaside(
+        transformers.modeling_utils.PreTrainedModel.warn_if_padding_and_no_attention_mask
+    )
+    @thunder.core.jit_ext.interpreter_needs_wrap
+    def dummy(*args):
+        pass
+
+    # Transformers 2.41+ adds some more non-essential data-dependent
+    # control flow behind a check whether we are compiling
+    if hasattr(torch, "compiler") and hasattr(torch.compiler, "is_compiling"):
+        is_compiling = torch.compiler.is_compiling
+    else:
+        is_compiling = torch._dynamo.is_compiling
+
+    @thunder.core.jit_ext.register_general_jit_lookaside(is_compiling)
+    @thunder.core.jit_ext.interpreter_needs_wrap
+    def dummy(*args):
+        return True
+
+    # transformers accesses the old attrib and causes the future warning
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FutureWarning, message=".*torch._dynamo.*.is_compiling.*")
+        m = transformers.BertForSequenceClassification(transformers.BertConfig())
+        del m.bert.encoder.layer[2:]
+        m.eval()
+        inp = torch.randint(1, 20, (1, 32))
+        jm = thunder.jit(m)
+        actual = jm(inp)
+        expected = m(inp)
+
+    assert_close(actual, expected)
+
+
 @requiresCUDA
 def test_quantization():
     try:
@@ -267,6 +294,7 @@ def test_quantization():
     config = litgpt_model.Config.from_name("llama2-like")
     with torch.device("cuda"):
         model_fp_reference = litgpt_model.GPT(config).to(torch.bfloat16)
+        model_fp_reference2 = litgpt_model.GPT(config).to(torch.bfloat16)
 
     import lightning as L
 
@@ -299,16 +327,31 @@ def test_quantization():
     model_fp_reference.requires_grad_(False)
     model_fp_reference.eval()
 
+    model_fp_reference2.set_kv_cache(1, device="cuda", dtype=torch.bfloat16)
+    model_fp_reference2.max_seq_length = 20
+    model_fp_reference2.requires_grad_(False)
+    model_fp_reference2.eval()
+
     jm = thunder.jit(
         model_fp_reference,
         executors=(bitsandbytes_executor,),
-        early_transforms=[BitsAndBytesLinearQuant4bit()],
+        transforms=[BitsAndBytesLinearQuant4bit()],
     )
 
+    jm2 = thunder.jit(
+        model_fp_reference2,
+        executors=(bitsandbytes_executor,),
+        transforms=[BitsAndBytesLinearQuant4bit()],
+    )
+    jm2.load_state_dict(jm.state_dict())
+
     logits_thunder = jm(x, input_pos)
+    logits_thunder2 = jm2(x, input_pos)
     # check_dtype=False due to litgpt returning float32
     # (maybe that also is the numerical discrepancy?)
     assert_close(logits_thunder, logits_expected, atol=2e-2, rtol=1e-3, check_dtype=False)
+
+    assert_close(logits_thunder, logits_thunder2, atol=2e-5, rtol=1e-5)
 
     sd = {k: v.clone() for k, v in jm.state_dict().items()}
     jm.load_original_state_dict(model_fp_reference.state_dict())

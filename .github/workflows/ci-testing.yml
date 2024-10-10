@@ -26,11 +26,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ["ubuntu-22.04", "macOS-12", "windows-2022"]
+        os: ["ubuntu-22.04", "macOS-14", "windows-2022"]
         python-version: ["3.10"]
         requires: ["latest", "nightly"] # , 'oldest'
+        suite: ["core", "ops"]
         include:
           - { os: "ubuntu-22.04", python-version: "3.11", requires: "latest" }
+          - { os: "ubuntu-22.04", python-version: "3.12", requires: "latest" }
+        exclude:
+          - { os: "windows-2022", suite: "ops" }
 
     # Timeout: https://stackoverflow.com/a/59076067/4521646
     timeout-minutes: 35
@@ -85,26 +89,37 @@ jobs:
         shell: bash
 
       - name: Testing Local
-        if: matrix.python-version == '3.10'
+        if: matrix.python-version == '3.10' && matrix.suite == 'core'
         run: |
           coverage run --source thunder -m \
             pytest thunder/tests/ \
               --ignore=thunder/tests/distributed \
+              --ignore=thunder/tests/test_ops.py \
+              --ignore=thunder/tests/test_grad.py \
               -v --datefmt="%Y%m%d-%H:%M:%S.%f" \
               --random-order-seed=$GITHUB_RUN_ID \
-              -n 2 --durations=250
+              -n 4 --durations=250
 
       - name: Testing Distributed
         # run all found tests in given past as standalone
-        if: matrix.python-version == '3.10' && runner.os == 'Linux'
+        if: matrix.python-version == '3.10' && runner.os == 'Linux' && matrix.suite == 'core'
         run: |
           pytest thunder/tests/distributed/ \
             -v --datefmt="%Y%m%d-%H:%M:%S.%f" \
             --random-order-seed=$GITHUB_RUN_ID \
             --durations=250
 
-      - name: Testing just a few
-        if: matrix.python-version == '3.11'
+      - name: Testing Ops
+        if: matrix.python-version == '3.10' && matrix.suite == 'ops' && runner.os != 'Windows'
+        run: |
+          coverage run --source thunder -m \
+            pytest thunder/tests/test_ops.py thunder/tests/test_grad.py \
+              -v --datefmt="%Y%m%d-%H:%M:%S.%f" \
+              --random-order-seed=$GITHUB_RUN_ID \
+              -n 4 --durations=250
+
+      - name: Testing interpreter
+        if: matrix.python-version == '3.11' || matrix.python-version == '3.12'
         #continue-on-error: true
         run: |
           python -m pytest \

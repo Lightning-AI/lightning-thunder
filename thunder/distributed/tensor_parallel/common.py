@@ -1,20 +1,28 @@
 from __future__ import annotations
 from abc import ABC
 from abc import abstractmethod
+import copy
 from enum import Enum
 from enum import auto
 from dataclasses import dataclass
 from dataclasses import field
+from itertools import chain
 from typing import TYPE_CHECKING
 
+import torch
+
+from thunder.core.module import ThunderModule
 from thunder.core.proxies import DistParallelType
 from thunder.core.proxies import TensorProxy
-from thunder.core.transform_common import EarlyTransform
+from thunder.core.proxies import variableify
+from thunder.core.transform_common import Transform
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from typing import Any
     from torch.distributed import ProcessGroup
     from thunder.common import CompileData
+    from thunder.core.module import ThunderModule
     from thunder.core.proxies import ProxyInterface
     from thunder.core.symbol import BoundSymbol
     from thunder.core.trace import TraceCtx
@@ -161,12 +169,15 @@ class ComputationTraceTransformVisitorForTensorParallel:
 
 
 @dataclass
-class TransformForTensorParallel(EarlyTransform):
+class TransformForTensorParallel(Transform):
     rank: int
     world_size: int
     compile_data: CompileData
-    chunked_param_name_to_layer_type: dict[str, Any]
     process_group: ProcessGroup
+    target_modules: Sequence[str]
+    chunked_param_name_to_layer_type: dict[str, Any] = field(init=False, default_factory=dict)
+    params_to_shard: dict[str, Any] = field(init=False, default_factory=dict)
+    dim_to_shard: int = field(init=False, default=-1)
 
     def __post_init__(self):
         from thunder.common import CompileData
@@ -175,6 +186,10 @@ class TransformForTensorParallel(EarlyTransform):
         utils.check_type(self.compile_data, CompileData)
         if getattr(self.compile_data, "use_fsdp", False) or getattr(self.compile_data.fn, "use_fsdp", False):
             raise NotImplementedError("Currently thunder does not support the combination of fsdp and tensor parallel")
+        self.device = torch.device("cuda", self.rank)
+
+        if self.dim_to_shard == -1:
+            raise ValueError(f"Set valid {self.dim_to_shard=} in inheritance")
 
     @abstractmethod
     def get_visitor_of_computation_trace_and_provenance(
@@ -183,13 +198,13 @@ class TransformForTensorParallel(EarlyTransform):
     ) -> tuple[ComputationTraceTransformVisitorForTensorParallel, TraceProvenance | str]: ...
 
     @abstractmethod
-    def _calc_new_shape(self, orig_shape) -> tuple[int, ...]: ...
+    def _calc_new_shape(self, orig_shape: list[int]) -> tuple[int, ...]: ...
 
     @property
     @abstractmethod
     def distparallel_type(self) -> DistParallelType: ...
 
-    def transform_traces(
+    def transform_traces_pre_prologue(
         self,
         prologue_trace: TraceCtx,
         computation_trace: TraceCtx,
@@ -210,6 +225,7 @@ class TransformForTensorParallel(EarlyTransform):
         prologue_producers, prologue_consumers = utils.producers_and_consumers(prologue_trace)
         pro_out_p: TensorProxy
         comp_inp_p: TensorProxy
+        pro_out_p_dict: dict[VariableInterface, TensorProxy] = {}
         for pro_out_p, comp_inp_p in zip(prologue_trace.output[0], computation_trace.args):
             if pro_out_p.name not in self.chunked_param_name_to_layer_type:
                 continue
@@ -230,26 +246,22 @@ class TransformForTensorParallel(EarlyTransform):
                         lambda: f"{comp_inp_p.distparallel_type = } is not compatible with {self.distparallel_type=}",
                     )
                     pro_out_p._distparallel_type = self.distparallel_type
+                    pro_out_p_dict[variableify(pro_out_p)] = pro_out_p
                     if comp_inp_p is not pro_out_p:
                         comp_inp_p._shape = new_shape
                         comp_inp_p._distparallel_type = self.distparallel_type
-
-                    for c in prologue_consumers[pro_out_p]:
-                        if c.sym is prims.check_tensor_shape_and_metadata:
-                            # TODO have a more principled way to update this?
-                            a0, _, _, *a2pp = c.args
-                            c.args = (a0, tuple(new_shape), a0.device.device_str(), *a2pp)
 
         for bsym in prologue_trace.bound_symbols:
             if bsym.sym is prims.check_tensor_shape_and_metadata and prologue_producers[bsym.args[0]].sym in (
                 prims.unpack_parameter,
                 prims.unpack_buffer,
             ):
-                param_thunder_module, name = prologue_producers[bsym.args[0]].args
+                param_thunder_module, _ = prologue_producers[bsym.args[0]].args
                 assert param_thunder_module is thunder_module_proxy
-                if name not in self.chunked_param_name_to_layer_type:
-                    a0, shape, _, *a2pp = bsym.args
-                    bsym.args = (a0, shape, a0.device.device_str(), *a2pp)
+                a0, shape, _, *a2pp = bsym.args
+                if variableify(a0) in pro_out_p_dict:
+                    new_shape = self._calc_new_shape(orig_shape=list(shape))
+                    bsym.args = (a0, new_shape, a0.device.device_str(), *a2pp)
 
         if len(modules_and_thunder_modules) != 1:
             raise NotImplementedError("cannot deal with modules other than the compiled module")
@@ -268,3 +280,107 @@ class TransformForTensorParallel(EarlyTransform):
             from thunder.distributed.tensor_parallel.optimize_comm import remove_redundant_comms
 
             return prologue_trace, remove_redundant_comms(new_computation_trace), epilogue_trace
+
+    def transform_module(self, model: ThunderModule) -> None:
+        import torch.nn as nn
+        from thunder.core import utils
+        from thunder.distributed import _shard_tensor
+
+        for target_mod_name in self.target_modules:
+            mod = model.get_submodule(target_mod_name)
+            utils.check_type(
+                mod,
+                (
+                    nn.Linear,
+                    nn.Embedding,
+                ),
+            )
+            for name, p in mod.named_parameters(prefix=target_mod_name, recurse=False):
+                if p.ndim <= self.dim_to_shard:
+                    continue
+                self.chunked_param_name_to_layer_type["t_" + name.replace(".", "_")] = type(mod)
+                self.params_to_shard[name] = None
+
+        # Modify module
+        for name, param in model.named_parameters():
+
+            orig_param: torch.Tensor | None
+            try:
+                orig_param = model._model.get_parameter(name)
+            except AttributeError:
+                orig_param = None
+
+            if param.is_meta:
+                param._thunder_device = self.device
+                if orig_param is not None:
+                    orig_param._thunder_device = self.device
+            elif param.device != self.device:
+                with torch.no_grad():
+                    new_param = torch.nn.Parameter(param.to(device=self.device), requires_grad=param.requires_grad)
+                model._overrides_parameters[name] = new_param
+
+            if name in self.params_to_shard:
+                sharded_param, _ = _shard_tensor(
+                    param,
+                    self.rank,
+                    self.world_size,
+                    name,
+                    allow_padding_for_fsdp=False,
+                    dim=self.dim_to_shard,
+                )
+                sharded_param = torch.nn.Parameter(sharded_param.clone(), requires_grad=param.requires_grad)
+                model._overrides_parameters[name] = sharded_param
+
+    def transform_state_dict_for_submodule(
+        self,
+        model: ThunderModule,
+        submodule_name: str,
+        state_dict: dict[str, Any],
+    ) -> dict[str, Any]:
+        from thunder.distributed import _shard_tensor
+
+        prefix = ""
+        if submodule_name:
+            prefix = f"{submodule_name}."
+        new_state_dict = {}
+        for k, v in state_dict.items():
+            full_k = prefix + k
+            if full_k in self.params_to_shard:
+                v, _ = _shard_tensor(
+                    v,
+                    self.rank,
+                    self.world_size,
+                    full_k,
+                    allow_padding_for_fsdp=False,
+                    dim=self.dim_to_shard,
+                )
+            new_state_dict[k] = v
+        return new_state_dict
+
+    def reverse_transform_state_dict_for_submodule(
+        self,
+        model: ThunderModule,
+        submodule_name: str,
+        state_dict: dict[str, Any],
+    ) -> dict[str, Any]:
+        from thunder.executors.torchex import _all_gather_prim_impl
+
+        new_state_dict = {}
+        for name, tensor in state_dict.items():
+            fqn: str
+            if submodule_name:
+                fqn = f"{submodule_name}.{name}"
+            else:
+                fqn = name
+
+            if fqn not in self.params_to_shard:
+                new_state_dict[name] = tensor
+            else:
+                all_gathered_param = _all_gather_prim_impl(
+                    tensor,
+                    group=self.process_group,
+                    do_async=False,
+                    dim=self.dim_to_shard,
+                )
+                new_state_dict[name] = all_gathered_param
+        return new_state_dict

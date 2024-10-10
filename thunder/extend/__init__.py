@@ -16,8 +16,11 @@ import torch.cuda
 from thunder.core.utils import check
 from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
 from thunder.core.trace import TraceCtx
-from thunder.core.proxies import Proxy
+from thunder.core.proxies import Proxy, TensorProxy, proxy
 from thunder.core.baseutils import run_once
+from thunder.core.dtypes import to_torch_dtype
+from thunder.core.devices import to_torch_device
+from thunder.core.pytree import tree_map
 
 __all__ = [
     "register_executor",
@@ -60,6 +63,7 @@ class Executor:
 
         self._implmap: dict[Hashable, ImplInfo] = {}
         self._lookasides: dict[Callable, Callable] = {}
+        self._opmap: dict[str, Symbol] = {}
 
     @property
     def name(self) -> Hashable:
@@ -73,8 +77,12 @@ class Executor:
     def implmap(self) -> dict[Hashable, ImplInfo]:
         return self._implmap
 
+    @property
+    def opmap(self) -> dict[str, Symbol]:
+        return self._opmap
+
     def __repr__(self) -> str:
-        return f"thunder.extend.OperatorExecutor('{str(self.name)}')"
+        return f"{self.__class__.__module__}.{self.__class__.__name__}('{str(self.name)}')"
 
     def __hash__(self) -> int:
         return hash(self.name)
@@ -133,77 +141,6 @@ class Executor:
 
         return impl.grad_transform
 
-
-class FUEL_LEVEL(enum.Enum):
-    UNLIMITED = enum.auto()
-
-
-# To implement a FusionExecutor, create a subclass of it that implements the fusion_pass method
-class FusionExecutor(Executor):
-    # Optimization fuel is a concept introduced by David B.
-    # Whalley (https://dl.acm.org/doi/pdf/10.1145/186025.186103) to isolate
-    # compiler bugs.
-    #
-    # A FusionExecutor keeps track of its own optimization fuel as the number
-    # of remaining optimizations it can do. Each fusion pass can call
-    # `get_fuel` to acquire a certain amount of optimization fuel, and, only if
-    # it returns true, perform the actual optimization. `set_fuel` is used by
-    # the test or the user to fuel the executor to a certain level.
-    #
-    # I used this to isolate
-    # https://github.com/NVIDIA/Fuser/issues/1667 from a numbers-mismatch error
-    # happened in test_grad.py. I binary-searched for the smallest optimization
-    # fuel that reproduced the error, and the last fusion generated in that run
-    # was the culprit. See test_nvfuser.py::test_optimization_fuel for an example.
-    def get_fuel(self, amount: int = 1, /) -> bool:
-        raise NotImplementedError
-
-    def set_fuel(self, value: int | FUEL_LEVEL):
-        raise NotImplementedError
-
-    def fusion_pass(self, trace: TraceCtx) -> TraceCtx:
-        raise NotImplementedError
-
-    def fuse(self, region: "Region", fusion_counter: int) -> BoundSymbol:  # type: ignore (circular import)
-        raise NotImplementedError
-
-    def register_supported(
-        self,
-        sym_or_id: Symbol | Hashable,
-        checker: None | Callable = None,
-        *,
-        execution_transform: None | Callable = None,
-        grad_transform: None | Callable = None,
-    ):
-        impl = ImplInfo(checker=checker, execution_transform=execution_transform, grad_transform=grad_transform)
-
-        _id = sym_or_id.id if isinstance(sym_or_id, Symbol) else sym_or_id
-        self.implmap[_id] = impl
-
-    def register_temporary_operation(
-        self, name: str, fn: Callable, *, inputs: list[Proxy], outputs: list[Proxy], bsyms: list[BoundSymbol]
-    ) -> BoundSymbol:
-        def _meta(*args):
-            return tuple(outputs)
-
-        def _bind_postprocess(bsym: BoundSymbol) -> None:
-            bsym.subsymbols = tuple(bsyms)
-            bsym._call_ctx = {name: fn}
-
-        sym = Symbol(name=name, meta=_meta, is_fusion=True, _bind_postprocess=_bind_postprocess, executor=self)
-        return sym.bind(*inputs, output=outputs)
-
-
-class OperatorExecutor(Executor):
-    def __init__(self, name: Hashable, *, version: None | Any = None):
-        super().__init__(name, version=version)
-
-        self._opmap: dict[str, Symbol] = {}
-
-    @property
-    def opmap(self) -> dict[str, Symbol]:
-        return self._opmap
-
     # TODO Document this operation
     # TODO Wrap meta in prim context?
     # TODO Document how to avoid name collisions
@@ -259,6 +196,70 @@ class OperatorExecutor(Executor):
 
         return sym
 
+
+class FUEL_LEVEL(enum.Enum):
+    UNLIMITED = enum.auto()
+
+
+# To implement a FusionExecutor, create a subclass of it that implements the fusion_pass method
+class FusionExecutor(Executor):
+    # Optimization fuel is a concept introduced by David B.
+    # Whalley (https://dl.acm.org/doi/pdf/10.1145/186025.186103) to isolate
+    # compiler bugs.
+    #
+    # A FusionExecutor keeps track of its own optimization fuel as the number
+    # of remaining optimizations it can do. Each fusion pass can call
+    # `get_fuel` to acquire a certain amount of optimization fuel, and, only if
+    # it returns true, perform the actual optimization. `set_fuel` is used by
+    # the test or the user to fuel the executor to a certain level.
+    #
+    # I used this to isolate
+    # https://github.com/NVIDIA/Fuser/issues/1667 from a numbers-mismatch error
+    # happened in test_grad.py. I binary-searched for the smallest optimization
+    # fuel that reproduced the error, and the last fusion generated in that run
+    # was the culprit. See test_nvfuser.py::test_optimization_fuel for an example.
+    def get_fuel(self, amount: int = 1, /) -> bool:
+        raise NotImplementedError
+
+    def set_fuel(self, value: int | FUEL_LEVEL):
+        raise NotImplementedError
+
+    def fusion_pass(self, trace: TraceCtx) -> TraceCtx:
+        raise NotImplementedError
+
+    def fuse(self, region: "Region", fusion_counter: int) -> BoundSymbol:  # type: ignore (circular import)
+        raise NotImplementedError
+
+    def register_supported(
+        self,
+        sym_or_id: Symbol | Hashable,
+        checker: None | Callable = None,
+        *,
+        execution_transform: None | Callable = None,
+        grad_transform: None | Callable = None,
+    ):
+        impl = ImplInfo(checker=checker, execution_transform=execution_transform, grad_transform=grad_transform)
+
+        _id = sym_or_id.id if isinstance(sym_or_id, Symbol) else sym_or_id
+        self.implmap[_id] = impl
+
+    def register_temporary_operation(
+        self, name: str, fn: Callable, *, inputs: list[Proxy], outputs: list[Proxy], bsyms: list[BoundSymbol]
+    ) -> BoundSymbol:
+        def _meta(*args):
+            return tuple(outputs)
+
+        def _bind_postprocess(bsym: BoundSymbol) -> None:
+            bsym._call_ctx = {name: fn}
+
+        sym = Symbol(name=name, meta=_meta, is_fusion=True, _bind_postprocess=_bind_postprocess, executor=self)
+        return sym.bind(*inputs, output=outputs, subsymbols=tuple(bsyms))
+
+
+class OperatorExecutor(Executor):
+    def __init__(self, name: Hashable, *, version: None | Any = None):
+        super().__init__(name, version=version)
+
     def register_implementation(
         self,
         sym_or_id: Symbol | Hashable,
@@ -277,6 +278,85 @@ class OperatorExecutor(Executor):
 
         _id = sym_or_id.id if isinstance(sym_or_id, Symbol) else sym_or_id
         self.implmap[_id] = impl
+
+
+class AdHocExecutor(OperatorExecutor):
+    """An "Anonymous" executor to be used for temporary registrations"""
+
+    def __init__(self):
+        super().__init__(f"__ad_hoc_executor_{id(self)}")
+        self.counter = 0  # a counter to disambiguate names
+
+    def register_operator(
+        self,
+        name: str,
+        *,
+        like: None | Symbol = None,
+        meta: None | Callable = None,
+        tags: None | list[Any] = None,
+        module: None | type | ModuleType = None,
+        fn: None | Callable = None,
+        bind_postprocess: None | Callable = None,
+        replaces: None | Callable = None,
+        python_printer: Callable = default_python_printer,
+    ) -> Symbol:
+        op = super().register_operator(
+            f"{name}_{id(self)}_{self.counter}",
+            like=like,
+            meta=meta,
+            tags=tags,
+            module=module,
+            fn=fn,
+            bind_postprocess=bind_postprocess,
+            replaces=replaces,
+            python_printer=python_printer,
+        )
+        self.counter += 1
+        return op
+
+    def register_operator_for_opaque_function(self, fn):
+        def get_name(fn):
+            mod = sys.modules[fn.__module__]
+            if getattr(mod, fn.__name__) == fn:
+                return f"{fn.__module__}.{fn.__name__}"
+            raise RuntimeError("could not find name")
+
+        def auto_meta(fn):
+            def meta(*args, **kwargs):
+                concrete_args = []
+                for a in args:
+                    if isinstance(a, TensorProxy):
+                        dtype = to_torch_dtype(a.dtype)
+                        if dtype.is_floating_point:
+                            t = torch.randn(
+                                a.shape,
+                                dtype=dtype,
+                                device=to_torch_device(a.device),
+                                requires_grad=a.requires_grad,
+                            )
+                        else:
+                            t = torch.ones(
+                                a.shape,
+                                dtype=dtype,
+                                device=to_torch_device(a.device),
+                                requires_grad=a.requires_grad,
+                            )
+                        concrete_args.append(t)
+                    else:
+                        concrete_args.append(a)
+                results = fn(*concrete_args, **kwargs)
+                meta_results = tree_map(lambda r: proxy(r) if isinstance(r, torch.Tensor) else r, results)
+                return meta_results
+
+            return meta
+
+        name = get_name(fn).replace(".", "_")
+        meta = auto_meta(fn)
+        symbol = self.register_operator(name, fn=fn, meta=meta, replaces=fn)
+        return symbol
+
+    def __repr__(self) -> str:
+        return f"<thunder.extend.AdHocExecutor object {id(self)}>"
 
 
 def single_op_executor(
@@ -353,12 +433,13 @@ def register_executor(ex: Executor) -> Executor:
 def get_all_executors() -> tuple[Executor, ...]:
     # manually import all native executors to let them register themselves
     from thunder.executors import (
-        apex_entropyex,
+        apexex,
         cudnn_layernormex,
         cudnnex,
         nvfuserex,
         pythonex,
         sdpaex,
+        fa3ex,
         torch_compile,
         torchex,
         transformer_engineex,
@@ -457,6 +538,8 @@ def resolve_executors(executors: None | Sequence[Executor | str]) -> tuple[Execu
                 continue
             else:
                 resolved_executors.append(ex)
+        elif not isinstance(e, Executor):
+            raise ValueError(f"An object of type {type(e)} is not a valid Executor. Executor list: {executors}")
         else:
             resolved_executors.append(e)
 

@@ -3,6 +3,8 @@ import traceback
 from functools import partial, reduce
 from itertools import product
 import dataclasses
+import re
+import weakref
 
 import pytest
 import torch
@@ -19,7 +21,15 @@ import thunder.tests.bf16
 import thunder.torch as ltorch
 
 import thunder.core.codeutils as codeutils
-from thunder.tests.framework import instantiate, NOTHING, TorchExecutor, nvFuserExecutor, requiresCUDA, TestExecutor
+from thunder.tests.framework import (
+    instantiate,
+    NOTHING,
+    TorchExecutor,
+    nvFuserExecutor,
+    requiresCUDA,
+    TestExecutor,
+    set_default_dtype_ctx,
+)
 import thunder.core.dtypes as dtypes
 import thunder.core.prims as prims
 from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, tracectx
@@ -229,6 +239,124 @@ def test_nested_empty_tuple_unpack(executor, device, dtype):
 
 
 @instantiate(dtypes=(thunder.float32,))
+def test_grad_unpack(executor, device, dtype):
+    tdtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=tdtype, requires_grad=True)
+    a.grad = make_tensor((2, 2), device=device, dtype=tdtype)
+
+    def get_grad_times_two(a):
+        return a.grad * 2
+
+    jitted_get_grad_times_two = executor.make_callable(get_grad_times_two)
+    actual = jitted_get_grad_times_two(a)
+    expected = a.grad * 2
+    assert_close(actual, expected)
+
+    # a.grad is unpacked before a
+    def grad_first(a):
+        return a.grad + a
+
+    # a.grad is unpacked after a
+    def grad_second(a):
+        return a + a.grad
+
+    jitted_grad_first = executor.make_callable(grad_first)
+    jitted_grad_second = executor.make_callable(grad_second)
+    actual_first = jitted_grad_first(a)
+    actual_second = jitted_grad_second(a)
+    expected = a + a.grad
+    assert_close(actual_first, expected)
+    assert_close(actual_second, expected)
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_grad_no_recompile(executor, device, dtype):
+    # Checks that having .grad or not does not cause recompile
+
+    def foo(a):
+        return a * 2
+
+    cfoo = executor.make_callable(foo)
+
+    tdtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=tdtype, requires_grad=True)
+    a.grad = make_tensor((2, 2), device=device, dtype=tdtype)
+    cfoo(a)
+    assert thunder.cache_misses(cfoo) == 1
+
+    a.grad = None
+    cfoo(a)
+    assert thunder.cache_misses(cfoo) == 1
+
+    b = make_tensor((3, 3), device=device, dtype=tdtype, requires_grad=True)
+    cfoo(b)
+    assert thunder.cache_misses(cfoo) == 2
+
+    b.grad = make_tensor((3, 3), device=device, dtype=tdtype)
+    cfoo(b)
+    assert thunder.cache_misses(cfoo) == 2
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_grad_recompile(executor, device, dtype):
+    # Checks that change in the metadata of a.grad causes recompile
+
+    def foo(a):
+        return a.grad * 2
+
+    cfoo = executor.make_callable(foo)
+
+    tdtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=tdtype, requires_grad=True)
+    a.grad = make_tensor((2, 2), device=device, dtype=tdtype)
+    cfoo(a)
+    assert thunder.cache_misses(cfoo) == 1
+
+    b = make_tensor((3, 3), device=device, dtype=tdtype, requires_grad=True)
+    b.grad = make_tensor((3, 3), device=device, dtype=tdtype)
+    cfoo(b)
+    assert thunder.cache_misses(cfoo) == 2
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_optimizer_unpack(executor, device, dtype):
+    class Optimizer(torch.optim.Optimizer):
+        def __init__(self, params):
+            self.param_groups = [{"params": params}]
+
+        def _init_group(self, group, params, grads):
+            for p in group["params"]:
+                if p.grad is not None:
+                    params.append(p)
+                    grads.append(p.grad)
+
+        def step(self):
+            for group in self.param_groups:
+                params = []
+                grads = []
+                self._init_group(group, params, grads)
+                for param, grad in zip(params, grads):
+                    param -= 0.1 * grad
+
+    tdtype = ltorch.to_torch_dtype(dtype)
+
+    a = make_tensor((2, 2), device=device, dtype=tdtype, requires_grad=True)
+    ref_a = a.detach().clone()
+    a.grad = make_tensor((2, 2), device=device, dtype=tdtype)
+
+    b = make_tensor((2, 2), device=device, dtype=tdtype)
+    ref_b = b.detach().clone()
+
+    optimizer = Optimizer([a, b])
+    cstep = executor.make_callable(optimizer.step)
+    cstep()
+
+    expected_a = ref_a - 0.1 * a.grad
+    assert_close(a, expected_a)
+    assert_close(b, ref_b)
+
+
+@instantiate(dtypes=(thunder.float32,))
 def test_varargs(executor, device, dtype):
     def foo(*args):
         return reduce(operator.add, args)
@@ -382,7 +510,7 @@ def test_devices_in_and_out(executor, device, dtype):
     x, y = lc_result
 
     assert x == 1
-    assert y == dev
+    assert y == thunder.devices.to_torch_device(dev)
 
 
 @instantiate(dtypes=(thunder.float32,))
@@ -524,6 +652,15 @@ def test_consistent_boundsymbol_collection_hard_printing():
         assert s0 == s1
 
 
+def test_to_printable_not_collection():
+    import numpy as np
+
+    inps = ("abc", torch.Size([2, 2]), torch.Tensor(1, 2), np.ndarray((2, 2)))
+    for inp in inps:
+        out = codeutils.to_printable(None, inp)
+        assert inp is out
+
+
 #
 # Type promotion tests
 #
@@ -658,74 +795,72 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
     d = make_tensor((2, 1), device=device, dtype=torch_dtype)
     e = make_tensor((2, 2), device=device, dtype=torch.bool)
 
-    for jit in (thunder.functional.jit, thunder.jit):
+    def foo(a, b):
+        return a + b
 
-        def foo(a, b):
-            return a + b
+    cfoo = thunder.jit(foo, cache_mode="constant values")
 
-        cfoo = jit(foo, cache_mode="constant values")
+    assert cache_option(cfoo) == thunder.CACHE_OPTIONS.CONSTANT_VALUES
 
-        assert cache_option(cfoo) == thunder.CACHE_OPTIONS.CONSTANT_VALUES
+    # Tensor x tensor
+    result = cfoo(a, b)
+    assert cache_misses(cfoo) == 1
+    assert cache_hits(cfoo) == 0
+    assert_close(result, a + b)
 
-        # Tensor x tensor
-        result = cfoo(a, b)
-        assert cache_misses(cfoo) == 1
-        assert cache_hits(cfoo) == 0
-        assert_close(result, a + b)
+    # Same tensors -- cache hit
+    result = cfoo(a, b)
+    assert cache_misses(cfoo) == 1
+    assert cache_hits(cfoo) == 1
+    assert_close(result, a + b)
 
-        # Same tensors -- cache hit
-        result = cfoo(a, b)
-        assert cache_misses(cfoo) == 1
-        assert cache_hits(cfoo) == 1
-        assert_close(result, a + b)
+    # Different tensor, same metadata -- cache hit
+    result = cfoo(a, c)
+    assert cache_misses(cfoo) == 1
+    assert cache_hits(cfoo) == 2
+    assert_close(result, a + c)
 
-        # Different tensor, same metadata -- cache hit
-        result = cfoo(a, c)
-        assert cache_misses(cfoo) == 1
-        assert cache_hits(cfoo) == 2
-        assert_close(result, a + c)
+    # Different tensor, different shape -- cache miss
+    result = cfoo(a, d)
+    assert cache_misses(cfoo) == 2
+    assert cache_hits(cfoo) == 2
+    assert_close(result, a + d)
 
-        # Different tensor, different shape -- cache miss
-        result = cfoo(a, d)
-        assert cache_misses(cfoo) == 2
-        assert cache_hits(cfoo) == 2
-        assert_close(result, a + d)
+    # Different tensor, different dtype -- cache miss
+    result = cfoo(a, e)
+    assert cache_misses(cfoo) == 3
+    assert cache_hits(cfoo) == 2
+    assert_close(result, a + e)
 
-        # Different tensor, different dtype -- cache miss
-        result = cfoo(a, e)
-        assert cache_misses(cfoo) == 3
-        assert cache_hits(cfoo) == 2
-        assert_close(result, a + e)
+    # Tensor x float number -- cache miss
+    result = cfoo(a, 1.0)
+    assert cache_misses(cfoo) == 4
+    assert cache_hits(cfoo) == 2
+    assert_close(result, a + 1.0)
 
-        # Tensor x float number -- cache miss
-        result = cfoo(a, 1.0)
-        assert cache_misses(cfoo) == 4
-        assert cache_hits(cfoo) == 2
-        assert_close(result, a + 1.0)
+    # Tensor x float number, different tensor data -- cache hit
+    result = cfoo(b, 1.0)
+    assert cache_misses(cfoo) == 4
+    assert cache_hits(cfoo) == 3
+    assert_close(result, b + 1.0)
 
-        # Tensor x float number, different tensor data -- cache hit
-        result = cfoo(b, 1.0)
-        assert cache_misses(cfoo) == 4
-        assert cache_hits(cfoo) == 3
-        assert_close(result, b + 1.0)
+    # Tensor x float number, different number value -- cache miss
+    result = cfoo(b, 3.0)
+    assert cache_misses(cfoo) == 5
+    assert cache_hits(cfoo) == 3
+    assert_close(result, b + 3.0)
 
-        # Tensor x float number, different number value -- cache miss
-        result = cfoo(b, 3.0)
-        assert cache_misses(cfoo) == 5
-        assert cache_hits(cfoo) == 3
-        assert_close(result, b + 3.0)
+    # Tensor x int number, different number type -- cache miss
+    result = cfoo(b, 3)
+    assert cache_misses(cfoo) == 6
+    assert cache_hits(cfoo) == 3
+    assert_close(result, b + 3)
 
-        # Tensor x int number, different number type -- cache miss
-        result = cfoo(b, 3)
-        assert cache_misses(cfoo) == 6
-        assert cache_hits(cfoo) == 3
-        assert_close(result, b + 3)
-
-        # Tensor x int number -- cache hit
-        result = cfoo(b, 3)
-        assert cache_misses(cfoo) == 6
-        assert cache_hits(cfoo) == 4
-        assert_close(result, b + 3)
+    # Tensor x int number -- cache hit
+    result = cfoo(b, 3)
+    assert cache_misses(cfoo) == 6
+    assert cache_hits(cfoo) == 4
+    assert_close(result, b + 3)
 
     def bar(a, b):
         return a, b
@@ -963,6 +1098,11 @@ def test_bsym_toposort(executor: TestExecutor, device: str, dtype: dtypes.dtype)
 
     assert top_down_reshape_bsym.sym.id == "torch.reshape"
     assert bottom_up_reshape_bsym.sym.id == "torch.reshape"
+
+    # Tests when the symbol list doesn't contain unpack operator
+    bsyms_without_unpack = trc.bound_symbols[1:]
+    roots, leaves = bsym_list_to_dag(bsyms_without_unpack)
+    assert len(leaves) == 1 and leaves[0].bsym.sym.id == prims.PrimIDs.RETURN
 
 
 # Verifies that using only some of the results of a function works as expected
@@ -1293,7 +1433,7 @@ def test_boundsymbol_hash_eq_examples(executor, device, dtype: dtypes.dtype):
 
     # Returns the bound symbols for a function and args.
     def compile_bsyms(fn, args):
-        fn = executor.make_callable_with_info(fn)
+        fn = executor.make_callable(fn)
         _ = fn(*args)
         traces = thunder.last_traces(fn)
         return traces[0].bound_symbols
@@ -1534,155 +1674,6 @@ def test_eval_trace(executor, device, _):
 
 @instantiate(
     dtypes=NOTHING,
-    executors=[
-        TorchExecutor,
-        # TODO: nvFuser executor doesn't support duplicate outputs
-        # TODO: nvFuser executor doesn't support clashing input and output names
-    ],
-)
-def test_eval_trace_duplicate_output(executor, device, _):
-    # This test ensures that eval_trace() can evaluate a trace with duplicate
-    # outputs.
-    from thunder.core.transforms import eval_trace, identity
-
-    def foo1(a):
-        return a, a
-
-    a = torch.ones((2, 2), device=device, dtype=torch.float32)
-
-    foo_trace = thunder.trace()(foo1, a)
-    assert len(foo_trace.bound_symbols) == 2
-    assert foo_trace.bound_symbols[0].sym.name == "unpack_trivial"
-    assert len(foo_trace.output) == 2
-    assert foo_trace.output[0].name == foo_trace.output[1].name
-
-    def func(a):
-        return eval_trace(foo_trace, a)
-
-    actual = executor.make_callable(func)(a)
-    assert_close(actual, (a, a))
-
-    # Identity is needed to ensure that the duplicated outputs of a symbol
-    # don't cause problems.
-    def foo2(a):
-        a = 1.0 * a
-        return a, a
-
-    for foo in [foo1, foo2]:
-        foo_trace = thunder.trace()(identity(foo), a)
-        assert len(foo_trace.output) == 2
-        assert foo_trace.output[0].name == foo_trace.output[1].name
-
-    # TODO: enable this once executors can work with identity call
-    #     actual = executor.make_callable(partial(eval_trace, foo_trace))(a)
-    #     assert_close(actual, (a, a))
-
-
-@instantiate(
-    dtypes=NOTHING,
-    executors=[
-        TorchExecutor,
-    ],
-)
-def test_transforms_identity(executor, device, _):
-    # This test ensures that identity() can be called from within a traced
-    # function without leaking the trace context.
-    # Also tests that identity() can be nested.
-    # Also tests that identity() can be used with "torch" executor.
-    from thunder.core.transforms import identity, Transforms
-
-    # from thunder import _get_executor
-
-    def func(a, b, *, c=5):
-        return clang.mul(clang.mul(clang.add(a, b), 1), c)
-
-    nested_id_func = identity(identity(identity(func)))
-
-    a = make_tensor((2, 2), device=device, dtype=torch.float32)
-    b = make_tensor((2, 2), device=device, dtype=torch.float32)
-    c = 4.0
-
-    nested_id_trace = thunder.trace()(nested_id_func, a, b, c=c)
-    # one annotating symbol per input and one actual symbol
-    assert len(nested_id_trace.bound_symbols) == 6
-    assert nested_id_trace.bound_symbols[-2].sym.id == Transforms.IdentityOp
-
-    trace = nested_id_trace.bound_symbols[-2].kwargs.get("trace", None)
-    for _ in range(2):
-        assert len(trace.bound_symbols) == 6
-        assert trace.bound_symbols[-2].sym.id == Transforms.IdentityOp
-        trace = trace.bound_symbols[-2].kwargs.get("trace", None)
-
-    assert len(trace.bound_symbols) == 7
-    assert trace.bound_symbols[-4].sym.name == "add"
-    assert trace.bound_symbols[-3].sym.name == "mul"
-    assert trace.bound_symbols[-2].sym.name == "mul"
-
-    # TODO: RuntimeError: Could not find executor for bound symbol __f =
-    # thunder.core.transforms.identity_call
-    # fusion = executor.make_callable(nested_id_trace)
-    # actual = fusion(a, b, c=c)
-    # expected = executor.make_callable(func)(a, b, c=c)
-    # torch.testing.assert_close(actual, expected)
-
-
-@instantiate(
-    dtypes=NOTHING,
-    executors=(
-        TorchExecutor,
-        # TODO: nvFuser executor does not support full(shape=()) yet
-    ),
-)
-def test_transforms_vmap_axis_size(executor, device, _):
-    from thunder.core.transforms import vmap
-
-    actual = executor.make_callable_legacy(vmap(lambda: 2, axis_size=4))()
-    expected = torch.full((4,), 2, device="cpu")
-    assert_close(actual, expected)
-
-    actual = executor.make_callable_legacy(vmap(lambda x: x, axis_size=4))(2)
-    assert_close(actual, expected)
-
-
-# TODO Re-enable this, broken by raising NotImplementedError from bool(tensor)
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_vmap_identity(executor, device, _):
-#     from thunder.core.transforms import identity, vmap
-
-#     def func(a):
-#         return clang.sin(a)
-
-#     a = torch.randn(2, 2)
-
-#     thunder._make_trace(vmap(identity(func)))(a)
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_jvp_eager(executor, device, _):
-#     from thunder.core.transforms import jvp_eager
-
-#     def func(a, b):
-#         c = tlang.sin(a)
-#         return tlang.mul(tlang.add(c, b), 1)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-#     primals = (a, b)
-#     tangents = (a, b)
-#     out_p, out_t = jvp_eager(func, primals, tangents, executor=executor)
-#     expected_out_p = torch.sin(a) + b
-#     expected_out_t = torch.cos(a) + b
-#     assert_close(out_p, expected_out_p)
-#     assert_close(out_t, expected_out_t)
-
-
-@instantiate(
-    dtypes=NOTHING,
     decorators=(pytest.mark.xfail(reason='issue "flaky test: test_transforms_vjp_{2_1, 1_2}_nvfuser_cuda_None"'),),
 )
 def test_transforms_vjp_1_2(executor, device, _):
@@ -1700,12 +1691,12 @@ def test_transforms_vjp_1_2(executor, device, _):
     g1 = make_tensor((2, 3), device=device, dtype=torch.float32)
     g2 = make_tensor((2, 3), device=device, dtype=torch.float32)
 
-    vjp_eager = executor.make_callable_legacy(vjp(func_1_2))
-
     primals = (a,)
     cotangents = (g1, g2)
+    initial_trace = thunder.trace()(vjp(func_1_2), primals, cotangents)
+    vjp_eager = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
     out_p, grads = vjp_eager(primals, cotangents)
-    expected_out_p = executor.make_callable_legacy(func_1_2)(a)
+    expected_out_p = executor.make_callable(func_1_2)(a)
     assert_close(out_p, expected_out_p, equal_nan=True, atol=1e-3, rtol=1e-5)
 
     # Now check the gradients
@@ -1751,11 +1742,11 @@ def test_transforms_vjp_2_2_kwarg(executor, device, _):
     g1 = make_tensor((2, 3), device=device, dtype=torch.float64)
     g2 = make_tensor((2, 3), device=device, dtype=torch.float64)
 
-    vjp_eager = executor.make_callable_legacy(vjp(func_2_2))
-
     primals = (x, y)
     primal_kwargs = {"z": z}
     cotangents = (g1, g2)
+    initial_trace = thunder.trace()(vjp(func_2_2), primals, cotangents, **primal_kwargs)
+    vjp_eager = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
     out_p, grads = vjp_eager(primals, cotangents, **primal_kwargs)
     expected_out_p = executor.make_callable(func_2_2)(*primals, **primal_kwargs)
     assert_close(out_p, expected_out_p, equal_nan=True)
@@ -1807,14 +1798,15 @@ def test_transforms_vjp_2_1(executor, device, _):
         c = clang.asin(b)
         return c
 
-    vjp_eager = executor.make_callable_legacy(vjp(func_2_1))
     a = make_tensor((2, 3), device=device, dtype=torch.float32)
     b = make_tensor((2, 3), device=device, dtype=torch.float32)
     g1 = make_tensor((2, 3), device=device, dtype=torch.float32)
     primals = (a, b)
     cotangents = (g1,)
+    initial_trace = thunder.trace()(vjp(func_2_1), primals, cotangents)
+    vjp_eager = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
     out_p, grads = vjp_eager(primals, cotangents)
-    expected_out_p = executor.make_callable_legacy(func_2_1)(*primals)
+    expected_out_p = executor.make_callable(func_2_1)(*primals)
     assert_close(out_p, expected_out_p, equal_nan=True)
 
     aa = a.clone().requires_grad_(True)
@@ -1822,120 +1814,6 @@ def test_transforms_vjp_2_1(executor, device, _):
     out = pt_func_2_1(aa, bb)
     expected_grads = torch.autograd.grad(out, [aa, bb], grad_outputs=(g1,), retain_graph=True)
     assert_close(expected_grads, grads, equal_nan=True)
-
-
-# TODO Enable me, disabled when extra error checking was added to reduction prims
-# @instantiate(
-#     dtypes=NOTHING,
-#     executors=(
-#         nvFuserExecutor,
-#         # TODO: Enable Torch executor once the issue with sum is fixed
-#         # See issue "Different behavior of sum(tensor, ()) for nvFuser and
-#         # Torch executor"
-#     ),
-# )
-# def test_transforms_vmap_inline_value_and_grad(executor, device, _):
-#     # This test checks whether it's possible to vmap a function that is
-#     # traced with inline and value_and_grad.
-#     # For applications see
-#     # https://jax.readthedocs.io/en/latest/jax-101/04-advanced-autodiff.html#per-example-gradients
-#     # https://pytorch.org/functorch/stable/notebooks/per_sample_grads.html
-#     from thunder.core.transforms import value_and_grad, vmap
-#     from thunder.core import prims
-
-#     def func(x):
-#         a = prims.sin(x)
-#         a = prims.sum(a, ())
-#         return prims.sum(a, tuple(range(a.ndim)))
-
-#     vjp_func = executor.make_callable(value_and_grad(func))
-#     a = make_tensor((2, 3), device=device, dtype=torch.float32)
-#     single_out, (single_grad,) = vjp_func(a)
-
-#     aaa = torch.stack([a, a, a])
-#     vmap_inline_vjp = executor.make_callable(vmap(value_and_grad(func)))
-#     batched_out, (batched_grad,) = vmap_inline_vjp(aaa)
-#     for i in range(3):
-#         assert_close(single_out, batched_out[i])
-#         assert_close(single_grad, batched_grad[i])
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_vmap_x(executor, device, _):
-#     from thunder.core.transforms import vmap_eager
-
-#     def func(a, b):
-#         assert isinstance(a, proxies.TensorProxy)
-#         assert isinstance(b, proxies.TensorProxy)
-#         assert a.ndim == 1
-#         assert a.shape == b.shape
-#         c = tlang.sin(a)
-#         return tlang.mul(tlang.add(c, b), 1)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-#     args = (a, b)
-#     out = vmap_eager(func, args, executor=executor)
-#     expected_out_p = torch.sin(a) + b
-#     assert_close(out, expected_out_p)
-
-
-@instantiate(
-    dtypes=NOTHING,
-)
-def test_transforms_inline_jvp_inline_vmap(executor, device, _):
-    pytest.xfail("AttributeError: 'NoneType' object has no attribute 'mul'")
-    from thunder.core.transforms import vmap, jvp, inline
-
-    if executor == nvFuserExecutor:
-        # Couldn't find metadata for 1.0 of type <class 'float'>
-        pytest.xfail("Something is failing with the nvFuser executor")
-
-    def func(a, b):
-        assert isinstance(a, proxies.TensorProxy)
-        assert isinstance(b, proxies.TensorProxy)
-        assert a.ndim == 1
-        assert a.shape == b.shape
-        c = clang.sin(a)
-        return clang.mul(clang.add(c, b), 1)
-
-    a = torch.ones(2, 3, device=device, dtype=torch.float32)
-    b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-    args = (a, b)
-    out_p, out_t = executor.make_callable(jvp(vmap(func)))(args, args)
-    expected_out_p = torch.sin(a) + b
-    assert_close(out_p, expected_out_p)
-    expected_out_t = torch.cos(a) + b
-    assert_close(out_t, expected_out_t)
-
-
-@instantiate(
-    dtypes=NOTHING,
-)
-def test_transforms_inline_vmap_inline_jvp(executor, device, _):
-    from thunder.core.transforms import vmap, jvp
-
-    def func(a, b):
-        assert isinstance(a, proxies.TensorProxy)
-        assert isinstance(b, proxies.TensorProxy)
-        assert a.ndim == 1
-        assert a.shape == b.shape
-        c = clang.sin(a)
-        return clang.mul(clang.add(c, b), 1)
-
-    a = torch.ones(2, 3, device=device, dtype=torch.float32)
-    b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-    args = (a, b)
-    out_p, out_t = executor.make_callable_legacy(vmap(jvp(func), out_dims=(0, 0)))(args, args)
-    expected_out_p = torch.sin(a) + b
-    assert_close(out_p, expected_out_p)
-    expected_out_t = torch.cos(a) + b
-    assert_close(out_t, expected_out_t)
 
 
 def test_traceback():
@@ -1947,8 +1825,10 @@ def test_traceback():
     with pytest.raises(RuntimeError) as excinfo:
         compiled_f(a)
     assert "on a bool tensor" in str(excinfo.value)
-    assert "torch.neg" in str(excinfo.traceback[-1].statement)
-    assert "thunder.computation" in excinfo.traceback[-1].path
+    # this should actually be in excinfo.traceback[-1] but see
+    # https://github.com/Lightning-AI/lightning-thunder/issues/844
+    assert any(("torch.neg" in str(tb.statement)) for tb in excinfo.traceback)
+    assert any(("thunder.computation" in str(tb.path)) for tb in excinfo.traceback)
 
 
 @instantiate(
@@ -2146,7 +2026,7 @@ def test_inplace(executor, device, _):
 
 @instantiate(dtypes=NOTHING)
 def test_thunder_autocast_transform(executor, device, _):
-    from thunder.core.transforms import autocast
+    from thunder.transforms.autocast import autocast
 
     def f(a, b, c):
         return a @ (b + c)
@@ -2162,13 +2042,8 @@ def test_thunder_autocast_transform(executor, device, _):
         dtype = thunder.bfloat16 if device == "cpu" else thunder.float16
         torch_dtype = ltorch.to_torch_dtype(dtype)
         x, y, z = (torch.randn((2, 2), device=device, dtype=torch.float32) for _ in range(3))
-        compiled = thunder.compile(
-            autocast(func, dtype=dtype),
-            executors_list=executor.executors_list(),
-            # NOTE(crcrpar): preprocessing needs to be disabled as this transform would introduce
-            # nonlocals that are not supported.
-            disable_preprocessing=True,
-        )
+        initial_trace = thunder.trace()(autocast(func, dtype=dtype), x, y, z)
+        compiled = thunder.jit(initial_trace.python_callable(), executors=executor.executors_list())
         out = compiled(x, y, z)
         traces = thunder.last_traces(compiled)
         assert out.dtype == (torch_dtype if should_autocast else torch.float32), traces[-1]
@@ -2223,14 +2098,18 @@ def test_no_passthrough_symbol(executor, device, _):
     compiled = executor.make_callable(func)
     out = compiled(x)
     assert out is x
-    initial_trace_with_dce = thunder.last_traces(compiled)[1]
+    initial_trace_with_dce = thunder.last_traces(compiled)[2]
     assert "Constructed by Dead Code Elimination" in str(initial_trace_with_dce)
     assert len(initial_trace_with_dce.bound_symbols) == 2
     assert initial_trace_with_dce.bound_symbols[0].sym.id == prims.PrimIDs.UNPACK_TRIVIAL
     assert initial_trace_with_dce.bound_symbols[1].sym.id == prims.PrimIDs.RETURN
 
 
-@instantiate(dtypes=NOTHING)
+@instantiate(
+    dtypes=NOTHING,
+    # https://github.com/Lightning-AI/lightning-thunder/issues/946
+    decorators=(pytest.mark.xfail(reason="Thunder JIT may rename variables differently, causing the test to fail."),),
+)
 def test_cse(executor, device, _):
     from thunder.core.pytree import tree_flatten
 
@@ -2249,10 +2128,11 @@ def test_cse(executor, device, _):
         return z, w, m, (a, b, c, d)
 
     x, y = (make_tensor((2, 2), device=device, dtype=torch.float32) for _ in range(2))
-    compiled_func = thunder.compile(
-        func,
-        disable_preprocessing=True,
-        executors_list=executor.executors_list(),
+    initial_trace = thunder.trace()(func, x, y, device)
+    print(initial_trace)
+    compiled_func = thunder.jit(
+        initial_trace.python_callable(),
+        executors=executor.executors_list(),
     )
     compiled_func(x, y, device)
     traces = thunder.last_traces(compiled_func)
@@ -2268,7 +2148,7 @@ def test_cse(executor, device, _):
     assert len(flatten_cse_trace.bound_symbols) == len(flatten_dce_trace.bound_symbols) - 3
     assert len([bsym for bsym in flatten_cse_trace.bound_symbols if bsym.sym.id == prims.PrimIDs.UNIFORM]) == 4
 
-    assert [t.name for t in tree_flatten(flatten_cse_trace.output)[0]] == ["t4", "t4", "t6", "t7", "t8", "t9", "t10"]
+    assert [t.name for t in tree_flatten(flatten_cse_trace.output)[0]] == ["t4", "t4", "t6", "t14", "t15", "t16", "t17"]
 
 
 def test_symbol_flat_args():
@@ -2380,146 +2260,6 @@ def test_default_method(executor, device: str, dtype: dtypes.dtype):
     # torch.numel(a) and a.numel() will run on PyTorch contenxt
     # b.numel will fall back to the default implementation
     assert torch.numel(a) == a.numel() == b.numel
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_vmap_jvp(executor, device, _):
-#     from thunder.core.transforms import vmap, jvp
-
-#     def func(a, b):
-#         assert isinstance(a, proxies.TensorProxy)
-#         assert isinstance(b, proxies.TensorProxy)
-#         assert a.ndim == 1
-#         assert a.shape == b.shape
-#         c = tlang.sin(a)
-#         return tlang.mul(tlang.add(c, b), 1)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-#     args = (a, b)
-#     out_p, out_t = thunder.make_traced(vmap(jvp(func), out_dims=(0, 0)), executor=executor)(args, args)
-#     expected_out_p = torch.sin(a) + b
-#     assert_close(out_p, expected_out_p)
-#     expected_out_t = torch.cos(a) + b
-#     assert_close(out_t, expected_out_t)
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_jvp_vmap(executor, device, _):
-#     from thunder.core.transforms import vmap, jvp
-
-#     def func(a, b):
-#         assert isinstance(a, proxies.TensorProxy)
-#         assert isinstance(b, proxies.TensorProxy)
-#         assert a.ndim == 1
-#         assert a.shape == b.shape
-#         c = tlang.sin(a)
-#         return tlang.mul(tlang.add(c, b), 1)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-#     args = (a, b)
-#     out_p, out_t = thunder.make_traced(jvp(vmap(func, out_dims=(0, 0))), executor=executor)(args, args)
-#     expected_out_p = torch.sin(a) + b
-#     assert_close(out_p, expected_out_p)
-#     expected_out_t = torch.cos(a) + b
-#     assert_close(out_t, expected_out_t)
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_jvp(executor, device, _):
-#     from thunder.core.transforms import jvp, inline, identity
-
-#     def func(a, b):
-#         c = tlang.sin(a)
-#         return tlang.mul(tlang.add(c, b), 1)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-#     primals = (a, b)
-#     tangents = (a, b)
-#     out_p, out_t = thunder.make_traced(identity(jvp(identity(func))), executor=executor)(primals, tangents)
-#     expected_out_p = torch.sin(a) + b
-#     expected_out_t = torch.cos(a) + b
-#     assert_close(out_p, expected_out_p)
-#     assert_close(out_t, expected_out_t)
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_jvp_no_inline(executor, device, _):
-#     from thunder.core.transforms import jvp, inline, identity
-
-#     def func(a, b):
-#         c = tlang.sin(a)
-#         return tlang.mul(tlang.add(c, b), 1)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-#     b = torch.ones(2, 3, device=device, dtype=torch.float32) * 2
-
-#     primals = (a, b)
-#     tangents = (a, b)
-#     out_p, out_t = thunder.make_traced(jvp(func), executor=executor)(primals, tangents)
-#     expected_out_p = torch.sin(a) + b
-#     expected_out_t = torch.cos(a) + b
-#     assert_close(out_p, expected_out_p)
-#     assert_close(out_t, expected_out_t)
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_vmap_sum(executor, device, _):
-#     from thunder.core.transforms import vmap
-
-#     def func(a):
-#         assert isinstance(a, proxies.TensorProxy)
-#         assert a.ndim == 1
-#         return ttorch.sum(a)
-
-#     a = torch.ones(2, 3, device=device, dtype=torch.float32)
-
-#     out = thunder.make_traced(vmap(func, out_dims=0), executor="torch")(a)
-#     expected_out = torch.sum(a, dim=1)
-#     assert_close(out, expected_out)
-
-
-# @instantiate(
-#     dtypes=NOTHING,
-# )
-# def test_transforms_jvp_python_number(executor, device, _):
-#     from thunder.core.transforms import jvp, inline
-
-#     scalars = (
-#         2,
-#         2.0,
-#         True,
-#     )
-#     for scalar in scalars:
-
-#         def func(a):
-#             return tlang.mul(a, scalar)
-
-#         a = make_tensor((2, 3), device=device, dtype=torch.float32)
-
-#         primals = (a,)
-#         tangents = (a,)
-#         out_p, out_t = thunder.make_traced(jvp(func), executor=executor)(primals, tangents)
-
-#         expected_out_p = a * scalar
-#         expected_out_t = a * scalar
-#         assert_close(out_p, expected_out_p)
-#         assert_close(out_t, expected_out_t)
 
 
 # @instantiate(
@@ -2695,6 +2435,12 @@ def test_torch_device():
 
     _test(foo2, device_strs_and_idxs)
 
+    def foo2_1(dev_and_idx):
+        dev_type, idx = dev_and_idx
+        return torch.ones(3, 3, device=torch.device(type=dev_type, index=idx))
+
+    _test(foo2_1, device_strs_and_idxs)
+
     # Test with `torch.device` as input
     torch_devices = (torch.device("cpu"), torch.device("cuda"), torch.device("meta"))
 
@@ -2756,6 +2502,33 @@ def test_grad_ctx():
     assert x.grad is not None
 
 
+def test_serialize_trace():
+    import dill as pickle
+
+    def fn(a, b, l):
+        res = a + b
+        for t in l:
+            res = res + t
+        return res
+
+    tm = thunder.jit(fn)
+    a, b = torch.randn(2, 5, device=("cuda" if torch.cuda.is_available() else "cpu"))
+    tm(a, b, [a, b])
+    trace = thunder.last_traces(tm)[0]
+
+    assert str(pickle.loads(pickle.dumps(trace))) == str(trace)
+
+    prologue_trace = thunder.last_prologue_traces(tm)[0]
+
+    assert str(pickle.loads(pickle.dumps(prologue_trace))) == str(prologue_trace)
+
+    # check that these are looked up rather than duplicated
+    device = thunder.devices.Device("cpu")
+    assert pickle.loads(pickle.dumps(device)) is device
+    fp32 = thunder.dtypes.float32
+    assert pickle.loads(pickle.dumps(fp32)) is fp32
+
+
 @pytest.mark.parametrize("requires_grad", (True, False))
 def test_dataclass_output(requires_grad):
     # Test both `requires_grad={True, False}` as both have
@@ -2766,11 +2539,12 @@ def test_dataclass_output(requires_grad):
         s: torch.Tensor
         i: int
         f: float
+        g: tuple
 
     def foo(x):
         # TestDataClass as the output and part of the nested output.
-        return TestDataclass(x, x + 2, x.numel(), x.numel() / 2.0), (
-            TestDataclass(x, x + 2, x.numel(), x.numel() / 2.0),
+        return TestDataclass(x, x + 2, x.numel(), x.numel() / 2.0, (x,)), (
+            TestDataclass(x, x + 2, x.numel(), x.numel() / 2.0, (x)),
             {"x": x, "y": x + 3},
         )
 
@@ -2790,6 +2564,7 @@ def test_dataclass_output(requires_grad):
         torch.testing.assert_close(actual_container.s, expected_container.s)
         torch.testing.assert_close(actual_container.i, expected_container.i)
         torch.testing.assert_close(actual_container.f, expected_container.f)
+        torch.testing.assert_close(actual_container.g[0], expected_container.g[0])
 
     _test_container(actual_container, expected_container)
     _test_container(actual_tuple[0], expected_tuple[0])
@@ -2823,64 +2598,6 @@ def test_dataclass_input(requires_grad):
     torch.testing.assert_close(actual, expected)
 
 
-@pytest.mark.filterwarnings("ignore:Please use `torch.vmap`")
-def test_custom_autograd_function():
-    from torch.autograd.gradcheck import GradcheckError
-    from torch.testing._internal.common_utils import gradcheck
-
-    class MyFunction(torch.autograd.Function):
-
-        @staticmethod
-        def forward(ctx, x: torch.Tensor) -> torch.Tensor:
-            return x * 2.0
-
-        # this is wrong on purpose.
-        @staticmethod
-        def backward(ctx, grad_output) -> torch.Tensor:
-            return grad_output
-
-    class Model(torch.nn.Module):
-        def __init__(self):
-            super().__init__()
-
-        def forward(self, x) -> torch.Tensor:
-            return MyFunction.apply(x)
-
-    x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
-    model = Model().to(dtype=torch.float64)
-    jitted = thunder.jit(model)
-
-    gradcheck(jitted, (x,))
-    with pytest.raises(GradcheckError):
-        gradcheck(model, (x,))
-
-    class MyLinear(torch.autograd.Function):
-        @staticmethod
-        def forward(ctx, x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
-            ctx.save_for_backward(x)
-            ctx.pretty_attr = 100
-            return torch.matmul(x, weight.t())
-
-        @staticmethod
-        def backward(ctx, grad_output):
-            (x,) = ctx.saved_tensors
-            return torch.matmul(grad_output, weight), torch.matmul(grad_output.t(), x)
-
-    class Model(torch.nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.l1 = torch.nn.Linear(2, 2, bias=False)
-
-        def forward(self, x):
-            return MyLinear.apply(x, self.l1.weight)
-
-    x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
-    model = Model().to(dtype=torch.float64)
-    jitted = thunder.jit(model)
-
-    gradcheck(jitted, (x,))
-
-
 def test_proxy_repr():
     # Verify that we can call `__repr__` on different proxy subclasses.
     t = thunder.core.trace.TraceCtx()
@@ -2901,7 +2618,8 @@ def test_proxy_repr():
 
 def test_type_string():
     def fn(x):
-        return 2 * x
+        result = 2 * x
+        return result
 
     jfn = thunder.jit(fn)
 
@@ -2934,3 +2652,267 @@ def test_dtype_in_trace():
     (pystr,) = tr.bound_symbols[1].subsymbols[0].python(0)
 
     assert "convert_element_type(x, dtypes.float16)" in pystr
+
+
+def test_factory_functions_default_dtype():
+
+    def fn(x):
+        o = torch.ones(x.shape)
+        return o.dtype
+
+    x = torch.randn(3, 3)
+    jfn = thunder.jit(fn)
+    actual_dtype = jfn(x)
+
+    assert fn(x) == jfn(x)
+    assert actual_dtype == torch.float32
+
+    # Check with a different default dtype.
+    with set_default_dtype_ctx(torch.float16):
+        actual_dtype = jfn(x)
+        assert actual_dtype == torch.float16
+
+    assert thunder.cache_misses(jfn) == 2
+
+
+def test_change_default_dtype_in_jitted_fn():
+    default_dtype = torch.get_default_dtype()
+    try:
+
+        def fn(x):
+            torch.set_default_dtype(torch.float16)
+            o = torch.ones(x.shape)
+            return o.dtype
+
+        jfn = thunder.jit(fn)
+        with pytest.raises(RuntimeError, match="Default dtype is changed during the execution of jitted function"):
+            jfn(torch.randn(3, 3))
+    finally:
+        torch.set_default_dtype(default_dtype)
+
+
+@requiresCUDA
+def test_factory_functions_default_device():
+
+    def fn(x):
+        o = torch.ones(x.shape)
+        return o.device
+
+    x = torch.randn(3, 3)
+    jfn = thunder.jit(fn)
+    actual_device = jfn(x)
+
+    assert fn(x) == jfn(x)
+    assert actual_device == torch.device("cpu")
+
+    # Check with a different default device.
+    org_device = torch.get_default_device()
+    torch.set_default_device("cuda")
+    try:
+        actual_device = jfn(x)
+        assert actual_device == fn(x)
+    finally:
+        torch.set_default_device(org_device)
+        # hard clean for https://github.com/Lightning-AI/lightning-thunder/issues/844
+        try:
+            torch._GLOBAL_DEVICE_CONTEXT.device_context.__exit__(None, None, None)
+            del torch._GLOBAL_DEVICE_CONTEXT.device_context
+        except Exception:
+            pass
+
+    assert thunder.cache_misses(jfn) == 2
+
+
+@requiresCUDA
+def test_change_default_device_in_jitted_fn():
+    default_device = torch.get_default_device()
+    try:
+
+        def fn(x):
+            torch.set_default_device("cuda")
+            o = torch.ones(x.shape)
+            return o.device
+
+        jfn = thunder.jit(fn)
+        with pytest.raises(RuntimeError, match="Default device is changed during the execution of jitted function"):
+            jfn(torch.randn(3, 3))
+    finally:
+        torch.set_default_device(default_device)
+        # hard clean for https://github.com/Lightning-AI/lightning-thunder/issues/844
+        try:
+            torch._GLOBAL_DEVICE_CONTEXT.device_context.__exit__(None, None, None)
+            del torch._GLOBAL_DEVICE_CONTEXT.device_context
+        except Exception:
+            pass
+
+
+@requiresCUDA
+@pytest.mark.xfail(
+    reason="When using device as context in PyTorch, it doesn't reflect in torch.get_default_device - see https://github.com/pytorch/pytorch/issues/131328",
+    strict=True,
+)
+def test_change_default_device_with_ctx():
+    def fn(x):
+        o = torch.ones(x.shape)
+        return o.device
+
+    x = torch.randn(3)
+
+    with torch.device("cuda"):
+        jfn = thunder.jit(fn)
+        actual_device = jfn(x)
+        assert actual_device == fn(x)
+
+
+def test_arange_default_dtype():
+    # If any of start, end, or stop are floating-point, the dtype is inferred to be the default dtype, see get_default_dtype().
+    # Otherwise, the dtype is inferred to be torch.int64.
+    def fn():
+        return torch.arange(start=1, end=2, step=0.5).dtype
+
+    jfn = thunder.jit(fn)
+    assert fn() == jfn()
+    assert jfn() == torch.float32
+
+    def fn():
+        return torch.arange(start=1, end=3, step=1).dtype
+
+    jfn = thunder.jit(fn)
+    assert fn() == jfn()
+    assert jfn() == torch.int64
+
+
+def test_cat_mixed_dtypes():
+    # We add a special test here instead of a sample in OpInfo.
+    # When we add a mixed input sample in OpInfo, it will also be picked up for the test which
+    # computes numerical Jacobian vector product and compares it with analytical. The test will produce failures
+    # when run in precision lower than double (and we can't disable a sample based on tests).
+    # See comment - https://github.com/Lightning-AI/lightning-thunder/pull/819#issuecomment-2244761476
+    def fn(tensors):
+        return torch.cat(tensors, dim=0)
+
+    tensors = (torch.randn(3, requires_grad=True), torch.randn(3, dtype=torch.float16, requires_grad=True))
+    with torch.no_grad():
+        tensors_jit = tuple(t.detach().clone() for t in tensors)
+        for t in tensors_jit:
+            t.requires_grad_(True)
+
+    # Compare forward
+    jfn = thunder.jit(fn)
+    expected = fn(tensors)
+    actual = jfn(tensors_jit)
+    torch.testing.assert_close(actual, expected)
+
+    # Compare backward
+    cotangent = torch.randn_like(expected)
+    expected.backward(cotangent)
+    actual.backward(cotangent)
+
+    torch.testing.assert_close(tuple(t.grad for t in tensors), tuple(t.grad for t in tensors_jit))
+
+
+@pytest.mark.parametrize("requires_grad", [True, False])
+def test_reshape_noop_prims(requires_grad):
+    # NOTE - We test for requires_grad with True and False,
+    #        as the trace before execution may have `ltorch.reshape` (for requires_grad=False) or
+    #        `prims.reshape` (for requires_grad=True) as the `grad` rule is only defined for `prims.reshape`.
+    def fn(x: torch.Tensor, y: torch.Tensor):
+        x_view = x.reshape(-1, 5)
+        y_view = y.reshape(-1)
+        return x_view + 3, y_view + 2
+
+    t = torch.randn(8, 5, requires_grad=requires_grad)
+    labels = torch.tensor([2, 4, 2, 3, 1, 0, 4, 4])
+
+    jfn = thunder.jit(fn)
+    actual = jfn(t, labels)
+    expected = fn(t, labels)
+
+    torch.testing.assert_close(actual, expected)
+
+
+@requiresCUDA
+def test_bound_symbol_sort_stability():
+    class LlamaMLPLike(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fc_1 = torch.nn.Linear(32, 32)
+            self.fc_2 = torch.nn.Linear(32, 32)
+            self.proj = torch.nn.Linear(32, 32)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            x_fc_1 = self.fc_1(x)
+            x_fc_2 = self.fc_2(x)
+            x = torch.nn.functional.silu(x_fc_1) * x_fc_2
+            return self.proj(x)
+
+    with torch.device("cuda"):
+        mlp = torch.nn.Sequential(*[LlamaMLPLike() for _ in range(16)]).requires_grad_(False)
+    j = thunder.jit(mlp)
+    j(torch.randn(32, 32, device="cuda"))
+    lt = thunder.last_traces(j)[-1]
+    assert all(
+        (i % 2 + 1 == i_2)
+        for i, i_2 in enumerate(
+            [
+                int(s.args[1].name.split("_")[-2])
+                for s in lt.bound_symbols
+                if s.sym.name == "linear" and "fc" in s.args[1].name
+            ]
+        )
+    )
+
+    fusions = examine.get_fusion_symbols(lt)
+
+    no_number = partial(re.sub, r"nvFusion\d+", "nvFusion")
+    fusions = [no_number(str(thunder.core.transform_common.canonicalize_proxies([f])[0])) for f in fusions]
+
+    f0 = fusions[0]
+    for f in fusions[1:]:
+        assert f0 == f
+
+
+def test_state_dict():
+    def make_model():
+        return torch.nn.Sequential(
+            torch.nn.Linear(3, 4),
+            torch.nn.GELU(),
+            torch.nn.Linear(4, 3),
+        )
+
+    m1 = make_model()
+    m2 = make_model()
+
+    jm1 = thunder.jit(m1)
+    jm2 = thunder.jit(m2)
+
+    inp = torch.randn(2, 3)
+
+    jm2.load_state_dict(jm1.state_dict())
+
+    torch.testing.assert_close(jm1(inp), jm2(inp))
+
+
+def test_thunder_optimized_module_is_freed():
+    mod = torch.nn.ReLU()
+    opt_mod = thunder.jit(mod)
+    ref_opt_mod = weakref.ref(opt_mod)
+    x = torch.randn(10, 10)
+    opt_mod(x)
+    del x
+    del mod
+    del opt_mod
+    assert ref_opt_mod() is None
+
+
+@pytest.mark.xfail(strict=True)
+def test_user_module_is_freed():
+    mod = torch.nn.ReLU()
+    opt_mod = thunder.jit(mod)
+    ref_mod = weakref.ref(mod)
+    x = torch.randn(10, 10)
+    opt_mod(x)
+    del x
+    del mod
+    del opt_mod
+    assert ref_mod() is None

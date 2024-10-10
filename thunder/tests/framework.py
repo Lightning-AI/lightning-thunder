@@ -7,13 +7,13 @@ from itertools import product
 from typing import List, Optional
 from collections.abc import Callable, Sequence, Iterable
 import packaging.version
+import contextlib
 
 import pytest
 import torch
 from torch._dynamo import is_inductor_supported
 from torch.testing import assert_close
 
-from looseversion import LooseVersion
 from lightning_utilities.core.imports import package_available
 
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
@@ -25,6 +25,7 @@ import thunder.executors.triton_utils as triton_utils
 import thunder.core.utils as utils
 
 from thunder.core.trace import TraceCtx, detached_trace
+from thunder.dynamo import ThunderCompiler
 
 import thunder
 
@@ -115,7 +116,7 @@ def assert_closer(*, reference, candidate, competitor, comparator):
             competitor_dist = torch.abs(ref - com)
             minimum_dist = torch.minimum(candidate_dist, competitor_dist)
 
-            signed_minimum_dist = torch.where(candidate_dist < 0, -minimum_dist, minimum_dist)
+            signed_minimum_dist = torch.where(ref > cand, -minimum_dist, minimum_dist)
             target = ref + signed_minimum_dist
 
             comparator(cand, target, check_dtype=False)
@@ -134,6 +135,9 @@ def available_devicetypes():
 
 
 class TestExecutor:
+    def is_available(self) -> bool:
+        return True
+
     def supports_dtype(self, dtype: datatypes.dtype) -> bool:
         return dtype in datatypes.resolve_dtypes(self.supported_dtypes)
 
@@ -143,18 +147,6 @@ class TestExecutor:
     # NOTE This method should be overridden by subclasses
     def executors_list(self) -> list[extend.Executor]:
         return []
-
-    @singledispatchmethod
-    def make_callable_legacy(self, fn, **kwargs):
-        assert kwargs.pop("disable_preprocessing", True)
-        assert kwargs.pop("disable_torch_autograd_support", True)
-        return thunder.compile(
-            fn,
-            executors_list=self.executors_list(),
-            disable_preprocessing=True,
-            disable_torch_autograd_support=True,
-            **kwargs,
-        )
 
     @singledispatchmethod
     def make_callable(self, fn, **kwargs):
@@ -168,13 +160,6 @@ class TestExecutor:
         with detached_trace():
             traces = thunder.common.transform_for_execution(trace, executors_list=self.executors_list(), **kwargs)
         return traces[-1].python_callable()
-
-    # TODO Remove this
-    def make_callable_with_info(self, fn, **kwargs):
-        disable_preprocessing = kwargs.pop("disable_preprocessing", True)
-        return thunder.compile(
-            fn, executors_list=self.executors_list(), disable_preprocessing=disable_preprocessing, **kwargs
-        )
 
 
 # TODO Convert to singletons or just add to executor logic
@@ -194,7 +179,7 @@ class nvFuserTestExecutor(TestExecutor):
         return [executors.get_nvfuser_executor()]
 
     def version(self):
-        return executors.get_nvfuser_executor().version()
+        return executors.get_nvfuser_executor().version
 
 
 # TODO Convert to singletons or just add to executor logic
@@ -215,6 +200,9 @@ class TorchCompileCatTestExecutor(TestExecutor):
     supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
     supported_dtypes = (datatypes.dtype,)
 
+    def is_available(self) -> bool:
+        return not IS_WINDOWS
+
     def executors_list(self) -> list[extend.Executor]:
         from thunder.executors.torch_compile import torch_compile_cat_ex
 
@@ -229,6 +217,9 @@ class TorchCompileTestExecutor(TestExecutor):
     supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
     supported_dtypes = (datatypes.dtype,)
 
+    def is_available(self) -> bool:
+        return not IS_WINDOWS
+
     def executors_list(self) -> list[extend.Executor]:
         from thunder.executors.torch_compile import torch_compile_ex
 
@@ -238,10 +229,27 @@ class TorchCompileTestExecutor(TestExecutor):
         return torch.__version__
 
 
+# This is a test executor that uses the ThunderCompiler with torch.compile to
+# compile the function. However, this executor is not used for all tests by
+# default (it's not part of the _all_test_executors list) because it might
+# increase the test runtime significantly. Instead, it's used for specific tests
+# that add it to the supported_executors list when needed. Thunder's end-to-end
+# tests (test_networks.py) use this executor to test the integration between
+# torch.compile and Thunder.
+class DynamoThunderTestExecutor(TestExecutor):
+    name = "DynamoThunder"
+    supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
+    supported_dtypes = (datatypes.dtype,)
+
+    def make_callable(self, fn, **kwargs):
+        return torch.compile(backend=ThunderCompiler(**kwargs))(fn)
+
+
 # TODO Refactor these executors into the actual executor (sub)modules
 TorchExecutor: TorchTestExecutor = TorchTestExecutor()
 TorchCompileCatExecutor: TorchCompileCatTestExecutor = TorchCompileCatTestExecutor()
 TorchCompileExecutor: TorchCompileTestExecutor = TorchCompileTestExecutor()
+DynamoThunderExecutor: DynamoThunderTestExecutor = DynamoThunderTestExecutor()
 nvFuserExecutor: None | nvFuserTestExecutor = None
 
 if NVFUSER_AVAILABLE:
@@ -471,7 +479,7 @@ class instantiate:
         for executor, devicetype in product(
             sorted(self.executors, key=lambda x: repr(x)), sorted(self.devicetypes, key=lambda x: repr(x))
         ):
-            if executor is None:
+            if executor is None or not executor.is_available():
                 continue
 
             if not executor.supports_devicetype(devicetype):
@@ -581,3 +589,13 @@ class custom_comparator:
 
     def __call__(self, test_template):
         return test_template
+
+
+@contextlib.contextmanager
+def set_default_dtype_ctx(dtype):
+    saved_dtype = torch.get_default_dtype()
+    torch.set_default_dtype(dtype)
+    try:
+        yield
+    finally:
+        torch.set_default_dtype(saved_dtype)

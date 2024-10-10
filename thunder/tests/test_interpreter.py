@@ -6,6 +6,7 @@ from itertools import product
 import io
 import sys
 import dis
+import weakref
 from collections.abc import Callable
 
 import pytest
@@ -776,6 +777,77 @@ def test_cross_function_exceptions(jit):
     assert cross_function_exceptions() == True
     jitting = True
     assert jit(cross_function_exceptions)() == True
+
+
+def test_stop_exception_no_leak(jit):
+
+    class Identity(torch.nn.Module):
+        def forward(self, x):
+            for p in self.parameters():
+                pass
+            return x
+
+    def foo():
+        model = thunder.jit(Identity())
+        x = torch.randn(16, 16)
+
+        model(x)
+
+        return weakref.ref(x)
+
+    weak_x = foo()
+
+    assert weak_x() is None
+
+
+def test_exception_no_leak(jit):
+
+    class Identity(torch.nn.Module):
+        @staticmethod
+        def raises():
+            raise RuntimeError("Exc")
+
+        def forward(self, x):
+            try:
+                self.raises()
+            except RuntimeError:
+                pass
+            return x
+
+    def foo():
+        model = thunder.jit(Identity())
+        x = torch.randn(16, 16)
+
+        model(x)
+
+        return weakref.ref(x)
+
+    weak_x = foo()
+
+    assert weak_x() is None
+
+
+def test_uncaught_exception_no_leak():
+
+    class Identity(torch.nn.Module):
+        def forward(self, x):
+            raise RuntimeError("FOOBAR")
+            return x
+
+    def main():
+        with torch.device("cpu"):
+            model = thunder.jit(Identity())
+            x = torch.randn(16, 16)
+
+        try:
+            model(x)
+        except:
+            pass
+        return weakref.ref(x)
+
+    weak_x = main()
+
+    assert weak_x() is None
 
 
 def test_walrus_operator(jit):
@@ -2119,7 +2191,13 @@ def test_list_to_tuple(jit):
     def ltt():
         return (*[1, 2, 3],)
 
-    assert any(i.opname == "LIST_TO_TUPLE" for i in dis.get_instructions(ltt))
+    if sys.version_info >= (3, 12):
+        assert any(
+            (i.opname == "CALL_INTRINSIC_1" and i.argrepr == "INTRINSIC_LIST_TO_TUPLE")
+            for i in dis.get_instructions(ltt)
+        )
+    else:
+        assert any(i.opname == "LIST_TO_TUPLE" for i in dis.get_instructions(ltt))
     assert jit(ltt)() == ltt()
 
 
@@ -2744,6 +2822,10 @@ def test_name_opcodes_and_print_expr(jit):
         jfn()
 
 
+@pytest.mark.skipif(
+    sys.version_info >= (3, 12),
+    reason="Python 3.12 code.InteractiveInterpreter().runsource does not use the displayhook as before",
+)
 def test_displayhook(jit):
     from contextlib import redirect_stdout
     import io
@@ -3260,7 +3342,7 @@ def test_litgpt(jit):
     assert_close(result, fn(*args, **kwargs))
 
 
-def test_transformer_model_output():
+def test_transformer_model_output(jit):
     pytest.importorskip("transformers")
     from transformers.utils.generic import ModelOutput
 
@@ -3274,3 +3356,93 @@ def test_transformer_model_output():
     actual = thunder.jit(fn)(x)
 
     assert expected is actual
+
+
+def test_metaclass(jit):
+    # thunder.core.devices.Device uses the singleton pattern
+    # implemented through metaclasses
+    def fn():
+        a = thunder.core.devices.Device("cpu")
+        b = thunder.core.devices.Device("cpu")
+        assert a is b
+
+    fn()
+    jit(fn)()
+
+
+def test_incorrect_args():
+    def fn(x):
+        return x
+
+    jfn = thunder.jit(fn)
+    with pytest.raises(TypeError, match="got unexpected keyword arguments: incorrect_arg"):
+        jfn(3, incorrect_arg=3)
+
+
+def test_class_setattr():
+    class A:
+        FOO = False
+
+        @classmethod
+        def set_something(cls):
+            cls.FOO = True
+
+    def foo():
+        A.set_something()
+
+    jfoo = thunder.jit(foo)
+    jfoo()
+    assert A.FOO
+
+
+def test_setitem_setattr():
+    class A:
+        def __init__(self, l):
+            super().__setattr__("l", l)  # avoid hitting our setattr
+
+        def __setattr__(self, name, val):
+            self.l.append((name, val))
+            return (name, val)  # unexpected
+
+        def __setitem__(self, idx, val):
+            self.l.append((idx, val))
+            return (idx, val)  # unexpected
+
+    def foo():
+        l = []
+        a = A(l)
+        a.attr = 3
+        a[1] = 2
+        return l
+
+    jfoo = thunder.jit(foo)
+    res = jfoo()
+    expected = foo()
+
+    assert res == expected
+
+
+def test_freeing_of_tensors():
+    # this guards against ref cycles preventing reeing of tensors
+    # see https://github.com/Lightning-AI/lightning-thunder/issues/886
+
+    l = []
+
+    def bar(x):
+        return x + 1
+
+    jbar = thunder.jit(bar)
+
+    def foo(i):
+        def on_finalize():
+            l.append(f"free {i}")
+
+        c = torch.randn(4, 4)
+        weakref.finalize(c, on_finalize)
+        return jbar(c)
+
+    for i in range(3):
+        l.append(f"run {i}")
+        foo(i)
+
+    assert l == ["run 0", "free 0", "run 1", "free 1", "run 2", "free 2"]

@@ -1,2 +1,4 @@
 # Move optimize_allreduce_in_ddp_backward to thunder.distributed.transforms namespace #2087
 7a3d5d4e64da010eea42210a065960e3568870ac
+# Split `test_ddp` into `test_ddp`, `test_fsdp` and `test_ops` (#772)
+b63e8713141044ed8c184f2f4c8305048d477319

@@ -83,9 +83,15 @@ class dtype:
     def shortname(self):
         return f"{self._shortname}{8 * self._bytes}{f'_{self._variant}' if self._variant else ''}"
 
+    @property
+    def full_name(self):
+        return (
+            f"{self._name}{8 * self._bytes}{f'_{self._variant}' if self._variant else ''}{'_' if self._is_weak else ''}"
+        )
+
     # TODO Fix name printing
     def __repr__(self):
-        return f"thunder.dtypes.{self._name}{8 * self._bytes}{f'_{self._variant}' if self._variant else ''}{'_' if self._is_weak else ''}"
+        return f"thunder.dtypes.{self.full_name}"
 
     def __str__(self):
         return self.__repr__()
@@ -103,6 +109,9 @@ class dtype:
             and self._is_weak == other._is_weak
             and self._variant == other._variant
         )
+
+    def __reduce__(self):
+        return self.full_name
 
 
 class exact(dtype):

@@ -1,5 +1,5 @@
 import math
-from functools import reduce
+from functools import partial, reduce
 from numbers import Number
 from typing import Union, List, Optional, Any
 from collections.abc import Callable
@@ -65,11 +65,13 @@ class clangop:
 #
 
 
-# Checks a tensor's shape and metadata (for use with "constant value" caching)
+# Checks a tensor's shape and metadata (for use with cache check)
 @clangop()
 def check_tensor_shape_and_metadata(t: TensorProxy, /) -> None:
     return prims.check_tensor_shape_and_metadata(
         t,
+        # replace Proxy entries with `-1`s as wild card, as we any value is
+        # allowed for proxy entries
         tuple(t.shape),
         t.device.device_str(),
         dtypes.to_torch_dtype(t.dtype),
@@ -277,7 +279,7 @@ def full(
         dtype = dtypes.numbertype_to_dtype(dtypes.to_dtype(fill_value))
     device = devices.to_device(device)
 
-    return prims.full(shape, fill_value, device=device, dtype=dtype)
+    return prims.full(tuple(shape), fill_value, device=device, dtype=dtype)
 
 
 @clangop()
@@ -514,7 +516,7 @@ def _get_indexing_signature(key: Any) -> IndexingSignature:
         return sig
 
     # TensorLike triggers advanced indexing.
-    if isinstance(key, TensorLike):
+    if isinstance(key, (TensorLike)):
         sig.advanced.append((None, None))
         return sig
 
@@ -598,7 +600,18 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
     if key is None or isinstance(key, (Number, NumberProxy, slice, EllipsisType)):
         key = (key,)
 
+    _key = []
+    # keeps track of keys that are not squeeze related
+    new_key = []
     for idx, x in enumerate(key):
+        if not isinstance(x, (NumberProxy, Number)):
+            new_key.append(x)
+        if isinstance(x, (list, TensorLike)):
+            # skip advanced indexing by converting this to [:]
+            x = slice(None, None, None)
+            _key.append(x)
+        else:
+            _key.append(x)
         if x is Ellipsis:
             utils.check(ellipsis_idx is None, lambda: f"Found two (or more) ellipses in key={key}")
             ellipsis_idx = idx
@@ -611,6 +624,7 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
                 unsqueeze_dims_post_ellipsis.append(idx)
         else:
             raise ValueError(f"Found unexpected value {x} in key={key}")
+    key = tuple(_key)
 
     utils.check(
         specified_slices <= len(a.shape),
@@ -693,12 +707,21 @@ def _basic_indexing(a: TensorLike, /, key) -> TensorLike:
             # NOTE: this is redundant with the ValueError exception above
             raise ValueError(f"Found unexpected value {x} in key={key}")
 
-    result = prims.slice_prim(a, start_indices, end_indices, strides)
+    # performance optimization; check if we need slicing
+    if (
+        all([x == 0 for x in start_indices])
+        and all([x == l for x, l in zip(end_indices, a.shape)])
+        and all([x == 1 for x in strides])
+        and len(squeeze_dims) == 0
+    ):
+        result = a
+    else:
+        result = prims.slice_prim(a, start_indices, end_indices, strides)
 
     if len(squeeze_dims) > 0:
         result = prims.squeeze(result, tuple(squeeze_dims))
 
-    return result
+    return result, tuple(new_key)
 
 
 # TODO Add more advanced indexing support
@@ -715,8 +738,49 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
         lambda: f"Advanced indexing currently only supports keys that are ellipses, integer tensors or sequences, but got {key=}",
     )
 
+    def _to_tensorproxies(x: list, device: devices.DeviceType):
+        # convert list to tensor
+        # e.g. [1, 2] -> tensor.Tensor([1, 2])
+        for idx, val in enumerate(x):
+            if isinstance(val, (NumberProxy)):
+                x[idx] = utils.get_numberlike_value(val)
+        if all(isinstance(i, int) for i in x):
+            x = tensor_from_sequence(x, dtype=dtypes.int64, device=device)
+        return x
+
+    basic_keys = []  # (key index, key)
+    advanced_keys = []  # (key index, key)
+
+    # convert list to 1D tensor
+    # this handles both cases when key is list or a tuple that contains lists
+    if isinstance(key, Sequence):
+        if isinstance(key, list):
+            key = _to_tensorproxies(key, a.device)
+            if isinstance(key, list):
+                # handle list of tensors
+                for ii, i in enumerate(key):
+                    advanced_keys.append((ii, i))
+        else:
+            key_ = []
+            for key_idx, x in enumerate(key):
+                if isinstance(x, list):
+                    # is it possible to have list of tensors here?
+                    x = _to_tensorproxies(x, a.device)
+                    key_.append(x)
+                    advanced_keys.append((key_idx, x))
+                elif isinstance(x, (EllipsisType, TensorLike)):
+                    key_.append(x)
+                    if isinstance(x, TensorLike):
+                        advanced_keys.append((key_idx, x))
+                else:
+                    # basic indices
+                    key_.append(None)
+                    basic_keys.append((key_idx, None))
+            key = tuple(key_)
+
     if isinstance(key, (TensorLike)):
         key = utils.sequencify(key)
+        advanced_keys.append((0, key[0]))
 
     # Validates (currently supported) inputs
     utils.check(len(key) > 0, lambda: f"Advanced indexing expected a non-empty sequence for a key, but got {key=}")
@@ -726,7 +790,7 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
         if x is Ellipsis:
             num_ellipses += 1
         utils.check(
-            isinstance(x, (EllipsisType, TensorLike)),
+            isinstance(x, (EllipsisType, TensorLike, type(None))),
             lambda: f"Advanced indexing currently only supports tensors as sequence elements (possibly with a starting ellipsis), but found an object of type {type(x)}",
         )
         if isinstance(x, TensorLike):
@@ -776,17 +840,46 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
     #   but actually generating those tensors seems expensive.
     flattened: TensorLike
     subtensor_shape: list[int]
+    # keeps track of the rest of the dimensions
+    remaining_shape: list[int]
     dim: int
     modified_key = list(key)
+    # calculates the output tensor shape
+    new_shape = []
 
+    permute_shape = []  # basic keys first followed by advanced keys
+    permute_key = []
+    for key_idx, key_val in basic_keys:
+        permute_shape.append(key_idx)
+        permute_key.append(key_val)
+    for key_idx, key_val in advanced_keys:
+        permute_shape.append(key_idx)
+        permute_key.append(key_val)
+
+    # transpose so that we have basic keys first
     if has_ellipsis:
         del modified_key[0]
+        permute_shape = [x + len(list(a.shape[: a.ndim - (seq_len - 1)])) - 1 for x in permute_shape]
+        permute_shape = list(range(a.ndim - (seq_len - 1))) + permute_shape
+        # check if we need to permute
+        if permute_shape != list(range(a.ndim)):
+            a = transpose(a, tuple(permute_shape))
+            key = tuple(permute_key)
+
         subtensor_shape = a.shape[a.ndim - (seq_len - 1) :]
+        remaining_shape = list(a.shape[: a.ndim - (seq_len - 1)])
         dim = -1
         flattened = flatten(a, a.ndim - (seq_len - 1), -1)
     else:
         # NOTE No ellipsis case
+        permute_shape = permute_shape + list(range(len(key), len(a.shape)))
+        # check if we need to permute
+        if permute_shape != list(range(a.ndim)):
+            a = transpose(a, tuple(permute_shape))
+            key = tuple(permute_key)
+
         subtensor_shape = a.shape[: len(key)]
+        remaining_shape = list(a.shape[len(key) :])
         dim = 0
         flattened = flatten(a, 0, seq_len - 1)
 
@@ -811,11 +904,34 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
     # A detail is that the first pairing is treated specially to initialize the loop variables.
     l = subtensor_shape[-1]
     flattened_idx = wrap_tensor(key[-1], l)
+    if len(flattened_idx.shape) > 0:
+        new_shape.append(flattened_idx.shape[0])
+
     accum: int = l
-    for k, l in zip(reversed(key[:-1]), reversed(subtensor_shape[:-1])):
-        wrapped = wrap_tensor(k, l)
-        flattened_idx = flattened_idx + wrapped * accum
-        accum *= l
+    for j, (k, l) in enumerate(zip(reversed(key[:-1]), reversed(subtensor_shape[:-1])), 2):
+        if k is not None:
+            wrapped = wrap_tensor(k, l)
+            flattened_idx = flattened_idx + wrapped * accum
+            if len(flattened_idx.shape) > 0:
+                # update flattened_idx
+                if new_shape:
+                    new_shape.pop()
+                new_shape.append(flattened_idx.shape[0])
+            accum *= l
+        else:
+            new_shape.append(l)
+            flattened_idx_ = empty([0], device=a.device, dtype=dtypes.int64)
+            for y in range(subtensor_shape[-j]):
+                flattened_idx_ = cat((flattened_idx_, flattened_idx + (accum * y)), dim=0)
+            accum *= l
+            flattened_idx = flattened_idx_
+
+    if has_ellipsis:
+        # fill from back
+        new_shape = remaining_shape + list(reversed(new_shape))
+    else:
+        # fill from front
+        new_shape = new_shape + remaining_shape
 
     res = take(flattened, flattened_idx, dim=dim)
 
@@ -823,7 +939,23 @@ def _advanced_indexing(a: TensorLike, /, key) -> TensorLike:
     # If all keys are 0-dim, this dim has to be squeezed.
     if all(k.ndim == 0 for k in modified_key if isinstance(k, TensorLike)):
         res = squeeze(res, (dim,))
+    res = reshape(res, tuple(new_shape))
+    # check if we need to permute
+    if permute_shape != list(range(a.ndim)):
+        # permute back to original shape
+        res = transpose(res, tuple(permute_shape[: len(new_shape)]))
+
     return res
+
+
+@clangop()
+def copy_with_setitem(a: TensorLike, key, value: TensorLike) -> TensorLike:
+    sig = _get_indexing_signature(key)
+    utils.check(
+        (a.ndim == 0 and (len(sig.basic) + len(sig.advanced)) <= 1) or (a.ndim >= len(sig.basic) + len(sig.advanced)),
+        lambda: f"{key=} tries to index more dimensions than {a.ndim=}",
+    )
+    return prims.copy_with_setitem(a, key, value)
 
 
 # NOTE Advanced indexing is triggered whenever:
@@ -843,6 +975,11 @@ def getitem(a: TensorLike, /, key) -> TensorLike:
         lambda: f"{key=} tries to index more dimensions than {a.ndim=}",
     )
 
+    # FIXME: This is a quick WAR to avoid accessing shape attribute of a without
+    # definition. This needs to be done properly somewhere else. See issue
+    # github.com/Lightning-AI/lightning-thunder/issues/1253
+    old_shape = prims.shape(a)
+
     # We do not support mixing basic and advanced indexing together yet,
     # but a very special case when there is a single advanced index which
     # is a sequence of length 1.
@@ -860,23 +997,18 @@ def getitem(a: TensorLike, /, key) -> TensorLike:
                     end = start + 1
                 # 1-len Sequence -> a slice
                 key = tuple(key[:key_idx]) + (slice(start, end),) + tuple(key[key_idx + 1 :])
-                return _basic_indexing(a, key)
-
-    utils.check(
-        not (len(sig.basic) > 0 and len(sig.advanced) > 0),
-        lambda: f"{key=} mixes basic and advanced indexing that is not currently supported",
-        NotImplementedError,
-    )
+                a, _ = _basic_indexing(a, key)
+                return a
 
     if isinstance(key, TensorLike) or (isinstance(key, Sequence) and not isinstance(key, tuple)):
         return _advanced_indexing(a, key)
 
-    if isinstance(key, tuple):
-        for x in key:
-            if isinstance(x, TensorLike) or isinstance(x, Sequence):
-                return _advanced_indexing(a, key)
+    # perform basic indexing first
+    a, key = _basic_indexing(a, key)
+    if sig.advanced:
+        a = _advanced_indexing(a, key)
 
-    return _basic_indexing(a, key)
+    return a
 
 
 # Based on NumPy's https://numpy.org/doc/stable/reference/generated/numpy.moveaxis.html
@@ -1064,6 +1196,12 @@ def index_add(a: TensorProxy, indices: TensorProxy, value: TensorProxy, dim: int
 
 
 @clangop()
+def index_copy(a: TensorProxy, indices: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
+    dim = utils.canonicalize_dim(a.ndim, dim)
+    return prims.index_copy(a, indices, value, dim)
+
+
+@clangop()
 def take(a: TensorProxy, indices: TensorProxy, dim: int) -> TensorProxy:
     dim = utils.canonicalize_dim(a.ndim, dim)
     return prims.take(a, indices, dim)
@@ -1083,6 +1221,12 @@ def gather(a: TensorProxy, /, indices: TensorProxy, dim: int) -> TensorProxy:
 
 
 @clangop()
+def scatter(a: TensorProxy, /, index: TensorProxy, src: TensorProxy | Number, dim: int) -> TensorProxy:
+    dim = utils.canonicalize_dim(a.ndim, dim)
+    return prims.scatter(a, index, src, dim)
+
+
+@clangop()
 def scatter_add(a: TensorProxy, /, indices: TensorProxy, value: TensorProxy, dim: int) -> TensorProxy:
     dim = utils.canonicalize_dim(a.ndim, dim)
     return prims.scatter_add(a, indices, value, dim)
@@ -1098,7 +1242,7 @@ def index_put(
     )
 
     # broadcast all index tensors together
-    broadcast_indices = maybe_broadcast(*indices)
+    broadcast_indices = maybe_broadcast(*indices, treat_cpu_scalar_tensors_as_numbers=False)
 
     # expand values
     # the expand rule is: Left-align the input shape and the index shape,
@@ -1159,7 +1303,20 @@ def unfold(a: TensorProxy, /, dim: int, size: int, step: int) -> TensorProxy:
 @clangop()
 def cat(tensors: list[TensorProxy], dim: int):
     """Concatenates the given sequence of tensors in the given dimension."""
-    return prims.cat(tensors, dim)
+    # Upcast tensors only if we have more than 1 tensor.
+    # NumPy and PyTorch support upcasting with mixed dtypes.
+    if len(tensors) > 1:
+        _, output_dtype = utils.elementwise_type_promotion(
+            *tensors, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.PRESERVE
+        )
+        promoted_tensors = []
+        for t in tensors:
+            if t.dtype != output_dtype:
+                t = prims.convert_element_type(t, output_dtype)
+            promoted_tensors.append(t)
+    else:
+        promoted_tensors = tensors
+    return prims.cat(promoted_tensors, dim)
 
 
 @clangop()
@@ -1172,7 +1329,7 @@ def stack(tensors: list[TensorProxy], dim: int):
             s == shapes[0], lambda: f"tensors must be of the same shape, tensor at {i} is {s} instead of {shapes[0]}"
         )
     tensors_ = [unsqueeze(t, dim) for t in tensors]
-    return prims.cat(tensors_, dim)
+    return cat(tensors_, dim)
 
 
 @clangop()
@@ -1247,14 +1404,17 @@ def matrix_transpose(a: TensorProxy) -> TensorProxy:
 
 # TODO: add scalar support
 # TODO: review hasattr pattern
+# NOTE: the tensor is not broadcasted if it is a CPU scalar tensor and treat_cpu_scalar_tensors_as_numbers=True
 @clangop()
-def maybe_broadcast(*args):
+def maybe_broadcast(*args, treat_cpu_scalar_tensors_as_numbers=True):
     """Returns tensors with the same shape, possibly broadcasting inputs to the result shape."""
 
     # Computes common shape
     common_shape = compute_broadcast_shape(*map(lambda t: t.shape if hasattr(t, "shape") else None, args))
 
     def _maybe_broadcast(x, shape):
+        if treat_cpu_scalar_tensors_as_numbers and utils.is_cpu_scalar_tensor(x):
+            return x
         if hasattr(x, "shape"):
             if not utils.same_shape(x.shape, common_shape):
                 return expand(x, common_shape)
@@ -1552,6 +1712,7 @@ def sigmoid(a):
 
 
 # TODO Review type promotionkind for sign
+@clangop()
 def sign(a):
     return _elementwise_unary_wrapper(
         a, prim=prims.sign, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.PRESERVE
@@ -1559,6 +1720,7 @@ def sign(a):
 
 
 # TODO Add supported dtypes to exclude complex
+@clangop()
 def signbit(a):
     if dtypes.is_unsigned_dtype(dtypes.to_dtype(a)):
         return full_like(a, False, dtype=dtypes.bool8)
@@ -1608,6 +1770,7 @@ def tanh(a):
     )
 
 
+@clangop()
 def trunc(a: TensorLike | Number) -> TensorLike | Number:
     # Short-circuits on unsigned inputs (which are already trivially truncated)
     if dtypes.is_exact_dtype(dtypes.to_dtype(a)):
@@ -1916,8 +2079,25 @@ def zeta(a, b):
 
 
 #
-# Conditional operators
+# Elementwise ternary operations
 #
+
+
+@clangop()
+def lerp(start: TensorLike, end: TensorLike, weight: Number | TensorLike) -> TensorLike:
+    inputs = (start, end, weight)
+    # torch.lerp does not promote types and only accepts floating-point inputs
+    computation_dtype, result_dtype = utils.elementwise_type_promotion(
+        *inputs, type_promotion_kind=utils.ELEMENTWISE_TYPE_PROMOTION_KIND.DEFAULT
+    )
+
+    inputs = maybe_broadcast(*inputs)
+    inputs = map(partial(maybe_convert_to_dtype, dtype=computation_dtype), inputs)
+
+    result = prims.lerp(*inputs)
+    result = maybe_convert_to_dtype(result, result_dtype)
+
+    return result
 
 
 @clangop()
@@ -1978,3 +2158,14 @@ def topk(
     dim = utils.canonicalize_dim(a.ndim, dim)
 
     return prims.topk(a, k, dim, bool(largest), bool(sorted), out=out)
+
+
+@clangop()
+def sort(
+    a: TensorLike, /, dim: None | int = None, descending: bool = False, stable: bool = False, *, out=None
+) -> (TensorProxy, TensorProxy):
+    if dim is None:
+        dim = a.ndim - 1 if a.ndim > 0 else 0
+    dim = utils.canonicalize_dim(a.ndim, dim)
+
+    return prims.sort(a, dim, descending, stable, out=out)

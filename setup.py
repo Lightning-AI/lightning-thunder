@@ -113,7 +113,7 @@ setup(
     include_package_data=True,
     zip_safe=False,
     keywords=["deep learning", "AI"],
-    python_requires=">=3.10, <3.12",
+    python_requires=">=3.10, <3.13",
     setup_requires=["wheel"],
     install_requires=_load_requirements(_PATH_REQUIRES, file_name="base.txt"),
     extras_require=_prepare_extras(),
