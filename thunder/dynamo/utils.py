@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import dataclasses
 import inspect
 import itertools
+import warnings
 
 import torch
 
@@ -388,13 +389,14 @@ def _get_example_inputs_from_placeholder(node) -> tuple[torch.Tensor]:
     example_value = node.meta["example_value"]
 
     if isinstance(example_value, torch.Tensor):
+        sz = _concrete_shape(example_value)
         return (
             make_tensor(
-                _concrete_shape(example_value),
+                sz,
                 dtype=example_value.dtype,
                 device=example_value.device,
                 requires_grad=example_value.requires_grad,
-            ),
+            ).as_strided(sz, example_value.stride()),
         )
     elif isinstance(example_value, tuple):
         return tuple(
@@ -403,7 +405,7 @@ def _get_example_inputs_from_placeholder(node) -> tuple[torch.Tensor]:
                 dtype=e_v.dtype,
                 device=e_v.device,
                 requires_grad=e_v.requires_grad,
-            )
+            ).as_strided(_concrete_shape(e_v), e_v.stride())
             for e_v in example_value
         )
     else:

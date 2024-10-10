@@ -490,9 +490,6 @@ def test_ThunderCompilerGraphBenchmarking_LlamaMLPBenchmark(benchmark):
     fn = torch._dynamo.optimize(backend=backend)(bench.fn())
     fn(*args, **kwargs)
 
-    # Avoid torch._dynamo hit config.cache_size_limit (8)
-    torch._dynamo.reset()
-
 
 @requiresCUDA
 def test_ThunderCompilerGraphBenchmarking_groupby(benchmark):
@@ -512,6 +509,3 @@ def test_ThunderCompilerGraphBenchmarking_groupby(benchmark):
     x = torch.ones(2, requires_grad=True).cuda()
     y = torch.ones(2, requires_grad=True).cuda()
     compiled(x, y)
-
-    # Avoid torch._dynamo hit config.cache_size_limit (8)
-    torch._dynamo.reset()

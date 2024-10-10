@@ -60,7 +60,7 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
                 compiled(x)
             ```
 
-            Note: Ensure the pytest configuration file (`thunder/benchmarks/conftest.py`) is present in the same directory as `script.py` to provide the grouping customization.
+            Note: Ensure the pytest configuration file (`thunder/tests/conftest.py`) is present in the same directory as `script.py` to provide the grouping customization.
             .
             ├── script.py
             ├── conftest.py
