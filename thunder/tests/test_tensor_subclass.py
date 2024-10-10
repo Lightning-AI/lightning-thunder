@@ -89,7 +89,7 @@ class ScaleTensorSubclass(torch.Tensor):
                 or issubclass(torch._subclasses.functional_tensor.FunctionalTensor, typ)
             )
 
-        def maybe_unwrap(t: ScaleTensorSubclass | Any):
+        def maybe_unwrap_and_scale(t: ScaleTensorSubclass | Any):
             if isinstance(t, ScaleTensorSubclass):
                 if t.is_floating_point():
                     return t._x * t._scale
@@ -101,8 +101,7 @@ class ScaleTensorSubclass(torch.Tensor):
             return NotImplementedError(f"Unsupported types are included: {types}")
 
         scales = tuple(t._scale for t in pytree.tree_flatten((args, kwargs))[0] if isinstance(t, ScaleTensorSubclass))
-
-        unwrapped_args, unwrapped_kwargs = pytree.tree_map(maybe_unwrap, (args, kwargs))
+        unwrapped_args, unwrapped_kwargs = pytree.tree_map(maybe_unwrap_and_scale, (args, kwargs))
         out = func(*unwrapped_args, **unwrapped_kwargs)
         if not isinstance(out, torch.Tensor):
             return out
