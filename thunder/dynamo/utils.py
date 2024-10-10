@@ -228,14 +228,18 @@ def get_nodes_in_unsupported_ctx_regions(gm: torch.fx.GraphModule) -> set[torch.
     # as unsupported as `thunder` doesn't correctly deal with these stateful functions.
 
     def is_no_grad_ctx_enter(node):
-        arg: bool = node.args[0]
-        assert isinstance(arg, bool)
-        return node.target == torch._C._set_grad_enabled and not arg  # arg is False (i.e. grad was disabled)
+        if node.target == torch._C._set_grad_enabled:
+            arg: bool = node.args[0]
+            assert isinstance(arg, bool)
+            return not arg  # arg is False (i.e. grad was disabled)
+        return False
 
     def is_no_grad_ctx_exit(node):
-        arg: bool = node.args[0]
-        assert isinstance(arg, bool)
-        return node.target == torch._C._set_grad_enabled and arg  # arg is True (i.e. grad was enabled)
+        if node.target == torch._C._set_grad_enabled:
+            arg: bool = node.args[0]
+            assert isinstance(arg, bool)
+            return arg  # arg is True (i.e. grad was enabled)
+        return False
 
     for node in gm.graph.nodes:
         if node.op == "call_function" and (
