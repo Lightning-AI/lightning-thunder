@@ -154,13 +154,6 @@ complex64 = dtypes.complex64
 complex128 = dtypes.complex128
 
 #
-# Module aliases
-#
-
-# NOTE this allows clang.foo() to be called directly as thunder.foo()
-from thunder.clang import *
-
-#
 # Promoted executor-related functions and objects
 #
 
