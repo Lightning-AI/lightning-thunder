@@ -1413,6 +1413,47 @@ def _enumerate_lookaside(obj: Iterable, start: int = 0):
     return _interpret_call(impl, obj, wrap_const(start))
 
 
+def _zip_lookaside(*obj: Iterable, strict=False):
+
+    if not obj:
+        return
+
+    def zip(*obj, strict=False):
+        # zip('ABCD', 'xy') --> Ax By
+        sentinel = object()
+        iterators = [iter(it) for it in obj]
+        while iterators:
+            result = []
+            break_loop = False
+            for it in iterators:
+                elem = next(it, sentinel)
+                if elem is sentinel:
+                    if not strict:
+                        return
+                    else:
+                        break_loop = True
+                        break
+                result.append(elem)
+
+            if break_loop:
+                break
+
+            yield tuple(result)
+        if result:
+            i = len(result)
+            plural = " " if i == 1 else "s 1-"
+            msg = f"zip() argument {i+1} is shorter than argument{plural}{i}"
+            raise ValueError(msg)
+        sentinel = object()
+        for i, iterator in enumerate(iterators[1:], 1):
+            if next(iterator, sentinel) is not sentinel:
+                plural = " " if i == 1 else "s 1-"
+                msg = f"zip() argument {i+1} is longer than argument{plural}{i}"
+                raise ValueError(msg)
+
+    return _interpret_call(zip, *obj, strict=wrap_const(strict))
+
+
 @interpreter_needs_wrap
 def eval_lookaside(
     source: str | bytes | bytearray | CodeType,  # A python expression
@@ -2743,6 +2784,7 @@ _default_lookaside_map: dict[Callable, Callable] = {
     any: _any_lookaside,
     bool: _bool_lookaside,
     enumerate: _enumerate_lookaside,
+    zip: _zip_lookaside,
     exec: exec_lookaside,
     eval: eval_lookaside,
     getattr: _getattr_lookaside,
