@@ -15,6 +15,7 @@ from thunder.core.transform_common import dce
 from thunder.core.pytree import tree_flatten
 from thunder.executors.passes import update_fusion_call_ctx
 from thunder.executors.utils import Region
+from thunder.executors.torch_autograd import connect_to_torch_autograd
 from thunder.extend import FusionExecutor, register_executor, ImplInfo
 from thunder.core.compile_data import get_compile_option
 
@@ -255,4 +256,7 @@ torch_compile_cat_ex._implmap = {
 
 torch_compile_ex = TorchCompileExecutor(name="torchcompile")
 register_executor(torch_compile_ex)
-torch_compile_ex._implmap = {op: ImplInfo() for op in pytorch_ex.implmap}
+unsupported_ops = {
+    connect_to_torch_autograd.id,
+}
+torch_compile_ex._implmap = {op: ImplInfo() for op in pytorch_ex.implmap if op not in unsupported_ops}
