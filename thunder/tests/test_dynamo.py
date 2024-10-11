@@ -3,7 +3,8 @@ import torch
 import torch.fx
 
 from thunder import dtypes
-from thunder.dynamo import ThunderCompiler, ThunderCompilerGraphBenchmarking
+from thunder.dynamo import ThunderCompiler
+from thunder.dynamo.compiler_graph_benchmark import ThunderCompilerGraphBenchmarking
 from thunder import last_traces
 from thunder.tests.bf16 import device_supports_bf16
 from thunder.tests.framework import (
@@ -469,7 +470,7 @@ def test_no_grad_ctx_manager(executor, device: str, dtype: dtypes.dtype):
 
 # Sample command to run the benchmark using ThunderCompilerGraphBenchmarking
 # pytest thunder/tests/test_dynamo.py -k test_ThunderCompilerGraphBenchmarking_groupby --benchmark-group-by='graph-by-graph:param:GraphID,param:SplitModuleName'
-# For more details, see :class:`thunder.dynamo.ThunderCompilerGraphBenchmarking`
+# For more details, see :class:`thunder.dynamo.compiler_graph_benchmark.ThunderCompilerGraphBenchmarking`
 # NOTE: The conftest.py file customizes the benchmark grouping behavior for ThunderCompilerGraphBenchmarking.
 # It must be located in the same folder as the test file to ensure the configuration.
 @requiresCUDA

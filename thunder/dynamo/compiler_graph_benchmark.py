@@ -44,8 +44,7 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
 
                 # script.py
                 import torch
-                import thunder
-                from thunder.dynamo import ThunderCompilerGraphBenchmarking
+                from thunder.dynamo.compiler_graph_benchmark import ThunderCompilerGraphBenchmarking
 
                 def func(x):
                     x = torch.sin(x)

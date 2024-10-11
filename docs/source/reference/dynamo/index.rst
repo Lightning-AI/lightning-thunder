@@ -4,7 +4,6 @@ thunder.dynamo
 ==============
 
 .. autosummary::
-    :toctree: generated/
+    :toctree:
 
     ThunderCompiler
-    ThunderCompilerGraphBenchmarking
