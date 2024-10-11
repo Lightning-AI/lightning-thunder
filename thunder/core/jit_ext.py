@@ -52,7 +52,6 @@ from types import (
 )
 
 import torch
-import torch.utils.checkpoint
 from thunder.core.proxies import (
     DistParallelType,
     proxy,

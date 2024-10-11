@@ -81,6 +81,8 @@ class SubgraphInfo:
 
     Attributes:
         original_graph_module: The original graph module.
+        original_split_graph_module: The original split graph module before the :func:`checkpoint_converter` replaces the Torch operators with Thunder symbols.
+            If no checkpoint operators are used in the Thunder-supported module, this will be identical to :attr:`split_graph_module`
         split_graph_module: The graph module for the split subgraph.
         thunder_compiled_fns: List of thunder optimized callables.
             This could be :obj:`None` if there the graph module was not supported by thunder.
@@ -452,7 +454,11 @@ def _get_example_inputs_from_placeholder(node) -> tuple[torch.Tensor]:
     
 
 def _checkpoint_function_converter(gm: torch.fx.GraphModule):
-    """Replace the torch operators in the function called by activation checkpoint with the corresponding Thunder symbols inplace"""
+    """
+    Replace the Torch operators in the GraphModule called by activation checkpoint operator with the corresponding Thunder symbols in place
+    Args:
+        gm: The GraphModule of the checkpointed function, which is modified in place
+    """
     new_graph = copy.deepcopy(gm.graph)
     for n in new_graph.nodes:
         # replace the torch operator in "call_function" node
@@ -482,8 +488,8 @@ def checkpoint_converter(gm: torch.fx.GraphModule, sub_gm: torch.fx.GraphModule)
     Utility function to convert the GraphModule that uses activation checkpointing into a Thunder-traceable GraphModule.
 
     Args:
-        gm: The parent GraphModule of the module with checkpoint node and the module of the checkpointed function
-        sub_gm: the GraphModule of the checkpointed function
+        gm: The parent GraphModule containing the submodule(sub_gm), as well as the GraphModule of the checkpointed function.
+        sub_gm: the GraphModule containing the checkpoint operator
 
     Note:
         The GraphModule of the checkpointed function is updated inplace
