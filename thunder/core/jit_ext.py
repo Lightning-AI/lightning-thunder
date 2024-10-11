@@ -725,7 +725,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     for bsym in custom_bwd_bsyms:
         trace_of_backward.add_bound_symbol(bsym)
     with tracectx(trace_of_backward):
-        prims.python_return.bind(*unwrap(custom_backward_result), output=())
+        prims.python_return.bind(*unwrap(custom_backward_result), output=None)
 
     @wraps(trace_of_backward.python_callable())
     def bwd_trace_callable_interface(*args, **kwargs):
@@ -734,7 +734,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     bwd_trace_impl = TraceCtx()
     for bsym in custom_bwd_bsyms:
         bwd_trace_impl.add_bound_symbol(bsym)
-    bwd_trace_impl.add_bound_symbol(prims.python_return.bind(*sequencify(unwrap(custom_backward_result)), output=()))
+    bwd_trace_impl.add_bound_symbol(prims.python_return.bind(*sequencify(unwrap(custom_backward_result)), output=None))
     bwd_trace_impl._siginfo = SigInfo.from_name_and_args(
         "backward_impl",
         ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads,
