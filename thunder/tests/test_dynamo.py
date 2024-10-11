@@ -1,11 +1,13 @@
 import pytest
 import torch
 import torch.fx
+import torch.nn as nn
 
 from thunder import dtypes
 from thunder.dynamo import ThunderCompiler
 from thunder.dynamo.compiler_graph_benchmark import ThunderCompilerGraphBenchmarking
 from thunder import last_traces
+from thunder.core.symbol import Symbol
 from thunder.tests.bf16 import device_supports_bf16
 from thunder.tests.framework import (
     instantiate,
@@ -538,9 +540,8 @@ def test_ThunderCompilerGraphBenchmarking_post_graph(benchmark):
 
 
 @requiresCUDA
-def test_torch_checkpoint_dynamo():
+def test_checkpoint_converter():
     import torch.utils.checkpoint as checkpoint
-    import torch.nn as nn
 
     class SimpleModel(nn.Module):
         def __init__(self):
@@ -578,3 +579,47 @@ def test_torch_checkpoint_dynamo():
     ref_out.backward(ref_g)
     torch.testing.assert_close(x.grad, x_ref.grad)
     torch.testing.assert_close(tuple(model.parameters()), tuple(ref_model.parameters()))
+
+
+@requiresCUDA
+def test_checkpoint_converter_submodule():
+    import torch.utils.checkpoint as checkpoint
+
+    class SubModule(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.lin = nn.Sequential(nn.ReLU(), nn.Linear(10, 10))
+
+        def forward(self, x):
+            return self.lin(x)
+
+    class SimpleModel(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.sub_mod = SubModule()
+
+        def forward(self, x):
+            x = torch.sin(x)
+            x = checkpoint.checkpoint(self.sub_mod, x)
+            return x
+
+    x = torch.randn(5, 10).cuda().requires_grad_()
+    model = SimpleModel().cuda().train()
+    backend = ThunderCompiler()
+    jf = torch.compile(backend=backend)(model)
+    out = jf(x)
+
+    subgraph_info = backend.subgraph_infos[0]
+    original_split_m = subgraph_info.original_split_graph_module
+    split_m = subgraph_info.split_graph_module
+    assert id(original_split_m) != id(split_m)
+    submodule_name = "wrap_body_0"
+    assert hasattr(original_split_m, submodule_name)
+    assert hasattr(split_m, submodule_name)
+
+    assert id(getattr(original_split_m, submodule_name)) != id(getattr(split_m, submodule_name))
+    submodule = getattr(split_m, submodule_name)
+
+    for n in submodule.graph.nodes:
+        if n.op == "call_function":
+            assert isinstance(n.target, Symbol)
