@@ -92,11 +92,12 @@ def _splitter(
     partition_cnt = 0
     supported_partitions: set[int] = set()
     split_reasons: list[SplitReason] = []
+    has_thunder_tracable_checkpoint = False
 
     nodes_in_unsupported_ctx_regions = get_nodes_in_unsupported_ctx_regions(gm)
 
     def callback(node) -> int:
-        nonlocal prev_value, partition_cnt, split_reasons, supported_partitions
+        nonlocal prev_value, partition_cnt, split_reasons, supported_partitions, has_thunder_tracable_checkpoint
 
         assert node.op not in (
             "placeholder",
@@ -116,6 +117,8 @@ def _splitter(
             split_reasons.append(split_reason)
         else:
             is_thunder_supported, split_reason = is_node_supported_by_thunder(node)
+            if node.target is torch.ops.higher_order.tag_activation_checkpoint and is_thunder_supported:
+                has_thunder_tracable_checkpoint = True
             if split_reason is not None:
                 split_reasons.append(split_reason)
 
@@ -141,6 +144,12 @@ def _splitter(
     # Call compile on the split region/s.
     thunder_compiled_fns = []
     submodule_to_compiled_fns = {}
+    origin_split_gm = split_gm
+    if has_thunder_tracable_checkpoint:
+        import copy
+
+        split_gm = copy.deepcopy(split_gm)
+
     for node in split_gm.graph.nodes:
         if is_thunder_supported_partition(node):
             graph_module = getattr(split_gm, node.name)
@@ -150,13 +159,23 @@ def _splitter(
             # Update the node name from "submod_*" to "thunder_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "thunder"), jit_fn)
             thunder_compiled_fns.append(jit_fn)
-            submodule_to_compiled_fns[graph_module] = CompiledFunction(jit_fn, CompilerType.THUNDER)
+            if has_thunder_tracable_checkpoint:
+                submodule_to_compiled_fns[getattr(origin_split_gm, node.name.replace("thunder", "submod"))] = (
+                    CompiledFunction(jit_fn, CompilerType.THUNDER)
+                )
+            else:
+                submodule_to_compiled_fns[graph_module] = CompiledFunction(jit_fn, CompilerType.THUNDER)
         elif node.name.startswith("submod"):  # For inductor
             graph_module = getattr(split_gm, node.name)
             jit_fn = torch_inductor(graph_module)
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), jit_fn)
-            submodule_to_compiled_fns[graph_module] = CompiledFunction(jit_fn, CompilerType.TORCH_INDUCTOR)
+            if has_thunder_tracable_checkpoint:
+                submodule_to_compiled_fns[getattr(origin_split_gm, node.name.replace("inductor", "submod"))] = (
+                    CompiledFunction(jit_fn, CompilerType.TORCH_INDUCTOR)
+                )
+            else:
+                submodule_to_compiled_fns[graph_module] = CompiledFunction(jit_fn, CompilerType.TORCH_INDUCTOR)
         else:
             # Everything else is a glue code to call and pass outputs between the other partitions.
             pass
@@ -166,6 +185,7 @@ def _splitter(
 
     return split_gm, SubgraphInfo(
         gm,
+        origin_split_gm,
         split_gm,
         thunder_compiled_fns,
         submodule_to_compiled_fns,
