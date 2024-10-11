@@ -477,7 +477,9 @@ def _checkpoint_function_converter(gm: torch.fx.GraphModule):
             new_graph.erase_node(n)
         else:
             if n.op == "call_module":
-                raise NotImplementedError("Calling the module inside a checkpoint is currently not supported.")
+                raise RuntimeError(
+                    "Unexpected call_module detected inside a checkpoint. This should have been inlined in dynamo graphs"
+                )
     new_graph.lint()
     gm.graph = new_graph
     recompile_graph(gm)
