@@ -92,6 +92,7 @@ class SubgraphInfo:
     """
 
     original_graph_module: torch.fx.GraphModule
+    original_split_graph_module: torch.fx.GraphModule | None
     split_graph_module: torch.fx.GraphModule | None
     thunder_compiled_fns: list[Callable] | None
     submodule_to_compiled_functions: dict[torch.fx.GraphModule, CompiledFunction]
