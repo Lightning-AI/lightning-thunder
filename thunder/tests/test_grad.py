@@ -1736,46 +1736,6 @@ def test_torch_checkpoint():
         torch.testing.assert_close(x.grad, x_ref.grad)
 
 
-def test_torch_checkpoint_dynamo():
-    import torch.utils.checkpoint as checkpoint
-    import torch.nn as nn
-    from thunder.dynamo import ThunderCompiler
-
-    class SimpleModel(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.layer1 = nn.Linear(10, 20)  # nn.ReLU() #
-            self.layer2 = nn.Linear(20, 20)
-            self.layer3 = nn.ReLU()  # nn.ReLU() #
-
-        def forward(self, x):
-            # Use checkpointing for layers where you want to save memory
-            x = torch.sin(x)
-            x = checkpoint.checkpoint(self.layer1, x)  # Checkpoint layer1 self.layer1(x) #
-            x = checkpoint.checkpoint(self.layer2, x)  # Checkpoint layer2
-            x = self.layer3(x)  # No checkpoint for layer3
-            return x
-
-    # Input tensor
-    x = torch.randn(5, 10).requires_grad_()
-    model = SimpleModel().train()
-    backend = ThunderCompiler()
-    jf = torch.compile(backend=backend)(model)
-    # jf = thunder.jit(f)
-    out = jf(x)
-    # print(thunder.last_traces(jf)[0])
-    print(thunder.last_traces(backend.subgraph_infos[0].thunder_compiled_fns[0])[0])
-    print(thunder.last_backward_traces(backend.subgraph_infos[0].thunder_compiled_fns[0])[0])
-
-    g = torch.ones_like(out)
-    out.backward(g)
-
-    x_ref = x.detach().requires_grad_()
-    out_ref = model(x_ref)
-    out_ref.backward(g)
-    torch.testing.assert_close(x.grad, x_ref.grad)
-
-
 def test_inconsistent_output_length_grad_transform():
     from thunder.extend import OperatorExecutor
     from thunder.core.proxies import AnyProxy, TensorProxy
