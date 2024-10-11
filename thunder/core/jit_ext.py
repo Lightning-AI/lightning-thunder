@@ -640,14 +640,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     with tracectx(trace_of_fwd):
         prims.python_return(unwrapped_custom_forward_result)
 
-    si = SigInfo(symbol_name)
-    for a in unwrapped_custom_forward_args:
-        if isinstance(a, Proxy):
-            si.args.append((a.name, None))
-        else:
-            pa = proxy(a)
-            si.args.append((pa.name, None))
-    trace_of_fwd._siginfo = si
+    trace_of_fwd._siginfo = SigInfo.from_name_and_args(symbol_name, unwrapped_custom_forward_args)
     trace_of_fwd.args = unwrapped_custom_forward_args
 
     @wraps(trace_of_fwd.python_callable())
@@ -687,14 +680,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         trace_of_augmented_fwd.add_bound_symbol(bsym)
     with tracectx(trace_of_augmented_fwd):
         prims.python_return(augmented_bsym_output)
-    si = SigInfo(custom_fwd_sym.name)
-    for a in unwrapped_custom_forward_args:
-        if isinstance(a, Proxy):
-            si.args.append((a.name, None))
-        else:
-            pa = proxy(a)
-            si.args.append((pa.name, None))
-    trace_of_augmented_fwd._siginfo = si
+    trace_of_augmented_fwd._siginfo = SigInfo.from_name_and_args(custom_fwd_sym.name, unwrapped_custom_forward_args)
     trace_of_augmented_fwd.args = unwrapped_custom_forward_args
 
     @wraps(trace_of_augmented_fwd.python_callable())
@@ -745,18 +731,14 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     def bwd_trace_callable_interface(*args, **kwargs):
         return thunder.core.trace_interpreter.interpret_trace(trace_of_backward, *args, **kwargs)
 
-    bwd_si = SigInfo("backward_impl")
-    for a in ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads:
-        if isinstance(a, Proxy):
-            bwd_si.args.append((a.name, None))
-        else:
-            pa = proxy(a)
-            bwd_si.args.append((pa.name, None))
     bwd_trace_impl = TraceCtx()
     for bsym in custom_bwd_bsyms:
         bwd_trace_impl.add_bound_symbol(bsym)
     bwd_trace_impl.add_bound_symbol(prims.python_return.bind(*sequencify(unwrap(custom_backward_result)), output=None))
-    bwd_trace_impl._siginfo = bwd_si
+    bwd_trace_impl._siginfo = SigInfo.from_name_and_args(
+        "backward_impl",
+        ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads,
+    )
     bwd_trace_impl.args = tuple(ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads)
 
     @wraps(bwd_trace_impl.python_callable())
