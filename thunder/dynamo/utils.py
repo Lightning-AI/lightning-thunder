@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import dataclasses
 import inspect
 import itertools
-import warnings
+import copy
 
 import torch
 
@@ -178,10 +178,6 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
     import thunder
     from thunder.core.trace import TraceCtx
 
-    # `tag_activation_checkpoint` has function input that get_proxy_inputs_from_node can not handle
-    if node.target is torch.ops.higher_order.tag_activation_checkpoint:
-        return True, None
-
     @thunder._with_cache_info_ctx
     def _run_with_cache_info():
 
@@ -264,6 +260,27 @@ def get_nodes_in_unsupported_ctx_regions(gm: torch.fx.GraphModule) -> set[torch.
     return nodes_in_unsupported_ctx_regions
 
 
+def is_graphmodule_supported_by_thunder(gm):
+    nodes_in_unsupported_ctx_regions = get_nodes_in_unsupported_ctx_regions(gm)
+    for node in gm.graph.nodes:
+        if node.op in (
+            "placeholder",
+            "get_attr",
+            "output",
+        ):
+            continue
+        if node in nodes_in_unsupported_ctx_regions:
+            split_reason = SplitReason(
+                SplitReasonType.UNSUPPORTED_NODE,
+                info=f"node with name: {node.name} and target: {node.target} is not supported probably because it is in unsupported context.",
+            )
+            return False, split_reason
+        is_thunder_supported, split_reason = is_node_supported_by_thunder(node)
+        if not is_thunder_supported:
+            return False, split_reason
+    return True, None
+
+
 def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason | None]:
     """
     Determine whether thunder can execute the operation described by this node.
@@ -310,6 +327,14 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
             info=f"node with name: {node.name} and target: {node.target} has been manually disabled.",
         )
         return False, split_reason
+
+    # If the operation is higher order function, check whether the submodule is supported by Thunder
+    if target is torch.ops.higher_order.tag_activation_checkpoint:
+        m = node.graph.owning_module
+        assert hasattr(m, node.args[0].name)
+        higher_order_module = getattr(m, node.args[0].name)
+        is_module_supported, split_reason = is_graphmodule_supported_by_thunder(higher_order_module)
+        return is_module_supported, split_reason
 
     # If thunder has a mapping for this operation, try executing the meta function and see.
     # We have a symbol for `torch.where`, but we don't support one overload of it.
@@ -426,33 +451,43 @@ def _get_example_inputs_from_placeholder(node) -> tuple[torch.Tensor]:
     
 
 def _checkpoint_function_converter(gm: torch.fx.GraphModule):
-    """Replace the torch operators in the function called by activation checkpoint with the corresponding Thunder symbols"""
-    new_g = torch.fx.Graph()
-    node_map: dict = {}
-    for n in gm.graph.nodes:
+    """Replace the torch operators in the function called by activation checkpoint with the corresponding Thunder symbols inplace"""
+    new_graph = copy.deepcopy(gm.graph)
+    for n in new_graph.nodes:
+        # replace the torch operator in "call_function" node
         if n.op == "call_function":
             assert isinstance(n.target, Callable)
             if n.target.__module__ in ("_operator", "builtins"):
-                node_map[n] = new_g.node_copy(n, lambda nod: node_map[nod])
                 continue
             check(
                 n.target in _torch_to_thunder_function_map, lambda: f"Unexpected {n.target}, not registered in Thunder"
             )
-            new_args = tree_map(lambda x: node_map[x] if x in node_map else x, (n.args, n.kwargs))
-            thunder_node = new_g.call_function(
-                _torch_to_thunder_function_map[n.target], args=new_args[0], kwargs=new_args[1]
-            )
-            node_map[n] = thunder_node
+            with new_graph.inserting_before(n):
+                thunder_node = new_graph.call_function(
+                    _torch_to_thunder_function_map[n.target], args=n.args, kwargs=n.kwargs
+                )
+            n.replace_all_uses_with(thunder_node)
+            new_graph.erase_node(n)
         else:
-            node_map[n] = new_g.node_copy(n, lambda nod: node_map[nod])
+            if n.op == "call_module":
+                raise NotImplementedError("Calling the module inside a checkpoint is currently not supported.")
+    new_graph.lint()
+    gm.graph = new_graph
+    recompile_graph(gm)
 
-    gm.graph = new_g
-    return
 
+def checkpoint_converter(gm: torch.fx.GraphModule, sub_gm: torch.fx.GraphModule):
+    """
+    Utility function to convert the GraphModule that uses activation checkpointing into a Thunder-traceable GraphModule.
 
-def checkpoint_converter(gm: torch.fx.GraphModule):
-    """Utility function to convert the GraphModule that uses activation checkpointing into a Thunder-traceable GraphModule."""
-    for n in gm.graph.nodes:
+    Args:
+        gm: The parent GraphModule of the module with checkpoint node and the module of the checkpointed function
+        sub_gm: the GraphModule of the checkpointed function
+
+    Note:
+        The GraphModule of the checkpointed function is updated inplace
+    """
+    for n in sub_gm.graph.nodes:
         if n.op == "call_function":
             if n.target in (torch.ops.higher_order.tag_activation_checkpoint,):
                 name = n.args[0].name
