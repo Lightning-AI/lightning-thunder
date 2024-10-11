@@ -2916,3 +2916,53 @@ def test_user_module_is_freed():
     del mod
     del opt_mod
     assert ref_mod() is None
+
+
+@pytest.mark.parametrize("requires_grad", [True, False])
+def test_return_bsym_has_none_output(requires_grad):
+    def fn(x):
+        return x + 1
+
+    x = torch.tensor([3.0], requires_grad=requires_grad)
+    jfn = thunder.jit(fn)
+    jfn(x)
+
+    for trace in thunder.last_traces(jfn):
+        return_bsym = trace.bound_symbols[-1]
+        assert return_bsym.sym.id == thunder.prims.PrimIDs.RETURN
+        assert return_bsym.output is None
+
+    if requires_grad:
+        for trace in thunder.last_backward_traces(jfn):
+            return_bsym = trace.bound_symbols[-1]
+            assert return_bsym.sym.id == thunder.prims.PrimIDs.RETURN
+            assert return_bsym.output is None
+
+
+def test_indexing_with_hashable_object():
+    class HashableClass:
+        def __hash__(self):
+            return id(self)
+
+    h = HashableClass()
+    d = {h: 1, 1: 0}
+
+    def fn():
+        return d[h]
+
+    jfn = thunder.jit(fn)
+    assert jfn() == 1
+    assert thunder.cache_misses(jfn) == 1  # Due to first compilation.
+
+    # Call jfn with no changes
+    # this should be cache hit.
+    assert jfn() == 1
+    assert thunder.cache_hits(jfn) == 1
+    assert thunder.cache_misses(jfn) == 1
+
+    # Change the value of the captured dict.
+    # This should be a cache miss, verify that.
+    d[h] = 2
+    assert jfn() == 2  # Verify that jfn now returns 2
+    assert thunder.cache_hits(jfn) == 1
+    assert thunder.cache_misses(jfn) == 2
