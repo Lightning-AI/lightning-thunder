@@ -2916,3 +2916,24 @@ def test_user_module_is_freed():
     del mod
     del opt_mod
     assert ref_mod() is None
+
+
+@pytest.mark.parametrize("requires_grad", [True, False])
+def test_return_bsym_has_none_output(requires_grad):
+    def fn(x):
+        return x + 1
+
+    x = torch.tensor([3.0], requires_grad=requires_grad)
+    jfn = thunder.jit(fn)
+    jfn(x)
+
+    for trace in thunder.last_traces(jfn):
+        return_bsym = trace.bound_symbols[-1]
+        assert return_bsym.sym.id == thunder.prims.PrimIDs.RETURN
+        assert return_bsym.output is None
+
+    if requires_grad:
+        for trace in thunder.last_backward_traces(jfn):
+            return_bsym = trace.bound_symbols[-1]
+            assert return_bsym.sym.id == thunder.prims.PrimIDs.RETURN
+            assert return_bsym.output is None
