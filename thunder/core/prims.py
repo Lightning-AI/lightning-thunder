@@ -1653,7 +1653,7 @@ python_del = make_prim(
 
 
 def _return_meta(*args) -> Any:
-    return args
+    return None
 
 
 def return_printer(
@@ -1676,7 +1676,7 @@ def return_printer(
 
 # NOTE This wrapper for del is necessary because python_impl=del is invalid syntax (del is not a regular function)
 def _return_impl(*args) -> Any:
-    return args
+    return None
 
 
 python_return = make_prim(
