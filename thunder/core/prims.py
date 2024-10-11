@@ -166,6 +166,7 @@ class PrimIDs(Enum):
     TRANSPOSE = auto()
     UNFOLD = auto()
     VIEW = auto()
+    SHALLOW_COPY = auto()  # a view copy
     # Memory layout prims (Experimental)
     STRIDE_ORDER = auto()
     # Elementwise unary prims
@@ -469,6 +470,8 @@ def _collectify(x: Any, *, name: str | None = None) -> Any:
         return x
     if baseutils.is_collection(x):
         return CollectionProxy(x, name=name)
+    if isinstance(x, slice):
+        return CollectionProxy((x.start, x.stop, x.step), name=name)
 
     return x
 
@@ -1649,8 +1652,8 @@ python_del = make_prim(
 )
 
 
-def _return_meta(*args) -> Any:
-    return args
+def _return_meta(*args) -> None:
+    return None
 
 
 def return_printer(
@@ -1658,7 +1661,7 @@ def return_printer(
 ):
     utils.check(
         len(kwarg_printables) == 0,
-        lambda: f"Expected no kwargs for del but got {kwarg_printables}",
+        lambda: f"Expected no kwargs for return but got {kwarg_printables}",
         exception_type=AssertionError,
     )
 
@@ -1671,9 +1674,8 @@ def return_printer(
     return f"return {arg_str}"
 
 
-# NOTE This wrapper for del is necessary because python_impl=del is invalid syntax (del is not a regular function)
-def _return_impl(*args) -> Any:
-    return args
+def _return_impl(*args) -> None:
+    return None
 
 
 python_return = make_prim(
@@ -3536,6 +3538,13 @@ transpose = make_prim(PrimIDs.TRANSPOSE, "transpose", meta=transpose_meta, tags=
 
 
 view = make_prim(PrimIDs.VIEW, "view", meta=reshape_meta, tags=(OpTags.SHAPE_OP,))
+
+
+def shallow_copy_meta(a: TensorProxy, /) -> TensorProxy:
+    return TensorProxy(like=a)
+
+
+shallow_copy = make_prim(PrimIDs.SHALLOW_COPY, "shallow_copy", meta=shallow_copy_meta, tags=(OpTags.SHAPE_OP,))
 
 
 def unfold_meta(a: TensorProxy, /, dim: int, size: int, step: int) -> TensorProxy:

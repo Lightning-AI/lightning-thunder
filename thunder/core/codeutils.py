@@ -140,7 +140,8 @@ def to_printable(
         return x
 
     if is_collection(x):
-        flat, spec = tree_flatten(x)
+        # specify namespace="" to avoid flattening dataclasses
+        flat, spec = tree_flatten(x, namespace="")
         if flat and flat[0] is x:
             raise RuntimeError(f"Don't know how to flatten object of {type(x)}")
         printables = []
@@ -232,7 +233,8 @@ def prettyprint(
         return m(f"{name}({call_repr_str})")
 
     if is_collection(x):
-        flat, spec = tree_flatten(x)
+        # specify namespace="" to avoid flattening dataclasses
+        flat, spec = tree_flatten(x, namespace="")
         printed = tuple(
             prettyprint(x, with_type=False, literals_as_underscores=literals_as_underscores, _quote_markers=True)
             for x in flat
@@ -336,6 +338,19 @@ class SigInfo:
         arg_str = ", ".join(args)
 
         return f"def {self.name}({arg_str}):"
+
+    @staticmethod
+    def from_name_and_args(name: str, args: Sequence[Any]):
+        si = SigInfo(name)
+        for a in args:
+            if isinstance(a, ProxyInterface):
+                si.args.append((a.name, None))
+            else:
+                from thunder.core.proxies import proxy
+
+                pa = proxy(a)
+                si.args.append((pa.name, None))
+        return si
 
 
 # Creates a SigInfo object from a function and the inputs to it

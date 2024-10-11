@@ -1460,6 +1460,9 @@ def test_populate_grads_mlp(executor, device, dtype):
 
 @instantiate(dtypes=(thunder.float32,))
 def test_populate_grads_csa(executor, device, dtype):
+    if version_between(torch.__version__, min_ver="2.6.0a0", max_ver="2.6.0"):
+        pytest.skip("https://github.com/Lightning-AI/lightning-thunder/issues/1254")
+
     from thunder.benchmarks import NanoGPTCSABenchmark, NanoGPTConfig
 
     # NOTE Currently setting dropout to zero for reproducibility, other settings taken from gpt2 config
@@ -1487,6 +1490,9 @@ def test_populate_grads_csa(executor, device, dtype):
 
 @instantiate(dtypes=(thunder.float32,))
 def test_populate_grads_block(executor, device, dtype):
+    if version_between(torch.__version__, min_ver="2.6.0a0", max_ver="2.6.0"):
+        pytest.skip("https://github.com/Lightning-AI/lightning-thunder/issues/1254")
+
     from thunder.benchmarks import NanoGPTBlockBenchmark, NanoGPTConfig
 
     # NOTE Currently setting dropout to zero for reproducibility, other settings taken from gpt2 config
@@ -1741,6 +1747,34 @@ def test_grad_softmax_dtype(device):
     jforward = thunder.jit(forward)
 
     x = torch.randn([8, 2], dtype=torch.bfloat16, device=device, requires_grad=True)
+
+    actual = jforward(x)
+    expected = forward(x)
+    torch.testing.assert_close(actual, expected)
+
+    grad_o = torch.randn_like(actual)
+
+    actual_grad = torch.autograd.grad(actual, x, grad_o)
+    expected_grad = torch.autograd.grad(expected, x, grad_o)
+    torch.testing.assert_close(actual_grad, expected_grad)
+
+
+@pytest.mark.parametrize("device", ("cuda", "cpu"))
+def test_grad_split_unused_output(device):
+    # Test to verify that the grad rule for split is
+    # correct even if few of the outputs are unused
+    # (leading to `grad=None` for them).
+
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+
+    def forward(x):
+        x_1, x_2, x_3 = torch.split(x, 2)
+        return x_1
+
+    jforward = thunder.jit(forward)
+
+    x = torch.randn([5, 2], dtype=torch.bfloat16, device=device, requires_grad=True)
 
     actual = jforward(x)
     expected = forward(x)

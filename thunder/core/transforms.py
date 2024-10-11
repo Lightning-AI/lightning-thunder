@@ -2138,14 +2138,26 @@ def nll_loss_backward(input, target, weight, reduction, ignore_index, total_weig
 def split_aug_fwd(a: TensorProxy, split_size_or_sections: int | Sequence[int], dim: int = 0) -> VJPDual:
     from thunder.torch import split
 
-    primal = split(a, split_size_or_sections, dim)
-    residuals = (dim,)
-    return VJPDual(primal, residuals)
+    primals = split(a, split_size_or_sections, dim)
+    # save `dtype, device and output shape` as few output can be unused user function
+    # leading to incoming gradients being `None`
+    # in which case we will create zeros as gradient to be passed to `cat`
+    residuals = (dim, a.dtype, a.device, tuple(primal.shape for primal in primals))
+    return VJPDual(primals, residuals)
 
 
 @register_backward("torch.split")
-def split_backward(dim, *grads):
-    from thunder.torch import cat
+def split_backward(dim, dtype, device, out_shapes, *grads):
+    from thunder.torch import cat, zeros
+
+    assert len(out_shapes) == len(grads)
+
+    def make_zeros_like(shape):
+        return zeros(shape, dtype=dtype, device=device)
+
+    grads = tuple(
+        grad if grad is not None else make_zeros_like(out_shape) for grad, out_shape in zip(grads, out_shapes)
+    )
 
     return cat(grads, dim)
 
@@ -2875,7 +2887,7 @@ def _update_forward_with_new_saved_for_backward(forward_trace: Trace, saved_for_
     saved_tensors, saved_other = _split_saved_for_backward_into_tensors_and_other(saved_for_backward)
     assert forward_trace.bound_symbols[-1].sym.id == prims.PrimIDs.RETURN
     new_return = (forward_trace.output[0], (saved_tensors, saved_other))
-    forward_trace.bound_symbols[-1] = replace(forward_trace.bound_symbols[-1], args=new_return, output=new_return)
+    forward_trace.bound_symbols[-1] = replace(forward_trace.bound_symbols[-1], args=new_return)
 
 
 def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_for_backward: Sequence[Variable]) -> None:
@@ -3132,7 +3144,7 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
     new_fwd_trace = from_trace(fwd_trace)
     new_fwd_trace.bound_symbols = fwd_trace.bound_symbols.copy()
     new_return_args = (fwd_trace.output[0], (new_saved_for_backward, fwd_trace.output[1][1]))
-    new_fwd_trace.bound_symbols[-1] = prims.python_return.bind(*new_return_args, output=())
+    new_fwd_trace.bound_symbols[-1] = prims.python_return.bind(*new_return_args, output=None)
 
     new_bwd_trace = from_trace(bwd_trace)
     # In cases where C0 name is carried from previous trace it must be removed

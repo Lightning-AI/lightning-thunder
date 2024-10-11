@@ -14,7 +14,6 @@ from looseversion import LooseVersion
 from thunder.core.module import ThunderModule
 from thunder.core.interpreter import InterpreterLogItem
 from thunder.core.options import (
-    resolve_sharp_edges_option,
     CACHE_OPTIONS,
     SHARP_EDGES_OPTIONS,
 )
@@ -124,6 +123,27 @@ __all__ = [
     "pytorch_executor",
     # debugging functions
     "set_execution_callback_file",
+    "jit",
+    "resolve_executors",
+    "add_executor_lists",
+    "get_executor",
+    "get_all_executors",
+    "get_default_executors",
+    "get_always_executors",
+    "compile_data",
+    "compile_stats",
+    "last_traces",
+    "last_backward_traces",
+    "cache_option",
+    "cache_hits",
+    "cache_misses",
+    "list_transforms",
+    "last_interpreter_log",
+    "last_interpreted_instructions",
+    "print_last_interpreter_log",
+    "last_compile_options",
+    "get_auto_registered_torch_op_names",
+    "grad",
 ]
 
 
@@ -152,13 +172,6 @@ float64 = dtypes.float64
 complex32 = dtypes.complex32
 complex64 = dtypes.complex64
 complex128 = dtypes.complex128
-
-#
-# Module aliases
-#
-
-# NOTE this allows clang.foo() to be called directly as thunder.foo()
-from thunder.clang import *
 
 #
 # Promoted executor-related functions and objects
@@ -310,6 +323,8 @@ def jit(
 
     # Resolve names of executors
     executors = resolve_executors(executors)
+    ad_hoc_executor = extend.AdHocExecutor()
+    executors = (*executors, ad_hoc_executor)
 
     # TODO: verify that tutorials don't have false positives and enable warning by default
     # # Make sharp_edges == warn default if not supplied and if in the general jit
@@ -504,7 +519,12 @@ def jit(
             prologue_trc: TraceCtx
             computation_trc: TraceCtx
             jit_results: TraceResults = thunder_general_jit(
-                fn, args, kwargs, record_history=record_history, sharp_edges=cd.sharp_edges
+                fn,
+                args,
+                kwargs,
+                ad_hoc_executor=ad_hoc_executor,
+                record_history=record_history,
+                sharp_edges=cd.sharp_edges,
             )
             prologue_trc = jit_results.prologue_trace
             computation_trc = jit_results.computation_trace

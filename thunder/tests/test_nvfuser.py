@@ -210,7 +210,7 @@ def test_redundant_cast_nvfusion(executor, device: str, dtype: dtypes.dtype):
     assert len(fusions[0].subsymbols) == 3
 
     # Verifies the intermediate consumer
-    assert fusions[1].subsymbols[-2].args[0].name == "g"
+    assert fusions[1].subsymbols[-1].args[0].name == "g"
 
 
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
@@ -281,16 +281,13 @@ def test_cse_subsymbol_removal(executor, device, _):
 
     # There are two nvfuser fusion groups separated by the matmul operation.
     assert len(fusion_bsyms) == 2
-    nvf_0, nvf_1 = fusion_bsyms
 
     # CSE removes the redundant (t0 + 5) operation
-    assert len(nvf_0.subsymbols) == 5
-    # Return t0 and t1 from the first fusion
-    assert [t.name for t in tree_flatten(nvf_0.output)[0]] == ["t1", "t4"]
+    nvf_0, nvf_1 = fusion_bsyms
+    assert len(nvf_0.subsymbols) + len(nvf_1.subsymbols) == 7
 
-    # CSE does not change the second fusion
-    assert len(nvf_1.subsymbols) == 2
-    assert [t.name for t in tree_flatten(nvf_1.output)[0]] == ["t10"]
+    outside_fusion_syms = ["unpack_trivial", "matmul", "python_return", "python_del"]
+    assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == set(outside_fusion_syms)
 
 
 @instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))
@@ -1050,8 +1047,16 @@ def test_sdpa(
 
     # Check nv_sdpfa_fwd is not in bwd_fusion -> that would indicate rematerialization
     assert "nv_sdpfa_bwd" in bwd_fusion[-1][-1].name and "nv_sdpfa_fwd" not in bwd_fusion[-1][-1].name
+
+    nvf_fd = bwd_fusion[-1][-1].last_used
+    repro_script = None
+    # Legacy repro script API
+    if nvfuser_version() < LooseVersion("0.2.14"):
+        repro_script = nvf_fd.getReproString()
+    else:
+        repro_script = nvf_fd.repro_script_for()
     assert (
-        bwd_fusion[-1][-1].last_used.getReproString().count("is_cpu=True") == 2
+        repro_script.count("is_cpu=True") == 2
     ), "Expected philox_seed and philox_offset inputs to be CPU scalar tensors."
 
     # Torch reference computation

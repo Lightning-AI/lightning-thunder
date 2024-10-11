@@ -47,6 +47,17 @@ import torch as torch
 import numpy as np
 import thunder
 
+
+__all__ = [
+    "CompileStats",
+    "CompileData",
+    "cache_put",
+    "cache_get",
+    "trace",
+    "transform_for_execution",
+    "transform_to_torch_types",
+]
+
 #
 # Datastructures for compiled functions
 #
@@ -291,6 +302,13 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs, *, rename_proxies: bool
             return proxy(x, name=name)
 
         if isinstance(x, Proxy):
+            # register proxy name used by NumberProxies in TensorProxy.shape
+            if isinstance(x, TensorProxy):
+                for s_p in filter(lambda s: isinstance(s, Proxy), x.shape):
+                    # TODO need to avoid name conflict here, since s_p.name
+                    # could have conflicted with something defined earlier in
+                    # the trace.
+                    get_tracectx().names.add(s_p.name)
             if not rename_proxies:
                 get_tracectx().names.add(x.name)
                 return x
@@ -702,6 +720,6 @@ def transform_to_torch_types(trace: TraceCtx):
     last = trace.bound_symbols[-1]
     assert last.sym.id == prims.PrimIDs.RETURN
     new_args = tree_map(map_to_torch, last.args)
-    new_bsym = prims.python_return.bind(*new_args, output=())
+    new_bsym = prims.python_return.bind(*new_args, output=None)
     trace.bound_symbols[-1] = new_bsym
     return trace

@@ -159,7 +159,7 @@ class CUDAGraphRunner:
         region_trace.bound_symbols = bsyms
         region_trace.args = inputs
         region_trace.kwargs = {}
-        region_trace.bound_symbols.append(prims.python_return.bind(outputs, output=()))
+        region_trace.bound_symbols.append(prims.python_return.bind(outputs, output=None))
         return region_trace.python_callable()
 
     def make_cuda_graph_callable_from_symbols(

@@ -38,7 +38,6 @@ from types import (
     NoneType,
     BuiltinFunctionType,
     BuiltinMethodType,
-    MethodDescriptorType,
     MethodWrapperType,
     WrapperDescriptorType,
     TracebackType,
@@ -199,6 +198,7 @@ class JitCtx:
         sharp_edges: SHARP_EDGES_OPTIONS,
         process_group_for_ddp=None,
         executor_lookasides,
+        ad_hoc_executor,
     ):
         self._sharp_edges: SHARP_EDGES_OPTIONS = sharp_edges
         self._prologue_trace = prologue_trace
@@ -208,6 +208,11 @@ class JitCtx:
         self._additional_outputs = collections.defaultdict(list)
         self._proxy_swapmap: dict[Variable, Proxy] = {}
         self._executor_lookasides: dict[Callable, Callable] = executor_lookasides
+        self._ad_hoc_executor = ad_hoc_executor
+
+    @property
+    def ad_hoc_executor(self):
+        return self._ad_hoc_executor
 
     @property
     def sharp_edges(self) -> SHARP_EDGES_OPTIONS:
@@ -380,7 +385,7 @@ def ensure_recursive_proxies(fn):  # shortcut for things we already processed?
 def record_source_loc_in_symbol_header(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        runtimectx: Interpreterruntimectx = get_interpreterruntimectx()
+        runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
         filename, positions = runtimectx.get_current_user_source_location()
         ctx: JitCtx = get_jit_ctx()
         ctx._computation_trace.set_current_source_location(filename, positions)
@@ -606,12 +611,11 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
 
     jit_ctx: JitCtx = get_jit_ctx()
 
-    custom_fwd_bsyms: list[BoundSymbol] = []
-    orig_scopes = jit_ctx.computation_trace.scopes
-
-    jit_ctx.computation_trace.scopes = [custom_fwd_bsyms]
+    jit_ctx.computation_trace.push_scope([])
 
     custom_autograd_function_cls = unwrap(obj)
+    symbol_name = custom_autograd_function_cls.__name__
+
     custom_forward = custom_autograd_function_cls.forward
     ctx = torch.autograd.function.FunctionCtx()
     ctx_proxy = proxy(ctx, name=None, history=None)
@@ -623,26 +627,11 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     # Forward.
     unwrapped_custom_forward_args = tree_map(lambda a: unwrap(a), args)
     unwrapped_custom_forward_result = unwrap(custom_forward_result)
-    symbol_name = custom_autograd_function_cls.__name__
-    custom_fwd_sym = Symbol(
-        name=symbol_name,
-        id=symbol_name,
-        meta=lambda *unwrapped_custom_forward_args: unwrapped_custom_forward_result,
+    # autograd.Function produces views of the tensor to attache the autograd node to
+    unwrapped_custom_forward_result = tree_map(
+        lambda x: prims.shallow_copy(x) if isinstance(x, TensorProxy) else x, unwrapped_custom_forward_result
     )
-    bsym_of_custom_fwd = BoundSymbol(
-        custom_fwd_sym,
-        args=unwrapped_custom_forward_args,
-        kwargs={},
-        output=unwrapped_custom_forward_result,
-        subsymbols=custom_fwd_bsyms,
-        source_filename=jit_ctx.computation_trace._current_source_filename,
-        source_positions=None,
-        _call_ctx=custom_fwd_bsyms[0]._call_ctx,
-        _import_ctx=custom_fwd_bsyms[0]._import_ctx,
-        _object_ctx=custom_fwd_bsyms[0]._object_ctx,
-        _executor=custom_fwd_bsyms[0]._executor,
-    )
-    orig_scopes[-1].append(bsym_of_custom_fwd)
+    custom_fwd_bsyms: list[BoundSymbol] = jit_ctx.computation_trace.pop_scope()
 
     # not augmented for when we don't need grad
     trace_of_fwd = TraceCtx()
@@ -651,23 +640,36 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     with tracectx(trace_of_fwd):
         prims.python_return(unwrapped_custom_forward_result)
 
-    si = SigInfo(custom_fwd_sym.name)
-    for a in unwrapped_custom_forward_args:
-        if isinstance(a, Proxy):
-            si.args.append((a.name, None))
-        else:
-            pa = proxy(a)
-            si.args.append((pa.name, None))
-    trace_of_fwd._siginfo = si
+    trace_of_fwd._siginfo = SigInfo.from_name_and_args(symbol_name, unwrapped_custom_forward_args)
     trace_of_fwd.args = unwrapped_custom_forward_args
 
     @wraps(trace_of_fwd.python_callable())
     def core_of_forward(*args, **kwargs):
         return thunder.core.trace_interpreter.interpret_trace(trace_of_fwd, *args, **kwargs)
 
-    thunder.executors.torchex._register_implementation(
-        custom_fwd_sym, core_of_forward, checker=thunder.executors.torchex._always_executable
+    def custom_forward_meta(*args, **kwargs):
+        trace = thunder.core.trace.get_tracectx()
+        trace.push_scope([])  # don't record symbol calls
+        res = core_of_forward(*args, **kwargs)
+        trace.pop_scope()
+        return res
+
+    def bind_postprocess(bsym):
+        bsym._call_ctx = {}
+
+    custom_fwd_sym = jit_ctx.ad_hoc_executor.register_operator(
+        symbol_name,
+        like=core_of_forward,
+        bind_postprocess=bind_postprocess,
     )
+
+    unwrapped_forward_result = custom_fwd_sym(*unwrapped_custom_forward_args)
+    forward_result = wrap(
+        unwrapped_forward_result,
+        provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[obj.provenance, custom_forward_result.provenance]),
+    )
+
+    jit_ctx.ad_hoc_executor.register_implementation(custom_fwd_sym, execution_transform=core_of_forward)
 
     augmented_bsym_output: tuple[tuple[TensorProxy, ...], tuple[TensorProxy, ...]] = (
         tuple(sequencify(unwrapped_custom_forward_result)),
@@ -676,22 +678,14 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     trace_of_augmented_fwd = TraceCtx()
     for bsym in custom_fwd_bsyms:
         trace_of_augmented_fwd.add_bound_symbol(bsym)
-    trace_of_augmented_fwd.add_bound_symbol(prims.python_return.bind(augmented_bsym_output, output=()))
-    si = SigInfo(custom_fwd_sym.name)
-    for a in unwrapped_custom_forward_args:
-        if isinstance(a, Proxy):
-            si.args.append((a.name, None))
-        else:
-            pa = proxy(a)
-            si.args.append((pa.name, None))
-    trace_of_augmented_fwd._siginfo = si
+    with tracectx(trace_of_augmented_fwd):
+        prims.python_return(augmented_bsym_output)
+    trace_of_augmented_fwd._siginfo = SigInfo.from_name_and_args(custom_fwd_sym.name, unwrapped_custom_forward_args)
     trace_of_augmented_fwd.args = unwrapped_custom_forward_args
 
     @wraps(trace_of_augmented_fwd.python_callable())
     def core_of_augmented_forward(*args, **kwargs):
         return thunder.core.trace_interpreter.interpret_trace(trace_of_augmented_fwd, *args, **kwargs)
-
-    # core_of_augmented_forward = trace_of_augmented_fwd.python_callable(include_decorators=False)
 
     @wraps(core_of_augmented_forward)
     def augmented_custom_forward_rule(*args, **kwargs):
@@ -699,25 +693,17 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         check(len(primal) == 1, lambda f: "{primal=} has {len(primal)} proxies but expected 1")
         return VJPDual(primal=primal[0], residuals=residulas)
 
+    # TODO: build and register gradient_transform instead
     augmented_forward_impls[custom_fwd_sym.name] = augmented_custom_forward_rule
 
     # Backward definition
     custom_backward = custom_autograd_function_cls.backward
-    custom_bwd_bsyms: list[BoundSymbol] = []
-    jit_ctx.computation_trace.scopes = [custom_bwd_bsyms]
+
     grads = tree_map(
         lambda a: a.replace_name(f"grad_{a.name}"),
         sequencify(unwrapped_custom_forward_result),
     )
-    wrapped_grads = tree_map(lambda g: wrap(g, provenance=custom_forward_result.provenance), grads)
-    custom_backward_result = _interpret_call(custom_backward, wrapped_ctx, *wrapped_grads)
-    if custom_backward_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
-        return custom_backward_result
-
     trace_of_backward = TraceCtx()
-    for bsym in custom_bwd_bsyms:
-        trace_of_backward.add_bound_symbol(bsym)
-    trace_of_backward.add_bound_symbol(prims.python_return.bind(*unwrap(custom_backward_result), output=()))
     bwd_si = SigInfo(f"{custom_fwd_sym.name}_backward")
     for a in ctx_proxy.saved_tensors + grads:
         if isinstance(a, Proxy):
@@ -728,22 +714,31 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     trace_of_backward._siginfo = bwd_si
     trace_of_backward.args = tuple(ctx_proxy.saved_tensors + grads)
 
+    jit_ctx.computation_trace.push_scope([])
+    wrapped_grads = tree_map(lambda g: wrap(g, provenance=custom_forward_result.provenance), grads)
+    custom_backward_result = _interpret_call(custom_backward, wrapped_ctx, *wrapped_grads)
+    if custom_backward_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return custom_backward_result
+
+    custom_bwd_bsyms: list[BoundSymbol] = jit_ctx.computation_trace.pop_scope()
+
+    for bsym in custom_bwd_bsyms:
+        trace_of_backward.add_bound_symbol(bsym)
+    with tracectx(trace_of_backward):
+        prims.python_return.bind(*unwrap(custom_backward_result), output=None)
+
     @wraps(trace_of_backward.python_callable())
     def bwd_trace_callable_interface(*args, **kwargs):
         return thunder.core.trace_interpreter.interpret_trace(trace_of_backward, *args, **kwargs)
 
-    bwd_si = SigInfo("backward_impl")
-    for a in ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads:
-        if isinstance(a, Proxy):
-            bwd_si.args.append((a.name, None))
-        else:
-            pa = proxy(a)
-            bwd_si.args.append((pa.name, None))
     bwd_trace_impl = TraceCtx()
     for bsym in custom_bwd_bsyms:
         bwd_trace_impl.add_bound_symbol(bsym)
-    bwd_trace_impl.add_bound_symbol(prims.python_return.bind(*sequencify(unwrap(custom_backward_result)), output=()))
-    bwd_trace_impl._siginfo = bwd_si
+    bwd_trace_impl.add_bound_symbol(prims.python_return.bind(*sequencify(unwrap(custom_backward_result)), output=None))
+    bwd_trace_impl._siginfo = SigInfo.from_name_and_args(
+        "backward_impl",
+        ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads,
+    )
     bwd_trace_impl.args = tuple(ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads)
 
     @wraps(bwd_trace_impl.python_callable())
@@ -757,10 +752,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         return bwd_impl_callable(*new_args)
 
     backward_impls[custom_fwd_sym.name] = backward_impl
-
-    # Cosmetic
-    jit_ctx.computation_trace.scopes = orig_scopes
-    return custom_forward_result
+    return forward_result
 
 
 @register_general_jit_lookaside(torch.finfo)
@@ -892,6 +884,9 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
     if thunder.core.utils.is_hashable(fn):  # see issue #889
         if (executor_lookaside := ctx._executor_lookasides.get(fn, None)) is not None:
             lookaside = executor_lookaside
+        # the ad hoc executor may be extended during compilation
+        elif (executor_lookaside := ctx.ad_hoc_executor._lookasides.get(fn, None)) is not None:
+            lookaside = interpreter_needs_wrap(executor_lookaside)
         elif isinstance(fn, Symbol) or fn in _clang_fn_set:
             # Performs symbol lookasides
             # NOTE Symbols "lookaside" to themselves; this just prevents their internals from being jitted
@@ -909,7 +904,14 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
     if lookaside is None:
 
         def is_from_torch(fn):
-            return hasattr(fn, "__module__") and fn.__module__ and fn.__module__.startswith("torch")
+            module = getattr(fn, "__module__", None)
+            if module is None:
+                module = getattr(getattr(fn, "__objclass__", None), "__module__", None)
+            if module is None:
+                return False
+            if module.startswith("torch"):
+                return module
+            return False
 
         has_tensor_arg = False
         for a in args:
@@ -921,8 +923,8 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
                     has_tensor_arg = True
                     break
 
-        if is_opaque(fn) and is_from_torch(fn) and has_tensor_arg:
-            if fn.__module__.startswith("torch._C"):
+        if is_opaque(fn) and (torch_module_name := is_from_torch(fn)) and has_tensor_arg:
+            if torch_module_name.startswith("torch._C"):
                 return lookaside
 
             # Torch functions have __name__ defined
@@ -939,6 +941,23 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
             )
 
             return do_raise(NotImplementedError(calling_opaque_torch_msg))
+
+        elif is_opaque(fn) and has_tensor_arg:
+            # We whitelist a few built-in things
+            if fn.__name__ == "__new__":
+                objectclass = fn.__self__
+            else:
+                objectclass = getattr(fn, "__objclass__", None)
+            if objectclass is not None:
+                module = getattr(objectclass, "__module__", None)
+            else:
+                module = getattr(fn, "__module__", None)
+            if module is not None:
+                module, *_ = module.split(".", 1)
+            if module not in {"builtins", "_operator", "optree"}:
+                # TODO: warn?
+                ctx.ad_hoc_executor.register_operator_for_opaque_function(fn)
+                return interpreter_needs_wrap(ctx.ad_hoc_executor._lookasides[fn])
 
     return lookaside
 
@@ -970,7 +989,7 @@ def _maybe_update_proxy_name(orig_value: Any, name: str, is_internal: bool | Non
     }
 
     if is_internal is None:
-        runtimectx: Interpreterruntimectx = get_interpreterruntimectx()
+        runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
         frame = runtimectx.peek_frame_stack()
         assert frame is not None  # pass is_internal if you call this before the frame is set up
         is_internal = frame.module in {"thunder.core.interpreter", "thunder.core.jit_ext"}
@@ -1632,6 +1651,7 @@ def thunder_general_jit(
     *,
     record_history: bool = False,
     sharp_edges: SHARP_EDGES_OPTIONS,
+    ad_hoc_executor,
 ) -> TraceResults:
     # TODO: move into wrap_callback or so
     if isinstance(fn, torch.nn.parallel.DistributedDataParallel):
@@ -1662,6 +1682,7 @@ def thunder_general_jit(
         sharp_edges=sharp_edges,
         process_group_for_ddp=process_group_for_ddp,
         executor_lookasides=executor_lookasides,
+        ad_hoc_executor=ad_hoc_executor,
     )
     jfn = interpret(
         fn,

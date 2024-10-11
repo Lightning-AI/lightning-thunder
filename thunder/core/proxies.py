@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import copy
 from enum import auto, Enum
 from numbers import Number
-from typing import Type, Optional, Any, Tuple, List, Union
+from typing import Any
 from collections.abc import Callable
 from collections.abc import Sequence
 
@@ -1951,7 +1952,7 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
     dtype = dtypes.to_dtype(t.dtype)
 
     grad = None
-    if t.grad is not None:
+    if t.is_leaf and t.grad is not None:
         grad_pr = None
         if history is not None:
             attr_pr = ProvenanceRecord(inst=PseudoInst.CONSTANT, inputs=[], value="grad")
@@ -1962,7 +1963,7 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
     distparallel_type = getattr(t, "distparallel_type", None)
     _thunder_fsdp_padding_size = getattr(t, "_thunder_fsdp_padding_size", None)
     if using_symbolic_values():
-        shape_attr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[history, wrap_const("shape").provenance])
+        shape_attr = ProvenanceRecord(PseudoInst.LOAD_ATTR, inputs=[copy.copy(history), wrap_const("shape").provenance])
         shape = tuple(
             IntegerProxy(
                 None,
@@ -1973,8 +1974,8 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
             for idx, s in enumerate(t.shape)
         )
     else:
+        # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
         shape = tuple(t.shape)
-    # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
     return TensorProxy(
         name,
         shape=tuple(shape),
