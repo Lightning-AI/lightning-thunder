@@ -144,6 +144,8 @@ def _splitter(
     # Call compile on the split region/s.
     thunder_compiled_fns = []
     submodule_to_compiled_fns = {}
+
+    # If the split_gm contains Thunder-traceable checkpoint operators, the checkpointed submodules are replaced, so we need to record the original split_gm
     origin_split_gm = split_gm
     if has_thunder_tracable_checkpoint:
         import copy

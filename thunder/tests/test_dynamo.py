@@ -537,41 +537,44 @@ def test_ThunderCompilerGraphBenchmarking_post_graph(benchmark):
     compiled(x)
 
 
+@requiresCUDA
 def test_torch_checkpoint_dynamo():
     import torch.utils.checkpoint as checkpoint
     import torch.nn as nn
-    from thunder.dynamo import ThunderCompiler
 
     class SimpleModel(nn.Module):
         def __init__(self):
             super().__init__()
-            self.layer1 = nn.Linear(10, 20)  # nn.ReLU() #
+            self.layer1 = nn.Linear(10, 20)
             self.layer2 = nn.Linear(20, 20)
-            self.layer3 = nn.ReLU()  # nn.ReLU() #
+            self.layer3 = nn.ReLU()
 
         def forward(self, x):
-            # Use checkpointing for layers where you want to save memory
             x = torch.sin(x)
-            x = checkpoint.checkpoint(self.layer1, x)  # Checkpoint layer1 self.layer1(x) #
-            x = checkpoint.checkpoint(self.layer2, x)  # Checkpoint layer2
-            x = self.layer3(x)  # No checkpoint for layer3
+            x = checkpoint.checkpoint(self.layer1, x)
+            x = checkpoint.checkpoint(self.layer2, x)
+            x = self.layer3(x)
             return x
 
     # Input tensor
-    x = torch.randn(5, 10).requires_grad_()
-    model = SimpleModel().train()
+    x = torch.randn(5, 10).cuda().requires_grad_()
+    x_ref = x.detach().requires_grad_()
+
+    model = SimpleModel().cuda().train()
+    ref_model = SimpleModel().cuda().train()
+    ref_model.load_state_dict(model.state_dict())
+
     backend = ThunderCompiler()
     jf = torch.compile(backend=backend)(model)
-    # jf = thunder.jit(f)
+
+    ref_out = ref_model(x_ref)
     out = jf(x)
-    # print(thunder.last_traces(jf)[0])
-    # print(thunder.last_traces(backend.subgraph_infos[0].thunder_compiled_fns[0])[0])
-    # print(thunder.last_backward_traces(backend.subgraph_infos[0].thunder_compiled_fns[0])[0])
+    torch.testing.assert_close(ref_out, out)
 
     g = torch.ones_like(out)
     out.backward(g)
 
-    x_ref = x.detach().requires_grad_()
-    out_ref = model(x_ref)
-    out_ref.backward(g)
+    ref_g = torch.ones_like(ref_out)
+    ref_out.backward(ref_g)
     torch.testing.assert_close(x.grad, x_ref.grad)
+    torch.testing.assert_close(tuple(model.parameters()), tuple(ref_model.parameters()))
