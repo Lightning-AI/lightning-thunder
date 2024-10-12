@@ -185,7 +185,9 @@ def quantize_4bit_impl(
         absmax = torch.zeros((blocks,), device=A.device, dtype=A.dtype)
 
     if out is None:
-        out = torch.zeros(((n + 1) // 2), dtype=torch.uint8, device=A.device)
+        # change to 2D shape instead of unsqueeze(0) to be consistent with
+        # CUDA implementation in multi-backend-refactor branch
+        out = torch.zeros(((n + 1) // 2, 1), dtype=torch.uint8, device=A.device)
 
     rem = n % blocksize
     has_rem = rem > 0
@@ -230,4 +232,4 @@ def quantize_4bit_impl(
             quant_type=quant_type,
         )
 
-    return out.unsqueeze(0), state
+    return out, state

@@ -57,7 +57,7 @@ class BitsAndBytesLinearQuant4bit(Transform):
     def quantize_weight(self, w):
         if w.device.type == "meta":
             n = w.numel()
-            output_shape = ((n + 1) // 2,)
+            output_shape = ((n + 1) // 2, 1)
             blocksize = 64
             blocks = n // blocksize
             blocks += 1 if n % blocksize > 0 else 0
