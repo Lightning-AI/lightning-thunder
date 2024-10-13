@@ -1272,6 +1272,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
 
     # Unpacks the inputs in the prologue trace
     # TODO Generate unpacking constraints
+    # TODO(crcrpar): "flatten" tensor subclasses
     def unpack(v: Variable | Proxy) -> Proxy:
         p: Proxy
         if isinstance(v, Proxy):
