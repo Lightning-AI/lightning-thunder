@@ -432,6 +432,15 @@ def _parse_to_device_and_dtype(
     return device, dtype
 
 
+def _will_to_return_self(input_device, input_dtype, device, dtype, memory_format, copy):
+    return not (
+        copy
+        or (device is not None and device != input_device)
+        or (dtype is not None and dtype != input_dtype)
+        or (memory_format in (torch.channels_last, torch.channels_last_3d))
+    )
+
+
 # TODO Model non_blocking (as kwargs)
 @torchsymbol(torch.Tensor.to, is_method=True)
 def to(
