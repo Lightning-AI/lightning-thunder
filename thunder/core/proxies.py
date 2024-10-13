@@ -1,12 +1,9 @@
 from __future__ import annotations
-
 import copy
+from collections.abc import Sequence
 from enum import auto, Enum
 from numbers import Number
-from typing import Any
-from collections.abc import Callable
-from collections.abc import Sequence
-
+from typing import TYPE_CHECKING
 from functools import reduce, partial
 import operator
 import builtins
@@ -33,6 +30,10 @@ import thunder.core.baseutils as baseutils
 from thunder.core.langctxs import resolve_method, get_langctx
 import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from typing import Any, Type
 
 ShapeLike = Sequence[int]
 
@@ -133,6 +134,8 @@ class Proxy(VariableInterface, ProxyInterface):
                 prefix = "s"
             elif isinstance(self, TensorProxy):
                 prefix = "t"
+            elif isinstance(self, SubclassTensorProxy):
+                prefix = "subclass_t"
             elif isinstance(self, CollectionProxy):
                 prefix = "C"
             elif isinstance(self, TupleProxy):
@@ -1502,6 +1505,16 @@ class TensorProxy(Proxy, TensorProxyInterface):
     def thunder_fsdp_padding_size(self):
         return self._thunder_fsdp_padding_size
 
+    def stride(self) -> tuple[...]:
+        return ()
+
+    def storage_offset(self) -> int:
+        return -1
+
+    @property
+    def layout(self) -> torch.layout:
+        return torch.strided
+
     # We need to implement `__len__` as
     # > In addition to bypassing any instance attributes in the
     # > interest of correctness, implicit special method lookup
@@ -1880,6 +1893,86 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(self)
 
 
+class SubclassTensorProxy(TensorProxy):
+    _tensors: list[TensorProxy]
+    _metadata: dict[str, Any]
+    _type: Any
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._tensors = []
+        self._metadata = {}
+        self._type = None
+
+    def tensor_flatten(self) -> tuple[list[TensorProxy], dict[str, Any]]:
+        return self._tensors, self._metadata
+
+    @staticmethod
+    def tensor_unflatten(inner_tensors: dict[str, TensorProxy], metadata: dict[str, Any], outer_size, outer_stride):
+        s = SubclassTensorProxy()
+        s._tensors = inner_tensors
+        s._metadata = metadata
+        return s
+
+    @classmethod
+    def torch_dispatch(cls, func, types, args, kwargs=None):
+        pass
+
+    def __repr__(self):
+        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, tensors={self._tensors}, metadata={self._metadata})>'
+
+    def type_string(self):
+        return f"{self.device.device_str()} {self.dtype.shortname()}{list(self.shape)}"
+
+    def replace(self, **changes):
+        r"""Return a copy of the TensorProxy object with new values for the specified fields as given to the constructor as arguments.
+        Valid kewword arguments are ``name``, ``history``, ``shape``, ``dtype``, ``device``, ``requires_grad``, ``distparallel_type``,  ``thunder_fsdp_padding_size``.
+        ``like`` is also a valid keyword and will take metadata from the tensor proxy argument
+        in preference to the old values but overridable by keyword arguments.
+        Note that the copy will use the current (environment) tracectx."""
+
+        like = changes.get("like")
+        (
+            shape,
+            device,
+            dtype,
+            true_dtype,
+            numel,
+            ndim,
+            requires_grad,
+            grad,
+            distparallel_type,
+            thunder_fsdp_padding_size,
+        ) = _infer_tensor_properties(
+            like,
+            changes.get("shape", self._shape if like is None else None),
+            changes.get("device", self._device if like is None else None),
+            changes.get("dtype", self._dtype if like is None else None),
+            changes.get("requires_grad", self._requires_grad if like is None else None),
+            changes.get("grad", self._grad if like is None else None),
+            changes.get("distparallel_type", self._distparallel_type if like is None else None),
+            changes.get("thunder_fsdp_padding_size", self._thunder_fsdp_padding_size if like is None else None),
+        )
+        name = changes.get("name", self.name)
+        history = changes.get("history", self.history)
+        tags = changes.get("tags", self.tags)
+        t = SubclassTensorProxy(
+            name=name,
+            tags=tags,
+            shape=shape,
+            device=device,
+            dtype=dtype,
+            requires_grad=requires_grad,
+            distparallel_type=distparallel_type,
+            thunder_fsdp_padding_size=thunder_fsdp_padding_size,
+            history=history,
+        )
+        t._tensors = self._tensors
+        t._metadata = self._metadata
+        t._type = self._type
+        return t
+
+
 class TorchAutogradFunctionCtxProxy(Proxy, TorchAutogradFunctionCtxProxyInterface):
     def __init__(
         self,
@@ -1951,6 +2044,7 @@ _cls_to_number_proxy_map = {
 
 # TODO: move this function to jit_ext.py
 def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple = None) -> TensorProxy:
+    from torch.utils._python_dispatch import is_traceable_wrapper_subclass_type
     from thunder.core.interpreter import ProvenanceRecord, PseudoInst, wrap_const
 
     if hasattr(t, "_thunder_device"):
@@ -1985,8 +2079,9 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
     else:
         # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
         shape = tuple(t.shape)
-    return TensorProxy(
-        name,
+
+    ctor_args_kwargs = dict(
+        name=name,
         shape=tuple(shape),
         device=device,
         dtype=dtype,
@@ -1996,6 +2091,18 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
         history=history,
         thunder_fsdp_padding_size=_thunder_fsdp_padding_size,
     )
+
+    tensor_type = type(t)
+    if is_traceable_wrapper_subclass_type(tensor_type):
+        subclass_tensor = SubclassTensorProxy(**ctor_args_kwargs)
+        tensor_attr_names, subclass_tensor._metadata = t.__tensor_flatten__()
+        subclass_tensor._tensors = [
+            tensorproxy(getattr(t, name), name=None, history=history) for name in tensor_attr_names
+        ]
+        subclass_tensor._type = tensor_type
+        return subclass_tensor
+    else:
+        return TensorProxy(**ctor_args_kwargs)
 
 
 def futuretensorproxy(
