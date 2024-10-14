@@ -385,6 +385,12 @@ def _get_example_inputs_from_placeholder(node) -> tuple[torch.Tensor]:
     from thunder.tests.make_tensor import make_tensor
 
     check(node.op == "placeholder", lambda: f"The node must be placeholder type", ValueError)
+    # Prefers to use actual example value in GraphArg if available
+    if "grapharg" in node.meta:
+        example_value = node.meta["grapharg"].example
+        if isinstance(example_value, torch.Tensor):
+            return (example_value.detach().clone().requires_grad_(example_value.requires_grad),)
+
     check("example_value" in node.meta, lambda: "example_value does not exist in the meta of {node}", ValueError)
     example_value = node.meta["example_value"]
 
