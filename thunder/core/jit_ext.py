@@ -385,7 +385,7 @@ def ensure_recursive_proxies(fn):  # shortcut for things we already processed?
 def record_source_loc_in_symbol_header(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        runtimectx: Interpreterruntimectx = get_interpreterruntimectx()
+        runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
         filename, positions = runtimectx.get_current_user_source_location()
         ctx: JitCtx = get_jit_ctx()
         ctx._computation_trace.set_current_source_location(filename, positions)
@@ -640,14 +640,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     with tracectx(trace_of_fwd):
         prims.python_return(unwrapped_custom_forward_result)
 
-    si = SigInfo(symbol_name)
-    for a in unwrapped_custom_forward_args:
-        if isinstance(a, Proxy):
-            si.args.append((a.name, None))
-        else:
-            pa = proxy(a)
-            si.args.append((pa.name, None))
-    trace_of_fwd._siginfo = si
+    trace_of_fwd._siginfo = SigInfo.from_name_and_args(symbol_name, unwrapped_custom_forward_args)
     trace_of_fwd.args = unwrapped_custom_forward_args
 
     @wraps(trace_of_fwd.python_callable())
@@ -687,14 +680,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         trace_of_augmented_fwd.add_bound_symbol(bsym)
     with tracectx(trace_of_augmented_fwd):
         prims.python_return(augmented_bsym_output)
-    si = SigInfo(custom_fwd_sym.name)
-    for a in unwrapped_custom_forward_args:
-        if isinstance(a, Proxy):
-            si.args.append((a.name, None))
-        else:
-            pa = proxy(a)
-            si.args.append((pa.name, None))
-    trace_of_augmented_fwd._siginfo = si
+    trace_of_augmented_fwd._siginfo = SigInfo.from_name_and_args(custom_fwd_sym.name, unwrapped_custom_forward_args)
     trace_of_augmented_fwd.args = unwrapped_custom_forward_args
 
     @wraps(trace_of_augmented_fwd.python_callable())
@@ -739,24 +725,20 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     for bsym in custom_bwd_bsyms:
         trace_of_backward.add_bound_symbol(bsym)
     with tracectx(trace_of_backward):
-        prims.python_return.bind(*unwrap(custom_backward_result), output=())
+        prims.python_return.bind(*unwrap(custom_backward_result), output=None)
 
     @wraps(trace_of_backward.python_callable())
     def bwd_trace_callable_interface(*args, **kwargs):
         return thunder.core.trace_interpreter.interpret_trace(trace_of_backward, *args, **kwargs)
 
-    bwd_si = SigInfo("backward_impl")
-    for a in ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads:
-        if isinstance(a, Proxy):
-            bwd_si.args.append((a.name, None))
-        else:
-            pa = proxy(a)
-            bwd_si.args.append((pa.name, None))
     bwd_trace_impl = TraceCtx()
     for bsym in custom_bwd_bsyms:
         bwd_trace_impl.add_bound_symbol(bsym)
-    bwd_trace_impl.add_bound_symbol(prims.python_return.bind(*sequencify(unwrap(custom_backward_result)), output=()))
-    bwd_trace_impl._siginfo = bwd_si
+    bwd_trace_impl.add_bound_symbol(prims.python_return.bind(*sequencify(unwrap(custom_backward_result)), output=None))
+    bwd_trace_impl._siginfo = SigInfo.from_name_and_args(
+        "backward_impl",
+        ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads,
+    )
     bwd_trace_impl.args = tuple(ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads)
 
     @wraps(bwd_trace_impl.python_callable())
@@ -904,7 +886,7 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
             lookaside = executor_lookaside
         # the ad hoc executor may be extended during compilation
         elif (executor_lookaside := ctx.ad_hoc_executor._lookasides.get(fn, None)) is not None:
-            lookaside = jit_needs_wrap(executor_lookaside)
+            lookaside = interpreter_needs_wrap(executor_lookaside)
         elif isinstance(fn, Symbol) or fn in _clang_fn_set:
             # Performs symbol lookasides
             # NOTE Symbols "lookaside" to themselves; this just prevents their internals from being jitted
@@ -1007,7 +989,7 @@ def _maybe_update_proxy_name(orig_value: Any, name: str, is_internal: bool | Non
     }
 
     if is_internal is None:
-        runtimectx: Interpreterruntimectx = get_interpreterruntimectx()
+        runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
         frame = runtimectx.peek_frame_stack()
         assert frame is not None  # pass is_internal if you call this before the frame is set up
         is_internal = frame.module in {"thunder.core.interpreter", "thunder.core.jit_ext"}
@@ -1402,7 +1384,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 output = Proxy("subscr")  # name? collectify?
             else:
                 output = p
-            if isinstance(idx, (int, str)):
+            if isinstance(idx, (int, str, Proxy)):
                 if isinstance(idx, int):
                     idx = int(idx)
                 elif isinstance(idx, str):

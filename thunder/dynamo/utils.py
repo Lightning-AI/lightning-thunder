@@ -1,8 +1,10 @@
-from enum import Enum, auto
-import dataclasses
+from __future__ import annotations
 from collections.abc import Callable
-import itertools
+from enum import Enum, auto
+from typing import TYPE_CHECKING
+import dataclasses
 import inspect
+import itertools
 
 import torch
 
@@ -10,7 +12,15 @@ from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.torch.langctx import torchctx
 
+if TYPE_CHECKING:
+    from thunder.core.symbol import Symbol
+
 auto_register_ops = set(itertools.chain(*torch_auto_registered_ops.values()))
+
+
+# Currently, thunder as mapping torch these function but they
+# just throw warning.
+UNSUPPORTED_THUNDER_FUNCTION = (torch._C._set_grad_enabled,)
 
 
 class CompilerType(Enum):
@@ -49,36 +59,38 @@ class SplitReasonType(Enum):
 
 @dataclasses.dataclass(frozen=True)
 class SplitReason:
-    """
-    A dataclass containing information about a split.
+    """A dataclass containing information about a split.
 
     Attributes:
-        type (SplitReasonType): Reason for the split.
-        info (str): String with details of what caused the split.
-        exception (Exception | None): Exception if there was any.
+        reason_type: Reason for the split.
+        info: String with details of what caused the split.
+        exception: Exception if there was any.
     """
 
-    type: SplitReasonType
+    reason_type: SplitReasonType
     info: str | None
     exception: Exception | None = None
 
 
 @dataclasses.dataclass(frozen=True)
 class SubgraphInfo:
-    """
-    A dataclass containing information about a subgraph.
+    """A dataclass containing information about a subgraph.
 
     Attributes:
-        original_graph_module (torch.fx.GraphModule): The original graph module.
-        split_graph_module (torch.fx.GraphModule): Optional. The graph module for the split subgraph.
-        thunder_compiled_fns (list[Callable]): List of thunder optimized callables. This could be None if there the graph module was not supported by thunder. Look at the `split_reasons` for further information.
-        compiled_functions (list[CompiledFunction]): A list of compiled functions derived from the subgraph. This will be a list with one function in case the graph was not split.
-        split_reasons (list[SplitReason] | None): Optional list of reasons explaining why the subgraph was split. Present only if there are was a split.
+        original_graph_module: The original graph module.
+        split_graph_module: The graph module for the split subgraph.
+        thunder_compiled_fns: List of thunder optimized callables.
+            This could be :obj:`None` if there the graph module was not supported by thunder.
+            Look at the :attr:`split_reasons` for further information.
+        submodule_to_compiled_functions: Dict from subgraph to compiled function.
+            This will be a dict with one pair in case the graph was not split.
+        split_reasons: List of reasons explaining why the subgraph was split.
+            Present only if there are was a split.
     """
 
     original_graph_module: torch.fx.GraphModule
-    split_graph_module: torch.fx.GraphModule
-    thunder_compiled_fns: list[Callable]
+    split_graph_module: torch.fx.GraphModule | None
+    thunder_compiled_fns: list[Callable] | None
     submodule_to_compiled_functions: dict[torch.fx.GraphModule, CompiledFunction]
     split_reasons: list | None = None
 
@@ -143,7 +155,7 @@ def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
         return proxy_args, proxy_kwargs
 
 
-def try_execute_thunder_symbol(thunder_symbol: "Symbol", node: torch.fx.Node) -> tuple[bool, SplitReason | None]:
+def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> tuple[bool, SplitReason | None]:
     """
     Attempts to execute a given Thunder symbol within a tracing context, using proxies for the node's arguments.
 
@@ -214,10 +226,29 @@ def get_nodes_in_unsupported_ctx_regions(gm: torch.fx.GraphModule) -> set[torch.
 
     # We want to mark nodes with `_enter_autocast` and `_exit_autocast`
     # as unsupported as `thunder` doesn't correctly deal with these stateful functions.
+
+    def is_no_grad_ctx_enter(node):
+        if node.target == torch._C._set_grad_enabled:
+            arg: bool = node.args[0]
+            assert isinstance(arg, bool)
+            return not arg  # arg is False (i.e. grad was disabled)
+        return False
+
+    def is_no_grad_ctx_exit(node):
+        if node.target == torch._C._set_grad_enabled:
+            arg: bool = node.args[0]
+            assert isinstance(arg, bool)
+            return arg  # arg is True (i.e. grad was enabled)
+        return False
+
     for node in gm.graph.nodes:
-        if node.op == "call_function" and node.target in (torch.amp.autocast_mode._enter_autocast,):
+        if node.op == "call_function" and (
+            node.target in (torch.amp.autocast_mode._enter_autocast,) or is_no_grad_ctx_enter(node)
+        ):
             ctx_cnt += 1
-        elif node.op == "call_function" and node.target in (torch.amp.autocast_mode._exit_autocast,):
+        elif node.op == "call_function" and (
+            node.target in (torch.amp.autocast_mode._exit_autocast,) or is_no_grad_ctx_exit(node)
+        ):
             ctx_cnt -= 1
         else:
             if ctx_cnt > 0:
@@ -264,6 +295,15 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
         )
         return False, split_reason
 
+    # These functions are present in `_torch_to_thunder_function_map` but don't mimic exact behavior.
+    # Eg. torch._C._set_grad_enabled's thunder implementation just throws warning that this is unsupported.
+    if target in UNSUPPORTED_THUNDER_FUNCTION:
+        split_reason = SplitReason(
+            SplitReasonType.UNSUPPORTED_NODE,
+            info=f"node with name: {node.name} and target: {node.target} has been manually disabled.",
+        )
+        return False, split_reason
+
     # If thunder has a mapping for this operation, try executing the meta function and see.
     # We have a symbol for `torch.where`, but we don't support one overload of it.
     # So, we try and execute the meta to get a real signal.
@@ -303,7 +343,10 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
 
 
 def update_node_and_submodule(
-    graph_module: torch.fx.GraphModule, node: torch.fx.Node, new_name: str, new_callable: Callable
+    graph_module: torch.fx.GraphModule,
+    node: torch.fx.Node,
+    new_name: str,
+    new_callable: Callable,
 ):
     """
     Updates the graph module and the node in place with a new name and a new callable as the target.

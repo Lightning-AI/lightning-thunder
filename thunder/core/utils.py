@@ -8,12 +8,13 @@ from numbers import Number
 from typing import Any, overload, Generic, Optional, TypeVar, TYPE_CHECKING
 from collections.abc import Callable
 from collections.abc import Hashable, Iterable, Iterator, Sequence
+from collections import defaultdict
 
 from typing_extensions import Self
 
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
-from thunder.core.proxies import Proxy, NumberProxy, TensorProxy, variableify, CONSTRAINT
+from thunder.core.proxies import Proxy, NumberProxy, TensorProxy, variableify, CONSTRAINT, Variable
 from thunder.core.baseutils import *
 from thunder.core.codeutils import *
 from thunder.core.trace import TraceCtx
@@ -1144,7 +1145,7 @@ def get_symbols_to_last_used_variables(symbols, ignore):
     ignore = (ignore,) if not isinstance(ignore, Sequence) else ignore
     ignore = tree_flatten(ignore)[0]
     variable_to_last_symbol = {}
-    symbol_to_last_variables = {}
+    symbol_to_last_variables = defaultdict(list)
 
     def _mark_last_use(symbol, variable):
         if variable in ignore:
@@ -1157,10 +1158,10 @@ def get_symbols_to_last_used_variables(symbols, ignore):
         # If this function is used in the combined nvfuser+torch executor, there are no symbols but regions.
         # Regions do not have args, kwargs
         if hasattr(symbol, "inputs"):
-            variables = tuple(symbol.inputs)
+            variables = tuple(symbol.inputs) + tuple(symbol.outputs)
         else:
-            variables = (symbol.args, symbol.kwargs)
-        tree_map(lambda x: _mark_last_use(symbol, x) if isinstance(x, trace.Variable) else None, variables)
+            variables = (symbol.flat_variableified_proxy_args) + tuple(symbol.flat_variableified_proxy_outs)
+        tree_map(lambda x: _mark_last_use(symbol, x) if isinstance(x, Variable) else None, variables)
     return symbol_to_last_variables
 
 
