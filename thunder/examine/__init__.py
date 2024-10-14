@@ -300,7 +300,7 @@ def make_trace_dot(trace: TraceCtx) -> graphviz.Digraph:
     )
     dot = graphviz.Digraph(
         node_attr=node_attr,
-        graph_attr=dict(size="10,10", nslimit="1.0"),
+        graph_attr=dict(size="10,10"),
     )
     dot.strict = True
 
