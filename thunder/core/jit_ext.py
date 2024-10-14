@@ -1635,13 +1635,6 @@ def update_tags(proxy_swapmap: dict[Variable, Proxy]) -> None:
         new.tags.update(unvariableify(old).tags)
 
 
-def _flatten_traceable_tensor_subclass(t: Any) -> Any | tuple[torch.Tensor, dict[str, Any]]:
-    if torch.utils._python_dispatch.is_traceable_wrapper_subclass(t):
-        tensor_attrs, metadata = t.__tensor_flatten__()
-        return *[getattr(t, name) for name in tensor_attrs], metadata
-    return t
-
-
 def thunder_general_jit(
     fn: Callable,
     args: tuple[Any, ...],
@@ -1692,22 +1685,9 @@ def thunder_general_jit(
         record_history=record_history,
     )
 
-    args_with_subclass_flattened, kwargs_with_subclass_flattened = tree_map(
-        _flatten_traceable_tensor_subclass,
-        (args, kwargs),
-    )
-    args_with_subclass_flattened = []
-    for a in args:
-        new_a = _flatten_traceable_tensor_subclass(a)
-        if new_a is a:
-            args_with_subclass_flattened.append(new_a)
-        else:
-            args_with_subclass_flattened.extend(list(new_a))
-    args_with_subclass_flattened = tuple(args_with_subclass_flattened)
     with jit_ctx(ctx):
         with tracectx(computation_trace):
-            print(f"$$$ {args=}\n$$$ {args_with_subclass_flattened=}\n$$$ {kwargs_with_subclass_flattened=}")
-            result = jfn(*args_with_subclass_flattened, **kwargs_with_subclass_flattened)
+            result = jfn(*args, **kwargs)
             prims.python_return(result)
             computation_trace.set_current_source_location(None, None)
             process_recorded_modifications(ctx, epilogue_trace)
