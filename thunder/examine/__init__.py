@@ -14,6 +14,8 @@ import torch
 from warnings import warn
 from itertools import chain
 
+import graphviz
+
 
 # TODO Maybe make collect_into a set?
 class CollectFunctionsUsed(torch.overrides.TorchFunctionMode):
@@ -272,3 +274,57 @@ def get_nvfuser_repro(trace: TraceCtx, fusion_name: str, /) -> str:
         raise RuntimeError("The installed version of nvFuser does not support repro generation unless on crash.")
 
     return get_repro(fusion.last_inputs)
+
+
+def make_trace_dot(trace: TraceCtx) -> graphviz.Digraph:
+    """
+    Creates a directed graph of the given trace.
+
+    This function is intended to be used to use graphviz to visualize the computation graph of a trace.
+    Beware, rendering out a graph for large traces might take a while.
+
+    Requires graphviz to be installed, for more information check out -> https://graphviz.readthedocs.io/en/stable/index.html
+
+    Args:
+        trace (TraceCtx): The Thunder trace to be made into a graph.
+
+    Returns:
+        graphviz.Digraph: A graphviz directed graph.
+    """
+
+    from thunder.core.transforms import bsym_list_to_dag, Node
+    from thunder.core.proxies import TensorProxy
+
+    node_attr = dict(
+        style="filled", shape="box", align="left", fontsize="10", ranksep="0.1", height="0.2", fontname="monospace"
+    )
+    dot = graphviz.Digraph(
+        node_attr=node_attr,
+        graph_attr=dict(size="10,10", nslimit="1.0"),
+    )
+    dot.strict = True
+
+    roots, leaves = bsym_list_to_dag(trace.bound_symbols)
+    leaves_id = set(id(leaf) for leaf in leaves)
+    stack = [*roots]
+    visited = set()
+    while stack:
+        node: Node = stack.pop()
+        node_id = id(node)
+        visited.add(node_id)
+        dot.node(str(node_id), node.bsym.sym.name, fillcolor="orange" if node_id in leaves_id else "white")
+
+        for child in node.children:
+            child_id = id(child)
+            out_proxy_name = node.bsym.output.name if isinstance(node.bsym.output, TensorProxy) else None
+            dot.edge(str(node_id), str(child_id), label=out_proxy_name)
+            if child_id not in visited and not str(child.bsym).startswith("#"):
+                stack.append(child)
+
+        for parent in node.parents:
+            parent_id = id(parent)
+            dot.edge(str(parent_id), str(node_id))
+            if parent_id not in visited and not str(parent.bsym).startswith("#"):
+                stack.append(parent)
+
+    return dot
