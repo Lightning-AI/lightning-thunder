@@ -81,9 +81,10 @@ class SubgraphInfo:
 
     Attributes:
         original_graph_module: The original graph module.
-        original_split_graph_module: The original split graph module before the :func:`checkpoint_converter` replaces the Torch operators with Thunder symbols.
-            If no checkpoint operators are used in the Thunder-supported module, this will be identical to :attr:`split_graph_module`
-        split_graph_module: The graph module for the split subgraph.
+        original_split_graph_module: The original split graph module before any transformations are applied.
+            Specifically, before the :func:`checkpoint_converter` replaces the Torch operators with Thunder symbols,
+            and before any submodules are compiled by Thunder.
+        split_graph_module: The graph module for the split subgraph. It contains the compiled thunder/inductor modules.
         thunder_compiled_fns: List of thunder optimized callables.
             This could be :obj:`None` if there the graph module was not supported by thunder.
             Look at the :attr:`split_reasons` for further information.
@@ -331,7 +332,7 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
         )
         return False, split_reason
 
-    # If the operation is higher order function, check whether the submodule is supported by Thunder
+    # If the operation is higher order function for checkpointing, check whether the submodule is supported by Thunder
     if target is torch.ops.higher_order.tag_activation_checkpoint:
         m = node.graph.owning_module
         assert hasattr(m, node.args[0].name)
