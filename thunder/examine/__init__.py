@@ -305,7 +305,7 @@ def make_trace_dot(trace: TraceCtx) -> graphviz.Digraph:
     dot.strict = True
 
     roots, leaves = bsym_list_to_dag(trace.bound_symbols)
-    leaves_id = set(id(leaf) for leaf in leaves)
+    leaves_id = {id(leaf) for leaf in leaves}
     stack = [*roots]
     visited = set()
     while stack:
