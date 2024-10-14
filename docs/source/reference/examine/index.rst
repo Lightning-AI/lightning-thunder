@@ -7,3 +7,4 @@ thunder.examine
     :toctree: generated/
 
     examine
+    make_trace_dot
