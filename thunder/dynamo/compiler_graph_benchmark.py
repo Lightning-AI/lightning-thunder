@@ -93,6 +93,9 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
                 fn = self.subgraph_infos[self.graph_idx].submodule_to_compiled_functions[gm].compiled_fn
             else:
                 if ex == "thunder":
+                    # The subgraph whose name starts with "inductor" is not supported by the Thunder backend.
+                    if name.startswith("inductor"):
+                        continue
                     fn = self._thunder_jit(gm)
                 elif ex == "inductor":
                     fn = self._torch_compile(gm)
