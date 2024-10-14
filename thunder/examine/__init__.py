@@ -2,6 +2,7 @@ from typing import Any
 from collections.abc import Callable
 import collections
 import traceback
+import warnings
 
 import thunder
 from thunder.core.trace import TraceCtx
@@ -14,7 +15,12 @@ import torch
 from warnings import warn
 from itertools import chain
 
-import graphviz
+try:
+    import graphviz
+
+    HAS_GRAPHVIZ = True
+except ImportError:
+    HAS_GRAPHVIZ = False
 
 
 # TODO Maybe make collect_into a set?
@@ -291,6 +297,9 @@ def make_trace_dot(trace: TraceCtx) -> graphviz.Digraph:
     Returns:
         graphviz.Digraph: A graphviz directed graph.
     """
+    if not HAS_GRAPHVIZ:
+        warnings.warn("graphviz is not available. Graph cannot be created.")
+        return
 
     from thunder.core.transforms import bsym_list_to_dag, Node
     from thunder.core.proxies import TensorProxy
