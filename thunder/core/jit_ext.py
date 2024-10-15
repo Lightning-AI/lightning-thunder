@@ -704,14 +704,10 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         sequencify(unwrapped_custom_forward_result),
     )
     trace_of_backward = TraceCtx()
-    bwd_si = SigInfo(f"{custom_fwd_sym.name}_backward")
-    for a in ctx_proxy.saved_tensors + grads:
-        if isinstance(a, Proxy):
-            bwd_si.args.append((a.name, None))
-        else:
-            pa = proxy(a)
-            bwd_si.args.append((pa.name, None))
-    trace_of_backward._siginfo = bwd_si
+    trace_of_backward._siginfo = SigInfo.from_name_and_args(
+        f"{custom_fwd_sym.name}_backward",
+        ctx_proxy.saved_tensors + grads,
+    )
     trace_of_backward.args = tuple(ctx_proxy.saved_tensors + grads)
 
     jit_ctx.computation_trace.push_scope([])
@@ -720,21 +716,13 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     if custom_backward_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return custom_backward_result
 
-    custom_bwd_bsyms: list[BoundSymbol] = jit_ctx.computation_trace.pop_scope()
-
-    for bsym in custom_bwd_bsyms:
+    for bsym in jit_ctx.computation_trace.pop_scope():
         trace_of_backward.add_bound_symbol(bsym)
     with tracectx(trace_of_backward):
-        prims.python_return.bind(*unwrap(custom_backward_result), output=None)
-
-    @wraps(trace_of_backward.python_callable())
-    def bwd_trace_callable_interface(*args, **kwargs):
-        return thunder.core.trace_interpreter.interpret_trace(trace_of_backward, *args, **kwargs)
+        prims.python_return(unwrap(custom_backward_result))
 
     bwd_trace_impl = TraceCtx()
-    for bsym in custom_bwd_bsyms:
-        bwd_trace_impl.add_bound_symbol(bsym)
-    bwd_trace_impl.add_bound_symbol(prims.python_return.bind(*sequencify(unwrap(custom_backward_result)), output=None))
+    bwd_trace_impl.bound_symbols.extend(trace_of_backward.bound_symbols)
     bwd_trace_impl._siginfo = SigInfo.from_name_and_args(
         "backward_impl",
         ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads,
@@ -745,7 +733,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     def bwd_impl_callable(*args, **kwargs):
         return thunder.core.trace_interpreter.interpret_trace(bwd_trace_impl, *args, **kwargs)
 
-    @wraps(bwd_trace_callable_interface)
+    @wraps(trace_of_backward.python_callable())
     def backward_impl(*args, **kwargs):
         check(not kwargs, lambda: f"{kwargs} expected to be empty")
         new_args = ctx_proxy.saved_consts + args
