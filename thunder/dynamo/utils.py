@@ -448,7 +448,7 @@ def _get_example_inputs_from_placeholder(node) -> tuple[torch.Tensor]:
         raise TypeError(
             "The 'example_value' in the placeholder node is expected to be either a Tensor or a Tuple of Tensors."
         )
-    
+
 
 def _checkpoint_function_converter(gm: torch.fx.GraphModule):
     """
