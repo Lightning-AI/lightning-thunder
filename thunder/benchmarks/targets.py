@@ -33,6 +33,7 @@ from thunder.benchmarks import (
     thunder_cudnn_executor,
     thunder_cudnn_nvfuser_executor,
     thunder_executor,
+    thunderfx_executor,
     thunder_sdpa_torch_compile_nvfuser_executor,
     torch_compile_executor,
     torch_executor,
@@ -151,15 +152,17 @@ def interpreter_fwd(module: Callable):
     return fn_
 
 
-executors = (
-    torch_executor,
-    torch_compile_executor,
-    thunder_executor,
-)
+executors = (torch_executor, torch_compile_executor, thunder_executor)
 executors_ids = (
     "torch",
     "torch.compile",
     "thunder",
+)
+
+torchbench_executors = (*executors, thunderfx_executor)
+torchbench_executors_ids = (
+    *executors_ids,
+    "thunderfx",
 )
 
 apex_executors = (thunder_apex_executor, thunder_apex_nvfuser_executor)
@@ -841,8 +844,8 @@ if importlib.util.find_spec("torchbenchmark"):
 )
 @pytest.mark.parametrize(
     "executor,",
-    executors,
-    ids=executors_ids,
+    torchbench_executors,
+    ids=torchbench_executors_ids,
 )
 @parametrize_compute_type
 def test_torchbench(benchmark, module_name, executor, compute_type: ComputeType):
@@ -867,8 +870,8 @@ def test_torchbench(benchmark, module_name, executor, compute_type: ComputeType)
 )
 @pytest.mark.parametrize(
     "executor,",
-    executors,
-    ids=executors_ids,
+    torchbench_executors,
+    ids=torchbench_executors_ids,
 )
 @parametrize_compute_type
 def test_torchbench_canary(benchmark, module_name, executor, compute_type: ComputeType):
