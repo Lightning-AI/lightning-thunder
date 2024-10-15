@@ -1186,7 +1186,7 @@ def test_custom_autograd_function():
             (x, weight) = ctx.saved_tensors
             assert weight.shape == ctx.shape  # really bogus, just to use ctx.shape
             scaler2 = ctx.shape[0] / ctx.shape[1]
-            return torch.matmul(grad_output, weight) * ctx.scaler, torch.matmul(grad_output.t(), x) / scaler2
+            return torch.matmul(grad_output, weight) * ctx.scaler, torch.matmul(grad_output.t(), x) / scaler2, None
 
     class Model(torch.nn.Module):
         def __init__(self):
@@ -1199,8 +1199,13 @@ def test_custom_autograd_function():
     x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
     model = Model().to(dtype=torch.float64)
     jitted = thunder.jit(model)
-
     gradcheck(jitted, (x,))
+
+    jitted.zero_grad()
+    x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
+    out = jitted(x)
+    out.backward(torch.rand_like(out))
+    assert jitted.l1.weight.grad is not None
 
 
 def test_autograd_function_apply():
