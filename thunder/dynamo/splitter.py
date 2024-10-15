@@ -142,33 +142,23 @@ def _splitter(
     # Call compile on the split region/s.
     thunder_compiled_fns = []
     submodule_to_compiled_fns = {}
-
-    # The compiled Thunder/Inductor module is updated in-place, and the converter also processes the target module in-place,
-    # so we need to record the original_split_gm in SubgraphInfo.original_split_graph_module
-    original_split_gm = split_gm
-    split_gm = copy.deepcopy(split_gm)
-
     for node in split_gm.graph.nodes:
         node_name = node.name
         if is_thunder_supported_partition(node):
-            graph_module = getattr(split_gm, node_name)
+            graph_module = getattr(split_gm, node.name)
             # Replace the torch operators within the function called by activation checkpoint with the corresponding Thunder symbols
             checkpoint_converter(split_gm, graph_module)
             jit_fn = thunder_jit(graph_module)
             # Update the node name from "submod_*" to "thunder_*" for more user-friendly names
-            update_node_and_submodule(split_gm, node, node_name.replace("submod", "thunder"), jit_fn)
+            update_node_and_submodule(split_gm, node, node.name.replace("submod", "thunder"), jit_fn)
             thunder_compiled_fns.append(jit_fn)
-            submodule_to_compiled_fns[getattr(original_split_gm, node_name)] = CompiledFunction(
-                jit_fn, CompilerType.THUNDER
-            )
+            submodule_to_compiled_fns[graph_module] = CompiledFunction(jit_fn, CompilerType.THUNDER)
         elif node.name.startswith("submod"):  # For inductor
             graph_module = getattr(split_gm, node_name)
             jit_fn = torch_inductor(graph_module)
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node_name.replace("submod", "inductor"), jit_fn)
-            submodule_to_compiled_fns[getattr(original_split_gm, node_name)] = CompiledFunction(
-                jit_fn, CompilerType.TORCH_INDUCTOR
-            )
+            submodule_to_compiled_fns[graph_module] = CompiledFunction(jit_fn, CompilerType.TORCH_INDUCTOR)
         else:
             # Everything else is a glue code to call and pass outputs between the other partitions.
             pass
@@ -178,7 +168,6 @@ def _splitter(
 
     return split_gm, SubgraphInfo(
         gm,
-        original_split_gm,
         split_gm,
         thunder_compiled_fns,
         submodule_to_compiled_fns,
