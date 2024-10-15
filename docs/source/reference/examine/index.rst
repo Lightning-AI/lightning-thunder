@@ -7,4 +7,3 @@ thunder.examine
     :toctree: generated/
 
     examine
-
