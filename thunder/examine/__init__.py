@@ -2,10 +2,10 @@ from typing import Any
 from collections.abc import Callable
 import collections
 import traceback
-import warnings
 
 import thunder
 from thunder.core.trace import TraceCtx
+from thunder.core.transforms import bsym_list_to_dag, Node
 from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import BoundSymbol
 from thunder.torch import _torch_to_thunder_function_map
@@ -14,13 +14,7 @@ from thunder.core.langctxs import resolve_language, LanguageContext, Languages
 import torch
 from warnings import warn
 from itertools import chain
-
-try:
-    import graphviz
-
-    HAS_GRAPHVIZ = True
-except ImportError:
-    HAS_GRAPHVIZ = False
+import importlib
 
 
 # TODO Maybe make collect_into a set?
@@ -282,7 +276,7 @@ def get_nvfuser_repro(trace: TraceCtx, fusion_name: str, /) -> str:
     return get_repro(fusion.last_inputs)
 
 
-def make_trace_dot(trace: TraceCtx) -> graphviz.Digraph:
+def make_trace_dot(trace: TraceCtx):
     """
     Creates a directed graph of the given trace.
 
@@ -297,12 +291,11 @@ def make_trace_dot(trace: TraceCtx) -> graphviz.Digraph:
     Returns:
         graphviz.Digraph: A graphviz directed graph.
     """
-    if not HAS_GRAPHVIZ:
-        warnings.warn("graphviz is not available. Graph cannot be created.")
+    if not importlib.util.find_spec("graphviz"):
+        warn("graphviz is not available. Graph cannot be created.")
         return
 
-    from thunder.core.transforms import bsym_list_to_dag, Node
-    from thunder.core.proxies import TensorProxy
+    import graphviz
 
     node_attr = dict(
         style="filled", shape="box", align="left", fontsize="10", ranksep="0.1", height="0.2", fontname="monospace"
