@@ -710,9 +710,9 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         from thunder.core.transforms import put_grads
         from thunder.core.trace_interpreter import interpret_trace
 
-        check(not kwargs, lambda f: "{kwargs=} should be empty")
+        check(not kwargs, lambda: f"{kwargs=} should be empty")
         primal, residuals = interpret_trace(trace_of_augmented_fwd, *args, **kwargs)
-        check(len(primal) == 1, lambda f: "{primal=} has {len(primal)} proxies but expected 1")
+        check(len(primal) == 1, lambda: f"{primal=} has {len(primal)} proxies but expected 1")
         grads = (get_grad(primal[0]),)
         bwd_args = ctx_proxy.saved_consts + residuals + grads
         result = bwd_impl_callable(*bwd_args)
