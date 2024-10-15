@@ -1896,13 +1896,14 @@ class TensorProxy(Proxy, TensorProxyInterface):
 class SubclassTensorProxy(TensorProxy):
     _tensors: list[TensorProxy]
     _metadata: dict[str, Any]
-    _type: Any
+    # `__torch_dispatch__(cls, aten_op, types, args, **kwargs=None) -> Tensor`
+    _torch_dispatch_impl: Callable[[Any, Callable[[Any], Any], Any, Any, Any], Any]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._tensors = []
         self._metadata = {}
-        self._type = None
+        self._torch_dispatch_impl = None
 
     def tensor_flatten(self) -> tuple[list[TensorProxy], dict[str, Any]]:
         return self._tensors, self._metadata
@@ -1919,7 +1920,7 @@ class SubclassTensorProxy(TensorProxy):
         pass
 
     def __repr__(self):
-        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, tensors={self._tensors}, metadata={self._metadata})>'
+        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, tensors={self._tensors}, metadata={self._metadata}, __torch_dispatch__={self._torch_dispatch_impl})>'
 
     def type_string(self):
         return f"{self.device.device_str()} {self.dtype.shortname()}{list(self.shape)}"
@@ -1969,7 +1970,7 @@ class SubclassTensorProxy(TensorProxy):
         )
         t._tensors = self._tensors
         t._metadata = self._metadata
-        t._type = self._type
+        t._torch_dispatch_impl = self._torch_dispatch_impl
         return t
 
 
@@ -2099,7 +2100,7 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
         subclass_tensor._tensors = [
             tensorproxy(getattr(t, name), name=None, history=history) for name in tensor_attr_names
         ]
-        subclass_tensor._type = tensor_type
+        subclass_tensor._torch_dispatch_impl = tensor_type.__torch_dispatch__
         return subclass_tensor
     else:
         return TensorProxy(**ctor_args_kwargs)

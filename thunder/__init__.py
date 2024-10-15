@@ -579,6 +579,8 @@ def jit(
                     if len(tensor_args_consumed_by_inplace_grouped_by_numel) > 1:
                         vanilla_tensor_args = set(tensor_indices)
 
+            # TODO(crcrpar): Transform computation_trc if it has any tensor subclasses inside of it.
+
             if epilogue_trc is not None:
                 epilogue_traces = [epilogue_trc]
             else:
