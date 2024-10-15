@@ -81,10 +81,7 @@ class SubgraphInfo:
 
     Attributes:
         original_graph_module: The original graph module.
-        original_split_graph_module: The original split graph module before any transformations are applied.
-            Specifically, before the :func:`checkpoint_converter` replaces the Torch operators with Thunder symbols,
-            and before any submodules are compiled by Thunder.
-        split_graph_module: The graph module for the split subgraph. It contains the compiled thunder/inductor modules.
+        split_graph_module: The graph module for the split subgraph.
         thunder_compiled_fns: List of thunder optimized callables.
             This could be :obj:`None` if there the graph module was not supported by thunder.
             Look at the :attr:`split_reasons` for further information.
@@ -95,7 +92,6 @@ class SubgraphInfo:
     """
 
     original_graph_module: torch.fx.GraphModule
-    original_split_graph_module: torch.fx.GraphModule | None
     split_graph_module: torch.fx.GraphModule | None
     thunder_compiled_fns: list[Callable] | None
     submodule_to_compiled_functions: dict[torch.fx.GraphModule, CompiledFunction]
