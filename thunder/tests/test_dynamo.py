@@ -610,14 +610,10 @@ def test_checkpoint_converter_submodule():
     out = jf(x)
 
     subgraph_info = backend.subgraph_infos[0]
-    original_split_m = subgraph_info.original_split_graph_module
     split_m = subgraph_info.split_graph_module
-    assert id(original_split_m) != id(split_m)
     submodule_name = "wrap_body_0"
-    assert hasattr(original_split_m, submodule_name)
     assert hasattr(split_m, submodule_name)
 
-    assert id(getattr(original_split_m, submodule_name)) != id(getattr(split_m, submodule_name))
     submodule = getattr(split_m, submodule_name)
 
     for n in submodule.graph.nodes:
