@@ -31,7 +31,7 @@ from thunder.executors.transformer_engineex import transformer_engine_ex, TE_AVA
 from thunder.executors.sdpaex import sdpa_ex
 from thunder.executors.torch_compile import torch_compile_cat_ex, torch_compile_ex
 from thunder.transforms.cudagraph import CUDAGraphTransform
-from thunder.tests import nanogpt_model, hf_bart_self_attn, litgpt_model
+from thunder.tests import nanogpt_model, hf_bart_self_attn
 from thunder.tests.litgpt_model import Config as LitGPTConfig
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 
@@ -1976,8 +1976,10 @@ class LlamaMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (make(shape),), {}
 
     def fn(self) -> Callable:
+        from litgpt.model import LLaMAMLP
+
         module = (
-            litgpt_model.LLaMAMLP(self.config)
+            LLaMAMLP(self.config)
             .to(device=self.device, dtype=self.tdtype)
             .requires_grad_(self.requires_grad)
         )
@@ -2046,8 +2048,10 @@ class LitGPTCausalSelfAttentionBenchmark(Benchmark, metaclass=UserFacingBenchmar
         return (x, cos, sin, mask, input_pos), {}
 
     def fn(self) -> Callable:
+        from litgpt.model import CausalSelfAttention
+
         module = (
-            litgpt_model.CausalSelfAttention(self.config)
+            CausalSelfAttention(self.config)
             .to(device=self.device, dtype=self.tdtype)
             .requires_grad_(self.requires_grad)
         )
@@ -2127,8 +2131,10 @@ class LlamaRMSNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (make(shape),), {}
 
     def fn(self) -> Callable:
+        from litgpt.model import RMSNorm
+
         module = (
-            litgpt_model.RMSNorm(self.size, self.dim, self.eps)
+            RMSNorm(self.size, self.dim, self.eps)
             .to(device=self.device, dtype=self.tdtype)
             .requires_grad_(self.requires_grad)
         )
@@ -2209,8 +2215,10 @@ class LitGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (x,), {}
 
     def fn(self) -> Callable:
+        from litgpt.model import GPT
+
         gpt = (
-            litgpt_model.GPT(self.config)
+            GPT(self.config)
             .to(device=self.device, dtype=self.model_tdtype)
             .requires_grad_(self.requires_grad)
         )
@@ -2230,6 +2238,8 @@ class LitGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 # "scaled_dot_product_attention" call.
 class QKVSplitRope(nn.Module):
     def __init__(self, config, use_apex) -> None:
+        from litgpt.model import apply_rope
+
         self.fused_apply_rotary_pos_emb_cached = None
         if use_apex:
             try:
@@ -2241,7 +2251,7 @@ class QKVSplitRope(nn.Module):
 
         super().__init__()
         self.config = config
-        self.apply_rope = litgpt_model.apply_rope
+        self.apply_rope = apply_rope
         self.use_apex = use_apex
 
     def forward(
@@ -2832,6 +2842,7 @@ class GPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         dtype: thunder.dtypes.dtype | torch.dtype | str = thunder.bfloat16,
         requires_grad: bool = True,
     ) -> None:
+        from litgpt.model import build_rope_cache
         super().__init__()
 
         self.config = LitGPTConfig.from_name(config)
@@ -2847,7 +2858,7 @@ class GPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         # Sets required benchmark parameters
         self.devices: list[str] = [device]
 
-        self.cos, self.sin = litgpt_model.build_rope_cache(
+        self.cos, self.sin = build_rope_cache(
             seq_len=seq_length, n_elem=self.config.rope_n_elem, device=self.device
         )
 
@@ -2859,8 +2870,10 @@ class GPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (a, self.cos, self.sin), {}
 
     def fn(self) -> Callable:
+        from litgpt.model import Block
+
         model = (
-            litgpt_model.Block(self.config).to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
+            Block(self.config).to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
         )
         return model
 
