@@ -788,9 +788,6 @@ def default_torch_ddp_executor(_) -> Callable:
 
 @dataclass(frozen=True)
 class get_default_torch_fsdp_executor:
-    from torch.distributed.fsdp import ShardingStrategy
-
-    sharding_strategy: ShardingStrategy
     apply_torch_compile: bool
     auto_wrap_policy: Any | None
 
