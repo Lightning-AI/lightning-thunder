@@ -32,7 +32,6 @@ from thunder.executors.sdpaex import sdpa_ex
 from thunder.executors.torch_compile import torch_compile_cat_ex, torch_compile_ex
 from thunder.transforms.cudagraph import CUDAGraphTransform
 from thunder.tests import nanogpt_model, hf_bart_self_attn
-from thunder.tests.litgpt_model import Config as LitGPTConfig
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 
 # List of all benchmarks
@@ -1221,12 +1220,14 @@ class LitGPTGeluBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def __init__(
         self,
-        config: str | LitGPTConfig,
+        config: str,
         batchdims: Sequence[int],
         device: str,
         dtype: dtypes.dtype,
         requires_grad: bool,
     ) -> None:
+        from litgpt.config import Config as LitGPTConfig
+
         super().__init__()
 
         self.config = LitGPTConfig.from_name(config) if not isinstance(config, LitGPTConfig) else config
@@ -1290,13 +1291,15 @@ class LitGPTSwigluBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def __init__(
         self,
-        config: str | LitGPTConfig,
+        config: str,
         batchdims: Sequence[int],
         device: str,
         dtype: dtypes.dtype,
         requires_grad: bool,
         use_liger: bool = False,
     ) -> None:
+        from litgpt.config import Config as LitGPTConfig
+
         super().__init__()
 
         self.config = LitGPTConfig.from_name(config) if not isinstance(config, LitGPTConfig) else config
@@ -1949,12 +1952,14 @@ class LlamaMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def __init__(
         self,
-        config: str | LitGPTConfig = "Llama-2-7b-hf",
+        config: str = "Llama-2-7b-hf",
         batchdims: Sequence[int] = (16,),
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.bfloat16,
         requires_grad: bool = True,
     ) -> None:
+        from litgpt.config import Config as LitGPTConfig
+
         super().__init__()
 
         self.config = LitGPTConfig.from_name(config) if not isinstance(config, LitGPTConfig) else config
@@ -2022,12 +2027,14 @@ class LitGPTCausalSelfAttentionBenchmark(Benchmark, metaclass=UserFacingBenchmar
 
     def __init__(
         self,
-        config: str | LitGPTConfig = "Llama-2-7b-hf",
+        config: str = "Llama-2-7b-hf",
         batchdims: Sequence[int] = (16,),
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.bfloat16,
         requires_grad: bool = True,
     ) -> None:
+        from litgpt.config import Config as LitGPTConfig
+
         super().__init__()
 
         self.config = LitGPTConfig.from_name(config) if not isinstance(config, LitGPTConfig) else config
@@ -2182,7 +2189,7 @@ class LitGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def __init__(
         self,
-        config: LitGPTConfig,
+        config,
         batchdims: Sequence[int] = (8,),
         indices_dtype: dtypes.dtype = thunder.int64,
         device: str = "cuda",
@@ -2342,13 +2349,15 @@ class LlamaQKVSplitRopeBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def __init__(
         self,
-        config: str | LitGPTConfig = "Llama-2-7b-hf",
+        config: str = "Llama-2-7b-hf",
         batchdims: Sequence[int] = (16,),
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.bfloat16,
         requires_grad: bool = True,
         use_apex: bool = False,
     ) -> None:
+        from litgpt.config import Config as LitGPTConfig
+
         super().__init__()
 
         self.config = LitGPTConfig.from_name(config) if not isinstance(config, LitGPTConfig) else config
@@ -2653,7 +2662,7 @@ class LitGPTSDPABenchmark(NanoGPTSDPABenchmark):
 
     def __init__(
         self,
-        config: str | LitGPTConfig = "Llama-2-7b-hf",
+        config: str = "Llama-2-7b-hf",
         batchdims: Sequence[int] = (16,),
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.bfloat16,
@@ -2843,6 +2852,8 @@ class GPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         requires_grad: bool = True,
     ) -> None:
         from litgpt.model import build_rope_cache
+        from litgpt.config import Config as LitGPTConfig
+
         super().__init__()
 
         self.config = LitGPTConfig.from_name(config)
