@@ -440,6 +440,7 @@ def test_saved_for_backward_recomputation():
     assert t7 not in bwd_bsym_out, "Unexpected tensor rematerialized in the backward."
 
 
+@requiresCUDA
 def test_not_rematerialize_matmul():
     nn = torch.nn
 
