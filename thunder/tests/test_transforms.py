@@ -4,6 +4,9 @@ from lightning_utilities.core.imports import package_available
 import pytest
 
 import thunder
+import thunder.examine
+from thunder.core import prims
+from thunder.core.trace import TraceCtx
 from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform, nvtx_push, nvtx_pop
 from thunder.tests.framework import requiresCUDA
 from thunder.tests import litgpt_model
@@ -435,6 +438,46 @@ def test_saved_for_backward_recomputation():
         )
     )
     assert t7 not in bwd_bsym_out, "Unexpected tensor rematerialized in the backward."
+
+
+def test_not_rematerialize_matmul():
+    nn = torch.nn
+
+    class MLP(nn.Module):
+        def __init__(self, embedding_size: int) -> None:
+            super().__init__()
+            self.layers = nn.Sequential(
+                nn.Linear(embedding_size, embedding_size * 4),
+                nn.GELU(),
+                nn.Linear(embedding_size * 4, embedding_size),
+                nn.Dropout(),
+            )
+
+        def forward(self, x):
+            return self.layers(x)
+
+    batch_size, sequence_length, embedding_size = 2, 3, 4
+    inp = torch.randn(batch_size, sequence_length, embedding_size, device="cuda", requires_grad=True)
+
+    model = MLP(embedding_size)
+    model.to("cuda")
+
+    jmodel = thunder.jit(model, nv_enable_linear=True, nv_enable_matmul=True)
+    jmodel(inp)
+
+    def assert_subsymbol_count(trace: TraceCtx, /, num_linears: int, num_matmuls: int):
+        fusions = thunder.examine.get_fusion_symbols(trace)
+        assert len(fusions) == 1
+
+        subsymbol_ids = [subsymbol.sym.id for subsymbol in fusions[0].subsymbols]
+        assert subsymbol_ids.count(prims.PrimIDs.LINEAR) == num_linears
+        assert subsymbol_ids.count(prims.PrimIDs.MATMUL) == num_matmuls
+
+    fw_trace = thunder.last_traces(jmodel)[-1]
+    assert_subsymbol_count(fw_trace, num_linears=2, num_matmuls=0)
+
+    bw_trace = thunder.last_backward_traces(jmodel)[-1]
+    assert_subsymbol_count(bw_trace, num_linears=0, num_matmuls=4)
 
 
 def test_lora_transform_linear():
