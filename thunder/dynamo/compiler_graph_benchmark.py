@@ -10,7 +10,8 @@ from thunder.core.utils import check
 
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Sequence, Callable
+
 
 GRAPH_BY_GRAPH_BENCHMARK_PARAMS_KEYS = ("GraphID", "SplitModuleName", "executor")
 
@@ -25,8 +26,8 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
     def __init__(
         self,
         bench: BenchmarkFixture,
-        executors: Sequence[str],
-        **thunder_options,
+        executors: dict[str, Callable],
+        # **thunder_options,
     ):
         """
         This class acts as a backend for the :func:`torch.compile` function, facilitating the benchmarking of each :class:`torch.fx.GraphModule` produced by Thunder dynamo splitter.
@@ -72,41 +73,27 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
             With `--benchmark-group-by='graph-by-graph:param:GraphID,param:SplitModuleName'`, the test cases are grouped based on GraphID and SplitModuleName,
             allowing for performance comparison between different executors (e.g., 'eager' vs. 'thunder').
         """
-        super().__init__(**thunder_options)
+        super().__init__()
         self.bench = bench
-        if not executors:
-            self.executors = ThunderCompilerGraphBenchmarking._executors
-        else:
-            check(
-                all(ex in ThunderCompilerGraphBenchmarking._executors for ex in executors),
-                lambda: f"ThunderCompilerGraphBenchmarking only supports the following executor names: {ThunderCompilerGraphBenchmarking._executors}  ",
-            )
-            self.executors = executors
+        check(isinstance(executors, dict) and executors, lambda: f"bench_executors is empty, nothing to execuate")
+        self.executors = executors
+
         self.graph_idx = 0
 
     def run_bench(self, gm: torch.fx.GraphModule, name: str, *sample_args):
         from thunder.benchmarks.targets import record_peak_allocated_memory, MAX_ALLOCATED_MEMORY_KEYWORD
 
-        for ex in self.executors:
-            # Uses the already compiled module if it is compiled with the expected executor
-            if name.startswith(ex):
-                fn = self.subgraph_infos[self.graph_idx].submodule_to_compiled_functions[gm].compiled_fn
+        for ex_name, ex in self.executors.items():
+            if ex is None:
+                compiled_fn = gm
             else:
-                if ex == "thunder":
-                    # The subgraph whose name starts with "inductor" is not supported by the Thunder backend.
-                    if name.startswith("inductor"):
-                        continue
-                    fn = self._thunder_jit(gm)
-                elif ex == "inductor":
-                    fn = self._torch_compile(gm)
-                else:
-                    fn = gm
+                compiled_fn = ex(gm)
             with record_peak_allocated_memory(self.bench):
-                self.bench(fn, *sample_args)
+                self.bench(compiled_fn, *sample_args)
             # BenchmarkFixture.stats is created each time bench is called (ref: https://github.com/pybenchmark/pytest-benchmark/blob/8c9a5faa1dd178b53ab7b2a66f5364a77e903d74/src/pytest_benchmark/fixture.py#L150)
             # Adds the graph number, split module name and executor suffix to the name string
             gid_key, module_name_key, ex_key = GRAPH_BY_GRAPH_BENCHMARK_PARAMS_KEYS
-            self.bench.stats.name += f"-{gid_key}[{self.graph_idx+1}]-{module_name_key}[{name}]-{ex_key}[{ex}]"
+            self.bench.stats.name += f"-{gid_key}[{self.graph_idx+1}]-{module_name_key}[{name}]-{ex_key}[{ex_name}]"
             assert MAX_ALLOCATED_MEMORY_KEYWORD in self.bench.extra_info
             assert f"{self.bench.stats.name}_{MAX_ALLOCATED_MEMORY_KEYWORD}" not in self.bench.extra_info
             # NOTE: A benchmark can include multiple stats, but only one extra_info field is allowed per benchmark.
@@ -128,8 +115,8 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
         }
         for node in split_module.graph.nodes:
             target = node.target
-            # Benchmarks the modules produced by the splitter.
-            if isinstance(target, str) and target.startswith(("thunder_", "inductor_")):
+            # Benchmarks the modules produced by the splitter and runable for Thunder.
+            if isinstance(target, str) and target.startswith("thunder_"):
                 check(
                     hasattr(split_module, target),
                     lambda: f"the submodule {target} does not exist in {split_module}",
