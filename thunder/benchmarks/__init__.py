@@ -1980,11 +1980,7 @@ class LlamaMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     def fn(self) -> Callable:
         from litgpt.model import LLaMAMLP
 
-        module = (
-            LLaMAMLP(self.config)
-            .to(device=self.device, dtype=self.tdtype)
-            .requires_grad_(self.requires_grad)
-        )
+        module = LLaMAMLP(self.config).to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
         return module
 
 
@@ -2221,11 +2217,7 @@ class LitGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     def fn(self) -> Callable:
         from litgpt.model import GPT
 
-        gpt = (
-            GPT(self.config)
-            .to(device=self.device, dtype=self.model_tdtype)
-            .requires_grad_(self.requires_grad)
-        )
+        gpt = GPT(self.config).to(device=self.device, dtype=self.model_tdtype).requires_grad_(self.requires_grad)
         return gpt
 
     def postprocess_for_backward(self, output: torch.Tensor) -> torch.Tensor | None:
@@ -2866,9 +2858,7 @@ class GPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         # Sets required benchmark parameters
         self.devices: list[str] = [device]
 
-        self.cos, self.sin = build_rope_cache(
-            seq_len=seq_length, n_elem=self.config.rope_n_elem, device=self.device
-        )
+        self.cos, self.sin = build_rope_cache(seq_len=seq_length, n_elem=self.config.rope_n_elem, device=self.device)
 
     def make_batch(self) -> tuple[list, dict]:
         make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
@@ -2880,9 +2870,7 @@ class GPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     def fn(self) -> Callable:
         from litgpt.model import Block
 
-        model = (
-            Block(self.config).to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
-        )
+        model = Block(self.config).to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
         return model
 
 
