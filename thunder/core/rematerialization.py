@@ -274,8 +274,8 @@ def find_cut(
     required_producer_vars = tuple(x for x in producer.args)
     required_producer_vars += tuple(x for x in external_producer_outputs)
 
-    # This is needed to avoid rematerializing random or reduction primitives.
-    tags = {prims.OpTags.REDUCTION_OP, prims.OpTags.RANDOM_OP}
+    # This is needed to avoid rematerializing random or expensive primitives.
+    tags = {prims.OpTags.REDUCTION_OP, prims.OpTags.RANDOM_OP, prims.OpTags.MATMUL_OP}
     required_producer_vars += tuple(
         chain.from_iterable((y for y in x.flat_outs) for x in producer.subsymbols if has_tags(x, tags))
     )
