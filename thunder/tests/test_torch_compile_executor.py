@@ -1,3 +1,4 @@
+import platform
 import pytest
 import torch
 from torch._dynamo import is_inductor_supported
@@ -15,7 +16,9 @@ def test_supported_ops_are_in_pytorch_executor():
     assert supported_ops - pytorch_ex.implmap.keys() == set()
 
 
-@pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported")
+# Disabling on windows temporarily, until our windows runners source the
+# appropriate visual studio config.
+@pytest.mark.skipif(not is_inductor_supported() or platform.system() == "Windows", reason="inductor unsupported")
 def test_torch_compile_litgpt():
     from litgpt.model import GPT
 
