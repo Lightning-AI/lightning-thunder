@@ -13,6 +13,7 @@ _ENABLED = os.getenv("THUNDER_ANNOTATE_TRACES") in ("1", "y", "Y")
 # environment variable.
 try:
     import nvtx
+
     _ENABLED = True
 except ImportError:
     if _ENABLED:
@@ -44,6 +45,7 @@ def add_markers(msg: str) -> None:
         finally:
             torch.cuda.nvtx.range_pop()
 
+
 # The main interface to profiling something. Generally used as a decorator:
 #   @thunder.core.profile.profile("foo")
 #   def foo(...): ...
@@ -56,13 +58,16 @@ profile: Callable[[str], None] = None
 if _ENABLED:
     profile = functools.partial(nvtx.annotate, domain="thunder")
 else:
+
     class _no_annotate(contextlib.nullcontext):
         """
         A profiling decorator that does nothing.
         """
+
         def __init__(self, *args, **kwargs):
             super().__init__()
 
-        def __call__(self, fqn): return fqn
+        def __call__(self, fqn):
+            return fqn
 
     profile = _no_annotate
