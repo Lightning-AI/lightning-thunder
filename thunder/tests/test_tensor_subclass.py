@@ -125,13 +125,9 @@ def test_subclass_inputs(executor, device, _):
     expected = f(x, y)
 
     jitted = executor.make_callable(f)
-    if executor in {nvFuserExecutor, DynamoThunderExecutor}:
-        with pytest.raises(RuntimeError, match="Traceable tensor subclasses are not supported because of executors of"):
+    if executor != DynamoThunderExecutor:
+        with pytest.raises(NotImplementedError, match="has Tensor Subclasses of"):
             jitted(x, y)
-            torch.cuda.synchronize()
-    else:
-        actual = jitted(x, y)
-        torch.testing.assert_close(actual, expected)
 
 
 @instantiate(
@@ -151,9 +147,6 @@ def test_conversion_to_subclass(executor, device, _):
     z = ScaleTensorSubclass.from_tensor(make_tensor((2, 2), device=device, dtype=torch.float32))
 
     jitted = executor.make_callable(f)
-    if executor == DynamoThunderExecutor:
-        with pytest.raises(RuntimeError, match="Traceable tensor subclasses are not supported because of executors of"):
-            jitted(x, y, z)
-    else:
-        with pytest.raises(AttributeError, match="Unknown attribute stride"):
+    if executor != DynamoThunderExecutor:
+        with pytest.raises(NotImplementedError, match="tensor subclasses are found"):
             jitted(x, y, z)

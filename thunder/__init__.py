@@ -581,7 +581,9 @@ def jit(
                         vanilla_tensor_args = set(tensor_indices)
 
             # TODO(crcrpar): Transform computation_trc if it has any tensor subclasses inside of it.
-            from thunder.core.symbol import BoundSymbol
+            from thunder.transforms.flatten_tensor_subclasses import flatten_tensor_subclasses
+
+            computation_trc = flatten_tensor_subclasses(computation_trc)
 
             bsym: BoundSymbol
             for bsym in computation_trc.bound_symbols:
