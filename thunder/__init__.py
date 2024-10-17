@@ -348,7 +348,6 @@ def jit(
         sharp_edges=sharp_edges,
         using_jit=True,
         disable_torch_autograd_support=disable_torch_autograd,
-        use_rematerialization=False,
         only_execute_prims=False,
         disable_preprocessing=True,
         compile_options=compile_options,

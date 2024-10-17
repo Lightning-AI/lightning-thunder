@@ -77,12 +77,8 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor: TestEx
     trace = wrap_return_value_together_with_argments(trace)
     fw_trace, bw_trace = forward_and_backward_from_trace(trace)
 
-    fw_extraces = transform_for_execution(
-        fw_trace, executors_list=executor.executors_list(), use_rematerialization=False
-    )
-    bw_extraces = transform_for_execution(
-        bw_trace, executors_list=executor.executors_list(), use_rematerialization=False
-    )
+    fw_extraces = transform_for_execution(fw_trace, executors_list=executor.executors_list())
+    bw_extraces = transform_for_execution(bw_trace, executors_list=executor.executors_list())
     fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extraces[-1], bw_extraces[-1])
 
     fw = fw_extrace.python_callable()
