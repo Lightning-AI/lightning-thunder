@@ -1,25 +1,16 @@
-import thunder
 import math
-from typing import Any, Optional, Dict, Tuple, Literal
-import builtins
+from typing import Any, Optional, Literal
 import collections
-from collections.abc import ValuesView, Iterable, Iterator
-from collections.abc import Callable, Sequence
-import weakref
-import random
-from functools import partial, wraps, reduce
-import linecache
-import operator
-import copy
+from collections.abc import ValuesView, Iterable, Callable, Sequence
+from functools import partial, wraps
 import contextvars
 from contextlib import contextmanager
 import dis
 import warnings
-from enum import Enum, auto
-from io import StringIO
-import inspect
-import time
+from enum import Enum
+import itertools
 
+import thunder
 from thunder.core.compile_data import compile_data_and_stats, get_cache_option, get_compile_data
 import thunder.clang as clang
 import thunder.core.transforms
@@ -753,6 +744,47 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
 
     backward_impls[custom_fwd_sym.name] = backward_impl
     return forward_result
+
+
+# NOTE(crcrpar): This isn't needed as of now due to the ban of subclass instantiation inside of callable
+# ref for args: https://github.com/pytorch/pytorch/blob/deaf041/torch/csrc/autograd/python_variable.cpp#L748-L778
+@register_general_jit_lookaside(torch.Tensor._make_wrapper_subclass)
+def _general_jit__make_wrapper_subclass_lookaside(
+    cls,
+    size,
+    strides: Sequence[int] | None = None,
+    storage_offset: int | None = None,
+    memory_format: torch.memory_format | None = None,
+    dtype: torch.dtype | None = None,
+    layout: torch.layout = torch.strided,
+    device: torch.device | None = None,
+    pin_memory: bool = False,
+    requires_grad: bool = False,
+    dispatch_sizes_strides_policy: str = None,
+    dispatch_device: bool = False,
+    dispatch_layout: bool = False,
+    _extra_dispatch_keys: Any | None = None,
+    storage_size: int | None = None,
+):
+    from thunder.core.proxies import SubclassTensorProxy
+
+    u_size = unwrap(size)
+    u_strides = unwrap(strides)
+    u_dtype = unwrap(dtype)
+    u_device = unwrap(device)
+    u_pin_memory = unwrap(pin_memory)
+    u_requires_grad = unwrap(requires_grad)
+    if not (u_strides is None or not u_strides):
+        warnings.warn(f"Thunder is not capable of utilizing strides of {u_strides}")
+    placeholder_tensor = SubclassTensorProxy(
+        name=None,
+        shape=tuple(u_size),
+        device=u_device,
+        dtype=u_dtype,
+        requires_grad=u_requires_grad,
+    )
+    wrapped = WrappedValue(placeholder_tensor, provenance=size.provenance)
+    return wrapped
 
 
 @register_general_jit_lookaside(torch.finfo)

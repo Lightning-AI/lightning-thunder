@@ -66,6 +66,7 @@ from thunder.core.proxies import (
     ListProxy,
     DictProxy,
     AnyProxy,
+    SubclassTensorProxy,
 )
 from thunder.core.interpreter import print_interpreter_log, print_to_log
 from thunder.core.jit_ext import thunder_general_jit
@@ -361,7 +362,11 @@ def jit(
         data_ptr_to_tensor_group_index = {}
         tensor_group_index_to_tensor_indices = defaultdict(list)
         for idx, t in enumerate(flat_args):
-            if pytorch.is_tensor(t) and t.layout == pytorch.strided:
+            if (
+                pytorch.is_tensor(t)
+                and not issubclass(type(t), (pytorch.Tensor, pytorch.nn.Parameter))
+                and t.layout == pytorch.strided
+            ):
                 data_ptr = t.untyped_storage().data_ptr()
                 if data_ptr not in data_ptr_to_tensor_group_index:
                     data_ptr_to_tensor_group_index[data_ptr] = len(data_ptr_to_tensor_group_index)
@@ -576,6 +581,21 @@ def jit(
                     if len(tensor_args_consumed_by_inplace_grouped_by_numel) > 1:
                         vanilla_tensor_args = set(tensor_indices)
 
+            # TODO(crcrpar): Transform computation_trc if it has any tensor subclasses inside of it.
+            from thunder.transforms.flatten_tensor_subclasses import flatten_tensor_subclasses
+
+            computation_trc = flatten_tensor_subclasses(computation_trc)
+
+            bsym: BoundSymbol
+            for bsym in computation_trc.bound_symbols:
+                for a in bsym.flat_proxy_args + bsym.flat_proxy_outs:
+                    if isinstance(a, SubclassTensorProxy):
+                        check(
+                            False,
+                            lambda: f"{bsym} has Tensor Subclasses of {a}",
+                            exception_type=NotImplementedError,
+                        )
+
             if epilogue_trc is not None:
                 epilogue_traces = [epilogue_trc]
             else:
@@ -719,6 +739,27 @@ def jit(
             )
             if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
                 cs.interpreter_cache.append(cache_entry)
+
+            # TODO(crcrpar): Ideally we should disable `__torch_dispatch__`s.
+            # But it feels like a temporary necessary evil to let them working if all of the
+            # executors are capable of obeying `__torch_dispatch__`s.
+            non_compat_executors: set[extend.Executor] = {
+                ex for ex in (cudnn_executor, sdpa_executor, apex_executor, nvfuser_executor) if ex is not None
+            }
+            # if (enabled_fusion_exs := set(cd.executors_list) & non_compat_executors) or ad_hoc_executor.opmap:
+            #     from thunder.core.pytree import tree_flatten
+            #
+            #     check(
+            #         not any(
+            #             pytorch.utils._python_dispatch.is_traceable_wrapper_subclass(a)
+            #             for a in tree_flatten((args, kwargs))[0]
+            #         ),
+            #         lambda: (
+            #             f"Traceable tensor subclasses are not supported because of "
+            #             f"executors of {[e.name for e in enabled_fusion_exs]} and "
+            #             f"ad hoc ops of {list(ad_hoc_executor.opmap.keys())}"
+            #         ),
+            #     )
 
         return cache_entry, inps, pro_to_epi
 
