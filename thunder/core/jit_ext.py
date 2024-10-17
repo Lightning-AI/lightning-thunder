@@ -719,6 +719,47 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     return forward_result
 
 
+# NOTE(crcrpar): This isn't needed as of now due to the ban of subclass instantiation inside of callable
+# ref for args: https://github.com/pytorch/pytorch/blob/deaf041/torch/csrc/autograd/python_variable.cpp#L748-L778
+@register_general_jit_lookaside(torch.Tensor._make_wrapper_subclass)
+def _general_jit__make_wrapper_subclass_lookaside(
+    cls,
+    size,
+    strides: Sequence[int] | None = None,
+    storage_offset: int | None = None,
+    memory_format: torch.memory_format | None = None,
+    dtype: torch.dtype | None = None,
+    layout: torch.layout = torch.strided,
+    device: torch.device | None = None,
+    pin_memory: bool = False,
+    requires_grad: bool = False,
+    dispatch_sizes_strides_policy: str = None,
+    dispatch_device: bool = False,
+    dispatch_layout: bool = False,
+    _extra_dispatch_keys: Any | None = None,
+    storage_size: int | None = None,
+):
+    from thunder.core.proxies import SubclassTensorProxy
+
+    u_size = unwrap(size)
+    u_strides = unwrap(strides)
+    u_dtype = unwrap(dtype)
+    u_device = unwrap(device)
+    u_pin_memory = unwrap(pin_memory)
+    u_requires_grad = unwrap(requires_grad)
+    if not (u_strides is None or not u_strides):
+        warnings.warn(f"Thunder is not capable of utilizing strides of {u_strides}")
+    placeholder_tensor = SubclassTensorProxy(
+        name=None,
+        shape=tuple(u_size),
+        device=u_device,
+        dtype=u_dtype,
+        requires_grad=u_requires_grad,
+    )
+    wrapped = WrappedValue(placeholder_tensor, provenance=size.provenance)
+    return wrapped
+
+
 @register_general_jit_lookaside(torch.finfo)
 @interpreter_needs_wrap
 def _general_jit_torch_finfo_lookaside(dtype: thunder.dtypes.dtype):
@@ -1271,7 +1312,6 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
 
     # Unpacks the inputs in the prologue trace
     # TODO Generate unpacking constraints
-    # TODO(crcrpar): "flatten" tensor subclasses
     def unpack(v: Variable | Proxy) -> Proxy:
         p: Proxy
         if isinstance(v, Proxy):

@@ -32,8 +32,7 @@ import thunder.core.devices as devices
 import thunder.core.dtypes as dtypes
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-    from typing import Any, Type
+    from typing import Any
 
 ShapeLike = Sequence[int]
 
@@ -1895,32 +1894,77 @@ class TensorProxy(Proxy, TensorProxyInterface):
 
 class SubclassTensorProxy(TensorProxy):
     _tensors: list[TensorProxy]
+    _tensor_attr_names: list[str]
     _metadata: dict[str, Any]
-    # `__torch_dispatch__(cls, aten_op, types, args, **kwargs=None) -> Tensor`
+    # Signature of `__torch_dispatch__` is `(cls, aten_op, types, args, **kwargs=None) -> Tensor`
     _torch_dispatch_impl: Callable[[Any, Callable[[Any], Any], Any, Any, Any], Any]
 
+    @staticmethod
+    def filter_args_and_kwargs(*args, **kwargs):
+        tensor_subclass_args = []
+        filtered_args = []
+        for a in args:
+            if isinstance(a, (TensorProxy, torch.Tensor, dict)):
+                tensor_subclass_args.append(a)
+            else:
+                tensor_subclass_args.append(a)
+        filtered_args = tuple(filtered_args)
+
+        tensor_subclass_kwargs = {}
+        filtered_kwargs = {}
+        for k, v in kwargs.items():
+            if isinstance(v, (TensorProxy, torch.Tensor, dict)):
+                tensor_subclass_kwargs[k] = v
+            else:
+                filtered_kwargs[k] = v
+        return filtered_args, filtered_kwargs, tensor_subclass_args, tensor_subclass_kwargs
+
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        from thunder.core.interpreter import WrappedValue
+
+        baseutils.check(not isinstance(self, WrappedValue), lambda: f"{type(self)=}, {type(self.value)=}")
+
+        filtered_args, filtered_kwargs, tensor_subclass_args, tensor_subclass_kwargs = (
+            SubclassTensorProxy.filter_args_and_kwargs(*args, **kwargs)
+        )
+        flat_tensor_subclass_args: list[TensorProxy | dict[str, Any]] = tensor_subclass_args + list(
+            tensor_subclass_kwargs.values()
+        )
+        baseutils.check(
+            not flat_tensor_subclass_args,
+            lambda: (
+                f"args/kwargs for tensor subclasses are found: {flat_tensor_subclass_args}. "
+                "Subclass tensor instantiation inside of a callable is not supported yet."
+            ),
+            exception_type=NotImplementedError,
+        )
+
+        super().__init__(*filtered_args, **filtered_kwargs)
+
         self._tensors = []
-        self._metadata = {}
+        self._tensor_attr_names = []
+        self._non_tensor_attr_names = []
         self._torch_dispatch_impl = None
 
-    def tensor_flatten(self) -> tuple[list[TensorProxy], dict[str, Any]]:
-        return self._tensors, self._metadata
-
-    @staticmethod
-    def tensor_unflatten(inner_tensors: dict[str, TensorProxy], metadata: dict[str, Any], outer_size, outer_stride):
-        s = SubclassTensorProxy()
-        s._tensors = inner_tensors
-        s._metadata = metadata
-        return s
+    # TODO(crcrpar): Audit the necessity of the following two methods.
+    # I initially added them just for the signature-wise compatibility with PT2-traceable torch.Tensor subclasses
+    # def tensor_flatten(self) -> tuple[list[TensorProxy], dict[str, Any]]:
+    #     return self._tensor_attr_names, self._metadata
+    #
+    # @staticmethod
+    # def tensor_unflatten(inner_tensors: dict[str, TensorProxy], metadata: dict[str, Any], outer_size, outer_stride):
+    #     s = SubclassTensorProxy()
+    #     s._set_tensor_attrs(list(inner_tensors.keys()), list(inner_tensors.values()))
+    #     s._metadata = metadata
+    #     return s
 
     @classmethod
     def torch_dispatch(cls, func, types, args, kwargs=None):
         pass
 
     def __repr__(self):
-        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, tensors={self._tensors}, metadata={self._metadata}, __torch_dispatch__={self._torch_dispatch_impl})>'
+        metadata = {a: getattr(self, a) for a in self._non_tensor_attr_names}
+        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, tensors={self._tensors}, metadata={metadata}, __torch_dispatch__={self._torch_dispatch_impl})>'
 
     def type_string(self):
         return f"{self.device.device_str()} {self.dtype.shortname()}{list(self.shape)}"
@@ -1968,10 +2012,22 @@ class SubclassTensorProxy(TensorProxy):
             thunder_fsdp_padding_size=thunder_fsdp_padding_size,
             history=history,
         )
-        t._tensors = self._tensors
-        t._metadata = self._metadata
+        # TODO(crcrpar): Fix copying of `__tensor_flatten__` info.
+        t._set_tensor_attrs(self._tensor_attr_names, self._tensors)
+        t._set_non_tensor_attrs({a: getattr(self, a) for a in self._non_tensor_attr_names})
         t._torch_dispatch_impl = self._torch_dispatch_impl
         return t
+
+    def _set_tensor_attrs(self, attr_names: list[str], tensors: list[TensorProxy]):
+        self._tensors = tensors
+        self._tensor_attr_names = attr_names
+        for n, t in zip(attr_names, tensors):
+            setattr(self, n, t)
+
+    def _set_non_tensor_attrs(self, metadata: dict[str, Any]):
+        self._non_tensor_attr_names = list(metadata.keys())
+        for k, v in metadata.items():
+            setattr(self, k, v)
 
 
 class TorchAutogradFunctionCtxProxy(Proxy, TorchAutogradFunctionCtxProxyInterface):
@@ -2094,12 +2150,17 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
     )
 
     tensor_type = type(t)
-    if is_traceable_wrapper_subclass_type(tensor_type):
+    if tensor_type != torch.Tensor and tensor_type != torch.nn.Parameter:
+        baseutils.check(
+            is_traceable_wrapper_subclass_type(tensor_type),
+            lambda: f"Untraceable tensor subclass of {tensor_type} found",
+            exception_type=NotImplementedError,
+        )
         subclass_tensor = SubclassTensorProxy(**ctor_args_kwargs)
-        tensor_attr_names, subclass_tensor._metadata = t.__tensor_flatten__()
-        subclass_tensor._tensors = [
-            tensorproxy(getattr(t, name), name=None, history=history) for name in tensor_attr_names
-        ]
+        tensor_attr_names, metadata = t.__tensor_flatten__()
+        tensors = [tensorproxy(getattr(t, name), name=None, history=history) for name in tensor_attr_names]
+        subclass_tensor._set_tensor_attrs(tensor_attr_names, tensors)
+        subclass_tensor._set_non_tensor_attrs(metadata)
         subclass_tensor._torch_dispatch_impl = tensor_type.__torch_dispatch__
         return subclass_tensor
     else:
