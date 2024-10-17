@@ -793,3 +793,22 @@ def test_unused_view_input(executor, device, _):
     expected = f(a, x, unused)
     actual = jitted(a, x, unused)
     torch.testing.assert_close(actual, expected)
+
+
+@instantiate(dtypes=NOTHING)
+def test_inplace_on_to(executor, device, _):
+
+    def f_self_result(a):
+        return a.to().sin_()
+
+    def f_copy(a):
+        return a.to(torch.float64).sin_()
+
+    for f in (f_self_result, f_copy):
+        x = make_tensor((2, 2), device=device, dtype=torch.float32)
+        x_ref = x.clone().detach()
+        jitted = executor.make_callable(f)
+        actual = jitted(x)
+        expected = f(x_ref)
+        torch.testing.assert_close(actual, expected)
+        torch.testing.assert_close(x, x_ref)

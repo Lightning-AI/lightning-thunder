@@ -199,7 +199,6 @@ class CompileData:
         only_execute_prims: bool = False,
         disable_preprocessing: bool = False,
         disable_torch_autograd_support: bool = False,
-        use_rematerialization: bool = False,
         debug_log: None | StringIO = None,
         compile_options: dict[str, Any] = {},
         get_computation_and_inputs: Callable | None = None,
@@ -254,7 +253,6 @@ class CompileData:
         self.fn = fn
         self.only_execute_prims = only_execute_prims
         self.disable_preprocessing = disable_preprocessing
-        self.use_rematerialization = use_rematerialization
         self.disable_torch_autograd_support = disable_torch_autograd_support
         self.debug_log = debug_log
 
@@ -636,7 +634,6 @@ def transform_for_execution(
     executors_list: Sequence[Executor],
     *,
     only_execute_prims=False,
-    use_rematerialization=True,
     use_del_last_used=True,
 ) -> list[TraceCtx]:
     traces: list[TraceCtx] = []
@@ -679,7 +676,6 @@ def _execute_trace(
             trc,
             executors_list=compile_data.executors_list,
             only_execute_prims=compile_data.only_execute_prims,
-            use_rematerialization=compile_data.use_rematerialization,
         )
     extrace = extraces[-1]
 

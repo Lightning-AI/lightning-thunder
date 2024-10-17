@@ -348,7 +348,6 @@ def jit(
         sharp_edges=sharp_edges,
         using_jit=True,
         disable_torch_autograd_support=disable_torch_autograd,
-        use_rematerialization=False,
         only_execute_prims=False,
         disable_preprocessing=True,
         compile_options=compile_options,
@@ -614,7 +613,7 @@ def jit(
                 use_del_last_used=False,
             )
             prologue_trc = prologue_traces[-1]
-            pro = prologue_trc.python_callable()
+            pro = prologue_trc.python_callable(include_decorators=False)
 
             if epilogue_trc is not None:
                 epilogue = epilogue_trc.python_callable()
