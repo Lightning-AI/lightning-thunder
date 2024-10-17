@@ -13,6 +13,7 @@ from thunder.core.options import (
     SHARP_EDGES_OPTIONS,
     resolve_sharp_edges_option,
 )
+import thunder.core.profile
 from thunder.core.utils import check, is_collection
 from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.compile_data import compile_data_and_stats
@@ -629,6 +630,7 @@ def trace(
 # TODO Consider making this faster by reusing more data
 # TODO Create a general mechanism for running traces that produces reproducible provenance and the
 #   appropriate error checks
+@thunder.core.profile.profile("transform_for_execution")
 def transform_for_execution(
     trace: TraceCtx,
     executors_list: Sequence[Executor],

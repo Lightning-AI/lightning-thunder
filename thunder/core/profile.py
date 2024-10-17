@@ -1,10 +1,26 @@
+from collections.abc import Callable
 import contextlib
+import functools
 import os
+import warnings
 
 import torch
 
 
 _ENABLED = os.getenv("THUNDER_ANNOTATE_TRACES") in ("1", "y", "Y")
+
+# However, nvtx is incredibly cheap so we no longer bother requiring the
+# environment variable.
+try:
+    import nvtx
+    _ENABLED = True
+except ImportError:
+    if _ENABLED:
+        msg = "Requested nvtx but the package is not available."
+        msg += "\nUse `pip install -m pip install nvtx`."
+        warnings.warn(msg)
+        _ENABLED = False
+        raise
 
 
 def profiling_enabled() -> bool:
@@ -27,3 +43,26 @@ def add_markers(msg: str) -> None:
 
         finally:
             torch.cuda.nvtx.range_pop()
+
+# The main interface to profiling something. Generally used as a decorator:
+#   @thunder.core.profile.profile("foo")
+#   def foo(...): ...
+# but alternatively as a `with` context:
+#   with thunder.core.profile.profile("name for a block of code"):
+#      # ... code ...
+profile: Callable[[str], None] = None
+
+
+if _ENABLED:
+    profile = functools.partial(nvtx.annotate, domain="thunder")
+else:
+    class _no_annotate(contextlib.nullcontext):
+        """
+        A profiling decorator that does nothing.
+        """
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+
+        def __call__(self, fqn): return fqn
+
+    profile = _no_annotate
