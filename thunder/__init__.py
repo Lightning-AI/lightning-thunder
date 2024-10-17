@@ -66,6 +66,7 @@ from thunder.core.proxies import (
     ListProxy,
     DictProxy,
     AnyProxy,
+    SubclassTensorProxy,
 )
 from thunder.core.interpreter import print_interpreter_log, print_to_log
 from thunder.core.jit_ext import thunder_general_jit
@@ -581,6 +582,17 @@ def jit(
                         vanilla_tensor_args = set(tensor_indices)
 
             # TODO(crcrpar): Transform computation_trc if it has any tensor subclasses inside of it.
+            from thunder.core.symbol import BoundSymbol
+
+            bsym: BoundSymbol
+            for bsym in computation_trc.bound_symbols:
+                for a in bsym.flat_proxy_args + bsym.flat_proxy_outs:
+                    if isinstance(a, SubclassTensorProxy):
+                        check(
+                            False,
+                            lambda: f"{bsym} has Tensor Subclasses of {a}",
+                            exception_type=NotImplementedError,
+                        )
 
             if epilogue_trc is not None:
                 epilogue_traces = [epilogue_trc]
