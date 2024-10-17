@@ -596,3 +596,18 @@ def test_constant_folding():
             break
     else:
         raise RuntimeError("Failed to find `add` symbol in trace")
+
+
+@requiresCUDA
+def test_cudagraph_empty_inputs():
+    def fn():
+        a = torch.ones(5, 5, device="cuda")
+        b = a * 2
+        return b
+
+    from thunder.transforms.cudagraph import CUDAGraphTransform
+
+    jfn = thunder.jit(fn, transforms=(CUDAGraphTransform(),), executors=())
+    assert_close(jfn(), fn())
+
+    assert any(("CUDAGraph" in bsym.sym.name) for bsym in thunder.last_traces(jfn)[-1].bound_symbols)
