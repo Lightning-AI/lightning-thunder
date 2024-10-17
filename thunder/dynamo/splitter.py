@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
+import copy
 
 import torch
 from torch.fx.passes.split_module import split_module
@@ -14,6 +15,7 @@ from thunder.dynamo.utils import (
     get_nodes_in_unsupported_ctx_regions,
     update_node_and_submodule,
     recompile_graph,
+    checkpoint_converter,
 )
 
 if TYPE_CHECKING:
@@ -143,6 +145,8 @@ def _splitter(
     for node in split_gm.graph.nodes:
         if is_thunder_supported_partition(node):
             graph_module = getattr(split_gm, node.name)
+            # Replace the torch operators within the function called by activation checkpoint with the corresponding Thunder symbols
+            checkpoint_converter(split_gm, graph_module)
             jit_fn = thunder_jit(graph_module)
             # Update the node name from "submod_*" to "thunder_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "thunder"), jit_fn)
