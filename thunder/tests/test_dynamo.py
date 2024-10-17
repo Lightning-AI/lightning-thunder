@@ -1,4 +1,5 @@
 import pytest
+import warnings
 import torch
 import torch.fx
 import torch.nn as nn
@@ -576,7 +577,10 @@ def test_checkpoint_converter():
     out.backward(g)
 
     ref_g = torch.ones_like(ref_out)
-    ref_out.backward(ref_g)
+    with warnings.catch_warnings():
+        # FutureWarning: `torch.cpu.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cpu', args...)` instead.
+        warnings.filterwarnings("ignore", category=FutureWarning)
+        ref_out.backward(ref_g)
     torch.testing.assert_close(x.grad, x_ref.grad)
     torch.testing.assert_close(tuple(model.parameters()), tuple(ref_model.parameters()))
 
