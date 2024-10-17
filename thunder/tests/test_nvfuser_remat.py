@@ -512,6 +512,8 @@ def test_not_rematerialize_matmul():
     model = MLP(embedding_size)
     model.to("cuda")
 
+    # At the time of writing, linear and matmul are not fused into nvFuser
+    # regions by default therefore, we should enable them separately
     jmodel = thunder.jit(model, nv_enable_linear=True, nv_enable_matmul=True)
     jmodel(inp)
 
