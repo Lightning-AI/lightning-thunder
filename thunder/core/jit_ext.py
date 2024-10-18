@@ -608,7 +608,6 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
            So far, non-tensor ``ctx`` attributes seem to be folded into a trace.
     """
     from thunder.core.baseutils import check, sequencify
-    from thunder.core.transforms import augmented_forward_impls, backward_impls, VJPDual
 
     jit_ctx: JitCtx = get_jit_ctx()
 
@@ -630,14 +629,14 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     unwrapped_custom_forward_result = unwrap(custom_forward_result)
     # autograd.Function produces views of the tensor to attache the autograd node to
     unwrapped_custom_forward_result = tree_map(
-        lambda x: prims.shallow_copy(x) if isinstance(x, TensorProxy) else x, unwrapped_custom_forward_result
+        lambda x: prims.shallow_copy(x) if isinstance(x, TensorProxy) else x,
+        unwrapped_custom_forward_result,
     )
     custom_fwd_bsyms: list[BoundSymbol] = jit_ctx.computation_trace.pop_scope()
 
     # not augmented for when we don't need grad
     trace_of_fwd = TraceCtx()
-    for bsym in custom_fwd_bsyms:
-        trace_of_fwd.add_bound_symbol(bsym)
+    trace_of_fwd.bound_symbols.extend(custom_fwd_bsyms)
     with tracectx(trace_of_fwd):
         prims.python_return(unwrapped_custom_forward_result)
 
@@ -648,20 +647,9 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     def core_of_forward(*args, **kwargs):
         return thunder.core.trace_interpreter.interpret_trace(trace_of_fwd, *args, **kwargs)
 
-    def custom_forward_meta(*args, **kwargs):
-        trace = thunder.core.trace.get_tracectx()
-        trace.push_scope([])  # don't record symbol calls
-        res = core_of_forward(*args, **kwargs)
-        trace.pop_scope()
-        return res
-
-    def bind_postprocess(bsym):
-        bsym._call_ctx = {}
-
     custom_fwd_sym = jit_ctx.ad_hoc_executor.register_operator(
         symbol_name,
         like=core_of_forward,
-        bind_postprocess=bind_postprocess,
     )
 
     unwrapped_forward_result = custom_fwd_sym(*unwrapped_custom_forward_args)
@@ -670,49 +658,28 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[obj.provenance, custom_forward_result.provenance]),
     )
 
-    jit_ctx.ad_hoc_executor.register_implementation(custom_fwd_sym, execution_transform=core_of_forward)
-
     augmented_bsym_output: tuple[tuple[TensorProxy, ...], tuple[TensorProxy, ...]] = (
         tuple(sequencify(unwrapped_custom_forward_result)),
         ctx_proxy.saved_tensors,
     )
     trace_of_augmented_fwd = TraceCtx()
-    for bsym in custom_fwd_bsyms:
-        trace_of_augmented_fwd.add_bound_symbol(bsym)
+    trace_of_augmented_fwd.bound_symbols.extend(custom_fwd_bsyms)
     with tracectx(trace_of_augmented_fwd):
         prims.python_return(augmented_bsym_output)
     trace_of_augmented_fwd._siginfo = SigInfo.from_name_and_args(custom_fwd_sym.name, unwrapped_custom_forward_args)
     trace_of_augmented_fwd.args = unwrapped_custom_forward_args
 
-    @wraps(trace_of_augmented_fwd.python_callable())
-    def core_of_augmented_forward(*args, **kwargs):
-        return thunder.core.trace_interpreter.interpret_trace(trace_of_augmented_fwd, *args, **kwargs)
-
-    @wraps(core_of_augmented_forward)
-    def augmented_custom_forward_rule(*args, **kwargs):
-        primal, residulas = core_of_augmented_forward(*args, **kwargs)
-        check(len(primal) == 1, lambda f: "{primal=} has {len(primal)} proxies but expected 1")
-        return VJPDual(primal=primal[0], residuals=residulas)
-
-    # TODO: build and register gradient_transform instead
-    augmented_forward_impls[custom_fwd_sym.name] = augmented_custom_forward_rule
-
     # Backward definition
     custom_backward = custom_autograd_function_cls.backward
-
     grads = tree_map(
         lambda a: a.replace_name(f"grad_{a.name}"),
         sequencify(unwrapped_custom_forward_result),
     )
     trace_of_backward = TraceCtx()
-    bwd_si = SigInfo(f"{custom_fwd_sym.name}_backward")
-    for a in ctx_proxy.saved_tensors + grads:
-        if isinstance(a, Proxy):
-            bwd_si.args.append((a.name, None))
-        else:
-            pa = proxy(a)
-            bwd_si.args.append((pa.name, None))
-    trace_of_backward._siginfo = bwd_si
+    trace_of_backward._siginfo = SigInfo.from_name_and_args(
+        f"{custom_fwd_sym.name}_backward",
+        ctx_proxy.saved_tensors + grads,
+    )
     trace_of_backward.args = tuple(ctx_proxy.saved_tensors + grads)
 
     jit_ctx.computation_trace.push_scope([])
@@ -721,21 +688,13 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     if custom_backward_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return custom_backward_result
 
-    custom_bwd_bsyms: list[BoundSymbol] = jit_ctx.computation_trace.pop_scope()
-
-    for bsym in custom_bwd_bsyms:
+    for bsym in jit_ctx.computation_trace.pop_scope():
         trace_of_backward.add_bound_symbol(bsym)
     with tracectx(trace_of_backward):
-        prims.python_return.bind(*unwrap(custom_backward_result), output=None)
-
-    @wraps(trace_of_backward.python_callable())
-    def bwd_trace_callable_interface(*args, **kwargs):
-        return thunder.core.trace_interpreter.interpret_trace(trace_of_backward, *args, **kwargs)
+        prims.python_return(unwrap(custom_backward_result))
 
     bwd_trace_impl = TraceCtx()
-    for bsym in custom_bwd_bsyms:
-        bwd_trace_impl.add_bound_symbol(bsym)
-    bwd_trace_impl.add_bound_symbol(prims.python_return.bind(*sequencify(unwrap(custom_backward_result)), output=None))
+    bwd_trace_impl.bound_symbols.extend(trace_of_backward.bound_symbols)
     bwd_trace_impl._siginfo = SigInfo.from_name_and_args(
         "backward_impl",
         ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads,
@@ -746,13 +705,26 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     def bwd_impl_callable(*args, **kwargs):
         return thunder.core.trace_interpreter.interpret_trace(bwd_trace_impl, *args, **kwargs)
 
-    @wraps(bwd_trace_callable_interface)
-    def backward_impl(*args, **kwargs):
-        check(not kwargs, lambda: f"{kwargs} expected to be empty")
-        new_args = ctx_proxy.saved_consts + args
-        return bwd_impl_callable(*new_args)
+    @wraps(core_of_forward)
+    def grad_transform(*args, **kwargs):
+        from thunder.core.transforms import get_grad
+        from thunder.core.transforms import put_grads
+        from thunder.core.trace_interpreter import interpret_trace
 
-    backward_impls[custom_fwd_sym.name] = backward_impl
+        check(not kwargs, lambda: f"{kwargs=} should be empty")
+        primal, residuals = interpret_trace(trace_of_augmented_fwd, *args, **kwargs)
+        check(len(primal) == 1, lambda: f"{primal=} has {len(primal)} proxies but expected 1")
+        grads = (get_grad(primal[0]),)
+        bwd_args = ctx_proxy.saved_consts + residuals + grads
+        result = bwd_impl_callable(*bwd_args)
+        put_grads(args, result)
+        return primal
+
+    jit_ctx.ad_hoc_executor.register_implementation(
+        custom_fwd_sym,
+        execution_transform=core_of_forward,
+        grad_transform=grad_transform,
+    )
     return forward_result
 
 
