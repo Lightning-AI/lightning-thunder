@@ -374,7 +374,13 @@ def find_cut(
     g = nx.DiGraph()
     g.add_edges_from(edges)
 
-    _, (reachable, non_reachable) = nx.minimum_cut(g, "source", "sink")
+    try:
+        _, (reachable, non_reachable) = nx.minimum_cut(g, "source", "sink")
+    except Exception:
+        raise RuntimeError(
+            "Failed to compute the min-cut on the graph due to a path with infinite capacity."
+            "Please report this error along with your function and relevant details at: https://github.com/Lightning-AI/lightning-thunder/issues/new"
+        )
 
     cut_edges = set()
     for u, nbrs in ((n, g[n]) for n in reachable):
