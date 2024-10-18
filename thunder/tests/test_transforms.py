@@ -6,8 +6,6 @@ import pytest
 import thunder
 from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform, nvtx_push, nvtx_pop
 from thunder.tests.framework import requiresCUDA
-from thunder.tests import litgpt_model
-from litgpt.lora import LoRALinear
 
 
 @requiresCUDA
@@ -76,12 +74,14 @@ def test_nvtx_transform():
 @requiresCUDA
 def test_materialization():
     from thunder.transforms import MaterializationTransform
+    from litgpt.config import Config
+    from litgpt.model import GPT
 
-    config = litgpt_model.Config.from_name("llama2-like")
+    config = Config.from_name("llama2-like")
     with torch.device("cuda"):
-        ref_m = litgpt_model.GPT(config).to(torch.bfloat16).eval().requires_grad_(False)
+        ref_m = GPT(config).to(torch.bfloat16).eval().requires_grad_(False)
     with torch.device("meta"):
-        m = litgpt_model.GPT(config).to(torch.bfloat16).eval().requires_grad_(False)
+        m = GPT(config).to(torch.bfloat16).eval().requires_grad_(False)
 
     ref_m.set_kv_cache(1, device="cuda", dtype=torch.bfloat16)
     ref_m.max_seq_length = 20
@@ -117,14 +117,16 @@ def test_materialization():
 def test_quantization_on_meta():
     from thunder.transforms import MaterializationTransform
     from thunder.transforms.quantization import BitsAndBytesLinearQuant4bit, get_bitsandbytes_executor
+    from litgpt.config import Config
+    from litgpt.model import GPT
 
     bitsandbytes_executor = get_bitsandbytes_executor()
 
-    config = litgpt_model.Config.from_name("llama2-like")
+    config = Config.from_name("llama2-like")
     with torch.device("cuda"):
-        ref_m = litgpt_model.GPT(config).to(torch.bfloat16).eval().requires_grad_(False)
+        ref_m = GPT(config).to(torch.bfloat16).eval().requires_grad_(False)
     with torch.device("meta"):
-        m = litgpt_model.GPT(config).to(torch.bfloat16).eval().requires_grad_(False)
+        m = GPT(config).to(torch.bfloat16).eval().requires_grad_(False)
 
     ref_m.set_kv_cache(1, device="cuda", dtype=torch.bfloat16)
     ref_m.max_seq_length = 20
@@ -460,6 +462,8 @@ def test_lora_transform_linear():
 
     class Original(torch.nn.Module):
         def __init__(self, rank, alpha) -> None:
+            from litgpt.lora import LoRALinear
+
             super().__init__()
             self.fc1 = LoRALinear(DIM, DIM, r=rank, lora_alpha=alpha)
             self.fc2 = LoRALinear(DIM, DIM, r=rank, lora_alpha=alpha)
@@ -497,3 +501,98 @@ def test_lora_transform_linear():
     original_model.load_state_dict(rename_state_dict, strict=False)
     litgpt_lora_output = original_model(x)
     assert_close(actual, litgpt_lora_output, atol=2e-1, rtol=2e-1)
+
+
+def test_constant_folding():
+
+    # Helper to verify we see the expected constant tensors
+    # in exec_trace.
+    def assert_in_trace(exec_trace, sym, arg_vals):
+        for bsym in exec_trace.bound_symbols:
+            if bsym.sym.id == sym and bsym.args == arg_vals:
+                return
+
+        err = f"Expected to find symbol {sym} with arguments {arg_vals} in execution trace but didn't find any."
+        raise RuntimeError(err)
+
+    from thunder.transforms.constant_folding import ConstantFolding
+
+    def forward():
+        const_t = torch.tensor([2])
+        getitem = (const_t * 2)[0]
+        return (getitem, const_t)  # (4, [2])
+
+    jforward = thunder.jit(forward, transforms=[ConstantFolding()])
+    actual = jforward()
+    expected = forward()
+    torch.testing.assert_close(actual, expected)
+    exec_trace = thunder.last_traces(jforward)[-1]
+    assert_in_trace(exec_trace, "tensor", ([2],))
+    assert_in_trace(exec_trace, "full", ((), 4))
+
+    def forward(x):
+        const_t = torch.tensor([2])
+        getitem = const_t[0]  # 2
+        getitem_2 = (
+            torch.zeros(
+                2,
+            )
+            + 1
+        )[
+            0
+        ]  # 1
+        return x + getitem + getitem_2
+
+    jforward = thunder.jit(forward, transforms=[ConstantFolding()])
+    x = torch.randn(3, 3)
+    actual = jforward(x)
+    expected = forward(x)
+    torch.testing.assert_close(actual, expected)
+    exec_trace = thunder.last_traces(jforward)[-1]
+    assert_in_trace(exec_trace, "full", ((), 2))
+    assert_in_trace(exec_trace, "full", ((), 1.0))
+
+    def forward(x):
+        const_t = torch.tensor([2], dtype=torch.float16)
+        ones_t = torch.ones(1, dtype=torch.float32)
+        s1 = const_t * 2  # 4
+        s2 = const_t / 1  # 2
+        s3 = s1 * s2 + 10  # 18
+        ones_mul_10 = ones_t * 10  # 10
+        return x[0, 0] + s3 + ones_mul_10
+
+    jforward = thunder.jit(forward, transforms=[ConstantFolding()])
+    x = torch.randn(3, 3)
+    actual = jforward(x)
+    expected = forward(x)
+    torch.testing.assert_close(actual, expected)
+    exec_trace = thunder.last_traces(jforward)[-1]
+    assert_in_trace(exec_trace, "tensor", ([18.0],))
+    assert_in_trace(exec_trace, "tensor", ([10.0],))
+
+    # Constant folding of Python constants.
+    def forward(x):
+        t = torch.tensor(2.0)
+        return x + (t.item() + (t + 1).item())
+
+    jforward = thunder.jit(forward, transforms=[ConstantFolding()])
+    x = torch.randn(3, 3)
+    actual = jforward(x)
+    expected = forward(x)
+    torch.testing.assert_close(actual, expected)
+    exec_trace = thunder.last_traces(jforward)[-1]
+    # exec_trace will look something like this
+    # def computation(x):
+    #     # x: "cpu f32[3]"
+    #     t5 = torch.add(x, 5.0, alpha=1)  # t5: "cpu f32[3]"
+    #         # t5 = ltorch.add(x, 5.0, alpha=1)  # t5: "cpu f32[3]"
+    #         # t5 = prims.add(x, 5.0)  # t5: "cpu f32[3]"
+    #     return t5
+
+    # So we check that torch.add has 5.0 in it's arguments.
+    for bsym in exec_trace.bound_symbols:
+        if bsym.sym.id == "add":
+            assert bsym.args[1] == 5.0
+            break
+    else:
+        raise RuntimeError("Failed to find `add` symbol in trace")

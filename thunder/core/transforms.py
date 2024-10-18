@@ -3202,7 +3202,7 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
     new_fwd_trace = from_trace(fwd_trace)
     new_fwd_trace.bound_symbols = fwd_trace.bound_symbols.copy()
     new_return_args = (fwd_trace.output[0], (new_saved_for_backward, fwd_trace.output[1][1]))
-    new_fwd_trace.bound_symbols[-1] = prims.python_return.bind(*new_return_args, output=())
+    new_fwd_trace.bound_symbols[-1] = prims.python_return.bind(*new_return_args, output=None)
 
     new_bwd_trace = from_trace(bwd_trace)
     # In cases where C0 name is carried from previous trace it must be removed

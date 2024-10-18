@@ -52,6 +52,7 @@ from types import (
 )
 
 import torch
+import torch.utils.checkpoint
 from thunder.core.proxies import (
     DistParallelType,
     proxy,
@@ -640,14 +641,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     with tracectx(trace_of_fwd):
         prims.python_return(unwrapped_custom_forward_result)
 
-    si = SigInfo(symbol_name)
-    for a in unwrapped_custom_forward_args:
-        if isinstance(a, Proxy):
-            si.args.append((a.name, None))
-        else:
-            pa = proxy(a)
-            si.args.append((pa.name, None))
-    trace_of_fwd._siginfo = si
+    trace_of_fwd._siginfo = SigInfo.from_name_and_args(symbol_name, unwrapped_custom_forward_args)
     trace_of_fwd.args = unwrapped_custom_forward_args
 
     @wraps(trace_of_fwd.python_callable())
@@ -687,14 +681,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         trace_of_augmented_fwd.add_bound_symbol(bsym)
     with tracectx(trace_of_augmented_fwd):
         prims.python_return(augmented_bsym_output)
-    si = SigInfo(custom_fwd_sym.name)
-    for a in unwrapped_custom_forward_args:
-        if isinstance(a, Proxy):
-            si.args.append((a.name, None))
-        else:
-            pa = proxy(a)
-            si.args.append((pa.name, None))
-    trace_of_augmented_fwd._siginfo = si
+    trace_of_augmented_fwd._siginfo = SigInfo.from_name_and_args(custom_fwd_sym.name, unwrapped_custom_forward_args)
     trace_of_augmented_fwd.args = unwrapped_custom_forward_args
 
     @wraps(trace_of_augmented_fwd.python_callable())
@@ -739,24 +726,20 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     for bsym in custom_bwd_bsyms:
         trace_of_backward.add_bound_symbol(bsym)
     with tracectx(trace_of_backward):
-        prims.python_return.bind(*unwrap(custom_backward_result), output=())
+        prims.python_return.bind(*unwrap(custom_backward_result), output=None)
 
     @wraps(trace_of_backward.python_callable())
     def bwd_trace_callable_interface(*args, **kwargs):
         return thunder.core.trace_interpreter.interpret_trace(trace_of_backward, *args, **kwargs)
 
-    bwd_si = SigInfo("backward_impl")
-    for a in ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads:
-        if isinstance(a, Proxy):
-            bwd_si.args.append((a.name, None))
-        else:
-            pa = proxy(a)
-            bwd_si.args.append((pa.name, None))
     bwd_trace_impl = TraceCtx()
     for bsym in custom_bwd_bsyms:
         bwd_trace_impl.add_bound_symbol(bsym)
-    bwd_trace_impl.add_bound_symbol(prims.python_return.bind(*sequencify(unwrap(custom_backward_result)), output=()))
-    bwd_trace_impl._siginfo = bwd_si
+    bwd_trace_impl.add_bound_symbol(prims.python_return.bind(*sequencify(unwrap(custom_backward_result)), output=None))
+    bwd_trace_impl._siginfo = SigInfo.from_name_and_args(
+        "backward_impl",
+        ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads,
+    )
     bwd_trace_impl.args = tuple(ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads)
 
     @wraps(bwd_trace_impl.python_callable())
@@ -779,6 +762,41 @@ def _general_jit_torch_finfo_lookaside(dtype: thunder.dtypes.dtype):
     torch_dtype = thunder.dtypes.to_torch_dtype(dtype)
     res = torch.finfo(torch_dtype)
     return res
+
+
+@register_general_jit_lookaside(torch.utils.checkpoint.checkpoint)
+def _general_jit_torch_checkpoint_lookaside(
+    function: Callable,
+    *args,
+    **kwargs: Any,
+):
+    """
+    This function does preprocessing of the `function` argument before
+    dispatching the call to `thunder.torch.checkpoint`. This is necessary
+    because the `function` is potentially calling into PyTorch functions that
+    are not yet translated to Thunder. `thunder.torch.checkpoint` is a Thunder
+    function that can handle only Thunder functions as input.
+
+    Args:
+        function: The function to be checkpointed.
+        args: Arguments to the function.
+        kwargs: Keyword arguments to the function.
+
+    Returns:
+        The result of calling `thunder.torch.checkpoint` with the preprocessed
+        `function` and its arguments.
+    """
+    from thunder.torch import checkpoint
+
+    # It should be possible to call the general_thunder_jit here to handle the
+    # conversion from torch to thunder but it doesn't work now
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/1126
+    # TODO: Convert the function to a Thunder function
+    def thunder_function(*args, **kwargs):
+        return unwrap(function)(*args, **kwargs)
+
+    wrapped_thunder_function = wrap_const(thunder_function)
+    return interpreter_needs_wrap(checkpoint)(wrapped_thunder_function, *args, **kwargs)
 
 
 # Adds proxy methods
@@ -1402,7 +1420,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 output = Proxy("subscr")  # name? collectify?
             else:
                 output = p
-            if isinstance(idx, (int, str)):
+            if isinstance(idx, (int, str, Proxy)):
                 if isinstance(idx, int):
                     idx = int(idx)
                 elif isinstance(idx, str):

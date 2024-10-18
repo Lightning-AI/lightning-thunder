@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 from enum import auto, Enum
 from numbers import Number
-from typing import Type, Optional, Any, Tuple, List, Union
+from typing import Any
 from collections.abc import Callable
 from collections.abc import Sequence
 
@@ -156,7 +156,7 @@ class Proxy(VariableInterface, ProxyInterface):
 
     def replace(self, **changes):
         r"""Return a copy of the Proxy object with new values for the specified fields as given to the constructor as arguments.
-        Valid kewword arguments are ``name``, ``history``.
+        Valid keyword arguments are ``name``, ``history``.
         Note that the copy will use the current (environment) tracectx."""
         if type(self) != Proxy:
             raise NotImplementedError(f"replace is not implemented for {type(self)}")
@@ -439,7 +439,7 @@ class StringProxy(Proxy, str):
 
     def replace(self, **changes):
         r"""Return a copy of the StringProxy object with new values for the specified fields as given to the constructor as arguments.
-        Valid kewword arguments are ``name``, ``history``.
+        Valid keyword arguments are ``name``, ``history``.
         Note that the copy will use the current (environment) tracectx."""
         kwargs = dict(
             name=self.name,
@@ -494,7 +494,7 @@ class TupleProxy(Proxy, tuple):
 
     def replace(self, **changes):
         r"""Return a copy of the TupleProxy object with new values for the specified fields as given to the constructor as arguments.
-        Valid kewword arguments are ``name``, ``history``.
+        Valid keyword arguments are ``name``, ``history``.
         Note that the copy will use the current (environment) tracectx."""
         kwargs = dict(
             name=self.name,
@@ -537,7 +537,7 @@ class ListProxy(Proxy, list):
 
     def replace(self, **changes):
         r"""Return a copy of the ListProxy object with new values for the specified fields as given to the constructor as arguments.
-        Valid kewword arguments are ``name``, ``history``.
+        Valid keyword arguments are ``name``, ``history``.
         Note that the copy will use the current (environment) tracectx."""
         kwargs = dict(
             name=self.name,
@@ -596,7 +596,7 @@ class DictProxy(Proxy, dict):
 
     def replace(self, **changes):
         r"""Return a copy of the DictProxy object with new values for the specified fields as given to the constructor as arguments.
-        Valid kewword arguments are ``name``, ``history``.
+        Valid keyword arguments are ``name``, ``history``.
         Note that the copy will use the current (environment) tracectx."""
         kwargs = dict(
             name=self.name,
@@ -685,7 +685,7 @@ class NumberProxy(Proxy, NumberProxyInterface):
 
     def replace(self, **changes):
         r"""Return a copy of the NumberProxy object with new values for the specified fields as given to the constructor as arguments.
-        Valid kewword arguments are ``name``, ``history``, ``value``, ``python_type``, ``constraint``.
+        Valid keyword arguments are ``name``, ``history``, ``value``, ``python_type``, ``constraint``.
         Note that the copy will use the current (environment) tracectx."""
         kwargs = dict(
             name=self.name,
@@ -1086,7 +1086,7 @@ class ComplexProxy(NumberProxy):
 
     def replace(self, **changes):
         r"""Return a copy of the ComplexProxy object with new values for the specified fields as given to the constructor as arguments.
-        Valid kewword arguments are ``name``, ``history``, ``value``, ``constraint``.
+        Valid keyword arguments are ``name``, ``history``, ``value``, ``constraint``.
         Note that the copy will use the current (environment) tracectx."""
         kwargs = dict(
             name=self.name,
@@ -1124,7 +1124,7 @@ class IntegerProxy(NumberProxy):
 
     def replace(self, **changes):
         r"""Return a copy of the IntegerProxy with new values for the specified fields as given to the constructor as arguments.
-        Valid kewword arguments are ``name``, ``history``, ``value``, ``constraint``.
+        Valid keyword arguments are ``name``, ``history``, ``value``, ``constraint``.
         Note that the copy will use the current (environment) tracectx."""
         kwargs = dict(
             name=self.name,
@@ -1168,7 +1168,7 @@ class FloatProxy(NumberProxy):
 
     def replace(self, **changes):
         r"""Return a copy of the FloatProxy object with new values for the specified fields as given to the constructor as arguments.
-        Valid kewword arguments are ``name``, ``history``, ``value``, ``constraint``.
+        Valid keyword arguments are ``name``, ``history``, ``value``, ``constraint``.
         Note that the copy will use the current (environment) tracectx."""
         kwargs = dict(
             name=self.name,
@@ -1375,7 +1375,7 @@ class FutureTensorProxy(Proxy, TensorProxyInterface):
 
     def replace(self, **changes):
         r"""Return a copy of the FutureTensorProxy object with new values for the specified fields as given to the constructor as arguments.
-        Valid kewword arguments are ``name``, ``history``, ``shape``, ``dtype``, ``device``.
+        Valid keyword arguments are ``name``, ``history``, ``shape``, ``dtype``, ``device``.
         ``like`` is also a valid keyword and will take metadata from the tensor proxy argument
         in preference to the old values but overridable by keyword arguments.
         Note that the copy will use the current (environment) tracectx."""
@@ -1505,7 +1505,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
 
     def replace(self, **changes):
         r"""Return a copy of the TensorProxy object with new values for the specified fields as given to the constructor as arguments.
-        Valid kewword arguments are ``name``, ``history``, ``shape``, ``dtype``, ``device``, ``requires_grad``, ``distparallel_type``,  ``thunder_fsdp_padding_size``.
+        Valid keyword arguments are ``name``, ``history``, ``shape``, ``dtype``, ``device``, ``requires_grad``, ``distparallel_type``,  ``thunder_fsdp_padding_size``.
         ``like`` is also a valid keyword and will take metadata from the tensor proxy argument
         in preference to the old values but overridable by keyword arguments.
         Note that the copy will use the current (environment) tracectx."""
@@ -1974,8 +1974,8 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
             for idx, s in enumerate(t.shape)
         )
     else:
+        # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
         shape = tuple(t.shape)
-    # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
     return TensorProxy(
         name,
         shape=tuple(shape),

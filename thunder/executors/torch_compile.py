@@ -70,7 +70,7 @@ def make_compiled(
     region_trace.bound_symbols = list(bsyms)
     region_trace.args = sorted_unique_inputs
     region_trace.kwargs = {}
-    region_trace.bound_symbols.append(prims.python_return.bind(sorted_unique_outputs, output=()))
+    region_trace.bound_symbols.append(prims.python_return.bind(sorted_unique_outputs, output=None))
 
     def torch_interpreted_func(*args):
         return eval_trace(region_trace, *args, symbol_mapper=to_torch_translator)

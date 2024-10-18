@@ -675,7 +675,7 @@ class nvFuserExecutor(FusionExecutor):
     def _dce_bsyms(self, input_list, output, bsyms: list[BoundSymbol]) -> list[BoundSymbol]:
         trace = TraceCtx(None)
         trace.bound_symbols = bsyms
-        bsyms.append(prims.python_return.bind(output, output=()))
+        bsyms.append(prims.python_return.bind(output, output=None))
         needed_proxies: set[Variable] = set()
         trace = dce(trace, needed_proxies)
         # update the input_list by removing the unused inputs
@@ -787,7 +787,7 @@ class nvFuserExecutor(FusionExecutor):
         return_bsym = cse_trace.bound_symbols[-1]
         assert return_bsym.sym.id == prims.PrimIDs.RETURN
         trace_output = tree_map(map_redundant, return_bsym.args)
-        cse_trace.bound_symbols[-1] = prims.python_return.bind(*trace_output, output=())
+        cse_trace.bound_symbols[-1] = prims.python_return.bind(*trace_output, output=None)
 
         end_time_ns = time.perf_counter_ns()
         elapsed_time_ns = end_time_ns - start_time_ns
