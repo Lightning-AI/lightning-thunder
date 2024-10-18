@@ -4,6 +4,7 @@ from functools import partial, wraps
 import torch
 
 import thunder
+import thunder.examine
 from thunder import torch as ttorch
 
 from thunder.core import utils, devices
@@ -15,7 +16,9 @@ from thunder.core.rematerialization import (
     find_filtered_producer_consumer_pairs,
     find_nvfuser_producer_consumer_pairs,
 )
+from thunder.core import prims
 from thunder.core.transforms import value_and_grad
+from thunder.core.trace import TraceCtx
 from thunder.examine import get_fusions
 from thunder.tests.framework import instantiate, NOTHING, nvFuserExecutor, TorchExecutor, requiresCUDA
 from thunder.tests.make_tensor import make_tensor
@@ -484,3 +487,46 @@ def test_rematerialization_name_collision():
     expected_grad = torch.autograd.grad(expected, x, grad_output)
 
     torch.testing.assert_close(actual_grad, expected_grad)
+
+
+@requiresCUDA
+def test_not_rematerialize_matmul():
+    nn = torch.nn
+
+    class MLP(nn.Module):
+        def __init__(self, embedding_size: int) -> None:
+            super().__init__()
+            self.layers = nn.Sequential(
+                nn.Linear(embedding_size, embedding_size * 4),
+                nn.GELU(),
+                nn.Linear(embedding_size * 4, embedding_size),
+                nn.Dropout(),
+            )
+
+        def forward(self, x):
+            return self.layers(x)
+
+    batch_size, sequence_length, embedding_size = 2, 3, 4
+    inp = torch.randn(batch_size, sequence_length, embedding_size, device="cuda", requires_grad=True)
+
+    model = MLP(embedding_size)
+    model.to("cuda")
+
+    # At the time of writing, linear and matmul are not fused into nvFuser
+    # regions by default therefore, we should enable them separately
+    jmodel = thunder.jit(model, nv_enable_linear=True, nv_enable_matmul=True)
+    jmodel(inp)
+
+    def assert_subsymbol_count(trace: TraceCtx, /, num_linears: int, num_matmuls: int):
+        fusions = thunder.examine.get_fusion_symbols(trace)
+        assert len(fusions) == 1
+
+        subsymbol_ids = [subsymbol.sym.id for subsymbol in fusions[0].subsymbols]
+        assert subsymbol_ids.count(prims.PrimIDs.LINEAR) == num_linears
+        assert subsymbol_ids.count(prims.PrimIDs.MATMUL) == num_matmuls
+
+    fw_trace = thunder.last_traces(jmodel)[-1]
+    assert_subsymbol_count(fw_trace, num_linears=2, num_matmuls=0)
+
+    bw_trace = thunder.last_backward_traces(jmodel)[-1]
+    assert_subsymbol_count(bw_trace, num_linears=0, num_matmuls=4)

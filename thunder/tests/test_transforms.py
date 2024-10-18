@@ -6,8 +6,6 @@ import pytest
 import thunder
 from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform, nvtx_push, nvtx_pop
 from thunder.tests.framework import requiresCUDA
-from thunder.tests import litgpt_model
-from litgpt.lora import LoRALinear
 
 
 @requiresCUDA
@@ -76,12 +74,14 @@ def test_nvtx_transform():
 @requiresCUDA
 def test_materialization():
     from thunder.transforms import MaterializationTransform
+    from litgpt.config import Config
+    from litgpt.model import GPT
 
-    config = litgpt_model.Config.from_name("llama2-like")
+    config = Config.from_name("llama2-like")
     with torch.device("cuda"):
-        ref_m = litgpt_model.GPT(config).to(torch.bfloat16).eval().requires_grad_(False)
+        ref_m = GPT(config).to(torch.bfloat16).eval().requires_grad_(False)
     with torch.device("meta"):
-        m = litgpt_model.GPT(config).to(torch.bfloat16).eval().requires_grad_(False)
+        m = GPT(config).to(torch.bfloat16).eval().requires_grad_(False)
 
     ref_m.set_kv_cache(1, device="cuda", dtype=torch.bfloat16)
     ref_m.max_seq_length = 20
@@ -117,14 +117,16 @@ def test_materialization():
 def test_quantization_on_meta():
     from thunder.transforms import MaterializationTransform
     from thunder.transforms.quantization import BitsAndBytesLinearQuant4bit, get_bitsandbytes_executor
+    from litgpt.config import Config
+    from litgpt.model import GPT
 
     bitsandbytes_executor = get_bitsandbytes_executor()
 
-    config = litgpt_model.Config.from_name("llama2-like")
+    config = Config.from_name("llama2-like")
     with torch.device("cuda"):
-        ref_m = litgpt_model.GPT(config).to(torch.bfloat16).eval().requires_grad_(False)
+        ref_m = GPT(config).to(torch.bfloat16).eval().requires_grad_(False)
     with torch.device("meta"):
-        m = litgpt_model.GPT(config).to(torch.bfloat16).eval().requires_grad_(False)
+        m = GPT(config).to(torch.bfloat16).eval().requires_grad_(False)
 
     ref_m.set_kv_cache(1, device="cuda", dtype=torch.bfloat16)
     ref_m.max_seq_length = 20
@@ -460,6 +462,8 @@ def test_lora_transform_linear():
 
     class Original(torch.nn.Module):
         def __init__(self, rank, alpha) -> None:
+            from litgpt.lora import LoRALinear
+
             super().__init__()
             self.fc1 = LoRALinear(DIM, DIM, r=rank, lora_alpha=alpha)
             self.fc2 = LoRALinear(DIM, DIM, r=rank, lora_alpha=alpha)
