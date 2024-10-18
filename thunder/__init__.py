@@ -689,14 +689,8 @@ def jit(
                 #         backward_trc = new_backward_trc
                 #         backward_traces.append(backward_trc)
 
-            # if backward_trc is not None:
-            #     backward_fn = backward_trc.python_callable()
-            # else:
-            #     backward_fn = None
-            # We do not have to return auxiliary tensors, which will only be useful in backward pass
-            if not used_torch_autograd:
-                computation_trc = unwrap_return_value(computation_trc)
-                computation_traces.append(computation_trc)
+            computation_trc = unwrap_return_value(computation_trc)
+            computation_traces.append(computation_trc)
 
             computation_trc = transform_to_torch_types(computation_trc)
             comp = computation_trc.python_callable()

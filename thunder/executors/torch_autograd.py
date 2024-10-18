@@ -183,7 +183,7 @@ def transform_for_torch_autograd(computation_trc: TraceCtx, compile_data, compil
             for old, new in utils.safe_zip(data_for_autograd["flat_tensor_output"], new_flat_output)
         }
         new_output = tree_map(lambda out: old_to_new_output.get(variableify(out), out), data_for_autograd["output"])
-        python_return(new_output)
+        python_return({"output": new_output, "flat_args": data_for_autograd["flat_args"]})
 
     fw_traces = [fw_trace]
     bw_traces = [bw_trace]
