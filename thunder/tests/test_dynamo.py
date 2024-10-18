@@ -3,6 +3,7 @@ import warnings
 import torch
 import torch.fx
 import torch.nn as nn
+import torch.nn.functional as F
 
 from thunder import dtypes
 from thunder.dynamo import ThunderCompiler
@@ -549,13 +550,12 @@ def test_checkpoint_converter():
             super().__init__()
             self.layer1 = nn.Linear(10, 20)
             self.layer2 = nn.Linear(20, 20)
-            self.layer3 = nn.ReLU()
 
         def forward(self, x):
             x = torch.sin(x)
             x = checkpoint.checkpoint(self.layer1, x)
             x = checkpoint.checkpoint(self.layer2, x)
-            x = self.layer3(x)
+            x = F.relu(x)
             return x
 
     # Input tensor
