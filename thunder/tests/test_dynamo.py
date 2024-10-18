@@ -574,10 +574,10 @@ def test_checkpoint_converter():
     out = jf(x)
     torch.testing.assert_close(ref_out, out)
 
-    g = torch.ones_like(out)
+    g = torch.randn_like(out)
     out.backward(g)
 
-    ref_g = torch.ones_like(ref_out)
+    ref_g = g.clone()
     ref_out.backward(ref_g)
     torch.testing.assert_close(x.grad, x_ref.grad)
     torch.testing.assert_close(tuple(model.parameters()), tuple(ref_model.parameters()))

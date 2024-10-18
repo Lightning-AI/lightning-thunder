@@ -332,8 +332,8 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
     if target is torch.ops.higher_order.tag_activation_checkpoint:
         m = node.graph.owning_module
         assert hasattr(m, node.args[0].name)
-        higher_order_module = getattr(m, node.args[0].name)
-        is_module_supported, split_reason = is_graphmodule_supported_by_thunder(higher_order_module)
+        checkpointed_fn = getattr(m, node.args[0].name)
+        is_module_supported, split_reason = is_graphmodule_supported_by_thunder(checkpointed_fn)
         return is_module_supported, split_reason
 
     # If thunder has a mapping for this operation, try executing the meta function and see.
