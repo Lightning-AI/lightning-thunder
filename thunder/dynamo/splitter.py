@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
-import copy
 
 import torch
 from torch.fx.passes.split_module import split_module
