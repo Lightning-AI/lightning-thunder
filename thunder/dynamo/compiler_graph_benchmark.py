@@ -26,6 +26,7 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
         self,
         bench: BenchmarkFixture,
         executors: dict[str, Callable],
+        **debug_options,
     ):
         """
         This class acts as a backend for the :func:`torch.compile` function, facilitating the benchmarking of each :class:`torch.fx.GraphModule` produced by Thunder dynamo splitter.
@@ -80,8 +81,12 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
             lambda: f"Executor names cannot contain '-' as it conflicts with the 'benchmark-group-by' function. Please rename it using a different character.",
         )
         self.executors = executors
+        self._get_debug_options(**debug_options)
 
         self.graph_idx = 0
+
+    def _get_debug_options(self, **debug_options):
+        self.post_graph = debug_options.get("post_graph", False)
 
     def run_bench(self, gm: torch.fx.GraphModule, name: str, *sample_args):
         from thunder.benchmarks.targets import record_peak_allocated_memory, MAX_ALLOCATED_MEMORY_KEYWORD
@@ -94,6 +99,9 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
                     compiled_fn = ex(gm)
                 except Exception as e:
                     raise RuntimeError(f"The input executor {ex_name} failed to compile {gm}") from e
+            if self.post_graph:
+                compiled_fn = self.post_graph(compiled_fn, sample_args)
+
             with record_peak_allocated_memory(self.bench):
                 self.bench(compiled_fn, *sample_args)
             # BenchmarkFixture.stats is created each time bench is called (ref: https://github.com/pybenchmark/pytest-benchmark/blob/8c9a5faa1dd178b53ab7b2a66f5364a77e903d74/src/pytest_benchmark/fixture.py#L150)
