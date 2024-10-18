@@ -12,7 +12,6 @@ from thunder.core.utils import check
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-
 GRAPH_BY_GRAPH_BENCHMARK_PARAMS_KEYS = ("GraphID", "SplitModuleName", "executor")
 
 
@@ -122,7 +121,7 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
         }
         for node in split_module.graph.nodes:
             target = node.target
-            # Benchmarks the modules produced by the splitter and runable for Thunder.
+            # Benchmarks the modules produced by the splitter and are supported by Thunder.
             if isinstance(target, str) and target.startswith("thunder_"):
                 check(
                     hasattr(split_module, target),
