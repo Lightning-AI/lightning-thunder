@@ -3144,6 +3144,7 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
     # We need to update the traces with the new saved_for_backward
     _update_forward_with_new_saved_for_backward(forward_trace, only_used_fw_saved_for_backward)
     _update_backward_with_new_saved_for_backward(backward_trace, only_used_bw_saved_for_backward)
+    forward_trace.tags.add(TraceTag.AUGMENTED_FORWARD)
     forward_trace.set_provenance(TraceProvenance("Augmented forward pass"))
     backward_trace.set_provenance(TraceProvenance("Backward pass"))
 
