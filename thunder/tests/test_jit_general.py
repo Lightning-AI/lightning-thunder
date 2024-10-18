@@ -17,7 +17,6 @@ from lightning_utilities import compare_version
 import thunder
 from thunder.core.interpreter import is_jitting, InterpreterError
 
-from thunder.tests import litgpt_model
 from thunder.tests.framework import version_between, requiresCUDA
 import thunder.clang as clang
 from thunder.core.options import CACHE_OPTIONS
@@ -676,22 +675,25 @@ def test_nanogpt():
     ("cpu", "cuda", "meta"),
 )
 def test_litgpt_variants(name, device):
+    from litgpt.config import Config
+    from litgpt.model import GPT
+
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
 
     device = torch.device(device)
 
     x = torch.randint(0, 200, (5, 5), device=device)
-    config = litgpt_model.Config.from_name(name)
+    config = Config.from_name(name)
 
     with device:
-        reference = litgpt_model.GPT(config)
+        reference = GPT(config)
     expected_logits = reference(x)
 
     expected_logits.sum().backward()
 
     with device:
-        model = litgpt_model.GPT(config)
+        model = GPT(config)
     model.load_state_dict(reference.state_dict())
     tom = thunder.jit(model, executors=nvfuserex if device.type == "cuda" else torchex)
     actual_logits = tom(x)
@@ -731,6 +733,8 @@ def test_litgpt_variants(name, device):
     ("cpu", "cuda"),
 )
 def test_litgpt_variants_kvcache(name, device):
+    from litgpt.config import Config
+    from litgpt.model import GPT
     import torch._dynamo  # this monkeypatches torch.manual_seed
 
     if device == "cuda" and not torch.cuda.is_available():
@@ -738,10 +742,10 @@ def test_litgpt_variants_kvcache(name, device):
 
     device = torch.device(device)
     x = torch.randint(0, 200, (1, 2), device=device)
-    config = litgpt_model.Config.from_name(name)
+    config = Config.from_name(name)
 
     with device:
-        model = litgpt_model.GPT(config)
+        model = GPT(config)
         model.max_seq_length = 3
 
     for p in model.parameters():
@@ -777,22 +781,25 @@ def test_litgpt_variants_kvcache(name, device):
     ("cpu", "cuda"),
 )
 def test_tom_overrides_proxy(device):
+    from litgpt.config import Config
+    from litgpt.model import GPT
+
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
 
     device = torch.device(device)
 
     x = torch.randint(0, 200, (5, 5), device=device)
-    config = litgpt_model.Config.from_name("llama2-like")
+    config = Config.from_name("llama2-like")
 
     with device:
-        reference = litgpt_model.GPT(config)
+        reference = GPT(config)
     expected_logits = reference(x)
 
     expected_logits.sum().backward()
 
     with device:
-        model = litgpt_model.GPT(config)
+        model = GPT(config)
     model.load_state_dict(reference.state_dict())
     tom = thunder.jit(model, executors=nvfuserex if device.type == "cuda" else torchex)
 
@@ -1116,7 +1123,7 @@ def test_isinstance_parameter():
     ("cpu", "cuda"),
 )
 def test_cache_symbolic_values_reshape(device):
-    if not torch.cuda.is_available():
+    if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
 
     a = torch.randn((4, 8, 6), device=device)
@@ -1186,7 +1193,7 @@ def test_custom_autograd_function():
             (x, weight) = ctx.saved_tensors
             assert weight.shape == ctx.shape  # really bogus, just to use ctx.shape
             scaler2 = ctx.shape[0] / ctx.shape[1]
-            return torch.matmul(grad_output, weight) * ctx.scaler, torch.matmul(grad_output.t(), x) / scaler2
+            return torch.matmul(grad_output, weight) * ctx.scaler, torch.matmul(grad_output.t(), x) / scaler2, None
 
     class Model(torch.nn.Module):
         def __init__(self):
@@ -1199,8 +1206,13 @@ def test_custom_autograd_function():
     x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
     model = Model().to(dtype=torch.float64)
     jitted = thunder.jit(model)
-
     gradcheck(jitted, (x,))
+
+    jitted.zero_grad()
+    x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
+    out = jitted(x)
+    out.backward(torch.rand_like(out))
+    assert jitted.l1.weight.grad is not None
 
 
 def test_autograd_function_apply():
@@ -1439,3 +1451,33 @@ def test_cache_symbolic_values_dynamic_shape(device):
     assert_close(actual, expected)
     assert thunder.cache_misses(jfoo) == 1
     assert thunder.cache_hits(jfoo) == 1
+
+
+def test_cache_symbolic_values_reshape_numel():
+    def foo(a):
+        a = torch.reshape(a, [a.numel()])
+        return a.relu()
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+
+    a = torch.randn(2, 3, 8, requires_grad=True, device="cpu")
+
+    actual = jfoo(a)
+    expected = foo(a)
+
+    assert_close(actual, expected)
+
+
+def test_cache_symbolic_values_slice():
+    def foo(a):
+        a = a[..., : a.shape[-1]]
+        return a.relu()
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+
+    a = torch.randn(2, 3, 8, requires_grad=True, device="cpu")
+
+    actual = jfoo(a)
+    expected = foo(a)
+
+    assert_close(actual, expected)
