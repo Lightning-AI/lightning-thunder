@@ -10,7 +10,7 @@ from thunder.core.utils import check
 
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence, Callable
+    from collections.abc import Callable
 
 
 GRAPH_BY_GRAPH_BENCHMARK_PARAMS_KEYS = ("GraphID", "SplitModuleName", "executor")
@@ -27,7 +27,6 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
         self,
         bench: BenchmarkFixture,
         executors: dict[str, Callable],
-        # **thunder_options,
     ):
         """
         This class acts as a backend for the :func:`torch.compile` function, facilitating the benchmarking of each :class:`torch.fx.GraphModule` produced by Thunder dynamo splitter.
@@ -35,16 +34,17 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
 
         Args:
             bench: the BenchmarkFixture created by ``pytest_benchmark``
-            executors: list of executors to compare. Supported executors include: 'eager', 'inductor', and 'thunder'. If None, defaults to all available executors.
-            **thunder_options: a dictionary of options to pass to :func:`thunder.jit`. Besides all the arguments to :func:`thunder.jit`,
-                                it accepts `torch_inductor_options` which are passed to :func:`torch.compile` if part of the graph
-                                is not supported by thunder.
+            executors: A dictionary of functors to compare.
+                - Key: The name of the executor to be displayed in the test name.
+                - Value: A callable representing the compile function to be applied to the GraphModule.
+                    If the value is None, no compilation is performed, and the GraphModule runs in Torch eager mode.
 
         Example:
             .. code-block:: python
 
                 # script.py
                 import torch
+                import thunder
                 from thunder.dynamo.compiler_graph_benchmark import ThunderCompilerGraphBenchmarking
 
                 def func(x):
@@ -55,7 +55,7 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
                         return x - 1
 
                 def test_func(benchmark):
-                    backend = ThunderCompilerGraphBenchmarking(benchmark, executors=["eager", "thunder"])
+                    backend = ThunderCompilerGraphBenchmarking(benchmark, executors={"eager": None, "thunder": thunder.jit})
                     compiled = torch.compile(backend=backend)(func)
                     x = torch.ones(2, requires_grad=True).cuda()
                     compiled(x)
@@ -75,7 +75,11 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
         """
         super().__init__()
         self.bench = bench
-        check(isinstance(executors, dict) and executors, lambda: f"bench_executors is empty, nothing to execuate")
+        check(isinstance(executors, dict) and executors, lambda: f"'executors' must be a non-empty dictionary.")
+        check(
+            not any("-" in k for k in executors.keys()),
+            lambda: f"Executor names cannot contain '-' as it conflicts with the 'benchmark-group-by' function. Please rename it using a different character.",
+        )
         self.executors = executors
 
         self.graph_idx = 0
@@ -87,7 +91,10 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
             if ex is None:
                 compiled_fn = gm
             else:
-                compiled_fn = ex(gm)
+                try:
+                    compiled_fn = ex(gm)
+                except Exception as e:
+                    raise RuntimeError(f"The input executor {ex_name} failed to compile {gm}") from e
             with record_peak_allocated_memory(self.bench):
                 self.bench(compiled_fn, *sample_args)
             # BenchmarkFixture.stats is created each time bench is called (ref: https://github.com/pybenchmark/pytest-benchmark/blob/8c9a5faa1dd178b53ab7b2a66f5364a77e903d74/src/pytest_benchmark/fixture.py#L150)
