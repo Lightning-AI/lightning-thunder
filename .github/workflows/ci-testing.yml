@@ -91,6 +91,10 @@ jobs:
       - name: Testing Local
         if: matrix.python-version == '3.10' && matrix.suite == 'core'
         run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+             "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x86
+             eval $( "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x86 | grep '=')
+          fi
           coverage run --source thunder -m \
             pytest thunder/tests/ \
               --ignore=thunder/tests/distributed \
