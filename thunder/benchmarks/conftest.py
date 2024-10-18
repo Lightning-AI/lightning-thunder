@@ -3,13 +3,7 @@ import platform
 import psutil
 from typing import Any
 import warnings
-
-try:
-    from asvdb import utils, BenchmarkInfo, BenchmarkResult, ASVDb
-
-    HAS_ASVDB = True
-except ImportError:
-    HAS_ASVDB = False
+import importlib.util
 
 
 def pytest_addoption(parser):
@@ -41,9 +35,16 @@ def save_benchmark_results_asv(config):
     """
 
     bench_dir = config.option.asv_bench_dir
-    if not HAS_ASVDB or not bench_dir:
-        warnings.warn("asvdb is not imported or 'asv_bench_dir' not set. Results won't be saved in asv format.")
+
+    if not importlib.util.find_spec("asv"):
+        warnings.warn("asvdb is not available. Results won't be saved in asv format.")
         return
+
+    if not bench_dir:
+        warnings.warn("asv_bench_dir' is not set. Results won't be saved in asv format.")
+        return
+
+    from asvdb import utils, ASVDb, BenchmarkResult, BenchmarkInfo
 
     benchmarks = config._benchmarksession.benchmarks
 
