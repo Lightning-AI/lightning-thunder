@@ -3050,6 +3050,11 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
             result["flat_tensor_output"] = tuple(flat_tensor_output)
         return result, saved_for_backward
 
+    # Copy the signature of the original function so that the arguments are
+    # named correctly in the augmented forward pass instead of being named
+    # "args" and "kwargs".
+    augmented_forward_fn.__signature__ = inspect.signature(trace.fn or trace.python_callable())
+
     # assert forward_trace.bound_symbols.pop(-1).sym is prims.python_return
     # with tracectx(forward_trace):
     #     prims.python_return((result, saved_for_backward))
