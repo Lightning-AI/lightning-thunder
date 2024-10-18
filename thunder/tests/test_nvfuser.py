@@ -997,6 +997,10 @@ def test_div_truediv_integer_tensors_consistency_nvfuser(executor, device, thund
             nvfuser_version() is None or nvfuser_version() < LooseVersion("0.2.10"),
             reason="Requires nvFuser version 0.2.10 or later",
         ),
+        pytest.mark.skipif(
+            torch.cuda.is_available() and torch.cuda.get_device_capability(0)[0] < 9,
+            reason="Requires CUDA compute capability >= 9.0",
+        ),
         pytest.mark.parametrize("dropout_p", [0.0, 0.2]),
         pytest.mark.parametrize("is_causal", [False, True]),
         pytest.mark.parametrize("scale", [None, 1e-3]),
