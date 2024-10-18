@@ -2192,6 +2192,7 @@ connect_to_autograd_impl = ex.register_operator(
 )
 _register_implementation(connect_to_torch_autograd, connect_to_autograd_impl, checker=_always_executable)
 
+
 def _shape_impl(t):
     return t.shape
 

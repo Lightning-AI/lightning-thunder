@@ -2971,7 +2971,9 @@ def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_fo
 # )
 
 
-def forward_and_backward_from_trace(trace: Trace, torch_autograd=False, requires_grad_mask=None) -> ForwardBackwardTraces:
+def forward_and_backward_from_trace(
+    trace: Trace, torch_autograd=False, requires_grad_mask=None
+) -> ForwardBackwardTraces:
     """Generates the forward and backward passes from a trace.
 
     This is a convenience function that combines the functionality of
@@ -3031,6 +3033,7 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False, requires
     # saved_for_backward = deconstruct_forward_env_for_backward(trace, env)
 
     output_spec = None
+
     def augmented_forward_fn(*args, **kwargs):
         result, env = augmented_forward_pass(*args, trace=trace, **kwargs)
         saved_for_backward = deconstruct_forward_env_for_backward(trace, env)
