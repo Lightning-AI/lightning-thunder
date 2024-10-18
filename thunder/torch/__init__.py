@@ -5262,8 +5262,8 @@ def _backward_checkpoint(
 ) -> tuple[None | TensorLike, ...]:
     from thunder.core.transforms import vjp
 
-    result = vjp(function)(args, grad_outputs, **kwargs)
-    return result
+    result, grads = vjp(function)(args, grad_outputs, **kwargs)
+    return grads
 
 
 #
