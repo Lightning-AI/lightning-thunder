@@ -1,13 +1,12 @@
 from dataclasses import replace
-from enum import auto, Enum
 from typing import Any
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import torch
 
 import thunder.core.utils as utils
-from thunder.core.prims import make_prim, PrimIDs, python_return
+from thunder.core.prims import PrimIDs, python_return
 
 from thunder.core.proxies import TensorProxy, variableify
 from thunder.core.pytree import tree_flatten, tree_map
@@ -15,32 +14,10 @@ from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import TraceCtx, tracectx, from_trace, set_tracectx, reset_tracectx
 from thunder.core.transform_common import replace_redundant_inputs
 from thunder.core.vjp_utils import get_saved_for_backward_tensors
+from thunder.transforms.torch_autograd import connect_to_torch_autograd
 
 if TYPE_CHECKING:
     from thunder.core.trace import VariableInterface
-
-
-class IDs(Enum):
-    TORCH_AUTOGRAD_FUNCTION = auto()
-
-
-def torch_autograd_function_meta(
-    *,
-    backward: TraceCtx | Callable,
-    return_none_instead_of_grads: bool,
-    saved_tensors: Sequence[TensorProxy],
-    saved_other: Sequence[Any],
-    flat_args: Sequence[TensorProxy],
-    flat_output: Sequence[TensorProxy],
-):
-    return tuple(TensorProxy(like=out) for out in flat_output)
-
-
-connect_to_torch_autograd = make_prim(
-    IDs.TORCH_AUTOGRAD_FUNCTION,
-    "connect_to_torch_autograd",
-    meta=torch_autograd_function_meta,
-)
 
 
 def rename_bwd_trace_outputs(bwd_trace: TraceCtx, fwd_trace: TraceCtx) -> TraceCtx:

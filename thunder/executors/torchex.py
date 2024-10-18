@@ -34,7 +34,8 @@ import thunder.core.utils as utils
 import thunder.torch as ltorch
 from thunder.torch import DeviceLike, dtypeLike, TensorLike
 
-from thunder.executors.torch_autograd import torch_autograd_function_meta, connect_to_torch_autograd, ThunderFunction
+from thunder.executors.torch_autograd import ThunderFunction
+from thunder.transforms.torch_autograd import torch_autograd_function_meta, connect_to_torch_autograd
 from thunder.extend import OperatorExecutor, register_executor, add_always_executor
 
 from thunder.core.transforms import (
