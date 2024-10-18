@@ -392,14 +392,16 @@ def find_cut(
     return tuple(sorted(cut_nodes))
 
 
-def rematerialize_all_gather(fw_trace: TraceCtx, bw_trace: TraceCtx) -> tuple[TraceCtx, TraceCtx]:
+def rematerialize_all_gather(fw_trace: TraceCtx) -> TraceCtx:
     """Insert new allgather+wait for backward trace and update the return statement for forward trace"""
 
     from thunder.core.proxies import FutureTensorProxy
     from thunder.core.trace import reset_tracectx, set_tracectx
     from thunder.distributed.prims import PrimIDs as distPrimIDs
     from thunder.executors.torchex import all_gather_prim_impl, wait_prim_impl
+    from thunder.transforms.torch_autograd import get_backward, set_backward
 
+    bw_trace = get_backward(fw_trace)
     new_bw_trace = from_trace(bw_trace)
     consumers = utils.consumers(fw_trace)
 
@@ -503,7 +505,8 @@ def rematerialize_all_gather(fw_trace: TraceCtx, bw_trace: TraceCtx) -> tuple[Tr
     new_fw_trace = from_trace(fw_trace)
     new_fw_trace.bound_symbols = list(fw_trace.bound_symbols)
     _update_forward_with_new_saved_for_backward(new_fw_trace, new_required_for_backward)
-    return new_fw_trace, new_bw_trace
+    set_backward(new_fw_trace, new_bw_trace)
+    return new_fw_trace
 
 
 def rematerialize(trace: TraceCtx) -> TraceCtx:
@@ -570,21 +573,23 @@ def rematerialize(trace: TraceCtx) -> TraceCtx:
     return rematerialized_trace
 
 
-def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -> tuple[TraceCtx, TraceCtx]:
+def rematerialize_forward_and_backward(fw_trace: TraceCtx) -> TraceCtx:
     """Apply rematerialization optimization to the forward and backward traces.
 
     Args:
         fw_trace (TraceCtx): Forward trace.
-        bw_trace (TraceCtx): Backward trace.
 
     Returns:
-        tuple[TraceCtx, TraceCtx]: Rematerialized forward and backward traces.
+        TraceCtx: Rematerialized forward trace.
     """
     # Circular dependency
     from thunder.core.transforms import (
         _update_backward_with_new_saved_for_backward,
         _update_forward_with_new_saved_for_backward,
     )
+    from thunder.transforms.torch_autograd import get_backward, set_backward
+
+    bw_trace = get_backward(fw_trace)
 
     def joint_fn(args, kwargs, cotangents):
         pass
@@ -654,7 +659,8 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
     # Update the call context
     new_fw_trace = update_fusion_call_ctx(new_fw_trace)
     new_bw_trace = update_fusion_call_ctx(new_bw_trace)
-    return new_fw_trace, new_bw_trace
+    new_fw_trace = set_backward(new_fw_trace, new_bw_trace)
+    return new_fw_trace
 
 
 def replace_uniform(trace: TraceCtx) -> TraceCtx:
