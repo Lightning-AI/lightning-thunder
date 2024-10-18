@@ -25,6 +25,13 @@ def get_compile_data() -> None | Any:
     return cd
 
 
+def get_compile_stats() -> None | Any:
+    """Returns the current compile stats."""
+    cd, cs = _compile_data.get()
+
+    return cs
+
+
 def set_compile_data_and_stats(cd, cs, /):
     """Sets the current compile data.
 
