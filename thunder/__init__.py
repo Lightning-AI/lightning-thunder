@@ -456,9 +456,6 @@ def jit(
                     except Exception as _:
                         continue
 
-                    cs.last_trace_host_tracing_start = time.perf_counter_ns()
-                    cs.last_trace_host_tracing_stop = time.perf_counter_ns()
-
                     # Updates cache statistics
                     cs.cache_hits += 1
                     cs.last_traces = comp_traces
@@ -490,9 +487,6 @@ def jit(
                 cs.last_prologue_execution_start = time.perf_counter_ns()
                 inps, pro_to_epi = pro(*args, **kwargs)
                 cs.last_prologue_execution_stop = time.perf_counter_ns()
-
-                cs.last_trace_host_tracing_start = time.perf_counter_ns()
-                cs.last_trace_host_tracing_stop = time.perf_counter_ns()
 
                 # Updates cache statistics
                 cs.cache_hits += 1
