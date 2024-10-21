@@ -720,7 +720,6 @@ def jit(
 
         return wrapped
 
-
     def prologue_execution_timer(fn):
         def wrapped(*args, **kwargs):
             cs.last_prologue_execution_start = time.perf_counter_ns()
@@ -731,7 +730,6 @@ def jit(
 
         return wrapped
 
-
     def decorate_computation_function(get_computation_and_inputs_fn, *decorators):
         def wrapped(*args, **kwargs):
             cache_entry, inps, pro_to_epi = get_computation_and_inputs_fn(*args, **kwargs)
@@ -741,10 +739,8 @@ def jit(
 
         return wrapped
 
-
     get_computation_and_inputs = decorate_computation_function(get_computation_and_inputs, host_execution_timer)
     cd.get_computation_and_inputs = get_computation_and_inputs
-
 
     def update_call_statistics(fn):
         def wrapped(*args, **kwargs):
@@ -757,7 +753,6 @@ def jit(
 
         return wrapped
 
-
     def check_storage_aliases(cache_entry, args):
         if cache_entry.vanilla_tensor_args:
             if alias_tensor_indices_str := _alias_tensor_of_args_kwargs(*args):
@@ -769,7 +764,6 @@ def jit(
                     lambda: f"It seems that {vanilla_tensor_args} are {alias_tensor_indices=} share their storage and some of them are modified in-place",
                     NotImplementedError,
                 )
-
 
     def maybe_connect_to_autograd(cache_entry, result):
         if cache_entry.backward_fn:
@@ -789,12 +783,10 @@ def jit(
 
         return result
 
-
     def maybe_call_epilogue(cache_entry, result, pro_to_epi):
         if cache_entry.epilogue_fn:
             result, comp_to_epi = result
             cache_entry.epilogue_fn(*pro_to_epi, *comp_to_epi)
-
 
     @wraps(fn)
     @update_call_statistics
