@@ -749,6 +749,25 @@ def jit(
                 )
 
 
+    def maybe_connect_to_autograd(cache_entry, result):
+        if cache_entry.backward_fn:
+            # If the backward function is available, we need to connect the
+            # resulting tensors to PyTorch's Autograd graph using the
+            # ThunderFunction (which is a torch.autograd.Function subclass)
+            data_for_autograd, (saved_tensors, saved_other) = result
+            ThunderFunction.apply(
+                cache_entry.return_none_instead_of_grads,
+                cache_entry.backward_fn,
+                saved_tensors,
+                saved_other,
+                data_for_autograd["flat_output"],
+                *data_for_autograd["flat_args"],
+            )
+            result = data_for_autograd["output"]
+
+        return result
+
+
     @wraps(fn)
     @update_call_statistics
     def fn_(*args, **kwargs) -> Any:
@@ -763,20 +782,7 @@ def jit(
 
         result = cache_entry.computation_fn(*inps)
 
-        if cache_entry.backward_fn:
-            # Run the compiled forward function
-            data_for_autograd, (saved_tensors, saved_other) = result
-
-            # Connect produced tensors with PyTorch's autograd graph
-            ThunderFunction.apply(
-                cache_entry.return_none_instead_of_grads,
-                cache_entry.backward_fn,
-                saved_tensors,
-                saved_other,
-                data_for_autograd["flat_output"],
-                *data_for_autograd["flat_args"],
-            )
-            result = data_for_autograd["output"]
+        result = maybe_connect_to_autograd(cache_entry, result)
 
         if cache_entry.epilogue_fn:
             result, comp_to_epi = result
