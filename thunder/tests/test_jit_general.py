@@ -1407,7 +1407,7 @@ def test_args_order():
     assert [a.name for a in thunder.last_traces(fn)[-1].args] == [f"a{i}" for i in range(11)]
 
 
-def test_cache_symbolic_values_dynamic_shape(device):
+def test_cache_symbolic_values_dynamic_shape():
     def foo(a):
         return a.relu()
 
