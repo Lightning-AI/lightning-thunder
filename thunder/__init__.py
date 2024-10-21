@@ -723,15 +723,25 @@ def jit(
 
     cd.get_computation_and_inputs = get_computation_and_inputs
 
+
+    def update_call_statistics(fn):
+        def wrapped(*args, **kwargs):
+            cs.calls += 1
+            cs.last_trace_host_start = time.perf_counter_ns()
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                cs.last_trace_host_stop = time.perf_counter_ns()
+
+        return wrapped
+
+
     @wraps(fn)
+    @update_call_statistics
     def fn_(*args, **kwargs) -> Any:
         if is_tracing():
             _recursive_jit_call_warning()
             return fn(*args, **kwargs)
-
-        # Updats call statistics
-        cs.last_trace_host_start = time.perf_counter_ns()
-        cs.calls += 1
 
         cache_entry, inps, pro_to_epi = get_computation_and_inputs(*args, **kwargs)
         cs.last_trace_host_execution_start = time.perf_counter_ns()
@@ -773,7 +783,6 @@ def jit(
 
         cs.last_executed = cache_entry.computation_fn
         cs.last_trace_cache_stop = time.perf_counter_ns()
-        cs.last_trace_host_stop = time.perf_counter_ns()
 
         return result
 
