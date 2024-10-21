@@ -768,6 +768,12 @@ def jit(
         return result
 
 
+    def maybe_call_epilogue(cache_entry, result, pro_to_epi):
+        if cache_entry.epilogue_fn:
+            result, comp_to_epi = result
+            cache_entry.epilogue_fn(*pro_to_epi, *comp_to_epi)
+
+
     @wraps(fn)
     @update_call_statistics
     def fn_(*args, **kwargs) -> Any:
@@ -784,9 +790,7 @@ def jit(
 
         result = maybe_connect_to_autograd(cache_entry, result)
 
-        if cache_entry.epilogue_fn:
-            result, comp_to_epi = result
-            cache_entry.epilogue_fn(*pro_to_epi, *comp_to_epi)
+        maybe_call_epilogue(cache_entry, result, pro_to_epi)
 
         cs.last_trace_host_execution_stop = time.perf_counter_ns()
 
