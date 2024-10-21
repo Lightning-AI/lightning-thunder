@@ -61,7 +61,8 @@ class BitsAndBytesLinearQuant4bit(Transform):
             blocksize = 64
             blocks = n // blocksize
             blocks += 1 if n % blocksize > 0 else 0
-            absmax = torch.zeros((blocks,), device=w.device, dtype=w.dtype)
+            # cuda absmax dtype is torch.float32 instead of dtype=A.dtype
+            absmax = torch.zeros((blocks,), device=w.device, dtype=torch.float32)
             quant_type = "nf4"
             code = get_4bit_type(quant_type, device=w.device)
 

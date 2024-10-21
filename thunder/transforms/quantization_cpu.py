@@ -182,7 +182,8 @@ def quantize_4bit_impl(
     blocks += 1 if n % blocksize > 0 else 0
 
     if absmax is None:
-        absmax = torch.zeros((blocks,), device=A.device, dtype=A.dtype)
+        # cuda absmax dtype is torch.float32 instead of dtype=A.dtype
+        absmax = torch.zeros((blocks,), device=A.device, dtype=torch.float32)
 
     if out is None:
         # change to 2D shape instead of unsqueeze(0) to be consistent with
@@ -216,7 +217,14 @@ def quantize_4bit_impl(
         out_uint8 += sign.to(torch.uint8) * 8
     if out_uint8.size(-1) % 2:
         out_uint8 = torch.nn.functional.pad(out_uint8, (0, 1), value=0)
-    out[:] = out_uint8[1::2].bitwise_left_shift(4).bitwise_or_(out_uint8[::2])
+
+    # Perform the bitwise operations
+    result = out_uint8[1::2].bitwise_left_shift(4).bitwise_or_(out_uint8[::2])
+
+    # Reshape the result to a 2D tensor with shape [N, 1]
+    # CUDA out is 2D tensor
+    out[:] = result.view(-1, 1)
+    # out[:] = out_uint8[1::2].bitwise_left_shift(4).bitwise_or_(out_uint8[::2])
 
     code = get_4bit_type(quant_type, device=A.device)
 
