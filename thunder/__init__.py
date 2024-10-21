@@ -779,7 +779,6 @@ def jit(
             cache_entry.epilogue_fn(*pro_to_epi, *comp_to_epi)
 
         cs.last_trace_host_execution_stop = time.perf_counter_ns()
-        cs.last_computation_execution_stop = cs.last_trace_host_execution_stop
 
         cs.last_computation = cache_entry.computation_fn
 
