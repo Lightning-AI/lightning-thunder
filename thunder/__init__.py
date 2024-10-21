@@ -791,6 +791,8 @@ def jit(
             result, comp_to_epi = result
             cache_entry.epilogue_fn(*pro_to_epi, *comp_to_epi)
 
+        return result
+
     @wraps(fn)
     @update_call_statistics
     def fn_(*args, **kwargs) -> Any:
@@ -804,8 +806,7 @@ def jit(
 
         result = cache_entry.computation_fn(*inps)
         result = maybe_connect_to_autograd(cache_entry, result)
-
-        maybe_call_epilogue(cache_entry, result, pro_to_epi)
+        result = maybe_call_epilogue(cache_entry, result, pro_to_epi)
 
         cs.last_computation = cache_entry.computation_fn
         return result
