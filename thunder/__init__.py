@@ -802,13 +802,11 @@ def jit(
         check_storage_aliases(cache_entry, inps)
 
         result = cache_entry.computation_fn(*inps)
-
         result = maybe_connect_to_autograd(cache_entry, result)
 
         maybe_call_epilogue(cache_entry, result, pro_to_epi)
 
         cs.last_computation = cache_entry.computation_fn
-
         return result
 
     if isinstance(fn, pytorch.nn.Module):
