@@ -61,6 +61,8 @@ __all__ = [
 
 # NOTE torch is a requirement
 import torch
+import torch.utils.checkpoint
+import torch._higher_order_ops.wrap
 
 import warnings
 
@@ -430,6 +432,15 @@ def _parse_to_device_and_dtype(
         device, dtype = device_, dtype_
 
     return device, dtype
+
+
+def _will_to_return_self(input_device, input_dtype, device, dtype, memory_format, copy):
+    return not (
+        copy
+        or (device is not None and device != input_device)
+        or (dtype is not None and dtype != input_dtype)
+        or (memory_format in (torch.channels_last, torch.channels_last_3d))
+    )
 
 
 # TODO Model non_blocking (as kwargs)
@@ -1852,9 +1863,9 @@ _inplace_to_out_of_place[silu] = silu, 1
 
 @torchsymbol(torch.add, is_method=True)
 def add(
-    a: NumberLike | TensorLike, b: NumberLike | TensorLike, /, *, alpha: None | Number | TensorLike = None
+    a: NumberLike | TensorLike, b: NumberLike | TensorLike, /, *, alpha: Number | TensorLike = 1
 ) -> Number | TensorLike:
-    if alpha is not None:
+    if isinstance(alpha, TensorProxy) or alpha != 1:
         b = b * alpha
 
     return clang.add(a, b)
@@ -1866,7 +1877,7 @@ def add_(
     b: NumberLike | TensorLike,
     /,
     *,
-    alpha: None | Number | TensorLike = None,
+    alpha: Number | TensorLike = 1,
 ) -> TensorLike:
     return prims.copy_(add(a, b, alpha=alpha), a)
 
@@ -2144,15 +2155,15 @@ def remainder_(a, b, /):
 
 
 @torchsymbol(torch.sub, is_method=True)
-def sub(a, b, /, *, alpha=None):
-    if alpha is not None:
+def sub(a, b, /, *, alpha: NumberLike | TensorLike = 1):
+    if isinstance(alpha, TensorProxy) or alpha != 1:
         b = b * alpha
 
     return clang.sub(a, b)
 
 
 @torchsymbol(torch.Tensor.sub_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
-def sub_(a, b, /, *, alpha=None):
+def sub_(a, b, /, *, alpha: NumberLike | TensorLike = 1):
     return prims.copy_(sub(a, b, alpha=alpha), a)
 
 
@@ -5188,6 +5199,71 @@ def _unwrap_if_dead(tensor):
 
 
 register_function(torch._C._functorch.unwrap_if_dead, _unwrap_if_dead)
+
+
+@torchsymbol(
+    torch.utils.checkpoint.checkpoint,
+    torch.ops.higher_order.tag_activation_checkpoint,
+    id="activation_checkpoint",
+)
+def checkpoint(
+    function: Callable[..., TensorLike],
+    *args: TensorLike,
+    context_fn: None | Callable[..., Any] = None,
+    debug: None | bool = None,
+    determinism_check: None | str = None,
+    preserve_rng_state: None | bool = None,
+    use_reentrant: bool = False,
+    **kwargs: Any,
+) -> TensorLike:
+    utils.check(
+        not use_reentrant,
+        lambda: "torch.checkpoint: use_reentrant=True is not supported in Thunder",
+    )
+    # NOTE: Thunder currently ignores the context_fn, debug, determinism_check, preserve_rng_state arguments
+    # Let's raise a warning if any of these arguments are passed
+    if context_fn is not None:
+        warnings.warn("torch.checkpoint: context_fn is not supported in Thunder and will be ignored")
+    if debug is not None:
+        warnings.warn("torch.checkpoint: debug is not supported in Thunder and will be ignored")
+    if determinism_check is not None:
+        warnings.warn("torch.checkpoint: determinism_check is not supported in Thunder and will be ignored")
+    if preserve_rng_state is not None:
+        warnings.warn("torch.checkpoint: preserve_rng_state is not supported in Thunder and will be ignored")
+    return function(*args, **kwargs)
+
+
+@register_augmented_forward(
+    "activation_checkpoint",
+)
+def _augmented_forward_checkpoint(
+    function: Callable[..., TensorLike],
+    *args: TensorLike,
+    context_fn: None | Callable[..., Any] = None,
+    debug: None | bool = None,
+    determinism_check: None | str = None,
+    preserve_rng_state: None | bool = None,
+    use_reentrant: bool = False,
+    **kwargs: Any,
+) -> TensorLike:
+    result = function(*args, **kwargs)
+    saved_for_backward = (function, args, kwargs)
+    return result, saved_for_backward
+
+
+@register_backward(
+    "activation_checkpoint",
+)
+def _backward_checkpoint(
+    function,
+    args,
+    kwargs,
+    *grad_outputs,
+) -> tuple[None | TensorLike, ...]:
+    from thunder.core.transforms import vjp
+
+    result = vjp(function)(args, grad_outputs, **kwargs)
+    return result
 
 
 #

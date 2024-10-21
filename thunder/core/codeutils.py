@@ -339,6 +339,19 @@ class SigInfo:
 
         return f"def {self.name}({arg_str}):"
 
+    @staticmethod
+    def from_name_and_args(name: str, args: Sequence[Any]):
+        si = SigInfo(name)
+        for a in args:
+            if isinstance(a, ProxyInterface):
+                si.args.append((a.name, None))
+            else:
+                from thunder.core.proxies import proxy
+
+                pa = proxy(a)
+                si.args.append((pa.name, None))
+        return si
+
 
 # Creates a SigInfo object from a function and the inputs to it
 # The SigInfo object contains name and value information for the args, varargs, kwargs, and varkwargs

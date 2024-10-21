@@ -14,7 +14,6 @@ from looseversion import LooseVersion
 from thunder.core.module import ThunderModule
 from thunder.core.interpreter import InterpreterLogItem
 from thunder.core.options import (
-    resolve_sharp_edges_option,
     CACHE_OPTIONS,
     SHARP_EDGES_OPTIONS,
 )
@@ -124,6 +123,27 @@ __all__ = [
     "pytorch_executor",
     # debugging functions
     "set_execution_callback_file",
+    "jit",
+    "resolve_executors",
+    "add_executor_lists",
+    "get_executor",
+    "get_all_executors",
+    "get_default_executors",
+    "get_always_executors",
+    "compile_data",
+    "compile_stats",
+    "last_traces",
+    "last_backward_traces",
+    "cache_option",
+    "cache_hits",
+    "cache_misses",
+    "list_transforms",
+    "last_interpreter_log",
+    "last_interpreted_instructions",
+    "print_last_interpreter_log",
+    "last_compile_options",
+    "get_auto_registered_torch_op_names",
+    "grad",
 ]
 
 
@@ -152,13 +172,6 @@ float64 = dtypes.float64
 complex32 = dtypes.complex32
 complex64 = dtypes.complex64
 complex128 = dtypes.complex128
-
-#
-# Module aliases
-#
-
-# NOTE this allows clang.foo() to be called directly as thunder.foo()
-from thunder.clang import *
 
 #
 # Promoted executor-related functions and objects
@@ -335,7 +348,6 @@ def jit(
         sharp_edges=sharp_edges,
         using_jit=True,
         disable_torch_autograd_support=disable_torch_autograd,
-        use_rematerialization=False,
         only_execute_prims=False,
         disable_preprocessing=True,
         compile_options=compile_options,
@@ -601,7 +613,7 @@ def jit(
                 use_del_last_used=False,
             )
             prologue_trc = prologue_traces[-1]
-            pro = prologue_trc.python_callable()
+            pro = prologue_trc.python_callable(include_decorators=False)
 
             if epilogue_trc is not None:
                 epilogue = epilogue_trc.python_callable()

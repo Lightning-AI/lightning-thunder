@@ -5,17 +5,24 @@ from typing import TYPE_CHECKING
 import dataclasses
 import inspect
 import itertools
+import warnings
 
 import torch
 
 from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.torch.langctx import torchctx
+from thunder.core.utils import check
 
 if TYPE_CHECKING:
     from thunder.core.symbol import Symbol
 
 auto_register_ops = set(itertools.chain(*torch_auto_registered_ops.values()))
+
+
+# Currently, thunder as mapping torch these function but they
+# just throw warning.
+UNSUPPORTED_THUNDER_FUNCTION = (torch._C._set_grad_enabled,)
 
 
 class CompilerType(Enum):
@@ -221,10 +228,29 @@ def get_nodes_in_unsupported_ctx_regions(gm: torch.fx.GraphModule) -> set[torch.
 
     # We want to mark nodes with `_enter_autocast` and `_exit_autocast`
     # as unsupported as `thunder` doesn't correctly deal with these stateful functions.
+
+    def is_no_grad_ctx_enter(node):
+        if node.target == torch._C._set_grad_enabled:
+            arg: bool = node.args[0]
+            assert isinstance(arg, bool)
+            return not arg  # arg is False (i.e. grad was disabled)
+        return False
+
+    def is_no_grad_ctx_exit(node):
+        if node.target == torch._C._set_grad_enabled:
+            arg: bool = node.args[0]
+            assert isinstance(arg, bool)
+            return arg  # arg is True (i.e. grad was enabled)
+        return False
+
     for node in gm.graph.nodes:
-        if node.op == "call_function" and node.target in (torch.amp.autocast_mode._enter_autocast,):
+        if node.op == "call_function" and (
+            node.target in (torch.amp.autocast_mode._enter_autocast,) or is_no_grad_ctx_enter(node)
+        ):
             ctx_cnt += 1
-        elif node.op == "call_function" and node.target in (torch.amp.autocast_mode._exit_autocast,):
+        elif node.op == "call_function" and (
+            node.target in (torch.amp.autocast_mode._exit_autocast,) or is_no_grad_ctx_exit(node)
+        ):
             ctx_cnt -= 1
         else:
             if ctx_cnt > 0:
@@ -268,6 +294,15 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
         split_reason = SplitReason(
             SplitReasonType.MISSING_OP_SUPPORT,
             info=f"node with name: {node.name} and target: {node.target} only has an automatic torch fallback in thunder.",
+        )
+        return False, split_reason
+
+    # These functions are present in `_torch_to_thunder_function_map` but don't mimic exact behavior.
+    # Eg. torch._C._set_grad_enabled's thunder implementation just throws warning that this is unsupported.
+    if target in UNSUPPORTED_THUNDER_FUNCTION:
+        split_reason = SplitReason(
+            SplitReasonType.UNSUPPORTED_NODE,
+            info=f"node with name: {node.name} and target: {node.target} has been manually disabled.",
         )
         return False, split_reason
 
@@ -344,3 +379,42 @@ def recompile_graph(gm: torch.fx.GraphModule):
     if isinstance(gm, torch.fx._lazy_graph_module._LazyGraphModule):
         return gm.real_recompile()
     return gm.recompile()
+
+
+def _get_example_inputs_from_placeholder(node) -> tuple[torch.Tensor]:
+    from thunder.tests.make_tensor import make_tensor
+
+    check(node.op == "placeholder", lambda: f"The node must be placeholder type", ValueError)
+    # Prefers to use actual example value in GraphArg if available
+    if "grapharg" in node.meta:
+        example_value = node.meta["grapharg"].example
+        if isinstance(example_value, torch.Tensor):
+            return (example_value.detach().clone().requires_grad_(example_value.requires_grad),)
+
+    check("example_value" in node.meta, lambda: "example_value does not exist in the meta of {node}", ValueError)
+    example_value = node.meta["example_value"]
+
+    if isinstance(example_value, torch.Tensor):
+        sz = _concrete_shape(example_value)
+        return (
+            make_tensor(
+                sz,
+                dtype=example_value.dtype,
+                device=example_value.device,
+                requires_grad=example_value.requires_grad,
+            ).as_strided(sz, example_value.stride()),
+        )
+    elif isinstance(example_value, tuple):
+        return tuple(
+            make_tensor(
+                _concrete_shape(e_v),
+                dtype=e_v.dtype,
+                device=e_v.device,
+                requires_grad=e_v.requires_grad,
+            ).as_strided(_concrete_shape(e_v), e_v.stride())
+            for e_v in example_value
+        )
+    else:
+        raise TypeError(
+            "The 'example_value' in the placeholder node is expected to be either a Tensor or a Tuple of Tensors."
+        )
