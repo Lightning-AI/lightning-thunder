@@ -450,9 +450,7 @@ def jit(
                         _vanilla_args,
                     ) = cache_entry
                     try:
-                        cs.last_prologue_execution_start = time.perf_counter_ns()
                         inps, pro_to_epi = pro(*args, **kwargs)
-                        cs.last_prologue_execution_stop = time.perf_counter_ns()
                     except Exception as _:
                         continue
 
@@ -484,9 +482,7 @@ def jit(
                     backward_traces,
                 ) = cache_entry
 
-                cs.last_prologue_execution_start = time.perf_counter_ns()
                 inps, pro_to_epi = pro(*args, **kwargs)
-                cs.last_prologue_execution_stop = time.perf_counter_ns()
 
                 # Updates cache statistics
                 cs.cache_hits += 1
@@ -608,6 +604,7 @@ def jit(
             )
             prologue_trc = prologue_traces[-1]
             pro = prologue_trc.python_callable(include_decorators=False)
+            pro = prologue_execution_timer(pro)
 
             if epilogue_trc is not None:
                 epilogue = epilogue_trc.python_callable()
@@ -623,9 +620,7 @@ def jit(
             cs.last_interpreter_log = last_interpreter_log
             cs.last_interpreted_instructions = (i for i in last_interpreter_log if isinstance(i, dis.Instruction))
 
-            cs.last_prologue_execution_start = time.perf_counter_ns()
             inps, pro_to_epi = pro(*args, **kwargs)
-            cs.last_prologue_execution_stop = time.perf_counter_ns()
 
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
@@ -722,6 +717,17 @@ def jit(
                 return fn(*args, **kwargs)
             finally:
                 cs.last_trace_host_execution_stop = time.perf_counter_ns()
+
+        return wrapped
+
+
+    def prologue_execution_timer(fn):
+        def wrapped(*args, **kwargs):
+            cs.last_prologue_execution_start = time.perf_counter_ns()
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                cs.last_prologue_execution_stop = time.perf_counter_ns()
 
         return wrapped
 
