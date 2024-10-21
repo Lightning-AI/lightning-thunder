@@ -732,7 +732,7 @@ def jit(
         return wrapped
 
 
-    def decorate_computation_functions(get_computation_and_inputs_fn, *decorators):
+    def decorate_computation_function(get_computation_and_inputs_fn, *decorators):
         def wrapped(*args, **kwargs):
             cache_entry, inps, pro_to_epi = get_computation_and_inputs_fn(*args, **kwargs)
             for decorator in decorators:
@@ -742,7 +742,7 @@ def jit(
         return wrapped
 
 
-    get_computation_and_inputs = decorate_computation_functions(get_computation_and_inputs, host_execution_timer)
+    get_computation_and_inputs = decorate_computation_function(get_computation_and_inputs, host_execution_timer)
     cd.get_computation_and_inputs = get_computation_and_inputs
 
 
