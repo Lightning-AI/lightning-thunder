@@ -33,7 +33,10 @@ def to_arg_descriptor(*args):
         else:
             return type(arg), None, None, arg
 
-    dtypes, sizes, strides, non_tensor_args = zip(*map(extract_descriptor, args))
+    if args:
+        dtypes, sizes, strides, non_tensor_args = zip(*map(extract_descriptor, args))
+    else:
+        dtypes = sizes = strides = non_tensor_args = None
     return ArgsDescriptor(dtypes, sizes, strides, non_tensor_args)
 
 
