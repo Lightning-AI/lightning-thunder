@@ -782,7 +782,6 @@ def jit(
         cs.last_computation_execution_stop = cs.last_trace_host_execution_stop
 
         cs.last_executed = cache_entry.computation_fn
-        cs.last_trace_cache_stop = time.perf_counter_ns()
 
         return result
 
