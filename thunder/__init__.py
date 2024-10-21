@@ -733,8 +733,11 @@ def jit(
     def decorate_computation_function(get_computation_and_inputs_fn, *decorators):
         def wrapped(*args, **kwargs):
             cache_entry, inps, pro_to_epi = get_computation_and_inputs_fn(*args, **kwargs)
+            decorated_computation_fn = cache_entry.computation_fn
             for decorator in decorators:
-                cache_entry.computation_fn = decorator(cache_entry.computation_fn)
+                decorated_computation_fn = decorator(decorated_computation_fn)
+            if decorators:
+                cache_entry = cache_entry._replace(computation_fn=decorated_computation_fn)
             return cache_entry, inps, pro_to_epi
 
         return wrapped
