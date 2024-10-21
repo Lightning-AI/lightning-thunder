@@ -736,6 +736,19 @@ def jit(
         return wrapped
 
 
+    def check_storage_aliases(cache_entry, args):
+        if cache_entry.vanilla_tensor_args:
+            if alias_tensor_indices_str := _alias_tensor_of_args_kwargs(*args):
+                alias_tensor_indices = alias_tensor_indices_str
+                alias_tensor_indices = {int(i) for i in alias_tensor_indices_str.split(",")}
+                vanilla_tensor_args = cache_entry.vanilla_tensor_args
+                check(
+                    not vanilla_tensor_args & alias_tensor_indices,
+                    lambda: f"It seems that {vanilla_tensor_args} are {alias_tensor_indices=} share their storage and some of them are modified in-place",
+                    NotImplementedError,
+                )
+
+
     @wraps(fn)
     @update_call_statistics
     def fn_(*args, **kwargs) -> Any:
@@ -746,16 +759,7 @@ def jit(
         cache_entry, inps, pro_to_epi = get_computation_and_inputs(*args, **kwargs)
         cs.last_trace_host_execution_start = time.perf_counter_ns()
 
-        if cache_entry.vanilla_tensor_args:
-            if alias_tensor_indices_str := _alias_tensor_of_args_kwargs(*inps):
-                alias_tensor_indices = alias_tensor_indices_str
-                alias_tensor_indices = {int(i) for i in alias_tensor_indices_str.split(",")}
-                vanilla_tensor_args = cache_entry.vanilla_tensor_args
-                check(
-                    not vanilla_tensor_args & alias_tensor_indices,
-                    lambda: f"It seems that {vanilla_tensor_args} are {alias_tensor_indices=} share their storage and some of them are modified in-place",
-                    NotImplementedError,
-                )
+        check_storage_aliases(cache_entry, inps)
 
         result = cache_entry.computation_fn(*inps)
 
