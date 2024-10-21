@@ -715,6 +715,28 @@ def jit(
 
         return cache_entry, inps, pro_to_epi
 
+    def host_execution_timer(fn):
+        def wrapped(*args, **kwargs):
+            cs.last_trace_host_execution_start = time.perf_counter_ns()
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                cs.last_trace_host_execution_stop = time.perf_counter_ns()
+
+        return wrapped
+
+
+    def decorate_computation_functions(get_computation_and_inputs_fn, *decorators):
+        def wrapped(*args, **kwargs):
+            cache_entry, inps, pro_to_epi = get_computation_and_inputs_fn(*args, **kwargs)
+            for decorator in decorators:
+                cache_entry.computation_fn = decorator(cache_entry.computation_fn)
+            return cache_entry, inps, pro_to_epi
+
+        return wrapped
+
+
+    get_computation_and_inputs = decorate_computation_functions(get_computation_and_inputs, host_execution_timer)
     cd.get_computation_and_inputs = get_computation_and_inputs
 
 
@@ -776,7 +798,6 @@ def jit(
             return fn(*args, **kwargs)
 
         cache_entry, inps, pro_to_epi = get_computation_and_inputs(*args, **kwargs)
-        cs.last_trace_host_execution_start = time.perf_counter_ns()
 
         check_storage_aliases(cache_entry, inps)
 
@@ -785,8 +806,6 @@ def jit(
         result = maybe_connect_to_autograd(cache_entry, result)
 
         maybe_call_epilogue(cache_entry, result, pro_to_epi)
-
-        cs.last_trace_host_execution_stop = time.perf_counter_ns()
 
         cs.last_computation = cache_entry.computation_fn
 
