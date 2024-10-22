@@ -16,6 +16,7 @@ import thunder
 from thunder import last_traces, cache_option, cache_hits, cache_misses
 import thunder.examine as examine
 import thunder.clang as clang
+import thunder.core.profile
 import thunder.core.proxies as proxies
 import thunder.tests.bf16
 import thunder.torch as ltorch
