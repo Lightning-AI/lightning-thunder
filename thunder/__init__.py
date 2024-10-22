@@ -368,7 +368,6 @@ def jit(
                 tensor_group_index_to_tensor_indices[tgi].append(idx)
         return tensor_group_index_to_tensor_indices
 
-    @thunder.core.profile.profile("_alias_tensor_of_args_kwargs")
     def _alias_tensor_of_args_kwargs(*args, **kwargs) -> str:
         """If no aliases found, empty string, otherwise, aliases are comma separated, groups are hyphen separated."""
 
@@ -614,12 +613,10 @@ def jit(
                 use_del_last_used=False,
             )
             prologue_trc = prologue_traces[-1]
-            with thunder.core.profile.profile("python_callable prologue"):
-                pro = prologue_trc.python_callable(include_decorators=False)
+            pro = prologue_trc.python_callable(include_decorators=False)
 
             if epilogue_trc is not None:
-                with thunder.core.profile.profile("python_callable epilogue"):
-                    epilogue = epilogue_trc.python_callable()
+                epilogue = epilogue_trc.python_callable()
             else:
                 epilogue = None
 
