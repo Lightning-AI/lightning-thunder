@@ -2972,9 +2972,11 @@ def test_profiling_decorator():
     @thunder.core.profile.profile("compile_and_run")
     def foo():
         def bar(a: torch.Tensor):
-          t0 = torch.add(a, 42)
-          t1 = torch.mul(t0, 0.25)
-          return t1
+            t0 = torch.add(a, 42)
+            t1 = torch.mul(t0, 0.25)
+            return t1
+
         baz = thunder.jit(bar)
-        baz(torch.randn((19)))
+        baz(torch.randn(19))
+
     foo()
