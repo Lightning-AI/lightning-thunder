@@ -371,6 +371,7 @@ def test_thunderfx_mistral_nemo_small():
     """
     import transformers
     import datasets
+
     model_id = "mistralai/Mistral-Nemo-Base-2407"
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
@@ -411,8 +412,7 @@ def test_thunderfx_mistral_nemo_small():
         tokenizer.add_special_tokens({"pad_token": "[PAD]"})
         mdl.resize_token_embeddings(len(tokenizer))
 
-    dataset = datasets.load_dataset("tiny_shakespeare", split="train",
-                                    trust_remote_code=True)
+    dataset = datasets.load_dataset("tiny_shakespeare", split="train", trust_remote_code=True)
 
     def tokenize_function(examples):
         return tokenizer(examples["text"], padding="max_length", truncation=True, max_length=2)
