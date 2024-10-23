@@ -777,3 +777,22 @@ def test_checkpoint_converter_submodule():
     for n in submodule.graph.nodes:
         if n.op == "call_function":
             assert isinstance(n.target, Symbol)
+
+
+def test_dynamo_reproducer(tmp_path):
+    backend = ThunderCompiler(save_reproducer=tmp_path)
+    x = torch.ones(2, requires_grad=True)
+
+    @torch.compile(backend=backend)
+    def func(x):
+        x = torch.sin(x)
+        if x.sum() > 0:
+            return x + 1
+        else:
+            return x - 1
+
+    out = func(x)
+    import os
+
+    assert os.path.exists(f"{tmp_path}/g0_thunder_1.py")
+    assert os.path.exists(f"{tmp_path}/g1_thunder_1.py")

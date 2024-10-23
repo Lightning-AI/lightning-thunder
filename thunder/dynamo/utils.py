@@ -555,3 +555,220 @@ def remove_empty_autocast(graph_module: torch.fx.GraphModule) -> torch.fx.GraphM
         empty_autocast_removed_graph_module.graph.erase_node(node)
 
     return empty_autocast_removed_graph_module
+
+
+from torch.nn.modules.module import _addindent
+import typing
+
+
+def arg_like_tensor_integer(arg: torch.Tensor, f: typing.TextIO):
+    """Creates a new argument like the given tensor, which must be an integer
+    type. This is separated out because randn() does not work for integer
+    types."""
+    itypes = (
+        torch.int,
+        torch.int8,
+        torch.int16,
+        torch.int32,
+        torch.int64,
+        torch.uint1,
+        torch.uint2,
+        torch.uint3,
+        torch.uint4,
+        torch.uint5,
+        torch.uint6,
+        torch.uint7,
+        torch.uint8,
+        torch.uint16,
+        torch.uint32,
+    )
+    assert arg.dtype in itypes
+    minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(arg)
+    # Sometimes the tensor can just be all the same value, in which case
+    # randint() will complain that there's no "range" to the low/high params.
+    # So we use a completely different method for tensor generation, then.
+    if minmax[0].cpu().item() == minmax[1].cpu().item():
+        meta = f"data={minmax[0].cpu().item()}, dtype={arg.dtype},"
+        meta = f'{meta} device="{arg.device}", requires_grad={arg.requires_grad}'
+        print(f"  torch.tensor({meta}).broadcast_to({arg.shape}),", file=f)
+        return
+    meta = f"low={minmax[0].cpu().item()}, high={minmax[1].cpu().item()},"
+    meta = f"{meta} size={arg.shape},"
+    meta = f"{meta} dtype={arg.dtype}, layout={arg.layout},"
+    meta = f'{meta} device="{arg.device}", requires_grad={arg.requires_grad}'
+    print(f"  torch.randint({meta}),", file=f)
+
+
+def arg_like_tensor(arg: torch.Tensor, f: typing.TextIO):
+    """Creates a new argument like the given tensor"""
+    itypes = (
+        torch.int,
+        torch.int8,
+        torch.int16,
+        torch.int32,
+        torch.int64,
+        torch.uint1,
+        torch.uint2,
+        torch.uint3,
+        torch.uint4,
+        torch.uint5,
+        torch.uint6,
+        torch.uint7,
+        torch.uint8,
+        torch.uint16,
+        torch.uint32,
+    )
+    assert arg.dtype not in itypes
+    minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(arg)
+    meta = f"size={arg.shape},"
+    meta = f"{meta} dtype={arg.dtype}, layout={arg.layout},"
+    meta = f'{meta} device="{arg.device}", requires_grad={arg.requires_grad}'
+    print(f"  torch.randn({meta}),", file=f)
+
+
+def arg_like(arg: typing.Any, f: typing.TextIO):
+    """Creates a new argument that is similar to the given arg."""
+    itypes = (
+        torch.int,
+        torch.int8,
+        torch.int16,
+        torch.int32,
+        torch.int64,
+        torch.uint1,
+        torch.uint2,
+        torch.uint3,
+        torch.uint4,
+        torch.uint5,
+        torch.uint6,
+        torch.uint7,
+        torch.uint8,
+        torch.uint16,
+        torch.uint32,
+    )
+    if isinstance(arg, torch.Tensor) and arg.dtype in itypes:
+        arg_like_tensor_integer(arg, f)
+    elif isinstance(arg, torch.Tensor):
+        arg_like_tensor(arg, f)
+    else:
+        # Assume it's a literal that we can just print directly.
+        print(f"  {arg},", file=f)
+
+
+def _readable(
+    module,
+    module_name,
+    print_output=False,
+    include_stride=True,
+    include_device=True,
+    colored=False,
+):
+    """Modified from torch. This is basically print_readable but it sets
+    verbose=False (torch hardcodes it to True)."""
+    graph = module.graph
+    assert graph is not None and isinstance(
+        graph, torch.fx.Graph
+    ), "print_readable must be used on a module with a graph"
+
+    verbose_python_code = graph.python_code(
+        root_module="self",
+        verbose=False,
+        include_stride=include_stride,
+        include_device=include_device,
+        colored=colored,
+    )
+    module_code = verbose_python_code.src
+    module_code = module_code.lstrip("\n")
+    module_code = f"class {module_name}(torch.nn.Module):\n" + module_code
+    module_code = _addindent(module_code, 2)
+
+    submodule_code_list = [""]
+    for submodule_name, submodule in module.named_children():
+        if hasattr(submodule, "graph"):
+            submodule_code_list.append(
+                _readable(
+                    submodule,
+                    submodule_name,
+                    print_output=False,
+                    include_stride=include_stride,
+                    include_device=include_device,
+                    colored=colored,
+                )
+            )
+    submodule_code = "\n".join(submodule_code_list)
+    submodule_code = _addindent(submodule_code, 2)
+
+    output = module_code + submodule_code
+    if print_output:
+        print(module_code + submodule_code)
+    return output
+
+
+def reproducer(gm: torch.fx.GraphModule, args, folder, num: int):
+    # assert num >= 0
+    # Ideally we'd use print_readable, but we want verbose=False and there's no
+    # way to set that with print_readable.
+    readable = _readable(gm, "DynamoModule", print_output=False)
+    # readable = gm.graph.python_code(
+    #  root_module="self",
+    #  verbose=False,
+    #  include_stride=True,
+    #  include_device=True,
+    #  colored=False
+    # ).src.lstrip("\n")
+    # Fixes for python_code not producing valid code.
+    readable = readable.replace("device = device(type", "device=torch.device(type")
+    readable = readable.replace("einops_einops_rearrange", "einops.einops.rearrange")
+    readable = readable.replace("einops_einops_reduce", "einops.einops.reduce")
+    readable = readable.replace("einops_einops_repeat", "einops.einops.repeat")
+    with open(f"{folder}/g{num}.py", "w") as f:
+        print("import os\n", file=f)
+        print("import einops", file=f)
+        print("import torch", file=f)
+        print("import thunder", file=f)
+        print("import thunder.transforms.cudagraph", file=f)
+        print("from thunder.dev_utils.nvtx_profile_transform ", end="", file=f)
+        print("import NvtxProfileTransform\n", file=f)
+        print("_execs = [", file=f)
+        print('  thunder.extend.get_executor("nvfuser"),', file=f)
+        print('  thunder.extend.get_executor("sdpa"),', file=f)
+        print('  thunder.extend.get_executor("cudnn"),', file=f)
+        print("]\n", file=f)
+        print(f"def test_g{num}():", file=f)
+        print(" ", _addindent(readable, 2), file=f)
+        print("  inputs = [", file=f)
+        for a in args:
+            print("  ", end="", file=f)
+            arg_like(a, f)
+        print("  ]", file=f)
+        print('  backend = os.getenv("BACKEND")', file=f)
+        print('  if backend == None or backend == "thunder":', file=f)
+        obj = "NvtxProfileTransform()"
+        print(f"    fqn = thunder.jit(DynamoModule(), transforms=[{obj}])", file=f)
+        print('  elif backend == "thunder-no-t.c":', file=f)
+        print("    fqn = thunder.jit(DynamoModule(), executors=_execs)", file=f)
+        print('  elif backend == "t.c":', file=f)
+        print("    fqn = torch.compile(DynamoModule())", file=f)
+        print('  elif backend == "dynamo-eager":', file=f)
+        print('    fqn = torch.compile(DynamoModule(), backend="eager")', file=f)
+        print('  elif backend == "thunder-cugraph":', file=f)
+        print("    xform = thunder.transforms.cudagraph.CUDAGraphTransform()", file=f)
+        print("    fqn = thunder.jit(DynamoModule(), transform=[xform])", file=f)
+        print(f'  post_graph = os.getenv("POST_GRAPH", "0")', file=f)
+        print(f"  if int(post_graph) > 0:", file=f)
+        print(f"    fqn = torch.cuda.make_graphed_callables(", file=f)
+        print(f"      fqn, inputs,", file=f)
+        print(f"      num_warmup_iters=1, allow_unused_input=True", file=f)
+        print(f"    )", file=f)
+        print(f'  torch.cuda.nvtx.range_push("g{num} compilation")', file=f)
+        print(f"  fqn(*inputs) # run once to force compilation", file=f)
+        print(f"  torch.cuda.nvtx.range_pop()", file=f)
+        print(f'  torch.cuda.nvtx.range_push("g{num} warmups")', file=f)
+        print(f"  for i in range(3): # warmup runs", file=f)
+        print(f"    fqn(*inputs)", file=f)
+        print(f"  torch.cuda.synchronize()", file=f)
+        print(f"  torch.cuda.nvtx.range_pop()", file=f)
+        print(f'  torch.cuda.nvtx.range_push("g{num}")', file=f)
+        print(f"  fqn(*inputs)", file=f)
+        print(f"  torch.cuda.synchronize()", file=f)
+        print(f"  torch.cuda.nvtx.range_pop()", file=f)
+        print(f"\ntest_g{num}()", file=f)
