@@ -296,8 +296,31 @@ def horizontal_merge(graph, merge_func: Callable):
     return topo_order_groups
 
 
-def fuse_bound_symbols(trace: TraceCtx, merge_func: Callable):
+def dfs(n, visited: set, bsyms_in_group):
+    if n in visited:
+        return
+    visited.add(n)
+    for nxt in n.children:
+        dfs(nxt, visited, bsyms_in_group)
+    bsyms_in_group += [n.group_bsyms]
+
+
+def dfs_topo_sort(g):
+    visited = set()
+    bsyms_in_group = []
+    for n in g.roots:
+        dfs(n, visited, bsyms_in_group)
+    return bsyms_in_group
+
+
+def fuse_bound_symbols(trace: TraceCtx, merge_func: Callable, skip_horizontal_merge=False):
+    import os
+
+    skip_horizontal_merge = os.getenv("SKIP_BFS_MERGE", None) == "true"
     graph = Graph(trace)
     dataflow_merge(graph, merge_func)
+    if skip_horizontal_merge:
+        ret = dfs_topo_sort(graph)
+        return ret[::-1]
     ret = horizontal_merge(graph, merge_func)
     return ret
