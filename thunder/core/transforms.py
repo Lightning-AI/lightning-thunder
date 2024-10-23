@@ -29,6 +29,7 @@ from thunder.core.proxies import (
     NumberProxy,
     Proxy,
     TensorProxy,
+    SubclassTensorProxy,
     FloatProxy,
     variableify,
     unvariableify,
@@ -1569,6 +1570,7 @@ augmented_forward_impls = {
     prims.PrimIDs.FMOD: lambda x, y: (prims.fmod(x, y), (x, y)),
     prims.PrimIDs.COPY_: lambda x, y: (prims.copy_(x, y), tuple()),
     prims.PrimIDs.CLONE: lambda x: (prims.clone(x), tuple()),
+    prims.PrimIDs.UNFLATTEN_TENSOR_SUBCLASS: lambda *args: (prims.unflatten_tensor_subclass(*args), tuple()),
 }
 
 
@@ -1599,6 +1601,7 @@ backward_impls = {
     # The copy should not be differentiable. We return None to enable the generation of the backward graph through them.
     prims.PrimIDs.COPY_: lambda g: (None, None),
     prims.PrimIDs.CLONE: lambda g: g,
+    prims.PrimIDs.UNFLATTEN_TENSOR_SUBCLASS: lambda g: g,
 }
 
 
@@ -2370,6 +2373,28 @@ def index_put_aug_fwd(
         accumulate,
     )
     return VJPDual(primal, residuals)
+
+
+@register_augmented_forward(prims.PrimIDs.FLATTEN_TENSOR_SUBCLASS)
+def flatten_tensor_subclass_augmented_forward(a: SubclassTensorProxy):
+    tensors = prims.flatten_tensor_subclass(a)
+    return VJPDual(tensors, tuple())
+
+
+@register_backward(prims.PrimIDs.FLATTEN_TENSOR_SUBCLASS)
+def flatten_tensor_subclass_backward(*grads):
+    return grads[0]
+
+
+# @register_augmented_forward(prims.PrimIDs.UNFLATTEN_TENSOR_SUBCLASS)
+# def unflatten_tensor_subclass_augmented_forward(tensor_subclass_type, inner_tensors: dict[str, TensorProxy], metadata: dict[str, Any]):
+#     subclass = prims.unflatten_tensor_subclass(tensor_subclass_type, inner_tensors, metadata)
+#     return VJPDual(subclass, tuple())
+#
+#
+# @register_backward(prims.PrimIDs.UNFLATTEN_TENSOR_SUBCLASS)
+# def unflatten_tensor_subclass_backward(grad):
+#     return grad
 
 
 if torch.distributed.is_available():

@@ -115,7 +115,44 @@ class ScaleTensorSubclass(torch.Tensor):
     dtypes=(dtypes.float32,),
     devicetypes=(devices.DeviceType.CUDA,),
 )
-def test_subclass_inputs(executor, device, _):
+def test_single_subclass_inputs(executor, device, _):
+
+    def f(a, b):
+        return a + b
+
+    x = ScaleTensorSubclass.from_tensor(make_tensor((2, 2), device=device, dtype=torch.float32))
+    y = make_tensor((2, 2), device=device, dtype=torch.float32)
+    expected = f(x, y)
+    jitted = executor.make_callable(f)
+    if executor == TorchCompileExecutor:
+        # Example error message I saw:
+        # E       torch._dynamo.exc.Unsupported: torch.* op returned non-Tensor str call_function <built-in function getitem>
+        # E
+        # E       from user code:
+        # E          File "thunder.torch_interpreted_func_8", line 7, in torch_interpreted_func
+        # E           (_, t1) = flatten_tensor_subclass(t0)
+        # E         File "/home/mkozuki/ghq/github.com/Lightning-AI/lightning-thunder/thunder/executors/torchex.py", line 2178, in flatten_tensor_subclass_impl
+        # E           tensor_attr_names, metadata = t.__tensor_flatten__()
+        # E
+        # E       Set TORCH_LOGS="+dynamo" and TORCHDYNAMO_VERBOSE=1 for more information
+        # E
+        # E
+        # E       You can suppress this exception and fall back to eager by setting:
+        # E           import torch._dynamo
+        # E           torch._dynamo.config.suppress_errors = True
+        with pytest.raises(torch._dynamo.exc.Unsupported, match="op returned non-Tensor str call_function"):
+            jitted(x, y)
+        return
+    actual = jitted(x, y)
+    torch.testing.assert_close(actual, expected)
+
+
+@instantiate(
+    executors=(nvFuserExecutor, TorchExecutor, TorchCompileCatExecutor, TorchCompileExecutor, DynamoThunderExecutor),
+    dtypes=(dtypes.float32,),
+    devicetypes=(devices.DeviceType.CUDA,),
+)
+def test_multiple_subclass_inputs(executor, device, _):
 
     def f(a, b):
         return a + b
@@ -123,11 +160,17 @@ def test_subclass_inputs(executor, device, _):
     x = ScaleTensorSubclass.from_tensor(make_tensor((2, 2), device=device, dtype=torch.float32))
     y = ScaleTensorSubclass.from_tensor(make_tensor((2, 2), device=device, dtype=torch.float32))
     expected = f(x, y)
-
     jitted = executor.make_callable(f)
-    if executor != DynamoThunderExecutor:
-        with pytest.raises(NotImplementedError, match="has Tensor Subclasses of"):
+    if executor == TorchCompileExecutor:
+        with pytest.raises(torch._dynamo.exc.Unsupported, match="op returned non-Tensor str call_function"):
             jitted(x, y)
+    else:
+        actual = jitted(x, y)
+        if executor != DynamoThunderExecutor:
+            with pytest.raises(AssertionError, match="Tensor-likes are not close!"):
+                torch.testing.assert_close(actual, expected)
+        else:
+            torch.testing.assert_close(actual, expected)
 
 
 @instantiate(
@@ -150,3 +193,5 @@ def test_conversion_to_subclass(executor, device, _):
     if executor != DynamoThunderExecutor:
         with pytest.raises(NotImplementedError, match="tensor subclasses are found"):
             jitted(x, y, z)
+    else:
+        jitted(x, y, z)

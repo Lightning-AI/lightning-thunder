@@ -7260,21 +7260,6 @@ def interpret(
                     del e
                     raise
 
-            if _employed_tensor_subclasses:
-                from torch._subclasses.fake_tensor import FakeTensorMode
-                from thunder.core.pytree import tree_map
-
-                fake_mode = FakeTensorMode()
-                converter = fake_mode.fake_tensor_converter
-                fake_args, fake_kwargs = tree_map(
-                    lambda t: converter.from_real_tensor(fake_mode, t) if torch.is_tensor(t) else t,
-                    (unwrap(args), unwrap(kwargs)),
-                )
-
-                with fake_mode:
-                    out = fn(*fake_args, **fake_kwargs)
-                print(fake_mode.cache_info)
-
             return interpretation_result
 
     fn_.__thunder_interpreter_orig_fn = fn  # type: ignore

@@ -66,6 +66,7 @@ from thunder.core.proxies import (
     CONSTRAINT,
     CollectionProxy,
     TensorProxy,
+    SubclassTensorProxy,
     NumberProxy,
     is_proxyable,
     proxy,
@@ -272,6 +273,9 @@ class PrimIDs(Enum):
     COPY_ = auto()
     #
     SINK = auto()
+    # Flatten/Unflatten Tensor Subclass Proxy
+    FLATTEN_TENSOR_SUBCLASS = auto()
+    UNFLATTEN_TENSOR_SUBCLASS = auto()
 
 
 class OpTags(Enum):
@@ -4046,3 +4050,51 @@ def sink_meta(*args, **kwargs):
 
 # TODO do we want another tag to remove this after prologue is constructed?
 sink = make_prim(PrimIDs.SINK, "sink", meta=sink_meta, tags=(OpTags.DONT_DCE,))
+
+
+def flatten_tensor_subclass_meta(t: SubclassTensorProxy) -> tuple[TensorProxy, ...]:
+    tensor_attr_names, metadata = t.__tensor_flatten__()
+    tensors = tuple(getattr(t, name) for name in tensor_attr_names)
+    return tensors
+
+
+flatten_tensor_subclass = make_prim(
+    PrimIDs.FLATTEN_TENSOR_SUBCLASS,
+    "flatten_tensor_subclass",
+    meta=flatten_tensor_subclass_meta,
+)
+
+
+def unflatten_tensor_subclass_meta(
+    tensor_subclass_type,
+    inner_tensors: dict[str, TensorProxy],
+    metadata: dict[str, Any],
+) -> SubclassTensorProxy:
+    first_tensor: TensorProxy = list(inner_tensors.values())[0]
+    a = SubclassTensorProxy(
+        shape=first_tensor.shape,
+        device=first_tensor.device,
+        dtype=first_tensor.dtype,
+        requires_grad=first_tensor.requires_grad,
+    )
+    a._set_tensor_attrs(list(inner_tensors.keys()), list(inner_tensors.values()))
+    a._set_non_tensor_attrs(metadata)
+    a._torch_dispatch_impl = tensor_subclass_type.__torch_dispatch__
+    a._tensor_subclass_type = tensor_subclass_type
+    return a
+
+
+def unflatten_tensor_subclass_python_impl(
+    tensor_subclass_type,
+    inner_tensors: dict[str, TensorProxy],
+    metadata: dict[str, Any],
+) -> torch.Tensor:
+    return tensor_subclass_type.__tensor_unflatten__(inner_tensors, metadata, -1, -1)
+
+
+unflatten_tensor_subclass = make_prim(
+    PrimIDs.UNFLATTEN_TENSOR_SUBCLASS,
+    "unflatten_tensor_subclass",
+    meta=unflatten_tensor_subclass_meta,
+    # python_impl=unflatten_tensor_subclass_python_impl,
+)

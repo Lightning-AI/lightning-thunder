@@ -580,20 +580,9 @@ def jit(
                     if len(tensor_args_consumed_by_inplace_grouped_by_numel) > 1:
                         vanilla_tensor_args = set(tensor_indices)
 
-            # TODO(crcrpar): Transform computation_trc if it has any tensor subclasses inside of it.
             from thunder.transforms.flatten_tensor_subclasses import flatten_tensor_subclasses
 
             computation_trc = flatten_tensor_subclasses(computation_trc)
-
-            bsym: BoundSymbol
-            for bsym in computation_trc.bound_symbols:
-                for a in bsym.flat_proxy_args + bsym.flat_proxy_outs:
-                    if isinstance(a, SubclassTensorProxy):
-                        check(
-                            False,
-                            lambda: f"{bsym} has Tensor Subclasses of {a}",
-                            exception_type=NotImplementedError,
-                        )
 
             if epilogue_trc is not None:
                 epilogue_traces = [epilogue_trc]
