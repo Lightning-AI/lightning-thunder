@@ -1,7 +1,8 @@
 from __future__ import annotations
-import pytest
+import re
 from typing import TYPE_CHECKING, cast
 
+import pytest
 import torch
 from torch.utils import _pytree as pytree
 
@@ -125,14 +126,19 @@ def test_single_subclass_inputs(executor, device, _):
     expected = f(x, y)
     jitted = executor.make_callable(f)
     if executor == TorchCompileExecutor:
-        # Example error message I saw:
-        # E       torch._dynamo.exc.Unsupported: torch.* op returned non-Tensor str call_function <built-in function getitem>
+        # E       torch._dynamo.exc.TorchRuntimeError: Failed running call_function <class 'thunder.tests.test_tensor_subclass.ScaleTensorSubclass'>(*(ScaleTensorSubclass(dtype=torch.float32, device=cuda:0, x=FakeTensor(..., device='cuda:0', size=(2, 2)), scale=FakeTensor(..., device='cuda:0', size=())), FakeTensor(..., device='cuda:0', size=(2, 2))), **{}):
+        # E       Invalid `scale`: FakeTensor(..., device='cuda:0', size=(2, 2))
+        # E       assert 4 == 1
+        # E        +  where 4 = <built-in method numel of FakeTensor object at 0x766f98fd6430>()
+        # E        +    where <built-in method numel of FakeTensor object at 0x766f98fd6430> = FakeTensor(..., device='cuda:0', size=(2, 2)).numel
         # E
         # E       from user code:
-        # E          File "thunder.torch_interpreted_func_8", line 7, in torch_interpreted_func
-        # E           (_, t1) = flatten_tensor_subclass(t0)
-        # E         File "/home/mkozuki/ghq/github.com/Lightning-AI/lightning-thunder/thunder/executors/torchex.py", line 2178, in flatten_tensor_subclass_impl
-        # E           tensor_attr_names, metadata = t.__tensor_flatten__()
+        # E          File "thunder.torch_interpreted_func_4", line 9, in torch_interpreted_func
+        # E           t5 = unflatten_tensor_subclass(_torch__C__TensorMeta_0, {'_x': t4, '_scale': t1}, {})  # t5: "cuda:0 f32[2, 2] ({'_x': 't4: cuda:0 f32[2, 2]', '_scale': 't1: cuda:0 f32[]'}, metadata: {})"
+        # E         File "/home/mkozuki/ghq/github.com/Lightning-AI/lightning-thunder/thunder/executors/torchex.py", line 2200, in unflatten_tensor_subclass_impl
+        # E           return tensor_subclass_type.__tensor_unflatten__(inner_tensors, metadata, -1, -1)
+        # E         File "/home/mkozuki/ghq/github.com/Lightning-AI/lightning-thunder/thunder/tests/test_tensor_subclass.py", line 75, in __tensor_unflatten__
+        # E           return ScaleTensorSubclass(inner_tensors["_x"], inner_tensors["_scale"])
         # E
         # E       Set TORCH_LOGS="+dynamo" and TORCHDYNAMO_VERBOSE=1 for more information
         # E
@@ -140,7 +146,10 @@ def test_single_subclass_inputs(executor, device, _):
         # E       You can suppress this exception and fall back to eager by setting:
         # E           import torch._dynamo
         # E           torch._dynamo.config.suppress_errors = True
-        with pytest.raises(torch._dynamo.exc.Unsupported, match="op returned non-Tensor str call_function"):
+        with pytest.raises(
+            torch._dynamo.exc.TorchRuntimeError,
+            match=re.escape("Failed running call_function <class 'thunder.tests.test_tensor_subclass.ScaleTensorSubclass'>"),
+        ):
             jitted(x, y)
         return
     actual = jitted(x, y)
@@ -166,11 +175,7 @@ def test_multiple_subclass_inputs(executor, device, _):
             jitted(x, y)
     else:
         actual = jitted(x, y)
-        if executor != DynamoThunderExecutor:
-            with pytest.raises(AssertionError, match="Tensor-likes are not close!"):
-                torch.testing.assert_close(actual, expected)
-        else:
-            torch.testing.assert_close(actual, expected)
+        torch.testing.assert_close(actual, expected)
 
 
 @instantiate(
