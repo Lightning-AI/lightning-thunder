@@ -1633,6 +1633,47 @@ reciprocal_opinfo = OpInfo(
 elementwise_unary_ops.append(reciprocal_opinfo)
 
 
+def celu_sample_generator(op, device, dtype, requires_grad):
+    alphas = (None, 1, -1, 0.5)
+    samples = elementwise_unary_generator(op, device, dtype, requires_grad)
+    for alpha, sample in itertools.product(alphas, samples):
+        if alpha is None:
+            yield sample
+        else:
+            yield SampleInput(*sample.args, alpha=alpha, **sample.kwargs)
+
+
+celu_opinfo = OpInfo(
+    ltorch.celu,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=celu_sample_generator,
+    torch_reference=torch.celu,
+    test_directives=(
+        # !!! copied from selu
+        # Some versions of PyTorch do not support CPU float16 selu
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            devicetypes=(devices.DeviceType.CPU,),
+            dtypes=(datatypes.float16,),
+        ),
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-2, rtol=1e-2)),
+            dtypes=(
+                datatypes.float16,
+                datatypes.bfloat16,
+            ),
+        ),
+        # TODO: we might have a tolerance issue here with relu6.
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+        ),
+    ),
+)
+elementwise_unary_ops.append(celu_opinfo)
+
+
 relu_opinfo = OpInfo(
     ltorch.relu,
     sample_input_generator=elementwise_unary_generator,
