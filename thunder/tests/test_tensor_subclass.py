@@ -148,7 +148,9 @@ def test_single_subclass_inputs(executor, device, _):
         # E           torch._dynamo.config.suppress_errors = True
         with pytest.raises(
             torch._dynamo.exc.TorchRuntimeError,
-            match=re.escape("Failed running call_function <class 'thunder.tests.test_tensor_subclass.ScaleTensorSubclass'>"),
+            match=re.escape(
+                "Failed running call_function <class 'thunder.tests.test_tensor_subclass.ScaleTensorSubclass'>"
+            ),
         ):
             jitted(x, y)
         return
