@@ -240,34 +240,34 @@ class DesugarTensorSubclass:
         bsyms: list[BoundSymbol] = []
         if list_of_unflatten_bsym:
             bsyms.extend(list_of_unflatten_bsym)
-        node_to_output_proxy: dict[Node, TensorProxy] = {}
+        fxnode_output_name_to_tensor_proxy: dict[str, OpOverload] = {}
         for node, ltorch_op in zip(list_of_function_call_node, ltorch_ops_for_node_of_ops):
-            args: list[str] = [a.target for a in node.args]
+            args: list[Node] = node.args
 
             arg_proxies: list[ProxyInterface] = []
             for a in args:
-                if isinstance(a, str):
-                    arg_proxies.append(unwrapped_bsym_args[arg_name_to_index[a]])
+                if isinstance(a.target, str):
+                    arg_proxies.append(unwrapped_bsym_args[arg_name_to_index[a.target]])
                 else:
-                    arg_proxies.append(node_to_output_proxy[a])
+                    arg_proxies.append(fxnode_output_name_to_tensor_proxy[str(a)])
 
             self.computation_trace.push_scope([])
             with tracectx(self.computation_trace):
                 out = ltorch_op(*arg_proxies)
-            node_to_output_proxy[node.target] = out
+            fxnode_output_name_to_tensor_proxy[str(node)] = out
             bsyms.extend(self.computation_trace.pop_scope())
         if len(bsyms) == 0:
             return [bsym]
 
         orig_output = bsym.flat_outs[0]
         if isinstance(orig_output, SubclassTensorProxy):
-            args = [a.target for a in node_of_output.args[0]]
+            args: list[Node] = node_of_output.args[0]
             new_tensor_proxies = []
             for a in args:
-                if isinstance(a, str):
-                    new_tensor_proxies.append(unwrapped_bsym_args[arg_name_to_index[a]])
+                if isinstance(a.target, str):
+                    new_tensor_proxies.append(unwrapped_bsym_args[arg_name_to_index[a.target]])
                 else:
-                    new_tensor_proxies.append(node_to_output_proxy[a])
+                    new_tensor_proxies.append(fxnode_output_name_to_tensor_proxy[str(a)])
             utils.check(
                 len(orig_output._tensors) == len(new_tensor_proxies),
                 lambda: (
@@ -405,13 +405,13 @@ class DesugarTensorSubclass:
                     )
                 )
             return [*bsyms, updated_bsym]
+
         trace = trace_from_bsym_or_bsyms(updated_bsym)
         fx, sequencified_cosmeticized_out, orig_output, _ = self.convert_trace_to_fx_graph_and_get_fake_result(trace)
         utils.check(
             len(sequencified_cosmeticized_out) == len(orig_output),
             lambda: f"{len(sequencified_cosmeticized_out)=}, {len(orig_output)=}",
         )
-
         out = []
         for i, (cosmeticized_out, orig_out) in enumerate(zip(sequencified_cosmeticized_out, orig_output)):
             if isinstance(cosmeticized_out.inner_tensors, dict):
@@ -447,6 +447,4 @@ def flatten_tensor_subclasses(computation_trace: TraceCtx) -> TraceCtx:
     computation_trace_with_subclass_tensor_proxy_output = from_trace(computation_trace)
     computation_trace_with_subclass_tensor_proxy_output.bound_symbols.extend(updated_bsyms)
     computation_trace_with_subclass_tensor_proxy_output.set_provenance(TraceProvenance("tensor subclasses desugared"))
-    # print(computation_trace)
-    # print(computation_trace_with_subclass_tensor_proxy_output)
     return computation_trace_with_subclass_tensor_proxy_output
