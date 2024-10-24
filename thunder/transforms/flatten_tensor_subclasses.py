@@ -1,5 +1,3 @@
-""""""
-
 from __future__ import annotations
 from dataclasses import dataclass
 from dataclasses import field
@@ -437,6 +435,36 @@ class DesugarTensorSubclass:
 
 
 def flatten_tensor_subclasses(computation_trace: TraceCtx) -> TraceCtx:
+    """Flatten tensor subclasses in ``computation_trace``.
+
+    Two things are happening inside of this function:
+        * Reevaluate every single bsym of ``computation_trace.bound_symbols``.
+        * Flatten tensor subclasses
+
+    Each :class:`thunder.core.symbol.BoundSymbol` is reevaluated with torch.fx tracing and
+    ``FakeTensorMode``. This is necessary because Thunder's initial trace cannot correctly infer the output
+    type of an op with tensor subclasses. By translating each bsym into a callable and tracing it with
+    ``torch.fx`` and ``FakeTensorMode``, we can tell the output type and the exact behavior of the bsym
+    which is extended by subclass's ``__torch_dispatch__`` (note that the sequence of observed operations
+    are free from tensor subclasses, everything is flattened).
+    The output type information is then reflected to the output :class:`thunder.core.proxies.Proxy`.
+
+    With this function applied, the :class:`thunder.core.trace.TraceCtx` is free from tensor subclasses.
+    Exceptions are prologue (meaning the first few lines of the trace, before any math) and epilogue (meaning
+    the last few lines of the trace, right before return statement).
+
+    .. note::
+
+        Currently any tensor subclass factories are not allowed.
+
+
+    Args:
+        computation_trace:
+
+    Returns:
+        TraceCtx: transformed trace that is free from tensor subclasses, every ``__torch_dispatch__``
+            behavior is spelled out.
+    """
     desugar_tensor_subclass = DesugarTensorSubclass(computation_trace=computation_trace)
     updated_bsyms: list[BoundSymbol] = []
     bsym: BoundSymbol
