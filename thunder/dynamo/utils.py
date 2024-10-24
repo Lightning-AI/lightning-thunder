@@ -6,6 +6,8 @@ import dataclasses
 import inspect
 import itertools
 import copy
+import warnings
+from pathlib import Path
 
 import torch
 
@@ -13,9 +15,11 @@ from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.torch.langctx import torchctx
 from thunder.core.utils import check
+from thunder.core import dtypes
 
 if TYPE_CHECKING:
     from thunder.core.symbol import Symbol
+    import os
 
 auto_register_ops = set(itertools.chain(*torch_auto_registered_ops.values()))
 
@@ -565,23 +569,7 @@ def arg_like_tensor_integer(arg: torch.Tensor, f: typing.TextIO):
     """Creates a new argument like the given tensor, which must be an integer
     type. This is separated out because randn() does not work for integer
     types."""
-    itypes = (
-        torch.int,
-        torch.int8,
-        torch.int16,
-        torch.int32,
-        torch.int64,
-        torch.uint1,
-        torch.uint2,
-        torch.uint3,
-        torch.uint4,
-        torch.uint5,
-        torch.uint6,
-        torch.uint7,
-        torch.uint8,
-        torch.uint16,
-        torch.uint32,
-    )
+    itypes = list(dtypes._thunder_to_torch_dtype_map[t] for t in dtypes.integer_dtypes)
     assert arg.dtype in itypes
     minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(arg)
     # Sometimes the tensor can just be all the same value, in which case
@@ -590,61 +578,28 @@ def arg_like_tensor_integer(arg: torch.Tensor, f: typing.TextIO):
     if minmax[0].cpu().item() == minmax[1].cpu().item():
         meta = f"data={minmax[0].cpu().item()}, dtype={arg.dtype},"
         meta = f'{meta} device="{arg.device}", requires_grad={arg.requires_grad}'
-        print(f"  torch.tensor({meta}).broadcast_to({arg.shape}),", file=f)
+        print(f"  torch.tensor({meta}).broadcast_to({arg.shape}).as_strided({arg.shape}, {arg.stride()}),", file=f)
         return
     meta = f"low={minmax[0].cpu().item()}, high={minmax[1].cpu().item()},"
     meta = f"{meta} size={arg.shape},"
     meta = f"{meta} dtype={arg.dtype}, layout={arg.layout},"
     meta = f'{meta} device="{arg.device}", requires_grad={arg.requires_grad}'
-    print(f"  torch.randint({meta}),", file=f)
+    print(f"  torch.randint({meta}).as_strided({arg.shape}, {arg.stride()}),", file=f)
 
 
 def arg_like_tensor(arg: torch.Tensor, f: typing.TextIO):
     """Creates a new argument like the given tensor"""
-    itypes = (
-        torch.int,
-        torch.int8,
-        torch.int16,
-        torch.int32,
-        torch.int64,
-        torch.uint1,
-        torch.uint2,
-        torch.uint3,
-        torch.uint4,
-        torch.uint5,
-        torch.uint6,
-        torch.uint7,
-        torch.uint8,
-        torch.uint16,
-        torch.uint32,
-    )
+    itypes = list(dtypes._thunder_to_torch_dtype_map[t] for t in dtypes.integer_dtypes)
     assert arg.dtype not in itypes
-    minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(arg)
     meta = f"size={arg.shape},"
     meta = f"{meta} dtype={arg.dtype}, layout={arg.layout},"
     meta = f'{meta} device="{arg.device}", requires_grad={arg.requires_grad}'
-    print(f"  torch.randn({meta}),", file=f)
+    print(f"  torch.randn({meta}).as_strided({arg.shape}, {arg.stride()}),", file=f)
 
 
 def arg_like(arg: typing.Any, f: typing.TextIO):
     """Creates a new argument that is similar to the given arg."""
-    itypes = (
-        torch.int,
-        torch.int8,
-        torch.int16,
-        torch.int32,
-        torch.int64,
-        torch.uint1,
-        torch.uint2,
-        torch.uint3,
-        torch.uint4,
-        torch.uint5,
-        torch.uint6,
-        torch.uint7,
-        torch.uint8,
-        torch.uint16,
-        torch.uint32,
-    )
+    itypes = list(dtypes._thunder_to_torch_dtype_map[t] for t in dtypes.integer_dtypes)
     if isinstance(arg, torch.Tensor) and arg.dtype in itypes:
         arg_like_tensor_integer(arg, f)
     elif isinstance(arg, torch.Tensor):
@@ -655,12 +610,12 @@ def arg_like(arg: typing.Any, f: typing.TextIO):
 
 
 def _readable(
-    module,
-    module_name,
-    print_output=False,
-    include_stride=True,
-    include_device=True,
-    colored=False,
+    module: torch.fx.GraphModule,
+    module_name: str,
+    print_output: bool = False,
+    include_stride: bool = True,
+    include_device: bool = True,
+    colored: bool = False,
 ):
     """Modified from torch. This is basically print_readable but it sets
     verbose=False (torch hardcodes it to True)."""
@@ -703,26 +658,29 @@ def _readable(
     return output
 
 
-def reproducer(gm: torch.fx.GraphModule, args, folder, num: int):
-    # assert num >= 0
+def get_env():
+    from torch.utils.collect_env import run, get_pretty_env_info, get_pip_packages
+
+    torch_env = get_pretty_env_info()
+    _, thunder_packages = get_pip_packages(run, {"lightning-thunder", "nvfuser"})
+    return torch_env, thunder_packages
+
+
+def reproducer(gm: torch.fx.GraphModule, args: tuple[torch.Tensor], folder: str | os.PathLike, graph_idx: int):
     # Ideally we'd use print_readable, but we want verbose=False and there's no
     # way to set that with print_readable.
+    folder = Path(folder)
+    folder.mkdir(exist_ok=True)
+    torch_env, thunder_pkgs = get_env()
     readable = _readable(gm, "DynamoModule", print_output=False)
-    # readable = gm.graph.python_code(
-    #  root_module="self",
-    #  verbose=False,
-    #  include_stride=True,
-    #  include_device=True,
-    #  colored=False
-    # ).src.lstrip("\n")
-    # Fixes for python_code not producing valid code.
-    readable = readable.replace("device = device(type", "device=torch.device(type")
-    readable = readable.replace("einops_einops_rearrange", "einops.einops.rearrange")
-    readable = readable.replace("einops_einops_reduce", "einops.einops.reduce")
-    readable = readable.replace("einops_einops_repeat", "einops.einops.repeat")
-    with open(f"{folder}/g{num}.py", "w") as f:
+    with open(folder / f"g{graph_idx}.py", "w") as f:
+        print('"""', file=f)
+        print("Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:\n", file=f)
+        print(torch_env, file=f)
+        print("\nVersions of Thunder related libraries:", file=f)
+        print(thunder_pkgs, file=f)
+        print('"""', file=f)
         print("import os\n", file=f)
-        print("import einops", file=f)
         print("import torch", file=f)
         print("import thunder", file=f)
         print("import thunder.transforms.cudagraph", file=f)
@@ -733,7 +691,7 @@ def reproducer(gm: torch.fx.GraphModule, args, folder, num: int):
         print('  thunder.extend.get_executor("sdpa"),', file=f)
         print('  thunder.extend.get_executor("cudnn"),', file=f)
         print("]\n", file=f)
-        print(f"def test_g{num}():", file=f)
+        print(f"def test_g{graph_idx}():", file=f)
         print(" ", _addindent(readable, 2), file=f)
         print("  inputs = [", file=f)
         for a in args:
@@ -759,16 +717,16 @@ def reproducer(gm: torch.fx.GraphModule, args, folder, num: int):
         print(f"      fqn, inputs,", file=f)
         print(f"      num_warmup_iters=1, allow_unused_input=True", file=f)
         print(f"    )", file=f)
-        print(f'  torch.cuda.nvtx.range_push("g{num} compilation")', file=f)
+        print(f'  torch.cuda.nvtx.range_push("g{graph_idx} compilation")', file=f)
         print(f"  fqn(*inputs) # run once to force compilation", file=f)
         print(f"  torch.cuda.nvtx.range_pop()", file=f)
-        print(f'  torch.cuda.nvtx.range_push("g{num} warmups")', file=f)
+        print(f'  torch.cuda.nvtx.range_push("g{graph_idx} warmups")', file=f)
         print(f"  for i in range(3): # warmup runs", file=f)
         print(f"    fqn(*inputs)", file=f)
         print(f"  torch.cuda.synchronize()", file=f)
         print(f"  torch.cuda.nvtx.range_pop()", file=f)
-        print(f'  torch.cuda.nvtx.range_push("g{num}")', file=f)
+        print(f'  torch.cuda.nvtx.range_push("g{graph_idx}")', file=f)
         print(f"  fqn(*inputs)", file=f)
         print(f"  torch.cuda.synchronize()", file=f)
         print(f"  torch.cuda.nvtx.range_pop()", file=f)
-        print(f"\ntest_g{num}()", file=f)
+        print(f"\ntest_g{graph_idx}()", file=f)

@@ -71,11 +71,11 @@ class ThunderCompiler:
         self._thunder_jit = partial(jit, **thunder_options)
         self._torch_compile = partial(torch.compile, **torch_inductor_options)
 
-        if "save_reproducer" in thunder_options:
-            self.save_reproducer = thunder_options.get("save_reproducer", "/tmp")
+        if "reproducer_folder_name" in thunder_options:
+            self.reproducer_folder_name = thunder_options.get("reproducer_folder_name", "/tmp")
             self.graph_idx = 0
         else:
-            self.save_reproducer = None
+            self.reproducer_folder_name = None
 
     def save_reproducer_to_folder(self, split_module):
         from thunder.dynamo.utils import reproducer, _get_example_inputs_from_placeholder
@@ -90,8 +90,12 @@ class ThunderCompiler:
                 # Greates random input values for the current module based on the faketensor 'example_value' of the placeholder node
                 placeholders = list(n for n in cur_nodes if n.op == "placeholder")
                 args = chain(*map(_get_example_inputs_from_placeholder, placeholders))
+                from thunder.core.module import ThunderModule
 
-                reproducer(cur_module, args, self.save_reproducer, f"{self.graph_idx}_{target}")
+                assert isinstance(cur_module, ThunderModule) and hasattr(cur_module, "_model")
+                reproducer(
+                    getattr(cur_module, "_model"), args, self.reproducer_folder_name, f"{self.graph_idx}_{target}"
+                )
 
     def __call__(self, gm: torch.fx.GraphModule, sample_args: list[torch.SymInt, torch.Tensor]):
         gm = remove_empty_autocast(gm)
@@ -103,7 +107,7 @@ class ThunderCompiler:
         # The whole graph may not be supported by `thunder`, so we split it in `thunder` supported sections
         # and unsupported sections which are passed to `torch.compile(backend='inductor')`
         split_module, subgraph_info = _splitter(gm, self._thunder_jit, self._torch_compile, sample_args)
-        if self.save_reproducer is not None:
+        if self.reproducer_folder_name is not None:
             self.save_reproducer_to_folder(split_module)
             self.graph_idx += 1
         self.subgraph_infos.append(subgraph_info)
