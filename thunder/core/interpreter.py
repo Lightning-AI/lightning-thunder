@@ -16,7 +16,7 @@ import sys
 import traceback
 import weakref
 import torch
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, TypedDict, Type
 from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence, Set, Sized
 import collections
 import operator
@@ -7164,9 +7164,35 @@ def interpret(
     if hasattr(fn, "__thunder_interpreter_orig_fn"):
         fn = fn.__thunder_interpreter_orig_fn
 
+    _employed_tensor_subclasses: list[type] = []
+
+    def _flatten_traceable_tensor_subclass(t: Any) -> Any | tuple[torch.Tensor, dict[str, Any]]:
+        nonlocal _employed_tensor_subclasses
+
+        if torch.utils._python_dispatch.is_traceable_wrapper_subclass(t):
+            subclass_type = type(t)
+            _employed_tensor_subclasses.append(subclass_type)
+            tensor_attrs, metadata = t.__tensor_flatten__()
+            return *[getattr(t, name) for name in tensor_attrs], metadata
+        return t
+
     @functools.wraps(fn)
     def fn_(*args, **kwargs) -> Any:
+        from thunder.core.pytree import tree_map
+
         runtimectx: InterpreterRuntimeCtx = InterpreterRuntimeCtx(debug_log=debug_log, record_history=record_history)
+        args_with_subclass_flattened, kwargs_with_subclass_flattened = tree_map(
+            _flatten_traceable_tensor_subclass,
+            (args, kwargs),
+        )
+        args_with_subclass_flattened = []
+        for a in args:
+            new_a = _flatten_traceable_tensor_subclass(a)
+            if new_a is a:
+                args_with_subclass_flattened.append(new_a)
+            else:
+                args_with_subclass_flattened.extend(list(new_a))
+        args_with_subclass_flattened = tuple(args_with_subclass_flattened)
 
         with interpreter_ctx(compilectx, runtimectx):
             try:
@@ -7233,6 +7259,21 @@ def interpret(
                 except Exception:
                     del e
                     raise
+
+            if _employed_tensor_subclasses:
+                from torch._subclasses.fake_tensor import FakeTensorMode
+                from thunder.core.pytree import tree_map
+
+                fake_mode = FakeTensorMode()
+                converter = fake_mode.fake_tensor_converter
+                fake_args, fake_kwargs = tree_map(
+                    lambda t: converter.from_real_tensor(fake_mode, t) if torch.is_tensor(t) else t,
+                    (unwrap(args), unwrap(kwargs)),
+                )
+
+                with fake_mode:
+                    out = fn(*fake_args, **fake_kwargs)
+                print(fake_mode.cache_info)
 
             return interpretation_result
 
