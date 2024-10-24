@@ -66,6 +66,7 @@ from thunder.core.proxies import (
     ListProxy,
     DictProxy,
     AnyProxy,
+    SubclassTensorProxy,
 )
 from thunder.core.interpreter import print_interpreter_log, print_to_log
 from thunder.core.jit_ext import thunder_general_jit
@@ -360,7 +361,11 @@ def jit(
         data_ptr_to_tensor_group_index = {}
         tensor_group_index_to_tensor_indices = defaultdict(list)
         for idx, t in enumerate(flat_args):
-            if pytorch.is_tensor(t) and t.layout == pytorch.strided:
+            if (
+                pytorch.is_tensor(t)
+                and t.layout == pytorch.strided
+                and not pytorch.utils._python_dispatch.is_traceable_wrapper_subclass(t)
+            ):
                 data_ptr = t.untyped_storage().data_ptr()
                 if data_ptr not in data_ptr_to_tensor_group_index:
                     data_ptr_to_tensor_group_index[data_ptr] = len(data_ptr_to_tensor_group_index)
@@ -574,6 +579,10 @@ def jit(
                         tensor_indices.append(index)
                     if len(tensor_args_consumed_by_inplace_grouped_by_numel) > 1:
                         vanilla_tensor_args = set(tensor_indices)
+
+            from thunder.transforms.flatten_tensor_subclasses import flatten_tensor_subclasses
+
+            computation_trc = flatten_tensor_subclasses(computation_trc)
 
             if epilogue_trc is not None:
                 epilogue_traces = [epilogue_trc]
