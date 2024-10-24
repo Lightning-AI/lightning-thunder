@@ -538,7 +538,7 @@ def test_ThunderCompilerGraphBenchmarking_post_graph(benchmark):
 
 
 def test_dynamo_reproducer(tmp_path):
-    backend = ThunderCompiler(save_reproducer=tmp_path)
+    backend = ThunderCompiler(reproducer_folder_name=tmp_path)
     x = torch.ones(2, requires_grad=True)
 
     @torch.compile(backend=backend)
