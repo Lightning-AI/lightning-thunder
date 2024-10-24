@@ -16,7 +16,12 @@ import torch
 
 from thunder.core.compile_data import using_symbolic_values, using_jit
 from thunder.core.interpreter import is_jitting, ProvenanceRecord, PseudoInst
-from thunder.core.trace import VariableInterface, get_tracectx, TraceCtx
+from thunder.core.trace import (
+    VariableInterface,
+    get_tracectx,
+    is_tracing,
+    TraceCtx,
+)
 from thunder.core.baseutils import (
     ProxyInterface,
     NumberProxyInterface,
@@ -1242,8 +1247,7 @@ def _infer_tensor_properties(
         thunder_fsdp_padding_size if thunder_fsdp_padding_size is not None else _thunder_fsdp_padding_size
     )
 
-    # dynamic shape not yet enabled, otherwise, the bake in should be guarded with if not using_symbolic_values():
-    # dynamic shape support is currently block by #471 https://github.com/Lightning-AI/lightning-thunder/issues/471
+    baseutils.check(_shape is not None, lambda: f"_shape cannot be None when creating TensorProxy")
     if not using_symbolic_values():
         _shape = tuple(pyval(x) for x in _shape)
         # Computes derived properties
@@ -1251,7 +1255,7 @@ def _infer_tensor_properties(
     else:
         # deferred computation of numel
         # TODO: similar to how `shape` is handled, this should be CSE or lifted for efficiency
-        _numel = lambda tp: reduce(operator.mul, tp.shape, 1)
+        _numel = lambda *args: reduce(operator.mul, _shape, 1)
 
     # TODO Alias rank to ndim?
     _ndim = len(_shape)
@@ -1459,7 +1463,12 @@ class TensorProxy(Proxy, TensorProxyInterface):
     #   outside of a trace or language context
     @property
     def shape(self):
-        return self._shape
+        if not using_symbolic_values() or not is_tracing():
+            return self._shape
+        else:
+            from thunder.core.prims import shape
+
+            return shape(self)
 
     @property
     def ndim(self):
@@ -1548,10 +1557,10 @@ class TensorProxy(Proxy, TensorProxyInterface):
         )
 
     def __repr__(self):
-        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self.shape})>'
+        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self._shape})>'
 
     def type_string(self):
-        return f"{self.device.device_str()} {self.dtype.shortname()}{list(self.shape)}"
+        return f"{self.device.device_str()} {self.dtype.shortname()}{list(self._shape)}"
 
     # NOTE __getattr__ is overridden to support language-specific methods
     def __getattr__(self, attr: str, /):
