@@ -175,8 +175,15 @@ class DesugarTensorSubclass:
     flat_trace_args: Sequence[ProxyInterface] = field(init=False, default=None)
     flat_trace_args_spec: Any = field(init=False, default=None)
     trace_args_set: Any = field(init=False, default=None)
+    requires_desugarring: bool = field(init=False, default=False)
 
     def __post_init__(self) -> None:
+        self.requires_desugarring = any(
+            isinstance(t, SubclassTensorProxy)
+            for t in tree_flatten((self.computation_trace.args, self.computation_trace.kwargs))[0]
+        )
+        if not self.requires_desugarring:
+            return
         (
             self.fx_computation_trace,
             self.computation_trace_output,
@@ -466,6 +473,8 @@ def flatten_tensor_subclasses(computation_trace: TraceCtx) -> TraceCtx:
             behavior is spelled out.
     """
     desugar_tensor_subclass = DesugarTensorSubclass(computation_trace=computation_trace)
+    if not desugar_tensor_subclass.requires_desugarring:
+        return computation_trace
     updated_bsyms: list[BoundSymbol] = []
     bsym: BoundSymbol
     for bsym in computation_trace.bound_symbols:
