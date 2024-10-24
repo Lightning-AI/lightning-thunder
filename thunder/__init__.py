@@ -363,8 +363,8 @@ def jit(
         for idx, t in enumerate(flat_args):
             if (
                 pytorch.is_tensor(t)
-                and not issubclass(type(t), (pytorch.Tensor, pytorch.nn.Parameter))
                 and t.layout == pytorch.strided
+                and not pytorch.utils._python_dispatch.is_traceable_wrapper_subclass(t)
             ):
                 data_ptr = t.untyped_storage().data_ptr()
                 if data_ptr not in data_ptr_to_tensor_group_index:
