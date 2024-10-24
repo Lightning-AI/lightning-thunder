@@ -2386,17 +2386,6 @@ def flatten_tensor_subclass_backward(*grads):
     return grads[0]
 
 
-# @register_augmented_forward(prims.PrimIDs.UNFLATTEN_TENSOR_SUBCLASS)
-# def unflatten_tensor_subclass_augmented_forward(tensor_subclass_type, inner_tensors: dict[str, TensorProxy], metadata: dict[str, Any]):
-#     subclass = prims.unflatten_tensor_subclass(tensor_subclass_type, inner_tensors, metadata)
-#     return VJPDual(subclass, tuple())
-#
-#
-# @register_backward(prims.PrimIDs.UNFLATTEN_TENSOR_SUBCLASS)
-# def unflatten_tensor_subclass_backward(grad):
-#     return grad
-
-
 if torch.distributed.is_available():
     from torch.distributed import ReduceOp
     from torch.distributed import distributed_c10d as c10d
