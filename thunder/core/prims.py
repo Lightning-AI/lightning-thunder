@@ -282,6 +282,7 @@ class OpTags(Enum):
     SHAPE_OP = auto()
     REDUCTION_OP = auto()
     RANDOM_OP = auto()
+    MATMUL_OP = auto()
     # Ops that might cause a device sync
     DEVICE_SYNC_OP = auto()
     # Labels operations that should not be removed by the dead code elimination (DCE) pass
@@ -1652,8 +1653,8 @@ python_del = make_prim(
 )
 
 
-def _return_meta(*args) -> Any:
-    return args
+def _return_meta(*args) -> None:
+    return None
 
 
 def return_printer(
@@ -1674,9 +1675,8 @@ def return_printer(
     return f"return {arg_str}"
 
 
-# NOTE This wrapper for del is necessary because python_impl=del is invalid syntax (del is not a regular function)
-def _return_impl(*args) -> Any:
-    return args
+def _return_impl(*args) -> None:
+    return None
 
 
 python_return = make_prim(
@@ -3775,7 +3775,7 @@ def linear_meta(a: TensorProxy, w: TensorProxy, bias: None | TensorProxy) -> Ten
     return TensorProxy(shape=out_shape, device=a.device, dtype=dtype, requires_grad=requires_grad)
 
 
-linear = make_prim(PrimIDs.LINEAR, "linear", meta=linear_meta)
+linear = make_prim(PrimIDs.LINEAR, "linear", meta=linear_meta, tags=(OpTags.MATMUL_OP,))
 
 
 def matmul_meta(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
@@ -3834,7 +3834,7 @@ def matmul_meta(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
     return TensorProxy(like=a, shape=shape)
 
 
-matmul = make_prim(PrimIDs.MATMUL, "matmul", meta=matmul_meta)
+matmul = make_prim(PrimIDs.MATMUL, "matmul", meta=matmul_meta, tags=(OpTags.MATMUL_OP,))
 
 #
 # NN prims

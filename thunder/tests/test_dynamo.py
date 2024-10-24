@@ -4,6 +4,7 @@ import torch.fx
 
 from thunder import dtypes
 from thunder.dynamo import ThunderCompiler
+from thunder.dynamo.compiler_graph_benchmark import ThunderCompilerGraphBenchmarking
 from thunder import last_traces
 from thunder.tests.bf16 import device_supports_bf16
 from thunder.tests.framework import (
@@ -435,3 +436,102 @@ def test_thundercompiler_optim_step(executor, device, dtype, optim):
             tuple(ref_model.parameters()),
             msg=lambda s: f"{i+1}-iter {s}",
         )
+
+
+@instantiate(dtypes=NOTHING, executors=[DynamoThunderExecutor])
+def test_no_grad_ctx_manager(executor, device: str, dtype: dtypes.dtype):
+    backend = ThunderCompiler()
+
+    def func(x):
+        with torch.no_grad():
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                y = x @ x
+        return y + x
+
+    x = torch.randn(3, 3, device=device, dtype=dtype, requires_grad=True)
+    actual = torch.compile(func, backend=backend)(x)
+    expected = torch.compile(func, backend="eager")(x)
+
+    # We record the GraphModules that was compiled by ThunderCompiler
+    assert len(backend.subgraph_infos) == 1
+
+    for subgraph_info in backend.subgraph_infos:
+        assert len(subgraph_info.split_reasons) > 1  # Verify there were splits in the subgraph.
+        assert isinstance(subgraph_info.original_graph_module, torch.fx.GraphModule)
+        assert any("has been manually disabled" in split_reason.info for split_reason in subgraph_info.split_reasons)
+
+    torch.testing.assert_close(actual, expected)
+
+    g = torch.randn_like(actual)
+    actual_grad = torch.autograd.grad(actual, x, g)
+    expected_grad = torch.autograd.grad(expected, x, g)
+    torch.testing.assert_close(actual_grad, expected_grad)
+
+
+# Sample command to run the benchmark using ThunderCompilerGraphBenchmarking
+# pytest thunder/tests/test_dynamo.py -k test_ThunderCompilerGraphBenchmarking_groupby --benchmark-group-by='graph-by-graph:param:GraphID,param:SplitModuleName'
+# For more details, see :class:`thunder.dynamo.compiler_graph_benchmark.ThunderCompilerGraphBenchmarking`
+# NOTE: The conftest.py file customizes the benchmark grouping behavior for ThunderCompilerGraphBenchmarking.
+# It must be located in the same folder as the test file to ensure the configuration.
+@requiresCUDA
+def test_ThunderCompilerGraphBenchmarking_LlamaMLPBenchmark(benchmark):
+    import thunder
+
+    backend = ThunderCompilerGraphBenchmarking(
+        benchmark, executors={"thunder": thunder.jit, "inductor": torch.compile, "eager": None}
+    )
+    from thunder.benchmarks import LlamaMLPBenchmark, Benchmark
+
+    bench: Benchmark = LlamaMLPBenchmark(
+        config="Llama-2-7b-hf",
+        batchdims=(2,),
+        device="cuda:0",
+        requires_grad=True,
+    )
+
+    args, kwargs = bench.make_batch()
+    # Using torch.compile here fails with "TypeError: cannot pickle '_io.TextIOWrapper' object" in
+    # https://github.com/Lightning-AI/pytorch-lightning/blob/828fd998961f6a60f92c35254bb94d6e049ad069/src/lightning/fabric/wrappers.py#L421
+    fn = torch._dynamo.optimize(backend=backend)(bench.fn())
+    fn(*args, **kwargs)
+
+
+@requiresCUDA
+def test_ThunderCompilerGraphBenchmarking_groupby(benchmark):
+    def f(x, y):
+        x = torch.sin(x)
+        if x.sum() > 0:
+            x = x.exp()
+            y = torch.sinc(x) + torch.cos(y)
+            return y + 1
+        else:
+            y = y.exp()
+            x = torch.sinc(y) + torch.cos(x)
+            return x - 1
+
+    import thunder
+
+    backend = ThunderCompilerGraphBenchmarking(
+        benchmark, executors={"thunder": thunder.jit, "inductor": torch.compile, "eager": None}
+    )
+    compiled = torch.compile(backend=backend)(f)
+    x = torch.ones(2, requires_grad=True).cuda()
+    y = torch.ones(2, requires_grad=True).cuda()
+    compiled(x, y)
+
+
+@requiresCUDA
+def test_ThunderCompilerGraphBenchmarking_post_graph(benchmark):
+    def f(x):
+        return torch.sin(x)
+
+    import thunder
+    from functools import partial
+
+    x = torch.randn((2, 2), device="cuda").requires_grad_()
+    post_gp = partial(torch.cuda.make_graphed_callables, num_warmup_iters=1, allow_unused_input=True)
+    backend = ThunderCompilerGraphBenchmarking(
+        benchmark, executors={"inductor": torch.compile, "thunder": thunder.jit}, post_graph=post_gp
+    )
+    compiled = torch.compile(backend=backend)(f)
+    compiled(x)

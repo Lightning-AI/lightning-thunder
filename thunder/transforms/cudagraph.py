@@ -33,7 +33,10 @@ def to_arg_descriptor(*args):
         else:
             return type(arg), None, None, arg
 
-    dtypes, sizes, strides, non_tensor_args = zip(*map(extract_descriptor, args))
+    if args:
+        dtypes, sizes, strides, non_tensor_args = zip(*map(extract_descriptor, args))
+    else:
+        dtypes = sizes = strides = non_tensor_args = None
     return ArgsDescriptor(dtypes, sizes, strides, non_tensor_args)
 
 
@@ -159,7 +162,7 @@ class CUDAGraphRunner:
         region_trace.bound_symbols = bsyms
         region_trace.args = inputs
         region_trace.kwargs = {}
-        region_trace.bound_symbols.append(prims.python_return.bind(outputs, output=()))
+        region_trace.bound_symbols.append(prims.python_return.bind(outputs, output=None))
         return region_trace.python_callable()
 
     def make_cuda_graph_callable_from_symbols(

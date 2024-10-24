@@ -47,6 +47,17 @@ import torch as torch
 import numpy as np
 import thunder
 
+
+__all__ = [
+    "CompileStats",
+    "CompileData",
+    "cache_put",
+    "cache_get",
+    "trace",
+    "transform_for_execution",
+    "transform_to_torch_types",
+]
+
 #
 # Datastructures for compiled functions
 #
@@ -188,7 +199,6 @@ class CompileData:
         only_execute_prims: bool = False,
         disable_preprocessing: bool = False,
         disable_torch_autograd_support: bool = False,
-        use_rematerialization: bool = False,
         debug_log: None | StringIO = None,
         compile_options: dict[str, Any] = {},
         get_computation_and_inputs: Callable | None = None,
@@ -243,7 +253,6 @@ class CompileData:
         self.fn = fn
         self.only_execute_prims = only_execute_prims
         self.disable_preprocessing = disable_preprocessing
-        self.use_rematerialization = use_rematerialization
         self.disable_torch_autograd_support = disable_torch_autograd_support
         self.debug_log = debug_log
 
@@ -293,7 +302,7 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs, *, rename_proxies: bool
         if isinstance(x, Proxy):
             # register proxy name used by NumberProxies in TensorProxy.shape
             if isinstance(x, TensorProxy):
-                for s_p in filter(lambda s: isinstance(s, Proxy), x.shape):
+                for s_p in filter(lambda s: isinstance(s, Proxy), x._shape):
                     # TODO need to avoid name conflict here, since s_p.name
                     # could have conflicted with something defined earlier in
                     # the trace.
@@ -625,7 +634,6 @@ def transform_for_execution(
     executors_list: Sequence[Executor],
     *,
     only_execute_prims=False,
-    use_rematerialization=True,
     use_del_last_used=True,
 ) -> list[TraceCtx]:
     traces: list[TraceCtx] = []
@@ -668,7 +676,6 @@ def _execute_trace(
             trc,
             executors_list=compile_data.executors_list,
             only_execute_prims=compile_data.only_execute_prims,
-            use_rematerialization=compile_data.use_rematerialization,
         )
     extrace = extraces[-1]
 
@@ -709,6 +716,6 @@ def transform_to_torch_types(trace: TraceCtx):
     last = trace.bound_symbols[-1]
     assert last.sym.id == prims.PrimIDs.RETURN
     new_args = tree_map(map_to_torch, last.args)
-    new_bsym = prims.python_return.bind(*new_args, output=())
+    new_bsym = prims.python_return.bind(*new_args, output=None)
     trace.bound_symbols[-1] = new_bsym
     return trace
