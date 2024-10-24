@@ -126,17 +126,12 @@ def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, *
                 else:
                     old = old.replace(shape=new._shape)
 
-            key: VariableInterface
             if isinstance(new, VJPDual):
-                key = variableify(new.primal)
-                swap_map[key] = old
+                swap_map[variableify(new.primal)] = old
                 new.primal = old
             else:
                 assert isinstance(new, ProxyInterface), (old, new)
-                key = variableify(new)
-                swap_map[key] = old
-            if key == variableify(old):
-                del swap_map[key]
+                swap_map[variableify(new)] = old
 
     def do_swap(v):
         if isinstance(v, VJPDual):
