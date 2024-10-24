@@ -300,6 +300,8 @@ def dfs(n, visited: set, bsyms_in_group):
     if n in visited:
         return
     visited.add(n)
+    children = list(n.children)
+    sorted(children, key=lambda n: sum(t.numel * t.dtype.bytes for t in n.group_bsyms[0].flat_proxy_outs))
     for nxt in n.children:
         dfs(nxt, visited, bsyms_in_group)
     bsyms_in_group += [n.group_bsyms]
@@ -308,9 +310,40 @@ def dfs(n, visited: set, bsyms_in_group):
 def dfs_topo_sort(g):
     visited = set()
     bsyms_in_group = []
-    for n in g.roots:
-        dfs(n, visited, bsyms_in_group)
+    # for n in g.roots:
+    for n in g.return_node.parents:
+        # dfs(n, visited, bsyms_in_group)
+        dfs_bottom_up(n, visited, bsyms_in_group)
+    bsyms_in_group += [g.return_node.group_bsyms]
     return bsyms_in_group
+
+
+from thunder.core.proxies import CollectionProxy, FutureTensorProxy, Proxy, TensorProxy
+from thunder.core.pytree import tree_iter
+
+
+def sfunc(n):
+    res = 0
+    for t in n.group_bsyms[0].flat_proxy_outs:
+        if isinstance(t, CollectionProxy):
+            for a in tree_iter(t.collection()):
+                if not isinstance(a, (TensorProxy, FutureTensorProxy)):
+                    continue
+                res += a.numel * a.dtype.bytes
+        else:
+            res += t.numel * t.dtype.bytes
+    return res
+
+
+def dfs_bottom_up(n, visited: set, bsyms_in_group):
+    if n in visited:
+        return
+    visited.add(n)
+    parent = list(n.parents)
+    parent = sorted(parent, key=sfunc)
+    for nxt in parent:
+        dfs_bottom_up(nxt, visited, bsyms_in_group)
+    bsyms_in_group += [n.group_bsyms]
 
 
 def fuse_bound_symbols(trace: TraceCtx, merge_func: Callable, skip_horizontal_merge=False):
@@ -320,7 +353,10 @@ def fuse_bound_symbols(trace: TraceCtx, merge_func: Callable, skip_horizontal_me
     graph = Graph(trace)
     dataflow_merge(graph, merge_func)
     if skip_horizontal_merge:
+        # import pdb;pdb.set_trace()
         ret = dfs_topo_sort(graph)
-        return ret[::-1]
+
+        return ret
+        # return ret[::-1]
     ret = horizontal_merge(graph, merge_func)
     return ret
