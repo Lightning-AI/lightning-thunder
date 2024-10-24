@@ -12,9 +12,8 @@ from thunder.benchmarks import (
     NanoGPTConfig,
     NanoGPTBenchmark,
     LitGPTBenchmark,
-    LitGPTConfig,
 )
-from thunder.tests.litgpt_model import name_to_config
+from thunder.tests.litgpt_model import name_to_config, Config as LitGPTConfig
 from thunder.distributed import FSDPBucketingStrategy
 from thunder.distributed import FSDPType
 
