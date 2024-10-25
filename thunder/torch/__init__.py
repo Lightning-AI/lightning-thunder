@@ -1763,7 +1763,7 @@ def real(a):
 
 @torchsymbol(torch.celu, torch.nn.functional.celu, id="torch.celu", is_method=True)
 def celu(a: TensorLike, /, alpha: float = 1.0, inplace: bool = False) -> TensorLike:
-    negative_domain_value = alpha * expm1(a / alpha)
+    negative_domain_value = expm1(a / alpha) * alpha
     out = where(a > 0, a, negative_domain_value)
     if inplace:
         return prims.copy_(out, a)

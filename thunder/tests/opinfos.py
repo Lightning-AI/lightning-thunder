@@ -549,11 +549,11 @@ class ElementwiseUnaryOpInfo(ElementwiseOpInfo):
 #   so this helper wraps and unwraps numbers
 def _elementwise_unary_torch(op):
     @wraps(op)
-    def _fn(x):
+    def _fn(x, **kwargs):
         if isinstance(x, torch.Tensor):
-            return op(x)
+            return op(x, **kwargs)
 
-        return op(torch.tensor(x)).item()
+        return op(torch.tensor(x), **kwargs).item()
 
     return _fn
 
@@ -1647,10 +1647,9 @@ celu_opinfo = OpInfo(
     ltorch.celu,
     dtypes=(datatypes.floating,),
     sample_input_generator=celu_sample_generator,
-    torch_reference=torch.celu,
+    torch_reference=_elementwise_unary_torch(torch.celu),
     test_directives=(
-        # !!! copied from selu
-        # Some versions of PyTorch do not support CPU float16 selu
+        # Some versions of PyTorch do not support CPU float16 celu
         DecorateInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
