@@ -1,4 +1,5 @@
 import itertools
+import platform
 
 import pytest
 import torch
@@ -140,7 +141,9 @@ def test_compile_autocast(executor, device, dtype):
     assert output.dtype == (torch.float16 if torch_device.type == "cuda" else torch.bfloat16)
 
 
-@pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported")
+# Disabling on windows temporarily, until our windows runners source the
+# appropriate visual studio config.
+@pytest.mark.skipif(not is_inductor_supported() or platform.system() == "Windows", reason="inductor unsupported")
 def test_torch_compile_autocast():
     """Checks if our autocast decorator plays well with ``torch.compile``"""
 

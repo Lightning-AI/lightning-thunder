@@ -624,9 +624,6 @@ class BoundSymbol(BoundSymbolInterface):
 
         return self._object_ctx
 
-    # def set_output(self, output: Any):
-    #     self.output = output
-
     def name_with_module(self):
         # Short-circuits if the symbol has no associated module
         if self.sym.module is None or self._call_ctx is not None:

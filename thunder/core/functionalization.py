@@ -19,6 +19,26 @@ __all__ = [
 ]
 
 
+# For `ltorch.to`, we can AOT tell whether or not the return value of the op is a new tensor or self.
+def bsym_of_to_return_self(bsym: BoundSymbol):
+    import thunder.torch as ltorch
+
+    a, tensor_dtype_or_device, optional_positional_dtype = bsym.args
+    device = bsym.kwargs.get("device")
+    dtype = bsym.kwargs.get("dtype")
+    copy = bsym.kwargs.get("copy")
+    memory_format = bsym.kwargs.get("memory_format")
+    device, dtype = ltorch._parse_to_device_and_dtype(
+        tensor_dtype_or_device,
+        optional_positional_dtype,
+        device=device,
+        dtype=dtype,
+    )
+    input_device, input_dtype = a.device, a.dtype
+    result_is_self = ltorch._will_to_return_self(input_device, input_dtype, device, dtype, memory_format, copy)
+    return result_is_self
+
+
 def check_inplace_to_views(computation_trace: Trace) -> dict[VariableInterface, TensorProxy]:
     """Error out if in-place op that outputs of different number of elements from the input and the input has other consumers."""
     from thunder.core import utils
@@ -59,16 +79,21 @@ def check_inplace_to_views(computation_trace: Trace) -> dict[VariableInterface, 
         if len(consumer_of_orig_tensor) == 1:
             continue
 
-        check(
-            prod_bsym.sym not in ltorch._syms_that_may_return_views,
-            lambda: (
-                f"in-place op of `{bsym.sym.id}` to `{prod_bsym.sym.id}` output `{in_tensor}` is not "
-                f"supported. It's unclear if the output of "
-                f"{tuple(s.id for s in ltorch._syms_that_may_return_views)} is "
-                f"a copy, a view, or the input itself, as per https://pytorch.org/docs/stable/tensor_view.html"
-            ),
-            NotImplementedError,
-        )
+        if prod_bsym.sym in ltorch._syms_that_may_return_views:
+            if prod_bsym.sym == ltorch.to:
+                if not bsym_of_to_return_self(prod_bsym):
+                    continue
+            else:
+                check(
+                    prod_bsym.sym not in ltorch._syms_returning_views,
+                    lambda: (
+                        f"in-place op of `{bsym.sym.id}` to `{prod_bsym.sym.id}` output `{in_tensor}` is not "
+                        f"supported. It's unclear if the output of "
+                        f"{tuple(s.id for s in ltorch._syms_that_may_return_views)} is "
+                        f"a copy, a view, or the input itself, as per https://pytorch.org/docs/stable/tensor_view.html"
+                    ),
+                    NotImplementedError,
+                )
         if prod_bsym.sym not in ltorch._syms_returning_views:
             continue
 
@@ -113,7 +138,11 @@ def _get_prod_bsym_with_arg(
     from thunder.torch import _syms_that_may_return_views
 
     def inplace_or_view(bsym) -> bool:
+        import thunder.torch as ltorch
+
         sym = bsym.sym
+        if sym == ltorch.to:
+            return bsym_of_to_return_self(bsym)
         check(
             sym not in _syms_that_may_return_views,
             lambda: (
