@@ -310,8 +310,11 @@ def dfs(n, visited: set, bsyms_in_group):
 def dfs_topo_sort(g):
     visited = set()
     bsyms_in_group = []
+    parent = list(g.return_node.parents)
+    parent = sorted(parent, key=sfunc)
+    # import pdb;pdb.set_trace()
     # for n in g.roots:
-    for n in g.return_node.parents:
+    for n in parent:  # g.return_node.parents:
         # dfs(n, visited, bsyms_in_group)
         dfs_bottom_up(n, visited, bsyms_in_group)
     bsyms_in_group += [g.return_node.group_bsyms]
@@ -355,7 +358,6 @@ def fuse_bound_symbols(trace: TraceCtx, merge_func: Callable, skip_horizontal_me
     if skip_horizontal_merge:
         # import pdb;pdb.set_trace()
         ret = dfs_topo_sort(graph)
-
         return ret
         # return ret[::-1]
     ret = horizontal_merge(graph, merge_func)
