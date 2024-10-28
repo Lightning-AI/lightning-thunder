@@ -1654,8 +1654,8 @@ python_del = make_prim(
 )
 
 
-def _return_meta(*args) -> Any:
-    return args
+def _return_meta(*args) -> None:
+    return None
 
 
 def return_printer(
@@ -1676,9 +1676,8 @@ def return_printer(
     return f"return {arg_str}"
 
 
-# NOTE This wrapper for del is necessary because python_impl=del is invalid syntax (del is not a regular function)
-def _return_impl(*args) -> Any:
-    return args
+def _return_impl(*args) -> None:
+    return None
 
 
 python_return = make_prim(
