@@ -2978,8 +2978,8 @@ def test_saved_view_of_output_of_autograd_function_does_not_leak():
         matmul = emb @ emb.T
         return tok_emb, matmul
 
-    weight = make_tensor((16, 32), dtype=torch.float, device="cuda", requires_grad=True)
-    x = make_tensor((1, 2), dtype=torch.int64, low=0, high=10, device="cuda")
+    weight = make_tensor((16, 32), dtype=torch.float, device="cpu", requires_grad=True)
+    x = make_tensor((1, 2), dtype=torch.int64, low=0, high=10, device="cpu")
 
     jfn = thunder.jit(fn)
 
