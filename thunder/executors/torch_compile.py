@@ -14,7 +14,7 @@ from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
 from thunder.core.transform_common import dce
 from thunder.core.pytree import tree_flatten
 from thunder.executors.passes import update_fusion_call_ctx
-from thunder.executors.utils import Region
+from thunder.executors.utils import Region, memory_efficient_sorting
 from thunder.extend import FusionExecutor, register_executor, ImplInfo
 from thunder.core.compile_data import get_compile_option
 
@@ -193,6 +193,12 @@ class TorchCompileExecutor(FusionExecutor):
         fusedtrace = rematerialize(fusedtrace)
         fusedtrace = dce(fusedtrace)
         fusedtrace = update_fusion_call_ctx(fusedtrace)
+
+        import os
+
+        skip_horizontal_merge = os.getenv("SKIP_BFS_MERGE", None) == "true"
+        if skip_horizontal_merge:
+            fusedtrace = memory_efficient_sorting(fusedtrace)
 
         end_time_ns: int = time.perf_counter_ns()
         elapsed_time_ns: int = end_time_ns - start_time_ns

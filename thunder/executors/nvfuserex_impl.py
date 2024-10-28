@@ -53,6 +53,7 @@ from thunder.executors.utils import (
     _input_shape_check_fused_scaled_dot_product_attention,
     _fused_sdp_choice,
     SpdaBackend,
+    memory_efficient_sorting,
 )
 
 from thunder.executors.passes import update_fusion_call_ctx
@@ -904,6 +905,10 @@ instantiated) this heuristic actually leads to worse code.
         fusedtrace = dce(fusedtrace)
 
         fusedtrace = update_fusion_call_ctx(fusedtrace)
+
+        skip_horizontal_merge = os.getenv("SKIP_BFS_MERGE", None) == "true"
+        if skip_horizontal_merge:
+            fusedtrace = memory_efficient_sorting(fusedtrace)
 
         end_time_ns: int = time.perf_counter_ns()
         elapsed_time_ns: int = end_time_ns - start_time_ns
