@@ -71,3 +71,7 @@ class Recipe:
             raise AttributeError(f"Compiler must be one of 'thunder.jit', 'torch.compile'. Found: {self.compiler}.")
 
         return thunder_model
+
+
+class DynamoRecipe(Recipe):
+    compiler = "torch.compile"
