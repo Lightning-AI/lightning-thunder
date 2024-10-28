@@ -78,6 +78,8 @@ class ThunderFunction(torch.autograd.Function):
         # NOTE - Detaching here would lead to problem with higher order differentiation but
         #        this is ok for now because ThunderFunction is only `once_differentiable`.
         def detach_if_tensor(t):
+            # Some operations may claim to return Tensor (as per their meta function)
+            # but may return None at Runtime (eg. noticed this for sdpa)
             if isinstance(t, torch.Tensor):
                 return t.detach()
             return t
