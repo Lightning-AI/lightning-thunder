@@ -5498,7 +5498,9 @@ def backward_autograd_function_apply(
 
 
 @torchsymbol(
-    torch.amp.autocast_mode._enter_autocast, id="torch.amp.autocast_mode._enter_autocast", tags=(prims.OpTags.DONT_DCE,)
+    torch.amp.autocast_mode._enter_autocast,
+    id="torch.amp.autocast_mode._enter_autocast",
+    tags=(prims.OpTags.DONT_DCE, prims.OpTags.CTX_MANAGER_ENTER_EXIT_OP),
 )
 def autocast_enter(device_type, dtype=None, enabled=True):
     if dtype is None:
@@ -5507,7 +5509,9 @@ def autocast_enter(device_type, dtype=None, enabled=True):
 
 
 @torchsymbol(
-    torch.amp.autocast_mode._exit_autocast, id="torch.amp.autocast_mode._exit_autocast", tags=(prims.OpTags.DONT_DCE,)
+    torch.amp.autocast_mode._exit_autocast,
+    id="torch.amp.autocast_mode._exit_autocast",
+    tags=(prims.OpTags.DONT_DCE, prims.OpTags.CTX_MANAGER_ENTER_EXIT_OP),
 )
 def autocast_exit(*args):
     get_compile_data().autocast_stack.pop()
