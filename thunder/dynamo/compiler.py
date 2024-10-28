@@ -7,6 +7,7 @@ import warnings
 import torch
 
 from thunder.core.baseutils import run_once
+from thunder.core.utils import safe_zip
 from thunder.dynamo.utils import recompile_graph, remove_empty_autocast
 from thunder.dynamo.splitter import _splitter
 
@@ -71,32 +72,6 @@ class ThunderCompiler:
         self._thunder_jit = partial(jit, **thunder_options)
         self._torch_compile = partial(torch.compile, **torch_inductor_options)
 
-        if "reproducer_folder_name" in thunder_options:
-            self.reproducer_folder_name = thunder_options.get("reproducer_folder_name", "/tmp")
-            self.graph_idx = 0
-        else:
-            self.reproducer_folder_name = None
-
-    def save_reproducer_to_folder(self, split_module):
-        from thunder.dynamo.utils import reproducer, _get_example_inputs_from_placeholder
-        from itertools import chain
-
-        for node in split_module.graph.nodes:
-            target = node.target
-            # Benchmarks the modules produced by the splitter and are supported by Thunder.
-            if isinstance(target, str) and target.startswith("thunder_"):
-                cur_module = getattr(split_module, target)
-                cur_nodes = cur_module.graph.nodes
-                # Greates random input values for the current module based on the faketensor 'example_value' of the placeholder node
-                placeholders = list(n for n in cur_nodes if n.op == "placeholder")
-                args = chain(*map(_get_example_inputs_from_placeholder, placeholders))
-                from thunder.core.module import ThunderModule
-
-                assert isinstance(cur_module, ThunderModule) and hasattr(cur_module, "_model")
-                reproducer(
-                    getattr(cur_module, "_model"), args, self.reproducer_folder_name, f"{self.graph_idx}_{target}"
-                )
-
     def __call__(self, gm: torch.fx.GraphModule, sample_args: list[torch.SymInt, torch.Tensor]):
         gm = remove_empty_autocast(gm)
 
@@ -107,8 +82,24 @@ class ThunderCompiler:
         # The whole graph may not be supported by `thunder`, so we split it in `thunder` supported sections
         # and unsupported sections which are passed to `torch.compile(backend='inductor')`
         split_module, subgraph_info = _splitter(gm, self._thunder_jit, self._torch_compile, sample_args)
-        if self.reproducer_folder_name is not None:
-            self.save_reproducer_to_folder(split_module)
-            self.graph_idx += 1
         self.subgraph_infos.append(subgraph_info)
         return split_module
+
+
+def save_reproducer_to_folder(backend: ThunderCompiler, reproducer_folder_name):
+    from thunder.dynamo.utils import reproducer, _get_example_inputs_from_placeholder
+    from thunder.core.module import ThunderModule
+
+    for graph_idx, subgraph_info in enumerate(backend.subgraph_infos):
+        thunder_module_names = []
+        for node in subgraph_info.split_graph_module.graph.nodes:
+            target = node.target
+            if isinstance(target, str) and target.startswith("thunder_"):
+                thunder_module_names.append(target)
+        thunder_modules = subgraph_info.thunder_compiled_fns
+        example_inputs = subgraph_info.thunder_compiled_fns_example_inputs
+        for cur_module, example_input, cur_name in safe_zip(thunder_modules, example_inputs, thunder_module_names):
+            assert isinstance(cur_module, ThunderModule) and hasattr(cur_module, "_model")
+            reproducer(
+                getattr(cur_module, "_model"), example_input, reproducer_folder_name, f"{graph_idx+1}_{cur_name}"
+            )

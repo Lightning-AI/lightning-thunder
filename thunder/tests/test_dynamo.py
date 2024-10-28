@@ -780,8 +780,12 @@ def test_checkpoint_converter_submodule():
 
 
 def test_dynamo_reproducer(tmp_path):
-    backend = ThunderCompiler(reproducer_folder_name=tmp_path)
-    x = torch.ones(2, requires_grad=True)
+    from thunder.dynamo.compiler import save_reproducer_to_folder
+
+    backend = ThunderCompiler()
+    # x = torch.randint(3, 10, (2, 2)).view(1,1,4)
+    x = make_tensor((4, 4), low=3, high=10, dtype=torch.int64, device="cuda", noncontiguous=True)
+    print(x)
 
     @torch.compile(backend=backend)
     def func(x):
@@ -792,7 +796,18 @@ def test_dynamo_reproducer(tmp_path):
             return x - 1
 
     out = func(x)
-    import os
 
-    assert os.path.exists(f"{tmp_path}/g0_thunder_1.py")
-    assert os.path.exists(f"{tmp_path}/g1_thunder_1.py")
+    save_reproducer_to_folder(backend, tmp_path)
+    import os
+    from subprocess import run
+
+    print(tmp_path)
+    s1 = f"{tmp_path}/g1_thunder_1.py"
+    s2 = f"{tmp_path}/g2_thunder_1.py"
+    assert os.path.exists(s1)
+    assert os.path.exists(s2)
+    result1 = run(["python", s1], capture_output=True, text=True)
+    result2 = run(["python", s2], capture_output=True, text=True)
+
+    assert result1.returncode == 0, f"Reproducer {s1} failed with return code {result1.returncode}"
+    assert result2.returncode == 0, f"Reproducer {s2} failed with return code {result2.returncode}"

@@ -1,6 +1,8 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 import copy
+from itertools import chain
+from functools import partial
 
 import torch
 from torch.fx.passes.split_module import split_module
@@ -16,6 +18,7 @@ from thunder.dynamo.utils import (
     update_node_and_submodule,
     recompile_graph,
     checkpoint_converter,
+    _get_example_inputs_from_placeholder,
 )
 
 if TYPE_CHECKING:
@@ -142,6 +145,7 @@ def _splitter(
 
     # Call compile on the split region/s.
     thunder_compiled_fns = []
+    example_input_metadatas = []
     submodule_to_compiled_fns = {}
     for node in split_gm.graph.nodes:
         node_name = node.name
@@ -149,6 +153,12 @@ def _splitter(
             graph_module = getattr(split_gm, node.name)
             # Replace PyTorch operators within the checkpointed function with the corresponding Thunder operators
             checkpoint_converter(split_gm, graph_module)
+            # Greates random input values for the current module based on the faketensor 'example_value' of the placeholder node
+            placeholders = list(n for n in graph_module.graph.nodes if n.op == "placeholder")
+            example_input_metadata = chain(
+                *map(partial(_get_example_inputs_from_placeholder, only_metadata=True), placeholders)
+            )
+            example_input_metadatas.append(list(example_input_metadata))
             jit_fn = thunder_jit(graph_module)
             # Update the node name from "submod_*" to "thunder_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "thunder"), jit_fn)
@@ -176,6 +186,7 @@ def _splitter(
         original_split_gm,
         split_gm,
         thunder_compiled_fns,
+        example_input_metadatas,
         submodule_to_compiled_fns,
         split_reasons,
     )
