@@ -1,7 +1,7 @@
 from typing import List, Dict
 
 from thunder.core.transform_common import Transform
-from thunder.extend import Executor
+from thunder.extend import Executor, get_default_executors
 
 import torch
 
@@ -33,8 +33,8 @@ class Recipe:
     def setup_transforms(self) -> list[Transform] | None:
         return None
 
-    def setup_executors(self) -> list[Executor] | None:
-        return None
+    def setup_executors(self):
+        return get_default_executors()
 
     def setup_config(self) -> dict:
         return {}

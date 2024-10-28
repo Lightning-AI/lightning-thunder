@@ -22,9 +22,3 @@ class HFBertBasic(thunder.Recipe):
         is_compiling_lookaside = thunder.Lookaside(fn=is_compiling, replace_with=lambda *_: True)
 
         return [warn_lookaside, is_compiling_lookaside]
-
-    def setup_transforms(self):
-        return None
-
-    def setup_executors(self):
-        return thunder.get_default_executors()
