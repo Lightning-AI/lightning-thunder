@@ -11,7 +11,7 @@ class HFBertBasic(thunder.Recipe):
     def setup_lookasides(self):
         warn_lookaside = thunder.Lookaside(
             fn=transformers.modeling_utils.PreTrainedModel.warn_if_padding_and_no_attention_mask,
-            replace_with=lambda *args: None
+            replace_with=lambda *args: None,
         )
 
         if hasattr(torch, "compiler") and hasattr(torch.compiler, "is_compiling"):
@@ -19,10 +19,7 @@ class HFBertBasic(thunder.Recipe):
         else:
             is_compiling = torch._dynamo.is_compiling
 
-        is_compiling_lookaside = thunder.Lookaside(
-            fn=is_compiling,
-            replace_with=lambda *_: True
-        )
+        is_compiling_lookaside = thunder.Lookaside(fn=is_compiling, replace_with=lambda *_: True)
 
         return [warn_lookaside, is_compiling_lookaside]
 
@@ -31,4 +28,3 @@ class HFBertBasic(thunder.Recipe):
 
     def setup_executors(self):
         return thunder.get_default_executors()
-

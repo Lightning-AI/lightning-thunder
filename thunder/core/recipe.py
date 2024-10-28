@@ -27,16 +27,16 @@ class Recipe:
     #     # this is for registering custom kernels on the fly
     #     return None
 
-    def setup_lookasides(self) -> List[Lookaside] | None:
+    def setup_lookasides(self) -> list[Lookaside] | None:
         return None
 
-    def setup_transforms(self) -> List[Transform] | None:
+    def setup_transforms(self) -> list[Transform] | None:
         return None
 
-    def setup_executors(self) -> List[Executor] | None:
+    def setup_executors(self) -> list[Executor] | None:
         return None
 
-    def setup_config(self) -> Dict:
+    def setup_config(self) -> dict:
         return {}
 
     def apply(self, model):
@@ -58,20 +58,15 @@ class Recipe:
 
         if self.compiler == "thunder.jit":
             from thunder import jit
-            thunder_model = jit(model,
-                         transforms=self.transforms,
-                         executors=self.executors,
-                         **self.config)
+
+            thunder_model = jit(model, transforms=self.transforms, executors=self.executors, **self.config)
 
         elif self.compiler == "torch.compile":
             from thunder.dynamo import ThunderCompiler
-            thunder_backend = ThunderCompiler(
-                transforms=self.transforms,
-                executors=self.executors,
-                **self.config
-            )
+
+            thunder_backend = ThunderCompiler(transforms=self.transforms, executors=self.executors, **self.config)
             thunder_model = torch.compile(model, backend=thunder_backend)
-        
+
         else:
             raise AttributeError(f"Compiler must be one of 'thunder.jit', 'torch.compile'. Found: {self.compiler}.")
 
