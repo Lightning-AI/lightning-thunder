@@ -487,7 +487,7 @@ def remove_context_manager_prims_from_trace(trace: Trace) -> Trace:
             return False
         return prims.OpTags.CTX_MANAGER_ENTER_EXIT_OP in bsym.sym.tags
 
-    filtered_bsyms = tuple(filterfalse(is_context_manager_prim, trace.bound_symbols))
+    filtered_bsyms = list(filterfalse(is_context_manager_prim, trace.bound_symbols))
     new_trace = from_trace(trace)
     new_trace.bound_symbols = filtered_bsyms
     new_trace.set_provenance(TraceProvenance("Remove context manager prims"))
