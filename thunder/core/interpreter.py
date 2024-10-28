@@ -64,9 +64,8 @@ from thunder.core.codeutils import Positions
 #   of where values originated. This mode is used by the general jit. This is done by
 #   wrapping all values in WrappedValues.
 #
-#   Both thunder.jit and thunder.functional.jit use extensions (in jit_ext.py) to
-#   create Thunder Programs. They use callbacks and additional lookasides to
-#   add their functionality.
+#   thunder.jit uses extensions (in jit_ext.py) to create Thunder Programs.
+#   They use callbacks and additional lookasides to add their functionality.
 #
 #   The Thunder program constructed has three parts, a "prologue trace", a
 #   "computation trace", and (optionally) an "epilogue trace". The prologue trace has

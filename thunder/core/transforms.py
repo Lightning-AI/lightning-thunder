@@ -2831,7 +2831,7 @@ def vjp(func):
         # If the argument is a CPU scalar tensor, its gradient needs to be summed into a scalar tensor.
         vjp_result = tuple(
             (
-                sum_to(grad, arg.shape)
+                sum_to(grad, arg._shape)
                 if (grad is not None and isinstance(arg, TensorProxy) and arg.device.type == "cpu")
                 else grad
             )

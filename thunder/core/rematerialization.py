@@ -274,8 +274,8 @@ def find_cut(
     required_producer_vars = tuple(x for x in producer.args)
     required_producer_vars += tuple(x for x in external_producer_outputs)
 
-    # This is needed to avoid rematerializing random or reduction primitives.
-    tags = {prims.OpTags.REDUCTION_OP, prims.OpTags.RANDOM_OP}
+    # This is needed to avoid rematerializing random or expensive primitives.
+    tags = {prims.OpTags.REDUCTION_OP, prims.OpTags.RANDOM_OP, prims.OpTags.MATMUL_OP}
     required_producer_vars += tuple(
         chain.from_iterable((y for y in x.flat_outs) for x in producer.subsymbols if has_tags(x, tags))
     )
@@ -374,7 +374,13 @@ def find_cut(
     g = nx.DiGraph()
     g.add_edges_from(edges)
 
-    _, (reachable, non_reachable) = nx.minimum_cut(g, "source", "sink")
+    try:
+        _, (reachable, non_reachable) = nx.minimum_cut(g, "source", "sink")
+    except Exception:
+        raise RuntimeError(
+            "Failed to compute the min-cut on the graph due to a path with infinite capacity."
+            "Please report this error along with your function and relevant details at: https://github.com/Lightning-AI/lightning-thunder/issues/new"
+        )
 
     cut_edges = set()
     for u, nbrs in ((n, g[n]) for n in reachable):

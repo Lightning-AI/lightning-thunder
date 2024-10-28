@@ -5,8 +5,8 @@ from collections.abc import Callable
 import torch
 
 import thunder
-from thunder.core.trace import from_trace, tracectx
-from thunder.core.proxies import variableify, Variable, TensorProxy, NumberProxy, proxy
+from thunder.core.trace import from_trace
+from thunder.core.proxies import variableify, Variable, TensorProxy, NumberProxy
 from thunder.core.symbol import BoundSymbol
 from thunder.core.dtypes import to_dtype
 from thunder.core.devices import to_device
@@ -71,7 +71,6 @@ def compute_with_constant_tensors(bsym, const_values) -> None | Any:
 
 class ConstantFolding(thunder.Transform):
     def transform_traces_pre_prologue(self, prologue_trc, computation_trc, epilogue_trc, **kwargs):
-        # print(computation_trc)
         # Create a new trace
         const_folded_trace = from_trace(computation_trc)
         const_folded_trace.bound_symbols = computation_trc.bound_symbols
