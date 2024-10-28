@@ -1427,7 +1427,7 @@ def _copy_with_setitem_grad(a: TensorProxy, index, value: Number | TensorProxy):
         expanded_dims = value_grad.ndim - value.ndim
         if expanded_dims > 0:
             value_grad = prims.sum(value_grad, tuple(range(expanded_dims)))
-            put_grad(value, value_grad)
+        put_grad(value, value_grad)
 
     return fwd
 
