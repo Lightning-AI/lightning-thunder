@@ -532,7 +532,7 @@ class Benchmark_litGPT:
         return model
 
     def setup_activation_checkpointing(self):
-        if "thunder" in self.compile:
+        if "thunder" in self.compile and "dynamo" not in self.compile:
             # checkpointing is an option to thunder.jit
             return
 
@@ -571,11 +571,6 @@ class Benchmark_litGPT:
 
                 executors.insert(0, transformer_engine_ex)
 
-            jit_options = {
-                "enable_saved_for_backward_recomputation": self.checkpoint_activations,
-                "recomputation_policy": None,
-            }
-
             if "dynamo" in self.compile:
                 if self.distributed_mode == "fsdp2":
                     print("Resetting cache size for when fsdp2 and using thunder as backend torch.compile")
@@ -583,13 +578,16 @@ class Benchmark_litGPT:
 
                     dynamo_config.cache_size_limit = 64
 
-                backend = ThunderCompiler(executors=executors, **jit_options)
+                self.backend = ThunderCompiler(executors=executors)
                 # Because Lightning Fabric is imported in this script it monkey patches the torch.compile function
                 # https://github.com/Lightning-AI/pytorch-lightning/blob/828fd998961f6a60f92c35254bb94d6e049ad069/src/lightning/fabric/wrappers.py#L421
                 # using __wrapped__ to access the original torch.compile function did not work
                 # so we are using the lower level torch._dynamo.optimize function
-                model = torch._dynamo.optimize(backend=backend)(model)
+                model = torch._dynamo.optimize(backend=self.backend)(model)
             else:
+                jit_options = {
+                    "enable_saved_for_backward_recomputation": self.checkpoint_activations,
+                }
                 jit_options["fp8_shard_intermediate_activation"] = self.fp8_shard_intermediate_activation
                 model = thunder.jit(model, executors=executors, **jit_options)
 
@@ -843,16 +841,28 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
                 for jitted in benchmark.thunder_as_torch_compile_backend.gm_to_thunder.values():
                     fwd_traces.append(thunder.last_traces(jitted))
                     bwd_traces.append(thunder.last_backward_traces(jitted))
-            else:
+            elif "dynamo" not in benchmark.compile:
                 fwd_traces = [thunder.last_traces(benchmark.model)]
                 bwd_traces = [thunder.last_backward_traces(benchmark.model)]
 
-            for i, f_traces in enumerate(fwd_traces, start=1):
-                print(f"##########\n#{i}-th ThunderModule\n##########")
-                print(f_traces[-1])
-            for i, b_traces in enumerate(bwd_traces, start=1):
-                print(f"##########\n#{i}-th ThunderModule\n##########")
-                print(b_traces[-1])
+            if "dynamo" in benchmark.compile:
+                for gid, infos in enumerate(benchmark.backend.subgraph_infos):
+                    for subgid, thunder_fn in enumerate(infos.thunder_compiled_fns):
+                        print(f"##########\n#Graph{gid}-ThunderFn{subgid} first forward trace\n##########")
+                        print(thunder.last_traces(thunder_fn)[0])
+                        print(f"##########\n#Graph{gid}-ThunderFn{subgid} last forward trace\n##########")
+                        print(thunder.last_traces(thunder_fn)[-1])
+                        print(f"##########\n#Graph{gid}-ThunderFn{subgid} first backward trace\n##########")
+                        print(thunder.last_backward_traces(thunder_fn)[0])
+                        print(f"##########\n#Graph{gid}-ThunderFn{subgid} last backward trace\n##########")
+                        print(thunder.last_backward_traces(thunder_fn)[-1])
+            else:
+                for i, f_traces in enumerate(fwd_traces, start=1):
+                    print(f"##########\n#{i}-th ThunderModule\n##########")
+                    print(f_traces[-1])
+                for i, b_traces in enumerate(bwd_traces, start=1):
+                    print(f"##########\n#{i}-th ThunderModule\n##########")
+                    print(b_traces[-1])
 
     if global_rank in [0, None]:
         if return_metrics_as_json:
