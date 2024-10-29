@@ -153,7 +153,7 @@ def _splitter(
             graph_module = getattr(split_gm, node.name)
             # Replace PyTorch operators within the checkpointed function with the corresponding Thunder operators
             checkpoint_converter(split_gm, graph_module)
-            # Greates random input values for the current module based on the faketensor 'example_value' of the placeholder node
+            # Record the input tensor metadata of the current module based on the faketensor 'example_value' of the placeholder node
             placeholders = list(n for n in graph_module.graph.nodes if n.op == "placeholder")
             example_input_metadata = chain(
                 *map(partial(_get_example_inputs_from_placeholder, only_metadata=True), placeholders)

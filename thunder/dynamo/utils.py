@@ -10,6 +10,7 @@ import warnings
 from pathlib import Path
 
 import torch
+from torch.nn.modules.module import _addindent
 
 from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
@@ -20,6 +21,7 @@ from thunder.core import dtypes
 if TYPE_CHECKING:
     from thunder.core.symbol import Symbol
     import os
+    from typing import Any, TextIO
 
 auto_register_ops = set(itertools.chain(*torch_auto_registered_ops.values()))
 
@@ -76,6 +78,26 @@ class SplitReason:
     reason_type: SplitReasonType
     info: str | None
     exception: Exception | None = None
+
+
+@dataclasses.dataclass
+class ExampleInputMetaData:
+    """
+    Describes the metadata of a tensor, used to generate a random tensor with matching properties
+    """
+
+    requires_grad: bool
+    layout: torch.layout
+    device: str | torch.device
+    dtype: torch.dtype
+    shape: list[int]
+    storage_shape: list[int]
+    strides: list[int]
+    min_val: int | None = None
+    max_val: int | None = None
+
+    def stride(self) -> list[int]:
+        return self.strides
 
 
 @dataclasses.dataclass(frozen=True)
@@ -429,7 +451,7 @@ def recompile_graph(gm: torch.fx.GraphModule):
     return gm.recompile()
 
 
-def _get_noncontiguous_shape(t):
+def _get_storage_shape(t: torch.Tensor):
     shape = _concrete_shape(t)
     if t.is_contiguous():
         return shape
@@ -438,10 +460,10 @@ def _get_noncontiguous_shape(t):
     return (storage_size,)
 
 
-def _get_example_input_tensor_metadata(t):
+def _get_example_input_tensor_metadata(t: torch.Tensor) -> ExampleInputMetaData:
     integer_types = list(dtypes._thunder_to_torch_dtype_map[t] for t in dtypes.integer_dtypes)
     meta_ev = ExampleInputMetaData(
-        t.requires_grad, t.layout, t.device, t.dtype, _concrete_shape(t), _get_noncontiguous_shape(t), t.stride()
+        t.requires_grad, t.layout, t.device, t.dtype, _concrete_shape(t), _get_storage_shape(t), t.stride()
     )
     # For integer-type tensors, record the min/max values to enable creating a random integer tensor with the same range.
     if t.dtype in integer_types:
@@ -451,9 +473,22 @@ def _get_example_input_tensor_metadata(t):
     return meta_ev
 
 
-def _get_example_inputs_from_placeholder(node, only_metadata=False) -> tuple[torch.Tensor]:
+def _create_random_tensor_from_tensor_metadata(t: ExampleInputMetaData) -> torch.Tensor:
     from thunder.tests.make_tensor import make_tensor
 
+    return (
+        make_tensor(
+            t.storage_shape,
+            dtype=t.dtype,
+            device=t.device,
+            requires_grad=t.requires_grad,
+        ).as_strided(t.shape, t.stride()),
+    )
+
+
+def _get_example_inputs_from_placeholder(
+    node: torch.fx.Node, only_metadata=False
+) -> tuple[torch.Tensor | ExampleInputMetaData]:
     check(node.op == "placeholder", lambda: f"The node must be placeholder type", ValueError)
     # Prefers to use actual example value in GraphArg if available
     if "grapharg" in node.meta:
@@ -467,29 +502,15 @@ def _get_example_inputs_from_placeholder(node, only_metadata=False) -> tuple[tor
     example_value = node.meta["example_value"]
 
     if isinstance(example_value, torch.Tensor):
-        sz = _get_noncontiguous_shape(example_value)
+        ev_metadata = _get_example_input_tensor_metadata(example_value)
         if only_metadata:
-            return (_get_example_input_tensor_metadata(example_value),)
-        return (
-            make_tensor(
-                _get_noncontiguous_shape(example_value),
-                dtype=example_value.dtype,
-                device=example_value.device,
-                requires_grad=example_value.requires_grad,
-            ).as_strided(_concrete_shape(example_value), example_value.stride()),
-        )
+            return (ev_metadata,)
+        return (_create_random_tensor_from_tensor_metadata(ev_metadata),)
     elif isinstance(example_value, tuple):
+        ev_metadatas = tuple(_get_example_input_tensor_metadata(e_v) for e_v in example_value)
         if only_metadata:
-            return tuple(_get_example_input_tensor_metadata(e_v) for e_v in example_value)
-        return tuple(
-            make_tensor(
-                _get_noncontiguous_shape(e_v),
-                dtype=e_v.dtype,
-                device=e_v.device,
-                requires_grad=e_v.requires_grad,
-            ).as_strided(_concrete_shape(e_v), e_v.stride())
-            for e_v in example_value
-        )
+            return ev_metadatas
+        return tuple(_create_random_tensor_from_tensor_metadata(ev_metadata) for ev_metadata in ev_metadatas)
     else:
         raise TypeError(
             "The 'example_value' in the placeholder node is expected to be either a Tensor or a Tuple of Tensors."
@@ -614,7 +635,7 @@ class ExampleInputMetaData:
         return self.strides
 
 
-def arg_like_tensor_integer(arg: torch.Tensor | ExampleInputMetaData, f: typing.TextIO):
+def arg_like_tensor_integer(arg: torch.Tensor | ExampleInputMetaData, f: TextIO):
     """Creates a new argument like the given tensor, which must be an integer
     type. This is separated out because randn() does not work for integer
     types."""
@@ -626,41 +647,41 @@ def arg_like_tensor_integer(arg: torch.Tensor | ExampleInputMetaData, f: typing.
         max_val = max_val.cpu().item()
     else:
         min_val, max_val = arg.min_val, arg.max_val
-    storage_size = _get_noncontiguous_shape(arg) if isinstance(arg, torch.Tensor) else arg.storage_shape
+    storage_shape = _get_storage_shape(arg) if isinstance(arg, torch.Tensor) else arg.storage_shape
     # Sometimes the tensor can just be all the same value, in which case
     # randint() will complain that there's no "range" to the low/high params.
     # So we use a completely different method for tensor generation, then.
-    # if minmax[0].cpu().item() == minmax[1].cpu().item():
     if min_val == max_val:
         meta = f"data={min_val}, dtype={arg.dtype},"
         meta = f'{meta} device="{arg.device}", requires_grad={arg.requires_grad}'
-        print(f"  torch.tensor({meta}).broadcast_to({storage_size}).as_strided({arg.shape}, {arg.stride()}),", file=f)
+        print(f"  torch.tensor({meta}).broadcast_to({storage_shape}).as_strided({arg.shape}, {arg.stride()}),", file=f)
         return
     meta = f"low={min_val}, high={max_val},"
-    meta = f"{meta} size={storage_size},"
+    meta = f"{meta} size={storage_shape},"
     meta = f"{meta} dtype={arg.dtype}, layout={arg.layout},"
     meta = f'{meta} device="{arg.device}", requires_grad={arg.requires_grad}'
     print(f"  torch.randint({meta}).as_strided({arg.shape}, {arg.stride()}),", file=f)
 
 
-def arg_like_tensor(arg: torch.Tensor | ExampleInputMetaData, f: typing.TextIO):
+def arg_like_tensor(arg: torch.Tensor | ExampleInputMetaData, f: TextIO):
     """Creates a new argument like the given tensor"""
     itypes = list(dtypes._thunder_to_torch_dtype_map[t] for t in dtypes.integer_dtypes)
     assert arg.dtype not in itypes
-    storage_size = _get_noncontiguous_shape(arg) if isinstance(arg, torch.Tensor) else arg.storage_shape
+    storage_size = _get_storage_shape(arg) if isinstance(arg, torch.Tensor) else arg.storage_shape
     meta = f"size={storage_size},"
     meta = f"{meta} dtype={arg.dtype}, layout={arg.layout},"
     meta = f'{meta} device="{arg.device}", requires_grad={arg.requires_grad}'
     print(f"  torch.randn({meta}).as_strided({arg.shape}, {arg.stride()}),", file=f)
 
 
-def arg_like(arg: typing.Any, f: typing.TextIO):
+def arg_like(arg: Any, f: TextIO):
     """Creates a new argument that is similar to the given arg."""
     itypes = list(dtypes._thunder_to_torch_dtype_map[t] for t in dtypes.integer_dtypes)
-    if isinstance(arg, (torch.Tensor, ExampleInputMetaData)) and arg.dtype in itypes:
-        arg_like_tensor_integer(arg, f)
-    elif isinstance(arg, (torch.Tensor, ExampleInputMetaData)):
-        arg_like_tensor(arg, f)
+    if isinstance(arg, (torch.Tensor, ExampleInputMetaData)):
+        if arg.dtype in itypes:
+            arg_like_tensor_integer(arg, f)
+        else:
+            arg_like_tensor(arg, f)
     else:
         # Assume it's a literal that we can just print directly.
         print(f"  {arg},", file=f)
@@ -674,8 +695,8 @@ def _readable(
     include_device: bool = True,
     colored: bool = False,
 ):
-    """Modified from torch. This is basically print_readable but it sets
-    verbose=False (torch hardcodes it to True)."""
+    """Modified from `torch.fx.graph_module._print_readable` (https://github.com/pytorch/pytorch/blob/3192bdeea428f2bf3a95274ee59ea41c4f8e31e9/torch/fx/graph_module.py#L297).
+    This is basically print_readable but it sets verbose=False (torch hardcodes it to True)."""
     graph = module.graph
     assert graph is not None and isinstance(
         graph, torch.fx.Graph
@@ -727,7 +748,12 @@ def get_env() -> tuple[str, str]:
     return torch_env, thunder_packages
 
 
-def reproducer(gm: torch.fx.GraphModule, args: tuple[torch.Tensor], folder: str | os.PathLike, graph_idx: int):
+def reproducer(
+    gm: torch.fx.GraphModule,
+    args: tuple[torch.Tensor | ExampleInputMetaData],
+    folder: str | os.PathLike,
+    graph_idx: int,
+):
     # Ideally we'd use print_readable, but we want verbose=False and there's no
     # way to set that with print_readable.
     folder = Path(folder)

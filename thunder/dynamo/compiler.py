@@ -8,11 +8,12 @@ import torch
 
 from thunder.core.baseutils import run_once
 from thunder.core.utils import safe_zip
-from thunder.dynamo.utils import recompile_graph, remove_empty_autocast
+from thunder.dynamo.utils import recompile_graph, remove_empty_autocast, reproducer
 from thunder.dynamo.splitter import _splitter
 
 if TYPE_CHECKING:
     from thunder.dynamo.utils import SubgraphInfo
+    from os import PathLike
 
 
 @run_once
@@ -85,21 +86,19 @@ class ThunderCompiler:
         self.subgraph_infos.append(subgraph_info)
         return split_module
 
+    def save_reproducer_to_folder(self, reproducer_folder_name: str | PathLike):
+        if not self.subgraph_infos:
+            raise TypeError(f"{self} doesn't seem to have been called yet.")
 
-def save_reproducer_to_folder(backend: ThunderCompiler, reproducer_folder_name):
-    from thunder.dynamo.utils import reproducer, _get_example_inputs_from_placeholder
-    from thunder.core.module import ThunderModule
-
-    for graph_idx, subgraph_info in enumerate(backend.subgraph_infos):
-        thunder_module_names = []
-        for node in subgraph_info.split_graph_module.graph.nodes:
-            target = node.target
-            if isinstance(target, str) and target.startswith("thunder_"):
-                thunder_module_names.append(target)
-        thunder_modules = subgraph_info.thunder_compiled_fns
-        example_inputs = subgraph_info.thunder_compiled_fns_example_inputs
-        for cur_module, example_input, cur_name in safe_zip(thunder_modules, example_inputs, thunder_module_names):
-            assert isinstance(cur_module, ThunderModule) and hasattr(cur_module, "_model")
-            reproducer(
-                getattr(cur_module, "_model"), example_input, reproducer_folder_name, f"{graph_idx+1}_{cur_name}"
-            )
+        for graph_idx, subgraph_info in enumerate(self.subgraph_infos):
+            thunder_module_names = []
+            for node in subgraph_info.split_graph_module.graph.nodes:
+                target = node.target
+                if isinstance(target, str) and target.startswith("thunder_"):
+                    thunder_module_names.append(target)
+            thunder_modules = subgraph_info.thunder_compiled_fns
+            example_inputs = subgraph_info.thunder_compiled_fns_example_inputs
+            for cur_module, example_input, cur_name in safe_zip(thunder_modules, example_inputs, thunder_module_names):
+                reproducer(
+                    getattr(cur_module, "_model"), example_input, reproducer_folder_name, f"{graph_idx+1}_{cur_name}"
+                )
