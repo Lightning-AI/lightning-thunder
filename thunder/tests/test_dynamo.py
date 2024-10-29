@@ -605,8 +605,8 @@ def test_checkpoint_converter_submodule():
             x = checkpoint.checkpoint(self.sub_mod, x)
             return x
 
-    x = torch.randn(5, 10).cuda().requires_grad_()
-    model = SimpleModel().cuda().train()
+    x = torch.randn(5, 10, device="cuda", requires_grad=True)
+    model = SimpleModel().cuda()
     backend = ThunderCompiler()
     jf = torch.compile(backend=backend)(model)
     out = jf(x)
@@ -614,8 +614,6 @@ def test_checkpoint_converter_submodule():
     subgraph_info = backend.subgraph_infos[0]
     split_m = subgraph_info.split_graph_module
     submodule_name = "wrap_body_0"
-    assert hasattr(split_m, submodule_name)
-
     submodule = getattr(split_m, submodule_name)
 
     for n in submodule.graph.nodes:

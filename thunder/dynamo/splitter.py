@@ -144,7 +144,7 @@ def _splitter(
     for node in split_gm.graph.nodes:
         if is_thunder_supported_partition(node):
             graph_module = getattr(split_gm, node.name)
-            # Replace the torch operators within the function called by activation checkpoint with the corresponding Thunder symbols
+            # Replace PyTorch operators within the checkpointed function with the corresponding Thunder operators
             checkpoint_converter(split_gm, graph_module)
             jit_fn = thunder_jit(graph_module)
             # Update the node name from "submod_*" to "thunder_*" for more user-friendly names

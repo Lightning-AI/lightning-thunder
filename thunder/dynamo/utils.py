@@ -13,7 +13,6 @@ from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.torch.langctx import torchctx
 from thunder.core.utils import check
-from thunder.core.pytree import tree_map
 
 if TYPE_CHECKING:
     from thunder.core.symbol import Symbol
@@ -328,7 +327,7 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
         )
         return False, split_reason
 
-    # If the operation is higher order function for checkpointing, check whether the submodule is supported by Thunder
+    # The checkpointed function must be fully supported by Thunder
     if target is torch.ops.higher_order.tag_activation_checkpoint:
         m = node.graph.owning_module
         assert hasattr(m, node.args[0].name)
@@ -452,9 +451,10 @@ def _get_example_inputs_from_placeholder(node) -> tuple[torch.Tensor]:
 
 def _checkpoint_function_converter(gm: torch.fx.GraphModule):
     """
-    Replace the Torch operators in the GraphModule called by activation checkpoint operator with the corresponding Thunder symbols in place
+    Replace PyTorch operators in ``gm`` representing a checkpointed function with corresponding Thunder operators. The input ``gm`` is modified inplace.
+
     Args:
-        gm: The GraphModule of the checkpointed function, which is modified in place
+        gm (torch.fx.GraphModule): The GraphModule of the checkpointed function, which is modified inplace.
     """
     new_graph = copy.deepcopy(gm.graph)
     for n in new_graph.nodes:
@@ -496,7 +496,5 @@ def checkpoint_converter(gm: torch.fx.GraphModule, sub_gm: torch.fx.GraphModule)
     for n in sub_gm.graph.nodes:
         if n.op == "call_function":
             if n.target in (torch.ops.higher_order.tag_activation_checkpoint,):
-                name = n.args[0].name
-                assert hasattr(gm, name)
-                function_module = getattr(gm, name)
+                function_module = getattr(gm, n.args[0].name)
                 _checkpoint_function_converter(function_module)
