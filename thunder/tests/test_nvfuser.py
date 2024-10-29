@@ -1081,8 +1081,8 @@ def test_sdpa(
 
 @thunder.tests.framework.requiresNVFuser
 def test_nvfuser_repro_print(capsys):
-    if nvfuser_version() < LooseVersion("0.2.14"):
-        pytest.skip("Need nvFuser >= 0.2.14")
+    if nvfuser_version() < LooseVersion("0.2.22"):
+        pytest.skip("Need nvFuser >= 0.2.22")
 
     def foo(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
         t0 = torch.add(a, b)

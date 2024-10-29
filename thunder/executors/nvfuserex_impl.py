@@ -445,7 +445,7 @@ class FusionDefinitionWrapper:
     print_repro: bool = False
     # Pre-generated so that we don't construct a LooseVersion on the critical
     # path.
-    repro_version_needed = LooseVersion("0.2.14")
+    repro_version_needed = LooseVersion("0.2.22")
 
     def __call__(self, *args):
         fd = self.get_fd(self.to_descriptors(args))
