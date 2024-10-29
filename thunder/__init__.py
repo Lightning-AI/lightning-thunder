@@ -40,6 +40,7 @@ from thunder.core.functionalization import (
     check_inplace_to_views,
     functionalize_inplace_ops,
 )
+from thunder.core.recipe import Recipe, Lookaside
 from thunder.common import (
     CompileData,
     CompileStats,
@@ -264,6 +265,13 @@ CacheEntry = namedtuple(
         "vanilla_tensor_args",
     ],
 )
+
+
+def compile(fn: Callable, recipe: Recipe | None):
+    if recipe is None:
+        return thunder.jit(fn)
+
+    return recipe.apply(fn)
 
 
 # This function will replace compile() (below) before RC1
