@@ -550,7 +550,6 @@ Tells NVIDIA libraries to print out reproductions for cases. This is largely
 for creating bug reports that can be independent of the full network.
 """
     print_repro: None | bool = get_compile_option("nv_print_repro", repro_help)
-    print(f"PRINT repro: {print_repro}")
     print_repro: bool = print_repro if isinstance(print_repro, bool) else False
 
     tensor_indices = []
