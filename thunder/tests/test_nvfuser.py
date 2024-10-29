@@ -1077,3 +1077,29 @@ def test_sdpa(
     ref_outputs = (ref_attn_out, *(inp.grad for inp in ref_tensor_inputs))
     for nv_out, ref_out in zip(nv_outputs, ref_outputs):
         torch.testing.assert_close(nv_out, ref_out)
+
+@thunder.tests.framework.requiresNVFuser
+def test_nvfuser_repro_print(capsys):
+    def foo(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+        t0 = torch.add(a, b)
+        t1 = torch.mul(t0, 0.424242)
+        return t1
+    func = thunder.jit(
+        foo,
+        nv_print_repro=True
+    )
+    tx = torch.randn((42), device='cuda')
+    ty = torch.randn((42), device='cuda')
+    func(tx, ty)
+    captured = capsys.readouterr()
+    assert "fd.define_tensor" in captured.out, "nv_print_repro not taken"
+
+    func2 = thunder.jit(foo, nv_print_repro=False)
+    func2(tx, ty)
+    captured = capsys.readouterr()
+    assert "fd.define_tensor" not in captured.out, "nv_print_repro always on?"
+
+    func3 = thunder.jit(foo)
+    func3(tx, ty)
+    captured = capsys.readouterr()
+    assert "fd.define_tensor" not in captured.out, "nv_print_repro default"

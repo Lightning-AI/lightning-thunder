@@ -442,6 +442,7 @@ class FusionDefinitionWrapper:
     last_used: None | FusionDefinition = None
     last_inputs: None | Sequence[tuple] = None
     store_inputs: bool = False
+    print_repro: bool = False
 
     def __call__(self, *args):
         fd = self.get_fd(self.to_descriptors(args))
@@ -453,7 +454,7 @@ class FusionDefinitionWrapper:
         # Set device if set in one of the "factory" methods like full, iota, or uniform
         kwargs = {"device": fd._selected_device} if hasattr(fd, "_selected_device") else {}
         with add_markers(self.name):
-            return fd.execute(args, **kwargs)
+            return fd.execute(args, **kwargs, print_repro=self.print_repro)
 
     def __repr__(self):
         return f"FusionDefinitionWrapper({self.name})"
@@ -544,6 +545,13 @@ def create_fusion_definition_wrapper(
     store_inputs: None | bool = get_compile_option(
         "nv_store_fusion_inputs", "Allow nvFuser to store fusion inputs for repro."
     )
+    repro_help = """\
+Tells NVIDIA libraries to print out reproductions for cases. This is largely
+for creating bug reports that can be independent of the full network.
+"""
+    print_repro: None | bool = get_compile_option("nv_print_repro", repro_help)
+    print(f"PRINT repro: {print_repro}")
+    print_repro: bool = print_repro if isinstance(print_repro, bool) else False
 
     tensor_indices = []
     for idx, x in enumerate(sorted_unique_inputs):
@@ -565,6 +573,7 @@ def create_fusion_definition_wrapper(
         get_fd.cache_info,
         get_fd.cache_clear,
         store_inputs=store_inputs,
+        print_repro=print_repro,
     )
     return fdw
 
