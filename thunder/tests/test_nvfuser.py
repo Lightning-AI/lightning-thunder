@@ -1081,14 +1081,18 @@ def test_sdpa(
 
 @thunder.tests.framework.requiresNVFuser
 def test_nvfuser_repro_print(capsys):
+    if nvfuser_version() < LooseVersion("0.2.14"):
+      pytest.skip("Need nvFuser >= 0.2.14")
+
     def foo(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
         t0 = torch.add(a, b)
         t1 = torch.mul(t0, 0.424242)
         return t1
 
-    func = thunder.jit(foo, nv_print_repro=True)
     tx = torch.randn((42), device="cuda")
     ty = torch.randn((42), device="cuda")
+
+    func = thunder.jit(foo, nv_print_repro=True)
     func(tx, ty)
     captured = capsys.readouterr()
     assert "fd.define_tensor" in captured.out, "nv_print_repro not taken"
