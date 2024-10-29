@@ -819,8 +819,9 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
 
         print(f"Average iter time: {benchmark.perf_metrics['average_iter_time']:.2f} ms")
         print(f"Memory used: {benchmark.perf_metrics['memory_used_GB']:.02f} GB")
-        print(f"Tokens/s: {benchmark.perf_metrics['tokens_per_sec']:.02f}")
-        print(f"Tokens/s/GPU: {(benchmark.perf_metrics['tokens_per_sec']/world_size):.02f}")
+        if "tokens_per_sec" in benchmark.perf_metrics:
+            print(f"Tokens/s: {benchmark.perf_metrics.get['tokens_per_sec']:.02f}")
+            print(f"Tokens/s/GPU: {(benchmark.perf_metrics['tokens_per_sec']/world_size):.02f}")
         print(f"TFLOP/s: {benchmark.perf_metrics['model_flop_per_sec'] / 1e12:.02f}")
 
         if benchmark.dump_memory_snapshot:
