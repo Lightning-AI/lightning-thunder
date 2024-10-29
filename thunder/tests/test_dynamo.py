@@ -613,9 +613,35 @@ def test_checkpoint_converter_submodule():
 
     subgraph_info = backend.subgraph_infos[0]
     split_m = subgraph_info.split_graph_module
-    submodule_name = "wrap_body_0"
-    submodule = getattr(split_m, submodule_name)
 
+    def find_target_module(model, target_module_name):
+        if hasattr(model, target_module_name):
+            return getattr(model, target_module_name)
+        for submodule in model.children():
+            cur = find_target_module(submodule, target_module_name)
+            if cur is not None:
+                return cur
+        return None
+
+    submodule_name = "wrap_body_0"
+    # 2.6.0a0+git9ca749d, split_m:
+    # GraphModule(
+    #     (thunder_1): ThunderModule(
+    #         (_model): GraphModule(
+    #             (wrap_body_0): GraphModule()
+    #         )
+    #     )
+    # )
+    #
+    # torch 2.4.0
+    # GraphModule(
+    #     (wrap_body_0): GraphModule()
+    #     (thunder_1): ThunderModule(
+    #         (_model): GraphModule()
+    #     )
+    # )
+    submodule = find_target_module(split_m, submodule_name)
+    assert submodule is not None
     for n in submodule.graph.nodes:
         if n.op == "call_function":
             assert isinstance(n.target, Symbol)

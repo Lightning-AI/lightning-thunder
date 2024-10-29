@@ -330,8 +330,9 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
     # The checkpointed function must be fully supported by Thunder
     if target is torch.ops.higher_order.tag_activation_checkpoint:
         m = node.graph.owning_module
-        assert hasattr(m, node.args[0].name)
-        checkpointed_fn = getattr(m, node.args[0].name)
+        get_attr_node = node.args[0]
+        assert get_attr_node.op == "get_attr"
+        checkpointed_fn = getattr(m, get_attr_node.target)
         is_module_supported, split_reason = is_graphmodule_supported_by_thunder(checkpointed_fn)
         return is_module_supported, split_reason
 
@@ -496,5 +497,9 @@ def checkpoint_converter(gm: torch.fx.GraphModule, sub_gm: torch.fx.GraphModule)
     for n in sub_gm.graph.nodes:
         if n.op == "call_function":
             if n.target in (torch.ops.higher_order.tag_activation_checkpoint,):
-                function_module = getattr(gm, n.args[0].name)
+                checkpoint_target_node = n.args[0]
+                if checkpoint_target_node.op == "get_attr":
+                    function_module = getattr(checkpoint_target_node.graph.owning_module, checkpoint_target_node.target)
+                else:
+                    function_module = getattr(gm, n.args[0].name)
                 _checkpoint_function_converter(function_module)
