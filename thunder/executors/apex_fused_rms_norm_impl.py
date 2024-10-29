@@ -14,6 +14,11 @@ from thunder.executors.apexex import apex_ex
 
 APEX_FUSED_NORMS_AVAILABLE = True
 try:
+    # Fused layer norm is only importable if torch.distributed is available
+    # https://github.com/NVIDIA/apex/issues/1853
+    from torch.distributed import is_available
+    if not is_available():
+        raise ImportError
     import fused_layer_norm_cuda
     from apex.normalization.fused_layer_norm import FusedRMSNormAffineMixedDtypesFunction
 except ImportError:
