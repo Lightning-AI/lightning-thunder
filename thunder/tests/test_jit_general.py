@@ -680,6 +680,8 @@ def test_litgpt_variants(name, device):
 
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
+    if device == "cuda" and name == "falcon-7b-like":
+        pytest.skip("NVFuser reenable when https://github.com/NVIDIA/Fuser/issues/3292 is fixed")
 
     device = torch.device(device)
 
