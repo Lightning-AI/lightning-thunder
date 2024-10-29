@@ -13,8 +13,18 @@ from looseversion import LooseVersion
 import thunder.core.utils as utils
 from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
-from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten
-from thunder.core.proxies import Variable, variableify, Proxy, unvariableify
+from thunder.core.transforms import bsym_list_to_dag, toposort_bsym_dag, TOPOSORT_ORDER
+from thunder.torch import _syms_returning_views, _syms_that_may_return_views
+from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten, tree_iter
+from thunder.core.proxies import (
+    Variable,
+    variableify,
+    Proxy,
+    unvariableify,
+    TensorProxy,
+    CollectionProxy,
+    FutureTensorProxy,
+)
 from thunder.core.prims import PrimIDs
 from thunder.core.transform_common import order_proxies
 from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
@@ -283,21 +293,9 @@ def _fused_sdp_choice(
 
 
 # bottom-up, always choose the bsym allocates the maximum memory in the topological equal node list.
-# assumes the output is allocated by the current bsym, the input has no other consumer then the current bsym is freed
 # assumes alias bsyms(e.g. reshape) cause no memory changes
 # keeps the original position of the return, unpack bsyms
 def memory_efficient_sorting(trace):
-    from thunder.core.transforms import bsym_list_to_dag, toposort_bsym_dag, TOPOSORT_ORDER
-    from thunder.examine.memory_caculation import (
-        memory_calculate_skip_list,
-        thunder_alias_operator_list,
-        tree_iter,
-        TensorProxy,
-        CollectionProxy,
-        FutureTensorProxy,
-    )
-    from functools import partial
-
     def get_size(t):
         res = 0
         if isinstance(t, CollectionProxy):
@@ -309,56 +307,42 @@ def memory_efficient_sorting(trace):
             res = t.numel * t.dtype.bytes
         return res
 
-    consumers = utils.consumers(trace)
-    out_names = []
-    flat_outs, _ = tree_flatten(trace.output)
-    list(out_names.append(out.name) for out in flat_outs if isinstance(out, Proxy))
+    out_names = {out.name for out in tree_flatten(trace.output)[0] if isinstance(out, Proxy)}
 
     def memory_selector(nodes):
-        # import pdb;pdb.set_trace()
         max_idx = 0
-        # min_val = float('+inf')
         max_val = float("-inf")
         for idx, node in enumerate(nodes):
             val = 0
-            if node.bsym.sym.id in memory_calculate_skip_list:
+            if node.bsym.sym.id in (PrimIDs.RETURN, PrimIDs.UNPACK_TRIVIAL, PrimIDs.UNPACK_SEQUENCE):
                 return idx
-            if node.bsym.sym.id in thunder_alias_operator_list:
+            if node.bsym.sym in chain(_syms_returning_views, _syms_that_may_return_views):
                 val = 0
             else:
                 for t in node.bsym.flat_proxy_outs:
                     val += get_size(t)
-                # skip the same input proxy, e.g. add(t0,t0)
                 arg_names = set()
-                for arg in node.bsym.flat_proxy_args:
-                    if arg.name in arg_names or arg.name in out_names:
+                for arg in chain(node.bsym.flat_proxy_args, node.bsym.flat_proxy_outs):
+                    if arg.name in out_names or arg.name in arg_names:
                         continue
-                    # consumers[t0] has duplicated bsyms
-                    if len(consumers[arg]) == 1 or (
-                        len(consumers[arg]) > 1 and all(consumers[arg][0] == cons for cons in consumers[arg])
-                    ):
-                        val -= get_size(arg)  # arg.numel* arg.dtype.bytes
-                        arg_names.add(arg.name)
-            # if val<min_val:
-            #     min_val = val
-            #     min_idx = idx
+                    val -= get_size(arg)  # arg.numel* arg.dtype.bytes
+                    arg_names.add(arg.name)
             if val > max_val:
                 max_val = val
                 max_idx = idx
-        # print(min_idx)
         bsym = nodes[max_idx].bsym
-        for arg in bsym.flat_proxy_args:
-            if bsym in consumers[arg]:
-                consumers[arg].remove(bsym)
+        for arg in chain(bsym.flat_proxy_args, bsym.flat_proxy_outs):
+            out_names.add(arg.name)
         return max_idx
 
+    utils.check(
+        not any(bsym.sym.id is PrimIDs.DEL for bsym in trace.bound_symbols),
+        lambda: "Cannot sort execution trace with del nodes",
+    )
     new_trace = from_trace(trace)
-    from thunder.core.transforms import bsym_list_to_dag, toposort_bsym_dag, TOPOSORT_ORDER
-
     new_trace.bound_symbols = toposort_bsym_dag(
         bsym_list_to_dag(trace.bound_symbols)[1],
         TOPOSORT_ORDER.BOTTOM_UP,
         selector=memory_selector,
     )
-    # import pdb;pdb.set_trace()
     return new_trace
