@@ -426,6 +426,8 @@ def to_descriptors(proxy_args, args) -> tuple:
 
     return tuple(to_descriptor(proxy_arg, arg) for proxy_arg, arg in zip(proxy_args, args))
 
+# Pre-generated so that we don't construct a LooseVersion on the critical path.
+_repro_version_needed = LooseVersion("0.2.22")
 
 # TODO Consider making this just a function, because it's faster to call a function than a callable class
 @dataclass
@@ -443,9 +445,6 @@ class FusionDefinitionWrapper:
     last_inputs: None | Sequence[tuple] = None
     store_inputs: bool = False
     print_repro: bool = False
-    # Pre-generated so that we don't construct a LooseVersion on the critical
-    # path.
-    repro_version_needed = LooseVersion("0.2.22")
 
     def __call__(self, *args):
         fd = self.get_fd(self.to_descriptors(args))
@@ -456,7 +455,7 @@ class FusionDefinitionWrapper:
 
         # Set device if set in one of the "factory" methods like full, iota, or uniform
         kwargs = {"device": fd._selected_device} if hasattr(fd, "_selected_device") else {}
-        if nvfuser_version() >= self.repro_version_needed:
+        if nvfuser_version() >= _repro_version_needed:
             kwargs["print_repro"] = self.print_repro
         with add_markers(self.name):
             return fd.execute(args, **kwargs)
