@@ -687,6 +687,21 @@ class Benchmark_litGPT:
                     logits = self.model(input_ids)
             else:
                 logits = self.model(input_ids)
+            # This information is accurate only in the case when torch.compile
+            # uses a single graph for the entire forward pass In the case of
+            # torch.compile using multiple graphs, the saved_tensors will be
+            # from the last graph For Thunder, the saved_tensors will be from
+            # its only graph There's no easy way to get the saved_tensors from
+            # the entire forward pass in the case of multiple graphs or PyTorch
+            # Eager mode. It's still useful for single-GPU and single-graph
+            # cases.
+            saved_tensors = getattr(logits.grad_fn, "saved_tensors", None)
+            saved_tensors_len = None
+            saved_tensors_size_in_mib = None
+            if saved_tensors:
+                saved_tensors_len = len([t for t in saved_tensors if t is not None])
+                saved_tensors_size_in_mib = sum(t.numel() * t.element_size() for t in saved_tensors if t is not None) / 1024 ** 2
+                del saved_tensors
             logits = logits.reshape(-1, logits.size(-1))
             targets = targets.reshape(-1)
             loss = (
@@ -727,6 +742,8 @@ class Benchmark_litGPT:
         if global_rank in [0, None]:
             # print(f"Total time: {(t1 - t0):.2f}s")
             self.perf_metrics["average_iter_time"] = ((t1 - t0) * 1000) / (self.max_iters - self.warmup_iters)
+            self.perf_metrics["saved_for_backward_tensor_size_mib"] = saved_tensors_size_in_mib
+            self.perf_metrics["saved_for_backward_number_of_tensors"] = saved_tensors_len
 
     def add_perf_metrics(self):
         if self.throughput:
@@ -819,6 +836,10 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
 
         print(f"Average iter time: {benchmark.perf_metrics['average_iter_time']:.2f} ms")
         print(f"Memory used: {benchmark.perf_metrics['memory_used_GB']:.02f} GB")
+        if benchmark.perf_metrics['saved_for_backward_tensor_size_mib'] is not None:
+            print(f"Saved for backward size: {benchmark.perf_metrics['saved_for_backward_tensor_size_mib']:.02f} MiB")
+            print(f"Saved for backward number of tensors: {benchmark.perf_metrics['saved_for_backward_number_of_tensors']}")
+
         if "tokens_per_sec" in benchmark.perf_metrics:
             print(f"Tokens/s: {benchmark.perf_metrics.get['tokens_per_sec']:.02f}")
             print(f"Tokens/s/GPU: {(benchmark.perf_metrics['tokens_per_sec']/world_size):.02f}")
