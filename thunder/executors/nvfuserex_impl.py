@@ -2241,6 +2241,7 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
 
 def _linear_check(a: TensorProxy, b: TensorProxy, bias: TensorProxy | None) -> bool:
     enable_linear: None | bool = get_compile_option("nv_enable_linear", "Enable nvFuser linear.")
+    enable_linear = enable_linear if enable_linear is not None else True
     if not enable_linear:
         return False
     # Verify linear inputs and bias (optional) are supported tensors.
