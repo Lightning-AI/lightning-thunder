@@ -70,7 +70,7 @@ from thunder.core.proxies import (
 )
 from thunder.core.interpreter import print_interpreter_log, print_to_log
 from thunder.core.jit_ext import thunder_general_jit
-from thunder.executors.torch_autograd import split_forward_backward, ThunderFunction
+from thunder.executors.torch_autograd import transform_for_torch_autograd
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
@@ -258,7 +258,6 @@ CacheEntry = namedtuple(
         "computation_traces",
         "epilogue_fn",
         "epilogue_traces",
-        "backward_fn",
         "backward_traces",
         "return_none_instead_of_grads",
         "vanilla_tensor_args",
@@ -361,6 +360,7 @@ def jit(
         compile_options=compile_options,
         executor_lookasides=executor_lookasides,
     )
+    # cd.post_optimization_transforms = post_optimization_transforms
     cs = CompileStats()
 
     def _alias_tensor_of_args_kwargs_dict(*args, **kwargs) -> dict[int, list[int]]:
@@ -430,7 +430,7 @@ def jit(
 
             no_grad_sync = get_skip_data_parallel_grad_sync()
         cache_info["no_grad_sync"] = no_grad_sync
-        return_none_instead_of_grads = is_fsdp_enabled and no_grad_sync
+        cd.return_none_instead_of_grads = is_fsdp_enabled and no_grad_sync
 
         # NOTE(crcrpar): If a callable is free from in-place ops whose operand is args and/or their views
         # alaises wouldn't matter, thus it'd be better to nullify this entry in such cases.
@@ -452,7 +452,6 @@ def jit(
                         comp_traces,
                         epilogue,
                         epilogue_traces,
-                        backward_fn,
                         backward_traces,
                         _return_none_instead_of_grads,
                         _vanilla_args,
@@ -491,7 +490,6 @@ def jit(
                     comp_traces,
                     epilogue,
                     epilogue_traces,
-                    backward_fn,
                     backward_traces,
                 ) = cache_entry
 
@@ -644,7 +642,7 @@ def jit(
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
 
-            backward_trc = None
+            used_torch_autograd = False
             if not cd.disable_torch_autograd_support:
                 tensor_cls = (pytorch.Tensor, TensorProxy)
                 requires_grad = any(isinstance(arg, tensor_cls) and arg.requires_grad for arg in inps)
@@ -654,11 +652,13 @@ def jit(
                     # transform_for_execution and various sorting of symbols,
                     # applying transform_for_execution after this would be
                     # breaking the order of operations
-                    computation_trc, backward_trc = split_forward_backward(computation_trc, cd, cs, *inps)
+                    computation_trc = transform_for_torch_autograd(computation_trc, cd, cs, *inps)
                     # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
                     # by split_forward_backward
+                    extraces = cs.last_traces
+                    used_torch_autograd = True
 
-            if backward_trc is None:
+            if not used_torch_autograd:
                 from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
                 from thunder.executors.passes import _transform_for_operator_executor_execution
                 from thunder.distributed.utils import maybe_sort_waits
@@ -666,18 +666,16 @@ def jit(
                 tmp_comp_trc = _transform_for_operator_executor_execution(computation_trc, cd.executors_list)
                 is_transformed, tmp_comp_trc = maybe_sort_waits(tmp_comp_trc)
                 if is_transformed:
-                    computation_trc = tmp_comp_trc
                     computation_traces.append(computation_trc)
 
                 extraces = transform_for_execution(
                     computation_trc,
                     executors_list=cd.executors_list,
-                    use_del_last_used=False,
                 )
                 computation_traces.extend(extraces)
                 computation_trc = computation_traces[-1]
 
-            if backward_trc is None:
+            if not used_torch_autograd:
                 computation_trc = thunder.executors.passes.del_last_used(computation_trc)
 
             if not compile_options.get("disable_inplace_copy_check", False):
@@ -685,28 +683,22 @@ def jit(
                 computation_traces.append(computation_trc)
 
             for transform in transforms:
-                # NOTE: `backward_trc` could be None.
                 new_computation_trc = transform.transform_trace_post_optimization(
                     computation_trc, executors_list=cd.executors_list
                 )
                 if new_computation_trc is not computation_trc:
                     computation_trc = new_computation_trc
                     computation_traces.append(computation_trc)
-                if backward_trc is not None:
-                    new_backward_trc = transform.transform_trace_post_optimization(
-                        backward_trc, executors_list=cd.executors_list
-                    )
-                    if new_backward_trc is not backward_trc:
-                        backward_trc = new_backward_trc
-                        backward_traces.append(backward_trc)
+                # if backward_trc is not None:
+                #     new_backward_trc = transform.transform_trace_post_optimization(
+                #         backward_trc, executors_list=cd.executors_list
+                #     )
+                #     if new_backward_trc is not backward_trc:
+                #         backward_trc = new_backward_trc
+                #         backward_traces.append(backward_trc)
 
-            if backward_trc is not None:
-                backward_fn = backward_trc.python_callable()
-            else:
-                backward_fn = None
-                # We do not have to return auxiliary tensors, which will only be useful in backward pass
-                computation_trc = unwrap_return_value(computation_trc)
-                computation_traces.append(computation_trc)
+            computation_trc = unwrap_return_value(computation_trc)
+            computation_traces.append(computation_trc)
 
             computation_trc = transform_to_torch_types(computation_trc)
             comp = computation_trc.python_callable()
@@ -719,9 +711,8 @@ def jit(
                 computation_traces,
                 epilogue,
                 epilogue_traces,
-                backward_fn,
                 backward_traces,
-                return_none_instead_of_grads,
+                cd.return_none_instead_of_grads,
                 vanilla_tensor_args,
             )
             if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
@@ -756,21 +747,6 @@ def jit(
                 )
 
         result = cache_entry.computation_fn(*inps)
-
-        if cache_entry.backward_fn:
-            # Run the compiled forward function
-            data_for_autograd, (saved_tensors, saved_other) = result
-
-            # Connect produced tensors with PyTorch's autograd graph
-            ThunderFunction.apply(
-                cache_entry.return_none_instead_of_grads,
-                cache_entry.backward_fn,
-                saved_tensors,
-                saved_other,
-                data_for_autograd["flat_output"],
-                *data_for_autograd["flat_args"],
-            )
-            result = data_for_autograd["output"]
 
         if cache_entry.epilogue_fn:
             result, comp_to_epi = result

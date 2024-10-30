@@ -698,7 +698,7 @@ class FSDPCommBucketing:
         check_num_comm_and_wait(updated_bwd_trace, _ALL_GATHER_SYM_IDS | _REDUCE_SCATTER_SYM_IDS)
         return updated_bwd_trace
 
-    def apply_bucketing_to_backward_trace(self, fsdp_bwd_trace: TraceCtx) -> TraceCtx:
+    def apply_bucketing_to_backward_trace(self, fsdp_fwd_trace: TraceCtx) -> TraceCtx:
         """Apply bucketing to reduce_scatter in fsdp bwd trace.
 
         1. Collect unsharded gradient tensor proxies and create buckets for them based on forward's buckets' name.
@@ -716,6 +716,9 @@ class FSDPCommBucketing:
         Returns:
             - :class:`TraceCtx`
         """
+        from thunder.transforms.torch_autograd import get_backward, set_backward
+
+        fsdp_bwd_trace = get_backward(fsdp_fwd_trace)
 
         if get_skip_data_parallel_grad_sync():
             utils.check(
@@ -724,18 +727,20 @@ class FSDPCommBucketing:
             )
             if self.requires_bwd_bucketing_allgather:
                 fsdp_bwd_trace = self._apply_bucketing_to_backward_all_gather(fsdp_bwd_trace)
-            return stash_unsharded_grads_and_return_none_as_grads(
+            fsdp_bwd_trace = stash_unsharded_grads_and_return_none_as_grads(
                 fsdp_bwd_trace,
                 self.compile_data,
                 self.index_to_fqn,
             )
+            return set_backward(fsdp_fwd_trace, fsdp_bwd_trace)
 
         if not self.apply_bucketing:
-            return fsdp_bwd_trace
+            return fsdp_fwd_trace
 
         # Apply bucketing to parameter unsharding (= AllGather)
         if self.requires_bwd_bucketing_allgather:
             fsdp_bwd_trace = self._apply_bucketing_to_backward_all_gather(fsdp_bwd_trace)
 
         # Apply bucketing to gradient sharding (= ReduceScatter)
-        return self._apply_bucketing_to_backward_reduce_scatter(fsdp_bwd_trace)
+        fsdp_bwd_trace = self._apply_bucketing_to_backward_reduce_scatter(fsdp_bwd_trace)
+        return set_backward(fsdp_fwd_trace, fsdp_bwd_trace)
