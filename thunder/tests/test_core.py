@@ -2981,3 +2981,42 @@ def test_profiling_decorator():
         baz(torch.randn(19))
 
     foo()
+
+
+def test_saved_view_of_output_of_autograd_function_does_not_leak():
+    # Verify that we have side-stepped the bug in torch.autograd.Function
+    # where saving a view of the output for backward leads to leak.
+    # See NOTE [Saved view of output of torch.autograd.Function leaks]
+    def fn(idx, weight):
+        tok_emb = torch.nn.functional.embedding(idx, weight)
+        emb = torch.reshape(tok_emb, (2, 32))
+        matmul = emb @ emb.T
+        return tok_emb, matmul
+
+    weight = make_tensor((16, 32), dtype=torch.float, device="cpu", requires_grad=True)
+    x = make_tensor((1, 2), dtype=torch.int64, low=0, high=10, device="cpu")
+
+    jfn = thunder.jit(fn)
+
+    # Computation Trace for jfn
+    # We save view of the output `tok_emb` for backward.
+    # @torch.no_grad()
+    # @no_autocast
+    # def computation(idx, t_wte_weight):
+    #   # idx: "cuda:0 i64[1, 2]"
+    #   # t_wte_weight: "cuda:0 f32[16, 32]"
+    #   tok_emb = torch.nn.functional.embedding(idx, t_wte_weight, None, None, 2.0, False, False)  # tok_emb: "cuda:0 f32[1, 2, 32]"
+    #   [emb, t4] = nvFusion0(tok_emb)
+    #       # emb = prims.reshape(tok_emb, (2, 32))  # emb: "cuda:0 f32[2, 32]"
+    #       # t4 = prims.transpose(emb, (1, 0))  # t4: "cuda:0 f32[32, 2]"
+    #   matmul = torch.matmul(emb, t4)  # matmul: "cuda:0 f32[2, 2]"
+    #   return {'output': (tok_emb, matmul), 'flat_args': [idx, t_wte_weight], 'flat_output': (tok_emb, matmul)}, ((emb, idx, t4), ())
+
+    prev_iter_refs = []
+    for iter_n in range(4):
+        tok_emb, _ = jfn(x, weight)
+        if iter_n < 3:
+            prev_iter_refs.append(weakref.ref(tok_emb))
+
+    for ref in prev_iter_refs:
+        assert ref() is None
