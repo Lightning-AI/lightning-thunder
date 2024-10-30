@@ -378,6 +378,11 @@ def test_saved_for_backward_recomputation():
     cd = thunder.compile_data(jmodel)
     cs = thunder.compile_stats(jmodel)
 
+    from copy import copy
+
+    fwd_names = fwd_trace.names
+    bwd_names = bwd_trace.names
+
     # Do not recompute any
     cd.compile_options["recomputation_policy"] = lambda x: set()
     with compile_data_and_stats(cd, cs):
@@ -408,6 +413,11 @@ def test_saved_for_backward_recomputation():
     old_saved_for_bwd = {variableify(j) for j in saved_for_bw}
 
     all_rematerializable = old_saved_for_bwd - fwd_trace_args
+    all_rematerializable_names = {f"remat_for_{unvariableify(x).name}" for x in all_rematerializable}
+
+    # Reset names to avoid conflicts
+    fwd_trace.names = copy(fwd_names)
+    bwd_trace.names = copy(bwd_names)
 
     cd.compile_options["recomputation_policy"] = lambda x: x
     with compile_data_and_stats(cd, cs):
@@ -416,27 +426,30 @@ def test_saved_for_backward_recomputation():
     # List the outputs after the unpacks
     bwd_bsym_out = set(
         map(
-            lambda x: variableify(x.output),
+            lambda x: x.output.name,
             filter(lambda x: isinstance(x.output, TensorProxy), new_bwd.bound_symbols[6:]),
         )
     )
     # check that all the fwd are recomputed
-    for rematerializable in all_rematerializable:
+    for rematerializable in all_rematerializable_names:
         assert rematerializable in bwd_bsym_out
+
+    # Reset names to avoid conflicts
+    fwd_trace.names = copy(fwd_names)
+    bwd_trace.names = copy(bwd_names)
 
     # Recompute only one tensor
     cd.compile_options["recomputation_policy"] = lambda x: set(filter(lambda i: unvariableify(i).name == "t7", x))
-    t7 = set(filter(lambda x: unvariableify(x).name == "t7", all_rematerializable))
     with compile_data_and_stats(cd, cs):
         _, new_bwd = recompute_saved_for_backward(fwd_trace, bwd_trace)
 
     bwd_bsym_out = set(
         map(
-            lambda x: variableify(x.output),
+            lambda x: x.output.name,
             filter(lambda x: isinstance(x.output, TensorProxy), new_bwd.bound_symbols[6:]),
         )
     )
-    assert t7 not in bwd_bsym_out, "Unexpected tensor rematerialized in the backward."
+    assert "remat_for_t7" in bwd_bsym_out, "Unexpected tensor rematerialized in the backward."
 
 
 def test_lora_transform_linear():
