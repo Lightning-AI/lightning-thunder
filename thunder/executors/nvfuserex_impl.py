@@ -426,8 +426,10 @@ def to_descriptors(proxy_args, args) -> tuple:
 
     return tuple(to_descriptor(proxy_arg, arg) for proxy_arg, arg in zip(proxy_args, args))
 
+
 # Pre-generated so that we don't construct a LooseVersion on the critical path.
 _repro_version_needed = LooseVersion("0.2.22")
+
 
 # TODO Consider making this just a function, because it's faster to call a function than a callable class
 @dataclass
