@@ -700,7 +700,9 @@ class Benchmark_litGPT:
             saved_tensors_size_in_mib = None
             if saved_tensors:
                 saved_tensors_len = len([t for t in saved_tensors if t is not None])
-                saved_tensors_size_in_mib = sum(t.numel() * t.element_size() for t in saved_tensors if t is not None) / 1024 ** 2
+                saved_tensors_size_in_mib = (
+                    sum(t.numel() * t.element_size() for t in saved_tensors if t is not None) / 1024**2
+                )
                 del saved_tensors
             logits = logits.reshape(-1, logits.size(-1))
             targets = targets.reshape(-1)
@@ -836,9 +838,11 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
 
         print(f"Average iter time: {benchmark.perf_metrics['average_iter_time']:.2f} ms")
         print(f"Memory used: {benchmark.perf_metrics['memory_used_GB']:.02f} GB")
-        if benchmark.perf_metrics['saved_for_backward_tensor_size_mib'] is not None:
+        if benchmark.perf_metrics["saved_for_backward_tensor_size_mib"] is not None:
             print(f"Saved for backward size: {benchmark.perf_metrics['saved_for_backward_tensor_size_mib']:.02f} MiB")
-            print(f"Saved for backward number of tensors: {benchmark.perf_metrics['saved_for_backward_number_of_tensors']}")
+            print(
+                f"Saved for backward number of tensors: {benchmark.perf_metrics['saved_for_backward_number_of_tensors']}"
+            )
 
         if "tokens_per_sec" in benchmark.perf_metrics:
             print(f"Tokens/s: {benchmark.perf_metrics.get['tokens_per_sec']:.02f}")
