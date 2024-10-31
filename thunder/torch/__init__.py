@@ -34,6 +34,7 @@ import thunder.core.prims as prims
 import thunder.core.utils as utils
 import thunder.distributed.prims as dist_prims
 from thunder.core.langctxs import langctx, Languages, get_langctx
+from thunder.core.compile_data import get_compile_data
 from thunder.core.proxies import (
     FloatProxy,
     IntegerProxy,
@@ -1759,6 +1760,18 @@ def real(a):
 # nn.functional elementwise unary
 #
 # TODO Move these to torch.nn.functional
+
+
+@torchsymbol(torch.celu, torch.nn.functional.celu, id="torch.celu", is_method=True)
+def celu(a: TensorLike, /, alpha: float = 1.0, inplace: bool = False) -> TensorLike:
+    negative_domain_value = alpha * expm1(a / alpha)
+    out = where(a > 0, a, negative_domain_value)
+    if inplace:
+        return prims.copy_(out, a)
+    return out
+
+
+_inplace_to_out_of_place[celu] = celu, 2
 
 
 @torchsymbol(torch.nn.functional.gelu, is_method=False)
@@ -3571,10 +3584,7 @@ def normalize(
     return out
 
 
-# TODO: likely want to refactor these normalizations
-def _native_layer_norm(
-    a: TensorProxy, /, normalized_shape, weight, bias, eps: Number
-) -> tuple[TensorLike, TensorLike, TensorLike]:
+def _check_normalized_shape_and_get_reduction_dims(a, normalized_shape, weight=None, bias=None):
     # Validates inputs
     normalized_ndim = len(normalized_shape)
     utils.check(normalized_ndim >= 1, lambda: f"Expected normalized_shape={normalized_shape} to have length >= 1!")
@@ -3600,6 +3610,14 @@ def _native_layer_norm(
 
     axis = a.ndim - normalized_ndim
     reduction_dims = list(range(axis, a.ndim))
+    return reduction_dims
+
+
+# TODO: likely want to refactor these normalizations
+def _native_layer_norm(
+    a: TensorProxy, /, normalized_shape, weight, bias, eps: Number
+) -> tuple[TensorLike, TensorLike, TensorLike]:
+    reduction_dims = _check_normalized_shape_and_get_reduction_dims(a, normalized_shape, weight, bias)
     out, mean, rstd = _normalize(a, reduction_dims, eps)
 
     # Handles weight and bias
@@ -3638,6 +3656,27 @@ def layer_norm(
         normalized_ndim = len(bias.shape)
         normalized_shape = a.shape[-normalized_ndim:]
     return _native_layer_norm(a, normalized_shape, weight, bias, eps)[0]
+
+
+def rms_norm(
+    a: TensorLike,
+    /,
+    normalized_shape: Sequence[int],
+    weight: None | TensorLike = None,
+    eps: None | float = None,
+):
+    if eps is None:
+        eps = torch.finfo(to_torch_dtype(a.dtype)).eps
+    reduction_dims = _check_normalized_shape_and_get_reduction_dims(a, normalized_shape, weight)
+    norm_a = mean(a * a, dim=reduction_dims, keepdim=True)
+    a_normed = a * rsqrt(norm_a + eps)
+    if weight is not None:
+        a_normed = a_normed * weight
+    return a_normed
+
+
+if hasattr(torch.nn.functional, "rms_norm"):
+    rms_norm = torchsymbol(torch.nn.functional.rms_norm)(rms_norm)
 
 
 def _native_batch_norm(
@@ -5262,8 +5301,8 @@ def _backward_checkpoint(
 ) -> tuple[None | TensorLike, ...]:
     from thunder.core.transforms import vjp
 
-    result = vjp(function)(args, grad_outputs, **kwargs)
-    return result
+    _, grads = vjp(function)(args, grad_outputs, **kwargs)
+    return grads
 
 
 #
@@ -5570,6 +5609,26 @@ def backward_autograd_function_apply(
     *grad_output: Sequence[TensorProxy],
 ) -> tuple[Any, ...]:
     return bwd(None, *grad_output, *saved_for_backward)
+
+
+@torchsymbol(
+    torch.amp.autocast_mode._enter_autocast,
+    id="torch.amp.autocast_mode._enter_autocast",
+    tags=(prims.OpTags.DONT_DCE, prims.OpTags.CTX_MANAGER_ENTER_EXIT_OP),
+)
+def autocast_enter(device_type, dtype=None, enabled=True):
+    if dtype is None:
+        dtype = torch.get_autocast_dtype(device_type)
+    get_compile_data().autocast_stack.push(device_type, dtype, enabled)
+
+
+@torchsymbol(
+    torch.amp.autocast_mode._exit_autocast,
+    id="torch.amp.autocast_mode._exit_autocast",
+    tags=(prims.OpTags.DONT_DCE, prims.OpTags.CTX_MANAGER_ENTER_EXIT_OP),
+)
+def autocast_exit(*args):
+    get_compile_data().autocast_stack.pop()
 
 
 #

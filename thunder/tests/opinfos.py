@@ -549,11 +549,11 @@ class ElementwiseUnaryOpInfo(ElementwiseOpInfo):
 #   so this helper wraps and unwraps numbers
 def _elementwise_unary_torch(op):
     @wraps(op)
-    def _fn(x):
+    def _fn(x, **kwargs):
         if isinstance(x, torch.Tensor):
-            return op(x)
+            return op(x, **kwargs)
 
-        return op(torch.tensor(x)).item()
+        return op(torch.tensor(x), **kwargs).item()
 
     return _fn
 
@@ -1631,6 +1631,31 @@ reciprocal_opinfo = OpInfo(
     ),
 )
 elementwise_unary_ops.append(reciprocal_opinfo)
+
+
+def celu_sample_generator(op, device, dtype, requires_grad):
+    alphas = (None, -1.0, 0.5)
+    samples = elementwise_unary_generator(op, device, dtype, requires_grad)
+    for alpha, sample in itertools.product(alphas, samples):
+        if alpha is None:
+            yield sample
+        else:
+            yield SampleInput(*sample.args, alpha=alpha, **sample.kwargs)
+
+
+celu_opinfo = OpInfo(
+    ltorch.celu,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=celu_sample_generator,
+    torch_reference=_elementwise_unary_torch(torch.celu),
+    test_directives=(
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-6, rtol=1e-6)),
+            "test_vjp_correctness",
+        ),
+    ),
+)
+elementwise_unary_ops.append(celu_opinfo)
 
 
 relu_opinfo = OpInfo(
@@ -7620,6 +7645,56 @@ layer_norm_opinfo = OpInfo(
     ),
 )
 nn_ops.append(layer_norm_opinfo)
+
+
+def rms_norm_reference_generator(op, device, dtype, requires_grad, **kwargs):
+    for sample_inputs in layer_norm_reference_generator(op, device, dtype, requires_grad, **kwargs):
+        print(sample_inputs.args)
+        if len(sample_inputs.args) > 3:  # positional bias
+            sample_inputs.args = sample_inputs.args[:3] + sample_inputs.args[4:]
+        sample_inputs.kwargs.pop("bias", None)
+        yield sample_inputs
+
+
+def rms_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    for sample_inputs in layer_norm_sample_generator(op, device, dtype, requires_grad, **kwargs):
+        print(sample_inputs.args)
+        if len(sample_inputs.args) > 3:  # positional bias
+            sample_inputs.args = sample_inputs.args[:3] + sample_inputs.args[4:]
+        sample_inputs.kwargs.pop("bias", None)
+        yield sample_inputs
+
+
+def rms_norm_error_generator(op, device, **kwargs):
+    for sample_inputs, exc_type, msg in layer_norm_error_generator(op, device, **kwargs):
+        print(sample_inputs.args)
+        if len(sample_inputs.args) > 3:  # positional bias
+            sample_inputs.args = sample_inputs.args[:3] + sample_inputs.args[4:]
+        sample_inputs.kwargs.pop("bias", None)
+        if "bias" not in msg:
+            yield sample_inputs, exc_type, msg
+
+
+if LooseVersion(torch.__version__) >= "2.4":
+    rms_norm_opinfo = OpInfo(
+        ltorch.rms_norm,
+        sample_input_generator=rms_norm_sample_generator,
+        error_input_generator=rms_norm_error_generator,
+        reference_input_generator=rms_norm_reference_generator,
+        torch_reference=torch.nn.functional.rms_norm,
+        # Complex var is not supported yet
+        dtypes=(datatypes.floating,),
+        test_directives=(
+            # PyTorch does not support float16 on CPU
+            DecorateInfo(
+                pytest.mark.xfail,
+                "test_core_vs_torch_consistency",
+                dtypes=(datatypes.float16,),
+                devicetypes=(devices.DeviceType.CPU,),
+            ),
+        ),
+    )
+    nn_ops.append(rms_norm_opinfo)
 
 
 def batch_norm_reference_generator(op, device, dtype, requires_grad, **kwargs):

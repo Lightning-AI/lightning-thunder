@@ -289,6 +289,8 @@ class OpTags(Enum):
     DONT_DCE = auto()
     IN_PLACE = auto()
     AUTO_REGISTERED = auto()
+    # Label for operations representing enter/exit of context managers.
+    CTX_MANAGER_ENTER_EXIT_OP = auto()
 
 
 # TODO RC1 Document this function and describe the parts of a primitive
