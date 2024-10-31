@@ -145,7 +145,8 @@ def test_splitter_autocast_ctx(executor, device: str, dtype: dtypes.dtype, dynam
     expected_grad = torch.autograd.grad(expected, x, g)
     torch.testing.assert_close(actual_grad, expected_grad)
 
-    assert len(backend.subgraph_infos) == 1  # There were no splits.
+    assert len(backend.subgraph_infos) == 1
+    assert len(backend.subgraph_infos[0].split_reasons) == 0
     compiled_functions = tuple(backend.subgraph_infos[0].submodule_to_compiled_functions.values())
     assert all(compiled_fn.compiler == CompilerType.THUNDER for compiled_fn in compiled_functions)
     assert not any(compiled_fn.compiler == CompilerType.TORCH_INDUCTOR for compiled_fn in compiled_functions)
