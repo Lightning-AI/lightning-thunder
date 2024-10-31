@@ -155,8 +155,8 @@ def _splitter(
             checkpoint_converter(split_gm, graph_module)
             # Record the input tensor metadata of the current module based on the faketensor 'example_value' of the placeholder node
             placeholders = list(n for n in graph_module.graph.nodes if n.op == "placeholder")
-            example_input_metadata = chain(
-                *map(partial(_get_example_inputs_from_placeholder, only_metadata=True), placeholders)
+            example_input_metadata = map(
+                partial(_get_example_inputs_from_placeholder, only_metadata=True), placeholders
             )
             example_input_metadatas.append(list(example_input_metadata))
             jit_fn = thunder_jit(graph_module)

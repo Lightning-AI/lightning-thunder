@@ -158,7 +158,7 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
                 cur_nodes = cur_module.graph.nodes
                 # Greates random input values for the current module based on the faketensor 'example_value' of the placeholder node
                 placeholders = list(n for n in cur_nodes if n.op == "placeholder")
-                args = chain(*map(_get_example_inputs_from_placeholder, placeholders))
+                args = list(map(_get_example_inputs_from_placeholder, placeholders))
                 # Runs the benchmark on the original module with the generated random inputs
                 self.run_bench(compiled_functions_to_submodule[cur_module], target, *args)
         self.graph_idx += 1

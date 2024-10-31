@@ -478,13 +478,8 @@ def _get_example_input_tensor_metadata(t: torch.Tensor) -> ExampleInputMetaData:
 def _create_random_tensor_from_tensor_metadata(t: ExampleInputMetaData) -> torch.Tensor:
     from thunder.tests.make_tensor import make_tensor
 
-    return (
-        make_tensor(
-            t.storage_shape,
-            dtype=t.dtype,
-            device=t.device,
-            requires_grad=t.requires_grad,
-        ).as_strided(t.shape, t.stride()),
+    return make_tensor(t.storage_shape, dtype=t.dtype, device=t.device, requires_grad=t.requires_grad).as_strided(
+        t.shape, t.stride()
     )
 
 
@@ -497,8 +492,8 @@ def _get_example_inputs_from_placeholder(
         ev = node.meta["grapharg"].example
         if isinstance(ev, torch.Tensor):
             if only_metadata:
-                return (_get_example_input_tensor_metadata(ev),)
-            return (ev.detach().clone().requires_grad_(ev.requires_grad),)
+                return _get_example_input_tensor_metadata(ev)
+            return ev.detach().clone().requires_grad_(ev.requires_grad)
 
     check("example_value" in node.meta, lambda: "example_value does not exist in the meta of {node}", ValueError)
     example_value = node.meta["example_value"]
@@ -506,8 +501,8 @@ def _get_example_inputs_from_placeholder(
     if isinstance(example_value, torch.Tensor):
         ev_metadata = _get_example_input_tensor_metadata(example_value)
         if only_metadata:
-            return (ev_metadata,)
-        return (_create_random_tensor_from_tensor_metadata(ev_metadata),)
+            return ev_metadata
+        return _create_random_tensor_from_tensor_metadata(ev_metadata)
     elif isinstance(example_value, tuple):
         ev_metadatas = tuple(_get_example_input_tensor_metadata(e_v) for e_v in example_value)
         if only_metadata:
