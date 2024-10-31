@@ -221,7 +221,7 @@ class Benchmark_litGPT:
         global_batch_size: int | None = None,
         model_name: str = "Llama-2-7b-hf",
         shard_mode: str = "zero2",
-        bucketing_mode: str = "none",
+        bucketing_mode: str | None = None,
         sharding_size: int | None = None,
         ddp_bucket_size: float = 256.0,
         fsdp_bucket_params: float | None = None,
@@ -303,7 +303,7 @@ class Benchmark_litGPT:
                 world_size % self.sharding_size == 0
             ), f"World size {world_size} is not divisible by the sharding size {self.sharding_size}"
 
-        if self.bucketing_mode != "none" and self.distributed_mode not in FSDP_MODES:
+        if self.bucketing_mode is not None and self.distributed_mode not in FSDP_MODES:
             warnings.warn(
                 f"--bucketing_mode {self.bucketing_mode} will be ignored as "
                 f" it is only used for FSDP style parallelism but running {self.distributed_mode}"
@@ -430,6 +430,7 @@ class Benchmark_litGPT:
                 from thunder.distributed import fsdp, FSDPType, FSDPBucketingStrategy
 
                 sharding_strategy = {"zero2": FSDPType.ZERO2, "zero3": FSDPType.ZERO3}[self.shard_mode]
+                self.bucketing_mode = self.bucketing_mode or "none"
                 bucketing_strategy = {
                     "none": FSDPBucketingStrategy.NONE,
                     "block": FSDPBucketingStrategy.BLOCK,
@@ -458,7 +459,7 @@ class Benchmark_litGPT:
                 from functools import partial
                 from torch.distributed._composable.fsdp import fully_shard, MixedPrecisionPolicy
 
-                if self.bucketing_mode != "none":
+                if self.bucketing_mode is not None:
                     warnings.warn(f"fsdp2 ignores {self.bucketing_mode=}")
 
                 torch.cuda.set_device(local_rank)
@@ -506,6 +507,7 @@ class Benchmark_litGPT:
                 )
                 zero_bucket_wrap_policy = lambda module, recurse, nonwrapped_numel: nonwrapped_numel >= 0
 
+                self.bucketing_mode = self.bucketing_mode or "block"
                 custom_wrap_policy = {
                     "block": litgpt_auto_wrap_policy,
                     "size": size_auto_wrap_policy,
