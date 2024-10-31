@@ -485,7 +485,11 @@ def _create_random_tensor_from_tensor_metadata(t: ExampleInputMetaData) -> torch
 
 def _get_example_inputs_from_placeholder(
     node: torch.fx.Node, only_metadata=False
-) -> tuple[torch.Tensor | ExampleInputMetaData]:
+) -> tuple[torch.Tensor | ExampleInputMetaData] | torch.Tensor | ExampleInputMetaData:
+    """Retrieves example input data for a given placeholder `torch.fx.Node`.
+    - When `only_metadata` is `False`: Generates and returns a random example tensor based on the node's expected shape and data type, etc.
+    - When `only_metadata` is `True`: Returns only the tensor's metadata (e.g., shape, data type) without generating an actual tensor.
+    """
     check(node.op == "placeholder", lambda: f"The node must be placeholder type", ValueError)
     # Prefers to use actual example value in GraphArg if available
     if "grapharg" in node.meta:
