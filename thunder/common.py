@@ -64,7 +64,6 @@ __all__ = [
 
 
 # Holds statistics and caches for a compiled function
-# TODO RC1 Update last_executed to last_computation
 # TODO RC1 Review how autograd traces are presented
 class CompileStats:
     """A class holding statistics and caches for a compiled function.
@@ -76,7 +75,7 @@ class CompileStats:
         See :mod:`thunder` for more of such utility functions.
 
     Attributes:
-        last_executed:
+        last_computation (Callable):
         last_traces (Sequence[TraceCtx]):
         last_prologue (TraceCtx):
         last_prologue_traces (Sequence[TraceCtx]):
@@ -107,7 +106,7 @@ class CompileStats:
 
     def __init__(self):
         # Callables and traces
-        self.last_executed = None
+        self.last_computation = None
         self.last_traces = None
         self.last_prologue = None
         self.last_prologue_traces = None
