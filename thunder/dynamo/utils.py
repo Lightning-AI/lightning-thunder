@@ -179,8 +179,8 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
     from thunder.core.compile_data import compile_data_and_stats
     from thunder.common import CompileData, CompileStats
 
-    # We require a corresponding `_enter_autocast` in trace to correctly pop the state,
-    # else we get error notifying that we are popping empty stack.
+    # We require a corresponding `_enter_autocast` in trace to correctly pop the
+    # state on `_exit_autocast`, else we get `IndexError: pop from an empty deque`.
     # As a work-around, we short circuit and return True.
     if hasattr(thunder_symbol, "id") and thunder_symbol.id == "torch.amp.autocast_mode._exit_autocast":
         return True, None
