@@ -844,9 +844,10 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
                 f"Saved for backward number of tensors: {benchmark.perf_metrics['saved_for_backward_number_of_tensors']}"
             )
 
-        if "tokens_per_sec" in benchmark.perf_metrics:
-            print(f"Tokens/s: {benchmark.perf_metrics.get['tokens_per_sec']:.02f}")
-            print(f"Tokens/s/GPU: {(benchmark.perf_metrics['tokens_per_sec']/world_size):.02f}")
+        tokens_per_sec = benchmark.perf_metrics.get("tokens_per_sec")
+        if tokens_per_sec:
+            print(f"Tokens/s: {tokens_per_sec:.02f}")
+            print(f"Tokens/s/GPU: {(tokens_per_sec / world_size):.02f}")
         print(f"TFLOP/s: {benchmark.perf_metrics['model_flop_per_sec'] / 1e12:.02f}")
 
         if benchmark.dump_memory_snapshot:
