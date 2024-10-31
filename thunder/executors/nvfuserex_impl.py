@@ -552,10 +552,13 @@ def create_fusion_definition_wrapper(
     _enable_options: None | list = get_compile_option(
         "nv_enable_options", "List of NVFUSER_ENABLE options to set."
     )
+    _enable_options = _enable_options if _enable_options is not None else []
+        
     _disable_options: None | list = get_compile_option(
         "nv_disable_options", "List of NVFUSER_DISABLE options to set."
     )
-
+    _disable_options = _disable_options if _disable_options is not None else []
+    print(_enable_options, _disable_options)
     tensor_indices = []
     for idx, x in enumerate(sorted_unique_inputs):
         if isinstance(x, TensorProxy):

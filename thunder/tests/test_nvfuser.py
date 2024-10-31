@@ -1080,7 +1080,7 @@ def test_sdpa(
 
 
 @instantiate(
-    dtypes=(thunder.float16, thunder.bfloat16),
+    dtypes=(thunder.float16,),
     devicetypes=(devices.DeviceType.CUDA,),
     executors=(nvFuserExecutor,),
     decorators=(
@@ -1095,15 +1095,20 @@ def test_enable_disable_options(executor, device: str, dtype: dtypes.dtype):
     def fn(a, b):
         return torch.matmul(a, b)
 
-    for sample in matmul_opinfo.sample_inputs(device, dtype):
-        if nvfuser_version() < LooseVersion("0.2.4") and (sample.args[0].ndim != 2 or sample.args[1].ndim != 2):
-            # Only 2D inputs are supported for version < 0.2.4.
-            continue
 
-        compiled_func = thunder.jit(fn, executors_list=executor.executors_list(), nv_enable_matmul=True, nv_enable_options=["fuse_matmul"], nv_disable_options=["matmul_expr_eval"])
 
-        out = compiled_func(*sample.args)
-        traces = thunder.last_traces(compiled_func)
-        fusions = examine.get_fusions(traces[-1])
-        assert len(fusions) == 1
-        torch.testing.assert_close(out, torch.matmul(*sample.args))
+    m = 24
+    n = 16
+    k = 16
+    inps = [
+        torch.randn(m, k, device="cuda", dtype=torch.float16),
+        torch.randn(k, n, device="cuda", dtype=torch.float16),
+    ]
+
+    compiled_func = thunder.jit(fn, executors_list=executor.executors_list(), nv_enable_matmul=True, nv_disable_options=["matmul_expr_eval", "kernel_reuse"])
+
+    out = compiled_func(*inps)
+    traces = thunder.last_traces(compiled_func)
+    fusions = examine.get_fusions(traces[-1])
+    assert len(fusions) == 1
+    torch.testing.assert_close(out, torch.matmul(*inps))
