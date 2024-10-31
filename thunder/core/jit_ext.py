@@ -1512,7 +1512,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
         return not isinstance(p, TensorProxy)
 
     # TODO: This is just a WAR to get things working. We'll revisit this when
-    # we deal with cosntraints in prologue trace.
+    # we deal with constraints in prologue trace.
     #
     # We sort variables to before `unpack` to put TensorProxy before others.
     # Because we could have TensorProxy.shape be part of `pro_to_xxx` along with
