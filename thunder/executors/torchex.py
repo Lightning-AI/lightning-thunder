@@ -171,6 +171,7 @@ def no_autocast(fn):
     prev_cpu = torch.is_autocast_cpu_enabled()
     prev = torch.is_autocast_enabled()
 
+    @wraps(fn)
     def no_autocast_fn(*args, **kwargs):
         try:
             set_autocast_enabled("cpu", False)
