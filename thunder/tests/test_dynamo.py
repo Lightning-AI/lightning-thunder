@@ -155,7 +155,7 @@ def test_splitter_autocast_ctx(executor, device: str, dtype: dtypes.dtype, dynam
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
     decorators=(
-        pytest.mark.parametrize("dynamic", (False,), ids=("static",)),
+        pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),
         pytest.mark.xfail(
             condition=IS_WINDOWS,
             strict=True,
@@ -178,12 +178,8 @@ def test_splitter_autocast_ctx_with_graph_break(executor, device: str, dtype: dt
     expected = torch.compile(func, dynamic=dynamic)(x)
     cfunc = torch.compile(func, backend=backend, dynamic=dynamic)
     actual = cfunc(x)
-    import thunder
 
-    # print(len(backend.subgraph_infos[1].thunder_compiled_fns))
-    print(thunder.last_traces(backend.subgraph_infos[1].thunder_compiled_fns[0])[0])
     g = torch.rand_like(actual)
-    print(actual.dtype, expected.dtype)
     torch.testing.assert_close(actual, expected)
     actual_grad = torch.autograd.grad(actual, x, g)
     expected_grad = torch.autograd.grad(expected, x, g)
