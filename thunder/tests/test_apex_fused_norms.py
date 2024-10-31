@@ -3,14 +3,19 @@ import torch
 from torch.testing import assert_close
 
 fused_layer_norm_cuda = pytest.importorskip("fused_layer_norm_cuda")
-from apex.normalization.fused_layer_norm import FusedRMSNormAffineMixedDtypesFunction
+
+from torch.distributed import is_available
 from thunder.executors.apexex import apex_ex
 import thunder
 
 
+# See https://github.com/NVIDIA/apex/issues/1853
+@pytest.mark.skipif(not is_available(), reason="torch.distributed is not available")
 @pytest.mark.parametrize("requires_grad", [True, False])
 @pytest.mark.parametrize("memory_efficient", [True, False])
 def test_apex_fused_rms_norm(requires_grad, memory_efficient):
+    from apex.normalization.fused_layer_norm import FusedRMSNormAffineMixedDtypesFunction
+
     def fn(x, weight, normalized_shape, eps):
         return FusedRMSNormAffineMixedDtypesFunction.apply(x, weight, normalized_shape, eps, memory_efficient)
 
@@ -34,9 +39,13 @@ def test_apex_fused_rms_norm(requires_grad, memory_efficient):
         assert_close(actual_grad, expected_grad)
 
 
+# See https://github.com/NVIDIA/apex/issues/1853
+@pytest.mark.skipif(not is_available(), reason="torch.distributed is not available")
 @pytest.mark.parametrize("requires_grad", [True, False])
 @pytest.mark.parametrize("memory_efficient", [True, False])
 def test_apex_fused_rms_norm_autoregister(requires_grad, memory_efficient):
+    from apex.normalization.fused_layer_norm import FusedRMSNormAffineMixedDtypesFunction
+
     def fn(x, weight, normalized_shape, eps):
         return FusedRMSNormAffineMixedDtypesFunction.apply(x, weight, normalized_shape, eps, memory_efficient)
 
