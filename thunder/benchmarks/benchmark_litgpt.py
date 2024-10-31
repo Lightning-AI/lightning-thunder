@@ -221,7 +221,7 @@ class Benchmark_litGPT:
         global_batch_size: int | None = None,
         model_name: str = "Llama-2-7b-hf",
         shard_mode: str = "zero2",
-        bucketing_mode: str = "none",
+        bucketing_mode: str | None = None,
         sharding_size: int | None = None,
         ddp_bucket_size: float = 256.0,
         fsdp_bucket_params: float | None = None,
@@ -303,7 +303,7 @@ class Benchmark_litGPT:
                 world_size % self.sharding_size == 0
             ), f"World size {world_size} is not divisible by the sharding size {self.sharding_size}"
 
-        if self.bucketing_mode != "none" and self.distributed_mode not in FSDP_MODES:
+        if self.bucketing_mode is not None and self.distributed_mode not in FSDP_MODES:
             warnings.warn(
                 f"--bucketing_mode {self.bucketing_mode} will be ignored as "
                 f" it is only used for FSDP style parallelism but running {self.distributed_mode}"
@@ -430,6 +430,7 @@ class Benchmark_litGPT:
                 from thunder.distributed import fsdp, FSDPType, FSDPBucketingStrategy
 
                 sharding_strategy = {"zero2": FSDPType.ZERO2, "zero3": FSDPType.ZERO3}[self.shard_mode]
+                self.bucketing_mode = self.bucketing_mode or "none"
                 bucketing_strategy = {
                     "none": FSDPBucketingStrategy.NONE,
                     "block": FSDPBucketingStrategy.BLOCK,
@@ -458,7 +459,7 @@ class Benchmark_litGPT:
                 from functools import partial
                 from torch.distributed._composable.fsdp import fully_shard, MixedPrecisionPolicy
 
-                if self.bucketing_mode != "none":
+                if self.bucketing_mode is not None:
                     warnings.warn(f"fsdp2 ignores {self.bucketing_mode=}")
 
                 torch.cuda.set_device(local_rank)
@@ -506,6 +507,7 @@ class Benchmark_litGPT:
                 )
                 zero_bucket_wrap_policy = lambda module, recurse, nonwrapped_numel: nonwrapped_numel >= 0
 
+                self.bucketing_mode = self.bucketing_mode or "block"
                 custom_wrap_policy = {
                     "block": litgpt_auto_wrap_policy,
                     "size": size_auto_wrap_policy,
@@ -532,7 +534,7 @@ class Benchmark_litGPT:
         return model
 
     def setup_activation_checkpointing(self):
-        if "thunder" in self.compile:
+        if "thunder" in self.compile and "dynamo" not in self.compile:
             # checkpointing is an option to thunder.jit
             return
 
@@ -571,11 +573,6 @@ class Benchmark_litGPT:
 
                 executors.insert(0, transformer_engine_ex)
 
-            jit_options = {
-                "enable_saved_for_backward_recomputation": self.checkpoint_activations,
-                "recomputation_policy": None,
-            }
-
             if "dynamo" in self.compile:
                 if self.distributed_mode == "fsdp2":
                     print("Resetting cache size for when fsdp2 and using thunder as backend torch.compile")
@@ -583,13 +580,16 @@ class Benchmark_litGPT:
 
                     dynamo_config.cache_size_limit = 64
 
-                backend = ThunderCompiler(executors=executors, **jit_options)
+                self.backend = ThunderCompiler(executors=executors)
                 # Because Lightning Fabric is imported in this script it monkey patches the torch.compile function
                 # https://github.com/Lightning-AI/pytorch-lightning/blob/828fd998961f6a60f92c35254bb94d6e049ad069/src/lightning/fabric/wrappers.py#L421
                 # using __wrapped__ to access the original torch.compile function did not work
                 # so we are using the lower level torch._dynamo.optimize function
-                model = torch._dynamo.optimize(backend=backend)(model)
+                model = torch._dynamo.optimize(backend=self.backend)(model)
             else:
+                jit_options = {
+                    "enable_saved_for_backward_recomputation": self.checkpoint_activations,
+                }
                 jit_options["fp8_shard_intermediate_activation"] = self.fp8_shard_intermediate_activation
                 model = thunder.jit(model, executors=executors, **jit_options)
 
@@ -687,6 +687,23 @@ class Benchmark_litGPT:
                     logits = self.model(input_ids)
             else:
                 logits = self.model(input_ids)
+            # This information is accurate only in the case when torch.compile
+            # uses a single graph for the entire forward pass In the case of
+            # torch.compile using multiple graphs, the saved_tensors will be
+            # from the last graph For Thunder, the saved_tensors will be from
+            # its only graph There's no easy way to get the saved_tensors from
+            # the entire forward pass in the case of multiple graphs or PyTorch
+            # Eager mode. It's still useful for single-GPU and single-graph
+            # cases.
+            saved_tensors = getattr(logits.grad_fn, "saved_tensors", None)
+            saved_tensors_len = None
+            saved_tensors_size_in_mib = None
+            if saved_tensors:
+                saved_tensors_len = len([t for t in saved_tensors if t is not None])
+                saved_tensors_size_in_mib = (
+                    sum(t.numel() * t.element_size() for t in saved_tensors if t is not None) / 1024**2
+                )
+                del saved_tensors
             logits = logits.reshape(-1, logits.size(-1))
             targets = targets.reshape(-1)
             loss = (
@@ -727,6 +744,8 @@ class Benchmark_litGPT:
         if global_rank in [0, None]:
             # print(f"Total time: {(t1 - t0):.2f}s")
             self.perf_metrics["average_iter_time"] = ((t1 - t0) * 1000) / (self.max_iters - self.warmup_iters)
+            self.perf_metrics["saved_for_backward_tensor_size_mib"] = saved_tensors_size_in_mib
+            self.perf_metrics["saved_for_backward_number_of_tensors"] = saved_tensors_len
 
     def add_perf_metrics(self):
         if self.throughput:
@@ -819,8 +838,15 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
 
         print(f"Average iter time: {benchmark.perf_metrics['average_iter_time']:.2f} ms")
         print(f"Memory used: {benchmark.perf_metrics['memory_used_GB']:.02f} GB")
-        print(f"Tokens/s: {benchmark.perf_metrics['tokens_per_sec']:.02f}")
-        print(f"Tokens/s/GPU: {(benchmark.perf_metrics['tokens_per_sec']/world_size):.02f}")
+        if benchmark.perf_metrics["saved_for_backward_tensor_size_mib"] is not None:
+            print(f"Saved for backward size: {benchmark.perf_metrics['saved_for_backward_tensor_size_mib']:.02f} MiB")
+            print(
+                f"Saved for backward number of tensors: {benchmark.perf_metrics['saved_for_backward_number_of_tensors']}"
+            )
+
+        if "tokens_per_sec" in benchmark.perf_metrics:
+            print(f"Tokens/s: {benchmark.perf_metrics.get['tokens_per_sec']:.02f}")
+            print(f"Tokens/s/GPU: {(benchmark.perf_metrics['tokens_per_sec']/world_size):.02f}")
         print(f"TFLOP/s: {benchmark.perf_metrics['model_flop_per_sec'] / 1e12:.02f}")
 
         if benchmark.dump_memory_snapshot:
@@ -843,16 +869,24 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
                 for jitted in benchmark.thunder_as_torch_compile_backend.gm_to_thunder.values():
                     fwd_traces.append(thunder.last_traces(jitted))
                     bwd_traces.append(thunder.last_backward_traces(jitted))
-            else:
+            elif "dynamo" not in benchmark.compile:
                 fwd_traces = [thunder.last_traces(benchmark.model)]
                 bwd_traces = [thunder.last_backward_traces(benchmark.model)]
 
-            for i, f_traces in enumerate(fwd_traces, start=1):
-                print(f"##########\n#{i}-th ThunderModule\n##########")
-                print(f_traces[-1])
-            for i, b_traces in enumerate(bwd_traces, start=1):
-                print(f"##########\n#{i}-th ThunderModule\n##########")
-                print(b_traces[-1])
+            if "dynamo" in benchmark.compile:
+                for gid, infos in enumerate(benchmark.backend.subgraph_infos):
+                    for subgid, thunder_fn in enumerate(infos.thunder_compiled_fns):
+                        print(f"##########\n#Graph{gid}-ThunderFn{subgid} last forward trace\n##########")
+                        print(thunder.last_traces(thunder_fn)[-1])
+                        print(f"##########\n#Graph{gid}-ThunderFn{subgid} last backward trace\n##########")
+                        print(thunder.last_backward_traces(thunder_fn)[-1])
+            else:
+                for i, f_traces in enumerate(fwd_traces, start=1):
+                    print(f"##########\n#{i}-th ThunderModule\n##########")
+                    print(f_traces[-1])
+                for i, b_traces in enumerate(bwd_traces, start=1):
+                    print(f"##########\n#{i}-th ThunderModule\n##########")
+                    print(b_traces[-1])
 
     if global_rank in [0, None]:
         if return_metrics_as_json:
