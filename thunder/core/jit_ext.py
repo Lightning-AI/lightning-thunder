@@ -828,37 +828,6 @@ _general_jit_lookaside_map.update(
     }
 )
 
-# TODO Implement safety --- UNSAFE, PERMISSIVE, SAFE
-_safe_functions: set = {
-    dict.get,  # TODO Review safety of this
-    FunctionType.__new__,
-    isinstance,
-    member_descriptor.__get__,  # TODO Review the safety of this
-    MethodDescriptorType.__get__,  # TODO Review the safety of this
-    type,
-    tuple.__len__,
-    tuple.__getitem__,
-    FunctionType.__get__,  # TODO: review safety
-    torch._C._get_tracing_state,  # TODO: review safety
-    object.__new__,
-    object.__init__,
-    callable,
-    NoneType.__bool__,
-    dict.__len__,
-    dict.__contains__,
-    dict.__getitem__,
-    contextvars.ContextVar.get,
-    type.__or__,
-    list.__new__,
-    list.__init__,
-    list.__getitem__,
-    reversed.__new__,
-    CellType.__new__,
-    GetSetDescriptorType.__get__,
-    Exception.__new__,
-    StopIteration.__init__,
-}
-
 
 # when we pass containers to the computation trace, we want these to be using the proxies
 def recursively_proxy(*args, **kwargs):
