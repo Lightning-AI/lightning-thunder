@@ -176,7 +176,21 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
     """
     import thunder
     from thunder.core.trace import TraceCtx
+    from thunder.core.compile_data import compile_data_and_stats
+    from thunder.common import CompileData, CompileStats
 
+    # We require a corresponding `_enter_autocast` in trace to correctly pop the state,
+    # else we get error notifying that we are popping empty stack.
+    # As a work-around, we short circuit and return True.
+    if hasattr(thunder_symbol, "id") and thunder_symbol.id == "torch.amp.autocast_mode._exit_autocast":
+        return True, None
+
+    # This is required for verifying `_enter_autocast`
+    # which pushes state onto `CompileData.autocast_stack`.
+    cd = CompileData(fn=lambda x: x, disable_preprocessing=True)
+    cs = CompileStats()
+
+    @compile_data_and_stats(cd, cs)
     @thunder._with_cache_info_ctx
     def _run_with_cache_info():
 
@@ -226,8 +240,8 @@ def get_nodes_in_unsupported_ctx_regions(gm: torch.fx.GraphModule) -> set[torch.
     nodes_in_unsupported_ctx_regions: set[torch.fx.Node] = set()
     ctx_cnt = 0  # Count of `enters_autocast` we have seen till now
 
-    # We want to mark nodes with `_enter_autocast` and `_exit_autocast`
-    # as unsupported as `thunder` doesn't correctly deal with these stateful functions.
+    # We want to mark nodes disabling `autograd` as unsupported
+    # because `thunder` doesn't correctly deal with these stateful functions.
 
     def is_no_grad_ctx_enter(node):
         if node.target == torch._C._set_grad_enabled:
@@ -244,13 +258,9 @@ def get_nodes_in_unsupported_ctx_regions(gm: torch.fx.GraphModule) -> set[torch.
         return False
 
     for node in gm.graph.nodes:
-        if node.op == "call_function" and (
-            node.target in (torch.amp.autocast_mode._enter_autocast,) or is_no_grad_ctx_enter(node)
-        ):
+        if node.op == "call_function" and is_no_grad_ctx_enter(node):
             ctx_cnt += 1
-        elif node.op == "call_function" and (
-            node.target in (torch.amp.autocast_mode._exit_autocast,) or is_no_grad_ctx_exit(node)
-        ):
+        elif node.op == "call_function" and is_no_grad_ctx_exit(node):
             ctx_cnt -= 1
         else:
             if ctx_cnt > 0:

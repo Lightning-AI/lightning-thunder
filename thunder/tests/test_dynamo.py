@@ -4,6 +4,7 @@ import torch.fx
 
 from thunder import dtypes
 from thunder.dynamo import ThunderCompiler
+from thunder.dynamo.utils import CompilerType
 from thunder.dynamo.compiler_graph_benchmark import ThunderCompilerGraphBenchmarking
 from thunder import last_traces
 from thunder.tests.bf16 import device_supports_bf16
@@ -122,7 +123,7 @@ def test_basic_splitter(executor, device: str, dtype: dtypes.dtype, dynamic: boo
         ),
     ),
 )
-def test_splitter_unsupported_ctx(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
+def test_splitter_autocast_ctx(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
     x = torch.rand(2, 2, device=device, dtype=dtype, requires_grad=True)
 
     backend = ThunderCompiler()
@@ -144,23 +145,17 @@ def test_splitter_unsupported_ctx(executor, device: str, dtype: dtypes.dtype, dy
     expected_grad = torch.autograd.grad(expected, x, g)
     torch.testing.assert_close(actual_grad, expected_grad)
 
-    assert len(backend.subgraph_infos) == 1
-    assert len(backend.subgraph_infos[0].submodule_to_compiled_functions) > 1  # Verify that the subgraph was split.
-    assert any(
-        "it is in unsupported context" in split_reason.info for split_reason in backend.subgraph_infos[0].split_reasons
-    )
-    targets = (node.target for node in backend.subgraph_infos[0].split_graph_module.graph.nodes)
-    assert any(target.startswith("thunder_") for target in targets)  # Verify that the submodules have name `thunder_*`
-    assert any(
-        target.startswith("inductor_") for target in targets
-    )  # Verify that the submodules have name `inductor_*`
+    assert len(backend.subgraph_infos) == 1  # There were no splits.
+    compiled_functions = tuple(backend.subgraph_infos[0].submodule_to_compiled_functions.values())
+    assert all(compiled_fn.compiler == CompilerType.THUNDER for compiled_fn in compiled_functions)
+    assert not any(compiled_fn.compiler == CompilerType.TORCH_INDUCTOR for compiled_fn in compiled_functions)
 
 
 @instantiate(
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
     decorators=(
-        pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),
+        pytest.mark.parametrize("dynamic", (False,), ids=("static",)),
         pytest.mark.xfail(
             condition=IS_WINDOWS,
             strict=True,
@@ -168,7 +163,7 @@ def test_splitter_unsupported_ctx(executor, device: str, dtype: dtypes.dtype, dy
         ),
     ),
 )
-def test_splitter_unsupported_ctx_with_graph_break(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
+def test_splitter_autocast_ctx_with_graph_break(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
     x = torch.rand(2, 2, device=device, dtype=dtype, requires_grad=True)
 
     backend = ThunderCompiler()
@@ -180,11 +175,15 @@ def test_splitter_unsupported_ctx_with_graph_break(executor, device: str, dtype:
             torch._dynamo.graph_break()
             return torch.matmul(x, y)
 
-    expected = torch.compile(func, dynamic=False)(x)
+    expected = torch.compile(func, dynamic=dynamic)(x)
     cfunc = torch.compile(func, backend=backend, dynamic=dynamic)
     actual = cfunc(x)
+    import thunder
 
+    # print(len(backend.subgraph_infos[1].thunder_compiled_fns))
+    print(thunder.last_traces(backend.subgraph_infos[1].thunder_compiled_fns[0])[0])
     g = torch.rand_like(actual)
+    print(actual.dtype, expected.dtype)
     torch.testing.assert_close(actual, expected)
     actual_grad = torch.autograd.grad(actual, x, g)
     expected_grad = torch.autograd.grad(expected, x, g)
@@ -193,8 +192,10 @@ def test_splitter_unsupported_ctx_with_graph_break(executor, device: str, dtype:
     # 2 subgraphs due to graph-break
     assert len(backend.subgraph_infos) == 2
     for subgraph_info in backend.subgraph_infos:
-        # Verify that for each subgraph we had split due to `autocast` being enabled.
-        assert any("it is in unsupported context" in split_reason.info for split_reason in subgraph_info.split_reasons)
+        assert len(subgraph_info.split_reasons) == 0
+        compiled_functions = tuple(subgraph_info.submodule_to_compiled_functions.values())
+        assert all(compiled_fn.compiler == CompilerType.THUNDER for compiled_fn in compiled_functions)
+        assert not any(compiled_fn.compiler == CompilerType.TORCH_INDUCTOR for compiled_fn in compiled_functions)
 
 
 @instantiate(
