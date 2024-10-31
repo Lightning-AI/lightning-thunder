@@ -1762,6 +1762,18 @@ def real(a):
 # TODO Move these to torch.nn.functional
 
 
+@torchsymbol(torch.celu, torch.nn.functional.celu, id="torch.celu", is_method=True)
+def celu(a: TensorLike, /, alpha: float = 1.0, inplace: bool = False) -> TensorLike:
+    negative_domain_value = alpha * expm1(a / alpha)
+    out = where(a > 0, a, negative_domain_value)
+    if inplace:
+        return prims.copy_(out, a)
+    return out
+
+
+_inplace_to_out_of_place[celu] = celu, 2
+
+
 @torchsymbol(torch.nn.functional.gelu, is_method=False)
 def gelu(a: TensorProxy, /, *, approximate: str = "none") -> TensorLike:
     if approximate == "none":
