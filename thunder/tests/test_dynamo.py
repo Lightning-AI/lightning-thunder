@@ -207,6 +207,55 @@ def test_splitter_autocast_ctx_with_graph_break(executor, device: str, dtype: dt
         ),
     ),
 )
+def test_splitter_autocast_ctx_with_split(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
+    x = torch.rand(2, 2, device=device, dtype=dtype, requires_grad=True)
+
+    backend = ThunderCompiler()
+
+    def func(x):
+        x = x + 2
+        with torch.autocast(device):
+            y = torch.sin(x)
+
+            #  torch.sinc has automatic fallback registered,
+            # so that operation will be given to inductor.
+            y = torch.sinc(y)
+            return torch.matmul(x, y)
+
+    expected = torch.compile(func, dynamic=dynamic)(x)
+    cfunc = torch.compile(func, backend=backend, dynamic=dynamic)
+    actual = cfunc(x)
+
+    g = torch.rand_like(actual)
+    torch.testing.assert_close(actual, expected)
+    actual_grad = torch.autograd.grad(actual, x, g)
+    expected_grad = torch.autograd.grad(expected, x, g)
+    torch.testing.assert_close(actual_grad, expected_grad)
+
+    assert len(backend.subgraph_infos) == 1  # no graph break in dynamo
+
+    subgraph_info = backend.subgraph_infos[0]
+    assert len(subgraph_info.split_reasons) > 1  # Split due to `torch.sinc`
+    compiled_functions = tuple(subgraph_info.submodule_to_compiled_functions.values())
+    assert any(compiled_fn.compiler == CompilerType.THUNDER for compiled_fn in compiled_functions)
+    assert any(compiled_fn.compiler == CompilerType.TORCH_INDUCTOR for compiled_fn in compiled_functions)
+    assert any(
+        "automatic torch fallback" in split_reason.info for split_reason in subgraph_info.split_reasons
+    )  # Verify that we had a split because we detected an `automatic registered operator`
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=[DynamoThunderExecutor],
+    decorators=(
+        pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),
+        pytest.mark.xfail(
+            condition=IS_WINDOWS,
+            strict=True,
+            reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+        ),
+    ),
+)
 def test_splitter_autograd_function(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
     x = torch.ones(2, device=device, dtype=dtype, requires_grad=True)
 
