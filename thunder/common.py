@@ -13,7 +13,7 @@ from thunder.core.options import (
     SHARP_EDGES_OPTIONS,
     resolve_sharp_edges_option,
 )
-from thunder.core.utils import check, is_collection
+from thunder.core.utils import check, is_collection, AutocastStack
 from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.compile_data import compile_data_and_stats
 import thunder.core.langctxs as langctxs
@@ -217,6 +217,9 @@ class CompileData:
 
         # Resolves cache option
         self.cache_option = resolve_cache_option(cache_option)
+
+        # State for pytorch autocast context managers.
+        self.autocast_stack: AutocastStack = AutocastStack()
 
         #
         # Gathers additional metadata

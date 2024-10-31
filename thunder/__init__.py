@@ -34,6 +34,7 @@ from thunder.core.transform_common import (
     Transform,
     wrap_return_value_together_with_argments,
     unwrap_return_value,
+    remove_context_manager_prims_from_trace,
 )
 from thunder.core.functionalization import (
     check_inplace_to_views,
@@ -419,6 +420,9 @@ def jit(
             )
             autocast_thunder_dtype = autocast_cpu_dtype if pytorch.is_autocast_cpu_enabled() else autocast_gpu_dtype
             cache_info.update(autocast_thunder_dtype=str(autocast_thunder_dtype))
+            device = "cuda" if pytorch.is_autocast_enabled() else "cpu"
+            dtype = autocast_thunder_dtype
+            cd.autocast_stack.push(device, dtype, is_autocast_enabled)
 
         cache_info["is_autocast_enabled"] = is_autocast_enabled
 
@@ -532,6 +536,9 @@ def jit(
             computation_traces = [computation_trc]
 
             computation_trc = wrap_return_value_together_with_argments(computation_trc)
+            computation_traces.append(computation_trc)
+
+            computation_trc = remove_context_manager_prims_from_trace(computation_trc)
             computation_traces.append(computation_trc)
 
             orig_to_view_swap_map = check_inplace_to_views(computation_trc)
