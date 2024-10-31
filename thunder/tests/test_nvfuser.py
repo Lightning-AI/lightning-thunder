@@ -1077,3 +1077,33 @@ def test_sdpa(
     ref_outputs = (ref_attn_out, *(inp.grad for inp in ref_tensor_inputs))
     for nv_out, ref_out in zip(nv_outputs, ref_outputs):
         torch.testing.assert_close(nv_out, ref_out)
+
+
+@instantiate(
+    dtypes=(thunder.float16, thunder.bfloat16),
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(nvFuserExecutor,),
+    decorators=(
+        pytest.mark.skipif(
+            nvfuser_version() is None or nvfuser_version() < LooseVersion("0.2.2"),
+            reason="Requires nvFuser version 0.2.2 or later",
+        ),
+    ),
+)
+def test_enable_disable_options(executor, device: str, dtype: dtypes.dtype):
+
+    def fn(a, b):
+        return torch.matmul(a, b)
+
+    for sample in matmul_opinfo.sample_inputs(device, dtype):
+        if nvfuser_version() < LooseVersion("0.2.4") and (sample.args[0].ndim != 2 or sample.args[1].ndim != 2):
+            # Only 2D inputs are supported for version < 0.2.4.
+            continue
+
+        compiled_func = thunder.jit(fn, executors_list=executor.executors_list(), nv_enable_matmul=True, nv_enable_options=["fuse_matmul"], nv_disable_options=["matmul_expr_eval"])
+
+        out = compiled_func(*sample.args)
+        traces = thunder.last_traces(compiled_func)
+        fusions = examine.get_fusions(traces[-1])
+        assert len(fusions) == 1
+        torch.testing.assert_close(out, torch.matmul(*sample.args))
