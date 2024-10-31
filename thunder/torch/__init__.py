@@ -5595,6 +5595,7 @@ def autocast_enter(device_type, dtype=None, enabled=True, _unused_cache_enabled=
     # PyTorch applies autocast irrespective of device index.
     # So, here we grab the device_type from the string.
     device_type, unused_deviceno = devices._device_from_string_helper(device_type)
+    device_type = devices.devicetype_string(device_type)
     if dtype is None:
         dtype = torch.get_autocast_dtype(device_type)
     get_compile_data().autocast_stack.push(device_type, dtype, enabled)
