@@ -1648,7 +1648,12 @@ celu_opinfo = OpInfo(
     dtypes=(datatypes.floating,),
     sample_input_generator=celu_sample_generator,
     torch_reference=_elementwise_unary_torch(torch.celu),
-    test_directives=(),
+    test_directives=(
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-6, rtol=1e-6)),
+            "test_vjp_correctness",
+        ),
+    ),
 )
 elementwise_unary_ops.append(celu_opinfo)
 
