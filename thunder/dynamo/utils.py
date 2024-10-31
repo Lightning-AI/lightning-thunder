@@ -113,6 +113,8 @@ class SubgraphInfo:
         thunder_compiled_fns: List of thunder optimized callables.
             This could be :obj:`None` if there the graph module was not supported by thunder.
             Look at the :attr:`split_reasons` for further information.
+        thunder_compiled_fns_example_inputs: List containing metadata of sample inputs for `thunder_compiled_fns`.
+            These inputs are used to generate random test inputs in the reproducer script.
         submodule_to_compiled_functions: Dict from subgraph in :attr:`original_split_graph_module` to compiled function.
             This will be a dict with one pair in case the graph was not split.
         split_reasons: List of reasons explaining why the subgraph was split.

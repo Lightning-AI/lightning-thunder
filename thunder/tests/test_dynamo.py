@@ -1,6 +1,8 @@
 import pytest
 import warnings
 import itertools
+import os
+from subprocess import run
 import torch
 import torch.fx
 import torch.nn as nn
@@ -779,13 +781,10 @@ def test_checkpoint_converter_submodule():
             assert isinstance(n.target, Symbol)
 
 
-def test_dynamo_reproducer(tmp_path):
-    from thunder.dynamo.compiler import save_reproducer_to_folder
-
+def test_dynamo_reproducer_2graph(tmp_path):
     backend = ThunderCompiler()
-    # x = torch.randint(3, 10, (2, 2)).view(1,1,4)
+    # Test non-contiguous input tensor
     x = make_tensor((4, 4), low=3, high=10, dtype=torch.int64, device="cuda", noncontiguous=True)
-    print(x)
 
     @torch.compile(backend=backend)
     def func(x):
@@ -796,12 +795,8 @@ def test_dynamo_reproducer(tmp_path):
             return x - 1
 
     out = func(x)
+    backend.save_reproducer_to_folder(tmp_path)
 
-    save_reproducer_to_folder(backend, tmp_path)
-    import os
-    from subprocess import run
-
-    print(tmp_path)
     s1 = f"{tmp_path}/g1_thunder_1.py"
     s2 = f"{tmp_path}/g2_thunder_1.py"
     assert os.path.exists(s1)
@@ -811,3 +806,32 @@ def test_dynamo_reproducer(tmp_path):
 
     assert result1.returncode == 0, f"Reproducer {s1} failed with return code {result1.returncode}"
     assert result2.returncode == 0, f"Reproducer {s2} failed with return code {result2.returncode}"
+
+
+@requiresCUDA
+def test_dynamo_reproducer_submodules(tmp_path):
+    from thunder.tests.distributed.helper import ToyModel
+    import torch.nn as nn
+
+    class SimpleModel(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.sub_mod = ToyModel()
+            self.seq = nn.Sequential(self.sub_mod, nn.ReLU())
+
+        def forward(self, x):
+            x = torch.sin(x)
+            x = self.seq(x)
+            return x
+
+    x = torch.randn(1, ToyModel.N_IN, device="cuda", requires_grad=True)
+    model = SimpleModel().cuda()
+    backend = ThunderCompiler()
+    jf = torch.compile(backend=backend)(model)
+    out = jf(x)
+    backend.save_reproducer_to_folder(tmp_path)
+
+    s1 = f"{tmp_path}/g1_thunder_1.py"
+    assert os.path.exists(s1)
+    result1 = run(["python", s1], capture_output=True, text=True)
+    assert result1.returncode == 0, f"Reproducer {s1} failed with return code {result1.returncode}"
