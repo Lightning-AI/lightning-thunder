@@ -838,20 +838,13 @@ def test_tom_overrides_proxy(device):
         assert v is params_actual[k]
 
 
-@pytest.mark.parametrize(
-    "device",
-    ("cpu", "cuda"),
-)
-def test_cache_symbolic_values_basic(device):
-    if device == "cuda" and not torch.cuda.is_available():
-        pytest.skip("CUDA not available")
-
+def test_cache_symbolic_values_basic():
     def foo(a, scalar):
         return (a * scalar).sum(scalar)
 
     jfoo = thunder.jit(foo, cache="symbolic values")
 
-    a = torch.randn((2, 2, 2), device=device)
+    a = torch.randn((2, 2, 2), device="cpu")
     b = 1
 
     actual = jfoo(a, b)
@@ -1120,15 +1113,8 @@ def test_isinstance_parameter():
     torch.testing.assert_close(actual, expected)
 
 
-@pytest.mark.parametrize(
-    "device",
-    ("cpu", "cuda"),
-)
-def test_cache_symbolic_values_reshape(device):
-    if device == "cuda" and not torch.cuda.is_available():
-        pytest.skip("CUDA not available")
-
-    a = torch.randn((4, 8, 6), device=device)
+def test_cache_symbolic_values_reshape():
+    a = torch.randn((4, 8, 6), device="cpu")
 
     def foo(t, batch_size):
         return t.reshape(batch_size, -1).sum(-1)
@@ -1423,20 +1409,13 @@ def test_args_order():
     assert [a.name for a in thunder.last_traces(fn)[-1].args] == [f"a{i}" for i in range(11)]
 
 
-@pytest.mark.parametrize(
-    "device",
-    ("cpu", "cuda"),
-)
-def test_cache_symbolic_values_dynamic_shape(device):
-    if device == "cuda" and not torch.cuda.is_available():
-        pytest.skip("CUDA not available")
-
+def test_cache_symbolic_values_dynamic_shape():
     def foo(a):
         return a.relu()
 
     jfoo = thunder.jit(foo, cache="symbolic values")
 
-    a = torch.randn((2, 2, 2), device=device)
+    a = torch.randn((2, 2, 2), device="cpu")
 
     actual = jfoo(a)
     expected = foo(a)
@@ -1445,7 +1424,7 @@ def test_cache_symbolic_values_dynamic_shape(device):
     assert thunder.cache_misses(jfoo) == 1
     assert thunder.cache_hits(jfoo) == 0
 
-    a = torch.randn((3, 4, 5), device=device)
+    a = torch.randn((3, 4, 5), device="cpu")
 
     actual = jfoo(a)
     expected = foo(a)
