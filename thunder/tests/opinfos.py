@@ -549,11 +549,11 @@ class ElementwiseUnaryOpInfo(ElementwiseOpInfo):
 #   so this helper wraps and unwraps numbers
 def _elementwise_unary_torch(op):
     @wraps(op)
-    def _fn(x):
+    def _fn(x, **kwargs):
         if isinstance(x, torch.Tensor):
-            return op(x)
+            return op(x, **kwargs)
 
-        return op(torch.tensor(x)).item()
+        return op(torch.tensor(x), **kwargs).item()
 
     return _fn
 
@@ -1631,6 +1631,31 @@ reciprocal_opinfo = OpInfo(
     ),
 )
 elementwise_unary_ops.append(reciprocal_opinfo)
+
+
+def celu_sample_generator(op, device, dtype, requires_grad):
+    alphas = (None, -1.0, 0.5)
+    samples = elementwise_unary_generator(op, device, dtype, requires_grad)
+    for alpha, sample in itertools.product(alphas, samples):
+        if alpha is None:
+            yield sample
+        else:
+            yield SampleInput(*sample.args, alpha=alpha, **sample.kwargs)
+
+
+celu_opinfo = OpInfo(
+    ltorch.celu,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=celu_sample_generator,
+    torch_reference=_elementwise_unary_torch(torch.celu),
+    test_directives=(
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-6, rtol=1e-6)),
+            "test_vjp_correctness",
+        ),
+    ),
+)
+elementwise_unary_ops.append(celu_opinfo)
 
 
 relu_opinfo = OpInfo(

@@ -675,11 +675,13 @@ def test_nanogpt():
     ("cpu", "cuda", "meta"),
 )
 def test_litgpt_variants(name, device):
-    from litgpt.config import Config
+    from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
 
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
+    if device == "cuda" and name == "falcon-7b-like":
+        pytest.skip("NVFuser reenable when https://github.com/NVIDIA/Fuser/issues/3292 is fixed")
 
     device = torch.device(device)
 
@@ -733,7 +735,7 @@ def test_litgpt_variants(name, device):
     ("cpu", "cuda"),
 )
 def test_litgpt_variants_kvcache(name, device):
-    from litgpt.config import Config
+    from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
     import torch._dynamo  # this monkeypatches torch.manual_seed
 

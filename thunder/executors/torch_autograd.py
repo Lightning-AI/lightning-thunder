@@ -70,10 +70,29 @@ class ThunderFunction(torch.autograd.Function):
         ctx.saved_other = saved_other
         ctx.compiled_backward = compiled_backward
 
+        # NOTE [Saved view of output of torch.autograd.Function leaks]
+        # We detach here to avoid a bug in PyTorch where
+        # it leaks memory if view of the output of torch.autograd.Function
+        # is saved for backward.
+        # See - https://github.com/pytorch/pytorch/issues/94990#issuecomment-1435181804
+        # NOTE - Detaching here would lead to problem with higher order differentiation but
+        #        this is ok for now because ThunderFunction is only `once_differentiable`.
+        def detach_if_tensor(t):
+            # Some operations may claim to return Tensor (as per their meta function)
+            # but may return None at Runtime (eg. noticed this for sdpa)
+            if isinstance(t, torch.Tensor):
+                return t.detach()
+            return t
+
+        saved_tensors = tuple(map(detach_if_tensor, saved_tensors))
+
         # We must save tensors using ctx.save_for_backward
         ctx.save_for_backward(*saved_tensors)
         return flat_output
 
+    # NOTE: If `torch.autograd.function.once_differentiable` is to be removed,
+    # one must take care of correctly removing the `detach_if_tensor` above.
+    # For more context, see NOTE [Saved view of output of torch.autograd.Function leaks] above.
     @staticmethod
     @torch.autograd.function.once_differentiable
     def backward(ctx, *args):

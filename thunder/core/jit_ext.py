@@ -728,6 +728,30 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     return forward_result
 
 
+@register_general_jit_lookaside(torch.autocast.__enter__)
+def autocast_enter(autocast_obj):
+    unwrap_autocast_obj = unwrap(autocast_obj)
+    device = unwrap_autocast_obj.device
+    dtype = unwrap_autocast_obj.fast_dtype
+    enabled = unwrap_autocast_obj._enabled
+    # NOTE - We manually map `torch.autocast.__enter__` to `torch.amp.autocast_mode._enter_autocast`
+    #        as it is functional variant of the same. This also allows the symbol to appear in trace
+    #        for better inspectibility.
+    thunder_fn = _torch_to_thunder_function_map[torch.amp.autocast_mode._enter_autocast]
+    thunder_fn(device, dtype, enabled)
+    return wrap(None, provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[autocast_obj.provenance]))
+
+
+@register_general_jit_lookaside(torch.autocast.__exit__)
+def autocast_exit(autocast_obj, exc_type, exc_val, exc_tb):
+    thunder_fn = _torch_to_thunder_function_map[torch.amp.autocast_mode._exit_autocast]
+    thunder_fn()
+    # NOTE - We manually map `torch.autocast.__exit__` to `torch.amp.autocast_mode._exit_autocast`
+    #        as it is functional variant of the same. This also allows the symbol to appear in trace
+    #        for better inspectibility.
+    return wrap(None, provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[autocast_obj.provenance]))
+
+
 @register_general_jit_lookaside(torch.finfo)
 @interpreter_needs_wrap
 def _general_jit_torch_finfo_lookaside(dtype: thunder.dtypes.dtype):
@@ -827,37 +851,6 @@ _general_jit_lookaside_map.update(
         prop_lookaside_helper: prop_lookaside_helper,
     }
 )
-
-# TODO Implement safety --- UNSAFE, PERMISSIVE, SAFE
-_safe_functions: set = {
-    dict.get,  # TODO Review safety of this
-    FunctionType.__new__,
-    isinstance,
-    member_descriptor.__get__,  # TODO Review the safety of this
-    MethodDescriptorType.__get__,  # TODO Review the safety of this
-    type,
-    tuple.__len__,
-    tuple.__getitem__,
-    FunctionType.__get__,  # TODO: review safety
-    torch._C._get_tracing_state,  # TODO: review safety
-    object.__new__,
-    object.__init__,
-    callable,
-    NoneType.__bool__,
-    dict.__len__,
-    dict.__contains__,
-    dict.__getitem__,
-    contextvars.ContextVar.get,
-    type.__or__,
-    list.__new__,
-    list.__init__,
-    list.__getitem__,
-    reversed.__new__,
-    CellType.__new__,
-    GetSetDescriptorType.__get__,
-    Exception.__new__,
-    StopIteration.__init__,
-}
 
 
 # when we pass containers to the computation trace, we want these to be using the proxies
@@ -1512,7 +1505,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
         return not isinstance(p, TensorProxy)
 
     # TODO: This is just a WAR to get things working. We'll revisit this when
-    # we deal with cosntraints in prologue trace.
+    # we deal with constraints in prologue trace.
     #
     # We sort variables to before `unpack` to put TensorProxy before others.
     # Because we could have TensorProxy.shape be part of `pro_to_xxx` along with

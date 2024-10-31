@@ -13,7 +13,7 @@ from thunder.core.options import (
     SHARP_EDGES_OPTIONS,
     resolve_sharp_edges_option,
 )
-from thunder.core.utils import check, is_collection
+from thunder.core.utils import check, is_collection, AutocastStack
 from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.compile_data import compile_data_and_stats
 import thunder.core.langctxs as langctxs
@@ -64,7 +64,6 @@ __all__ = [
 
 
 # Holds statistics and caches for a compiled function
-# TODO RC1 Update last_executed to last_computation
 # TODO RC1 Review how autograd traces are presented
 class CompileStats:
     """A class holding statistics and caches for a compiled function.
@@ -76,7 +75,7 @@ class CompileStats:
         See :mod:`thunder` for more of such utility functions.
 
     Attributes:
-        last_executed:
+        last_computation (Callable):
         last_traces (Sequence[TraceCtx]):
         last_prologue (TraceCtx):
         last_prologue_traces (Sequence[TraceCtx]):
@@ -107,7 +106,7 @@ class CompileStats:
 
     def __init__(self):
         # Callables and traces
-        self.last_executed = None
+        self.last_computation = None
         self.last_traces = None
         self.last_prologue = None
         self.last_prologue_traces = None
@@ -218,6 +217,9 @@ class CompileData:
 
         # Resolves cache option
         self.cache_option = resolve_cache_option(cache_option)
+
+        # State for pytorch autocast context managers.
+        self.autocast_stack: AutocastStack = AutocastStack()
 
         #
         # Gathers additional metadata
