@@ -6,7 +6,7 @@ import traceback
 import thunder
 from thunder.core.trace import TraceCtx
 from thunder.core.transforms import bsym_list_to_dag, Node
-from thunder.core.proxies import TensorProxy
+from thunder.core.proxies import TensorProxy, CollectionProxy
 from thunder.core.symbol import BoundSymbol
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.torch.default_torch_ops import torch_auto_registered_ops
@@ -291,10 +291,14 @@ def resize_graph(dot, size_per_element=0.15, min_size=12):
     dot.graph_attr.update(size=size_str)
 
 
-def _repr_tensor_proxy(t_proxy, show_metadata=False):
-    assert isinstance(t_proxy, TensorProxy)
-    extra_meta = f"\n shape:{t_proxy.shape} \n dtype:{t_proxy.dtype}" if show_metadata else ""
-    return f"name:{t_proxy.name}" + extra_meta
+def _repr_proxy(t_proxy, show_metadata=False):
+    if isinstance(t_proxy, TensorProxy):
+        # Should we just delegate to TensorProxy.__repr__ ?
+        extra_meta = f"\n shape:{t_proxy.shape} \n dtype:{t_proxy.dtype}" if show_metadata else ""
+        return f"name:{t_proxy.name}" + extra_meta
+
+    # For any other proxy, we just print the name.
+    return f"name:{t_proxy.name}"
 
 
 def make_trace_dot(trace: TraceCtx, show_metadata=False):
@@ -356,18 +360,24 @@ def make_trace_dot(trace: TraceCtx, show_metadata=False):
         node_id = id(node)
         visited.add(node_id)
         color = _get_color(node_id)
-        dot.node(str(node_id), node.bsym.python(indent=0, print_depth=1)[0], fillcolor=color)
+
+        # Unpacking collection might be a multi-line.
+        node_repr = "\n".join(node.bsym.python(indent=0, print_depth=1))
+        node_repr = node_repr.replace("\\", "")
+        dot.node(str(node_id), node_repr, fillcolor=color)
 
         # Add node for args and connect args
         for arg in node.bsym.flat_args:
-            if isinstance(arg, TensorProxy):
+            # We have collection proxies in backward
+            if isinstance(arg, (TensorProxy, CollectionProxy)):
                 arg_id = arg.name
-                dot.node(arg_id, _repr_tensor_proxy(arg, show_metadata))
+                dot.node(arg_id, _repr_proxy(arg, show_metadata))
                 dot.edge(arg_id, str(node_id))
 
         # Connect outputs
         for out in node.bsym.flat_outs:
-            if isinstance(out, TensorProxy):
+            # We have collection proxies in backward
+            if isinstance(out, (TensorProxy, CollectionProxy)):
                 out_id = out.name
                 dot.edge(str(node_id), out_id)
 
