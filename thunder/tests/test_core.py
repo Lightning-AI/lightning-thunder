@@ -2970,7 +2970,7 @@ def test_indexing_with_hashable_object():
 
 
 def test_profiling_decorator():
-    @thunder.core.profile.profile("compile_and_run")
+    @thunder.core.profile.annotate_for_profile("compile_and_run")
     def foo():
         def bar(a: torch.Tensor):
             t0 = torch.add(a, 42)

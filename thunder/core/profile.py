@@ -52,11 +52,11 @@ def add_markers(msg: str) -> None:
 # but alternatively as a `with` context:
 #   with thunder.core.profile.profile("name for a block of code"):
 #      # ... code ...
-profile: Callable[[str], None] = None
+annotate_for_profile: Callable[[str], None] = None
 
 
 if _ENABLED:
-    profile = functools.partial(nvtx.annotate, domain="thunder")
+    annotate_for_profile = functools.partial(nvtx.annotate, domain="thunder")
 else:
 
     class _no_annotate(contextlib.nullcontext):
@@ -70,4 +70,4 @@ else:
         def __call__(self, fqn):
             return fqn
 
-    profile = _no_annotate
+    annotate_for_profile = _no_annotate
