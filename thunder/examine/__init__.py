@@ -297,17 +297,20 @@ def _repr_tensor_proxy(t_proxy, show_metadata=False):
     return f"name:{t_proxy.name}" + extra_meta
 
 
-def make_trace_dot(trace: TraceCtx, show_proxy_metadata=False):
+def make_trace_dot(trace: TraceCtx, show_metadata=False):
     """
     Creates a directed graph of the given trace.
 
     This function is intended to be used to use graphviz to visualize the computation graph of a trace.
     Beware, rendering out a graph for large traces might take a while.
 
+    Roots nodes are colored "green", intermediates are colored "lightblue" and leaves are colored "orange"
+
     Requires graphviz to be installed, for more information check out -> https://graphviz.readthedocs.io/en/stable/index.html
 
     Args:
         trace (TraceCtx): The Thunder trace to be made into a graph.
+        show_metadata (bool): Add more meta-data (like shape, dtype) to the nodes representing the Tensor. Defaults to False.
 
     Returns:
         graphviz.Digraph: A graphviz directed graph.
@@ -359,7 +362,7 @@ def make_trace_dot(trace: TraceCtx, show_proxy_metadata=False):
         for arg in node.bsym.flat_args:
             if isinstance(arg, TensorProxy):
                 arg_id = arg.name
-                dot.node(arg_id, _repr_tensor_proxy(arg, show_proxy_metadata))
+                dot.node(arg_id, _repr_tensor_proxy(arg, show_metadata))
                 dot.edge(arg_id, str(node_id))
 
         # Add node for outputs and connect outputs
