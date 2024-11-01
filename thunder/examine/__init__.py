@@ -365,7 +365,7 @@ def make_trace_dot(trace: TraceCtx, show_metadata=False):
                 dot.node(arg_id, _repr_tensor_proxy(arg, show_metadata))
                 dot.edge(arg_id, str(node_id))
 
-        # Add node for outputs and connect outputs
+        # Connect outputs
         for out in node.bsym.flat_outs:
             if isinstance(out, TensorProxy):
                 out_id = out.name
