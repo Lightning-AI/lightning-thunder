@@ -276,7 +276,28 @@ def get_nvfuser_repro(trace: TraceCtx, fusion_name: str, /) -> str:
     return get_repro(fusion.last_inputs)
 
 
-def make_trace_dot(trace: TraceCtx):
+# Copied from `pytorchviz` which has MIT License (Thank you!)
+# See https://github.com/szagoruyko/pytorchviz/blob/0adcd83af8aa7ab36d6afd139cabbd9df598edb7/torchviz/dot.py#L180
+def resize_graph(dot, size_per_element=0.15, min_size=12):
+    """Resize the graph according to how much content it contains.
+
+    Modify the graph in place.
+    """
+    # Get the approximate number of nodes and edges
+    num_rows = len(dot.body)
+    content_size = num_rows * size_per_element
+    size = max(min_size, content_size)
+    size_str = str(size) + "," + str(size)
+    dot.graph_attr.update(size=size_str)
+
+
+def _repr_tensor_proxy(t_proxy, show_metadata=False):
+    assert isinstance(t_proxy, TensorProxy)
+    extra_meta = f"\n shape:{t_proxy.shape} \n dtype:{t_proxy.dtype}" if show_metadata else ""
+    return f"name:{t_proxy.name}" + extra_meta
+
+
+def make_trace_dot(trace: TraceCtx, show_proxy_metadata=False):
     """
     Creates a directed graph of the given trace.
 
@@ -308,25 +329,51 @@ def make_trace_dot(trace: TraceCtx):
 
     roots, leaves = bsym_list_to_dag(trace.bound_symbols)
     leaves_id = {id(leaf) for leaf in leaves}
+    roots_id = {id(root) for root in roots}
+
+    def _get_color(node_id):
+        if node_id in roots_id:
+            return "green"
+        if node_id in leaves_id:
+            return "orange"
+        return "lightblue"
+
+    # All roots will be positioned at same level due to `rank`:`same`.
+    roots_g = graphviz.Digraph(graph_attr={"rank": "same"})
+    for root in roots:
+        roots_g.node(str(id(root)), root.bsym.python(indent=0, print_depth=1)[0], fillcolor=_get_color(str(id(root))))
+    dot.subgraph(roots_g)  # Add roots_g to main graph.
+
     stack = [*roots]
     visited = set()
+
+    # Breadth first
     while stack:
-        node: Node = stack.pop()
+        node: Node = stack.pop(0)
         node_id = id(node)
         visited.add(node_id)
-        dot.node(str(node_id), node.bsym.sym.name, fillcolor="orange" if node_id in leaves_id else "white")
+        color = _get_color(node_id)
+        dot.node(str(node_id), node.bsym.python(indent=0, print_depth=1)[0], fillcolor=color)
 
+        # Add node for args and connect args
+        for arg in node.bsym.flat_args:
+            if isinstance(arg, TensorProxy):
+                arg_id = arg.name
+                dot.node(arg_id, _repr_tensor_proxy(arg, show_proxy_metadata))
+                dot.edge(arg_id, str(node_id))
+
+        # Add node for outputs and connect outputs
+        for out in node.bsym.flat_outs:
+            if isinstance(out, TensorProxy):
+                out_id = out.name
+                dot.edge(str(node_id), out_id)
+
+        # Add children for exploration
         for child in node.children:
             child_id = id(child)
-            out_proxy_name = node.bsym.output.name if isinstance(node.bsym.output, TensorProxy) else None
-            dot.edge(str(node_id), str(child_id), label=out_proxy_name)
             if child_id not in visited and not str(child.bsym).startswith("#"):
                 stack.append(child)
 
-        for parent in node.parents:
-            parent_id = id(parent)
-            dot.edge(str(parent_id), str(node_id))
-            if parent_id not in visited and not str(parent.bsym).startswith("#"):
-                stack.append(parent)
-
+    # Resize graph based on number of nodes
+    resize_graph(dot)
     return dot
