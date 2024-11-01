@@ -3584,10 +3584,7 @@ def normalize(
     return out
 
 
-# TODO: likely want to refactor these normalizations
-def _native_layer_norm(
-    a: TensorProxy, /, normalized_shape, weight, bias, eps: Number
-) -> tuple[TensorLike, TensorLike, TensorLike]:
+def _check_normalized_shape_and_get_reduction_dims(a, normalized_shape, weight=None, bias=None):
     # Validates inputs
     normalized_ndim = len(normalized_shape)
     utils.check(normalized_ndim >= 1, lambda: f"Expected normalized_shape={normalized_shape} to have length >= 1!")
@@ -3613,6 +3610,14 @@ def _native_layer_norm(
 
     axis = a.ndim - normalized_ndim
     reduction_dims = list(range(axis, a.ndim))
+    return reduction_dims
+
+
+# TODO: likely want to refactor these normalizations
+def _native_layer_norm(
+    a: TensorProxy, /, normalized_shape, weight, bias, eps: Number
+) -> tuple[TensorLike, TensorLike, TensorLike]:
+    reduction_dims = _check_normalized_shape_and_get_reduction_dims(a, normalized_shape, weight, bias)
     out, mean, rstd = _normalize(a, reduction_dims, eps)
 
     # Handles weight and bias
@@ -3651,6 +3656,27 @@ def layer_norm(
         normalized_ndim = len(bias.shape)
         normalized_shape = a.shape[-normalized_ndim:]
     return _native_layer_norm(a, normalized_shape, weight, bias, eps)[0]
+
+
+def rms_norm(
+    a: TensorLike,
+    /,
+    normalized_shape: Sequence[int],
+    weight: None | TensorLike = None,
+    eps: None | float = None,
+):
+    if eps is None:
+        eps = torch.finfo(to_torch_dtype(a.dtype)).eps
+    reduction_dims = _check_normalized_shape_and_get_reduction_dims(a, normalized_shape, weight)
+    norm_a = mean(a * a, dim=reduction_dims, keepdim=True)
+    a_normed = a * rsqrt(norm_a + eps)
+    if weight is not None:
+        a_normed = a_normed * weight
+    return a_normed
+
+
+if hasattr(torch.nn.functional, "rms_norm"):
+    rms_norm = torchsymbol(torch.nn.functional.rms_norm)(rms_norm)
 
 
 def _native_batch_norm(
