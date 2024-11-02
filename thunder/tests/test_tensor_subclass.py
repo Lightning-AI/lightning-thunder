@@ -87,58 +87,7 @@ class ScaleTensorSubclass(torch.Tensor):
             return ScaleTensorSubclass(out, scales[0])
 
 
-# Error message:
-#         unpack_fn = d.get(inst)
-#         if unpack_fn is None:
-# >           raise NotImplementedError(f"Unpacking from {inst} {provenance}")
-# E           NotImplementedError: Unpacking from LOOKASIDE ProvenanceRecord(
-# E             i1 = INPUT_FN()
-# E             i2 = LOAD_ATTR(i1, '__globals__')
-# E             i3 = BINARY_SUBSCR(i2, 'ScaleTensorSubclass')
-# E             i4 = LOOKASIDE(i3)
-# E           )
-#
-# thunder/core/jit_ext.py:1503: NotImplementedError
-#
-# The above exception was the direct cause of the following exception:
-#
-#     def test_subclass_ctor():
-#
-#         def f(x: torch.Tensor, scale: torch.Tensor) -> ScaleTensorSubclass:
-#             return ScaleTensorSubclass(x, scale)
-#
-#         device = torch.device("cuda")
-#         dtype = torch.float32
-#         shape = (2, 2)
-#         x = make_tensor(shape, device=device, dtype=dtype)
-#         scale = make_tensor((), device=device, dtype=dtype)
-#
-#         jitted = thunder.jit(f)
-#
-#         expected = f(x, scale)
-# >       actual = jitted(x, scale)
-#
-# thunder/tests/test_tensor_subclass.py:104:
-# _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
-# thunder/__init__.py:768: in wrapped
-#     return fn(*args, **kwargs)
-# thunder/__init__.py:818: in fn_
-#     cache_entry, inps, pro_to_epi = get_computation_and_inputs(*args, **kwargs)
-# thunder/__init__.py:750: in wrapped
-#     cache_entry, inps, pro_to_epi = get_computation_and_inputs_fn(*args, **kwargs)
-# thunder/core/langctxs.py:136: in _fn
-#     result = fn(*args, **kwargs)
-# thunder/__init__.py:234: in cache_info_wrapper
-#     res = fn(*args, **kwargs)
-# thunder/__init__.py:522: in get_computation_and_inputs
-#     jit_results: TraceResults = thunder_general_jit(
-# thunder/core/jit_ext.py:1788: in thunder_general_jit
-#     pro_to_comp_proxies, pro_to_epi_proxies = unpack_inputs(ctx, prologue_trace, pro_to_comp, pro_to_epi, args, kwargs)
-# thunder/core/jit_ext.py:1576: in unpack_inputs
-#     pro_to_comp = tuple(sorted((unpack(v) for v in pro_to_comp_inps), key=lambda x: param_ordering[id(x)][1]))
-# thunder/core/jit_ext.py:1576: in <genexpr>
-#     pro_to_comp = tuple(sorted((unpack(v) for v in pro_to_comp_inps), key=lambda x: param_ordering[id(x)][1]))
-def test_subclass_ctor():
+def test_func_of_subclass_ctor_wrapper():
 
     def f(x: torch.Tensor, scale: torch.Tensor) -> ScaleTensorSubclass:
         return ScaleTensorSubclass(x, scale)
@@ -153,3 +102,5 @@ def test_subclass_ctor():
 
     expected = f(x, scale)
     actual = jitted(x, scale)
+    assert type(expected) is type(actual)
+    torch.testing.assert_close((expected._x, expected._scale), (actual._x, actual._scale))
