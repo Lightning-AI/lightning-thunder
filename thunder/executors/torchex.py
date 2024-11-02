@@ -2207,3 +2207,15 @@ _register_implementation(prims.shape, shape, checker=_always_executable)
 
 shallow_copy = ex.register_operator("shallow_copy", meta=prims.shallow_copy, fn=lambda x: x)
 _register_implementation(prims.shallow_copy, shallow_copy, checker=_always_executable)
+
+
+def _tensor_subclass_ctor(cls, name, shape, device, dtype, requires_grad, tensors, non_tensors):
+    return cls(*tensors, *non_tensors)
+
+
+tensor_subclass_ctor = ex.register_operator(
+    "tensor_subclass_ctor",
+    meta=prims.tensor_subclass_ctor,
+    fn=_tensor_subclass_ctor,
+)
+_register_implementation(prims.tensor_subclass_ctor, tensor_subclass_ctor, checker=_always_executable)
