@@ -1886,23 +1886,103 @@ class SubclassTensorProxy(TensorProxy):
     _subclass_type: torch._C._TensorMeta
 
     def __init__(self, *args, **kwargs):
-        tensors = kwargs.pop("tensors", [])
-        non_tensors = kwargs.pop("non_tensors", [])
+        from thunder.core.pytree import tree_flatten
+
+        kwarg_tensors = kwargs.pop("tensors", [])
+        kwarg_non_tensors = kwargs.pop("non_tensors", [])
         subclass_type = kwargs.pop("subclass_type", None)
-        if not hasattr(self, "_name"):
+
+        # If tensors (and non_tensors) are not empty, then it should be the path of `_make_wrapper_subclass`
+        # where `self` should already have gotten its name.
+        flat_args, spec = tree_flatten((args, kwargs))
+        tensors = list(filter(lambda t: isinstance(t, TensorProxy), flat_args))
+        non_tensors = list(filter(lambda t: not isinstance(t, TensorProxy), flat_args))
+        has_name_before_init = hasattr(self, "_name")
+
+        is_dunder_init_following_make_wrapper_subclass: bool = False
+        if tensors:
+            baseutils.check(
+                has_name_before_init
+                and not kwarg_tensors
+                and not kwarg_non_tensors
+                and self._subclass_type is not None,
+                lambda: f"{flat_args=} indicates this instance is created by `torch.Tensor._make_wrapper_subclass`'s lookaside but `name` is not set",
+            )
+            is_dunder_init_following_make_wrapper_subclass = True
+
+        if not is_dunder_init_following_make_wrapper_subclass:
             super().__init__(*args, **kwargs)
-            self._tensors = tensors
-            self._non_tensors = non_tensors
+
+        if not is_dunder_init_following_make_wrapper_subclass:
+            self._tensors = kwarg_tensors
+            self._non_tensors = kwarg_non_tensors
             self._subclass_type = subclass_type
         else:
-            from thunder.core.pytree import tree_flatten
+            self._tensors = tensors
+            self._non_tensors = non_tensors
 
-            flat_args, spec = tree_flatten((args, kwargs))
-            self._tensors = list(filter(lambda t: isinstance(t, TensorProxy), flat_args))
-            self._non_tensors = list(filter(lambda t: not isinstance(t, TensorProxy), flat_args))
-            baseutils.check(
-                self.history is not None, lambda: f"SubclassTensorProxy {self._name} must have its `history` set"
+        if is_dunder_init_following_make_wrapper_subclass:
+            from thunder.core import prims
+
+            bsym = prims.tensor_subclass_ctor.bind(
+                self._subclass_type,
+                self.name,
+                self.shape,
+                self.device,
+                self.dtype,
+                self.requires_grad,
+                self._tensors,
+                self._non_tensors,
+                output=self,
             )
+            get_tracectx().add_bound_symbol(bsym)
+
+    def replace(self, **changes):
+        r"""Return a copy of the SubclassTensorProxy object with new values for the specified fields as given to the constructor as arguments.
+        Valid keyword arguments are ``name``, ``history``, ``shape``, ``dtype``, ``device``, ``requires_grad``, ``distparallel_type``,  ``thunder_fsdp_padding_size``.
+        ``like`` is also a valid keyword and will take metadata from the tensor proxy argument
+        in preference to the old values but overridable by keyword arguments.
+        Note that the copy will use the current (environment) tracectx."""
+
+        like = changes.get("like")
+        (
+            shape,
+            device,
+            dtype,
+            true_dtype,
+            numel,
+            ndim,
+            requires_grad,
+            grad,
+            distparallel_type,
+            thunder_fsdp_padding_size,
+        ) = _infer_tensor_properties(
+            like,
+            changes.get("shape", self._shape if like is None else None),
+            changes.get("device", self._device if like is None else None),
+            changes.get("dtype", self._dtype if like is None else None),
+            changes.get("requires_grad", self._requires_grad if like is None else None),
+            changes.get("grad", self._grad if like is None else None),
+            changes.get("distparallel_type", self._distparallel_type if like is None else None),
+            changes.get("thunder_fsdp_padding_size", self._thunder_fsdp_padding_size if like is None else None),
+        )
+        name = changes.get("name", self.name)
+        history = changes.get("history", self.history)
+        tags = changes.get("tags", self.tags)
+        return SubclassTensorProxy(
+            name=name,
+            tags=tags,
+            shape=shape,
+            device=device,
+            dtype=dtype,
+            requires_grad=requires_grad,
+            distparallel_type=distparallel_type,
+            thunder_fsdp_padding_size=thunder_fsdp_padding_size,
+            history=history,
+            tensors=self._tensors,
+            non_tensors=self._non_tensors,
+            subclass_type=self._subclass_type,
+        )
 
 
 class TorchAutogradFunctionCtxProxy(Proxy, TorchAutogradFunctionCtxProxyInterface):

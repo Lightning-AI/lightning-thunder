@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from enum import auto, Enum
 from numbers import Number
 from functools import reduce, wraps
@@ -77,6 +79,7 @@ from thunder.core.proxies import (
     TupleProxy,
     AnyProxy,
     IntegerProxy,
+    SubclassTensorProxy,
 )
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
@@ -272,6 +275,8 @@ class PrimIDs(Enum):
     COPY_ = auto()
     #
     SINK = auto()
+    # Tensor Subclasses methods
+    TENSOR_SUBCLASS_CTOR = auto()
 
 
 class OpTags(Enum):
@@ -4048,3 +4053,27 @@ def sink_meta(*args, **kwargs):
 
 # TODO do we want another tag to remove this after prologue is constructed?
 sink = make_prim(PrimIDs.SINK, "sink", meta=sink_meta, tags=(OpTags.DONT_DCE,))
+
+
+def tensor_subclass_ctor_meta(
+    cls, name, shape, device, dtype, requires_grad, tensors, non_tensors
+) -> SubclassTensorProxy:
+    s = SubclassTensorProxy(
+        name,
+        subclass_type=cls,
+        shape=shape,
+        device=device,
+        dtype=dtype,
+        requires_grad=requires_grad,
+        tensors=tensors,
+        non_tensors=non_tensors,
+        history=[t.history for t in tensors],
+    )
+    return s
+
+
+tensor_subclass_ctor = make_prim(
+    PrimIDs.TENSOR_SUBCLASS_CTOR,
+    "tensor_subclass_ctor",
+    meta=tensor_subclass_ctor_meta,
+)
