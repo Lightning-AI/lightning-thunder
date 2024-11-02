@@ -1880,6 +1880,31 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(self)
 
 
+class SubclassTensorProxy(TensorProxy):
+    _tensors: list[TensorProxy]
+    _non_tensors: list[Any]
+    _subclass_type: torch._C._TensorMeta
+
+    def __init__(self, *args, **kwargs):
+        tensors = kwargs.pop("tensors", [])
+        non_tensors = kwargs.pop("non_tensors", [])
+        subclass_type = kwargs.pop("subclass_type", None)
+        if not hasattr(self, "_name"):
+            super().__init__(*args, **kwargs)
+            self._tensors = tensors
+            self._non_tensors = non_tensors
+            self._subclass_type = subclass_type
+        else:
+            from thunder.core.pytree import tree_flatten
+
+            flat_args, spec = tree_flatten((args, kwargs))
+            self._tensors = list(filter(lambda t: isinstance(t, TensorProxy), flat_args))
+            self._non_tensors = list(filter(lambda t: not isinstance(t, TensorProxy), flat_args))
+            baseutils.check(
+                self.history is not None, lambda: f"SubclassTensorProxy {self._name} must have its `history` set"
+            )
+
+
 class TorchAutogradFunctionCtxProxy(Proxy, TorchAutogradFunctionCtxProxyInterface):
     def __init__(
         self,
