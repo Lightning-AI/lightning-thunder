@@ -1906,24 +1906,26 @@ class SubclassTensorProxy(TensorProxy):
                 and not kwarg_tensors
                 and not kwarg_non_tensors
                 and self._subclass_type is not None,
-                lambda: f"{flat_args=} indicates this instance is created by `torch.Tensor._make_wrapper_subclass`'s lookaside but `name` is not set",
+                lambda: (
+                    f"{flat_args=} indicates this instance is created by"
+                    "`torch.Tensor._make_wrapper_subclass`'s lookaside but `name` is not set"
+                ),
             )
             is_dunder_init_following_make_wrapper_subclass = True
 
         if not is_dunder_init_following_make_wrapper_subclass:
             super().__init__(*args, **kwargs)
 
-        if not is_dunder_init_following_make_wrapper_subclass:
             self._tensors = kwarg_tensors
             self._non_tensors = kwarg_non_tensors
             self._subclass_type = subclass_type
         else:
-            self._tensors = tensors
-            self._non_tensors = non_tensors
-
-        if is_dunder_init_following_make_wrapper_subclass:
+            # TODO(crcrpar): Think about materializing `self` so that we can
+            # call `__tensor_init__` to know each attribute names.
             from thunder.core import prims
 
+            self._tensors = tensors
+            self._non_tensors = non_tensors
             bsym = prims.tensor_subclass_ctor.bind(
                 self._subclass_type,
                 self.name,
