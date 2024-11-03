@@ -34,7 +34,10 @@ from typing import Literal, Optional, Tuple
 import warnings
 import torch
 
-import bitsandbytes
+from bitsandbytes.functional import (
+    QuantState,
+    get_4bit_type,
+)
 
 try:
     # to support Intel CPU/GPU (XPU) backend
@@ -126,7 +129,7 @@ def quantize_4bit_cpu(
     compress_statistics=False,
     quant_type: Literal["fp4", "nf4"] = "fp4",
     quant_storage=torch.uint8,
-) -> tuple[torch.Tensor, bitsandbytes.functional.QuantState]:
+) -> tuple[torch.Tensor, QuantState]:
     if blocksize is None:
         blocksize = 64
     assert_on_cpu([A, absmax, out])
@@ -223,12 +226,12 @@ def quantize_4bit_impl(
     out[:] = result.view(-1, 1)
     # out[:] = out_uint8[1::2].bitwise_left_shift(4).bitwise_or_(out_uint8[::2])
 
-    code = bitsandbytes.functional.get_4bit_type(quant_type, device=A.device)
+    code = get_4bit_type(quant_type, device=A.device)
 
     if compress_statistics:
         raise NotImplementedError("bnb_4bit_use_double_quant is not supported yet for CPU/XPU")
     else:
-        state = bitsandbytes.functional.QuantState(
+        state = QuantState(
             absmax=absmax,
             shape=input_shape,
             dtype=A.dtype,
