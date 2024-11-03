@@ -15,7 +15,6 @@ from .utils import (
 )
 
 from .quantization_cpu import quantize_4bit_cpu
-from bitsandbytes.functional import QuantState, get_4bit_type
 
 bitsandbytes_executor = None
 
@@ -64,10 +63,10 @@ class BitsAndBytesLinearQuant4bit(Transform):
             # cuda absmax dtype is torch.float32 instead of dtype=A.dtype
             absmax = torch.zeros((blocks,), device=w.device, dtype=torch.float32)
             quant_type = "nf4"
-            code = get_4bit_type(quant_type, device=w.device)
+            code = bitsandbytes.functional.get_4bit_type(quant_type, device=w.device)
 
             # Return only shape and dtype for meta tensors without calculation
-            state = QuantState(
+            state = bitsandbytes.functional.QuantState(
                 absmax=absmax,
                 shape=w.shape,
                 dtype=w.dtype,
