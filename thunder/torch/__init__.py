@@ -5750,7 +5750,7 @@ def _get_fake_arg(inp: Any):
     if inp is None:
         return inp
     if isinstance(inp, NumberProxy):
-        if inp.value == None:
+        if inp.value is None:
             raise NotImplementedError("Unsupported for NumberProxy.value=None")
         else:
             return inp.value
