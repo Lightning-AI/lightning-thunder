@@ -1,4 +1,4 @@
-ipython[all] ~=8.27.0
+ipython[all] ~=8.29.0
 numpy >=1.23.0,<2  # not yet ready for numpy 2
 liger-kernel == 0.3.1
 cuda-python

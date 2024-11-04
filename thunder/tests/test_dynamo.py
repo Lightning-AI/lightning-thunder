@@ -151,8 +151,7 @@ def test_splitter_unsupported_ctx(executor, device: str, dtype: dtypes.dtype, dy
     assert len(backend.subgraph_infos) == 1
     assert len(backend.subgraph_infos[0].submodule_to_compiled_functions) > 1  # Verify that the subgraph was split.
     assert any(
-        "didn't have any mapping in thunder" in split_reason.info
-        for split_reason in backend.subgraph_infos[0].split_reasons
+        "it is in unsupported context" in split_reason.info for split_reason in backend.subgraph_infos[0].split_reasons
     )
     targets = (node.target for node in backend.subgraph_infos[0].split_graph_module.graph.nodes)
     assert any(target.startswith("thunder_") for target in targets)  # Verify that the submodules have name `thunder_*`
@@ -180,7 +179,7 @@ def test_splitter_unsupported_ctx_with_graph_break(executor, device: str, dtype:
 
     def func(x):
         x = x + 2
-        with torch.autocast("cpu"):
+        with torch.autocast(device):
             y = torch.sin(x)
             torch._dynamo.graph_break()
             return torch.matmul(x, y)
@@ -197,12 +196,9 @@ def test_splitter_unsupported_ctx_with_graph_break(executor, device: str, dtype:
 
     # 2 subgraphs due to graph-break
     assert len(backend.subgraph_infos) == 2
-
     for subgraph_info in backend.subgraph_infos:
         # Verify that for each subgraph we had split due to `autocast` being enabled.
-        assert any(
-            "didn't have any mapping in thunder" in split_reason.info for split_reason in subgraph_info.split_reasons
-        )
+        assert any("it is in unsupported context" in split_reason.info for split_reason in subgraph_info.split_reasons)
 
 
 @instantiate(
