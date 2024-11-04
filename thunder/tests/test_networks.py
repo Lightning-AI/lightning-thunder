@@ -400,6 +400,40 @@ def test_thunderfx_mistral_nemo_small():
     assert th_backend.subgraph_infos, "Should have at least 1 subgraph"
 
 
+LLAMA_3_2_1B_CFG = {
+    'architectures': ['LlamaForCausalLM'],
+  'attention_bias': False,
+  'attention_dropout': 0.0,
+  'bos_token_id': 128000,
+  'eos_token_id': 128001,
+  'head_dim': 64,
+  'hidden_act': 'silu',
+  'hidden_size': 2048,
+  'initializer_range': 0.02,
+  'intermediate_size': 8192,
+  'max_position_embeddings': 131072,
+  'mlp_bias': False,
+  'model_type': 'llama',
+  'num_attention_heads': 32,
+  'num_hidden_layers': 16,
+  'num_key_value_heads': 8,
+  'pretraining_tp': 1,
+  'rms_norm_eps': 1e-05,
+  'rope_scaling': {'factor': 32.0,
+   'high_freq_factor': 4.0,
+   'low_freq_factor': 1.0,
+   'original_max_position_embeddings': 8192,
+   'rope_type': 'llama3'},
+  'rope_theta': 500000.0,
+  'tie_word_embeddings': True,
+  'torch_dtype': 'bfloat16',
+  'transformers_version': '4.45.0.dev0',
+  'use_cache': True,
+  'vocab_size': 128256,
+  '_commit_hash': '4e20de362430cd3b72f300e6b0f18e50e7166e08'
+}
+
+
 @requiresCUDA
 def test_hf_llama():
     from transformers.models.llama import LlamaForCausalLM, LlamaConfig
@@ -411,7 +445,7 @@ def test_hf_llama():
     llama_logger.setLevel(logging.CRITICAL)
     model_id = "meta-llama/Llama-3.2-1B"
 
-    config_args = LlamaConfig.get_config_dict(model_id)[0]
+    config_args = LLAMA_3_2_1B_CFG.copy()
     config_args["num_hidden_layers"] = 1
     with torch.device("cuda"):
         model = LlamaForCausalLM(LlamaConfig(**config_args)).to(torch.bfloat16).requires_grad_(False).eval()
