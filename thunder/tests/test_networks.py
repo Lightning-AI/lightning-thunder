@@ -255,18 +255,6 @@ def test_hf_bert():
     def dummy(*args):
         pass
 
-    # Transformers 2.41+ adds some more non-essential data-dependent
-    # control flow behind a check whether we are compiling
-    if hasattr(torch, "compiler") and hasattr(torch.compiler, "is_compiling"):
-        is_compiling = torch.compiler.is_compiling
-    else:
-        is_compiling = torch._dynamo.is_compiling
-
-    @thunder.core.jit_ext.register_general_jit_lookaside(is_compiling)
-    @thunder.core.jit_ext.interpreter_needs_wrap
-    def dummy(*args):
-        return True
-
     # transformers accesses the old attrib and causes the future warning
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=FutureWarning, message=".*torch._dynamo.*.is_compiling.*")
@@ -410,3 +398,48 @@ def test_thunderfx_mistral_nemo_small():
     logits.backward(grad_logits)
 
     assert th_backend.subgraph_infos, "Should have at least 1 subgraph"
+
+
+@requiresCUDA
+def test_hf_llama():
+    from transformers.models.llama import LlamaForCausalLM, LlamaConfig
+    from transformers import DynamicCache
+    from transformers.models.llama.modeling_llama import logger as llama_logger
+    import logging
+
+    # transformers logs a cache deprecation warning
+    llama_logger.setLevel(logging.CRITICAL)
+    model_id = "meta-llama/Llama-3.2-1B"
+
+    config_args = LlamaConfig.get_config_dict(model_id)[0]
+    config_args["num_hidden_layers"] = 1
+    with torch.device("cuda"):
+        model = LlamaForCausalLM(LlamaConfig(**config_args)).to(torch.bfloat16).requires_grad_(False).eval()
+
+    jm = thunder.jit(model)
+
+    args1 = dict(
+        cache_position=torch.tensor([0, 1, 2, 3, 4, 5], device="cuda:0"),
+        input_ids=torch.tensor([[128000, 791, 1401, 311, 2324, 374]], device="cuda:0"),
+        inputs_embeds=None,
+        attention_mask=torch.tensor([[1, 1, 1, 1, 1, 1]], device="cuda:0"),
+        use_cache=True,
+        return_dict=True,
+    )
+    res = jm(**args1)
+    expected = model(**args1)
+
+    assert_close(res, expected, rtol=1e-1, atol=1e-1)
+
+    args2 = dict(
+        cache_position=torch.tensor([6], device="cuda:0"),
+        input_ids=torch.tensor([[311]], device="cuda:0"),
+        inputs_embeds=None,
+        attention_mask=torch.tensor([[1, 1, 1, 1, 1, 1, 1]], device="cuda:0"),
+        use_cache=True,
+        return_dict=True,
+    )
+
+    res2 = jm(past_key_values=res["past_key_values"], **args2)
+    expected2 = model(past_key_values=res["past_key_values"], **args2)
+    assert_close(res2, expected2, rtol=1e-1, atol=1e-1)
