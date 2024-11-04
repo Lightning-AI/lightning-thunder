@@ -127,8 +127,13 @@ def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
     with thunder.core.trace.tracectx(TraceCtx()):
 
         def make_tensor_proxy(arg_node):
-            # This is a Node in the graph representing a Tensor or tuple of Tensors.
+            # This is a Node in the graph representing a Tensor or tuple of Tensors or
+            # a PyTorch object like one representing torch.autocast.
             if isinstance(arg_node, torch.fx.Node):
+                if "example_value" not in arg_node.meta:
+                    # This is a non tensor object like `torch.autocast` ctx manager object.
+                    return arg_node
+
                 example_value = arg_node.meta["example_value"]
 
                 if isinstance(example_value, torch.Tensor):
@@ -178,12 +183,6 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
     from thunder.core.trace import TraceCtx
     from thunder.core.compile_data import compile_data_and_stats
     from thunder.common import CompileData, CompileStats
-
-    # We require a corresponding `_enter_autocast` in trace to correctly pop the
-    # state on `_exit_autocast`, else we get `IndexError: pop from an empty deque`.
-    # As a work-around, we short circuit and return True.
-    if hasattr(thunder_symbol, "id") and thunder_symbol.id == "torch.amp.autocast_mode._exit_autocast":
-        return True, None
 
     # This is required for verifying `_enter_autocast`
     # which pushes state onto `CompileData.autocast_stack`.

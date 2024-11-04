@@ -5607,6 +5607,8 @@ def autocast_enter(device_type, dtype=None, enabled=True, _unused_cache_enabled=
     tags=(prims.OpTags.DONT_DCE, prims.OpTags.CTX_MANAGER_ENTER_EXIT_OP),
 )
 def autocast_exit(*args):
+    if get_compile_data().autocast_stack.is_empty():
+        return
     get_compile_data().autocast_stack.pop()
 
 
