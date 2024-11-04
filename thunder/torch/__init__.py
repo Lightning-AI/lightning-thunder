@@ -5616,7 +5616,12 @@ def backward_autograd_function_apply(
     id="torch.amp.autocast_mode._enter_autocast",
     tags=(prims.OpTags.DONT_DCE, prims.OpTags.CTX_MANAGER_ENTER_EXIT_OP),
 )
-def autocast_enter(device_type, dtype=None, enabled=True):
+def autocast_enter(device_type, dtype=None, enabled=True, _unused_cache_enabled=True):
+    # We may receive device_type=cuda:0
+    # PyTorch applies autocast irrespective of device index.
+    # So, here we grab the device_type from the string.
+    device_type, unused_deviceno = devices._device_from_string_helper(device_type)
+    device_type = devices.devicetype_string(device_type)
     if dtype is None:
         dtype = torch.get_autocast_dtype(device_type)
     get_compile_data().autocast_stack.push(device_type, dtype, enabled)
@@ -5628,6 +5633,8 @@ def autocast_enter(device_type, dtype=None, enabled=True):
     tags=(prims.OpTags.DONT_DCE, prims.OpTags.CTX_MANAGER_ENTER_EXIT_OP),
 )
 def autocast_exit(*args):
+    if get_compile_data().autocast_stack.is_empty():
+        return
     get_compile_data().autocast_stack.pop()
 
 

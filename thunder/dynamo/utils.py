@@ -127,8 +127,13 @@ def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
     with thunder.core.trace.tracectx(TraceCtx()):
 
         def make_tensor_proxy(arg_node):
-            # This is a Node in the graph representing a Tensor or tuple of Tensors.
+            # This is a Node in the graph representing a Tensor or tuple of Tensors or
+            # a PyTorch object like one representing torch.autocast.
             if isinstance(arg_node, torch.fx.Node):
+                if "example_value" not in arg_node.meta:
+                    # This is a non tensor object like `torch.autocast` ctx manager object.
+                    return arg_node
+
                 example_value = arg_node.meta["example_value"]
 
                 if isinstance(example_value, torch.Tensor):
@@ -176,7 +181,15 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
     """
     import thunder
     from thunder.core.trace import TraceCtx
+    from thunder.core.compile_data import compile_data_and_stats
+    from thunder.common import CompileData, CompileStats
 
+    # This is required for verifying `_enter_autocast`
+    # which pushes state onto `CompileData.autocast_stack`.
+    cd = CompileData(fn=lambda x: x, disable_preprocessing=True)
+    cs = CompileStats()
+
+    @compile_data_and_stats(cd, cs)
     @thunder._with_cache_info_ctx
     def _run_with_cache_info():
 
@@ -226,8 +239,8 @@ def get_nodes_in_unsupported_ctx_regions(gm: torch.fx.GraphModule) -> set[torch.
     nodes_in_unsupported_ctx_regions: set[torch.fx.Node] = set()
     ctx_cnt = 0  # Count of `enters_autocast` we have seen till now
 
-    # We want to mark nodes with `_enter_autocast` and `_exit_autocast`
-    # as unsupported as `thunder` doesn't correctly deal with these stateful functions.
+    # We want to mark nodes disabling `autograd` as unsupported
+    # because `thunder` doesn't correctly deal with these stateful functions.
 
     def is_no_grad_ctx_enter(node):
         if node.target == torch._C._set_grad_enabled:
@@ -244,13 +257,9 @@ def get_nodes_in_unsupported_ctx_regions(gm: torch.fx.GraphModule) -> set[torch.
         return False
 
     for node in gm.graph.nodes:
-        if node.op == "call_function" and (
-            node.target in (torch.amp.autocast_mode._enter_autocast,) or is_no_grad_ctx_enter(node)
-        ):
+        if node.op == "call_function" and is_no_grad_ctx_enter(node):
             ctx_cnt += 1
-        elif node.op == "call_function" and (
-            node.target in (torch.amp.autocast_mode._exit_autocast,) or is_no_grad_ctx_exit(node)
-        ):
+        elif node.op == "call_function" and is_no_grad_ctx_exit(node):
             ctx_cnt -= 1
         else:
             if ctx_cnt > 0:
