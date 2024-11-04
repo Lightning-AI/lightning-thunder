@@ -47,10 +47,10 @@ def add_markers(msg: str) -> None:
 
 
 # The main interface to profiling something. Generally used as a decorator:
-#   @thunder.core.profile.profile("foo")
+#   @thunder.core.profile.annotate_for_profile("foo")
 #   def foo(...): ...
 # but alternatively as a `with` context:
-#   with thunder.core.profile.profile("name for a block of code"):
+#   with thunder.core.profile.annotate_for_profile("name for a block of code"):
 #      # ... code ...
 annotate_for_profile: Callable[[str], None] = None
 
