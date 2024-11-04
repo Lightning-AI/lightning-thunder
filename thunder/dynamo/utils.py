@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import dataclasses
 import inspect
 import itertools
-import warnings
+import copy
 
 import torch
 
@@ -259,6 +259,27 @@ def get_nodes_in_unsupported_ctx_regions(gm: torch.fx.GraphModule) -> set[torch.
     return nodes_in_unsupported_ctx_regions
 
 
+def is_graphmodule_supported_by_thunder(gm):
+    nodes_in_unsupported_ctx_regions = get_nodes_in_unsupported_ctx_regions(gm)
+    for node in gm.graph.nodes:
+        if node.op in (
+            "placeholder",
+            "get_attr",
+            "output",
+        ):
+            continue
+        if node in nodes_in_unsupported_ctx_regions:
+            split_reason = SplitReason(
+                SplitReasonType.UNSUPPORTED_NODE,
+                info=f"node with name: {node.name} and target: {node.target} is not supported probably because it is in unsupported context.",
+            )
+            return False, split_reason
+        is_thunder_supported, split_reason = is_node_supported_by_thunder(node)
+        if not is_thunder_supported:
+            return False, split_reason
+    return True, None
+
+
 def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason | None]:
     """
     Determine whether thunder can execute the operation described by this node.
@@ -305,6 +326,15 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
             info=f"node with name: {node.name} and target: {node.target} has been manually disabled.",
         )
         return False, split_reason
+
+    # The checkpointed function must be fully supported by Thunder
+    if target is torch.ops.higher_order.tag_activation_checkpoint:
+        m = node.graph.owning_module
+        get_attr_node = node.args[0]
+        assert get_attr_node.op == "get_attr"
+        checkpointed_fn = getattr(m, get_attr_node.target)
+        is_module_supported, split_reason = is_graphmodule_supported_by_thunder(checkpointed_fn)
+        return is_module_supported, split_reason
 
     # If thunder has a mapping for this operation, try executing the meta function and see.
     # We have a symbol for `torch.where`, but we don't support one overload of it.
@@ -418,3 +448,58 @@ def _get_example_inputs_from_placeholder(node) -> tuple[torch.Tensor]:
         raise TypeError(
             "The 'example_value' in the placeholder node is expected to be either a Tensor or a Tuple of Tensors."
         )
+
+
+def _checkpoint_function_converter(gm: torch.fx.GraphModule):
+    """
+    Replace PyTorch operators in ``gm`` representing a checkpointed function with corresponding Thunder operators. The input ``gm`` is modified inplace.
+
+    Args:
+        gm (torch.fx.GraphModule): The GraphModule of the checkpointed function, which is modified inplace.
+    """
+    new_graph = copy.deepcopy(gm.graph)
+    for n in new_graph.nodes:
+        # replace the torch operator in "call_function" node
+        if n.op == "call_function":
+            assert isinstance(n.target, Callable)
+            if n.target.__module__ in ("_operator", "builtins"):
+                continue
+            check(
+                n.target in _torch_to_thunder_function_map, lambda: f"Unexpected {n.target}, not registered in Thunder"
+            )
+            with new_graph.inserting_before(n):
+                thunder_node = new_graph.call_function(
+                    _torch_to_thunder_function_map[n.target], args=n.args, kwargs=n.kwargs
+                )
+            n.replace_all_uses_with(thunder_node)
+            new_graph.erase_node(n)
+        else:
+            if n.op == "call_module":
+                raise RuntimeError(
+                    "Unexpected call_module detected inside a checkpoint. This should have been inlined in dynamo graphs"
+                )
+    new_graph.lint()
+    gm.graph = new_graph
+    recompile_graph(gm)
+
+
+def checkpoint_converter(gm: torch.fx.GraphModule, sub_gm: torch.fx.GraphModule):
+    """
+    Utility function to convert the GraphModule that uses activation checkpointing into a Thunder-traceable GraphModule.
+
+    Args:
+        gm: The parent GraphModule containing the submodule(sub_gm), as well as the GraphModule of the checkpointed function.
+        sub_gm: the GraphModule containing the checkpoint operator
+
+    Note:
+        The GraphModule of the checkpointed function is updated inplace
+    """
+    for n in sub_gm.graph.nodes:
+        if n.op == "call_function":
+            if n.target in (torch.ops.higher_order.tag_activation_checkpoint,):
+                checkpoint_target_node = n.args[0]
+                if checkpoint_target_node.op == "get_attr":
+                    function_module = getattr(checkpoint_target_node.graph.owning_module, checkpoint_target_node.target)
+                else:
+                    function_module = getattr(gm, n.args[0].name)
+                _checkpoint_function_converter(function_module)
