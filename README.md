@@ -81,11 +81,11 @@ pip install git+https://github.com/Lightning-AI/lightning-thunder.git@main
 
 To achieve the best performance, you can install Thunder with the following additional dependencies:
 
-- install nightly [nvFuser](https://github.com/NVIDIA/Fuser) built for PyTorch 2.4 as follows:
+- install prerelease [nvFuser](https://github.com/NVIDIA/Fuser) built for PyTorch 2.5.1 as follows:
 
 ```bash
 # install nvFuser built for the matching stable PyTorch
-pip install --pre nvfuser-cu121-torch24
+pip install --pre nvfuser-cu121-torch25
 ```
 
 - install [cudnn](https://gitlab-master.nvidia.com/cudnn/cudnn_frontend) as follows:
