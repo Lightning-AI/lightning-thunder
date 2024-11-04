@@ -411,6 +411,20 @@ def register_general_jit_lookaside(diverted_fn):
     return lookaside_wrapper
 
 
+# PyTorch moved this to torch.compiler.is_compiling as official API
+# we are compiling
+if hasattr(torch, "compiler") and hasattr(torch.compiler, "is_compiling"):
+    is_compiling = torch.compiler.is_compiling
+else:
+    is_compiling = torch._dynamo.is_compiling
+
+
+@register_general_jit_lookaside(is_compiling)
+@interpreter_needs_wrap
+def jit_is_compiling_lookaside():
+    return True
+
+
 # lookaside for getattr. We record the provenance of the attribute but for the core attribute getting, we
 # rely on the default JIT getattr lookaside (as returned from default_lookaside)
 @register_general_jit_lookaside(getattr)
