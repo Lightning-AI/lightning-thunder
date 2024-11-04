@@ -7695,8 +7695,8 @@ if LooseVersion(torch.__version__) >= "2.4":
             # See issue - https://github.com/Lightning-AI/lightning-thunder/issues/1395
             DecorateInfo(
                 custom_comparator(partial(assert_close, atol=2e-3, rtol=2e-3)),
-                dtypes=(datatypes.float16),
-                devicetypes=(devices.DeviceType.CUDA),
+                dtypes=(datatypes.float16,),
+                devicetypes=(devices.DeviceType.CUDA,),
             ),
         ),
     )
