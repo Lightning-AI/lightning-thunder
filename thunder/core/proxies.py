@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 from enum import auto, Enum
 from numbers import Number
-from typing import Any
+from typing import Any, ClassVar
 from collections.abc import Callable
 from collections.abc import Sequence
 
@@ -1881,9 +1881,13 @@ class TensorProxy(Proxy, TensorProxyInterface):
 
 
 class SubclassTensorProxy(TensorProxy):
+    SUBCLASS_TYPE_ATTR: ClassVar[str] = "_subclass_type"
     _tensors: list[TensorProxy]
     _non_tensors: list[Any]
     _subclass_type: torch._C._TensorMeta
+
+    _tensor_attr_names: list[str] | None
+    _non_tensor_attr_names: list[str] | None
 
     def __init__(self, *args, **kwargs):
         from thunder.core.pytree import tree_flatten
@@ -1924,8 +1928,6 @@ class SubclassTensorProxy(TensorProxy):
             # call `__tensor_init__` to know each attribute names.
             from thunder.core import prims
 
-            self._tensors = tensors
-            self._non_tensors = non_tensors
             bsym = prims.tensor_subclass_ctor.bind(
                 self._subclass_type,
                 self.name,
@@ -1950,6 +1952,20 @@ class SubclassTensorProxy(TensorProxy):
                 current_trace.add_bound_symbol(bsym)
             else:
                 cur_tail_scope.append(bsym)
+
+            if not self._tensors and not self._non_tensors:
+                for a in tensors:
+                    self._tensors.append(a)
+                for a in non_tensors:
+                    self._non_tensors.append(a)
+            baseutils.check(self._tensors, lambda: f"`{self._name}._tensors` must not be empty")
+
+    def __tensor_flatten__(self) -> tuple[list[TensorProxy], dict[str, Any]]:
+        return self._tensor_attr_names, self.metadata
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        return dict(zip(self._non_tensor_attr_names, self._non_tensors))
 
     def replace(self, **changes):
         r"""Return a copy of the SubclassTensorProxy object with new values for the specified fields as given to the constructor as arguments.
@@ -1983,7 +1999,7 @@ class SubclassTensorProxy(TensorProxy):
         name = changes.get("name", self.name)
         history = changes.get("history", self.history)
         tags = changes.get("tags", self.tags)
-        return SubclassTensorProxy(
+        p = SubclassTensorProxy(
             name=name,
             tags=tags,
             shape=shape,
@@ -1997,6 +2013,12 @@ class SubclassTensorProxy(TensorProxy):
             non_tensors=self._non_tensors,
             subclass_type=self._subclass_type,
         )
+        if hasattr(self, "_tensor_attr_names") and hasattr(self, "_non_tensor_attr_names"):
+            p._tensor_attr_names = self._tensor_attr_names
+            p._non_tensor_attr_names = self._non_tensor_attr_names
+            for name, value in zip(p._tensor_attr_names + p._non_tensor_attr_names, p._tensors + p._non_tensors):
+                setattr(p, name, value)
+        return p
 
 
 class TorchAutogradFunctionCtxProxy(Proxy, TorchAutogradFunctionCtxProxyInterface):
@@ -2122,7 +2144,7 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
             lambda: f"{t=} seems to be a tensor subclass but not traceable",
         )
         tensor_attr_names, metadata = t.__tensor_flatten__()
-        tensors = [getattr(t, name) for name in tensor_attr_names]
+        tensors = [tensorproxy(getattr(t, name), name=None, history=history) for name in tensor_attr_names]
         ctor_kwargs.update(
             {
                 "tensors": tensors,
@@ -2131,6 +2153,8 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
             }
         )
         p = SubclassTensorProxy(**ctor_kwargs)
+        p._tensor_attr_names = tensor_attr_names
+        p._non_tensor_attr_names = list(metadata.keys())
         for name, tensor in zip(tensor_attr_names, tensors):
             setattr(p, name, tensor)
         for name, value in metadata.items():

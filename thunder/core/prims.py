@@ -277,6 +277,8 @@ class PrimIDs(Enum):
     SINK = auto()
     # Tensor Subclasses methods
     TENSOR_SUBCLASS_CTOR = auto()
+    FLATTEN_TENSOR_SUBCLASS = auto()
+    UNFLATTEN_TENSOR_SUBCLASS = auto()
 
 
 class OpTags(Enum):
@@ -4076,4 +4078,54 @@ tensor_subclass_ctor = make_prim(
     PrimIDs.TENSOR_SUBCLASS_CTOR,
     "tensor_subclass_ctor",
     meta=tensor_subclass_ctor_meta,
+)
+
+
+def flatten_tensor_subclass_meta(t: SubclassTensorProxy) -> tuple[TensorProxy, ...]:
+    tensor_attr_names, metadata = t.__tensor_flatten__()
+    tensors = tuple(getattr(t, name) for name in tensor_attr_names)
+    return tensors
+
+
+flatten_tensor_subclass = make_prim(
+    PrimIDs.FLATTEN_TENSOR_SUBCLASS,
+    "flatten_tensor_subclass",
+    meta=flatten_tensor_subclass_meta,
+)
+
+
+def unflatten_tensor_subclass_meta(
+    tensor_subclass_type,
+    inner_tensors: dict[str, TensorProxy],
+    metadata: dict[str, Any],
+) -> SubclassTensorProxy:
+    first_tensor: TensorProxy = list(inner_tensors.values())[0]
+    a = SubclassTensorProxy(
+        shape=first_tensor.shape,
+        device=first_tensor.device,
+        dtype=first_tensor.dtype,
+        requires_grad=first_tensor.requires_grad,
+        tensors=list(inner_tensors.values()),
+        non_tensors=list(metadata.values()),
+        subclass_type=tensor_subclass_type,
+    )
+    for name, value in inner_tensors.items():
+        setattr(a, name, value)
+    for name, value in metadata.items():
+        setattr(a, name, value)
+    return a
+
+
+def unflatten_tensor_subclass_python_impl(
+    tensor_subclass_type,
+    inner_tensors: dict[str, TensorProxy],
+    metadata: dict[str, Any],
+) -> torch.Tensor:
+    return tensor_subclass_type.__tensor_unflatten__(inner_tensors, metadata, -1, -1)
+
+
+unflatten_tensor_subclass = make_prim(
+    PrimIDs.UNFLATTEN_TENSOR_SUBCLASS,
+    "unflatten_tensor_subclass",
+    meta=unflatten_tensor_subclass_meta,
 )
