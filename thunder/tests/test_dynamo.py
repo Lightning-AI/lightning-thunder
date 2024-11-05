@@ -1,5 +1,6 @@
 import pytest
 import warnings
+import itertools
 import torch
 import torch.fx
 import torch.nn as nn
@@ -513,6 +514,60 @@ def test_no_grad_ctx_manager(executor, device: str, dtype: dtypes.dtype):
     actual_grad = torch.autograd.grad(actual, x, g)
     expected_grad = torch.autograd.grad(expected, x, g)
     torch.testing.assert_close(actual_grad, expected_grad)
+
+
+def test_empty_autocast():
+    autocast_ops = (torch.amp.autocast_mode._enter_autocast, torch.amp.autocast_mode._exit_autocast)
+
+    def _call_thunder_backend(fn, args):
+        backend = ThunderCompiler()
+        jf = torch.compile(backend=backend)(f)
+        jf(*args)
+        return backend
+
+    # autocast region is removed
+    def f():
+        with torch.autocast(dtype=torch.bfloat16, device_type="cuda"):
+            pass
+        return
+
+    backend = _call_thunder_backend(f, ())
+    assert all(node.target not in autocast_ops for node in backend.subgraph_infos[0].split_graph_module.graph.nodes)
+
+    # Both autocast regions are removed
+    def f(x):
+        with torch.autocast(dtype=torch.bfloat16, device_type="cuda"):
+            pass
+        y = x @ x
+        with torch.autocast(dtype=torch.bfloat16, device_type="cuda"):
+            pass
+        return y
+
+    x = torch.randn(3, 3, device="cuda")
+    backend = _call_thunder_backend(f, (x,))
+
+    all_nodes = itertools.chain(
+        backend.subgraph_infos[0].split_graph_module.graph.nodes,
+        backend.subgraph_infos[0].split_graph_module.thunder_1.graph.nodes,
+    )
+    assert all(node.target not in autocast_ops for node in all_nodes)
+
+    # First autocast region is removed and second isn't
+    def f(x):
+        with torch.autocast(dtype=torch.bfloat16, device_type="cuda"):
+            pass
+        y = x @ x
+        with torch.autocast(dtype=torch.bfloat16, device_type="cuda"):
+            y = y @ y
+        return y
+
+    x = torch.randn(3, 3, device="cuda")
+    backend = _call_thunder_backend(f, (x,))
+    all_nodes = itertools.chain(
+        backend.subgraph_infos[0].split_graph_module.graph.nodes,
+        backend.subgraph_infos[0].split_graph_module.thunder_1.graph.nodes,
+    )
+    assert sum(node.target in autocast_ops for node in all_nodes) == 2
 
 
 # Sample command to run the benchmark using ThunderCompilerGraphBenchmarking
