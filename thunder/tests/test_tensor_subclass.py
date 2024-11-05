@@ -4,11 +4,41 @@ from typing import TYPE_CHECKING
 import torch
 
 import thunder
-from thunder.tests.framework import instantiate, NOTHING
+from thunder.tests.framework import instantiate
 from thunder.tests.make_tensor import make_tensor
 
 if TYPE_CHECKING:
     from typing import Any
+
+
+@torch._dynamo.allow_in_graph
+class EncapsulateXandScale(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x: torch.Tensor, scale: torch.Tensor):
+        return ScaleTensorSubclass(x, scale)
+
+    @staticmethod
+    def backward(ctx, grad):
+        return grad, None
+
+
+def encapsulate_x_and_scale(x, scale) -> ScaleTensorSubclass:
+    return EncapsulateXandScale.apply(x, scale)
+
+
+@torch._dynamo.allow_in_graph
+class ToScaleTensorSubclass(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x: torch.Tensor):
+        return ScaleTensorSubclass.from_tensor(x)
+
+    @staticmethod
+    def backward(ctx, grad):
+        return grad
+
+
+def to_scale_tensor_subclass(x: torch.Tensor) -> ScaleTensorSubclass:
+    return ToScaleTensorSubclass.apply(x)
 
 
 class ScaleTensorSubclass(torch.Tensor):
@@ -117,4 +147,36 @@ def test_func_of_subclass_ctor_wrapper(executor, device, _):
 
     expected = f(x, scale)
     actual = jitted(x, scale)
+    torch.testing.assert_close((expected._x, expected._scale), (actual._x, actual._scale))
+
+
+@instantiate(
+    dtypes=(thunder.core.dtypes.float32,),
+)
+def test_func_calling_converter(executor, device, _):
+
+    def f(x: torch.Tensor, scale: torch.Tensor) -> ScaleTensorSubclass:
+        y = encapsulate_x_and_scale(x, scale)
+        return y
+
+    jitted = executor.make_callable(f)
+
+    dtype = torch.float32
+    shape = (2, 2)
+    x = make_tensor(shape, device=device, dtype=dtype)
+    scale = make_tensor((), device=device, dtype=dtype)
+
+    expected = f(x, scale)
+    actual = jitted(x, scale)
+    torch.testing.assert_close((expected._x, expected._scale), (actual._x, actual._scale))
+
+    def g(x: torch.Tensor) -> ScaleTensorSubclass:
+        y = to_scale_tensor_subclass(x)
+        return y
+
+    jitted = thunder.jit(g)
+    x = make_tensor(shape, device=device, dtype=dtype)
+
+    expected = g(x)
+    actual = jitted(x)
     torch.testing.assert_close((expected._x, expected._scale), (actual._x, actual._scale))
