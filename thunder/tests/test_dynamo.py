@@ -527,7 +527,7 @@ def test_empty_autocast():
 
     # autocast region is removed
     def f():
-        with torch.autocast(dtype=torch.bfloat16, device_type="cuda"):
+        with torch.autocast(dtype=torch.bfloat16, device_type="cpu"):
             pass
         return
 
@@ -536,14 +536,14 @@ def test_empty_autocast():
 
     # Both autocast regions are removed
     def f(x):
-        with torch.autocast(dtype=torch.bfloat16, device_type="cuda"):
+        with torch.autocast(dtype=torch.bfloat16, device_type="cpu"):
             pass
         y = x @ x
-        with torch.autocast(dtype=torch.bfloat16, device_type="cuda"):
+        with torch.autocast(dtype=torch.bfloat16, device_type="cpu"):
             pass
         return y
 
-    x = torch.randn(3, 3, device="cuda")
+    x = torch.randn(3, 3)
     backend = _call_thunder_backend(f, (x,))
 
     all_nodes = itertools.chain(
@@ -554,14 +554,14 @@ def test_empty_autocast():
 
     # First autocast region is removed and second isn't
     def f(x):
-        with torch.autocast(dtype=torch.bfloat16, device_type="cuda"):
+        with torch.autocast(dtype=torch.bfloat16, device_type="cpu"):
             pass
         y = x @ x
-        with torch.autocast(dtype=torch.bfloat16, device_type="cuda"):
+        with torch.autocast(dtype=torch.bfloat16, device_type="cpu"):
             y = y @ y
         return y
 
-    x = torch.randn(3, 3, device="cuda")
+    x = torch.randn(3, 3)
     backend = _call_thunder_backend(f, (x,))
     all_nodes = itertools.chain(
         backend.subgraph_infos[0].split_graph_module.graph.nodes,
