@@ -211,15 +211,9 @@ def test_func_of_subclass_simple_math(executor, device, _):
 
     expected = f(x, data, scale)
     actual = jitted(x, data, scale)
-    if executor == nvFuserExecutor:
-        with pytest.raises(Exception):
-            assert type(expected) is type(actual)
-            torch.testing.assert_close((expected._x, expected._scale), (actual._x, actual._scale))
-    else:
-        assert type(expected) is type(actual)
-        torch.testing.assert_close((expected._x, expected._scale), (actual._x, actual._scale))
+    assert type(expected) is type(actual)
+    torch.testing.assert_close((expected._x, expected._scale), (actual._x, actual._scale))
 
     return_bsym: BoundSymbol = thunder.last_traces(jitted)[-1].bound_symbols[-1]
     return_proxy = return_bsym.flat_args[0]
-    # FIXME(crcrpar): Implement a trace transform that corrects the output type of bsyms involving tensor subclasses
-    assert not isinstance(return_proxy, SubclassTensorProxy)
+    assert isinstance(return_proxy, SubclassTensorProxy)
