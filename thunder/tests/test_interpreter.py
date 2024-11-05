@@ -3108,8 +3108,11 @@ def test_super(jit):
 
 
 def test_print_log_types(jit):
+    def one():
+        return 1
+
     def foo():
-        return 5
+        return 2 + one()
 
     jfoo = jit(foo, record_history=True)
     jfoo()
@@ -3119,10 +3122,18 @@ def test_print_log_types(jit):
     # print into string
     buf = io.StringIO()
     with redirect_stdout(buf):
-        print_interpreter_log(log, use_colors=False, indent=False)
+        # print_interpreter_log(log, use_colors=False, indent=False)
+        print_interpreter_log(log, use_colors=True)
     bufstr = buf.getvalue()
 
-    assert "Returning from call to test_print_log_types.<locals>.foo() with value of type int" in bufstr
+    from thunder.core.baseutils import init_colors
+    colors = init_colors(True)
+
+    assert f" {colors['YELLOW']}        return 2 + one()" in bufstr
+    assert f" {colors['MAGENTA']}Instruction('LOAD_DEREF', arg=0, argrepr='one')" in bufstr
+    assert f"  {colors['GREEN']}Interpreting call to test_print_log_types.<locals>.one() from test_print_log_types.<locals>.foo()" in bufstr
+    assert f"  {colors['RED']}Returning from call to test_print_log_types.<locals>.one() with value of type int" in bufstr
+    assert f" {colors['RED']}Returning from call to test_print_log_types.<locals>.foo() with value of type int" in bufstr
 
 
 def test_is_jitting_with_raise(jit):

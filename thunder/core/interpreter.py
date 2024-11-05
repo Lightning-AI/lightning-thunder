@@ -470,6 +470,7 @@ class LookasideLogItem(TypedDict):
 class CallLogItem(TypedDict):
     kind: Literal["InterpreterCall"]
     fn: str
+    fn_filename: str
     prev_frame: str
 
 
@@ -604,7 +605,7 @@ class InterpreterRuntimeCtx:
             pf = self._pop_frame_stack()
             assert pf is frame, "Frame stack inconsistency"
 
-    def get_current_user_source_location(self) -> tuple[str, Positions]:
+    def get_current_user_source_location(self) -> tuple[str, Positions | None] | tuple[None, None]:
         for frame in reversed(self.frame_stack):
             modname = unwrap(frame.globals).get("__name__", "")
             if modname not in ("thunder.core.interpreter", "thunder.core.jit_ext", "thunder.torch"):
@@ -626,14 +627,16 @@ class InterpreterRuntimeCtx:
         if not self._record_history:
             return self
 
-        frame: InterpreterFrame | None = self.peek_frame_stack()
+        prev_frame: InterpreterFrame | None = self.peek_frame_stack()
 
         # If frame is None, that means that this is the first call to _interpret_call, in _run_frame.
         # In that case we should also print out what line we're starting on, since
         # no line number changes have happened yet.
-        if frame is not None:
+        if prev_frame is not None:
+            ufn = unwrap(fn)
+            fn_filename = ufn.__code__.co_filename if hasattr(ufn, "__code__") else "<Unknown>"
             self.record(
-                {"kind": "InterpreterCall", "fn": extract_callable_name(unwrap(fn)), "prev_frame": frame.qualname}
+                {"kind": "InterpreterCall", "fn": extract_callable_name(ufn), "fn_filename": fn_filename, "prev_frame": prev_frame.qualname}
             )
         else:
             if hasattr(self._original_callsite, "positions"):
@@ -645,6 +648,7 @@ class InterpreterRuntimeCtx:
                 {
                     "kind": "InterpreterCall",
                     "fn": extract_callable_name(unwrap(fn)),
+                    "fn_filename": self._original_callsite.filename,
                     "prev_frame": self._original_callsite.function,
                 }
             )
@@ -676,7 +680,7 @@ class InterpreterRuntimeCtx:
         return self
 
     def record_position(
-        self, fn: Callable | CodeType, filename: str, position: Positions | None, /
+        self, fn: Callable | CodeType, filename: str | None, position: Positions | None, /
     ) -> InterpreterRuntimeCtx:
         if not self._record_history:
             return self
@@ -7205,6 +7209,7 @@ def interpret(
 
                 interpretation_result: Any = _interpret_call(wrapped_fn_2, args, kwargs)
                 interpretation_result = unwrap(interpretation_result)
+
             except BaseException as e:
                 # TODO Highlight the portion of the line that originated the opcode on Python versions that include
                 #      the line offset information in the instruction
@@ -7259,6 +7264,10 @@ def print_interpreter_log(
 ) -> None:
     colors = init_colors(use_colors)
     interpreter_path = os.path.join("thunder", "core", "interpreter.py")
+    ext_path = os.path.join("thunder", "core", "jit_ext.py")
+
+    def is_internal(filename: str):
+        return (filename == "<Unknown>") or (interpreter_path in filename) or (ext_path in filename)
 
     c_indent = -1
     inside_inner_interpreter = False
@@ -7283,7 +7292,7 @@ def print_interpreter_log(
 
             case {"kind": "Line", "fn": fn, "filename": filename, "position": position}:
                 # LineLogItem
-                inside_inner_interpreter = interpreter_path in filename
+                inside_inner_interpreter = is_internal(filename)
                 if color_internals or not inside_inner_interpreter:
                     linecolor = colors["YELLOW"]
                 nl = os.linesep
@@ -7302,8 +7311,9 @@ def print_interpreter_log(
                     linestr = linestr[: -len(os.linesep)]
                 source_line = linestr
 
-            case {"kind": "InterpreterCall", "fn": fn, "prev_frame": prev_frame}:
+            case {"kind": "InterpreterCall", "fn": fn, "fn_filename": fn_filename, "prev_frame": prev_frame}:
                 # CallLogItem
+                inside_inner_interpreter = is_internal(fn_filename)
                 if color_internals or not inside_inner_interpreter:
                     linecolor = colors["GREEN"]
                 c_indent += 1
