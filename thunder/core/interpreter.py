@@ -636,7 +636,12 @@ class InterpreterRuntimeCtx:
             ufn = unwrap(fn)
             fn_filename = ufn.__code__.co_filename if hasattr(ufn, "__code__") else "<Unknown>"
             self.record(
-                {"kind": "InterpreterCall", "fn": extract_callable_name(ufn), "fn_filename": fn_filename, "prev_frame": prev_frame.qualname}
+                {
+                    "kind": "InterpreterCall",
+                    "fn": extract_callable_name(ufn),
+                    "fn_filename": fn_filename,
+                    "prev_frame": prev_frame.qualname,
+                }
             )
         else:
             if hasattr(self._original_callsite, "positions"):

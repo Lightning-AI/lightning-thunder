@@ -3127,13 +3127,21 @@ def test_print_log_types(jit):
     bufstr = buf.getvalue()
 
     from thunder.core.baseutils import init_colors
+
     colors = init_colors(True)
 
     assert f" {colors['YELLOW']}        return 2 + one()" in bufstr
     assert f" {colors['MAGENTA']}Instruction('LOAD_DEREF', arg=0, argrepr='one')" in bufstr
-    assert f"  {colors['GREEN']}Interpreting call to test_print_log_types.<locals>.one() from test_print_log_types.<locals>.foo()" in bufstr
-    assert f"  {colors['RED']}Returning from call to test_print_log_types.<locals>.one() with value of type int" in bufstr
-    assert f" {colors['RED']}Returning from call to test_print_log_types.<locals>.foo() with value of type int" in bufstr
+    assert (
+        f"  {colors['GREEN']}Interpreting call to test_print_log_types.<locals>.one() from test_print_log_types.<locals>.foo()"
+        in bufstr
+    )
+    assert (
+        f"  {colors['RED']}Returning from call to test_print_log_types.<locals>.one() with value of type int" in bufstr
+    )
+    assert (
+        f" {colors['RED']}Returning from call to test_print_log_types.<locals>.foo() with value of type int" in bufstr
+    )
 
 
 def test_is_jitting_with_raise(jit):
