@@ -2161,7 +2161,7 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
             lambda: f"{t=} seems to be a tensor subclass but not traceable",
         )
         tensor_attr_names, metadata = t.__tensor_flatten__()
-        tensors = [tensorproxy(getattr(t, name), name=None, history=history) for name in tensor_attr_names]
+        tensors = [getattr(t, name) for name in tensor_attr_names]
         ctor_kwargs.update(
             {
                 "tensors": tensors,
