@@ -77,7 +77,7 @@ class ThunderCompiler:
         recompile_graph(gm)
 
         gm = remove_empty_autocast(gm)
-        gm.print_readable()
+
         # The whole graph may not be supported by `thunder`, so we split it in `thunder` supported sections
         # and unsupported sections which are passed to `torch.compile(backend='inductor')`
         split_module, subgraph_info = _splitter(gm, self._thunder_jit, self._torch_compile, sample_args)
