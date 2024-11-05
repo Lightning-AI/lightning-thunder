@@ -1937,7 +1937,8 @@ class SubclassTensorProxy(TensorProxy):
                 self._non_tensors,
                 output=self,
             )
-            get_tracectx().add_bound_symbol(bsym)
+            current_trace = get_tracectx()
+            current_trace.scopes[-1].append(bsym)
 
     def replace(self, **changes):
         r"""Return a copy of the SubclassTensorProxy object with new values for the specified fields as given to the constructor as arguments.
