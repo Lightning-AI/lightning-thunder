@@ -2219,3 +2219,41 @@ tensor_subclass_ctor = ex.register_operator(
     fn=_tensor_subclass_ctor,
 )
 _register_implementation(prims.tensor_subclass_ctor, tensor_subclass_ctor, checker=_always_executable)
+
+
+def flatten_tensor_subclass_impl(t):
+    tensor_attr_names, metadata = t.__tensor_flatten__()
+    tensors = tuple(getattr(t, name) for name in tensor_attr_names)
+    return tensors
+
+
+flatten_tensor_subclass = ex.register_operator(
+    "flatten_tensor_subclass",
+    meta=prims.flatten_tensor_subclass.meta,
+    fn=flatten_tensor_subclass_impl,
+)
+_register_implementation(
+    prims.flatten_tensor_subclass,
+    flatten_tensor_subclass,
+    checker=_always_executable,
+)
+
+
+def unflatten_tensor_subclass_impl(
+    tensor_subclass_type: torch._C._TensorMeta,
+    inner_tensors: dict[str, TensorLike],
+    metadata: dict,
+):
+    return tensor_subclass_type.__tensor_unflatten__(inner_tensors, metadata, -1, -1)
+
+
+unflatten_tensor_subclass = ex.register_operator(
+    "unflatten_tensor_subclass",
+    meta=prims.unflatten_tensor_subclass.meta,
+    fn=unflatten_tensor_subclass_impl,
+)
+_register_implementation(
+    prims.unflatten_tensor_subclass,
+    unflatten_tensor_subclass,
+    checker=_always_executable,
+)
