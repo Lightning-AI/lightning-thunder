@@ -2104,8 +2104,8 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
     else:
         # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
         shape = tuple(t.shape)
-    return TensorProxy(
-        name,
+    ctor_kwargs = dict(
+        name=name,
         shape=tuple(shape),
         device=device,
         dtype=dtype,
@@ -2115,6 +2115,29 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
         history=history,
         thunder_fsdp_padding_size=_thunder_fsdp_padding_size,
     )
+
+    if type(t) not in (torch.Tensor, torch.nn.Parameter) and isinstance(t, torch.Tensor):
+        baseutils.check(
+            hasattr(t, "__tensor_flatten__") and hasattr(t, "__tensor_unflatten__"),
+            lambda: f"{t=} seems to be a tensor subclass but not traceable",
+        )
+        tensor_attr_names, metadata = t.__tensor_flatten__()
+        tensors = [getattr(t, name) for name in tensor_attr_names]
+        ctor_kwargs.update(
+            {
+                "tensors": tensors,
+                "non_tensors": list(metadata.values()),
+                "subclass_type": type(t),
+            }
+        )
+        p = SubclassTensorProxy(**ctor_kwargs)
+        for name, tensor in zip(tensor_attr_names, tensors):
+            setattr(p, name, tensor)
+        for name, value in metadata.items():
+            setattr(p, name, value)
+        return p
+    else:
+        return TensorProxy(**ctor_kwargs)
 
 
 def futuretensorproxy(

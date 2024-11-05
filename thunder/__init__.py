@@ -73,6 +73,7 @@ from thunder.core.proxies import (
 from thunder.core.interpreter import print_interpreter_log, print_to_log
 from thunder.core.jit_ext import thunder_general_jit
 from thunder.executors.torch_autograd import split_forward_backward, ThunderFunction
+from thunder.transforms.tensor_subclasses import flatten_tensor_subclasses
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
@@ -585,6 +586,8 @@ def jit(
                         tensor_indices.append(index)
                     if len(tensor_args_consumed_by_inplace_grouped_by_numel) > 1:
                         vanilla_tensor_args = set(tensor_indices)
+
+            computation_trc = flatten_tensor_subclasses(computation_trc)
 
             if epilogue_trc is not None:
                 epilogue_traces = [epilogue_trc]
