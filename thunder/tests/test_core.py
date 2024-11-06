@@ -2833,6 +2833,7 @@ def test_reshape_noop_prims(requires_grad):
 
 
 @requiresCUDA
+@thunder.tests.framework.requiresNVFuser
 def test_bound_symbol_sort_stability():
     class LlamaMLPLike(torch.nn.Module):
         def __init__(self) -> None:
