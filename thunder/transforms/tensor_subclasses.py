@@ -565,11 +565,6 @@ def flatten_tensor_subclasses(computation_trace: TraceCtx) -> TraceCtx:
     Exceptions are prologue (meaning the first few lines of the trace, before any math) and epilogue (meaning
     the last few lines of the trace, right before return statement).
 
-    .. note::
-
-        Currently any tensor subclass factories are not allowed.
-
-
     Args:
         computation_trace:
 
