@@ -620,15 +620,17 @@ class BoundSymbol(BoundSymbolInterface):
             # BoundSymbols of Symbols without Python implementations (either because they
             #   have Python implementations or defined call ctxs) are assumed to need
             #   a module import to run properly
-            assert self.sym.module is not None  # TODO: Is this a valid assumption?
-            module_name = self.sym.module.__name__
-            import_ctx = {module_name: self.sym.module}
+            if self.sym.module is not None:  # TODO: Is this a valid assumption?
+                module_name = self.sym.module.__name__
+                import_ctx = {module_name: self.sym.module}
 
-            # TODO Include the other modules on the path?
-            # Also includes the root module of this (potential) submodule
-            if "." in module_name:
-                root_name = module_name.split(".")[0]
-                import_ctx[root_name] = sys.modules[root_name]
+                # TODO Include the other modules on the path?
+                # Also includes the root module of this (potential) submodule
+                if "." in module_name:
+                    root_name = module_name.split(".")[0]
+                    import_ctx[root_name] = sys.modules[root_name]
+            else:
+                import_ctx = {}
 
         self._import_ctx.update(import_ctx)
         return self._import_ctx
