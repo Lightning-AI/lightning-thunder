@@ -400,6 +400,42 @@ def test_thunderfx_mistral_nemo_small():
     assert th_backend.subgraph_infos, "Should have at least 1 subgraph"
 
 
+@thunder.tests.framework.requiresCUDA
+def test_hf_qwen2():
+    from thunder.dynamo import ThunderCompiler
+    from transformers import Qwen2Config, Qwen2ForCausalLM
+
+    # https://huggingface.co/Qwen/Qwen2.5-7B-Instruct/blob/main/config.json
+    configuration = Qwen2Config(
+        # Qwen2.5-7B-Instruct uses Grouped-Query Attention, while the default
+        # config uses Multi-Head Attention
+        num_attention_heads=28,
+        num_key_value_heads=4,
+        # Scaled down for testing
+        hidden_size=56,
+        vocab_size=4096,
+    )
+    configuration.num_hidden_layers = 1
+    with torch.device("cuda"):
+        model = Qwen2ForCausalLM(configuration).to(torch.bfloat16)
+
+    backend = ThunderCompiler()
+    compiled_model = torch.compile(model, backend=backend, fullgraph=True)
+
+    input_ids = torch.randint(0, configuration.vocab_size, (1, configuration.max_position_embeddings), device="cuda")
+    ref_output = model(input_ids=input_ids, labels=input_ids)
+    ref_loss = ref_output.loss
+
+    compiled_output = compiled_model(input_ids=input_ids, labels=input_ids)
+    compiled_loss = compiled_output.loss
+    torch.testing.assert_close(compiled_loss, ref_loss)
+
+    assert len(backend.subgraph_infos) == 1, "Should have exactly 1 subgraph because of fullgraph=True"
+
+    with pytest.raises(RuntimeError, match="Found two different const extents in the same set"):
+        compiled_loss.backward(torch.randn_like(compiled_loss))
+
+
 LLAMA_3_2_1B_CFG = {
     "architectures": ["LlamaForCausalLM"],
     "attention_bias": False,
