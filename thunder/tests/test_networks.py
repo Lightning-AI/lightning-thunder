@@ -434,6 +434,7 @@ def test_hf_qwen2():
 
     assert len(backend.subgraph_infos) == 1, "Should have exactly 1 subgraph because of fullgraph=True"
 
+    # https://github.com/NVIDIA/Fuser/issues/871#issuecomment-2461562917
     with pytest.raises(RuntimeError, match="Found two different const extents in the same set"):
         compiled_loss.backward(torch.randn_like(compiled_loss))
 
