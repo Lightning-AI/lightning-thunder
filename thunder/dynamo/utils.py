@@ -533,7 +533,7 @@ def remove_empty_autocast(graph_module: torch.fx.GraphModule) -> torch.fx.GraphM
     prev_node = torch.fx.node.Node(graph_module.graph, "start_node", "call_function", lambda: None, None, None)
     nodes_to_erase = []
     for node in empty_autocast_removed_graph_module.graph.nodes:
-        # Due to these functions mapping regions created by context manager,
+        # As _enter_autocast and _exit_autocast functions map the regions created by context manager,
         # previous `_enter_autocast` will always correspond with current `_exit_autocast`.
         if (
             prev_node.target == torch.amp.autocast_mode._enter_autocast
@@ -552,5 +552,4 @@ def remove_empty_autocast(graph_module: torch.fx.GraphModule) -> torch.fx.GraphM
     for node in nodes_to_erase:
         empty_autocast_removed_graph_module.graph.erase_node(node)
 
-    recompile_graph(empty_autocast_removed_graph_module)
     return empty_autocast_removed_graph_module

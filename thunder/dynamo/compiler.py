@@ -72,11 +72,11 @@ class ThunderCompiler:
         self._torch_compile = partial(torch.compile, **torch_inductor_options)
 
     def __call__(self, gm: torch.fx.GraphModule, sample_args: list[torch.SymInt, torch.Tensor]):
+        gm = remove_empty_autocast(gm)
+
         # Dynamo uses lazy generation of the underlying Python code, so we need to
         # force recompilation of the GraphModule before passing it to Thunder.
         recompile_graph(gm)
-
-        gm = remove_empty_autocast(gm)
 
         # The whole graph may not be supported by `thunder`, so we split it in `thunder` supported sections
         # and unsupported sections which are passed to `torch.compile(backend='inductor')`
