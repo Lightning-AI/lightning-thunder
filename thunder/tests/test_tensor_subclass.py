@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+import pytest
 import torch
 from torch.utils import _pytree as pytree
 
@@ -61,7 +62,7 @@ class ScaleTensorSubclass(torch.Tensor):
             # strides=x.stride(),
             # storage_offset=x.storage_offset(),
             # layout=x.layout,
-            # requires_grad=x.requires_grad,
+            requires_grad=x.requires_grad,
         )
         self._x = x
         self._scale = scale
@@ -115,10 +116,7 @@ class ScaleTensorSubclass(torch.Tensor):
         scales = tuple(t._scale for t in pytree.tree_flatten((args, kwargs))[0] if isinstance(t, ScaleTensorSubclass))
         unwrapped_args, unwrapped_kwargs = pytree.tree_map(maybe_unwrap_and_scale, (args, kwargs))
         out = aten_ir_op(*unwrapped_args, **unwrapped_kwargs)
-        if not isinstance(out, torch.Tensor):
-            return out
-        else:
-            return ScaleTensorSubclass(out, scales[0])
+        return out
 
 
 @instantiate(
@@ -188,12 +186,11 @@ def test_func_calling_converter(executor, device, _):
 
 @instantiate(
     dtypes=(thunder.core.dtypes.float32,),
+    decorators=(pytest.mark.parametrize("requires_grad", (False,), ids=("no_bwd",)),),
 )
-def test_func_of_subclass_simple_math(executor, device, _):
+def test_func_of_subclass_simple_math(executor, device, _, requires_grad):
 
-    def f(x: ScaleTensorSubclass, data: torch.Tensor, scale: torch.Tensor) -> ScaleTensorSubclass:
-
-        y = ScaleTensorSubclass(data, scale)
+    def f(x: ScaleTensorSubclass, y: ScaleTensorSubclass) -> torch.Tensor:
         out = x + y
         return out
 
@@ -202,17 +199,34 @@ def test_func_of_subclass_simple_math(executor, device, _):
     dtype = torch.float32
     shape = (2, 2)
     x = ScaleTensorSubclass(
-        make_tensor(shape, device=device, dtype=dtype),
+        make_tensor(shape, device=device, dtype=dtype, requires_grad=requires_grad),
         make_tensor((), device=device, dtype=dtype),
     )
-    data = make_tensor(shape, device=device, dtype=dtype)
+    y = ScaleTensorSubclass(
+        make_tensor(shape, device=device, dtype=dtype, requires_grad=requires_grad),
+        make_tensor((), device=device, dtype=dtype),
+    )
+
+    expected = f(x, y)
+    actual = jitted(x, y)
+    assert type(expected) is type(actual)
+    torch.testing.assert_close(expected, actual)
+
+    def g(x: ScaleTensorSubclass, data: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+        y = EncapsulateXandScale.apply(data, scale)
+        out = x + y
+        return out
+
+    jitted = executor.make_callable(g)
+
+    x = ScaleTensorSubclass(
+        make_tensor(shape, device=device, dtype=dtype, requires_grad=requires_grad),
+        make_tensor((), device=device, dtype=dtype),
+    )
+    data = make_tensor(shape, device=device, dtype=dtype, requires_grad=requires_grad)
     scale = make_tensor((), device=device, dtype=dtype)
 
-    expected = f(x, data, scale)
+    expected = g(x, data, scale)
     actual = jitted(x, data, scale)
     assert type(expected) is type(actual)
-    torch.testing.assert_close((expected._x, expected._scale), (actual._x, actual._scale))
-
-    return_bsym: BoundSymbol = thunder.last_traces(jitted)[-1].bound_symbols[-1]
-    return_proxy = return_bsym.flat_args[0]
-    assert isinstance(return_proxy, SubclassTensorProxy)
+    torch.testing.assert_close(expected, actual)
