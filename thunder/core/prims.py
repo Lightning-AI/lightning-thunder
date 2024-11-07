@@ -3550,7 +3550,10 @@ transpose = make_prim(PrimIDs.TRANSPOSE, "transpose", meta=transpose_meta, tags=
 view = make_prim(PrimIDs.VIEW, "view", meta=reshape_meta, tags=(OpTags.SHAPE_OP,))
 
 
-def shallow_copy_meta(a: TensorProxy, /) -> TensorProxy:
+def shallow_copy_meta(a: TensorProxy | SubclassTensorProxy, /) -> TensorProxy:
+    if isinstance(a, SubclassTensorProxy):
+        # SubclassTensorProxy(like=...) would not copy some attrs such as `_tensors` while replace does.
+        return a.replace()
     return TensorProxy(like=a)
 
 

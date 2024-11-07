@@ -158,16 +158,38 @@ def proxy_fake_tensor(t: torch.Tensor | FakeTensor) -> ProxyInterface:
 
 
 def trace_from_bsym_or_bsyms(bsym_or_bsyms: BoundSymbol | Sequence[BoundSymbol]) -> TraceCtx:
+    from thunder.core.compile_data import get_compile_data
+
+    cd = get_compile_data()
+    ad_hoc_executor = None
+    if cd is not None:
+        from thunder.extend import AdHocExecutor
+
+        executors_list = list(filter(lambda t: isinstance(t, AdHocExecutor), cd.executors_list))
+        if executors_list:
+            ad_hoc_executor = executors_list[0]
+
     bsyms = utils.sequencify(bsym_or_bsyms)
+    trace_args = bsyms[0].flat_proxy_args
+    trace_name = bsyms[0].sym.name
+
+    if ad_hoc_executor is not None and ad_hoc_executor._implmap:
+        tmp_bsyms = []
+        for bsym in bsyms:
+            if ad_hoc_executor.can_execute(bsym) and bsym.subsymbols:
+                tmp_bsyms.extend(bsym.subsymbols)
+            else:
+                tmp_bsyms.append(bsym)
+        bsyms = tmp_bsyms
 
     trace = TraceCtx()
     trace.bound_symbols.extend(bsyms)
-    trace.args = bsyms[0].flat_proxy_args
+    trace.args = trace_args
     with tracectx(trace):
         prims.python_return(bsyms[-1].output)
     with tracectx(trace):
         # note(crcrpar): Give prefix `tmp` to avoid infinite recursion due to the same name
-        trace._siginfo = SigInfo.from_name_and_args(f"tmp_{bsyms[0].sym.name}", trace.args)
+        trace._siginfo = SigInfo.from_name_and_args(f"tmp_{trace_name}", trace.args)
     return trace
 
 
@@ -371,7 +393,7 @@ class DesugarTensorSubclass:
                 output = OutputWrapperForFxTracing(out, None)
             return output
 
-        extrace = transform_for_execution(trace, [get_executor("torch")])
+        extrace = transform_for_execution(trace, [get_executor("torch"), get_executor("ad_hoc")])
         f = extrace.python_callable(include_decorators=False)
 
         def f_with_wrap_and_unwrap(*desugared_args) -> tuple[OutputWrapperForFxTracing, ...]:
@@ -420,8 +442,12 @@ class DesugarTensorSubclass:
             if not self.subclass_proxy_to_flatten or True:
                 return [updated_bsym]
 
-        is_subclass_ctor = bsym.sym.id == prims.PrimIDs.TENSOR_SUBCLASS_CTOR
-        if not is_subclass_ctor and not any(isinstance(a, SubclassTensorProxy) for a in updated_bsym.flat_proxy_args):
+        is_bsym_of_subclass_ctor = bsym.sym.id == prims.PrimIDs.TENSOR_SUBCLASS_CTOR
+        returns_subclass = any(isinstance(a, SubclassTensorProxy) for a in updated_bsym.flat_proxy_outs)
+        no_subclass_args = all(not isinstance(a, SubclassTensorProxy) for a in updated_bsym.flat_proxy_args)
+        is_unpack = bsym.sym.id in {prims.PrimIDs.UNPACK_TRIVIAL, prims.PrimIDs.UNPACK_SEQUENCE}
+        is_subclass_ctor = is_bsym_of_subclass_ctor or (no_subclass_args and returns_subclass and not is_unpack)
+        if not is_subclass_ctor and no_subclass_args:
             return [updated_bsym]
 
         utils.check(
