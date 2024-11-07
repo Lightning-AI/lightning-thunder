@@ -1,13 +1,12 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
-import pytest
 import torch
 from torch.utils import _pytree as pytree
 
 import thunder
 from thunder.core.proxies import SubclassTensorProxy
-from thunder.tests.framework import instantiate, nvFuserExecutor
+from thunder.tests.framework import instantiate
 from thunder.tests.make_tensor import make_tensor
 
 if TYPE_CHECKING:
