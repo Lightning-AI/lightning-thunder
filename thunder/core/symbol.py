@@ -624,7 +624,6 @@ class BoundSymbol(BoundSymbolInterface):
             # BoundSymbols of Symbols without Python implementations (either because they
             #   have Python implementations or defined call ctxs) are assumed to need
             #   a module import to run properly
-            if isinstance(self.sym.executor, AdHocExecutor):
                 import_ctx = {}
             else:
                 assert self.sym.module is not None  # TODO: Is this a valid assumption?
