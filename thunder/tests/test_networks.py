@@ -438,10 +438,7 @@ def test_hf_qwen2():
     torch.testing.assert_close(compiled_loss, ref_loss, rtol=1e-4, atol=1e-4)
 
     assert len(backend.subgraph_infos) == 1, "Should have exactly 1 subgraph because of fullgraph=True"
-
-    # https://github.com/NVIDIA/Fuser/issues/871#issuecomment-2461562917
-    with pytest.raises(RuntimeError, match="Found two different const extents in the same set"):
-        compiled_loss.backward(torch.randn_like(compiled_loss))
+    compiled_loss.backward(torch.randn_like(compiled_loss))
 
 
 LLAMA_3_2_1B_CFG = {
