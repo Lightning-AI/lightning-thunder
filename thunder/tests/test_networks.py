@@ -413,7 +413,8 @@ def test_hf_qwen2():
         num_key_value_heads=4,
         # Scaled down for testing
         hidden_size=56,
-        vocab_size=4096,
+        vocab_size=16,
+        max_position_embeddings=32,
     )
     configuration.num_hidden_layers = 1
     with torch.device("cuda"):
