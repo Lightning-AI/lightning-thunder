@@ -27,8 +27,8 @@ class _DebugTransform(thunder.core.transforms.Transform):
         self.pre_callback = pre_callback
         self.post_callback = post_callback
 
+    @thunder.core.profile.annotate_for_profile("DebugTransform.transform_trace_post_optimization")
     def transform_trace_post_optimization(self, trace: TraceCtx, **kwargs) -> TraceCtx:
-        start_time_ns = time.perf_counter_ns()
         debug_trace = from_trace(trace)
         debug_counter = 1
 
@@ -67,9 +67,8 @@ class _DebugTransform(thunder.core.transforms.Transform):
             debug_counter += 1
 
         debug_trace.bound_symbols = new_bsyms
-        elapsed_time_ns = time.perf_counter_ns() - start_time_ns
 
-        debug_trace.set_provenance(TraceProvenance(f"Debug trace (took {elapsed_time_ns * 1e-6:.2f} milliseconds)"))
+        debug_trace.set_provenance(TraceProvenance("Debug trace"))
 
         return debug_trace
 

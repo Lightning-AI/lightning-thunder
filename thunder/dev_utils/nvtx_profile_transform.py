@@ -1,3 +1,4 @@
+from thunder.core.profile import annotate_for_profile
 from thunder.core.trace import TraceCtx as Trace, from_trace, TraceProvenance
 from thunder.dev_utils.utils import NON_COMPUTATION_PRIMS
 from thunder.extend import OperatorExecutor
@@ -40,23 +41,19 @@ nvtx_pop = nvtx_profiler_ex.register_operator("nvtx_range_pop", meta=lambda: Non
 
 
 class NvtxProfileTransform(thunder.core.transforms.Transform):
+    @annotate_for_profile("NvtxProfileTransform.transform_trace_post_optimization")
     def transform_trace_post_optimization(self, trace: Trace, **kwargs) -> Trace:
-        with Timer() as timer:
-            profile_trace = from_trace(trace)
+        profile_trace = from_trace(trace)
 
-            for bound_symbol in trace.bound_symbols:
-                if bound_symbol.sym.id in NON_COMPUTATION_PRIMS:
-                    profile_trace.bound_symbols.append(bound_symbol)
-                    continue
-
-                # Add nvtx range for the symbol.
-                profile_trace.bound_symbols.append(
-                    nvtx_push.bind(f"{''.join(bound_symbol.python(indent=0))}", output=None)
-                )
+        for bound_symbol in trace.bound_symbols:
+            if bound_symbol.sym.id in NON_COMPUTATION_PRIMS:
                 profile_trace.bound_symbols.append(bound_symbol)
-                profile_trace.bound_symbols.append(nvtx_pop.bind(output=None))
+                continue
 
-        profile_trace.set_provenance(
-            TraceProvenance(f"NVTX Profile Transform (took {timer.get_elapsed_time_in_ms()} milliseconds)")
-        )
+            # Add nvtx range for the symbol.
+            profile_trace.bound_symbols.append(nvtx_push.bind(f"{''.join(bound_symbol.python(indent=0))}", output=None))
+            profile_trace.bound_symbols.append(bound_symbol)
+            profile_trace.bound_symbols.append(nvtx_pop.bind(output=None))
+
+        profile_trace.set_provenance(TraceProvenance("NVTX Profile Transform"))
         return profile_trace

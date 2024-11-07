@@ -232,15 +232,6 @@ class BenchmarkRunStatistics:
     stop_time: int
     host_stop_time: int
     called_backward: bool
-    has_extended_stats: bool = False
-    last_trace_host_start: int = -1
-    last_trace_host_stop: int = -1
-    last_trace_cache_start: int = -1
-    last_trace_cache_stop: int = -1
-    last_trace_tracing_start: int = -1
-    last_trace_tracing_stop: int = -1
-    last_trace_host_execution_start: int = -1
-    last_trace_host_execution_stop: int = -1
 
 
 # A timing helper
@@ -293,18 +284,6 @@ def _benchmark(
             host_stop_time=host_stop,
             called_backward=called_backward,
         )
-
-        # TODO Ensure the compile data statistics are always populated
-        if cs is not None and cs.last_trace_host_start > 0:
-            stat.has_extended_stats = True
-            stat.last_trace_host_start = cs.last_trace_host_start
-            stat.last_trace_host_stop = cs.last_trace_host_stop
-            stat.last_trace_cache_start = cs.last_trace_cache_start
-            stat.last_trace_cache_stop = cs.last_trace_cache_stop
-            stat.last_trace_tracing_start = cs.last_trace_tracing_start
-            stat.last_trace_tracing_stop = cs.last_trace_tracing_stop
-            stat.last_trace_host_execution_start = cs.last_trace_host_execution_start
-            stat.last_trace_host_execution_stop = cs.last_trace_host_execution_stop
 
         stats.append(stat)
 
@@ -417,51 +396,9 @@ def _prettyprint_stats(
         for rank, (memory_allocated, memory_reserved) in rank_mem_info.items():
             short_printout += f"\n    rank-{rank} - peak allocated memory {memory_allocated/1024/1024:.2f}MB, peak reserved: {memory_reserved/1024/1024:.2f}MB"
         short_printout += "\n"
-    if median_benchmark_stat.has_extended_stats:
-        # NOTE At this point in the program extended statistics are available
-        trace_time_ns = median_benchmark_stat.last_trace_host_stop - median_benchmark_stat.last_trace_host_start
-        cache_time_ns = median_benchmark_stat.last_trace_cache_stop - median_benchmark_stat.last_trace_cache_start
-        tracing_time_ns = median_benchmark_stat.last_trace_tracing_stop - median_benchmark_stat.last_trace_tracing_start
-        trace_execution_time_ns = (
-            median_benchmark_stat.last_trace_host_execution_stop - median_benchmark_stat.last_trace_host_execution_start
-        )
-
-        trace_time_us: str = ns_to_us(trace_time_ns)
-        cache_time_us: str = ns_to_us(cache_time_ns)
-        tracing_time_us: str = ns_to_us(tracing_time_ns)
-        trace_execution_time_us: str = ns_to_us(trace_execution_time_ns)
-
-        trace_time_percentage: str = f"{round(trace_time_ns / median_benchmark_stat.total_time * 100)}%"
-        cache_time_percentage: str = f"{round(cache_time_ns / median_benchmark_stat.total_time * 100)}%"
-        tracing_time_percentage: str = f"{round(tracing_time_ns / median_benchmark_stat.total_time * 100)}%"
-        trace_execution_time_percentage: str = (
-            f"{round(trace_execution_time_ns / median_benchmark_stat.total_time * 100)}%"
-        )
-
-        before_trace_time_ns = median_benchmark_stat.last_trace_host_start - median_benchmark_stat.start_time
-        accelerator_wait_time_ns = median_benchmark_stat.stop_time - median_benchmark_stat.last_trace_host_stop
-
-        before_trace_time_us: str = ns_to_us(before_trace_time_ns)
-        accelerator_wait_time_us: str = ns_to_us(accelerator_wait_time_ns)
-
-        before_trace_time_percentage: str = f"{round(before_trace_time_ns / median_benchmark_stat.total_time * 100)}%"
-        accelerator_wait_time_percentage: str = (
-            f"{round(accelerator_wait_time_ns / median_benchmark_stat.total_time * 100)}%"
-        )
-
-        extension = f"""\
-            The median benchmark took {before_trace_time_us} to get into the tracing logic, {before_trace_time_percentage} of the total time.
-            The median benchmark took {accelerator_wait_time_us} waiting for the accelerator's computation to finish, {accelerator_wait_time_percentage} of the total time.
-            The median benchmark run's total time in tracing logic is {trace_time_us}, {trace_time_percentage} of the total time.
-            The median benchmark run's cache lookup time is {cache_time_us}, {cache_time_percentage} of the total time.
-            The median benchmark run's time spent tracing is {tracing_time_us}, {tracing_time_percentage} of the total time.
-            The median benchmark run's time to request the traced program be executed is {trace_execution_time_us}, {trace_execution_time_percentage} of the total time.
-        """
-    else:
         extension = ""
 
-    output = textwrap.dedent(preamble) + textwrap.indent(textwrap.dedent(extension), " " * 4)
-    print(output)
+    print(textwrap.dedent(preamble))
 
 
 def print_rank_0(message):

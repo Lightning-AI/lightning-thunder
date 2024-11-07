@@ -3,6 +3,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 import thunder.core.prims as prims
+import thunder.core.profile
 from thunder.core.proxies import variableify, TensorProxy, unvariableify, ProxyInterface
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import BoundSymbol
@@ -39,6 +40,7 @@ def bsym_of_to_return_self(bsym: BoundSymbol):
     return result_is_self
 
 
+@thunder.core.profile.annotate_for_profile("check_inplace_to_views")
 def check_inplace_to_views(computation_trace: Trace) -> dict[VariableInterface, TensorProxy]:
     """Error out if in-place op that outputs of different number of elements from the input and the input has other consumers."""
     import thunder.torch as ltorch
@@ -613,6 +615,7 @@ def apply_functionalization_to_canonicalized_trace(
     return functionalized_computation_trace
 
 
+@thunder.core.profile.annotate_for_profile("functionalize_inplace_ops")
 def functionalize_inplace_ops(
     computation_trace: Trace,
     orig_to_view_swap_map: dict[VariableInterface, TensorProxy],

@@ -18,6 +18,7 @@ import thunder.core.dtypes as dtypes
 import thunder.torch as ltorch
 from thunder.torch import TensorLike
 
+import thunder.core.profile
 from thunder.core import prims, utils
 from thunder.core.baseutils import BoundSymbolInterface
 from thunder.core.prims import PrimIDs
@@ -743,6 +744,7 @@ class nvFuserExecutor(FusionExecutor):
 
     # TODO Update the replacement of redundant proxies to use a visitor pattern
     #   when that architecture is added in the future
+    @thunder.core.profile.annotate_for_profile("nvFuserExecutor.cse")
     def cse(self, trace: TraceCtx) -> TraceCtx:
         """Remove bound symbols whose right hand side is common expression.
         Nvfuser specific CSE pass.
@@ -753,9 +755,6 @@ class nvFuserExecutor(FusionExecutor):
         Returns:
             :class:`TraceCtx` with common subexpression eliminated.
         """
-
-        start_time_ns = time.perf_counter_ns()
-
         cse_trace = from_trace(trace)
 
         # The trace_rhs_to_bsym_map is used for CSE on trace outside of nvFusion region.
@@ -826,18 +825,12 @@ class nvFuserExecutor(FusionExecutor):
         trace_output = tree_map(map_redundant, return_bsym.args)
         cse_trace.bound_symbols[-1] = prims.python_return.bind(*trace_output, output=None)
 
-        end_time_ns = time.perf_counter_ns()
-        elapsed_time_ns = end_time_ns - start_time_ns
-        elapsed_time_millis = elapsed_time_ns // 1000000
-
-        cse_trace.set_provenance(
-            TraceProvenance(f"Nvfuser Common Subexpression Elimination (took {elapsed_time_millis} milliseconds)")
-        )
+        cse_trace.set_provenance(TraceProvenance("Nvfuser Common Subexpression Elimination"))
         return cse_trace
 
     # TODO Restore fusion logic here -- this just replaces supported operations in isolation at the moment
+    @thunder.core.profile.annotate_for_profile("nvFuserExecutor.fusion_pass")
     def fusion_pass(self, trace: TraceCtx) -> TraceCtx:
-        start_time_ns: int = time.perf_counter_ns()
         # Replace uniform with uniform_philox and rng state operators for better rematerialization
         from thunder.core.rematerialization import replace_uniform
 
@@ -933,11 +926,7 @@ instantiated) this heuristic actually leads to worse code.
         fusedtrace = dce(fusedtrace)
 
         fusedtrace = update_fusion_call_ctx(fusedtrace)
-
-        end_time_ns: int = time.perf_counter_ns()
-        elapsed_time_ns: int = end_time_ns - start_time_ns
-        elapsed_time_millis: int = elapsed_time_ns // 1000000
-        fusedtrace.set_provenance(TraceProvenance(f"Fusion (took {elapsed_time_millis} milliseconds)"))
+        fusedtrace.set_provenance(TraceProvenance("nvFuser Fusion"))
 
         return fusedtrace
 
@@ -2115,9 +2104,8 @@ register_supported(PrimIDs.COPY_, copy_, _copy__check)
 # NOTE This only handles conversions performed by CONVERT_ELEMENT_TYPE, and not conversions caused
 #   by other Symbols, like torch.to, which may be unflattened
 # TODO This could be extended to non-float conversions, like complex -> complex conversions
+@thunder.core.profile.annotate_for_profile("remove_redundant_casts")
 def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
-    start_time_ns = time.perf_counter_ns()
-
     rrctrace = from_trace(trace)
 
     # Returns a tuple (is proxy float->float conversion?, object to convert, dtype to convert to)
@@ -2264,10 +2252,8 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
 
     rrctrace.bound_symbols = nbsyms
 
-    end_time_ns = time.perf_counter_ns()
-    elapsed_time_ns = end_time_ns - start_time_ns
-    elapsed_time_millis = elapsed_time_ns // 1000000
-    rrctrace.set_provenance(TraceProvenance(f"Remove redundant casts (took {elapsed_time_millis} milliseconds)"))
+    rrctrace.set_provenance(TraceProvenance("Remove redundant casts"))
+
     return rrctrace
 
 

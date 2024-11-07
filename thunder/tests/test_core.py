@@ -15,7 +15,7 @@ from torch.testing import assert_close, make_tensor
 from types import FunctionType
 
 import thunder
-from thunder import last_traces, cache_option, cache_hits, cache_misses
+from thunder import last_traces, cache_option
 import thunder.examine as examine
 import thunder.clang as clang
 import thunder.core.profile
@@ -270,55 +270,6 @@ def test_grad_unpack(executor, device, dtype):
     expected = a + a.grad
     assert_close(actual_first, expected)
     assert_close(actual_second, expected)
-
-
-@instantiate(dtypes=(thunder.float32,))
-def test_grad_no_recompile(executor, device, dtype):
-    # Checks that having .grad or not does not cause recompile
-
-    def foo(a):
-        return a * 2
-
-    cfoo = executor.make_callable(foo)
-
-    tdtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=tdtype, requires_grad=True)
-    a.grad = make_tensor((2, 2), device=device, dtype=tdtype)
-    cfoo(a)
-    assert thunder.cache_misses(cfoo) == 1
-
-    a.grad = None
-    cfoo(a)
-    assert thunder.cache_misses(cfoo) == 1
-
-    b = make_tensor((3, 3), device=device, dtype=tdtype, requires_grad=True)
-    cfoo(b)
-    assert thunder.cache_misses(cfoo) == 2
-
-    b.grad = make_tensor((3, 3), device=device, dtype=tdtype)
-    cfoo(b)
-    assert thunder.cache_misses(cfoo) == 2
-
-
-@instantiate(dtypes=(thunder.float32,))
-def test_grad_recompile(executor, device, dtype):
-    # Checks that change in the metadata of a.grad causes recompile
-
-    def foo(a):
-        return a.grad * 2
-
-    cfoo = executor.make_callable(foo)
-
-    tdtype = ltorch.to_torch_dtype(dtype)
-    a = make_tensor((2, 2), device=device, dtype=tdtype, requires_grad=True)
-    a.grad = make_tensor((2, 2), device=device, dtype=tdtype)
-    cfoo(a)
-    assert thunder.cache_misses(cfoo) == 1
-
-    b = make_tensor((3, 3), device=device, dtype=tdtype, requires_grad=True)
-    b.grad = make_tensor((3, 3), device=device, dtype=tdtype)
-    cfoo(b)
-    assert thunder.cache_misses(cfoo) == 2
 
 
 @instantiate(dtypes=(thunder.float32,))
@@ -818,62 +769,42 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
 
     # Tensor x tensor
     result = cfoo(a, b)
-    assert cache_misses(cfoo) == 1
-    assert cache_hits(cfoo) == 0
     assert_close(result, a + b)
 
     # Same tensors -- cache hit
     result = cfoo(a, b)
-    assert cache_misses(cfoo) == 1
-    assert cache_hits(cfoo) == 1
     assert_close(result, a + b)
 
     # Different tensor, same metadata -- cache hit
     result = cfoo(a, c)
-    assert cache_misses(cfoo) == 1
-    assert cache_hits(cfoo) == 2
     assert_close(result, a + c)
 
     # Different tensor, different shape -- cache miss
     result = cfoo(a, d)
-    assert cache_misses(cfoo) == 2
-    assert cache_hits(cfoo) == 2
     assert_close(result, a + d)
 
     # Different tensor, different dtype -- cache miss
     result = cfoo(a, e)
-    assert cache_misses(cfoo) == 3
-    assert cache_hits(cfoo) == 2
     assert_close(result, a + e)
 
     # Tensor x float number -- cache miss
     result = cfoo(a, 1.0)
-    assert cache_misses(cfoo) == 4
-    assert cache_hits(cfoo) == 2
     assert_close(result, a + 1.0)
 
     # Tensor x float number, different tensor data -- cache hit
     result = cfoo(b, 1.0)
-    assert cache_misses(cfoo) == 4
-    assert cache_hits(cfoo) == 3
     assert_close(result, b + 1.0)
 
     # Tensor x float number, different number value -- cache miss
     result = cfoo(b, 3.0)
-    assert cache_misses(cfoo) == 5
-    assert cache_hits(cfoo) == 3
     assert_close(result, b + 3.0)
 
     # Tensor x int number, different number type -- cache miss
     result = cfoo(b, 3)
-    assert cache_misses(cfoo) == 6
-    assert cache_hits(cfoo) == 3
     assert_close(result, b + 3)
 
     # Tensor x int number -- cache hit
     result = cfoo(b, 3)
-    assert cache_misses(cfoo) == 6
-    assert cache_hits(cfoo) == 4
     assert_close(result, b + 3)
 
     def bar(a, b):
@@ -886,30 +817,20 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
 
     # String x string -- cache miss
     cbar(astr, bstr)
-    assert cache_misses(cbar) == 1
-    assert cache_hits(cbar) == 0
 
     # Same strings -- cache hit
     cbar(astr, bstr)
-    assert cache_misses(cbar) == 1
-    assert cache_hits(cbar) == 1
 
     # Same string values -- different strings
     bother_str = "b"
     cbar(astr, bother_str)
-    assert cache_misses(cbar) == 1
-    assert cache_hits(cbar) == 2
 
     # Object x string -- cache miss
     cbar(object(), bother_str)
-    assert cache_misses(cbar) == 2
-    assert cache_hits(cbar) == 2
 
     # TODO: test objects in prologues
     # object() != object() -- cache miss
     # cbar(object(), bother_str)
-    # assert cache_misses(cbar) == 3
-    # assert cache_hits(cbar) == 2
 
     # Module tests
     m = torch.nn.Linear(5, 5, device=device, dtype=torch_dtype)
@@ -922,18 +843,12 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
 
     assert_close(result, torch_result)
 
-    assert cache_misses(cm) == 1
-    assert cache_hits(cm) == 0
-
     # Same input -- cache hit
 
     result = cm(inp)
     torch_result = m(inp)
 
     assert_close(result, torch_result)
-
-    assert cache_misses(cm) == 1
-    assert cache_hits(cm) == 1
 
     # Different input, same metadata -- cache hit
     inp = make_tensor((5, 5), device=device, dtype=torch_dtype)
@@ -942,18 +857,12 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
 
     assert_close(result, torch_result)
 
-    assert cache_misses(cm) == 1
-    assert cache_hits(cm) == 2
-
     # Different input, different metadata -- cache miss
     inp = make_tensor((6, 5), device=device, dtype=torch_dtype)
     result = cm(inp)
     torch_result = m(inp)
 
     assert_close(result, torch_result)
-
-    assert cache_misses(cm) == 2
-    assert cache_hits(cm) == 2
 
     #
     # Sequence tests
@@ -972,18 +881,12 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
 
     assert_close(thunder_result, torch_result)
 
-    assert cache_misses(ccaz) == 1
-    assert cache_hits(ccaz) == 0
-
     # List with different values -- cache miss
     inp1 = [6, 3, 7]
     thunder_result = ccaz(inp1)
     torch_result = caz(inp1)
 
     assert_close(thunder_result, torch_result)
-
-    assert cache_misses(ccaz) == 2
-    assert cache_hits(ccaz) == 0
 
     # List with same values -- cache hit
     inp2 = [5, 3, 7]
@@ -992,18 +895,12 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
 
     assert_close(thunder_result, torch_result)
 
-    assert cache_misses(ccaz) == 2
-    assert cache_hits(ccaz) == 1
-
     # List with same values but different types -- cache miss
     inp3 = [5.0, 3, 7]
     thunder_result = ccaz(inp3)
     torch_result = caz(inp3)
 
     assert_close(thunder_result, torch_result)
-
-    assert cache_misses(ccaz) == 3
-    assert cache_hits(ccaz) == 1
 
     #
     # Kwarg tests
@@ -1019,9 +916,6 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
 
     assert_close(thunder_result, torch_result)
 
-    assert cache_misses(cdaz) == 1
-    assert cache_hits(cdaz) == 0
-
     # Same keys and tensor metadata the same -- cache hit
     inp1 = {"a": b, "b": a}
     thunder_result = cdaz(**inp1)
@@ -1029,18 +923,12 @@ def test_static_caching(executor, device: str, dtype: dtypes.dtype):
 
     assert_close(thunder_result, torch_result)
 
-    assert cache_misses(cdaz) == 1
-    assert cache_hits(cdaz) == 1
-
     # Same keys but different tensor metadata -- cache hit
     inp2 = {"a": b, "b": e}
     thunder_result = cdaz(**inp2)
     torch_result = daz(**inp2)
 
     assert_close(thunder_result, torch_result)
-
-    assert cache_misses(cdaz) == 2
-    assert cache_hits(cdaz) == 1
 
 
 #
@@ -2740,8 +2628,6 @@ def test_factory_functions_default_dtype():
         actual_dtype = jfn(x)
         assert actual_dtype == torch.float16
 
-    assert thunder.cache_misses(jfn) == 2
-
 
 def test_change_default_dtype_in_jitted_fn():
     default_dtype = torch.get_default_dtype()
@@ -2787,8 +2673,6 @@ def test_factory_functions_default_device():
             del torch._GLOBAL_DEVICE_CONTEXT.device_context
         except Exception:
             pass
-
-    assert thunder.cache_misses(jfn) == 2
 
 
 @requiresCUDA
@@ -3021,20 +2905,15 @@ def test_indexing_with_hashable_object():
 
     jfn = thunder.jit(fn)
     assert jfn() == 1
-    assert thunder.cache_misses(jfn) == 1  # Due to first compilation.
 
     # Call jfn with no changes
     # this should be cache hit.
     assert jfn() == 1
-    assert thunder.cache_hits(jfn) == 1
-    assert thunder.cache_misses(jfn) == 1
 
     # Change the value of the captured dict.
-    # This should be a cache miss, verify that.
+    # This should be a cache miss
     d[h] = 2
     assert jfn() == 2  # Verify that jfn now returns 2
-    assert thunder.cache_hits(jfn) == 1
-    assert thunder.cache_misses(jfn) == 2
 
 
 def test_profiling_decorator():

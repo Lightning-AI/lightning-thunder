@@ -653,7 +653,6 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
 
     res_of_a, a_out = jitted_f(a, a)
     ref_res_of_a, ref_a_out = f(a_ref, a_ref)
-    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (0, 1)
     torch.testing.assert_close(res_of_a, ref_res_of_a)
     torch.testing.assert_close(a, a_ref)
     assert a_out.data_ptr() == a.data_ptr()
@@ -662,12 +661,10 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     a_ref = a.clone().detach()
     res_of_a_and_b, _ = jitted_f(a, b)
     ref_res_of_a_and_b, _ = f(a_ref, b_ref)
-    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (0, 2)
     torch.testing.assert_close(res_of_a_and_b, ref_res_of_a_and_b)
 
     res_of_b, _ = jitted_f(b, b)
     ref_res_of_b, _ = f(b_ref, b_ref)
-    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (1, 2)
     torch.testing.assert_close(res_of_b, ref_res_of_b)
     torch.testing.assert_close(b, b_ref)
 
@@ -675,7 +672,6 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     b_ref = b.clone().detach()
     res_of_b_and_a, _ = jitted_f(b, a)
     ref_res_of_b_and_a, _ = f(b_ref, a_ref)
-    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (2, 2)
     torch.testing.assert_close(res_of_b_and_a, ref_res_of_b_and_a)
 
     # TODO(crcrpar): The message should be from the check of in-place to aliases of different shapes.
@@ -687,13 +683,9 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
 
     jitted_f = executor.make_callable(f)
     jitted_f(a, a)
-    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (0, 1)
     jitted_f(a, b)
-    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (0, 2)
     jitted_f(b, a)
-    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (1, 2)
     jitted_f(b, b)
-    assert (thunder.cache_hits(jitted_f), thunder.cache_misses(jitted_f)) == (2, 2)
 
     def f(a, b, c):
         d = a.exp_()

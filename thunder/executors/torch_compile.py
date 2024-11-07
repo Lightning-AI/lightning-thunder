@@ -6,6 +6,7 @@ from typing import Any
 import torch
 from lightning_utilities import compare_version
 
+import thunder.core.profile
 from thunder.core import prims, utils
 from thunder.core.proxies import Proxy, TensorProxy, unvariableify, Variable
 from thunder.core.rematerialization import rematerialize
@@ -154,9 +155,8 @@ class TorchCompileExecutor(FusionExecutor):
 
         return fusion_bsym
 
+    @thunder.core.profile.annotate_for_profile("TorchCompileExecutor.fusion_pass")
     def fusion_pass(self, trace: TraceCtx) -> TraceCtx:
-        start_time_ns: int = time.perf_counter_ns()
-
         fusedtrace: TraceCtx = from_trace(trace)
 
         producers, consumers = utils.producers_and_consumers(trace)
@@ -188,10 +188,7 @@ class TorchCompileExecutor(FusionExecutor):
         fusedtrace = dce(fusedtrace)
         fusedtrace = update_fusion_call_ctx(fusedtrace)
 
-        end_time_ns: int = time.perf_counter_ns()
-        elapsed_time_ns: int = end_time_ns - start_time_ns
-        elapsed_time_millis: int = elapsed_time_ns // 1000000
-        fusedtrace.set_provenance(TraceProvenance(f"Fusion (took {elapsed_time_millis} milliseconds)"))
+        fusedtrace.set_provenance(TraceProvenance("torch.compile Fusion"))
 
         return fusedtrace
 

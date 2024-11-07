@@ -9,6 +9,7 @@ import time
 
 import networkx as nx
 
+import thunder.core.profile
 from thunder.core import prims, utils
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
 from thunder.core.prims import PrimIDs
@@ -526,6 +527,7 @@ def rematerialize_all_gather(fw_trace: TraceCtx, bw_trace: TraceCtx) -> tuple[Tr
     return new_fw_trace, new_bw_trace
 
 
+@thunder.core.profile.annotate_for_profile("match_fw_and_bw_saved_for_bw_proxies")
 def match_fw_and_bw_saved_for_bw_proxies(
     fw_trace: TraceCtx, bw_trace: TraceCtx
 ) -> tuple[dict[str, Proxy], dict[str, Proxy]]:
@@ -560,6 +562,7 @@ def match_fw_and_bw_saved_for_bw_proxies(
     return new_required_for_backward_fw_to_bw_map, new_required_for_backward_bw_to_fw_map
 
 
+@thunder.core.profile.annotate_for_profile("rematerialize")
 def rematerialize(trace: TraceCtx) -> TraceCtx:
     """Rematerialize the trace.
 
@@ -570,8 +573,6 @@ def rematerialize(trace: TraceCtx) -> TraceCtx:
         TraceCtx: Rematerialized trace and the list of
             rematerialized traces.
     """
-    start_time_ns = time.perf_counter_ns()
-
     static_consumer_info = utils.consumers(trace)
 
     # Find all the producers and consumers
@@ -616,11 +617,8 @@ def rematerialize(trace: TraceCtx) -> TraceCtx:
     rematerialized_trace = from_trace(trace)
     rematerialized_trace.bound_symbols = tuple(new_bsyms.get(bsym, bsym) for bsym in trace.bound_symbols)
 
-    end_time_ns = time.perf_counter_ns()
-    elapsed_time_ns = end_time_ns - start_time_ns
-    elapsed_time_millis = elapsed_time_ns // 1000000
+    rematerialized_trace.set_provenance(TraceProvenance(f"Rematerialization"))
 
-    rematerialized_trace.set_provenance(TraceProvenance(f"Rematerialization (took {elapsed_time_millis} milliseconds)"))
     return rematerialized_trace
 
 
@@ -754,9 +752,9 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
     return new_fw_trace, new_bw_trace
 
 
+@thunder.core.profile.annotate_for_profile("replace_uniform")
 def replace_uniform(trace: TraceCtx) -> TraceCtx:
     """For better rematerialization, replace the uniform operator with the stateless uniform_philox operator and manually update the RNG state."""
-    start_time_ns = time.perf_counter_ns()
     from thunder.core.trace import VariableInterface
     from thunder.core.proxies import Proxy
     from thunder.core.devices import Device
@@ -787,11 +785,6 @@ def replace_uniform(trace: TraceCtx) -> TraceCtx:
         bound_symbols.append(nbsym)
 
     new_trace.bound_symbols = bound_symbols
+    new_trace.set_provenance(TraceProvenance("Transform for replace uniform"))
 
-    end_time_ns = time.perf_counter_ns()
-    elapsed_time_ns = end_time_ns - start_time_ns
-    elapsed_time_millis = elapsed_time_ns // 1000000
-    new_trace.set_provenance(
-        TraceProvenance(f"Transform for replace uniform (took {elapsed_time_millis} milliseconds)")
-    )
     return new_trace

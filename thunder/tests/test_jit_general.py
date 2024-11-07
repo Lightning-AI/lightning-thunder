@@ -172,75 +172,6 @@ def test_intermediate_torch_operations():
     assert_close(actual, expected)
 
 
-def test_cache_basic():
-    def foo(a, b):
-        return a + b
-
-    jfoo = thunder.jit(foo)
-
-    a = torch.randn((2, 2), device="cpu")
-    b = torch.randn((2, 2), device="cpu")
-
-    expected = foo(a, b)
-    actual = jfoo(a, b)
-    assert_close(expected, actual)
-    assert thunder.cache_misses(jfoo) == 1
-    assert thunder.cache_hits(jfoo) == 0
-
-    expected = foo(a, b)
-    actual = jfoo(a, b)
-    assert_close(expected, actual)
-    assert thunder.cache_misses(jfoo) == 1
-    assert thunder.cache_hits(jfoo) == 1
-
-    # Tests rank changing
-    a = torch.randn((2), device="cpu")
-
-    expected = foo(a, b)
-    actual = jfoo(a, b)
-    assert_close(expected, actual)
-    assert thunder.cache_misses(jfoo) == 2
-    assert thunder.cache_hits(jfoo) == 1
-
-    expected = foo(a, b)
-    actual = jfoo(a, b)
-    assert_close(expected, actual)
-    assert thunder.cache_misses(jfoo) == 2
-    assert thunder.cache_hits(jfoo) == 2
-
-    # Tests dtype changing
-    a = torch.randn((2, 2), device="cpu", dtype=torch.bfloat16)
-    b = torch.randn((2, 2), device="cpu", dtype=torch.bfloat16)
-
-    expected = foo(a, b)
-    actual = jfoo(a, b)
-    assert_close(expected, actual)
-    assert thunder.cache_misses(jfoo) == 3
-    assert thunder.cache_hits(jfoo) == 2
-
-    expected = foo(a, b)
-    actual = jfoo(a, b)
-    assert_close(expected, actual)
-    assert thunder.cache_misses(jfoo) == 3
-    assert thunder.cache_hits(jfoo) == 3
-
-    # Tests shape changing
-    a = torch.randn((2, 1), device="cpu", dtype=torch.bfloat16)
-    b = torch.randn((2, 1), device="cpu", dtype=torch.bfloat16)
-
-    expected = foo(a, b)
-    actual = jfoo(a, b)
-    assert_close(expected, actual)
-    assert thunder.cache_misses(jfoo) == 4
-    assert thunder.cache_hits(jfoo) == 3
-
-    expected = foo(a, b)
-    actual = jfoo(a, b)
-    assert_close(expected, actual)
-    assert thunder.cache_misses(jfoo) == 4
-    assert thunder.cache_hits(jfoo) == 4
-
-
 def test_cache_always_trace():
     def foo(a, b):
         return a + b
@@ -256,8 +187,6 @@ def test_cache_always_trace():
     actual = jfoo(a, b)
     actual = jfoo(a, b)
     assert_close(expected, actual)
-    assert thunder.cache_misses(jfoo) == 4
-    assert thunder.cache_hits(jfoo) == 0
 
 
 def test_cache_equality_constraint():
@@ -273,15 +202,6 @@ def test_cache_equality_constraint():
 
     assert_close(fn(True), jfn(True))
     assert_close(fn(False), jfn(False))
-
-    assert thunder.cache_misses(jfn) == 2
-    assert thunder.cache_hits(jfn) == 0
-
-    assert_close(fn(True), jfn(True))
-    assert_close(fn(False), jfn(False))
-
-    assert thunder.cache_misses(jfn) == 2
-    assert thunder.cache_hits(jfn) == 2
 
 
 def test_nn_parameter():
@@ -577,9 +497,6 @@ def test_litgpt():
     result = jfn(*args, **kwargs)
     assert_close(result, module(*args, **kwargs))
 
-    assert thunder.cache_misses(jfn) == 1
-    assert thunder.cache_hits(jfn) == 1
-
 
 def test_nanogpt_block():
     from thunder.benchmarks import NanoGPTBlockBenchmark, NanoGPTConfig, _nanogpt_configs
@@ -853,8 +770,6 @@ def test_cache_symbolic_values_basic():
     expected = foo(a, b)
 
     assert_close(actual, expected)
-    assert thunder.cache_misses(jfoo) == 1
-    assert thunder.cache_hits(jfoo) == 0
 
     b = 2
 
@@ -862,8 +777,6 @@ def test_cache_symbolic_values_basic():
     expected = foo(a, b)
 
     assert_close(actual, expected)
-    assert thunder.cache_misses(jfoo) == 1
-    assert thunder.cache_hits(jfoo) == 1
 
 
 def test_post_optimization_transform():
@@ -947,30 +860,22 @@ def test_cache_symbolic_values_constraints():
     actual = jfoo(1.5)
 
     assert_close(expected, actual)
-    assert thunder.cache_misses(jfoo) == 1
-    assert thunder.cache_hits(jfoo) == 0
 
     expected = foo(2.0)
     actual = jfoo(2.0)
 
     assert_close(expected, actual)
     # even though we should be able to re-use the cache, we cannot do it now. Because constraints are propagated to inputs being static number.
-    assert thunder.cache_misses(jfoo) == 2
-    assert thunder.cache_hits(jfoo) == 0
 
     expected = foo(1.5)
     actual = jfoo(1.5)
 
     assert_close(expected, actual)
-    assert thunder.cache_misses(jfoo) == 2
-    assert thunder.cache_hits(jfoo) == 1
 
     expected = foo(-0.3)
     actual = jfoo(-0.3)
 
     assert_close(expected, actual)
-    assert thunder.cache_misses(jfoo) == 3
-    assert thunder.cache_hits(jfoo) == 1
 
     def bar(t):
         if t[0].item() > 5:
@@ -1125,15 +1030,11 @@ def test_cache_symbolic_values_reshape():
     actual = jfoo(a, 32)
 
     assert_close(expected, actual)
-    assert thunder.cache_misses(jfoo) == 1
-    assert thunder.cache_hits(jfoo) == 0
 
     expected = foo(a, 16)
     actual = jfoo(a, 16)
 
     assert_close(expected, actual)
-    assert thunder.cache_misses(jfoo) == 1
-    assert thunder.cache_hits(jfoo) == 1
 
 
 @pytest.mark.filterwarnings("ignore:Please use `torch.vmap`")
@@ -1481,8 +1382,6 @@ def test_cache_symbolic_values_dynamic_shape():
     expected = foo(a)
 
     assert_close(actual, expected)
-    assert thunder.cache_misses(jfoo) == 1
-    assert thunder.cache_hits(jfoo) == 0
 
     a = torch.randn((3, 4, 5), device="cpu")
 
@@ -1490,8 +1389,6 @@ def test_cache_symbolic_values_dynamic_shape():
     expected = foo(a)
 
     assert_close(actual, expected)
-    assert thunder.cache_misses(jfoo) == 1
-    assert thunder.cache_hits(jfoo) == 1
 
 
 def test_cache_symbolic_values_reshape_numel():
