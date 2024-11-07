@@ -2530,7 +2530,6 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
             # It could be a torch.dropout with 0.0 probability, so we skip it
             if symbol.sym.id == "torch.nn.functional.dropout":
                 return None
-            print(f"VJP for {symbol} is not implemented")
             raise NotImplementedError(f"VJP for {symbol.sym.id} is not implemented")
 
     def _vjp_impl(*args, **kwargs):
