@@ -172,7 +172,8 @@ def trace_from_bsym_or_bsyms(bsym_or_bsyms: BoundSymbol | Sequence[BoundSymbol])
     with tracectx(trace):
         prims.python_return(bsyms[-1].output)
     with tracectx(trace):
-        trace._siginfo = SigInfo.from_name_and_args(bsyms[0].sym.name, trace.args)
+        # note(crcrpar): Give prefix `tmp` to avoid infinite recursion due to the same name
+        trace._siginfo = SigInfo.from_name_and_args(f"tmp_{bsyms[0].sym.name}", trace.args)
     return trace
 
 
@@ -481,31 +482,8 @@ class DesugarTensorSubclass:
                 )
             return [*bsyms, updated_bsym]
 
-        if not any(isinstance(a, SubclassTensorProxy) for a in updated_bsym.flat_proxy_args):
-            if bsym.sym.id == prims.PrimIDs.TENSOR_SUBCLASS_CTOR:
-                subclass_proxy = updated_bsym.flat_proxy_outs[0]
-                subclass_type = getattr(subclass_proxy, SubclassTensorProxy.SUBCLASS_TYPE_ATTR)
-                utils.check(
-                    (
-                        has_attr_names := (
-                            hasattr(subclass_proxy, "_tensor_attr_names")
-                            and hasattr(subclass_proxy, "_non_tensor_attr_names")
-                        )
-                    )
-                    or subclass_type in self.subclass_type_to_attr_names,
-                    lambda: f"{subclass_type=} has not been observed",
-                )
-                if not has_attr_names:
-                    tensor_attr_names, non_tensor_attr_names = self.subclass_type_to_attr_names[subclass_type]
-                    subclass_proxy._tensor_attr_names = tensor_attr_names
-                    subclass_proxy._non_tensor_attr_names = non_tensor_attr_names
-
-                    for name, value in zip(
-                        tensor_attr_names + non_tensor_attr_names,
-                        subclass_proxy._tensors + subclass_proxy._non_tensors,
-                    ):
-                        setattr(subclass_proxy, name, value)
-                self.subclass_proxy_to_flatten.add(variableify(subclass_proxy))
+        is_subclass_ctor = bsym.sym.id == prims.PrimIDs.TENSOR_SUBCLASS_CTOR
+        if not is_subclass_ctor and not any(isinstance(a, SubclassTensorProxy) for a in updated_bsym.flat_proxy_args):
             return [updated_bsym]
 
         utils.check(
@@ -520,6 +498,21 @@ class DesugarTensorSubclass:
             len(sequencified_cosmeticized_out) == len(orig_output),
             lambda: f"{len(sequencified_cosmeticized_out)=}, {len(orig_output)=}",
         )
+        if is_subclass_ctor:
+            utils.check(len(sequencified_cosmeticized_out) == 1 and len(orig_output) == 1, lambda: "")
+            fake_tensor_subclass = orig_output[0]
+            subclass_proxy = updated_bsym.flat_outs[0]
+            tensor_attr_names, metadata = fake_tensor_subclass.__tensor_flatten__()
+            subclass_proxy._tensor_attr_names = tensor_attr_names
+            subclass_proxy._non_tensor_attr_names = list(metadata.keys())
+            self.subclass_proxy_to_flatten.add(variableify(subclass_proxy))
+            for name, value in zip(
+                tensor_attr_names + subclass_proxy._non_tensor_attr_names,
+                subclass_proxy._tensors + subclass_proxy._non_tensor_attr_names,
+            ):
+                setattr(subclass_proxy, name, value)
+            return [updated_bsym]
+
         out = []
         for i, (cosmeticized_out, orig_out) in enumerate(zip(sequencified_cosmeticized_out, orig_output)):
             if isinstance(cosmeticized_out.inner_tensors, dict):
