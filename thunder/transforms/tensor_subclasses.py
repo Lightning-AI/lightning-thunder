@@ -318,6 +318,11 @@ class DesugarTensorSubclass:
             )
 
             self.swap_map[variableify(orig_output)] = new_subclass
+        else:
+            non_none_args = [n for n in node_of_output.args[0] if n is not None]
+            utils.check(len(non_none_args) == 1, lambda: f"{node_of_output.args = }")
+            new_out_node = non_none_args[0]
+            self.swap_map[variableify(orig_output)] = fxnode_output_name_to_tensor_proxy[str(new_out_node)]
         return bsyms
 
     def convert_trace_to_fx_graph_and_get_fake_result(
@@ -454,7 +459,7 @@ class DesugarTensorSubclass:
                 )
                 out.append(orig_out)
             else:
-                out.append(orig_out.tensors)
+                out.append(orig_out)
 
         with tracectx(self.computation_trace):
             out_proxy = tree_map(proxy_fake_tensor, out)
