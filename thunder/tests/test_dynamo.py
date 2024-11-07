@@ -1,11 +1,16 @@
 import pytest
+import warnings
 import torch
 import torch.fx
+import torch.nn as nn
+import torch.nn.functional as F
 
 from thunder import dtypes
 from thunder.dynamo import ThunderCompiler
+from thunder.dynamo.utils import CompilerType
 from thunder.dynamo.compiler_graph_benchmark import ThunderCompilerGraphBenchmarking
 from thunder import last_traces
+from thunder.core.symbol import Symbol
 from thunder.tests.bf16 import device_supports_bf16
 from thunder.tests.framework import (
     instantiate,
@@ -122,7 +127,7 @@ def test_basic_splitter(executor, device: str, dtype: dtypes.dtype, dynamic: boo
         ),
     ),
 )
-def test_splitter_unsupported_ctx(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
+def test_splitter_autocast_ctx(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
     x = torch.rand(2, 2, device=device, dtype=dtype, requires_grad=True)
 
     backend = ThunderCompiler()
@@ -145,16 +150,10 @@ def test_splitter_unsupported_ctx(executor, device: str, dtype: dtypes.dtype, dy
     torch.testing.assert_close(actual_grad, expected_grad)
 
     assert len(backend.subgraph_infos) == 1
-    assert len(backend.subgraph_infos[0].submodule_to_compiled_functions) > 1  # Verify that the subgraph was split.
-    assert any(
-        "didn't have any mapping in thunder" in split_reason.info
-        for split_reason in backend.subgraph_infos[0].split_reasons
-    )
-    targets = (node.target for node in backend.subgraph_infos[0].split_graph_module.graph.nodes)
-    assert any(target.startswith("thunder_") for target in targets)  # Verify that the submodules have name `thunder_*`
-    assert any(
-        target.startswith("inductor_") for target in targets
-    )  # Verify that the submodules have name `inductor_*`
+    assert len(backend.subgraph_infos[0].split_reasons) == 0
+    compiled_functions = tuple(backend.subgraph_infos[0].submodule_to_compiled_functions.values())
+    assert all(compiled_fn.compiler == CompilerType.THUNDER for compiled_fn in compiled_functions)
+    assert not any(compiled_fn.compiler == CompilerType.TORCH_INDUCTOR for compiled_fn in compiled_functions)
 
 
 @instantiate(
@@ -169,19 +168,19 @@ def test_splitter_unsupported_ctx(executor, device: str, dtype: dtypes.dtype, dy
         ),
     ),
 )
-def test_splitter_unsupported_ctx_with_graph_break(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
+def test_splitter_autocast_ctx_with_graph_break(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
     x = torch.rand(2, 2, device=device, dtype=dtype, requires_grad=True)
 
     backend = ThunderCompiler()
 
     def func(x):
         x = x + 2
-        with torch.autocast("cpu"):
+        with torch.autocast(device):
             y = torch.sin(x)
             torch._dynamo.graph_break()
             return torch.matmul(x, y)
 
-    expected = torch.compile(func, dynamic=False)(x)
+    expected = torch.compile(func, dynamic=dynamic)(x)
     cfunc = torch.compile(func, backend=backend, dynamic=dynamic)
     actual = cfunc(x)
 
@@ -193,12 +192,60 @@ def test_splitter_unsupported_ctx_with_graph_break(executor, device: str, dtype:
 
     # 2 subgraphs due to graph-break
     assert len(backend.subgraph_infos) == 2
-
     for subgraph_info in backend.subgraph_infos:
-        # Verify that for each subgraph we had split due to `autocast` being enabled.
-        assert any(
-            "didn't have any mapping in thunder" in split_reason.info for split_reason in subgraph_info.split_reasons
-        )
+        assert len(subgraph_info.split_reasons) == 0
+        compiled_functions = tuple(subgraph_info.submodule_to_compiled_functions.values())
+        assert all(compiled_fn.compiler == CompilerType.THUNDER for compiled_fn in compiled_functions)
+        assert not any(compiled_fn.compiler == CompilerType.TORCH_INDUCTOR for compiled_fn in compiled_functions)
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=[DynamoThunderExecutor],
+    decorators=(
+        pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),
+        pytest.mark.xfail(
+            condition=IS_WINDOWS,
+            strict=True,
+            reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+        ),
+    ),
+)
+def test_splitter_autocast_ctx_with_split(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
+    x = torch.rand(2, 2, device=device, dtype=dtype, requires_grad=True)
+
+    backend = ThunderCompiler()
+
+    def func(x):
+        x = x + 2
+        with torch.autocast(device):
+            y = torch.sin(x)
+
+            #  torch.sinc has automatic fallback registered,
+            # so that operation will be given to inductor.
+            y = torch.sinc(y)
+            return torch.matmul(x, y)
+
+    expected = torch.compile(func, dynamic=dynamic)(x)
+    cfunc = torch.compile(func, backend=backend, dynamic=dynamic)
+    actual = cfunc(x)
+
+    g = torch.rand_like(actual)
+    torch.testing.assert_close(actual, expected)
+    actual_grad = torch.autograd.grad(actual, x, g)
+    expected_grad = torch.autograd.grad(expected, x, g)
+    torch.testing.assert_close(actual_grad, expected_grad)
+
+    assert len(backend.subgraph_infos) == 1  # no graph break in dynamo
+
+    subgraph_info = backend.subgraph_infos[0]
+    assert len(subgraph_info.split_reasons) > 1  # Split due to `torch.sinc`
+    compiled_functions = tuple(subgraph_info.submodule_to_compiled_functions.values())
+    assert any(compiled_fn.compiler == CompilerType.THUNDER for compiled_fn in compiled_functions)
+    assert any(compiled_fn.compiler == CompilerType.TORCH_INDUCTOR for compiled_fn in compiled_functions)
+    assert any(
+        "automatic torch fallback" in split_reason.info for split_reason in subgraph_info.split_reasons
+    )  # Verify that we had a split because we detected an `automatic registered operator`
 
 
 @instantiate(
@@ -535,3 +582,109 @@ def test_ThunderCompilerGraphBenchmarking_post_graph(benchmark):
     )
     compiled = torch.compile(backend=backend)(f)
     compiled(x)
+
+
+@requiresCUDA
+@pytest.mark.filterwarnings(r"ignore:`torch\.cpu\.amp\.autocast\((.*?)\)` is deprecated.*:FutureWarning")
+def test_checkpoint_converter():
+    import torch.utils.checkpoint as checkpoint
+
+    class SimpleModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.layer1 = nn.Linear(10, 20)
+            self.layer2 = nn.Linear(20, 20)
+
+        def forward(self, x):
+            x = torch.sin(x)
+            x = checkpoint.checkpoint(self.layer1, x)
+            x = checkpoint.checkpoint(self.layer2, x)
+            x = F.relu(x)
+            return x
+
+    # Input tensor
+    x = torch.randn(5, 10).cuda().requires_grad_()
+    x_ref = x.detach().requires_grad_()
+
+    model = SimpleModel().cuda().train()
+    ref_model = SimpleModel().cuda().train()
+    ref_model.load_state_dict(model.state_dict())
+
+    backend = ThunderCompiler()
+    jf = torch.compile(backend=backend)(model)
+
+    ref_out = ref_model(x_ref)
+    out = jf(x)
+    torch.testing.assert_close(ref_out, out)
+
+    g = torch.randn_like(out)
+    out.backward(g)
+
+    ref_g = g.clone()
+    ref_out.backward(ref_g)
+    torch.testing.assert_close(x.grad, x_ref.grad)
+    torch.testing.assert_close(tuple(model.parameters()), tuple(ref_model.parameters()))
+
+
+@requiresCUDA
+def test_checkpoint_converter_submodule():
+    import torch.utils.checkpoint as checkpoint
+
+    class SubModule(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.lin = nn.Sequential(nn.ReLU(), nn.Linear(10, 10))
+
+        def forward(self, x):
+            return self.lin(x)
+
+    class SimpleModel(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.sub_mod = SubModule()
+
+        def forward(self, x):
+            x = torch.sin(x)
+            x = checkpoint.checkpoint(self.sub_mod, x)
+            return x
+
+    x = torch.randn(5, 10, device="cuda", requires_grad=True)
+    model = SimpleModel().cuda()
+    backend = ThunderCompiler()
+    jf = torch.compile(backend=backend)(model)
+    out = jf(x)
+
+    subgraph_info = backend.subgraph_infos[0]
+    split_m = subgraph_info.split_graph_module
+
+    def find_target_module(model, target_module_name):
+        if hasattr(model, target_module_name):
+            return getattr(model, target_module_name)
+        for submodule in model.children():
+            cur = find_target_module(submodule, target_module_name)
+            if cur is not None:
+                return cur
+        return None
+
+    submodule_name = "wrap_body_0"
+    # 2.6.0a0+git9ca749d, split_m:
+    # GraphModule(
+    #     (thunder_1): ThunderModule(
+    #         (_model): GraphModule(
+    #             (wrap_body_0): GraphModule()
+    #         )
+    #     )
+    # )
+    #
+    # torch 2.4.0
+    # GraphModule(
+    #     (wrap_body_0): GraphModule()
+    #     (thunder_1): ThunderModule(
+    #         (_model): GraphModule()
+    #     )
+    # )
+    submodule = find_target_module(split_m, submodule_name)
+    assert submodule is not None
+    for n in submodule.graph.nodes:
+        if n.op == "call_function":
+            assert isinstance(n.target, Symbol)
