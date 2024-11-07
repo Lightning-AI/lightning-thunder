@@ -419,6 +419,8 @@ def test_hf_qwen2():
     with torch.device("cuda"):
         model = Qwen2ForCausalLM(configuration).to(torch.bfloat16)
 
+    # thunder.jit doesn't work with Qwen2, so we use torch.compile
+    # https://github.com/Lightning-AI/lightning-thunder/issues/1405
     backend = ThunderCompiler()
     compiled_model = torch.compile(model, backend=backend, fullgraph=True)
 
