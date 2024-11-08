@@ -142,7 +142,7 @@ def dce(trace: Trace, needed_proxies: None | set[Variable] = None) -> Trace:
         #   may mark some of the operation's outputs as unused
         some_unused = False
         for out in bsym.flat_proxy_outs:
-            if variableify(out) in needed_proxies and producer_map[out] == bsym:
+            if variableify(out) in needed_proxies and producer_map.get(out, None) == bsym:
                 needed = True
             else:
                 some_unused = True
