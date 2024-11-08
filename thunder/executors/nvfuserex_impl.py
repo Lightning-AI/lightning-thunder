@@ -12,6 +12,7 @@ import warnings
 
 from looseversion import LooseVersion
 import torch
+from torch import Tensor
 
 import thunder.core.dtypes as dtypes
 import thunder.torch as ltorch
@@ -408,7 +409,7 @@ def get_tensor_descriptor(p: TensorProxy, t: torch.Tensor) -> tuple[tuple[int, .
 # TODO Inline the get_tensor_descriptor call
 def to_descriptors(proxy_args, args) -> tuple:
     def to_descriptor(proxy_arg, arg):
-        if isinstance(arg, torch.Tensor):
+        if isinstance(arg, Tensor):
             return (*get_tensor_descriptor(proxy_arg, arg), arg.dtype)
         elif isinstance(arg, Number):
             return type(arg)
