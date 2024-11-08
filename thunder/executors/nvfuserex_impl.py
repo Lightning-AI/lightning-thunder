@@ -40,7 +40,7 @@ from thunder.core.devices import Device, DeviceType, cpu
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
 from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs, NON_FUNCTIONAL_OPS
-from thunder.core.profile import add_markers
+from thunder.core.profile import annotate_for_profile
 from thunder.core.compile_data import get_compile_option
 
 from thunder.core.transforms import (
@@ -448,7 +448,7 @@ class FusionDefinitionWrapper:
 
         # Set device if set in one of the "factory" methods like full, iota, or uniform
         kwargs = {"device": fd._selected_device} if hasattr(fd, "_selected_device") else {}
-        with add_markers(self.name):
+        with annotate_for_profile(self.name):
             return fd.execute(args, **kwargs)
 
     def __repr__(self):
