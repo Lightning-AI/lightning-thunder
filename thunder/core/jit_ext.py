@@ -663,6 +663,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
            So far, non-tensor ``ctx`` attributes seem to be folded into a trace.
     """
     from thunder.core.baseutils import check, sequencify
+    from thunder.core.transform_common import dce
 
     custom_autograd_function_cls = unwrap(obj)
     custom_forward = custom_autograd_function_cls.forward
@@ -680,6 +681,12 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         unwrapped_custom_forward_args,
     )
     trace_of_fwd.args = unwrapped_custom_forward_args
+    unpack_bsyms = [
+        prims.unpack_trivial.bind(a, name=a.name, output=a)
+        for a in filter(lambda a: isinstance(a, Proxy), trace_of_fwd.args)
+    ]
+    trace_of_fwd.bound_symbols = unpack_bsyms + trace_of_fwd.bound_symbols
+    trace_of_fwd = dce(trace_of_fwd)
 
     @wraps(trace_of_fwd.python_callable())
     def core_of_forward(*args, **kwargs):
@@ -721,6 +728,12 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         ctx_proxy.saved_tensors + grads,
     )
     trace_of_backward.args = tuple(ctx_proxy.saved_tensors + grads)
+    bwd_unpack_bsyms = [
+        prims.unpack_trivial.bind(a, name=a.name, output=a)
+        for a in filter(lambda a: isinstance(a, Proxy), trace_of_backward.args)
+    ]
+    trace_of_backward.bound_symbols = bwd_unpack_bsyms + trace_of_backward.bound_symbols
+    trace_of_backward = dce(trace_of_backward)
 
     bwd_trace_impl = TraceCtx()
     bwd_trace_impl.bound_symbols.extend(trace_of_backward.bound_symbols)
