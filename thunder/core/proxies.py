@@ -1502,6 +1502,26 @@ class TensorProxy(Proxy, TensorProxyInterface):
     def thunder_fsdp_padding_size(self):
         return self._thunder_fsdp_padding_size
 
+    # n.b.(crcrpar): just returning contiguous for `_make_wrapper_subclasses`
+    def stride(self) -> Sequence[int]:
+        shape = self.shape
+        if len(shape) == 1:
+            return (1,)
+        elif len(shape) == 0:
+            return tuple()
+        else:
+            import numpy
+
+            _stride = reversed(numpy.cumprod([1] + list(shape[1:])).tolist())
+            return tuple(_stride)
+
+    def storage_offset(self) -> int:
+        return -1
+
+    @property
+    def layout(self) -> torch.layout:
+        return torch.strided
+
     # We need to implement `__len__` as
     # > In addition to bypassing any instance attributes in the
     # > interest of correctness, implicit special method lookup
