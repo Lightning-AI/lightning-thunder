@@ -304,7 +304,7 @@ def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = Fals
 
     v = tree_map(make, outs_p)
     if set_compile_data:
-        with thunder.core.compile_data.compile_data_and_stats(thunder.compile_data(jf), None):
+        with thunder.core.compile_data.compile_data_and_stats(thunder.compile_data(comp_f), None):
             initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
     else:
         initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
