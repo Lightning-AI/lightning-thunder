@@ -690,6 +690,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         for a in filter(lambda a: isinstance(a, Proxy), trace_of_fwd.args)
     ]
     trace_of_fwd.bound_symbols = unpack_bsyms + trace_of_fwd.bound_symbols
+    trace_of_fwd = dce(trace_of_fwd)
 
     @wraps(trace_of_fwd.python_callable())
     def core_of_forward(*args, **kwargs):
