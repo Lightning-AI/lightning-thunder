@@ -664,6 +664,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
            So far, non-tensor ``ctx`` attributes seem to be folded into a trace.
     """
     from thunder.core.baseutils import check, sequencify
+    from thunder.core.transform_common import dce
 
     custom_autograd_function_cls = unwrap(obj)
     custom_forward = custom_autograd_function_cls.forward
@@ -675,6 +676,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     )
     if trace_of_fwd is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return trace_of_fwd
+    trace_of_fwd = dce(trace_of_fwd)
 
     # Forward.
     unwrapped_custom_forward_args = tree_map(lambda a: unwrap(a), args)
@@ -734,6 +736,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         for a in filter(lambda a: isinstance(a, Proxy), trace_of_backward.args)
     ]
     trace_of_backward.bound_symbols = bwd_unpack_bsyms + trace_of_backward.bound_symbols
+    trace_of_backward = dce(trace_of_backward)
 
     bwd_trace_impl = TraceCtx()
     bwd_trace_impl.bound_symbols.extend(trace_of_backward.bound_symbols)
