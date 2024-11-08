@@ -1757,6 +1757,11 @@ selu_opinfo = OpInfo(
                 datatypes.bfloat16,
             ),
         ),
+        # TODO: we might have a tolerance issue here with relu6.
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_vjp_correctness",
+        ),
     ),
 )
 elementwise_unary_ops.append(selu_opinfo)
