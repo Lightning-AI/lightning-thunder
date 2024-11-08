@@ -1633,7 +1633,7 @@ reciprocal_opinfo = OpInfo(
 elementwise_unary_ops.append(reciprocal_opinfo)
 
 
-def celu_sample_generator(op, device, dtype, requires_grad):
+def elementise_unary_with_alpha_generator(op, device, dtype, requires_grad):
     alphas = (None, -1.0, 0.5)
     samples = elementwise_unary_generator(op, device, dtype, requires_grad)
     for alpha, sample in itertools.product(alphas, samples):
@@ -1646,16 +1646,23 @@ def celu_sample_generator(op, device, dtype, requires_grad):
 celu_opinfo = OpInfo(
     ltorch.celu,
     dtypes=(datatypes.floating,),
-    sample_input_generator=celu_sample_generator,
+    sample_input_generator=elementise_unary_with_alpha_generator,
     torch_reference=_elementwise_unary_torch(torch.celu),
-    test_directives=(
-        DecorateInfo(
-            custom_comparator(partial(assert_close, atol=1e-6, rtol=1e-6)),
-            "test_vjp_correctness",
-        ),
-    ),
+    test_directives=(),
 )
 elementwise_unary_ops.append(celu_opinfo)
+
+
+elu_opinfo = OpInfo(
+    ltorch.elu,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=elementise_unary_with_alpha_generator,
+    torch_reference=torch.nn.functional.elu,
+    # fdm.jvp, which is used in test_vjp_correctness, behaves badly on (-1e-6, 1e-6) for this function
+    singularity_fn=lambda x: x,
+    test_directives=(),
+)
+elementwise_unary_ops.append(elu_opinfo)
 
 
 relu_opinfo = OpInfo(
@@ -1749,11 +1756,6 @@ selu_opinfo = OpInfo(
                 datatypes.float16,
                 datatypes.bfloat16,
             ),
-        ),
-        # TODO: we might have a tolerance issue here with relu6.
-        DecorateInfo(
-            pytest.mark.xfail,
-            "test_vjp_correctness",
         ),
     ),
 )

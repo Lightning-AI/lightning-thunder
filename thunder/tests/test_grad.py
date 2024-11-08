@@ -281,7 +281,7 @@ def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = Fals
     """
     # Let f be a function from vectors of size n to vectors of size m.
     # Its Jacobian is a matrix J of size m x n.
-    # The adjoint property is J^* J = I, where J^* is the conjugate transpose (adjoint) of J.
+    # Represent by J^* the conjugate transpose (adjoint) of J.
     # J^* is a matrix of size n x m.
     # For any vector v of size m, J^* v is a vector of size n.
     # For any vector u of size n, J u is a vector of size m.
@@ -296,9 +296,7 @@ def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = Fals
 
     u = tree_map(make, primals)
 
-    # dirty little trick for speed: skip the prologue
-    jf = executor.make_callable(f, disable_torch_autograd=True)
-    comp_f = thunder.compile_data(jf).get_computation_and_inputs(*primals)[0].computation_fn
+    comp_f = thunder.jit(f, disable_torch_autograd=True)
 
     outs_p, J_u = numerical_jvp(comp_f)(primals, u)
 
