@@ -405,7 +405,7 @@ def compute_tensor_descriptor(
 def to_descriptors(proxy_args, args) -> tuple:
     def to_descriptor(proxy_arg, arg):
         if isinstance(arg, Tensor):
-            return (*compute_tensor_descriptor(proxy_arg.shape, arg.shape, arg.stride()), arg.dtype)
+            return (*compute_tensor_descriptor(proxy_arg._shape, arg.shape, arg.stride()), arg.dtype)
         elif isinstance(arg, Number):
             return type(arg)
         elif isinstance(arg, tuple):
