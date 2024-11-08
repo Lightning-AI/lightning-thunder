@@ -438,7 +438,11 @@ def test_hf_qwen2():
     torch.testing.assert_close(compiled_loss, ref_loss, rtol=1e-4, atol=1e-4)
 
     assert len(backend.subgraph_infos) == 1, "Should have exactly 1 subgraph because of fullgraph=True"
-    compiled_loss.backward(torch.randn_like(compiled_loss))
+    loss_grad = torch.randn_like(compiled_loss)
+
+    grads_ref = torch.autograd.grad(ref_loss, model.parameters(), grad_outputs=loss_grad)
+    grads_compiled = torch.autograd.grad(compiled_loss, model.parameters(), grad_outputs=loss_grad)
+    torch.testing.assert_close(grads_ref, grads_compiled, rtol=1e-2, atol=1e-2)
 
 
 LLAMA_3_2_1B_CFG = {
