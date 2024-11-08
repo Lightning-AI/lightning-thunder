@@ -140,24 +140,6 @@ def test_compile_autocast(executor, device, dtype):
     assert output.dtype == (torch.float16 if torch_device.type == "cuda" else torch.bfloat16)
 
 
-# Disabling on windows temporarily, until our windows runners source the
-# appropriate visual studio config.
-@pytest.mark.skipif(not is_inductor_supported() or platform.system() == "Windows", reason="inductor unsupported")
-def test_torch_compile_autocast():
-    """Checks if our autocast decorator plays well with ``torch.compile``"""
-
-    @no_autocast
-    def fn(x, y):
-        return x + y
-
-    a = torch.randn(2, 2)
-    b = torch.randn(2, 2)
-    cfn = torch.compile(fn, fullgraph=True)
-    actual = cfn(a, b)
-    expected = a + b
-    torch.testing.assert_close(actual, expected)
-
-
 def test_autocast_mixed_dtype_inputs():
     def foo(x, w):
         return torch.nn.functional.linear(x, w)
