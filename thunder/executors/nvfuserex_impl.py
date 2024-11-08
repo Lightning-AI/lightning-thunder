@@ -402,15 +402,10 @@ def compute_tensor_descriptor(
     return compute_symbolic_shape(proxy_shape, shape), *compute_contiguity(shape, stride)
 
 
-def get_tensor_descriptor(p: TensorProxy, t: torch.Tensor) -> tuple[tuple[int, ...], tuple[bool, ...], tuple[int, ...]]:
-    return compute_tensor_descriptor(p.shape, t.shape, t.stride())
-
-
-# TODO Inline the get_tensor_descriptor call
 def to_descriptors(proxy_args, args) -> tuple:
     def to_descriptor(proxy_arg, arg):
         if isinstance(arg, Tensor):
-            return (*get_tensor_descriptor(proxy_arg, arg), arg.dtype)
+            return (*compute_tensor_descriptor(proxy_arg.shape, arg.shape, arg.stride()), arg.dtype)
         elif isinstance(arg, Number):
             return type(arg)
         elif isinstance(arg, tuple):
