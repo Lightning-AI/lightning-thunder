@@ -1633,7 +1633,7 @@ reciprocal_opinfo = OpInfo(
 elementwise_unary_ops.append(reciprocal_opinfo)
 
 
-def elementise_unary_with_alpha_generator(op, device, dtype, requires_grad):
+def elementwise_unary_with_alpha_generator(op, device, dtype, requires_grad):
     alphas = (None, -1.0, 0.5)
     samples = elementwise_unary_generator(op, device, dtype, requires_grad)
     for alpha, sample in itertools.product(alphas, samples):
@@ -1646,7 +1646,7 @@ def elementise_unary_with_alpha_generator(op, device, dtype, requires_grad):
 celu_opinfo = OpInfo(
     ltorch.celu,
     dtypes=(datatypes.floating,),
-    sample_input_generator=elementise_unary_with_alpha_generator,
+    sample_input_generator=elementwise_unary_with_alpha_generator,
     torch_reference=_elementwise_unary_torch(torch.celu),
     test_directives=(),
 )
@@ -1656,7 +1656,7 @@ elementwise_unary_ops.append(celu_opinfo)
 elu_opinfo = OpInfo(
     ltorch.elu,
     dtypes=(datatypes.floating,),
-    sample_input_generator=elementise_unary_with_alpha_generator,
+    sample_input_generator=elementwise_unary_with_alpha_generator,
     torch_reference=torch.nn.functional.elu,
     # fdm.jvp, which is used in test_vjp_correctness, behaves badly on (-1e-6, 1e-6) for this function
     singularity_fn=lambda x: x,
