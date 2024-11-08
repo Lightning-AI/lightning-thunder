@@ -478,3 +478,17 @@ def unwrap_return_value(trace: Trace) -> Trace:
     new_trace.bound_symbols = trace.bound_symbols[:-1] + [new_return_bsym]
     new_trace.set_provenance(TraceProvenance("Unwrap the actual return value"))
     return new_trace
+
+
+def remove_context_manager_prims_from_trace(trace: Trace) -> Trace:
+    def is_context_manager_prim(bsym):
+        # context manager prims would/should be explicitly tagged.
+        if bsym.sym.tags is None:
+            return False
+        return prims.OpTags.CTX_MANAGER_ENTER_EXIT_OP in bsym.sym.tags
+
+    filtered_bsyms = list(filterfalse(is_context_manager_prim, trace.bound_symbols))
+    new_trace = from_trace(trace)
+    new_trace.bound_symbols = filtered_bsyms
+    new_trace.set_provenance(TraceProvenance("Remove context manager prims"))
+    return new_trace

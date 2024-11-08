@@ -1414,6 +1414,26 @@ register_grad(pids.ARGMAX, prims.argmax)
 # This operation creates no grad associations
 register_grad(pids.SHAPE, prims.shape)
 
+
+def _copy_with_setitem_grad(a: TensorProxy, index, value: Number | TensorProxy):
+    fwd = prims.copy_with_setitem(a, index, value)
+    g = get_grad(fwd)
+
+    a_grad = prims.copy_with_setitem(g, index, 0)
+    put_grad(a, a_grad)
+
+    if isinstance(value, TensorProxy):
+        value_grad = g[index]
+        expanded_dims = value_grad.ndim - value.ndim
+        if expanded_dims > 0:
+            value_grad = prims.sum(value_grad, tuple(range(expanded_dims)))
+        put_grad(value, value_grad)
+
+    return fwd
+
+
+register_grad(pids.COPY_WITH_SETITEM, _copy_with_setitem_grad)
+
 #
 # Phantom grad transform helpers
 #
@@ -2510,7 +2530,6 @@ def vjp_symbol_mapper(symbol: prims.Symbol, *args, **kwargs):
             # It could be a torch.dropout with 0.0 probability, so we skip it
             if symbol.sym.id == "torch.nn.functional.dropout":
                 return None
-            print(f"VJP for {symbol} is not implemented")
             raise NotImplementedError(f"VJP for {symbol.sym.id} is not implemented")
 
     def _vjp_impl(*args, **kwargs):
@@ -2811,7 +2830,7 @@ def vjp(func):
         # If the argument is a CPU scalar tensor, its gradient needs to be summed into a scalar tensor.
         vjp_result = tuple(
             (
-                sum_to(grad, arg.shape)
+                sum_to(grad, arg._shape)
                 if (grad is not None and isinstance(arg, TensorProxy) and arg.device.type == "cpu")
                 else grad
             )
@@ -2887,7 +2906,7 @@ def _update_forward_with_new_saved_for_backward(forward_trace: Trace, saved_for_
     saved_tensors, saved_other = _split_saved_for_backward_into_tensors_and_other(saved_for_backward)
     assert forward_trace.bound_symbols[-1].sym.id == prims.PrimIDs.RETURN
     new_return = (forward_trace.output[0], (saved_tensors, saved_other))
-    forward_trace.bound_symbols[-1] = replace(forward_trace.bound_symbols[-1], args=new_return, output=new_return)
+    forward_trace.bound_symbols[-1] = replace(forward_trace.bound_symbols[-1], args=new_return)
 
 
 def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_for_backward: Sequence[Variable]) -> None:
@@ -3144,7 +3163,7 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
     new_fwd_trace = from_trace(fwd_trace)
     new_fwd_trace.bound_symbols = fwd_trace.bound_symbols.copy()
     new_return_args = (fwd_trace.output[0], (new_saved_for_backward, fwd_trace.output[1][1]))
-    new_fwd_trace.bound_symbols[-1] = prims.python_return.bind(*new_return_args, output=())
+    new_fwd_trace.bound_symbols[-1] = prims.python_return.bind(*new_return_args, output=None)
 
     new_bwd_trace = from_trace(bwd_trace)
     # In cases where C0 name is carried from previous trace it must be removed

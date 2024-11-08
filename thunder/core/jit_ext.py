@@ -52,6 +52,7 @@ from types import (
 )
 
 import torch
+import torch.utils.checkpoint
 from thunder.core.proxies import (
     DistParallelType,
     proxy,
@@ -385,7 +386,7 @@ def ensure_recursive_proxies(fn):  # shortcut for things we already processed?
 def record_source_loc_in_symbol_header(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        runtimectx: Interpreterruntimectx = get_interpreterruntimectx()
+        runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
         filename, positions = runtimectx.get_current_user_source_location()
         ctx: JitCtx = get_jit_ctx()
         ctx._computation_trace.set_current_source_location(filename, positions)
@@ -408,6 +409,20 @@ def register_general_jit_lookaside(diverted_fn):
         return lookaside
 
     return lookaside_wrapper
+
+
+# PyTorch moved this to torch.compiler.is_compiling as official API
+# we are compiling
+if hasattr(torch, "compiler") and hasattr(torch.compiler, "is_compiling"):
+    is_compiling = torch.compiler.is_compiling
+else:
+    is_compiling = torch._dynamo.is_compiling
+
+
+@register_general_jit_lookaside(is_compiling)
+@interpreter_needs_wrap
+def jit_is_compiling_lookaside():
+    return True
 
 
 # lookaside for getattr. We record the provenance of the attribute but for the core attribute getting, we
@@ -595,6 +610,47 @@ def _general_jit_named_buffers_lookaside(obj: Any, *args, **kwargs):
     )
 
 
+def _convert_pytorchfunc_to_thundertrace(
+    func: Callable[[Any], Any],
+    shallow_copy_output: bool,
+    *args,
+    **kwargs,
+) -> tuple[TraceCtx | INTERPRETER_SIGNALS, ProvenanceRecord | None]:
+    """Converts pytorch function to thunder trace.
+
+    Note that the generated trace would not have _siginfo and args set.
+
+    Args:
+        func: A callable composed of pytorch functions.
+        shallow_copy_output: Needs to be :obj:`True` only if func is `torch.autograd.Function.apply` as
+            it produces views of the tensor to attach the autograd node to.
+        *args:
+        **kwargs
+    """
+    active_jit_ctx: JitCtx = get_jit_ctx()
+    active_jit_ctx.computation_trace.push_scope([])
+    wrapped_func_result = _interpret_call(func, *args, **kwargs)
+    if wrapped_func_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return wrapped_func_result, None
+
+    trace = TraceCtx()
+    trace.bound_symbols.extend(active_jit_ctx.computation_trace.pop_scope())
+    func_result = unwrap(wrapped_func_result)
+    if shallow_copy_output:
+        from thunder.core.baseutils import sequencify
+
+        out_to_shallow_copy: dict[Variable, TensorProxy] = {}
+        for a in sequencify(func_result):
+            shallow_copy_of_a = prims.shallow_copy.meta(a)
+            bsym = prims.shallow_copy.bind(a, output=shallow_copy_of_a)
+            trace.add_bound_symbol(bsym)
+            out_to_shallow_copy[variableify(a)] = shallow_copy_of_a
+        func_result = tree_map(lambda t: out_to_shallow_copy.get(variableify(t), t), func_result)
+    with tracectx(trace):
+        prims.python_return(func_result)
+    return trace, wrapped_func_result.provenance
+
+
 @register_general_jit_lookaside(torch.autograd.function.Function.apply.__func__)
 def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwargs):
     """Encapsulate forward into a bsym, define and register augmented fwd and bwd.
@@ -607,170 +663,122 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
            So far, non-tensor ``ctx`` attributes seem to be folded into a trace.
     """
     from thunder.core.baseutils import check, sequencify
-    from thunder.core.transforms import augmented_forward_impls, backward_impls, VJPDual
-
-    jit_ctx: JitCtx = get_jit_ctx()
-
-    jit_ctx.computation_trace.push_scope([])
 
     custom_autograd_function_cls = unwrap(obj)
-    symbol_name = custom_autograd_function_cls.__name__
-
     custom_forward = custom_autograd_function_cls.forward
     ctx = torch.autograd.function.FunctionCtx()
     ctx_proxy = proxy(ctx, name=None, history=None)
     wrapped_ctx = wrap_const(ctx_proxy)
-    custom_forward_result = _interpret_call(custom_forward, wrapped_ctx, *args, **kwargs)
-    if custom_forward_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
-        return custom_forward_result
+    trace_of_fwd, fwd_output_provenance = _convert_pytorchfunc_to_thundertrace(
+        custom_forward, True, wrapped_ctx, *args, **kwargs
+    )
 
     # Forward.
     unwrapped_custom_forward_args = tree_map(lambda a: unwrap(a), args)
-    unwrapped_custom_forward_result = unwrap(custom_forward_result)
-    # autograd.Function produces views of the tensor to attache the autograd node to
-    unwrapped_custom_forward_result = tree_map(
-        lambda x: prims.shallow_copy(x) if isinstance(x, TensorProxy) else x, unwrapped_custom_forward_result
+    trace_of_fwd._siginfo = SigInfo.from_name_and_args(
+        custom_autograd_function_cls.__name__,
+        unwrapped_custom_forward_args,
     )
-    custom_fwd_bsyms: list[BoundSymbol] = jit_ctx.computation_trace.pop_scope()
-
-    # not augmented for when we don't need grad
-    trace_of_fwd = TraceCtx()
-    for bsym in custom_fwd_bsyms:
-        trace_of_fwd.add_bound_symbol(bsym)
-    with tracectx(trace_of_fwd):
-        prims.python_return(unwrapped_custom_forward_result)
-
-    si = SigInfo(symbol_name)
-    for a in unwrapped_custom_forward_args:
-        if isinstance(a, Proxy):
-            si.args.append((a.name, None))
-        else:
-            pa = proxy(a)
-            si.args.append((pa.name, None))
-    trace_of_fwd._siginfo = si
     trace_of_fwd.args = unwrapped_custom_forward_args
 
     @wraps(trace_of_fwd.python_callable())
     def core_of_forward(*args, **kwargs):
         return thunder.core.trace_interpreter.interpret_trace(trace_of_fwd, *args, **kwargs)
 
-    def custom_forward_meta(*args, **kwargs):
-        trace = thunder.core.trace.get_tracectx()
-        trace.push_scope([])  # don't record symbol calls
-        res = core_of_forward(*args, **kwargs)
-        trace.pop_scope()
-        return res
-
-    def bind_postprocess(bsym):
-        bsym._call_ctx = {}
-
-    custom_fwd_sym = jit_ctx.ad_hoc_executor.register_operator(
-        symbol_name,
+    custom_fwd_sym = get_jit_ctx().ad_hoc_executor.register_operator(
+        trace_of_fwd._siginfo.name,
         like=core_of_forward,
-        bind_postprocess=bind_postprocess,
     )
-
     unwrapped_forward_result = custom_fwd_sym(*unwrapped_custom_forward_args)
     forward_result = wrap(
         unwrapped_forward_result,
-        provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[obj.provenance, custom_forward_result.provenance]),
+        provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[obj.provenance, fwd_output_provenance]),
     )
 
-    jit_ctx.ad_hoc_executor.register_implementation(custom_fwd_sym, execution_transform=core_of_forward)
-
     augmented_bsym_output: tuple[tuple[TensorProxy, ...], tuple[TensorProxy, ...]] = (
-        tuple(sequencify(unwrapped_custom_forward_result)),
+        tuple(sequencify(trace_of_fwd.output)),
         ctx_proxy.saved_tensors,
     )
     trace_of_augmented_fwd = TraceCtx()
-    for bsym in custom_fwd_bsyms:
-        trace_of_augmented_fwd.add_bound_symbol(bsym)
+    trace_of_augmented_fwd.bound_symbols.extend(trace_of_fwd.bound_symbols[:-1])
     with tracectx(trace_of_augmented_fwd):
         prims.python_return(augmented_bsym_output)
-    si = SigInfo(custom_fwd_sym.name)
-    for a in unwrapped_custom_forward_args:
-        if isinstance(a, Proxy):
-            si.args.append((a.name, None))
-        else:
-            pa = proxy(a)
-            si.args.append((pa.name, None))
-    trace_of_augmented_fwd._siginfo = si
+    trace_of_augmented_fwd._siginfo = SigInfo.from_name_and_args(custom_fwd_sym.name, unwrapped_custom_forward_args)
     trace_of_augmented_fwd.args = unwrapped_custom_forward_args
-
-    @wraps(trace_of_augmented_fwd.python_callable())
-    def core_of_augmented_forward(*args, **kwargs):
-        return thunder.core.trace_interpreter.interpret_trace(trace_of_augmented_fwd, *args, **kwargs)
-
-    @wraps(core_of_augmented_forward)
-    def augmented_custom_forward_rule(*args, **kwargs):
-        primal, residulas = core_of_augmented_forward(*args, **kwargs)
-        check(len(primal) == 1, lambda f: "{primal=} has {len(primal)} proxies but expected 1")
-        return VJPDual(primal=primal[0], residuals=residulas)
-
-    # TODO: build and register gradient_transform instead
-    augmented_forward_impls[custom_fwd_sym.name] = augmented_custom_forward_rule
 
     # Backward definition
     custom_backward = custom_autograd_function_cls.backward
-
     grads = tree_map(
         lambda a: a.replace_name(f"grad_{a.name}"),
-        sequencify(unwrapped_custom_forward_result),
+        sequencify(trace_of_fwd.output),
     )
-    trace_of_backward = TraceCtx()
-    bwd_si = SigInfo(f"{custom_fwd_sym.name}_backward")
-    for a in ctx_proxy.saved_tensors + grads:
-        if isinstance(a, Proxy):
-            bwd_si.args.append((a.name, None))
-        else:
-            pa = proxy(a)
-            bwd_si.args.append((pa.name, None))
-    trace_of_backward._siginfo = bwd_si
+    wrapped_grads = tree_map(lambda g: wrap(g, provenance=fwd_output_provenance), grads)
+    trace_of_backward, _ = _convert_pytorchfunc_to_thundertrace(custom_backward, False, wrapped_ctx, *wrapped_grads)
+    if trace_of_backward is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return trace_of_backward
+    trace_of_backward._siginfo = SigInfo.from_name_and_args(
+        f"{custom_fwd_sym.name}_backward",
+        ctx_proxy.saved_tensors + grads,
+    )
     trace_of_backward.args = tuple(ctx_proxy.saved_tensors + grads)
 
-    jit_ctx.computation_trace.push_scope([])
-    wrapped_grads = tree_map(lambda g: wrap(g, provenance=custom_forward_result.provenance), grads)
-    custom_backward_result = _interpret_call(custom_backward, wrapped_ctx, *wrapped_grads)
-    if custom_backward_result is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
-        return custom_backward_result
-
-    custom_bwd_bsyms: list[BoundSymbol] = jit_ctx.computation_trace.pop_scope()
-
-    for bsym in custom_bwd_bsyms:
-        trace_of_backward.add_bound_symbol(bsym)
-    with tracectx(trace_of_backward):
-        prims.python_return.bind(*unwrap(custom_backward_result), output=())
-
-    @wraps(trace_of_backward.python_callable())
-    def bwd_trace_callable_interface(*args, **kwargs):
-        return thunder.core.trace_interpreter.interpret_trace(trace_of_backward, *args, **kwargs)
-
-    bwd_si = SigInfo("backward_impl")
-    for a in ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads:
-        if isinstance(a, Proxy):
-            bwd_si.args.append((a.name, None))
-        else:
-            pa = proxy(a)
-            bwd_si.args.append((pa.name, None))
     bwd_trace_impl = TraceCtx()
-    for bsym in custom_bwd_bsyms:
-        bwd_trace_impl.add_bound_symbol(bsym)
-    bwd_trace_impl.add_bound_symbol(prims.python_return.bind(*sequencify(unwrap(custom_backward_result)), output=()))
-    bwd_trace_impl._siginfo = bwd_si
+    bwd_trace_impl.bound_symbols.extend(trace_of_backward.bound_symbols)
+    bwd_trace_impl._siginfo = SigInfo.from_name_and_args(
+        "backward_impl",
+        ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads,
+    )
     bwd_trace_impl.args = tuple(ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads)
 
     @wraps(bwd_trace_impl.python_callable())
     def bwd_impl_callable(*args, **kwargs):
         return thunder.core.trace_interpreter.interpret_trace(bwd_trace_impl, *args, **kwargs)
 
-    @wraps(bwd_trace_callable_interface)
-    def backward_impl(*args, **kwargs):
-        check(not kwargs, lambda: f"{kwargs} expected to be empty")
-        new_args = ctx_proxy.saved_consts + args
-        return bwd_impl_callable(*new_args)
+    @wraps(core_of_forward)
+    def grad_transform(*args, **kwargs):
+        from thunder.core.transforms import get_grad
+        from thunder.core.transforms import put_grads
+        from thunder.core.trace_interpreter import interpret_trace
 
-    backward_impls[custom_fwd_sym.name] = backward_impl
+        check(not kwargs, lambda: f"{kwargs=} should be empty")
+        primal, residuals = interpret_trace(trace_of_augmented_fwd, *args, **kwargs)
+        check(len(primal) == 1, lambda: f"{primal=} has {len(primal)} proxies but expected 1")
+        grads = tree_map(lambda t: get_grad(t), primal)
+        bwd_args = ctx_proxy.saved_consts + tuple(sequencify(residuals)) + grads
+        result = bwd_impl_callable(*bwd_args)
+        put_grads(args, result)
+        return primal
+
+    get_jit_ctx().ad_hoc_executor.register_implementation(
+        custom_fwd_sym,
+        execution_transform=core_of_forward,
+        grad_transform=grad_transform,
+    )
     return forward_result
+
+
+@register_general_jit_lookaside(torch.autocast.__enter__)
+def autocast_enter(autocast_obj):
+    unwrap_autocast_obj = unwrap(autocast_obj)
+    device = unwrap_autocast_obj.device
+    dtype = unwrap_autocast_obj.fast_dtype
+    enabled = unwrap_autocast_obj._enabled
+    # NOTE - We manually map `torch.autocast.__enter__` to `torch.amp.autocast_mode._enter_autocast`
+    #        as it is functional variant of the same. This also allows the symbol to appear in trace
+    #        for better inspectibility.
+    thunder_fn = _torch_to_thunder_function_map[torch.amp.autocast_mode._enter_autocast]
+    thunder_fn(device, dtype, enabled)
+    return wrap(None, provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[autocast_obj.provenance]))
+
+
+@register_general_jit_lookaside(torch.autocast.__exit__)
+def autocast_exit(autocast_obj, exc_type, exc_val, exc_tb):
+    thunder_fn = _torch_to_thunder_function_map[torch.amp.autocast_mode._exit_autocast]
+    thunder_fn()
+    # NOTE - We manually map `torch.autocast.__exit__` to `torch.amp.autocast_mode._exit_autocast`
+    #        as it is functional variant of the same. This also allows the symbol to appear in trace
+    #        for better inspectibility.
+    return wrap(None, provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[autocast_obj.provenance]))
 
 
 @register_general_jit_lookaside(torch.finfo)
@@ -779,6 +787,41 @@ def _general_jit_torch_finfo_lookaside(dtype: thunder.dtypes.dtype):
     torch_dtype = thunder.dtypes.to_torch_dtype(dtype)
     res = torch.finfo(torch_dtype)
     return res
+
+
+@register_general_jit_lookaside(torch.utils.checkpoint.checkpoint)
+def _general_jit_torch_checkpoint_lookaside(
+    function: Callable,
+    *args,
+    **kwargs: Any,
+):
+    """
+    This function does preprocessing of the `function` argument before
+    dispatching the call to `thunder.torch.checkpoint`. This is necessary
+    because the `function` is potentially calling into PyTorch functions that
+    are not yet translated to Thunder. `thunder.torch.checkpoint` is a Thunder
+    function that can handle only Thunder functions as input.
+
+    Args:
+        function: The function to be checkpointed.
+        args: Arguments to the function.
+        kwargs: Keyword arguments to the function.
+
+    Returns:
+        The result of calling `thunder.torch.checkpoint` with the preprocessed
+        `function` and its arguments.
+    """
+    from thunder.torch import checkpoint
+
+    # It should be possible to call the general_thunder_jit here to handle the
+    # conversion from torch to thunder but it doesn't work now
+    # See https://github.com/Lightning-AI/lightning-thunder/issues/1126
+    # TODO: Convert the function to a Thunder function
+    def thunder_function(*args, **kwargs):
+        return unwrap(function)(*args, **kwargs)
+
+    wrapped_thunder_function = wrap_const(thunder_function)
+    return interpreter_needs_wrap(checkpoint)(wrapped_thunder_function, *args, **kwargs)
 
 
 # Adds proxy methods
@@ -838,37 +881,6 @@ _general_jit_lookaside_map.update(
     }
 )
 
-# TODO Implement safety --- UNSAFE, PERMISSIVE, SAFE
-_safe_functions: set = {
-    dict.get,  # TODO Review safety of this
-    FunctionType.__new__,
-    isinstance,
-    member_descriptor.__get__,  # TODO Review the safety of this
-    MethodDescriptorType.__get__,  # TODO Review the safety of this
-    type,
-    tuple.__len__,
-    tuple.__getitem__,
-    FunctionType.__get__,  # TODO: review safety
-    torch._C._get_tracing_state,  # TODO: review safety
-    object.__new__,
-    object.__init__,
-    callable,
-    NoneType.__bool__,
-    dict.__len__,
-    dict.__contains__,
-    dict.__getitem__,
-    contextvars.ContextVar.get,
-    type.__or__,
-    list.__new__,
-    list.__init__,
-    list.__getitem__,
-    reversed.__new__,
-    CellType.__new__,
-    GetSetDescriptorType.__get__,
-    Exception.__new__,
-    StopIteration.__init__,
-}
-
 
 # when we pass containers to the computation trace, we want these to be using the proxies
 def recursively_proxy(*args, **kwargs):
@@ -904,7 +916,7 @@ def general_jit_lookaside(fn, *args, **kwargs) -> None | Callable:
             lookaside = executor_lookaside
         # the ad hoc executor may be extended during compilation
         elif (executor_lookaside := ctx.ad_hoc_executor._lookasides.get(fn, None)) is not None:
-            lookaside = jit_needs_wrap(executor_lookaside)
+            lookaside = interpreter_needs_wrap(executor_lookaside)
         elif isinstance(fn, Symbol) or fn in _clang_fn_set:
             # Performs symbol lookasides
             # NOTE Symbols "lookaside" to themselves; this just prevents their internals from being jitted
@@ -1007,7 +1019,7 @@ def _maybe_update_proxy_name(orig_value: Any, name: str, is_internal: bool | Non
     }
 
     if is_internal is None:
-        runtimectx: Interpreterruntimectx = get_interpreterruntimectx()
+        runtimectx: InterpreterRuntimeCtx = get_interpreterruntimectx()
         frame = runtimectx.peek_frame_stack()
         assert frame is not None  # pass is_internal if you call this before the frame is set up
         is_internal = frame.module in {"thunder.core.interpreter", "thunder.core.jit_ext"}
@@ -1402,7 +1414,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 output = Proxy("subscr")  # name? collectify?
             else:
                 output = p
-            if isinstance(idx, (int, str)):
+            if isinstance(idx, (int, str, Proxy)):
                 if isinstance(idx, int):
                     idx = int(idx)
                 elif isinstance(idx, str):
@@ -1522,7 +1534,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
         return not isinstance(p, TensorProxy)
 
     # TODO: This is just a WAR to get things working. We'll revisit this when
-    # we deal with cosntraints in prologue trace.
+    # we deal with constraints in prologue trace.
     #
     # We sort variables to before `unpack` to put TensorProxy before others.
     # Because we could have TensorProxy.shape be part of `pro_to_xxx` along with

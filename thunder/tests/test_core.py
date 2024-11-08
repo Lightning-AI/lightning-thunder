@@ -16,6 +16,7 @@ import thunder
 from thunder import last_traces, cache_option, cache_hits, cache_misses
 import thunder.examine as examine
 import thunder.clang as clang
+import thunder.core.profile
 import thunder.core.proxies as proxies
 import thunder.tests.bf16
 import thunder.torch as ltorch
@@ -2098,7 +2099,7 @@ def test_no_passthrough_symbol(executor, device, _):
     compiled = executor.make_callable(func)
     out = compiled(x)
     assert out is x
-    initial_trace_with_dce = thunder.last_traces(compiled)[2]
+    initial_trace_with_dce = thunder.last_traces(compiled)[3]
     assert "Constructed by Dead Code Elimination" in str(initial_trace_with_dce)
     assert len(initial_trace_with_dce.bound_symbols) == 2
     assert initial_trace_with_dce.bound_symbols[0].sym.id == prims.PrimIDs.UNPACK_TRIVIAL
@@ -2832,6 +2833,7 @@ def test_reshape_noop_prims(requires_grad):
 
 
 @requiresCUDA
+@thunder.tests.framework.requiresNVFuser
 def test_bound_symbol_sort_stability():
     class LlamaMLPLike(torch.nn.Module):
         def __init__(self) -> None:
@@ -2916,3 +2918,106 @@ def test_user_module_is_freed():
     del mod
     del opt_mod
     assert ref_mod() is None
+
+
+@pytest.mark.parametrize("requires_grad", [True, False])
+def test_return_bsym_has_none_output(requires_grad):
+    def fn(x):
+        return x + 1
+
+    x = torch.tensor([3.0], requires_grad=requires_grad)
+    jfn = thunder.jit(fn)
+    jfn(x)
+
+    for trace in thunder.last_traces(jfn):
+        return_bsym = trace.bound_symbols[-1]
+        assert return_bsym.sym.id == thunder.prims.PrimIDs.RETURN
+        assert return_bsym.output is None
+
+    if requires_grad:
+        for trace in thunder.last_backward_traces(jfn):
+            return_bsym = trace.bound_symbols[-1]
+            assert return_bsym.sym.id == thunder.prims.PrimIDs.RETURN
+            assert return_bsym.output is None
+
+
+def test_indexing_with_hashable_object():
+    class HashableClass:
+        def __hash__(self):
+            return id(self)
+
+    h = HashableClass()
+    d = {h: 1, 1: 0}
+
+    def fn():
+        return d[h]
+
+    jfn = thunder.jit(fn)
+    assert jfn() == 1
+    assert thunder.cache_misses(jfn) == 1  # Due to first compilation.
+
+    # Call jfn with no changes
+    # this should be cache hit.
+    assert jfn() == 1
+    assert thunder.cache_hits(jfn) == 1
+    assert thunder.cache_misses(jfn) == 1
+
+    # Change the value of the captured dict.
+    # This should be a cache miss, verify that.
+    d[h] = 2
+    assert jfn() == 2  # Verify that jfn now returns 2
+    assert thunder.cache_hits(jfn) == 1
+    assert thunder.cache_misses(jfn) == 2
+
+
+def test_profiling_decorator():
+    @thunder.core.profile.annotate_for_profile("compile_and_run")
+    def foo():
+        def bar(a: torch.Tensor):
+            t0 = torch.add(a, 42)
+            t1 = torch.mul(t0, 0.25)
+            return t1
+
+        baz = thunder.jit(bar)
+        baz(torch.randn(19))
+
+    foo()
+
+
+def test_saved_view_of_output_of_autograd_function_does_not_leak():
+    # Verify that we have side-stepped the bug in torch.autograd.Function
+    # where saving a view of the output for backward leads to leak.
+    # See NOTE [Saved view of output of torch.autograd.Function leaks]
+    def fn(idx, weight):
+        tok_emb = torch.nn.functional.embedding(idx, weight)
+        emb = torch.reshape(tok_emb, (2, 32))
+        matmul = emb @ emb.T
+        return tok_emb, matmul
+
+    weight = make_tensor((16, 32), dtype=torch.float, device="cpu", requires_grad=True)
+    x = make_tensor((1, 2), dtype=torch.int64, low=0, high=10, device="cpu")
+
+    jfn = thunder.jit(fn)
+
+    # Computation Trace for jfn
+    # We save view of the output `tok_emb` for backward.
+    # @torch.no_grad()
+    # @no_autocast
+    # def computation(idx, t_wte_weight):
+    #   # idx: "cuda:0 i64[1, 2]"
+    #   # t_wte_weight: "cuda:0 f32[16, 32]"
+    #   tok_emb = torch.nn.functional.embedding(idx, t_wte_weight, None, None, 2.0, False, False)  # tok_emb: "cuda:0 f32[1, 2, 32]"
+    #   [emb, t4] = nvFusion0(tok_emb)
+    #       # emb = prims.reshape(tok_emb, (2, 32))  # emb: "cuda:0 f32[2, 32]"
+    #       # t4 = prims.transpose(emb, (1, 0))  # t4: "cuda:0 f32[32, 2]"
+    #   matmul = torch.matmul(emb, t4)  # matmul: "cuda:0 f32[2, 2]"
+    #   return {'output': (tok_emb, matmul), 'flat_args': [idx, t_wte_weight], 'flat_output': (tok_emb, matmul)}, ((emb, idx, t4), ())
+
+    prev_iter_refs = []
+    for iter_n in range(4):
+        tok_emb, _ = jfn(x, weight)
+        if iter_n < 3:
+            prev_iter_refs.append(weakref.ref(tok_emb))
+
+    for ref in prev_iter_refs:
+        assert ref() is None

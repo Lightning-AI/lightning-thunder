@@ -77,12 +77,8 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor: TestEx
     trace = wrap_return_value_together_with_argments(trace)
     fw_trace, bw_trace = forward_and_backward_from_trace(trace)
 
-    fw_extraces = transform_for_execution(
-        fw_trace, executors_list=executor.executors_list(), use_rematerialization=False
-    )
-    bw_extraces = transform_for_execution(
-        bw_trace, executors_list=executor.executors_list(), use_rematerialization=False
-    )
+    fw_extraces = transform_for_execution(fw_trace, executors_list=executor.executors_list())
+    bw_extraces = transform_for_execution(bw_trace, executors_list=executor.executors_list())
     fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extraces[-1], bw_extraces[-1])
 
     fw = fw_extrace.python_callable()
@@ -1000,6 +996,10 @@ def test_div_truediv_integer_tensors_consistency_nvfuser(executor, device, thund
         pytest.mark.skipif(
             nvfuser_version() is None or nvfuser_version() < LooseVersion("0.2.10"),
             reason="Requires nvFuser version 0.2.10 or later",
+        ),
+        pytest.mark.skipif(
+            torch.cuda.is_available() and torch.cuda.get_device_capability(0)[0] < 9,
+            reason="Requires CUDA compute capability >= 9.0",
         ),
         pytest.mark.parametrize("dropout_p", [0.0, 0.2]),
         pytest.mark.parametrize("is_causal", [False, True]),

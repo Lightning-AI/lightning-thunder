@@ -1,4 +1,5 @@
 import itertools
+import platform
 
 import pytest
 import torch
@@ -9,7 +10,7 @@ import thunder.tests.bf16
 import thunder.torch as ltorch
 from thunder.core import dtypes
 from thunder.executors.torchex import no_autocast
-from thunder.tests.framework import instantiate, TorchExecutor
+from thunder.tests.framework import instantiate, TorchExecutor, requiresCUDA
 
 
 # TODO This test currently ignores the "should_autocast" argument enumerated in it
@@ -140,7 +141,9 @@ def test_compile_autocast(executor, device, dtype):
     assert output.dtype == (torch.float16 if torch_device.type == "cuda" else torch.bfloat16)
 
 
-@pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported")
+# Disabling on windows temporarily, until our windows runners source the
+# appropriate visual studio config.
+@pytest.mark.skipif(not is_inductor_supported() or platform.system() == "Windows", reason="inductor unsupported")
 def test_torch_compile_autocast():
     """Checks if our autocast decorator plays well with ``torch.compile``"""
 
@@ -259,6 +262,71 @@ def test_autocast_torch_matmul(requires_grad, device, b_dtype):
         go = torch.ones_like(expected) / expected.numel()
         eager_grads = torch.autograd.grad(expected, [a, b], go)
         jit_grads = torch.autograd.grad(actual, [a, b], go)
+
+        for eg, jg in zip(eager_grads, jit_grads):
+            torch.testing.assert_close(eg, jg, rtol=5e-3, atol=5e-3)
+
+
+@pytest.mark.parametrize("requires_grad", [False, True])
+@pytest.mark.parametrize("device", ("cpu", "cuda"))
+@pytest.mark.parametrize("b_dtype", (torch.float, torch.bfloat16))
+def test_autocast_trace(requires_grad, device, b_dtype):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("Skipping - CUDA is not available")
+
+    def foo(a, b):
+        with torch.autocast(device, torch.bfloat16):
+            autocast_output = torch.matmul(a, b)
+            with torch.autocast(device, torch.bfloat16, enabled=False):
+                if a.dtype != b.dtype:
+                    b = b.to(a.dtype)
+                non_autocast_output = torch.matmul(a, b)
+        return autocast_output, non_autocast_output
+
+    a = torch.rand([3, 1, 2], dtype=torch.float, device=device, requires_grad=requires_grad)
+    b = torch.rand([2, 3], dtype=b_dtype, device=device, requires_grad=requires_grad)
+
+    autocast_expected, non_autocast_expected = foo(a, b)
+    autocast_actual, non_autocast_actual = thunder.jit(foo)(a, b)
+
+    torch.testing.assert_close(autocast_actual, autocast_expected)
+    torch.testing.assert_close(non_autocast_actual, non_autocast_expected)
+
+    if requires_grad:
+        go = torch.ones_like(autocast_actual) / autocast_actual.numel()
+        eager_grads = torch.autograd.grad(autocast_expected, [a, b], go)
+        jit_grads = torch.autograd.grad(autocast_actual, [a, b], go)
+
+        for eg, jg in zip(eager_grads, jit_grads):
+            torch.testing.assert_close(eg, jg, rtol=5e-3, atol=5e-3)
+
+
+@pytest.mark.parametrize("requires_grad", [False, True])
+@pytest.mark.parametrize("b_dtype", (torch.float, torch.bfloat16))
+@requiresCUDA
+def test_autocast_cpu_and_cuda(requires_grad, b_dtype):
+    def foo(a, b, c, d):
+        with torch.autocast("cpu", torch.bfloat16):
+            cpu_output = torch.matmul(a, b)
+            with torch.autocast("cuda", torch.bfloat16):
+                cuda_output = torch.matmul(c, d)
+        return cpu_output, cuda_output
+
+    a = torch.rand([3, 1, 2], dtype=torch.float, device="cpu", requires_grad=requires_grad)
+    b = torch.rand([2, 3], dtype=b_dtype, device="cpu", requires_grad=requires_grad)
+    c = torch.rand([3, 1, 2], dtype=torch.float, device="cuda", requires_grad=requires_grad)
+    d = torch.rand([2, 3], dtype=b_dtype, device="cuda", requires_grad=requires_grad)
+
+    cpu_expected, cuda_expected = foo(a, b, c, d)
+    cpu_actual, cuda_actual = thunder.jit(foo)(a, b, c, d)
+
+    torch.testing.assert_close(cpu_actual, cpu_expected)
+    torch.testing.assert_close(cuda_actual, cuda_expected)
+
+    if requires_grad:
+        go = torch.ones_like(cpu_actual) / cpu_actual.numel()
+        eager_grads = torch.autograd.grad(cpu_expected, [a, b], go)
+        jit_grads = torch.autograd.grad(cpu_actual, [a, b], go)
 
         for eg, jg in zip(eager_grads, jit_grads):
             torch.testing.assert_close(eg, jg, rtol=5e-3, atol=5e-3)

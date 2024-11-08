@@ -8,12 +8,13 @@ from numbers import Number
 from typing import Any, overload, Generic, Optional, TypeVar, TYPE_CHECKING
 from collections.abc import Callable
 from collections.abc import Hashable, Iterable, Iterator, Sequence
+from collections import defaultdict
 
 from typing_extensions import Self
 
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
-from thunder.core.proxies import Proxy, NumberProxy, TensorProxy, variableify, CONSTRAINT
+from thunder.core.proxies import Proxy, NumberProxy, TensorProxy, variableify, CONSTRAINT, Variable
 from thunder.core.baseutils import *
 from thunder.core.codeutils import *
 from thunder.core.trace import TraceCtx
@@ -1000,8 +1001,9 @@ class ProxyDict:
         return str(self._dict)
 
 
-# NOTE That this pass does not assume that the bound symbols are in a reasonable order,
-#   but it does assume that each proxy is uniquely constructed once
+# NOTE That this pass does not assume that the bound symbols are in a reasonable order.
+#   For bound symbols with multiple producers, this pass returns the first producer of
+#   in order of the presented bound symbols
 # Returns a proxy -> producer mapping
 #   If _map_to_numbers is True then producers are represented by their position in the trace (their "line number")
 def producers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface], *, _map_to_numbers: bool = False) -> ProxyDict:
@@ -1021,6 +1023,10 @@ def producers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface], *, _map_to_
             continue
 
         for out in bsym.flat_proxy_outs:
+            # if a producer has already been traversed, skip
+            if producers.get(out, None) != None:
+                continue
+
             vout = variableify(out)
 
             # Checks if the proxy was also an input (in which case this is not its producers)
@@ -1144,7 +1150,7 @@ def get_symbols_to_last_used_variables(symbols, ignore):
     ignore = (ignore,) if not isinstance(ignore, Sequence) else ignore
     ignore = tree_flatten(ignore)[0]
     variable_to_last_symbol = {}
-    symbol_to_last_variables = {}
+    symbol_to_last_variables = defaultdict(list)
 
     def _mark_last_use(symbol, variable):
         if variable in ignore:
@@ -1157,10 +1163,10 @@ def get_symbols_to_last_used_variables(symbols, ignore):
         # If this function is used in the combined nvfuser+torch executor, there are no symbols but regions.
         # Regions do not have args, kwargs
         if hasattr(symbol, "inputs"):
-            variables = tuple(symbol.inputs)
+            variables = tuple(symbol.inputs) + tuple(symbol.outputs)
         else:
-            variables = (symbol.args, symbol.kwargs)
-        tree_map(lambda x: _mark_last_use(symbol, x) if isinstance(x, trace.Variable) else None, variables)
+            variables = (symbol.flat_variableified_proxy_args) + tuple(symbol.flat_variableified_proxy_outs)
+        tree_map(lambda x: _mark_last_use(symbol, x) if isinstance(x, Variable) else None, variables)
     return symbol_to_last_variables
 
 
@@ -1189,3 +1195,40 @@ def make_hashable(a: Any, /) -> tuple | FrozenDict:
     if isinstance(a, dict):
         return FrozenDict(map(lambda item: (item[0], make_hashable(item[1])), a.items()))
     return id(a)
+
+
+class AutocastStack:
+    """
+    This class provides functionality to keep track of active
+    autocast state which can be triggered with `torch.autocast` context manager.
+    This is used to enable tracking the autocast state for a trace so that the rules
+    can be applied correctly within the active region.
+
+    Each `torch.autocast.__enter__` should be mapped to `push` with relevant state information
+    and corresponding `torch.autocast.__exit__` should be mapped to `pop`.
+    See - `autocast_enter` and `autocast_exit` to see how they use this stack.
+    """
+
+    def __init__(self):
+        self.stack = deque()
+
+    def push(self, device: str, dtype: dtypes.dtype | torch.dtype, enabled: bool):
+        self.stack.append((device, dtype, enabled))
+
+    def pop(self) -> None:
+        self.stack.pop()
+
+    def is_empty(self) -> bool:
+        return len(self.stack) == 0
+
+    def get_dtype_for_device_if_enabled(self, query_device_str: str):
+        for autocast_state in reversed(self.stack):
+            device, dtype, enabled = autocast_state
+            if device == query_device_str:
+                if enabled:
+                    return dtype
+                # Explicitly disabled with ctx manager i.e. torch.autocast("cuda", enabled=False)
+                return None
+
+        # Not found on the stack.
+        return None

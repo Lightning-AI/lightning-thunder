@@ -5,17 +5,24 @@ from typing import TYPE_CHECKING
 import dataclasses
 import inspect
 import itertools
+import copy
 
 import torch
 
 from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.torch.langctx import torchctx
+from thunder.core.utils import check
 
 if TYPE_CHECKING:
     from thunder.core.symbol import Symbol
 
 auto_register_ops = set(itertools.chain(*torch_auto_registered_ops.values()))
+
+
+# Currently, thunder as mapping torch these function but they
+# just throw warning.
+UNSUPPORTED_THUNDER_FUNCTION = (torch._C._set_grad_enabled,)
 
 
 class CompilerType(Enum):
@@ -120,8 +127,13 @@ def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
     with thunder.core.trace.tracectx(TraceCtx()):
 
         def make_tensor_proxy(arg_node):
-            # This is a Node in the graph representing a Tensor or tuple of Tensors.
+            # This is a Node in the graph representing a Tensor or tuple of Tensors or
+            # a PyTorch object like one representing torch.autocast.
             if isinstance(arg_node, torch.fx.Node):
+                if "example_value" not in arg_node.meta:
+                    # This is a non tensor object like `torch.autocast` ctx manager object.
+                    return arg_node
+
                 example_value = arg_node.meta["example_value"]
 
                 if isinstance(example_value, torch.Tensor):
@@ -169,7 +181,15 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
     """
     import thunder
     from thunder.core.trace import TraceCtx
+    from thunder.core.compile_data import compile_data_and_stats
+    from thunder.common import CompileData, CompileStats
 
+    # This is required for verifying `_enter_autocast`
+    # which pushes state onto `CompileData.autocast_stack`.
+    cd = CompileData(fn=lambda x: x, disable_preprocessing=True)
+    cs = CompileStats()
+
+    @compile_data_and_stats(cd, cs)
     @thunder._with_cache_info_ctx
     def _run_with_cache_info():
 
@@ -219,18 +239,54 @@ def get_nodes_in_unsupported_ctx_regions(gm: torch.fx.GraphModule) -> set[torch.
     nodes_in_unsupported_ctx_regions: set[torch.fx.Node] = set()
     ctx_cnt = 0  # Count of `enters_autocast` we have seen till now
 
-    # We want to mark nodes with `_enter_autocast` and `_exit_autocast`
-    # as unsupported as `thunder` doesn't correctly deal with these stateful functions.
+    # We want to mark nodes disabling `autograd` as unsupported
+    # because `thunder` doesn't correctly deal with these stateful functions.
+
+    def is_no_grad_ctx_enter(node):
+        if node.target == torch._C._set_grad_enabled:
+            arg: bool = node.args[0]
+            assert isinstance(arg, bool)
+            return not arg  # arg is False (i.e. grad was disabled)
+        return False
+
+    def is_no_grad_ctx_exit(node):
+        if node.target == torch._C._set_grad_enabled:
+            arg: bool = node.args[0]
+            assert isinstance(arg, bool)
+            return arg  # arg is True (i.e. grad was enabled)
+        return False
+
     for node in gm.graph.nodes:
-        if node.op == "call_function" and node.target in (torch.amp.autocast_mode._enter_autocast,):
+        if node.op == "call_function" and is_no_grad_ctx_enter(node):
             ctx_cnt += 1
-        elif node.op == "call_function" and node.target in (torch.amp.autocast_mode._exit_autocast,):
+        elif node.op == "call_function" and is_no_grad_ctx_exit(node):
             ctx_cnt -= 1
         else:
             if ctx_cnt > 0:
                 nodes_in_unsupported_ctx_regions.add(node)
 
     return nodes_in_unsupported_ctx_regions
+
+
+def is_graphmodule_supported_by_thunder(gm):
+    nodes_in_unsupported_ctx_regions = get_nodes_in_unsupported_ctx_regions(gm)
+    for node in gm.graph.nodes:
+        if node.op in (
+            "placeholder",
+            "get_attr",
+            "output",
+        ):
+            continue
+        if node in nodes_in_unsupported_ctx_regions:
+            split_reason = SplitReason(
+                SplitReasonType.UNSUPPORTED_NODE,
+                info=f"node with name: {node.name} and target: {node.target} is not supported probably because it is in unsupported context.",
+            )
+            return False, split_reason
+        is_thunder_supported, split_reason = is_node_supported_by_thunder(node)
+        if not is_thunder_supported:
+            return False, split_reason
+    return True, None
 
 
 def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason | None]:
@@ -270,6 +326,24 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
             info=f"node with name: {node.name} and target: {node.target} only has an automatic torch fallback in thunder.",
         )
         return False, split_reason
+
+    # These functions are present in `_torch_to_thunder_function_map` but don't mimic exact behavior.
+    # Eg. torch._C._set_grad_enabled's thunder implementation just throws warning that this is unsupported.
+    if target in UNSUPPORTED_THUNDER_FUNCTION:
+        split_reason = SplitReason(
+            SplitReasonType.UNSUPPORTED_NODE,
+            info=f"node with name: {node.name} and target: {node.target} has been manually disabled.",
+        )
+        return False, split_reason
+
+    # The checkpointed function must be fully supported by Thunder
+    if target is torch.ops.higher_order.tag_activation_checkpoint:
+        m = node.graph.owning_module
+        get_attr_node = node.args[0]
+        assert get_attr_node.op == "get_attr"
+        checkpointed_fn = getattr(m, get_attr_node.target)
+        is_module_supported, split_reason = is_graphmodule_supported_by_thunder(checkpointed_fn)
+        return is_module_supported, split_reason
 
     # If thunder has a mapping for this operation, try executing the meta function and see.
     # We have a symbol for `torch.where`, but we don't support one overload of it.
@@ -344,3 +418,97 @@ def recompile_graph(gm: torch.fx.GraphModule):
     if isinstance(gm, torch.fx._lazy_graph_module._LazyGraphModule):
         return gm.real_recompile()
     return gm.recompile()
+
+
+def _get_example_inputs_from_placeholder(node) -> tuple[torch.Tensor]:
+    from thunder.tests.make_tensor import make_tensor
+
+    check(node.op == "placeholder", lambda: f"The node must be placeholder type", ValueError)
+    # Prefers to use actual example value in GraphArg if available
+    if "grapharg" in node.meta:
+        example_value = node.meta["grapharg"].example
+        if isinstance(example_value, torch.Tensor):
+            return (example_value.detach().clone().requires_grad_(example_value.requires_grad),)
+
+    check("example_value" in node.meta, lambda: "example_value does not exist in the meta of {node}", ValueError)
+    example_value = node.meta["example_value"]
+
+    if isinstance(example_value, torch.Tensor):
+        sz = _concrete_shape(example_value)
+        return (
+            make_tensor(
+                sz,
+                dtype=example_value.dtype,
+                device=example_value.device,
+                requires_grad=example_value.requires_grad,
+            ).as_strided(sz, example_value.stride()),
+        )
+    elif isinstance(example_value, tuple):
+        return tuple(
+            make_tensor(
+                _concrete_shape(e_v),
+                dtype=e_v.dtype,
+                device=e_v.device,
+                requires_grad=e_v.requires_grad,
+            ).as_strided(_concrete_shape(e_v), e_v.stride())
+            for e_v in example_value
+        )
+    else:
+        raise TypeError(
+            "The 'example_value' in the placeholder node is expected to be either a Tensor or a Tuple of Tensors."
+        )
+
+
+def _checkpoint_function_converter(gm: torch.fx.GraphModule):
+    """
+    Replace PyTorch operators in ``gm`` representing a checkpointed function with corresponding Thunder operators. The input ``gm`` is modified inplace.
+
+    Args:
+        gm (torch.fx.GraphModule): The GraphModule of the checkpointed function, which is modified inplace.
+    """
+    new_graph = copy.deepcopy(gm.graph)
+    for n in new_graph.nodes:
+        # replace the torch operator in "call_function" node
+        if n.op == "call_function":
+            assert isinstance(n.target, Callable)
+            if n.target.__module__ in ("_operator", "builtins"):
+                continue
+            check(
+                n.target in _torch_to_thunder_function_map, lambda: f"Unexpected {n.target}, not registered in Thunder"
+            )
+            with new_graph.inserting_before(n):
+                thunder_node = new_graph.call_function(
+                    _torch_to_thunder_function_map[n.target], args=n.args, kwargs=n.kwargs
+                )
+            n.replace_all_uses_with(thunder_node)
+            new_graph.erase_node(n)
+        else:
+            if n.op == "call_module":
+                raise RuntimeError(
+                    "Unexpected call_module detected inside a checkpoint. This should have been inlined in dynamo graphs"
+                )
+    new_graph.lint()
+    gm.graph = new_graph
+    recompile_graph(gm)
+
+
+def checkpoint_converter(gm: torch.fx.GraphModule, sub_gm: torch.fx.GraphModule):
+    """
+    Utility function to convert the GraphModule that uses activation checkpointing into a Thunder-traceable GraphModule.
+
+    Args:
+        gm: The parent GraphModule containing the submodule(sub_gm), as well as the GraphModule of the checkpointed function.
+        sub_gm: the GraphModule containing the checkpoint operator
+
+    Note:
+        The GraphModule of the checkpointed function is updated inplace
+    """
+    for n in sub_gm.graph.nodes:
+        if n.op == "call_function":
+            if n.target in (torch.ops.higher_order.tag_activation_checkpoint,):
+                checkpoint_target_node = n.args[0]
+                if checkpoint_target_node.op == "get_attr":
+                    function_module = getattr(checkpoint_target_node.graph.owning_module, checkpoint_target_node.target)
+                else:
+                    function_module = getattr(gm, n.args[0].name)
+                _checkpoint_function_converter(function_module)

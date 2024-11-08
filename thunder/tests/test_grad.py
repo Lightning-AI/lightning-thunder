@@ -1700,6 +1700,47 @@ def test_get_saved_for_backward_tensors_error():
         get_saved_for_backward_tensors(execution_trace)
 
 
+def test_torch_checkpoint():
+    import torch.utils.checkpoint
+    import torch._higher_order_ops.wrap
+
+    def fn_to_checkpoint(x, y):
+        return x.sin().cos().exp().mul(y)
+
+    checkpoint_fns = (
+        thunder.torch.checkpoint,
+        partial(torch.utils.checkpoint.checkpoint, use_reentrant=False),
+        torch.ops.higher_order.tag_activation_checkpoint,
+    )
+
+    for checkpoint_fn in checkpoint_fns:
+
+        def f(x, y):
+            return checkpoint_fn(fn_to_checkpoint, x, y)
+
+        x = make_tensor((2, 2), device="cpu", dtype=torch.float32, requires_grad=True)
+        y = make_tensor((2, 2), device="cpu", dtype=torch.float32, requires_grad=True)
+        jf = thunder.jit(f)
+        out = jf(x, y)
+
+        # With activation checkpointing, we are saving only the original input.
+        # The intermediate values are recomputed during backward pass.
+        assert len(out.grad_fn.saved_tensors) == 2
+        # We detach the saved tensors (which returns a new Python tensor backed by same storage)
+        assert out.grad_fn.saved_tensors[0].data_ptr() == x.data_ptr()
+        assert out.grad_fn.saved_tensors[1].data_ptr() == y.data_ptr()
+
+        g = torch.ones_like(out)
+        out.backward(g)
+
+        x_ref = x.detach().requires_grad_()
+        y_ref = y.detach().requires_grad_()
+        out_ref = fn_to_checkpoint(x_ref, y_ref)
+        out_ref.backward(g)
+        torch.testing.assert_close(x.grad, x_ref.grad)
+        torch.testing.assert_close(y.grad, y_ref.grad)
+
+
 def test_inconsistent_output_length_grad_transform():
     from thunder.extend import OperatorExecutor
     from thunder.core.proxies import AnyProxy, TensorProxy
