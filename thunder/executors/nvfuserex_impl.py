@@ -408,7 +408,9 @@ def get_tensor_descriptor(p: TensorProxy, t: torch.Tensor) -> tuple[tuple[int, .
 # TODO Inline the get_tensor_descriptor call
 def to_descriptors(proxy_args, args) -> tuple:
     def to_descriptor(proxy_arg, arg):
-        if isinstance(arg, Number):
+        if isinstance(arg, torch.Tensor):
+            return (*get_tensor_descriptor(proxy_arg, arg), arg.dtype)
+        elif isinstance(arg, Number):
             return type(arg)
         elif isinstance(arg, tuple):
             if len(arg) != 0:
@@ -419,8 +421,6 @@ def to_descriptors(proxy_args, args) -> tuple:
                     exception_type=AssertionError,
                 )
             return type(arg)
-        elif isinstance(arg, torch.Tensor):
-            return (*get_tensor_descriptor(proxy_arg, arg), arg.dtype)
 
         raise ValueError(f"unrecognized type in arguments: {type(arg)}")
 
