@@ -30,36 +30,42 @@ optree.register_pytree_node(
 )
 
 
+allowed_types = {
+    FunctionType,
+    dict,
+    list,
+    str,
+    int,
+    bool,
+    tuple,
+    torch.dtype,
+    float,
+    dtypes.floating,
+    dtypes.bool_,
+    devices.Device,
+    torch.memory_format,
+    type(None),
+    slice,
+    complex,
+    type,
+    type(Ellipsis),
+    torch.Size,
+    torch.finfo,
+    dtypes.signedinteger,
+    # FakeTensor type is used for automatic registration of torch ops
+    torch._subclasses.fake_tensor.FakeTensor,
+    torch.device,
+    torch.autograd.function.FunctionCtx,
+}
+
+
+def register_type(typ):
+    allowed_types.add(typ)
+
+
 def tree_flatten(args, namespace=OPTREE_NAMESPACE):
     if (
-        type(args)
-        not in {
-            FunctionType,
-            dict,
-            list,
-            str,
-            int,
-            bool,
-            tuple,
-            torch.dtype,
-            float,
-            dtypes.floating,
-            dtypes.bool_,
-            devices.Device,
-            torch.memory_format,
-            type(None),
-            slice,
-            complex,
-            type,
-            type(Ellipsis),
-            torch.Size,
-            torch.finfo,
-            dtypes.signedinteger,
-            # FakeTensor type is used for automatic registration of torch ops
-            torch._subclasses.fake_tensor.FakeTensor,
-            torch.device,
-            torch.autograd.function.FunctionCtx,
-        }
+        type(args) not in allowed_types
         and not isinstance(args, (ProxyInterface))
         and not is_likely_from_collections_namedtuple(args)
         and not dataclasses.is_dataclass(args)
