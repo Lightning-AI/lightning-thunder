@@ -83,7 +83,7 @@ def default_python_printer(
         kwarg_str = ", ".join(f"{k}={codeutils.prettyprint(v)}" for k, v in kwarg_printables.items())
 
     result_str: str
-    if bsym.output is None or (codeutils.is_collection(bsym.output) and len(bsym.output) == 0):
+    if bsym.output is None or (baseutils.is_collection(bsym.output) and len(bsym.output) == 0):
         result_str = ""
     else:
         result_str = f"{codeutils.prettyprint(out_printables, literals_as_underscores=True)} = "
