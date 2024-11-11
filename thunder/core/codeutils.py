@@ -299,7 +299,7 @@ def get_source_line(filename: str, lineno: int) -> str:
 
 # TODO Make this a frozen dataclass?
 class SigInfo:
-    def __init__(self, name, /):
+    def __init__(self, name: str, /):
         self.name = name
         self.args = []
         self.varargs = None
