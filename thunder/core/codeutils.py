@@ -1,24 +1,37 @@
-from types import CodeType, FunctionType, MethodType, EllipsisType
-from typing import List, Dict, Tuple, Set, Deque, Any, NamedTuple
-from numbers import Number
-from collections import deque
-from collections.abc import Mapping, Sequence, Iterable
-import inspect
-from inspect import Parameter
-import string
-import functools
-from functools import partial
-import dis
-import linecache
+from __future__ import annotations
+from typing import TYPE_CHECKING
+from typing import NamedTuple
 import dataclasses
-
-import torch
+import dis
+import functools
+import inspect
+import linecache
+import sys
 
 import thunder.core.baseutils as baseutils
 from thunder.core.baseutils import ProxyInterface, check
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 from thunder.core.pytree import tree_flatten, tree_unflatten
+
+if TYPE_CHECKING:
+    from typing import Any, Optional
+    from collections.abc import Callable, Sequence
+
+
+__all__ = [
+    "ContextObject",
+    "module_shortname",
+    "indent_string",
+    "is_simple_printable_collection",
+    "is_printable",
+    "is_literal",
+    "to_printable",
+    "prettyprint",
+    "get_source_line",
+    "SigInfo",
+    "get_siginfo",
+]
 
 #
 # Functions related to analyzing and printing functions and arguments
@@ -105,7 +118,7 @@ def is_literal(x: Any) -> bool:
     return True
 
 
-def _to_printable(tracectx: Optional, x: Any) -> tuple[Any, Optional[tuple[str, Any]]]:
+def _to_printable(tracectx: Optional, x: Any) -> tuple[Any, tuple[str, Any] | None]:
     can_print, module_info = is_printable(x)
     if can_print:
         return x, module_info
@@ -125,8 +138,8 @@ def to_printable(
     trace: Optional,
     x: Any,
     *,
-    import_ctx: Optional[dict] = None,
-    object_ctx: Optional[dict] = None,
+    import_ctx: dict | None = None,
+    object_ctx: dict | None = None,
 ) -> Printable:
     # Short-circuits if x is a Proxy
     if isinstance(x, ProxyInterface):
@@ -190,7 +203,7 @@ def prettyprint(
         exception_type=AssertionError,
     )
 
-    m = partial(_qm, quote_markers=_quote_markers)
+    m = functools.partial(_qm, quote_markers=_quote_markers)
 
     if literals_as_underscores and is_literal(x) and not baseutils.is_collection(x):
         return m("_")
@@ -415,7 +428,7 @@ def get_siginfo(fn: Callable, args, kwargs, *, _make_named_inputs: bool = False)
     # NOTE A default value is, for example alpha=1. in a function's signature
     #   These default values are not included in ba.arguments
     # NOTE Partial kwargs take precedence as defaults
-    default_dict = {k: v.default for k, v in sig.parameters.items() if v.default is not Parameter.empty}
+    default_dict = {k: v.default for k, v in sig.parameters.items() if v.default is not inspect.Parameter.empty}
     default_dict.update(partial_kwargs)
     args_dict = default_dict | ba.arguments
 
@@ -458,13 +471,13 @@ def get_siginfo(fn: Callable, args, kwargs, *, _make_named_inputs: bool = False)
         p, idx = params_with_indices[name]
         pkind = p.kind
 
-        if pkind in (Parameter.POSITIONAL_ONLY, Parameter.POSITIONAL_OR_KEYWORD):
+        if pkind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
             si.args.append((x, idx, name))
-        elif pkind is Parameter.VAR_POSITIONAL:
+        elif pkind is inspect.Parameter.VAR_POSITIONAL:
             si.varargs = (name, x)
-        elif pkind is Parameter.KEYWORD_ONLY:
+        elif pkind is inspect.Parameter.KEYWORD_ONLY:
             si.kwargs[name] = x
-        elif pkind is Parameter.VAR_KEYWORD:
+        elif pkind is inspect.Parameter.VAR_KEYWORD:
             si.varkwargs = (name, x)
         else:
             raise ValueError(f"Unexpected parameter kind {pkind}")
