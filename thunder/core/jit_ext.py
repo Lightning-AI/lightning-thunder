@@ -672,6 +672,8 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     trace_of_fwd, fwd_output_provenance = _convert_pytorchfunc_to_thundertrace(
         custom_forward, True, wrapped_ctx, *args, **kwargs
     )
+    if trace_of_fwd is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return trace_of_fwd
 
     # Forward.
     unwrapped_custom_forward_args = tree_map(lambda a: unwrap(a), args)
