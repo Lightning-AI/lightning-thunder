@@ -2,7 +2,7 @@ from types import CodeType, FunctionType, MethodType, EllipsisType
 from typing import List, Dict, Tuple, Set, Deque, Any, NamedTuple, Optional
 from numbers import Number
 from collections import deque
-from collections.abc import Mapping, Sequence, Iterable
+from collections.abc import Mapping, Sequence, Iterable, Callable
 import inspect
 from inspect import Parameter
 import string
