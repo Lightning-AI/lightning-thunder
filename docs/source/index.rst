@@ -89,6 +89,7 @@ The compiled function ``jitted_foo`` takes and returns PyTorch tensors, just lik
    Thunder step by step <basic/inspecting_traces>
    The sharp edges <basic/sharp_edges>
    Train a MLP on MNIST <basic/mlp_mnist>
+   Thunder Concepts - Trace, BoundSymbol, Symbol and Proxy <notebooks/thunder_trace_intro>
    FAQ <basic/faq>
 
 .. toctree::
