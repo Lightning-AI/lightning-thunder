@@ -260,7 +260,7 @@ def prettyprint(
         return m(f"{baseutils.print_type(x, with_quotes=False)}")
 
     # Handles objects that this doesn't know how to serialize as a string
-    return m(f"(object of type {print_type(type(x), with_quotes=False)})")
+    return m(f"(object of type {baseutils.print_type(type(x), with_quotes=False)})")
 
 
 # Use dis.Positions in 3.11+ and make it up in <3.11
