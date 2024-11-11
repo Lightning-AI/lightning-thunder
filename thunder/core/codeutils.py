@@ -1,5 +1,5 @@
 from types import CodeType, FunctionType, MethodType, EllipsisType
-from typing import List, Dict, Tuple, Set, Deque, Any, NamedTuple
+from typing import List, Dict, Tuple, Set, Deque, Any, NamedTuple, Optional
 from numbers import Number
 from collections import deque
 from collections.abc import Mapping, Sequence, Iterable
@@ -105,7 +105,7 @@ def is_literal(x: Any) -> bool:
     return True
 
 
-def _to_printable(tracectx: Optional, x: Any) -> tuple[Any, Optional[tuple[str, Any]]]:
+def _to_printable(tracectx: Optional, x: Any) -> tuple[Any, tuple[str, Any] | None]:
     can_print, module_info = is_printable(x)
     if can_print:
         return x, module_info
@@ -125,8 +125,8 @@ def to_printable(
     trace: Optional,
     x: Any,
     *,
-    import_ctx: Optional[dict] = None,
-    object_ctx: Optional[dict] = None,
+    import_ctx: dict | None = None,
+    object_ctx: dict | None = None,
 ) -> Printable:
     # Short-circuits if x is a Proxy
     if isinstance(x, ProxyInterface):
