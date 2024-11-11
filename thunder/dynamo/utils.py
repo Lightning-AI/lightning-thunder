@@ -607,30 +607,6 @@ def remove_empty_autocast(graph_module: torch.fx.GraphModule) -> torch.fx.GraphM
     return empty_autocast_removed_graph_module
 
 
-from torch.nn.modules.module import _addindent
-import typing
-
-
-@dataclasses.dataclass
-class ExampleInputMetaData:
-    """
-    Describes the metadata of a tensor, used to generate a random tensor with matching properties
-    """
-
-    requires_grad: bool
-    layout: torch.layout
-    device: str | torch.device
-    dtype: torch.dtype
-    shape: list[int]
-    storage_shape: list[int]
-    strides: list[int]
-    min_val: int | None = None
-    max_val: int | None = None
-
-    def stride(self) -> list[int]:
-        return self.strides
-
-
 def arg_like_tensor_integer(arg: torch.Tensor | ExampleInputMetaData, f: TextIO):
     """Creates a new argument like the given tensor, which must be an integer
     type. This is separated out because randn() does not work for integer

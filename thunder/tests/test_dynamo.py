@@ -781,6 +781,7 @@ def test_checkpoint_converter_submodule():
             assert isinstance(n.target, Symbol)
 
 
+@requiresCUDA
 def test_dynamo_reproducer_2graph(tmp_path):
     backend = ThunderCompiler()
     # Test non-contiguous input tensor
