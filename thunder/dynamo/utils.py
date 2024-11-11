@@ -507,15 +507,10 @@ def _get_example_inputs_from_placeholder(
         if only_metadata:
             return ev_metadata
         return _create_random_tensor_from_tensor_metadata(ev_metadata)
-    elif isinstance(example_value, tuple):
-        ev_metadatas = tuple(_get_example_input_tensor_metadata(e_v) for e_v in example_value)
-        if only_metadata:
-            return ev_metadatas
-        return tuple(_create_random_tensor_from_tensor_metadata(ev_metadata) for ev_metadata in ev_metadatas)
+    elif isinstance(example_value, torch.types.py_sym_types):
+        return example_value.node.hint
     else:
-        raise TypeError(
-            "The 'example_value' in the placeholder node is expected to be either a Tensor or a Tuple of Tensors."
-        )
+        raise TypeError(f"Unsupported example_value type: {type(example_value)}")
 
 
 def _checkpoint_function_converter(gm: torch.fx.GraphModule):
