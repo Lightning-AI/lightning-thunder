@@ -10,7 +10,7 @@ from functools import partial
 import thunder
 import thunder.core.prims as prims
 from thunder.core.baseutils import BoundSymbolInterface
-from thunder.core.proxies import Proxy, variableify, Variable, TensorProxy, unvariableify
+from thunder.core.proxies import Proxy, variableify, Variable, TensorProxy, unvariableify, ProxyTag
 from thunder.core.pytree import tree_flatten, tree_iter, tree_map, tree_unflatten
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, has_tags
 from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace, tracectx
@@ -491,4 +491,53 @@ def remove_context_manager_prims_from_trace(trace: Trace) -> Trace:
     new_trace = from_trace(trace)
     new_trace.bound_symbols = filtered_bsyms
     new_trace.set_provenance(TraceProvenance("Remove context manager prims"))
+    return new_trace
+
+
+def tag_no_grad_symbols_pass(trace: Trace) -> Trace:
+    """
+    This function iterates over trace and marks the BoundSymbols
+    in `no_grad` regions such that VJP pass will treat them as constant.
+    """
+    is_no_grad_region = False
+
+    # NOTE - This will also copy name from original trace.
+    new_trace = from_trace(trace)
+    new_bsyms = []
+
+    for bsym in trace.bound_symbols:
+        # case - torch._C._set_grad_enabled(False)
+        if bsym.sym.id == thunder.torch._set_grad_enabled_with_warning.id and not bsym.args[0]:
+            is_no_grad_region = True
+            continue
+        # case - torch._C._set_grad_enabled(True)
+        elif bsym.sym.id == thunder.torch._set_grad_enabled_with_warning.id and bsym.args[0]:
+            is_no_grad_region = False
+            continue
+
+        if is_no_grad_region:
+            # Mark the TensorProxy output of the `bsym`
+            # with `ProxyTag.DETACHED_AUTOGRAD_GRAPH` so that
+            # vjp will treat this as constant.
+
+            def create_detached_output(t):
+                if isinstance(t, TensorProxy):
+                    # NOTE - We need `tracectx` as creating/replacing name for proxy
+                    # tries a look-up in current trace.
+                    with tracectx(new_trace):
+                        # Remove the name so that we can re-use it.
+                        # Otherwise, we get a proxy with new name.
+                        new_trace.names.remove(t.name)
+                        return t.replace(requires_grad=False, tags=(ProxyTag.DETACHED_AUTOGRAD_GRAPH,))
+
+                return t
+
+            new_output = tree_map(create_detached_output, bsym.output)
+            # Create a copy of the `bsym` with `new_output`
+            bsym = bsym.from_bsym(output=new_output)
+
+        new_bsyms.append(bsym)
+
+    new_trace.bound_symbols = new_bsyms
+    new_trace.set_provenance(TraceProvenance("no_grad detach graph for vjp pass"))
     return new_trace

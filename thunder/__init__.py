@@ -35,6 +35,7 @@ from thunder.core.transform_common import (
     wrap_return_value_together_with_argments,
     unwrap_return_value,
     remove_context_manager_prims_from_trace,
+    tag_no_grad_symbols_pass,
 )
 from thunder.core.functionalization import (
     check_inplace_to_views,
@@ -536,6 +537,9 @@ def jit(
             computation_traces = [computation_trc]
 
             computation_trc = wrap_return_value_together_with_argments(computation_trc)
+            computation_traces.append(computation_trc)
+
+            computation_trc = tag_no_grad_symbols_pass(computation_trc)
             computation_traces.append(computation_trc)
 
             computation_trc = remove_context_manager_prims_from_trace(computation_trc)
