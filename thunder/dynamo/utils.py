@@ -762,6 +762,8 @@ def reproducer(
         print(torch_env, file=f)
         print("\nVersions of Thunder related libraries:", file=f)
         print(thunder_pkgs, file=f)
+        print("\nThe torch.fx.Graph:", file=f)
+        print(gm.graph, file=f)
         print('"""', file=f)
         print("import os\n", file=f)
         print("import torch", file=f)

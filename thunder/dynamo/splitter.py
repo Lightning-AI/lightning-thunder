@@ -151,14 +151,14 @@ def _splitter(
         node_name = node.name
         if is_thunder_supported_partition(node):
             graph_module = getattr(split_gm, node.name)
-            # Replace PyTorch operators within the checkpointed function with the corresponding Thunder operators
-            checkpoint_converter(split_gm, graph_module)
             # Record the input tensor metadata of the current module based on the faketensor 'example_value' of the placeholder node
             placeholders = list(n for n in graph_module.graph.nodes if n.op == "placeholder")
             example_input_metadata = map(
                 partial(_get_example_inputs_from_placeholder, only_metadata=True), placeholders
             )
             example_input_metadatas.append(list(example_input_metadata))
+            # Replace PyTorch operators within the checkpointed function with the corresponding Thunder operators
+            checkpoint_converter(split_gm, graph_module)
             jit_fn = thunder_jit(graph_module)
             # Update the node name from "submod_*" to "thunder_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "thunder"), jit_fn)
