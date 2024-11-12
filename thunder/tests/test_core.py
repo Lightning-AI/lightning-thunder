@@ -2099,7 +2099,7 @@ def test_no_passthrough_symbol(executor, device, _):
     compiled = executor.make_callable(func)
     out = compiled(x)
     assert out is x
-    initial_trace_with_dce = thunder.last_traces(compiled)[3]
+    initial_trace_with_dce = thunder.last_traces(compiled)[4]
     assert "Constructed by Dead Code Elimination" in str(initial_trace_with_dce)
     assert len(initial_trace_with_dce.bound_symbols) == 2
     assert initial_trace_with_dce.bound_symbols[0].sym.id == prims.PrimIDs.UNPACK_TRIVIAL
@@ -2485,8 +2485,7 @@ def test_grad_ctx():
         return x + 1
 
     x = torch.randn(3, 3, requires_grad=True)
-    with pytest.warns(UserWarning, match="have no effect under thunder.jit"):
-        thunder.jit(foo1)(x).sum().backward()
+    thunder.jit(foo1)(x).sum().backward()
 
     assert x.grad is not None
 
@@ -2495,12 +2494,9 @@ def test_grad_ctx():
         return x + 1
 
     x = torch.randn(3, 3, requires_grad=True)
-    with pytest.warns(UserWarning, match="have no effect under thunder.jit"):
-        thunder.jit(foo2)(x).sum().backward()
+    thunder.jit(foo2)(x).sum().backward()
 
-    # `torch.no_grad` has no effect on thunder's autodiff which determines whether to compute grad based on `requires_grad=True`.
-    # Thus when backward is called it computes grad for the input.
-    assert x.grad is not None
+    assert x.grad is None
 
 
 def test_serialize_trace():
