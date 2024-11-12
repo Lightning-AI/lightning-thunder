@@ -528,7 +528,7 @@ def tag_no_grad_symbols_pass(trace: Trace) -> Trace:
                         # Remove the name so that we can re-use it.
                         # Otherwise, we get a proxy with new name.
                         new_trace.names.remove(t.name)
-                        return t.replace(requires_grad=False, tags=(ProxyTag.DETACHED_AUTOGRAD_GRAPH,))
+                        return t.replace(tags=(ProxyTag.DETACHED_AUTOGRAD_GRAPH,))
 
                 return t
 
