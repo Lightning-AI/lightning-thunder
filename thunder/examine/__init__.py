@@ -312,6 +312,16 @@ def make_trace_dot(trace: TraceCtx, show_metadata=False):
 
     Requires graphviz to be installed, for more information check out -> https://graphviz.readthedocs.io/en/stable/index.html
 
+    .. note::
+        To improve the rendering time, one can update `nslimit` and `nslimit1` graph attributes on the returned Digraph before
+        calling the `render`.
+        Eg. dot_graph.graph_attr["nslimit"] = 5
+
+        Refer the following links for more details:
+        [1] https://graphviz.org/docs/attrs/nslimit/
+        [2] https://graphviz.org/docs/attrs/nslimit1/
+
+
     Args:
         trace (TraceCtx): The Thunder trace to be made into a graph.
         show_metadata (bool): Add more meta-data (like shape, dtype) to the nodes representing the Tensor. Defaults to False.
