@@ -296,9 +296,7 @@ def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = Fals
 
     u = tree_map(make, primals)
 
-    # dirty little trick for speed: skip the prologue
-    jf = executor.make_callable(f, disable_torch_autograd=True)
-    comp_f = thunder.compile_data(jf).get_computation_and_inputs(*primals)[0].computation_fn
+    comp_f = thunder.jit(f)
 
     outs_p, J_u = numerical_jvp(comp_f)(primals, u)
 
