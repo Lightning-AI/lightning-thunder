@@ -454,6 +454,7 @@ class FusionDefinitionWrapper:
             kwargs["device"] = fd._selected_device
 
         if nvfuser_version() >= LooseVersion("0.2.23"):
+            # nvFuser expects empty list instead of None values.
             kwargs["_enable_options"] = self._enable_options if self._enable_options is not None else []
             kwargs["_disable_options"] = self._disable_options if self._disable_options is not None else []
 
