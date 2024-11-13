@@ -17,7 +17,7 @@ defaults:
 env:
   #CI: "true"
   TORCH_URL_RC: "https://download.pytorch.org/whl/test/cpu/torch_test.html"
-  TORCH_URL_NIGHTLY: "https://download.pytorch.org/whl/nightly/cpu/torch/"
+  TORCH_URL_NIGHTLY: "https://download.pytorch.org/whl/nightly/cpu"
   TORCH_URL_STABLE: "https://download.pytorch.org/whl/cpu"
 
 jobs:
