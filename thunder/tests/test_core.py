@@ -2480,23 +2480,57 @@ def test_torch_device():
 
 
 def test_grad_ctx():
+    # Test `enable_grad` on a function works correctly
     @torch.enable_grad()
     def foo1(x):
         return x + 1
 
     x = torch.randn(3, 3, requires_grad=True)
     thunder.jit(foo1)(x).sum().backward()
-
     assert x.grad is not None
 
+    # Test `no_grad` on a function works correctly
     @torch.no_grad()
     def foo2(x):
         return x + 1
 
     x = torch.randn(3, 3, requires_grad=True)
     thunder.jit(foo2)(x).sum().backward()
-
     assert x.grad is None
+
+    # Test `no_grad` ctx correctly disable gradient computation
+    def foo3(x):
+        with torch.no_grad():
+            y = x * 3
+        return x * 2 + y
+
+    x = torch.randn(3, 3, requires_grad=True)
+    with torch.no_grad():
+        x_ref = x.clone()
+        x_ref.requires_grad_(True)
+
+    foo3(x_ref).sum().backward()
+    thunder.jit(foo3)(x).sum().backward()
+    # Verify the gradients match
+    torch.testing.assert_close(x.grad, x_ref.grad)
+
+    # Test nested `no_grad` and `enable_grad`
+    def foo4(x):
+        with torch.enable_grad():
+            with torch.no_grad():
+                y = x * 3
+            z = x * 4
+        return x * 2 + y + z
+
+    x = torch.randn(3, 3, requires_grad=True)
+    with torch.no_grad():
+        x_ref = x.clone()
+        x_ref.requires_grad_(True)
+
+    foo4(x_ref).sum().backward()
+    thunder.jit(foo4)(x).sum().backward()
+    # Verify the gradients match
+    torch.testing.assert_close(x.grad, x_ref.grad)
 
 
 def test_serialize_trace():
