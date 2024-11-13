@@ -10,7 +10,7 @@ from functools import partial
 import thunder
 import thunder.core.prims as prims
 from thunder.core.baseutils import BoundSymbolInterface
-from thunder.core.proxies import Proxy, variableify, Variable, TensorProxy, unvariableify, ProxyTag
+from thunder.core.proxies import Proxy, variableify, Variable, TensorProxy, unvariableify
 from thunder.core.pytree import tree_flatten, tree_iter, tree_map, tree_unflatten
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, has_tags
 from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace, tracectx
