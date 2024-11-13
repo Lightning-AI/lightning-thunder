@@ -221,6 +221,8 @@ class CompileData:
         # State for pytorch autocast context managers.
         self.autocast_stack: AutocastStack = AutocastStack()
 
+        self.is_grad_enabled: bool = True
+
         #
         # Gathers additional metadata
         #

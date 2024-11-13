@@ -21,7 +21,8 @@ from thunder.core.utils import FrozenDict, make_hashable
 from thunder.core.pytree import tree_flatten_with_dataclass, tree_unflatten, tree_map
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
-from thunder.core.proxies import Proxy, NumberProxy, variableify, CollectionProxy
+from thunder.core.proxies import Proxy, TensorProxy, NumberProxy, variableify, CollectionProxy, ProxyTag
+from thunder.core.compile_data import get_compile_data
 
 from thunder.core.trace import (
     get_tracectx,
@@ -319,6 +320,15 @@ class Symbol:
             trace.push_scope(subsymbols)
             result = self.meta(*args, **kwargs)
             trace.pop_scope()
+
+        if not get_compile_data().is_grad_enabled:
+
+            def tag_tensorproxy_output_as_detached(proxy):
+                if isinstance(proxy, TensorProxy):
+                    return proxy.replace(tags=(ProxyTag.DETACHED_AUTOGRAD_GRAPH,))
+                return proxy
+
+            result = tree_map(tag_tensorproxy_output_as_detached, result)
 
         bsym = self.bind(*args, **kwargs, output=result, subsymbols=subsymbols)
         symbols_list = trace.peek_scope()

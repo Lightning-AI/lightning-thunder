@@ -35,7 +35,6 @@ from thunder.core.transform_common import (
     wrap_return_value_together_with_argments,
     unwrap_return_value,
     remove_context_manager_prims_from_trace,
-    tag_no_grad_symbols_pass,
 )
 from thunder.core.functionalization import (
     check_inplace_to_views,
@@ -443,6 +442,9 @@ def jit(
         # which seems to break the consistency of cache_info, leading to a failure in cache_info check.
         cache_info["alias_tensor_indices"] = _alias_tensor_of_args_kwargs(*args, **kwargs)
 
+        cache_info["is_grad_enabled"] = pytorch.is_grad_enabled()
+        cd.is_grad_enabled = pytorch.is_grad_enabled()
+
         # TODO RC1 Add module and function checks to prologue (make it a compile option)
 
         # Checks cache
@@ -537,9 +539,6 @@ def jit(
             computation_traces = [computation_trc]
 
             computation_trc = wrap_return_value_together_with_argments(computation_trc)
-            computation_traces.append(computation_trc)
-
-            computation_trc = tag_no_grad_symbols_pass(computation_trc)
             computation_traces.append(computation_trc)
 
             computation_trc = remove_context_manager_prims_from_trace(computation_trc)

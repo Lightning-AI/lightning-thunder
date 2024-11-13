@@ -5238,7 +5238,7 @@ ProxyTag.register_tag("DETACHED_AUTOGRAD_GRAPH")
 # for VJP using the `DETACHED_AUTOGRAD_GRAPH` tag.
 @torchsymbol(torch._C._set_grad_enabled, id="set_grad_enabled", tags=(prims.OpTags.CTX_MANAGER_ENTER_EXIT_OP,))
 def _set_grad_enabled_with_warning(enabled: bool) -> None:
-    pass
+    get_compile_data().is_grad_enabled = enabled
 
 
 def _unwrap_if_dead(tensor):
