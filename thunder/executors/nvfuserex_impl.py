@@ -437,9 +437,9 @@ class FusionDefinitionWrapper:
     cache_clear: None | Callable = None
     last_used: None | FusionDefinition = None
     last_inputs: None | Sequence[tuple] = None
-    store_inputs: bool = False,
-    _enable_options: list = [],
-    _disable_options: list = [],
+    store_inputs: bool = (False,)
+    _enable_options: list = ([],)
+    _disable_options: list = ([],)
 
     def __call__(self, *args):
         fd = self.get_fd(self.to_descriptors(args))
@@ -452,13 +452,11 @@ class FusionDefinitionWrapper:
         # Set device if set in one of the "factory" methods like full, iota, or uniform
         if hasattr(fd, "_selected_device"):
             kwargs["device"] = fd._selected_device
-        if not self._enable_options:
-            
+
         if nvfuser_version() >= LooseVersion("0.2.23"):
             kwargs["_enable_options"] = self._enable_options
-        if not self._disable_options:
-                kwargs["_disable_options"] = self._disable_options
-            
+            kwargs["_disable_options"] = self._disable_options
+
         elif len(self._enable_options) or len(self._disable_options):
             warnings.warn(f"nvFuser _enable_options/_disable_options requires version 0.2.23 and above, using version {nvfuser_version()}. These options will be ignored.")
             
@@ -554,16 +552,12 @@ def create_fusion_definition_wrapper(
     store_inputs: None | bool = get_compile_option(
         "nv_store_fusion_inputs", "Allow nvFuser to store fusion inputs for repro."
     )
-    _enable_options: None | list = get_compile_option(
-        "nv_enable_options", "List of NVFUSER_ENABLE options to set."
-    )
+    _enable_options: None | list = get_compile_option("nv_enable_options", "List of NVFUSER_ENABLE options to set.")
     _enable_options = _enable_options if _enable_options is not None else []
-        
-    _disable_options: None | list = get_compile_option(
-        "nv_disable_options", "List of NVFUSER_DISABLE options to set."
-    )
+
+    _disable_options: None | list = get_compile_option("nv_disable_options", "List of NVFUSER_DISABLE options to set.")
     _disable_options = _disable_options if _disable_options is not None else []
-    
+
     tensor_indices = []
     for idx, x in enumerate(sorted_unique_inputs):
         if isinstance(x, TensorProxy):
@@ -576,7 +570,7 @@ def create_fusion_definition_wrapper(
     def get_fd(input_descriptors) -> FusionDefinition:
         # A closure over local trace and region
         return create_fd(bsyms, input_descriptors, sorted_unique_inputs, sorted_unique_outputs)
-    
+
     fdw = FusionDefinitionWrapper(
         get_fd,
         partial(to_descriptors, sorted_unique_inputs),
@@ -584,8 +578,8 @@ def create_fusion_definition_wrapper(
         get_fd.cache_info,
         get_fd.cache_clear,
         store_inputs=store_inputs,
-        _enable_options = _enable_options if _enable_options is not None else [],
-        _disable_options = _disable_options if _disable_options is not None else [],
+        _enable_options=_enable_options if _enable_options is not None else [],
+        _disable_options=_disable_options if _disable_options is not None else [],
     )
     return fdw
 

@@ -1104,11 +1104,11 @@ def test_enable_disable_options(executor, device: str, thunder_dtype: dtypes.dty
     ]
 
     compiled_func = thunder.jit(
-        fn, 
-        executors_list=executor.executors_list(), 
-        nv_enable_matmul=True, 
+        fn,
+        executors_list=executor.executors_list(),
+        nv_enable_matmul=True,
         nv_enable_options=["fuse_matmul"],
-        nv_disable_options=["matmul_expr_eval", "kernel_reuse"]
+        nv_disable_options=["matmul_expr_eval", "kernel_reuse"],
     )
     # The above combination of options enables matmul codegen and disables expr evaluation for matmul.
     # Since matmul scheduler does not support float32 inputs, the execution should raise an error.
