@@ -459,8 +459,10 @@ class FusionDefinitionWrapper:
             kwargs["_disable_options"] = self.disable_options if self.disable_options is not None else []
 
         elif self.enable_options or self.disable_options:
-            warnings.warn(f"nvFuser _enable_options/_disable_options requires version 0.2.23 and above, using version {nvfuser_version()}. These options will be ignored.")
-            
+            warnings.warn(
+                f"nvFuser _enable_options/_disable_options requires version 0.2.23 and above, using version {nvfuser_version()}. These options will be ignored."
+            )
+
         with annotate_for_profile(self.name):
             return fd.execute(args, **kwargs)
 
@@ -553,9 +555,7 @@ def create_fusion_definition_wrapper(
     store_inputs: None | bool = get_compile_option(
         "nv_store_fusion_inputs", "Allow nvFuser to store fusion inputs for repro."
     )
-    enable_options: None | list[str] = get_compile_option(
-        "nv_enable_options", "List of NVFUSER_ENABLE options to set."
-    )
+    enable_options: None | list[str] = get_compile_option("nv_enable_options", "List of NVFUSER_ENABLE options to set.")
     disable_options: None | list[str] = get_compile_option(
         "nv_disable_options", "List of NVFUSER_DISABLE options to set."
     )
