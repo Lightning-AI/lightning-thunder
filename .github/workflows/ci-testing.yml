@@ -83,8 +83,8 @@ jobs:
         run: |
           pip --version
           pip install -e . -U \
-            -r requirements/test.txt \
-            --find-links=${TORCH_URL} ${PIP_EXTRA_FLAG}
+            ${PIP_EXTRA_FLAG} -r requirements/test.txt \
+            --index-url=${TORCH_URL} ${PIP_EXTRA_FLAG}
           pip list
         shell: bash
 
