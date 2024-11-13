@@ -1113,6 +1113,8 @@ def test_enable_disable_options(executor, device: str, thunder_dtype: dtypes.dty
     # The above combination of options enables matmul codegen and disables expr evaluation for matmul.
     # Since matmul scheduler does not support float32 inputs, the execution should raise an error.
     # By default, without using these options, the given fusion will run through expr eval scheduler correctly.
-
+    # NOTE: This test relies on `float32` being unsupported by nvFuser matmul scheduler.
+    # If this support is added, the test will need to be updated since it will no longer
+    # verify the functionality of the above flags.
     with pytest.raises(RuntimeError, match="Can not find a scheduler to schedule fusion segment"):
         out = compiled_func(*inps)

@@ -438,8 +438,8 @@ class FusionDefinitionWrapper:
     last_used: None | FusionDefinition = None
     last_inputs: None | Sequence[tuple] = None
     store_inputs: bool = False
-    _enable_options: None | list[str] = None
-    _disable_options: None | list[str] = None
+    enable_options: None | list[str] = None
+    disable_options: None | list[str] = None
 
     def __call__(self, *args):
         fd = self.get_fd(self.to_descriptors(args))
@@ -455,10 +455,10 @@ class FusionDefinitionWrapper:
 
         if nvfuser_version() >= LooseVersion("0.2.23"):
             # nvFuser expects empty list instead of None values.
-            kwargs["_enable_options"] = self._enable_options if self._enable_options is not None else []
-            kwargs["_disable_options"] = self._disable_options if self._disable_options is not None else []
+            kwargs["_enable_options"] = self.enable_options if self.enable_options is not None else []
+            kwargs["_disable_options"] = self.disable_options if self.disable_options is not None else []
 
-        elif self._enable_options or self._disable_options:
+        elif self.enable_options or self.disable_options:
             warnings.warn(f"nvFuser _enable_options/_disable_options requires version 0.2.23 and above, using version {nvfuser_version()}. These options will be ignored.")
             
         with annotate_for_profile(self.name):
@@ -553,10 +553,10 @@ def create_fusion_definition_wrapper(
     store_inputs: None | bool = get_compile_option(
         "nv_store_fusion_inputs", "Allow nvFuser to store fusion inputs for repro."
     )
-    _enable_options: None | list[str] = get_compile_option(
+    enable_options: None | list[str] = get_compile_option(
         "nv_enable_options", "List of NVFUSER_ENABLE options to set."
     )
-    _disable_options: None | list[str] = get_compile_option(
+    disable_options: None | list[str] = get_compile_option(
         "nv_disable_options", "List of NVFUSER_DISABLE options to set."
     )
 
@@ -580,8 +580,8 @@ def create_fusion_definition_wrapper(
         get_fd.cache_info,
         get_fd.cache_clear,
         store_inputs=store_inputs,
-        _enable_options=_enable_options,
-        _disable_options=_disable_options,
+        enable_options=enable_options,
+        disable_options=disable_options,
     )
     return fdw
 
