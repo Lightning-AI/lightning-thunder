@@ -53,7 +53,7 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor: TestEx
     from thunder.clang import cos, sin
     import thunder.torch as ltorch
     from thunder.core.transforms import forward_and_backward_from_trace, value_and_grad
-    from thunder.core.transform_common import wrap_return_value_together_with_argments
+    from thunder.core.transform_common import wrap_return_value_together_with_arguments
     from thunder.common import transform_for_execution
     from thunder.core.rematerialization import rematerialize_forward_and_backward
 
@@ -74,7 +74,7 @@ def test_rematerialization_with_forward_and_backward_from_trace(executor: TestEx
         requires_grad=True,
     )
     trace = trace(inline_trace=False)(func, a, b, c=c)
-    trace = wrap_return_value_together_with_argments(trace)
+    trace = wrap_return_value_together_with_arguments(trace)
     fw_trace, bw_trace = forward_and_backward_from_trace(trace)
 
     fw_extraces = transform_for_execution(fw_trace, executors_list=executor.executors_list())
