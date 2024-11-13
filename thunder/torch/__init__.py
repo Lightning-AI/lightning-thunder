@@ -5228,7 +5228,7 @@ register_function(torch.device, torch_device)
 
 
 # Tag to use on Proxies created in `no_grad` regions.
-# VJP transform will treat BOundSymbol's whose output has these tags
+# VJP transform will treat BoundSymbol's whose output has these tags
 # as constant.
 ProxyTag.register_tag("DETACHED_AUTOGRAD_GRAPH")
 

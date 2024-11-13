@@ -2486,7 +2486,7 @@ def is_constant_for_vjp(symbol: prims.Symbol) -> bool:
         bool: True if the symbol is constant, False otherwise.
     """
     are_all_args_non_differentiable = not any(isinstance(arg, (FloatProxy, TensorProxy)) for arg in symbol.flat_args)
-    # `no_grad_detach_graph_pass` tags output of BoundSymbols in `torch.no_grad` regions with `DETACHED_AUTOGRAD_GRAPH`.
+    # Symbol's tag their output in `torch.no_grad` regions with `DETACHED_AUTOGRAD_GRAPH`.
     # These are treated as constant for VJP.
     # NOTE - `any(()) is False`
     output_disconnected_from_graph = any(
