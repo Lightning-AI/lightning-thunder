@@ -578,8 +578,8 @@ def create_fusion_definition_wrapper(
         get_fd.cache_info,
         get_fd.cache_clear,
         store_inputs=store_inputs,
-        _enable_options=_enable_options if _enable_options is not None else [],
-        _disable_options=_disable_options if _disable_options is not None else [],
+        _enable_options=_enable_options,
+        _disable_options=_disable_options,
     )
     return fdw
 
