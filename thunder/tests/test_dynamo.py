@@ -589,6 +589,10 @@ def test_ThunderCompilerGraphBenchmarking_post_graph(benchmark):
     compiled(x)
 
 
+@pytest.mark.skipif(
+    LooseVersion(torch.__version__) < LooseVersion("2.6.0"),
+    reason="The checkpoint function becomes a submodule of the module containing `tag_activation_checkpoint` in PyTorch 2.6.0.",
+)
 @requiresCUDA
 def test_ThunderCompilerGraphBenchmarking_checkpoint(benchmark):
     class SimpleModel(nn.Module):
