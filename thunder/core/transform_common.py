@@ -17,6 +17,7 @@ from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace, t
 from thunder.core.utils import ProxyDict, producers, check
 
 if TYPE_CHECKING:
+    from numbers import Number
     from typing import Any
     from thunder.core.module import ThunderModule
 
