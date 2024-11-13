@@ -437,8 +437,8 @@ class FusionDefinitionWrapper:
     cache_clear: None | Callable = None
     last_used: None | FusionDefinition = None
     last_inputs: None | Sequence[tuple] = None
-    store_inputs: bool = (False,)
-    _enable_options: None | list[str] = (None,)
+    store_inputs: bool = False
+    _enable_options: None | list[str] = None
     _disable_options: None | list[str] = None
 
     def __call__(self, *args):
