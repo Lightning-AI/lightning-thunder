@@ -603,7 +603,7 @@ def apply_functionalization_to_canonicalized_trace(
         if bsym in bsym_to_copy_bsyms:
             functionalized_bsyms.extend(bsym_to_copy_bsyms[bsym])
             copy_bsym = functionalized_bsyms[-1]
-            # wrap_return_value_together_with_argments places all the arguments in the return value
+            # wrap_return_value_together_with_arguments places all the arguments in the return value
             # We swap these arguments in the return value with the outputs of copies onto them
             # This prevents subsequent transforms from ordering the return statement before those copies
             swap_map_for_return[variableify(copy_bsym.flat_proxy_args[0])] = copy_bsym.flat_proxy_outs[0]

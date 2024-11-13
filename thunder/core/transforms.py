@@ -75,7 +75,7 @@ from thunder.clang import (
 from thunder.core.transform_common import (
     dce,
     Transform,
-    wrap_return_value_together_with_argments,
+    wrap_return_value_together_with_arguments,
     unwrap_return_value,
     VJPDual,
 )
@@ -1493,7 +1493,7 @@ def grad(
                 grad(python_callable), *computation_trc.args, **computation_trc.kwargs
             )
 
-            gradtrc = wrap_return_value_together_with_argments(gradtrc)
+            gradtrc = wrap_return_value_together_with_arguments(gradtrc)
             gradtrc = dce(gradtrc)
             return prologue_trc, gradtrc, epilogue_trc
 
