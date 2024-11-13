@@ -2480,6 +2480,10 @@ def test_torch_device():
 
 
 def test_grad_ctx():
+    # NOTE - This test would start failing if tags on Proxies are dropped
+    # as the computation under `no_grad` won't be treated as constant
+    # and grad won't match with PyTorch eager.
+
     # Test `enable_grad` on a function works correctly
     @torch.enable_grad()
     def foo1(x):
@@ -2531,6 +2535,26 @@ def test_grad_ctx():
     thunder.jit(foo4)(x).sum().backward()
     # Verify the gradients match
     torch.testing.assert_close(x.grad, x_ref.grad)
+
+    def foo5(x):
+        return x * 2
+
+    x = torch.randn(3, 3, requires_grad=True)
+    with torch.no_grad():
+        x_ref = x.clone()
+        x_ref.requires_grad_(True)
+
+    jfoo = thunder.jit(foo5)
+    with torch.no_grad():
+        o = jfoo(x)
+        assert o.grad_fn is None
+        assert thunder.cache_misses(jfoo) == 1  # First compilation
+
+    # Running it out of `torch.no_grad`, should lead to recompile.
+    foo5(x_ref).sum().backward()
+    jfoo(x).sum().backward()
+    torch.testing.assert_close(x.grad, x_ref.grad)
+    assert thunder.cache_misses(jfoo) == 2
 
 
 def test_serialize_trace():
