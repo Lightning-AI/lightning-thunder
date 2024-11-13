@@ -170,12 +170,21 @@ def test_inplace_copy_dst_copy_returned_issue_1109(executor, device, dtype):
     # This pattern is unsafe in general. Disabling sanity check to silence
     # exception for testing
     traced_foo = executor.make_callable(func, disable_inplace_copy_check=True)
-    a = make_tensor((4, 4), device=device, dtype=tdtype)
-    a_ref = a.clone()
+    t0 = make_tensor((4, 4), device=device, dtype=tdtype)
+    t0_ref = t0.clone()
 
-    o_thunder = traced_foo(a)
-    o_eager = func(a_ref)
+    actual_t1, actual_t2 = traced_foo(t0)
 
-    assert_close(a_ref, a)
-    for o, o_ref in zip(o_thunder, o_eager):
-        assert_close(o, o_ref)
+    expected = t0_ref.sin().cos()
+    expected_t1 = t0_ref.sin()
+    expected_t2 = expected_t1.cos()
+    expected = expected_t2
+
+    assert_close(t0, expected)
+    assert_close(actual_t2, expected_t2)
+    # FIXME(crcrpar): Since there's no `ltorch.Tensor.copy_`, functions like `func` would not
+    # be observed and executed with pytorch eager mode. Though there should be either an audit of
+    # `prims.copy_` in a nvfuser region and/or what #1110 did.
+    assert actual_t1.data_ptr() == actual_t2.data_ptr()
+    with pytest.raises(AssertionError):
+        assert_close(actual_t1, expected_t1)
