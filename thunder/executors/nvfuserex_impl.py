@@ -438,7 +438,6 @@ class FusionDefinitionWrapper:
     last_used: None | FusionDefinition = None
     last_inputs: None | Sequence[tuple] = None
     store_inputs: bool = False,
-    profile: bool = False,
     _enable_options: list = [],
     _disable_options: list = [],
 
