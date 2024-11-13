@@ -12,11 +12,13 @@ import warnings
 from looseversion import LooseVersion
 
 from thunder.core.module import ThunderModule
+import thunder.core.profile
 from thunder.core.interpreter import InterpreterLogItem
 from thunder.core.options import (
     CACHE_OPTIONS,
     SHARP_EDGES_OPTIONS,
 )
+from thunder.core.profile import annotate_for_profile
 from thunder.core.trace import (
     TraceResults,
     TraceCtx,
@@ -277,6 +279,7 @@ def compile(fn: Callable, recipe: Recipe | None):
 # This function will replace compile() (below) before RC1
 # TODO RC1 Consider adding a debug_log parameter to control debug printing
 # TODO RC1 Consider renaming compile_options to additional_compile_options
+@thunder.core.profile.annotate_for_profile("jit")
 def jit(
     fn: Callable,
     /,
@@ -377,6 +380,7 @@ def jit(
                 tensor_group_index_to_tensor_indices[tgi].append(idx)
         return tensor_group_index_to_tensor_indices
 
+    @thunder.core.profile.annotate_for_profile("_alias_tensor_of_args_kwargs")
     def _alias_tensor_of_args_kwargs(*args, **kwargs) -> str:
         """If no aliases found, empty string, otherwise, aliases are comma separated, groups are hyphen separated."""
 
@@ -391,6 +395,7 @@ def jit(
 
     @langctxs.langctx(cd.langctx)
     @_with_cache_info_ctx
+    @thunder.core.profile.annotate_for_profile("get_computation_and_inputs")
     def get_computation_and_inputs(*args, **kwargs):
         # set up a record of things in the current environment that impact caching / prologues
         # this could be replaced by the respective querying in the prologues
@@ -440,7 +445,8 @@ def jit(
         # alaises wouldn't matter, thus it'd be better to nullify this entry in such cases.
         # It however would require the functionalized computation trace to interact with `cache_info`,
         # which seems to break the consistency of cache_info, leading to a failure in cache_info check.
-        cache_info["alias_tensor_indices"] = _alias_tensor_of_args_kwargs(*args, **kwargs)
+        with thunder.core.profile.annotate_for_profile("Alias_tensor_of_args_kwarsgs"):
+            cache_info["alias_tensor_indices"] = _alias_tensor_of_args_kwargs(*args, **kwargs)
 
         # TODO RC1 Add module and function checks to prologue (make it a compile option)
 
@@ -462,7 +468,9 @@ def jit(
                         _vanilla_args,
                     ) = cache_entry
                     try:
-                        inps, pro_to_epi = pro(*args, **kwargs)
+                        from thunder.core.profile import annotate_for_profile
+
+                        inps, pro_to_epi = annotate_for_profile("prologue")(pro(*args, **kwargs))
                     except Exception as _:
                         continue
 
@@ -494,7 +502,7 @@ def jit(
                     backward_traces,
                 ) = cache_entry
 
-                inps, pro_to_epi = pro(*args, **kwargs)
+                inps, pro_to_epi = annotate_for_profile("Prologue")(pro(*args, **kwargs))
 
                 # Updates cache statistics
                 cs.cache_hits += 1
@@ -618,11 +626,16 @@ def jit(
                 use_del_last_used=False,
             )
             prologue_trc = prologue_traces[-1]
-            pro = prologue_trc.python_callable(include_decorators=False)
-            pro = prologue_execution_timer(pro)
+            pro = thunder.core.profile.annotate_for_profile("prologue python_callable")(
+                prologue_trc.python_callable(include_decorators=False)
+            )
+            # pro = thunder.core.profile.annotate_for_profile("prologue")(pro)
 
             if epilogue_trc is not None:
-                epilogue = epilogue_trc.python_callable()
+                epilogue = thunder.core.profile.annotate_for_profile("epilogue python_callable")(
+                    epilogue_trc.python_callable()
+                )
+                epilogue = thunder.core.profile.annotate_for_profile("epilogue")(epilogue)
             else:
                 epilogue = None
 
@@ -697,7 +710,9 @@ def jit(
                         backward_traces.append(backward_trc)
 
             if backward_trc is not None:
-                backward_fn = backward_trc.python_callable()
+                backward_fn = thunder.core.profile.annotate_for_profile("backward python_callable")(
+                    backward_trc.python_callable()
+                )
             else:
                 backward_fn = None
                 # We do not have to return auxiliary tensors, which will only be useful in backward pass
@@ -727,33 +742,21 @@ def jit(
 
     def host_execution_timer(fn):
         def wrapped(*args, **kwargs):
-            cs.last_trace_host_execution_start = time.perf_counter_ns()
-            try:
+            with thunder.core.profile.annotate_for_profile("computation"):
                 return fn(*args, **kwargs)
-            finally:
-                cs.last_trace_host_execution_stop = time.perf_counter_ns()
-
-        return wrapped
-
-    def prologue_execution_timer(fn):
-        def wrapped(*args, **kwargs):
-            cs.last_prologue_execution_start = time.perf_counter_ns()
-            try:
-                return fn(*args, **kwargs)
-            finally:
-                cs.last_prologue_execution_stop = time.perf_counter_ns()
 
         return wrapped
 
     def decorate_computation_function(get_computation_and_inputs_fn, *decorators):
         def wrapped(*args, **kwargs):
-            cache_entry, inps, pro_to_epi = get_computation_and_inputs_fn(*args, **kwargs)
-            decorated_computation_fn = cache_entry.computation_fn
-            for decorator in decorators:
-                decorated_computation_fn = decorator(decorated_computation_fn)
-            if decorators:
-                cache_entry = cache_entry._replace(computation_fn=decorated_computation_fn)
-            return cache_entry, inps, pro_to_epi
+            with thunder.core.profile.annotate_for_profile("get_computation_and_inputs"):
+                cache_entry, inps, pro_to_epi = get_computation_and_inputs_fn(*args, **kwargs)
+                decorated_computation_fn = cache_entry.computation_fn
+                for decorator in decorators:
+                    decorated_computation_fn = decorator(decorated_computation_fn)
+                if decorators:
+                    cache_entry = cache_entry._replace(computation_fn=decorated_computation_fn)
+                return cache_entry, inps, pro_to_epi
 
         return wrapped
 
@@ -763,14 +766,11 @@ def jit(
     def update_call_statistics(fn):
         def wrapped(*args, **kwargs):
             cs.calls += 1
-            cs.last_trace_host_start = time.perf_counter_ns()
-            try:
-                return fn(*args, **kwargs)
-            finally:
-                cs.last_trace_host_stop = time.perf_counter_ns()
+            return fn(*args, **kwargs)
 
         return wrapped
 
+    @thunder.core.profile.annotate_for_profile("check_storage_aliases")
     def check_storage_aliases(cache_entry, args):
         if cache_entry.vanilla_tensor_args:
             if alias_tensor_indices_str := _alias_tensor_of_args_kwargs(*args):
@@ -783,6 +783,7 @@ def jit(
                     NotImplementedError,
                 )
 
+    @thunder.core.profile.annotate_for_profile("maybe_connect_to_autograd")
     def maybe_connect_to_autograd(cache_entry, result):
         if cache_entry.backward_fn:
             # If the backward function is available, we need to connect the
@@ -810,6 +811,7 @@ def jit(
 
     @wraps(fn)
     @update_call_statistics
+    @thunder.core.profile.annotate_for_profile("fn_")
     def fn_(*args, **kwargs) -> Any:
         if is_tracing():
             _recursive_jit_call_warning()
@@ -1033,6 +1035,7 @@ def get_auto_registered_torch_op_names(fn: Callable, /) -> set[str] | None:
 
 
 # TODO (mruberry) Update this
+@thunder.core.profile.annotate_for_profile("_grad_transform")
 def _grad_transform(trace):
     grad_fwd_trace = from_trace(trace)
     trace_tok = set_tracectx(grad_fwd_trace)
@@ -1086,10 +1089,12 @@ def _grad_transform(trace):
 
 # TODO Test nesting of grad and grad and grad and grad
 # TODO Test nesting of a regular function + calling grad
+@thunder.core.profile.annotate_for_profile("grad")
 def grad(fn):
     cfn = compile(fn)
 
     @wraps(cfn)
+    @thunder.core.profile.annotate_for_profile("_fn")
     def _fn(*args, **kwargs):
         original_result, original_trace = cfn(*args, **kwargs)
         original_trace = last_traces(cfn)

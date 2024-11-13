@@ -1685,6 +1685,7 @@ def update_tags(proxy_swapmap: dict[Variable, Proxy]) -> None:
         new.tags.update(unvariableify(old).tags)
 
 
+@thunder.core.profile.annotate_for_profile("thunder_general_jit")
 def thunder_general_jit(
     fn: Callable,
     args: tuple[Any, ...],

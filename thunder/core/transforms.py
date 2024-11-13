@@ -24,6 +24,7 @@ from thunder.core.trace_interpreter import (
     interpret_trace_to_trace,
     trace_interpreter_skip_list,
 )
+from thunder.core.profile import annotate_for_profile
 from thunder.core.proxies import (
     CollectionProxy,
     NumberProxy,
@@ -1485,6 +1486,7 @@ def grad(
             computation_trc = dce(computation_trc)
 
             @wraps(computation_trc.python_callable())
+            @annotate_for_profile("_GradTransform.python_callable")
             def python_callable(*args, **kwargs):
                 return eval_trace(computation_trc, *args, **kwargs)["output"]
 

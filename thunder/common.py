@@ -82,20 +82,20 @@ class CompileStats:
         last_interpreted_instructions (Generator[dist.Instruction, None, None] | None):
         last_interpreter_log (list[InterpreterLogItem] | None):
         last_backward_traces (Sequence[TraceCtx]):
-        last_trace_host_start (int):
-        last_trace_host_stop (int):
-        last_trace_cache_start (int):
-        last_trace_cache_stop (int):
-        last_trace_tracing_start (int):
-        last_trace_tracing_stop (int):
-        last_trace_host_execution_start (int):
-        last_trace_host_execution_stop (int):
-        last_prologue_transformation_start (int):
-        last_prologue_transformation_stop (int):
-        last_prologue_execution_start (int):
-        last_prologue_execution_stop (int):
-        last_computation_execution_start (int):
-        last_computation_execution_stop (int):
+        last_trace_host_start (int): deprecated
+        last_trace_host_stop (int): deprecated
+        last_trace_cache_start (int): deprecated
+        last_trace_cache_stop (int): deprecated
+        last_trace_tracing_start (int): deprecated
+        last_trace_tracing_stop (int): deprecated
+        last_trace_host_execution_start (int): deprecated
+        last_trace_host_execution_stop (int): deprecated
+        last_prologue_transformation_start (int): deprecated
+        last_prologue_transformation_stop (int): deprecated
+        last_prologue_execution_start (int): deprecated
+        last_prologue_execution_stop (int): deprecated
+        last_computation_execution_start (int): deprecated
+        last_computation_execution_stop (int): deprecated
         cache (dict):
         interpreter_cache (list):
         calls (int):
@@ -132,6 +132,8 @@ class CompileStats:
         self.last_prologue_execution_stop: int = -1
         self.last_computation_execution_start: int = -1
         self.last_computation_execution_stop: int = -1
+        self.last_times_msg: str = "Timers have been replaced by nvtx. "
+        self.last_times_msg += "Please use Nsight systems to see host timers."
 
         # Cache stats
         self.cache = {}
@@ -151,29 +153,24 @@ class CompileStats:
         return stop - start
 
     def last_cache_lookup_time(self, /) -> int:
-        start: int = self.last_trace_cache_start
-        stop: int = self.last_trace_cache_stop
-        return self._time_template(start, stop, "cache lookup")
+        warnings.warn(self.last_times_msg)
+        return -1
 
     def last_trace_construction_time(self, /) -> int:
-        start: int = self.last_trace_host_start
-        stop: int = self.last_trace_host_stop
-        return self._time_template(start, stop, "trace construction")
+        warnings.warn(self.last_times_msg)
+        return -1
 
     def last_prologue_transformation_time(self, /) -> int:
-        start: int = self.last_prologue_transformation_start
-        stop: int = self.last_prologue_transformation_stop
-        return self._time_template(start, stop, "prologue construction")
+        warnings.warn(self.last_times_msg)
+        return -1
 
     def last_prologue_execution_time(self, /) -> int:
-        start: int = self.last_prologue_execution_start
-        stop: int = self.last_prologue_execution_stop
-        return self._time_template(start, stop, "prologue execution")
+        warnings.warn(self.last_times_msg)
+        return -1
 
     def last_computation_execution_time(self, /) -> int:
-        start: int = self.last_computation_execution_start
-        stop: int = self.last_computation_execution_stop
-        return self._time_template(start, stop, "computation execution")
+        warnings.warn(self.last_times_msg)
+        return -1
 
 
 # A class that holds data about the compiled object, including statistics about how it's been called
@@ -631,6 +628,7 @@ def trace(
 # TODO Consider making this faster by reusing more data
 # TODO Create a general mechanism for running traces that produces reproducible provenance and the
 #   appropriate error checks
+@thunder.core.profile.annotate_for_profile("transform_for_execution")
 def transform_for_execution(
     trace: TraceCtx,
     executors_list: Sequence[Executor],

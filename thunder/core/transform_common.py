@@ -113,6 +113,7 @@ def _inplace_copy_sanity_check(extrace: Trace):
 #   that only produce non-proxy objects
 # NOTE needed_proxies is an in/out argument, it takes an initial set of Variables you want to keep, and return
 #   all the needed proxies of the input trace
+@thunder.core.profile.annotate_for_profile("dce")
 def dce(trace: Trace, needed_proxies: None | set[Variable] = None) -> Trace:
     start_time_ns = time.perf_counter_ns()
 
@@ -456,6 +457,7 @@ def canonicalize_proxies(bsyms: Sequence[BoundSymbol]) -> Sequence[BoundSymbol]:
     return output
 
 
+@thunder.core.profile.annotate_for_profile("wrap_return-value_together_with_arguments")
 def wrap_return_value_together_with_argments(trace: Trace) -> Trace:
     last = trace.bound_symbols[-1]
     assert last.sym.id == prims.PrimIDs.RETURN
@@ -480,6 +482,7 @@ def unwrap_return_value(trace: Trace) -> Trace:
     return new_trace
 
 
+@thunder.core.profile.annotate_for_profile("remove_context_manager_prims_from_trace")
 def remove_context_manager_prims_from_trace(trace: Trace) -> Trace:
     def is_context_manager_prim(bsym):
         # context manager prims would/should be explicitly tagged.

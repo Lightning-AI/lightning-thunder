@@ -10,6 +10,7 @@ import time
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance, VariableInterface
 import thunder.core.dtypes as dtypes
 import thunder.core.utils as cutils
+import thunder.core.profile
 from thunder.core.utils import ProxyDict, check, safe_map_flat
 from thunder.core.symbol import BoundSymbol
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
@@ -31,6 +32,7 @@ comment_symbols = {prims.PrimIDs.COMMENT, prims.PrimIDs.UNPACK_TRIVIAL}
 # 1. The trace is updated with `visitor_transform` with `visit_helper_` (where executors try to claim the symbols). Note that this replaces the output proxies in the trace.
 # 2. `visit_helper_` also creates a swapmap from the new symbols back to old one.
 # 3. After the `visitor_transform`, it iterates over the updated trace and puts back the old proxies.
+@thunder.core.profile.annotate_for_profile("_transform_for_operator_execution")
 def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: Sequence[Executor]) -> TraceCtx:
     start_time_ns = time.perf_counter_ns()
 
@@ -133,6 +135,7 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
     return extrace
 
 
+@thunder.core.profile.annotate_for_profile("transform_for_execution")
 def transform_for_execution(trace: TraceCtx, executors_list: Sequence[Executor]) -> TraceCtx:
     import torch
 
@@ -212,6 +215,7 @@ def _update_fusion_call_ctx(bsym: BoundSymbol) -> BoundSymbol:
     return bsym.sym.executor.fuse(fusion_bsym_to_region(bsym), counter)
 
 
+@thunder.core.profile.annotate_for_profile("update_fusion_call_ctx")
 def update_fusion_call_ctx(trace: TraceCtx) -> TraceCtx:
     """Updates the call context of the trace to be the current call context.
 
@@ -287,6 +291,7 @@ def _del_last_used(bound_symbols, flattened_final_output, *, clear_mutable_colle
 
 
 # TODO Review deleting non-proxies
+@thunder.core.profile.annotate_for_profile("del_last_used")
 def del_last_used(trace: TraceCtx, *, clear_mutable_collections=False) -> TraceCtx:
     """Mark last used intermediates to be deleted. This lets the Python garbage collector free
         unused tensor memory.
