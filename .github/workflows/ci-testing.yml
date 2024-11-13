@@ -17,7 +17,7 @@ defaults:
 env:
   #CI: "true"
   TORCH_URL_RC: "https://download.pytorch.org/whl/test/cpu/torch_test.html"
-  TORCH_URL_NIGHTLY: "https://download.pytorch.org/whl/nightly/cpu/torch/"
+  TORCH_URL_NIGHTLY: "https://download.pytorch.org/whl/nightly/cpu"
   TORCH_URL_STABLE: "https://download.pytorch.org/whl/cpu"
 
 jobs:
@@ -81,10 +81,15 @@ jobs:
 
       - name: Install package & dependencies
         run: |
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+             brew install libomp
+          fi
           pip --version
+          pip install -U \
+            ${PIP_EXTRA_FLAG} torch torchvision torchaudio \
+            --index-url=${TORCH_URL}
           pip install -e . -U \
-            -r requirements/test.txt \
-            --find-links=${TORCH_URL} ${PIP_EXTRA_FLAG}
+            ${PIP_EXTRA_FLAG} -r requirements/test.txt
           pip list
         shell: bash
 
