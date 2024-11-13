@@ -221,6 +221,8 @@ class CompileData:
         # State for pytorch autocast context managers.
         self.autocast_stack: AutocastStack = AutocastStack()
 
+        # State to query whether grad is enabled or disabled using
+        # torch.no_grad/torch.enable_grad/torch._C._set_grad_enabled
         self.is_grad_enabled: bool = True
 
         #

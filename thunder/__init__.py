@@ -442,6 +442,8 @@ def jit(
         # which seems to break the consistency of cache_info, leading to a failure in cache_info check.
         cache_info["alias_tensor_indices"] = _alias_tensor_of_args_kwargs(*args, **kwargs)
 
+        # Store the `is_grad_enabled` state of PyTorch. This is used by vjp transform
+        # to treat certain Symbols as constant.
         cache_info["is_grad_enabled"] = pytorch.is_grad_enabled()
         cd.is_grad_enabled = pytorch.is_grad_enabled()
 
