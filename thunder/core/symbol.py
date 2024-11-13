@@ -321,7 +321,8 @@ class Symbol:
             result = self.meta(*args, **kwargs)
             trace.pop_scope()
 
-        if not get_compile_data().is_grad_enabled:
+        cd = get_compile_data()
+        if cd is not None and not cd.is_grad_enabled:
 
             def tag_tensorproxy_output_as_detached(proxy):
                 if isinstance(proxy, TensorProxy):
