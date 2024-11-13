@@ -454,9 +454,15 @@ class FusionDefinitionWrapper:
         if hasattr(fd, "_selected_device"):
             kwargs["device"] = fd._selected_device
         if not self._enable_options:
+            
+        if nvfuser_version() >= LooseVersion("0.2.23"):
             kwargs["_enable_options"] = self._enable_options
         if not self._disable_options:
-            kwargs["_disable_options"] = self._disable_options
+                kwargs["_disable_options"] = self._disable_options
+            
+        elif len(self._enable_options) or len(self._disable_options):
+            warnings.warn(f"nvFuser _enable_options/_disable_options requires version 0.2.23 and above, using version {nvfuser_version()}. These options will be ignored.")
+            
         with annotate_for_profile(self.name):
             return fd.execute(args, **kwargs)
 
@@ -558,7 +564,7 @@ def create_fusion_definition_wrapper(
         "nv_disable_options", "List of NVFUSER_DISABLE options to set."
     )
     _disable_options = _disable_options if _disable_options is not None else []
-    print(_enable_options, _disable_options)
+    
     tensor_indices = []
     for idx, x in enumerate(sorted_unique_inputs):
         if isinstance(x, TensorProxy):
@@ -571,7 +577,7 @@ def create_fusion_definition_wrapper(
     def get_fd(input_descriptors) -> FusionDefinition:
         # A closure over local trace and region
         return create_fd(bsyms, input_descriptors, sorted_unique_inputs, sorted_unique_outputs)
-    # breakpoint()
+    
     fdw = FusionDefinitionWrapper(
         get_fd,
         partial(to_descriptors, sorted_unique_inputs),

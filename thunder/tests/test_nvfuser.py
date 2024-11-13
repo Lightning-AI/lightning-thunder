@@ -1080,42 +1080,39 @@ def test_sdpa(
 
 
 @instantiate(
-    dtypes=(thunder.float16,),
+    dtypes=(thunder.float32,),
     devicetypes=(devices.DeviceType.CUDA,),
     executors=(nvFuserExecutor,),
     decorators=(
         pytest.mark.skipif(
-            nvfuser_version() is None or nvfuser_version() < LooseVersion("0.2.2"),
-            reason="Requires nvFuser version 0.2.2 or later",
+            nvfuser_version() is None or nvfuser_version() < LooseVersion("0.2.23"),
+            reason="Requires nvFuser version 0.2.23 or later",
         ),
     ),
 )
-def test_enable_disable_options(executor, device: str, dtype: dtypes.dtype):
+def test_enable_disable_options(executor, device: str, thunder_dtype: dtypes.dtype):
 
     def fn(a, b):
         return torch.matmul(a, b)
 
+    m, n, k = 24, 16, 16
 
-
-    m = 24
-    n = 16
-    k = 16
+    dtype = ltorch.to_torch_dtype(thunder_dtype)
     inps = [
-        torch.randn(m, k, device="cuda", dtype=torch.float16),
-        torch.randn(k, n, device="cuda", dtype=torch.float16),
+        torch.randn(m, k, device="cuda", dtype=dtype),
+        torch.randn(k, n, device="cuda", dtype=dtype),
     ]
 
-    compiled_func = thunder.jit(fn, executors_list=executor.executors_list(), nv_enable_matmul=True, nv_disable_options=["matmul_expr_eval", "kernel_reuse"])
-    try:
+    compiled_func = thunder.jit(
+        fn, 
+        executors_list=executor.executors_list(), 
+        nv_enable_matmul=True, 
+        nv_enable_options=["fuse_matmul"],
+        nv_disable_options=["matmul_expr_eval", "kernel_reuse"]
+    )
+    # The above combination of options enables matmul codegen and disables expr evaluation for matmul.
+    # Since matmul scheduler does not support float32 inputs, the execution should raise an error.
+    # By default, without using these options, the given fusion will run through expr eval scheduler correctly.
+
+    with pytest.raises(RuntimeError, match="Can not find a scheduler to schedule fusion segment"):
         out = compiled_func(*inps)
-        raise RuntimeError(
-            'RuntimeError:  INTERNAL ASSERT FAILED at "/opt/pytorch/nvfuser/csrc/fusion_segmenter.cpp":3718, please report a bug with repro script to NVFuser at https://github.com/NVIDIA/Fuser/issues. Can not find a scheduler to schedule fusion segment'
-        )
-    except:
-        pass
-        
-    # out = compiled_func(*inps)
-    # traces = thunder.last_traces(compiled_func)
-    # fusions = examine.get_fusions(traces[-1])
-    # assert len(fusions) == 1
-    # torch.testing.assert_close(out, torch.matmul(*inps))
