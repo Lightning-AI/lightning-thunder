@@ -483,8 +483,7 @@ def test_hf_phi3_mini_128k():
         model = Phi3ForCausalLM(configuration).to(torch.bfloat16)
 
     # thunder.jit doesn't work with phi3, so we use torch.compile
-    # 
-    # compiled_model = thunder.jit(model)
+    # https://github.com/Lightning-AI/lightning-thunder/issues/735
     backend = ThunderCompiler()
     # Can't use fullgraph=True because of conditional statement in modeling_phi3.py:205
     compiled_model = torch.compile(model, backend=backend)
@@ -501,6 +500,8 @@ def test_hf_phi3_mini_128k():
     # https://github.com/Lightning-AI/lightning-thunder/issues/1407
     torch.testing.assert_close(compiled_loss, ref_loss, rtol=1e-2, atol=1e-2)
 
+    # Gradients are very different from reference
+    # TODO: Investigate gradients differences
     loss_grad = torch.randn_like(compiled_loss)
     grads_ref = torch.autograd.grad(ref_loss, model.parameters(), grad_outputs=loss_grad)
     grads_compiled = torch.autograd.grad(compiled_loss, model.parameters(), grad_outputs=loss_grad)
