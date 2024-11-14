@@ -445,6 +445,68 @@ def test_hf_qwen2():
     torch.testing.assert_close(grads_ref, grads_compiled, rtol=1e-2, atol=1e-2)
 
 
+PHI3_MINI_128K_CFG = {
+    "max_position_embeddings": 32,
+    "rope_scaling": {
+        "long_factor": [
+            1.0700000524520874,
+            1.1200000047683716,
+        ],
+        "short_factor": [
+            1.1,
+            1.1,
+        ],
+        "type": "longrope",
+    },
+    "sliding_window": 262144,
+    "torch_dtype": "bfloat16",
+    "architectures": ["Phi3ForCausalLM"],
+    "attention_bias": False,
+    # Scaled down for testing
+    "hidden_size": 16,
+    "num_attention_heads": 4,
+    "vocab_size": 8,
+    "pad_token_id": 6,
+}
+
+
+@thunder.tests.framework.requiresCUDA
+def test_hf_phi3_mini_128k():
+    from thunder.dynamo import ThunderCompiler
+    from transformers import Phi3Config, Phi3ForCausalLM
+
+    # https://huggingface.co/microsoft/Phi-3-mini-128k-instruct/blob/main/config.json
+    config_args = PHI3_MINI_128K_CFG.copy()
+    configuration = Phi3Config(**config_args)
+    configuration.num_hidden_layers = 1
+    with torch.device("cuda"):
+        model = Phi3ForCausalLM(configuration).to(torch.bfloat16)
+
+    # thunder.jit doesn't work with phi3, so we use torch.compile
+    # 
+    # compiled_model = thunder.jit(model)
+    backend = ThunderCompiler()
+    # Can't use fullgraph=True because of conditional statement in modeling_phi3.py:205
+    compiled_model = torch.compile(model, backend=backend)
+
+    input_ids = torch.randint(0, configuration.vocab_size, (1, configuration.max_position_embeddings), device="cuda")
+    ref_output = model(input_ids=input_ids, labels=input_ids)
+    ref_loss = ref_output.loss
+
+    compiled_output = compiled_model(input_ids=input_ids, labels=input_ids)
+    compiled_loss = compiled_output.loss
+
+    # Less strict tolerance probably due to different type promotion order for bfloat16
+    # TODO: As per Qwen2, investigate why the loss is different
+    # https://github.com/Lightning-AI/lightning-thunder/issues/1407
+    torch.testing.assert_close(compiled_loss, ref_loss, rtol=1e-2, atol=1e-2)
+
+    loss_grad = torch.randn_like(compiled_loss)
+    grads_ref = torch.autograd.grad(ref_loss, model.parameters(), grad_outputs=loss_grad)
+    grads_compiled = torch.autograd.grad(compiled_loss, model.parameters(), grad_outputs=loss_grad)
+    torch.testing.assert_close(grads_ref, grads_compiled, rtol=1e-2, atol=1e-2)
+
+
 LLAMA_3_2_1B_CFG = {
     "architectures": ["LlamaForCausalLM"],
     "attention_bias": False,
