@@ -18,6 +18,7 @@ from thunder.core.pytree import tree_flatten, tree_unflatten
 if TYPE_CHECKING:
     from typing import Any
     from collections.abc import Callable, Sequence
+    from thunder.core.trace import TraceCtx
 
 
 __all__ = [
@@ -119,7 +120,7 @@ def is_literal(x: Any) -> bool:
     return True
 
 
-def _to_printable(tracectx: Optional, x: Any) -> tuple[Any, tuple[str, Any] | None]:
+def _to_printable(tracectx: TraceCtx | None, x: Any) -> tuple[Any, tuple[str, Any] | None]:
     can_print, module_info = is_printable(x)
     if can_print:
         return x, module_info
@@ -136,7 +137,7 @@ def _to_printable(tracectx: Optional, x: Any) -> tuple[Any, tuple[str, Any] | No
 
 # TODO Improve type annotations
 def to_printable(
-    trace: Optional,
+    trace: TraceCtx | None,
     x: Any,
     *,
     import_ctx: dict | None = None,
@@ -315,7 +316,9 @@ class SigInfo:
     # TODO Print the original signature's type annotations
     # TODO Maybe be clear about what inputs are const and what aren't?
     # TODO Improve this signature's type annotations
-    def prettyprint(self, *, trace: Optional = None, import_ctx: Optional = None, object_ctx=None) -> str:
+    def prettyprint(
+        self, *, trace: TraceCtx | None = None, import_ctx: Any | None = None, object_ctx: Any | None = None
+    ) -> str:
         def _arg_printer(name: str, has_default: bool, default: Any = None) -> str:
             # NOTE In this case the argument has a default value, like 'a' in foo(a=5)
             if has_default:
