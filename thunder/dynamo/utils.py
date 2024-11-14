@@ -463,15 +463,12 @@ def _get_storage_shape(t: torch.Tensor):
 
 
 def _get_example_input_tensor_metadata(t: torch.Tensor) -> ExampleInputMetaData:
-    integer_types = list(dtypes._thunder_to_torch_dtype_map[t] for t in dtypes.integer_dtypes)
     meta_ev = ExampleInputMetaData(
         t.requires_grad, t.layout, t.device, t.dtype, _concrete_shape(t), _get_storage_shape(t), t.stride()
     )
-    # For integer-type tensors, record the min/max values to enable creating a random integer tensor with the same range.
-    if t.dtype in integer_types:
-        minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(t)
-        meta_ev.min_val = minmax[0].cpu().item()
-        meta_ev.max_val = minmax[1].cpu().item()
+    minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(t)
+    meta_ev.min_val = minmax[0].cpu().item()
+    meta_ev.max_val = minmax[1].cpu().item()
     return meta_ev
 
 
