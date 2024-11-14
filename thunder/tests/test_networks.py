@@ -403,7 +403,7 @@ def test_thunderfx_mistral_nemo_small():
 @thunder.tests.framework.requiresCUDA
 def test_hf_qwen2():
     from thunder.dynamo import ThunderCompiler
-    from transformers import AutoConfig, Qwen2ForCausalLM
+    from transformers import AutoConfig, AutoModelForCausalLM
 
     # https://huggingface.co/Qwen/Qwen2.5-7B-Instruct/blob/main/config.json
     configuration = AutoConfig.from_pretrained(
@@ -415,7 +415,7 @@ def test_hf_qwen2():
         num_hidden_layers=1,
     )
     with torch.device("cuda"):
-        model = Qwen2ForCausalLM(configuration).to(torch.bfloat16)
+        model = AutoModelForCausalLM.from_config(configuration).to(torch.bfloat16)
 
     # thunder.jit doesn't work with Qwen2, so we use torch.compile
     # https://github.com/Lightning-AI/lightning-thunder/issues/1405
