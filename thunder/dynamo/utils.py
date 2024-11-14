@@ -499,7 +499,8 @@ def _get_example_inputs_from_placeholder(
                 return _get_example_input_tensor_metadata(ev)
             return ev.detach().clone().requires_grad_(ev.requires_grad)
 
-    check("example_value" in node.meta, lambda: f"example_value does not exist in the meta of {node}", ValueError)
+    if "example_value" not in node.meta:
+        return None
     example_value = node.meta["example_value"]
 
     if isinstance(example_value, torch.Tensor):
@@ -777,6 +778,10 @@ def reproducer(
             print("]\n", file=f)
         print(f"def test_g{graph_idx}():", file=f)
         print(" ", _addindent(readable, 2), file=f)
+        if any(arg is None for arg in args):
+            print(
+                "  # Warning: Inferring some inputs fails, inputs that cannot be inferred are set to None, requiring the user to manually give inputs according to the code"
+            )
         print("  inputs = [", file=f)
         for a in args:
             print("  ", end="", file=f)

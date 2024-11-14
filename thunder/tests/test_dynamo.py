@@ -781,7 +781,6 @@ def test_checkpoint_converter_submodule():
             assert isinstance(n.target, Symbol)
 
 
-# @requiresCUDA
 @instantiate(dtypes=NOTHING, executors=[DynamoThunderExecutor])
 def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, tmp_path):
     from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform
