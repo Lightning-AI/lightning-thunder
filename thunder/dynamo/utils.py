@@ -11,12 +11,12 @@ from pathlib import Path
 
 import torch
 from torch.nn.modules.module import _addindent
+from torch._subclasses.fake_tensor import FakeTensor
 
 from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.torch.langctx import torchctx
 from thunder.core.utils import check
-from thunder.core import dtypes
 
 if TYPE_CHECKING:
     from thunder.core.symbol import Symbol
@@ -466,9 +466,10 @@ def _get_example_input_tensor_metadata(t: torch.Tensor) -> ExampleInputMetaData:
     meta_ev = ExampleInputMetaData(
         t.requires_grad, t.layout, t.device, t.dtype, _concrete_shape(t), _get_storage_shape(t), t.stride()
     )
-    minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(t)
-    meta_ev.min_val = minmax[0].cpu().item()
-    meta_ev.max_val = minmax[1].cpu().item()
+    if not isinstance(t, FakeTensor):
+        minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(t)
+        meta_ev.min_val = minmax[0].cpu().item()
+        meta_ev.max_val = minmax[1].cpu().item()
     return meta_ev
 
 
