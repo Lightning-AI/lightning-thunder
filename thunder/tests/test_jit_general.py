@@ -1236,7 +1236,11 @@ def test_autograd_function_apply():
     bsym_str_ids = tuple(
         bsym.sym.id for bsym in initial_computation_trace.bound_symbols if isinstance(bsym.sym.id, str)
     )
-    assert any(bsid.startswith("autograd_function_apply") for bsid in bsym_str_ids), bsym_str_ids
+    assert any(
+        bsym.sym.id == "torch.ops.higher_order.autograd_function_apply"
+        for bsym in initial_computation_trace.bound_symbols
+        if isinstance(bsym.sym.id, str)
+    )
 
     grad = torch.rand_like(y)
     actual_grad = torch.autograd.grad(y, x, grad)

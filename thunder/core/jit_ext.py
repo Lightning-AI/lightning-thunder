@@ -772,10 +772,9 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
 # ref: https://github.com/pytorch/pytorch/blob/38114ec/torch/_functorch/autograd_function.py#L715-L752
 @register_general_jit_lookaside(torch.ops.higher_order.autograd_function_apply)
 def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_args, **fwd_kwargs):
-    from thunder.core import utils
     from thunder.core.baseutils import sequencify
-    from thunder.core.pytree import tree_flatten, tree_map
-    from thunder.core.transforms import VJPDual, augmented_forward_impls, backward_impls
+    from thunder.core.pytree import tree_map
+    from thunder.core.trace_interpreter import interpret_trace
 
     def _generate_random_str_id() -> str:
         import secrets
@@ -783,8 +782,6 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
 
         length = 5
         return "".join(secrets.choice(string.ascii_lowercase) for _ in range(length))
-
-    jit_ctx: JitCtx = get_jit_ctx()
 
     args_tensor_mask = unwrap(fwd_kwargs["args_tensor_mask"])
     # TODO(crcrpar): Think about making use of `non_differentiable_idx`
@@ -798,51 +795,11 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
         return aug_fwd_trace
     aug_fwd_result = aug_fwd_trace.output
     output, saved_values = unwrap(aug_fwd_result)
-    wrapped_output = wrap(output, provenance=aug_fwd_provenance)
+    unwrapped_fwd_args = tree_map(lambda t: unwrap(t), new_fwd_args)
 
-    unwrapped_fwd_args = tree_map(lambda t: unwrap(t), new_fwd_args)[1:]
-
-    fwd_bsyms: list[BoundSymbol] = aug_fwd_trace.bound_symbols
-    producer_map = utils.producers(fwd_bsyms)
-    tensor_to_prod_bsym: dict[Variable, BoundSymbol] = {}
-    for p in tree_flatten((output, saved_values))[0]:
-        if not isinstance(p, TensorProxy):
-            continue
-        if p in producer_map:
-            prod_bsym = producer_map[p]
-            tensor_to_prod_bsym[variableify(p)] = prod_bsym
-    prod_bsym_to_tensor = {v: unvariableify(k) for k, v in tensor_to_prod_bsym.items()}
-
-    sym_id = f"autograd_function_apply_{_generate_random_str_id()}"
-    vanilla_fwd_trace = TraceCtx()
-    vanilla_fwd_trace.args = unwrapped_fwd_args
-    unpack_bsyms = [
-        prims.unpack_trivial.bind(a, name=a.name, output=a)
-        for a in filter(lambda a: isinstance(a, Proxy), vanilla_fwd_trace.args)
-    ]
-    for bsym in unpack_bsyms + fwd_bsyms[:-1]:
-        vanilla_fwd_trace.add_bound_symbol(bsym)
-    vanilla_fwd_trace.add_bound_symbol(prims.python_return.bind(output, output=()))
-    vanilla_fwd_trace._siginfo = SigInfo.from_name_and_args(sym_id, vanilla_fwd_trace.args)
-
-    @wraps(vanilla_fwd_trace.python_callable())
-    def core_of_fwd(*args, **kwargs):
-        return thunder.core.trace_interpreter.interpret_trace(vanilla_fwd_trace, *args, **kwargs)
-
-    sym = jit_ctx.ad_hoc_executor.register_operator(
-        vanilla_fwd_trace._siginfo.name,
-        like=core_of_fwd,
-    )
-    unwrapped_forward_result = sym(*unwrapped_fwd_args)
-
-    # Define augmented fwd rule and backward rule on the fly.
-    augmented_fwd_trace = TraceCtx()
-    augmented_fwd_trace.args = vanilla_fwd_trace.args
-    for bsym in unpack_bsyms + fwd_bsyms[:-1]:
-        augmented_fwd_trace.add_bound_symbol(bsym)
-    augmented_fwd_trace.add_bound_symbol(prims.python_return.bind(output, saved_values, output=()))
-    si = SigInfo.from_name_and_args(f"augmented_autograd_function_apply_{sym_id}", augmented_fwd_trace.args)
-    augmented_fwd_trace._siginfo = si
+    tmp_name = _generate_random_str_id()
+    aug_fwd_trace.args = unwrapped_fwd_args
+    aug_fwd_trace._siginfo = SigInfo.from_name_and_args(tmp_name, aug_fwd_trace.args)
 
     grads = sequencify(tree_map(lambda t: TensorProxy(like=t), sequencify(output)))
     bwd_args = (wrap_const(None),)
@@ -855,42 +812,29 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
     )
     if bwd_trace is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return bwd_trace
-    bwd_trace.args = bwd_tensor_args
+    bwd_trace.args = (None,) + bwd_tensor_args
     bwd_unpack_bsyms = [
         prims.unpack_trivial.bind(a, name=a.name, output=a)
         for a in filter(lambda a: isinstance(a, Proxy), bwd_trace.args)
     ]
     bwd_trace.bound_symbols = bwd_unpack_bsyms + bwd_trace.bound_symbols
-    bwd_trace._siginfo = SigInfo.from_name_and_args(f"bwd_{sym_id}", saved_values + grads)
+    bwd_trace._siginfo = SigInfo.from_name_and_args(f"bwd_{tmp_name}", saved_values + grads)
+
+    @wraps(aug_fwd_trace.python_callable())
+    def augmented_forward_caller(*args, **kwargs):
+        return interpret_trace(aug_fwd_trace, *args, **kwargs)
 
     @wraps(bwd_trace.python_callable())
-    def bwd_impl_callable(*args, **kwargs):
-        return thunder.core.trace_interpreter.interpret_trace(bwd_trace, *args, **kwargs)
+    def backward_caller(*args, **kwargs):
+        return interpret_trace(bwd_trace, *args, **kwargs)
 
-    @wraps(core_of_fwd)
-    def grad_transform(*args, **kwargs):
-        from thunder.core.transforms import get_grad, put_grads
+    from thunder.torch import autograd_function_apply
 
-        primal, residuals = thunder.core.trace_interpreter.interpret_trace(
-            augmented_fwd_trace,
-            *args,
-            **kwargs,
-        )
-        grads = tree_map(lambda t: get_grad(t), sequencify(primal))
-        bwd_args = grads + residuals
-        result = bwd_impl_callable(*bwd_args)
-        put_grads(args, result)
-        return primal
-
-    jit_ctx.ad_hoc_executor.register_implementation(
-        sym,
-        execution_transform=core_of_fwd,
-        grad_transform=grad_transform,
-    )
-
-    return wrap(
-        unwrapped_forward_result,
-        provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[fwd.provenance, bwd.provenance]),
+    return interpreter_needs_wrap(autograd_function_apply)(
+        wrap_const(augmented_forward_caller),
+        wrap_const(backward_caller),
+        *fwd_args,
+        **fwd_kwargs,
     )
 
 
