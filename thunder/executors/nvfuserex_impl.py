@@ -460,7 +460,7 @@ class FusionDefinitionWrapper:
 
         elif self.enable_options or self.disable_options:
             warnings.warn(
-                f"nvFuser _enable_options/_disable_options requires version 0.2.23 and above, using version {nvfuser_version()}. These options will be ignored."
+                f"nv_enable_options/nv_disable_options require nvFuser version 0.2.23 and above, found version {nvfuser_version()}. These options will be ignored."
             )
 
         with annotate_for_profile(self.name):
