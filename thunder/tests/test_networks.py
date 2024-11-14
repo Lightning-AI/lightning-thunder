@@ -403,20 +403,17 @@ def test_thunderfx_mistral_nemo_small():
 @thunder.tests.framework.requiresCUDA
 def test_hf_qwen2():
     from thunder.dynamo import ThunderCompiler
-    from transformers import Qwen2Config, Qwen2ForCausalLM
+    from transformers import AutoConfig, Qwen2ForCausalLM
 
     # https://huggingface.co/Qwen/Qwen2.5-7B-Instruct/blob/main/config.json
-    configuration = Qwen2Config(
-        # Qwen2.5-7B-Instruct uses Grouped-Query Attention, while the default
-        # config uses Multi-Head Attention
-        num_attention_heads=28,
-        num_key_value_heads=4,
+    configuration = AutoConfig.from_pretrained(
+        "Qwen/Qwen2.5-7B-Instruct",
         # Scaled down for testing
         hidden_size=56,
         vocab_size=16,
         max_position_embeddings=32,
+        num_hidden_layers=1,
     )
-    configuration.num_hidden_layers = 1
     with torch.device("cuda"):
         model = Qwen2ForCausalLM(configuration).to(torch.bfloat16)
 
