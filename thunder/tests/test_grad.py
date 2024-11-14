@@ -1148,7 +1148,7 @@ def test_forward_and_backward_from_trace(executor, device, _):
     from thunder.clang import cos, sin
     import thunder.torch as ltorch
     from thunder.core.transforms import forward_and_backward_from_trace, value_and_grad
-    from thunder.core.transform_common import wrap_return_value_together_with_argments
+    from thunder.core.transform_common import wrap_return_value_together_with_arguments
 
     def func(a, b, *, c):
         d = a + b + c
@@ -1159,7 +1159,7 @@ def test_forward_and_backward_from_trace(executor, device, _):
     b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     c = make_tensor((3,), device=device, dtype=torch.float64, requires_grad=True)
     initial_trace = trace(inline_trace=False)(func, a, b, c=c)
-    wrapped_trace = wrap_return_value_together_with_argments(initial_trace)
+    wrapped_trace = wrap_return_value_together_with_arguments(initial_trace)
     fw_trace, bw_trace = forward_and_backward_from_trace(wrapped_trace)
     fw = executor.make_callable(fw_trace)
     bw = executor.make_callable(bw_trace)
