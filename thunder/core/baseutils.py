@@ -38,6 +38,7 @@ __all__ = [
     "check_types",
     "check_valid_length",
     "check_valid_shape",
+    "default_dataclass_params",
     "extract_callable_name",
     "fnprint",
     "get_module",
