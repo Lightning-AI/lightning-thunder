@@ -803,6 +803,7 @@ _register_elementwise_unary_implementation(ltorch.real, real)
 
 # nn.functional elementwise unary
 celu = _register_torch_operation("celu", module=torch.nn.functional)
+elu = _register_torch_operation("elu", module=torch.nn.functional)
 gelu = _register_torch_operation("gelu", module=torch.nn.functional)
 relu = _register_torch_operation("relu", module=torch.nn.functional)
 relu6 = _register_torch_operation("relu6", module=torch.nn.functional)
@@ -815,6 +816,7 @@ def _elementwise_unary_with_inplace_checker(a: TensorProxy, /, inplace: bool = F
     return isinstance(a, TensorProxy) and not inplace
 
 
+_register_elementwise_unary_implementation(ltorch.elu, elu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.celu, celu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.gelu, gelu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.relu, relu, checker=_elementwise_unary_with_inplace_checker)

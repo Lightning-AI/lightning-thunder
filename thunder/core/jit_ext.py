@@ -672,6 +672,8 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     trace_of_fwd, fwd_output_provenance = _convert_pytorchfunc_to_thundertrace(
         custom_forward, True, wrapped_ctx, *args, **kwargs
     )
+    if trace_of_fwd is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return trace_of_fwd
 
     # Forward.
     unwrapped_custom_forward_args = tree_map(lambda a: unwrap(a), args)
@@ -680,6 +682,11 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         unwrapped_custom_forward_args,
     )
     trace_of_fwd.args = unwrapped_custom_forward_args
+    unpack_bsyms = [
+        prims.unpack_trivial.bind(a, name=a.name, output=a)
+        for a in filter(lambda a: isinstance(a, Proxy), trace_of_fwd.args)
+    ]
+    trace_of_fwd.bound_symbols = unpack_bsyms + trace_of_fwd.bound_symbols
 
     @wraps(trace_of_fwd.python_callable())
     def core_of_forward(*args, **kwargs):
@@ -721,6 +728,11 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         ctx_proxy.saved_tensors + grads,
     )
     trace_of_backward.args = tuple(ctx_proxy.saved_tensors + grads)
+    bwd_unpack_bsyms = [
+        prims.unpack_trivial.bind(a, name=a.name, output=a)
+        for a in filter(lambda a: isinstance(a, Proxy), trace_of_backward.args)
+    ]
+    trace_of_backward.bound_symbols = bwd_unpack_bsyms + trace_of_backward.bound_symbols
 
     bwd_trace_impl = TraceCtx()
     bwd_trace_impl.bound_symbols.extend(trace_of_backward.bound_symbols)
