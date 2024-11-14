@@ -1,25 +1,38 @@
-from types import CodeType, FunctionType, MethodType, EllipsisType
-from typing import List, Dict, Tuple, Set, Deque, Any, NamedTuple, Optional
-from numbers import Number
-from collections import deque
-from collections.abc import Mapping, Sequence, Iterable, Callable
-import inspect
-from inspect import Parameter
-import string
-import functools
+from __future__ import annotations
 from functools import partial
-import dis
-import linecache
+from inspect import Parameter
+from typing import TYPE_CHECKING, NamedTuple
 import dataclasses
+import dis
+import functools
+import inspect
+import linecache
 import sys
-
-import torch
 
 import thunder.core.baseutils as baseutils
 from thunder.core.baseutils import ProxyInterface, check
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 from thunder.core.pytree import tree_flatten, tree_unflatten
+
+if TYPE_CHECKING:
+    from typing import Any
+    from collections.abc import Callable, Sequence
+
+
+__all__ = [
+    "ContextObject",
+    "SigInfo",
+    "get_siginfo",
+    "get_source_line",
+    "indent_string",
+    "is_literal",
+    "is_printable",
+    "is_simple_printable_collection",
+    "module_shortname",
+    "prettyprint",
+    "to_printable",
+]
 
 #
 # Functions related to analyzing and printing functions and arguments
