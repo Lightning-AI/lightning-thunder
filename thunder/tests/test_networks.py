@@ -406,7 +406,6 @@ def test_hf_for_nemo(model_id):
     from thunder.dynamo import ThunderCompiler
     from transformers import AutoConfig, AutoModelForCausalLM
 
-    # https://huggingface.co/Qwen/Qwen2.5-7B-Instruct/blob/main/config.json
     configuration = AutoConfig.from_pretrained(
         model_id,
         # Scaled down for testing
