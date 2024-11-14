@@ -725,8 +725,23 @@ def get_env() -> tuple[str, str]:
     return torch_env, thunder_packages
 
 
+def thunder_options_to_str(thunder_options: dict) -> str:
+    from thunder import resolve_executors
+
+    option_str = ""
+    for key, value in thunder_options.items():
+        if key == "executors":
+            executors = resolve_executors(value)
+            option_str += f"{key}=[" + ",".join(f"thunder.extend.get_executor('{ex.name}')" for ex in executors) + "]"
+        else:
+            option_str += f"{key}={repr(value)}"
+        option_str += ","
+    return option_str
+
+
 def reproducer(
     gm: torch.fx.GraphModule,
+    thunder_options: dict,
     args: tuple[torch.Tensor | ExampleInputMetaData],
     folder: str | os.PathLike,
     graph_idx: int,
@@ -737,6 +752,8 @@ def reproducer(
     folder.mkdir(exist_ok=True)
     torch_env, thunder_pkgs = get_env()
     readable = _readable(gm, "DynamoModule", print_output=False)
+    has_cuda_args = any(hasattr(arg, "device") and arg.device.type == "cuda" for arg in args)
+    thunder_options_str = thunder_options_to_str(thunder_options)
     with open(folder / f"g{graph_idx}.py", "w") as f:
         print('"""', file=f)
         print("Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:\n", file=f)
@@ -749,14 +766,15 @@ def reproducer(
         print("import os\n", file=f)
         print("import torch", file=f)
         print("import thunder", file=f)
-        print("import thunder.transforms.cudagraph", file=f)
-        print("from thunder.dev_utils.nvtx_profile_transform ", end="", file=f)
-        print("import NvtxProfileTransform\n", file=f)
-        print("_execs = [", file=f)
-        print('  thunder.extend.get_executor("nvfuser"),', file=f)
-        print('  thunder.extend.get_executor("sdpa"),', file=f)
-        print('  thunder.extend.get_executor("cudnn"),', file=f)
-        print("]\n", file=f)
+        if has_cuda_args:
+            print("import thunder.transforms.cudagraph", file=f)
+            print("from thunder.dev_utils.nvtx_profile_transform ", end="", file=f)
+            print("import NvtxProfileTransform\n", file=f)
+            print("_execs = [", file=f)
+            print('  thunder.extend.get_executor("nvfuser"),', file=f)
+            print('  thunder.extend.get_executor("sdpa"),', file=f)
+            print('  thunder.extend.get_executor("cudnn"),', file=f)
+            print("]\n", file=f)
         print(f"def test_g{graph_idx}():", file=f)
         print(" ", _addindent(readable, 2), file=f)
         print("  inputs = [", file=f)
@@ -764,35 +782,42 @@ def reproducer(
             print("  ", end="", file=f)
             arg_like(a, f)
         print("  ]", file=f)
+        print(
+            """  # NOTE the `BACKEND` environment variable is intended to provide some common ways to debug/benchmark thunder.jit
+  # with different backend and compilation options. By default, it uses the original Thunder options that are executed""",
+            file=f,
+        )
         print('  backend = os.getenv("BACKEND")', file=f)
+        # thunder_options_str = ", ".join(f"{key}={repr(value)}" for key, value in thunder_options.items())
         print('  if backend == None or backend == "thunder":', file=f)
-        obj = "NvtxProfileTransform()"
-        print(f"    fqn = thunder.jit(DynamoModule(), transforms=[{obj}])", file=f)
-        print('  elif backend == "thunder-no-t.c":', file=f)
-        print("    fqn = thunder.jit(DynamoModule(), executors=_execs)", file=f)
-        print('  elif backend == "t.c":', file=f)
+        print(f"    fqn = thunder.jit(DynamoModule(), {thunder_options_str})", file=f)
+        print('  elif backend == "torch.compile":', file=f)
         print("    fqn = torch.compile(DynamoModule())", file=f)
         print('  elif backend == "dynamo-eager":', file=f)
         print('    fqn = torch.compile(DynamoModule(), backend="eager")', file=f)
-        print('  elif backend == "thunder-cugraph":', file=f)
-        print("    xform = thunder.transforms.cudagraph.CUDAGraphTransform()", file=f)
-        print("    fqn = thunder.jit(DynamoModule(), transform=[xform])", file=f)
-        print(f'  post_graph = os.getenv("POST_GRAPH", "0")', file=f)
-        print(f"  if int(post_graph) > 0:", file=f)
-        print(f"    fqn = torch.cuda.make_graphed_callables(", file=f)
-        print(f"      fqn, inputs,", file=f)
-        print(f"      num_warmup_iters=1, allow_unused_input=True", file=f)
-        print(f"    )", file=f)
-        print(f'  torch.cuda.nvtx.range_push("g{graph_idx} compilation")', file=f)
-        print(f"  fqn(*inputs) # run once to force compilation", file=f)
-        print(f"  torch.cuda.nvtx.range_pop()", file=f)
-        print(f'  torch.cuda.nvtx.range_push("g{graph_idx} warmups")', file=f)
+        if has_cuda_args:
+            print('  elif backend == "thunder-nvtxprofile":', file=f)
+            print("    fqn = thunder.jit(DynamoModule(), transforms=[NvtxProfileTransform()])", file=f)
+            print('  elif backend == "thunder-no-torch.compile":', file=f)
+            print("    fqn = thunder.jit(DynamoModule(), executors=_execs)", file=f)
+            print('  elif backend == "thunder-cudagraph":', file=f)
+            print("    xform = thunder.transforms.cudagraph.CUDAGraphTransform()", file=f)
+            print("    fqn = thunder.jit(DynamoModule(), transform=[xform])", file=f)
+            print(f'  post_graph = os.getenv("POST_GRAPH", "0")', file=f)
+            print(f"  if int(post_graph) > 0:", file=f)
+            print(f"    fqn = torch.cuda.make_graphed_callables(", file=f)
+            print(f"      fqn, inputs,", file=f)
+            print(f"      num_warmup_iters=1, allow_unused_input=True", file=f)
+            print(f"    )", file=f)
+            print(f'  torch.cuda.nvtx.range_push("g{graph_idx} warmups")', file=f)
         print(f"  for i in range(3): # warmup runs", file=f)
         print(f"    fqn(*inputs)", file=f)
-        print(f"  torch.cuda.synchronize()", file=f)
-        print(f"  torch.cuda.nvtx.range_pop()", file=f)
-        print(f'  torch.cuda.nvtx.range_push("g{graph_idx}")', file=f)
+        if has_cuda_args:
+            print(f"  torch.cuda.synchronize()", file=f)
+            print(f"  torch.cuda.nvtx.range_pop()", file=f)
+            print(f'  torch.cuda.nvtx.range_push("g{graph_idx}")', file=f)
         print(f"  fqn(*inputs)", file=f)
-        print(f"  torch.cuda.synchronize()", file=f)
-        print(f"  torch.cuda.nvtx.range_pop()", file=f)
+        if has_cuda_args:
+            print(f"  torch.cuda.synchronize()", file=f)
+            print(f"  torch.cuda.nvtx.range_pop()", file=f)
         print(f"\ntest_g{graph_idx}()", file=f)

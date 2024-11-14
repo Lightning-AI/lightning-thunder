@@ -781,11 +781,28 @@ def test_checkpoint_converter_submodule():
             assert isinstance(n.target, Symbol)
 
 
-@requiresCUDA
-def test_dynamo_reproducer_2graph(tmp_path):
-    backend = ThunderCompiler()
+# @requiresCUDA
+@instantiate(dtypes=NOTHING, executors=[DynamoThunderExecutor])
+def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, tmp_path):
+    from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform
+    from thunder import nvfuser_executor
+    from thunder.transforms.cudagraph import CUDAGraphTransform
+
+    if device.startswith("cuda"):
+        backend = ThunderCompiler(
+            transforms=[
+                NvtxProfileTransform(),
+                CUDAGraphTransform(),
+            ],
+            executors=[nvfuser_executor],
+            cache="no caching",
+            langctx=None,
+            record_history=False,
+        )
+    else:
+        backend = ThunderCompiler(executors=None)
     # Test non-contiguous input tensor
-    x = make_tensor((4, 4), low=3, high=10, dtype=torch.int64, device="cuda", noncontiguous=True)
+    x = make_tensor((4, 4), low=3, high=10, dtype=torch.int64, device=device, noncontiguous=True)
 
     @torch.compile(backend=backend)
     def func(x):

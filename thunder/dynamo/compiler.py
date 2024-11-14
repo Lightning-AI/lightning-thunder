@@ -106,4 +106,10 @@ class ThunderCompiler:
             thunder_modules = subgraph_info.thunder_compiled_fns
             example_inputs = subgraph_info.thunder_compiled_fns_example_inputs
             for cur_module, example_input, cur_name in safe_zip(thunder_modules, example_inputs, thunder_module_names):
-                reproducer(getattr(cur_module, "_model"), example_input, reproducer_folder, f"{graph_idx+1}_{cur_name}")
+                reproducer(
+                    getattr(cur_module, "_model"),
+                    self.thunder_options,
+                    example_input,
+                    reproducer_folder,
+                    f"{graph_idx+1}_{cur_name}",
+                )
