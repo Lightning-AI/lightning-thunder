@@ -409,11 +409,12 @@ def test_hf_qwen2():
     configuration = AutoConfig.from_pretrained(
         "Qwen/Qwen2.5-7B-Instruct",
         # Scaled down for testing
-        hidden_size=56,
         vocab_size=16,
+        pad_token_id=15,
         max_position_embeddings=32,
         num_hidden_layers=1,
     )
+    configuration.hidden_size = configuration.num_attention_heads
     with torch.device("cuda"):
         model = AutoModelForCausalLM.from_config(configuration).to(torch.bfloat16)
 
