@@ -613,12 +613,8 @@ def remove_empty_autocast(graph_module: torch.fx.GraphModule) -> torch.fx.GraphM
     return empty_autocast_removed_graph_module
 
 
-def arg_like_tensor_integer(arg: torch.Tensor | ExampleInputMetaData, f: TextIO):
-    """Creates a new argument like the given tensor, which must be an integer
-    type. This is separated out because randn() does not work for integer
-    types."""
-    itypes = list(dtypes._thunder_to_torch_dtype_map[t] for t in dtypes.integer_dtypes)
-    assert arg.dtype in itypes
+def arg_like_tensor(arg: torch.Tensor | ExampleInputMetaData, f: TextIO):
+    """Creates a new argument like the given tensor or tensor metadata"""
     if isinstance(arg, torch.Tensor):
         min_val, max_val = torch.aminmax(arg)
         min_val = min_val.cpu().item()
@@ -626,40 +622,19 @@ def arg_like_tensor_integer(arg: torch.Tensor | ExampleInputMetaData, f: TextIO)
     else:
         min_val, max_val = arg.min_val, arg.max_val
     storage_shape = _get_storage_shape(arg) if isinstance(arg, torch.Tensor) else arg.storage_shape
-    # Sometimes the tensor can just be all the same value, in which case
-    # randint() will complain that there's no "range" to the low/high params.
-    # So we use a completely different method for tensor generation, then.
-    if min_val == max_val:
-        meta = f"data={min_val}, dtype={arg.dtype},"
-        meta = f'{meta} device="{arg.device}", requires_grad={arg.requires_grad}'
+    if min_val is not None and min_val == max_val:
+        meta = f"data={min_val}, dtype={arg.dtype}, device='{arg.device}', requires_grad={arg.requires_grad}"
         print(f"  torch.tensor({meta}).broadcast_to({storage_shape}).as_strided({arg.shape}, {arg.stride()}),", file=f)
         return
-    meta = f"low={min_val}, high={max_val},"
-    meta = f"{meta} size={storage_shape},"
-    meta = f"{meta} dtype={arg.dtype}, layout={arg.layout},"
-    meta = f'{meta} device="{arg.device}", requires_grad={arg.requires_grad}'
-    print(f"  torch.randint({meta}).as_strided({arg.shape}, {arg.stride()}),", file=f)
-
-
-def arg_like_tensor(arg: torch.Tensor | ExampleInputMetaData, f: TextIO):
-    """Creates a new argument like the given tensor"""
-    itypes = list(dtypes._thunder_to_torch_dtype_map[t] for t in dtypes.integer_dtypes)
-    assert arg.dtype not in itypes
-    storage_size = _get_storage_shape(arg) if isinstance(arg, torch.Tensor) else arg.storage_shape
-    meta = f"size={storage_size},"
-    meta = f"{meta} dtype={arg.dtype}, layout={arg.layout},"
-    meta = f'{meta} device="{arg.device}", requires_grad={arg.requires_grad}'
-    print(f"  torch.randn({meta}).as_strided({arg.shape}, {arg.stride()}),", file=f)
+    meta = f"{storage_shape}, dtype={arg.dtype},  device='{arg.device}', requires_grad={arg.requires_grad},"
+    meta = f"{meta} low={min_val}, high={max_val},"
+    print(f"  torch.testing.make_tensor({meta}).as_strided({arg.shape}, {arg.stride()}),", file=f)
 
 
 def arg_like(arg: Any, f: TextIO):
     """Creates a new argument that is similar to the given arg."""
-    itypes = list(dtypes._thunder_to_torch_dtype_map[t] for t in dtypes.integer_dtypes)
     if isinstance(arg, (torch.Tensor, ExampleInputMetaData)):
-        if arg.dtype in itypes:
-            arg_like_tensor_integer(arg, f)
-        else:
-            arg_like_tensor(arg, f)
+        arg_like_tensor(arg, f)
     else:
         # Assume it's a literal that we can just print directly.
         print(f"  {arg},", file=f)
@@ -780,7 +755,7 @@ def reproducer(
         print(" ", _addindent(readable, 2), file=f)
         if any(arg is None for arg in args):
             print(
-                "  # Warning: Inferring some inputs fails, inputs that cannot be inferred are set to None, requiring the user to manually give inputs according to the code"
+                "  # Warning: The inputs that cannot be inferred are set to None, requiring the user to manually give inputs according to the code"
             )
         print("  inputs = [", file=f)
         for a in args:
