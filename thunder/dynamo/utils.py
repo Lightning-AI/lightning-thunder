@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from thunder.core.symbol import Symbol
     import os
     from typing import Any, TextIO
+    from collections.abc import Sequence
 
 auto_register_ops = set(itertools.chain(*torch_auto_registered_ops.values()))
 
@@ -130,9 +131,9 @@ class SubgraphInfo:
     split_reasons: list | None = None
 
 
-def _concrete_shape(x):
+def _concrete_value(vals: torch.Size | Sequence):
     """
-    Get the concrete shape for a FakeTensor if it has `torch.SymInt` in its shape.
+    Get the concrete value from the input `vals` if it contains `torch.SymInt`.
     """
 
     def get_backed_value(s):
@@ -141,7 +142,7 @@ def _concrete_shape(x):
         # Value is already concrete.
         return s
 
-    return tuple(map(get_backed_value, x.shape))
+    return tuple(map(get_backed_value, vals))
 
 
 def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
@@ -176,11 +177,12 @@ def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
                     # Here, we only want to verify that thunder can run an operation.
                     # So, it is ok to verify with concrete value.
                     example_value = example_value.new_ones(
-                        _concrete_shape(example_value), device=example_value.device, dtype=example_value.dtype
+                        _concrete_value(example_value.shape), device=example_value.device, dtype=example_value.dtype
                     )
                 elif isinstance(example_value, tuple):
                     example_value = tuple(
-                        e_v.new_ones(_concrete_shape(e_v), device=e_v.device, dtype=e_v.dtype) for e_v in example_value
+                        e_v.new_ones(_concrete_value(e_v.shape), device=e_v.device, dtype=e_v.dtype)
+                        for e_v in example_value
                     )
                 else:
                     # NOTE - This will be caught will be caught and be part of the SplitReason.
@@ -454,17 +456,23 @@ def recompile_graph(gm: torch.fx.GraphModule):
 
 
 def _get_storage_shape(t: torch.Tensor):
-    shape = _concrete_shape(t)
+    shape = _concrete_value(t.shape)
     if t.is_contiguous():
         return shape
-    strides = t.stride()
+    strides = _concrete_value(t.stride())
     storage_size = sum(strides[i] * (shape[i] - 1) for i in range(len(shape))) + 1
     return (storage_size,)
 
 
 def _get_example_input_tensor_metadata(t: torch.Tensor) -> ExampleInputMetaData:
     meta_ev = ExampleInputMetaData(
-        t.requires_grad, t.layout, t.device, t.dtype, _concrete_shape(t), _get_storage_shape(t), t.stride()
+        t.requires_grad,
+        t.layout,
+        t.device,
+        t.dtype,
+        _concrete_value(t.shape),
+        _get_storage_shape(t),
+        _concrete_value(t.stride()),
     )
     if not isinstance(t, FakeTensor):
         minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(t)
