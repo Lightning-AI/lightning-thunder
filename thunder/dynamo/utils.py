@@ -621,8 +621,8 @@ def arg_like_tensor(arg: torch.Tensor | ExampleInputMetaData, f: TextIO):
         min_val, max_val = arg.min_val, arg.max_val
     storage_shape = _get_storage_shape(arg) if isinstance(arg, torch.Tensor) else arg.storage_shape
     if min_val is not None and min_val == max_val:
-        meta = f"data={min_val}, dtype={arg.dtype}, device='{arg.device}', requires_grad={arg.requires_grad}"
-        print(f"  torch.tensor({meta}).broadcast_to({storage_shape}).as_strided({arg.shape}, {arg.stride()}),", file=f)
+        meta = f"{storage_shape}, {min_val}, dtype={arg.dtype}, device='{arg.device}', requires_grad={arg.requires_grad}, layout={arg.layout}"
+        print(f"  torch.full({meta}).as_strided({arg.shape}, {arg.stride()}),", file=f)
         return
     meta = f"{storage_shape}, dtype={arg.dtype},  device='{arg.device}', requires_grad={arg.requires_grad},"
     meta = f"{meta} low={min_val}, high={max_val},"

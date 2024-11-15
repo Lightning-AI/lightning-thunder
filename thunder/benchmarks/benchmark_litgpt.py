@@ -241,6 +241,7 @@ class Benchmark_litGPT:
         use_torchao_fp8_allgather: bool = False,
         use_torchao_fp8_precompute_scale_for_fsdp: bool = False,
         fp8_shard_intermediate_activation: bool = False,
+        save_dynamo_repro: str | None = None,
     ):
         seed = 1337
         torch.manual_seed(seed)
@@ -275,6 +276,11 @@ class Benchmark_litGPT:
         self.dump_thunder_traces = dump_thunder_traces
         self.dump_memory_snapshot = dump_memory_snapshot
         self.fp8_shard_intermediate_activation = fp8_shard_intermediate_activation
+        if save_dynamo_repro is not None:
+            assert (
+                "dynamo" in self.compile and "thunder" in self.compile
+            ), "save_dynamo_repro can only be used if --compile=thunder+dynamo"
+            self.save_dynamo_repro = save_dynamo_repro
 
         if use_torchao_fp8_linear:
 
@@ -891,6 +897,9 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
                 for i, b_traces in enumerate(bwd_traces, start=1):
                     print(f"##########\n#{i}-th ThunderModule\n##########")
                     print(b_traces[-1])
+
+        if benchmark.save_dynamo_repro:
+            benchmark.backend.save_reproducer_to_folder(benchmark.save_dynamo_repro)
 
     if global_rank in [0, None]:
         if return_metrics_as_json:
