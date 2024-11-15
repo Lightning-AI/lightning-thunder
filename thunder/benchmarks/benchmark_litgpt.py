@@ -280,7 +280,7 @@ class Benchmark_litGPT:
             assert (
                 "dynamo" in self.compile and "thunder" in self.compile
             ), "save_dynamo_repro can only be used if --compile=thunder+dynamo"
-            self.save_dynamo_repro = save_dynamo_repro
+        self.save_dynamo_repro = save_dynamo_repro
 
         if use_torchao_fp8_linear:
 
