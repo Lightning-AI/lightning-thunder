@@ -1775,6 +1775,18 @@ def celu(a: TensorLike, /, alpha: float = 1.0, inplace: bool = False) -> TensorL
 _inplace_to_out_of_place[celu] = celu, 2
 
 
+@torchsymbol(torch.nn.functional.elu, is_method=False)
+def elu(a: TensorProxy, /, alpha: float = 1.0, inplace: bool = False) -> TensorLike:
+    negative_domain_value = alpha * expm1(a)
+    out = where(a > 0, a, negative_domain_value)
+    if inplace:
+        return prims.copy_(out, a)
+    return out
+
+
+_inplace_to_out_of_place[elu] = elu, 2
+
+
 @torchsymbol(torch.nn.functional.gelu, is_method=False)
 def gelu(a: TensorProxy, /, *, approximate: str = "none") -> TensorLike:
     if approximate == "none":

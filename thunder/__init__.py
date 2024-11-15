@@ -32,7 +32,7 @@ import thunder.core.devices as devices
 from thunder.core.transform_common import (
     dce,
     Transform,
-    wrap_return_value_together_with_argments,
+    wrap_return_value_together_with_arguments,
     unwrap_return_value,
     remove_context_manager_prims_from_trace,
 )
@@ -540,7 +540,7 @@ def jit(
             prologue_traces = [prologue_trc]
             computation_traces = [computation_trc]
 
-            computation_trc = wrap_return_value_together_with_argments(computation_trc)
+            computation_trc = wrap_return_value_together_with_arguments(computation_trc)
             computation_traces.append(computation_trc)
 
             computation_trc = remove_context_manager_prims_from_trace(computation_trc)

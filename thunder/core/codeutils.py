@@ -1,8 +1,8 @@
 from types import CodeType, FunctionType, MethodType, EllipsisType
-from typing import List, Dict, Tuple, Set, Deque, Any, NamedTuple
+from typing import List, Dict, Tuple, Set, Deque, Any, NamedTuple, Optional
 from numbers import Number
 from collections import deque
-from collections.abc import Mapping, Sequence, Iterable
+from collections.abc import Mapping, Sequence, Iterable, Callable
 import inspect
 from inspect import Parameter
 import string
@@ -11,6 +11,7 @@ from functools import partial
 import dis
 import linecache
 import dataclasses
+import sys
 
 import torch
 
@@ -19,7 +20,6 @@ from thunder.core.baseutils import ProxyInterface, check
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 from thunder.core.pytree import tree_flatten, tree_unflatten
-from thunder.core.baseutils import *
 
 #
 # Functions related to analyzing and printing functions and arguments
@@ -78,7 +78,7 @@ def is_printable(x: Any) -> tuple[bool, None | tuple[str, Any]]:
 
     if isinstance(x, ContextObject):
         return True, None
-    if is_collection(x):
+    if baseutils.is_collection(x):
         # TODO RC1 Fix collection printing by testing if each item is printable and gathering the imports
         #   required (if any)
         flat, _ = tree_flatten(x)
@@ -96,7 +96,7 @@ def is_literal(x: Any) -> bool:
     if isinstance(x, (ContextObject, ProxyInterface)):
         return False
 
-    if is_collection(x):
+    if baseutils.is_collection(x):
         flat, _ = tree_flatten(x)
         for f in flat:
             if is_literal(f):
@@ -106,7 +106,7 @@ def is_literal(x: Any) -> bool:
     return True
 
 
-def _to_printable(tracectx: Optional, x: Any) -> tuple[Any, Optional[tuple[str, Any]]]:
+def _to_printable(tracectx: Optional, x: Any) -> tuple[Any, tuple[str, Any] | None]:
     can_print, module_info = is_printable(x)
     if can_print:
         return x, module_info
@@ -126,8 +126,8 @@ def to_printable(
     trace: Optional,
     x: Any,
     *,
-    import_ctx: Optional[dict] = None,
-    object_ctx: Optional[dict] = None,
+    import_ctx: dict | None = None,
+    object_ctx: dict | None = None,
 ) -> Printable:
     # Short-circuits if x is a Proxy
     if isinstance(x, ProxyInterface):
@@ -139,7 +139,7 @@ def to_printable(
         # Return the instance as printable object (as function `prettyprint` knows how to deal with it).
         return x
 
-    if is_collection(x):
+    if baseutils.is_collection(x):
         # specify namespace="" to avoid flattening dataclasses
         flat, spec = tree_flatten(x, namespace="")
         if flat and flat[0] is x:
@@ -193,7 +193,7 @@ def prettyprint(
 
     m = partial(_qm, quote_markers=_quote_markers)
 
-    if literals_as_underscores and is_literal(x) and not is_collection(x):
+    if literals_as_underscores and is_literal(x) and not baseutils.is_collection(x):
         return m("_")
 
     if type(x) is str:
@@ -232,7 +232,7 @@ def prettyprint(
         call_repr_str = ",".join(call_repr)
         return m(f"{name}({call_repr_str})")
 
-    if is_collection(x):
+    if baseutils.is_collection(x):
         # specify namespace="" to avoid flattening dataclasses
         flat, spec = tree_flatten(x, namespace="")
         printed = tuple(
@@ -260,7 +260,7 @@ def prettyprint(
         return m(f"{baseutils.print_type(x, with_quotes=False)}")
 
     # Handles objects that this doesn't know how to serialize as a string
-    return m(f"(object of type {print_type(type(x), with_quotes=False)})")
+    return m(f"(object of type {baseutils.print_type(type(x), with_quotes=False)})")
 
 
 # Use dis.Positions in 3.11+ and make it up in <3.11
