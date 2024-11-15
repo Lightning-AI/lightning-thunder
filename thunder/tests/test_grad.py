@@ -298,10 +298,10 @@ def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = Fals
 
     # dirty little trick for speed: skip the prologue, however, the prologue is required when
     # there are non-differentiable kwargs
+    jf = executor.make_callable(f, disable_torch_autograd=True)
     if prologue_required:
         comp_f = thunder.jit(f, disable_torch_autograd=True)
     else:
-        jf = executor.make_callable(f, disable_torch_autograd=True)
         comp_f = thunder.compile_data(jf).get_computation_and_inputs(*primals)[0].computation_fn
 
     outs_p, J_u = numerical_jvp(comp_f)(primals, u)
@@ -310,7 +310,7 @@ def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = Fals
 
     v = tree_map(make, outs_p)
     if set_compile_data:
-        with thunder.core.compile_data.compile_data_and_stats(thunder.compile_data(comp_f), None):
+        with thunder.core.compile_data.compile_data_and_stats(thunder.compile_data(jf), None):
             initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
     else:
         initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
