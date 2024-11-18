@@ -1233,9 +1233,6 @@ def test_autograd_function_apply():
     torch.testing.assert_close(y, y_ref)
 
     initial_computation_trace = thunder.last_traces(jitted)[0]
-    bsym_str_ids = tuple(
-        bsym.sym.id for bsym in initial_computation_trace.bound_symbols if isinstance(bsym.sym.id, str)
-    )
     assert any(
         bsym.sym.id == "torch.ops.higher_order.autograd_function_apply"
         for bsym in initial_computation_trace.bound_symbols
