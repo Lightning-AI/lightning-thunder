@@ -662,6 +662,15 @@ def test_to_printable_not_collection():
         assert inp is out
 
 
+def test_to_printable_collection():
+    from collections import namedtuple
+    MyTuple = namedtuple('MyTuple', ['x', 'y'])
+
+    inps = (MyTuple("abc", "def"),)
+    for inp in inps:
+        out = codeutils.to_printable(None, inp)
+        assert inp == out
+
 #
 # Type promotion tests
 #
