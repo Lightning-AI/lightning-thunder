@@ -3021,3 +3021,30 @@ def test_saved_view_of_output_of_autograd_function_does_not_leak():
 
     for ref in prev_iter_refs:
         assert ref() is None
+
+
+def test_debug_options():
+    from thunder import DebugOptions
+    import dill
+
+    initial_state = dill.dumps(dict(DebugOptions.__dict__))
+    print(DebugOptions.__dict__)
+    DebugOptions.register_option("test_option", bool, False, "Test Option")
+
+    assert "Test Option" in DebugOptions.__doc__
+
+    do = DebugOptions(test_option=True)
+    assert do.test_option is True
+
+    with pytest.raises(TypeError, match="test_option"):
+        do = DebugOptions(test_option=5)
+
+    del DebugOptions._docs["test_option"]
+    del DebugOptions._defaults["test_option"]
+    del DebugOptions.__annotations__["test_option"]
+    del DebugOptions.test_option
+
+    DebugOptions._set_docstring()
+
+    print(DebugOptions.__dict__)
+    assert dill.dumps(dict(DebugOptions.__dict__)) == initial_state

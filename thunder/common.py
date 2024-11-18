@@ -12,6 +12,7 @@ from thunder.core.options import (
     resolve_cache_option,
     SHARP_EDGES_OPTIONS,
     resolve_sharp_edges_option,
+    DebugOptions,
 )
 from thunder.core.utils import check, is_collection, AutocastStack
 from thunder.core.pytree import tree_flatten, tree_map
@@ -202,6 +203,7 @@ class CompileData:
         compile_options: dict[str, Any] = {},
         get_computation_and_inputs: Callable | None = None,
         executor_lookasides: dict[Callable, Callable] | None = None,
+        debug_options: DebugOptions | None = None,
     ):
         # Records whether we're using the thunder.jit() entrypoint or not
         #   The thunder.jit() entrypoint introduces important architectural updates,
@@ -257,6 +259,7 @@ class CompileData:
         self.disable_preprocessing = disable_preprocessing
         self.disable_torch_autograd_support = disable_torch_autograd_support
         self.debug_log = debug_log
+        self.debug_options = DebugOptions() if debug_options is None else debug_options
 
         # TODO Consider validating that this dict has exclusively string keys
         self.compile_options = compile_options
