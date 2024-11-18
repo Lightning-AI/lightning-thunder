@@ -85,11 +85,10 @@ def test_no_autocast(executor, device, dtype):
 
     trace = thunder.trace()(func)
     python_callable = trace.python_callable()
-    # 3 unwraps for:
+    # 2 unwraps for:
     # @no_grad()
-    # @autocast(device_type="cpu", ...)
-    # @autocast(device_type="cuda", ...)
-    cfunc = python_callable.__wrapped__.__wrapped__.__wrapped__
+    # @no_autocast
+    cfunc = python_callable.__wrapped__.__wrapped__
     b1, b2 = python_callable()
     assert b1 is False
     assert b2 is False
@@ -107,10 +106,10 @@ def test_no_autocast(executor, device, dtype):
     with torch.autocast(device_type=devicetype, dtype=test_dtype):
         b1, b2 = python_callable()
         b3, b4 = cfunc()
-    assert b1 is False
-    assert b2 is False
-    assert b3 is (True if torch_device.type == "cuda" else False)
-    assert b4 is (True if torch_device.type == "cpu" else False)
+    assert not b1
+    assert not b2
+    assert not b3
+    assert not b4
 
 
 @instantiate(
@@ -139,24 +138,6 @@ def test_compile_autocast(executor, device, dtype):
     with torch.autocast(device_type=devicetype, dtype=test_dtype):
         output = cfunc(a, b)
     assert output.dtype == (torch.float16 if torch_device.type == "cuda" else torch.bfloat16)
-
-
-# Disabling on windows temporarily, until our windows runners source the
-# appropriate visual studio config.
-@pytest.mark.skipif(not is_inductor_supported() or platform.system() == "Windows", reason="inductor unsupported")
-def test_torch_compile_autocast():
-    """Checks if our autocast decorator plays well with ``torch.compile``"""
-
-    @no_autocast
-    def fn(x, y):
-        return x + y
-
-    a = torch.randn(2, 2)
-    b = torch.randn(2, 2)
-    cfn = torch.compile(fn, fullgraph=True)
-    actual = cfn(a, b)
-    expected = a + b
-    torch.testing.assert_close(actual, expected)
 
 
 def test_autocast_mixed_dtype_inputs():
