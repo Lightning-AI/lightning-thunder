@@ -21,7 +21,8 @@ from thunder.core.utils import FrozenDict, make_hashable
 from thunder.core.pytree import tree_flatten_with_dataclass, tree_unflatten, tree_map
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
-from thunder.core.proxies import Proxy, NumberProxy, variableify, CollectionProxy
+from thunder.core.proxies import Proxy, TensorProxy, NumberProxy, variableify, CollectionProxy, ProxyTag
+from thunder.core.compile_data import get_compile_data
 
 from thunder.core.trace import (
     get_tracectx,
@@ -83,7 +84,7 @@ def default_python_printer(
         kwarg_str = ", ".join(f"{k}={codeutils.prettyprint(v)}" for k, v in kwarg_printables.items())
 
     result_str: str
-    if bsym.output is None or (codeutils.is_collection(bsym.output) and len(bsym.output) == 0):
+    if bsym.output is None or (baseutils.is_collection(bsym.output) and len(bsym.output) == 0):
         result_str = ""
     else:
         result_str = f"{codeutils.prettyprint(out_printables, literals_as_underscores=True)} = "
@@ -319,6 +320,20 @@ class Symbol:
             trace.push_scope(subsymbols)
             result = self.meta(*args, **kwargs)
             trace.pop_scope()
+
+        cd = get_compile_data()
+        if cd is not None and not cd.is_grad_enabled:
+            # If grad is disabled using `torch.no_grad` or `torch._C._set_grad_enabled(False)`,
+            # tag the results with `DETACHED_AUTOGRAD_GRAPH` which makes this Symbol a constant for
+            # vjp transform (applied later).
+            def tag_tensorproxy_output_as_detached(proxy):
+                if isinstance(proxy, TensorProxy):
+                    # We need to remove name from trace, otherwise replace will return a proxy with new name.
+                    trace.names.remove(proxy.name)
+                    return proxy.replace(tags=(ProxyTag.DETACHED_AUTOGRAD_GRAPH,))
+                return proxy
+
+            result = tree_map(tag_tensorproxy_output_as_detached, result)
 
         bsym = self.bind(*args, **kwargs, output=result, subsymbols=subsymbols)
         symbols_list = trace.peek_scope()

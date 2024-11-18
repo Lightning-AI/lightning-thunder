@@ -17,6 +17,7 @@ from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace, t
 from thunder.core.utils import ProxyDict, producers, check
 
 if TYPE_CHECKING:
+    from numbers import Number
     from typing import Any
     from thunder.core.module import ThunderModule
 
@@ -456,7 +457,7 @@ def canonicalize_proxies(bsyms: Sequence[BoundSymbol]) -> Sequence[BoundSymbol]:
     return output
 
 
-def wrap_return_value_together_with_argments(trace: Trace) -> Trace:
+def wrap_return_value_together_with_arguments(trace: Trace) -> Trace:
     last = trace.bound_symbols[-1]
     assert last.sym.id == prims.PrimIDs.RETURN
     flat_args, _ = tree_flatten((trace.args, trace.kwargs))

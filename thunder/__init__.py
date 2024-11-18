@@ -32,7 +32,7 @@ import thunder.core.devices as devices
 from thunder.core.transform_common import (
     dce,
     Transform,
-    wrap_return_value_together_with_argments,
+    wrap_return_value_together_with_arguments,
     unwrap_return_value,
     remove_context_manager_prims_from_trace,
 )
@@ -442,6 +442,11 @@ def jit(
         # which seems to break the consistency of cache_info, leading to a failure in cache_info check.
         cache_info["alias_tensor_indices"] = _alias_tensor_of_args_kwargs(*args, **kwargs)
 
+        # Store the `is_grad_enabled` state of PyTorch. This is used by vjp transform
+        # to treat certain Symbols as constant.
+        cache_info["is_grad_enabled"] = pytorch.is_grad_enabled()
+        cd.is_grad_enabled = pytorch.is_grad_enabled()
+
         # TODO RC1 Add module and function checks to prologue (make it a compile option)
 
         # Checks cache
@@ -535,7 +540,7 @@ def jit(
             prologue_traces = [prologue_trc]
             computation_traces = [computation_trc]
 
-            computation_trc = wrap_return_value_together_with_argments(computation_trc)
+            computation_trc = wrap_return_value_together_with_arguments(computation_trc)
             computation_traces.append(computation_trc)
 
             computation_trc = remove_context_manager_prims_from_trace(computation_trc)
