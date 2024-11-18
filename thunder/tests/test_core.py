@@ -664,12 +664,14 @@ def test_to_printable_not_collection():
 
 def test_to_printable_collection():
     from collections import namedtuple
-    MyTuple = namedtuple('MyTuple', ['x', 'y'])
+
+    MyTuple = namedtuple("MyTuple", ["x", "y"])
 
     inps = (MyTuple("abc", "def"),)
     for inp in inps:
         out = codeutils.to_printable(None, inp)
         assert inp == out
+
 
 #
 # Type promotion tests

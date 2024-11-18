@@ -209,6 +209,7 @@ def sequencify(x: Any) -> Sequence:
 def get_module(name: str) -> Any:
     return sys.modules[name]
 
+
 def is_likely_from_collections_namedtuple(tuple_type):
     from collections import namedtuple
 
