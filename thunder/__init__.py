@@ -575,15 +575,13 @@ def jit(
                         arg_to_idx[a] = i
 
                     tensor_indices: int = []
-                    tensor_args_consumed_by_inplace_grouped_by_numel: dict[int, list[TensorProxy]] = defaultdict(list)
                     for bsym in filter(lambda b: b.sym.id == prims.PrimIDs.COPY_, computation_trc.bound_symbols):
                         t = bsym.flat_proxy_args[1]
                         index = arg_to_idx[t]
-                        numel = t.numel
-                        tensor_args_consumed_by_inplace_grouped_by_numel[numel].append(index)
                         tensor_indices.append(index)
-                    if len(tensor_args_consumed_by_inplace_grouped_by_numel) > 1:
-                        vanilla_tensor_args = set(tensor_indices)
+                    tmp_vanilla_tensor_args = set(tensor_indices)
+                    if len(tmp_vanilla_tensor_args) > 1:
+                        vanilla_tensor_args = tmp_vanilla_tensor_args
 
             if epilogue_trc is not None:
                 epilogue_traces = [epilogue_trc]
