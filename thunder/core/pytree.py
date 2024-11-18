@@ -6,7 +6,7 @@ import optree
 import torch
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
-from thunder.core.baseutils import ProxyInterface
+from thunder.core.baseutils import ProxyInterface, is_likely_from_collections_namedtuple
 from types import FunctionType
 
 OPTREE_NAMESPACE = "thunder"
@@ -61,7 +61,7 @@ def tree_flatten(args, namespace=OPTREE_NAMESPACE):
             torch.autograd.function.FunctionCtx,
         }
         and not isinstance(args, (ProxyInterface))
-        and not isinstance(args, tuple)
+        and not is_likely_from_collections_namedtuple(args)
         and not dataclasses.is_dataclass(args)
         and not type(args).__module__.startswith("torch.return_types")
     ):
