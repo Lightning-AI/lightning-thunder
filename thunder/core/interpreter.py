@@ -42,7 +42,7 @@ from types import (
     TracebackType,
 )
 
-from thunder.core.baseutils import Singleton, init_colors, extract_callable_name
+from thunder.core.baseutils import Singleton, init_colors, extract_callable_name, is_likely_from_collections_namedtuple
 from thunder.core.codeutils import Positions
 
 
@@ -2847,16 +2847,6 @@ def _tuple_new_provenance_tracking_lookaside(cls, iterable=(), /):
                     return INTERPRETER_SIGNALS.EXCEPTION_RAISED
             else:
                 item_wrappers.append(wv)
-
-    def is_likely_from_collections_namedtuple(tuple_type):
-        from collections import namedtuple
-
-        # Check if tuple_type code object is coming from namedtuple
-        return (
-            hasattr(tuple_type, "__repr__")
-            and hasattr(tuple_type.__repr__, "__code__")
-            and tuple_type.__repr__.__code__ in namedtuple.__code__.co_consts
-        )
 
     # Construction of namedtuples may raise
     try:
