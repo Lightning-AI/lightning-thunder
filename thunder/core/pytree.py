@@ -61,6 +61,7 @@ def tree_flatten(args, namespace=OPTREE_NAMESPACE):
             torch.autograd.function.FunctionCtx,
         }
         and not isinstance(args, (ProxyInterface))
+        and not isinstance(args, tuple)
         and not dataclasses.is_dataclass(args)
         and not type(args).__module__.startswith("torch.return_types")
     ):
