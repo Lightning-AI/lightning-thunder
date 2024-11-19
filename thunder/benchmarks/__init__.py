@@ -3048,8 +3048,10 @@ class HFBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
     def fn(self) -> Callable:
         from transformers import AutoModelForCausalLM
 
-        model = AutoModelForCausalLM.from_config(self.config)
-        model = model.to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
+        with torch.device(self.device):
+            model = AutoModelForCausalLM.from_config(self.config)
+
+        model = model.to(dtype=self.tdtype).requires_grad_(self.requires_grad)
 
         return model
 
