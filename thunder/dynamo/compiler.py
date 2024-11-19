@@ -7,7 +7,7 @@ import warnings
 import torch
 
 from thunder.core.baseutils import run_once
-from thunder.dynamo.utils import recompile_graph
+from thunder.dynamo.utils import recompile_graph, remove_empty_autocast
 from thunder.dynamo.splitter import _splitter
 
 if TYPE_CHECKING:
@@ -72,6 +72,8 @@ class ThunderCompiler:
         self._torch_compile = partial(torch.compile, **torch_inductor_options)
 
     def __call__(self, gm: torch.fx.GraphModule, sample_args: list[torch.SymInt, torch.Tensor]):
+        gm = remove_empty_autocast(gm)
+
         # Dynamo uses lazy generation of the underlying Python code, so we need to
         # force recompilation of the GraphModule before passing it to Thunder.
         recompile_graph(gm)

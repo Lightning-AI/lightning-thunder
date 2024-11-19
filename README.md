@@ -38,7 +38,7 @@ Thunder aims to be usable, understandable, and extensible.
 
 &#160;
 
-> \[!Note\]
+> [!Note]
 > Lightning Thunder is in alpha. Feel free to get involved, but expect a few bumps along the way.
 
 &#160;

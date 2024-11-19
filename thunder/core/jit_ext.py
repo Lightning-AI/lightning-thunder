@@ -101,7 +101,7 @@ from thunder.core.baseutils import extract_callable_name
 from thunder.core.codeutils import get_siginfo, SigInfo
 import thunder.core.prims as prims
 from thunder.common import transform_for_execution
-from thunder.core.options import CACHE_OPTIONS, SHARP_EDGES_OPTIONS
+from thunder.core.options import CACHE_OPTIONS, SHARP_EDGES_OPTIONS, DebugOptions
 from thunder.core.symbol import Symbol, BoundSymbol, is_traceable
 
 from thunder.extend import Executor
@@ -1685,13 +1685,17 @@ def update_tags(proxy_swapmap: dict[Variable, Proxy]) -> None:
         new.tags.update(unvariableify(old).tags)
 
 
+DebugOptions.register_option(
+    "record_interpreter_history", bool, False, "record interpreter history (use thunder.last_interpreter_log to access)"
+)
+
+
 def thunder_general_jit(
     fn: Callable,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
     /,
     *,
-    record_history: bool = False,
     sharp_edges: SHARP_EDGES_OPTIONS,
     ad_hoc_executor,
 ) -> TraceResults:
@@ -1732,7 +1736,7 @@ def thunder_general_jit(
         callbacks=general_jit_callbacks,
         with_provenance_tracking=True,
         uncacheable_classes=(torch.Tensor, int, float, str, NoneType),
-        record_history=record_history,
+        record_history=compile_data.debug_options.record_interpreter_history,
     )
 
     with jit_ctx(ctx):

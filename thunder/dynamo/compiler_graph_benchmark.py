@@ -2,6 +2,7 @@ from __future__ import annotations
 from itertools import chain
 from pytest_benchmark.fixture import BenchmarkFixture
 from typing import TYPE_CHECKING
+from looseversion import LooseVersion
 
 import torch
 from thunder.dynamo import ThunderCompiler
@@ -124,6 +125,23 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
 
     def __call__(self, gm: torch.fx.GraphModule, sample_args: list[torch.SymInt, torch.Tensor]):
         split_module = super().__call__(gm, sample_args)
+
+        def has_checkpoint_node(g):
+            if g.find_nodes(op="call_function", target=torch.ops.higher_order.tag_activation_checkpoint):
+                return True
+            for n in g.nodes:
+                if n.op == "call_module" and has_checkpoint_node(getattr(g.owning_module, n.target).graph):
+                    return True
+            return False
+
+        if LooseVersion(torch.__version__) < LooseVersion("2.6.0"):
+            # NOTE: PyTorch 2.6 changes the structure of GraphModule when using activation checkpointing.
+            # It's hard to retrieve the example input tensor for the GraphModule contains checkpoint operator before PyTorch 2.6
+            if has_checkpoint_node(split_module.graph):
+                raise RuntimeError(
+                    "The benchmarking of the Torch activation checkpointing is only supported with PyTorch version 2.6 or later."
+                )
+
         compiled_functions_to_submodule = {
             v.compiled_fn: k for k, v in self.subgraph_infos[self.graph_idx].submodule_to_compiled_functions.items()
         }
