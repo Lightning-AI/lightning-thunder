@@ -5,6 +5,7 @@ import torch
 import torch.fx
 import torch.nn as nn
 import torch.nn.functional as F
+from looseversion import LooseVersion
 
 from thunder import dtypes
 from thunder.dynamo import ThunderCompiler
@@ -445,6 +446,10 @@ def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
             IS_WINDOWS,
             reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
         ),
+        pytest.mark.skipif(
+            LooseVersion(torch.__version__) < LooseVersion("2.6.0"),
+            reason="Skip until the Torch bug is fixed - https://github.com/pytorch/pytorch/pull/139275",
+        ),
     ),
 )
 @requiresCUDA
@@ -637,6 +642,35 @@ def test_ThunderCompilerGraphBenchmarking_post_graph(benchmark):
     )
     compiled = torch.compile(backend=backend)(f)
     compiled(x)
+
+
+@pytest.mark.skipif(
+    LooseVersion(torch.__version__) < LooseVersion("2.6.0"),
+    reason="The checkpoint function becomes a submodule of the module containing `tag_activation_checkpoint` in PyTorch 2.6.0.",
+)
+@requiresCUDA
+def test_ThunderCompilerGraphBenchmarking_checkpoint(benchmark):
+    class SimpleModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.layer1 = nn.Linear(10, 20)
+
+        def forward(self, x):
+            x = torch.utils.checkpoint.checkpoint(self.layer1, x)
+            x = F.relu(x)
+            return x
+
+    x = torch.randn(5, 10).cuda().requires_grad_()
+    model = SimpleModel().cuda().train()
+
+    exe_backend = ThunderCompiler()
+    backend = ThunderCompilerGraphBenchmarking(
+        benchmark, executors={"inductor": torch.compile, "thunderfx": torch.compile(backend=exe_backend)}
+    )
+    # Using torch.compile here fails with "TypeError: cannot pickle '_io.TextIOWrapper' object" in
+    # https://github.com/Lightning-AI/pytorch-lightning/blob/828fd998961f6a60f92c35254bb94d6e049ad069/src/lightning/fabric/wrappers.py#L421
+    jf = torch._dynamo.optimize(backend=backend)(model)
+    out = jf(x)
 
 
 @requiresCUDA

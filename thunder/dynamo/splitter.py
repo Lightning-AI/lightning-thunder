@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
+import copy
 
 import torch
 from torch.fx.passes.split_module import split_module
@@ -131,9 +132,10 @@ def _splitter(
         return partition_cnt
 
     # `split_module` iterates over nodes and determines the partition to place them based on the callback.
-    split_gm: torch.fx.GraphModule = split_module(
+    original_split_gm: torch.fx.GraphModule = split_module(
         gm, root_m=None, split_callback=callback, keep_original_order=True, keep_original_node_name=True
     )
+    split_gm = copy.deepcopy(original_split_gm)
 
     def is_thunder_supported_partition(node: torch.fx.Node) -> bool:
         return node.name.startswith("submod") and int(node.name.replace("submod_", "")) in supported_partitions
@@ -142,6 +144,7 @@ def _splitter(
     thunder_compiled_fns = []
     submodule_to_compiled_fns = {}
     for node in split_gm.graph.nodes:
+        node_name = node.name
         if is_thunder_supported_partition(node):
             graph_module = getattr(split_gm, node.name)
             # Replace PyTorch operators within the checkpointed function with the corresponding Thunder operators
@@ -150,13 +153,17 @@ def _splitter(
             # Update the node name from "submod_*" to "thunder_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "thunder"), jit_fn)
             thunder_compiled_fns.append(jit_fn)
-            submodule_to_compiled_fns[graph_module] = CompiledFunction(jit_fn, CompilerType.THUNDER)
+            submodule_to_compiled_fns[getattr(original_split_gm, node_name)] = CompiledFunction(
+                jit_fn, CompilerType.THUNDER
+            )
         elif node.name.startswith("submod"):  # For inductor
             graph_module = getattr(split_gm, node.name)
             jit_fn = torch_inductor(graph_module)
             # Update the node name from "submod_*" to "inductor_*" for more user-friendly names
             update_node_and_submodule(split_gm, node, node.name.replace("submod", "inductor"), jit_fn)
-            submodule_to_compiled_fns[graph_module] = CompiledFunction(jit_fn, CompilerType.TORCH_INDUCTOR)
+            submodule_to_compiled_fns[getattr(original_split_gm, node_name)] = CompiledFunction(
+                jit_fn, CompilerType.TORCH_INDUCTOR
+            )
         else:
             # Everything else is a glue code to call and pass outputs between the other partitions.
             pass
@@ -166,6 +173,7 @@ def _splitter(
 
     return split_gm, SubgraphInfo(
         gm,
+        original_split_gm,
         split_gm,
         thunder_compiled_fns,
         submodule_to_compiled_fns,

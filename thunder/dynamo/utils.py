@@ -80,17 +80,21 @@ class SubgraphInfo:
 
     Attributes:
         original_graph_module: The original graph module.
-        split_graph_module: The graph module for the split subgraph.
+        original_split_graph_module: The original split graph module before any transformations are applied.
+            Specifically, before the :func:`checkpoint_converter` replaces the Torch operators with Thunder symbols,
+            and before any submodules are compiled by Thunder.
+        split_graph_module: The graph module for the split subgraph. It contains the compiled thunder/inductor modules.
         thunder_compiled_fns: List of thunder optimized callables.
             This could be :obj:`None` if there the graph module was not supported by thunder.
             Look at the :attr:`split_reasons` for further information.
-        submodule_to_compiled_functions: Dict from subgraph to compiled function.
+        submodule_to_compiled_functions: Dict from subgraph in :attr:`original_split_graph_module` to compiled function.
             This will be a dict with one pair in case the graph was not split.
         split_reasons: List of reasons explaining why the subgraph was split.
             Present only if there are was a split.
     """
 
     original_graph_module: torch.fx.GraphModule
+    original_split_graph_module: torch.fx.GraphModule | None
     split_graph_module: torch.fx.GraphModule | None
     thunder_compiled_fns: list[Callable] | None
     submodule_to_compiled_functions: dict[torch.fx.GraphModule, CompiledFunction]
@@ -466,8 +470,7 @@ def _checkpoint_function_converter(gm: torch.fx.GraphModule):
     Args:
         gm (torch.fx.GraphModule): The GraphModule of the checkpointed function, which is modified inplace.
     """
-    new_graph = copy.deepcopy(gm.graph)
-    for n in new_graph.nodes:
+    for n in gm.graph.nodes:
         # replace the torch operator in "call_function" node
         if n.op == "call_function":
             assert isinstance(n.target, Callable)
@@ -476,19 +479,18 @@ def _checkpoint_function_converter(gm: torch.fx.GraphModule):
             check(
                 n.target in _torch_to_thunder_function_map, lambda: f"Unexpected {n.target}, not registered in Thunder"
             )
-            with new_graph.inserting_before(n):
-                thunder_node = new_graph.call_function(
+            with gm.graph.inserting_before(n):
+                thunder_node = gm.graph.call_function(
                     _torch_to_thunder_function_map[n.target], args=n.args, kwargs=n.kwargs
                 )
             n.replace_all_uses_with(thunder_node)
-            new_graph.erase_node(n)
+            gm.graph.erase_node(n)
         else:
             if n.op == "call_module":
                 raise RuntimeError(
                     "Unexpected call_module detected inside a checkpoint. This should have been inlined in dynamo graphs"
                 )
-    new_graph.lint()
-    gm.graph = new_graph
+    gm.graph.lint()
     recompile_graph(gm)
 
 
