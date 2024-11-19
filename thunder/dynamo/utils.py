@@ -512,3 +512,44 @@ def checkpoint_converter(gm: torch.fx.GraphModule, sub_gm: torch.fx.GraphModule)
                 else:
                     function_module = getattr(gm, n.args[0].name)
                 _checkpoint_function_converter(function_module)
+
+
+def remove_empty_autocast(graph_module: torch.fx.GraphModule) -> torch.fx.GraphModule:
+    """
+    Function to remove empty autocast regions from GraphModule.
+
+    Dynamo can provide empty autocast regions in which case, it is more performant to remove them
+    from the graph than to compile them and pay the cost of calling a wrapped optimized function
+    which does nothing.
+
+    Args:
+        graph_module: Graph module to which this pass is applied.
+
+    """
+
+    empty_autocast_removed_graph_module = copy.deepcopy(graph_module)
+
+    # Dummy init node.
+    prev_node = torch.fx.node.Node(graph_module.graph, "start_node", "call_function", lambda: None, None, None)
+    nodes_to_erase = []
+    for node in empty_autocast_removed_graph_module.graph.nodes:
+        # As _enter_autocast and _exit_autocast functions map the regions created by context manager,
+        # previous `_enter_autocast` will always correspond with current `_exit_autocast`.
+        if (
+            prev_node.target == torch.amp.autocast_mode._enter_autocast
+            and node.target == torch.amp.autocast_mode._exit_autocast
+        ):
+            # NOTE: Order of node being appended matters.
+            # The node to be erased has to have zero users.
+            # So, we remove `_exit_autocast` first (which consumes output from `_enter_autocast`)
+            # and then we can remove the corresponding `_enter_autocast`.
+            nodes_to_erase.append(node)
+            nodes_to_erase.append(prev_node)
+
+        prev_node = node
+
+    # Erase the marked nodes.
+    for node in nodes_to_erase:
+        empty_autocast_removed_graph_module.graph.erase_node(node)
+
+    return empty_autocast_removed_graph_module
