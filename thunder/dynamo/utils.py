@@ -473,7 +473,7 @@ def _get_example_input_tensor_metadata(t: torch.Tensor) -> ExampleInputMetaData:
         _get_storage_shape(t),
         _concrete_value(t.stride()),
     )
-    if not isinstance(t, FakeTensor):
+    if not isinstance(t, FakeTensor) and t.numel() != 0:
         minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(t)
         meta_ev.min_val = minmax[0].cpu().item()
         meta_ev.max_val = minmax[1].cpu().item()
@@ -620,10 +620,13 @@ def remove_empty_autocast(graph_module: torch.fx.GraphModule) -> torch.fx.GraphM
 
 def arg_like_tensor(arg: torch.Tensor | ExampleInputMetaData):
     """Creates a new argument like the given tensor or tensor metadata"""
+    min_val = None
+    max_val = None
     if isinstance(arg, torch.Tensor):
-        min_val, max_val = torch.aminmax(arg)
-        min_val = min_val.cpu().item()
-        max_val = max_val.cpu().item()
+        if arg.numel() != 0:
+            min_val, max_val = torch.aminmax(arg)
+            min_val = min_val.cpu().item()
+            max_val = max_val.cpu().item()
     else:
         min_val, max_val = arg.min_val, arg.max_val
     storage_shape = _get_storage_shape(arg) if isinstance(arg, torch.Tensor) else arg.storage_shape
