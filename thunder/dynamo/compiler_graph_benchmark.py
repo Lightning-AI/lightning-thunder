@@ -103,19 +103,24 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
             if self.post_graph:
                 compiled_fn = self.post_graph(compiled_fn, sample_args)
 
-            with record_peak_allocated_memory(self.bench):
+            if torch.cuda.is_available():
+                with record_peak_allocated_memory(self.bench):
+                    self.bench(compiled_fn, *sample_args)
+            else:
                 self.bench(compiled_fn, *sample_args)
             # BenchmarkFixture.stats is created each time bench is called (ref: https://github.com/pybenchmark/pytest-benchmark/blob/8c9a5faa1dd178b53ab7b2a66f5364a77e903d74/src/pytest_benchmark/fixture.py#L150)
             # Adds the graph number, split module name and executor suffix to the name string
             gid_key, module_name_key, ex_key = GRAPH_BY_GRAPH_BENCHMARK_PARAMS_KEYS
             self.bench.stats.name += f"-{gid_key}[{self.graph_idx+1}]-{module_name_key}[{name}]-{ex_key}[{ex_name}]"
-            assert MAX_ALLOCATED_MEMORY_KEYWORD in self.bench.extra_info
-            assert f"{self.bench.stats.name}_{MAX_ALLOCATED_MEMORY_KEYWORD}" not in self.bench.extra_info
-            # NOTE: A benchmark can include multiple stats, but only one extra_info field is allowed per benchmark.
-            # Therefore, we use the current stats name as a prefix to distinguish memory usage for each stats.
-            self.bench.extra_info[f"{self.bench.stats.name}_{MAX_ALLOCATED_MEMORY_KEYWORD}"] = (
-                self.bench.extra_info.pop(MAX_ALLOCATED_MEMORY_KEYWORD)
-            )
+
+            if torch.cuda.is_available():
+                assert MAX_ALLOCATED_MEMORY_KEYWORD in self.bench.extra_info
+                assert f"{self.bench.stats.name}_{MAX_ALLOCATED_MEMORY_KEYWORD}" not in self.bench.extra_info
+                # NOTE: A benchmark can include multiple stats, but only one extra_info field is allowed per benchmark.
+                # Therefore, we use the current stats name as a prefix to distinguish memory usage for each stats.
+                self.bench.extra_info[f"{self.bench.stats.name}_{MAX_ALLOCATED_MEMORY_KEYWORD}"] = (
+                    self.bench.extra_info.pop(MAX_ALLOCATED_MEMORY_KEYWORD)
+                )
 
             # when the graph is segmented, the self.bench run multiple times, pybenchmark throws an error:
             # `FixtureAlreadyUsed("Fixture can only be used once. Previously it was used in %s mode." % self._mode)`
