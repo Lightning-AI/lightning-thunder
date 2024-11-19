@@ -2071,7 +2071,8 @@ def copy_(
 ) -> Any:
     nvcopy_from = getnv(copy_from, fd, lc_to_nv_map)
     nvcopy_to = getnv(copy_to, fd, lc_to_nv_map)
-    fd.add_output(nvcopy_from, alias_input=nvcopy_to)
+    alias_output = fd.ops.set(nvcopy_from)
+    fd.add_output(alias_output, alias_input=nvcopy_to)
     return nvcopy_to
 
 

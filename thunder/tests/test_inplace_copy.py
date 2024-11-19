@@ -182,9 +182,4 @@ def test_inplace_copy_dst_copy_returned_issue_1109(executor, device, dtype):
 
     assert_close(t0, expected)
     assert_close(actual_t2, expected_t2)
-    # FIXME(crcrpar): Since there's no `ltorch.Tensor.copy_`, functions like `func` would not
-    # be observed and executed with pytorch eager mode. Though there should be either an audit of
-    # `prims.copy_` in a nvfuser region and/or what #1110 did.
-    assert actual_t1.data_ptr() == actual_t2.data_ptr()
-    with pytest.raises(AssertionError):
-        assert_close(actual_t1, expected_t1)
+    assert_close(actual_t1, expected_t1)
