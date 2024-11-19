@@ -891,28 +891,28 @@ def test_torchbench_canary(benchmark, module_name, executor, compute_type: Compu
 
 
 hf_model_ids = ["Qwen/Qwen2.5-7B-Instruct", "microsoft/Phi-3-mini-128k-instruct", "mistralai/Mistral-Nemo-Base-2407"]
-hf_seq_lengths = [2**i for i in range(12, 18)]
+hf_seq_lengths = [4096 * 2**i for i in range(0, 6)]
 
 
-@pytest.mark.parametrize("model_id", hf_model_ids, ids=hf_model_ids)
 @pytest.mark.parametrize(
     "seq_length",
     hf_seq_lengths,
 )
 @pytest.mark.parametrize("batch_size", range(1, 5))
+@pytest.mark.parametrize("model_id", hf_model_ids, ids=hf_model_ids)
 @pytest.mark.parametrize(
     "executor,",
-    [thunderfx_executor],
-    ids=["thunderfx"],
+    [
+        thunderfx_executor,
+        torch_compile_executor,
+        torch_executor,
+    ],
+    ids=["thunderfx", "inductor", "eager"],
 )
 @parametrize_compute_type
 def test_hf_transformers(benchmark, model_id: str, seq_length: int, batch_size: int, executor, compute_type):
     if not importlib.util.find_spec("transformers"):
         pytest.skip("HF transformers not available.")
-
-    if "Qwen2" in model_id and seq_length > 2**15:
-        # https://huggingface.co/Qwen/Qwen2.5-7B-Instruct/blob/main/config.json#L12
-        pytest.skip("Qwen2 maximum sequence length is 2^15.")
 
     b = HFBenchmark(
         model_id,
@@ -923,7 +923,15 @@ def test_hf_transformers(benchmark, model_id: str, seq_length: int, batch_size: 
         requires_grad=is_requires_grad(compute_type),
     )
 
+    if seq_length > b.config.max_position_embeddings:
+        pytest.skip("Sequence length larger than maximum for the model.")
+
     args, kwargs = b.make_batch()
     fn = executor(b.fn())
 
-    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
+    if compute_type == ComputeType.TRAINING_BACKWARD:
+        return_fn = lambda *args, **kwargs: fn(*args, **kwargs).logits
+    else:
+        return_fn = fn
+
+    benchmark_for_compute_type(compute_type, benchmark, return_fn, args, kwargs)
