@@ -2,11 +2,15 @@
 
 # These owners will be the default owners for everything in the repo. Unless a later match takes precedence,
 # @global-owner1, @global-owner2, and @global-owner3 will be requested for review when someone opens a pull request.
-* @mruberry @lantiga @t-vi @carmocca
+
+# Thank you, our previous code owners for their service:
+#   @carmocca
+
+* @mruberry @lantiga @t-vi
 
 # CI/CD and configs
-/.azure/        @borda @lantiga @t-vi @carmocca
-/.github/       @borda @lantiga @t-vi @carmocca
-/dockers/       @borda @lantiga @t-vi @carmocca
-Makefile        @borda @lantiga @t-vi @carmocca
-*.yml           @borda @lantiga @t-vi @carmocca
+/.azure/        @borda @lantiga @t-vi
+/.github/       @borda @lantiga @t-vi
+/dockers/       @borda @lantiga @t-vi
+Makefile        @borda @lantiga @t-vi
+*.yml           @borda @lantiga @t-vi
