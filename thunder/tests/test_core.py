@@ -662,6 +662,17 @@ def test_to_printable_not_collection():
         assert inp is out
 
 
+def test_to_printable_collection():
+    from collections import namedtuple
+
+    MyTuple = namedtuple("MyTuple", ["x", "y"])
+
+    inps = (MyTuple("abc", "def"),)
+    for inp in inps:
+        out = codeutils.to_printable(None, inp)
+        assert inp == out
+
+
 #
 # Type promotion tests
 #
@@ -2099,7 +2110,7 @@ def test_no_passthrough_symbol(executor, device, _):
     compiled = executor.make_callable(func)
     out = compiled(x)
     assert out is x
-    initial_trace_with_dce = thunder.last_traces(compiled)[3]
+    initial_trace_with_dce = thunder.last_traces(compiled)[4]
     assert "Constructed by Dead Code Elimination" in str(initial_trace_with_dce)
     assert len(initial_trace_with_dce.bound_symbols) == 2
     assert initial_trace_with_dce.bound_symbols[0].sym.id == prims.PrimIDs.UNPACK_TRIVIAL
@@ -2480,27 +2491,81 @@ def test_torch_device():
 
 
 def test_grad_ctx():
+    # NOTE - This test would start failing if tags on Proxies are dropped
+    # as the computation under `no_grad` won't be treated as constant
+    # and grad won't match with PyTorch eager.
+
+    # Test `enable_grad` on a function works correctly
     @torch.enable_grad()
     def foo1(x):
         return x + 1
 
     x = torch.randn(3, 3, requires_grad=True)
-    with pytest.warns(UserWarning, match="have no effect under thunder.jit"):
-        thunder.jit(foo1)(x).sum().backward()
-
+    thunder.jit(foo1)(x).sum().backward()
     assert x.grad is not None
 
+    # Test `no_grad` on a function works correctly
     @torch.no_grad()
     def foo2(x):
         return x + 1
 
     x = torch.randn(3, 3, requires_grad=True)
-    with pytest.warns(UserWarning, match="have no effect under thunder.jit"):
-        thunder.jit(foo2)(x).sum().backward()
+    thunder.jit(foo2)(x).sum().backward()
+    assert x.grad is None
 
-    # `torch.no_grad` has no effect on thunder's autodiff which determines whether to compute grad based on `requires_grad=True`.
-    # Thus when backward is called it computes grad for the input.
-    assert x.grad is not None
+    # Test `no_grad` ctx correctly disable gradient computation
+    def foo3(x):
+        with torch.no_grad():
+            y = x * 3
+        return x * 2 + y
+
+    x = torch.randn(3, 3, requires_grad=True)
+    with torch.no_grad():
+        x_ref = x.clone()
+        x_ref.requires_grad_(True)
+
+    foo3(x_ref).sum().backward()
+    thunder.jit(foo3)(x).sum().backward()
+    # Verify the gradients match
+    torch.testing.assert_close(x.grad, x_ref.grad)
+
+    # Test nested `no_grad` and `enable_grad`
+    def foo4(x):
+        with torch.enable_grad():
+            with torch.no_grad():
+                y = x * 3
+            z = x * 4
+        return x * 2 + y + z
+
+    x = torch.randn(3, 3, requires_grad=True)
+    with torch.no_grad():
+        x_ref = x.clone()
+        x_ref.requires_grad_(True)
+
+    foo4(x_ref).sum().backward()
+    thunder.jit(foo4)(x).sum().backward()
+    # Verify the gradients match
+    torch.testing.assert_close(x.grad, x_ref.grad)
+
+    def foo5(x):
+        return x * 2
+
+    x = torch.randn(3, 3, requires_grad=True)
+    with torch.no_grad():
+        x_ref = x.clone()
+        x_ref.requires_grad_(True)
+
+    jfoo = thunder.jit(foo5)
+    with torch.no_grad():
+        o = jfoo(x)
+        assert o.grad_fn is None
+        assert thunder.cache_misses(jfoo) == 1  # First compilation
+
+    # Running it out of `torch.no_grad`, should lead to recompile.
+    foo5(x_ref).sum().backward()
+    jfoo(x).sum().backward()
+    torch.testing.assert_close(x.grad, x_ref.grad)
+    assert thunder.cache_misses(jfoo) == 2
 
 
 def test_serialize_trace():

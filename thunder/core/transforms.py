@@ -33,6 +33,7 @@ from thunder.core.proxies import (
     variableify,
     unvariableify,
     FutureTensorProxy,
+    ProxyTag,
 )
 from thunder.core.compile_data import get_compile_data, get_compile_option
 from thunder.core.langctxs import langctx, Languages
@@ -75,7 +76,7 @@ from thunder.clang import (
 from thunder.core.transform_common import (
     dce,
     Transform,
-    wrap_return_value_together_with_argments,
+    wrap_return_value_together_with_arguments,
     unwrap_return_value,
     VJPDual,
 )
@@ -1493,7 +1494,7 @@ def grad(
                 grad(python_callable), *computation_trc.args, **computation_trc.kwargs
             )
 
-            gradtrc = wrap_return_value_together_with_argments(gradtrc)
+            gradtrc = wrap_return_value_together_with_arguments(gradtrc)
             gradtrc = dce(gradtrc)
             return prologue_trc, gradtrc, epilogue_trc
 
@@ -2485,10 +2486,17 @@ def is_constant_for_vjp(symbol: prims.Symbol) -> bool:
         bool: True if the symbol is constant, False otherwise.
     """
     are_all_args_non_differentiable = not any(isinstance(arg, (FloatProxy, TensorProxy)) for arg in symbol.flat_args)
+    # Symbol's tag their output in `torch.no_grad` regions with `DETACHED_AUTOGRAD_GRAPH`.
+    # These are treated as constant for VJP.
+    # NOTE - `any(()) is False`
+    output_disconnected_from_graph = any(
+        ProxyTag.DETACHED_AUTOGRAD_GRAPH in o.tags for o in symbol.flat_outs if isinstance(o, TensorProxy)
+    )
     return (
         are_all_args_non_differentiable
         or symbol.are_all_args_constant
         or symbol.sym.id in nondifferentiable_vjp_symbols
+        or output_disconnected_from_graph
     )
 
 

@@ -266,7 +266,7 @@ def _dot(x, y):
     return sum([_tensor_dot(a, b) for a, b in zip(x, y)])
 
 
-def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = False):
+def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = False, prologue_required: bool = False):
     """Check that the vector-Jacobian product of a function is correct.
 
     Args:
@@ -281,7 +281,7 @@ def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = Fals
     """
     # Let f be a function from vectors of size n to vectors of size m.
     # Its Jacobian is a matrix J of size m x n.
-    # The adjoint property is J^* J = I, where J^* is the conjugate transpose (adjoint) of J.
+    # Represent by J^* the conjugate transpose (adjoint) of J.
     # J^* is a matrix of size n x m.
     # For any vector v of size m, J^* v is a vector of size n.
     # For any vector u of size n, J u is a vector of size m.
@@ -296,9 +296,13 @@ def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = Fals
 
     u = tree_map(make, primals)
 
-    # dirty little trick for speed: skip the prologue
+    # dirty little trick for speed: skip the prologue, however, the prologue is required when
+    # there are non-differentiable kwargs
     jf = executor.make_callable(f, disable_torch_autograd=True)
-    comp_f = thunder.compile_data(jf).get_computation_and_inputs(*primals)[0].computation_fn
+    if prologue_required:
+        comp_f = thunder.jit(f, disable_torch_autograd=True)
+    else:
+        comp_f = thunder.compile_data(jf).get_computation_and_inputs(*primals)[0].computation_fn
 
     outs_p, J_u = numerical_jvp(comp_f)(primals, u)
 
@@ -366,8 +370,15 @@ def _make_differentiable_wrapper(func, args):
     return wrapper, filtered_args
 
 
-def snippet_vjp_correctness(func, args, comp, executor, set_compile_data):
-    check_vjp(func, *args, comp=comp, executor=executor, set_compile_data=set_compile_data)
+def snippet_vjp_correctness(func, args, comp, executor, set_compile_data, prologue_required):
+    check_vjp(
+        func,
+        *args,
+        comp=comp,
+        executor=executor,
+        set_compile_data=set_compile_data,
+        prologue_required=prologue_required,
+    )
 
 
 # TODO Use the given comparator
@@ -410,6 +421,7 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
             comp,
             executor,
             "adaptive_avg_pool2d" in op.name,
+            len(sample.kwargs) != 0,
         )
         if result is not None:
             return result
@@ -1136,7 +1148,7 @@ def test_forward_and_backward_from_trace(executor, device, _):
     from thunder.clang import cos, sin
     import thunder.torch as ltorch
     from thunder.core.transforms import forward_and_backward_from_trace, value_and_grad
-    from thunder.core.transform_common import wrap_return_value_together_with_argments
+    from thunder.core.transform_common import wrap_return_value_together_with_arguments
 
     def func(a, b, *, c):
         d = a + b + c
@@ -1147,7 +1159,7 @@ def test_forward_and_backward_from_trace(executor, device, _):
     b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     c = make_tensor((3,), device=device, dtype=torch.float64, requires_grad=True)
     initial_trace = trace(inline_trace=False)(func, a, b, c=c)
-    wrapped_trace = wrap_return_value_together_with_argments(initial_trace)
+    wrapped_trace = wrap_return_value_together_with_arguments(initial_trace)
     fw_trace, bw_trace = forward_and_backward_from_trace(wrapped_trace)
     fw = executor.make_callable(fw_trace)
     bw = executor.make_callable(bw_trace)

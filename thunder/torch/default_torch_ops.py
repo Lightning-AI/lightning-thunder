@@ -338,7 +338,6 @@ torch_auto_registered_ops = {
         torch.nn.functional.dropout1d,
         torch.nn.functional.dropout2d,
         torch.nn.functional.dropout3d,
-        torch.nn.functional.elu,
         torch.nn.functional.embedding_bag,
         torch.nn.functional.feature_alpha_dropout,
         torch.nn.functional.fold,

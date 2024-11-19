@@ -148,9 +148,40 @@ _register_implementation(ltorch.to, checker=_always_executable, execution_transf
 
 
 def no_autocast(fn):
-    fn = torch.autocast(device_type="cpu", enabled=False, cache_enabled=False)(fn)
-    fn = torch.autocast(device_type="cuda", enabled=False, cache_enabled=False)(fn)
-    return fn
+    """
+    A decorator that disables torch.autocast for the duration of the decorated
+    function.
+
+    In Thunder this is useful when you want to ensure that the generated
+    function is not run with PyTorch's autocast enabled to execute exactly as
+    generated.
+
+    Args:
+        fn: The function to decorate.
+
+    Returns:
+        The decorated function.
+    """
+    # This decorator intentionally does not use the torch.autocast decorator
+    # because it is much slower than the implementation here. This is because
+    # the torch.autocast decorator has a lot more overhead to support various
+    # features that are not needed in Thunder.
+    from torch import set_autocast_enabled
+
+    prev_cpu = torch.is_autocast_cpu_enabled()
+    prev = torch.is_autocast_enabled()
+
+    @wraps(fn)
+    def no_autocast_fn(*args, **kwargs):
+        try:
+            set_autocast_enabled("cpu", False)
+            set_autocast_enabled("cuda", False)
+            return fn(*args, **kwargs)
+        finally:
+            set_autocast_enabled("cpu", prev_cpu)
+            set_autocast_enabled("cuda", prev)
+
+    return no_autocast_fn
 
 
 #
@@ -803,6 +834,7 @@ _register_elementwise_unary_implementation(ltorch.real, real)
 
 # nn.functional elementwise unary
 celu = _register_torch_operation("celu", module=torch.nn.functional)
+elu = _register_torch_operation("elu", module=torch.nn.functional)
 gelu = _register_torch_operation("gelu", module=torch.nn.functional)
 relu = _register_torch_operation("relu", module=torch.nn.functional)
 relu6 = _register_torch_operation("relu6", module=torch.nn.functional)
@@ -815,6 +847,7 @@ def _elementwise_unary_with_inplace_checker(a: TensorProxy, /, inplace: bool = F
     return isinstance(a, TensorProxy) and not inplace
 
 
+_register_elementwise_unary_implementation(ltorch.elu, elu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.celu, celu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.gelu, gelu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.relu, relu, checker=_elementwise_unary_with_inplace_checker)
