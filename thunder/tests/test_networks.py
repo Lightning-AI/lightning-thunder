@@ -401,29 +401,31 @@ def test_thunderfx_mistral_nemo_small():
 
 
 @thunder.tests.framework.requiresCUDA
-def test_hf_qwen2():
+@pytest.mark.parametrize("model_id", ["Qwen/Qwen2.5-7B-Instruct", "microsoft/Phi-3-mini-128k-instruct"])
+def test_hf_for_nemo(model_id):
     from thunder.dynamo import ThunderCompiler
-    from transformers import Qwen2Config, Qwen2ForCausalLM
+    from transformers import AutoConfig, AutoModelForCausalLM
 
-    # https://huggingface.co/Qwen/Qwen2.5-7B-Instruct/blob/main/config.json
-    configuration = Qwen2Config(
-        # Qwen2.5-7B-Instruct uses Grouped-Query Attention, while the default
-        # config uses Multi-Head Attention
-        num_attention_heads=28,
-        num_key_value_heads=4,
+    configuration = AutoConfig.from_pretrained(
+        model_id,
         # Scaled down for testing
-        hidden_size=56,
         vocab_size=16,
+        pad_token_id=15,
         max_position_embeddings=32,
+        num_hidden_layers=1,
     )
-    configuration.num_hidden_layers = 1
+    configuration.hidden_size = configuration.num_attention_heads
     with torch.device("cuda"):
-        model = Qwen2ForCausalLM(configuration).to(torch.bfloat16)
+        model = AutoModelForCausalLM.from_config(configuration).to(torch.bfloat16)
 
     # thunder.jit doesn't work with Qwen2, so we use torch.compile
     # https://github.com/Lightning-AI/lightning-thunder/issues/1405
+
+    # fullgraph=True used to work with transformers 4.45.2, but it doesn't work
+    # with 4.46.2 because of re.findall usage in the loss function
+    fullgraph = False
     backend = ThunderCompiler()
-    compiled_model = torch.compile(model, backend=backend, fullgraph=True)
+    compiled_model = torch.compile(model, backend=backend, fullgraph=fullgraph)
 
     input_ids = torch.randint(0, configuration.vocab_size, (1, configuration.max_position_embeddings), device="cuda")
     ref_output = model(input_ids=input_ids, labels=input_ids)
@@ -437,7 +439,8 @@ def test_hf_qwen2():
     # https://github.com/Lightning-AI/lightning-thunder/issues/1407
     torch.testing.assert_close(compiled_loss, ref_loss, rtol=1e-4, atol=1e-4)
 
-    assert len(backend.subgraph_infos) == 1, "Should have exactly 1 subgraph because of fullgraph=True"
+    if fullgraph:
+        assert len(backend.subgraph_infos) == 1, "Should have exactly 1 subgraph because of fullgraph=True"
     loss_grad = torch.randn_like(compiled_loss)
 
     grads_ref = torch.autograd.grad(ref_loss, model.parameters(), grad_outputs=loss_grad)

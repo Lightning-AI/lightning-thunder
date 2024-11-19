@@ -47,6 +47,7 @@ from thunder.core.proxies import (
     ListProxy,
     DictProxy,
     numberproxy,
+    ProxyTag,
 )
 from thunder.core.pytree import tree_map, tree_flatten, tree_unflatten
 from thunder.core.symbol import Symbol
@@ -5238,11 +5239,24 @@ def torch_device(type: DeviceLike, index: int | None = None) -> devices.Device:
 register_function(torch.device, torch_device)
 
 
+# Tag to use on Proxies created in `no_grad` regions.
+# VJP transform will treat BoundSymbol's whose output has these tags
+# as constant.
+ProxyTag.register_tag("DETACHED_AUTOGRAD_GRAPH")
+
+
+# This is just a marker Symbol. `tag_no_grad_symbols_pass` pass uses these symbols
+# to find the `no_grad` regions and mark the BoundSymbols within them as constant
+# for VJP using the `DETACHED_AUTOGRAD_GRAPH` tag.
+@torchsymbol(torch._C._set_grad_enabled, id="set_grad_enabled", tags=(prims.OpTags.CTX_MANAGER_ENTER_EXIT_OP,))
 def _set_grad_enabled_with_warning(enabled: bool) -> None:
-    warnings.warn("torch.enable_grad/torch.no_grad/torch._C._set_grad_enabled have no effect under thunder.jit")
-
-
-register_function(torch._C._set_grad_enabled, _set_grad_enabled_with_warning)
+    cd = get_compile_data()
+    if cd is None:
+        warnings.warn(
+            "torch.enable_grad/torch.no_grad/torch._C._set_grad_enabled have no effect, use thunder.jit for correct behaviour"
+        )
+        return
+    get_compile_data().is_grad_enabled = enabled
 
 
 def _unwrap_if_dead(tensor):

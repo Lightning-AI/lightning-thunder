@@ -16,6 +16,7 @@ from thunder.core.interpreter import InterpreterLogItem
 from thunder.core.options import (
     CACHE_OPTIONS,
     SHARP_EDGES_OPTIONS,
+    DebugOptions,
 )
 from thunder.core.trace import (
     TraceResults,
@@ -124,6 +125,7 @@ __all__ = [
     "nvfuser_executor",
     "pytorch_executor",
     # debugging functions
+    "DebugOptions",
     "set_execution_callback_file",
     "jit",
     "resolve_executors",
@@ -275,7 +277,6 @@ def compile(fn: Callable, recipe: Recipe | None):
 
 
 # This function will replace compile() (below) before RC1
-# TODO RC1 Consider adding a debug_log parameter to control debug printing
 # TODO RC1 Consider renaming compile_options to additional_compile_options
 def jit(
     fn: Callable,
@@ -287,7 +288,7 @@ def jit(
     cache: None | CACHE_OPTIONS | str = None,
     disable_torch_autograd: bool = False,  # TODO Revisit this UX for RC1
     transforms: list[Transform] | None = None,
-    record_history: bool = False,
+    debug_options: DebugOptions | None = None,
     **compile_options,  # TODO RC1 Make this explicit -- dict of options
 ) -> Callable:
     """Just-in-time compile a callable (function or model).
@@ -313,7 +314,9 @@ def jit(
                - ``"constant values"`` - require Tensors to be of the same shape, device, dtype etc., and integers and strings to match exactly,
                - ``"same input"`` - don't check, but just assume that a cached function works if it exists.
 
-        transforms: List of transforms to be applied. It should be an instance :class:`thunder.core.transforms.Transform`. Default: ``None``
+        transforms: optional list of transforms to be applied. It should be a list of instances of :class:`thunder.core.transforms.Transform`. Default: ``None``
+
+        debug_options: optional :class:`thunder.DebugOptions` instance. See the doc string of :class:`DebugOptions` for supported debug options. Default: ``None``
     """
 
     if "executors_list" in compile_options:
@@ -345,8 +348,6 @@ def jit(
         # TODO: sharp edge if lookasides are shadowed?
         executor_lookasides.update(ex._lookasides)
 
-    assert type(record_history) is bool
-
     # TODO RC1 Refine the compile data option to remove unused options
     # TODO: refine options
     cd = CompileData(
@@ -361,6 +362,7 @@ def jit(
         disable_preprocessing=True,
         compile_options=compile_options,
         executor_lookasides=executor_lookasides,
+        debug_options=debug_options,
     )
     cs = CompileStats()
 
@@ -441,6 +443,11 @@ def jit(
         # It however would require the functionalized computation trace to interact with `cache_info`,
         # which seems to break the consistency of cache_info, leading to a failure in cache_info check.
         cache_info["alias_tensor_indices"] = _alias_tensor_of_args_kwargs(*args, **kwargs)
+
+        # Store the `is_grad_enabled` state of PyTorch. This is used by vjp transform
+        # to treat certain Symbols as constant.
+        cache_info["is_grad_enabled"] = pytorch.is_grad_enabled()
+        cd.is_grad_enabled = pytorch.is_grad_enabled()
 
         # TODO RC1 Add module and function checks to prologue (make it a compile option)
 
@@ -524,7 +531,6 @@ def jit(
                 args,
                 kwargs,
                 ad_hoc_executor=ad_hoc_executor,
-                record_history=record_history,
                 sharp_edges=cd.sharp_edges,
             )
             prologue_trc = jit_results.prologue_trace
