@@ -8,7 +8,7 @@ import torch
 
 from thunder.core.baseutils import run_once
 from thunder.core.utils import safe_zip
-from thunder.dynamo.utils import recompile_graph, remove_empty_autocast, reproducer
+from thunder.dynamo.utils import recompile_graph, remove_empty_autocast, reproducer, CompilerType
 from thunder.dynamo.splitter import _splitter
 
 if TYPE_CHECKING:
@@ -112,11 +112,17 @@ class ThunderCompiler:
                 target = node.target
                 if isinstance(target, str) and target.startswith("thunder_"):
                     thunder_module_names.append(target)
-            thunder_modules = subgraph_info.thunder_compiled_fns
+            original_thunder_modules = (
+                m
+                for m, compiled_m in subgraph_info.submodule_to_compiled_functions.items()
+                if compiled_m.compiler == CompilerType.THUNDER
+            )
             example_inputs = subgraph_info.thunder_compiled_fns_example_inputs
-            for cur_module, example_input, cur_name in safe_zip(thunder_modules, example_inputs, thunder_module_names):
+            for cur_module, example_input, cur_name in safe_zip(
+                original_thunder_modules, example_inputs, thunder_module_names
+            ):
                 reproducer(
-                    getattr(cur_module, "_model"),
+                    cur_module,
                     self.thunder_options,
                     example_input,
                     reproducer_folder,
