@@ -3010,6 +3010,50 @@ class TorchbenchBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return self.model
 
 
+class HFBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    def __init__(
+        self,
+        model_id: str,
+        seq_length: int,
+        batch_size: int,
+        device: str = "cuda",
+        dtype: dtypes.dtype = thunder.float32,
+        requires_grad: bool = False,
+    ) -> None:
+        super().__init__()
+
+        from transformers import AutoConfig
+
+        config = AutoConfig.from_pretrained(model_id)
+
+        self.device: str = device
+        self.tdtype: torch.dtype = ltorch.to_torch_dtype(dtype)
+        self.requires_grad: bool = requires_grad
+
+        self.shape = (batch_size, seq_length)
+        self.config = config
+
+    def make_batch(self) -> tuple[list, dict]:
+        make = partial(
+            make_tensor,
+            low=0,
+            high=self.config.vocab_size,
+            device=self.device,
+            dtype=ltorch.to_torch_dtype(torch.int64),
+            requires_grad=False,
+        )
+        a = make(self.shape)
+        return (a,), {}
+
+    def fn(self) -> Callable:
+        from transformers import AutoModelForCausalLM
+
+        model = AutoModelForCausalLM.from_config(self.config)
+        model = model.to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
+
+        return model
+
+
 # TODO Add descriptions to the executors when listed, and list them alphabetically
 # TODO Allow querying benchmark for details
 # TODO Allow specifying benchmark arguments
