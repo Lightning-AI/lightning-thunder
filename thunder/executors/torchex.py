@@ -1,32 +1,24 @@
 from __future__ import annotations
 import operator
 import importlib
-from dataclasses import replace
-from contextlib import ContextDecorator
-from functools import wraps, partial
-from inspect import signature
-from itertools import groupby
+from functools import partial
 from numbers import Number
 from typing import TYPE_CHECKING
 from collections.abc import Callable
 from collections.abc import Hashable, Sequence
 from collections.abc import Sequence
 from types import ModuleType
-from enum import Enum, auto
 
 import torch
-import math
-from looseversion import LooseVersion
 
+from thunder.core.compile_data import get_compile_data
 import thunder.core.dtypes as dtypes
 from thunder.core.dtypes import to_torch_dtype, to_dtype
 import thunder.core.devices as devices
 from thunder.core.devices import to_torch_device, to_device
 import thunder.core.prims as prims
-from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, from_trace
-from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy, variableify, pytype
-from thunder.core.pytree import tree_flatten, tree_unflatten
-from thunder.core.symbol import Symbol, BoundSymbol
+from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy, pytype
+from thunder.core.symbol import Symbol
 from thunder.distributed.prims import DistributedReduceOps
 import thunder.distributed.prims as dist_prims
 import thunder.core.utils as utils
@@ -2159,6 +2151,9 @@ if has_einops:
 
 
 def _copy__impl(copy_from, copy_to):
+    cd = get_compile_data()
+    if cd is not None and cd.is_grad_enabled and copy_to.is_leaf and copy_to.requires_grad:
+        raise RuntimeError("a leaf Variable that requires grad is being used in an in-place operation.")
     copy_to.copy_(copy_from)
     return copy_to
 

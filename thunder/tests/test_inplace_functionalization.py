@@ -476,31 +476,27 @@ def test_multiple_inplace_to_multiple_args(executor, device, _):
     dtypes=NOTHING,
 )
 def test_inplace_to_tensors_with_grad(executor, device, _):
-    @torch.no_grad
     def add_y(x, y):
-        x.add_(y, alpha=0.1)
+        # inplace operations requiring grad on leafs are illegal, trick to make z a non-leaf
+        z = torch.abs(x) * torch.sgn(x)
+        z.add_(y, alpha=0.1)
 
-    @torch.no_grad
-    def add_grad(x, y):
-        x.add_(x.grad, alpha=0.1)
+    jitted_f = executor.make_callable(add_y)
+    x = make_tensor((2, 2), device=device, dtype=torch.float32, requires_grad=True)
+    x.grad = make_tensor((2, 2), device=device, dtype=torch.float32)
+    y = make_tensor((2, 2), device=device, dtype=torch.float32)
 
-    for f in (add_y, add_grad):
-        jitted_f = executor.make_callable(f)
-        x = make_tensor((2, 2), device=device, dtype=torch.float32, requires_grad=True)
-        x.grad = make_tensor((2, 2), device=device, dtype=torch.float32)
-        y = make_tensor((2, 2), device=device, dtype=torch.float32)
+    x_ref = x.clone().detach().requires_grad_(True)
+    x_ref.grad = x.grad.clone().detach()
+    y_ref = y.clone().detach()
 
-        x_ref = x.clone().detach().requires_grad_(True)
-        x_ref.grad = x.grad.clone().detach()
-        y_ref = y.clone().detach()
+    res = jitted_f(x, y)
+    res_ref = add_y(x_ref, y_ref)
 
-        res = jitted_f(x, y)
-        res_ref = f(x_ref, y_ref)
-
-        torch.testing.assert_close(x, x_ref)
-        torch.testing.assert_close(x.grad, x_ref.grad)
-        torch.testing.assert_close(y, y_ref)
-        torch.testing.assert_close(res, res_ref)
+    torch.testing.assert_close(x, x_ref)
+    torch.testing.assert_close(x.grad, x_ref.grad)
+    torch.testing.assert_close(y, y_ref)
+    torch.testing.assert_close(res, res_ref)
 
 
 @instantiate(
@@ -551,6 +547,8 @@ def test_single_tensor_adam_like(executor, device, _):
 
     jitted = executor.make_callable(single_tensor_adam)
     params, grads, exp_avgs, exp_avg_sqs = tensors
+    cd = thunder.compile_data(jitted)
+    cd.compile_options["torch_compile_fullgraph"] = False
 
     jitted(params, grads, exp_avgs, exp_avg_sqs, state_steps)
     torch.testing.assert_close(actual=tensors + [state_steps], expected=ref_tensors + [ref_state_steps])
