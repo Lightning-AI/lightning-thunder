@@ -781,8 +781,12 @@ def test_checkpoint_converter_submodule():
             assert isinstance(n.target, Symbol)
 
 
-@instantiate(dtypes=NOTHING, executors=[DynamoThunderExecutor])
-def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, tmp_path):
+@instantiate(
+    dtypes=NOTHING,
+    executors=[DynamoThunderExecutor],
+    decorators=(pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro")),),
+)
+def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, use_pytest_benchmark, tmp_path):
     from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform
     from thunder import nvfuser_executor
     from thunder.transforms.cudagraph import CUDAGraphTransform
@@ -794,7 +798,7 @@ def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, tm
                 CUDAGraphTransform(),
             ],
             executors=[nvfuser_executor],
-            cache="no caching",
+            cache="constant values",
             langctx=None,
             record_history=False,
         )
@@ -812,21 +816,23 @@ def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, tm
             return x - 1
 
     out = func(x)
-    backend.save_reproducer_to_folder(tmp_path)
+    backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark=use_pytest_benchmark)
 
-    s1 = f"{tmp_path}/g1_thunder_1.py"
-    s2 = f"{tmp_path}/g2_thunder_1.py"
+    s1 = f"{tmp_path}/graph1_thunder_1.py"
+    s2 = f"{tmp_path}/graph2_thunder_1.py"
     assert os.path.exists(s1)
     assert os.path.exists(s2)
-    result1 = run(["python", s1], capture_output=True, text=True)
-    result2 = run(["python", s2], capture_output=True, text=True)
+    cmd = "pytest" if use_pytest_benchmark else "python"
+    result1 = run([cmd, s1], capture_output=True, text=True)
+    result2 = run([cmd, s2], capture_output=True, text=True)
 
     assert result1.returncode == 0, f"Reproducer {s1} failed with return code {result1.returncode}"
     assert result2.returncode == 0, f"Reproducer {s2} failed with return code {result2.returncode}"
 
 
 @requiresCUDA
-def test_dynamo_reproducer_submodules(tmp_path):
+@pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro"))
+def test_dynamo_reproducer_submodules(use_pytest_benchmark, tmp_path):
     from thunder.tests.distributed.helper import ToyModel
     import torch.nn as nn
 
@@ -846,9 +852,10 @@ def test_dynamo_reproducer_submodules(tmp_path):
     backend = ThunderCompiler()
     jf = torch.compile(backend=backend)(model)
     out = jf(x)
-    backend.save_reproducer_to_folder(tmp_path)
+    backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark=use_pytest_benchmark)
 
-    s1 = f"{tmp_path}/g1_thunder_1.py"
+    s1 = f"{tmp_path}/graph1_thunder_1.py"
     assert os.path.exists(s1)
-    result1 = run(["python", s1], capture_output=True, text=True)
+    cmd = "pytest" if use_pytest_benchmark else "python"
+    result1 = run([cmd, s1], capture_output=True, text=True)
     assert result1.returncode == 0, f"Reproducer {s1} failed with return code {result1.returncode}"
