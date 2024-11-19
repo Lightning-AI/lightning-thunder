@@ -133,3 +133,68 @@ def resolve_sharp_edges_option(x: Any, /) -> SHARP_EDGES_OPTIONS:
             )
 
     return seo
+
+
+class DebugOptions:
+    _defaults = {}
+    _docs = {}
+
+    def __init__(self, **kwargs):
+        cls = self.__class__
+        for k, default in self._defaults.items():
+            v = kwargs.pop(k, default)
+            typ = cls.__annotations__[k]
+            if not isinstance(v, typ):
+                raise TypeError(f"{cls.__name__}.{k} needs to be of type {typ.__name__}")
+            setattr(self, k, v)
+        if kwargs:
+            unknown_args = ", ".join(f"{k}" for k in kwargs)
+            raise TypeError(f"unknown argument(s) for {cls.__name__}: {unknown_args}")
+
+    @classmethod
+    def register_option(cls, name, typ, default, doc=""):
+        if hasattr(cls, name):
+            raise AttributeError(f"{cls.__name__}.{name} is already registered")
+
+        assert isinstance(default, typ)
+        cls._defaults[name] = default
+        cls.__annotations__[name] = typ
+        cls._docs[name] = doc
+        setattr(cls, name, default)
+        cls._set_docstring()
+
+    @classmethod
+    def _set_docstring(cls):
+        cls.__doc__ = f"""{cls.__name__}(**options)
+    options can be dynamically registered, currently registered ones are below
+
+    Keyword Args:
+        {cls.list_options(docstr=True)}
+        """
+
+    @classmethod
+    def list_options(cls, docstr=False):
+        lines = []
+        cls.__annotations__  # initialize annotations in cls.__dict__
+        for name, default in sorted(cls._defaults.items()):
+            typ = cls.__annotations__[name]
+            doc = cls._docs[name]
+            lines.append(f"{name}: {typ.__name__}={default}   {doc}")
+
+        sep = "\n" if not docstr else "\n\n        "
+        return sep.join(lines)
+
+    def __repr__(self):
+        cls = self.__class__
+        repr = [f"{cls.__name__}("]
+        for k, default in cls._defaults.items():
+            v = getattr(self, k, default)
+            if v != default:
+                repr.append(f"  {k}={v},")
+        repr.append(")")
+        if len(repr) <= 3:
+            return "".join(r.lstrip().rstrip(",") for r in repr)
+        return "\n".join(repr)
+
+
+DebugOptions._set_docstring()
