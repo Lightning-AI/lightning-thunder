@@ -1,16 +1,16 @@
-import sys
-import os
+from __future__ import annotations
+from collections import defaultdict, deque, UserDict
+from collections.abc import Callable, Hashable, Iterable, Iterator, Sequence, Mapping
 from enum import Enum
-from functools import reduce, wraps
-import itertools
-from itertools import chain
+from functools import reduce
 from numbers import Number
-from typing import Any, overload, Generic, Optional, TypeVar, TYPE_CHECKING
-from collections.abc import Callable
-from collections.abc import Hashable, Iterable, Iterator, Sequence
-from collections import defaultdict
+from types import MappingProxyType
+from typing import overload, Generic, TypeVar, TYPE_CHECKING
+import itertools
+import os
 
 from typing_extensions import Self
+import torch
 
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
@@ -19,6 +19,9 @@ from thunder.core.baseutils import *
 from thunder.core.codeutils import *
 from thunder.core.trace import TraceCtx
 import thunder.core.prims as prims
+
+if TYPE_CHECKING:
+    from typing import Any
 
 # This file defines utilities that can be used when defining primitive operations.
 
@@ -71,8 +74,6 @@ __all__ = [
     # Helpful classes
     "OrderedSet",
     "FrozenDict",
-    # Context-related functions and decorators
-    "langctx",
 ]
 
 T = TypeVar("T")
@@ -731,17 +732,17 @@ class _OrderedSet(Generic[T, T1], Iterable[T]):
         return len(self.d)
 
     # -
-    def __sub__(self, other: "_OrderedSet") -> Self:
+    def __sub__(self, other: _OrderedSet) -> Self:
         return self.__class__(k for k in self if k not in other)
 
-    def __and__(self, other: "_OrderedSet") -> Self:
+    def __and__(self, other: _OrderedSet) -> Self:
         return self.__class__(k for k in self if k in other)
 
-    def __or__(self, other: "_OrderedSet") -> Self:
+    def __or__(self, other: _OrderedSet) -> Self:
         return self.__class__(itertools.chain(self, other))
 
     # NOTE: actual set signature is (self, *others)
-    def difference(self, other: "_OrderedSet") -> Self:
+    def difference(self, other: _OrderedSet) -> Self:
         return self - other
 
     def add(self, x: T | T1):
@@ -755,7 +756,7 @@ class _OrderedSet(Generic[T, T1], Iterable[T]):
     def issubset(self, other):
         return all((e in other) for e in self)
 
-    def union(self, *others: "Sequence[_OrderedSet]") -> Self:
+    def union(self, *others: Sequence[_OrderedSet]) -> Self:
         return self.__class__(itertools.chain(self, *others))
 
     def update(self, x: Iterable[T | T1]) -> None:
@@ -793,7 +794,7 @@ class InferringDict(dict[T, T1]):
 if TYPE_CHECKING:
     _UserDictT = dict
 else:
-    _UserDictT = collections.UserDict
+    _UserDictT = UserDict
 
 
 class FrozenDict(_UserDictT[T, T1], Mapping[T, T1]):
