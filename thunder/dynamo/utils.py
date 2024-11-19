@@ -21,7 +21,7 @@ from thunder.core.utils import check
 if TYPE_CHECKING:
     from thunder.core.symbol import Symbol
     import os
-    from typing import Any, TextIO
+    from typing import Any
     from collections.abc import Sequence
 
 auto_register_ops = set(itertools.chain(*torch_auto_registered_ops.values()))
@@ -619,7 +619,7 @@ def remove_empty_autocast(graph_module: torch.fx.GraphModule) -> torch.fx.GraphM
     return empty_autocast_removed_graph_module
 
 
-def arg_like_tensor(arg: torch.Tensor | ExampleInputMetaData, f: TextIO):
+def arg_like_tensor(arg: torch.Tensor | ExampleInputMetaData):
     """Creates a new argument like the given tensor or tensor metadata"""
     if isinstance(arg, torch.Tensor):
         min_val, max_val = torch.aminmax(arg)
@@ -630,20 +630,19 @@ def arg_like_tensor(arg: torch.Tensor | ExampleInputMetaData, f: TextIO):
     storage_shape = _get_storage_shape(arg) if isinstance(arg, torch.Tensor) else arg.storage_shape
     if min_val is not None and min_val == max_val:
         meta = f"{storage_shape}, {min_val}, dtype={arg.dtype}, device='{arg.device}', requires_grad={arg.requires_grad}, layout={arg.layout}"
-        print(f"  torch.full({meta}).as_strided({arg.shape}, {arg.stride()}),", file=f)
-        return
+        return f"torch.full({meta}).as_strided({arg.shape}, {arg.stride()}),"
     meta = f"{storage_shape}, dtype={arg.dtype},  device='{arg.device}', requires_grad={arg.requires_grad},"
     meta = f"{meta} low={min_val}, high={max_val},"
-    print(f"  torch.testing.make_tensor({meta}).as_strided({arg.shape}, {arg.stride()}),", file=f)
+    return f"torch.testing.make_tensor({meta}).as_strided({arg.shape}, {arg.stride()}),"
 
 
-def arg_like(arg: Any, f: TextIO):
+def arg_like(arg: Any):
     """Creates a new argument that is similar to the given arg."""
     if isinstance(arg, (torch.Tensor, ExampleInputMetaData)):
-        arg_like_tensor(arg, f)
+        return f"{arg_like_tensor(arg)}"
     else:
         # Assume it's a literal that we can just print directly.
-        print(f"  {arg},", file=f)
+        return f"{arg},"
 
 
 def _readable(
@@ -726,84 +725,68 @@ def reproducer(
     thunder_options: dict,
     args: tuple[torch.Tensor | ExampleInputMetaData],
     folder: str | os.PathLike,
-    graph_idx: int,
+    graph_name: str,
+    use_pytest_benchmark: bool = False,
 ):
-    # Ideally we'd use print_readable, but we want verbose=False and there's no
-    # way to set that with print_readable.
     folder = Path(folder)
     folder.mkdir(exist_ok=True)
     torch_env, thunder_pkgs = get_env()
+    # Ideally we'd use print_readable, but we want verbose=False and there's no
+    # way to set that with print_readable.
     readable = _readable(gm, "DynamoModule", print_output=False)
     has_cuda_args = any(hasattr(arg, "device") and arg.device.type == "cuda" for arg in args)
     thunder_options_str = thunder_options_to_str(thunder_options)
-    with open(folder / f"g{graph_idx}.py", "w") as f:
-        print('"""', file=f)
-        print("Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:\n", file=f)
-        print(torch_env, file=f)
-        print("\nVersions of Thunder related libraries:", file=f)
-        print(thunder_pkgs, file=f)
-        print("\nThe torch.fx.Graph:", file=f)
-        print(gm.graph, file=f)
-        print('"""', file=f)
-        print("import os\n", file=f)
-        print("import torch", file=f)
-        print("import thunder", file=f)
+    with open(folder / f"{graph_name}.py", "w") as f:
+        comment_str = f'''"""
+Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:
+{torch_env}
+
+Versions of Thunder related libraries:
+{thunder_pkgs}
+
+The torch.fx.Graph:
+{gm.graph}
+"""
+'''
+        if use_pytest_benchmark:
+            comment_str += f"""# NOTE: This script requires `pytest-benchmark==4.0.0` to be installed.
+# To execute the script, run `pytest {graph_name}.py`"""
+        import_str = f"from functools import partial\n\nimport torch\nimport thunder\n"
         if has_cuda_args:
-            print("import thunder.transforms.cudagraph", file=f)
-            print("from thunder.dev_utils.nvtx_profile_transform ", end="", file=f)
-            print("import NvtxProfileTransform\n", file=f)
-            print("_execs = [", file=f)
-            print('  thunder.extend.get_executor("nvfuser"),', file=f)
-            print('  thunder.extend.get_executor("sdpa"),', file=f)
-            print('  thunder.extend.get_executor("cudnn"),', file=f)
-            print("]\n", file=f)
-        print(f"def test_g{graph_idx}():", file=f)
-        print(" ", _addindent(readable, 2), file=f)
+            import_str += "from thunder.transforms.cudagraph import CUDAGraphTransform\n"
+            import_str += "from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform\n"
+        if use_pytest_benchmark:
+            code_str = f"def test_{graph_name}(benchmark):\n{readable}\n"
+        else:
+            code_str = f"def test_{graph_name}():\n{readable}\n"
+
         if any(arg is None for arg in args):
-            print(
-                "  # Warning: The inputs that cannot be inferred are set to None, requiring the user to manually give inputs according to the code"
-            )
-        print("  inputs = [", file=f)
-        for a in args:
-            print("  ", end="", file=f)
-            arg_like(a, f)
-        print("  ]", file=f)
-        print(
-            """  # NOTE the `BACKEND` environment variable is intended to provide some common ways to debug/benchmark thunder.jit
-  # with different backend and compilation options. By default, it uses the original Thunder options that are executed""",
-            file=f,
-        )
-        print('  backend = os.getenv("BACKEND")', file=f)
-        # thunder_options_str = ", ".join(f"{key}={repr(value)}" for key, value in thunder_options.items())
-        print('  if backend == None or backend == "thunder":', file=f)
-        print(f"    fqn = thunder.jit(DynamoModule(), {thunder_options_str})", file=f)
-        print('  elif backend == "torch.compile":', file=f)
-        print("    fqn = torch.compile(DynamoModule())", file=f)
-        print('  elif backend == "dynamo-eager":', file=f)
-        print('    fqn = torch.compile(DynamoModule(), backend="eager")', file=f)
-        if has_cuda_args:
-            print('  elif backend == "thunder-nvtxprofile":', file=f)
-            print("    fqn = thunder.jit(DynamoModule(), transforms=[NvtxProfileTransform()])", file=f)
-            print('  elif backend == "thunder-no-torch.compile":', file=f)
-            print("    fqn = thunder.jit(DynamoModule(), executors=_execs)", file=f)
-            print('  elif backend == "thunder-cudagraph":', file=f)
-            print("    xform = thunder.transforms.cudagraph.CUDAGraphTransform()", file=f)
-            print("    fqn = thunder.jit(DynamoModule(), transform=[xform])", file=f)
-            print(f'  post_graph = os.getenv("POST_GRAPH", "0")', file=f)
-            print(f"  if int(post_graph) > 0:", file=f)
-            print(f"    fqn = torch.cuda.make_graphed_callables(", file=f)
-            print(f"      fqn, inputs,", file=f)
-            print(f"      num_warmup_iters=1, allow_unused_input=True", file=f)
-            print(f"    )", file=f)
-            print(f'  torch.cuda.nvtx.range_push("g{graph_idx} warmups")', file=f)
-        print(f"  for i in range(3): # warmup runs", file=f)
-        print(f"    fqn(*inputs)", file=f)
-        if has_cuda_args:
-            print(f"  torch.cuda.synchronize()", file=f)
-            print(f"  torch.cuda.nvtx.range_pop()", file=f)
-            print(f'  torch.cuda.nvtx.range_push("g{graph_idx}")', file=f)
-        print(f"  fqn(*inputs)", file=f)
-        if has_cuda_args:
-            print(f"  torch.cuda.synchronize()", file=f)
-            print(f"  torch.cuda.nvtx.range_pop()", file=f)
-        print(f"\ntest_g{graph_idx}()", file=f)
+            code_str += f"# Warning: The inputs that cannot be inferred are set to None, requiring the user to manually give inputs according to the code\n"
+        input_str = f"""inputs = [\n{chr(10).join(arg_like(a) for a in args)}\n"""
+        code_str += f"{_addindent(input_str, 4)}\n]\n"
+
+        if not use_pytest_benchmark:
+            code_str += f"fqn = thunder.jit(DynamoModule(), {thunder_options_str})\n"
+            code_str += "fqn(*inputs)"
+        else:
+            code_str += "from thunder.dynamo.compiler_graph_benchmark import ThunderCompilerGraphBenchmarking\n"
+            code_str = f"""{code_str}
+bench_executors_dict = {{}}
+bench_executors_dict["thunder"]=partial(thunder.jit, {thunder_options_str})
+bench_executors_dict["torch.compile"]=torch.compile
+bench_executors_dict["dynamo_eager"]=partial(torch.compile, backend="eager")
+bench_executors_dict["eager"]=None
+"""
+            if has_cuda_args:
+                code_str = f"""{code_str}bench_executors_dict["thunder_cugraph"]=partial(thunder.jit, transform=CUDAGraphTransform())\n"""
+            code_str += f"""
+backend = ThunderCompilerGraphBenchmarking(benchmark, executors=bench_executors_dict)
+compiled = torch.compile(backend=backend)(DynamoModule())
+compiled(*inputs)
+"""
+        print(comment_str, file=f)
+        print(import_str, file=f)
+        print(_addindent(code_str, 4), file=f)
+
+        if not use_pytest_benchmark:
+            print(f"\ntest_{graph_name}()", file=f)
