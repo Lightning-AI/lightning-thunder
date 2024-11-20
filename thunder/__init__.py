@@ -780,14 +780,17 @@ def jit(
     def check_storage_aliases(cache_entry, args):
         if cache_entry.vanilla_tensor_args:
             if alias_tensor_indices_str := _alias_tensor_of_args_kwargs(*args):
-                alias_tensor_indices = alias_tensor_indices_str
-                alias_tensor_indices = {int(i) for i in alias_tensor_indices_str.split(",")}
-                vanilla_tensor_args = cache_entry.vanilla_tensor_args
-                check(
-                    not vanilla_tensor_args & alias_tensor_indices,
-                    lambda: f"It seems that {vanilla_tensor_args} are {alias_tensor_indices=} share their storage and some of them are modified in-place",
-                    NotImplementedError,
-                )
+                for alias_tensor_group in alias_tensor_indices_str.split("-"):
+                    alias_tensor_indices = {int(i) for i in alias_tensor_group.split(",")}
+                    vanilla_tensor_args = cache_entry.vanilla_tensor_args
+                    check(
+                        not vanilla_tensor_args & alias_tensor_indices,
+                        lambda: (
+                            f"It seems that {vanilla_tensor_args} are {alias_tensor_indices=} share "
+                            "their storage and some of them are modified in-place"
+                        ),
+                        NotImplementedError,
+                    )
 
     def maybe_connect_to_autograd(cache_entry, result):
         if cache_entry.backward_fn:
