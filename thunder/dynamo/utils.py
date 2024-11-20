@@ -80,7 +80,7 @@ class SplitReason:
     exception: Exception | None = None
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class ExampleInputMetaData:
     """
     Describes the metadata of a tensor, used to generate a random tensor with matching properties
@@ -464,6 +464,12 @@ def _get_storage_shape(t: torch.Tensor):
 
 
 def _get_example_input_tensor_metadata(t: torch.Tensor) -> ExampleInputMetaData:
+    min_val = None
+    max_val = None
+    if not isinstance(t, FakeTensor) and t.numel() != 0:
+        minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(t)
+        min_val = minmax[0].cpu().item()
+        max_val = minmax[1].cpu().item()
     meta_ev = ExampleInputMetaData(
         t.requires_grad,
         t.layout,
@@ -472,11 +478,9 @@ def _get_example_input_tensor_metadata(t: torch.Tensor) -> ExampleInputMetaData:
         _concrete_value(t.shape),
         _get_storage_shape(t),
         _concrete_value(t.stride()),
+        min_val,
+        max_val,
     )
-    if not isinstance(t, FakeTensor) and t.numel() != 0:
-        minmax: tuple[torch.Tensor, torch.Tensor] = torch.aminmax(t)
-        meta_ev.min_val = minmax[0].cpu().item()
-        meta_ev.max_val = minmax[1].cpu().item()
     return meta_ev
 
 
@@ -768,8 +772,8 @@ The torch.fx.Graph:
         code_str += f"{_addindent(input_str, 4)}\n]\n"
 
         if not use_pytest_benchmark:
-            code_str += f"fqn = thunder.jit(DynamoModule(), {thunder_options_str})\n"
-            code_str += "fqn(*inputs)"
+            code_str += f"compiled = thunder.jit(DynamoModule(), {thunder_options_str})\n"
+            code_str += "compiled(*inputs)"
         else:
             code_str += "from thunder.dynamo.compiler_graph_benchmark import ThunderCompilerGraphBenchmarking\n"
             code_str = f"""{code_str}
