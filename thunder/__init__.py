@@ -825,7 +825,9 @@ def jit(
             def internal_to_thunder(co):
                 if co is thunder_general_jit.__code__ or co is _thunder_unwrap_inner_exception.__code__:
                     return True
-                return co.co_filename.endswith("thunder" + os.sep + "core" + os.sep + "interpreter.py") and (co.co_name in ("fn_", "fn_2"))
+                return co.co_filename.endswith("thunder" + os.sep + "core" + os.sep + "interpreter.py") and (
+                    co.co_name in ("fn_", "fn_2")
+                )
 
             # Iterate over the traceback and collect frames that don't correspond to thunder internal functions.
             tb = exc.__traceback__
