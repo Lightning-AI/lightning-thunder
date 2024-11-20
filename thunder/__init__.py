@@ -816,11 +816,13 @@ def jit(
 
     def unwrap_inner_exception(c: Callable) -> Callable:
         def _thunder_unwrap_inner_exception(*args, **kwargs):
+            # Run the function, and caputre the exception if there is one.
             try:
                 return c(*args, **kwargs)
             except InnerException as e:
                 exc = e.value
 
+            # Iterate over the traceback and exclude thunder internal functions.
             tb = exc.__traceback__
             tb_frames = []
             while tb != None:
@@ -834,14 +836,22 @@ def jit(
                     tb_frames.append(tb)
                 tb = tb.tb_next
 
+            # Relink the non-internal traceback frames
             if tb_frames:
                 top_tb = tb = tb_frames[0]
                 for _tb in tb_frames[1:]:
                     tb.tb_next = _tb
                     tb = _tb
-                exc.with_traceback(top_tb)
+                exc.__traceback__ = top_tb
 
-            raise exc
+            # Re-raise the exception without retaining it in this stack frame to avoid leaking tensors.
+            try:
+                raise exc
+            except Exception as e:
+                del exc
+                del e
+                raise # re-raises current exception
+
         return _thunder_unwrap_inner_exception
 
     @wraps(fn)
