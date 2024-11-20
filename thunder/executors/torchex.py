@@ -1,7 +1,7 @@
 from __future__ import annotations
 import operator
 import importlib
-from functools import partial
+from functools import partial, wraps
 from numbers import Number
 from typing import TYPE_CHECKING
 from collections.abc import Callable
