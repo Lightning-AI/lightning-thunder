@@ -822,19 +822,17 @@ def jit(
             except InnerException as e:
                 exc = e.value
 
-            # Iterate over the traceback and exclude thunder internal functions.
+            def internal_to_thunder(co):
+                if co is thunder_general_jit.__code__ or co is _thunder_unwrap_inner_exception.__code__:
+                    return True
+                return co.co_filename.endswith("thunder" + os.sep + "core" + os.sep + "interpreter.py") and (co.co_name in ("fn_", "fn_2"))
+
+            # Iterate over the traceback and collect frames that don't correspond to thunder internal functions.
             tb = exc.__traceback__
             tb_frames = []
             while tb != None:
                 co = tb.tb_frame.f_code
-                co_fname = co.co_filename
-                co_name = co.co_name
-                if (co is _thunder_unwrap_inner_exception.__code__ or co is thunder_general_jit.__code__) or (
-                    co_fname.endswith("thunder" + os.sep + "core" + os.sep + "interpreter.py")
-                    and (co_name in ("fn_", "fn_2"))
-                ):
-                    pass
-                else:
+                if not internal_to_thunder(co):
                     tb_frames.append(tb)
                 tb = tb.tb_next
 
