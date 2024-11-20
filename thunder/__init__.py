@@ -829,8 +829,10 @@ def jit(
                 co = tb.tb_frame.f_code
                 co_fname = co.co_filename
                 co_name = co.co_name
-                if ((co is _thunder_unwrap_inner_exception.__code__ or co is thunder_general_jit.__code__) or
-                    (co_fname.endswith("thunder" + os.sep + "core" + os.sep + "interpreter.py") and (co_name in ("fn_", "fn_2")))):
+                if (co is _thunder_unwrap_inner_exception.__code__ or co is thunder_general_jit.__code__) or (
+                    co_fname.endswith("thunder" + os.sep + "core" + os.sep + "interpreter.py")
+                    and (co_name in ("fn_", "fn_2"))
+                ):
                     pass
                 else:
                     tb_frames.append(tb)
@@ -850,7 +852,7 @@ def jit(
             except Exception as e:
                 del exc
                 del e
-                raise # re-raises current exception
+                raise  # re-raises current exception
 
         return _thunder_unwrap_inner_exception
 
