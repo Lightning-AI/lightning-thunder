@@ -1674,6 +1674,8 @@ leaky_relu_opinfo = OpInfo(
     dtypes=(datatypes.floating,),
     sample_input_generator=get_elementwise_unary_with_kwargs_generator([{}, {"negative_slope": 0.5}]),
     torch_reference=torch.nn.functional.leaky_relu,
+    # fdm.jvp, which is used in test_vjp_correctness, behaves badly on (-1e-6, 1e-6) for this function
+    singularity_fn=lambda x: x,
     test_directives=(),
 )
 elementwise_unary_ops.append(leaky_relu_opinfo)
