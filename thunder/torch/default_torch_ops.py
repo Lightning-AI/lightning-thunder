@@ -346,7 +346,6 @@ torch_auto_registered_ops = {
         torch.nn.functional.fractional_max_pool3d,
         torch.nn.functional.fractional_max_pool3d_with_indices,
         torch.nn.functional.gaussian_nll_loss,
-        torch.nn.functional.glu,
         torch.nn.functional.grid_sample,
         torch.nn.functional.gumbel_softmax,
         torch.nn.functional.hardshrink,

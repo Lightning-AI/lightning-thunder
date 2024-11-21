@@ -1345,7 +1345,7 @@ def view_as(a: TensorLike, b: TensorLike, /) -> TensorLike:
 
 
 #
-# Elementwise unary operaitons
+# Elementwise unary operatons
 #
 # TODO Add type annotations
 
@@ -2674,6 +2674,19 @@ def clone(a: TensorProxy, *, memory_format=torch.preserve_format) -> TensorProxy
 register_function(torch.clone, clone)
 register_function(torch.Tensor.clone, clone)
 register_method("clone", clone)
+
+
+@torchsymbol(torch.nn.functional.glu, is_method=False)
+def glu(a: TensorProxy, /, dim=None):
+    dim = -1 if dim is None else dim
+    utils.check(
+        a.shape[dim] % 2 == 0,
+        lambda: f"Halving dimension must be even, but dimension {dim} is size {a.shape[dim]}",
+    )
+    chunk_size = a.shape[dim] // 2
+    left, right = split(a, (chunk_size, chunk_size), dim=dim)
+    out = left * sigmoid(right)
+    return out
 
 
 @torchsymbol(torch.mean, is_method=True)

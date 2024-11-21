@@ -5475,6 +5475,54 @@ def var_sample_generator(op, device, dtype, requires_grad):
     yield SampleInput(make_tensor((), device=device, dtype=dtype, requires_grad=requires_grad))
 
 
+def glu_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(
+        make_tensor,
+        device=device,
+        dtype=dtype,
+        requires_grad=requires_grad,
+    )
+
+    cases = (
+        ((4,),),
+        ((3, 4), 1),
+        ((3, 4),),
+        ((4, 3), 0),
+        ((4, 5, 8),),
+        ((4, 5, 8), 0),
+    )
+
+    for case in cases:
+        if len(case) == 1:
+            yield SampleInput(make(*case))
+        else:
+            shape, dim = case
+            yield SampleInput(make(shape), dim)
+
+
+def glu_error_generator(op, device, **kwargs):
+    make = partial(
+        make_tensor,
+        device=device,
+        dtype=torch.float,
+    )
+    err_msg = r"Halving dimension must be even, but dimension .* is size .*"
+    yield (SampleInput(make((3,))), RuntimeError, err_msg)
+    yield (SampleInput(make((2, 2, 3))), RuntimeError, err_msg)
+    yield (SampleInput(make((4, 5, 8)), dim=1), RuntimeError, err_msg)
+
+
+glu_opinfo = OpInfo(
+    ltorch.glu,
+    sample_input_generator=glu_sample_generator,
+    error_input_generator=glu_error_generator,
+    dtypes=(datatypes.floating, datatypes.complexfloating),
+    torch_reference=torch.nn.functional.glu,
+    test_directives=(),
+)
+reduction_ops.append(glu_opinfo)
+
+
 mean_opinfo = OpInfo(
     ltorch.mean,
     sample_input_generator=reduction_sample_generator,
