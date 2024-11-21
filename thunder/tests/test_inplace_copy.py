@@ -178,3 +178,11 @@ def test_inplace_copy_dst_copy_returned_issue_1109(executor, device, dtype):
     assert_close(a_ref, a)
     for o, o_ref in zip(o_thunder, o_eager):
         assert_close(o, o_ref)
+
+
+@instantiate(dtypes=datatypes.float_math_dtypes)
+def test_inplace_copy_of_leaf_requiring_grad_fails(executor, device, dtype):
+    tdtype = ttorch.to_torch_dtype(dtype)
+    a = make_tensor((4, 4), device=device, dtype=tdtype, requires_grad=True)
+    with pytest.raises(RuntimeError):
+        a.copy_(a)

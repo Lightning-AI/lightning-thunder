@@ -545,10 +545,9 @@ def test_single_tensor_adam_like(executor, device, _):
     ref_state_steps = [torch.tensor(1, device=device) for _ in range(2)]
     single_tensor_adam(*ref_tensors, state_steps=ref_state_steps)
 
-    jitted = executor.make_callable(single_tensor_adam)
+    # torch.compile does not support accessing the ContextVariable compile data used in _copy__impl_
+    jitted = executor.make_callable(single_tensor_adam, torch_compile_fullgraph=False)
     params, grads, exp_avgs, exp_avg_sqs = tensors
-    cd = thunder.compile_data(jitted)
-    cd.compile_options["torch_compile_fullgraph"] = False
 
     jitted(params, grads, exp_avgs, exp_avg_sqs, state_steps)
     torch.testing.assert_close(actual=tensors + [state_steps], expected=ref_tensors + [ref_state_steps])
