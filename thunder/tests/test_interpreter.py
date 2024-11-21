@@ -864,13 +864,7 @@ def test_backtrace_filter():
 
     jfn = thunder.jit(fn1)
 
-    expected_frame_names = [
-        "test_backtrace_filter",
-        "_thunder_unwrap_inner_exception",
-        "fn1",
-        "fn2",
-        "fn3"
-    ]
+    expected_frame_names = ["test_backtrace_filter", "_thunder_unwrap_inner_exception", "fn1", "fn2", "fn3"]
 
     try:
         jfn()
@@ -883,7 +877,7 @@ def test_backtrace_filter():
         frame_names = [tb.tb_frame.f_code.co_name for tb in tb_frames]
         assert frame_names == expected_frame_names
     except BaseException as e:
-        assert False, e # Wrong exception type.
+        assert False, e  # Wrong exception type.
 
 
 def test_walrus_operator(jit):
