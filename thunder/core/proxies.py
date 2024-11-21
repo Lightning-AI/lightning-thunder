@@ -1953,6 +1953,8 @@ class SubclassTensorProxy(TensorProxy):
         else:
             # TODO(crcrpar): Think about materializing `self` so that we can
             # call `__tensor_init__` to know each attribute names.
+            from dataclasses import replace
+            import inspect
             from thunder.core import prims
 
             bsym = prims.tensor_subclass_ctor.bind(
@@ -1966,6 +1968,9 @@ class SubclassTensorProxy(TensorProxy):
                 self._non_tensors,
                 output=self,
             )
+            cls_module = inspect.getmodule(self._subclass_type)
+            bsym.sym = replace(bsym.sym, _module=cls_module)
+
             # NOTE(crcrpar): A callable being `thunder.jit`ed can call `MySubclassTensor(...)`
             # inside of it either directly or indirectly: indirect way is to call it through
             # a custom `torch.autograd.Function` as in
