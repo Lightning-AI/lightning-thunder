@@ -1,26 +1,18 @@
+from collections.abc import Callable, Sequence, Hashable
 import enum
-import sys
-import os
 import itertools
-from typing import Any
-from collections.abc import Sequence
-from collections.abc import Callable
-from collections.abc import Hashable
-from types import ModuleType
-import warnings
-from functools import cache, partial
+import os
+import sys
+from typing import Any, ModuleType
 
 import torch.cuda
 
-
-from thunder.core.utils import check
+from thunder.core.devices import to_torch_device
+from thunder.core.dtypes import to_torch_dtype
+from thunder.core.proxies import Proxy, TensorProxy, proxy
+from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
 from thunder.core.trace import TraceCtx
-from thunder.core.proxies import Proxy, TensorProxy, proxy
-from thunder.core.baseutils import run_once
-from thunder.core.dtypes import to_torch_dtype
-from thunder.core.devices import to_torch_device
-from thunder.core.pytree import tree_map
 
 __all__ = [
     "register_executor",
