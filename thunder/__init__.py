@@ -849,9 +849,8 @@ def jit(
             # Re-raise the exception without retaining it in this stack frame to avoid leaking tensors.
             try:
                 raise exc
-            except Exception as e:
+            except Exception:
                 del exc
-                del e
                 raise  # re-raises current exception
 
         return _thunder_unwrap_inner_exception
