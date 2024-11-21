@@ -1,13 +1,11 @@
+from collections import namedtuple
+from collections.abc import Callable, Generator, Iterable, Sequence
+from functools import partial, wraps
 import itertools
 import math
-import operator
-from collections import namedtuple
-from collections.abc import Sequence
-from functools import partial, wraps
 from numbers import Number
-from typing import Union, Optional, Tuple, Any
-from collections.abc import Callable
-from collections.abc import Generator, Iterable
+import operator
+from typing import Any
 
 import numpy as np
 import pytest
@@ -23,14 +21,13 @@ import thunder.core.devices as devices
 import thunder.core.dtypes as datatypes
 from thunder.core.dtypes import to_dtype, to_torch_dtype
 import thunder.core.prims as prims
-import thunder.executors as executors
-import thunder.torch as ltorch
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
-from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator, IS_WINDOWS, version_between
+import thunder.executors as executors
+from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator, IS_WINDOWS
 from thunder.tests.make_tensor import make_tensor
-import thunder.extend as extend
 import thunder.tests.bf16
+import thunder.torch as ltorch
 
 #
 # Helpful constants and utility functions
