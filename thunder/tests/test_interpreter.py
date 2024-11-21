@@ -850,6 +850,42 @@ def test_uncaught_exception_no_leak():
     assert weak_x() is None
 
 
+def test_backtrace_filter():
+    import thunder
+
+    def fn1():
+        fn2()
+
+    def fn2():
+        fn3()
+
+    def fn3():
+        raise ValueError
+
+    jfn = thunder.jit(fn1)
+
+    expected_frame_names = [
+        "test_backtrace_filter",
+        "_thunder_unwrap_inner_exception",
+        "fn1",
+        "fn2",
+        "fn3"
+    ]
+
+    try:
+        jfn()
+    except ValueError as e:
+        tb_frames = []
+        tb = e.__traceback__
+        while tb != None:
+            tb_frames.append(tb)
+            tb = tb.tb_next
+        frame_names = [tb.tb_frame.f_code.co_name for tb in tb_frames]
+        assert frame_names == expected_frame_names
+    except BaseException as e:
+        assert False, e # Wrong exception type.
+
+
 def test_walrus_operator(jit):
     def foo(a, b):
         c = (a := b)
