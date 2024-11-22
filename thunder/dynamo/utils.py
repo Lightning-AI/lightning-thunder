@@ -26,9 +26,10 @@ if TYPE_CHECKING:
 auto_register_ops = set(itertools.chain(*torch_auto_registered_ops.values()))
 
 
-# Currently, thunder as mapping torch these function but they
-# just throw warning.
-UNSUPPORTED_THUNDER_FUNCTION = (torch._C._set_grad_enabled,)
+# Currently, thunder has mapping for these torch function but they
+# just raise a warning (or don't support the exact behaviour)
+# Previously used for `torch._C._set_grad_enabled` when it just raised a warning.
+UNSUPPORTED_THUNDER_FUNCTION = ()
 
 
 class CompilerType(Enum):
@@ -269,36 +270,20 @@ def try_execute_thunder_symbol(thunder_symbol: Symbol, node: torch.fx.Node) -> t
 
 def get_nodes_in_unsupported_ctx_regions(gm: torch.fx.GraphModule) -> set[torch.fx.Node]:
     """
-    Finds the node within `autocast` or other supported context and marks them as unsupported.
+    Finds the node within unsupported context and marks them as unsupported.
     Even though, thunder may support the operation within the reason, it doesn't correctly apply the change
     triggered from the context.
     """
-    # NOTE - Currently only detects the autocast regions.
+    # NOTE - Currently doesn't ban any ctx (previously used for `no_grad` and `autocast`).
 
     nodes_in_unsupported_ctx_regions: set[torch.fx.Node] = set()
-    ctx_cnt = 0  # Count of `enters_autocast` we have seen till now
+    ctx_cnt = 0  # Count of  we have seen till now
 
-    # We want to mark nodes disabling `autograd` as unsupported
-    # because `thunder` doesn't correctly deal with these stateful functions.
-
-    def is_no_grad_ctx_enter(node):
-        if node.target == torch._C._set_grad_enabled:
-            arg: bool = node.args[0]
-            assert isinstance(arg, bool)
-            return not arg  # arg is False (i.e. grad was disabled)
-        return False
-
-    def is_no_grad_ctx_exit(node):
-        if node.target == torch._C._set_grad_enabled:
-            arg: bool = node.args[0]
-            assert isinstance(arg, bool)
-            return arg  # arg is True (i.e. grad was enabled)
-        return False
-
+    UNSUPPORTED_THUNDER_CTX = ()
     for node in gm.graph.nodes:
-        if node.op == "call_function" and is_no_grad_ctx_enter(node):
+        if node.op == "call_function" and node.target in UNSUPPORTED_THUNDER_CTX:
             ctx_cnt += 1
-        elif node.op == "call_function" and is_no_grad_ctx_exit(node):
+        elif node.op == "call_function" and node.target in UNSUPPORTED_THUNDER_CTX:
             ctx_cnt -= 1
         else:
             if ctx_cnt > 0:
@@ -367,7 +352,7 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
         return False, split_reason
 
     # These functions are present in `_torch_to_thunder_function_map` but don't mimic exact behavior.
-    # Eg. torch._C._set_grad_enabled's thunder implementation just throws warning that this is unsupported.
+    # Eg. previously torch._C._set_grad_enabled's thunder implementation just threw warning that this is unsupported.
     if target in UNSUPPORTED_THUNDER_FUNCTION:
         split_reason = SplitReason(
             SplitReasonType.UNSUPPORTED_NODE,

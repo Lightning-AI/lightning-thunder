@@ -512,9 +512,40 @@ def test_no_grad_ctx_manager(executor, device: str, dtype: dtypes.dtype):
     assert len(backend.subgraph_infos) == 1
 
     for subgraph_info in backend.subgraph_infos:
-        assert len(subgraph_info.split_reasons) > 1  # Verify there were splits in the subgraph.
+        assert len(subgraph_info.split_reasons) == 0  # Verify there were splits in the subgraph.
         assert isinstance(subgraph_info.original_graph_module, torch.fx.GraphModule)
-        assert any("has been manually disabled" in split_reason.info for split_reason in subgraph_info.split_reasons)
+
+    torch.testing.assert_close(actual, expected)
+
+    g = torch.randn_like(actual)
+    actual_grad = torch.autograd.grad(actual, x, g)
+    expected_grad = torch.autograd.grad(expected, x, g)
+    torch.testing.assert_close(actual_grad, expected_grad)
+
+
+@instantiate(dtypes=NOTHING, executors=[DynamoThunderExecutor])
+def test_no_grad_enabled_grad_nested_ctx_manager(executor, device: str, dtype: dtypes.dtype):
+    backend = ThunderCompiler()
+
+    def func(x):
+        with torch.no_grad():
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                y = x @ x
+
+            with torch.enable_grad():
+                z = x.sin()
+        return y + x + z
+
+    x = torch.randn(3, 3, device=device, dtype=dtype, requires_grad=True)
+    actual = torch.compile(func, backend=backend)(x)
+    expected = torch.compile(func, backend="eager")(x)
+
+    # We record the GraphModules that was compiled by ThunderCompiler
+    assert len(backend.subgraph_infos) == 1
+
+    for subgraph_info in backend.subgraph_infos:
+        assert len(subgraph_info.split_reasons) == 0  # Verify there were splits in the subgraph.
+        assert isinstance(subgraph_info.original_graph_module, torch.fx.GraphModule)
 
     torch.testing.assert_close(actual, expected)
 
