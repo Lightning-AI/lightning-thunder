@@ -4081,6 +4081,28 @@ def tensor_subclass_ctor_meta(
     return s
 
 
+def get_nested_types(collection):
+    collection = utils.sequencify(collection)
+    types_set = {type(t) for t in collection}
+
+    def check_types(coll):
+        for item in coll:
+            # Check if the item is a nested collection
+            if baseutils.is_collection(item):
+                # If it's a dictionary, check its values
+                if isinstance(item, dict):
+                    check_types(item.values())
+                # Recursively check nested collections
+                else:
+                    check_types(item)
+            else:
+                # Add the type of non-collection items
+                types_set.add(type(item))
+
+    check_types(collection)
+    return tuple(types_set)
+
+
 def printer_of_tensor_subclass_ctor(
     bsym: BoundSymbol,
     out_printables: Any,
@@ -4092,8 +4114,11 @@ def printer_of_tensor_subclass_ctor(
     baseutils.check(not kwarg_printables, lambda: f"No kwargs are supported but {kwarg_printables = }")
 
     # NOTE(crcrpar): It's not a context but at the moment Tensor subclass is treated as `ContextObject`.
-    wrapped_cls: ContextObject = arg_printables[0]
-    cls: torch._C._TensorMeta = wrapped_cls.obj
+    wrapped_cls: ContextObject | torch._C._TensorMeta = arg_printables[0]
+    if isinstance(wrapped_cls, torch._C._TensorMeta):
+        cls = wrapped_cls
+    else:
+        cls: torch._C._TensorMeta = wrapped_cls.obj
     tensors, non_tensors = arg_printables[-2:]
 
     arg_str = ", ".join(codeutils.prettyprint(x) for x in [*tensors, *non_tensors])
@@ -4168,11 +4193,33 @@ def printer_of_tensor_subclass_ctor(
     return s
 
 
+def bind_postprocess_of_tensor_subclass_ctor(bsym: BoundSymbol) -> None:
+    non_tensors = bsym.args[-1]
+    if not non_tensors:
+        return
+    types = get_nested_types(non_tensors)
+    filtered_types = tuple(
+        filter(
+            lambda t: (
+                t.__module__ != "builtins"
+                and t != Number
+                and not t.__module__.startswith("thunder.")
+                and not t.__module__.startswith("torch.")
+            ),
+            types,
+        )
+    )
+    if filtered_types:
+        new_imports = {t.__name__: t for t in filtered_types}
+        bsym._import_ctx.update(new_imports)
+
+
 tensor_subclass_ctor = make_prim(
     PrimIDs.TENSOR_SUBCLASS_CTOR,
     "tensor_subclass_ctor",
     meta=tensor_subclass_ctor_meta,
     python_printer=printer_of_tensor_subclass_ctor,
+    _bind_postprocess=bind_postprocess_of_tensor_subclass_ctor,
 )
 
 
