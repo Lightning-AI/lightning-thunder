@@ -2183,7 +2183,7 @@ if has_einops:
 
 def _copy__impl(copy_from, copy_to):
     cd = get_compile_data()
-    if cd is not None and cd.is_grad_enabled and copy_to.is_leaf and copy_to.requires_grad:
+    if (cd is None or cd.is_grad_enabled) and copy_to.is_leaf and copy_to.requires_grad:
         raise RuntimeError("a leaf Variable that requires grad is being used in an in-place operation.")
     copy_to.copy_(copy_from)
     return copy_to

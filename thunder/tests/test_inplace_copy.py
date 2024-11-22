@@ -7,7 +7,7 @@ from torch.testing import assert_close, make_tensor
 import thunder
 import thunder.core.dtypes as datatypes
 import thunder.torch as ttorch
-from thunder.tests.framework import instantiate, nvFuserExecutor
+from thunder.tests.framework import instantiate, nvFuserExecutor, TorchExecutor
 
 
 @instantiate(dtypes=datatypes.all_dtypes - datatypes.float_8bit_dtypes)
@@ -180,9 +180,14 @@ def test_inplace_copy_dst_copy_returned_issue_1109(executor, device, dtype):
         assert_close(o, o_ref)
 
 
-@instantiate(dtypes=datatypes.float_math_dtypes)
+@instantiate(executors=(TorchExecutor,), dtypes=datatypes.float_math_dtypes)
 def test_inplace_copy_of_leaf_requiring_grad_fails(executor, device, dtype):
+    def fn(x):
+        x.copy_(x)
+
+    jitted_fn = executor.make_callable(fn)
+
     tdtype = ttorch.to_torch_dtype(dtype)
     a = make_tensor((4, 4), device=device, dtype=tdtype, requires_grad=True)
     with pytest.raises(RuntimeError):
-        a.copy_(a)
+        jitted_fn(a)
