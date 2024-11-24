@@ -2226,10 +2226,34 @@ def _tensor_subclass_ctor(cls, name, shape, device, dtype, requires_grad, tensor
     return cls(*tensors, *non_tensors)
 
 
+def _bind_postprocess_of_tensor_subclass_ctor(bsym: BoundSymbol) -> None:
+    from thunder.core.prims import get_nested_types
+
+    cls, _name, _shape, _device, _dtype, _requires_grad, _tensors, non_tensors = bsym.args
+    types = get_nested_types(non_tensors)
+    filtered_types = tuple(
+        filter(
+            lambda t: (
+                t.__module__ != "builtins"
+                and t != Number
+                and not t.__module__.startswith("thunder.")
+                and not t.__module__.startswith("torch.")
+            ),
+            (cls,) + types,
+        )
+    )
+    if filtered_types:
+        new_imports = {t.__name__: t for t in filtered_types}
+        print(f"$$$ [torchexecutor] {bsym.sym = }| {new_imports = }")
+        bsym._import_ctx.update(new_imports)
+
+
 tensor_subclass_ctor = ex.register_operator(
     "tensor_subclass_ctor",
     meta=prims.tensor_subclass_ctor,
     fn=_tensor_subclass_ctor,
+    bind_postprocess=_bind_postprocess_of_tensor_subclass_ctor,
+    python_printer=prims.printer_of_tensor_subclass_ctor,
 )
 _register_implementation(prims.tensor_subclass_ctor, tensor_subclass_ctor, checker=_always_executable)
 
