@@ -94,7 +94,15 @@ def _make_fake_subclass_tensor_from_subclass_tensor_proxy(
             [_materialize_tensor_proxy(t, fake_tensor_mode=fake_tensor_mode) for t in tensor_proxy._tensors],
         )
     )
-    metadata = dict(zip(non_tensor_attr_names, tensor_proxy._non_tensors))
+    new_non_tensors = []
+    for a in tensor_proxy._non_tensors:
+        if isinstance(a, dtypes.dtype):
+            new_non_tensors.append(dtypes.to_torch_dtype(a))
+        elif isinstance(a, devices.Device):
+            new_non_tensors.append(devices.to_torch_device(a))
+        else:
+            new_non_tensors.append(a)
+    metadata = dict(zip(non_tensor_attr_names, new_non_tensors))
     subclass_tensor = subclass_type.__tensor_unflatten__(
         inner_tensors,
         metadata,
@@ -386,8 +394,14 @@ class DesugarTensorSubclass:
         def transform_out(out: torch.Tensor) -> OutputWrapperForFxTracing:
             orig_output.append(out)
             if is_traceable_wrapper_subclass(out):
+                from enum import Enum
+
                 attrs, metadata = out.__tensor_flatten__()
                 tensors = [getattr(out, name) for name in attrs]
+                for key in metadata:
+                    v = metadata[key]
+                    if issubclass(type(v), Enum) and not isinstance(v, (torch.dtype, torch.device)):
+                        metadata[key] = str(metadata[key])
                 output = OutputWrapperForFxTracing(dict(zip(attrs, tensors)), metadata)
             else:
                 output = OutputWrapperForFxTracing(out, None)
