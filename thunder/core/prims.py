@@ -4143,11 +4143,12 @@ def printer_of_tensor_subclass_ctor(
     else:
         comment_str = ""
 
-    if len(bsym.name_with_module().split(".")) > 1:
-        module_name = ".".join(bsym.name_with_module().split(".")[:-1])
-        cls_with_module = f"{module_name}.{cls.__name__}"
-    else:
-        cls_with_module = f"{cls.__name__}"
+    # if len(bsym.name_with_module().split(".")) > 1:
+    #     module_name = ".".join(bsym.name_with_module().split(".")[:-1])
+    #     cls_with_module = f"{module_name}.{cls.__name__}"
+    # else:
+    #     cls_with_module = f"{cls.__name__}"
+    cls_with_module = f"{cls.__name__}"
     s = f"{result_str}{cls_with_module}({arg_str}{', ' if (len(arg_str) > 0 and len(kwarg_str) > 0) else ''}{kwarg_str}){comment_str}"
 
     if bsym.header:
@@ -4159,65 +4160,47 @@ def printer_of_tensor_subclass_ctor(
         header_lines = (f"# {line}" for line in header_lines)
         return chain(header_lines, [s])
 
-    # The following part updates `bsym._import_ctx` which I think theoretically should be done
-    # via `_bind_postprocess` but I've been finding this better working for this case.
+    filtered_types = (cls,)
     if non_tensors:
 
-        def get_nested_types(collection):
-            collection = utils.sequencify(collection)
-            types_set = {type(t) for t in collection}
-
-            def check_types(coll):
-                for item in coll:
-                    # Check if the item is a nested collection
-                    if baseutils.is_collection(item):
-                        # If it's a dictionary, check its values
-                        if isinstance(item, dict):
-                            check_types(item.values())
-                        # Recursively check nested collections
-                        else:
-                            check_types(item)
-                    else:
-                        # Add the type of non-collection items
-                        types_set.add(type(item))
-
-            check_types(collection)
-            return tuple(types_set)
-
         types = get_nested_types([t.obj if isinstance(t, codeutils.ContextObject) else t for t in non_tensors])
-        filtered_types = tuple(
+        filtered_types += tuple(
             filter(
                 lambda t: (
                     t.__module__ != "builtins"
                     and t != Number
+                    # note(crcrpar): maybe `thunder.core`?
                     and not t.__module__.startswith("thunder.")
                     and not t.__module__.startswith("torch.")
                 ),
                 types,
             )
         )
-        if filtered_types:
-            new_imports = {t.__name__: t for t in filtered_types}
-            bsym._import_ctx.update(new_imports)
+    if filtered_types:
+        new_imports = {t.__name__: t for t in filtered_types}
+        bsym._import_ctx.update(new_imports)
     return s
 
 
 def bind_postprocess_of_tensor_subclass_ctor(bsym: BoundSymbol) -> None:
+    cls = bsym.args[0]
     non_tensors = bsym.args[-1]
-    if not non_tensors:
-        return
-    types = get_nested_types(non_tensors)
-    filtered_types = tuple(
-        filter(
-            lambda t: (
-                t.__module__ != "builtins"
-                and t != Number
-                and not t.__module__.startswith("thunder.")
-                and not t.__module__.startswith("torch.")
-            ),
-            types,
+
+    filtered_types: tuple[Any, ...] = (cls,)
+    if non_tensors:
+        types = get_nested_types(non_tensors)
+        filtered_types += tuple(
+            filter(
+                lambda t: (
+                    t.__module__ != "builtins"
+                    and t != Number
+                    # note(crcrpar): maybe `thunder.core`?
+                    and not t.__module__.startswith("thunder.")
+                    and not t.__module__.startswith("torch.")
+                ),
+                types,
+            )
         )
-    )
     if filtered_types:
         new_imports = {t.__name__: t for t in filtered_types}
         bsym._import_ctx.update(new_imports)
