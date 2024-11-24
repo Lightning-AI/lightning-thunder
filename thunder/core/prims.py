@@ -4087,6 +4087,7 @@ def get_nested_types(collection):
 
     def check_types(coll):
         for item in coll:
+            types_set.add(type(item))
             # Check if the item is a nested collection
             if baseutils.is_collection(item):
                 # If it's a dictionary, check its values
@@ -4095,9 +4096,6 @@ def get_nested_types(collection):
                 # Recursively check nested collections
                 else:
                     check_types(item)
-            else:
-                # Add the type of non-collection items
-                types_set.add(type(item))
 
     check_types(collection)
     return tuple(types_set)
@@ -4137,8 +4135,11 @@ def printer_of_tensor_subclass_ctor(
     else:
         comment_str = ""
 
-    module_name = ".".join(bsym.name_with_module().split(".")[:-1])
-    cls_with_module = f"{module_name}.{cls.__name__}"
+    if len(bsym.name_with_module().split(".")) > 1:
+        module_name = ".".join(bsym.name_with_module().split(".")[:-1])
+        cls_with_module = f"{module_name}.{cls.__name__}"
+    else:
+        cls_with_module = f"{cls.__name__}"
     s = f"{result_str}{cls_with_module}({arg_str}{', ' if (len(arg_str) > 0 and len(kwarg_str) > 0) else ''}{kwarg_str}){comment_str}"
 
     if bsym.header:
