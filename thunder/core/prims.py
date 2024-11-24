@@ -4118,8 +4118,16 @@ def printer_of_tensor_subclass_ctor(
     else:
         cls: torch._C._TensorMeta = wrapped_cls.obj
     tensors, non_tensors = arg_printables[-2:]
+    new_non_tensors = []
+    for a in non_tensors:
+        if isinstance(a, dtypes.dtype):
+            new_non_tensors.append(dtypes.to_torch_dtype(a))
+        elif isinstance(a, devices.Device):
+            new_non_tensors.append(devices.to_torch_device(a))
+        else:
+            new_non_tensors.append(a)
 
-    arg_str = ", ".join(codeutils.prettyprint(x) for x in [*tensors, *non_tensors])
+    arg_str = ", ".join(codeutils.prettyprint(x) for x in [*tensors, *new_non_tensors])
     kwarg_str = ""
 
     result_str: str

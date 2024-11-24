@@ -2223,7 +2223,15 @@ _register_implementation(prims.shallow_copy, shallow_copy, checker=_always_execu
 
 
 def _tensor_subclass_ctor(cls, name, shape, device, dtype, requires_grad, tensors, non_tensors):
-    return cls(*tensors, *non_tensors)
+    new_non_tensors = []
+    for a in non_tensors:
+        if isinstance(a, dtypes.dtype):
+            new_non_tensors.append(to_torch_dtype(a))
+        elif isinstance(a, devices.Device):
+            new_non_tensors.append(to_torch_device(a))
+        else:
+            new_non_tensors.append(a)
+    return cls(*tensors, *new_non_tensors)
 
 
 def _bind_postprocess_of_tensor_subclass_ctor(bsym: BoundSymbol) -> None:
@@ -2244,7 +2252,6 @@ def _bind_postprocess_of_tensor_subclass_ctor(bsym: BoundSymbol) -> None:
     )
     if filtered_types:
         new_imports = {t.__name__: t for t in filtered_types}
-        print(f"$$$ [torchexecutor] {bsym.sym = }| {new_imports = }")
         bsym._import_ctx.update(new_imports)
 
 
@@ -2281,6 +2288,12 @@ def unflatten_tensor_subclass_impl(
     inner_tensors: dict[str, TensorLike],
     metadata: dict,
 ):
+    for key in metadata:
+        v = metadata[key]
+        if isinstance(v, dtypes.dtype):
+            metadata[key] = to_torch_dtype(v)
+        elif isinstance(v, devices.Device):
+            metadata[key] = to_torch_device(v)
     return tensor_subclass_type.__tensor_unflatten__(inner_tensors, metadata, -1, -1)
 
 
