@@ -4172,12 +4172,10 @@ def printer_of_tensor_subclass_ctor(
 
     filtered_types = (cls,)
     if non_tensors:
-
         types = get_nested_types([t.obj if isinstance(t, codeutils.ContextObject) else t for t in non_tensors])
         filtered_types += filter_types(types)
-    if filtered_types:
-        new_imports = {t.__name__: t for t in filtered_types}
-        bsym._import_ctx.update(new_imports)
+    new_imports = {t.__name__: t for t in filtered_types}
+    bsym._import_ctx.update(new_imports)
     return s
 
 
@@ -4189,9 +4187,8 @@ def bind_postprocess_of_tensor_subclass_ctor(bsym: BoundSymbol) -> None:
     if non_tensors:
         types = get_nested_types(non_tensors)
         filtered_types += filter_types(types)
-    if filtered_types:
-        new_imports = {t.__name__: t for t in filtered_types}
-        bsym._import_ctx.update(new_imports)
+    new_imports = {t.__name__: t for t in filtered_types}
+    bsym._import_ctx.update(new_imports)
 
 
 tensor_subclass_ctor = make_prim(
