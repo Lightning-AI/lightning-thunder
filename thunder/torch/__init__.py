@@ -1259,7 +1259,7 @@ def t(a: TensorLike, /) -> TensorLike:
         lambda: f"t() expects a tensor with <= 2 dimensions, but self is {a.ndim}D",
         RuntimeError,
     )
-    return prims.transpose(a, (1, 0)) if a.ndim == 2 else a
+    return transpose(a, 0, 1) if a.ndim == 2 else a
 
 
 @run_once
