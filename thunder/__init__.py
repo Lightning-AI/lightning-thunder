@@ -37,6 +37,7 @@ from thunder.core.transform_common import (
     unwrap_return_value,
     remove_context_manager_prims_from_trace,
 )
+from thunder.transforms.constant_folding import ConstantFolding
 from thunder.core.functionalization import (
     check_inplace_to_views,
     functionalize_inplace_ops,
@@ -332,6 +333,10 @@ def jit(
 
     if transforms is None:
         transforms = []
+
+    # Add the constant folding transform by default
+    if not any(isinstance(t, ConstantFolding) for t in transforms):
+        transforms.append(ConstantFolding())
 
     # Resolve names of executors
     executors = resolve_executors(executors)
