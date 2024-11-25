@@ -248,8 +248,7 @@ def test_func_of_subclass_simple_math(executor, device, _, requires_grad):
             not (TORCHAO_AVAILABLE and torch.cuda.get_device_capability() >= (8, 9)),
             reason="Requires capability >= 8.9 and torchao",
         ),
-        # `Tensor.t` -> `ltorch.t` -> `prims.transpose` -> `torchex.permute` and
-        # `torch.permute` is not included in fp8 ops table.
+        # `ltorch._scaled_mm` is missing
         pytest.mark.xfail(),
     ),
 )
