@@ -177,7 +177,7 @@ def trace_from_bsym_or_bsyms(bsym_or_bsyms: BoundSymbol | Sequence[BoundSymbol])
         if executors_list:
             ad_hoc_executor = executors_list[0]
 
-    bsyms = utils.sequencify(bsym_or_bsyms)
+    bsyms = list(utils.sequencify(bsym_or_bsyms))
     trace_args = bsyms[0].flat_proxy_args
     trace_name = bsyms[0].sym.name
 
