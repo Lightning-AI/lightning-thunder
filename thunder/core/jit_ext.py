@@ -95,6 +95,7 @@ from thunder.core.interpreter import (
     PseudoInst,
     ProvenanceRecord,
     interpreter_needs_wrap,
+    ThunderInterpreterObject,
 )
 from thunder.core.langctxs import set_langctx, reset_langctx, Languages, resolve_language
 from thunder.core.baseutils import extract_callable_name
@@ -497,6 +498,47 @@ def _general_jit_ordered_dict_setitem(d, key, value):
     return dict_setitem_lookaside(d, key, value)
 
 
+_TORCH_DYNAMIC_TYPES = {
+    torch.amp.autocast_mode.autocast,
+    torch.autograd.grad_mode.set_grad_enabled,
+    torch.autograd.grad_mode.no_grad,
+}
+
+
+def is_created_during_tracing(provenance):
+    if (
+        provenance.inst is PseudoInst.OPAQUE
+        and provenance.inputs[0].inst is PseudoInst.CONSTANT
+        and provenance.inputs[0].value == object.__new__
+    ):
+        return True
+    if provenance.inst is PseudoInst.NEW:
+        return True
+    return False
+
+
+@interpreter_needs_wrap
+def _raw_object_setattr(obj: Any, name: str, value: Any):
+    return object.__setattr__(obj, name, value)
+
+
+@register_general_jit_lookaside(object.__setattr__)
+def _general_jit_object_setattr_lookaside(obj: Any, name: str, value: Any):
+    uobj = unwrap(obj)
+    if is_created_during_tracing(obj.provenance) or type(uobj) in _TORCH_DYNAMIC_TYPES:
+        return _raw_object_setattr(obj, name, value)
+
+    print("##existing###", type(unwrap(obj)), unwrap(name), obj.provenance)
+    d = _interpret_call(getattr, obj, wrap_const("__dict__"))
+    if d is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return d
+    d.provenance.ext_flag |= EXT_FLAG_IS_MODULE_MEMBER_DICT
+    ud = unwrap(d)
+    assert type(ud) == dict
+    res = _interpret_call(ud.__setitem__, name, value)
+    return res
+
+
 @register_general_jit_lookaside(setattr)
 def _general_jit_setattr_lookaside(obj: Any, name: str, value: Any):
     setattr_lookaside = default_lookaside(setattr)
@@ -504,9 +546,12 @@ def _general_jit_setattr_lookaside(obj: Any, name: str, value: Any):
 
     uobj = unwrap(obj)
     uname = unwrap(name)
+
     if isinstance(uobj, torch.nn.Module):
-        # 1) modify the inner thing
-        # 2) divert the actual setattr...
+        # 1) populate the wrappeers for the member dicts
+        # 2) let the original setattr do it's thing by modifying the
+        #    the member dict
+        # This might generalize to other things, too...
         for n in MODULE_MEMBER_DICT_ATTRS:
             member_dict = _interpret_call(getattr, obj, wrap_const(n))
             member_dict.provenance.ext_flag |= EXT_FLAG_IS_MODULE_MEMBER_DICT
@@ -1619,27 +1664,47 @@ def process_recorded_modifications(ctx, epilogue_trace):
             for k, (inst, *args) in last_modification.items():
                 if inst == PseudoInst.STORE_SUBSCR:
                     (value,) = args
-                    assert isinstance(value.value, Proxy)
+                    print("#########", value.value, modified_object.provenance)
+                    assert isinstance(value.value, (Proxy, int))
 
-                    assert modified_object.provenance.inst is PseudoInst.LOAD_ATTR
-                    assert modified_object.provenance.inputs[1].inst is PseudoInst.CONSTANT
-                    assert modified_object.provenance.inputs[1].value == "_buffers"
+                    if (
+                        modified_object.provenance.inst is PseudoInst.LOAD_ATTR
+                        and modified_object.provenance.inputs[1].inst is PseudoInst.CONSTANT
+                        and modified_object.provenance.inputs[1].value == "_buffers"
+                    ):
+                        typ, name, root_module_provenance = get_parameter_or_buffer_or_submodule_name_and_root(
+                            modified_object.provenance.inputs[0]
+                        )
+                        assert typ == "_modules"
+                        root_module_proxy = root_for_provenances.get(root_module_provenance)
+                        if root_module_proxy is None:
+                            ## we want this to created in the compute trace context for namespace...
+                            root_module_proxy = Proxy(history=root_module_provenance)
+                            epilogue_trace.add_name(root_module_proxy.name)
+                            root_for_provenances[root_module_provenance] = root_module_proxy
 
-                    typ, name, root_module_provenance = get_parameter_or_buffer_or_submodule_name_and_root(
-                        modified_object.provenance.inputs[0]
-                    )
-                    assert typ == "_modules"
-                    root_module_proxy = root_for_provenances.get(root_module_provenance)
-                    if root_module_proxy is None:
-                        ## we want this to created in the compute trace context for namespace...
-                        root_module_proxy = Proxy(history=root_module_provenance)
-                        epilogue_trace.add_name(root_module_proxy.name)
-                        root_for_provenances[root_module_provenance] = root_module_proxy
-
-                    name = ".".join(name + [k])
-                    with tracectx(epilogue_trace):
-                        bsym = prims.pack_buffer.bind(root_module_proxy, name, value.value, output=None)
-                        epilogue_trace.bound_symbols.append(bsym)
+                        name = ".".join(name + [k])
+                        with tracectx(epilogue_trace):
+                            bsym = prims.pack_buffer.bind(root_module_proxy, name, value.value, output=None)
+                            epilogue_trace.bound_symbols.append(bsym)
+                    elif (
+                        modified_object.provenance.inst is PseudoInst.LOAD_ATTR
+                        and modified_object.provenance.inputs[1].inst is PseudoInst.CONSTANT
+                        and modified_object.provenance.inputs[1].value == "__dict__"
+                    ):
+                        name = k
+                        setattr_obj_provenance = modified_object.provenance.inputs[0]
+                        if hasattr(setattr_obj_provenance, "proxy"):
+                            setattr_obj_proxy = setattr_obj_provenance.proxy
+                        else:
+                            ## we want this to created in the compute trace context for namespace...
+                            setattr_obj_proxy = Proxy(history=setattr_obj_provenance)
+                            epilogue_trace.add_name(setattr_obj_proxy.name)
+                        with tracectx(epilogue_trace):
+                            bsym = prims.pack_attr.bind(setattr_obj_proxy, name, value.value, output=None)
+                            epilogue_trace.bound_symbols.append(bsym)
+                    else:
+                        raise NotImplementedError(f"Modifications of {modified_object.provenance} are not supported")
                 else:
                     raise NotImplementedError(f"Modifications {inst} on dicts are not supported")
         else:

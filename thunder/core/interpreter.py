@@ -933,6 +933,7 @@ class PseudoInst(str, enum.Enum):
     BUILTINS = "BUILTINS"
     STORE_SUBSCR = "STORE_SUBSCR"
     LIST_TO_TUPLE = "LIST_TO_TUPLE"
+    NEW = "NEW"
 
 
 @dataclasses.dataclass
@@ -2073,9 +2074,13 @@ def _functools_reduce_lookaside(
     return _interpret_call(impl, fn, iterable, initializer, null)
 
 
+class ThunderInterpreterObject:
+    pass
+
+
 # An iterator to be returned from Sequence.__iter__ lookasides below. This will be run in the interpreter
 # Note: this potentially might imitate a list_iterator / tuple_iterator more...
-class SequenceIter:
+class SequenceIter(ThunderInterpreterObject):
     def __init__(self, s, is_reversed=False):
         self.s = s
         self.next_pos = 0 if not is_reversed else len(s) - 1
@@ -2377,7 +2382,7 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
         return wrap_const(None)
 
 
-class MappingKeysIterator(Iterator):
+class MappingKeysIterator(Iterator, ThunderInterpreterObject):
     # note: the __init__ will be executed by Python itself, and
     #       the caller needs to set up the wrapped_attribute for _mapping
     # The other methods are called through the interpreter mechanism.
@@ -2395,7 +2400,7 @@ class MappingKeysIterator(Iterator):
         return k
 
 
-class MappingKeysView:
+class MappingKeysView(ThunderInterpreterObject):
     def __init__(self, mapping):
         self._mapping = mapping
 
@@ -2425,7 +2430,7 @@ class MappingKeysView:
         return mapping_iter
 
 
-class MappingValuesIterator:
+class MappingValuesIterator(ThunderInterpreterObject):
     def __init__(self, mapping, is_reversed=False):
         self._mapping = mapping
         if is_reversed:
@@ -2440,7 +2445,7 @@ class MappingValuesIterator:
         return dict.__getitem__(self._mapping, next(self._key_iter))
 
 
-class MappingValuesWrapper:
+class MappingValuesWrapper(ThunderInterpreterObject):
     def __init__(self, mapping):
         self._mapping = mapping
 
@@ -2448,7 +2453,7 @@ class MappingValuesWrapper:
         return MappingValuesIterator(self._mapping)
 
 
-class MappingItemsIterator:
+class MappingItemsIterator(ThunderInterpreterObject):
     def __init__(self, mapping, is_reversed=False):
         self._mapping = mapping
         if is_reversed:
@@ -2464,7 +2469,7 @@ class MappingItemsIterator:
         return k, dict.__getitem__(self._mapping, k)
 
 
-class MappingItemsWrapper:
+class MappingItemsWrapper(ThunderInterpreterObject):
     def __init__(self, mapping):
         self._mapping = mapping
 
@@ -2476,7 +2481,7 @@ class MutMappingWrapperMethods(WrappedValue):
     def __new__(cls, /, *args, **kwds):
         uvalue = unwrap(cls)()
         # todo: for subclasses, better record the call to the constructor
-        return wrap_const(uvalue)
+        return wrap(uvalue, provenance=ProvenanceRecord(PseudoInst.NEW, inputs=[cls.provenance]))
 
     def __init__(self, *other, **kwds):
         MutMappingWrapperMethods.update(self, *other, **kwds)
@@ -2775,7 +2780,6 @@ def _type_call_lookaside(wrapped_typ, *args, **kwargs):
     obj = _interpret_call(typ.__new__, wrapped_typ, *args, **kwargs)
     if obj is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return obj
-
     wrapped_init = _interpret_call(getattr, obj, wrap_const("__init__"))
     assert not isinstance(wrapped_init, INTERPRETER_SIGNALS)
     populate_attribute_wrapper(wrapped_init, "__self__", obj)
