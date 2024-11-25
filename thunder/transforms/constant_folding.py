@@ -13,6 +13,12 @@ from thunder.core.devices import to_device
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.core.utils import get_symbols_to_last_used_variables
 
+
+__all__ = [
+    "ConstantFolding",
+]
+
+
 _thunder_to_torch_function_map = {v: k for k, v in _torch_to_thunder_function_map.items()}
 
 # Factory functions whose value we know.
@@ -70,6 +76,88 @@ def compute_with_constant_tensors(bsym, const_values) -> None | Any:
 
 
 class ConstantFolding(thunder.Transform):
+    """Apply Constant Folding to computation trace.
+
+    With this transform applied to a computation trace, successive passes
+    (meaning trace transformations) can transform the simplified compute.
+
+
+    .. code-block:: python
+        :name: example-constant_folding
+
+        from thunder.transforms import ConstantFolding
+
+        model = ...
+        transforms = [ConstantFolding()]
+        jitted = thunder.jit(model, transforms=transforms)
+        # If you prefer `ThunderCompiler`...
+        from thunder.dynamo import ThunderCompiler
+        backend = ThunderCompiler(transforms=transforms)
+        jitted = torch.compile(model, backend=backend)
+
+
+    To see the effect of this transform, let's use the following function:
+
+    .. code-block:: python
+
+        def forward(x):
+            scale_t = torch.tensor([2.])
+            getitem = scale_t[0]
+            getitem_2 = torch.tensor([2., 3.])[0]
+            return x + getitem + getitem_2
+
+    The initial computation trace is as follows:
+
+    .. code-block:: python
+
+        def computation(x):
+          # x: "cpu f32[3, 3]"
+          scale_t = torch.tensor([2.0], device=torch.device("cpu"), dtype=None)  # scale_t: "cpu f32[1]"
+            # scale_t = ltorch.tensor([2.0], device=torch.device("cpu"), dtype=None, requires_grad=False, pin_memory=False)  # scale_t: "cpu f32[1]"
+              # scale_t = prims.tensor_from_sequence([2.0], dtype=None, device=devices.Device("cpu"))  # scale_t: "cpu f32[1]"
+          t3 = torch.tensor([2.0, 3.0], device=torch.device("cpu"), dtype=None)  # t3: "cpu f32[2]"
+            # t3 = ltorch.tensor([2.0, 3.0], device=torch.device("cpu"), dtype=None, requires_grad=False, pin_memory=False)  # t3: "cpu f32[2]"
+              # t3 = prims.tensor_from_sequence([2.0, 3.0], dtype=None, device=devices.Device("cpu"))  # t3: "cpu f32[2]"
+          getitem = Tensor.__getitem__(scale_t, 0)  # getitem: "cpu f32[]"
+            # getitem = ltorch.getitem(scale_t, 0)  # getitem: "cpu f32[]"
+              # (_,) = prims.shape(scale_t)
+              # t17 = prims.slice_prim(scale_t, [0], [1], [1])  # t17: "cpu f32[1]"
+              # getitem = prims.squeeze(t17, (0,))  # getitem: "cpu f32[]"
+          del scale_t
+          getitem_2 = Tensor.__getitem__(t3, 0)  # getitem_2: "cpu f32[]"
+            # getitem_2 = ltorch.getitem(t3, 0)  # getitem_2: "cpu f32[]"
+              # (_,) = prims.shape(t3)
+              # t20 = prims.slice_prim(t3, [0], [1], [1])  # t20: "cpu f32[1]"
+              # getitem_2 = prims.squeeze(t20, (0,))  # getitem_2: "cpu f32[]"
+          del t3
+          t6 = torch.add(x, getitem, alpha=1)  # t6: "cpu f32[3, 3]"
+            # t6 = ltorch.add(x, getitem, alpha=1)  # t6: "cpu f32[3, 3]"
+              # t6 = prims.add(x, getitem)  # t6: "cpu f32[3, 3]"
+          del getitem
+          t7 = torch.add(t6, getitem_2, alpha=1)  # t7: "cpu f32[3, 3]"
+            # t7 = ltorch.add(t6, getitem_2, alpha=1)  # t7: "cpu f32[3, 3]"
+              # t7 = prims.add(t6, getitem_2)  # t7: "cpu f32[3, 3]"
+          del t6, getitem_2
+          return t7
+
+    This transform simplifies this trace into
+
+    .. code-block:: python
+
+        def computation(x):
+          # x: "cpu f32[3, 3]"
+          getitem = torch.full((), 2.0, device=torch.device("cpu"), dtype=torch.float32)  # getitem: "cpu f32[]"
+            # getitem = ltorch.full((), 2.0, device=torch.device("cpu"), dtype=torch.float32)  # getitem: "cpu f32[]"
+              # getitem = prims.full((), 2.0, device=devices.Device("cpu"), dtype=dtypes.float32)  # getitem: "cpu f32[]"
+          t6 = torch.add(x, getitem, alpha=1)  # t6: "cpu f32[3, 3]"
+            # t6 = ltorch.add(x, getitem, alpha=1)  # t6: "cpu f32[3, 3]"
+              # t6 = prims.add(x, getitem)  # t6: "cpu f32[3, 3]"
+          t7 = torch.add(t6, getitem, alpha=1)  # t7: "cpu f32[3, 3]"
+            # t7 = ltorch.add(t6, getitem, alpha=1)  # t7: "cpu f32[3, 3]"
+              # t7 = prims.add(t6, getitem)  # t7: "cpu f32[3, 3]"
+          del t6, getitem
+          return t7
+    """
     def transform_traces_pre_prologue(self, prologue_trc, computation_trc, epilogue_trc, **kwargs):
         # Create a new trace
         const_folded_trace = from_trace(computation_trc)
