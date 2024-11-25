@@ -158,6 +158,7 @@ class ConstantFolding(thunder.Transform):
           del t6, getitem
           return t7
     """
+
     def transform_traces_pre_prologue(self, prologue_trc, computation_trc, epilogue_trc, **kwargs):
         # Create a new trace
         const_folded_trace = from_trace(computation_trc)
