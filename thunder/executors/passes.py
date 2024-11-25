@@ -18,6 +18,7 @@ from thunder.core.proxies import Proxy, variableify, unvariableify, Variable, Co
 import thunder.core.transforms as transforms
 from thunder.core.transform_common import dce
 from thunder.core.trace import get_tracectx
+from thunder.core.trace_interpreter import interpret_trace, interpret_trace_to_trace, TraceSubstitutionProcessor
 from thunder.executors.pythonex import clear_mutable_collection
 
 from thunder.extend import Executor, get_always_executors, OperatorExecutor, FusionExecutor
@@ -61,68 +62,63 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
     #   If the BoundSymbol already has an executor then None is returned
     #   If the executor has an execution transform, it's called and True is returned
     #   If no executor can execute the BoundSymbol, False is returned
-    def visit_helper_(bsym: BoundSymbol) -> None | bool:
-        if bsym.sym.python_impl is not None:
-            return None
 
-        ex: Executor
-        for ex in executors_list:
-            # TODO Consider allowing operator executors to claim portions of operations
-            # TODO Should FusionExecutors be allowed to claim bsym with bsym.sym.executor?
-            if (isinstance(ex, OperatorExecutor) and ex.can_execute(bsym)) or (
-                isinstance(ex, FusionExecutor) and ex.can_fuse(bsym)
-            ):
-                execution_transform: None | Callable = ex.get_execution_transform(bsym.sym)
-                out: Any
-                if execution_transform is not None:
-                    out = execution_transform(*bsym.args, **bsym.kwargs)
-                elif isinstance(ex, OperatorExecutor):
-                    # NOTE execution_transform is None and the executor is an operator executor
-                    # Calls the operator executor's operation
-                    # TODO Instead of directly acquiring the symbol from the implmap, we probably
-                    #   want to hide this behind a function
-                    op = ex.implmap[bsym.sym.id].symbol
-                    out = op(*bsym.args, **bsym.kwargs)
-                elif isinstance(ex, FusionExecutor):
-                    # NOTE execution_transform is None and the executor is a fusion executor
-                    # Preserves the symbol as is (it will be handled in the fusion pass)
-                    out = preserve_bsym(bsym)
-                else:
-                    raise AssertionError("Unknown executor")
+    class OpExProcessor(TraceSubstitutionProcessor):
+        def process_bsym(self, bsym):
+            if bsym.sym.python_impl is not None:
+                self.add_processed_bsyms([bsym])
+                self.set_result(bsym.output)
+                return
 
-                safe_map_flat(update_swapmap, bsym.output, out)
-                return True
+            ex: Executor
+            for ex in executors_list:
+                # TODO Consider allowing operator executors to claim portions of operations
+                # TODO Should FusionExecutors be allowed to claim bsym with bsym.sym.executor?
+                if (isinstance(ex, OperatorExecutor) and ex.can_execute(bsym)) or (
+                    isinstance(ex, FusionExecutor) and ex.can_fuse(bsym)
+                ):
+                    execution_transform: None | Callable = ex.get_execution_transform(bsym.sym)
+                    out: Any
+                    if execution_transform is not None:
+                        self.bsyms_from_function(execution_transform, *bsym.args, **bsym.kwargs)
+                        return
+                    elif isinstance(ex, OperatorExecutor):
+                        # NOTE execution_transform is None and the executor is an operator executor
+                        # Calls the operator executor's operation
+                        # TODO Instead of directly acquiring the symbol from the implmap, we probably
+                        #   want to hide this behind a function
+                        op = ex.implmap[bsym.sym.id].symbol
+                        self.bsyms_from_function(op, *bsym.args, **bsym.kwargs)
+                        return
+                    elif isinstance(ex, FusionExecutor):
+                        # NOTE execution_transform is None and the executor is a fusion executor
+                        # Preserves the symbol as is (it will be handled in the fusion pass)
+                        self.add_processed_bsyms([bsym])
+                        self.set_result(bsym.output)
+                        return
+                    else:
+                        raise AssertionError("Unknown executor")
 
-        if bsym.sym.executor is not None:
-            return None
+            if bsym.sym.executor is not None:
+                self.add_processed_bsyms([bsym])
+                self.set_result(bsym.output)
+                return
 
-        return False
+            # No executor found, need to descend
+            cutils.check(not bsym.sym.is_prim, lambda: f"Failed to find an executor for bound symbol {bsym=}")
+            ### OUTPUTS to map
+            self.add_unprocessed_bsyms(bsym.subsymbols[:])
 
-    def visit_(bsym: BoundSymbol) -> transforms.VISIT_TYPE:
-        result: None | bool = visit_helper_(bsym)
+    extrace, _ = OpExProcessor(trace)()
 
-        if result is None:
-            return transforms.VISIT_TYPE.NO_OP
-
-        if result is True:
-            return transforms.VISIT_TYPE.REPLACE
-
-        # NOTE result is False (which means no executor was found for the symbol)
-        cutils.check(not bsym.sym.is_prim, lambda: f"Failed to find an executor for bound symbol {bsym=}")
-        for sbsym in bsym.subsymbols:
-            visit_(sbsym)
-
-        return transforms.VISIT_TYPE.REPLACE
-
-    extrace = transforms.visitor_transform(trace, visit_)
-
+    # extrace, _ = interpret_trace_to_trace(trace, *trace.args, symbol_mapper=symbol_mapper, **trace.kwargs)
     # Restores original variables
-    bound_symbols: list[BoundSymbol] = []
-    for bsym in extrace.bound_symbols:
-        nbsym: BoundSymbol = bsym.from_bsym_swap_proxies(swapmap)
-        bound_symbols.append(nbsym)
+    # bound_symbols: list[BoundSymbol] = []
+    # for bsym in extrace.bound_symbols:
+    #    nbsym: BoundSymbol = bsym.from_bsym_swap_proxies(swapmap)
+    #    bound_symbols.append(nbsym)
 
-    extrace.bound_symbols = bound_symbols
+    # extrace.bound_symbols = bound_symbols
 
     end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
@@ -151,7 +147,6 @@ def transform_for_execution(trace: TraceCtx, executors_list: Sequence[Executor])
     #
     extrace = _transform_for_operator_executor_execution(trace, executors_list)
     extrace = dce(extrace)
-
     #
     # Step 2 Fusion executors can transform the trace
     #

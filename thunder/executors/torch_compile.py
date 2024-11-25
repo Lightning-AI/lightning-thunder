@@ -10,13 +10,19 @@ from thunder.core import prims, utils
 from thunder.core.proxies import Proxy, TensorProxy, unvariableify, Variable
 from thunder.core.rematerialization import rematerialize
 from thunder.core.symbol import BoundSymbol, Symbol
-from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
+from thunder.core.trace import from_trace, tracectx, TraceCtx, TraceProvenance
 from thunder.core.transform_common import dce
 from thunder.core.pytree import tree_flatten
-from thunder.executors.passes import update_fusion_call_ctx
+from thunder.executors.passes import (
+    update_fusion_call_ctx,
+    _transform_for_operator_executor_execution,
+    transform_for_execution,
+)
 from thunder.executors.utils import Region
 from thunder.extend import FusionExecutor, register_executor, ImplInfo
 from thunder.core.compile_data import get_compile_option
+from thunder.executors.torchex import ex as pytorch_ex
+
 
 _TORCH_GREATER_EQUAL_2_3 = compare_version("torch", operator.ge, "2.3.0", use_base_version=True)
 
@@ -31,10 +37,9 @@ def to_torch_translator(bsym: BoundSymbol) -> Callable:
     Returns:
         A callable that can be executed by PyTorch after being traced by Thunder.
     """
-    from thunder.executors.torchex import ex as torchex
 
     def _to_torch(*args, **kwargs) -> Any:
-        impl_info = torchex.implmap.get(bsym.sym.id)
+        impl_info = pytorch_ex.implmap.get(bsym.sym.id)
         torch_op = None
         if impl_info is not None:
             torch_op = impl_info.symbol
@@ -42,12 +47,12 @@ def to_torch_translator(bsym: BoundSymbol) -> Callable:
                 return impl_info.execution_transform(*args, **kwargs)
 
         if torch_op is None:
-            torch_op = torchex.opmap.get(bsym.sym.name)
+            torch_op = pytorch_ex.opmap.get(bsym.sym.name)
 
         # this should be really rare, but type_as has this,
         # ideally we would be also handling more subsymbols here
         if torch_op is None and len(bsym.subsymbols) == 1:
-            torch_op = torchex.opmap.get(bsym.subsymbols[0].sym.name)
+            torch_op = pytorch_ex.opmap.get(bsym.subsymbols[0].sym.name)
 
         if torch_op is None:
             raise RuntimeError("op not found for {bsym.sym.name}")
@@ -63,36 +68,34 @@ def make_compiled(
     from thunder import trace
     from thunder.core.transforms import eval_trace
     from thunder.executors.torchex import no_autocast
+    from thunder.executors.pythonex import ex as pythonex
+    from thunder.core.codeutils import SigInfo
 
     # Here we construct a trace that will be used to compile the function
+    # TODO: maybe we should have a utility that does this properly
     region_trace = TraceCtx(None)
-    region_trace.bound_symbols = list(bsyms)
     region_trace.args = sorted_unique_inputs
     region_trace.kwargs = {}
+    with tracectx(region_trace):
+        for a in sorted_unique_inputs:
+            prims.unpack_trivial(a, name=a.name)
+
+    region_trace.bound_symbols += list(bsyms)
     region_trace.bound_symbols.append(prims.python_return.bind(sorted_unique_outputs, output=None))
+    # for a in region_trace.args:
+    #    region_trace.add_name(a.name)
+    for bsym in region_trace.bound_symbols:
+        for o in bsym.flat_outs:
+            if o is not None:  # TODO: investigate
+                region_trace.add_name(o.name)
 
-    def torch_interpreted_func(*args):
-        return eval_trace(region_trace, *args, symbol_mapper=to_torch_translator)
+    # maybe make this the default if no sig info is present?
+    region_trace._siginfo = SigInfo("to_be_compiled")
+    region_trace._siginfo.args = [(a.name, None) for a in region_trace.args]
 
-    # Here instead of using thunder.trace we could use torch_trace =
-    # passes._transform_for_operator_executor_execution(region_trace, [torchex])
-    # but then we would need to handle unpacking of the args explicitly For
-    # example with:
-    # try:
-    #     token = set_tracectx(region_trace)
-    #     col = CollectionProxy(region_trace.args, name="args")
-    #     _ = prims.unpack_sequence(col, len(region_trace.args))
-    # finally:
-    #     reset_tracectx(token)
-    #     region_trace.bound_symbols.extend(bsyms)
-    # But there are some issues with the
-    # _transform_for_operator_executor_execution implementation that need to be
-    # fixed first. One issue is that it doesn't maintain the ssa form of the
-    # trace, which is needed for all the passes to work correctly.
-    # TODO: issue "Try using _transform_for_operator_executor_execution for
-    # torch.compile executor"
-    torch_trace = trace(inline_trace=False)(torch_interpreted_func, *sorted_unique_inputs)
-    trace_callable = torch_trace.python_callable(include_decorators=False)
+    torchex_trace = transform_for_execution(region_trace, executors_list=(pytorch_ex,))
+    trace_callable = torchex_trace.python_callable(include_decorators=False)
+
     torch_compile_fullgraph: None | bool = get_compile_option(
         "torch_compile_fullgraph", "Whether to enable `fullgraph` from `torch.compile`. Defaults to `True`."
     )
@@ -200,9 +203,6 @@ class TorchCompileExecutor(FusionExecutor):
         fusedtrace.set_provenance(TraceProvenance(f"Fusion (took {elapsed_time_millis} milliseconds)"))
 
         return fusedtrace
-
-
-from thunder.executors.torchex import ex as pytorch_ex
 
 
 def cuda_device_checker(*args, **kwargs):
