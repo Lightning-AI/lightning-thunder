@@ -189,9 +189,13 @@ def trace_from_bsym_or_bsyms(bsym_or_bsyms: BoundSymbol | Sequence[BoundSymbol])
             else:
                 tmp_bsyms.append(bsym)
         bsyms = tmp_bsyms
+    unpack_bsyms = [
+        prims.unpack_trivial.bind(a, name=a.name, output=a)
+        for a in filter(lambda a: isinstance(a, ProxyInterface), trace_args)
+    ]
 
     trace = TraceCtx()
-    trace.bound_symbols.extend(bsyms)
+    trace.bound_symbols.extend(unpack_bsyms + bsyms)
     trace.args = trace_args
     with tracectx(trace):
         prims.python_return(bsyms[-1].output)
@@ -408,6 +412,17 @@ class DesugarTensorSubclass:
             return output
 
         extrace = transform_for_execution(trace, [get_executor("torch"), get_executor("ad_hoc")])
+        utils.check(
+            (len(extrace.bound_symbols) == len(trace.bound_symbols))
+            or (
+                len(extrace.bound_symbols) == len(trace.bound_symbols) - 1
+                and any(bsym.sym.id == prims.PrimIDs.SHALLOW_COPY for bsym in trace.bound_symbols)
+            ),
+            lambda: (
+                f"Input trace is\n{trace}\nExecution trace is\n{extrace}\n"
+                f"Input has {len(trace.bound_symbols)} syms but execution trace has {len(extrace.bound_symbols)}"
+            ),
+        )
         f = extrace.python_callable(include_decorators=False)
 
         def f_with_wrap_and_unwrap(*desugared_args) -> tuple[OutputWrapperForFxTracing, ...]:
