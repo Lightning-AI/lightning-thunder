@@ -2052,6 +2052,17 @@ class SubclassTensorProxy(TensorProxy):
                 setattr(p, name, value)
         return p
 
+    def __repr__(self):
+        tensors, metadata = {}, {}
+        if hasattr(self, "_tensor_attr_names"):
+            tensor_names, metadata = self.__tensor_flatten__()
+            tensors = {k: getattr(self, n) for n in tensor_names}
+        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self._shape}, {tensors=}, {metadata=})>'
+
+    def type_string(self):
+        tensor_strings = ",".join([t.type_string() for t in self._tensors])
+        return f"{self.device.device_str()} {self.dtype.shortname()}{list(self._shape)} ({self._subclass_type.__name__}| {tensor_strings})"
+
 
 class TorchAutogradFunctionCtxProxy(Proxy, TorchAutogradFunctionCtxProxyInterface):
     def __init__(
