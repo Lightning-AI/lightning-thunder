@@ -2059,20 +2059,6 @@ class SubclassTensorProxy(TensorProxy):
             tensors = {n: getattr(self, n) for n in tensor_names}
         return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self._shape}, {tensors=}, {metadata=})>'
 
-    def type_string(self):
-        if hasattr(self, "_tensor_attr_names"):
-            tensor_strings = ", ".join(
-                [f'{name}: "{t.type_string()}"' for name, t in zip(self._tensor_attr_names, self._tensors)]
-            )
-            metadata = ""
-            if self._non_tensors and hasattr(self, "_non_tensor_attr_names"):
-                metadata = self.metadata
-                metadata = f" and {metadata=}"
-        else:
-            tensor_strings = ", ".join([t.type_string() for t in self._tensors])
-            metadata = ""
-        return f"{self._subclass_type.__name__} of {self.device.device_str()} {self.dtype.shortname()}{list(self._shape)} with tensors of [{tensor_strings}]{metadata})"
-
 
 class TorchAutogradFunctionCtxProxy(Proxy, TorchAutogradFunctionCtxProxyInterface):
     def __init__(
