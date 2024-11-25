@@ -851,7 +851,8 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
         if tokens_per_sec:
             print(f"Tokens/s: {tokens_per_sec:.02f}")
             print(f"Tokens/s/GPU: {(tokens_per_sec / world_size):.02f}")
-        print(f"TFLOP/s: {benchmark.perf_metrics['model_flop_per_sec'] / 1e12:.02f}")
+        if benchmark.throughput:
+            print(f"TFLOP/s: {benchmark.perf_metrics['model_flop_per_sec'] / 1e12:.02f}")
 
         if benchmark.dump_memory_snapshot:
             file_name = f"{benchmark.model_name}_{benchmark.compile}_{benchmark.distributed_mode}"
