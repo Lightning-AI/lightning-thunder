@@ -5,6 +5,7 @@ from numbers import Number
 from typing import TYPE_CHECKING, NamedTuple
 
 import torch
+from torch.fx import Node
 from torch.fx.experimental.proxy_tensor import make_fx
 from torch._dispatch.python import enable_python_dispatcher
 from torch._subclasses.fake_tensor import FakeTensor
@@ -37,7 +38,6 @@ if TYPE_CHECKING:
     from typing import Any
     from optree import PyTreeSpec
     from torch.fx import GraphModule
-    from torch.fx import Node
     from torch._ops import OpOverload
     from thunder.core.symbol import Symbol, BoundSymbol
     from torch._C import _TensorMeta
@@ -268,11 +268,6 @@ class DesugarTensorSubclass:
                         lambda: f"{a=}, {tensor_attr_names = }, {tensors=}",
                     )
                     unwrapped_bsym_args[len(unwrapped_bsym_args)] = t
-                utils.check(
-                    not metadata,
-                    lambda: f"Tensor Subclasses with nonempty metadata are not supported.",
-                    exception_type=NotImplementedError,
-                )
             else:
                 if not isinstance(a, ProxyInterface):
                     from thunder.core.proxies import proxy
@@ -305,10 +300,13 @@ class DesugarTensorSubclass:
 
             arg_proxies: list[ProxyInterface] = []
             for a in args:
-                if isinstance(a.target, str):
-                    arg_proxies.append(unwrapped_bsym_args[arg_name_to_index[a.target]])
+                if isinstance(a, Node):
+                    if isinstance(a.target, str):
+                        arg_proxies.append(unwrapped_bsym_args[arg_name_to_index[a.target]])
+                    else:
+                        arg_proxies.append(fxnode_output_name_to_tensor_proxy[str(a)])
                 else:
-                    arg_proxies.append(fxnode_output_name_to_tensor_proxy[str(a)])
+                    arg_proxies.append(a)
 
             self.computation_trace.push_scope([])
 
@@ -326,11 +324,18 @@ class DesugarTensorSubclass:
             # note(crcrpar): args[0] would be list of tensors, and args[1] could be list of non-tensors.
             args: list[Node] = node_of_output.args[0]
             new_tensor_proxies = []
+            new_non_tensor_values = []
             for a in args:
-                if isinstance(a.target, str):
-                    new_tensor_proxies.append(unwrapped_bsym_args[arg_name_to_index[a.target]])
+                value = a
+                if isinstance(a, Node):
+                    if isinstance(a.target, str):
+                        value = unwrapped_bsym_args[arg_name_to_index[a.target]]
+                    else:
+                        value = fxnode_output_name_to_tensor_proxy[str(a)]
+                if isinstance(value, TensorProxy):
+                    new_tensor_proxies.append(value)
                 else:
-                    new_tensor_proxies.append(fxnode_output_name_to_tensor_proxy[str(a)])
+                    new_non_tensor_values.append(value)
             utils.check(
                 len(orig_output._tensors) == len(new_tensor_proxies),
                 lambda: (
