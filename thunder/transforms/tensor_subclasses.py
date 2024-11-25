@@ -289,7 +289,15 @@ class DesugarTensorSubclass:
                 node_of_output = node
         args = [n.target for n in list_of_placeholder_node]
         arg_name_to_index = {a: i for i, a in enumerate(args)}
-        ltorch_ops_for_node_of_ops = [getattr(ltorch, node.target._opname) for node in list_of_function_call_node]
+        ltorch_ops_for_node_of_ops = []
+        for node in list_of_function_call_node:
+            if not hasattr(ltorch, node.target._opname):
+                msg = (
+                    f"While trying to flatten the following BoundSymbol:\n{bsym}\nUnsupported op of "
+                    f"torch.{node.target._opname} found from\n{fx_graph.print_readable(print_output=False)}"
+                )
+                raise RuntimeError(msg)
+            ltorch_ops_for_node_of_ops.append(getattr(ltorch, node.target._opname))
 
         bsyms: list[BoundSymbol] = []
         if list_of_unflatten_bsym:
