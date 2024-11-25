@@ -476,27 +476,31 @@ def test_multiple_inplace_to_multiple_args(executor, device, _):
     dtypes=NOTHING,
 )
 def test_inplace_to_tensors_with_grad(executor, device, _):
+    @torch.no_grad
+    def add_grad(x, y):
+        x.add_(x.grad)
+
+    @torch.no_grad
     def add_y(x, y):
-        # inplace operations requiring grad on leafs are illegal, trick to make z a non-leaf
-        z = torch.abs(x) * torch.sgn(x)
-        z.add_(y, alpha=0.1)
+        x.add_(y, alpha=0.1)
 
-    jitted_f = executor.make_callable(add_y)
-    x = make_tensor((2, 2), device=device, dtype=torch.float32, requires_grad=True)
-    x.grad = make_tensor((2, 2), device=device, dtype=torch.float32)
-    y = make_tensor((2, 2), device=device, dtype=torch.float32)
+    for fn in (add_grad, add_y):
+        jitted_f = executor.make_callable(fn)
+        x = make_tensor((2, 2), device=device, dtype=torch.float32, requires_grad=True)
+        x.grad = make_tensor((2, 2), device=device, dtype=torch.float32)
+        y = make_tensor((2, 2), device=device, dtype=torch.float32)
 
-    x_ref = x.clone().detach().requires_grad_(True)
-    x_ref.grad = x.grad.clone().detach()
-    y_ref = y.clone().detach()
+        x_ref = x.clone().detach().requires_grad_(True)
+        x_ref.grad = x.grad.clone().detach()
+        y_ref = y.clone().detach()
 
-    res = jitted_f(x, y)
-    res_ref = add_y(x_ref, y_ref)
+        res = jitted_f(x, y)
+        res_ref = fn(x_ref, y_ref)
 
-    torch.testing.assert_close(x, x_ref)
-    torch.testing.assert_close(x.grad, x_ref.grad)
-    torch.testing.assert_close(y, y_ref)
-    torch.testing.assert_close(res, res_ref)
+        torch.testing.assert_close(x, x_ref)
+        torch.testing.assert_close(x.grad, x_ref.grad)
+        torch.testing.assert_close(y, y_ref)
+        torch.testing.assert_close(res, res_ref)
 
 
 @instantiate(
