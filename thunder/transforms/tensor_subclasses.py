@@ -329,8 +329,10 @@ class DesugarTensorSubclass:
                     out = ltorch_op(*arg_proxies)
             except Exception as e:
                 msg = (
-                    f"Failing to map {node=} to {ltorch_op=} with {arg_proxies = }\n"
-                    f"BoundSymbol in question is\n{bsym}\nCorresponding torch.fx Graph is\n{fx_graph.print_readable(print_output=False)}\n"
+                    f"Failing to map `torch.{node}` to `thunder.torch` op of "
+                    f"{ltorch_op} with args of {arg_proxies}\n"
+                    f"BoundSymbol in question is\n```python\n{bsym}\n```\n"
+                    f"Corresponding torch.fx Graph is\n```python\n{fx_graph.print_readable(print_output=False)}\n```\n"
                     f"Original error is {e}"
                 )
                 raise type(e)(msg)
