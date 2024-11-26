@@ -1345,7 +1345,7 @@ def view_as(a: TensorLike, b: TensorLike, /) -> TensorLike:
 
 
 #
-# Elementwise unary operatons
+# Elementwise unary operations
 #
 # TODO Add type annotations
 
