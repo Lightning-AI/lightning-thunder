@@ -918,9 +918,6 @@ def test_hf_transformers(benchmark, model_id: str, seq_length: int, batch_size: 
     if not importlib.util.find_spec("transformers"):
         pytest.skip("HF transformers not available.")
 
-    if not is_requires_grad(compute_type) and peft:
-        pytest.skip("PEFT is training only")
-
     b = HFBenchmark(
         model_id,
         seq_length,

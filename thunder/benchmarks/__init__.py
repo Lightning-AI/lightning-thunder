@@ -3046,7 +3046,7 @@ class HFBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             ]
             self.peft_config = LoraConfig(
                 task_type=TaskType.SEQ_2_SEQ_LM,
-                inference_mode=False,
+                inference_mode=not self.requires_grad,
                 r=16,
                 lora_alpha=16,
                 lora_dropout=0.0,
@@ -3072,11 +3072,14 @@ class HFBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
         with torch.device(self.device):
             model = AutoModelForCausalLM.from_config(self.config)
+            model = model.to(dtype=self.tdtype)
+            
             if self.peft_config:
                 from peft import get_peft_model
                 model = get_peft_model(model, self.peft_config)
+            else:
+                model._requires_grad(self.requires_grad)
 
-        model = model.to(dtype=self.tdtype).requires_grad_(self.requires_grad)
 
         return model
 
