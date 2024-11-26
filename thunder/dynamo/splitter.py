@@ -126,8 +126,9 @@ def _splitter(
             return partition_cnt
 
         # There is a flip. Either from supported to unsupported or unsupported to supported.
+        if prev_value is not None:
+            partition_cnt += 1  # Bump the region cnt.
         prev_value = is_thunder_supported
-        partition_cnt += 1  # Bump the region cnt.
 
         if is_thunder_supported:
             supported_partitions.add(partition_cnt)

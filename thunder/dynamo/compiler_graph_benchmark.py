@@ -103,6 +103,7 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
             if self.post_graph:
                 compiled_fn = self.post_graph(compiled_fn, sample_args)
 
+            # This guard ensures compatibility with CPU-only PyTorch builds.
             if torch.cuda.is_available():
                 with record_peak_allocated_memory(self.bench):
                     self.bench(compiled_fn, *sample_args)

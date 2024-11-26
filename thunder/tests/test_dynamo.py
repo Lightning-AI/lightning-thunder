@@ -818,8 +818,8 @@ def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, us
     out = func(x)
     backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark=use_pytest_benchmark)
 
-    s1 = f"{tmp_path}/graph1_thunder_1.py"
-    s2 = f"{tmp_path}/graph2_thunder_1.py"
+    s1 = f"{tmp_path}/graph0_thunder_0.py"
+    s2 = f"{tmp_path}/graph1_thunder_0.py"
     assert os.path.exists(s1)
     assert os.path.exists(s2)
     cmd = "pytest" if use_pytest_benchmark else "python"
@@ -854,7 +854,7 @@ def test_dynamo_reproducer_submodules(use_pytest_benchmark, tmp_path):
     out = jf(x)
     backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark=use_pytest_benchmark)
 
-    s1 = f"{tmp_path}/graph1_thunder_1.py"
+    s1 = f"{tmp_path}/graph0_thunder_0.py"
     assert os.path.exists(s1)
     cmd = "pytest" if use_pytest_benchmark else "python"
     result1 = run([cmd, s1], capture_output=True, text=True)
