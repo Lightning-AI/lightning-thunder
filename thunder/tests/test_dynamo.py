@@ -22,6 +22,7 @@ from thunder.tests.framework import (
     DynamoThunderExecutor,
     IS_WINDOWS,
     requiresCUDA,
+    version_between,
 )
 from thunder.tests.make_tensor import make_tensor
 
@@ -451,6 +452,10 @@ def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
         pytest.mark.skipif(
             LooseVersion(torch.__version__) < LooseVersion("2.6.0"),
             reason="Skip until the Torch bug is fixed - https://github.com/pytorch/pytorch/pull/139275",
+        ),
+        pytest.mark.skipif(
+            version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
+            reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
         ),
     ),
 )
