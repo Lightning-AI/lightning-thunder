@@ -902,6 +902,7 @@ hf_seq_lengths = [4096 * 2**i for i in range(0, 6)]
     ],
     ids=["thunderfx", "inductor", "eager"],
 )
+@parametrize_compute_type
 @pytest.mark.parametrize(
     "peft",
     [True, False],
@@ -913,7 +914,6 @@ hf_seq_lengths = [4096 * 2**i for i in range(0, 6)]
 )
 @pytest.mark.parametrize("batch_size", range(1, 5))
 @pytest.mark.parametrize("model_id", hf_model_ids, ids=hf_model_ids)
-@parametrize_compute_type
 def test_hf_transformers(benchmark, model_id: str, seq_length: int, batch_size: int, peft: bool, executor, compute_type):
     if not importlib.util.find_spec("transformers"):
         pytest.skip("HF transformers not available.")
