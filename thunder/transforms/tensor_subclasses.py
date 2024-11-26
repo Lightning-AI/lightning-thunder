@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import torch
 from torch.fx import Node
+from torch.fx.immutable_collections import immutable_dict, immutable_list
 from torch.fx.experimental.proxy_tensor import make_fx
 from torch._dispatch.python import enable_python_dispatcher
 from torch._subclasses.fake_tensor import FakeTensor
@@ -320,7 +321,12 @@ class DesugarTensorSubclass:
                     else:
                         arg_proxies.append(fxnode_output_name_to_tensor_proxy[str(a)])
                 else:
-                    arg_proxies.append(a)
+                    if isinstance(a, immutable_dict):
+                        arg_proxies.append(dict(a))
+                    elif isinstance(a, immutable_list):
+                        arg_proxies.append(list(a))
+                    else:
+                        arg_proxies.append(a)
 
             self.computation_trace.push_scope([])
 
@@ -358,6 +364,11 @@ class DesugarTensorSubclass:
                         value = fxnode_output_name_to_tensor_proxy[str(a)]
                 if isinstance(value, TensorProxy):
                     new_tensor_proxies.append(value)
+                elif isinstance(value, (immutable_dict, immutable_list)):
+                    if isinstance(value, immutable_dict):
+                        new_non_tensor_values.append(dict(value))
+                    else:
+                        new_non_tensor_values.append(list(v))
                 else:
                     new_non_tensor_values.append(value)
             utils.check(
