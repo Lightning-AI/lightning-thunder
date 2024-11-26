@@ -3,7 +3,8 @@ import enum
 import itertools
 import os
 import sys
-from typing import Any, ModuleType
+from types import ModuleType
+from typing import Any
 
 import torch.cuda
 
