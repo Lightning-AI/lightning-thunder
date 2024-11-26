@@ -3057,7 +3057,7 @@ class HFBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             requires_grad=False,
         )
         a = make(self.shape)
-        return (a,), {}
+        return (), {"input_ids": a}
 
     def fn(self) -> Callable:
         from transformers import AutoModelForCausalLM
