@@ -112,7 +112,7 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
             # BenchmarkFixture.stats is created each time bench is called (ref: https://github.com/pybenchmark/pytest-benchmark/blob/8c9a5faa1dd178b53ab7b2a66f5364a77e903d74/src/pytest_benchmark/fixture.py#L150)
             # Adds the graph number, split module name and executor suffix to the name string
             gid_key, module_name_key, ex_key = GRAPH_BY_GRAPH_BENCHMARK_PARAMS_KEYS
-            self.bench.stats.name += f"-{gid_key}[{self.graph_idx+1}]-{module_name_key}[{name}]-{ex_key}[{ex_name}]"
+            self.bench.stats.name += f"-{gid_key}[{self.graph_idx}]-{module_name_key}[{name}]-{ex_key}[{ex_name}]"
 
             if torch.cuda.is_available():
                 assert MAX_ALLOCATED_MEMORY_KEYWORD in self.bench.extra_info

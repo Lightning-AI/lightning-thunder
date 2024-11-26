@@ -560,7 +560,7 @@ def test_empty_autocast():
 
     all_nodes = itertools.chain(
         backend.subgraph_infos[0].split_graph_module.graph.nodes,
-        backend.subgraph_infos[0].split_graph_module.thunder_1.graph.nodes,
+        backend.subgraph_infos[0].split_graph_module.thunder_0.graph.nodes,
     )
     assert all(node.target not in autocast_ops for node in all_nodes)
 
@@ -577,7 +577,7 @@ def test_empty_autocast():
     backend = _call_thunder_backend(f, (x,))
     all_nodes = itertools.chain(
         backend.subgraph_infos[0].split_graph_module.graph.nodes,
-        backend.subgraph_infos[0].split_graph_module.thunder_1.graph.nodes,
+        backend.subgraph_infos[0].split_graph_module.thunder_0.graph.nodes,
     )
     assert sum(node.target in autocast_ops for node in all_nodes) == 2
 
