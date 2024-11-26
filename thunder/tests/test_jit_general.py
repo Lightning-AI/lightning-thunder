@@ -1205,13 +1205,15 @@ def test_custom_autograd_function():
 
 def test_autograd_function_apply():
 
+    # see https://github.com/Lightning-AI/lightning-thunder/issues/1248#issuecomment-2388655917
+    # for why `torch.foo` instead of `torch.Tensor.foo`
     def forward(ctx, x):
         saved_for_backward = (x,)
-        return x.sin(), saved_for_backward
+        return torch.sin(x), saved_for_backward
 
     def backward(ctx, grad_output, *saved_tensors):
         (x,) = saved_tensors
-        return grad_output * x.cos()
+        return grad_output * torch.cos(x)
 
     def my_sin(x):
         return torch.ops.higher_order.autograd_function_apply(
