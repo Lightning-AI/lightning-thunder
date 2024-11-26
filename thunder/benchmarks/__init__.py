@@ -3019,6 +3019,7 @@ class HFBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.float32,
         requires_grad: bool = False,
+        enable_peft: bool = False
     ) -> None:
         super().__init__()
 
@@ -3032,6 +3033,27 @@ class HFBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
         self.shape = (batch_size, seq_length)
         self.config = config
+        if enable_peft:
+            from peft import LoraConfig, TaskType
+            target_modules = [
+                "q_proj",
+                "k_proj",
+                "v_proj",
+                "o_proj",
+                "gate_proj",
+                "up_proj",
+                "down_proj",
+            ]
+            self.peft_config = LoraConfig(
+                task_type=TaskType.SEQ_2_SEQ_LM,
+                inference_mode=False,
+                r=16,
+                lora_alpha=16,
+                lora_dropout=0.0,
+                bias="none",
+                use_rslora=False,
+                target_modules=target_modules,
+            )
 
     def make_batch(self) -> tuple[list, dict]:
         make = partial(
@@ -3050,6 +3072,9 @@ class HFBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
         with torch.device(self.device):
             model = AutoModelForCausalLM.from_config(self.config)
+            if self.peft_config:
+                from peft import get_peft_model
+                model = get_peft_model(model, self.peft_config)
 
         model = model.to(dtype=self.tdtype).requires_grad_(self.requires_grad)
 

@@ -893,7 +893,11 @@ def test_torchbench_canary(benchmark, module_name, executor, compute_type: Compu
 hf_model_ids = ["Qwen/Qwen2.5-7B-Instruct", "microsoft/Phi-3-mini-128k-instruct", "mistralai/Mistral-Nemo-Base-2407"]
 hf_seq_lengths = [4096 * 2**i for i in range(0, 6)]
 
-
+@pytest.mark.parametrize(
+    "peft",
+    [True, False],
+    ids=["PEFT", "FT"]
+)
 @pytest.mark.parametrize(
     "seq_length",
     hf_seq_lengths,
@@ -910,7 +914,7 @@ hf_seq_lengths = [4096 * 2**i for i in range(0, 6)]
     ids=["thunderfx", "inductor", "eager"],
 )
 @parametrize_compute_type
-def test_hf_transformers(benchmark, model_id: str, seq_length: int, batch_size: int, executor, compute_type):
+def test_hf_transformers(benchmark, model_id: str, seq_length: int, batch_size: int, peft: bool, executor, compute_type):
     if not importlib.util.find_spec("transformers"):
         pytest.skip("HF transformers not available.")
 
@@ -921,6 +925,7 @@ def test_hf_transformers(benchmark, model_id: str, seq_length: int, batch_size: 
         device="cuda",
         dtype=torch.bfloat16,
         requires_grad=is_requires_grad(compute_type),
+        enable_peft=peft
     )
 
     if seq_length > b.config.max_position_embeddings:
