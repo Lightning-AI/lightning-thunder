@@ -311,7 +311,6 @@ torch_auto_registered_ops = {
         torch.vsplit,
         torch.vstack,
         torch.xlogy,
-        torch._scaled_mm,
     ],
     torch.nn.functional: [
         torch.nn.functional.adaptive_avg_pool1d,
