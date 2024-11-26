@@ -275,7 +275,10 @@ def test_hf_bert():
     assert_close(actual, expected)
 
 
-@pytest.mark.skipif(version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.6.0a99"))
+@pytest.mark.skipif(
+    version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.6.0a99"),
+    reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1413",
+)
 @requiresCUDA
 def test_quantization():
     try:
