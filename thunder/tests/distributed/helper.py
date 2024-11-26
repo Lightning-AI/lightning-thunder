@@ -112,6 +112,11 @@ class DistributedParallelTestCase(common_distributed.MultiProcessTestCase):
     def init_method(self):
         return f"{common_utils.FILE_SCHEMA}{self.file_name}"
 
+    @property
+    def destroy_pg_upon_exit(self) -> bool:
+        # Overriding base test class: do not auto destroy PG upon exit.
+        return False
+
     @classmethod
     def _run(cls, rank, test_name, file_name, pipe, *, fake_pg=False):
         assert not fake_pg, "Not yet supported here..."
@@ -130,14 +135,10 @@ class DistributedParallelTestCase(common_distributed.MultiProcessTestCase):
         local_rank = self.rank % torch.cuda.device_count()
         torch.cuda.set_device(local_rank)
         os.environ["LOCAL_RANK"] = str(local_rank)
-        if "destroy_process_group" in inspect.signature(self.run_test).parameters:
-            run_test_kwargs = {"destroy_process_group": False}
-        else:
-            run_test_kwargs = {}
 
         torch.distributed.barrier()
         try:
-            self.run_test(test_name, pipe, **run_test_kwargs)
+            self.run_test(test_name, pipe)
         except Exception:
             raise
         finally:
