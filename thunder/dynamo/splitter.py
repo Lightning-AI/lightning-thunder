@@ -135,6 +135,19 @@ def _splitter(
     original_split_gm: torch.fx.GraphModule = split_module(
         gm, root_m=None, split_callback=callback, keep_original_order=True, keep_original_node_name=True
     )
+
+    def add_output(m):
+        has_output = False
+        for node in m.graph.nodes:
+            if node.op == "call_module":
+                add_output(getattr(m, node.target))
+            elif node.op == "output":
+                has_output = True
+        if not has_output:
+            m.graph.output(())
+
+    # Workaround for the Torch bug https://github.com/pytorch/pytorch/pull/139275
+    add_output(original_split_gm)
     split_gm = copy.deepcopy(original_split_gm)
 
     def is_thunder_supported_partition(node: torch.fx.Node) -> bool:
