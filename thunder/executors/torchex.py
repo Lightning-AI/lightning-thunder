@@ -1421,13 +1421,18 @@ def _scaled_mm_transform(
     if b.stride()[0] != 1 and b.stride()[1] > 1:
         b = b.t().contiguous().t()
 
-    print(f"{type(a)=}, {type(b)=}, {type(scale_a)=}, {type(scale_b)=}, {type(bias)=}, {type(scale_result)=}, {type(result_dtype)=}, {type(use_fast_accum)=}")
+    print(
+        f"{type(a)=}, {type(b)=}, {type(scale_a)=}, {type(scale_b)=}, {type(bias)=}, {type(scale_result)=}, {type(result_dtype)=}, {type(use_fast_accum)=}"
+    )
     return _scaled_mm(a, b, scale_a, scale_b, bias, scale_result, result_dtype, use_fast_accum)
+
 
 _register_implementation(prims.matmul, matmul, checker=_always_executable)
 
 _register_implementation(ltorch.matmul, matmul, checker=_always_executable)
-_register_implementation(ltorch._scaled_mm, _scaled_mm, checker=_always_executable, execution_transform=_scaled_mm_transform)
+_register_implementation(
+    ltorch._scaled_mm, _scaled_mm, checker=_always_executable, execution_transform=_scaled_mm_transform
+)
 _register_implementation(ltorch.outer, outer, checker=_always_executable)
 
 #
