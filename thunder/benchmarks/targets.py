@@ -894,6 +894,15 @@ hf_model_ids = ["Qwen/Qwen2.5-7B-Instruct", "microsoft/Phi-3-mini-128k-instruct"
 hf_seq_lengths = [4096 * 2**i for i in range(0, 6)]
 
 @pytest.mark.parametrize(
+    "executor,",
+    [
+        thunderfx_executor,
+        torch_compile_executor,
+        torch_executor,
+    ],
+    ids=["thunderfx", "inductor", "eager"],
+)
+@pytest.mark.parametrize(
     "peft",
     [True, False],
     ids=["PEFT", "FT"]
@@ -904,15 +913,6 @@ hf_seq_lengths = [4096 * 2**i for i in range(0, 6)]
 )
 @pytest.mark.parametrize("batch_size", range(1, 5))
 @pytest.mark.parametrize("model_id", hf_model_ids, ids=hf_model_ids)
-@pytest.mark.parametrize(
-    "executor,",
-    [
-        thunderfx_executor,
-        torch_compile_executor,
-        torch_executor,
-    ],
-    ids=["thunderfx", "inductor", "eager"],
-)
 @parametrize_compute_type
 def test_hf_transformers(benchmark, model_id: str, seq_length: int, batch_size: int, peft: bool, executor, compute_type):
     if not importlib.util.find_spec("transformers"):
