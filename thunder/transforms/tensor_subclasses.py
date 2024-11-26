@@ -297,7 +297,8 @@ class DesugarTensorSubclass:
         for node in list_of_function_call_node:
             if not hasattr(ltorch, node.target._opname):
                 msg = (
-                    f"`thunder.torch` does not have corresponding op for {node.target}."
+                    f"`thunder.torch` does not have corresponding op for {node.target._opname}. "
+                    "Think about adding it to thunder/torch/default_torch_ops.py"
                     f"\nThe op is found while flattening the following BoundSymbol:\n{bsym}"
                     f"\ntorch.fx graph:\n{fx_graph.print_readable(print_output=False)}"
                 )
