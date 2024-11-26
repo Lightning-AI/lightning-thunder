@@ -386,6 +386,9 @@ class DesugarTensorSubclass:
             utils.check(len(non_none_args) == 1, lambda: f"{node_of_output.args = }")
             new_out_node = non_none_args[0]
             self.swap_map[variableify(orig_output)] = fxnode_output_name_to_tensor_proxy[str(new_out_node)]
+
+        for sbsym in bsyms:
+            sbsym.header = f"Flattened result of {bsym}"
         return bsyms
 
     def convert_trace_to_fx_graph_and_get_fake_result(
