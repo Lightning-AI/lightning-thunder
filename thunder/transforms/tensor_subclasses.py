@@ -324,8 +324,16 @@ class DesugarTensorSubclass:
 
             self.computation_trace.push_scope([])
 
-            with tracectx(self.computation_trace):
-                out = ltorch_op(*arg_proxies)
+            try:
+                with tracectx(self.computation_trace):
+                    out = ltorch_op(*arg_proxies)
+            except Exception as e:
+                msg = (
+                    f"Failing to map {node=} to {ltorch_op=} with {arg_proxies = }\n"
+                    f"BoundSymbol in question is\n{bsym}\nCorresponding torch.fx Graph is\n{fx_graph.print_readable(print_output=False)}\n"
+                    f"Original error is {e}"
+                )
+                raise type(e)(msg)
             fxnode_output_name_to_tensor_proxy[str(node)] = out
             bsyms.extend(self.computation_trace.pop_scope())
         if len(bsyms) == 0:
