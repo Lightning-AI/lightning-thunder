@@ -225,7 +225,7 @@ def test_nanogpt_mlp(executor, device, dtype):
     executors=all_test_executors_and_dynamo,
     decorators=(
         pytest.mark.skipif(
-            version_between(torch.__version__, min_ver="2.6.0a0", max_ver="2.6.0a99"),
+            version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
             reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
         ),
     ),
@@ -285,7 +285,7 @@ def test_hf_bert():
 
 
 @pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0a0", max_ver="2.6.0a99"),
+    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
     reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1413",
 )
 @requiresCUDA
@@ -369,7 +369,7 @@ def test_quantization():
 
 
 @pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0a0", max_ver="2.6.0a99"),
+    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
     reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
 )
 @thunder.tests.framework.requiresCUDA
@@ -424,7 +424,7 @@ def test_thunderfx_mistral_nemo_small():
 
 
 @pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0a0", max_ver="2.6.0a99"),
+    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
     reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
 )
 @thunder.tests.framework.requiresCUDA
