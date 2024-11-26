@@ -248,7 +248,8 @@ def test_func_of_subclass_simple_math(executor, device, _, requires_grad):
             not (TORCHAO_AVAILABLE and torch.cuda.get_device_capability() >= (8, 9)),
             reason="Requires capability >= 8.9 and torchao",
         ),
-        # `ltorch._scaled_mm` is missing
+        # forward-backward split is failing.
+        # TypeError: tree_flatten of type <enum 'GemmInputRole'> is not supported.
         pytest.mark.xfail(),
     ),
 )
