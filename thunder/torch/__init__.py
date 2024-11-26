@@ -3521,6 +3521,47 @@ def matmul(a: TensorLike, b: TensorLike, /) -> TensorLike:
     return prims.matmul(a, b)
 
 
+# reference: https://github.com/pytorch/pytorch/blob/6d4cd3e/torch/_meta_registrations.py#L5566
+@torchsymbol(torch._scaled_mm, is_method=False)
+def _scaled_mm(
+    a: TensorLike,
+    b: TensorLike,
+    scale_a: TensorLike,
+    scale_b: TensorLike,
+    bias: TensorLike | None = None,
+    scale_result: TensorLike | None = None,
+    out_dtype: dtypeLike | None = None,
+    use_fast_accum: bool = False,
+) -> TensorLike:
+    fp8_dtypes = {dtypes.float8_e4m3fn, dtypes.float8_e4m3fnuz, dtypes.float8_e5m2, dtypes.float8_e5m2fnuz}
+    # TODO(crcrpar): Devise a way to make sure `a` is row-major and `b` is column-major.
+    utils.check(
+        (
+            (a.ndim == 2 and b.ndim == 2)
+            and (a.shape[1] == b.shape[0])
+            and (a.shape[1] % 16 == 0 and b.shape[0] % 16 == 0 and b.shape[1] % 16 == 0)
+            and (to_dtype(a.dtype) in fp8_dtypes and to_dtype(b.dtype) in fp8_dtypes)
+        ),
+        lambda: f"data matrices of {a=} and {b=} do not satisfy the condition.",
+    )
+    utils.check(
+        (
+            (scale_a.numel() == 1 and scale_b.numel() == 1)
+            and (scale_a.dtype == dtypes.float32 and scale_b.dtype == dtypes.float32)
+        ),
+        lambda: f"Only tensor-wise scaling is supported but {scaled_a.shape = } and {scaled_b.shape = }",
+        exception_type=NotImplementedError,
+    )
+    result_dtype = a.dtype if out_dtype is None else to_dtype(out_dtype)
+    return TensorProxy(
+        name=None,
+        shape=(a.shape[0], b.shape[1]),
+        device=a.device,
+        dtype=result_dtype,
+        requires_grad=a.requires_grad,
+    )
+
+
 @torchsymbol(torch.outer, is_method=True)
 def outer(a: TensorLike, b: TensorLike, /) -> TensorLike:
     utils.check_types((a, b), TensorProxy)
