@@ -293,8 +293,9 @@ class DesugarTensorSubclass:
         for node in list_of_function_call_node:
             if not hasattr(ltorch, node.target._opname):
                 msg = (
-                    f"While trying to flatten the following BoundSymbol:\n{bsym}\nUnsupported op of "
-                    f"torch.{node.target._opname} found from\n{fx_graph.print_readable(print_output=False)}"
+                    f"`thunder.torch` does not have corresponding op for {node.target}."
+                    f"\nThe op is found while flattening the following BoundSymbol:\n{bsym}"
+                    f"\ntorch.fx graph:\n{fx_graph.print_readable(print_output=False)}"
                 )
                 raise RuntimeError(msg)
             ltorch_ops_for_node_of_ops.append(getattr(ltorch, node.target._opname))
