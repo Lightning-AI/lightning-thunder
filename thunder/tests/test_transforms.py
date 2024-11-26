@@ -113,7 +113,7 @@ def test_materialization():
 
 
 @pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0a0", max_ver="2.6.0a99"),
+    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
     reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1413",
 )
 @pytest.mark.skipif(not package_available("bitsandbytes"), reason="`bitsandbytes` is not available")
@@ -190,7 +190,7 @@ def test_quantization_on_meta():
 
 
 @pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0a0", max_ver="2.6.0a99"),
+    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
     reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1413",
 )
 @pytest.mark.skipif(
@@ -301,7 +301,7 @@ def test_cudagraph_warmup_runs_with_correct_buffers():
 
 
 @pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0a0", max_ver="2.6.0a99"),
+    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
     reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1413",
 )
 @pytest.mark.skipif(not package_available("bitsandbytes"), reason="`bitsandbytes` is not available")
