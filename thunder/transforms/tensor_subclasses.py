@@ -268,6 +268,10 @@ class DesugarTensorSubclass:
                         lambda: f"{a=}, {tensor_attr_names = }, {tensors=}",
                     )
                     unwrapped_bsym_args[len(unwrapped_bsym_args)] = t
+                # TODO(crcrpar): Think about how to verify the correctness of this flattening
+                flat_metadata, _ = tree_flatten(metadata)
+                for v in flat_metadata:
+                    unwrapped_bsym_args[len(unwrapped_bsym_args)] = v
             else:
                 if not isinstance(a, ProxyInterface):
                     from thunder.core.proxies import proxy
