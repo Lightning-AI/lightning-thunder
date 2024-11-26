@@ -54,7 +54,11 @@ def _remove_noop_subsymbols(bsym: BoundSymbol) -> None:
     for sbsym in bsym.subsymbols:
         if len(sbsym.subsymbols) == 0 and not sbsym.sym.is_prim:
             continue
-
+        # if all outputs are constants, we elmininate the subsymbol
+        if not has_tags(bsym, {prims.OpTags.DONT_DCE}) and not any(
+            o is not None for o in sbsym.flat_proxy_outs
+        ):  # is not None to avoid cast to bool
+            continue
         _remove_noop_subsymbols(sbsym)
         nsbsyms.append(sbsym)
 
