@@ -11,7 +11,13 @@ from torch.testing import assert_close, make_tensor
 
 import thunder
 import thunder.torch as ttorch
-from thunder.tests.framework import instantiate, requiresCUDA, DynamoThunderExecutor, _all_test_executors
+from thunder.tests.framework import (
+    instantiate,
+    requiresCUDA,
+    DynamoThunderExecutor,
+    _all_test_executors,
+    version_between,
+)
 import thunder.tests.nanogpt_model as nanogpt_model
 import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
 
@@ -214,7 +220,16 @@ def test_nanogpt_mlp(executor, device, dtype):
     assert_close(torch_result, thunder_result)
 
 
-@instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
+@instantiate(
+    dtypes=(thunder.float32,),
+    executors=all_test_executors_and_dynamo,
+    decorators=(
+        pytest.mark.skipif(
+            version_between(torch.__version__, min_ver="2.6.0a0", max_ver="2.6.0a99"),
+            reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
+        ),
+    ),
+)
 def test_nanogpt_gelu(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=tdtype, device=device)
@@ -269,6 +284,10 @@ def test_hf_bert():
     assert_close(actual, expected)
 
 
+@pytest.mark.skipif(
+    version_between(torch.__version__, min_ver="2.6.0a0", max_ver="2.6.0a99"),
+    reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1413",
+)
 @requiresCUDA
 def test_quantization():
     try:
@@ -349,6 +368,10 @@ def test_quantization():
         assert_close(v, sd2[k])
 
 
+@pytest.mark.skipif(
+    version_between(torch.__version__, min_ver="2.6.0a0", max_ver="2.6.0a99"),
+    reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
+)
 @thunder.tests.framework.requiresCUDA
 def test_thunderfx_mistral_nemo_small():
     """
@@ -400,6 +423,10 @@ def test_thunderfx_mistral_nemo_small():
     assert th_backend.subgraph_infos, "Should have at least 1 subgraph"
 
 
+@pytest.mark.skipif(
+    version_between(torch.__version__, min_ver="2.6.0a0", max_ver="2.6.0a99"),
+    reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
+)
 @thunder.tests.framework.requiresCUDA
 @pytest.mark.parametrize("model_id", ["Qwen/Qwen2.5-7B-Instruct", "microsoft/Phi-3-mini-128k-instruct"])
 def test_hf_for_nemo(model_id):
