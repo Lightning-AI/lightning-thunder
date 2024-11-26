@@ -11,7 +11,13 @@ from torch.testing import assert_close, make_tensor
 
 import thunder
 import thunder.torch as ttorch
-from thunder.tests.framework import instantiate, requiresCUDA, DynamoThunderExecutor, _all_test_executors
+from thunder.tests.framework import (
+    instantiate,
+    requiresCUDA,
+    DynamoThunderExecutor,
+    _all_test_executors,
+    version_between,
+)
 import thunder.tests.nanogpt_model as nanogpt_model
 import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
 
@@ -269,6 +275,7 @@ def test_hf_bert():
     assert_close(actual, expected)
 
 
+@pytest.mark.skipif(version_between(torch.__version__, min_ver="2.5.0a0", max_ver="2.6.0a99"))
 @requiresCUDA
 def test_quantization():
     try:
