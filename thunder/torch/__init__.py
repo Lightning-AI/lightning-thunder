@@ -1802,7 +1802,7 @@ def gelu(a: TensorProxy, /, *, approximate: str = "none") -> TensorLike:
 
 
 @torchsymbol(torch.nn.functional.leaky_relu, is_method=False)
-def leaky_relu(a: TensorProxy, /, negative_slope=0.01, inplace: bool = False) -> TensorLike:
+def leaky_relu(a: TensorProxy, /, negative_slope: float = 0.01, inplace: bool = False) -> TensorLike:
     out = where(a > 0, a, a * negative_slope)
     if inplace:
         return prims.copy_(out, a)
