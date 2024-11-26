@@ -2677,7 +2677,7 @@ register_method("clone", clone)
 
 
 @torchsymbol(torch.nn.functional.glu, is_method=False)
-def glu(a: TensorProxy, /, dim: None | int = None):
+def glu(a: TensorProxy, /, dim: int = -1):
     dim = -1 if dim is None else dim
     utils.check(
         a.shape[dim] % 2 == 0,
