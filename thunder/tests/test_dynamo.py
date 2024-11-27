@@ -860,3 +860,22 @@ def test_dynamo_reproducer_submodules(use_pytest_benchmark, tmp_path):
     cmd = "pytest" if use_pytest_benchmark else "python"
     result1 = run([cmd, s1], capture_output=True, text=True)
     assert result1.returncode == 0, f"Reproducer {s1} failed with return code {result1.returncode}"
+
+
+def test_deepcopy_graph_module():
+    class MyModule(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+
+        def forward(self, x):
+            y = x + 1
+
+    m = MyModule()
+    gm = torch.fx.symbolic_trace(m)
+    n = gm.graph.find_nodes(op="output")
+    gm.graph.erase_node(n[0])
+    import thunder
+
+    _, subgraph_info = thunder.dynamo.splitter._splitter(gm, thunder.jit, thunder.jit, [])
+    original_split_gm = subgraph_info.original_split_graph_module
+    assert original_split_gm.graph.find_nodes(op="output")
