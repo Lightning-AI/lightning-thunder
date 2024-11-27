@@ -356,7 +356,6 @@ torch_auto_registered_ops = {
         torch.nn.functional.instance_norm,
         torch.nn.functional.kl_div,
         torch.nn.functional.l1_loss,
-        torch.nn.functional.leaky_relu,
         torch.nn.functional.local_response_norm,
         torch.nn.functional.logsigmoid,
         torch.nn.functional.lp_pool1d,
