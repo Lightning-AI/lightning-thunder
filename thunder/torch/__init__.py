@@ -2689,7 +2689,11 @@ register_method("clone", clone)
 
 @torchsymbol(torch.nn.functional.glu, is_method=False)
 def glu(a: TensorProxy, /, dim: int = -1):
-    dim = -1 if dim is None else dim
+    utils.check(
+        -a.ndim <= dim < a.ndim,
+        lambda: f"Dimension out of range (expected to be in range [{-a.ndim}, {a.ndim - 1}], but got {dim})",
+        IndexError,
+    )
     utils.check(
         a.shape[dim] % 2 == 0,
         lambda: f"Halving dimension must be even, but dimension {dim} is size {a.shape[dim]}",
