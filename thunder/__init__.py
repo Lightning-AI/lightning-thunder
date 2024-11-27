@@ -465,7 +465,6 @@ def jit(
                         backward_fn,
                         backward_traces,
                         _return_none_instead_of_grads,
-                        _vanilla_args,
                     ) = cache_entry
                     try:
                         inps, pro_to_epi = pro(*args, **kwargs)
