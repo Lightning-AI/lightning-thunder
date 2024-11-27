@@ -342,8 +342,9 @@ class DesugarTensorSubclass:
                     f"Original error is {e}"
                 )
                 raise type(e)(msg)
-            fxnode_output_name_to_tensor_proxy[str(node)] = out
-            bsyms.extend(self.computation_trace.pop_scope())
+            else:
+                fxnode_output_name_to_tensor_proxy[str(node)] = out
+                bsyms.extend(self.computation_trace.pop_scope())
         if len(bsyms) == 0:
             return [bsym]
 
