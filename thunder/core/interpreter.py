@@ -285,6 +285,7 @@ def wrap(value: Any, /, *, provenance: ProvenanceRecord) -> WrappedValue:
 
 def wrap_const(value: Any, /, *, provenance: ProvenanceRecord | None = None) -> WrappedValue:
     from thunder.core.proxies import Proxy
+
     if provenance is None:
         provenance = ProvenanceRecord(inst=PseudoInst.CONSTANT, inputs=[], value=value)
     return wrap(value, provenance=provenance)
