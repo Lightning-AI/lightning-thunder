@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "DesugarTensorSubclass",
     "flatten_tensor_subclasses",
 ]
 
@@ -567,7 +568,7 @@ class DesugarTensorSubclass:
         return self.translate_fx_graph_into_bsym(bsym_with_modified_output, fx)
 
 
-def flatten_tensor_subclasses(computation_trace: TraceCtx) -> TraceCtx:
+def flatten_tensor_subclasses(computation_trace: TraceCtx) -> tuple[TraceCtx, DesugarTensorSubclass]:
     """Flatten tensor subclasses in ``computation_trace``.
 
     Two things are happening inside of this function:
@@ -593,6 +594,7 @@ def flatten_tensor_subclasses(computation_trace: TraceCtx) -> TraceCtx:
         TraceCtx: transformed trace that is free from tensor subclasses, every ``__torch_dispatch__``
             behavior is spelled out.
     """
+    print(f"### input computation trace\n{computation_trace}")
     desugar_tensor_subclass = DesugarTensorSubclass(computation_trace=computation_trace)
     updated_bsyms: list[BoundSymbol] = []
     bsym: BoundSymbol
@@ -601,9 +603,9 @@ def flatten_tensor_subclasses(computation_trace: TraceCtx) -> TraceCtx:
         updated_bsyms.extend(maybe_desugared_bsyms)
 
     if not desugar_tensor_subclass.subclass_proxy_to_flatten:
-        return computation_trace
+        return computation_trace, None
 
     computation_trace_with_subclass_tensor_proxy_output = from_trace(computation_trace)
     computation_trace_with_subclass_tensor_proxy_output.bound_symbols.extend(updated_bsyms)
     computation_trace_with_subclass_tensor_proxy_output.set_provenance(TraceProvenance("tensor subclasses desugared"))
-    return computation_trace_with_subclass_tensor_proxy_output
+    return computation_trace_with_subclass_tensor_proxy_output, desugar_tensor_subclass
