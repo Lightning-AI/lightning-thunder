@@ -285,7 +285,8 @@ def wrap(value: Any, /, *, provenance: ProvenanceRecord) -> WrappedValue:
 
 def wrap_const(value: Any, /, *, provenance: ProvenanceRecord | None = None) -> WrappedValue:
     from thunder.core.proxies import Proxy
-    assert not isinstance(value,Proxy)
+
+    assert not isinstance(value, Proxy)
     if provenance is None:
         provenance = ProvenanceRecord(inst=PseudoInst.CONSTANT, inputs=[], value=value)
     return wrap(value, provenance=provenance)
@@ -2516,6 +2517,7 @@ class MutMappingWrapperMethods(WrappedValue):
             return do_raise(e)
 
         from thunder.core.proxies import Proxy
+
         populate_single_dict_item_wrapper(uv, self, key if isinstance(key.value, Proxy) else key.value)
         v = self.item_wrappers[key.value]
         assert uv is v.value or uv is v.original_value, f"value for {key.value} out of sync {uv} {v.value}"
