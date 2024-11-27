@@ -637,7 +637,7 @@ def _convert_pytorchfunc_to_thundertrace(
     trace = TraceCtx()
     trace.bound_symbols.extend(active_jit_ctx.computation_trace.pop_scope())
     func_result = unwrap(wrapped_func_result)
-    if shallow_copy_output:
+    if shallow_copy_output and not trace.bound_symbols:
         from thunder.core.baseutils import sequencify
 
         out_to_shallow_copy: dict[Variable, TensorProxy] = {}
