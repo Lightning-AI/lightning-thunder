@@ -631,9 +631,9 @@ def test_vjp_correctness_torch_item_manual(op, device, dtype, executor, comp):
         out = op.torch_reference(*sample.args, **sample.kwargs)
         flat_op, flat_args, spec = flatten_func(item, sample.args, sample.kwargs)
         initial_trace = thunder.trace()(vjp(flat_op), flat_args, (None,))
-        actual_out, (grad_in,) = executor.make_callable(
-            initial_trace.python_callable(), disable_torch_autograd=True
-        )(flat_args, (None,))
+        actual_out, (grad_in,) = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(
+            flat_args, (None,)
+        )
         assert grad_in is None, "grad_in should be None"
         comp(actual_out, out, equal_nan=True)
 
