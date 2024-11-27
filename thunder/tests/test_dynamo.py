@@ -1,6 +1,8 @@
 import pytest
 import warnings
 import itertools
+import os
+from subprocess import run
 import torch
 import torch.fx
 import torch.nn as nn
@@ -20,6 +22,7 @@ from thunder.tests.framework import (
     DynamoThunderExecutor,
     IS_WINDOWS,
     requiresCUDA,
+    version_between,
 )
 from thunder.tests.make_tensor import make_tensor
 
@@ -450,6 +453,10 @@ def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
             LooseVersion(torch.__version__) < LooseVersion("2.6.0"),
             reason="Skip until the Torch bug is fixed - https://github.com/pytorch/pytorch/pull/139275",
         ),
+        pytest.mark.skipif(
+            version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
+            reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
+        ),
     ),
 )
 @requiresCUDA
@@ -584,7 +591,7 @@ def test_empty_autocast():
 
     all_nodes = itertools.chain(
         backend.subgraph_infos[0].split_graph_module.graph.nodes,
-        backend.subgraph_infos[0].split_graph_module.thunder_1.graph.nodes,
+        backend.subgraph_infos[0].split_graph_module.thunder_0.graph.nodes,
     )
     assert all(node.target not in autocast_ops for node in all_nodes)
 
@@ -601,7 +608,7 @@ def test_empty_autocast():
     backend = _call_thunder_backend(f, (x,))
     all_nodes = itertools.chain(
         backend.subgraph_infos[0].split_graph_module.graph.nodes,
-        backend.subgraph_infos[0].split_graph_module.thunder_1.graph.nodes,
+        backend.subgraph_infos[0].split_graph_module.thunder_0.graph.nodes,
     )
     assert sum(node.target in autocast_ops for node in all_nodes) == 2
 
@@ -808,3 +815,83 @@ def test_checkpoint_converter_submodule():
     for n in submodule.graph.nodes:
         if n.op == "call_function":
             assert isinstance(n.target, Symbol)
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=[DynamoThunderExecutor],
+    decorators=(pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro")),),
+)
+def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, use_pytest_benchmark, tmp_path):
+    from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform
+    from thunder import nvfuser_executor
+    from thunder.transforms.cudagraph import CUDAGraphTransform
+
+    if device.startswith("cuda"):
+        backend = ThunderCompiler(
+            transforms=[
+                NvtxProfileTransform(),
+                CUDAGraphTransform(),
+            ],
+            executors=[nvfuser_executor],
+            cache="constant values",
+            langctx=None,
+            record_history=False,
+        )
+    else:
+        backend = ThunderCompiler(executors=None)
+    # Test non-contiguous input tensor
+    x = make_tensor((4, 4), low=3, high=10, dtype=torch.int64, device=device, noncontiguous=True)
+
+    @torch.compile(backend=backend)
+    def func(x):
+        x = torch.sin(x)
+        if x.sum() > 0:
+            return x + 1
+        else:
+            return x - 1
+
+    out = func(x)
+    backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark=use_pytest_benchmark)
+
+    s1 = f"{tmp_path}/graph0_thunder_0.py"
+    s2 = f"{tmp_path}/graph1_thunder_0.py"
+    assert os.path.exists(s1)
+    assert os.path.exists(s2)
+    cmd = "pytest" if use_pytest_benchmark else "python"
+    result1 = run([cmd, s1], capture_output=True, text=True)
+    result2 = run([cmd, s2], capture_output=True, text=True)
+
+    assert result1.returncode == 0, f"Reproducer {s1} failed with return code {result1.returncode}"
+    assert result2.returncode == 0, f"Reproducer {s2} failed with return code {result2.returncode}"
+
+
+@requiresCUDA
+@pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro"))
+def test_dynamo_reproducer_submodules(use_pytest_benchmark, tmp_path):
+    from thunder.tests.distributed.helper import ToyModel
+    import torch.nn as nn
+
+    class SimpleModel(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.sub_mod = ToyModel()
+            self.seq = nn.Sequential(self.sub_mod, nn.ReLU())
+
+        def forward(self, x):
+            x = torch.sin(x)
+            x = self.seq(x)
+            return x
+
+    x = torch.randn(1, ToyModel.N_IN, device="cuda", requires_grad=True)
+    model = SimpleModel().cuda()
+    backend = ThunderCompiler()
+    jf = torch.compile(backend=backend)(model)
+    out = jf(x)
+    backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark=use_pytest_benchmark)
+
+    s1 = f"{tmp_path}/graph0_thunder_0.py"
+    assert os.path.exists(s1)
+    cmd = "pytest" if use_pytest_benchmark else "python"
+    result1 = run([cmd, s1], capture_output=True, text=True)
+    assert result1.returncode == 0, f"Reproducer {s1} failed with return code {result1.returncode}"
