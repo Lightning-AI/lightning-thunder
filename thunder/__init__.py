@@ -824,8 +824,8 @@ def jit(
         cache_entry, inps, pro_to_epi = get_computation_and_inputs(*args, **kwargs)
 
         check_storage_aliases(cache_entry, inps)
-
-        result = cache_entry.computation_fn(*inps)
+        with compile_data_and_stats(cd, cs):
+            result = cache_entry.computation_fn(*inps)
         result = maybe_connect_to_autograd(cache_entry, result)
         result = maybe_call_epilogue(cache_entry, result, pro_to_epi)
 

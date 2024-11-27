@@ -4030,8 +4030,6 @@ embedding_backward = make_prim(PrimIDs.EMBEDDING_BACKWARD, "embedding_backward",
 def copy__meta(
     copy_from: TensorProxy,
     copy_to: TensorProxy,
-    *,
-    is_grad_enabled: bool = False,
 ):
     utils.check_type(copy_from, TensorProxy)
     utils.check_type(copy_to, TensorProxy)

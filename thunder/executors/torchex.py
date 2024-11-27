@@ -2181,8 +2181,9 @@ if has_einops:
     einops._backends._type2backend[TensorProxy] = EinopsThunderBackend()
 
 
-def _copy__impl(copy_from, copy_to, *, is_grad_enabled):
-    if is_grad_enabled and copy_to.is_leaf and copy_to.requires_grad:
+def _copy__impl(copy_from, copy_to):
+    cd = get_compile_data()
+    if cd.is_grad_enabled and copy_to.is_leaf and copy_to.requires_grad:
         raise RuntimeError("a leaf Variable that requires grad is being used in an in-place operation.")
     copy_to.copy_(copy_from)
     return copy_to

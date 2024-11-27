@@ -478,11 +478,11 @@ def test_multiple_inplace_to_multiple_args(executor, device, _):
 def test_inplace_to_tensors_with_grad(executor, device, _):
     @torch.no_grad
     def add_grad(x, y):
-        x.add_(x.grad)
+        return x.add_(x.grad)
 
     @torch.no_grad
     def add_y(x, y):
-        x.add_(y, alpha=0.1)
+        return x.add_(y, alpha=0.1)
 
     for fn in (add_grad, add_y):
         jitted_f = executor.make_callable(fn)
@@ -494,7 +494,8 @@ def test_inplace_to_tensors_with_grad(executor, device, _):
         x_ref.grad = x.grad.clone().detach()
         y_ref = y.clone().detach()
 
-        res = jitted_f(x, y)
+        with torch.no_grad():
+            res = jitted_f(x, y)
         res_ref = fn(x_ref, y_ref)
 
         torch.testing.assert_close(x, x_ref)
