@@ -3066,11 +3066,11 @@ class HFBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             model = AutoModelForCausalLM.from_config(self.config)
             model = model.to(dtype=self.tdtype)
 
-            if self.peft_config:
+            if getattr(self, "peft_config", None):
                 from peft import get_peft_model
                 model = get_peft_model(model, self.peft_config)
             else:
-                model._requires_grad(self.requires_grad)
+                model.requires_grad_(self.requires_grad)
 
 
         return model
