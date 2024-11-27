@@ -80,17 +80,21 @@ class SubgraphInfo:
 
     Attributes:
         original_graph_module: The original graph module.
-        split_graph_module: The graph module for the split subgraph.
+        original_split_graph_module: The original split graph module before any transformations are applied.
+            Specifically, before the :func:`checkpoint_converter` replaces the Torch operators with Thunder symbols,
+            and before any submodules are compiled by Thunder.
+        split_graph_module: The graph module for the split subgraph. It contains the compiled thunder/inductor modules.
         thunder_compiled_fns: List of thunder optimized callables.
             This could be :obj:`None` if there the graph module was not supported by thunder.
             Look at the :attr:`split_reasons` for further information.
-        submodule_to_compiled_functions: Dict from subgraph to compiled function.
+        submodule_to_compiled_functions: Dict from subgraph in :attr:`original_split_graph_module` to compiled function.
             This will be a dict with one pair in case the graph was not split.
         split_reasons: List of reasons explaining why the subgraph was split.
             Present only if there are was a split.
     """
 
     original_graph_module: torch.fx.GraphModule
+    original_split_graph_module: torch.fx.GraphModule | None
     split_graph_module: torch.fx.GraphModule | None
     thunder_compiled_fns: list[Callable] | None
     submodule_to_compiled_functions: dict[torch.fx.GraphModule, CompiledFunction]
@@ -466,8 +470,7 @@ def _checkpoint_function_converter(gm: torch.fx.GraphModule):
     Args:
         gm (torch.fx.GraphModule): The GraphModule of the checkpointed function, which is modified inplace.
     """
-    new_graph = copy.deepcopy(gm.graph)
-    for n in new_graph.nodes:
+    for n in gm.graph.nodes:
         # replace the torch operator in "call_function" node
         if n.op == "call_function":
             assert isinstance(n.target, Callable)
@@ -476,19 +479,18 @@ def _checkpoint_function_converter(gm: torch.fx.GraphModule):
             check(
                 n.target in _torch_to_thunder_function_map, lambda: f"Unexpected {n.target}, not registered in Thunder"
             )
-            with new_graph.inserting_before(n):
-                thunder_node = new_graph.call_function(
+            with gm.graph.inserting_before(n):
+                thunder_node = gm.graph.call_function(
                     _torch_to_thunder_function_map[n.target], args=n.args, kwargs=n.kwargs
                 )
             n.replace_all_uses_with(thunder_node)
-            new_graph.erase_node(n)
+            gm.graph.erase_node(n)
         else:
             if n.op == "call_module":
                 raise RuntimeError(
                     "Unexpected call_module detected inside a checkpoint. This should have been inlined in dynamo graphs"
                 )
-    new_graph.lint()
-    gm.graph = new_graph
+    gm.graph.lint()
     recompile_graph(gm)
 
 
@@ -512,3 +514,44 @@ def checkpoint_converter(gm: torch.fx.GraphModule, sub_gm: torch.fx.GraphModule)
                 else:
                     function_module = getattr(gm, n.args[0].name)
                 _checkpoint_function_converter(function_module)
+
+
+def remove_empty_autocast(graph_module: torch.fx.GraphModule) -> torch.fx.GraphModule:
+    """
+    Function to remove empty autocast regions from GraphModule.
+
+    Dynamo can provide empty autocast regions in which case, it is more performant to remove them
+    from the graph than to compile them and pay the cost of calling a wrapped optimized function
+    which does nothing.
+
+    Args:
+        graph_module: Graph module to which this pass is applied.
+
+    """
+
+    empty_autocast_removed_graph_module = copy.deepcopy(graph_module)
+
+    # Dummy init node.
+    prev_node = torch.fx.node.Node(graph_module.graph, "start_node", "call_function", lambda: None, None, None)
+    nodes_to_erase = []
+    for node in empty_autocast_removed_graph_module.graph.nodes:
+        # As _enter_autocast and _exit_autocast functions map the regions created by context manager,
+        # previous `_enter_autocast` will always correspond with current `_exit_autocast`.
+        if (
+            prev_node.target == torch.amp.autocast_mode._enter_autocast
+            and node.target == torch.amp.autocast_mode._exit_autocast
+        ):
+            # NOTE: Order of node being appended matters.
+            # The node to be erased has to have zero users.
+            # So, we remove `_exit_autocast` first (which consumes output from `_enter_autocast`)
+            # and then we can remove the corresponding `_enter_autocast`.
+            nodes_to_erase.append(node)
+            nodes_to_erase.append(prev_node)
+
+        prev_node = node
+
+    # Erase the marked nodes.
+    for node in nodes_to_erase:
+        empty_autocast_removed_graph_module.graph.erase_node(node)
+
+    return empty_autocast_removed_graph_module

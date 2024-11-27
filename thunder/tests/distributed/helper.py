@@ -2,6 +2,7 @@ from __future__ import annotations
 from functools import partial
 from functools import wraps
 from typing import ClassVar, TYPE_CHECKING
+import inspect
 import math
 import os
 import sys
@@ -110,6 +111,11 @@ class DistributedParallelTestCase(common_distributed.MultiProcessTestCase):
     @property
     def init_method(self):
         return f"{common_utils.FILE_SCHEMA}{self.file_name}"
+
+    @property
+    def destroy_pg_upon_exit(self) -> bool:
+        # Overriding base test class: do not auto destroy PG upon exit.
+        return False
 
     @classmethod
     def _run(cls, rank, test_name, file_name, pipe, *, fake_pg=False):

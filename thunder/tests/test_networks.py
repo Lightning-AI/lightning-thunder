@@ -11,7 +11,13 @@ from torch.testing import assert_close, make_tensor
 
 import thunder
 import thunder.torch as ttorch
-from thunder.tests.framework import instantiate, requiresCUDA, DynamoThunderExecutor, _all_test_executors
+from thunder.tests.framework import (
+    instantiate,
+    requiresCUDA,
+    DynamoThunderExecutor,
+    _all_test_executors,
+    version_between,
+)
 import thunder.tests.nanogpt_model as nanogpt_model
 import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
 
@@ -214,7 +220,16 @@ def test_nanogpt_mlp(executor, device, dtype):
     assert_close(torch_result, thunder_result)
 
 
-@instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
+@instantiate(
+    dtypes=(thunder.float32,),
+    executors=all_test_executors_and_dynamo,
+    decorators=(
+        pytest.mark.skipif(
+            version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
+            reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
+        ),
+    ),
+)
 def test_nanogpt_gelu(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
     make = partial(make_tensor, dtype=tdtype, device=device)
@@ -269,6 +284,10 @@ def test_hf_bert():
     assert_close(actual, expected)
 
 
+@pytest.mark.skipif(
+    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
+    reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1413",
+)
 @requiresCUDA
 def test_quantization():
     try:
@@ -349,6 +368,10 @@ def test_quantization():
         assert_close(v, sd2[k])
 
 
+@pytest.mark.skipif(
+    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
+    reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
+)
 @thunder.tests.framework.requiresCUDA
 def test_thunderfx_mistral_nemo_small():
     """
@@ -400,30 +423,36 @@ def test_thunderfx_mistral_nemo_small():
     assert th_backend.subgraph_infos, "Should have at least 1 subgraph"
 
 
+@pytest.mark.skipif(
+    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
+    reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
+)
 @thunder.tests.framework.requiresCUDA
-def test_hf_qwen2():
+@pytest.mark.parametrize("model_id", ["Qwen/Qwen2.5-7B-Instruct", "microsoft/Phi-3-mini-128k-instruct"])
+def test_hf_for_nemo(model_id):
     from thunder.dynamo import ThunderCompiler
-    from transformers import Qwen2Config, Qwen2ForCausalLM
+    from transformers import AutoConfig, AutoModelForCausalLM
 
-    # https://huggingface.co/Qwen/Qwen2.5-7B-Instruct/blob/main/config.json
-    configuration = Qwen2Config(
-        # Qwen2.5-7B-Instruct uses Grouped-Query Attention, while the default
-        # config uses Multi-Head Attention
-        num_attention_heads=28,
-        num_key_value_heads=4,
+    configuration = AutoConfig.from_pretrained(
+        model_id,
         # Scaled down for testing
-        hidden_size=56,
         vocab_size=16,
+        pad_token_id=15,
         max_position_embeddings=32,
+        num_hidden_layers=1,
     )
-    configuration.num_hidden_layers = 1
+    configuration.hidden_size = configuration.num_attention_heads
     with torch.device("cuda"):
-        model = Qwen2ForCausalLM(configuration).to(torch.bfloat16)
+        model = AutoModelForCausalLM.from_config(configuration).to(torch.bfloat16)
 
     # thunder.jit doesn't work with Qwen2, so we use torch.compile
     # https://github.com/Lightning-AI/lightning-thunder/issues/1405
+
+    # fullgraph=True used to work with transformers 4.45.2, but it doesn't work
+    # with 4.46.2 because of re.findall usage in the loss function
+    fullgraph = False
     backend = ThunderCompiler()
-    compiled_model = torch.compile(model, backend=backend, fullgraph=True)
+    compiled_model = torch.compile(model, backend=backend, fullgraph=fullgraph)
 
     input_ids = torch.randint(0, configuration.vocab_size, (1, configuration.max_position_embeddings), device="cuda")
     ref_output = model(input_ids=input_ids, labels=input_ids)
@@ -437,7 +466,8 @@ def test_hf_qwen2():
     # https://github.com/Lightning-AI/lightning-thunder/issues/1407
     torch.testing.assert_close(compiled_loss, ref_loss, rtol=1e-4, atol=1e-4)
 
-    assert len(backend.subgraph_infos) == 1, "Should have exactly 1 subgraph because of fullgraph=True"
+    if fullgraph:
+        assert len(backend.subgraph_infos) == 1, "Should have exactly 1 subgraph because of fullgraph=True"
     loss_grad = torch.randn_like(compiled_loss)
 
     grads_ref = torch.autograd.grad(ref_loss, model.parameters(), grad_outputs=loss_grad)
@@ -524,3 +554,7 @@ def test_hf_llama():
     res2 = jm(past_key_values=res["past_key_values"], **args2)
     expected2 = model(past_key_values=res["past_key_values"], **args2)
     assert_close(res2, expected2, rtol=1e-1, atol=1e-1)
+
+    top_level_symbol_names = {bsym.sym.name for bsym in thunder.last_traces(jm)[-1].bound_symbols}
+    # changes this to fewer as needed, the goal is to not have too many fusions
+    assert len([s for s in top_level_symbol_names if s.startswith("nvFusion")]) == 7
