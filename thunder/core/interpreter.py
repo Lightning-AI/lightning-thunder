@@ -2515,6 +2515,7 @@ class MutMappingWrapperMethods(WrappedValue):
             return do_raise(e)
 
         from thunder.core.proxies import Proxy
+
         populate_single_dict_item_wrapper(uv, self, key if isinstance(key.value, Proxy) else key.value)
         v = self.item_wrappers[key.value]
         assert uv is v.value or uv is v.original_value, f"value for {key.value} out of sync {uv} {v.value}"
