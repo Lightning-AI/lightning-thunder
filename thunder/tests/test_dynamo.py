@@ -879,3 +879,9 @@ def test_deepcopy_graph_module():
     _, subgraph_info = thunder.dynamo.splitter._splitter(gm, thunder.jit, thunder.jit, [])
     original_split_gm = subgraph_info.original_split_graph_module
     assert original_split_gm.graph.find_nodes(op="output")
+    for subm in original_split_gm.children():
+        assert subm.graph.find_nodes(op="output")
+    import copy
+
+    # No assertion error
+    copy_gm = copy.deepcopy(original_split_gm)
