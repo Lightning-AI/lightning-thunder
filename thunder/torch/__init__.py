@@ -4878,6 +4878,10 @@ def item(a: TensorLike) -> Number:
     return prims.item(a)
 
 
+# PyTorch does not support backward for torch.item
+register_grad(item.id, item)
+
+
 # TODO Move this to nn.functional
 @torchsymbol(torch.nn.functional.linear)
 def linear(a: TensorLike, w: TensorLike, /, bias: None | TensorLike = None) -> TensorLike:
