@@ -273,7 +273,8 @@ def test_torchao_float8_linear(executor, device, _):
     actual = jitted(x)
 
     if executor == DynamoThunderExecutor:
-        with pytest.raises(AssertionError):
+        # FIXME(crcrpar)
+        with pytest.raises(AssertionError, match="Tensor-likes are not close!"):
             torch.testing.assert_close(actual, expected)
     else:
         torch.testing.assert_close(actual, expected)
