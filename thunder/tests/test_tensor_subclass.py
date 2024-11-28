@@ -267,5 +267,4 @@ def test_torchao_float8_linear(executor, device, _):
     jitted = executor.make_callable(fp8_model)
     actual = jitted(x)
 
-
     torch.testing.assert_close(actual, expected)
