@@ -3019,7 +3019,7 @@ class HFBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.float32,
         requires_grad: bool = False,
-        enable_peft: bool = False
+        enable_peft: bool = False,
     ) -> None:
         super().__init__()
 
@@ -3035,6 +3035,7 @@ class HFBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         self.config = config
         if enable_peft:
             from peft import LoraConfig, TaskType
+
             target_modules = "all-linear"
             self.peft_config = LoraConfig(
                 task_type=TaskType.CAUSAL_LM,
@@ -3068,7 +3069,9 @@ class HFBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             if getattr(self, "peft_config", None):
                 from peft import get_peft_model
 
-                model = get_peft_model(model, self.peft_config)
+                # autocast_adapter_dtype set to False is needed to actually execute the ops in bf16
+                # otherwise they'll be casted to f32
+                model = get_peft_model(model, self.peft_config, autocast_adapter_dtype=False)
             else:
                 model.requires_grad_(self.requires_grad)
 
