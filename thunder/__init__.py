@@ -73,6 +73,7 @@ from thunder.core.proxies import (
 from thunder.core.interpreter import print_interpreter_log, print_to_log
 from thunder.core.jit_ext import thunder_general_jit
 from thunder.executors.torch_autograd import split_forward_backward, ThunderFunction
+from thunder.transforms.tensor_subclasses import flatten_tensor_subclasses
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
@@ -646,6 +647,7 @@ def jit(
             computation_trc = dce(computation_trc)
             computation_traces.append(computation_trc)
 
+            _tensor_subclass_transform_applied = False
             backward_trc = None
             if not cd.disable_torch_autograd_support:
                 tensor_cls = (pytorch.Tensor, TensorProxy)
@@ -659,6 +661,9 @@ def jit(
                     computation_trc, backward_trc = split_forward_backward(computation_trc, cd, cs, *inps)
                     # Note computation_trc and backward_trc have been appended to cs.last_(backward_)traces
                     # by split_forward_backward
+                    _tensor_subclass_transform_applied = True
+            if not _tensor_subclass_transform_applied:
+                computation_trc, _ = flatten_tensor_subclasses(computation_trc)
 
             if backward_trc is None:
                 from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
