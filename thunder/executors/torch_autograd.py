@@ -155,7 +155,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     # not any other container type. So we need to flatten the outputs of
     # the forward trace and inputs of the backward trace.
     fw_trace, bw_trace = forward_and_backward_from_trace(primal_trace, torch_autograd=True)
-    fw_trace, fw_tensor_subclass_desugar = flatten_tensor_subclasses(fw_trace)
+    fw_trace = flatten_tensor_subclasses(fw_trace)
 
     fw_traces = [fw_trace]
     bw_traces = [bw_trace]
@@ -264,7 +264,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     if getattr(compile_data.fn, "use_fsdp", False):
         bw_trace = _fsdp_comm_bucketing.apply_bucketing_to_backward_trace(bw_trace)
 
-    bw_trace, bw_tensor_subclass_desugar = flatten_tensor_subclasses(bw_trace)
+    bw_trace = flatten_tensor_subclasses(bw_trace)
 
     # Now we can run the optimization passes on the backward trace
     # TODO Restore request for no rematerialization
