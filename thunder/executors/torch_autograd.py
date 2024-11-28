@@ -247,6 +247,8 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     if getattr(compile_data.fn, "use_fsdp", False):
         bw_trace = _fsdp_comm_bucketing.apply_bucketing_to_backward_trace(bw_trace)
 
+    bw_trace, bw_tensor_subclass_desugar = flatten_tensor_subclasses(bw_trace)
+
     # Now we can run the optimization passes on the backward trace
     # TODO Restore request for no rematerialization
     bw_extrace = transform_for_execution(
