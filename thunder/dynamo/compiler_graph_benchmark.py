@@ -2,6 +2,7 @@ from __future__ import annotations
 from itertools import chain
 from pytest_benchmark.fixture import BenchmarkFixture
 from typing import TYPE_CHECKING
+from looseversion import LooseVersion
 
 import torch
 from thunder.dynamo import ThunderCompiler
@@ -102,19 +103,25 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
             if self.post_graph:
                 compiled_fn = self.post_graph(compiled_fn, sample_args)
 
-            with record_peak_allocated_memory(self.bench):
+            # This guard ensures compatibility with CPU-only PyTorch builds.
+            if torch.cuda.is_available():
+                with record_peak_allocated_memory(self.bench):
+                    self.bench(compiled_fn, *sample_args)
+            else:
                 self.bench(compiled_fn, *sample_args)
             # BenchmarkFixture.stats is created each time bench is called (ref: https://github.com/pybenchmark/pytest-benchmark/blob/8c9a5faa1dd178b53ab7b2a66f5364a77e903d74/src/pytest_benchmark/fixture.py#L150)
             # Adds the graph number, split module name and executor suffix to the name string
             gid_key, module_name_key, ex_key = GRAPH_BY_GRAPH_BENCHMARK_PARAMS_KEYS
-            self.bench.stats.name += f"-{gid_key}[{self.graph_idx+1}]-{module_name_key}[{name}]-{ex_key}[{ex_name}]"
-            assert MAX_ALLOCATED_MEMORY_KEYWORD in self.bench.extra_info
-            assert f"{self.bench.stats.name}_{MAX_ALLOCATED_MEMORY_KEYWORD}" not in self.bench.extra_info
-            # NOTE: A benchmark can include multiple stats, but only one extra_info field is allowed per benchmark.
-            # Therefore, we use the current stats name as a prefix to distinguish memory usage for each stats.
-            self.bench.extra_info[f"{self.bench.stats.name}_{MAX_ALLOCATED_MEMORY_KEYWORD}"] = (
-                self.bench.extra_info.pop(MAX_ALLOCATED_MEMORY_KEYWORD)
-            )
+            self.bench.stats.name += f"-{gid_key}[{self.graph_idx}]-{module_name_key}[{name}]-{ex_key}[{ex_name}]"
+
+            if torch.cuda.is_available():
+                assert MAX_ALLOCATED_MEMORY_KEYWORD in self.bench.extra_info
+                assert f"{self.bench.stats.name}_{MAX_ALLOCATED_MEMORY_KEYWORD}" not in self.bench.extra_info
+                # NOTE: A benchmark can include multiple stats, but only one extra_info field is allowed per benchmark.
+                # Therefore, we use the current stats name as a prefix to distinguish memory usage for each stats.
+                self.bench.extra_info[f"{self.bench.stats.name}_{MAX_ALLOCATED_MEMORY_KEYWORD}"] = (
+                    self.bench.extra_info.pop(MAX_ALLOCATED_MEMORY_KEYWORD)
+                )
 
             # when the graph is segmented, the self.bench run multiple times, pybenchmark throws an error:
             # `FixtureAlreadyUsed("Fixture can only be used once. Previously it was used in %s mode." % self._mode)`
@@ -124,6 +131,23 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
 
     def __call__(self, gm: torch.fx.GraphModule, sample_args: list[torch.SymInt, torch.Tensor]):
         split_module = super().__call__(gm, sample_args)
+
+        def has_checkpoint_node(g):
+            if g.find_nodes(op="call_function", target=torch.ops.higher_order.tag_activation_checkpoint):
+                return True
+            for n in g.nodes:
+                if n.op == "call_module" and has_checkpoint_node(getattr(g.owning_module, n.target).graph):
+                    return True
+            return False
+
+        if LooseVersion(torch.__version__) < LooseVersion("2.6.0"):
+            # NOTE: PyTorch 2.6 changes the structure of GraphModule when using activation checkpointing.
+            # It's hard to retrieve the example input tensor for the GraphModule contains checkpoint operator before PyTorch 2.6
+            if has_checkpoint_node(split_module.graph):
+                raise RuntimeError(
+                    "The benchmarking of the Torch activation checkpointing is only supported with PyTorch version 2.6 or later."
+                )
+
         compiled_functions_to_submodule = {
             v.compiled_fn: k for k, v in self.subgraph_infos[self.graph_idx].submodule_to_compiled_functions.items()
         }
@@ -140,7 +164,7 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
                 cur_nodes = cur_module.graph.nodes
                 # Greates random input values for the current module based on the faketensor 'example_value' of the placeholder node
                 placeholders = list(n for n in cur_nodes if n.op == "placeholder")
-                args = chain(*map(_get_example_inputs_from_placeholder, placeholders))
+                args = list(map(_get_example_inputs_from_placeholder, placeholders))
                 # Runs the benchmark on the original module with the generated random inputs
                 self.run_bench(compiled_functions_to_submodule[cur_module], target, *args)
         self.graph_idx += 1

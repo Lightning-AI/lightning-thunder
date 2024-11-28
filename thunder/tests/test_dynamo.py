@@ -1,9 +1,13 @@
 import pytest
 import warnings
+import itertools
+import os
+from subprocess import run
 import torch
 import torch.fx
 import torch.nn as nn
 import torch.nn.functional as F
+from looseversion import LooseVersion
 
 from thunder import dtypes
 from thunder.dynamo import ThunderCompiler
@@ -18,6 +22,7 @@ from thunder.tests.framework import (
     DynamoThunderExecutor,
     IS_WINDOWS,
     requiresCUDA,
+    version_between,
 )
 from thunder.tests.make_tensor import make_tensor
 
@@ -444,6 +449,14 @@ def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
             IS_WINDOWS,
             reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
         ),
+        pytest.mark.skipif(
+            LooseVersion(torch.__version__) < LooseVersion("2.6.0"),
+            reason="Skip until the Torch bug is fixed - https://github.com/pytorch/pytorch/pull/139275",
+        ),
+        pytest.mark.skipif(
+            version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
+            reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
+        ),
     ),
 )
 @requiresCUDA
@@ -515,6 +528,60 @@ def test_no_grad_ctx_manager(executor, device: str, dtype: dtypes.dtype):
     torch.testing.assert_close(actual_grad, expected_grad)
 
 
+def test_empty_autocast():
+    autocast_ops = (torch.amp.autocast_mode._enter_autocast, torch.amp.autocast_mode._exit_autocast)
+
+    def _call_thunder_backend(fn, args):
+        backend = ThunderCompiler()
+        jf = torch.compile(backend=backend)(f)
+        jf(*args)
+        return backend
+
+    # autocast region is removed
+    def f():
+        with torch.autocast(dtype=torch.bfloat16, device_type="cpu"):
+            pass
+        return
+
+    backend = _call_thunder_backend(f, ())
+    assert all(node.target not in autocast_ops for node in backend.subgraph_infos[0].split_graph_module.graph.nodes)
+
+    # Both autocast regions are removed
+    def f(x):
+        with torch.autocast(dtype=torch.bfloat16, device_type="cpu"):
+            pass
+        y = x @ x
+        with torch.autocast(dtype=torch.bfloat16, device_type="cpu"):
+            pass
+        return y
+
+    x = torch.randn(3, 3)
+    backend = _call_thunder_backend(f, (x,))
+
+    all_nodes = itertools.chain(
+        backend.subgraph_infos[0].split_graph_module.graph.nodes,
+        backend.subgraph_infos[0].split_graph_module.thunder_0.graph.nodes,
+    )
+    assert all(node.target not in autocast_ops for node in all_nodes)
+
+    # First autocast region is removed and second isn't
+    def f(x):
+        with torch.autocast(dtype=torch.bfloat16, device_type="cpu"):
+            pass
+        y = x @ x
+        with torch.autocast(dtype=torch.bfloat16, device_type="cpu"):
+            y = y @ y
+        return y
+
+    x = torch.randn(3, 3)
+    backend = _call_thunder_backend(f, (x,))
+    all_nodes = itertools.chain(
+        backend.subgraph_infos[0].split_graph_module.graph.nodes,
+        backend.subgraph_infos[0].split_graph_module.thunder_0.graph.nodes,
+    )
+    assert sum(node.target in autocast_ops for node in all_nodes) == 2
+
+
 # Sample command to run the benchmark using ThunderCompilerGraphBenchmarking
 # pytest thunder/tests/test_dynamo.py -k test_ThunderCompilerGraphBenchmarking_groupby --benchmark-group-by='graph-by-graph:param:GraphID,param:SplitModuleName'
 # For more details, see :class:`thunder.dynamo.compiler_graph_benchmark.ThunderCompilerGraphBenchmarking`
@@ -582,6 +649,35 @@ def test_ThunderCompilerGraphBenchmarking_post_graph(benchmark):
     )
     compiled = torch.compile(backend=backend)(f)
     compiled(x)
+
+
+@pytest.mark.skipif(
+    LooseVersion(torch.__version__) < LooseVersion("2.6.0"),
+    reason="The checkpoint function becomes a submodule of the module containing `tag_activation_checkpoint` in PyTorch 2.6.0.",
+)
+@requiresCUDA
+def test_ThunderCompilerGraphBenchmarking_checkpoint(benchmark):
+    class SimpleModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.layer1 = nn.Linear(10, 20)
+
+        def forward(self, x):
+            x = torch.utils.checkpoint.checkpoint(self.layer1, x)
+            x = F.relu(x)
+            return x
+
+    x = torch.randn(5, 10).cuda().requires_grad_()
+    model = SimpleModel().cuda().train()
+
+    exe_backend = ThunderCompiler()
+    backend = ThunderCompilerGraphBenchmarking(
+        benchmark, executors={"inductor": torch.compile, "thunderfx": torch.compile(backend=exe_backend)}
+    )
+    # Using torch.compile here fails with "TypeError: cannot pickle '_io.TextIOWrapper' object" in
+    # https://github.com/Lightning-AI/pytorch-lightning/blob/828fd998961f6a60f92c35254bb94d6e049ad069/src/lightning/fabric/wrappers.py#L421
+    jf = torch._dynamo.optimize(backend=backend)(model)
+    out = jf(x)
 
 
 @requiresCUDA
@@ -688,3 +784,83 @@ def test_checkpoint_converter_submodule():
     for n in submodule.graph.nodes:
         if n.op == "call_function":
             assert isinstance(n.target, Symbol)
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=[DynamoThunderExecutor],
+    decorators=(pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro")),),
+)
+def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, use_pytest_benchmark, tmp_path):
+    from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform
+    from thunder import nvfuser_executor
+    from thunder.transforms.cudagraph import CUDAGraphTransform
+
+    if device.startswith("cuda"):
+        backend = ThunderCompiler(
+            transforms=[
+                NvtxProfileTransform(),
+                CUDAGraphTransform(),
+            ],
+            executors=[nvfuser_executor],
+            cache="constant values",
+            langctx=None,
+            record_history=False,
+        )
+    else:
+        backend = ThunderCompiler(executors=None)
+    # Test non-contiguous input tensor
+    x = make_tensor((4, 4), low=3, high=10, dtype=torch.int64, device=device, noncontiguous=True)
+
+    @torch.compile(backend=backend)
+    def func(x):
+        x = torch.sin(x)
+        if x.sum() > 0:
+            return x + 1
+        else:
+            return x - 1
+
+    out = func(x)
+    backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark=use_pytest_benchmark)
+
+    s1 = f"{tmp_path}/graph0_thunder_0.py"
+    s2 = f"{tmp_path}/graph1_thunder_0.py"
+    assert os.path.exists(s1)
+    assert os.path.exists(s2)
+    cmd = "pytest" if use_pytest_benchmark else "python"
+    result1 = run([cmd, s1], capture_output=True, text=True)
+    result2 = run([cmd, s2], capture_output=True, text=True)
+
+    assert result1.returncode == 0, f"Reproducer {s1} failed with return code {result1.returncode}"
+    assert result2.returncode == 0, f"Reproducer {s2} failed with return code {result2.returncode}"
+
+
+@requiresCUDA
+@pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro"))
+def test_dynamo_reproducer_submodules(use_pytest_benchmark, tmp_path):
+    from thunder.tests.distributed.helper import ToyModel
+    import torch.nn as nn
+
+    class SimpleModel(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.sub_mod = ToyModel()
+            self.seq = nn.Sequential(self.sub_mod, nn.ReLU())
+
+        def forward(self, x):
+            x = torch.sin(x)
+            x = self.seq(x)
+            return x
+
+    x = torch.randn(1, ToyModel.N_IN, device="cuda", requires_grad=True)
+    model = SimpleModel().cuda()
+    backend = ThunderCompiler()
+    jf = torch.compile(backend=backend)(model)
+    out = jf(x)
+    backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark=use_pytest_benchmark)
+
+    s1 = f"{tmp_path}/graph0_thunder_0.py"
+    assert os.path.exists(s1)
+    cmd = "pytest" if use_pytest_benchmark else "python"
+    result1 = run([cmd, s1], capture_output=True, text=True)
+    assert result1.returncode == 0, f"Reproducer {s1} failed with return code {result1.returncode}"

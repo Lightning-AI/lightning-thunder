@@ -210,6 +210,17 @@ def get_module(name: str) -> Any:
     return sys.modules[name]
 
 
+def is_likely_from_collections_namedtuple(tuple_type):
+    from collections import namedtuple
+
+    # Check if tuple_type code object is coming from namedtuple
+    return (
+        hasattr(tuple_type, "__repr__")
+        and hasattr(tuple_type.__repr__, "__code__")
+        and tuple_type.__repr__.__code__ in namedtuple.__code__.co_consts
+    )
+
+
 #
 # Functions related to printing and debugging
 #

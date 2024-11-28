@@ -623,6 +623,21 @@ def test_vjp_correctness_zeta_manual(op, device, dtype, executor, comp):
         comp(grad_rhs, expected_grad[0], equal_nan=True)
 
 
+@ops((get_opinfo("item"),), supported_dtypes=(dtypes.float64,))
+def test_vjp_correctness_torch_item_manual(op, device, dtype, executor, comp):
+    from thunder.torch import item
+
+    for sample in op.sample_inputs(device, dtype, requires_grad=True, no_rhs_numbers=True):
+        out = op.torch_reference(*sample.args, **sample.kwargs)
+        flat_op, flat_args, spec = flatten_func(item, sample.args, sample.kwargs)
+        initial_trace = thunder.trace()(vjp(flat_op), flat_args, (None,))
+        actual_out, (grad_in,) = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(
+            flat_args, (None,)
+        )
+        assert grad_in is None, "grad_in should be None"
+        comp(actual_out, out, equal_nan=True)
+
+
 @ops((get_opinfo("nll_loss"),), supported_dtypes=(dtypes.float64,))
 def test_vjp_correctness_nll_loss_manual(op, device, dtype, executor, comp):
     for sample in op.sample_inputs(device, dtype, requires_grad=True, no_rhs_numbers=True):
@@ -1472,7 +1487,7 @@ def test_populate_grads_mlp(executor, device, dtype):
 
 @instantiate(dtypes=(thunder.float32,))
 def test_populate_grads_csa(executor, device, dtype):
-    if version_between(torch.__version__, min_ver="2.6.0a0", max_ver="2.6.0"):
+    if version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0"):
         pytest.skip("https://github.com/Lightning-AI/lightning-thunder/issues/1254")
 
     from thunder.benchmarks import NanoGPTCSABenchmark, NanoGPTConfig
@@ -1502,7 +1517,7 @@ def test_populate_grads_csa(executor, device, dtype):
 
 @instantiate(dtypes=(thunder.float32,))
 def test_populate_grads_block(executor, device, dtype):
-    if version_between(torch.__version__, min_ver="2.6.0a0", max_ver="2.6.0"):
+    if version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0"):
         pytest.skip("https://github.com/Lightning-AI/lightning-thunder/issues/1254")
 
     from thunder.benchmarks import NanoGPTBlockBenchmark, NanoGPTConfig

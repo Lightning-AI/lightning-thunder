@@ -21,6 +21,7 @@ Querying information on compiled functions and modules
 .. autosummary::
     :toctree: generated/
 
+    DebugOptions
     compile_data
     compile_stats
     last_traces
