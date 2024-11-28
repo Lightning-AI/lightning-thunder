@@ -3063,7 +3063,7 @@ class HFBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         from transformers import AutoModelForCausalLM
 
         with torch.device(self.device):
-            model = AutoModelForCausalLM.from_config(self.config, torch_dtype=self.dtype)
+            model = AutoModelForCausalLM.from_config(self.config, torch_dtype=self.tdtype)
 
             if getattr(self, "peft_config", None):
                 from peft import get_peft_model
