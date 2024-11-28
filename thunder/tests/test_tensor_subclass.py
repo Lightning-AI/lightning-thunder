@@ -8,7 +8,13 @@ import torch.nn as nn
 from torch.utils import _pytree as pytree
 
 import thunder
-from thunder.tests.framework import instantiate, TorchExecutor, TorchCompileCatExecutor, nvFuserExecutor, DynamoThunderExecutor
+from thunder.tests.framework import (
+    instantiate,
+    TorchExecutor,
+    TorchCompileCatExecutor,
+    nvFuserExecutor,
+    DynamoThunderExecutor,
+)
 from thunder.tests.make_tensor import make_tensor
 
 TORCHAO_AVAILABLE = package_available("torchao")
