@@ -634,7 +634,7 @@ def jit(
                     # by split_forward_backward
                     _tensor_subclass_transform_applied = True
             if not _tensor_subclass_transform_applied:
-                computation_trc, _ = flatten_tensor_subclasses(computation_trc)
+                computation_trc = flatten_tensor_subclasses(computation_trc)
 
             if backward_trc is None:
                 from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
