@@ -1259,7 +1259,9 @@ def t(a: TensorLike, /) -> TensorLike:
         lambda: f"t() expects a tensor with <= 2 dimensions, but self is {a.ndim}D",
         RuntimeError,
     )
-    return transpose(a, 0, 1) if a.ndim == 2 else a
+    if a.ndim == 2:
+        return transpose(a, 0, 1)
+    return a
 
 
 @run_once
@@ -1310,6 +1312,17 @@ def transpose(a: TensorLike, /, dim0: int, dim1: int) -> TensorLike:
     permutation[dim0] = dim1
     permutation[dim1] = dim0
     return clang.transpose(a, permutation)
+
+
+def _transpose_grad(a: TensorLike, /, dim0: int, dim1: int) -> TensorLike:
+    fwd = transpose(a, dim0, dim1)
+    g = get_grad(fwd)
+    a_grad = transpose(g, dim0, dim1)
+    put_grad(a, a_grad)
+    return fwd
+
+
+register_grad(transpose, _transpose_grad)
 
 
 @torchsymbol(torch.unbind, is_method=True)
