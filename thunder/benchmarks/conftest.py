@@ -25,23 +25,22 @@ def launch_benchmark(target_file, target_name: str):
     target_filename = target_name.replace("/", "_")
 
     target_json = path.join(BENCHMARK_JSON_DIR, f"{target_filename}.json")
-
     target_log = path.join(FAILED_BENCHMARK_LOGS_DIR, f"{target_filename}.log")
-    target_log_file = open(target_log, "w")
 
-    subprocess.run(
-        [
-            "pytest",
-            f"{target_file}::{target_name}",
-            "-vs",
-            "--benchmark-json",
-            target_json,
-        ],
-        check=True,
-        text=True,
-        stderr=subprocess.STDOUT,
-        stdout=target_log_file,
-    )
+    with open(target_log, "w") as target_log_file:
+        subprocess.run(
+            [
+                "pytest",
+                f"{target_file}::{target_name}",
+                "-vs",
+                "--benchmark-json",
+                target_json,
+            ],
+            check=True,
+            text=True,
+            stderr=subprocess.STDOUT,
+            stdout=target_log_file,
+        )
 
 
 def run_in_isolation(item: Item) -> TestReport:
@@ -96,6 +95,7 @@ def pytest_runtestloop(session):
     mp.set_start_method("spawn")
 
     from _pytest.terminal import TerminalReporter
+
     terminal: TerminalReporter = session.config.pluginmanager.get_plugin("terminalreporter")
 
     custom_report_dir = os.getenv("THUNDER_BENCH_DIR")
@@ -104,8 +104,8 @@ def pytest_runtestloop(session):
     os.makedirs(BENCHMARK_JSON_DIR, exist_ok=True)
     os.makedirs(FAILED_BENCHMARK_LOGS_DIR, exist_ok=True)
 
-    terminal.write_line(f"Saving failed benchmarks logs in {FAILED_BENCHMARK_LOGS_DIR}/")
-    terminal.write_line(f"Saving benchmarks reports in {BENCHMARK_JSON_DIR}/")
+    terminal.write_line(f"Saving failed benchmarks logs in {FAILED_BENCHMARK_LOGS_DIR}")
+    terminal.write_line(f"Saving benchmarks reports in {BENCHMARK_JSON_DIR}")
 
 
 def pytest_sessionfinish(session, exitstatus):
