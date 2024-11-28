@@ -132,6 +132,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     from thunder.distributed.transforms import FSDPCommBucketing
     from thunder.distributed.utils import sort_data_parallel_syncs, sort_waits, sort_communication_ops
     from thunder.executors.passes import del_last_used, transform_for_execution
+    from thunder.transforms.tensor_subclasses import flatten_tensor_subclasses, DesugarTensorSubclass
 
     utils.check(compile_data is not None, lambda: "`compile_data` is required")
     # NOTE: This function is rather slow, so it's intended to be used
@@ -154,6 +155,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     # not any other container type. So we need to flatten the outputs of
     # the forward trace and inputs of the backward trace.
     fw_trace, bw_trace = forward_and_backward_from_trace(primal_trace, torch_autograd=True)
+    fw_trace, fw_tensor_subclass_desugar = flatten_tensor_subclasses(fw_trace)
 
     fw_traces = [fw_trace]
     bw_traces = [bw_trace]
@@ -261,6 +263,8 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
 
     if getattr(compile_data.fn, "use_fsdp", False):
         bw_trace = _fsdp_comm_bucketing.apply_bucketing_to_backward_trace(bw_trace)
+
+    bw_trace, bw_tensor_subclass_desugar = flatten_tensor_subclasses(bw_trace)
 
     # Now we can run the optimization passes on the backward trace
     # TODO Restore request for no rematerialization

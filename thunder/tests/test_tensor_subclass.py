@@ -8,15 +8,19 @@ import torch.nn as nn
 from torch.utils import _pytree as pytree
 
 import thunder
-from thunder.core.proxies import SubclassTensorProxy
-from thunder.tests.framework import instantiate
+from thunder.tests.framework import (
+    instantiate,
+    TorchExecutor,
+    TorchCompileCatExecutor,
+    nvFuserExecutor,
+    DynamoThunderExecutor,
+)
 from thunder.tests.make_tensor import make_tensor
 
 TORCHAO_AVAILABLE = package_available("torchao")
 
 if TYPE_CHECKING:
     from typing import Any
-    from thunder.core.symbol import BoundSymbol
 
 
 @torch._dynamo.allow_in_graph
@@ -243,14 +247,12 @@ def test_func_of_subclass_simple_math(executor, device, _, requires_grad):
 @instantiate(
     dtypes=(thunder.core.dtypes.float32,),
     devicetypes=(thunder.core.devices.DeviceType.CUDA,),
+    executors=(TorchExecutor, TorchCompileCatExecutor, nvFuserExecutor, DynamoThunderExecutor),
     decorators=(
         pytest.mark.skipif(
             not (TORCHAO_AVAILABLE and torch.cuda.get_device_capability() >= (8, 9)),
             reason="Requires capability >= 8.9 and torchao",
         ),
-        # forward-backward split is failing.
-        # TypeError: tree_flatten of type <enum 'GemmInputRole'> is not supported.
-        pytest.mark.xfail(),
     ),
 )
 def test_torchao_float8_linear(executor, device, _):
@@ -269,3 +271,9 @@ def test_torchao_float8_linear(executor, device, _):
 
     jitted = executor.make_callable(fp8_model)
     actual = jitted(x)
+
+    if executor == DynamoThunderExecutor:
+        with pytest.raises(AssertionError):
+            torch.testing.assert_close(actual, expected)
+    else:
+        torch.testing.assert_close(actual, expected)

@@ -41,10 +41,10 @@ if TYPE_CHECKING:
     from torch.fx import GraphModule
     from torch._ops import OpOverload
     from thunder.core.symbol import Symbol, BoundSymbol
-    from torch._C import _TensorMeta
 
 
 __all__ = [
+    "DesugarTensorSubclass",
     "flatten_tensor_subclasses",
 ]
 
@@ -249,17 +249,18 @@ class DesugarTensorSubclass:
         import thunder.torch as ltorch
 
         unwrapped_bsym_args: dict[int, ProxyInterface] = {}
-        list_of_unflatten_bsym: list[BoundSymbol] = []
+        list_of_flattening_bsyms: list[BoundSymbol] = []
         for a in bsym.flat_args:
             if isinstance(a, SubclassTensorProxy):
                 if variableify(a) in self.subclass_proxy_to_flatten:
                     self.computation_trace.push_scope([])
                     with tracectx(self.computation_trace):
                         prims.flatten_tensor_subclass(a)
-                    unflatten_bsym = self.computation_trace.pop_scope()[0]
-                    list_of_unflatten_bsym.append(unflatten_bsym)
+                    flattening_bsym = self.computation_trace.pop_scope()[0]
+                    list_of_flattening_bsyms.append(flattening_bsym)
                 tensor_attr_names = self._get_tensor_attr_names(a)
                 tensors = a._tensors
+
                 non_tensor_attr_names = self._get_non_tensor_attr_names(a)
                 non_tensors = a._non_tensors
                 metadata = dict(zip(non_tensor_attr_names, non_tensors))
@@ -307,8 +308,8 @@ class DesugarTensorSubclass:
             ltorch_ops_for_node_of_ops.append(getattr(ltorch, node.target._opname))
 
         bsyms: list[BoundSymbol] = []
-        if list_of_unflatten_bsym:
-            bsyms.extend(list_of_unflatten_bsym)
+        if list_of_flattening_bsyms:
+            bsyms.extend(list_of_flattening_bsyms)
         fxnode_output_name_to_tensor_proxy: dict[str, OpOverload] = {}
         for node, ltorch_op in zip(list_of_function_call_node, ltorch_ops_for_node_of_ops):
             args: list[Node] = node.args
@@ -379,10 +380,22 @@ class DesugarTensorSubclass:
                     f"{len(new_tensor_proxies)=} != {len(orig_output._tensors)=}"
                 ),
             )
-            if [variableify(t) for t in orig_output._tensors] != [variableify(t) for t in new_tensor_proxies]:
-                orig_output._tensors = new_tensor_proxies
-                for name, tensor in zip(orig_output._tensor_attr_names, new_tensor_proxies):
-                    setattr(orig_output, name, tensor)
+            with tracectx(self.computation_trace):
+                new_subclass = orig_output.replace()
+            new_subclass._tensors = new_tensor_proxies
+            for name, value in zip(new_subclass._tensor_attr_names, new_tensor_proxies):
+                setattr(new_subclass, name, value)
+            bsyms.append(
+                prims.unflatten_tensor_subclass.bind(
+                    new_subclass._subclass_type,
+                    dict(zip(new_subclass._tensor_attr_names, new_tensor_proxies)),
+                    dict(zip(new_subclass._non_tensor_attr_names, new_subclass._non_tensors)),
+                    output=new_subclass,
+                )
+            )
+
+            self.swap_map[variableify(orig_output)] = new_subclass
+            self.subclass_proxy_to_flatten.add(variableify(new_subclass))
 
         else:
             non_none_args = [n for n in node_of_output.args[0] if n is not None]
@@ -502,7 +515,12 @@ class DesugarTensorSubclass:
 
     def __call__(self, bsym: BoundSymbol) -> list[BoundSymbol]:
         updated_bsym: BoundSymbol = bsym.from_bsym_swap_proxies(self.swap_map)
-        if updated_bsym.sym.id == prims.PrimIDs.RETURN:
+        if bsym.sym.id == prims.PrimIDs.RETURN:
+            new_swap_map = {}
+            for k, v in self.swap_map.items():
+                if isinstance(v, SubclassTensorProxy):
+                    continue
+                new_swap_map[k] = v
             if not self.subclass_proxy_to_flatten or True:
                 return [updated_bsym]
 
@@ -567,7 +585,7 @@ class DesugarTensorSubclass:
         return self.translate_fx_graph_into_bsym(bsym_with_modified_output, fx)
 
 
-def flatten_tensor_subclasses(computation_trace: TraceCtx) -> TraceCtx:
+def flatten_tensor_subclasses(computation_trace: TraceCtx) -> tuple[TraceCtx, DesugarTensorSubclass]:
     """Flatten tensor subclasses in ``computation_trace``.
 
     Two things are happening inside of this function:
@@ -601,9 +619,9 @@ def flatten_tensor_subclasses(computation_trace: TraceCtx) -> TraceCtx:
         updated_bsyms.extend(maybe_desugared_bsyms)
 
     if not desugar_tensor_subclass.subclass_proxy_to_flatten:
-        return computation_trace
+        return computation_trace, None
 
     computation_trace_with_subclass_tensor_proxy_output = from_trace(computation_trace)
     computation_trace_with_subclass_tensor_proxy_output.bound_symbols.extend(updated_bsyms)
     computation_trace_with_subclass_tensor_proxy_output.set_provenance(TraceProvenance("tensor subclasses desugared"))
-    return computation_trace_with_subclass_tensor_proxy_output
+    return computation_trace_with_subclass_tensor_proxy_output, desugar_tensor_subclass
