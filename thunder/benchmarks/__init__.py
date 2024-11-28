@@ -3063,15 +3063,14 @@ class HFBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         from transformers import AutoModelForCausalLM
 
         with torch.device(self.device):
-            model = AutoModelForCausalLM.from_config(self.config)
-            model = model.to(dtype=self.tdtype)
+            model = AutoModelForCausalLM.from_config(self.config, torch_dtype=self.dtype)
 
             if getattr(self, "peft_config", None):
                 from peft import get_peft_model
+
                 model = get_peft_model(model, self.peft_config)
             else:
                 model.requires_grad_(self.requires_grad)
-
 
         return model
 
