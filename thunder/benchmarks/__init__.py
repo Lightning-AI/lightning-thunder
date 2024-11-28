@@ -3037,7 +3037,7 @@ class HFBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
             from peft import LoraConfig, TaskType
             target_modules = "all-linear"
             self.peft_config = LoraConfig(
-                task_type=TaskType.SEQ_2_SEQ_LM,
+                task_type=TaskType.CAUSAL_LM,
                 inference_mode=not self.requires_grad,
                 r=16,
                 lora_alpha=32,
