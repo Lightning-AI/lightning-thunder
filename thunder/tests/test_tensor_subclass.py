@@ -259,7 +259,6 @@ def test_torchao_float8_linear(executor, device, dtype):
     from torchao.float8 import convert_to_float8_training
 
     batch_size, in_features, out_features = 16, 32, 64
-
     device = torch.device("cuda")
     torch_dtype = thunder.core.dtypes.to_torch_dtype(dtype)
 
@@ -267,18 +266,12 @@ def test_torchao_float8_linear(executor, device, dtype):
     fp8_model = convert_to_float8_training(model)
     x = make_tensor((batch_size, in_features), device=device, dtype=torch_dtype)
 
-    expected = fp8_model(x)
-    jitted = executor.make_callable(fp8_model)
-
-    if executor != DynamoThunderExecutor and dtype == thunder.core.dtypes.bfloat16:
-        # somehow transform_for_execution evaluates `ltorch.to(t0, fp32)` returns t0
-        with pytest.raises(UnboundLocalError, "local variable 't57' referenced before assignment"):
-            actual = jitted(x)
+    if executor == DynamoThunderExecutor:
+        # NOTE(crcrpar): Currently no ops are handled by thunder. so check the number of thunder_fns of `ThunderCompiler`
+        expected = torch.compile(fp8_model)(x)
     else:
-        actual = jitted(x)
-        if executor == DynamoThunderExecutor and dtype == thunder.core.dtypes.float32:
-            # FIXME(crcrpar)
-            with pytest.raises(AssertionError, match="Tensor-likes are not close!"):
-                torch.testing.assert_close(actual, expected)
-        else:
-            torch.testing.assert_close(actual, expected)
+        expected = fp8_model(x)
+
+    jitted = executor.make_callable(fp8_model)
+    actual = jitted(x)
+    torch.testing.assert_close(actual, expected)
