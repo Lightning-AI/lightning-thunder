@@ -31,8 +31,6 @@ from thunder.core.trace import TraceCtx
 from thunder.core.trace import TraceProvenance
 from thunder.core.trace import from_trace
 from thunder.core.trace import tracectx
-from thunder.executors.passes import transform_for_execution
-from thunder.extend import get_executor
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -204,6 +202,20 @@ def trace_from_bsym_or_bsyms(bsym_or_bsyms: BoundSymbol | Sequence[BoundSymbol])
         # note(crcrpar): Give prefix `tmp` to avoid infinite recursion due to the same name
         trace._siginfo = SigInfo.from_name_and_args(f"tmp_{trace_name}", trace.args)
     return trace
+
+
+def make_trace_executable(trace_to_convert: TraceCtx, *args_for_eval, **kwargs_for_eval):
+    from functools import wraps
+    from thunder import trace
+    from thunder.core.transforms import eval_trace
+    from thunder.executors.torch_compile import to_torch_translator
+
+    @wraps(trace_to_convert.python_callable())
+    def torch_interpreted_func(*args, **kwargs):
+        return eval_trace(trace_to_convert, *args, **kwargs, symbol_mapper=to_torch_translator)
+
+    torch_trace = trace(inline_trace=False)(torch_interpreted_func, *args_for_eval, **kwargs_for_eval)
+    return torch_trace
 
 
 def aten_core_ir_op_to_ltorch_op(aten_op: OpOverload) -> Symbol:
@@ -459,7 +471,16 @@ class DesugarTensorSubclass:
                 output = OutputWrapperForFxTracing(out, None)
             return output
 
-        extrace = transform_for_execution(trace, [get_executor("torch"), get_executor("ad_hoc")])
+        desugared_proxy_args = []
+        for a in trace.args:
+            if isinstance(a, SubclassTensorProxy):
+                names, metadata = a.__tensor_flatten__()
+                desugared_proxy_args.extend([getattr(a, name) for name in names])
+                desugared_proxy_args.append(metadata)
+            else:
+                desugared_proxy_args.append(a)
+
+        extrace = make_trace_executable(trace, *trace.args, **trace.kwargs)
         utils.check(
             (len(extrace.bound_symbols) == len(trace.bound_symbols))
             or (
