@@ -247,7 +247,7 @@ class DesugarTensorSubclass:
         if len(self.computation_trace.bound_symbols) > 6:
             maybe_unpack_C0_bsym = self.computation_trace.bound_symbols[4]
             maybe_unpack_C1_bsym = self.computation_trace.bound_symbols[5]
-            is_backward_trace = (
+            is_backward_trace = maybe_unpack_C0_bsym.args and maybe_unpack_C1_bsym.args and (
                 maybe_unpack_C0_bsym.sym.id,
                 maybe_unpack_C1_bsym.sym.id,
                 maybe_unpack_C0_bsym.args[0].name,
