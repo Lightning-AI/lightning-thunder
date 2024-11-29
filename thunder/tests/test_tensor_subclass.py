@@ -8,6 +8,7 @@ import torch.nn as nn
 from torch.utils import _pytree as pytree
 
 import thunder
+from thunder.dynamo import ThunderCompiler
 from thunder.tests.framework import (
     instantiate,
     TorchExecutor,
@@ -266,12 +267,24 @@ def test_torchao_float8_linear(executor, device, dtype):
     fp8_model = convert_to_float8_training(model)
     x = make_tensor((batch_size, in_features), device=device, dtype=torch_dtype)
 
-    if executor == DynamoThunderExecutor:
-        # NOTE(crcrpar): Currently no ops are handled by thunder. so check the number of thunder_fns of `ThunderCompiler`
+    expected: torch.Tensor
+    jitted: nn.Module
+    backend: ThunderCompiler | None = None
+
+    if (is_thunderfx := executor == DynamoThunderExecutor):
+        torch._dynamo.reset()
         expected = torch.compile(fp8_model)(x)
+        backend = ThunderCompiler()
+        jitted = torch.compile(fp8_model, backend=backend)
     else:
         expected = fp8_model(x)
+        jitted = executor.make_callable(fp8_model)
 
-    jitted = executor.make_callable(fp8_model)
     actual = jitted(x)
     torch.testing.assert_close(actual, expected)
+
+    # TODO(crcrpar): Think of how to push tensor subclasses to `thunder.jit`.
+    # Currently no subgraphs go to thunder.jit.
+    if is_thunderfx:
+        for subgraph in backend.subgraph_infos:
+            assert not subgraph.thunder_compiled_fns
