@@ -271,7 +271,7 @@ def test_torchao_float8_linear(executor, device, dtype):
     jitted: nn.Module
     backend: ThunderCompiler | None = None
 
-    if (is_thunderfx := executor == DynamoThunderExecutor):
+    if is_thunderfx := executor == DynamoThunderExecutor:
         torch._dynamo.reset()
         expected = torch.compile(fp8_model)(x)
         backend = ThunderCompiler()
