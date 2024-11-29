@@ -415,8 +415,10 @@ class DesugarTensorSubclass:
             new_out_node = non_none_args[0]
             self.swap_map[variableify(orig_output)] = fxnode_output_name_to_tensor_proxy[str(new_out_node)]
 
-        for sbsym in bsyms:
-            sbsym.header = f"Flattened result of {bsym}"
+        args = ", ".join([t.name if isinstance(t, ProxyInterface) else f"{t}" for t in bsym.flat_args])
+        header = f"{bsym.sym.id}({args})"
+        for i, sbsym in enumerate(bsyms, 1):
+            sbsym.header = f"[{i}/{len(bsyms)}] unrolled `__torch_dispatch__` of `{header}`"
         return bsyms
 
     def convert_trace_to_fx_graph_and_get_fake_result(
