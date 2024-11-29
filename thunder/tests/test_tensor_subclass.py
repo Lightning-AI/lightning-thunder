@@ -245,7 +245,7 @@ def test_func_of_subclass_simple_math(executor, device, _, requires_grad):
 
 
 @instantiate(
-    dtypes=(thunder.core.dtypes.float32,),
+    dtypes=(thunder.core.dtypes.float32, thunder.core.dtypes.bfloat16),
     devicetypes=(thunder.core.devices.DeviceType.CUDA,),
     executors=(TorchExecutor, TorchCompileCatExecutor, nvFuserExecutor, DynamoThunderExecutor),
     decorators=(
@@ -255,26 +255,30 @@ def test_func_of_subclass_simple_math(executor, device, _, requires_grad):
         ),
     ),
 )
-def test_torchao_float8_linear(executor, device, _):
+def test_torchao_float8_linear(executor, device, dtype):
     from torchao.float8 import convert_to_float8_training
 
     batch_size, in_features, out_features = 16, 32, 64
 
     device = torch.device("cuda")
-    dtype = torch.float32
+    torch_dtype = thunder.core.dtypes.to_torch_dtype(dtype)
 
-    model = nn.Linear(in_features, out_features, bias=False, device=device, dtype=dtype)
+    model = nn.Linear(in_features, out_features, bias=False, device=device, dtype=torch_dtype)
     fp8_model = convert_to_float8_training(model)
-    x = make_tensor((batch_size, in_features), device=device, dtype=dtype)
+    x = make_tensor((batch_size, in_features), device=device, dtype=torch_dtype)
 
     expected = fp8_model(x)
-
     jitted = executor.make_callable(fp8_model)
-    actual = jitted(x)
 
-    if executor == DynamoThunderExecutor:
-        # FIXME(crcrpar)
-        with pytest.raises(AssertionError, match="Tensor-likes are not close!"):
-            torch.testing.assert_close(actual, expected)
+    if executor != DynamoThunderExecutor and dtype == thunder.core.dtypes.bfloat16:
+        # somehow transform_for_execution evaluates `ltorch.to(t0, fp32)` returns t0
+        with pytest.raises(UnboundLocalError, "local variable 't57' referenced before assignment"):
+            actual = jitted(x)
     else:
-        torch.testing.assert_close(actual, expected)
+        actual = jitted(x)
+        if executor == DynamoThunderExecutor and dtype == thunder.core.dtypes.float32:
+            # FIXME(crcrpar)
+            with pytest.raises(AssertionError, match="Tensor-likes are not close!"):
+                torch.testing.assert_close(actual, expected)
+        else:
+            torch.testing.assert_close(actual, expected)
