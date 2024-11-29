@@ -4,6 +4,7 @@ from dataclasses import field
 from numbers import Number
 from typing import TYPE_CHECKING, NamedTuple
 import time
+import warnings
 
 import torch
 from torch.fx import Node
@@ -15,6 +16,7 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 from torch._subclasses.functional_tensor import FunctionalTensorMode
 from torch.utils._python_dispatch import is_traceable_wrapper_subclass
 
+from thunder.core.baseutils import run_once
 from thunder.core.codeutils import SigInfo
 from thunder.core import devices
 from thunder.core import dtypes
@@ -51,6 +53,11 @@ __all__ = [
 PLACEHOLDER: str = "placeholder"
 CALL_FUNCTION: str = "call_function"
 OUTPUT: str = "output"
+
+
+@run_once
+def warn_tensor_subclass_support() -> None:
+    warnings.warn("Tensor Subclasses with `__torch_dispatch` support is experimental")
 
 
 class OutputWrapperForFxTracing(NamedTuple):
@@ -666,10 +673,12 @@ def flatten_tensor_subclasses(trace: TraceCtx) -> TraceCtx:
     if not desugar_tensor_subclass.subclass_proxy_to_flatten:
         return trace
 
-    computation_trace_with_subclass_tensor_proxy_output = from_trace(trace)
-    computation_trace_with_subclass_tensor_proxy_output.bound_symbols.extend(updated_bsyms)
     end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
-    computation_trace_with_subclass_tensor_proxy_output.set_provenance(TraceProvenance("tensor subclasses desugared (took {elapsed_time_millis} milliseconds)"))
+
+    computation_trace_with_subclass_tensor_proxy_output = from_trace(trace)
+    computation_trace_with_subclass_tensor_proxy_output.bound_symbols.extend(updated_bsyms)
+    computation_trace_with_subclass_tensor_proxy_output.set_provenance(TraceProvenance(f"tensor subclasses desugared (took {elapsed_time_millis} milliseconds)"))
+    warn_tensor_subclass_support()
     return computation_trace_with_subclass_tensor_proxy_output
