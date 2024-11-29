@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from dataclasses import field
 from numbers import Number
 from typing import TYPE_CHECKING, NamedTuple
+import time
 
 import torch
 from torch.fx import Node
@@ -235,14 +236,34 @@ class DesugarTensorSubclass:
     swap_map: dict[Variable, ProxyInterface] = field(init=False, default_factory=dict)
     fake_tensor_mode: FakeTensorMode = field(init=False, default_factory=FakeTensorMode)
     flat_trace_args: Sequence[ProxyInterface] = field(init=False, default=None)
+    # TODO(crcrpar): Remove `flat_trace_args_spec` as there's no users apparently.
     flat_trace_args_spec: Any = field(init=False, default=None)
     subclass_proxy_to_flatten: set[Variable] = field(init=False, default_factory=set)
     bsym_to_new_outputs: dict[BoundSymbol, list[TensorProxy]] = field(init=False, default_factory=dict)
 
     def __post_init__(self) -> None:
-        self.flat_trace_args, self.flat_trace_args_spec = tree_flatten(
-            (self.computation_trace.args, self.computation_trace.kwargs)
-        )
+        # Check if this trace is backward trace
+        is_backward_trace: bool = False
+        if len(self.computation_trace.bound_symbols) > 6:
+            maybe_unpack_C0_bsym = self.computation_trace.bound_symbols[4]
+            maybe_unpack_C1_bsym = self.computation_trace.bound_symbols[5]
+            is_backward_trace = (
+                maybe_unpack_C0_bsym.sym.id,
+                maybe_unpack_C1_bsym.sym.id,
+                maybe_unpack_C0_bsym.args[0].name,
+                maybe_unpack_C1_bsym.args[0].name,
+            ) == (
+                prims.PrimIDs.UNPACK_SEQUENCE,
+                prims.PrimIDs.UNPACK_SEQUENCE,
+                "C0",
+                "C1",
+            )
+            if is_backward_trace:
+                self.flat_trace_args, _ = tree_flatten((maybe_unpack_C0_bsym.output, maybe_unpack_C1_bsym.output))
+        if not is_backward_trace:
+            self.flat_trace_args, _ = tree_flatten(
+                (self.computation_trace.args, self.computation_trace.kwargs)
+            )
         for arg in self.flat_trace_args:
             if isinstance(arg, SubclassTensorProxy):
                 self.subclass_proxy_to_flatten.add(variableify(arg))
@@ -603,7 +624,6 @@ class DesugarTensorSubclass:
         self.swap_map.update(dict(zip(sequence_out, utils.sequencify(out_proxy))))
 
         bsym_with_modified_output = updated_bsym.from_bsym_swap_proxies(self.swap_map)
-
         self.bsym_to_new_outputs[bsym_with_modified_output] = bsym_with_modified_output
         return self.translate_fx_graph_into_bsym(bsym_with_modified_output, fx)
 
@@ -634,6 +654,8 @@ def flatten_tensor_subclasses(trace: TraceCtx) -> TraceCtx:
         TraceCtx: transformed trace that is free from tensor subclasses, every ``__torch_dispatch__``
             behavior is spelled out.
     """
+    start_time_ns = time.perf_counter_ns()
+
     desugar_tensor_subclass = DesugarTensorSubclass(computation_trace=trace)
     updated_bsyms: list[BoundSymbol] = []
     bsym: BoundSymbol
@@ -646,5 +668,8 @@ def flatten_tensor_subclasses(trace: TraceCtx) -> TraceCtx:
 
     computation_trace_with_subclass_tensor_proxy_output = from_trace(trace)
     computation_trace_with_subclass_tensor_proxy_output.bound_symbols.extend(updated_bsyms)
-    computation_trace_with_subclass_tensor_proxy_output.set_provenance(TraceProvenance("tensor subclasses desugared"))
+    end_time_ns = time.perf_counter_ns()
+    elapsed_time_ns = end_time_ns - start_time_ns
+    elapsed_time_millis = elapsed_time_ns // 1000000
+    computation_trace_with_subclass_tensor_proxy_output.set_provenance(TraceProvenance("tensor subclasses desugared (took {elapsed_time_millis} milliseconds)"))
     return computation_trace_with_subclass_tensor_proxy_output
