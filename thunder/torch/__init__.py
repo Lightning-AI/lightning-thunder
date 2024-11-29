@@ -1849,6 +1849,15 @@ def relu6(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
 _inplace_to_out_of_place[relu6] = relu6, 1
 
 
+@torchsymbol(torch.nn.functional.hardshrink, is_method=False)
+def hardshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
+    out = where(a <= lambd, where(-lambd <= a, 0, a), a)
+    return out
+
+
+_inplace_to_out_of_place[hardshrink] = hardshrink, -1
+
+
 @torchsymbol(torch.nn.functional.hardswish, id="torch.hardswish", is_method=False)
 def hardswish(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
     utils.check(

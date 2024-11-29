@@ -1730,6 +1730,16 @@ relu6_opinfo = OpInfo(
 elementwise_unary_ops.append(relu6_opinfo)
 
 
+hardshrink_opinfo = OpInfo(
+    ltorch.hardshrink,
+    dtypes=(datatypes.inexact,),
+    sample_input_generator=get_elementwise_unary_with_kwargs_generator([{}, {"lambd": 0.25}]),
+    torch_reference=_elementwise_unary_torch(torch.nn.functional.hardshrink),
+    test_directives=(),
+)
+elementwise_unary_ops.append(hardshrink_opinfo)
+
+
 hardswish_opinfo = OpInfo(
     ltorch.hardswish,
     sample_input_generator=elementwise_unary_generator,
