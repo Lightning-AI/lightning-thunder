@@ -254,23 +254,26 @@ class DesugarTensorSubclass:
         if len(self.computation_trace.bound_symbols) > 6:
             maybe_unpack_C0_bsym = self.computation_trace.bound_symbols[4]
             maybe_unpack_C1_bsym = self.computation_trace.bound_symbols[5]
-            is_backward_trace = maybe_unpack_C0_bsym.args and maybe_unpack_C1_bsym.args and (
-                maybe_unpack_C0_bsym.sym.id,
-                maybe_unpack_C1_bsym.sym.id,
-                getattr(maybe_unpack_C0_bsym.args[0], "name", ""),
-                getattr(maybe_unpack_C1_bsym.args[0], "name", ""),
-            ) == (
-                prims.PrimIDs.UNPACK_SEQUENCE,
-                prims.PrimIDs.UNPACK_SEQUENCE,
-                "C0",
-                "C1",
+            is_backward_trace = (
+                maybe_unpack_C0_bsym.args
+                and maybe_unpack_C1_bsym.args
+                and (
+                    maybe_unpack_C0_bsym.sym.id,
+                    maybe_unpack_C1_bsym.sym.id,
+                    getattr(maybe_unpack_C0_bsym.args[0], "name", ""),
+                    getattr(maybe_unpack_C1_bsym.args[0], "name", ""),
+                )
+                == (
+                    prims.PrimIDs.UNPACK_SEQUENCE,
+                    prims.PrimIDs.UNPACK_SEQUENCE,
+                    "C0",
+                    "C1",
+                )
             )
             if is_backward_trace:
                 self.flat_trace_args, _ = tree_flatten((maybe_unpack_C0_bsym.output, maybe_unpack_C1_bsym.output))
         if not is_backward_trace:
-            self.flat_trace_args, _ = tree_flatten(
-                (self.computation_trace.args, self.computation_trace.kwargs)
-            )
+            self.flat_trace_args, _ = tree_flatten((self.computation_trace.args, self.computation_trace.kwargs))
         for arg in self.flat_trace_args:
             if isinstance(arg, SubclassTensorProxy):
                 self.subclass_proxy_to_flatten.add(variableify(arg))
@@ -679,6 +682,8 @@ def flatten_tensor_subclasses(trace: TraceCtx) -> TraceCtx:
 
     computation_trace_with_subclass_tensor_proxy_output = from_trace(trace)
     computation_trace_with_subclass_tensor_proxy_output.bound_symbols.extend(updated_bsyms)
-    computation_trace_with_subclass_tensor_proxy_output.set_provenance(TraceProvenance(f"tensor subclasses desugared (took {elapsed_time_millis} milliseconds)"))
+    computation_trace_with_subclass_tensor_proxy_output.set_provenance(
+        TraceProvenance(f"tensor subclasses desugared (took {elapsed_time_millis} milliseconds)")
+    )
     warn_tensor_subclass_support()
     return computation_trace_with_subclass_tensor_proxy_output

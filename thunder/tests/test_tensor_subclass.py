@@ -253,7 +253,7 @@ def test_func_of_subclass_simple_math(executor, device, _, requires_grad):
             not (TORCHAO_AVAILABLE and torch.cuda.get_device_capability() >= (8, 9)),
             reason="Requires capability >= 8.9 and torchao",
         ),
-        pytest.mark.parametrize("bias", (True, False))
+        pytest.mark.parametrize("bias", (True, False)),
     ),
 )
 def test_torchao_float8_linear(executor, device, dtype, bias):
@@ -294,7 +294,9 @@ def test_torchao_float8_linear(executor, device, dtype, bias):
             torch.testing.assert_close(actual, expected)
         return
 
-    if (dtype == thunder.core.dtypes.bfloat16 and executor != DynamoThunderExecutor) or (not bias and dtype == thunder.core.dtypes.bfloat16 and executor == DynamoThunderExecutor):
+    if (dtype == thunder.core.dtypes.bfloat16 and executor != DynamoThunderExecutor) or (
+        not bias and dtype == thunder.core.dtypes.bfloat16 and executor == DynamoThunderExecutor
+    ):
         pytest.xfail("numerical error")
     torch.testing.assert_close(actual, expected)
 
