@@ -257,8 +257,8 @@ class DesugarTensorSubclass:
             is_backward_trace = maybe_unpack_C0_bsym.args and maybe_unpack_C1_bsym.args and (
                 maybe_unpack_C0_bsym.sym.id,
                 maybe_unpack_C1_bsym.sym.id,
-                maybe_unpack_C0_bsym.args[0].name,
-                maybe_unpack_C1_bsym.args[0].name,
+                getattr(maybe_unpack_C0_bsym.args[0], "name", ""),
+                getattr(maybe_unpack_C1_bsym.args[0], "name", ""),
             ) == (
                 prims.PrimIDs.UNPACK_SEQUENCE,
                 prims.PrimIDs.UNPACK_SEQUENCE,
