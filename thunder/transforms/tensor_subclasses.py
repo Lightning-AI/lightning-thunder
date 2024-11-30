@@ -243,8 +243,6 @@ class DesugarTensorSubclass:
     swap_map: dict[Variable, ProxyInterface] = field(init=False, default_factory=dict)
     fake_tensor_mode: FakeTensorMode = field(init=False, default_factory=FakeTensorMode)
     flat_trace_args: Sequence[ProxyInterface] = field(init=False, default=None)
-    # TODO(crcrpar): Remove `flat_trace_args_spec` as there's no users apparently.
-    flat_trace_args_spec: Any = field(init=False, default=None)
     subclass_proxy_to_flatten: set[Variable] = field(init=False, default_factory=set)
     bsym_to_new_outputs: dict[BoundSymbol, list[TensorProxy]] = field(init=False, default_factory=dict)
 
