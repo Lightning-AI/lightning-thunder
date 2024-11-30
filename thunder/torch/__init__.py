@@ -1801,6 +1801,17 @@ def gelu(a: TensorProxy, /, *, approximate: str = "none") -> TensorLike:
         raise ValueError(f"gelu does not support the approximate={approximate} argument")
 
 
+@torchsymbol(torch.nn.functional.leaky_relu, is_method=False)
+def leaky_relu(a: TensorProxy, /, negative_slope: float = 0.01, inplace: bool = False) -> TensorLike:
+    out = where(a > 0, a, a * negative_slope)
+    if inplace:
+        return prims.copy_(out, a)
+    return out
+
+
+_inplace_to_out_of_place[leaky_relu] = leaky_relu, 2
+
+
 # TODO Should this use clamp? -- Would that propagate NaNs properly?
 @torchsymbol(torch.relu, torch.nn.functional.relu, id="torch.relu", is_method=True)
 def relu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
@@ -4876,6 +4887,10 @@ def interpolate(
 @torchsymbol(torch.Tensor.item, is_method=True)
 def item(a: TensorLike) -> Number:
     return prims.item(a)
+
+
+# PyTorch does not support backward for torch.item
+register_grad(item.id, item)
 
 
 # TODO Move this to nn.functional

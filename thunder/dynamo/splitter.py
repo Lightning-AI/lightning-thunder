@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 import copy
+from functools import partial
 
 import torch
 from torch.fx.passes.split_module import split_module
@@ -16,6 +17,7 @@ from thunder.dynamo.utils import (
     update_node_and_submodule,
     recompile_graph,
     checkpoint_converter,
+    _get_example_inputs_from_placeholder,
 )
 
 if TYPE_CHECKING:
@@ -124,8 +126,9 @@ def _splitter(
             return partition_cnt
 
         # There is a flip. Either from supported to unsupported or unsupported to supported.
+        if prev_value is not None:
+            partition_cnt += 1  # Bump the region cnt.
         prev_value = is_thunder_supported
-        partition_cnt += 1  # Bump the region cnt.
 
         if is_thunder_supported:
             supported_partitions.add(partition_cnt)
@@ -142,11 +145,18 @@ def _splitter(
 
     # Call compile on the split region/s.
     thunder_compiled_fns = []
+    example_input_metadatas = []
     submodule_to_compiled_fns = {}
     for node in split_gm.graph.nodes:
         node_name = node.name
         if is_thunder_supported_partition(node):
             graph_module = getattr(split_gm, node.name)
+            # Record the input tensor metadata of the current module based on the faketensor 'example_value' of the placeholder node
+            placeholders = list(n for n in graph_module.graph.nodes if n.op == "placeholder")
+            example_input_metadata = map(
+                partial(_get_example_inputs_from_placeholder, only_metadata=True), placeholders
+            )
+            example_input_metadatas.append(list(example_input_metadata))
             # Replace PyTorch operators within the checkpointed function with the corresponding Thunder operators
             checkpoint_converter(split_gm, graph_module)
             jit_fn = thunder_jit(graph_module)
@@ -176,6 +186,7 @@ def _splitter(
         original_split_gm,
         split_gm,
         thunder_compiled_fns,
+        example_input_metadatas,
         submodule_to_compiled_fns,
         split_reasons,
     )
