@@ -404,6 +404,9 @@ class Transform(ABC):
     ) -> dict[str, Any]:
         return state_dict
 
+    def __repr__(self) -> str:
+        return f"{self.__class__.__module__}.{self.__class__.__name__}()"
+
 
 def order_proxies(bsyms: Sequence[BoundSymbol]) -> dict[str, int]:
     """computes a canonical ordering of proxies in the bound symbols based on the order of appearance

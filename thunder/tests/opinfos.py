@@ -1633,20 +1633,24 @@ reciprocal_opinfo = OpInfo(
 elementwise_unary_ops.append(reciprocal_opinfo)
 
 
-def elementwise_unary_with_alpha_generator(op, device, dtype, requires_grad):
-    alphas = (None, -1.0, 0.5)
-    samples = elementwise_unary_generator(op, device, dtype, requires_grad)
-    for alpha, sample in itertools.product(alphas, samples):
-        if alpha is None:
-            yield sample
-        else:
-            yield SampleInput(*sample.args, alpha=alpha, **sample.kwargs)
+def get_elementwise_unary_with_alpha_generator():
+    kwargs_list = [{}, {"alpha": -1.0}, {"alpha": 0.5}]
+    return get_elementwise_unary_with_kwargs_generator(kwargs_list)
+
+
+def get_elementwise_unary_with_kwargs_generator(kwargs_list):
+    def gen(op, device, dtype, requires_grad):
+        samples = elementwise_unary_generator(op, device, dtype, requires_grad)
+        for kwargs, sample in itertools.product(kwargs_list, samples):
+            yield SampleInput(*sample.args, **kwargs, **sample.kwargs)
+
+    return gen
 
 
 celu_opinfo = OpInfo(
     ltorch.celu,
     dtypes=(datatypes.floating,),
-    sample_input_generator=elementwise_unary_with_alpha_generator,
+    sample_input_generator=get_elementwise_unary_with_alpha_generator(),
     torch_reference=_elementwise_unary_torch(torch.celu),
     test_directives=(),
 )
@@ -1656,13 +1660,25 @@ elementwise_unary_ops.append(celu_opinfo)
 elu_opinfo = OpInfo(
     ltorch.elu,
     dtypes=(datatypes.floating,),
-    sample_input_generator=elementwise_unary_with_alpha_generator,
+    sample_input_generator=get_elementwise_unary_with_alpha_generator(),
     torch_reference=torch.nn.functional.elu,
     # fdm.jvp, which is used in test_vjp_correctness, behaves badly on (-1e-6, 1e-6) for this function
     singularity_fn=lambda x: x,
     test_directives=(),
 )
 elementwise_unary_ops.append(elu_opinfo)
+
+
+leaky_relu_opinfo = OpInfo(
+    ltorch.leaky_relu,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=get_elementwise_unary_with_kwargs_generator([{}, {"negative_slope": 0.5}]),
+    torch_reference=torch.nn.functional.leaky_relu,
+    # fdm.jvp, which is used in test_vjp_correctness, behaves badly on (-1e-6, 1e-6) for this function
+    singularity_fn=lambda x: x,
+    test_directives=(),
+)
+elementwise_unary_ops.append(leaky_relu_opinfo)
 
 
 relu_opinfo = OpInfo(
