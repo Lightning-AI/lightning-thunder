@@ -20,6 +20,7 @@ def test_supported_ops_are_in_pytorch_executor():
 # appropriate visual studio config.
 @pytest.mark.skipif(not is_inductor_supported() or platform.system() == "Windows", reason="inductor unsupported")
 def test_torch_compile_litgpt():
+    from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
 
     model = GPT.from_name("llama1-like", n_layer=1)
@@ -40,7 +41,7 @@ def test_torch_compile_litgpt():
 @requiresCUDA
 @pytest.mark.skipif(not device_supports_bf16(torch.device("cuda")), reason="bf16 is not supported")
 def test_torch_compile_cat_nvfuser_phi2_tanh():
-    from litgpt.config import Config
+    from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
 
     device = torch.device("cuda")
