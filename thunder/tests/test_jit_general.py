@@ -680,6 +680,8 @@ def test_litgpt_variants(name, device):
 
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
+    if device == "cuda" and name == "falcon-40b-like":
+        pytest.skip("NVFuser reenable when https://github.com/NVIDIA/Fuser/issues/3505 is fixed, Thunder issue #1504")
     if device == "cuda" and name == "falcon-7b-like":
         pytest.skip("NVFuser reenable when https://github.com/NVIDIA/Fuser/issues/3292 is fixed")
 
@@ -783,7 +785,7 @@ def test_litgpt_variants_kvcache(name, device):
     ("cpu", "cuda"),
 )
 def test_tom_overrides_proxy(device):
-    from litgpt.config import Config
+    from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
 
     if device == "cuda" and not torch.cuda.is_available():
