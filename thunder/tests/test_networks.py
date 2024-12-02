@@ -2,6 +2,7 @@ import math
 from dataclasses import dataclass
 from functools import partial
 import warnings
+from looseversion import LooseVersion
 
 import pytest
 import torch
@@ -20,6 +21,7 @@ from thunder.tests.framework import (
 )
 import thunder.tests.nanogpt_model as nanogpt_model
 import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
+from thunder.executors.nvfuserex import nvfuser_version
 
 #
 # nanoGPT tests
@@ -557,4 +559,5 @@ def test_hf_llama():
 
     top_level_symbol_names = {bsym.sym.name for bsym in thunder.last_traces(jm)[-1].bound_symbols}
     # changes this to fewer as needed, the goal is to not have too many fusions
-    assert len([s for s in top_level_symbol_names if s.startswith("nvFusion")]) == 4
+    num_of_nvfusion = 4 if nvfuser_version() >= LooseVersion("0.2.23") else 7
+    assert len([s for s in top_level_symbol_names if s.startswith("nvFusion")]) == num_of_nvfusion
