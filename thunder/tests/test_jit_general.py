@@ -783,7 +783,7 @@ def test_litgpt_variants_kvcache(name, device):
     ("cpu", "cuda"),
 )
 def test_tom_overrides_proxy(device):
-    from litgpt.config import Config
+    from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
 
     if device == "cuda" and not torch.cuda.is_available():
