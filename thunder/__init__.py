@@ -678,8 +678,6 @@ def jit(
                 )
                 computation_traces.extend(extraces)
                 computation_trc = computation_traces[-1]
-
-            if backward_trc is None:
                 computation_trc = thunder.executors.passes.del_last_used(computation_trc)
 
             if not compile_options.get("disable_inplace_copy_check", False):
