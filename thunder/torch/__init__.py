@@ -1851,7 +1851,7 @@ _inplace_to_out_of_place[relu6] = relu6, 1
 
 @torchsymbol(torch.nn.functional.hardshrink, is_method=False)
 def hardshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
-    out = where(a <= lambd, where(-lambd <= a, 0, a), a)
+    out = where(a <= lambd, where(a < -lambd, a, 0), a)
     return out
 
 

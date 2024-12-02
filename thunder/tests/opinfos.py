@@ -69,8 +69,8 @@ def push_away_from_singularities(x, singularity_fn, eps):
     `eps` away from them. The `singularity_fn`  returns the (signed)
     distance from `x` to the nearest singularity."""
     x_dist = singularity_fn(x)
-    x_ = torch.where((x_dist > 0) & (x_dist < eps), x + eps, x)
-    return torch.where((x_dist < 0) & (x_dist > -eps), x - eps, x_)
+    x_ = torch.where((x_dist >= 0) & (x_dist < eps), x + eps, x)
+    return torch.where((x_dist <= 0) & (x_dist > -eps), x_ - eps, x_)
 
 
 # Randomly select a fraction of the elements in a tensor and set them to specified value
@@ -1730,14 +1730,33 @@ relu6_opinfo = OpInfo(
 elementwise_unary_ops.append(relu6_opinfo)
 
 
+def hardshrink_singularity_at(lambd):
+    return lambda a: torch.where(a >= 0, a - lambd, a + lambd)
+
+
 hardshrink_opinfo = OpInfo(
     ltorch.hardshrink,
     dtypes=(datatypes.inexact,),
-    sample_input_generator=get_elementwise_unary_with_kwargs_generator([{}, {"lambd": 0.25}]),
+    sample_input_generator=get_elementwise_unary_with_kwargs_generator([{}]),
     torch_reference=_elementwise_unary_torch(torch.nn.functional.hardshrink),
+    # fdm.jvp, which is used in test_vjp_correctness, behaves badly at jump discontinuties of the partial derviatives
+    singularity_fn=hardshrink_singularity_at(0.5),
     test_directives=(),
 )
 elementwise_unary_ops.append(hardshrink_opinfo)
+
+
+hardshrink_lambd_opinfo = OpInfo(
+    ltorch.hardshrink,
+    name="hardshrink_lambd",
+    dtypes=(datatypes.inexact,),
+    sample_input_generator=get_elementwise_unary_with_kwargs_generator([{"lambd": 0.25}]),
+    torch_reference=_elementwise_unary_torch(torch.nn.functional.hardshrink),
+    # fdm.jvp, which is used in test_vjp_correctness, behaves badly at jump discontinuties of the partial derviatives
+    singularity_fn=hardshrink_singularity_at(0.25),
+    test_directives=(),
+)
+elementwise_unary_ops.append(hardshrink_lambd_opinfo)
 
 
 hardswish_opinfo = OpInfo(
