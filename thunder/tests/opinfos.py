@@ -66,8 +66,8 @@ def push_away_from_singularities(x, singularity_fn, eps):
     `eps` away from them. The `singularity_fn`  returns the (signed)
     distance from `x` to the nearest singularity."""
     x_dist = singularity_fn(x)
-    x_ = torch.where((x_dist > 0) & (x_dist < eps), x + eps, x)
-    return torch.where((x_dist < 0) & (x_dist > -eps), x - eps, x_)
+    x_ = torch.where((x_dist >= 0) & (x_dist < eps), x + eps, x)
+    return torch.where((x_dist <= 0) & (x_dist > -eps), x_ - eps, x_)
 
 
 # Randomly select a fraction of the elements in a tensor and set them to specified value
@@ -1725,6 +1725,37 @@ relu6_opinfo = OpInfo(
     ),
 )
 elementwise_unary_ops.append(relu6_opinfo)
+
+
+# For positive lambd, hardshrink's singularities occur at lambd and -lambd, the locations of jump discontinuties
+# of its partial derivatives.  Since lambd is passed as an input kwarg, the singularity_fn depends upon the input
+# sample.  Therefore, mutliple opinfos with varying sample generator and singularity_fn pairs are added.
+def get_hardshrink_singularity_fn(lambd):
+    if lambd is None:
+        lambd = 0.5
+    return lambda a: torch.where(a >= 0, a - lambd, a + lambd)
+
+
+def hardshrink_opinfo_factory(lambds):
+    for lambd in lambds:
+        kwargs = {} if lambd is None else {"lambd": lambd}
+        name = "hardshrink_" + str(lambd)
+        singularity_fn = get_hardshrink_singularity_fn(lambd)
+
+        hardshrink_opinfo = OpInfo(
+            ltorch.hardshrink,
+            name=name,
+            dtypes=(datatypes.floating,),
+            sample_input_generator=get_elementwise_unary_with_kwargs_generator([kwargs]),
+            torch_reference=_elementwise_unary_torch(torch.nn.functional.hardshrink),
+            # fdm.jvp, which is used in test_vjp_correctness, behaves badly at jump discontinuties of the partial derviatives
+            singularity_fn=singularity_fn,
+            test_directives=(),
+        )
+        elementwise_unary_ops.append(hardshrink_opinfo)
+
+
+hardshrink_opinfo_factory([None, 0.25, -0.1])
 
 
 hardswish_opinfo = OpInfo(
