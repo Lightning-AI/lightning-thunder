@@ -15,7 +15,6 @@ from thunder.core.transform_common import dce
 from thunder.core.pytree import tree_flatten
 from thunder.executors.passes import (
     update_fusion_call_ctx,
-    _transform_for_operator_executor_execution,
     transform_for_execution,
 )
 from thunder.executors.utils import Region
@@ -65,10 +64,7 @@ def to_torch_translator(bsym: BoundSymbol) -> Callable:
 def make_compiled(
     bsyms: list[BoundSymbol], sorted_unique_inputs: list[Proxy], sorted_unique_outputs: list[Proxy]
 ) -> Callable:
-    from thunder import trace
-    from thunder.core.transforms import eval_trace
     from thunder.executors.torchex import no_autocast
-    from thunder.executors.pythonex import ex as pythonex
     from thunder.core.codeutils import SigInfo
 
     # Here we construct a trace that will be used to compile the function
