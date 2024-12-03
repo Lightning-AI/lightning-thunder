@@ -18,7 +18,7 @@ from thunder.core.proxies import Proxy, variableify, unvariableify, Variable, Co
 import thunder.core.transforms as transforms
 from thunder.core.transform_common import dce
 from thunder.core.trace import get_tracectx
-from thunder.core.trace_interpreter import interpret_trace, interpret_trace_to_trace, TraceSubstitutionProcessor
+from thunder.core.trace_interpreter import TraceSubstitutionProcessor
 from thunder.executors.pythonex import clear_mutable_collection
 
 from thunder.extend import Executor, get_always_executors, OperatorExecutor, FusionExecutor
