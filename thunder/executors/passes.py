@@ -111,15 +111,6 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
 
     extrace, _ = OpExProcessor(trace)()
 
-    # extrace, _ = interpret_trace_to_trace(trace, *trace.args, symbol_mapper=symbol_mapper, **trace.kwargs)
-    # Restores original variables
-    # bound_symbols: list[BoundSymbol] = []
-    # for bsym in extrace.bound_symbols:
-    #    nbsym: BoundSymbol = bsym.from_bsym_swap_proxies(swapmap)
-    #    bound_symbols.append(nbsym)
-
-    # extrace.bound_symbols = bound_symbols
-
     end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
