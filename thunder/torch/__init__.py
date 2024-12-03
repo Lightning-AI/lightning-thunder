@@ -1849,22 +1849,13 @@ def relu6(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
 _inplace_to_out_of_place[relu6] = relu6, 1
 
 
-# @torchsymbol(torch.nn.functional.hardshrink, is_method=False)
-# def hardshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
-#     return where(a <= lambd, where(a >= -lambd, 0, a), a)
-
-
 @torchsymbol(torch.nn.functional.hardshrink, is_method=False)
 def hardshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
-    if lambd <= 0:
-        return a
-    return where((a <= lambd) & (a >= -lambd), 0, a)
-
-
-# @torchsymbol(torch.nn.functional.hardshrink, is_method=False)
-# def hardshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
-#     # exclude complex values
-#     return where(abs(a) <= lambd, 0, a)
+    utils.check(
+        not dtypes.is_complex_dtype(a.dtype),
+        lambda: f"hardshrink not implemented for '{a.dtype}'",
+    )
+    return where(abs(a) <= lambd, 0, a)
 
 
 _inplace_to_out_of_place[hardshrink] = hardshrink, -1

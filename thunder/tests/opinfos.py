@@ -1734,6 +1734,8 @@ elementwise_unary_ops.append(relu6_opinfo)
 # of its partial derivatives.  Since lambd is passed as an input kwarg, the singularity_fn depends upon the input
 # sample.  Therefore, mutliple opinfos with varying sample generator and singularity_fn pairs are added.
 def get_hardshrink_singularity_fn(lambd):
+    if lambd is None:
+        lambd = 0.5
     return lambda a: torch.where(a >= 0, a - lambd, a + lambd)
 
 
@@ -1746,7 +1748,7 @@ def hardshrink_opinfo_factory(lambds):
         hardshrink_opinfo = OpInfo(
             ltorch.hardshrink,
             name=name,
-            dtypes=(datatypes.inexact,),
+            dtypes=(datatypes.floating,),
             sample_input_generator=get_elementwise_unary_with_kwargs_generator([kwargs]),
             torch_reference=_elementwise_unary_torch(torch.nn.functional.hardshrink),
             # fdm.jvp, which is used in test_vjp_correctness, behaves badly at jump discontinuties of the partial derviatives
