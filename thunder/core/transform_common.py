@@ -111,7 +111,12 @@ def _inplace_copy_sanity_check(extrace: Trace):
             check(copy_to_out, "output")
 
 
-def remove_duplicate_number_proxies(bsyms):
+def remove_duplicate_number_proxies(bsyms: Sequence[BoundSymbol]) -> list[BoundSymbol]:
+    """This removes duplicate number proxies when they are returned multiple times.
+    The remaining DCE pass does not see them (because they often are in a tuple?).
+    In particular, proxies may be extracted multiple times when using the thunder.jit's
+    symbolic constraints mode.
+    """
     seen = set()
 
     def keep_or_swap(p):
@@ -193,8 +198,10 @@ def dce(trace: Trace, needed_proxies: None | set[Variable] = None) -> Trace:
 
     dcetrace = from_trace(trace)
     dced_bound_symbols = list(reversed(dced))
-    dced_bound_symbols = dced_bound_symbols
-    dcetrace.bound_symbols = remove_duplicate_number_proxies(dced_bound_symbols)
+    # duplicate number proxies happen with the symbolic shapes and are
+    # not covered by the above (due to being in tuples?).
+    dced_bound_symbols = remove_duplicate_number_proxies(dced_bound_symbols)
+    dcetrace.bound_symbols = dced_bound_symbols
 
     end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns

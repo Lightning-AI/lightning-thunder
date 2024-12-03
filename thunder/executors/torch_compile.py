@@ -82,11 +82,9 @@ def make_compiled(
 
     region_trace.bound_symbols += list(bsyms)
     region_trace.bound_symbols.append(prims.python_return.bind(sorted_unique_outputs, output=None))
-    # for a in region_trace.args:
-    #    region_trace.add_name(a.name)
     for bsym in region_trace.bound_symbols:
         for o in bsym.flat_outs:
-            if o is not None:  # TODO: investigate
+            if o is not None:
                 region_trace.add_name(o.name)
 
     # maybe make this the default if no sig info is present?

@@ -207,6 +207,22 @@ def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, *
 
 
 class TraceSubstitutionProcessor:
+    """This processes a trace in an interpretation-style way by looping over the bound symbols.
+    This processing aims to preserve as much information on the proxies as possible.
+
+    Args:
+        trace: trace to process
+        *args: arguments to process the trace with
+        **kwargs: keyword arguments to process the trace with
+
+    The user is expected to subclass the trace and implement process_bsym with the help of add_unprocessed_bsyms (useful eg for using subsymbols to compute a symbol), add_processed_bsyms, and add_bsyms_from_function.
+
+    Calling the instantiated object initiates the processing and returns
+    the new trace and a mapping of the outputs.
+
+    See the OpExProcessor in thunder.executors.passes._transform_for_operator_executor_execution for an example of subclassing.
+    """
+
     NULL = object()
 
     def __init__(self, trace, *args, **kwargs):
@@ -267,7 +283,7 @@ class TraceSubstitutionProcessor:
     def add_unprocessed_bsyms(self, bsyms):
         self.unprocessed_bsyms[:0] = bsyms
 
-    def bsyms_from_function(self, fn, /, *args, **kwargs):
+    def add_bsyms_from_function(self, fn, /, *args, **kwargs):
         self.new_trace.push_scope([])
         result = fn(*args, **kwargs)
         self.new_bsyms += self.new_trace.pop_scope()
@@ -275,8 +291,6 @@ class TraceSubstitutionProcessor:
         return result
 
     def add_processed_bsyms(self, bsyms):
-
-        ### replacements of inputs!
         self.new_bsyms += bsyms
 
     def set_result(self, result):
@@ -298,8 +312,6 @@ class TraceSubstitutionProcessor:
             safe_map_flat(self.write, list(self.trace.kwargs.values()), list(kwargs.values()))
 
     def __call__(self):
-        # if not self.have_processed_args and self.trace.args is not None:
-        #    self.process_args(*self.args, **self.kwargs)
         with tracectx(self.new_trace):
             self.unprocessed_bsyms = self.trace.bound_symbols[:]
 

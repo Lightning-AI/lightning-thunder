@@ -28,10 +28,6 @@ comment_symbols = {prims.PrimIDs.COMMENT, prims.PrimIDs.UNPACK_TRIVIAL}
 
 # Transforms a trace by determining which execution transforms to call given the list of executors in priority order
 # This pass tries to preserve the original trace and proxies.
-# Implementation Steps -
-# 1. The trace is updated with `visitor_transform` with `visit_helper_` (where executors try to claim the symbols). Note that this replaces the output proxies in the trace.
-# 2. `visit_helper_` also creates a swapmap from the new symbols back to old one.
-# 3. After the `visitor_transform`, it iterates over the updated trace and puts back the old proxies.
 def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: Sequence[Executor]) -> TraceCtx:
     start_time_ns = time.perf_counter_ns()
 
@@ -50,22 +46,21 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
                 return
             swapmap[vno] = o
 
-    def preserve_bsym(bsym: BoundSymbol) -> Any:
-        trace = get_tracectx()
-        trace.scopes[-1].append(bsym)
-        for p in chain(bsym.flat_proxy_outs, bsym.flat_proxy_args):
-            trace.names.add(p.name)
-        return bsym.output
-
-    # TODO Consider using an enum for this function's return values
-    # Tries to find an executor for the BoundSymbol
-    #   If the BoundSymbol already has an executor then None is returned
-    #   If the executor has an execution transform, it's called and True is returned
-    #   If no executor can execute the BoundSymbol, False is returned
-
+    # This processes the bsyms to map symbols to operator executors:
+    # - if a bsym has a python impl, that will be called, so we can keep it.
+    # - in the order of the executor list
+    #   - if the executor defines an execution transform, call that to
+    #     create symbols for the trace,
+    #   - for operator executors, if we have an implmap entry for the symbol,
+    #     execute that
+    #   - for fusion executors, check if the symbol can be fused (done later)
+    # - if none of these apply, and the symbol is not a prim, replace the symbol
+    #   with its subsymbols (which will then be processed using the above),
+    # - if none of the above apply and we have a prim, raise an error
     class OpExProcessor(TraceSubstitutionProcessor):
         def process_bsym(self, bsym):
             if bsym.sym.python_impl is not None:
+                # keep the bound symbol and use the python impl
                 self.add_processed_bsyms([bsym])
                 self.set_result(bsym.output)
                 return
@@ -80,7 +75,7 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
                     execution_transform: None | Callable = ex.get_execution_transform(bsym.sym)
                     out: Any
                     if execution_transform is not None:
-                        self.bsyms_from_function(execution_transform, *bsym.args, **bsym.kwargs)
+                        self.add_bsyms_from_function(execution_transform, *bsym.args, **bsym.kwargs)
                         return
                     elif isinstance(ex, OperatorExecutor):
                         # NOTE execution_transform is None and the executor is an operator executor
@@ -88,7 +83,7 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
                         # TODO Instead of directly acquiring the symbol from the implmap, we probably
                         #   want to hide this behind a function
                         op = ex.implmap[bsym.sym.id].symbol
-                        self.bsyms_from_function(op, *bsym.args, **bsym.kwargs)
+                        self.add_bsyms_from_function(op, *bsym.args, **bsym.kwargs)
                         return
                     elif isinstance(ex, FusionExecutor):
                         # NOTE execution_transform is None and the executor is a fusion executor
