@@ -745,14 +745,17 @@ def reproducer(
     thunder_options_str = thunder_options_to_str(thunder_options)
 
     # split reason
+    split_reason_str = "Split Information:\n"
     if subgraph_info.split_reasons:
         num_submodules = len(subgraph_info.submodule_to_compiled_functions)
         num_thunder_submodules = len(subgraph_info.thunder_compiled_fns)
-        split_reason_str = f"The original graph is split into {num_submodules} subgraphs, {num_thunder_submodules} of which are run by thunder.jit.\n"
+        split_reason_str += f"The original graph is split into {num_submodules} subgraphs, {num_thunder_submodules} of which are run by Thunder.\n"
         split_reason_str += f"The structure of the split module:\n{subgraph_info.split_graph_module}\n"
         split_reason_str += f"Split Reasons:\n"
         for id, split_reason in enumerate(subgraph_info.split_reasons):
             split_reason_str += f"  Split Reason {id}:\n    {split_reason.info}\n"
+    else:
+        split_reason_str += "The original graph is not split, and is entirely run by Thunder.\n"
 
     with open(folder / f"{graph_name}.py", "w") as f:
         comment_str = f'''"""
@@ -763,11 +766,8 @@ Versions of Thunder related libraries:
 {thunder_pkgs}
 
 '''
-        if subgraph_info.split_reasons:
-            comment_str += f'{split_reason_str}"""\n'
-            del split_reason_str
-        else:
-            comment_str += '"""\n'
+        comment_str += f'{split_reason_str}"""\n'
+        del split_reason_str
         if use_pytest_benchmark:
             comment_str += f"""# NOTE: This script requires `pytest-benchmark==4.0.0` to be installed.
 # To execute the script, run `pytest {graph_name}.py`"""
