@@ -213,7 +213,6 @@ class TraceSubstitutionProcessor:
         self.trace = trace
         self.new_trace = from_trace(self.trace)
         self.have_processed_args = False
-        print(self.trace)
 
     def read(self, x: VariableInterface | Any) -> Any:
         if isinstance(x, VariableInterface):
