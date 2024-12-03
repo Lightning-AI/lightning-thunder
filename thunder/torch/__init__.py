@@ -5779,6 +5779,7 @@ def register_default_torch_op(torchfn: Callable, torch_module):
         name=torchfn_name,
         meta=_fn,
         id=f"{torch_module.__name__}.{torchfn_name}",
+        is_prim=True,
         tags=(prims.OpTags.AUTO_REGISTERED,),
     )
 
