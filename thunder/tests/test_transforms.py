@@ -74,7 +74,8 @@ def test_nvtx_transform():
 @requiresCUDA
 def test_materialization():
     from thunder.transforms import MaterializationTransform
-    from litgpt.config import Config
+    from thunder.tests.litgpt_model import Config
+
     from litgpt.model import GPT
 
     config = Config.from_name("llama2-like")
@@ -121,7 +122,7 @@ def test_materialization():
 def test_quantization_on_meta():
     from thunder.transforms import MaterializationTransform
     from thunder.transforms.quantization import BitsAndBytesLinearQuant4bit, get_bitsandbytes_executor
-    from litgpt.config import Config
+    from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
 
     bitsandbytes_executor = get_bitsandbytes_executor()
