@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Any
 
 from thunder.core import prims
@@ -45,9 +46,9 @@ def interpret_trace(trace, *args, symbol_mapper=None, with_env=False, **kwargs):
     def write(v: VariableInterface | Any, val: Any, allow_duplicates=False) -> None:
         if not isinstance(v, VariableInterface):
             return
-        # Duplicates are allowed and overwritten
         if v.name in env:
             if allow_duplicates:
+                # Duplicates are allowed and not overwritten
                 return
             raise ValueError(f"Variable {v.name} is being overwritten this is not allowed")
         env[v.name] = val
@@ -104,9 +105,9 @@ def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, *
     def write(v: VariableInterface | Any, val: Any, allow_duplicates=False) -> None:
         if not isinstance(v, VariableInterface):
             return
-        # Duplicates are allowed and overwritten
         if v.name in env:
             if allow_duplicates:
+                # Duplicates are allowed and not overwritten
                 return
             raise ValueError(f"Variable {v.name} is being overwritten this is not allowed")
         env[v.name] = val
@@ -220,11 +221,13 @@ class TraceSubstitutionProcessor:
         else:
             return x
 
-    def write(self, v: VariableInterface | Any, val: Any) -> None:
+    def write(self, v: VariableInterface | Any, val: Any, allow_duplicates=True) -> None:
         if not isinstance(v, VariableInterface):
             return
-        # Duplicates are allowed and overwritten
         if v.name in self.env:
+            if allow_duplicates:
+                # Duplicates are allowed and not overwritten
+                return
             raise ValueError(f"Variable {v.name} is being overwritten this is not allowed")
         self.env[v.name] = val
 
@@ -350,8 +353,13 @@ class TraceSubstitutionProcessor:
 
                     result = tree_map(self.do_swap, self.replacement_result)
 
+                    # we need to allow duplicates here because the re-interpretation is not necessairly DCEed when subsymbols symbols are flattened into the trace after re-execution.
                     try:
-                        safe_map_flat(self.write, list(sequencify(bsym.output)), list(sequencify(result)))
+                        safe_map_flat(
+                            partial(self.write, allow_duplicates=True),
+                            list(sequencify(bsym.output)),
+                            list(sequencify(result)),
+                        )
                     except AssertionError as e:
                         raise RuntimeError(
                             f"Error while assigning the result of dispatched function {prim_func} to the output of the original symbol {bsym}."
