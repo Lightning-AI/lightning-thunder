@@ -32,7 +32,6 @@ import thunder.distributed.prims as dist_prims
 import thunder.core.utils as utils
 
 import thunder.torch as ltorch
-from thunder.torch import DeviceLike, dtypeLike, TensorLike
 
 from thunder.extend import OperatorExecutor, register_executor, add_always_executor
 
