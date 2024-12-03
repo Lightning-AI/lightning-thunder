@@ -5488,6 +5488,7 @@ def var_sample_generator(op, device, dtype, requires_grad):
     yield SampleInput(make_tensor((), device=device, dtype=dtype, requires_grad=requires_grad))
 
 
+# glu requires that value of the shape of the input at index dim be even
 def glu_sample_generator(op, device, dtype, requires_grad, **kwargs):
     make = partial(
         make_tensor,
@@ -5497,20 +5498,20 @@ def glu_sample_generator(op, device, dtype, requires_grad, **kwargs):
     )
 
     cases = (
-        ((4,),),
+        ((4,), None),
         ((3, 4), 1),
-        ((3, 4),),
+        ((3, 4), None),
+        ((3, 4), -1),
         ((4, 3), 0),
-        ((4, 5, 8),),
+        ((4, 5, 8), None),
         ((4, 5, 8), 0),
     )
 
-    for case in cases:
-        if len(case) == 1:
-            yield SampleInput(make(*case))
+    for shape, dim in cases:
+        if dim is None:
+            yield SampleInput(make(*shape))
         else:
-            shape, dim = case
-            yield SampleInput(make(shape), dim)
+            yield SampleInput(make(*shape), dim)
 
 
 def glu_error_generator(op, device, **kwargs):
@@ -5520,8 +5521,10 @@ def glu_error_generator(op, device, **kwargs):
         dtype=torch.float,
     )
     err_msg = r"Halving dimension must be even, but dimension .* is size .*"
+    # The value of the shape of the input in the default (last) dim is odd, which is unsupported.
     yield (SampleInput(make((3,))), RuntimeError, err_msg)
     yield (SampleInput(make((2, 2, 3))), RuntimeError, err_msg)
+    # The value of the shape of the input at index dim=1 is odd, which is unsupported.
     yield (SampleInput(make((4, 5, 8)), dim=1), RuntimeError, err_msg)
 
 
@@ -5529,7 +5532,7 @@ glu_opinfo = OpInfo(
     ltorch.glu,
     sample_input_generator=glu_sample_generator,
     error_input_generator=glu_error_generator,
-    dtypes=(datatypes.floating, datatypes.complexfloating),
+    dtypes=(datatypes.inexact,),
     torch_reference=torch.nn.functional.glu,
     test_directives=(),
 )
@@ -5540,7 +5543,7 @@ mean_opinfo = OpInfo(
     ltorch.mean,
     sample_input_generator=reduction_sample_generator,
     torch_reference=torch.mean,
-    dtypes=(datatypes.floating, datatypes.complexfloating),
+    dtypes=(datatypes.inexact,),
     test_directives=(
         # PyTorch doesn't support CPU and CUDA complex half mean
         DecorateInfo(
