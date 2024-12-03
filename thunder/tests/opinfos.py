@@ -1730,33 +1730,33 @@ relu6_opinfo = OpInfo(
 elementwise_unary_ops.append(relu6_opinfo)
 
 
-def hardshrink_singularity_at(lambd):
+# For positive lambd, hardshrink's singularities occur at lambd and -lambd, the locations of jump discontinuties
+# of its partial derivatives.  Since lambd is passed as an input kwarg, the singularity_fn depends upon the input
+# sample.  Therefore, mutliple opinfos with varying sample generator and singularity_fn pairs are added.
+def get_hardshrink_singularity_fn(lambd):
     return lambda a: torch.where(a >= 0, a - lambd, a + lambd)
 
 
-hardshrink_opinfo = OpInfo(
-    ltorch.hardshrink,
-    dtypes=(datatypes.inexact,),
-    sample_input_generator=get_elementwise_unary_with_kwargs_generator([{}]),
-    torch_reference=_elementwise_unary_torch(torch.nn.functional.hardshrink),
-    # fdm.jvp, which is used in test_vjp_correctness, behaves badly at jump discontinuties of the partial derviatives
-    singularity_fn=hardshrink_singularity_at(0.5),
-    test_directives=(),
-)
-elementwise_unary_ops.append(hardshrink_opinfo)
+def hardshrink_opinfo_factory(lambds):
+    for lambd in lambds:
+        kwargs = {} if lambd is None else {"lambd": lambd}
+        name = "hardshrink_" + str(lambd)
+        singularity_fn = get_hardshrink_singularity_fn(lambd)
+
+        hardshrink_opinfo = OpInfo(
+            ltorch.hardshrink,
+            name=name,
+            dtypes=(datatypes.inexact,),
+            sample_input_generator=get_elementwise_unary_with_kwargs_generator([kwargs]),
+            torch_reference=_elementwise_unary_torch(torch.nn.functional.hardshrink),
+            # fdm.jvp, which is used in test_vjp_correctness, behaves badly at jump discontinuties of the partial derviatives
+            singularity_fn=singularity_fn,
+            test_directives=(),
+        )
+        elementwise_unary_ops.append(hardshrink_opinfo)
 
 
-hardshrink_lambd_opinfo = OpInfo(
-    ltorch.hardshrink,
-    name="hardshrink_lambd",
-    dtypes=(datatypes.inexact,),
-    sample_input_generator=get_elementwise_unary_with_kwargs_generator([{"lambd": 0.25}]),
-    torch_reference=_elementwise_unary_torch(torch.nn.functional.hardshrink),
-    # fdm.jvp, which is used in test_vjp_correctness, behaves badly at jump discontinuties of the partial derviatives
-    singularity_fn=hardshrink_singularity_at(0.25),
-    test_directives=(),
-)
-elementwise_unary_ops.append(hardshrink_lambd_opinfo)
+hardshrink_opinfo_factory([None, 0.25, -0.1])
 
 
 hardswish_opinfo = OpInfo(
