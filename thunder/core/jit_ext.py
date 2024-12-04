@@ -766,6 +766,21 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         execution_transform=core_of_forward,
         grad_transform=grad_transform,
     )
+
+    bsym_of_func: BoundSymbol = get_jit_ctx().computation_trace.scopes[-1][-1]
+    import_ctx, call_ctx, object_ctx = {}, {}, {}
+    for bsym in trace_of_fwd.bound_symbols:
+        for d_to_update, src in zip((import_ctx, call_ctx, object_ctx), bsym.gather_ctxs()):
+            d_to_update.update(src)
+    if import_ctx:
+        bsym_of_func._import_ctx.update(import_ctx)
+    if call_ctx:
+        if bsym_of_func._call_ctx is not None:
+            bsym_of_func._call_ctx = call_ctx
+        else:
+            bsym_of_func._call_ctx.update(call_ctx)
+    if object_ctx:
+        bsym_of_func._object_ctx.update(object_ctx)
     return forward_result
 
 
