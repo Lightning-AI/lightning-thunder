@@ -371,7 +371,8 @@ def jit(
 
     if transforms:
         for transform in transforms:
-            fn = transform(fn)
+            if isinstance(transform, AutocastTransform):
+                fn = transform(fn)
 
     # Resolve names of executors
     executors = resolve_executors(executors)
