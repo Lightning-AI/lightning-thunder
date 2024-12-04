@@ -1877,6 +1877,18 @@ def hardswish(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
 _inplace_to_out_of_place[hardswish] = hardswish, 1
 
 
+@torchsymbol(torch.nn.functional.hardtanh, is_method=False)
+def hardtanh(a: TensorProxy, /, min_val: float = -1.0, max_val: float = 1.0, inplace: bool = False) -> TensorLike:
+    utils.check(min_val < max_val, lambda: f"max_val {max_val} must be larger than min_val {min_val}")
+    out = clamp(a, min_val, max_val)
+    if inplace:
+        return prims.copy(out, a)
+    return out
+
+
+_inplace_to_out_of_place[hardtanh] = hardtanh, 3
+
+
 # id=torch.selu because we ignore inplace argument in torch.nn.functional.selu
 @torchsymbol(torch.selu, torch.nn.functional.selu, id="torch.selu", is_method=False)
 def selu(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
