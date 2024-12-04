@@ -333,7 +333,7 @@ def jit(
 
     if transforms is None:
         transforms = []
-    
+
     if transforms:
         for transform in transforms:
             fn = transform(fn)
