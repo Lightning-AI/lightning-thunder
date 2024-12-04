@@ -885,3 +885,38 @@ def test_deepcopy_graph_module():
 
     # No assertion error
     copy_gm = copy.deepcopy(original_split_gm)
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=[DynamoThunderExecutor],
+    decorators=(pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro")),),
+)
+def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use_pytest_benchmark, tmp_path):
+    x = torch.ones(2, 2, device=device, dtype=dtype, requires_grad=True)
+
+    backend = ThunderCompiler()
+
+    def func(x):
+        # torch.sinc has automatic fallback registered,
+        # so that operation will be given to inductor.
+        x = x.exp()
+        y = torch.sinc(x) + torch.cos(x)
+        y = y + torch.sinc(x)
+        return y + 1
+
+    cfunc = torch.compile(func, backend=backend)
+    actual = cfunc(x)
+    backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark)
+
+    def check(file_name, cmd):
+        assert os.path.exists(file_name)
+        result = run([cmd, file_name], capture_output=True, text=True)
+        assert result.returncode == 0, f"Reproducer {file_name} failed with return code {result.returncode}"
+
+    s1 = f"{tmp_path}/graph0_thunder_0.py"
+    s2 = f"{tmp_path}/graph0_thunder_2.py"
+    s3 = f"{tmp_path}/graph0_thunder_4.py"
+    cmd = "pytest" if use_pytest_benchmark else "python"
+    for fname in [s1, s2, s3]:
+        check(fname, cmd)
