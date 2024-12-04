@@ -8,7 +8,7 @@ from thunder.core.pytree import tree_map, tree_flatten
 from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import BoundSymbolInterface, Symbol
 from thunder.core.proxies import TensorProxy
-from thunder.core.transforms import construct_trace, eval_trace
+from thunder.core.transforms import construct_trace, eval_trace,Transform
 from thunder.clang import (
     maybe_convert_to_dtype,
 )
@@ -309,3 +309,10 @@ def maybe_apply_autocast(sym):
         return wrapper
 
     return None
+
+class AutocastTransform(Transform):
+    def __init__(self, dtype):
+        self.dtype = dtype
+
+    def __call__(self, fn):
+        return autocast(fn, dtype=self.dtype)
