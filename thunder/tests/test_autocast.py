@@ -3,6 +3,8 @@ import platform
 
 import pytest
 import torch
+from thunder.transforms.autocast import AutocastTransform
+from thunder import jit
 from torch._dynamo.eval_frame import is_inductor_supported
 
 import thunder
@@ -311,3 +313,21 @@ def test_autocast_cpu_and_cuda(requires_grad, b_dtype):
 
         for eg, jg in zip(eager_grads, jit_grads):
             torch.testing.assert_close(eg, jg, rtol=5e-3, atol=5e-3)
+
+
+def simple_addition(x, y):
+    return x + y
+
+def test_autocast_transform():
+    autocast_transform = AutocastTransform(dtype=torch.bfloat16)
+    jitted_fn = jit(simple_addition, transforms=[autocast_transform])
+
+    x = torch.randn(2, 2, dtype=torch.float32)
+    y = torch.randn(2, 2, dtype=torch.float32)
+
+    result = jitted_fn(x, y)
+
+    assert result.dtype == torch.bfloat16, f"Expected dtype: bfloat16, but got: {result.dtype}"
+
+    expected_result = simple_addition(x, y).to(torch.bfloat16)
+    assert torch.allclose(result, expected_result), "The output values do not match the expected results."
