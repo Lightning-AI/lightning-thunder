@@ -71,7 +71,7 @@ from thunder.core.proxies import (
     AnyProxy,
 )
 from thunder.core.interpreter import print_interpreter_log, print_to_log
-from thunder.core.jit_ext import thunder_general_jit
+from thunder.core.jit_ext import thunder_general_jit, InnerException
 from thunder.executors.torch_autograd import split_forward_backward, ThunderFunction
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
@@ -812,7 +812,49 @@ def jit(
 
         return result
 
+    def unwrap_inner_exception(c: Callable) -> Callable:
+        def _thunder_unwrap_inner_exception(*args, **kwargs):
+            # Run the function, and caputre the exception if there is one.
+            try:
+                return c(*args, **kwargs)
+            except InnerException as e:
+                exc = e.value
+
+            def internal_to_thunder(co):
+                if co is thunder_general_jit.__code__ or co is _thunder_unwrap_inner_exception.__code__:
+                    return True
+                return co.co_filename.endswith("thunder" + os.sep + "core" + os.sep + "interpreter.py") and (
+                    co.co_name in ("fn_", "fn_2")
+                )
+
+            # Iterate over the traceback and collect frames that don't correspond to thunder internal functions.
+            tb = exc.__traceback__
+            tb_frames = []
+            while tb != None:
+                co = tb.tb_frame.f_code
+                if not internal_to_thunder(co):
+                    tb_frames.append(tb)
+                tb = tb.tb_next
+
+            # Relink the non-internal traceback frames
+            if tb_frames:
+                top_tb = tb = tb_frames[0]
+                for _tb in tb_frames[1:]:
+                    tb.tb_next = _tb
+                    tb = _tb
+                exc.__traceback__ = top_tb
+
+            # Re-raise the exception without retaining it in this stack frame to avoid leaking tensors.
+            try:
+                raise exc
+            except Exception:
+                del exc
+                raise  # re-raises current exception
+
+        return _thunder_unwrap_inner_exception
+
     @wraps(fn)
+    @unwrap_inner_exception
     @update_call_statistics
     def fn_(*args, **kwargs) -> Any:
         if is_tracing():

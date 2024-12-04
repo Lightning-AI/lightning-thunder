@@ -132,6 +132,11 @@ MODULE_MEMBER_DICT_ATTRS = {
 }
 
 
+class InnerException(BaseException):
+    def __init__(self, *, value: BaseException):
+        self.value = value
+
+
 class JITSharpEdgeError(RuntimeError):
     """
     Thrown when the program cannot be safely translated to a thunder program,
@@ -1741,7 +1746,11 @@ def thunder_general_jit(
 
     with jit_ctx(ctx):
         with tracectx(computation_trace):
-            result = jfn(*args, **kwargs)
+            try:
+                result = jfn(*args, **kwargs)
+            except BaseException as e:
+                raise InnerException(value=e)
+
             prims.python_return(result)
             computation_trace.set_current_source_location(None, None)
             process_recorded_modifications(ctx, epilogue_trace)
