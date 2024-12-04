@@ -477,15 +477,15 @@ def test_multiple_inplace_to_multiple_args(executor, device, _):
 )
 def test_inplace_to_tensors_with_grad(executor, device, _):
     @torch.no_grad
-    def add_y(x, y):
-        x.add_(y, alpha=0.1)
+    def add_grad(x, y):
+        return x.add_(x.grad)
 
     @torch.no_grad
-    def add_grad(x, y):
-        x.add_(x.grad, alpha=0.1)
+    def add_y(x, y):
+        return x.add_(y, alpha=0.1)
 
-    for f in (add_y, add_grad):
-        jitted_f = executor.make_callable(f)
+    for fn in (add_grad, add_y):
+        jitted_f = executor.make_callable(fn)
         x = make_tensor((2, 2), device=device, dtype=torch.float32, requires_grad=True)
         x.grad = make_tensor((2, 2), device=device, dtype=torch.float32)
         y = make_tensor((2, 2), device=device, dtype=torch.float32)
@@ -494,8 +494,9 @@ def test_inplace_to_tensors_with_grad(executor, device, _):
         x_ref.grad = x.grad.clone().detach()
         y_ref = y.clone().detach()
 
-        res = jitted_f(x, y)
-        res_ref = f(x_ref, y_ref)
+        with torch.no_grad():
+            res = jitted_f(x, y)
+        res_ref = fn(x_ref, y_ref)
 
         torch.testing.assert_close(x, x_ref)
         torch.testing.assert_close(x.grad, x_ref.grad)
@@ -549,7 +550,8 @@ def test_single_tensor_adam_like(executor, device, _):
     ref_state_steps = [torch.tensor(1, device=device) for _ in range(2)]
     single_tensor_adam(*ref_tensors, state_steps=ref_state_steps)
 
-    jitted = executor.make_callable(single_tensor_adam)
+    # torch.compile does not support accessing the ContextVariable compile data used in _copy__impl_
+    jitted = executor.make_callable(single_tensor_adam, torch_compile_fullgraph=False)
     params, grads, exp_avgs, exp_avg_sqs = tensors
 
     jitted(params, grads, exp_avgs, exp_avg_sqs, state_steps)
