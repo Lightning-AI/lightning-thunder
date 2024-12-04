@@ -680,6 +680,8 @@ def test_litgpt_variants(name, device):
 
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
+    if device == "cuda" and name == "falcon-40b-like":
+        pytest.skip("NVFuser reenable when https://github.com/NVIDIA/Fuser/issues/3505 is fixed, Thunder issue #1504")
     if device == "cuda" and name == "falcon-7b-like":
         pytest.skip("NVFuser reenable when https://github.com/NVIDIA/Fuser/issues/3292 is fixed")
 
@@ -783,7 +785,7 @@ def test_litgpt_variants_kvcache(name, device):
     ("cpu", "cuda"),
 )
 def test_tom_overrides_proxy(device):
-    from litgpt.config import Config
+    from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
 
     if device == "cuda" and not torch.cuda.is_available():
@@ -1027,7 +1029,6 @@ def test_load_original_state_dict():
     ids=("remove_duplicate=False", "remove_duplicate=True"),
 )
 def test_named_params_and_named_buffers(prefix, recurse, remove_duplicate):
-
     buffer_tensor = torch.tensor([1.0])
 
     class SubMod(torch.nn.Module):
@@ -1141,7 +1142,6 @@ def test_custom_autograd_function():
     from torch.testing._internal.common_utils import gradcheck
 
     class MyFunction(torch.autograd.Function):
-
         @staticmethod
         def forward(ctx, x: torch.Tensor) -> torch.Tensor:
             return x * 2.0
@@ -1204,7 +1204,6 @@ def test_custom_autograd_function():
 
 
 def test_autograd_function_apply():
-
     def forward(ctx, x):
         saved_for_backward = (x,)
         return x.sin(), saved_for_backward
@@ -1273,7 +1272,6 @@ def test_autograd_function_apply():
 
 
 def test_autograd_function_empty_forward():
-
     class Fn(torch.autograd.Function):
         @staticmethod
         def forward(self, x):
@@ -1460,5 +1458,32 @@ def test_cache_symbolic_values_slice():
 
     actual = jfoo(a)
     expected = foo(a)
+
+    assert_close(actual, expected)
+
+
+def test_cache_symbolic_values_dict():
+    def foo(a, v):
+        return a[v].relu()
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+
+    a = {
+        2: torch.randn(2, 3, 8, requires_grad=True, device="cpu"),
+        5: torch.randn(4, 8, requires_grad=True, device="cpu"),
+    }
+
+    actual = jfoo(a, 2)
+    expected = foo(a, 2)
+
+    assert_close(actual, expected)
+
+    b = {
+        "a": torch.randn(2, 8, requires_grad=True, device="cpu"),
+        "b": torch.randn(7, requires_grad=True, device="cpu"),
+    }
+
+    actual = jfoo(b, "b")
+    expected = foo(b, "b")
 
     assert_close(actual, expected)

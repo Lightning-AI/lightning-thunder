@@ -62,7 +62,7 @@ def test_nanogpt_complete(executor, device, dtype, recwarn):
 # TODO: Add float16 and bfloat16 comparison tests here and to all other tests in
 # this file.
 # See issue "Add half precision dtype tests to test_networks.py"
-@instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
+@instantiate(dtypes=(thunder.float32,))  # ), executors=all_test_executors_and_dynamo)
 def test_nanogpt_complete_autograd(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
 

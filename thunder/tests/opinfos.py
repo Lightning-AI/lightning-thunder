@@ -1,13 +1,11 @@
+from collections import namedtuple
+from collections.abc import Callable, Generator, Iterable, Sequence
+from functools import partial, wraps
 import itertools
 import math
-import operator
-from collections import namedtuple
-from collections.abc import Sequence
-from functools import partial, wraps
 from numbers import Number
-from typing import Union, Optional, Tuple, Any
-from collections.abc import Callable
-from collections.abc import Generator, Iterable
+import operator
+from typing import Any
 
 import numpy as np
 import pytest
@@ -23,14 +21,13 @@ import thunder.core.devices as devices
 import thunder.core.dtypes as datatypes
 from thunder.core.dtypes import to_dtype, to_torch_dtype
 import thunder.core.prims as prims
-import thunder.executors as executors
-import thunder.torch as ltorch
 from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
-from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator, IS_WINDOWS, version_between
+import thunder.executors as executors
+from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator, IS_WINDOWS
 from thunder.tests.make_tensor import make_tensor
-import thunder.extend as extend
 import thunder.tests.bf16
+import thunder.torch as ltorch
 
 #
 # Helpful constants and utility functions
@@ -69,8 +66,8 @@ def push_away_from_singularities(x, singularity_fn, eps):
     `eps` away from them. The `singularity_fn`  returns the (signed)
     distance from `x` to the nearest singularity."""
     x_dist = singularity_fn(x)
-    x_ = torch.where((x_dist > 0) & (x_dist < eps), x + eps, x)
-    return torch.where((x_dist < 0) & (x_dist > -eps), x - eps, x_)
+    x_ = torch.where((x_dist >= 0) & (x_dist < eps), x + eps, x)
+    return torch.where((x_dist <= 0) & (x_dist > -eps), x_ - eps, x_)
 
 
 # Randomly select a fraction of the elements in a tensor and set them to specified value
@@ -1728,6 +1725,37 @@ relu6_opinfo = OpInfo(
     ),
 )
 elementwise_unary_ops.append(relu6_opinfo)
+
+
+# For positive lambd, hardshrink's singularities occur at lambd and -lambd, the locations of jump discontinuties
+# of its partial derivatives.  Since lambd is passed as an input kwarg, the singularity_fn depends upon the input
+# sample.  Therefore, mutliple opinfos with varying sample generator and singularity_fn pairs are added.
+def get_hardshrink_singularity_fn(lambd):
+    if lambd is None:
+        lambd = 0.5
+    return lambda a: torch.where(a >= 0, a - lambd, a + lambd)
+
+
+def hardshrink_opinfo_factory(lambds):
+    for lambd in lambds:
+        kwargs = {} if lambd is None else {"lambd": lambd}
+        name = "hardshrink_" + str(lambd)
+        singularity_fn = get_hardshrink_singularity_fn(lambd)
+
+        hardshrink_opinfo = OpInfo(
+            ltorch.hardshrink,
+            name=name,
+            dtypes=(datatypes.floating,),
+            sample_input_generator=get_elementwise_unary_with_kwargs_generator([kwargs]),
+            torch_reference=_elementwise_unary_torch(torch.nn.functional.hardshrink),
+            # fdm.jvp, which is used in test_vjp_correctness, behaves badly at jump discontinuties of the partial derviatives
+            singularity_fn=singularity_fn,
+            test_directives=(),
+        )
+        elementwise_unary_ops.append(hardshrink_opinfo)
+
+
+hardshrink_opinfo_factory([None, 0.25, -0.1])
 
 
 hardswish_opinfo = OpInfo(
@@ -5491,11 +5519,62 @@ def var_sample_generator(op, device, dtype, requires_grad):
     yield SampleInput(make_tensor((), device=device, dtype=dtype, requires_grad=requires_grad))
 
 
+# glu requires that value of the shape of the input at index dim be even
+def glu_sample_generator(op, device, dtype, requires_grad, **kwargs):
+    make = partial(
+        make_tensor,
+        device=device,
+        dtype=dtype,
+        requires_grad=requires_grad,
+    )
+
+    cases = (
+        ((4,), None),
+        ((3, 4), 1),
+        ((3, 4), None),
+        ((3, 4), -1),
+        ((4, 3), 0),
+        ((4, 5, 8), None),
+        ((4, 5, 8), 0),
+    )
+
+    for shape, dim in cases:
+        if dim is None:
+            yield SampleInput(make(*shape))
+        else:
+            yield SampleInput(make(*shape), dim)
+
+
+def glu_error_generator(op, device, **kwargs):
+    make = partial(
+        make_tensor,
+        device=device,
+        dtype=torch.float,
+    )
+    err_msg = r"Halving dimension must be even, but dimension .* is size .*"
+    # The value of the shape of the input in the default (last) dim is odd, which is unsupported.
+    yield (SampleInput(make((3,))), RuntimeError, err_msg)
+    yield (SampleInput(make((2, 2, 3))), RuntimeError, err_msg)
+    # The value of the shape of the input at index dim=1 is odd, which is unsupported.
+    yield (SampleInput(make((4, 5, 8)), dim=1), RuntimeError, err_msg)
+
+
+glu_opinfo = OpInfo(
+    ltorch.glu,
+    sample_input_generator=glu_sample_generator,
+    error_input_generator=glu_error_generator,
+    dtypes=(datatypes.inexact,),
+    torch_reference=torch.nn.functional.glu,
+    test_directives=(),
+)
+reduction_ops.append(glu_opinfo)
+
+
 mean_opinfo = OpInfo(
     ltorch.mean,
     sample_input_generator=reduction_sample_generator,
     torch_reference=torch.mean,
-    dtypes=(datatypes.floating, datatypes.complexfloating),
+    dtypes=(datatypes.inexact,),
     test_directives=(
         # PyTorch doesn't support CPU and CUDA complex half mean
         DecorateInfo(

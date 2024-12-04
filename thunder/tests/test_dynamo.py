@@ -450,10 +450,6 @@ def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
             reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
         ),
         pytest.mark.skipif(
-            LooseVersion(torch.__version__) < LooseVersion("2.6.0"),
-            reason="Skip until the Torch bug is fixed - https://github.com/pytorch/pytorch/pull/139275",
-        ),
-        pytest.mark.skipif(
             version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
             reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
         ),
@@ -864,3 +860,63 @@ def test_dynamo_reproducer_submodules(use_pytest_benchmark, tmp_path):
     cmd = "pytest" if use_pytest_benchmark else "python"
     result1 = run([cmd, s1], capture_output=True, text=True)
     assert result1.returncode == 0, f"Reproducer {s1} failed with return code {result1.returncode}"
+
+
+def test_deepcopy_graph_module():
+    class MyModule(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+
+        def forward(self, x):
+            y = x + 1
+
+    m = MyModule()
+    gm = torch.fx.symbolic_trace(m)
+    n = gm.graph.find_nodes(op="output")
+    gm.graph.erase_node(n[0])
+    import thunder
+
+    _, subgraph_info = thunder.dynamo.splitter._splitter(gm, thunder.jit, thunder.jit, [])
+    original_split_gm = subgraph_info.original_split_graph_module
+    assert original_split_gm.graph.find_nodes(op="output")
+    for subm in original_split_gm.children():
+        assert subm.graph.find_nodes(op="output")
+    import copy
+
+    # No assertion error
+    copy_gm = copy.deepcopy(original_split_gm)
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=[DynamoThunderExecutor],
+    decorators=(pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro")),),
+)
+def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use_pytest_benchmark, tmp_path):
+    x = torch.ones(2, 2, device=device, dtype=dtype, requires_grad=True)
+
+    backend = ThunderCompiler()
+
+    def func(x):
+        # torch.sinc has automatic fallback registered,
+        # so that operation will be given to inductor.
+        x = x.exp()
+        y = torch.sinc(x) + torch.cos(x)
+        y = y + torch.sinc(x)
+        return y + 1
+
+    cfunc = torch.compile(func, backend=backend)
+    actual = cfunc(x)
+    backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark)
+
+    def check(file_name, cmd):
+        assert os.path.exists(file_name)
+        result = run([cmd, file_name], capture_output=True, text=True)
+        assert result.returncode == 0, f"Reproducer {file_name} failed with return code {result.returncode}"
+
+    s1 = f"{tmp_path}/graph0_thunder_0.py"
+    s2 = f"{tmp_path}/graph0_thunder_2.py"
+    s3 = f"{tmp_path}/graph0_thunder_4.py"
+    cmd = "pytest" if use_pytest_benchmark else "python"
+    for fname in [s1, s2, s3]:
+        check(fname, cmd)
