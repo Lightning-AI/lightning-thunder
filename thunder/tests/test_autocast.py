@@ -318,6 +318,7 @@ def test_autocast_cpu_and_cuda(requires_grad, b_dtype):
 def simple_addition(x, y):
     return x + y
 
+
 def test_autocast_transform():
     autocast_transform = AutocastTransform(dtype=torch.bfloat16)
     jitted_fn = jit(simple_addition, transforms=[autocast_transform])
