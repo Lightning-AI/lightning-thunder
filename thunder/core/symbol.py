@@ -231,7 +231,9 @@ class Symbol:
             raise ValueError("Cannot serialize a symbol without a module and executor.")
 
         if self.executor is None:
-            assert getattr(sys.modules[self.module.__name__], self.name, None) is self
+            assert (
+                getattr(sys.modules[self.module.__name__], self.name, None) is self
+            ), f"{self.module.__name__}.{self.name} is not {self}"
         else:
             assert thunder.get_executor(self.executor.name).opmap.get(self.name) is self
 

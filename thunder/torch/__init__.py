@@ -1345,7 +1345,7 @@ def view_as(a: TensorLike, b: TensorLike, /) -> TensorLike:
 
 
 #
-# Elementwise unary operaitons
+# Elementwise unary operations
 #
 # TODO Add type annotations
 
@@ -1847,6 +1847,18 @@ def relu6(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
 
 
 _inplace_to_out_of_place[relu6] = relu6, 1
+
+
+@torchsymbol(torch.nn.functional.hardshrink, is_method=False)
+def hardshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
+    utils.check(
+        not dtypes.is_complex_dtype(a.dtype),
+        lambda: f"hardshrink not implemented for '{a.dtype}'",
+    )
+    return where(abs(a) <= lambd, 0, a)
+
+
+_inplace_to_out_of_place[hardshrink] = hardshrink, -1
 
 
 @torchsymbol(torch.nn.functional.hardswish, id="torch.hardswish", is_method=False)
@@ -2687,8 +2699,21 @@ register_function(torch.Tensor.clone, clone)
 register_method("clone", clone)
 
 
+@torchsymbol(torch.nn.functional.glu, is_method=False)
+def glu(a: TensorProxy, /, dim: int = -1) -> TensorProxy:
+    dim = utils.canonicalize_dim(len(a.shape), dim)
+    utils.check(
+        a.shape[dim] % 2 == 0,
+        lambda: f"Halving dimension must be even, but dimension {dim} is size {a.shape[dim]}",
+    )
+    chunk_size = a.shape[dim] // 2
+    left, right = split(a, (chunk_size, chunk_size), dim=dim)
+    out = left * sigmoid(right)
+    return out
+
+
 @torchsymbol(torch.mean, is_method=True)
-def mean(a: TensorProxy, /, dim=None, keepdim: bool = False, *, dtype=None):
+def mean(a: TensorProxy, /, dim=None, keepdim: bool = False, *, dtype=None) -> TensorProxy:
     dtype = dtype if dtype is not None else a.dtype
     utils.check(
         not utils.is_integer_dtype(dtype) and not utils.is_boolean_dtype(dtype),
@@ -5754,6 +5779,7 @@ def register_default_torch_op(torchfn: Callable, torch_module):
         name=torchfn_name,
         meta=_fn,
         id=f"{torch_module.__name__}.{torchfn_name}",
+        is_prim=True,
         tags=(prims.OpTags.AUTO_REGISTERED,),
     )
 

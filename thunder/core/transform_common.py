@@ -9,7 +9,7 @@ from functools import partial
 
 import thunder
 import thunder.core.prims as prims
-from thunder.core.baseutils import BoundSymbolInterface
+from thunder.core.baseutils import BoundSymbolInterface, NumberProxyInterface
 from thunder.core.proxies import Proxy, variableify, Variable, TensorProxy, unvariableify
 from thunder.core.pytree import tree_flatten, tree_iter, tree_map, tree_unflatten
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, has_tags
@@ -111,6 +111,29 @@ def _inplace_copy_sanity_check(extrace: Trace):
             check(copy_to_out, "output")
 
 
+def remove_duplicate_number_proxies(bsyms: Sequence[BoundSymbol]) -> list[BoundSymbol]:
+    """This removes duplicate number proxies when they are returned multiple times.
+    The remaining DCE pass does not see them (because they often are in a tuple?).
+    In particular, proxies may be extracted multiple times when using the thunder.jit's
+    symbolic constraints mode.
+    """
+    seen = set()
+
+    def keep_or_swap(p):
+        if not isinstance(p, NumberProxyInterface):
+            return p
+        if p.name in seen:
+            return p.value  # don't make it a duplicate
+        seen.add(p.name)
+        return p
+
+    new_bsyms = []
+    for bsym in bsyms:
+        output = tree_map(keep_or_swap, bsym.output)
+        new_bsyms.append(bsym.from_bsym(output=output))
+    return new_bsyms
+
+
 # TODO This calls variableify(), but we could directly construct Variable objects instead, which might slightly
 #   improve performance
 # Runs a Dead Code Elimination (DCE) pass
@@ -174,7 +197,11 @@ def dce(trace: Trace, needed_proxies: None | set[Variable] = None) -> Trace:
                 needed_proxies.add(variableify(x))
 
     dcetrace = from_trace(trace)
-    dcetrace.bound_symbols = list(reversed(dced))
+    dced_bound_symbols = list(reversed(dced))
+    # duplicate number proxies happen with the symbolic shapes and are
+    # not covered by the above (due to being in tuples?).
+    dced_bound_symbols = remove_duplicate_number_proxies(dced_bound_symbols)
+    dcetrace.bound_symbols = dced_bound_symbols
 
     end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
