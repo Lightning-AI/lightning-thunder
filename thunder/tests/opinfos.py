@@ -1678,6 +1678,23 @@ leaky_relu_opinfo = OpInfo(
 elementwise_unary_ops.append(leaky_relu_opinfo)
 
 
+logsigmoid_opinfo = OpInfo(
+    ltorch.logsigmoid,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=torch.nn.functional.logsigmoid,
+    test_directives=(
+        # test tols are too tight for these half precision tests
+        DecorateInfo(
+            pytest.mark.skip,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16, datatypes.bfloat16),
+        ),
+    ),
+)
+elementwise_unary_ops.append(logsigmoid_opinfo)
+
+
 relu_opinfo = OpInfo(
     ltorch.relu,
     sample_input_generator=elementwise_unary_generator,
