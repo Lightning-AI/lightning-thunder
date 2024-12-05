@@ -27,3 +27,7 @@ updates:
     open-pull-requests-limit: 5
     reviewers:
       - "Borda"
+    groups:
+      GHA-updates:
+        patterns:
+          - "*"
