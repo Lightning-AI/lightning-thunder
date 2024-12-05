@@ -338,7 +338,7 @@ class JitCtx:
                     )
             return proxy_s
         else:
-            raise ValueError("cannot proxify value of {type(uvalue).__type} objects")
+            raise ValueError(f"cannot proxify value of {type(uvalue).__type__} objects")
 
 
 _jit_ctx = contextvars.ContextVar("jitctx")
@@ -528,7 +528,8 @@ def _general_jit_object_setattr_lookaside(obj: Any, name: str, value: Any):
     if is_created_during_tracing(obj.provenance) or type(uobj) in _TORCH_DYNAMIC_TYPES:
         return _raw_object_setattr(obj, name, value)
 
-    print("##existing###", type(unwrap(obj)), unwrap(name), obj.provenance)
+    if should_register_for_prologue(obj.provenance):
+        print("##existing###", type(unwrap(obj)), unwrap(name), obj.provenance)
     d = _interpret_call(getattr, obj, wrap_const("__dict__"))
     if d is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return d
@@ -1141,10 +1142,10 @@ def _general_jit_global_callback(orig_value: Any, name: str) -> Any:
     return orig_value
 
 
-_safe_provenance_inst = {
+_input_provenance_inst = {
     "INPUT_ARGS",
     "INPUT_KWARGS",
-    "INPUT_FN",
+    "INPUT_FN",  # or self
     "LOAD_ATTR",
     "CONSTANT",
     "BINARY_SUBSCR",
@@ -1159,7 +1160,7 @@ def should_register_for_prologue(pr):
         inst = inst.opname
     else:
         inst = inst.value
-    if inst not in _safe_provenance_inst:
+    if inst not in _input_provenance_inst:
         return False
     if inst == "CONSTANT" and callable(pr.value):
         if pr.value.__name__ != "__getitem__" and pr.value != GetSetDescriptorType.__get__:
@@ -1664,14 +1665,15 @@ def process_recorded_modifications(ctx, epilogue_trace):
             for k, (inst, *args) in last_modification.items():
                 if inst == PseudoInst.STORE_SUBSCR:
                     (value,) = args
-                    print("#########", value.value, modified_object.provenance)
                     assert isinstance(value.value, (Proxy, int))
 
+                    print("####store#####", value.value, modified_object.provenance)
                     if (
                         modified_object.provenance.inst is PseudoInst.LOAD_ATTR
                         and modified_object.provenance.inputs[1].inst is PseudoInst.CONSTANT
                         and modified_object.provenance.inputs[1].value == "_buffers"
                     ):
+                        print("###store1")
                         typ, name, root_module_provenance = get_parameter_or_buffer_or_submodule_name_and_root(
                             modified_object.provenance.inputs[0]
                         )
@@ -1692,12 +1694,15 @@ def process_recorded_modifications(ctx, epilogue_trace):
                         and modified_object.provenance.inputs[1].inst is PseudoInst.CONSTANT
                         and modified_object.provenance.inputs[1].value == "__dict__"
                     ):
+                        print(
+                            "###store2",
+                        )
                         name = k
                         setattr_obj_provenance = modified_object.provenance.inputs[0]
                         if hasattr(setattr_obj_provenance, "proxy"):
                             setattr_obj_proxy = setattr_obj_provenance.proxy
                         else:
-                            ## we want this to created in the compute trace context for namespace...
+                            ## we want this to be created in the compute trace context for namespace...
                             setattr_obj_proxy = Proxy(history=setattr_obj_provenance)
                             epilogue_trace.add_name(setattr_obj_proxy.name)
                         with tracectx(epilogue_trace):
@@ -1813,10 +1818,11 @@ def thunder_general_jit(
             last_interpreter_log = jfn._last_interpreter_log
 
     pro_to_comp, computation_intermediates = get_computation_inputs_and_intermediates(computation_trace)
+    print(epilogue_trace)
     epilogue_inputs, _ = get_computation_inputs_and_intermediates(epilogue_trace)
-
     comp_to_epi = []
     pro_to_epi = []
+    print("#####", epilogue_inputs)
 
     # propagate static constrained intermediates to inputs
     propagate_constraints(ctx, pro_to_comp, computation_intermediates, computation_trace)
@@ -1826,10 +1832,14 @@ def thunder_general_jit(
             comp_to_epi.append(i)
         else:
             pro_to_epi.append(i)
+
+    print(f"######{pro_to_epi=} {comp_to_epi=}")
+
     comp_to_epi = tuple(comp_to_epi)
     comp_to_epi_proxies = tuple(v.proxy for v in comp_to_epi)
     pro_to_epi = tuple(pro_to_epi)
 
+    print(f"######{pro_to_epi=} {comp_to_epi=}")
     if epilogue_trace.bound_symbols:
         # restore `scopes` so the return would be appended to the trace
         computation_trace.scopes = [computation_trace.bound_symbols]
