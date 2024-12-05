@@ -1496,7 +1496,17 @@ def grad(
 
             gradtrc = wrap_return_value_together_with_arguments(gradtrc)
             gradtrc = dce(gradtrc)
-            return prologue_trc, gradtrc, epilogue_trc
+            grad_output = gradtrc.output
+            print(grad_output)
+            if type(grad_output) == dict:
+                grad_output = grad_output["output"]
+
+            def new_epilogue(*args):
+                return args
+
+            new_epilogue_trc = construct_trace()(new_epilogue, *grad_output)
+
+            return prologue_trc, gradtrc, new_epilogue_trc
 
     cfn._using_grad_transform = True
     _grad_transform = _GradTransform()
