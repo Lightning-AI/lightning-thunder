@@ -1811,6 +1811,30 @@ selu_opinfo = OpInfo(
 elementwise_unary_ops.append(selu_opinfo)
 
 
+tanhshrink_opinfo = OpInfo(
+    ltorch.tanhshrink,
+    dtypes=(datatypes.inexact,),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=torch.nn.functional.tanhshrink,
+    test_directives=(
+        # Torch doesn't support CPU float16 or complex32 tanhshrink
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16, datatypes.complex32),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        # NOTE Nvfuser fails with AssertionError: Tensor-likes are not close!
+        DecorateInfo(
+            pytest.mark.xfail,
+            dtypes=(datatypes.bfloat16, datatypes.float16),
+            executors=("nvfuser",),
+        ),
+    ),
+)
+elementwise_unary_ops.append(tanhshrink_opinfo)
+
+
 round_opinfo = OpInfo(
     clang.round,
     dtypes=(datatypes.floating, datatypes.exact),

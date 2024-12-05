@@ -1905,6 +1905,11 @@ def silu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
 _inplace_to_out_of_place[silu] = silu, 1
 
 
+@torchsymbol(torch.nn.functional.tanhshrink)
+def tanhshrink(a: TensorLike, /):
+    return a - tanh(a)
+
+
 #
 # Elementwise binary operations
 #
