@@ -1735,7 +1735,7 @@ elementwise_unary_ops.append(relu6_opinfo)
 
 # fdm.jvp, which is used in test_vjp_correctness, behaves badly at jump discontinuties of the partial derviatives
 def hardshrink_singularity_fn_producer(sample: SampleInput):
-    lambd = 0.5 if "lambd" not in sample.kwargs else sample.kwargs["lambd"]
+    lambd = sample.kwargs.get("lambd", 0.5)
     return lambda a: torch.where(a >= 0, a - lambd, a + lambd)
 
 
