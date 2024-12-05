@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from functools import partial
 from numbers import Number
 from typing import Any
+from contextlib import contextmanager
 
 import torch
 import torch.multiprocessing as mp
@@ -33,6 +34,8 @@ from thunder.executors.torch_compile import torch_compile_cat_ex, torch_compile_
 from thunder.transforms.cudagraph import CUDAGraphTransform
 from thunder.tests import nanogpt_model, hf_bart_self_attn
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
+
+MAX_ALLOCATED_MEMORY_KEYWORD = "max_allocated_memory_MB"
 
 # List of all benchmarks
 benchmarks: list = []
@@ -3028,3 +3031,54 @@ class TorchbenchBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 #     if args.listbenchmarks:
 #         list_benchmarks(use_classname=False)
 #         sys.exit(0)
+
+
+def timer_and_memory_stats(benchmark) -> float:
+    """
+    Make a timer that also records the peak allocated memory.
+
+    pytest-benchmark has the following benchmarking code structure:
+
+    start = timer()
+    for _ in loops_range:
+        function_to_benchmark(*args, **kwargs)
+    end = timer()
+
+    So the information about the peak allocated memory should be recorded
+    after the function_to_benchmark call and we need to reset the peak memory
+    stats before the function_to_benchmark call.
+
+    If reset_peak_memory_stats is called inside the function_to_benchmark call,
+    the peak memory stats will be reset multiple times and the peak memory
+    stats may not be accurate.
+
+    Args:
+        benchmark: The pytest-benchmark object
+
+    Returns:
+        The decorator that records the peak allocated memory
+    """
+
+    def deco(old_timer):
+        import functools
+
+        @functools.wraps(old_timer)
+        def timer():
+            ret = old_timer()
+            benchmark.extra_info[MAX_ALLOCATED_MEMORY_KEYWORD] = torch.cuda.max_memory_allocated() / (1024 * 1024.0)
+            torch.cuda.reset_peak_memory_stats()
+            return ret
+
+        return timer
+
+    return deco
+
+
+@contextmanager
+def record_peak_allocated_memory(benchmark):
+    old_timer = benchmark._timer
+    benchmark._timer = timer_and_memory_stats(benchmark)(benchmark._timer)
+    try:
+        yield
+    finally:
+        benchmark._timer = old_timer

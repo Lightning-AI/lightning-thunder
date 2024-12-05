@@ -814,7 +814,7 @@ compiled = mod if executor == None else executor(mod)
             if not has_cuda_args:
                 func_str += f"""benchmark(compiled, *inputs)"""
             else:
-                func_str += f"""from thunder.benchmarks.targets import record_peak_allocated_memory
+                func_str += f"""from thunder.benchmarks import record_peak_allocated_memory
 
 with record_peak_allocated_memory(benchmark):
     benchmark(compiled, *inputs)
