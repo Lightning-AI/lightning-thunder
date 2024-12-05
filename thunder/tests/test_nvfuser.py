@@ -36,7 +36,6 @@ from thunder.tests.framework import (
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import (
     opinfos,
-    push_away_from_singularities,
     tensor_creation_ops,
     get_opinfo,
     linear_opinfo,
