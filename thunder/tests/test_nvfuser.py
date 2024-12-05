@@ -347,6 +347,7 @@ def test_cse_rematerialization(executor, device, _):
         disable_torch_autograd=True,
         executors=executor.executors_list(),
         nv_enable_bookend=False,
+        nv_enable_linear=False,
     )
     compiled_func(x, y)
 
