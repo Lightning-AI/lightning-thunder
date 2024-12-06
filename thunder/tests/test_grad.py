@@ -303,7 +303,7 @@ def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = Fals
     # if there are things the prologue passes to the epilogue, we need the prologue
     # this happens e.g. if the function returns inputs
     prologue_trc = thunder.compile_data(jf).get_computation_and_inputs(*primals)[0].prologue_traces[-1]
-    prologue_required |= prologue_trc.output[1]  # non-empty prologue_to_epilogue
+    prologue_required = prologue_required or prologue_trc.output[1]  # non-empty prologue_to_epilogue
 
     if prologue_required:
         comp_f = jf
