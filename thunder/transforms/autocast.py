@@ -4,16 +4,19 @@ from collections.abc import Callable
 from collections.abc import Sequence
 
 from thunder.core import dtypes, prims, devices
+from thunder.core.dtypes import dtype
 from thunder.core.pytree import tree_map, tree_flatten
 from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import BoundSymbolInterface, Symbol
 from thunder.core.proxies import TensorProxy
+from thunder.core.trace import TraceCtx
+from thunder.core.trace_interpreter import TraceSubstitutionProcessor
 from thunder.core.transforms import construct_trace, eval_trace, Transform
 from thunder.clang import (
     maybe_convert_to_dtype,
 )
 import thunder.torch as ltorch
-
+import warnings
 
 autocast_impls: dict[prims.PrimIDs, Callable] = {}
 
@@ -310,10 +313,31 @@ def maybe_apply_autocast(sym):
 
     return None
 
-
 class AutocastTransform(Transform):
-    def __init__(self, dtype):
+    """Transform that enables autocasting operations to a specified dtype.
+    
+    Args:
+        dtype: The data type to which arguments could get cast if they are float32.
+    """
+    def __init__(self, dtype: dtype):
+        super().__init__()
+        if not isinstance(dtype, dtype):
+            raise ValueError(f"`dtype` expected to be `thunder.dtype.dtype` but got {type(dtype)}")
+        _check_valid_autocast_dtype(dtype)
         self.dtype = dtype
 
-    def __call__(self, fn):
-        return autocast(fn, dtype=self.dtype)
+    def transform_traces_pre_prologue(
+        self,
+        prologue_trace: TraceCtx,
+        computation_trace: TraceCtx, 
+        epilogue_trace: TraceCtx,
+        **kwargs
+    ) -> tuple[TraceCtx, TraceCtx, TraceCtx]:
+        processor = TraceSubstitutionProcessor(
+            computation_trace,
+            symbol_mapper=partial(autocast_symbol_mapper, dtype=self.dtype)
+        )
+        new_computation_trace = processor.run()
+        new_computation_trace.set_provenance("Autocast Transform")
+        
+        return prologue_trace, new_computation_trace, epilogue_trace
