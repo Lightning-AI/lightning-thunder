@@ -561,10 +561,7 @@ def jit(
                 )
                 computation_trc = computation_traces[-1]
 
-            if epilogue_trc is not None:
-                epilogue_traces = [epilogue_trc]
-            else:
-                epilogue_traces = None
+            epilogue_traces = [epilogue_trc]
 
             cs.last_trace_tracing_stop = time.perf_counter_ns()
 
@@ -602,15 +599,14 @@ def jit(
             pro = prologue_trc.python_callable(include_decorators=False)
             pro = prologue_execution_timer(pro)
 
-            if epilogue_trc is not None:
-                epilogue = epilogue_trc.python_callable()
-            else:
-                epilogue = None
+            epilogue_trc = transform_to_torch_types(epilogue_trc)
+            epilogue = epilogue_trc.python_callable()
 
             cs.last_prologue_transformation_stop = time.perf_counter_ns()
             cs.last_prologue_traces = prologue_traces
             cs.last_prologue = pro
             cs.last_traces = computation_traces
+            cs.last_epilogue_traces = epilogue_traces
             backward_traces = []
             cs.last_backward_traces = backward_traces
             cs.last_interpreter_log = last_interpreter_log
@@ -767,11 +763,8 @@ def jit(
 
         return result
 
-    def maybe_call_epilogue(cache_entry, result, pro_to_epi):
-        if cache_entry.epilogue_fn:
-            result, comp_to_epi = result
-            cache_entry.epilogue_fn(*pro_to_epi, *comp_to_epi)
-
+    def call_epilogue(cache_entry, comp_result, pro_to_epi):
+        result = cache_entry.epilogue_fn(*pro_to_epi, *comp_result)
         return result
 
     @wraps(fn)
@@ -785,7 +778,7 @@ def jit(
 
         result = cache_entry.computation_fn(*inps)
         result = maybe_connect_to_autograd(cache_entry, result)
-        result = maybe_call_epilogue(cache_entry, result, pro_to_epi)
+        result = call_epilogue(cache_entry, result, pro_to_epi)
 
         cs.last_computation = cache_entry.computation_fn
         return result
