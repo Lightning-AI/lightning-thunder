@@ -232,7 +232,7 @@ def autocast(func: Callable, dtype: dtypes.dtype):
     warnings.warn(
         "autocast() is deprecated. Use thunder.jit(func, transforms=[AutocastTransform(dtype)]) instead",
         DeprecationWarning,
-        stacklevel=2
+        stacklevel=2,
     )
 
     if not isinstance(dtype, dtypes.dtype):
