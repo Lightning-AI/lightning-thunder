@@ -299,8 +299,14 @@ def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = Fals
     # dirty little trick for speed: skip the prologue, however, the prologue is required when
     # there are non-differentiable kwargs
     jf = executor.make_callable(f, disable_torch_autograd=True)
+
+    # if there are things the prologue passes to the epilogue, we need the prologue
+    # this happens e.g. if the function returns inputs
+    prologue_trc = thunder.compile_data(jf).get_computation_and_inputs(*primals)[0].prologue_traces[-1]
+    prologue_required = prologue_required or prologue_trc.output[1]  # non-empty prologue_to_epilogue
+
     if prologue_required:
-        comp_f = thunder.jit(f, disable_torch_autograd=True)
+        comp_f = jf
     else:
         comp_f = thunder.compile_data(jf).get_computation_and_inputs(*primals)[0].computation_fn
 
@@ -408,8 +414,8 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
         if len(filtered_args) == 0:
             continue
-        if op.singularity_fn is not None:
-            filtered_args = [push_away_from_singularities(arg, op.singularity_fn, eps) for arg in filtered_args]
+        if (singularity_fn := op.singularity_fn_producer(sample)) is not None:
+            filtered_args = [push_away_from_singularities(arg, singularity_fn, eps) for arg in filtered_args]
         at_least_one_differentiable_input = True
         result = run_snippet(
             snippet_vjp_correctness,
@@ -1406,7 +1412,7 @@ def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype,
             op.torch_reference,
             sample,
             lambda a, b, **kwargs: comp(a, b, equal_nan=True, **kwargs),
-            op.singularity_fn,
+            op.singularity_fn_producer(sample),
         )
 
         # See [NOTE] dynamo reset
