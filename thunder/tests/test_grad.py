@@ -408,8 +408,8 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
         if len(filtered_args) == 0:
             continue
-        if op.singularity_fn is not None:
-            filtered_args = [push_away_from_singularities(arg, op.singularity_fn, eps) for arg in filtered_args]
+        if (singularity_fn := op.singularity_fn_producer(sample)) is not None:
+            filtered_args = [push_away_from_singularities(arg, singularity_fn, eps) for arg in filtered_args]
         at_least_one_differentiable_input = True
         result = run_snippet(
             snippet_vjp_correctness,
@@ -1406,7 +1406,7 @@ def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype,
             op.torch_reference,
             sample,
             lambda a, b, **kwargs: comp(a, b, equal_nan=True, **kwargs),
-            op.singularity_fn,
+            op.singularity_fn_producer(sample),
         )
 
         # See [NOTE] dynamo reset
