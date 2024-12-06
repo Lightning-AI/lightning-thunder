@@ -1497,14 +1497,16 @@ def grad(
             gradtrc = wrap_return_value_together_with_arguments(gradtrc)
             gradtrc = dce(gradtrc)
             grad_output = gradtrc.output
+            pro_to_epi = prologue_trc.output[1]
             print(grad_output)
             if type(grad_output) == dict:
                 grad_output = grad_output["output"]
+            print("#####", gradtrc, grad_output)
 
             def new_epilogue(*args):
                 return args
 
-            new_epilogue_trc = construct_trace()(new_epilogue, *grad_output)
+            new_epilogue_trc = construct_trace()(new_epilogue, *pro_to_epi, *grad_output)
 
             return prologue_trc, gradtrc, new_epilogue_trc
 

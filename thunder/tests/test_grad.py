@@ -299,8 +299,14 @@ def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = Fals
     # dirty little trick for speed: skip the prologue, however, the prologue is required when
     # there are non-differentiable kwargs
     jf = executor.make_callable(f, disable_torch_autograd=True)
+
+    # if there are things the prologue passes to the epilogue, we need the prologue
+    # this happens e.g. if the function returns inputs
+    prologue_trc = thunder.compile_data(jf).get_computation_and_inputs(*primals)[0].prologue_traces[-1]
+    prologue_required |= prologue_trc.output[1]  # non-empty prologue_to_epilogue
+
     if prologue_required:
-        comp_f = thunder.jit(f, disable_torch_autograd=True)
+        comp_f = jf
     else:
         comp_f = thunder.compile_data(jf).get_computation_and_inputs(*primals)[0].computation_fn
 

@@ -109,7 +109,7 @@ from thunder.common import CompileData, CompileStats
 from thunder.core.trace import TraceCtx, TraceResults
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.clang import _clang_fn_set
-from thunder.core.pytree import tree_map
+from thunder.core.pytree import tree_map, tree_iter
 from thunder.core.compile_data import compile_data_and_stats
 
 #
@@ -1278,7 +1278,7 @@ def get_computation_inputs_and_intermediates(computation_trace):
         for v in bsym.flat_variableified_proxy_outs:
             intermediates_set.add(v)
 
-    return inputs_list, intermediates_set
+    return inputs_list, inputs_set, intermediates_set
 
 
 def get_parameter_or_buffer_or_submodule_name_and_root(provenance):
@@ -1745,11 +1745,15 @@ def thunder_general_jit(
             computation_trace.set_current_source_location(None, None)
             process_recorded_modifications(ctx, epilogue_trace)
             last_interpreter_log = jfn._last_interpreter_log
+            result_proxies = tuple(p for p in tree_iter(result) if isinstance(p, (TensorProxy, NumberProxy)))
+            prims.python_return(result_proxies)
         with tracectx(epilogue_trace):
             prims.python_return(result)
 
-    pro_to_comp, computation_intermediates = get_computation_inputs_and_intermediates(computation_trace)
-    epilogue_inputs, _ = get_computation_inputs_and_intermediates(epilogue_trace)
+    pro_to_comp, pro_to_comp_set, computation_intermediates = get_computation_inputs_and_intermediates(
+        computation_trace
+    )
+    epilogue_inputs, _, _ = get_computation_inputs_and_intermediates(epilogue_trace)
 
     comp_to_epi = []
     pro_to_epi = []
@@ -1757,19 +1761,25 @@ def thunder_general_jit(
     # propagate static constrained intermediates to inputs
     propagate_constraints(ctx, pro_to_comp, computation_intermediates, computation_trace)
 
+    # we want tensors to go through the computation trace even for noops because
+    # we may need to propagate gradients etc.
+    comp_available = computation_intermediates | pro_to_comp_set
     for i in epilogue_inputs:
-        if i in computation_intermediates:
+        if i in comp_available:
             comp_to_epi.append(i)
         else:
             pro_to_epi.append(i)
     comp_to_epi = tuple(comp_to_epi)
     comp_to_epi_proxies = tuple(v.proxy for v in comp_to_epi)
     pro_to_epi = tuple(pro_to_epi)
+    pro_to_comp = tuple(pro_to_comp)
 
+    with tracectx(computation_trace):
+        last = computation_trace.bound_symbols.pop(-1)
+        assert last.sym.id == prims.PrimIDs.RETURN
+        prims.python_return(comp_to_epi_proxies)
     # restore `scopes` so the return would be appended to the trace
     computation_trace.scopes = [computation_trace.bound_symbols]
-    with tracectx(computation_trace):
-        prims.python_return(comp_to_epi_proxies)
 
     pro_to_comp_proxies, pro_to_epi_proxies = unpack_inputs(ctx, prologue_trace, pro_to_comp, pro_to_epi, args, kwargs)
 
@@ -1802,4 +1812,5 @@ def thunder_general_jit(
         epilogue_trace, restrict_proxy_swapmap(pro_to_epi_proxies + comp_to_epi_proxies), "epilogue"
     )
 
+    print(prologue_trace, computation_trace.bound_symbols[-1], epilogue_trace)
     return TraceResults(prologue_trace, computation_trace, epilogue_trace, last_interpreter_log)
