@@ -32,13 +32,9 @@ def test_thunder_autocast_transform(executor, device, dtype):
         dtype = thunder.bfloat16 if device == "cpu" else thunder.float16
         torch_dtype = ltorch.to_torch_dtype(dtype)
         x, y, z = (torch.randn((2, 2), device=device, dtype=torch.float32) for _ in range(3))
-        
+
         # Use the new transform class
-        compiled = thunder.jit(
-            func, 
-            transforms=[AutocastTransform(dtype=dtype)], 
-            executors=executor.executors_list()
-        )
+        compiled = thunder.jit(func, transforms=[AutocastTransform(dtype=dtype)], executors=executor.executors_list())
         out = compiled(x, y, z)
         traces = thunder.last_traces(compiled)
         assert out.dtype == (torch_dtype if should_autocast else torch.float32), traces[-1]
