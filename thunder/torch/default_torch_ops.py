@@ -385,7 +385,6 @@ torch_auto_registered_ops = {
         torch.nn.functional.softplus,
         torch.nn.functional.softshrink,
         torch.nn.functional.softsign,
-        torch.nn.functional.tanhshrink,
         torch.nn.functional.triplet_margin_loss,
         torch.nn.functional.triplet_margin_with_distance_loss,
         torch.nn.functional.unfold,
