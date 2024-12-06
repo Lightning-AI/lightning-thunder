@@ -1655,6 +1655,7 @@ celu_opinfo = OpInfo(
     dtypes=(datatypes.floating,),
     sample_input_generator=get_elementwise_unary_with_alpha_generator(),
     torch_reference=_elementwise_unary_torch(torch.celu),
+    singularity_fn=lambda x: x,
     test_directives=(),
 )
 elementwise_unary_ops.append(celu_opinfo)

@@ -1076,3 +1076,44 @@ def test_sdpa(
     ref_outputs = (ref_attn_out, *(inp.grad for inp in ref_tensor_inputs))
     for nv_out, ref_out in zip(nv_outputs, ref_outputs):
         torch.testing.assert_close(nv_out, ref_out)
+
+
+@instantiate(
+    dtypes=(thunder.float32,),
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(nvFuserExecutor,),
+    decorators=(
+        pytest.mark.skipif(
+            nvfuser_version() is None or nvfuser_version() < LooseVersion("0.2.23"),
+            reason="Requires nvFuser version 0.2.23 or later",
+        ),
+    ),
+)
+def test_enable_disable_options(executor, device: str, thunder_dtype: dtypes.dtype):
+
+    def fn(a, b):
+        return torch.matmul(a, b)
+
+    m, n, k = 24, 16, 16
+
+    dtype = ltorch.to_torch_dtype(thunder_dtype)
+    inps = [
+        torch.randn(m, k, device="cuda", dtype=dtype),
+        torch.randn(k, n, device="cuda", dtype=dtype),
+    ]
+
+    compiled_func = thunder.jit(
+        fn,
+        executors_list=executor.executors_list(),
+        nv_enable_matmul=True,
+        nv_enable_options=["fuse_matmul"],
+        nv_disable_options=["matmul_expr_eval", "kernel_reuse"],
+    )
+    # The above combination of options enables matmul codegen and disables expr evaluation for matmul.
+    # Since matmul scheduler does not support float32 inputs, the execution should raise an error.
+    # By default, without using these options, the given fusion will run through expr eval scheduler correctly.
+    # NOTE: This test relies on `float32` being unsupported by nvFuser matmul scheduler.
+    # If this support is added, the test will need to be updated since it will no longer
+    # verify the functionality of the above flags.
+    with pytest.raises(RuntimeError, match="Can not find a scheduler to schedule fusion segment"):
+        out = compiled_func(*inps)
