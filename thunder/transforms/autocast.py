@@ -4,7 +4,6 @@ from collections.abc import Callable
 from collections.abc import Sequence
 
 from thunder.core import dtypes, prims, devices
-from thunder.core.dtypes import dtype
 from thunder.core.pytree import tree_map, tree_flatten
 from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import BoundSymbolInterface, Symbol
@@ -230,6 +229,11 @@ def autocast(func: Callable, dtype: dtypes.dtype):
     Returns:
         Callable: The transformed function
     """
+    warnings.warn(
+        "autocast() is deprecated. Use thunder.jit(func, transforms=[AutocastTransform(dtype)]) instead",
+        DeprecationWarning,
+        stacklevel=2
+    )
 
     if not isinstance(dtype, dtypes.dtype):
         raise ValueError(f"`dtype` is expected to be `thunder.dtype.dtype` but {type(dtype)}")
@@ -321,9 +325,9 @@ class AutocastTransform(Transform):
         dtype: The data type to which arguments could get cast if they are float32.
     """
 
-    def __init__(self, dtype: dtype):
+    def __init__(self, dtype: dtypes.dtype):
         super().__init__()
-        if not isinstance(dtype, dtype):
+        if not isinstance(dtype, dtypes.dtype):
             raise ValueError(f"`dtype` expected to be `thunder.dtype.dtype` but got {type(dtype)}")
         _check_valid_autocast_dtype(dtype)
         self.dtype = dtype
