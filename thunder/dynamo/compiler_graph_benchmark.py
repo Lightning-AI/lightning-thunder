@@ -90,7 +90,7 @@ class ThunderCompilerGraphBenchmarking(ThunderCompiler):
         self.post_graph = debug_options.get("post_graph", False)
 
     def run_bench(self, gm: torch.fx.GraphModule, name: str, *sample_args):
-        from thunder.benchmarks.targets import record_peak_allocated_memory, MAX_ALLOCATED_MEMORY_KEYWORD
+        from thunder.benchmarks import record_peak_allocated_memory, MAX_ALLOCATED_MEMORY_KEYWORD
 
         for ex_name, ex in self.executors.items():
             if ex is None:
