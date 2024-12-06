@@ -771,12 +771,15 @@ Versions of Thunder related libraries:
             comment_str += f"""# NOTE: This script requires `pytest-benchmark==4.0.0` to be installed.
 # To execute the script, run `pytest {graph_name}.py --benchmark-timer=torch.utils.benchmark.utils.timer.timer --benchmark-warmup=on`
 # To check the peak allocated CUDA memory, use --benchmark-json=json_file_name and look at the "max_allocated_memory_MB" field in the json file"""
-        code_str = f"from functools import partial\n\nimport torch\nimport thunder\n"
+        # The packages that are likely to be used by the code generated from the Torch GraphModule
+        code_str = "\n".join([v.import_str for v in torch.fx.graph._custom_builtins.values()])
+        code_str += f"\nfrom functools import partial\nimport thunder\n"
         if has_cuda_args:
             code_str += "from thunder.transforms.cudagraph import CUDAGraphTransform\n"
             code_str += "from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform\n"
         if use_pytest_benchmark:
-            code_str += f"""\nimport pytest
+            code_str += f"""import pytest
+
 bench_executors_dict = {{}}
 bench_executors_dict["thunder"]=partial(thunder.jit, {thunder_options_str})
 bench_executors_dict["torch.compile"]=torch.compile
