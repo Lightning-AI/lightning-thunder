@@ -313,12 +313,14 @@ def maybe_apply_autocast(sym):
 
     return None
 
+
 class AutocastTransform(Transform):
     """Transform that enables autocasting operations to a specified dtype.
-    
+
     Args:
         dtype: The data type to which arguments could get cast if they are float32.
     """
+
     def __init__(self, dtype: dtype):
         super().__init__()
         if not isinstance(dtype, dtype):
@@ -327,17 +329,12 @@ class AutocastTransform(Transform):
         self.dtype = dtype
 
     def transform_traces_pre_prologue(
-        self,
-        prologue_trace: TraceCtx,
-        computation_trace: TraceCtx, 
-        epilogue_trace: TraceCtx,
-        **kwargs
+        self, prologue_trace: TraceCtx, computation_trace: TraceCtx, epilogue_trace: TraceCtx, **kwargs
     ) -> tuple[TraceCtx, TraceCtx, TraceCtx]:
         processor = TraceSubstitutionProcessor(
-            computation_trace,
-            symbol_mapper=partial(autocast_symbol_mapper, dtype=self.dtype)
+            computation_trace, symbol_mapper=partial(autocast_symbol_mapper, dtype=self.dtype)
         )
         new_computation_trace = processor.run()
         new_computation_trace.set_provenance("Autocast Transform")
-        
+
         return prologue_trace, new_computation_trace, epilogue_trace
