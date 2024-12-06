@@ -547,7 +547,6 @@ def _general_jit_setattr_lookaside(obj: Any, name: str, value: Any):
 
     uobj = unwrap(obj)
     uname = unwrap(name)
-
     if isinstance(uobj, torch.nn.Module):
         # 1) populate the wrappeers for the member dicts
         # 2) let the original setattr do it's thing by modifying the
@@ -1324,7 +1323,7 @@ def get_computation_inputs_and_intermediates(computation_trace):
         for v in bsym.flat_variableified_proxy_outs:
             intermediates_set.add(v)
 
-    return inputs_list, intermediates_set
+    return inputs_list, inputs_set, intermediates_set
 
 
 def get_parameter_or_buffer_or_submodule_name_and_root(provenance):
@@ -1816,42 +1815,41 @@ def thunder_general_jit(
             computation_trace.set_current_source_location(None, None)
             process_recorded_modifications(ctx, epilogue_trace)
             last_interpreter_log = jfn._last_interpreter_log
+            result_proxies = tuple(p for p in tree_iter(result) if isinstance(p, (TensorProxy, NumberProxy)))
+            prims.python_return(result_proxies)
+        with tracectx(epilogue_trace):
+            prims.python_return(result)
 
-    pro_to_comp, computation_intermediates = get_computation_inputs_and_intermediates(computation_trace)
-    print(epilogue_trace)
-    epilogue_inputs, _ = get_computation_inputs_and_intermediates(epilogue_trace)
+    pro_to_comp, pro_to_comp_set, computation_intermediates = get_computation_inputs_and_intermediates(
+        computation_trace
+    )
+    epilogue_inputs, _, _ = get_computation_inputs_and_intermediates(epilogue_trace)
+
     comp_to_epi = []
     pro_to_epi = []
-    print("#####", epilogue_inputs)
 
     # propagate static constrained intermediates to inputs
     propagate_constraints(ctx, pro_to_comp, computation_intermediates, computation_trace)
 
+    # we want tensors to go through the computation trace even for noops because
+    # we may need to propagate gradients etc.
+    comp_available = computation_intermediates | pro_to_comp_set
     for i in epilogue_inputs:
-        if i in computation_intermediates:
+        if i in comp_available:
             comp_to_epi.append(i)
         else:
             pro_to_epi.append(i)
-
-    print(f"######{pro_to_epi=} {comp_to_epi=}")
-
     comp_to_epi = tuple(comp_to_epi)
     comp_to_epi_proxies = tuple(v.proxy for v in comp_to_epi)
     pro_to_epi = tuple(pro_to_epi)
+    pro_to_comp = tuple(pro_to_comp)
 
-    print(f"######{pro_to_epi=} {comp_to_epi=}")
-    if epilogue_trace.bound_symbols:
-        # restore `scopes` so the return would be appended to the trace
-        computation_trace.scopes = [computation_trace.bound_symbols]
-        with tracectx(computation_trace):
-            last = computation_trace.bound_symbols.pop(-1)
-            assert last.sym.id == prims.PrimIDs.RETURN
-            prims.python_return((result, comp_to_epi_proxies))
-
-        with tracectx(epilogue_trace):
-            prims.python_return(None)
-    else:
-        epilogue_trace = None
+    with tracectx(computation_trace):
+        last = computation_trace.bound_symbols.pop(-1)
+        assert last.sym.id == prims.PrimIDs.RETURN
+        prims.python_return(comp_to_epi_proxies)
+    # restore `scopes` so the return would be appended to the trace
+    computation_trace.scopes = [computation_trace.bound_symbols]
 
     pro_to_comp_proxies, pro_to_epi_proxies = unpack_inputs(ctx, prologue_trace, pro_to_comp, pro_to_epi, args, kwargs)
 
@@ -1859,8 +1857,9 @@ def thunder_general_jit(
     pro_to_comp = tuple(sorted(pro_to_comp, key=lambda v: proxy_order[id(v.proxy)]))
 
     bind_inputs("computation", computation_trace, pro_to_comp, pro_to_comp_proxies)
-    if epilogue_trace:
-        bind_inputs("epilogue", epilogue_trace, pro_to_epi + comp_to_epi, pro_to_epi_proxies + comp_to_epi_proxies)
+    for p in pro_to_epi_proxies + comp_to_epi_proxies:
+        epilogue_trace.names.add(p.name)
+    bind_inputs("epilogue", epilogue_trace, pro_to_epi + comp_to_epi, pro_to_epi_proxies + comp_to_epi_proxies)
 
     # Returns a new swapmap dictionary which has the keys (ctx._proxy_swapmap.key() & variableify(proxies))
     def restrict_proxy_swapmap(proxies: tuple[Proxy]) -> dict[Variable, Proxy]:
@@ -1879,9 +1878,8 @@ def thunder_general_jit(
     computation_trace = _apply_trace_proxy_rename(computation_trace, ctx._proxy_swapmap, "computation")
 
     # Update epilogue trace by renaming proxies which are passed to the epilogue trace from prologue and computation traces
-    if epilogue_trace:
-        epilogue_trace = _apply_trace_proxy_rename(
-            epilogue_trace, restrict_proxy_swapmap(pro_to_epi_proxies + comp_to_epi_proxies), "epilogue"
-        )
+    epilogue_trace = _apply_trace_proxy_rename(
+        epilogue_trace, restrict_proxy_swapmap(pro_to_epi_proxies + comp_to_epi_proxies), "epilogue"
+    )
 
     return TraceResults(prologue_trace, computation_trace, epilogue_trace, last_interpreter_log)

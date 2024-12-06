@@ -728,6 +728,7 @@ def thunder_options_to_str(thunder_options: dict) -> str:
 
 def reproducer(
     gm: torch.fx.GraphModule,
+    subgraph_info: SubgraphInfo,
     thunder_options: dict,
     args: tuple[torch.Tensor | ExampleInputMetaData],
     folder: str | os.PathLike,
@@ -742,6 +743,20 @@ def reproducer(
     readable = _readable(gm, "DynamoModule", print_output=False)
     has_cuda_args = any(hasattr(arg, "device") and arg.device.type == "cuda" for arg in args)
     thunder_options_str = thunder_options_to_str(thunder_options)
+
+    # split reason
+    split_reason_str = "Split Information:\n"
+    if subgraph_info.split_reasons:
+        num_submodules = len(subgraph_info.submodule_to_compiled_functions)
+        num_thunder_submodules = len(subgraph_info.thunder_compiled_fns)
+        split_reason_str += f"The original graph is split into {num_submodules} subgraphs, {num_thunder_submodules} of which are run by Thunder.\n"
+        split_reason_str += f"The structure of the split module:\n{subgraph_info.split_graph_module}\n"
+        split_reason_str += f"Split Reasons:\n"
+        for id, split_reason in enumerate(subgraph_info.split_reasons):
+            split_reason_str += f"  Split Reason {id}:\n    {split_reason.info}\n"
+    else:
+        split_reason_str += "The original graph is not split, and is entirely run by Thunder.\n"
+
     with open(folder / f"{graph_name}.py", "w") as f:
         comment_str = f'''"""
 Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:
@@ -750,10 +765,9 @@ Environment information get from `torch.utils.collect_env.get_pretty_env_info()`
 Versions of Thunder related libraries:
 {thunder_pkgs}
 
-The torch.fx.Graph:
-{gm.graph}
-"""
 '''
+        comment_str += f'{split_reason_str}"""\n'
+        del split_reason_str
         if use_pytest_benchmark:
             comment_str += f"""# NOTE: This script requires `pytest-benchmark==4.0.0` to be installed.
 # To execute the script, run `pytest {graph_name}.py`"""

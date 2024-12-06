@@ -1,14 +1,11 @@
 from collections.abc import Sequence
 
 import thunder
-from thunder.core.proxies import TensorProxy
 from thunder.core.transform_common import Transform
 from thunder.core import prims
 import torch
-import math
 
 from .utils import (
-    get_orig_and_thunder_module_proxies_from_prologue,
     get_checks,
     add_trace_output,
     trace_with_replaced_proxy_metadata,

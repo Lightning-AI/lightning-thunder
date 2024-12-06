@@ -5,7 +5,6 @@ from itertools import chain
 from typing import TYPE_CHECKING
 
 import torch
-from torch.utils.weak import WeakTensorKeyDictionary
 
 from thunder.core.transform_common import Transform
 

@@ -121,6 +121,7 @@ class ThunderCompiler:
             ):
                 reproducer(
                     cur_module,
+                    subgraph_info,
                     self.thunder_options,
                     example_input,
                     reproducer_folder,
