@@ -84,7 +84,6 @@ from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
 import thunder.executors.pythonex
 import thunder.executors.torchex
 import thunder.executors.nvfuserex
-from thunder.transforms.autocast import AutocastTransform
 
 pythonex = extend.get_executor("python")
 assert pythonex is not None
@@ -332,11 +331,6 @@ def jit(
 
     if transforms is None:
         transforms = []
-
-    if transforms:
-        for transform in transforms:
-            if isinstance(transform, AutocastTransform):
-                fn = transform(fn)
 
     # Resolve names of executors
     executors = resolve_executors(executors)
