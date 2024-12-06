@@ -1498,10 +1498,8 @@ def grad(
             gradtrc = dce(gradtrc)
             grad_output = gradtrc.output
             pro_to_epi = prologue_trc.output[1]
-            print(grad_output)
             if type(grad_output) == dict:
                 grad_output = grad_output["output"]
-            print("#####", gradtrc, grad_output)
 
             def new_epilogue(*args):
                 return args

@@ -1812,5 +1812,4 @@ def thunder_general_jit(
         epilogue_trace, restrict_proxy_swapmap(pro_to_epi_proxies + comp_to_epi_proxies), "epilogue"
     )
 
-    print(prologue_trace, computation_trace.bound_symbols[-1], epilogue_trace)
     return TraceResults(prologue_trace, computation_trace, epilogue_trace, last_interpreter_log)
