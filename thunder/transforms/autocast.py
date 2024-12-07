@@ -338,7 +338,7 @@ class AutocastTransform(Transform):
         processor = TraceSubstitutionProcessor(
             computation_trace, symbol_mapper=partial(autocast_symbol_mapper, dtype=self.dtype)
         )
-        new_computation_trace = processor.run()
+        new_computation_trace, _ = processor()
         new_computation_trace.set_provenance("Autocast Transform")
 
         return prologue_trace, new_computation_trace, epilogue_trace
