@@ -17,7 +17,7 @@ from thunder.tests.framework import instantiate, TorchExecutor, requiresCUDA
 @instantiate(dtypes=dtypes.float_math_dtypes)
 def test_thunder_autocast_transform(executor, device, dtype):
     from thunder.transforms.autocast import AutocastTransform
-    
+
     torch_device = torch.device(device)
     if torch_device.type == "cpu" and dtype == dtypes.float16:
         pytest.skip("float16 matmul is not supported on CPU.")
@@ -50,12 +50,10 @@ def test_thunder_autocast_transform(executor, device, dtype):
     ):
         autocast_torch_dtype = ltorch.to_torch_dtype(autocast_dtype)
         x, y, z = (torch.randn((2, 2), device=device, dtype=torch_dtype) for _ in range(3))
-        
+
         # Use AutocastTransform instead of autocast function
         compiled = thunder.jit(
-            func, 
-            transforms=[AutocastTransform(dtype=autocast_dtype)], 
-            executors=executor.executors_list()
+            func, transforms=[AutocastTransform(dtype=autocast_dtype)], executors=executor.executors_list()
         )
         out = compiled(x, y, z)
 
@@ -63,6 +61,7 @@ def test_thunder_autocast_transform(executor, device, dtype):
         with torch.autocast(device_type=devicetype, dtype=autocast_torch_dtype):
             torch_output = func(x, y, z)
         assert out.dtype == torch_output.dtype
+
 
 @instantiate(
     executors=[TorchExecutor],
