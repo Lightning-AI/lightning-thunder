@@ -1232,13 +1232,6 @@ def test_autograd_function_apply():
     y_ref = my_sin(x_ref)
     torch.testing.assert_close(y, y_ref)
 
-    initial_computation_trace = thunder.last_traces(jitted)[0]
-    assert any(
-        bsym.sym.id == "torch.ops.higher_order.autograd_function_apply"
-        for bsym in initial_computation_trace.bound_symbols
-        if isinstance(bsym.sym.id, str)
-    )
-
     grad = torch.rand_like(y)
     actual_grad = torch.autograd.grad(y, x, grad)
     expect_grad = torch.autograd.grad(y_ref, x_ref, grad)

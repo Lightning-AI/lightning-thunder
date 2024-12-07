@@ -800,7 +800,22 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
 
     tmp_name = _generate_random_str_id()
     aug_fwd_trace.args = unwrapped_fwd_args
-    aug_fwd_trace._siginfo = SigInfo.from_name_and_args(tmp_name, aug_fwd_trace.args)
+    aug_fwd_trace._siginfo = SigInfo.from_name_and_args(
+        f"higher_order_autograd_function_apply_{tmp_name}",
+        aug_fwd_trace.args,
+    )
+
+    trace_of_forward = from_trace(aug_fwd_trace)
+    for bsym in aug_fwd_trace.bound_symbols:
+        if bsym.sym.id == prims.PrimIDs.RETURN:
+            continue
+        trace_of_forward.bound_symbols.append(bsym)
+    with tracectx(trace_of_forward):
+        prims.python_return(*(sequencify(output)))
+
+    @wraps(aug_fwd_trace.python_callable())
+    def forward(*args, **kwargs):
+        return interpret_trace(trace_of_forward, *args, **kwargs)
 
     grads = sequencify(tree_map(lambda t: TensorProxy(like=t), sequencify(output)))
     bwd_tensor_args = grads + tuple(saved_values)
@@ -821,20 +836,27 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
     bwd_trace.bound_symbols = bwd_unpack_bsyms + bwd_trace.bound_symbols
     bwd_trace._siginfo = SigInfo.from_name_and_args(f"bwd_{tmp_name}", bwd_trace.args)
 
-    @wraps(aug_fwd_trace.python_callable())
-    def augmented_forward_caller(*args, **kwargs):
-        return interpret_trace(aug_fwd_trace, *args, **kwargs)
+    @wraps(forward)
+    def grad_transform(*args, **kwargs):
+        from thunder.core.transforms import get_grad, put_grads
 
-    @wraps(bwd_trace.python_callable())
-    def backward_caller(*args, **kwargs):
-        return interpret_trace(bwd_trace, *args, **kwargs)
+        primal, residuals = interpret_trace(aug_fwd_trace, *args, **kwargs)
+        grads = tree_map(lambda t: get_grad(t), sequencify(primal))
+        bwd_args = (None,) + tuple(grads) + tuple(sequencify(residuals))
+        result = interpret_trace(bwd_trace, *bwd_args)
+        put_grads(args[1:], result)
 
-    return interpreter_needs_wrap(autograd_function_apply)(
-        wrap_const(augmented_forward_caller),
-        wrap_const(backward_caller),
-        *fwd_args,
-        **fwd_kwargs,
+        return primal
+
+    forward_op = get_jit_ctx().ad_hoc_executor.register_operator(trace_of_forward._siginfo.name, like=forward)
+    unwrapped_output = forward_op(*unwrapped_fwd_args)
+    output = wrap(unwrapped_output, provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[fwd.provenance, aug_fwd_provenance]))
+    get_jit_ctx().ad_hoc_executor.register_implementation(
+        forward_op,
+        execution_transform=forward,
+        grad_transform=grad_transform,
     )
+    return output
 
 
 @register_general_jit_lookaside(torch.autocast.__enter__)
