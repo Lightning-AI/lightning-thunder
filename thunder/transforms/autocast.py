@@ -317,6 +317,7 @@ def maybe_apply_autocast(sym):
 
     return None
 
+
 class AutocastTraceSubstitutionProcessor(TraceSubstitutionProcessor):
     def __init__(self, trace, dtype):
         super().__init__(trace)
@@ -324,12 +325,12 @@ class AutocastTraceSubstitutionProcessor(TraceSubstitutionProcessor):
 
     def process_bsym(self, bsym):
         """Process a bound symbol for autocast transformation.
-        
+
         This method is called by TraceSubstitutionProcessor.__call__ for each bound symbol.
         """
         # Get the autocast implementation for this symbol
         autocast_impl = _maybe_get_autocast_rule_for_symbol(bsym.sym)
-        
+
         if autocast_impl is None:
             # If no autocast rule exists, use the original symbol
             args = tree_map(self.read, bsym.args)
@@ -343,6 +344,7 @@ class AutocastTraceSubstitutionProcessor(TraceSubstitutionProcessor):
         kwargs = tree_map(self.read, bsym.kwargs)
         result = autocast_impl(*args, dtype=self.dtype, **kwargs)
         self.set_result(result)
+
 
 class AutocastTransform(Transform):
     """Transform that enables autocasting operations to a specified dtype.
