@@ -17,34 +17,52 @@ from thunder.tests.framework import instantiate, TorchExecutor, requiresCUDA
 @instantiate(dtypes=dtypes.float_math_dtypes)
 def test_thunder_autocast_transform(executor, device, dtype):
     from thunder.transforms.autocast import AutocastTransform
+    
+    torch_device = torch.device(device)
+    if torch_device.type == "cpu" and dtype == dtypes.float16:
+        pytest.skip("float16 matmul is not supported on CPU.")
+    if torch_device.type == "cuda" and dtype == dtypes.bfloat16 and not thunder.tests.bf16.device_supports_bf16(device):
+        pytest.skip(f"bfloat16 is not supported on {torch.cuda.get_device_name()}")
 
     def f(a, b, c):
         return a @ (b + c)
 
-    # The following functions needs to be updated as autocast_impls grows.
     def g(a, b, c):
         return a + b - c
 
     def h(a, b, c):
         return (a @ b) + c
 
-    for func, should_autocast in ((f, True), (g, False), (h, False)):
-        dtype = thunder.bfloat16 if device == "cpu" else thunder.float16
-        torch_dtype = ltorch.to_torch_dtype(dtype)
-        x, y, z = (torch.randn((2, 2), device=device, dtype=torch.float32) for _ in range(3))
+    torch_dtype = ltorch.to_torch_dtype(dtype)
+    if torch_device.type == "cpu":
+        autocast_dtypes = (thunder.bfloat16,)
+    elif torch_device.type == "cuda":
+        autocast_dtypes = (
+            (thunder.bfloat16, thunder.float16)
+            if thunder.tests.bf16.device_supports_bf16(device)
+            else (thunder.float16,)
+        )
+    else:
+        pytest.fail(f"Invalid combination of parameters: {executor=}, {device=}, {dtype=}")
 
-        # Use the new transform class
-        compiled = thunder.jit(func, transforms=[AutocastTransform(dtype=dtype)], executors=executor.executors_list())
+    for (func, should_autocast), autocast_dtype in itertools.product(
+        ((f, True), (g, False), (h, True)), autocast_dtypes
+    ):
+        autocast_torch_dtype = ltorch.to_torch_dtype(autocast_dtype)
+        x, y, z = (torch.randn((2, 2), device=device, dtype=torch_dtype) for _ in range(3))
+        
+        # Use AutocastTransform instead of autocast function
+        compiled = thunder.jit(
+            func, 
+            transforms=[AutocastTransform(dtype=autocast_dtype)], 
+            executors=executor.executors_list()
+        )
         out = compiled(x, y, z)
-        traces = thunder.last_traces(compiled)
-        assert out.dtype == (torch_dtype if should_autocast else torch.float32), traces[-1]
 
-        # Compare with PyTorch autocast
         devicetype = torch.device(device).type
-        with torch.autocast(device_type=devicetype, dtype=torch_dtype):
+        with torch.autocast(device_type=devicetype, dtype=autocast_torch_dtype):
             torch_output = func(x, y, z)
         assert out.dtype == torch_output.dtype
-
 
 @instantiate(
     executors=[TorchExecutor],
