@@ -1,17 +1,26 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+from lightning_utilities.core.imports import package_available
+import pytest
 import torch
+import torch.nn as nn
 from torch.utils import _pytree as pytree
 
 import thunder
-from thunder.core.proxies import SubclassTensorProxy
-from thunder.tests.framework import instantiate
+from thunder.dynamo import ThunderCompiler
+from thunder.tests.framework import (
+    instantiate,
+    TorchExecutor,
+    nvFuserExecutor,
+    DynamoThunderExecutor,
+)
 from thunder.tests.make_tensor import make_tensor
+
+TORCHAO_AVAILABLE = package_available("torchao")
 
 if TYPE_CHECKING:
     from typing import Any
-    from thunder.core.symbol import BoundSymbol
 
 
 @torch._dynamo.allow_in_graph
@@ -61,7 +70,7 @@ class ScaleTensorSubclass(torch.Tensor):
             # strides=x.stride(),
             # storage_offset=x.storage_offset(),
             # layout=x.layout,
-            # requires_grad=x.requires_grad,
+            requires_grad=x.requires_grad,
         )
         self._x = x
         self._scale = scale
@@ -115,10 +124,7 @@ class ScaleTensorSubclass(torch.Tensor):
         scales = tuple(t._scale for t in pytree.tree_flatten((args, kwargs))[0] if isinstance(t, ScaleTensorSubclass))
         unwrapped_args, unwrapped_kwargs = pytree.tree_map(maybe_unwrap_and_scale, (args, kwargs))
         out = aten_ir_op(*unwrapped_args, **unwrapped_kwargs)
-        if not isinstance(out, torch.Tensor):
-            return out
-        else:
-            return ScaleTensorSubclass(out, scales[0])
+        return out
 
 
 @instantiate(
@@ -188,12 +194,11 @@ def test_func_calling_converter(executor, device, _):
 
 @instantiate(
     dtypes=(thunder.core.dtypes.float32,),
+    decorators=(pytest.mark.parametrize("requires_grad", (False, True), ids=("fwd_only", "with_bwd")),),
 )
-def test_func_of_subclass_simple_math(executor, device, _):
+def test_func_of_subclass_simple_math(executor, device, _, requires_grad):
 
-    def f(x: ScaleTensorSubclass, data: torch.Tensor, scale: torch.Tensor) -> ScaleTensorSubclass:
-
-        y = ScaleTensorSubclass(data, scale)
+    def f(x: ScaleTensorSubclass, y: ScaleTensorSubclass) -> torch.Tensor:
         out = x + y
         return out
 
@@ -202,17 +207,104 @@ def test_func_of_subclass_simple_math(executor, device, _):
     dtype = torch.float32
     shape = (2, 2)
     x = ScaleTensorSubclass(
-        make_tensor(shape, device=device, dtype=dtype),
+        make_tensor(shape, device=device, dtype=dtype, requires_grad=requires_grad),
         make_tensor((), device=device, dtype=dtype),
     )
-    data = make_tensor(shape, device=device, dtype=dtype)
+    y = ScaleTensorSubclass(
+        make_tensor(shape, device=device, dtype=dtype, requires_grad=requires_grad),
+        make_tensor((), device=device, dtype=dtype),
+    )
+
+    expected = f(x, y)
+    actual = jitted(x, y)
+    assert type(expected) is type(actual)
+    torch.testing.assert_close(expected, actual)
+    if requires_grad:
+        actual.mean().backward()
+
+    def g(x: ScaleTensorSubclass, data: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+        y = EncapsulateXandScale.apply(data, scale)
+        out = x + y
+        return out
+
+    jitted = executor.make_callable(g)
+
+    x = ScaleTensorSubclass(
+        make_tensor(shape, device=device, dtype=dtype, requires_grad=requires_grad),
+        make_tensor((), device=device, dtype=dtype),
+    )
+    data = make_tensor(shape, device=device, dtype=dtype, requires_grad=requires_grad)
     scale = make_tensor((), device=device, dtype=dtype)
 
-    expected = f(x, data, scale)
+    expected = g(x, data, scale)
     actual = jitted(x, data, scale)
     assert type(expected) is type(actual)
-    torch.testing.assert_close((expected._x, expected._scale), (actual._x, actual._scale))
+    torch.testing.assert_close(expected, actual)
+    if requires_grad:
+        actual.mean().backward()
 
-    return_bsym: BoundSymbol = thunder.last_traces(jitted)[-1].bound_symbols[-1]
-    return_proxy = return_bsym.flat_args[0]
-    assert isinstance(return_proxy, SubclassTensorProxy)
+
+@instantiate(
+    dtypes=(thunder.core.dtypes.float32, thunder.core.dtypes.bfloat16),
+    devicetypes=(thunder.core.devices.DeviceType.CUDA,),
+    executors=(TorchExecutor, nvFuserExecutor, DynamoThunderExecutor),
+    decorators=(
+        pytest.mark.skipif(
+            not (TORCHAO_AVAILABLE and torch.cuda.get_device_capability() >= (8, 9)),
+            reason="Requires capability >= 8.9 and torchao",
+        ),
+        pytest.mark.parametrize("bias", (True, False)),
+    ),
+)
+def test_torchao_float8_linear(executor, device, dtype, bias):
+    from torchao.float8 import convert_to_float8_training
+
+    batch_size, in_features, out_features = 16, 32, 64
+    device = torch.device("cuda")
+    torch_dtype = thunder.core.dtypes.to_torch_dtype(dtype)
+
+    model = nn.Sequential(
+        nn.Linear(in_features, out_features, bias=bias),
+        nn.GELU(approximate="tanh"),
+        nn.Linear(out_features, out_features, bias=bias),
+    ).to(device=device, dtype=torch_dtype)
+    fp8_model = convert_to_float8_training(model)
+    x = make_tensor((batch_size, in_features), device=device, dtype=torch_dtype)
+
+    expected: torch.Tensor
+    jitted: nn.Module
+    backend: ThunderCompiler | None = None
+
+    if is_thunderfx := executor == DynamoThunderExecutor:
+        torch._dynamo.reset()
+        expected = torch.compile(fp8_model)(x)
+        backend = ThunderCompiler()
+        jitted = torch.compile(fp8_model, backend=backend)
+    else:
+        expected = fp8_model(x)
+        jitted = executor.make_callable(fp8_model)
+
+    if bias and dtype == thunder.core.dtypes.bfloat16 and executor == nvFuserExecutor:
+        with pytest.raises(RuntimeError, match="INTERNAL ASSERT FAILED"):
+            jitted(x)
+        return
+    actual = jitted(x)
+    if bias and dtype == thunder.core.dtypes.bfloat16 and executor == DynamoThunderExecutor:
+        with pytest.raises(AssertionError, match="Tensor-likes are not close"):
+            torch.testing.assert_close(actual, expected)
+        return
+
+    if (dtype == thunder.core.dtypes.bfloat16 and executor != DynamoThunderExecutor) or (
+        not bias and dtype == thunder.core.dtypes.bfloat16 and executor == DynamoThunderExecutor
+    ):
+        pytest.xfail("numerical error")
+    torch.testing.assert_close(actual, expected)
+
+    # TODO(crcrpar): Think of how to push tensor subclasses to `thunder.jit`.
+    # Currently no subgraphs go to thunder.jit.
+    if is_thunderfx:
+        for subgraph in backend.subgraph_infos:
+            if not bias and dtype == thunder.core.dtypes.bfloat16:
+                assert not subgraph.thunder_compiled_fns
+            else:
+                assert subgraph.thunder_compiled_fns

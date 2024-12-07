@@ -1259,7 +1259,9 @@ def t(a: TensorLike, /) -> TensorLike:
         lambda: f"t() expects a tensor with <= 2 dimensions, but self is {a.ndim}D",
         RuntimeError,
     )
-    return prims.transpose(a, (1, 0)) if a.ndim == 2 else a
+    if a.ndim == 2:
+        return transpose(a, 0, 1)
+    return a
 
 
 @run_once
@@ -1310,6 +1312,17 @@ def transpose(a: TensorLike, /, dim0: int, dim1: int) -> TensorLike:
     permutation[dim0] = dim1
     permutation[dim1] = dim0
     return clang.transpose(a, permutation)
+
+
+def _transpose_grad(a: TensorLike, /, dim0: int, dim1: int) -> TensorLike:
+    fwd = transpose(a, dim0, dim1)
+    g = get_grad(fwd)
+    a_grad = transpose(g, dim0, dim1)
+    put_grad(a, a_grad)
+    return fwd
+
+
+register_grad(transpose, _transpose_grad)
 
 
 @torchsymbol(torch.unbind, is_method=True)
@@ -3555,6 +3568,47 @@ def matmul(a: TensorLike, b: TensorLike, /) -> TensorLike:
         b = clang.expand(b, b_broadcast_shape)
 
     return prims.matmul(a, b)
+
+
+# reference: https://github.com/pytorch/pytorch/blob/6d4cd3e/torch/_meta_registrations.py#L5566
+@torchsymbol(torch._scaled_mm, is_method=False)
+def _scaled_mm(
+    a: TensorLike,
+    b: TensorLike,
+    scale_a: TensorLike,
+    scale_b: TensorLike,
+    bias: TensorLike | None = None,
+    scale_result: TensorLike | None = None,
+    out_dtype: dtypeLike | None = None,
+    use_fast_accum: bool = False,
+) -> TensorLike:
+    fp8_dtypes = {dtypes.float8_e4m3fn, dtypes.float8_e4m3fnuz, dtypes.float8_e5m2, dtypes.float8_e5m2fnuz}
+    # TODO(crcrpar): Devise a way to make sure `a` is row-major and `b` is column-major.
+    utils.check(
+        (
+            (a.ndim == 2 and b.ndim == 2)
+            and (a.shape[1] == b.shape[0])
+            and (a.shape[1] % 16 == 0 and b.shape[0] % 16 == 0 and b.shape[1] % 16 == 0)
+            and (to_dtype(a.dtype) in fp8_dtypes and to_dtype(b.dtype) in fp8_dtypes)
+        ),
+        lambda: f"data matrices of {a=} and {b=} do not satisfy the condition.",
+    )
+    utils.check(
+        (
+            (scale_a.numel() == 1 and scale_b.numel() == 1)
+            and (scale_a.dtype == dtypes.float32 and scale_b.dtype == dtypes.float32)
+        ),
+        lambda: f"Only tensor-wise scaling is supported but {scaled_a.shape = } and {scaled_b.shape = }",
+        exception_type=NotImplementedError,
+    )
+    result_dtype = a.dtype if out_dtype is None else to_dtype(out_dtype)
+    return TensorProxy(
+        name=None,
+        shape=(a.shape[0], b.shape[1]),
+        device=a.device,
+        dtype=result_dtype,
+        requires_grad=a.requires_grad,
+    )
 
 
 @torchsymbol(torch.outer, is_method=True)

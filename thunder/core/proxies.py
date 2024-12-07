@@ -1502,6 +1502,26 @@ class TensorProxy(Proxy, TensorProxyInterface):
     def thunder_fsdp_padding_size(self):
         return self._thunder_fsdp_padding_size
 
+    # n.b.(crcrpar): just returning contiguous for `_make_wrapper_subclasses`
+    def stride(self) -> Sequence[int]:
+        shape = self.shape
+        if len(shape) == 1:
+            return (1,)
+        elif len(shape) == 0:
+            return tuple()
+        else:
+            import numpy
+
+            _stride = reversed(numpy.cumprod([1] + list(shape[1:])).tolist())
+            return tuple(_stride)
+
+    def storage_offset(self) -> int:
+        return -1
+
+    @property
+    def layout(self) -> torch.layout:
+        return torch.strided
+
     # We need to implement `__len__` as
     # > In addition to bypassing any instance attributes in the
     # > interest of correctness, implicit special method lookup
@@ -1933,6 +1953,8 @@ class SubclassTensorProxy(TensorProxy):
         else:
             # TODO(crcrpar): Think about materializing `self` so that we can
             # call `__tensor_init__` to know each attribute names.
+            from dataclasses import replace
+            import inspect
             from thunder.core import prims
 
             bsym = prims.tensor_subclass_ctor.bind(
@@ -1946,6 +1968,9 @@ class SubclassTensorProxy(TensorProxy):
                 self._non_tensors,
                 output=self,
             )
+            cls_module = inspect.getmodule(self._subclass_type)
+            bsym.sym = replace(bsym.sym, _module=cls_module)
+
             # NOTE(crcrpar): A callable being `thunder.jit`ed can call `MySubclassTensor(...)`
             # inside of it either directly or indirectly: indirect way is to call it through
             # a custom `torch.autograd.Function` as in
@@ -2026,6 +2051,13 @@ class SubclassTensorProxy(TensorProxy):
             for name, value in zip(p._tensor_attr_names + p._non_tensor_attr_names, p._tensors + p._non_tensors):
                 setattr(p, name, value)
         return p
+
+    def __repr__(self):
+        tensors, metadata = {}, {}
+        if hasattr(self, "_tensor_attr_names"):
+            tensor_names, metadata = self.__tensor_flatten__()
+            tensors = {n: getattr(self, n) for n in tensor_names}
+        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self._shape}, {tensors=}, {metadata=})>'
 
 
 class TorchAutogradFunctionCtxProxy(Proxy, TorchAutogradFunctionCtxProxyInterface):
