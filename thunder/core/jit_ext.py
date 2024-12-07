@@ -850,7 +850,9 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
 
     forward_op = get_jit_ctx().ad_hoc_executor.register_operator(trace_of_forward._siginfo.name, like=forward)
     unwrapped_output = forward_op(*unwrapped_fwd_args)
-    output = wrap(unwrapped_output, provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[fwd.provenance, aug_fwd_provenance]))
+    output = wrap(
+        unwrapped_output, provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[fwd.provenance, aug_fwd_provenance])
+    )
     get_jit_ctx().ad_hoc_executor.register_implementation(
         forward_op,
         execution_transform=forward,
