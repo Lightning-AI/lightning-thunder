@@ -317,6 +317,32 @@ def maybe_apply_autocast(sym):
 
     return None
 
+class AutocastTraceSubstitutionProcessor(TraceSubstitutionProcessor):
+    def __init__(self, trace, dtype):
+        super().__init__(trace)
+        self.dtype = dtype
+
+    def process_bsym(self, bsym):
+        """Process a bound symbol for autocast transformation.
+        
+        This method is called by TraceSubstitutionProcessor.__call__ for each bound symbol.
+        """
+        # Get the autocast implementation for this symbol
+        autocast_impl = _maybe_get_autocast_rule_for_symbol(bsym.sym)
+        
+        if autocast_impl is None:
+            # If no autocast rule exists, use the original symbol
+            args = tree_map(self.read, bsym.args)
+            kwargs = tree_map(self.read, bsym.kwargs)
+            result = bsym.sym(*args, **kwargs)
+            self.set_result(result)
+            return
+
+        # Apply the autocast implementation
+        args = tree_map(self.read, bsym.args)
+        kwargs = tree_map(self.read, bsym.kwargs)
+        result = autocast_impl(*args, dtype=self.dtype, **kwargs)
+        self.set_result(result)
 
 class AutocastTransform(Transform):
     """Transform that enables autocasting operations to a specified dtype.
@@ -335,10 +361,7 @@ class AutocastTransform(Transform):
     def transform_traces_pre_prologue(
         self, prologue_trace: TraceCtx, computation_trace: TraceCtx, epilogue_trace: TraceCtx, **kwargs
     ) -> tuple[TraceCtx, TraceCtx, TraceCtx]:
-        processor = TraceSubstitutionProcessor(
-            computation_trace, symbol_mapper=partial(autocast_symbol_mapper, dtype=self.dtype)
-        )
-        new_computation_trace, _ = processor()
+        processor = AutocastTraceSubstitutionProcessor(computation_trace, self.dtype)
+        new_computation_trace, outputs = processor()
         new_computation_trace.set_provenance("Autocast Transform")
-
         return prologue_trace, new_computation_trace, epilogue_trace
