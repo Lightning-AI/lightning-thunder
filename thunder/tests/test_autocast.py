@@ -27,6 +27,7 @@ def test_thunder_autocast_transform(executor, device, dtype):
     def f(a, b, c):
         return a @ (b + c)
 
+    # The following functions needs to be updated as autocast_impls grows.
     def g(a, b, c):
         return a + b - c
 
@@ -58,6 +59,7 @@ def test_thunder_autocast_transform(executor, device, dtype):
         out = compiled(x, y, z)
 
         devicetype = torch.device(device).type
+        # note(crcrpar): This test could be broken in the future as thunder autocast develops.
         with torch.autocast(device_type=devicetype, dtype=autocast_torch_dtype):
             torch_output = func(x, y, z)
         assert out.dtype == torch_output.dtype
@@ -309,22 +311,3 @@ def test_autocast_cpu_and_cuda(requires_grad, b_dtype):
 
         for eg, jg in zip(eager_grads, jit_grads):
             torch.testing.assert_close(eg, jg, rtol=5e-3, atol=5e-3)
-
-
-# def simple_addition(x, y):
-#     return x + y
-
-
-# def test_autocast_transform():
-#     autocast_transform = AutocastTransform(dtype=torch.bfloat16)
-#     jitted_fn = jit(simple_addition, transforms=[autocast_transform])
-
-#     x = torch.randn(2, 2, dtype=torch.float32)
-#     y = torch.randn(2, 2, dtype=torch.float32)
-
-#     result = jitted_fn(x, y)
-
-#     assert result.dtype == torch.bfloat16, f"Expected dtype: bfloat16, but got: {result.dtype}"
-
-#     expected_result = simple_addition(x, y).to(torch.bfloat16)
-#     assert torch.allclose(result, expected_result), "The output values do not match the expected results."
