@@ -19,6 +19,7 @@ import thunder
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
 from thunder.core.devices import cpu, Device
+from thunder.core.trace import VariableInterface
 from thunder.core.trace_interpreter import (
     interpret_trace as eval_trace,
     interpret_trace_to_trace,
@@ -3144,7 +3145,6 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
     Returns:
         tuple[Trace, Trace]: A tuple containing the new forward and backward traces.
     """
-
     start_time_ns = time.perf_counter_ns()
 
     saved_for_bw = get_saved_for_backward_tensors(fwd_trace)
@@ -3165,32 +3165,36 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
 
     producers = find_producer_symbols(fwd_trace, tuple(unvariableify(i) for i in rematerializable), fwd_trace.args)
 
-    required_fw_args = fwd_trace_args & old_saved_for_bwd
-    recomputed_tensors_from_producers = set()
-    for prod in producers:
-        for prod_arg in prod.flat_args:
-            prod_arg = variableify(prod_arg)
-            if prod_arg in fwd_trace_args:
-                required_fw_args.add(prod_arg)
-        for prod_out in prod.flat_outs:
-            recomputed_tensors_from_producers.add(variableify(prod_out))
-
-    required_saved_for_bwd = all_rematerializable - rematerializable - recomputed_tensors_from_producers
-    new_saved_for_backward = tuple(unvariableify(i) for i in required_fw_args | required_saved_for_bwd)
-
-    new_fwd_trace = from_trace(fwd_trace)
-    new_fwd_trace.bound_symbols = fwd_trace.bound_symbols.copy()
-    new_return_args = (fwd_trace.output[0], (new_saved_for_backward, fwd_trace.output[1][1]))
-    new_fwd_trace.bound_symbols[-1] = prims.python_return.bind(*new_return_args, output=None)
-
     new_bwd_trace = from_trace(bwd_trace)
     # In cases where C0 name is carried from previous trace it must be removed
     # as the proxy needs to register with that specific name to follow the backward
     # trace standard signature.
     new_bwd_trace.names.discard("C0")
 
+    swap_map: dict[VariableInterface, TensorProxy] = {}
+
     with tracectx(new_bwd_trace):
+        required_fw_args = fwd_trace_args & old_saved_for_bwd
+        recomputed_tensors_from_producers = set()
+
+        for prod in producers:
+            for prod_arg in prod.flat_args:
+                prod_arg = variableify(prod_arg)
+                if prod_arg in fwd_trace_args:
+                    required_fw_args.add(prod_arg)
+            for prod_out in prod.flat_outs:
+                if isinstance(prod_out, TensorProxy):
+                    swap_map[variableify(prod_out)] = prod_out.replace_name(f"remat_of_{prod_out.name}")
+                recomputed_tensors_from_producers.add(variableify(prod_out))
+
+        required_saved_for_bwd = all_rematerializable - rematerializable - recomputed_tensors_from_producers
+        new_saved_for_backward = tuple(unvariableify(i) for i in required_fw_args | required_saved_for_bwd)
         unpack_args = (CollectionProxy(new_saved_for_backward, name="C0"), len(new_saved_for_backward))
+
+    new_fwd_trace = from_trace(fwd_trace)
+    new_fwd_trace.bound_symbols = fwd_trace.bound_symbols.copy()
+    new_return_args = (fwd_trace.output[0], (new_saved_for_backward, fwd_trace.output[1][1]))
+    new_fwd_trace.bound_symbols[-1] = prims.python_return.bind(*new_return_args, output=None)
 
     # Here we make sure that the signature of the backward trace is the same as the one we expect.
     # This part of the trace is the unpacking of the tuple passed from the forward trace,
@@ -3206,10 +3210,11 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
             new_unpack = prims.unpack_sequence.bind(*unpack_args, output=new_saved_for_backward)
             new_bwd_trace.bound_symbols.append(new_unpack)
         elif idx == 6:
-            new_bwd_trace.bound_symbols.extend(producers)
-            new_bwd_trace.bound_symbols.append(bsym)
+            for p in producers:
+                new_bwd_trace.bound_symbols.append(p.from_bsym_swap_proxies(swap_map=swap_map))
+            new_bwd_trace.bound_symbols.append(bsym.from_bsym_swap_proxies(swap_map=swap_map))
         else:
-            new_bwd_trace.bound_symbols.append(bsym)
+            new_bwd_trace.bound_symbols.append(bsym.from_bsym_swap_proxies(swap_map=swap_map))
 
     new_bwd_trace.args = [(new_saved_for_backward, fwd_trace.output[1][1]), *bwd_trace.args[1:]]
 
