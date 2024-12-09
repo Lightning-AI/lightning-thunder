@@ -110,7 +110,7 @@ from thunder.common import CompileData, CompileStats
 from thunder.core.trace import TraceCtx, TraceResults
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.clang import _clang_fn_set
-from thunder.core.pytree import tree_map
+from thunder.core.pytree import tree_iter, tree_map
 from thunder.core.compile_data import compile_data_and_stats
 
 #
@@ -711,9 +711,13 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
 
     custom_autograd_function_cls = unwrap(obj)
     custom_forward = custom_autograd_function_cls.forward
-    ctx = torch.autograd.function.FunctionCtx()
+    typ = torch.autograd.function.FunctionCtx
+    ctx = typ()
     ctx_proxy = proxy(ctx, name=None, history=None)
-    wrapped_ctx = wrap_const(ctx_proxy)
+    wrapped_ctx = wrap_const(
+        ctx_proxy, provenance=ProvenanceRecord(PseudoInst.NEW, inputs=[wrap_const(typ).provenance])
+    )
+    print("###ctx", wrapped_ctx.provenance)
     trace_of_fwd, fwd_output_provenance = _convert_pytorchfunc_to_thundertrace(
         custom_forward, True, wrapped_ctx, *args, **kwargs
     )
@@ -1664,9 +1668,9 @@ def process_recorded_modifications(ctx, epilogue_trace):
             for k, (inst, *args) in last_modification.items():
                 if inst == PseudoInst.STORE_SUBSCR:
                     (value,) = args
-                    assert isinstance(value.value, (Proxy, int))
-
                     print("####store#####", value.value, modified_object.provenance)
+                    assert isinstance(value.value, (Proxy, int, tuple))  ## todo: better criterion
+
                     if (
                         modified_object.provenance.inst is PseudoInst.LOAD_ATTR
                         and modified_object.provenance.inputs[1].inst is PseudoInst.CONSTANT
@@ -1811,7 +1815,6 @@ def thunder_general_jit(
     with jit_ctx(ctx):
         with tracectx(computation_trace):
             result = jfn(*args, **kwargs)
-            prims.python_return(result)
             computation_trace.set_current_source_location(None, None)
             process_recorded_modifications(ctx, epilogue_trace)
             last_interpreter_log = jfn._last_interpreter_log
