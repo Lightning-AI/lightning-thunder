@@ -110,7 +110,7 @@ from thunder.common import CompileData, CompileStats
 from thunder.core.trace import TraceCtx, TraceResults
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.clang import _clang_fn_set
-from thunder.core.pytree import tree_map
+from thunder.core.pytree import tree_iter, tree_map
 from thunder.core.compile_data import compile_data_and_stats
 
 #
@@ -1811,7 +1811,6 @@ def thunder_general_jit(
     with jit_ctx(ctx):
         with tracectx(computation_trace):
             result = jfn(*args, **kwargs)
-            prims.python_return(result)
             computation_trace.set_current_source_location(None, None)
             process_recorded_modifications(ctx, epilogue_trace)
             last_interpreter_log = jfn._last_interpreter_log
