@@ -788,6 +788,11 @@ def test_checkpoint_converter_submodule():
     decorators=(pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro")),),
 )
 def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, use_pytest_benchmark, tmp_path):
+    if IS_WINDOWS and use_pytest_benchmark:
+        pytest.skip(
+            "Skipping on Windows because this uses torch.compile (see https://github.com/Lightning-AI/lightning-thunder/issues/1326)"
+        )
+
     from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform
     from thunder import nvfuser_executor
     from thunder.transforms.cudagraph import CUDAGraphTransform
@@ -893,6 +898,11 @@ def test_deepcopy_graph_module():
     decorators=(pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro")),),
 )
 def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use_pytest_benchmark, tmp_path):
+    if IS_WINDOWS and use_pytest_benchmark:
+        pytest.skip(
+            "Skipping on Windows because this uses torch.compile (see https://github.com/Lightning-AI/lightning-thunder/issues/1326)"
+        )
+
     x = torch.ones(2, 2, device=device, dtype=dtype, requires_grad=True)
 
     backend = ThunderCompiler()
