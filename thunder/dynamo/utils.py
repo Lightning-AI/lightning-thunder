@@ -671,7 +671,6 @@ def _readable(
         verbose=False,
         include_stride=include_stride,
         include_device=include_device,
-        colored=colored,
     )
     module_code = verbose_python_code.src
     module_code = module_code.lstrip("\n")
@@ -728,6 +727,7 @@ def thunder_options_to_str(thunder_options: dict) -> str:
 
 def reproducer(
     gm: torch.fx.GraphModule,
+    subgraph_info: SubgraphInfo,
     thunder_options: dict,
     args: tuple[torch.Tensor | ExampleInputMetaData],
     folder: str | os.PathLike,
@@ -742,6 +742,20 @@ def reproducer(
     readable = _readable(gm, "DynamoModule", print_output=False)
     has_cuda_args = any(hasattr(arg, "device") and arg.device.type == "cuda" for arg in args)
     thunder_options_str = thunder_options_to_str(thunder_options)
+
+    # split reason
+    split_reason_str = "Split Information:\n"
+    if subgraph_info.split_reasons:
+        num_submodules = len(subgraph_info.submodule_to_compiled_functions)
+        num_thunder_submodules = len(subgraph_info.thunder_compiled_fns)
+        split_reason_str += f"The original graph is split into {num_submodules} subgraphs, {num_thunder_submodules} of which are run by Thunder.\n"
+        split_reason_str += f"The structure of the split module:\n{subgraph_info.split_graph_module}\n"
+        split_reason_str += f"Split Reasons:\n"
+        for id, split_reason in enumerate(subgraph_info.split_reasons):
+            split_reason_str += f"  Split Reason {id}:\n    {split_reason.info}\n"
+    else:
+        split_reason_str += "The original graph is not split, and is entirely run by Thunder.\n"
+
     with open(folder / f"{graph_name}.py", "w") as f:
         comment_str = f'''"""
 Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:
@@ -750,33 +764,22 @@ Environment information get from `torch.utils.collect_env.get_pretty_env_info()`
 Versions of Thunder related libraries:
 {thunder_pkgs}
 
-The torch.fx.Graph:
-{gm.graph}
-"""
 '''
+        comment_str += f'{split_reason_str}"""\n'
+        del split_reason_str
         if use_pytest_benchmark:
             comment_str += f"""# NOTE: This script requires `pytest-benchmark==4.0.0` to be installed.
-# To execute the script, run `pytest {graph_name}.py`"""
-        import_str = f"from functools import partial\n\nimport torch\nimport thunder\n"
+# To execute the script, run `pytest {graph_name}.py --benchmark-timer=torch.utils.benchmark.utils.timer.timer --benchmark-warmup=on`
+# To check the peak allocated CUDA memory, use --benchmark-json=json_file_name and look at the "max_allocated_memory_MB" field in the json file"""
+        # The packages that are likely to be used by the code generated from the Torch GraphModule
+        code_str = "\n".join([v.import_str for v in torch.fx.graph._custom_builtins.values()])
+        code_str += f"\nfrom functools import partial\nimport thunder\n"
         if has_cuda_args:
-            import_str += "from thunder.transforms.cudagraph import CUDAGraphTransform\n"
-            import_str += "from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform\n"
+            code_str += "from thunder.transforms.cudagraph import CUDAGraphTransform\n"
+            code_str += "from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform\n"
         if use_pytest_benchmark:
-            code_str = f"def test_{graph_name}(benchmark):\n{readable}\n"
-        else:
-            code_str = f"def test_{graph_name}():\n{readable}\n"
+            code_str += f"""import pytest
 
-        if any(arg is None for arg in args):
-            code_str += f"# Warning: The inputs that cannot be inferred are set to None, requiring the user to manually give inputs according to the code\n"
-        input_str = f"""inputs = [\n{chr(10).join(arg_like(a) for a in args)}\n"""
-        code_str += f"{_addindent(input_str, 4)}\n]\n"
-
-        if not use_pytest_benchmark:
-            code_str += f"compiled = thunder.jit(DynamoModule(), {thunder_options_str})\n"
-            code_str += "compiled(*inputs)"
-        else:
-            code_str += "from thunder.dynamo.compiler_graph_benchmark import ThunderCompilerGraphBenchmarking\n"
-            code_str = f"""{code_str}
 bench_executors_dict = {{}}
 bench_executors_dict["thunder"]=partial(thunder.jit, {thunder_options_str})
 bench_executors_dict["torch.compile"]=torch.compile
@@ -784,15 +787,44 @@ bench_executors_dict["dynamo_eager"]=partial(torch.compile, backend="eager")
 bench_executors_dict["eager"]=None
 """
             if has_cuda_args:
-                code_str = f"""{code_str}bench_executors_dict["thunder_cugraph"]=partial(thunder.jit, transform=CUDAGraphTransform())\n"""
+                code_str += f"""bench_executors_dict["thunder_cugraph"]=partial(thunder.jit, transform=CUDAGraphTransform())\n"""
             code_str += f"""
-backend = ThunderCompilerGraphBenchmarking(benchmark, executors=bench_executors_dict)
-compiled = torch.compile(backend=backend)(DynamoModule())
-compiled(*inputs)
+executors = list(bench_executors_dict.values())
+executor_ids = list(bench_executors_dict.keys())
+
+@pytest.mark.parametrize(
+    "executor,",
+    executors,
+    ids=executor_ids,
+)"""
+            func_str = f"def test_{graph_name}(benchmark, executor):\n{readable}\n"
+        else:
+            func_str = f"def test_{graph_name}():\n{readable}\n"
+
+        if any(arg is None for arg in args):
+            func_str += f"# Warning: The inputs that cannot be inferred are set to None, requiring the user to manually give inputs according to the code\n"
+        input_str = f"""inputs = [\n{chr(10).join(arg_like(a) for a in args)}\n"""
+        func_str += f"{_addindent(input_str, 4)}\n]\n"
+
+        if not use_pytest_benchmark:
+            func_str += f"compiled = thunder.jit(DynamoModule(), {thunder_options_str})\n"
+            func_str += "compiled(*inputs)"
+        else:
+            func_str = f"""{func_str}
+mod = DynamoModule()
+compiled = mod if executor == None else executor(mod)
+"""
+            if not has_cuda_args:
+                func_str += f"""benchmark(compiled, *inputs)"""
+            else:
+                func_str += f"""from thunder.benchmarks import record_peak_allocated_memory
+
+with record_peak_allocated_memory(benchmark):
+    benchmark(compiled, *inputs)
 """
         print(comment_str, file=f)
-        print(import_str, file=f)
-        print(_addindent(code_str, 4), file=f)
+        print(code_str, file=f)
+        print(_addindent(func_str, 4), file=f)
 
         if not use_pytest_benchmark:
             print(f"\ntest_{graph_name}()", file=f)

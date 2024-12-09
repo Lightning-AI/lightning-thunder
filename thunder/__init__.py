@@ -264,7 +264,6 @@ CacheEntry = namedtuple(
         "backward_fn",
         "backward_traces",
         "return_none_instead_of_grads",
-        "vanilla_tensor_args",
     ],
 )
 
@@ -466,7 +465,6 @@ def jit(
                         backward_fn,
                         backward_traces,
                         _return_none_instead_of_grads,
-                        _vanilla_args,
                     ) = cache_entry
                     try:
                         inps, pro_to_epi = pro(*args, **kwargs)
@@ -548,9 +546,7 @@ def jit(
             computation_traces.append(computation_trc)
 
             orig_to_view_swap_map = check_inplace_to_views(computation_trc)
-            vanilla_tensor_args: set[int] | None = None
             if not compile_options.get("skip_inplace_functionalization", False):
-                orig_len = len(computation_traces)
                 alias_tensor_indices = []
                 if alias_tensor_indices_str := cache_info["alias_tensor_indices"]:
                     alias_tensor_indices: list[list[int]] = [
@@ -564,32 +560,8 @@ def jit(
                     )
                 )
                 computation_trc = computation_traces[-1]
-                if len(computation_traces) > orig_len:
-                    from thunder.core.pytree import tree_flatten
-                    from thunder.core.utils import ProxyDict
 
-                    flat_args, _ = tree_flatten((computation_trc.args, computation_trc.kwargs))
-                    arg_to_idx = ProxyDict()
-                    for i, a in enumerate(flat_args):
-                        if not isinstance(a, TensorProxy):
-                            continue
-                        arg_to_idx[a] = i
-
-                    tensor_indices: int = []
-                    tensor_args_consumed_by_inplace_grouped_by_numel: dict[int, list[TensorProxy]] = defaultdict(list)
-                    for bsym in filter(lambda b: b.sym.id == prims.PrimIDs.COPY_, computation_trc.bound_symbols):
-                        t = bsym.flat_proxy_args[1]
-                        index = arg_to_idx[t]
-                        numel = t.numel
-                        tensor_args_consumed_by_inplace_grouped_by_numel[numel].append(index)
-                        tensor_indices.append(index)
-                    if len(tensor_args_consumed_by_inplace_grouped_by_numel) > 1:
-                        vanilla_tensor_args = set(tensor_indices)
-
-            if epilogue_trc is not None:
-                epilogue_traces = [epilogue_trc]
-            else:
-                epilogue_traces = None
+            epilogue_traces = [epilogue_trc]
 
             cs.last_trace_tracing_stop = time.perf_counter_ns()
 
@@ -627,15 +599,14 @@ def jit(
             pro = prologue_trc.python_callable(include_decorators=False)
             pro = prologue_execution_timer(pro)
 
-            if epilogue_trc is not None:
-                epilogue = epilogue_trc.python_callable()
-            else:
-                epilogue = None
+            epilogue_trc = transform_to_torch_types(epilogue_trc)
+            epilogue = epilogue_trc.python_callable()
 
             cs.last_prologue_transformation_stop = time.perf_counter_ns()
             cs.last_prologue_traces = prologue_traces
             cs.last_prologue = pro
             cs.last_traces = computation_traces
+            cs.last_epilogue_traces = epilogue_traces
             backward_traces = []
             cs.last_backward_traces = backward_traces
             cs.last_interpreter_log = last_interpreter_log
@@ -678,8 +649,6 @@ def jit(
                 )
                 computation_traces.extend(extraces)
                 computation_trc = computation_traces[-1]
-
-            if backward_trc is None:
                 computation_trc = thunder.executors.passes.del_last_used(computation_trc)
 
             if not compile_options.get("disable_inplace_copy_check", False):
@@ -724,7 +693,6 @@ def jit(
                 backward_fn,
                 backward_traces,
                 return_none_instead_of_grads,
-                vanilla_tensor_args,
             )
             if cd.cache_option is not CACHE_OPTIONS.NO_CACHING:
                 cs.interpreter_cache.append(cache_entry)
@@ -777,18 +745,6 @@ def jit(
 
         return wrapped
 
-    def check_storage_aliases(cache_entry, args):
-        if cache_entry.vanilla_tensor_args:
-            if alias_tensor_indices_str := _alias_tensor_of_args_kwargs(*args):
-                alias_tensor_indices = alias_tensor_indices_str
-                alias_tensor_indices = {int(i) for i in alias_tensor_indices_str.split(",")}
-                vanilla_tensor_args = cache_entry.vanilla_tensor_args
-                check(
-                    not vanilla_tensor_args & alias_tensor_indices,
-                    lambda: f"It seems that {vanilla_tensor_args} are {alias_tensor_indices=} share their storage and some of them are modified in-place",
-                    NotImplementedError,
-                )
-
     def maybe_connect_to_autograd(cache_entry, result):
         if cache_entry.backward_fn:
             # If the backward function is available, we need to connect the
@@ -807,11 +763,8 @@ def jit(
 
         return result
 
-    def maybe_call_epilogue(cache_entry, result, pro_to_epi):
-        if cache_entry.epilogue_fn:
-            result, comp_to_epi = result
-            cache_entry.epilogue_fn(*pro_to_epi, *comp_to_epi)
-
+    def call_epilogue(cache_entry, comp_result, pro_to_epi):
+        result = cache_entry.epilogue_fn(*pro_to_epi, *comp_result)
         return result
 
     @wraps(fn)
@@ -823,11 +776,9 @@ def jit(
 
         cache_entry, inps, pro_to_epi = get_computation_and_inputs(*args, **kwargs)
 
-        check_storage_aliases(cache_entry, inps)
-
         result = cache_entry.computation_fn(*inps)
         result = maybe_connect_to_autograd(cache_entry, result)
-        result = maybe_call_epilogue(cache_entry, result, pro_to_epi)
+        result = call_epilogue(cache_entry, result, pro_to_epi)
 
         cs.last_computation = cache_entry.computation_fn
         return result

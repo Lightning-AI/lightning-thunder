@@ -109,7 +109,7 @@ from thunder.common import CompileData, CompileStats
 from thunder.core.trace import TraceCtx, TraceResults
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.clang import _clang_fn_set
-from thunder.core.pytree import tree_map
+from thunder.core.pytree import tree_map, tree_iter
 from thunder.core.compile_data import compile_data_and_stats
 
 #
@@ -627,6 +627,8 @@ def _convert_pytorchfunc_to_thundertrace(
         *args:
         **kwargs
     """
+    from thunder.core.baseutils import sequencify
+
     active_jit_ctx: JitCtx = get_jit_ctx()
     active_jit_ctx.computation_trace.push_scope([])
     wrapped_func_result = _interpret_call(func, *args, **kwargs)
@@ -637,8 +639,6 @@ def _convert_pytorchfunc_to_thundertrace(
     trace.bound_symbols.extend(active_jit_ctx.computation_trace.pop_scope())
     func_result = unwrap(wrapped_func_result)
     if shallow_copy_output:
-        from thunder.core.baseutils import sequencify
-
         out_to_shallow_copy: dict[Variable, TensorProxy] = {}
         for a in sequencify(func_result):
             shallow_copy_of_a = prims.shallow_copy.meta(a)
@@ -648,7 +648,7 @@ def _convert_pytorchfunc_to_thundertrace(
         func_result = tree_map(lambda t: out_to_shallow_copy.get(variableify(t), t), func_result)
     with tracectx(trace):
         prims.python_return(func_result)
-    return trace, wrapped_func_result.provenance
+    return trace, sequencify(wrapped_func_result)[0].provenance
 
 
 @register_general_jit_lookaside(torch.autograd.function.Function.apply.__func__)
@@ -767,6 +767,98 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         grad_transform=grad_transform,
     )
     return forward_result
+
+
+# ref: https://github.com/pytorch/pytorch/blob/38114ec/torch/_functorch/autograd_function.py#L715-L752
+@register_general_jit_lookaside(torch.ops.higher_order.autograd_function_apply)
+def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_args, **fwd_kwargs):
+    from thunder.core.baseutils import sequencify
+    from thunder.core.pytree import tree_map
+    from thunder.core.trace_interpreter import interpret_trace
+    from thunder.torch import autograd_function_apply
+
+    def _generate_random_str_id() -> str:
+        import secrets
+        import string
+
+        length = 5
+        return "".join(secrets.choice(string.ascii_lowercase) for _ in range(length))
+
+    args_tensor_mask = unwrap(fwd_kwargs["args_tensor_mask"])
+    # TODO(crcrpar): Think about making use of `non_differentiable_idx`
+    # note that this key is quite new: https://github.com/pytorch/pytorch/pull/134087
+    # non_differentiable_idx = fwd_kwargs.get("non_differentiable_idx")
+    length_of_tensor_args = sum(args_tensor_mask)
+    new_fwd_args = (wrap_const(None),) + fwd_args[:length_of_tensor_args]
+
+    aug_fwd_trace, aug_fwd_provenance = _convert_pytorchfunc_to_thundertrace(fwd, False, *new_fwd_args)
+    if aug_fwd_trace is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return aug_fwd_trace
+    aug_fwd_result = aug_fwd_trace.output
+    output, saved_values = unwrap(aug_fwd_result)
+    unwrapped_fwd_args = tree_map(lambda t: unwrap(t), new_fwd_args)
+
+    tmp_name = _generate_random_str_id()
+    aug_fwd_trace.args = unwrapped_fwd_args
+    aug_fwd_trace._siginfo = SigInfo.from_name_and_args(
+        f"higher_order_autograd_function_apply_{tmp_name}",
+        aug_fwd_trace.args,
+    )
+
+    trace_of_forward = from_trace(aug_fwd_trace)
+    for bsym in aug_fwd_trace.bound_symbols:
+        if bsym.sym.id == prims.PrimIDs.RETURN:
+            continue
+        trace_of_forward.bound_symbols.append(bsym)
+    with tracectx(trace_of_forward):
+        prims.python_return(*(sequencify(output)))
+
+    @wraps(aug_fwd_trace.python_callable())
+    def forward(*args, **kwargs):
+        return interpret_trace(trace_of_forward, *args, **kwargs)
+
+    grads = sequencify(tree_map(lambda t: TensorProxy(like=t), sequencify(output)))
+    bwd_tensor_args = grads + tuple(saved_values)
+    bwd_args = (None,) + bwd_tensor_args
+    wrapped_bwd_args = tree_map(lambda t: wrap(t, provenance=aug_fwd_provenance), bwd_args)
+    bwd_trace, bwd_trace_provenance = _convert_pytorchfunc_to_thundertrace(
+        bwd,
+        False,
+        *wrapped_bwd_args,
+    )
+    if bwd_trace is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return bwd_trace
+    bwd_trace.args = bwd_args
+    bwd_unpack_bsyms = [
+        prims.unpack_trivial.bind(a, name=a.name, output=a)
+        for a in filter(lambda a: isinstance(a, Proxy), bwd_trace.args)
+    ]
+    bwd_trace.bound_symbols = bwd_unpack_bsyms + bwd_trace.bound_symbols
+    bwd_trace._siginfo = SigInfo.from_name_and_args(f"bwd_{tmp_name}", bwd_trace.args)
+
+    @wraps(forward)
+    def grad_transform(*args, **kwargs):
+        from thunder.core.transforms import get_grad, put_grads
+
+        primal, residuals = interpret_trace(aug_fwd_trace, *args, **kwargs)
+        grads = tree_map(lambda t: get_grad(t), sequencify(primal))
+        bwd_args = (None,) + tuple(grads) + tuple(sequencify(residuals))
+        result = interpret_trace(bwd_trace, *bwd_args)
+        put_grads(args[1:], result)
+
+        return primal
+
+    forward_op = get_jit_ctx().ad_hoc_executor.register_operator(trace_of_forward._siginfo.name, like=forward)
+    unwrapped_output = forward_op(*unwrapped_fwd_args)
+    output = wrap(
+        unwrapped_output, provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[fwd.provenance, aug_fwd_provenance])
+    )
+    get_jit_ctx().ad_hoc_executor.register_implementation(
+        forward_op,
+        execution_transform=forward,
+        grad_transform=grad_transform,
+    )
+    return output
 
 
 @register_general_jit_lookaside(torch.autocast.__enter__)
@@ -1278,7 +1370,7 @@ def get_computation_inputs_and_intermediates(computation_trace):
         for v in bsym.flat_variableified_proxy_outs:
             intermediates_set.add(v)
 
-    return inputs_list, intermediates_set
+    return inputs_list, inputs_set, intermediates_set
 
 
 def get_parameter_or_buffer_or_submodule_name_and_root(provenance):
@@ -1742,13 +1834,18 @@ def thunder_general_jit(
     with jit_ctx(ctx):
         with tracectx(computation_trace):
             result = jfn(*args, **kwargs)
-            prims.python_return(result)
             computation_trace.set_current_source_location(None, None)
             process_recorded_modifications(ctx, epilogue_trace)
             last_interpreter_log = jfn._last_interpreter_log
+            result_proxies = tuple(p for p in tree_iter(result) if isinstance(p, (TensorProxy, NumberProxy)))
+            prims.python_return(result_proxies)
+        with tracectx(epilogue_trace):
+            prims.python_return(result)
 
-    pro_to_comp, computation_intermediates = get_computation_inputs_and_intermediates(computation_trace)
-    epilogue_inputs, _ = get_computation_inputs_and_intermediates(epilogue_trace)
+    pro_to_comp, pro_to_comp_set, computation_intermediates = get_computation_inputs_and_intermediates(
+        computation_trace
+    )
+    epilogue_inputs, _, _ = get_computation_inputs_and_intermediates(epilogue_trace)
 
     comp_to_epi = []
     pro_to_epi = []
@@ -1756,27 +1853,25 @@ def thunder_general_jit(
     # propagate static constrained intermediates to inputs
     propagate_constraints(ctx, pro_to_comp, computation_intermediates, computation_trace)
 
+    # we want tensors to go through the computation trace even for noops because
+    # we may need to propagate gradients etc.
+    comp_available = computation_intermediates | pro_to_comp_set
     for i in epilogue_inputs:
-        if i in computation_intermediates:
+        if i in comp_available:
             comp_to_epi.append(i)
         else:
             pro_to_epi.append(i)
     comp_to_epi = tuple(comp_to_epi)
     comp_to_epi_proxies = tuple(v.proxy for v in comp_to_epi)
     pro_to_epi = tuple(pro_to_epi)
+    pro_to_comp = tuple(pro_to_comp)
 
-    if epilogue_trace.bound_symbols:
-        # restore `scopes` so the return would be appended to the trace
-        computation_trace.scopes = [computation_trace.bound_symbols]
-        with tracectx(computation_trace):
-            last = computation_trace.bound_symbols.pop(-1)
-            assert last.sym.id == prims.PrimIDs.RETURN
-            prims.python_return((result, comp_to_epi_proxies))
-
-        with tracectx(epilogue_trace):
-            prims.python_return(None)
-    else:
-        epilogue_trace = None
+    with tracectx(computation_trace):
+        last = computation_trace.bound_symbols.pop(-1)
+        assert last.sym.id == prims.PrimIDs.RETURN
+        prims.python_return(comp_to_epi_proxies)
+    # restore `scopes` so the return would be appended to the trace
+    computation_trace.scopes = [computation_trace.bound_symbols]
 
     pro_to_comp_proxies, pro_to_epi_proxies = unpack_inputs(ctx, prologue_trace, pro_to_comp, pro_to_epi, args, kwargs)
 
@@ -1784,8 +1879,9 @@ def thunder_general_jit(
     pro_to_comp = tuple(sorted(pro_to_comp, key=lambda v: proxy_order[id(v.proxy)]))
 
     bind_inputs("computation", computation_trace, pro_to_comp, pro_to_comp_proxies)
-    if epilogue_trace:
-        bind_inputs("epilogue", epilogue_trace, pro_to_epi + comp_to_epi, pro_to_epi_proxies + comp_to_epi_proxies)
+    for p in pro_to_epi_proxies + comp_to_epi_proxies:
+        epilogue_trace.names.add(p.name)
+    bind_inputs("epilogue", epilogue_trace, pro_to_epi + comp_to_epi, pro_to_epi_proxies + comp_to_epi_proxies)
 
     # Returns a new swapmap dictionary which has the keys (ctx._proxy_swapmap.key() & variableify(proxies))
     def restrict_proxy_swapmap(proxies: tuple[Proxy]) -> dict[Variable, Proxy]:
@@ -1804,9 +1900,8 @@ def thunder_general_jit(
     computation_trace = _apply_trace_proxy_rename(computation_trace, ctx._proxy_swapmap, "computation")
 
     # Update epilogue trace by renaming proxies which are passed to the epilogue trace from prologue and computation traces
-    if epilogue_trace:
-        epilogue_trace = _apply_trace_proxy_rename(
-            epilogue_trace, restrict_proxy_swapmap(pro_to_epi_proxies + comp_to_epi_proxies), "epilogue"
-        )
+    epilogue_trace = _apply_trace_proxy_rename(
+        epilogue_trace, restrict_proxy_swapmap(pro_to_epi_proxies + comp_to_epi_proxies), "epilogue"
+    )
 
     return TraceResults(prologue_trace, computation_trace, epilogue_trace, last_interpreter_log)
