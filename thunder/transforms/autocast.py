@@ -347,55 +347,40 @@ class AutocastTransform(Transform):
                 self.dtype = dtype
 
             def process_bsym(self, bsym):
-                # Skip special symbols that shouldn't be processed
                 if bsym.sym.id in trace_interpreter_skip_list:
                     self.new_trace.bound_symbols.append(bsym.from_bsym())
                     return
 
-                # Check if symbol has an autocast implementation
                 autocast_impl = _maybe_get_autocast_rule_for_symbol(bsym.sym)
 
                 if autocast_impl is not None:
-                    # Read the arguments with potential autocast conversion
                     args = tree_map(self.read, bsym.args)
                     kwargs = tree_map(self.read, bsym.kwargs)
 
-                    # Apply the autocast implementation
                     with disable_autocast():
                         result = autocast_impl(*args, **kwargs, dtype=self.dtype)
 
                     self.set_result(result)
                 else:
-                    # No autocast rule, process normally
                     args = tree_map(self.read, bsym.args)
                     kwargs = tree_map(self.read, bsym.kwargs)
                     result = bsym.sym(*args, **kwargs)
                     self.set_result(result)
 
-                    # Add the bound symbol to new trace
                     new_bsym = bsym.from_bsym()
                     new_bsym.args = args
                     new_bsym.kwargs = kwargs
                     self.add_processed_bsyms([new_bsym])
 
-        # Process the computation trace
         if computation_trace is not None:
             processor = AutocastProcessor(computation_trace, self.dtype)
 
-            # Get the actual args and kwargs from the kwargs dict
             args = kwargs.get("args", ())
             kw = kwargs.get("kwargs", {})
 
-            with tracectx(processor.new_trace):
-                # Initialize the processor's environment with input arguments
-                for trace_arg, arg in zip(computation_trace.args, args):
-                    processor.env[trace_arg.name] = arg
+            processor.process_args(*args, **kw)
 
-                # Initialize kwargs if any
-                for trace_kwarg, kwarg in zip(computation_trace.kwargs.values(), kw.values()):
-                    processor.env[trace_kwarg.name] = kwarg
-
-                new_trace, _ = processor()
-                computation_trace = new_trace
+            new_trace, outputs = processor()
+            computation_trace = new_trace
 
         return prologue_trace, computation_trace, epilogue_trace
