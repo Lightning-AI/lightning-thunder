@@ -1812,6 +1812,14 @@ def leaky_relu(a: TensorProxy, /, negative_slope: float = 0.01, inplace: bool = 
 _inplace_to_out_of_place[leaky_relu] = leaky_relu, 2
 
 
+@torchsymbol(torch.nn.functional.logsigmoid, is_method=False)
+def logsigmoid(a: TensorProxy, /):
+    return log(sigmoid(a))
+
+
+_inplace_to_out_of_place[logsigmoid] = logsigmoid, -1
+
+
 # TODO Should this use clamp? -- Would that propagate NaNs properly?
 @torchsymbol(torch.relu, torch.nn.functional.relu, id="torch.relu", is_method=True)
 def relu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
