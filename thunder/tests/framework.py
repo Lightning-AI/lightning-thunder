@@ -67,7 +67,7 @@ def _bitsandbytes_available():
         return False
     try:
         import bitsandbytes
-    except Exception:
+    except (ImportError, RuntimeError):
         return False
     return True
 
