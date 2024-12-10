@@ -19,14 +19,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
-@run_once
-def _warn_thunder_compiler():
-    warnings.warn(
-        "The ThunderCompiler is in active development and may not work as expected."
-        + " Please report any issues you encounter to the Lightning Thunder team."
-    )
-
-
 class ThunderCompiler:
     def __init__(self, **thunder_options):
         """
@@ -54,8 +46,6 @@ class ThunderCompiler:
             >>> out = func(x)
         """
         from thunder import jit
-
-        _warn_thunder_compiler()
 
         if LooseVersion(torch.__version__) < LooseVersion("2.4.0"):
             # NOTE: PyTorch 2.3 or lower has bug in `split_module` function used in splitter.
