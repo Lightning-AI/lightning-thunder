@@ -1,6 +1,4 @@
-from thunder.dynamo.compiler import ThunderCompiler
+from thunder.dynamo.compiler import ThunderCompiler, thunderfx
 
 
-__all__ = [
-    "ThunderCompiler",
-]
+__all__ = ["ThunderCompiler", "thunderfx"]
