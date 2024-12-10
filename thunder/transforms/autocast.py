@@ -8,12 +8,14 @@ from thunder.core.pytree import tree_map, tree_flatten
 from thunder.core.proxies import TensorProxy
 from thunder.core.symbol import BoundSymbolInterface, Symbol
 from thunder.core.proxies import TensorProxy
-from thunder.core.transforms import construct_trace, eval_trace
+from thunder.core.trace import TraceCtx, tracectx
+from thunder.core.trace_interpreter import TraceSubstitutionProcessor, trace_interpreter_skip_list
+from thunder.core.transforms import construct_trace, eval_trace, Transform
 from thunder.clang import (
     maybe_convert_to_dtype,
 )
 import thunder.torch as ltorch
-
+import warnings
 
 autocast_impls: dict[prims.PrimIDs, Callable] = {}
 
@@ -227,6 +229,11 @@ def autocast(func: Callable, dtype: dtypes.dtype):
     Returns:
         Callable: The transformed function
     """
+    warnings.warn(
+        "autocast() is deprecated. Use thunder.jit(func, transforms=[AutocastTransform(dtype)]) instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
     if not isinstance(dtype, dtypes.dtype):
         raise ValueError(f"`dtype` is expected to be `thunder.dtype.dtype` but {type(dtype)}")
@@ -309,3 +316,71 @@ def maybe_apply_autocast(sym):
         return wrapper
 
     return None
+
+
+class AutocastTransform(Transform):
+    """Transform that applies automatic mixed precision (autocast) to eligible operations."""
+
+    def __init__(self, dtype: dtypes.dtype):
+        """Initialize the autocast transform.
+
+        Args:
+            dtype: The target dtype to cast eligible operations to (float16 or bfloat16)
+        """
+        if not isinstance(dtype, dtypes.dtype):
+            raise ValueError(f"`dtype` is expected to be `thunder.dtype.dtype` but {type(dtype)}")
+
+        if dtype not in _allowed_downcast_types:
+            raise ValueError(
+                f"autocast: `dtype` is expected to be either `thunder.float16` or `thunder.bfloat16`, but {dtype}"
+            )
+        self.dtype = dtype
+
+    def transform_traces_pre_prologue(
+        self, prologue_trace: TraceCtx, computation_trace: TraceCtx, epilogue_trace: TraceCtx | None, **kwargs
+    ) -> tuple[TraceCtx, TraceCtx, TraceCtx | None]:
+        """Transform the computation trace to apply autocast rules."""
+
+        class AutocastProcessor(TraceSubstitutionProcessor):
+            def __init__(self, trace, dtype, *args, **kwargs):
+                super().__init__(trace, *args, **kwargs)
+                self.dtype = dtype
+
+            def process_bsym(self, bsym):
+                if bsym.sym.id in trace_interpreter_skip_list:
+                    self.new_trace.bound_symbols.append(bsym.from_bsym())
+                    return
+
+                autocast_impl = _maybe_get_autocast_rule_for_symbol(bsym.sym)
+
+                if autocast_impl is not None:
+                    args = tree_map(self.read, bsym.args)
+                    kwargs = tree_map(self.read, bsym.kwargs)
+
+                    with disable_autocast():
+                        result = autocast_impl(*args, **kwargs, dtype=self.dtype)
+
+                    self.set_result(result)
+                else:
+                    args = tree_map(self.read, bsym.args)
+                    kwargs = tree_map(self.read, bsym.kwargs)
+                    result = bsym.sym(*args, **kwargs)
+                    self.set_result(result)
+
+                    new_bsym = bsym.from_bsym()
+                    new_bsym.args = args
+                    new_bsym.kwargs = kwargs
+                    self.add_processed_bsyms([new_bsym])
+
+        if computation_trace is not None:
+            processor = AutocastProcessor(computation_trace, self.dtype)
+
+            args = kwargs.get("args", ())
+            kw = kwargs.get("kwargs", {})
+
+            processor.process_args(*args, **kw)
+
+            new_trace, outputs = processor()
+            computation_trace = new_trace
+
+        return prologue_trace, computation_trace, epilogue_trace
