@@ -3,6 +3,7 @@ from functools import partial
 from looseversion import LooseVersion
 from typing import TYPE_CHECKING
 import warnings
+import inspect
 
 import torch
 
@@ -10,10 +11,12 @@ from thunder.core.baseutils import run_once
 from thunder.core.utils import safe_zip
 from thunder.dynamo.utils import recompile_graph, remove_empty_autocast, reproducer, CompilerType
 from thunder.dynamo.splitter import _splitter
+from thunder.core.utils import check
 
 if TYPE_CHECKING:
     from thunder.dynamo.utils import SubgraphInfo
     from os import PathLike
+    from collections.abc import Callable
 
 
 @run_once
@@ -127,3 +130,32 @@ class ThunderCompiler:
                     f"graph{graph_idx}_{cur_name}",
                     use_pytest_benchmark,
                 )
+
+
+def thunderfx(fn: Callable, /, **kwargs) -> Callable:
+    """Compiles a callable (function or model) by using Thunder as the backend of :func:`torch.compile`
+    Args:
+        fn: A :class:`~torch.nn.Module` or a function to compile.
+    Keyword Args:
+        **kwargs: a dictionary of options to pass to :func:`torch.compile` and :func:`thunder.jit`.
+    Returns:
+        The compiled callable
+    """
+    import thunder
+
+    torch_compile_kwarg_names = inspect.getfullargspec(torch.compile).kwonlyargs
+    thunder_jit_kwarg_names = inspect.getfullargspec(thunder.jit).kwonlyargs
+    overlap = [kwarg_name for kwarg_name in thunder_jit_kwarg_names if kwarg_name in torch_compile_kwarg_names]
+    check(
+        not overlap,
+        lambda: f"There are overlapping kwargs between thunder.jit and torch.compile: {overlap}",
+        ValueError,
+    )
+
+    torch_compile_options = {k: v for k, v in kwargs.items() if k in torch_compile_kwarg_names}
+    thunder_options = {k: v for k, v in kwargs.items() if k not in torch_compile_kwarg_names}
+
+    backend = ThunderCompiler(**thunder_options)
+    compiled = torch.compile(fn, backend=backend, **torch_compile_options)
+    compiled._backend = backend
+    return compiled
