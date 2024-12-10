@@ -62,6 +62,19 @@ DISABLE_CUDA_TEST_INSTANTIATION: bool = (
 IS_WINDOWS = platform.system() == "Windows"
 
 
+def _bitsandbytes_available():
+    if not package_available("bitsandbytes"):
+        return False
+    try:
+        import bitsandbytes
+    except (ImportError, RuntimeError):
+        return False
+    return True
+
+
+BITSANDBYTES_AVAILABLE = _bitsandbytes_available()
+
+
 def version_between(version: str, *, min_ver: str | None = None, max_ver: str | None = None):
     v = packaging.version.parse(version)
     if min_ver is not None and v < packaging.version.parse(min_ver):
