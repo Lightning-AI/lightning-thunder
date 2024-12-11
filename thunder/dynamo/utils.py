@@ -783,6 +783,7 @@ Versions of Thunder related libraries:
 # NOTE: The reproducer function has already been processed by TorchDynamo.
 # If we let it go through TorchDynamo again, it could be segmented further.
 # To avoid this, we directly use Inductor here.
+# See issue https://github.com/Lightning-AI/lightning-thunder/issues/1521
 def torch_inductor(fn, inputs):
     from torch._inductor import compile as inductor_compile
     from torch.fx import symbolic_trace
