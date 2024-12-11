@@ -1,5 +1,4 @@
 import pytest
-import warnings
 import itertools
 import os
 from subprocess import run
@@ -11,7 +10,7 @@ from looseversion import LooseVersion
 
 from thunder import dtypes
 from thunder.dynamo import ThunderCompiler
-from thunder.dynamo.utils import CompilerType
+from thunder.dynamo.utils import CompilerType, SplitReasonType
 from thunder.dynamo.compiler_graph_benchmark import ThunderCompilerGraphBenchmarking
 from thunder import last_traces
 from thunder.core.symbol import Symbol
@@ -930,3 +929,52 @@ def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use
     cmd = "pytest" if use_pytest_benchmark else "python"
     for fname in [s1, s2, s3]:
         check(fname, cmd)
+
+
+# TODO(crcrpar): Currently a custom `torch.autograd.Function` that vanilla `thunder.jit`
+#   could handle seems to go to the fallback path.
+#   The function is the same as https://github.com/Lightning-AI/lightning-thunder/blob/9de5434/thunder/tests/test_jit_general.py#L1144
+@instantiate(
+    dtypes=NOTHING,
+    executors=[DynamoThunderExecutor],
+)
+def test_custom_autograd_function_through_thunderfx(executor, device: str, dtype: dtypes.dtype):
+    class MyFunction(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, x: torch.Tensor) -> torch.Tensor:
+            return x * 2.0
+
+        # this is wrong on purpose.
+        @staticmethod
+        def backward(ctx, grad_output) -> torch.Tensor:
+            return grad_output
+
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+
+        def forward(self, x) -> torch.Tensor:
+            return MyFunction.apply(x)
+
+    dtype = torch.float32
+    x = torch.randn((2, 2), dtype=dtype, device=device, requires_grad=True)
+    model = Model().to(dtype=dtype, device=device)
+
+    backend = ThunderCompiler()
+    jitted = torch.compile(model, backend=backend)
+    _ = jitted(x)
+    assert len(backend.subgraph_infos) == 1
+
+    subgraph = backend.subgraph_infos[0]
+    thunder_compiled_fns = subgraph.thunder_compiled_fns
+    assert thunder_compiled_fns is not None and (not thunder_compiled_fns)
+
+    split_reasons = subgraph.split_reasons
+    assert len(split_reasons) == 2
+    assert (
+        split_reasons[0].reason_type == SplitReasonType.MISSING_OP_SUPPORT and "function_ctx" in split_reasons[0].info
+    )
+    assert (
+        split_reasons[1].reason_type == SplitReasonType.EXCEPTION_META_THUNDER_OP
+        and "autograd_function_apply" in split_reasons[1].info
+    )
