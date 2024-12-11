@@ -780,10 +780,19 @@ Versions of Thunder related libraries:
         if use_pytest_benchmark:
             code_str += f"""import pytest
 
+# NOTE: The reproducer function has already been processed by TorchDynamo.
+# If we let it go through TorchDynamo again, it could be segmented further.
+# To avoid this, we directly use Inductor here.
+def torch_inductor(fn, inputs):
+    from torch._inductor import compile as inductor_compile
+    from torch.fx import symbolic_trace
+
+    fx_graph = symbolic_trace(fn)
+    return inductor_compile(fx_graph, inputs)
+
 bench_executors_dict = {{}}
 bench_executors_dict["thunder"]=partial(thunder.jit, {thunder_options_str})
-bench_executors_dict["torch.compile"]=torch.compile
-bench_executors_dict["dynamo_eager"]=partial(torch.compile, backend="eager")
+bench_executors_dict["torch_inductor"]=torch_inductor
 bench_executors_dict["eager"]=None
 """
             if has_cuda_args:
@@ -812,7 +821,12 @@ executor_ids = list(bench_executors_dict.keys())
         else:
             func_str = f"""{func_str}
 mod = DynamoModule()
-compiled = mod if executor == None else executor(mod)
+if executor == None:
+    compiled = mod
+elif executor == torch_inductor:
+    compiled = executor(mod, inputs)
+else:
+    compiled = executor(mod)
 """
             if not has_cuda_args:
                 func_str += f"""benchmark(compiled, *inputs)"""
