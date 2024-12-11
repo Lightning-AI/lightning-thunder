@@ -2750,9 +2750,6 @@ def backward_pass(forward_env, trace, init_cotangents):
                 raise NotImplementedError(f"Backward for {symbol.sym.id} is not implemented")
 
         result = backward(*residuals, *cotangents)
-        print(f"res: {residuals}")
-        print(f"cot: {cotangents}")
-        print(result)
         if isinstance(result, dict):
             # If the backward returns a dict, we assume that it is a dict of
             # forward arguments to the corresponding
@@ -2825,7 +2822,6 @@ def backward_pass(forward_env, trace, init_cotangents):
     gkwargs = tree_map(get_grad, trace.kwargs)
     gkwargs = {k: v for k, v in gkwargs.items() if v is not None}
     gargs, gkwargs = tree_map(get_inexact_dtype_or_none, (gargs, gkwargs))
-    print(f"gargs: {gargs}")
     return gargs + (gkwargs,) if len(gkwargs) != 0 else gargs
 
 
@@ -2836,7 +2832,6 @@ def vjp_call(primals, cotangents, trace: Trace, **kwargs):
         primals = (primals,)
 
     result, env = augmented_forward_pass(*primals, trace=trace, **kwargs)
-    print(f"env: {env}")
     check(
         len(result) == len(cotangents) if isinstance(result, Sequence) else True,
         lambda: f"Expected cotangents to be a sequence of length {len(result)}, got a sequence of length {len(cotangents)}",
