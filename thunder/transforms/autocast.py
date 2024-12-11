@@ -20,6 +20,7 @@ from contextlib import contextmanager
 
 autocast_impls: dict[prims.PrimIDs, Callable] = {}
 
+
 # NOTE: Rules which are registered ltorch symbols should match the type signature
 #       of those symbols as we use this rule for translating from `torch` -> `thunder.torch`
 #       if autocast is enabled while jitting. See also `NOTE: torch.autocast support`.
@@ -404,6 +405,7 @@ class AutocastTransform(Transform):
             if token is not None:
                 reset_tracectx(token)
 
+
 def transform_traces_pre_prologue(
     self, prologue_trace: TraceCtx, computation_trace: TraceCtx, epilogue_trace: TraceCtx | None, **kwargs
 ) -> tuple[TraceCtx, TraceCtx, TraceCtx | None]:
@@ -412,7 +414,7 @@ def transform_traces_pre_prologue(
 
     # Create new computation trace
     new_computation_trace = from_trace(computation_trace)
-    
+
     # Initialize environment with input tensors
     for arg in computation_trace.args:
         if isinstance(arg, TensorProxy):
@@ -472,15 +474,14 @@ def transform_traces_pre_prologue(
                     with self.trace_context(new_computation_trace):
                         result = maybe_downcast_to(self.dtype, result)
 
-                new_bsym = bsym.from_bsym(
-                    args=processed_args,
-                    kwargs=processed_kwargs,
-                    output=result
-                )
+                new_bsym = bsym.from_bsym(args=processed_args, kwargs=processed_kwargs, output=result)
             else:
                 new_bsym = bsym.from_bsym()
                 # If this is the final operation, ensure output is in target dtype
-                if isinstance(new_bsym.output, TensorProxy) and new_bsym.output.dtype in (dtypes.float32, dtypes.float64):
+                if isinstance(new_bsym.output, TensorProxy) and new_bsym.output.dtype in (
+                    dtypes.float32,
+                    dtypes.float64,
+                ):
                     with self.trace_context(new_computation_trace):
                         new_bsym.output = maybe_downcast_to(self.dtype, new_bsym.output)
 
