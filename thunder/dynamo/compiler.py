@@ -27,9 +27,7 @@ class ThunderCompiler:
         function.
 
         Keyword arguments:
-            thunder_options: a dictionary of options to pass to :func:`thunder.jit`. Besides all the arguments to :func:`thunder.jit`,
-                             it accepts ``torch_inductor_options`` which are passed to :func:`torch.compile` if part of the graph
-                             is not supported by thunder.
+            thunder_options: a dictionary of options to pass to :func:`thunder.jit`.
 
         Example:
             >>> import torch
@@ -60,11 +58,9 @@ class ThunderCompiler:
         # Ref to the documentation of `SubgraphInfo` to know more about the information it contains.
         self.subgraph_infos: list[SubgraphInfo] = []
 
-        torch_inductor_options = thunder_options.pop("torch_inductor_options", {})
-
         self.thunder_options = thunder_options
         self._thunder_jit = partial(jit, **thunder_options)
-        self._torch_compile = partial(torch.compile, **torch_inductor_options)
+        self._torch_compile = torch.compile
 
     def __call__(self, gm: torch.fx.GraphModule, sample_args: list[torch.SymInt, torch.Tensor]):
         gm = remove_empty_autocast(gm)
