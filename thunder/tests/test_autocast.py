@@ -17,7 +17,7 @@ from thunder.tests.framework import instantiate, TorchExecutor, requiresCUDA
 @instantiate(dtypes=dtypes.float_math_dtypes)
 def test_thunder_autocast_transform(executor, device, dtype):
     from thunder.transforms.autocast import AutocastTransform
-    
+
     # TODO: Consider adding support for device specific dtypes in the test
     # instantiator.
     torch_device = torch.device(device)
