@@ -1683,14 +1683,8 @@ logsigmoid_opinfo = OpInfo(
     dtypes=(datatypes.floating,),
     sample_input_generator=elementwise_unary_generator,
     torch_reference=torch.nn.functional.logsigmoid,
-    test_directives=(
-        # test tols are too tight for these half precision tests
-        DecorateInfo(
-            pytest.mark.skip,
-            "test_core_vs_torch_consistency",
-            dtypes=(datatypes.float16, datatypes.bfloat16),
-        ),
-    ),
+    domain=(-1, 1),
+    test_directives=(),
 )
 elementwise_unary_ops.append(logsigmoid_opinfo)
 

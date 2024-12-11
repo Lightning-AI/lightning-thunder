@@ -835,11 +835,15 @@ _register_elementwise_unary_implementation(ltorch.real, real)
 celu = _register_torch_operation("celu", module=torch.nn.functional)
 elu = _register_torch_operation("elu", module=torch.nn.functional)
 gelu = _register_torch_operation("gelu", module=torch.nn.functional)
-leaky_relu = _register_torch_operation("leaky_relu", module=torch.nn.functional)
-relu = _register_torch_operation("relu", module=torch.nn.functional)
-relu6 = _register_torch_operation("relu6", module=torch.nn.functional)
 hardshrink = _register_torch_operation("hardshrink", module=torch.nn.functional)
 hardswish = _register_torch_operation("hardswish", module=torch.nn.functional)
+leaky_relu = _register_torch_operation("leaky_relu", module=torch.nn.functional)
+logsigmoid = _register_torch_operation("logsigmoid", module=torch.nn.functional)
+log_sigmoid_backward = _register_torch_operation(
+    "torch.ops.aten.log_sigmoid_backward", like=ltorch.log_sigmoid_backward
+)
+relu = _register_torch_operation("relu", module=torch.nn.functional)
+relu6 = _register_torch_operation("relu6", module=torch.nn.functional)
 selu = _register_torch_operation("selu", module=torch.nn.functional)
 silu = _register_torch_operation("silu", module=torch.nn.functional)
 
@@ -851,11 +855,15 @@ def _elementwise_unary_with_inplace_checker(a: TensorProxy, /, inplace: bool = F
 _register_elementwise_unary_implementation(ltorch.elu, elu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.celu, celu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.gelu, gelu, checker=_always_executable)
-_register_elementwise_unary_implementation(ltorch.leaky_relu, leaky_relu, checker=_always_executable)
-_register_elementwise_unary_implementation(ltorch.relu, relu, checker=_elementwise_unary_with_inplace_checker)
-_register_elementwise_unary_implementation(ltorch.relu6, relu6, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.hardshrink, hardshrink, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.hardswish, hardswish, checker=_elementwise_unary_with_inplace_checker)
+_register_elementwise_unary_implementation(ltorch.leaky_relu, leaky_relu, checker=_always_executable)
+_register_elementwise_unary_implementation(
+    ltorch.log_sigmoid_backward, log_sigmoid_backward, checker=_always_executable
+)
+_register_elementwise_unary_implementation(ltorch.logsigmoid, logsigmoid)
+_register_elementwise_unary_implementation(ltorch.relu, relu, checker=_elementwise_unary_with_inplace_checker)
+_register_elementwise_unary_implementation(ltorch.relu6, relu6, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.selu, selu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.silu, silu, checker=_always_executable)
 

@@ -1813,11 +1813,22 @@ _inplace_to_out_of_place[leaky_relu] = leaky_relu, 2
 
 
 @torchsymbol(torch.nn.functional.logsigmoid, is_method=False)
-def logsigmoid(a: TensorProxy, /):
-    return log(sigmoid(a))
+def logsigmoid(a: TensorProxy, /) -> TensorLike:
+    return where(a > 0, -log1p(exp(-a)), a - log1p(exp(a)))
 
 
 _inplace_to_out_of_place[logsigmoid] = logsigmoid, -1
+
+
+# @torchsymbol("log_sigmoid_backward", id="log_sigmoid_backward")
+def log_sigmoid_backward(g: TensorProxy, a: TensorProxy, _: TensorProxy) -> TensorLike:
+    exp_a = exp(-abs(a))
+    z = exp_a / (1 + exp_a)
+    return g * where(a > 0, z, 1 - z)
+    # return g * where(a > 0, exp(-a) / (1 + exp(-a)), 1 - exp(a) / (1 + exp(a)))
+
+
+_inplace_to_out_of_place[log_sigmoid_backward] = log_sigmoid_backward, -1
 
 
 # TODO Should this use clamp? -- Would that propagate NaNs properly?
