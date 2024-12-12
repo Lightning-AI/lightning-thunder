@@ -1808,7 +1808,7 @@ tanhshrink_opinfo = OpInfo(
     ltorch.tanhshrink,
     dtypes=(datatypes.inexact,),
     sample_input_generator=elementwise_unary_generator,
-    torch_reference=torch.nn.functional.tanhshrink,
+    torch_reference=_elementwise_unary_torch(torch.nn.functional.tanhshrink),
     test_directives=(
         # Torch doesn't support CPU float16 or complex32 tanhshrink
         DecorateInfo(
@@ -1819,6 +1819,7 @@ tanhshrink_opinfo = OpInfo(
         ),
         DecorateInfo(
             custom_comparator(partial(assert_close, atol=1e-2, rtol=1e-2)),
+            executors=("nvfuser",),
             dtypes=(
                 datatypes.float16,
                 datatypes.bfloat16,
