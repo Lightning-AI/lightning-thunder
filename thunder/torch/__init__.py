@@ -1906,7 +1906,7 @@ _inplace_to_out_of_place[silu] = silu, 1
 
 
 @torchsymbol(torch.nn.functional.tanhshrink)
-def tanhshrink(a: TensorLike, /):
+def tanhshrink(a: TensorLike, /) -> TensorLike:
     return a - tanh(a)
 
 

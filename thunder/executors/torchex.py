@@ -842,6 +842,7 @@ hardshrink = _register_torch_operation("hardshrink", module=torch.nn.functional)
 hardswish = _register_torch_operation("hardswish", module=torch.nn.functional)
 selu = _register_torch_operation("selu", module=torch.nn.functional)
 silu = _register_torch_operation("silu", module=torch.nn.functional)
+tanhshrink = _register_torch_operation("tanhshrink", module=torch.nn.functional)
 
 
 def _elementwise_unary_with_inplace_checker(a: TensorProxy, /, inplace: bool = False) -> bool:
@@ -858,6 +859,7 @@ _register_elementwise_unary_implementation(ltorch.hardshrink, hardshrink, checke
 _register_elementwise_unary_implementation(ltorch.hardswish, hardswish, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.selu, selu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.silu, silu, checker=_always_executable)
+_register_elementwise_unary_implementation(ltorch.tanhshrink, tanhshrink, checker=_always_executable)
 
 #
 # Elementwise binary operations

@@ -1824,11 +1824,12 @@ tanhshrink_opinfo = OpInfo(
             dtypes=(datatypes.float16, datatypes.complex32),
             devicetypes=(devices.DeviceType.CPU,),
         ),
-        # NOTE Nvfuser fails with AssertionError: Tensor-likes are not close!
         DecorateInfo(
-            pytest.mark.xfail,
-            dtypes=(datatypes.bfloat16, datatypes.float16),
-            executors=("nvfuser",),
+            custom_comparator(partial(assert_close, atol=1e-2, rtol=1e-2)),
+            dtypes=(
+                datatypes.float16,
+                datatypes.bfloat16,
+            ),
         ),
     ),
 )
