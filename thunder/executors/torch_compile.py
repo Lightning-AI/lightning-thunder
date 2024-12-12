@@ -72,7 +72,7 @@ def make_compiled(
     region_trace = TraceCtx(None)
     region_trace.args = sorted_unique_inputs
     region_trace.kwargs = {}
-    region_trace.names = set([a.name for a in region_trace.args])
+    region_trace.names = {a.name for a in region_trace.args}
     with tracectx(region_trace):
         for a in sorted_unique_inputs:
             prims.unpack_trivial(a, name=a.name)

@@ -91,15 +91,17 @@ def test_transform_for_execution_for_callable():
     jfn = thunder.jit(fn, executors=(thunder.executors.torch_compile.torch_compile_ex,))
     assert_close(jfn(a), fn(a))
 
+
 @pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported")
 @requiresCUDA
 @pytest.mark.skipif(not device_supports_bf16(torch.device("cuda")), reason="bf16 is not supported")
 def test_litgpt_fabric_for_callable():
-    from typing import Any, Callable, Optional, Tuple, Union, List, Dict
+    from typing import Any, Optional, Tuple, Union, List, Dict
+    from collections.abc import Callable
     from litgpt.model import Config, GPT
     import torch.nn as nn
 
-    def jit(fn: Callable, executors: List[str]) -> Any:
+    def jit(fn: Callable, executors: list[str]) -> Any:
         assert executors is not None
         return thunder.jit(fn, executors=executors)
 
