@@ -1910,6 +1910,8 @@ def tanhshrink(a: TensorLike, /) -> TensorLike:
     return a - tanh(a)
 
 
+_inplace_to_out_of_place[tanhshrink] = tanhshrink, -1
+
 #
 # Elementwise binary operations
 #
