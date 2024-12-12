@@ -86,7 +86,9 @@ def make_compiled(
             if o is not None:
                 region_trace.add_name(o.name)
         for sbsym in bsym.subsymbols:
-            list(map(lambda o: region_trace.add_name(o.name), filter(lambda o: o is not None and o.name not in region_trace.names, sbsym.flat_outs)))
+            for o in sbsym.flat_outs:
+                if o is not None and o.name not in region_trace.names:
+                    region_trace.add_name(o.name)
 
     # maybe make this the default if no sig info is present?
     region_trace._siginfo = SigInfo("to_be_compiled")
