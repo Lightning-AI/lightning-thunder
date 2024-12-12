@@ -350,8 +350,7 @@ def test_optimizer_unpack(executor, device, dtype):
 
     optimizer = Optimizer([a, b])
     cstep = executor.make_callable(optimizer.step)
-    with torch.no_grad():
-        cstep()
+    cstep()
 
     expected_a = ref_a - 0.1 * a.grad
     assert_close(a, expected_a)

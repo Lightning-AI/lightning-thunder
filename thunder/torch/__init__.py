@@ -1960,7 +1960,8 @@ def copysign_(a, b, /):
 
 @torchsymbol(torch.Tensor.copy_, is_method=True)  # , tags=(prims.OpTags.IN_PLACE,))
 def copy_(a, b, /):
-    return prims.copy_(b, a)
+    cd = get_compile_data()
+    return prims.copy_(b, a, grad_enabled=cd.is_grad_enabled if cd is not None else False)
 
 
 # TODO Implement div

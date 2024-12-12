@@ -494,8 +494,7 @@ def test_inplace_to_tensors_with_grad(executor, device, _):
         x_ref.grad = x.grad.clone().detach()
         y_ref = y.clone().detach()
 
-        with torch.no_grad():
-            res = jitted_f(x, y)
+        res = jitted_f(x, y)
         res_ref = fn(x_ref, y_ref)
 
         torch.testing.assert_close(x, x_ref)
