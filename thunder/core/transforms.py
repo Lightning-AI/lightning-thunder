@@ -1435,6 +1435,25 @@ def _copy_with_setitem_grad(a: TensorProxy, index, value: Number | TensorProxy):
 
 register_grad(pids.COPY_WITH_SETITEM, _copy_with_setitem_grad)
 
+
+def _log_sigmoid_grad(
+    a: TensorProxy,
+) -> TensorProxy:
+    from thunder.torch import abs, exp, log_sigmoid_backward, logsigmoid
+
+    fwd = logsigmoid(a)
+
+    g = get_grad(fwd)
+    z = exp(-abs(a)) if a.device.type == "cpu" else full_like(a, fill_value=0)
+    a_grad = log_sigmoid_backward(g, a, z)
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad("torch.nn.functional.logsigmoid", _log_sigmoid_grad)
+
+
 #
 # Phantom grad transform helpers
 #
@@ -2215,21 +2234,6 @@ def embedding_backward(a, num_weights, padding_idx, scale_grad_by_freq, sparse, 
     padding_idx = -1 if padding_idx is None else padding_idx
     gweight = embedding_backward(g, a, num_weights, padding_idx, scale_grad_by_freq, sparse)
     return gweight
-
-
-@register_augmented_forward("torch.nn.functional.logsigmoid")
-def log_sigmoid_aug_fwd(a):
-    from thunder.torch import logsigmoid, relu
-
-    primal = logsigmoid(a)
-    return VJPDual(primal, (a, a))
-
-
-@register_backward("torch.nn.functional.logsigmoid")
-def log_sigmoid_backward(a, _, g):
-    from thunder.torch import log_sigmoid_backward
-
-    return log_sigmoid_backward(g, a, _)
 
 
 @register_augmented_forward("torch.cumsum")

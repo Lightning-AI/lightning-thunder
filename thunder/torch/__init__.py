@@ -1820,12 +1820,12 @@ def logsigmoid(a: TensorProxy, /) -> TensorLike:
 _inplace_to_out_of_place[logsigmoid] = logsigmoid, -1
 
 
-# @torchsymbol("log_sigmoid_backward", id="log_sigmoid_backward")
-def log_sigmoid_backward(g: TensorProxy, a: TensorProxy, _: TensorProxy) -> TensorLike:
-    exp_a = exp(-abs(a))
-    z = exp_a / (1 + exp_a)
-    return g * where(a > 0, z, 1 - z)
-    # return g * where(a > 0, exp(-a) / (1 + exp(-a)), 1 - exp(a) / (1 + exp(a)))
+@torchsymbol("log_sigmoid_backward", id="log_sigmoid_backward")
+def log_sigmoid_backward(g: TensorProxy, a: TensorProxy, buffer: TensorProxy) -> TensorLike:
+    # buffer is used by PyTorch in cpu-based calculations.  See
+    # https://github.com/pytorch/pytorch/blob/7667235a23e2ffca4d32e6e16aa60a683418e159/torch/_decomp/decompositions.py#L332
+    # This is addressed in the custom grad fn thunder.core.transforms._log_sigmoid_grad.
+    return g * where(a > 0, exp(-a) / (1 + exp(-a)), 1 - exp(a) / (1 + exp(a)))
 
 
 _inplace_to_out_of_place[log_sigmoid_backward] = log_sigmoid_backward, -1
