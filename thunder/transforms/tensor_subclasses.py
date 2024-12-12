@@ -57,7 +57,7 @@ OUTPUT: str = "output"
 
 @run_once
 def warn_tensor_subclass_support() -> None:
-    warnings.warn("Tensor Subclasses with `__torch_dispatch` support is experimental")
+    warnings.warn("Tensor Subclasses with `__torch_dispatch__` defined support is experimental")
 
 
 class OutputWrapperForFxTracing(NamedTuple):
