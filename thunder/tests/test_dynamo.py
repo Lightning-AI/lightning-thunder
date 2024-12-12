@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from looseversion import LooseVersion
 
 from thunder import dtypes
-from thunder.dynamo import ThunderCompiler
+from thunder.dynamo import ThunderCompiler, thunderfx
 from thunder.dynamo.utils import CompilerType
 from thunder.dynamo.compiler_graph_benchmark import ThunderCompilerGraphBenchmarking
 from thunder import last_traces
@@ -788,6 +788,11 @@ def test_checkpoint_converter_submodule():
     decorators=(pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro")),),
 )
 def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, use_pytest_benchmark, tmp_path):
+    if IS_WINDOWS and use_pytest_benchmark:
+        pytest.skip(
+            "Skipping on Windows because this uses torch.compile (see https://github.com/Lightning-AI/lightning-thunder/issues/1326)"
+        )
+
     from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform
     from thunder import nvfuser_executor
     from thunder.transforms.cudagraph import CUDAGraphTransform
@@ -893,6 +898,11 @@ def test_deepcopy_graph_module():
     decorators=(pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro")),),
 )
 def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use_pytest_benchmark, tmp_path):
+    if IS_WINDOWS and use_pytest_benchmark:
+        pytest.skip(
+            "Skipping on Windows because this uses torch.compile (see https://github.com/Lightning-AI/lightning-thunder/issues/1326)"
+        )
+
     x = torch.ones(2, 2, device=device, dtype=dtype, requires_grad=True)
 
     backend = ThunderCompiler()
@@ -920,3 +930,25 @@ def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use
     cmd = "pytest" if use_pytest_benchmark else "python"
     for fname in [s1, s2, s3]:
         check(fname, cmd)
+
+
+@requiresCUDA
+def test_thunderfx():
+    def foo(x):
+        return torch.sin(x) + torch.cos(x)
+
+    x = torch.randn(4, 4, device="cuda", requires_grad=True)
+    cfoo = thunderfx(foo)
+    cfoo(x)
+    thunder_compiled_fns = cfoo._backend.subgraph_infos[0].thunder_compiled_fns
+    assert len(thunder_compiled_fns) == 1
+    assert last_traces(thunder_compiled_fns[0])
+
+    from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform
+
+    cfoo = thunderfx(foo, dynamic=True, transforms=[NvtxProfileTransform()])
+    cfoo(x)
+    thunder_compiled_fns = cfoo._backend.subgraph_infos[0].thunder_compiled_fns
+    assert len(thunder_compiled_fns) == 1
+    trc = last_traces(thunder_compiled_fns[-1])[-1]
+    assert any(bsym.sym.id == "nvtx_range_push" for bsym in trc.bound_symbols)

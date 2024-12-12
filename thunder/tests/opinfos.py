@@ -341,6 +341,7 @@ class OpInfo:
         test_directives=(),
         domain=(None, None),
         singularity_fn=None,
+        singularity_fn_producer=None,
         test_torch_compile_executor=False,
     ):
         self.op = op
@@ -376,6 +377,11 @@ class OpInfo:
         self.test_directives = test_directives
         self.domain = Domain(*domain)
         self.singularity_fn = singularity_fn
+        # singularity_fn_producers are expected to produce a singularity_fn based on a given SampleInput.
+        # This can be useful in cases when the definition of the op function invovles kwargs of the input.
+        self.singularity_fn_producer = (
+            (lambda _: singularity_fn) if singularity_fn_producer is None else singularity_fn_producer
+        )
         self.test_torch_compile_executor = test_torch_compile_executor
 
     def __call__(self, *args, **kwargs):
@@ -1649,6 +1655,7 @@ celu_opinfo = OpInfo(
     dtypes=(datatypes.floating,),
     sample_input_generator=get_elementwise_unary_with_alpha_generator(),
     torch_reference=_elementwise_unary_torch(torch.celu),
+    singularity_fn=lambda x: x,
     test_directives=(),
 )
 elementwise_unary_ops.append(celu_opinfo)
@@ -1738,35 +1745,21 @@ relu6_opinfo = OpInfo(
 elementwise_unary_ops.append(relu6_opinfo)
 
 
-# For positive lambd, hardshrink's singularities occur at lambd and -lambd, the locations of jump discontinuties
-# of its partial derivatives.  Since lambd is passed as an input kwarg, the singularity_fn depends upon the input
-# sample.  Therefore, mutliple opinfos with varying sample generator and singularity_fn pairs are added.
-def get_hardshrink_singularity_fn(lambd):
-    if lambd is None:
-        lambd = 0.5
+# fdm.jvp, which is used in test_vjp_correctness, behaves badly at jump discontinuties of the partial derviatives
+def hardshrink_singularity_fn_producer(sample: SampleInput):
+    lambd = sample.kwargs.get("lambd", 0.5)
     return lambda a: torch.where(a >= 0, a - lambd, a + lambd)
 
 
-def hardshrink_opinfo_factory(lambds):
-    for lambd in lambds:
-        kwargs = {} if lambd is None else {"lambd": lambd}
-        name = "hardshrink_" + str(lambd)
-        singularity_fn = get_hardshrink_singularity_fn(lambd)
-
-        hardshrink_opinfo = OpInfo(
-            ltorch.hardshrink,
-            name=name,
-            dtypes=(datatypes.floating,),
-            sample_input_generator=get_elementwise_unary_with_kwargs_generator([kwargs]),
-            torch_reference=_elementwise_unary_torch(torch.nn.functional.hardshrink),
-            # fdm.jvp, which is used in test_vjp_correctness, behaves badly at jump discontinuties of the partial derviatives
-            singularity_fn=singularity_fn,
-            test_directives=(),
-        )
-        elementwise_unary_ops.append(hardshrink_opinfo)
-
-
-hardshrink_opinfo_factory([None, 0.25, -0.1])
+hardshrink_opinfo = OpInfo(
+    ltorch.hardshrink,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=get_elementwise_unary_with_kwargs_generator([{}, {"lambd": 0.25}, {"lambd": -0.1}]),
+    torch_reference=_elementwise_unary_torch(torch.nn.functional.hardshrink),
+    singularity_fn_producer=hardshrink_singularity_fn_producer,
+    test_directives=(),
+)
+elementwise_unary_ops.append(hardshrink_opinfo)
 
 
 hardswish_opinfo = OpInfo(
