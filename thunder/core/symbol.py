@@ -620,6 +620,7 @@ class BoundSymbol(BoundSymbolInterface):
             import_ctx = {}
         else:
             from thunder.extend import AdHocExecutor
+
             # BoundSymbols of Symbols without Python implementations (either because they
             #   have Python implementations or defined call ctxs) are assumed to need
             #   a module import to run properly
