@@ -72,9 +72,8 @@ def make_compiled(
     region_trace = TraceCtx(None)
     region_trace.args = sorted_unique_inputs
     region_trace.kwargs = {}
-    with tracectx(region_trace):
-        for a in sorted_unique_inputs:
-            prims.unpack_trivial(a, name=a.name)
+    for a in sorted_unique_inputs:
+        region_trace.bound_symbols.append(prims.unpack_trivial.bind(a, name=a.name, output=a))
 
     region_trace.bound_symbols += list(bsyms)
     region_trace.bound_symbols.append(prims.python_return.bind(sorted_unique_outputs, output=None))
@@ -82,6 +81,13 @@ def make_compiled(
         for o in bsym.flat_outs:
             if o is not None:
                 region_trace.add_name(o.name)
+        for sbsym in bsym.subsymbols:
+            for o in sbsym.flat_outs:
+                if o is not None and o.name not in region_trace.names:
+                    region_trace.add_name(o.name)
+    for arg in region_trace.args:
+        if arg.name not in region_trace.names:
+            region_trace.add_name(arg.name)
 
     # maybe make this the default if no sig info is present?
     region_trace._siginfo = SigInfo("to_be_compiled")
