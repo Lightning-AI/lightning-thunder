@@ -5,7 +5,7 @@ import pytest
 
 import thunder
 from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform, nvtx_push, nvtx_pop
-from thunder.tests.framework import requiresCUDA, version_between
+from thunder.tests.framework import requiresCUDA, version_between, BITSANDBYTES_AVAILABLE
 
 
 @requiresCUDA
@@ -117,7 +117,7 @@ def test_materialization():
     version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
     reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1413",
 )
-@pytest.mark.skipif(not package_available("bitsandbytes"), reason="`bitsandbytes` is not available")
+@pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
 @requiresCUDA
 def test_quantization_on_meta():
     from thunder.transforms import MaterializationTransform
@@ -194,10 +194,7 @@ def test_quantization_on_meta():
     version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
     reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1413",
 )
-@pytest.mark.skipif(
-    not package_available("bitsandbytes"),
-    reason="`bitsandbytes` is not available",
-)
+@pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
 @requiresCUDA
 def test_nvfuser_cse():
     with torch.device("cuda"):
@@ -305,7 +302,7 @@ def test_cudagraph_warmup_runs_with_correct_buffers():
     version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
     reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1413",
 )
-@pytest.mark.skipif(not package_available("bitsandbytes"), reason="`bitsandbytes` is not available")
+@pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
 @requiresCUDA
 def test_materialization_init():
     from thunder.transforms import MaterializationTransform
