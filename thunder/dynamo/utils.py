@@ -159,10 +159,12 @@ def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
     # We need to be under trace context to generate proxies.
     with thunder.core.trace.tracectx(TraceCtx()):
 
-        def make_tensor_proxy(arg_node):
+        def make_input_proxy(arg_node):
             # This is a Node in the graph representing a Tensor or tuple of Tensors or
             # a PyTorch object like one representing torch.autocast.
             if isinstance(arg_node, torch.fx.Node):
+                if arg_node.op == "get_attr":
+                    return getattr(arg_node.graph.owning_module, arg_node.target)
                 if "example_value" not in arg_node.meta:
                     # This is a non tensor object like `torch.autocast` ctx manager object.
                     return arg_node
@@ -185,14 +187,14 @@ def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
                     )
                 else:
                     # NOTE - This will be caught will be caught and be part of the SplitReason.
-                    raise TypeError(f"Received `make_tensor_proxy` received example_value which wasn't Tensor or Tuple")
+                    raise TypeError(f"Received `make_input_proxy` received example_value which wasn't Tensor or Tuple")
                 return proxy(example_value)
 
             # This is int, float, etc.
             return arg_node
 
-        proxy_args = torch.fx.map_arg(node.args, make_tensor_proxy)
-        proxy_kwargs = {k: torch.fx.map_arg(v, make_tensor_proxy) for k, v in node.kwargs.items()}
+        proxy_args = torch.fx.map_arg(node.args, make_input_proxy)
+        proxy_kwargs = {k: torch.fx.map_arg(v, make_input_proxy) for k, v in node.kwargs.items()}
         return proxy_args, proxy_kwargs
 
 
