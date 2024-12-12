@@ -438,6 +438,8 @@ class FusionDefinitionWrapper:
     last_used: None | FusionDefinition = None
     last_inputs: None | Sequence[tuple] = None
     store_inputs: bool = False
+    enable_options: None | list[str] = None
+    disable_options: None | list[str] = None
 
     def __call__(self, *args):
         fd = self.get_fd(self.to_descriptors(args))
@@ -446,8 +448,21 @@ class FusionDefinitionWrapper:
         if self.store_inputs:
             self.last_inputs = args
 
+        kwargs = {}
         # Set device if set in one of the "factory" methods like full, iota, or uniform
-        kwargs = {"device": fd._selected_device} if hasattr(fd, "_selected_device") else {}
+        if hasattr(fd, "_selected_device"):
+            kwargs["device"] = fd._selected_device
+
+        if nvfuser_version() >= LooseVersion("0.2.23"):
+            # nvFuser expects empty list instead of None values.
+            kwargs["_enable_options"] = self.enable_options if self.enable_options is not None else []
+            kwargs["_disable_options"] = self.disable_options if self.disable_options is not None else []
+
+        elif self.enable_options or self.disable_options:
+            warnings.warn(
+                f"nv_enable_options/nv_disable_options require nvFuser version 0.2.23 and above, found version {nvfuser_version()}. These options will be ignored."
+            )
+
         with annotate_for_profile(self.name):
             return fd.execute(args, **kwargs)
 
@@ -540,6 +555,10 @@ def create_fusion_definition_wrapper(
     store_inputs: None | bool = get_compile_option(
         "nv_store_fusion_inputs", "Allow nvFuser to store fusion inputs for repro."
     )
+    enable_options: None | list[str] = get_compile_option("nv_enable_options", "List of NVFUSER_ENABLE options to set.")
+    disable_options: None | list[str] = get_compile_option(
+        "nv_disable_options", "List of NVFUSER_DISABLE options to set."
+    )
 
     tensor_indices = []
     for idx, x in enumerate(sorted_unique_inputs):
@@ -561,6 +580,8 @@ def create_fusion_definition_wrapper(
         get_fd.cache_info,
         get_fd.cache_clear,
         store_inputs=store_inputs,
+        enable_options=enable_options,
+        disable_options=disable_options,
     )
     return fdw
 

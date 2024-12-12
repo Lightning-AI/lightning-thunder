@@ -1345,7 +1345,7 @@ def view_as(a: TensorLike, b: TensorLike, /) -> TensorLike:
 
 
 #
-# Elementwise unary operaitons
+# Elementwise unary operations
 #
 # TODO Add type annotations
 
@@ -1801,6 +1801,17 @@ def gelu(a: TensorProxy, /, *, approximate: str = "none") -> TensorLike:
         raise ValueError(f"gelu does not support the approximate={approximate} argument")
 
 
+@torchsymbol(torch.nn.functional.leaky_relu, is_method=False)
+def leaky_relu(a: TensorProxy, /, negative_slope: float = 0.01, inplace: bool = False) -> TensorLike:
+    out = where(a > 0, a, a * negative_slope)
+    if inplace:
+        return prims.copy_(out, a)
+    return out
+
+
+_inplace_to_out_of_place[leaky_relu] = leaky_relu, 2
+
+
 # TODO Should this use clamp? -- Would that propagate NaNs properly?
 @torchsymbol(torch.relu, torch.nn.functional.relu, id="torch.relu", is_method=True)
 def relu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
@@ -1836,6 +1847,18 @@ def relu6(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
 
 
 _inplace_to_out_of_place[relu6] = relu6, 1
+
+
+@torchsymbol(torch.nn.functional.hardshrink, is_method=False)
+def hardshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
+    utils.check(
+        not dtypes.is_complex_dtype(a.dtype),
+        lambda: f"hardshrink not implemented for '{a.dtype}'",
+    )
+    return where(abs(a) <= lambd, 0, a)
+
+
+_inplace_to_out_of_place[hardshrink] = hardshrink, -1
 
 
 @torchsymbol(torch.nn.functional.hardswish, id="torch.hardswish", is_method=False)
@@ -2677,8 +2700,21 @@ register_function(torch.Tensor.clone, clone)
 register_method("clone", clone)
 
 
+@torchsymbol(torch.nn.functional.glu, is_method=False)
+def glu(a: TensorProxy, /, dim: int = -1) -> TensorProxy:
+    dim = utils.canonicalize_dim(len(a.shape), dim)
+    utils.check(
+        a.shape[dim] % 2 == 0,
+        lambda: f"Halving dimension must be even, but dimension {dim} is size {a.shape[dim]}",
+    )
+    chunk_size = a.shape[dim] // 2
+    left, right = split(a, (chunk_size, chunk_size), dim=dim)
+    out = left * sigmoid(right)
+    return out
+
+
 @torchsymbol(torch.mean, is_method=True)
-def mean(a: TensorProxy, /, dim=None, keepdim: bool = False, *, dtype=None):
+def mean(a: TensorProxy, /, dim=None, keepdim: bool = False, *, dtype=None) -> TensorProxy:
     dtype = dtype if dtype is not None else a.dtype
     utils.check(
         not utils.is_integer_dtype(dtype) and not utils.is_boolean_dtype(dtype),
@@ -4879,6 +4915,10 @@ def item(a: TensorLike) -> Number:
     return prims.item(a)
 
 
+# PyTorch does not support backward for torch.item
+register_grad(item.id, item)
+
+
 # TODO Move this to nn.functional
 @torchsymbol(torch.nn.functional.linear)
 def linear(a: TensorLike, w: TensorLike, /, bias: None | TensorLike = None) -> TensorLike:
@@ -5740,6 +5780,7 @@ def register_default_torch_op(torchfn: Callable, torch_module):
         name=torchfn_name,
         meta=_fn,
         id=f"{torch_module.__name__}.{torchfn_name}",
+        is_prim=True,
         tags=(prims.OpTags.AUTO_REGISTERED,),
     )
 

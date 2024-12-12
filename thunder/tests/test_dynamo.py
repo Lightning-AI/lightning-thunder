@@ -1,6 +1,8 @@
 import pytest
 import warnings
 import itertools
+import os
+from subprocess import run
 import torch
 import torch.fx
 import torch.nn as nn
@@ -8,7 +10,7 @@ import torch.nn.functional as F
 from looseversion import LooseVersion
 
 from thunder import dtypes
-from thunder.dynamo import ThunderCompiler
+from thunder.dynamo import ThunderCompiler, thunderfx
 from thunder.dynamo.utils import CompilerType
 from thunder.dynamo.compiler_graph_benchmark import ThunderCompilerGraphBenchmarking
 from thunder import last_traces
@@ -448,10 +450,6 @@ def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
             reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
         ),
         pytest.mark.skipif(
-            LooseVersion(torch.__version__) < LooseVersion("2.6.0"),
-            reason="Skip until the Torch bug is fixed - https://github.com/pytorch/pytorch/pull/139275",
-        ),
-        pytest.mark.skipif(
             version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
             reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
         ),
@@ -558,7 +556,7 @@ def test_empty_autocast():
 
     all_nodes = itertools.chain(
         backend.subgraph_infos[0].split_graph_module.graph.nodes,
-        backend.subgraph_infos[0].split_graph_module.thunder_1.graph.nodes,
+        backend.subgraph_infos[0].split_graph_module.thunder_0.graph.nodes,
     )
     assert all(node.target not in autocast_ops for node in all_nodes)
 
@@ -575,7 +573,7 @@ def test_empty_autocast():
     backend = _call_thunder_backend(f, (x,))
     all_nodes = itertools.chain(
         backend.subgraph_infos[0].split_graph_module.graph.nodes,
-        backend.subgraph_infos[0].split_graph_module.thunder_1.graph.nodes,
+        backend.subgraph_infos[0].split_graph_module.thunder_0.graph.nodes,
     )
     assert sum(node.target in autocast_ops for node in all_nodes) == 2
 
@@ -782,3 +780,175 @@ def test_checkpoint_converter_submodule():
     for n in submodule.graph.nodes:
         if n.op == "call_function":
             assert isinstance(n.target, Symbol)
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=[DynamoThunderExecutor],
+    decorators=(pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro")),),
+)
+def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, use_pytest_benchmark, tmp_path):
+    if IS_WINDOWS and use_pytest_benchmark:
+        pytest.skip(
+            "Skipping on Windows because this uses torch.compile (see https://github.com/Lightning-AI/lightning-thunder/issues/1326)"
+        )
+
+    from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform
+    from thunder import nvfuser_executor
+    from thunder.transforms.cudagraph import CUDAGraphTransform
+
+    if device.startswith("cuda"):
+        backend = ThunderCompiler(
+            transforms=[
+                NvtxProfileTransform(),
+                CUDAGraphTransform(),
+            ],
+            executors=[nvfuser_executor],
+            cache="constant values",
+            langctx=None,
+            record_history=False,
+        )
+    else:
+        backend = ThunderCompiler(executors=None)
+    # Test non-contiguous input tensor
+    x = make_tensor((4, 4), low=3, high=10, dtype=torch.int64, device=device, noncontiguous=True)
+
+    @torch.compile(backend=backend)
+    def func(x):
+        x = torch.sin(x)
+        if x.sum() > 0:
+            return x + 1
+        else:
+            return x - 1
+
+    out = func(x)
+    backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark=use_pytest_benchmark)
+
+    s1 = f"{tmp_path}/graph0_thunder_0.py"
+    s2 = f"{tmp_path}/graph1_thunder_0.py"
+    assert os.path.exists(s1)
+    assert os.path.exists(s2)
+    cmd = "pytest" if use_pytest_benchmark else "python"
+    result1 = run([cmd, s1], capture_output=True, text=True)
+    result2 = run([cmd, s2], capture_output=True, text=True)
+
+    assert result1.returncode == 0, f"Reproducer {s1} failed with return code {result1.returncode}"
+    assert result2.returncode == 0, f"Reproducer {s2} failed with return code {result2.returncode}"
+
+
+@requiresCUDA
+@pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro"))
+def test_dynamo_reproducer_submodules(use_pytest_benchmark, tmp_path):
+    from thunder.tests.distributed.helper import ToyModel
+    import torch.nn as nn
+
+    class SimpleModel(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.sub_mod = ToyModel()
+            self.seq = nn.Sequential(self.sub_mod, nn.ReLU())
+
+        def forward(self, x):
+            x = torch.sin(x)
+            x = self.seq(x)
+            return x
+
+    x = torch.randn(1, ToyModel.N_IN, device="cuda", requires_grad=True)
+    model = SimpleModel().cuda()
+    backend = ThunderCompiler()
+    jf = torch.compile(backend=backend)(model)
+    out = jf(x)
+    backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark=use_pytest_benchmark)
+
+    s1 = f"{tmp_path}/graph0_thunder_0.py"
+    assert os.path.exists(s1)
+    cmd = "pytest" if use_pytest_benchmark else "python"
+    result1 = run([cmd, s1], capture_output=True, text=True)
+    assert result1.returncode == 0, f"Reproducer {s1} failed with return code {result1.returncode}"
+
+
+def test_deepcopy_graph_module():
+    class MyModule(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+
+        def forward(self, x):
+            y = x + 1
+
+    m = MyModule()
+    gm = torch.fx.symbolic_trace(m)
+    n = gm.graph.find_nodes(op="output")
+    gm.graph.erase_node(n[0])
+    import thunder
+
+    _, subgraph_info = thunder.dynamo.splitter._splitter(gm, thunder.jit, thunder.jit, [])
+    original_split_gm = subgraph_info.original_split_graph_module
+    assert original_split_gm.graph.find_nodes(op="output")
+    for subm in original_split_gm.children():
+        assert subm.graph.find_nodes(op="output")
+    import copy
+
+    # No assertion error
+    copy_gm = copy.deepcopy(original_split_gm)
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=[DynamoThunderExecutor],
+    decorators=(pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro")),),
+)
+def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use_pytest_benchmark, tmp_path):
+    if IS_WINDOWS and use_pytest_benchmark:
+        pytest.skip(
+            "Skipping on Windows because this uses torch.compile (see https://github.com/Lightning-AI/lightning-thunder/issues/1326)"
+        )
+
+    x = torch.ones(2, 2, device=device, dtype=dtype, requires_grad=True)
+
+    backend = ThunderCompiler()
+
+    def func(x):
+        # torch.sinc has automatic fallback registered,
+        # so that operation will be given to inductor.
+        x = x.exp()
+        y = torch.sinc(x) + torch.cos(x)
+        y = y + torch.sinc(x)
+        return y + 1
+
+    cfunc = torch.compile(func, backend=backend)
+    actual = cfunc(x)
+    backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark)
+
+    def check(file_name, cmd):
+        assert os.path.exists(file_name)
+        result = run([cmd, file_name], capture_output=True, text=True)
+        assert result.returncode == 0, f"Reproducer {file_name} failed with return code {result.returncode}"
+
+    s1 = f"{tmp_path}/graph0_thunder_0.py"
+    s2 = f"{tmp_path}/graph0_thunder_2.py"
+    s3 = f"{tmp_path}/graph0_thunder_4.py"
+    cmd = "pytest" if use_pytest_benchmark else "python"
+    for fname in [s1, s2, s3]:
+        check(fname, cmd)
+
+
+@requiresCUDA
+def test_thunderfx():
+    def foo(x):
+        return torch.sin(x) + torch.cos(x)
+
+    x = torch.randn(4, 4, device="cuda", requires_grad=True)
+    cfoo = thunderfx(foo)
+    cfoo(x)
+    thunder_compiled_fns = cfoo._backend.subgraph_infos[0].thunder_compiled_fns
+    assert len(thunder_compiled_fns) == 1
+    assert last_traces(thunder_compiled_fns[0])
+
+    from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform
+
+    cfoo = thunderfx(foo, dynamic=True, transforms=[NvtxProfileTransform()])
+    cfoo(x)
+    thunder_compiled_fns = cfoo._backend.subgraph_infos[0].thunder_compiled_fns
+    assert len(thunder_compiled_fns) == 1
+    trc = last_traces(thunder_compiled_fns[-1])[-1]
+    assert any(bsym.sym.id == "nvtx_range_push" for bsym in trc.bound_symbols)

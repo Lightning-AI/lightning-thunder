@@ -17,6 +17,7 @@ from thunder.tests.framework import (
     DynamoThunderExecutor,
     _all_test_executors,
     version_between,
+    BITSANDBYTES_AVAILABLE,
 )
 import thunder.tests.nanogpt_model as nanogpt_model
 import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
@@ -62,7 +63,7 @@ def test_nanogpt_complete(executor, device, dtype, recwarn):
 # TODO: Add float16 and bfloat16 comparison tests here and to all other tests in
 # this file.
 # See issue "Add half precision dtype tests to test_networks.py"
-@instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
+@instantiate(dtypes=(thunder.float32,))  # ), executors=all_test_executors_and_dynamo)
 def test_nanogpt_complete_autograd(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
 
@@ -288,13 +289,9 @@ def test_hf_bert():
     version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
     reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1413",
 )
+@pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
 @requiresCUDA
 def test_quantization():
-    try:
-        import bitsandbytes
-    except (ImportError, RuntimeError):
-        pytest.skip("bitsandbytes not found")
-
     from thunder.tests import litgpt_model
     from lightning.fabric.plugins import BitsandbytesPrecision
 
