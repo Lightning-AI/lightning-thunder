@@ -134,8 +134,9 @@ def _splitter(
             supported_partitions.add(partition_cnt)
         return partition_cnt
 
-    # `split_module` iterates over nodes and determines the partition to place them based on the callback.
     gm.graph.eliminate_dead_code()
+    gm.recompile()
+    # `split_module` iterates over nodes and determines the partition to place them based on the callback.
     original_split_gm: torch.fx.GraphModule = split_module(
         gm, root_m=None, split_callback=callback, keep_original_order=True, keep_original_node_name=True
     )

@@ -163,8 +163,11 @@ def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
             # This is a Node in the graph representing a Tensor or tuple of Tensors or
             # a PyTorch object like one representing torch.autocast.
             if isinstance(arg_node, torch.fx.Node):
+                # Higher-order operator nodes take get_attr nodes as input to get the called module
                 if arg_node.op == "get_attr":
-                    return getattr(arg_node.graph.owning_module, arg_node.target)
+                    attr = getattr(arg_node.graph.owning_module, arg_node.target)
+                    if isinstance(attr, torch.nn.Module):
+                        return attr
                 if "example_value" not in arg_node.meta:
                     # This is a non tensor object like `torch.autocast` ctx manager object.
                     return arg_node
@@ -372,13 +375,15 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
         return False, split_reason
 
     # The checkpointed function must be fully supported by Thunder
-    if target is torch.ops.higher_order.tag_activation_checkpoint:
+    if target in (torch.ops.higher_order.tag_activation_checkpoint, torch.ops.higher_order.autograd_function_apply):
         m = node.graph.owning_module
-        get_attr_node = node.args[0]
-        assert get_attr_node.op == "get_attr"
-        checkpointed_fn = getattr(m, get_attr_node.target)
-        is_module_supported, split_reason = is_graphmodule_supported_by_thunder(checkpointed_fn)
-        return is_module_supported, split_reason
+        for arg_node in node.args:
+            if arg_node.op == "get_attr":
+                called_module = getattr(m, arg_node.target)
+                is_module_supported, split_reason = is_graphmodule_supported_by_thunder(called_module)
+                if not is_module_supported:
+                    return is_module_supported, split_reason
+        return True, None
 
     # If thunder has a mapping for this operation, try executing the meta function and see.
     # We have a symbol for `torch.where`, but we don't support one overload of it.
