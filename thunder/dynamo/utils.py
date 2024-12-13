@@ -348,7 +348,6 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
 
     target = node.target  # Target is the function to call.
     if node.op == "call_method":
-        self_arg = node.args[0]
         target = getattr(torch.Tensor, node.target, None)
         assert target is not None, f"Failed to find method {node.target}"
 
