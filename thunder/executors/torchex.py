@@ -861,7 +861,25 @@ _register_elementwise_unary_implementation(ltorch.leaky_relu, leaky_relu, checke
 _register_elementwise_unary_implementation(
     ltorch.log_sigmoid_backward, log_sigmoid_backward, checker=_always_executable
 )
-_register_elementwise_unary_implementation(ltorch.logsigmoid, logsigmoid)
+# _register_elementwise_unary_implementation(ltorch.logsigmoid, logsigmoid)
+
+
+def log_sigmoid_grad_transform(a):
+    fwd = logsigmoid(a)
+
+    g = get_grad(fwd)
+    # NOTE PyTorch's CPU computation for logsigmoid's grad uses an additional "buffer" tensor, see
+    # https://github.com/pytorch/pytorch/blob/7667235a23e2ffca4d32e6e16aa60a683418e159/torch/_decomp/decompositions.py#L332
+    buffer = exp(-abs(a))
+    a_grad = log_sigmoid_backward(g, a, buffer)
+
+    put_grad(a, a_grad)
+    return fwd
+
+
+ex.register_implementation(
+    ltorch.logsigmoid, logsigmoid, checker=_elementwise_unary_checker, grad_transform=log_sigmoid_grad_transform
+)
 _register_elementwise_unary_implementation(ltorch.relu, relu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.relu6, relu6, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.selu, selu, checker=_elementwise_unary_with_inplace_checker)
