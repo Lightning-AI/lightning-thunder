@@ -1437,29 +1437,29 @@ def _copy_with_setitem_grad(a: TensorProxy, index, value: Number | TensorProxy):
 register_grad(pids.COPY_WITH_SETITEM, _copy_with_setitem_grad)
 
 
-# def _log_sigmoid_grad(
-#     a: TensorProxy,
-# ) -> TensorProxy:
-#     from thunder.torch import abs, exp, log_sigmoid_backward, logsigmoid
+def _log_sigmoid_grad(
+    a: TensorProxy,
+) -> TensorProxy:
+    from thunder.torch import abs, exp, log_sigmoid_backward, logsigmoid
 
-#     fwd = logsigmoid(a)
+    fwd = logsigmoid(a)
 
-#     g = get_grad(fwd)
-#     if a.device.type == "cpu":
-#         # NOTE PyTorch's CPU computation for logsigmoid's grad uses an additional "buffer" tensor, see
-#         # https://github.com/pytorch/pytorch/blob/7667235a23e2ffca4d32e6e16aa60a683418e159/torch/_decomp/decompositions.py#L332
-#         buffer = exp(-abs(a))
-#         a_grad = log_sigmoid_backward(g, a, buffer)
-#     else:
-#         # Here a placeholder tensor is provided.
-#         placeholder_buffer = empty((0,), device=a.device, dtype=a.dtype)
-#         a_grad = log_sigmoid_backward(g, a, placeholder_buffer)
-#     put_grad(a, a_grad)
+    g = get_grad(fwd)
+    if a.device.type == "cpu":
+        # NOTE PyTorch's CPU computation for logsigmoid's grad uses an additional "buffer" tensor, see
+        # https://github.com/pytorch/pytorch/blob/7667235a23e2ffca4d32e6e16aa60a683418e159/torch/_decomp/decompositions.py#L332
+        buffer = exp(-abs(a))
+        a_grad = log_sigmoid_backward(g, a, buffer)
+    else:
+        # Here a placeholder tensor is provided.
+        placeholder_buffer = empty((0,), device=a.device, dtype=a.dtype)
+        a_grad = log_sigmoid_backward(g, a, placeholder_buffer)
+    put_grad(a, a_grad)
 
-#     return fwd
+    return fwd
 
 
-# register_grad("torch.nn.functional.logsigmoid", _log_sigmoid_grad)
+register_grad("torch.nn.functional.logsigmoid", _log_sigmoid_grad)
 
 
 #
