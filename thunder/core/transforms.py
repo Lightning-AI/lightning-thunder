@@ -64,6 +64,7 @@ from thunder.core.utils import (
 )
 import thunder.clang as clang
 from thunder.clang import (
+    empty,
     full,
     full_like,
     unsqueeze,
@@ -1447,11 +1448,12 @@ def _log_sigmoid_grad(
     if a.device.type == "cpu":
         # NOTE PyTorch's CPU computation for logsigmoid's grad uses an additional "buffer" tensor, see
         # https://github.com/pytorch/pytorch/blob/7667235a23e2ffca4d32e6e16aa60a683418e159/torch/_decomp/decompositions.py#L332
-        z = exp(-abs(a))
-        a_grad = log_sigmoid_backward(g, a, z)
+        buffer = exp(-abs(a))
+        a_grad = log_sigmoid_backward(g, a, buffer)
     else:
         # Here a placeholder tensor is provided.
-        a_grad = log_sigmoid_backward(g, a, full((1,), fill_value=0, device=a.device))
+        placeholder_buffer = empty((0,), device=a.device, dtype=a.dtype)
+        a_grad = log_sigmoid_backward(g, a, placeholder_buffer)
     put_grad(a, a_grad)
 
     return fwd
