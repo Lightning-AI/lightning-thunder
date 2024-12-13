@@ -1444,8 +1444,14 @@ def _log_sigmoid_grad(
     fwd = logsigmoid(a)
 
     g = get_grad(fwd)
-    z = exp(-abs(a)) if a.device.type == "cpu" else full_like(a, fill_value=0)
-    a_grad = log_sigmoid_backward(g, a, z)
+    if a.device.type == "cpu":
+        # NOTE PyTorch's CPU computation for logsigmoid's grad uses an additional "buffer" tensor, see
+        # https://github.com/pytorch/pytorch/blob/7667235a23e2ffca4d32e6e16aa60a683418e159/torch/_decomp/decompositions.py#L332
+        z = exp(-abs(a))
+        a_grad = log_sigmoid_backward(g, a, z)
+    else:
+        # Here a placeholder tensor is provided.
+        a_grad = log_sigmoid_backward(g, a, full((1,), fill_value=0, device=a.device))
     put_grad(a, a_grad)
 
     return fwd
