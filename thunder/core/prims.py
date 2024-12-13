@@ -4239,6 +4239,10 @@ def printer_of_tensor_subclass_flatten(
     return s
 
 
+# NOTE(crcrpar): The behavior is different from PyTorch `subclass_tensor.__tensor_flatten__()`
+# that returns a list of tensor attr names and a dict of const metadata. In Thunder traces,
+# const values could be obviated and actual tensor proxies would be more useful
+# than tensor attr names.
 def flatten_tensor_subclass_meta(t: SubclassTensorProxy) -> tuple[TensorProxy, ...]:
     tensor_attr_names, metadata = t.__tensor_flatten__()
     tensors = tuple(getattr(t, name) for name in tensor_attr_names)
