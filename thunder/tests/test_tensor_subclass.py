@@ -285,7 +285,7 @@ def test_torchao_float8_linear(executor, device, dtype, bias):
         jitted = executor.make_callable(fp8_model)
 
     if bias and dtype == thunder.core.dtypes.bfloat16 and executor == nvFuserExecutor:
-        with pytest.raises(RuntimeError, match="INTERNAL ASSERT FAILED"):
+        with pytest.raises(RuntimeError, match="Failed to compute the min-cut on the graph due to a path with infinite capacity"):
             jitted(x)
         return
     actual = jitted(x)
