@@ -454,9 +454,7 @@ class DesugarTensorSubclass:
         self,
         trace: TraceCtx,
     ) -> tuple[GraphModule, tuple[OutputWrapperForFxTracing, ...], tuple[torch.Tensor, ...], PyTreeSpec]:
-
         def create_ctor(unflatten_method, tensor_names):
-
             def ctor(tensors, metadata):
                 inner_tensors = dict(zip(tensor_names, tensors))
                 return unflatten_method(inner_tensors, metadata, -1, -1)
@@ -636,6 +634,69 @@ class DesugarTensorSubclass:
         return self.translate_fx_graph_into_bsym(bsym_with_modified_output, fx)
 
 
+def tensor_subclass_dce(trace: TraceCtx) -> TraceCtx:
+    """Remove ``tensor.__tensor_flatten__``s as possible.
+
+    This function tries to remove flattening of tensor subclass
+    by replacing their outputs with tensor args of ``tensor``\'s constructor,
+    either '`TensorSubclass(...)` or `TensorSubclass.__tensor_unflatten__(...)`.
+
+    This function does not remove ``TensorSubclass(...)`` nor ``TensorSubclass.__tensor_unflatten__(...)``
+    as they could be a saved tensor for backward.
+    """
+    start_time_ns = time.perf_counter_ns()
+    swap_map: dict[Variable, TensorProxy] = {}
+    producer_map, consumer_map = utils.producers_and_consumers(trace)
+    bsym_to_exclude: set[BoundSymbol] = set()
+
+    subclass_flatten_bsym: BoundSymbol
+    for subclass_flatten_bsym in filter(
+        lambda bsym: bsym.sym.id == prims.PrimIDs.FLATTEN_TENSOR_SUBCLASS,
+        trace.bound_symbols,
+    ):
+        subclass_tensor_proxy: SubclassTensorProxy = subclass_flatten_bsym.flat_args[0]
+        flatten_tensors: tuple[TensorProxy, ...] = subclass_flatten_bsym.output
+        ctor_bsym: BoundSymbol = producer_map[subclass_tensor_proxy]
+        match ctor_bsym.sym.id:
+            case prims.PrimIDs.TENSOR_SUBCLASS_CTOR:
+                ctor_tensors: list[TensorProxy] = ctor_bsym.args[6]
+            case prims.PrimIDs.UNFLATTEN_TENSOR_SUBCLASS:
+                ctor_tensors: list[TensorProxy] = list(ctor_bsym.args[1].values())
+            case _:
+                continue
+        utils.check(
+            len(flatten_tensors) == len(ctor_tensors),
+            lambda: f"{flatten_tensors} and {ctor_tensors} have different number of tensors",
+        )
+
+        for k, v in zip(flatten_tensors, ctor_tensors):
+            if k.name == v.name:
+                continue
+            swap_map[variableify(k)] = v
+        bsym_to_exclude.add(subclass_flatten_bsym)
+
+    if not swap_map:
+        return trace
+
+    new_bsyms: list[BoundSymbol] = []
+    bsym: BoundSymbol
+    for bsym in trace.bound_symbols:
+        if bsym in bsym_to_exclude:
+            continue
+        new_bsyms.append(bsym.from_bsym_swap_proxies(swap_map, skip_output=True))
+
+    new_trace = from_trace(trace)
+    new_trace.bound_symbols = new_bsyms
+    end_time_ns = time.perf_counter_ns()
+    elapsed_time_ns = end_time_ns - start_time_ns
+    elapsed_time_millis = elapsed_time_ns // 1000000
+    new_trace.set_provenance(
+        TraceProvenance(f"DCE of Tensor Subclass Flattening/Unflattening (took {elapsed_time_millis} milliseconds)")
+    )
+
+    return new_trace
+
+
 def flatten_tensor_subclasses(trace: TraceCtx) -> TraceCtx:
     """Flatten tensor subclasses in ``computation_trace``.
 
@@ -683,5 +744,6 @@ def flatten_tensor_subclasses(trace: TraceCtx) -> TraceCtx:
     computation_trace_with_subclass_tensor_proxy_output.set_provenance(
         TraceProvenance(f"tensor subclasses desugared (took {elapsed_time_millis} milliseconds)")
     )
+    csed_computation_trace = tensor_subclass_dce(computation_trace_with_subclass_tensor_proxy_output)
     warn_tensor_subclass_support()
-    return computation_trace_with_subclass_tensor_proxy_output
+    return csed_computation_trace
