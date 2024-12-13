@@ -2,7 +2,7 @@ import pytest
 import warnings
 import itertools
 import os
-from subprocess import run
+import subprocess
 import torch
 import torch.fx
 import torch.nn as nn
@@ -820,11 +820,11 @@ def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, us
     assert os.path.exists(s1)
     assert os.path.exists(s2)
     cmd = "pytest" if use_pytest_benchmark else "python"
-    result1 = run([cmd, s1], capture_output=True, text=True)
-    result2 = run([cmd, s2], capture_output=True, text=True)
+    result1 = subprocess.run([cmd, s1], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    result2 = subprocess.run([cmd, s2], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
-    assert result1.returncode == 0, f"Reproducer {s1} failed with return code {result1.returncode}"
-    assert result2.returncode == 0, f"Reproducer {s2} failed with return code {result2.returncode}"
+    assert result1.returncode == 0, f"Reproducer {s1} failed: {result1}"
+    assert result2.returncode == 0, f"Reproducer {s2} failed: {result2}"
 
 
 @requiresCUDA
@@ -853,8 +853,8 @@ def test_dynamo_reproducer_submodules(use_pytest_benchmark, tmp_path):
     s1 = f"{tmp_path}/graph0_thunder_0.py"
     assert os.path.exists(s1)
     cmd = "pytest" if use_pytest_benchmark else "python"
-    result1 = run([cmd, s1], capture_output=True, text=True)
-    assert result1.returncode == 0, f"Reproducer {s1} failed with return code {result1.returncode}"
+    result1 = subprocess.run([cmd, s1], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert result1.returncode == 0, f"Reproducer {s1} failed: {result1}"
 
 
 def test_deepcopy_graph_module():
@@ -909,8 +909,8 @@ def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use
 
     def check(file_name, cmd):
         assert os.path.exists(file_name)
-        result = run([cmd, file_name], capture_output=True, text=True)
-        assert result.returncode == 0, f"Reproducer {file_name} failed with return code {result.returncode}"
+        result = subprocess.run([cmd, file_name], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        assert result.returncode == 0, f"Reproducer {file_name} failed: {result}"
 
     s1 = f"{tmp_path}/graph0_thunder_0.py"
     s2 = f"{tmp_path}/graph0_thunder_2.py"
