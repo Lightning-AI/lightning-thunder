@@ -3,6 +3,7 @@ import warnings
 import itertools
 import os
 import subprocess
+import sys
 import torch
 import torch.fx
 import torch.nn as nn
@@ -819,9 +820,13 @@ def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, us
     s2 = f"{tmp_path}/graph1_thunder_0.py"
     assert os.path.exists(s1)
     assert os.path.exists(s2)
-    cmd = "pytest" if use_pytest_benchmark else "python"
-    result1 = subprocess.run([cmd, s1], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    result2 = subprocess.run([cmd, s2], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    cmd = [sys.executable]
+    if use_pytest_benchmark:
+      cmd = cmd + ["-m", "pytest"]
+    cmd1 = cmd + [s1]
+    cmd2 = cmd + [s2]
+    result1 = subprocess.run(cmd1, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    result2 = subprocess.run(cmd2, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
     assert result1.returncode == 0, f"Reproducer {s1} failed: {result1}"
     assert result2.returncode == 0, f"Reproducer {s2} failed: {result2}"
@@ -852,8 +857,11 @@ def test_dynamo_reproducer_submodules(use_pytest_benchmark, tmp_path):
 
     s1 = f"{tmp_path}/graph0_thunder_0.py"
     assert os.path.exists(s1)
-    cmd = "pytest" if use_pytest_benchmark else "python"
-    result1 = subprocess.run([cmd, s1], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    cmd = [sys.executable]
+    if use_pytest_benchmark:
+      cmd = cmd + ["-m", "pytest"]
+    cmd1 = cmd + [s1]
+    result1 = subprocess.run(cmd1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     assert result1.returncode == 0, f"Reproducer {s1} failed: {result1}"
 
 
@@ -915,7 +923,9 @@ def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use
     s1 = f"{tmp_path}/graph0_thunder_0.py"
     s2 = f"{tmp_path}/graph0_thunder_2.py"
     s3 = f"{tmp_path}/graph0_thunder_4.py"
-    cmd = "pytest" if use_pytest_benchmark else "python"
+    cmd = [sys.executable]
+    if use_pytest_benchmark:
+      cmd = cmd + ["-m", "pytest"]
     for fname in [s1, s2, s3]:
         check(fname, cmd)
 
