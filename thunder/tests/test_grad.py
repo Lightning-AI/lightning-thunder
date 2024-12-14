@@ -1493,9 +1493,6 @@ def test_populate_grads_mlp(executor, device, dtype):
 
 @instantiate(dtypes=(thunder.float32,))
 def test_populate_grads_csa(executor, device, dtype):
-    if version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0"):
-        pytest.skip("https://github.com/Lightning-AI/lightning-thunder/issues/1254")
-
     from thunder.benchmarks import NanoGPTCSABenchmark, NanoGPTConfig
 
     # NOTE Currently setting dropout to zero for reproducibility, other settings taken from gpt2 config
@@ -1523,9 +1520,6 @@ def test_populate_grads_csa(executor, device, dtype):
 
 @instantiate(dtypes=(thunder.float32,))
 def test_populate_grads_block(executor, device, dtype):
-    if version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0"):
-        pytest.skip("https://github.com/Lightning-AI/lightning-thunder/issues/1254")
-
     from thunder.benchmarks import NanoGPTBlockBenchmark, NanoGPTConfig
 
     # NOTE Currently setting dropout to zero for reproducibility, other settings taken from gpt2 config
