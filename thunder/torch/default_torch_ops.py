@@ -354,7 +354,6 @@ torch_auto_registered_ops = {
         torch.nn.functional.kl_div,
         torch.nn.functional.l1_loss,
         torch.nn.functional.local_response_norm,
-        torch.nn.functional.logsigmoid,
         torch.nn.functional.lp_pool1d,
         torch.nn.functional.lp_pool2d,
         torch.nn.functional.lp_pool3d,
