@@ -917,7 +917,8 @@ def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use
 
     def check(file_name, cmd):
         assert os.path.exists(file_name)
-        result = subprocess.run([cmd, file_name], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        cmd = cmd + [file_name]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         assert result.returncode == 0, f"Reproducer {file_name} failed: {result}"
 
     s1 = f"{tmp_path}/graph0_thunder_0.py"
