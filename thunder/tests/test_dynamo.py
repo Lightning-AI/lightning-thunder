@@ -822,7 +822,7 @@ def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, us
     assert os.path.exists(s2)
     cmd = [sys.executable]
     if use_pytest_benchmark:
-      cmd = cmd + ["-m", "pytest"]
+        cmd = cmd + ["-m", "pytest"]
     cmd1 = cmd + [s1]
     cmd2 = cmd + [s2]
     result1 = subprocess.run(cmd1, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -859,7 +859,7 @@ def test_dynamo_reproducer_submodules(use_pytest_benchmark, tmp_path):
     assert os.path.exists(s1)
     cmd = [sys.executable]
     if use_pytest_benchmark:
-      cmd = cmd + ["-m", "pytest"]
+        cmd = cmd + ["-m", "pytest"]
     cmd1 = cmd + [s1]
     result1 = subprocess.run(cmd1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     assert result1.returncode == 0, f"Reproducer {s1} failed: {result1}"
@@ -926,7 +926,7 @@ def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use
     s3 = f"{tmp_path}/graph0_thunder_4.py"
     cmd = [sys.executable]
     if use_pytest_benchmark:
-      cmd = cmd + ["-m", "pytest"]
+        cmd = cmd + ["-m", "pytest"]
     for fname in [s1, s2, s3]:
         check(fname, cmd)
 
