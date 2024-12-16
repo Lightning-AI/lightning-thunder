@@ -333,7 +333,6 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
 
     target = node.target  # Target is the function to call.
     if node.op == "call_method":
-        self_arg = node.args[0]
         target = getattr(torch.Tensor, node.target, None)
         assert target is not None, f"Failed to find method {node.target}"
 
@@ -656,7 +655,6 @@ def _readable(
         verbose=False,
         include_stride=include_stride,
         include_device=include_device,
-        colored=colored,
     )
     module_code = verbose_python_code.src
     module_code = module_code.lstrip("\n")
@@ -755,43 +753,77 @@ Versions of Thunder related libraries:
         del split_reason_str
         if use_pytest_benchmark:
             comment_str += f"""# NOTE: This script requires `pytest-benchmark==4.0.0` to be installed.
-# To execute the script, run `pytest {graph_name}.py`"""
-        import_str = f"from functools import partial\n\nimport torch\nimport thunder\n"
+# To execute the script, run `pytest {graph_name}.py --benchmark-timer=torch.utils.benchmark.utils.timer.timer --benchmark-warmup=on`
+# To check the peak allocated CUDA memory, use --benchmark-json=json_file_name and look at the "max_allocated_memory_MB" field in the json file"""
+        # The packages that are likely to be used by the code generated from the Torch GraphModule
+        code_str = "\n".join([v.import_str for v in torch.fx.graph._custom_builtins.values()])
+        code_str += f"\nfrom functools import partial\nimport thunder\n"
         if has_cuda_args:
-            import_str += "from thunder.transforms.cudagraph import CUDAGraphTransform\n"
-            import_str += "from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform\n"
+            code_str += "from thunder.transforms.cudagraph import CUDAGraphTransform\n"
+            code_str += "from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform\n"
         if use_pytest_benchmark:
-            code_str = f"def test_{graph_name}(benchmark):\n{readable}\n"
-        else:
-            code_str = f"def test_{graph_name}():\n{readable}\n"
+            code_str += f"""import pytest
 
-        if any(arg is None for arg in args):
-            code_str += f"# Warning: The inputs that cannot be inferred are set to None, requiring the user to manually give inputs according to the code\n"
-        input_str = f"""inputs = [\n{chr(10).join(arg_like(a) for a in args)}\n"""
-        code_str += f"{_addindent(input_str, 4)}\n]\n"
+# NOTE: The reproducer function has already been processed by TorchDynamo.
+# If we let it go through TorchDynamo again, it could be segmented further.
+# To avoid this, we directly use Inductor here.
+# See issue https://github.com/Lightning-AI/lightning-thunder/issues/1521
+def torch_inductor(fn, inputs):
+    from torch._inductor import compile as inductor_compile
+    from torch.fx import symbolic_trace
 
-        if not use_pytest_benchmark:
-            code_str += f"compiled = thunder.jit(DynamoModule(), {thunder_options_str})\n"
-            code_str += "compiled(*inputs)"
-        else:
-            code_str += "from thunder.dynamo.compiler_graph_benchmark import ThunderCompilerGraphBenchmarking\n"
-            code_str = f"""{code_str}
+    fx_graph = symbolic_trace(fn)
+    return inductor_compile(fx_graph, inputs)
+
 bench_executors_dict = {{}}
 bench_executors_dict["thunder"]=partial(thunder.jit, {thunder_options_str})
-bench_executors_dict["torch.compile"]=torch.compile
-bench_executors_dict["dynamo_eager"]=partial(torch.compile, backend="eager")
+bench_executors_dict["torch_inductor"]=torch_inductor
 bench_executors_dict["eager"]=None
 """
             if has_cuda_args:
-                code_str = f"""{code_str}bench_executors_dict["thunder_cugraph"]=partial(thunder.jit, transform=CUDAGraphTransform())\n"""
+                code_str += f"""bench_executors_dict["thunder_cugraph"]=partial(thunder.jit, transform=CUDAGraphTransform())\n"""
             code_str += f"""
-backend = ThunderCompilerGraphBenchmarking(benchmark, executors=bench_executors_dict)
-compiled = torch.compile(backend=backend)(DynamoModule())
-compiled(*inputs)
+executors = list(bench_executors_dict.values())
+executor_ids = list(bench_executors_dict.keys())
+
+@pytest.mark.parametrize(
+    "executor,",
+    executors,
+    ids=executor_ids,
+)"""
+            func_str = f"def test_{graph_name}(benchmark, executor):\n{readable}\n"
+        else:
+            func_str = f"def test_{graph_name}():\n{readable}\n"
+
+        if any(arg is None for arg in args):
+            func_str += f"# Warning: The inputs that cannot be inferred are set to None, requiring the user to manually give inputs according to the code\n"
+        input_str = f"""inputs = [\n{chr(10).join(arg_like(a) for a in args)}\n"""
+        func_str += f"{_addindent(input_str, 4)}\n]\n"
+
+        if not use_pytest_benchmark:
+            func_str += f"compiled = thunder.jit(DynamoModule(), {thunder_options_str})\n"
+            func_str += "compiled(*inputs)"
+        else:
+            func_str = f"""{func_str}
+mod = DynamoModule()
+if executor == None:
+    compiled = mod
+elif executor == torch_inductor:
+    compiled = executor(mod, inputs)
+else:
+    compiled = executor(mod)
+"""
+            if not has_cuda_args:
+                func_str += f"""benchmark(compiled, *inputs)"""
+            else:
+                func_str += f"""from thunder.benchmarks import record_peak_allocated_memory
+
+with record_peak_allocated_memory(benchmark):
+    benchmark(compiled, *inputs)
 """
         print(comment_str, file=f)
-        print(import_str, file=f)
-        print(_addindent(code_str, 4), file=f)
+        print(code_str, file=f)
+        print(_addindent(func_str, 4), file=f)
 
         if not use_pytest_benchmark:
             print(f"\ntest_{graph_name}()", file=f)

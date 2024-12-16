@@ -64,6 +64,7 @@ from thunder.core.utils import (
 )
 import thunder.clang as clang
 from thunder.clang import (
+    empty,
     full,
     full_like,
     unsqueeze,
@@ -1435,6 +1436,32 @@ def _copy_with_setitem_grad(a: TensorProxy, index, value: Number | TensorProxy):
 
 register_grad(pids.COPY_WITH_SETITEM, _copy_with_setitem_grad)
 
+
+def _log_sigmoid_grad(
+    a: TensorProxy,
+) -> TensorProxy:
+    from thunder.torch import abs, exp, log_sigmoid_backward, logsigmoid
+
+    fwd = logsigmoid(a)
+
+    g = get_grad(fwd)
+    if a.device.type == "cpu":
+        # NOTE PyTorch's CPU computation for logsigmoid's grad uses an additional "buffer" tensor, see
+        # https://github.com/pytorch/pytorch/blob/7667235a23e2ffca4d32e6e16aa60a683418e159/torch/_decomp/decompositions.py#L332
+        buffer = exp(-abs(a))
+        a_grad = log_sigmoid_backward(g, a, buffer)
+    else:
+        # Here a placeholder tensor is provided.
+        placeholder_buffer = empty((0,), device=a.device, dtype=a.dtype)
+        a_grad = log_sigmoid_backward(g, a, placeholder_buffer)
+    put_grad(a, a_grad)
+
+    return fwd
+
+
+register_grad("torch.nn.functional.logsigmoid", _log_sigmoid_grad)
+
+
 #
 # Phantom grad transform helpers
 #
@@ -1496,7 +1523,17 @@ def grad(
 
             gradtrc = wrap_return_value_together_with_arguments(gradtrc)
             gradtrc = dce(gradtrc)
-            return prologue_trc, gradtrc, epilogue_trc
+            grad_output = gradtrc.output
+            pro_to_epi = prologue_trc.output[1]
+            if type(grad_output) == dict:
+                grad_output = grad_output["output"]
+
+            def new_epilogue(*args):
+                return args
+
+            new_epilogue_trc = construct_trace()(new_epilogue, *pro_to_epi, *grad_output)
+
+            return prologue_trc, gradtrc, new_epilogue_trc
 
     cfn._using_grad_transform = True
     _grad_transform = _GradTransform()

@@ -17,6 +17,7 @@ from thunder.tests.framework import (
     DynamoThunderExecutor,
     _all_test_executors,
     version_between,
+    BITSANDBYTES_AVAILABLE,
 )
 import thunder.tests.nanogpt_model as nanogpt_model
 import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
@@ -288,13 +289,9 @@ def test_hf_bert():
     version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
     reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1413",
 )
+@pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
 @requiresCUDA
 def test_quantization():
-    try:
-        import bitsandbytes
-    except (ImportError, RuntimeError):
-        pytest.skip("bitsandbytes not found")
-
     from thunder.tests import litgpt_model
     from lightning.fabric.plugins import BitsandbytesPrecision
 
@@ -407,8 +404,7 @@ def test_thunderfx_mistral_nemo_small():
     device = torch.device("cuda")
     model.to(device)
     model.train()
-    th_backend = thunder.dynamo.ThunderCompiler()
-    mdl = torch.compile(model, backend=th_backend)
+    mdl = thunder.dynamo.thunderfx(model)
 
     batch_size = 1
     iid_size = (batch_size, config.max_position_embeddings)
@@ -420,7 +416,7 @@ def test_thunderfx_mistral_nemo_small():
     grad_logits = torch.randn_like(logits)
     logits.backward(grad_logits)
 
-    assert th_backend.subgraph_infos, "Should have at least 1 subgraph"
+    assert mdl._backend.subgraph_infos, "Should have at least 1 subgraph"
 
 
 @pytest.mark.skipif(
@@ -430,7 +426,7 @@ def test_thunderfx_mistral_nemo_small():
 @thunder.tests.framework.requiresCUDA
 @pytest.mark.parametrize("model_id", ["Qwen/Qwen2.5-7B-Instruct", "microsoft/Phi-3-mini-128k-instruct"])
 def test_hf_for_nemo(model_id):
-    from thunder.dynamo import ThunderCompiler
+    from thunder.dynamo import thunderfx
     from transformers import AutoConfig, AutoModelForCausalLM
 
     configuration = AutoConfig.from_pretrained(
@@ -451,8 +447,7 @@ def test_hf_for_nemo(model_id):
     # fullgraph=True used to work with transformers 4.45.2, but it doesn't work
     # with 4.46.2 because of re.findall usage in the loss function
     fullgraph = False
-    backend = ThunderCompiler()
-    compiled_model = torch.compile(model, backend=backend, fullgraph=fullgraph)
+    compiled_model = thunderfx(model, fullgraph=fullgraph)
 
     input_ids = torch.randint(0, configuration.vocab_size, (1, configuration.max_position_embeddings), device="cuda")
     ref_output = model(input_ids=input_ids, labels=input_ids)
@@ -467,7 +462,9 @@ def test_hf_for_nemo(model_id):
     torch.testing.assert_close(compiled_loss, ref_loss, rtol=1e-4, atol=1e-4)
 
     if fullgraph:
-        assert len(backend.subgraph_infos) == 1, "Should have exactly 1 subgraph because of fullgraph=True"
+        assert (
+            len(compiled_model._backend.subgraph_infos) == 1
+        ), "Should have exactly 1 subgraph because of fullgraph=True"
     loss_grad = torch.randn_like(compiled_loss)
 
     grads_ref = torch.autograd.grad(ref_loss, model.parameters(), grad_outputs=loss_grad)

@@ -1812,6 +1812,19 @@ def leaky_relu(a: TensorProxy, /, negative_slope: float = 0.01, inplace: bool = 
 _inplace_to_out_of_place[leaky_relu] = leaky_relu, 2
 
 
+@torchsymbol(torch.nn.functional.logsigmoid, is_method=False)
+def logsigmoid(a: TensorProxy, /) -> TensorLike:
+    return where(a > 0, -log1p(exp(-a)), a - log1p(exp(a)))
+
+
+@torchsymbol("log_sigmoid_backward", id="log_sigmoid_backward")
+def log_sigmoid_backward(g: TensorProxy, a: TensorProxy, buffer: TensorProxy) -> TensorLike:
+    # buffer is used by PyTorch in cpu-based calculations.  See
+    # https://github.com/pytorch/pytorch/blob/7667235a23e2ffca4d32e6e16aa60a683418e159/torch/_decomp/decompositions.py#L332
+    # This is addressed in the custom grad fn thunder.core.transforms._log_sigmoid_grad.
+    return g * where(a > 0, exp(-a) / (1 + exp(-a)), 1 - exp(a) / (1 + exp(a)))
+
+
 # TODO Should this use clamp? -- Would that propagate NaNs properly?
 @torchsymbol(torch.relu, torch.nn.functional.relu, id="torch.relu", is_method=True)
 def relu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
@@ -1858,9 +1871,6 @@ def hardshrink(a: TensorProxy, /, lambd: float = 0.5) -> TensorLike:
     return where(abs(a) <= lambd, 0, a)
 
 
-_inplace_to_out_of_place[hardshrink] = hardshrink, -1
-
-
 @torchsymbol(torch.nn.functional.hardswish, id="torch.hardswish", is_method=False)
 def hardswish(a: TensorProxy, /, inplace: bool = False) -> TensorLike:
     utils.check(
@@ -1904,6 +1914,13 @@ def silu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
 
 _inplace_to_out_of_place[silu] = silu, 1
 
+
+@torchsymbol(torch.nn.functional.tanhshrink)
+def tanhshrink(a: TensorLike, /) -> TensorLike:
+    return a - tanh(a)
+
+
+_inplace_to_out_of_place[tanhshrink] = tanhshrink, -1
 
 #
 # Elementwise binary operations
