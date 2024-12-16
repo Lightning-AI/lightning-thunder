@@ -1117,3 +1117,43 @@ def test_enable_disable_options(executor, device: str, thunder_dtype: dtypes.dty
     # verify the functionality of the above flags.
     with pytest.raises(RuntimeError, match="Can not find a scheduler to schedule fusion segment"):
         out = compiled_func(*inps)
+
+
+@instantiate(
+    dtypes=(thunder.float32,),
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(nvFuserExecutor,),
+)
+def test_no_shape_only_fusion_region(executor, device: str, thunder_dtype: dtypes.dtype):
+    x = make_tensor(2, 2, 2, device=device, dtype=ltorch.to_torch_dtype(thunder_dtype))
+
+    def fn(x):
+        return x.view(4, -1).transpose(0, 1)
+
+    jfn = thunder.jit(fn)
+
+    expected = fn(x)
+    actual = jfn(x)
+
+    torch.testing.assert_close(actual, expected)
+
+    fwd_trace = thunder.last_traces(jfn)[-1]
+
+    # Make sure there are no fusion symbols.
+    assert all(not bsym.sym.is_fusion for bsym in fwd_trace.bound_symbols)
+
+    # Verify that we create fusion even if we have a single compute op.
+    def fn(x):
+        # There is a `sin` which is not a shape op.
+        return x.view(4, -1).transpose(0, 1).sin().transpose(0, 1).view(2, 2, 2)
+
+    jfn = thunder.jit(fn)
+    expected = fn(x)
+    actual = jfn(x)
+
+    torch.testing.assert_close(actual, expected)
+
+    fwd_trace = thunder.last_traces(jfn)[-1]
+
+    # Make sure there is a fusion symbol.
+    assert any(bsym.sym.is_fusion for bsym in fwd_trace.bound_symbols)
