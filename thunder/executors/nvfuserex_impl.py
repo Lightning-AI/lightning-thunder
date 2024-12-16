@@ -2611,6 +2611,8 @@ def _scaled_matmul_check(
     enable_linear: None | bool = get_compile_option("nv_enable_linear", "Enable nvFuser linear.")
     if not (enable_matmul or enable_linear):
         return False
+    if out_dtype is None:
+        return False
     if not (scale_a.numel == 1 and scale_b.numel == 1 and scale_result is None and not use_fast_accum):
         return False
     if not (
@@ -2619,8 +2621,6 @@ def _scaled_matmul_check(
         and scale_a.dtype == dtypes.float32
         and scale_b.dtype == dtypes.float32
     ):
-        return False
-    if torch.cuda.get_device_capability(to_torch_device(a.device))[0] < 9:
         return False
     return True
 
@@ -2638,29 +2638,17 @@ def _scaled_matmul(
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:
-    nva = getnv(a, fd, lc_to_nv_map)
-    nvb = getnv(b, fd, lc_to_nv_map)
-    nvscale_a = getnv(scale_a, fd, lc_to_nv_map)
-    nvscale_b = getnv(scale_b, fd, lc_to_nv_map)
-
-    if out_dtype is None:
-        out_dtype = a.dtype
-
-    nvout_dtype = lcdtype_to_nvdtype(out_dtype)
-
-    cast_nva = fd.ops.cast(nva, DataType.Float)
-    cast_nvb = fd.ops.cast(nvb, DataType.Float)
-
-    scaled_cast_nva = fd.ops.mul(cast_nva, nvscale_a)
-    scaled_cast_nvb = fd.ops.mul(cast_nvb, nvscale_b)
+    cast_a = convert_element_type(a, DataType.Float, fd=fd, lc_to_nv_map=lc_to_nv_map)
+    cast_b = convert_element_type(b, DataType.Float, fd=fd, lc_to_nv_map=lc_to_nv_map)
+    scaled_cast_a = mul(cast_a, scale_a, fd=fd, lc_to_nv_map=lc_to_nv_map)
+    scaled_cast_b = mul(cast_b, scale_b, fd=fd, lc_to_nv_map=lc_to_nv_map)
 
     output: Any
     if bias is not None:
-        nvbias = getnv(bias, fd, lc_to_nv_map)
-        output = fd.ops.linear(scaled_cast_nva, scaled_cast_nvb, nvbias)
+        output = linear(scaled_cast_a, scaled_cast_b, bias, fd=fd, lc_to_nv_map=lc_to_nv_map)
     else:
-        output = fd.ops.matmul(scaled_cast_nva, scaled_cast_nvb)
-    return fd.ops.cast(output, nvout_dtype)
+        output = matmul(scaled_cast_a, scaled_cast_b, fd=fd, lc_to_nv_map=lc_to_nv_map)
+    return convert_element_type(output, out_dtype, fd=fd, lc_to_nv_map=lc_to_nv_map)
 
 
 register_supported(ltorch._scaled_mm, _scaled_matmul, _scaled_matmul_check)
