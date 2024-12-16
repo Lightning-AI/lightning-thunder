@@ -2593,3 +2593,69 @@ ex.register_supported(
     execution_transform=scaled_dot_product_flash_attention,
     grad_transform=scaled_dot_product_flash_attention_grad,
 )
+
+
+def _scaled_matmul_check(
+    a: TensorProxy,
+    b: TensorProxy,
+    scale_a: TensorLike,
+    scale_b: TensorLike,
+    bias: TensorLike | None = None,
+    scale_result: TensorLike | None = None,
+    out_dtype: dtypes.dtype | None = None,
+    use_fast_accum: bool = False,
+) -> bool:
+    enable_matmul: None | bool = get_compile_option("nv_enable_matmul", "Enable nvFuser matmul.")
+    enable_linear: None | bool = get_compile_option("nv_enable_linear", "Enable nvFuser linear.")
+    if not (enable_matmul or enable_linear):
+        return False
+    if not (scale_a.numel == 1 and scale_b.numel == 1 and scale_result is None and not use_fast_accum):
+        return False
+    if not (
+        a.dtype in dtypes.float_8bit_dtypes
+        and b.dtype in dtypes.float_8bit_dtypes
+        and scale_a.dtype == dtypes.float32
+        and scale_b.dtype == dtypes.float32
+    ):
+        return False
+
+    return True
+
+
+def _scaled_matmul(
+    a: TensorProxy,
+    b: TensorProxy,
+    scale_a: TensorLike,
+    scale_b: TensorLike,
+    bias: TensorLike | None = None,
+    scale_result: TensorLike | None = None,
+    out_dtype: dtypes.dtype | None = None,
+    use_fast_accum: bool = False,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    nvb = getnv(b, fd, lc_to_nv_map)
+    nvscale_a = getnv(scale_a, fd, lc_to_nv_map)
+    nvscale_b = getnv(scale_b, fd, lc_to_nv_map)
+
+    if out_dtype is None:
+        out_dtype = a.dtype
+
+    out_nvdtype = lcdtype_to_nvdtype(out_dtype)
+
+    cast_nva = fd.ops.cast(nva, DataType.Float)
+    cast_nvb = fd.ops.cast(nvb, DataType.Float)
+
+    scaled_cast_nva = fd.ops.div(cast_nva, scale_a)
+    scaled_cast_nvb = fd.ops.div(cast_nvb, scale_b)
+
+    if bias is not None:
+        nvbias = getnv(bias, fd, lc_to_nv_map)
+        return fd.ops.linear(scaled_cast_nva, scaled_cast_nvb, nvbias)
+    else:
+        return fd.ops.matmul(scaled_cast_nva, scaled_cast_nvb)
+
+
+register_supported(ltorch._scaled_mm, _scaled_matmul, _scaled_matmul_check)
