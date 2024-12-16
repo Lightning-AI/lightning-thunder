@@ -356,28 +356,28 @@ def test_cse_rematerialization(executor, device, _):
 
     fw_trace = thunder.last_traces(compiled_func)[-1]
     fusion_bsyms = tuple(filter(lambda a: a.sym.is_fusion, fw_trace.bound_symbols))
-    assert len(fusion_bsyms) == 11
+    assert len(fusion_bsyms) == 9
     # fusion groups 1 and 6 correspond with the apply_rotary_emb function
     # Nvfuser with recomputation should use precomputed cos and sin values.
-    assert len(fusion_bsyms[1].args) == len(fusion_bsyms[6].args)
+    assert len(fusion_bsyms[1].args) == len(fusion_bsyms[5].args)
 
     # Below, we check that freqs_sin and freqs_cos are used
     # in the same operation in both fusions.
     (fusion1_freqs_sin_arg,) = (a for a in fusion_bsyms[1].args if a.name == "freqs_sin")
     (fusion1_freqs_cos_arg,) = (a for a in fusion_bsyms[1].args if a.name == "freqs_cos")
-    (fusion6_freqs_sin_arg,) = (a for a in fusion_bsyms[6].args if a.name == "freqs_sin")
-    (fusion6_freqs_cos_arg,) = (a for a in fusion_bsyms[6].args if a.name == "freqs_cos")
+    (fusion5_freqs_sin_arg,) = (a for a in fusion_bsyms[5].args if a.name == "freqs_sin")
+    (fusion5_freqs_cos_arg,) = (a for a in fusion_bsyms[5].args if a.name == "freqs_cos")
 
     (fusion1_freqs_sin_user,) = (s for s in fusion_bsyms[1].subsymbols if s.args[0] is fusion1_freqs_sin_arg)
-    (fusion6_freqs_sin_user,) = (s for s in fusion_bsyms[6].subsymbols if s.args[0] is fusion6_freqs_sin_arg)
+    (fusion6_freqs_sin_user,) = (s for s in fusion_bsyms[5].subsymbols if s.args[0] is fusion5_freqs_sin_arg)
 
     assert fusion1_freqs_sin_user.sym is fusion6_freqs_sin_user.sym
     assert fusion1_freqs_sin_user.args[1:] == fusion6_freqs_sin_user.args[1:]
     (fusion1_freqs_cos_user,) = (s for s in fusion_bsyms[1].subsymbols if s.args[0] is fusion1_freqs_cos_arg)
-    (fusion6_freqs_cos_user,) = (s for s in fusion_bsyms[6].subsymbols if s.args[0] is fusion1_freqs_cos_arg)
+    (fusion5_freqs_cos_user,) = (s for s in fusion_bsyms[5].subsymbols if s.args[0] is fusion5_freqs_cos_arg)
 
-    assert fusion1_freqs_cos_user.sym is fusion6_freqs_cos_user.sym
-    assert fusion1_freqs_cos_user.args[1:] == fusion6_freqs_cos_user.args[1:]
+    assert fusion1_freqs_cos_user.sym is fusion5_freqs_cos_user.sym
+    assert fusion1_freqs_cos_user.args[1:] == fusion5_freqs_cos_user.args[1:]
 
 
 # Tests that two separated nvFuser regions can be merged when they don't depend
