@@ -880,6 +880,21 @@ instantiated) this heuristic actually leads to worse code.
             else:
                 bookend_result = {"front_bsyms": [], "fusion": region, "rear_bsyms": []}
 
+            def all_tagged(bsym: BoundSymbol, tags: set[prims.OpTags]) -> bool:
+                if not has_tags(bsym, tags):
+                    return False
+
+                for sbsym in bsym.subsymbols:
+                    if not has_tags(sbsym, tags):
+                        return False
+
+                return True
+
+            all_shape_ops = all(map(lambda bsym: all_tagged(bsym, {prims.OpTags.SHAPE_OP}), bsyms))
+            if all_shape_ops:
+                fused_bsyms.extend(bsyms)
+                continue
+
             if len(bsyms) == 1:
                 bsym: BoundSymbol = bsyms[0]
                 can_fuse: bool = self.can_fuse(bsym)
