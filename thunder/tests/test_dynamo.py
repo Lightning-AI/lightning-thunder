@@ -521,7 +521,6 @@ def test_no_grad_ctx_manager(executor, device: str, dtype: dtypes.dtype):
 
 @instantiate(dtypes=NOTHING, executors=[DynamoThunderExecutor])
 def test_no_grad_enabled_grad_nested_ctx_manager(executor, device: str, dtype: dtypes.dtype):
-    backend = ThunderCompiler()
 
     def func(x):
         with torch.no_grad():
@@ -533,9 +532,11 @@ def test_no_grad_enabled_grad_nested_ctx_manager(executor, device: str, dtype: d
         return y + x + z
 
     x = torch.randn(3, 3, device=device, dtype=dtype, requires_grad=True)
-    actual = torch.compile(func, backend=backend)(x)
+    cfunc = thunderfx(func)
+    actual = cfunc(x)
     expected = torch.compile(func, backend="eager")(x)
 
+    backend = cfunc._backend
     # We record the GraphModules that was compiled by ThunderCompiler
     assert len(backend.subgraph_infos) == 1
 
