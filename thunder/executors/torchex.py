@@ -1417,8 +1417,12 @@ def _scaled_mm_transform(
     out_dtype: dtypeLike | None = None,
     use_fast_accum: bool = False,
 ):
+
+    def is_column_major(mat: TensorLike) -> bool:
+        return mat.stride()[0] == 1 and mat.stride()[0] > 1
+
     result_dtype: torch.dtype = to_torch_dtype(a.dtype if out_dtype is None else out_dtype)
-    if b.stride()[0] != 1 and b.stride()[1] > 1:
+    if not is_column_major(b):
         b = b.t().contiguous().t()
 
     return _scaled_mm(a, b, scale_a, scale_b, bias, scale_result, result_dtype, use_fast_accum)

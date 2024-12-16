@@ -3608,6 +3608,7 @@ def _scaled_mm(
             and (a.shape[1] == b.shape[0])
             and (a.shape[1] % 16 == 0 and b.shape[0] % 16 == 0 and b.shape[1] % 16 == 0)
             and (to_dtype(a.dtype) in fp8_dtypes and to_dtype(b.dtype) in fp8_dtypes)
+            and not (a.dtype == dtypes.float8_e5m2 and b.dtype == dtypes.float8_e5m2)
         ),
         lambda: f"data matrices of {a=} and {b=} do not satisfy the condition.",
     )
