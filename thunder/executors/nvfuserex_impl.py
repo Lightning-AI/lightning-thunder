@@ -349,7 +349,7 @@ def compute_symbolic_shape(
 
 def compute_contiguity(
     shape: torch.Size | Sequence[int], stride: Sequence[int]
-) -> tuple[[tuple[bool, ...], tuple[int, ...]]]:
+) -> tuple[tuple[bool, ...], tuple[int, ...]]:
     """
     Computes the contiguity and stride_order of a tensor using nvFuser's notion.
 
