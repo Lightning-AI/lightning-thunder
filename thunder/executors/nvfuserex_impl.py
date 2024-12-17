@@ -2595,7 +2595,7 @@ ex.register_supported(
 )
 
 
-def _scaled_matmul_check(
+def _scaled_mm_check(
     a: TensorProxy,
     b: TensorProxy,
     scale_a: TensorLike,
@@ -2622,10 +2622,31 @@ def _scaled_matmul_check(
         and scale_b.dtype == dtypes.float32
     ):
         return False
+    if torch.cuda.get_device_capability(to_torch_device(a.device))[0] < 9:
+        return False
     return True
 
 
-def _scaled_matmul(
+def _scaled_mm_meta(
+    a: TensorProxy,
+    b: TensorProxy,
+    scale_a: TensorLike,
+    scale_b: TensorLike,
+    bias: TensorLike | None = None,
+    scale_result: TensorLike | None = None,
+    out_dtype: dtypes.dtype | None = None,
+    use_fast_accum: bool = False,
+) -> TensorLike:
+    result_dtype = a.dtype if out_dtype is None else dtypes.to_dtype(out_dtype)
+    return TensorProxy(
+        like=a,
+        shape=(a.shape[0], b.shape[1]),
+        device=a.device,
+        dtype=result_dtype,
+    )
+
+
+def _nv_scaled_mm(
     a: TensorProxy,
     b: TensorProxy,
     scale_a: TensorLike,
@@ -2638,17 +2659,48 @@ def _scaled_matmul(
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:
-    cast_a = convert_element_type(a, DataType.Float, fd=fd, lc_to_nv_map=lc_to_nv_map)
-    cast_b = convert_element_type(b, DataType.Float, fd=fd, lc_to_nv_map=lc_to_nv_map)
-    scaled_cast_a = mul(cast_a, scale_a, fd=fd, lc_to_nv_map=lc_to_nv_map)
-    scaled_cast_b = mul(cast_b, scale_b, fd=fd, lc_to_nv_map=lc_to_nv_map)
+    nv_a = getnv(a, fd, lc_to_nv_map)
+    nv_b = getnv(a, fd, lc_to_nv_map)
+    nvscale_a = getnv(scale_a, fd, lc_to_nv_map)
+    nvscale_b = getnv(scale_b, fd, lc_to_nv_map)
+
+    cast_a = fd.ops.cast(nv_a, DataType.Float)
+    cast_b = fd.ops.cast(nv_b, DataType.Float)
+    scaled_cast_a = fd.ops.mul(cast_a, nvscale_a)
+    scaled_cast_b = fd.ops.mul(cast_b, nvscale_b)
 
     output: Any
     if bias is not None:
-        output = linear(scaled_cast_a, scaled_cast_b, bias, fd=fd, lc_to_nv_map=lc_to_nv_map)
+        nvbias = getnv(bias, fd, lc_to_nv_map)
+        output = fd.ops.linear(scaled_cast_a, scaled_cast_b, nvbias)
     else:
-        output = matmul(scaled_cast_a, scaled_cast_b, fd=fd, lc_to_nv_map=lc_to_nv_map)
-    return convert_element_type(output, out_dtype, fd=fd, lc_to_nv_map=lc_to_nv_map)
+        output = fd.ops.matmul(scaled_cast_a, scaled_cast_b)
+    return fd.ops.cast(output, lcdtype_to_nvdtype(dtypes.to_dtype(out_dtype)))
 
 
-register_supported(ltorch._scaled_mm, _scaled_matmul, _scaled_matmul_check)
+def _scaled_mm(
+    a: TensorProxy,
+    b: TensorProxy,
+    scale_a: TensorLike,
+    scale_b: TensorLike,
+    bias: TensorLike | None = None,
+    scale_result: TensorLike | None = None,
+    out_dtype: dtypes.dtype | None = None,
+    use_fast_accum: bool = False,
+):
+    return nv__scaled_mm(a, b, scale_a, scale_b, bias, scale_result, out_dtype, use_fast_accum)
+
+
+nv__scaled_mm = ex.register_operator(
+    "nv__scaled_mm",
+    meta=_scaled_mm_meta,
+    fn=_nv_scaled_mm,
+)
+register_supported(nv__scaled_mm.id, _nv_scaled_mm, None)
+
+
+ex.register_supported(
+    ltorch._scaled_mm,
+    checker=_scaled_mm_check,
+    execution_transform=_scaled_mm,
+)
