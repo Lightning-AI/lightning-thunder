@@ -3609,9 +3609,14 @@ def _scaled_mm(
             and (a.shape[1] % 16 == 0 and b.shape[0] % 16 == 0 and b.shape[1] % 16 == 0)
             and (to_dtype(a.dtype) in fp8_dtypes and to_dtype(b.dtype) in fp8_dtypes)
             and not (a.dtype == dtypes.float8_e5m2 and b.dtype == dtypes.float8_e5m2)
+            and to_device(a.device).type == "cuda"
         ),
         lambda: f"data matrices of {a=} and {b=} do not satisfy the condition.",
     )
+    args = [a, b, scale_a, scale_b]
+    if bias is not None:
+        args.append(bias)
+    utils.check_same_device(args)
     utils.check(
         (
             (scale_a.numel() == 1 and scale_b.numel() == 1)
@@ -3622,11 +3627,10 @@ def _scaled_mm(
     )
     result_dtype = a.dtype if out_dtype is None else to_dtype(out_dtype)
     return TensorProxy(
-        name=None,
+        like=a,
         shape=(a.shape[0], b.shape[1]),
         device=a.device,
         dtype=result_dtype,
-        requires_grad=a.requires_grad,
     )
 
 
