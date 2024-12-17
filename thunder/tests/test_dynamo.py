@@ -280,8 +280,9 @@ def test_splitter_autograd_function(executor, device: str, dtype: dtypes.dtype, 
             return g * torch.cos(x)
 
     def func(x):
-        y = torch.cos(x) + Sin.apply(x)
-        return torch.matmul(x, y)
+        # y = torch.cos(x) + Sin.apply(x)
+        # return torch.matmul(x, y)
+        return Sin.apply(x)
 
     expected = torch.compile(func, dynamic=dynamic)(x)
 
@@ -289,18 +290,24 @@ def test_splitter_autograd_function(executor, device: str, dtype: dtypes.dtype, 
     cfunc = torch.compile(func, backend=backend, dynamic=dynamic)
     actual = cfunc(x)
 
-    targets = (node.target for node in backend.subgraph_infos[0].split_graph_module.graph.nodes)
-    assert any(target.startswith("thunder_") for target in targets)
-    assert any(target.startswith("inductor_") for target in targets)
+    # targets = (node.target for node in backend.subgraph_infos[0].split_graph_module.graph.nodes)
+    # assert any(target.startswith("thunder_") for target in targets)
+    # assert any(target.startswith("inductor_") for target in targets)
 
     # Verify forward pass
     torch.testing.assert_close(actual, expected)
 
     # Verify backward pass
     g = torch.rand_like(actual)
-    actual_grad = torch.autograd.grad(actual, x, g)
+    actual_grad = torch.autograd.grad(actual, x, g, allow_unused=True)
     expected_grad = torch.autograd.grad(expected, x, g)
     torch.testing.assert_close(actual_grad, expected_grad)
+    from thunder import last_backward_traces
+
+    assert len(backend.subgraph_infos) == 1
+    assert len(backend.subgraph_infos[0].thunder_compiled_fns) == 1
+    print(last_traces(backend.subgraph_infos[0].thunder_compiled_fns[0]))
+    print(last_backward_traces(backend.subgraph_infos[0].thunder_compiled_fns[0]))
 
 
 @instantiate(

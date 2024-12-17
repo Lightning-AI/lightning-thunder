@@ -2495,6 +2495,8 @@ def is_constant_for_vjp(symbol: prims.Symbol) -> bool:
     Returns:
         bool: True if the symbol is constant, False otherwise.
     """
+    if isinstance(symbol.sym.id, str) and symbol.sym.id.startswith("higher_order_autograd_function_apply"):
+        return False
     are_all_args_non_differentiable = not any(isinstance(arg, (FloatProxy, TensorProxy)) for arg in symbol.flat_args)
     # Symbol's tag their output in `torch.no_grad` regions with `DETACHED_AUTOGRAD_GRAPH`.
     # These are treated as constant for VJP.
