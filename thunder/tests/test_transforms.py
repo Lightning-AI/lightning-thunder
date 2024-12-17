@@ -375,7 +375,7 @@ def test_saved_for_backward_recomputation():
     model = MyModel()
 
     # Do not recompute anything
-    jmodel = thunder.jit(model)
+    jmodel = thunder.jit(model, enable_saved_for_backward_recomputation=False)
     jmodel(a)
 
     fwd_trace = None
