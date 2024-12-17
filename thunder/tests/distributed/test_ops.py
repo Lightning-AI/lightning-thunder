@@ -2,7 +2,10 @@ from itertools import product
 import re
 import unittest
 
+import pytest
 import torch
+if not torch.distributed.is_available():
+    pytest.skip(allow_module_level=True)
 from torch.testing import make_tensor
 from torch.distributed import distributed_c10d as c10d
 

@@ -3,6 +3,8 @@ from itertools import product
 import pytest
 import torch
 import torch.nn as nn
+if not torch.distributed.is_available():
+    pytest.skip(allow_module_level=True)
 
 import thunder
 from thunder.distributed import column_parallel, row_parallel

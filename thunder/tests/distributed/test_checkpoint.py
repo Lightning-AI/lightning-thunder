@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 import torch
+if not torch.distributed.is_available():
+    pytest.skip(allow_module_level=True)
 from torch.distributed import distributed_c10d as c10d
 from torch.distributed._tensor import DTensor
 from torch.testing._internal import common_utils
