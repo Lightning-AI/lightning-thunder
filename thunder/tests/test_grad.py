@@ -1180,12 +1180,15 @@ def test_forward_and_backward_from_trace(executor, device, _):
     a = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     c = make_tensor((3,), device=device, dtype=torch.float64, requires_grad=True)
-    initial_trace = trace(inline_trace=False)(func, a, b, c=c)
+    jfn = thunder.jit(func)
+    cd, inps, _ = thunder.compile_data(jfn).get_computation_and_inputs(a, b, c=c)
+    initial_trace = cd.computation_traces[0]
     wrapped_trace = wrap_return_value_together_with_arguments(initial_trace)
+
     fw_trace, bw_trace = forward_and_backward_from_trace(wrapped_trace)
     fw = executor.make_callable(fw_trace)
     bw = executor.make_callable(bw_trace)
-    fw_out, saved_for_backward = fw(a, b, c=c)
+    fw_out, saved_for_backward = fw(*inps)
 
     initial_trace = trace()(value_and_grad(func), a, b, c=c)
     expected_vjp_func = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)
@@ -1195,6 +1198,7 @@ def test_forward_and_backward_from_trace(executor, device, _):
 
     output_grads = tree_map(lambda x: torch.ones_like(x), fw_out["output"])
     bw_out = bw(saved_for_backward, output_grads)
+    expected_grads = (*expected_grads[:-1], expected_grads[-1]["c"])
     torch.testing.assert_close(bw_out, expected_grads)
 
 
