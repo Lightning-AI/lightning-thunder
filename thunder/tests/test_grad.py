@@ -27,6 +27,7 @@ from thunder.tests.framework import (
     run_snippet,
     assert_closer,
     IN_CI,
+    NVFUSER_AVAILABLE,
     requiresCUDA,
     version_between,
 )
@@ -1897,3 +1898,28 @@ def test_grad_split_unused_output(device):
     actual_grad = torch.autograd.grad(actual, x, grad_o)
     expected_grad = torch.autograd.grad(expected, x, grad_o)
     torch.testing.assert_close(actual_grad, expected_grad)
+
+
+@pytest.mark.parametrize("device", ("cuda", "cpu"))
+def test_backward_recomputation_decomposed_ops(device):
+    def fn(a):
+        return torch.nn.functional.gelu(a)
+
+    jfn = thunder.jit(fn, enable_saved_for_backward_recomputation=False)
+    jfn2 = thunder.jit(fn, enable_saved_for_backward_recomputation=True)
+    a = torch.randn(2, 2, device=device, requires_grad=True)
+    res = jfn(a)
+    res2 = jfn2(a)
+    assert len(res.grad_fn.saved_tensors) == 3  # should be decomposed
+    assert len(res2.grad_fn.saved_tensors) == 1
+
+    if NVFUSER_AVAILABLE and device == "cuda":
+        # check everything is fused
+        assert {bsym.sym.name for bsym in thunder.last_backward_traces(jfn2)[-1].bound_symbols} == {
+            "nvFusion0",
+            "clear_mutable_collection",
+            "python_return",
+            "python_del",
+            "unpack_sequence",
+            "unpack_trivial",
+        }
