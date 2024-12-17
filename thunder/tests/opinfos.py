@@ -1685,6 +1685,17 @@ leaky_relu_opinfo = OpInfo(
 elementwise_unary_ops.append(leaky_relu_opinfo)
 
 
+logsigmoid_opinfo = OpInfo(
+    ltorch.logsigmoid,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=torch.nn.functional.logsigmoid,
+    domain=(-1, 1),
+    test_directives=(),
+)
+elementwise_unary_ops.append(logsigmoid_opinfo)
+
+
 relu_opinfo = OpInfo(
     ltorch.relu,
     sample_input_generator=elementwise_unary_generator,
@@ -1802,6 +1813,32 @@ selu_opinfo = OpInfo(
     ),
 )
 elementwise_unary_ops.append(selu_opinfo)
+
+
+tanhshrink_opinfo = OpInfo(
+    ltorch.tanhshrink,
+    dtypes=(datatypes.inexact,),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.nn.functional.tanhshrink),
+    test_directives=(
+        # Torch doesn't support CPU float16 or complex32 tanhshrink
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16, datatypes.complex32),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-2, rtol=1e-2)),
+            executors=("nvfuser",),
+            dtypes=(
+                datatypes.float16,
+                datatypes.bfloat16,
+            ),
+        ),
+    ),
+)
+elementwise_unary_ops.append(tanhshrink_opinfo)
 
 
 round_opinfo = OpInfo(
