@@ -141,10 +141,6 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
     torch_compile_options = {k: v for k, v in kwargs.items() if k in torch_compile_kwarg_names}
     thunder_options = {k: v for k, v in kwargs.items() if k not in torch_compile_kwarg_names}
 
-    if "disable_param_and_buffer_check" not in thunder_options:
-        # For `thunderfx`, we disable shape and metadata checks for params and buffers in prologue.
-        thunder_options["disable_param_and_buffer_check"] = True
-
     backend = ThunderCompiler(**thunder_options)
     compiled = torch.compile(fn, backend=backend, **torch_compile_options)
     compiled._backend = backend
