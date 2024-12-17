@@ -38,7 +38,7 @@ from thunder.core.proxies import (
 from thunder.core.compile_data import get_compile_data, get_compile_option
 from thunder.core.langctxs import langctx, Languages
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten, tree_flatten_with_dataclass
-from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol
+from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol, BoundSymbolTag
 from thunder.core.trace import TraceCtx as Trace
 from thunder.core.trace import VariableInterface as Variable
 from thunder.core.trace import (
@@ -92,6 +92,7 @@ import numpy as np
 
 
 TraceTag.register_tag("AUGMENTED_FORWARD")
+BoundSymbolTag.register_tag("RECOMPUTE_IN_BACKWARD")
 
 
 # TODO This should be a partial of thunder.trace, but that would cause a circular import
@@ -3183,11 +3184,19 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
     )
 
     if remat_policy:
-        rematerializable = remat_policy(all_rematerializable)
+        rematerializable = remat_policy(fwd_trace, bwd_trace, all_rematerializable)
     else:
-        rematerializable = all_rematerializable
+        rematerializable = {
+            p
+            for p in all_rematerializable
+            if thunder.core.proxies.ProxyTag.RECOMPUTE_IN_BACKWARD in thunder.core.proxies.unvariableify(p).tags
+        }
 
-    producers = find_producer_symbols(fwd_trace, tuple(unvariableify(i) for i in rematerializable), fwd_trace.args)
+    producers = find_producer_symbols(
+        fwd_trace,
+        tuple(unvariableify(i) for i in rematerializable),
+        tuple(fwd_trace.args) + tuple(unvariableify(i) for i in all_rematerializable - rematerializable),
+    )
 
     required_fw_args = fwd_trace_args & old_saved_for_bwd
     recomputed_tensors_from_producers = set()
@@ -3225,14 +3234,28 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
     assert bwd_trace.bound_symbols[5].sym.id == prims.PrimIDs.UNPACK_SEQUENCE
     assert bwd_trace.bound_symbols[5].args[0].name == "C1"
 
+    proxy_names_to_producers = {}
+    for bsym in producers:
+        for p in bsym.flat_proxy_outs:
+            if variableify(p) in recomputed_tensors_from_producers:
+                proxy_names_to_producers[p.name] = bsym
+
+    def insert_producer_for_proxy(pname):
+        producer_bsym = proxy_names_to_producers.get(pname)
+        if producer_bsym is not None:
+            for p in producer_bsym.flat_proxy_args:
+                insert_producer_for_proxy(p.name)
+            for o in producer_bsym.flat_proxy_outs:
+                proxy_names_to_producers.pop(o.name, None)
+            new_bwd_trace.bound_symbols.append(producer_bsym)
+
     for idx, bsym in enumerate(bwd_trace.bound_symbols):
         if idx == 4:
             new_unpack = prims.unpack_sequence.bind(*unpack_args, output=new_saved_for_backward)
             new_bwd_trace.bound_symbols.append(new_unpack)
-        elif idx == 6:
-            new_bwd_trace.bound_symbols.extend(producers)
-            new_bwd_trace.bound_symbols.append(bsym)
         else:
+            for p in bsym.flat_proxy_args:
+                insert_producer_for_proxy(p.name)
             new_bwd_trace.bound_symbols.append(bsym)
 
     new_bwd_trace.args = [(new_saved_for_backward, fwd_trace.output[1][1]), *bwd_trace.args[1:]]

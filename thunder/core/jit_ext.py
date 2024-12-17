@@ -895,11 +895,18 @@ def _general_jit_torch_finfo_lookaside(dtype: thunder.dtypes.dtype):
     return res
 
 
+ProxyTag.register_tag("RECOMPUTE_IN_BACKWARD")
+
+
 @register_general_jit_lookaside(torch.utils.checkpoint.checkpoint)
 def _general_jit_torch_checkpoint_lookaside(
     function: Callable,
     *args,
-    **kwargs: Any,
+    context_fn: None | Callable[..., Any] = None,
+    debug: None | bool = None,
+    determinism_check: None | str = None,
+    preserve_rng_state: None | bool = None,
+    use_reentrant: bool = False,
 ):
     """
     This function does preprocessing of the `function` argument before
@@ -917,6 +924,48 @@ def _general_jit_torch_checkpoint_lookaside(
         The result of calling `thunder.torch.checkpoint` with the preprocessed
         `function` and its arguments.
     """
+
+    if unwrap(use_reentrant):
+        return do_raise(
+            "torch.checkpoint: use_reentrant=True is not supported in Thunder",
+        )
+    # NOTE: Thunder currently ignores the context_fn, debug, determinism_check, preserve_rng_state arguments
+    # Let's raise a warning if any of these arguments are passed
+    if unwrap(context_fn) is not None:
+        warnings.warn("torch.checkpoint: context_fn is not supported in Thunder and will be ignored")
+    if unwrap(debug) is not None:
+        warnings.warn("torch.checkpoint: debug is not supported in Thunder and will be ignored")
+    if unwrap(determinism_check) is not None:
+        warnings.warn("torch.checkpoint: determinism_check is not supported in Thunder and will be ignored")
+    if unwrap(preserve_rng_state) is not None:
+        warnings.warn("torch.checkpoint: preserve_rng_state is not supported in Thunder and will be ignored")
+
+    jit_ctx: JitCtx = get_jit_ctx()
+    jit_ctx.computation_trace.push_scope([])
+
+    input_output_proxy_names = set()
+
+    def add_input_output_proxy_name(p):
+        if isinstance(p, Proxy):
+            input_output_proxy_names.add(p.name)
+
+    tree_map(add_input_output_proxy_name, [unwrap(a) for a in args])
+
+    res = _interpret_call(function, *args)
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return res
+
+    tree_map(add_input_output_proxy_name, unwrap(res))
+
+    new_bsyms = jit_ctx.computation_trace.pop_scope()
+    jit_ctx.computation_trace.bound_symbols.extend(new_bsyms)
+
+    for bsym in new_bsyms:
+        for o in bsym.flat_proxy_outs:
+            if o.name not in input_output_proxy_names:
+                o.tags.add(ProxyTag.RECOMPUTE_IN_BACKWARD)
+
+    return res
     from thunder.torch import checkpoint
 
     # It should be possible to call the general_thunder_jit here to handle the
@@ -926,6 +975,7 @@ def _general_jit_torch_checkpoint_lookaside(
     def thunder_function(*args, **kwargs):
         return unwrap(function)(*args, **kwargs)
 
+    XXX
     wrapped_thunder_function = wrap_const(thunder_function)
     return interpreter_needs_wrap(checkpoint)(wrapped_thunder_function, *args, **kwargs)
 

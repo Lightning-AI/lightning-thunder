@@ -63,7 +63,6 @@ __all__ = [
 
 # NOTE torch is a requirement
 import torch
-import torch.utils.checkpoint
 import torch._higher_order_ops.wrap
 
 import warnings
@@ -5325,7 +5324,6 @@ register_function(torch._C._functorch.unwrap_if_dead, _unwrap_if_dead)
 
 
 @torchsymbol(
-    torch.utils.checkpoint.checkpoint,
     torch.ops.higher_order.tag_activation_checkpoint,
     id="activation_checkpoint",
 )

@@ -16,7 +16,7 @@ from collections.abc import Sequence
 import thunder.core.baseutils as baseutils
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable, Positions
-from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
+from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface, TagBase
 from thunder.core.utils import FrozenDict, make_hashable
 from thunder.core.pytree import tree_flatten_with_dataclass, tree_unflatten, tree_map
 import thunder.core.dtypes as dtypes
@@ -351,6 +351,10 @@ class Symbol:
         return result
 
 
+class BoundSymbolTag(TagBase):
+    pass
+
+
 # A symbol, arguments (and kwarguments), output, and sub-symbols
 # args is a sequence of the arguments
 # kwargs is a dict of the kwargs
@@ -376,6 +380,8 @@ class BoundSymbol(BoundSymbolInterface):
     header: str | list[str] = ""
     source_filename: str | None = None
     source_positions: Positions | None = None
+
+    bsym_tags: set[BoundSymbolTag] = field(default_factory=set)
 
     _call_ctx: None | dict[str, Any] = None
 
@@ -412,6 +418,7 @@ class BoundSymbol(BoundSymbolInterface):
             "_import_ctx": self._import_ctx,
             "_object_ctx": self._object_ctx,
             "_executor": self._executor,
+            "bsym_tags": self.bsym_tags.copy(),
         }
 
         self_kwargs.update(kwargs)

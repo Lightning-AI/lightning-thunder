@@ -349,7 +349,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     )
     bw_traces.append(bw_extrace)
 
-    fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extrace, bw_extrace)
+    # fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extrace, bw_extrace)
     fw_traces.append(fw_extrace)
     bw_traces.append(bw_extrace)
 
