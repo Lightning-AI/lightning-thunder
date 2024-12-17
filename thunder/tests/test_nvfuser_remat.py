@@ -515,7 +515,7 @@ def test_not_rematerialize_matmul():
 
     # At the time of writing, linear and matmul are not fused into nvFuser
     # regions by default therefore, we should enable them separately
-    jmodel = thunder.jit(model, nv_enable_linear=True, nv_enable_matmul=True)
+    jmodel = thunder.jit(model, nv_enable_linear=True, nv_enable_matmul=True, use_rematerialization=True)
     jmodel(inp)
 
     def assert_subsymbol_count(trace: TraceCtx, /, num_linears: int, num_matmuls: int, num_fusions: int):

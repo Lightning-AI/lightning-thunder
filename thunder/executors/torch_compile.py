@@ -184,7 +184,11 @@ class TorchCompileExecutor(FusionExecutor):
 
         fusedtrace.bound_symbols = fused_bsyms
 
-        # fusedtrace = rematerialize(fusedtrace)
+        use_rematerialization: None | bool = get_compile_option(
+            "use_rematerialization", "use rematerialization of parameters"
+        )
+        if use_rematerialization:
+            fusedtrace = rematerialize(fusedtrace)
         fusedtrace = dce(fusedtrace)
         fusedtrace = update_fusion_call_ctx(fusedtrace)
 

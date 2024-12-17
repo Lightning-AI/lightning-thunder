@@ -925,7 +925,10 @@ instantiated) this heuristic actually leads to worse code.
         # Some of the operations might be better placed with its consumers (for
         # example residual connection in transformer block). This pass moves
         # them to the consumer.
-        if self._use_rematerialization:
+        use_rematerialization: None | bool = get_compile_option(
+            "use_rematerialization", "use rematerialization of parameters"
+        )
+        if use_rematerialization and self._use_rematerialization:
             fusedtrace = rematerialize(fusedtrace)
 
         fusedtrace = remove_redundant_casts(fusedtrace)
