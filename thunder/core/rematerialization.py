@@ -361,6 +361,7 @@ def find_cut(
     if not required_producer_vars:
         # If there are no required producer variables, we need to make sure that
         # the source node is added to the graph.
+        print("#### hello")
         add_edge("source", "source", capacity=float("inf"))
 
     for var in required_producer_vars:
@@ -373,6 +374,8 @@ def find_cut(
 
     g = nx.DiGraph()
     g.add_edges_from(edges)
+
+    print("#####", dict(g.nodes), g.edges)
 
     try:
         _, (reachable, non_reachable) = nx.minimum_cut(g, "source", "sink")
