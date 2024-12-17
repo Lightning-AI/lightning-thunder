@@ -22,5 +22,5 @@ class ExtractionOnlyPrologueTransform(thunder.Transform):
 
         new_prologue_trace.bound_symbols = new_bsyms
 
-        new_prologue_trace.set_provenance("Extraction only pass")
+        new_prologue_trace.set_provenance("Extraction only prologue pass")
         return new_prologue_trace, computation_trace, epilogue_trace
