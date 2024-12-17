@@ -3221,28 +3221,34 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
     new_return_args = (fwd_trace.output[0], (new_saved_for_backward, fwd_trace.output[1][1]))
     new_fwd_trace.bound_symbols[-1] = prims.python_return.bind(*new_return_args, output=None)
 
-    new_bwd_trace = from_trace(bwd_trace)
-    # In cases where C0 name is carried from previous trace it must be removed
-    # as the proxy needs to register with that specific name to follow the backward
-    # trace standard signature.
-    new_bwd_trace.names.discard("C0")
-
-    with tracectx(new_bwd_trace):
-        unpack_args = (CollectionProxy(new_saved_for_backward, name="C0"), len(new_saved_for_backward))
-
-    # Here we make sure that the signature of the backward trace is the same as the one we expect.
-    # This part of the trace is the unpacking of the tuple passed from the forward trace,
-    # more specifically, C0 unpacks into the saved for backward tensors and C1 into the cotangents
-    # used to compute the vector-Jacobian product.
+    assert bwd_trace.bound_symbols[2].sym.id == prims.PrimIDs.UNPACK_SEQUENCE
+    assert bwd_trace.bound_symbols[2].args[0].name == "saved_for_backward"
     assert bwd_trace.bound_symbols[4].sym.id == prims.PrimIDs.UNPACK_SEQUENCE
     assert bwd_trace.bound_symbols[4].args[0].name == "C0"
     assert bwd_trace.bound_symbols[5].sym.id == prims.PrimIDs.UNPACK_SEQUENCE
     assert bwd_trace.bound_symbols[5].args[0].name == "C1"
 
+    p_saved_for_backward = bwd_trace.bound_symbols[2].args[0]
+    p_c0 = bwd_trace.bound_symbols[4].args[0]
+
+    new_bwd_trace = from_trace(bwd_trace)
+    # In cases where C0 name is carried from previous trace it must be removed
+    # as the proxy needs to register with that specific name to follow the backward
+    # trace standard signature.
+
+    p_saved_for_backward.coll = (new_saved_for_backward, fwd_trace.output[1][1])
+    p_c0.coll = new_saved_for_backward
+
+    # Here we make sure that the signature of the backward trace is the same as the one we expect.
+    # This part of the trace is the unpacking of the tuple passed from the forward trace,
+    # more specifically, C0 unpacks into the saved for backward tensors and C1 into the cotangents
+    # used to compute the vector-Jacobian product.
+
     proxy_names_to_producers = {}
     for bsym in producers:
+        input_names = {p.name for p in bsym.flat_proxy_args}
         for p in bsym.flat_proxy_outs:
-            if variableify(p) in recomputed_tensors_from_producers:
+            if p.name not in input_names and variableify(p) in recomputed_tensors_from_producers:
                 proxy_names_to_producers[p.name] = bsym
 
     def insert_producer_for_proxy(pname):
@@ -3256,7 +3262,7 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
 
     for idx, bsym in enumerate(bwd_trace.bound_symbols):
         if idx == 4:
-            new_unpack = prims.unpack_sequence.bind(*unpack_args, output=new_saved_for_backward)
+            new_unpack = prims.unpack_sequence.bind(p_c0, len(new_saved_for_backward), output=new_saved_for_backward)
             new_bwd_trace.bound_symbols.append(new_unpack)
         else:
             for p in bsym.flat_proxy_args:
