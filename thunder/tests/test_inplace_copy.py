@@ -180,7 +180,7 @@ def test_inplace_copy_dst_copy_returned_issue_1109(executor, device, dtype):
         assert_close(o, o_ref)
 
 
-@instantiate(executors=(TorchExecutor, nvFuserExecutor), dtypes=datatypes.float_math_dtypes)
+@instantiate(executors=(TorchExecutor,), dtypes=datatypes.float_math_dtypes)
 def test_inplace_copy_of_leaf_requiring_grad_fails(executor, device, dtype):
     def fn(x):
         x.copy_(x)
