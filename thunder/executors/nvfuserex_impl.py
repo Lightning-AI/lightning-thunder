@@ -2078,6 +2078,8 @@ def _copy__check(
     *,
     grad_enabled: bool,
 ) -> bool:
+    if grad_enabled:
+        warnings.warn("An inplace operation requiring grad is occurring on a variable which may be a leaf.")
     return are_supported_tensors(copy_from, copy_to)
 
 

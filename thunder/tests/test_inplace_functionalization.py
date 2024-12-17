@@ -550,7 +550,7 @@ def test_single_tensor_adam_like(executor, device, _):
     single_tensor_adam(*ref_tensors, state_steps=ref_state_steps)
 
     # torch.compile does not support accessing the ContextVariable compile data used in _copy__impl_
-    jitted = executor.make_callable(single_tensor_adam, torch_compile_fullgraph=False)
+    jitted = executor.make_callable(single_tensor_adam)
     params, grads, exp_avgs, exp_avg_sqs = tensors
 
     jitted(params, grads, exp_avgs, exp_avg_sqs, state_steps)
