@@ -6,6 +6,7 @@ from collections.abc import Callable
 import pytest
 import torch
 import torch.distributed as tdist
+
 if not tdist.is_available():
     pytest.skip(allow_module_level=True)
 import torch.nn as nn

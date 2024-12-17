@@ -125,6 +125,7 @@ class SmallModel(nn.Module):
 
 if torch.distributed.is_available():
     from torch.testing._internal import common_distributed, common_utils
+
     # note(crcrpar): How to write a test with `DDP`
     # Just add a method to :class:`CompileDDPTest`. The class is responsible for
     #     - calling `torch.distributed.init_process_group` with NCCL backend
@@ -201,7 +202,6 @@ if torch.distributed.is_available():
                 torch.distributed.destroy_process_group()
             sys.exit(0)
 
-
     # Configures PyTorch's default process group, must be called at the start of each
     #   distributed process
     def init_per_process_distributed(
@@ -224,7 +224,6 @@ if torch.distributed.is_available():
         #   thunder doesn't like to model primitives with implicit defaults,
         #   so we want to pass the ProcessGroup explicitly
         return torch.distributed.distributed_c10d._get_default_group()
-
 
     # Wraps a function so that it becomes one process of several executing the test
     #   See test_native_ddp and its helper _test_native_ddp_helper below for an example
@@ -293,7 +292,6 @@ if torch.distributed.is_available():
 
             return test_fn
 
-
     # Creates a dataloader for a process
     #   If sample_seed is specified then the dataloader will load tensors with the same values
     #   on each process.
@@ -324,7 +322,6 @@ if torch.distributed.is_available():
         dataloader = torch.utils.data.DataLoader(dataset, sampler=sampler, collate_fn=collate_fn)
 
         return dataloader
-
 
     def run_test_no_sync_grad_accumulation(
         test_case: DistributedParallelTestCase,
