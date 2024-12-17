@@ -624,3 +624,24 @@ def test_cudagraph_empty_inputs():
     assert_close(jfn(), fn())
 
     assert any(("CUDAGraph" in bsym.sym.name) for bsym in thunder.last_traces(jfn)[-1].bound_symbols)
+
+
+def test_disable_params_and_buffer_check():
+    from thunder.tests.litgpt_model import Config
+    from litgpt.model import GPT
+    from thunder.transforms.extraction_only_prologue_transform import ExtractionOnlyPrologueTransform
+
+    model = GPT(Config.from_name("llama1-like", n_layer=1))
+    x = torch.randint(model.max_seq_length, (2, 5))
+    cmodel = thunder.jit(model, transforms=[ExtractionOnlyPrologueTransform()])
+    _ = cmodel(x)
+    prologue_trc = thunder.last_prologue_traces(cmodel)[-1]
+
+    check_bsyms = tuple(
+        filter(
+            lambda bsym: bsym.sym.id == thunder.executors.pythonex.check_tensor_shape_and_metadata.id,
+            prologue_trc.bound_symbols,
+        )
+    )
+
+    assert len(check_bsyms) == 1  # We only have the check for input.

@@ -1659,9 +1659,6 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
     pro_to_epi = tuple(sorted((unpack(v) for v in pro_to_epi_inps), key=lambda x: param_ordering[id(x)][1]))
     pro_to_comp = tuple(sorted((unpack(v) for v in pro_to_comp_inps), key=lambda x: param_ordering[id(x)][1]))
 
-    OPTION_STR = "Whether to add checks in prologue for parameters and buffers of nn.Module, defaults to `False`"
-    disable_param_and_buffer_check: bool | None = get_compile_option("disable_param_and_buffer_check", OPTION_STR)
-
     with tracectx(prologue_trace):
         for prim, *args in ctx._constraints:
             for a in args:
@@ -1672,11 +1669,6 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 for s in a.shape:
                     if isinstance(s, Proxy):
                         unpack(s)
-                if disable_param_and_buffer_check and ProxyTag.STATIC_MEMORY_LOCATION in args[0].tags:
-                    # NOTE - We assume TensorProxy's tagged with `STATIC_MEMORY_LOCATION` to
-                    #        be Parameters or Buffer. It should be safe to disable check for
-                    #        tensors we deem to be static.
-                    continue
 
             prim(*args)
 
