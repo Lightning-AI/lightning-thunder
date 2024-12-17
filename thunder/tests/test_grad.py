@@ -1754,8 +1754,8 @@ def test_torch_checkpoint():
         # The intermediate values are recomputed during backward pass.
         assert len(out.grad_fn.next_functions[0][0].saved_tensors) == 2
         # We detach the saved tensors (which returns a new Python tensor backed by same storage)
-        assert out.grad_fn.next_functions[0][0].saved_tensors[0].data_ptr() == x.data_ptr()
-        assert out.grad_fn.next_functions[0][0].saved_tensors[1].data_ptr() == y.data_ptr()
+        # the order seems to be non-deterministic sometimes
+        assert {t.data_ptr() for t in out.grad_fn.next_functions[0][0].saved_tensors} == {x.data_ptr(), y.data_ptr()}
 
         g = torch.ones_like(out)
         out.backward(g)
@@ -1766,6 +1766,49 @@ def test_torch_checkpoint():
         out_ref.backward(g)
         torch.testing.assert_close(x.grad, x_ref.grad)
         torch.testing.assert_close(y.grad, y_ref.grad)
+
+
+@requiresCUDA
+def test_checkpoint_max_memory():
+    import torch.utils.checkpoint
+
+    class Checkpoint(torch.nn.Module):
+        def __init__(self, module):
+            super().__init__()
+            self.module = module
+
+        def forward(self, *args):
+            return torch.utils.checkpoint.checkpoint(self.module, *args, use_reentrant=False)
+
+    with torch.device("cuda:0"):
+        m = torch.nn.Sequential(
+            torch.nn.Linear(1024, 16),
+            torch.nn.ReLU(),
+            *[
+                Checkpoint(
+                    torch.nn.Sequential(
+                        torch.nn.Linear(16, 2048),
+                        torch.nn.Linear(2048, 16),
+                        torch.nn.ReLU(),
+                    )
+                )
+                for _ in range(10)
+            ],
+            torch.nn.Linear(16, 1024),
+        )
+        inps = torch.randn(512, 1024, requires_grad=True)
+
+    jm = thunder.jit(m, executors=())  # no rematerialization
+    mem_base = torch.cuda.memory_allocated()
+    torch.cuda.reset_accumulated_memory_stats()
+    res = jm(inps)
+    res.sum().backward()
+    mem_max = torch.cuda.max_memory_allocated()
+    # the rematerialization pass moved all(?) recomputation to the front,
+    # making the peak mem about 46MB.
+    # With checkpointing as coded in the model and recomputation where the
+    # values are used, we get about 12MB, so we put the barrier at 16MB
+    assert mem_max - mem_base < 16 * 2**20
 
 
 def test_inconsistent_output_length_grad_transform():

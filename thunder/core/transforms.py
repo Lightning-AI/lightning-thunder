@@ -3154,6 +3154,8 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
     enable_saved_for_backward_recomputation: None | bool = get_compile_option(
         "enable_saved_for_backward_recomputation", "Enable save for backward tensors recomputation."
     )
+    if enable_saved_for_backward_recomputation is None:
+        enable_saved_for_backward_recomputation = True
     if enable_saved_for_backward_recomputation:
         forward_trace, backward_trace = recompute_saved_for_backward(forward_trace, backward_trace)
 
@@ -3191,6 +3193,9 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
             for p in all_rematerializable
             if thunder.core.proxies.ProxyTag.RECOMPUTE_IN_BACKWARD in thunder.core.proxies.unvariableify(p).tags
         }
+
+    if not rematerializable:
+        return fwd_trace, bwd_trace
 
     producers = find_producer_symbols(
         fwd_trace,
