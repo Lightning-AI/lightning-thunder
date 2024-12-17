@@ -3184,7 +3184,7 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
     )
 
     if remat_policy:
-        rematerializable = remat_policy(fwd_trace, bwd_trace, all_rematerializable)
+        rematerializable = remat_policy(all_rematerializable)
     else:
         rematerializable = {
             p
