@@ -1483,3 +1483,26 @@ def test_cache_symbolic_values_dict():
     expected = foo(b, "b")
 
     assert_close(actual, expected)
+
+
+@pytest.mark.parametrize("disable_param_and_buffer_check", [None, False, True])
+def test_disable_params_and_buffer_check(disable_param_and_buffer_check):
+    from thunder.tests.litgpt_model import Config
+    from litgpt.model import GPT
+
+    model = GPT(Config.from_name("llama1-like", n_layer=1))
+    x = torch.randint(model.max_seq_length, (2, 5))
+    cmodel = thunder.jit(model, disable_param_and_buffer_check=disable_param_and_buffer_check)
+    _ = cmodel(x)
+    init_prologue_trc = thunder.last_prologue_traces(cmodel)[0]
+
+    check_bsyms = tuple(
+        filter(
+            lambda bsym: bsym.sym.id == thunder.prims.PrimIDs.CHECK_TENSOR_SHAPE_AND_METADATA,
+            init_prologue_trc.bound_symbols,
+        )
+    )
+    if disable_param_and_buffer_check:
+        assert len(check_bsyms) == 1  # We only have the check for input.
+    else:
+        assert len(check_bsyms) > 1  # We have checks for inputs and params.
