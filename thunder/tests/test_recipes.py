@@ -6,7 +6,7 @@ import pytest
 from torch.testing import assert_close, make_tensor
 from thunder.tests.framework import version_between
 
-
+@pytest.mark.skip(reason="torchvision::nms issue with transformers")
 def test_recipe_basic_bert():
     bert = transformers.BertForSequenceClassification(transformers.BertConfig())
     del bert.bert.encoder.layer[1:]
