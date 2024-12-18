@@ -335,7 +335,7 @@ def jit(
     # Resolve names of executors
     executors = resolve_executors(executors)
     ad_hoc_executor = extend.AdHocExecutor()
-    executors = (*executors, ad_hoc_executor)
+    executors = (ad_hoc_executor, *executors)
 
     # TODO: verify that tutorials don't have false positives and enable warning by default
     # # Make sharp_edges == warn default if not supplied and if in the general jit
