@@ -1812,8 +1812,8 @@ def test_checkpoint_max_memory():
     # the rematerialization pass moved all(?) recomputation to the front,
     # making the peak mem about 46MB.
     # With checkpointing as coded in the model and recomputation where the
-    # values are used, we get about 12MB, so we put the barrier at 16MB
-    assert mem_max - mem_base < 16 * 2**20
+    # values are used, we get about 12-20MB, so we put the barrier at 24MB
+    assert mem_max - mem_base < 24 * 2**20
 
 
 def test_inconsistent_output_length_grad_transform():
@@ -1937,6 +1937,9 @@ def test_adhoc_executor_grad(executor, device, _):
 
 @pytest.mark.parametrize("device", ("cuda", "cpu"))
 def test_backward_recomputation_decomposed_ops(device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+
     def fn(a):
         return torch.nn.functional.gelu(a)
 

@@ -192,7 +192,9 @@ def apply_rematerialization_for_consumer(
     _, leaves = bsym_list_to_dag(list(new_subsymbols))
     new_subsymbols = toposort_bsym_dag(leaves, TOPOSORT_ORDER.BOTTOM_UP)
     proxy_order = order_proxies(new_subsymbols)
-    new_consumer_args = tuple(sorted(new_consumer_args, key=lambda x: proxy_order[x.name]))
+    new_consumer_args = tuple(
+        sorted((a for a in new_consumer_args if a.name in proxy_order), key=lambda x: proxy_order[x.name])
+    )
     new_consumer = replace(consumer, args=new_consumer_args, subsymbols=new_subsymbols)
     return new_consumer
 
