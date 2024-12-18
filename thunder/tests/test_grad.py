@@ -1933,3 +1933,36 @@ def test_backward_recomputation_decomposed_ops(device):
             "unpack_sequence",
             "unpack_trivial",
         }
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_adhoc_executor_grad(executor, device, _):
+    import torch
+    import thunder
+
+    x = torch.ones(2, device=device, requires_grad=True)
+
+    class Sin(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, x):
+            ctx.save_for_backward(x)
+            return torch.sin(x)
+
+        @staticmethod
+        def backward(ctx, g):
+            (x,) = ctx.saved_tensors
+            return g * torch.cos(x) * 200
+
+    def func(x):
+        return Sin.apply(x)
+
+    cfunc = thunder.jit(func)
+    actual = cfunc(x)
+    (actual_gr,) = torch.autograd.grad(actual.sum(), x)
+    expected = func(x)
+    (expected_gr,) = torch.autograd.grad(expected.sum(), x)
+
+    torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(actual_gr, expected_gr)

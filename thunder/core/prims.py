@@ -3585,7 +3585,7 @@ def stride_order_meta(a: TensorProxy, /, order: Sequence[int]) -> TensorProxy:
 # TODO Consider a more general stride manipulation primitive, like PyTorch's
 #   as_strided or set_strided operations
 # See clang.stride_order for this prim's documentation
-stride_order = make_prim(PrimIDs.STRIDE_ORDER, "stride_order", meta=stride_order_meta)
+stride_order = make_prim(PrimIDs.STRIDE_ORDER, "stride_order", meta=stride_order_meta, tags=(OpTags.SHAPE_OP,))
 
 #
 # Reduction prims
