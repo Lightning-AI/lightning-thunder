@@ -778,7 +778,6 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
     from thunder.core.baseutils import sequencify
     from thunder.core.pytree import tree_map
     from thunder.core.trace_interpreter import interpret_trace
-    from thunder.torch import autograd_function_apply
 
     def _generate_random_str_id() -> str:
         import secrets
