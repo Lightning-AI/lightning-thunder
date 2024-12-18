@@ -261,6 +261,7 @@ def test_hf_bart_self_attn():
     assert_close(torch_result, thunder_result)
 
 
+@pytest.mark.skip(reason="torchvision::nms issue in an upstream library")
 def test_hf_bert():
     import transformers
 
