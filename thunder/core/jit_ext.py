@@ -801,7 +801,6 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
     new_fwd_args = []
     for i, v in enumerate(fwd_args):
         if i < length_of_tensor_args:
-            print(unwrap(v))
             new_fwd_args.append(v)
         else:
             # note(crcrpar): we might want to include `FutureTensorProxy` and
