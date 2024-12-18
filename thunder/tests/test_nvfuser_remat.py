@@ -309,7 +309,7 @@ def test_find_filtered_producer_consumer_pairs_multiple_consumers(executor, devi
         return t3, t4
 
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
-    compiled_func = executor.make_callable(func)
+    compiled_func = executor.make_callable(func, enable_saved_for_backward_recomputation=False)
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[0]
@@ -370,7 +370,10 @@ def test_find_fusion_producer_consumer_pairs_multiple_producers(executor, device
 
     try:
         compiled_func = thunder.jit(
-            func, executors=(torch_compile_cat_ex, thunder.nvfuser_executor), use_rematerialization=True
+            func,
+            executors=(torch_compile_cat_ex, thunder.nvfuser_executor),
+            use_rematerialization=True,
+            enable_saved_for_backward_recomputation=False,
         )
         _ = compiled_func(
             t0,
