@@ -273,9 +273,32 @@ class OperatorExecutor(Executor):
         self.implmap[_id] = impl
 
 
-class AdHocExecutor(OperatorExecutor):
-    """An "Anonymous" executor to be used for temporary registrations"""
+class TransientOperatorExecutor(OperatorExecutor):
+    """
+    A specialized executor for managing temporary operator registrations at runtime.
 
+    This executor generates unique identifiers for each registered operator by combining
+    the operator name with instance-specific identifiers. It's designed for scenarios
+    requiring dynamic operator registration without conflicting with existing operations.
+
+    Key Features:
+        - Creates unique operator names using instance ID and counter
+        - Supports runtime registration of operators
+        - Handles opaque function registration
+        - Maintains isolation between different temporary registrations
+
+    Example:
+        >>> executor = TransientOperatorExecutor()
+        >>> op = executor.register_operator(
+        ...     name="temp_add",
+        ...     like=thunder.torch.add,
+        ...     fn=lambda x, y: x + y
+        ... )
+
+    Note:
+        Operators registered through this executor are intended for temporary use
+        and should not be relied upon for permanent implementations.
+    """
     def __init__(self):
         super().__init__(f"__ad_hoc_executor_{id(self)}")
         self.counter = 0  # a counter to disambiguate names
@@ -349,7 +372,7 @@ class AdHocExecutor(OperatorExecutor):
         return symbol
 
     def __repr__(self) -> str:
-        return f"<thunder.extend.AdHocExecutor object {id(self)}>"
+        return f"<thunder.extend.TransientOperatorExecutor object {id(self)}>"
 
 
 def single_op_executor(

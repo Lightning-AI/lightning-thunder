@@ -619,12 +619,12 @@ class BoundSymbol(BoundSymbolInterface):
             # NOTE If the call ctx was specified directly, then no import is needed to call the function
             import_ctx = {}
         else:
-            from thunder.extend import AdHocExecutor
+            from thunder.extend import TransientOperatorExecutor
 
             # BoundSymbols of Symbols without Python implementations (either because they
             #   have Python implementations or defined call ctxs) are assumed to need
             #   a module import to run properly
-            if isinstance(self.sym.executor, AdHocExecutor):
+            if isinstance(self.sym.executor, TransientOperatorExecutor):
                 import_ctx = {}
             else:
                 assert self.sym.module is not None  # TODO: Is this a valid assumption?

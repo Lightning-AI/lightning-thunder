@@ -334,7 +334,7 @@ def jit(
 
     # Resolve names of executors
     executors = resolve_executors(executors)
-    ad_hoc_executor = extend.AdHocExecutor()
+    ad_hoc_executor = extend.TransientOperatorExecutor()
     executors = (*executors, ad_hoc_executor)
 
     # TODO: verify that tutorials don't have false positives and enable warning by default
