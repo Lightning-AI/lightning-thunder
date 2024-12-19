@@ -62,6 +62,7 @@ from thunder.core.proxies import (
     NumberProxy,
     StringProxy,
     TensorProxy,
+    SubclassTensorProxy,
     FutureTensorProxy,
     make_proxy_name,
     Variable,
@@ -666,6 +667,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
            So far, non-tensor ``ctx`` attributes seem to be folded into a trace.
     """
     from thunder.core.baseutils import check, sequencify
+    from thunder.core.transform_common import dce
 
     custom_autograd_function_cls = unwrap(obj)
     custom_forward = custom_autograd_function_cls.forward
@@ -677,6 +679,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     )
     if trace_of_fwd is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return trace_of_fwd
+    trace_of_fwd = dce(trace_of_fwd)
 
     # Forward.
     unwrapped_custom_forward_args = tree_map(lambda a: unwrap(a), args)
@@ -690,6 +693,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         for a in filter(lambda a: isinstance(a, Proxy), trace_of_fwd.args)
     ]
     trace_of_fwd.bound_symbols = unpack_bsyms + trace_of_fwd.bound_symbols
+    trace_of_fwd = dce(trace_of_fwd)
 
     @wraps(trace_of_fwd.python_callable())
     def core_of_forward(*args, **kwargs):
@@ -736,6 +740,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         for a in filter(lambda a: isinstance(a, Proxy), trace_of_backward.args)
     ]
     trace_of_backward.bound_symbols = bwd_unpack_bsyms + trace_of_backward.bound_symbols
+    trace_of_backward = dce(trace_of_backward)
 
     bwd_trace_impl = TraceCtx()
     bwd_trace_impl.bound_symbols.extend(trace_of_backward.bound_symbols)
@@ -769,6 +774,24 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         execution_transform=core_of_forward,
         grad_transform=grad_transform,
     )
+
+    added_bsym: BoundSymbol = get_jit_ctx().computation_trace.scopes[-1][-1]
+    import_ctx, call_ctx, object_ctx = {}, {}, {}
+    for bsym in trace_of_fwd.bound_symbols:
+        cur_import_ctx, cur_call_ctx, cur_object_ctx = bsym.gather_ctxs()
+        import_ctx.update(cur_import_ctx)
+        call_ctx.update(cur_call_ctx)
+        object_ctx.update(cur_object_ctx)
+
+    if import_ctx:
+        added_bsym._import_ctx.update(import_ctx)
+    if call_ctx:
+        if added_bsym._call_ctx is not None:
+            added_bsym._call_ctx.update(call_ctx)
+        else:
+            added_bsym._call_ctx = call_ctx
+    if object_ctx:
+        added_bsym._object_ctx.update(object_ctx)
     return forward_result
 
 
@@ -861,6 +884,42 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
         grad_transform=grad_transform,
     )
     return output
+
+
+@register_general_jit_lookaside(torch.Tensor._make_wrapper_subclass)
+def _make_wrapper_subclass(
+    cls: torch._C._TensorMeta,
+    size: Sequence[int],
+    strides: Sequence[int] | None = None,
+    storage_offset: int | None = None,
+    memory_format: torch.memory_format | None = None,
+    dtype: torch.dtype | None = None,
+    layout: torch.layout | None = torch.strided,
+    device: torch.device | None = None,
+    pin_memory: bool = False,
+    requires_grad: bool = False,
+    dispatch_sizes_strides_policy: str | None = None,
+    dispatch_device: bool = False,
+    dispatch_layout: bool = False,
+    _extra_dispatch_keys: torch.DispatchKeySet | None = None,
+    storage_size: int | None = None,
+):
+    ucls = unwrap(cls)
+    usize = unwrap(size)
+    udtype = unwrap(dtype)
+    udevice = unwrap(device)
+    urequires_grad = unwrap(requires_grad)
+
+    subclass = SubclassTensorProxy(
+        None,
+        shape=usize,
+        device=udevice,
+        dtype=udtype,
+        requires_grad=urequires_grad,
+        history=ProvenanceRecord(PseudoInst.LOOKASIDE, [cls.provenance]),
+        subclass_type=ucls,
+    )
+    return wrap(subclass, provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, [cls.provenance]))
 
 
 @register_general_jit_lookaside(torch.autocast.__enter__)
