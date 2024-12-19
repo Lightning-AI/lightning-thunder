@@ -2607,9 +2607,8 @@ def _scaled_mm_check(
 ) -> bool:
     from thunder.core.devices import to_torch_device
 
-    enable_matmul: None | bool = get_compile_option("nv_enable_matmul", "Enable nvFuser matmul.")
-    enable_linear: None | bool = get_compile_option("nv_enable_linear", "Enable nvFuser linear.")
-    if not (enable_matmul or enable_linear):
+    enable_scaled_mm: None | bool = get_compile_option("nv_enable_scaled_mm", "Enable nvFuser linear.")
+    if not enable_scaled_mm:
         return False
     if out_dtype is None:
         return False
