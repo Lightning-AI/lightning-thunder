@@ -1478,7 +1478,6 @@ def _get_gradfn_and_executor(
             ex_grad_transform: None | Callable = ex.get_grad_transform(bsym.sym)
             if ex_grad_transform is not None:
                 return ex_grad_transform, ex
-            break
 
     # If the executor doesn't define its own grad transform, this just returns the default grad transform for the bsym
     gradfn = _grad_fn_map.get(bsym.sym.id, None)
@@ -2510,6 +2509,8 @@ nondifferentiable_vjp_symbols: set[prims.PrimIDs] = {
     prims.PrimIDs.BITWISE_XOR,
     prims.PrimIDs.SIGNBIT,
     prims.PrimIDs.FULL,
+    prims.PrimIDs.FLATTEN_TENSOR_SUBCLASS,
+    prims.PrimIDs.UNFLATTEN_TENSOR_SUBCLASS,
 }
 
 
