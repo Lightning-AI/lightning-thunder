@@ -263,6 +263,7 @@ def test_validate_executors():
     with pytest.raises(ValueError, match=re.compile("Expected an Executor or the name of a registered Executor")):
         assert thunder.resolve_executors(("python", "foo", pytorch_executor, "bar"))
 
+
 def test_transient_operator_executor():
     from thunder.extend import TransientOperatorExecutor
     from functools import partial

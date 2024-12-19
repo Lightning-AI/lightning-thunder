@@ -299,6 +299,7 @@ class TransientOperatorExecutor(OperatorExecutor):
         Operators registered through this executor are intended for temporary use
         and should not be relied upon for permanent implementations.
     """
+
     def __init__(self):
         super().__init__(f"__ad_hoc_executor_{id(self)}")
         self.counter = 0  # a counter to disambiguate names
