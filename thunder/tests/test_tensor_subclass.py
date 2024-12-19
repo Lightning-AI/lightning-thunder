@@ -284,7 +284,7 @@ def test_torchao_float8_linear(executor, device, dtype, bias):
         expected = fp8_model(x)
         jitted = executor.make_callable(fp8_model)
 
-    if bias and dtype == thunder.core.dtypes.bfloat16 and executor == nvFuserExecutor:
+    if dtype == thunder.core.dtypes.bfloat16 and executor == nvFuserExecutor:
         with pytest.raises(
             RuntimeError, match="Failed to compute the min-cut on the graph due to a path with infinite capacity"
         ):
