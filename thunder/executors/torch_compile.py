@@ -16,6 +16,7 @@ from thunder.core.pytree import tree_flatten
 from thunder.executors.passes import (
     update_fusion_call_ctx,
     transform_for_execution,
+    del_last_used,
 )
 from thunder.executors.utils import Region
 from thunder.extend import FusionExecutor, register_executor, ImplInfo, fuse_bound_symbols
@@ -95,6 +96,7 @@ def make_compiled(
     region_trace._siginfo.args = [(a.name, None) for a in region_trace.args]
 
     torchex_trace = transform_for_execution(region_trace, executors_list=(pytorch_ex,))
+    torchex_trace = del_last_used(torchex_trace)
     trace_callable = torchex_trace.python_callable(include_decorators=False)
 
     torch_compile_fullgraph: None | bool = get_compile_option(
