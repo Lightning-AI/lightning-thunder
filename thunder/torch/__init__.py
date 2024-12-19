@@ -91,7 +91,8 @@ _torch_to_thunder_function_map: dict[Callable, Callable] = {}
 # torch operation definitions
 #
 
-# in-place sym -> out-of-place (= functional) sym with index of `inplace` argument
+# in-place sym -> out-of-place (= functional) sym with index of `inplace: bool` argument
+# If an in-place op doesn't have `inplace: bool` argument, set -1.
 _inplace_to_out_of_place: dict[Callable, tuple[Callable, int]] = {}
 
 
