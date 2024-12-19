@@ -744,6 +744,6 @@ def flatten_tensor_subclasses(trace: TraceCtx) -> TraceCtx:
     computation_trace_with_subclass_tensor_proxy_output.set_provenance(
         TraceProvenance(f"tensor subclasses desugared (took {elapsed_time_millis} milliseconds)")
     )
-    csed_computation_trace = tensor_subclass_dce(computation_trace_with_subclass_tensor_proxy_output)
+    dced_computation_trace = tensor_subclass_dce(computation_trace_with_subclass_tensor_proxy_output)
     warn_tensor_subclass_support()
-    return csed_computation_trace
+    return dced_computation_trace
