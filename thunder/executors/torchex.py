@@ -2201,7 +2201,9 @@ def _copy__impl(copy_from, copy_to, grad_enabled):
     return copy_to
 
 
-copy_ = ex.register_operator("copy_", meta=prims.copy_, tags=(prims.OpTags.DONT_DCE,), fn=_copy__impl)
+copy_ = ex.register_operator(
+    "copy_", meta=prims.copy_, tags=(prims.OpTags.DONT_DCE,), fn=_copy__impl, module=torch.Tensor
+)
 _register_implementation(prims.copy_, copy_, checker=_always_executable)
 
 

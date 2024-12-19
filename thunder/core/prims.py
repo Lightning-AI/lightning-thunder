@@ -4031,7 +4031,7 @@ def copy__meta(
     copy_from: TensorProxy,
     copy_to: TensorProxy,
     *,
-    grad_enabled: bool = False,
+    grad_enabled: bool,
 ):
     utils.check_type(copy_from, TensorProxy)
     utils.check_type(copy_to, TensorProxy)

@@ -20,7 +20,7 @@ def test_prim_inplace_copy_fwd(executor, device, dtype):
     def foo(x, y):
         z = x + y
         # NOTE: nvfuserex doesn't support `return z`, i.e. the copy_from argument
-        o = thunder.core.prims.copy_(z, x)
+        o = thunder.core.prims.copy_(z, x, grad_enabled=True)
         return o
 
     traced_nvfuser_foo = executor.make_callable(foo)
@@ -49,7 +49,7 @@ def test_prim_inplace_copy_bwd(executor, device, dtype):
     def foo(x, y):
         z = x * y
         z = z * x
-        o = thunder.core.prims.copy_(z, x)
+        o = thunder.core.prims.copy_(z, x, grad_enabled=True)
         p = y * y
         return p
 
@@ -120,25 +120,25 @@ def test_batch_norm_running_stats(executor, device, dtype):
 def test_inplace_copy_sanity_check(executor, device, dtype):
     def func0(x, y):
         z = x * y
-        x = thunder.core.prims.copy_(z, x)
+        x = thunder.core.prims.copy_(z, x, grad_enabled=True)
         return x + y
 
     def func1(x, y):
         z = x * y
-        o1 = thunder.core.prims.copy_(z, x)
-        o2 = thunder.core.prims.copy_(y, x)
+        o1 = thunder.core.prims.copy_(z, x, grad_enabled=True)
+        o2 = thunder.core.prims.copy_(y, x, grad_enabled=True)
         return x, o1, o2
 
     def func2(x, y):
         z = x * y
-        o1 = thunder.core.prims.copy_(z, x)
-        o2 = thunder.core.prims.copy_(x, y)
+        o1 = thunder.core.prims.copy_(z, x, grad_enabled=True)
+        o2 = thunder.core.prims.copy_(x, y, grad_enabled=True)
         return y, o1, o2
 
     def func3(x, y):
         z = x * y
-        o1 = thunder.core.prims.copy_(z, x)
-        o2 = thunder.core.prims.copy_(o1, y)
+        o1 = thunder.core.prims.copy_(z, x, grad_enabled=True)
+        o2 = thunder.core.prims.copy_(o1, y, grad_enabled=True)
         return y, o2
 
     for foo in (func0, func1, func2, func3):
