@@ -319,15 +319,14 @@ def insert_inplace(
         trc._complete = False
 
         # Creates a temporary scope to record these operations in
-        old_scope = trc.scopes
         scope = []
-        trc.scopes = [scope]
+        trc.push_scope(scope)
 
         fn()
         _insert_extend_list(trc.bound_symbols, idx, scope)
 
     finally:
-        trc.scopes = old_scope
+        trc.pop_scope()
         trc._complete = True
         reset_tracectx(tracectx_tok)
 
@@ -357,16 +356,15 @@ def replace_inplace(
         trc._complete = False
 
         # Creates a temporary scope to record these operations in
-        old_scope = trc.scopes
         scope = []
-        trc.scopes = [scope]
+        trc.push_scope(scope)
 
         fn(trc.bound_symbols[idx])
         del trc.bound_symbols[idx]
         _insert_extend_list(trc.bound_symbols, idx, scope)
 
     finally:
-        trc.scopes = old_scope
+        trc.pop_scope()
         trc._complete = True
         reset_tracectx(tracectx_tok)
 
