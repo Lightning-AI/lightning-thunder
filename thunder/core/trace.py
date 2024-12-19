@@ -14,6 +14,7 @@ from types import ModuleType
 import thunder
 import thunder.core.codeutils as codeutils
 import thunder.core.baseutils as baseutils
+import thunder.core.profile
 from thunder.core.baseutils import ProxyInterface, BoundSymbolInterface, TagBase
 import thunder.core.devices as devices
 from thunder.core.pytree import tree_flatten, tree_unflatten
@@ -479,6 +480,7 @@ class TraceCtx:
     # Returns a Python callable that executes the trace
     # TODO issue "Create a mechanism for freezing TraceCtx objects"
     #   Create a mechanism for freezing traces and cache the compilation
+    @thunder.core.profile.annotate_for_profile("TraceCtx.python_callable")
     def python_callable(self, *, global_dicts: None | dict = None, **kwargs: Any) -> Callable:
         python_str: str
 

@@ -5,6 +5,7 @@ from typing import Any
 
 import torch
 
+from thunder.core.profile import annotate_for_profile
 from thunder.core.transform_common import Transform
 from thunder.core import utils, prims
 from thunder.core.proxies import Proxy, ProxyTag, unvariableify
@@ -268,9 +269,8 @@ class CUDAGraphTransform(Transform):
 
         return True
 
+    @annotate_for_profile("CUDAGraphTransformer.transform_trace_post_optimization")
     def transform_trace_post_optimization(self, trace: TraceCtx, **kwargs) -> TraceCtx:
-        start_time_ns: int = time.perf_counter_ns()
-
         def _should_fuse(a: Node, b: Node):
             # TODO: modify the logic to be able to potentially better handle
             # islands around data-dependent ops once these are supported by Thunder.
@@ -315,9 +315,5 @@ class CUDAGraphTransform(Transform):
         delattr(fused_trace, "clear_collection_names")
         reset_tracectx(fused_trace_tok)
 
-        end_time_ns = time.perf_counter_ns()
-        elapsed_time_ns = end_time_ns - start_time_ns
-        elapsed_time_ms = elapsed_time_ns // 1000000
-        fused_trace.set_provenance(TraceProvenance(f"CUDAGraph fusion (took {elapsed_time_ms} milliseconds)"))
-
+        fused_trace.set_provenance(TraceProvenance("CUDAGraph fusion"))
         return fused_trace

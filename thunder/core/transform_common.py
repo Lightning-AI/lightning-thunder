@@ -9,6 +9,7 @@ from functools import partial
 
 import thunder
 import thunder.core.prims as prims
+import thunder.core.profile
 from thunder.core.baseutils import BoundSymbolInterface, NumberProxyInterface
 from thunder.core.proxies import Proxy, variableify, Variable, TensorProxy, unvariableify
 from thunder.core.pytree import tree_flatten, tree_iter, tree_map, tree_unflatten
@@ -141,9 +142,8 @@ def remove_duplicate_number_proxies(bsyms: Sequence[BoundSymbol]) -> list[BoundS
 #   that only produce non-proxy objects
 # NOTE needed_proxies is an in/out argument, it takes an initial set of Variables you want to keep, and return
 #   all the needed proxies of the input trace
+@thunder.core.profile.annotate_for_profile("dce")
 def dce(trace: Trace, needed_proxies: None | set[Variable] = None) -> Trace:
-    start_time_ns = time.perf_counter_ns()
-
     producer_map: ProxyDict = producers(trace)
 
     flat_trace_outputs, _ = tree_flatten(trace.output)
@@ -203,10 +203,7 @@ def dce(trace: Trace, needed_proxies: None | set[Variable] = None) -> Trace:
     dced_bound_symbols = remove_duplicate_number_proxies(dced_bound_symbols)
     dcetrace.bound_symbols = dced_bound_symbols
 
-    end_time_ns = time.perf_counter_ns()
-    elapsed_time_ns = end_time_ns - start_time_ns
-    elapsed_time_millis = elapsed_time_ns // 1000000
-    dcetrace.set_provenance(TraceProvenance(f"Dead Code Elimination (took {elapsed_time_millis} milliseconds)"))
+    dcetrace.set_provenance(TraceProvenance(f"Dead Code Elimination"))
 
     return dcetrace
 
@@ -300,6 +297,7 @@ def cse_single_bsym(
 
 # TODO Update the replacement of redundant proxies to use a visitor pattern
 #   when that architecture is added in the future
+@thunder.core.profile.annotate_for_profile("cse")
 def cse(trace: Trace) -> Trace:
     """Remove bound symbols whose right hand side is common expression.
 
@@ -355,8 +353,6 @@ def cse(trace: Trace) -> Trace:
     Returns:
         :class:`TraceCtx` with common subexpression eliminated.
     """
-    start_time_ns = time.perf_counter_ns()
-
     cse_trace = from_trace(trace)
 
     cse_trace_bound_symbols = []
@@ -374,12 +370,7 @@ def cse(trace: Trace) -> Trace:
     new_bsyms = replace_redundant_inputs(redundant_map, cse_trace_bound_symbols)
     cse_trace.bound_symbols = new_bsyms
 
-    end_time_ns = time.perf_counter_ns()
-    elapsed_time_ns = end_time_ns - start_time_ns
-    elapsed_time_millis = elapsed_time_ns // 1000000
-    cse_trace.set_provenance(
-        TraceProvenance(f"Common Subexpression Elimination (took {elapsed_time_millis} milliseconds)")
-    )
+    cse_trace.set_provenance(TraceProvenance("Common Subexpression Elimination"))
     return cse_trace
 
 
@@ -491,6 +482,7 @@ def canonicalize_proxies(bsyms: Sequence[BoundSymbol]) -> Sequence[BoundSymbol]:
     return output
 
 
+@thunder.core.profile.annotate_for_profile("wrap_return_value_together_with_arguments")
 def wrap_return_value_together_with_arguments(trace: Trace) -> Trace:
     last = trace.bound_symbols[-1]
     assert last.sym.id == prims.PrimIDs.RETURN
@@ -515,6 +507,7 @@ def unwrap_return_value(trace: Trace) -> Trace:
     return new_trace
 
 
+@thunder.core.profile.annotate_for_profile("remove_context_manager_prims_from_trace")
 def remove_context_manager_prims_from_trace(trace: Trace) -> Trace:
     def is_context_manager_prim(bsym):
         # context manager prims would/should be explicitly tagged.
