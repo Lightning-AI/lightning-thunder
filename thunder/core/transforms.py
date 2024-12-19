@@ -38,7 +38,7 @@ from thunder.core.proxies import (
 from thunder.core.compile_data import get_compile_data, get_compile_option
 from thunder.core.langctxs import langctx, Languages
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten, tree_flatten_with_dataclass
-from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol
+from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol, BoundSymbolTag, has_tags
 from thunder.core.trace import TraceCtx as Trace
 from thunder.core.trace import VariableInterface as Variable
 from thunder.core.trace import (
@@ -92,6 +92,7 @@ import numpy as np
 
 
 TraceTag.register_tag("AUGMENTED_FORWARD")
+BoundSymbolTag.register_tag("RECOMPUTE_IN_BACKWARD")
 
 
 # TODO This should be a partial of thunder.trace, but that would cause a circular import
@@ -318,15 +319,14 @@ def insert_inplace(
         trc._complete = False
 
         # Creates a temporary scope to record these operations in
-        old_scope = trc.scopes
         scope = []
-        trc.scopes = [scope]
+        trc.push_scope(scope)
 
         fn()
         _insert_extend_list(trc.bound_symbols, idx, scope)
 
     finally:
-        trc.scopes = old_scope
+        trc.pop_scope()
         trc._complete = True
         reset_tracectx(tracectx_tok)
 
@@ -356,16 +356,15 @@ def replace_inplace(
         trc._complete = False
 
         # Creates a temporary scope to record these operations in
-        old_scope = trc.scopes
         scope = []
-        trc.scopes = [scope]
+        trc.push_scope(scope)
 
         fn(trc.bound_symbols[idx])
         del trc.bound_symbols[idx]
         _insert_extend_list(trc.bound_symbols, idx, scope)
 
     finally:
-        trc.scopes = old_scope
+        trc.pop_scope()
         trc._complete = True
         reset_tracectx(tracectx_tok)
 
@@ -407,9 +406,8 @@ def visitor_transform(trace_from: Trace, visit: Callable, *, provenance: None | 
                 # Creates a temporary scope to support copying the original bsym BEFORE
                 #   the operations performed by visit(), even though this doesn't know whether to
                 #   copy the original bsym until after visit() completes
-                old_scope = trc.scopes
                 scope = []
-                trc.scopes = [scope]
+                trc.push_scope(scope)
 
                 visit_type = visit(bsym)
 
@@ -426,7 +424,7 @@ def visitor_transform(trace_from: Trace, visit: Callable, *, provenance: None | 
 
             finally:
                 # Restores the trc's scope
-                trc.scopes = old_scope
+                trc.pop_scope()
 
         if provenance is not None:
             trc.set_provenance(TraceProvenance(provenance))
@@ -2994,6 +2992,7 @@ def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_fo
         )
     )
     backward_trace.bound_symbols = list((*unpacking_trace.bound_symbols[:-1], *backward_trace_bsyms_without_unpacking))
+    backward_trace.scopes[0] = backward_trace.bound_symbols
 
 
 def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> ForwardBackwardTraces:
@@ -3156,6 +3155,8 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
     enable_saved_for_backward_recomputation: None | bool = get_compile_option(
         "enable_saved_for_backward_recomputation", "Enable save for backward tensors recomputation."
     )
+    if enable_saved_for_backward_recomputation is None:
+        enable_saved_for_backward_recomputation = True
     if enable_saved_for_backward_recomputation:
         forward_trace, backward_trace = recompute_saved_for_backward(forward_trace, backward_trace)
 
@@ -3174,10 +3175,18 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
 
     start_time_ns = time.perf_counter_ns()
 
+    cd = get_compile_data()
+    have_nvfuser = any([ex.name == "nvfuser" for ex in cd.executors_list]) if cd is not None else False
+    if have_nvfuser:
+        from thunder.core.rematerialization import replace_uniform
+
+        fwd_trace = replace_uniform(fwd_trace)
+
     saved_for_bw = get_saved_for_backward_tensors(fwd_trace)
     fwd_trace_args = {variableify(j) for j in fwd_trace.args}
     old_saved_for_bwd = {variableify(j) for j in saved_for_bw}
 
+    producers = utils.producers(fwd_trace)
     all_rematerializable = old_saved_for_bwd - fwd_trace_args
 
     remat_policy: None | Callable[[set[Variable]], set[Variable]] = get_compile_option(
@@ -3188,13 +3197,35 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
     if remat_policy:
         rematerializable = remat_policy(all_rematerializable)
     else:
-        rematerializable = all_rematerializable
+        rematerializable = {
+            p
+            for p in all_rematerializable
+            if thunder.core.proxies.ProxyTag.RECOMPUTE_IN_BACKWARD in thunder.core.proxies.unvariableify(p).tags
+        }
 
-    producers = find_producer_symbols(fwd_trace, tuple(unvariableify(i) for i in rematerializable), fwd_trace.args)
+    if not rematerializable:
+        return fwd_trace, bwd_trace
+
+    producers = find_producer_symbols(
+        fwd_trace,
+        tuple(unvariableify(i) for i in rematerializable),
+        tuple(fwd_trace.args) + tuple(unvariableify(i) for i in all_rematerializable - rematerializable),
+    )
 
     required_fw_args = fwd_trace_args & old_saved_for_bwd
+    additional_tensors = set()
+    additional_nontensors = set()
+
     recomputed_tensors_from_producers = set()
     for prod in producers:
+        if has_tags(prod, {prims.OpTags.RANDOM_OP}):
+            for prod_out in prod.flat_proxy_outs:
+                # things that are from inputs?
+                if isinstance(prod_out, TensorProxy):
+                    additional_tensors.add(variableify(prod_out))
+                else:
+                    additional_nontensors.add(variableify(prod_out))
+            continue
         for prod_arg in prod.flat_args:
             prod_arg = variableify(prod_arg)
             if prod_arg in fwd_trace_args:
@@ -3203,39 +3234,70 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
             recomputed_tensors_from_producers.add(variableify(prod_out))
 
     required_saved_for_bwd = all_rematerializable - rematerializable - recomputed_tensors_from_producers
-    new_saved_for_backward = tuple(unvariableify(i) for i in required_fw_args | required_saved_for_bwd)
+    new_saved_for_backward = tuple(
+        unvariableify(i) for i in required_fw_args | required_saved_for_bwd | additional_tensors
+    )
 
     new_fwd_trace = from_trace(fwd_trace)
     new_fwd_trace.bound_symbols = fwd_trace.bound_symbols.copy()
-    new_return_args = (fwd_trace.output[0], (new_saved_for_backward, fwd_trace.output[1][1]))
+    new_fwd_trace.scopes[0] = new_fwd_trace.bound_symbols
+
+    assert bwd_trace.bound_symbols[2].sym.id == prims.PrimIDs.UNPACK_SEQUENCE
+    assert bwd_trace.bound_symbols[2].args[0].name == "saved_for_backward"
+    assert bwd_trace.bound_symbols[4].sym.id == prims.PrimIDs.UNPACK_SEQUENCE
+    assert bwd_trace.bound_symbols[4].args[0].name == "C0"
+    assert bwd_trace.bound_symbols[5].sym.id == prims.PrimIDs.UNPACK_SEQUENCE
+    assert bwd_trace.bound_symbols[5].args[0].name == "C1"
+
+    p_saved_for_backward = bwd_trace.bound_symbols[2].args[0]
+    p_c0 = bwd_trace.bound_symbols[4].args[0]
+    p_c1 = bwd_trace.bound_symbols[5].args[0]
+
+    new_c1 = tuple(unvariableify(i) for i in {variableify(p) for p in p_c1.coll} | additional_nontensors)
+
+    new_return_args = (fwd_trace.output[0], (new_saved_for_backward, new_c1))
     new_fwd_trace.bound_symbols[-1] = prims.python_return.bind(*new_return_args, output=None)
 
     new_bwd_trace = from_trace(bwd_trace)
     # In cases where C0 name is carried from previous trace it must be removed
     # as the proxy needs to register with that specific name to follow the backward
     # trace standard signature.
-    new_bwd_trace.names.discard("C0")
 
-    with tracectx(new_bwd_trace):
-        unpack_args = (CollectionProxy(new_saved_for_backward, name="C0"), len(new_saved_for_backward))
+    p_saved_for_backward.coll = (new_saved_for_backward, fwd_trace.output[1][1])
+    p_c0.coll = new_saved_for_backward
+    p_c1.coll = new_c1
 
     # Here we make sure that the signature of the backward trace is the same as the one we expect.
     # This part of the trace is the unpacking of the tuple passed from the forward trace,
     # more specifically, C0 unpacks into the saved for backward tensors and C1 into the cotangents
     # used to compute the vector-Jacobian product.
-    assert bwd_trace.bound_symbols[4].sym.id == prims.PrimIDs.UNPACK_SEQUENCE
-    assert bwd_trace.bound_symbols[4].args[0].name == "C0"
-    assert bwd_trace.bound_symbols[5].sym.id == prims.PrimIDs.UNPACK_SEQUENCE
-    assert bwd_trace.bound_symbols[5].args[0].name == "C1"
+
+    proxy_names_to_producers = {}
+    for bsym in producers:
+        input_names = {p.name for p in bsym.flat_proxy_args}
+        for p in bsym.flat_proxy_outs:
+            if p.name not in input_names and variableify(p) in recomputed_tensors_from_producers:
+                proxy_names_to_producers[p.name] = bsym
+
+    def insert_producer_for_proxy(pname):
+        producer_bsym = proxy_names_to_producers.get(pname)
+        if producer_bsym is not None:
+            for p in producer_bsym.flat_proxy_args:
+                insert_producer_for_proxy(p.name)
+            for o in producer_bsym.flat_proxy_outs:
+                proxy_names_to_producers.pop(o.name, None)
+            new_bwd_trace.bound_symbols.append(producer_bsym)
 
     for idx, bsym in enumerate(bwd_trace.bound_symbols):
         if idx == 4:
-            new_unpack = prims.unpack_sequence.bind(*unpack_args, output=new_saved_for_backward)
+            new_unpack = prims.unpack_sequence.bind(p_c0, len(new_saved_for_backward), output=new_saved_for_backward)
             new_bwd_trace.bound_symbols.append(new_unpack)
-        elif idx == 6:
-            new_bwd_trace.bound_symbols.extend(producers)
-            new_bwd_trace.bound_symbols.append(bsym)
+        elif idx == 5:
+            new_unpack = prims.unpack_sequence.bind(p_c1, len(new_c1), output=new_c1)
+            new_bwd_trace.bound_symbols.append(new_unpack)
         else:
+            for p in bsym.flat_proxy_args:
+                insert_producer_for_proxy(p.name)
             new_bwd_trace.bound_symbols.append(bsym)
 
     new_bwd_trace.args = [(new_saved_for_backward, fwd_trace.output[1][1]), *bwd_trace.args[1:]]
