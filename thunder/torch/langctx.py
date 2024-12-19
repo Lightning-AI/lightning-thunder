@@ -28,7 +28,6 @@ class TorchCtx(LanguageContext):
         #       throwing AttributeError (only) when the attribute does
         #       not exist.
         inps, _ = tree_flatten((args, kwargs))
-
         has_tensor_input: bool = False
         for x in inps:
             if isinstance(x, TensorProxy):
