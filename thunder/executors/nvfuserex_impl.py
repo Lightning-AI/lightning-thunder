@@ -488,6 +488,18 @@ class FusionDefinitionWrapper:
         return f"FusionDefinitionWrapper({self.name})"
 
 
+def all_tagged(bsym: BoundSymbol, tag: prims.OpTags) -> bool:
+    """:obj:`True` if `bsym` and its subsymbols all are tagged with ``tag``."""
+    if not has_tags(bsym, {tag}):
+        return False
+
+    for sbsym in bsym.subsymbols:
+        if not has_tags(sbsym, {tag}):
+            return False
+
+    return True
+
+
 # Group bookend meta operations into separate regions
 # This function returns a List[Region] which changes the executor of meta regions to torchex
 #
@@ -524,20 +536,10 @@ def group_bookend_meta_ops(producers, consumers, region: Region) -> Mapping[str,
                     return False
         return True
 
-    def all_tagged(bsym: BoundSymbol, tags: set[prims.OpTags]) -> bool:
-        if not has_tags(bsym, tags):
-            return False
-
-        for sbsym in bsym.subsymbols:
-            if not has_tags(sbsym, tags):
-                return False
-
-        return True
-
     # traversing all bound_symbols in topo order
     for bsym in region.bound_symbols:
         # we look at meta operations that can be moved to the front
-        if all_tagged(bsym, {prims.OpTags.SHAPE_OP}) and can_move_to_front(bsym):
+        if all_tagged(bsym, prims.OpTags.SHAPE_OP) and can_move_to_front(bsym):
             # when we remove a node, we add all the bsym's flat_outs to region_inputs
             front_meta_cluster.append(bsym)
             for out in bsym.flat_outs:
@@ -548,7 +550,7 @@ def group_bookend_meta_ops(producers, consumers, region: Region) -> Mapping[str,
             middle_cluster.append(bsym)
     # traversing all bound_symbols in reverse topo order
     for bsym in reversed(copy(middle_cluster)):
-        if all_tagged(bsym, {prims.OpTags.SHAPE_OP}) and can_move_to_rear(bsym):
+        if all_tagged(bsym, prims.OpTags.SHAPE_OP) and can_move_to_rear(bsym):
             middle_cluster.remove(bsym)
             rear_meta_cluster.insert(0, bsym)
 
@@ -897,6 +899,12 @@ instantiated) this heuristic actually leads to worse code.
                 bookend_result = group_bookend_meta_ops(producers, consumers, region)
             else:
                 bookend_result = {"front_bsyms": [], "fusion": region, "rear_bsyms": []}
+
+            # Don't fuse a region which has only Shape Operations.
+            all_shape_ops = all(map(lambda bsym: all_tagged(bsym, prims.OpTags.SHAPE_OP), bsyms))
+            if all_shape_ops:
+                fused_bsyms.extend(bsyms)
+                continue
 
             if len(bsyms) == 1:
                 bsym: BoundSymbol = bsyms[0]
