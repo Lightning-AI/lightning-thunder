@@ -2004,7 +2004,7 @@ def copysign(a, b, /):
     return clang.copysign(a, b)
 
 
-@torchsymbol(torch.Tensor.copysign_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+@torchsymbol(torch.Tensor.copysign_, is_method=True)  # , tags=(prims.OpTags.IN_PLACE,))
 def copysign_(a, b, /):
     return _copy_(a, copysign(a, b))
 
