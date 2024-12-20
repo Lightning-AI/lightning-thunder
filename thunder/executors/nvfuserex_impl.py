@@ -865,7 +865,9 @@ class nvFuserExecutor(FusionExecutor):
 
             return _can_fuse_node(a) and _can_fuse_node(b)
 
-        bound_symbol_groups = fuse_bound_symbols(trace, _should_fuse)
+        bound_symbol_groups = fuse_bound_symbols(
+            trace, lambda bsym: self.can_fuse(bsym) and self.has_cuda_input_or_output(bsym)
+        )  # _should_fuse)
 
         # Counts how many fusions (per executor) have been constructed
         #   (Used to name fusions like nvFusion0, nvFusion1, ...)
@@ -939,7 +941,10 @@ instantiated) this heuristic actually leads to worse code.
         # Some of the operations might be better placed with its consumers (for
         # example residual connection in transformer block). This pass moves
         # them to the consumer.
-        if self._use_rematerialization:
+        use_rematerialization: None | bool = get_compile_option(
+            "use_rematerialization", "use rematerialization of parameters"
+        )
+        if use_rematerialization and self._use_rematerialization:
             fusedtrace = rematerialize(fusedtrace)
 
         fusedtrace = remove_redundant_casts(fusedtrace)

@@ -1433,7 +1433,7 @@ def test_cache_symbolic_values_reshape_numel():
         a = torch.reshape(a, [a.numel()])
         return a.relu()
 
-    jfoo = thunder.jit(foo, cache="symbolic values")
+    jfoo = thunder.jit(foo, cache="symbolic values", enable_saved_for_backward_recomputation=False)
 
     a = torch.randn(2, 3, 8, requires_grad=True, device="cpu")
 

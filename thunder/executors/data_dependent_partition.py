@@ -301,3 +301,18 @@ def fuse_bound_symbols(trace: TraceCtx, merge_func: Callable):
     dataflow_merge(graph, merge_func)
     ret = horizontal_merge(graph, merge_func)
     return ret
+
+
+def fuse_bound_symbols(trace: TraceCtx, can_fuse: Callable):
+    fusions = [[]]
+    for bsym in trace.bound_symbols:
+        if can_fuse(bsym):
+            fusions[-1].append(bsym)
+        else:
+            if fusions[-1]:
+                fusions.append([])
+            fusions[-1].append(bsym)
+            fusions.append([])
+    if not fusions[-1]:
+        del fusions[-1]
+    return fusions

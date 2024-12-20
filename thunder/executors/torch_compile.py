@@ -16,6 +16,7 @@ from thunder.core.pytree import tree_flatten
 from thunder.executors.passes import (
     update_fusion_call_ctx,
     transform_for_execution,
+    del_last_used,
 )
 from thunder.executors.utils import Region
 from thunder.extend import FusionExecutor, register_executor, ImplInfo
@@ -95,6 +96,7 @@ def make_compiled(
     region_trace._siginfo.args = [(a.name, None) for a in region_trace.args]
 
     torchex_trace = transform_for_execution(region_trace, executors_list=(pytorch_ex,))
+    torchex_trace = del_last_used(torchex_trace)
     trace_callable = torchex_trace.python_callable(include_decorators=False)
 
     torch_compile_fullgraph: None | bool = get_compile_option(
@@ -171,7 +173,7 @@ class TorchCompileExecutor(FusionExecutor):
 
             return _can_fuse_node(a) and _can_fuse_node(b)
 
-        bound_symbol_groups = fuse_bound_symbols(trace, _should_fuse)
+        bound_symbol_groups = fuse_bound_symbols(trace, self.can_fuse)
 
         fused_bsyms = []
         # Counts how many fusions (per executor) have been constructed
@@ -194,7 +196,11 @@ class TorchCompileExecutor(FusionExecutor):
 
         fusedtrace.bound_symbols = fused_bsyms
 
-        fusedtrace = rematerialize(fusedtrace)
+        use_rematerialization: None | bool = get_compile_option(
+            "use_rematerialization", "use rematerialization of parameters"
+        )
+        if use_rematerialization:
+            fusedtrace = rematerialize(fusedtrace)
         fusedtrace = dce(fusedtrace)
         fusedtrace = update_fusion_call_ctx(fusedtrace)
 

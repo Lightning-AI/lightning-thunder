@@ -2795,6 +2795,7 @@ get_and_update_rng_state = make_prim(
     PrimIDs.GET_AND_UPDATE_RNG_STATE,
     "get_and_update_rng_state",
     meta=_get_and_update_rng_state_meta,
+    tags=(OpTags.RANDOM_OP,),
 )
 
 
