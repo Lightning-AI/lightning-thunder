@@ -147,7 +147,7 @@ def clear_mutable_collection_argument_memory(
     return memory_size
 
 
-def get_alloc_memory(trc: TraceCtx) -> tuple[int, dict[str, int]]:
+def get_alloc_memory(trc: TraceCtx, *, annotate=False) -> tuple[int, dict[str, int]]:
     """
     Calculate the memory usage based on the executable trace.
     The memory calculation is based only on the compile-time trace, i.e. the input and output shape
@@ -189,6 +189,10 @@ def get_alloc_memory(trc: TraceCtx) -> tuple[int, dict[str, int]]:
             impl = partial(impl, is_argument=is_argument)
 
         allocated += impl(bsym, tensor_to_memory_data, name_to_alloc_memory)
+        if annotate:
+            if bsym.header:
+                bsym.header += " "
+            bsym.header += f"mem after next op: ~{allocated/(2**30):2f}GB"
         max_allocated = max(max_allocated, allocated)
 
     return max_allocated, name_to_alloc_memory
