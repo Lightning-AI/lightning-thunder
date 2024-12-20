@@ -24,6 +24,7 @@ from thunder.core.trace_interpreter import (
     interpret_trace_to_trace,
     trace_interpreter_skip_list,
 )
+from thunder.core.profile import annotate_for_profile
 from thunder.core.proxies import (
     CollectionProxy,
     NumberProxy,
@@ -484,10 +485,10 @@ def add_transform(
 
 # The no-op transform. A trivial composable transform, only useful as an example.
 class _NoopTransform(Transform):
+    @thunder.core.profile.annotate_for_profile("NoopTransform.transform_trace_pre_prologue")
     def transform_trace_pre_prologue(
         self, prologue_trace: Trace, computation_trace: Trace, epilogue_trace: Trace | None, **kwargs
     ) -> Trace:
-        start_time_ns = time.perf_counter_ns()
         noop_trace = from_trace(computation_trace)
 
         tracectx_tok: Any
@@ -499,10 +500,7 @@ class _NoopTransform(Transform):
 
         noop_trace.bound_symbols.extend(computation_trace.bound_symbols)
 
-        end_time_ns = time.perf_counter_ns()
-        elapsed_time_ns = end_time_ns - start_time_ns
-        elapsed_time_millis = elapsed_time_ns // 1000000
-        noop_trace.set_provenance(TraceProvenance(f"No-op Transform (took {elapsed_time_millis} milliseconds)"))
+        noop_trace.set_provenance(TraceProvenance("No-op Transform"))
 
         return prologue_trace, noop_trace, computation_trace
 
@@ -515,8 +513,8 @@ def noop(cfn: Callable) -> Callable:
 # The comment fusions transform. Just adds a comment before and after each fusion.
 #   This is an example of a post-optimization transform.
 class _CommentFusionsTransform(Transform):
+    @thunder.core.profile.annotate_for_profile("CommentFusionsTransform.transform_trace_post_optimization")
     def transform_trace_post_optimization(self, trace: Trace, **kwargs) -> Trace:
-        start_time_ns = time.perf_counter_ns()
         commented_trace = from_trace(trace)
 
         nbsyms: list[BoundSymbol] = []
@@ -531,11 +529,8 @@ class _CommentFusionsTransform(Transform):
                 nbsyms.append(bsym)
 
         commented_trace.bound_symbols = nbsyms
-        end_time_ns = time.perf_counter_ns()
-        elapsed_time_ns = end_time_ns - start_time_ns
-        elapsed_time_millis = elapsed_time_ns // 1000000
 
-        commented_trace.set_provenance(TraceProvenance(f"Comment Fusions (took {elapsed_time_millis} milliseconds)"))
+        commented_trace.set_provenance(TraceProvenance("Comment Fusions"))
 
         return commented_trace
 
@@ -1513,6 +1508,7 @@ def grad(
             computation_trc = dce(computation_trc)
 
             @wraps(computation_trc.python_callable())
+            @annotate_for_profile("_GradTransform.python_callable")
             def python_callable(*args, **kwargs):
                 return eval_trace(computation_trc, *args, **kwargs)["output"]
 
@@ -3162,6 +3158,7 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
     return ForwardBackwardTraces(forward_trace, backward_trace)
 
 
+@thunder.core.profile.annotate_for_profile("recompute_saved_for_backward")
 def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Trace, Trace]:
     """Generates the pair of traces with rematerializaion of the saved-for-backward tensors.
     Args:
@@ -3171,9 +3168,6 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
     Returns:
         tuple[Trace, Trace]: A tuple containing the new forward and backward traces.
     """
-
-    start_time_ns = time.perf_counter_ns()
-
     saved_for_bw = get_saved_for_backward_tensors(fwd_trace)
     fwd_trace_args = {variableify(j) for j in fwd_trace.args}
     old_saved_for_bwd = {variableify(j) for j in saved_for_bw}
@@ -3240,12 +3234,7 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
 
     new_bwd_trace.args = [(new_saved_for_backward, fwd_trace.output[1][1]), *bwd_trace.args[1:]]
 
-    elapsed_time_ns = time.perf_counter_ns() - start_time_ns
-    new_bwd_trace.set_provenance(
-        TraceProvenance(f"Saved for backward remat trace (took {elapsed_time_ns * 1e-6:.2f} milliseconds)")
-    )
-    new_fwd_trace.set_provenance(
-        TraceProvenance(f"Saved for backward remat trace (took {elapsed_time_ns * 1e-6:.2f} milliseconds)")
-    )
+    new_bwd_trace.set_provenance(TraceProvenance("Saved for backward remat trace"))
+    new_fwd_trace.set_provenance(TraceProvenance("Saved for backward remat trace"))
 
     return new_fwd_trace, new_bwd_trace
