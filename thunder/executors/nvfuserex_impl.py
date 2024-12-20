@@ -2659,7 +2659,7 @@ def _nv_scaled_mm(
     lc_to_nv_map: dict,
 ) -> Any:
     nv_a = getnv(a, fd, lc_to_nv_map)
-    nv_b = getnv(a, fd, lc_to_nv_map)
+    nv_b = getnv(b, fd, lc_to_nv_map)
     nvscale_a = getnv(scale_a, fd, lc_to_nv_map)
     nvscale_b = getnv(scale_b, fd, lc_to_nv_map)
 
