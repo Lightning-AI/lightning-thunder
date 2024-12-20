@@ -482,7 +482,7 @@ def test_inplace_to_tensors_with_grad(executor, device, _):
 
     @torch.no_grad
     def add_grad(x, y):
-        return x.add_(x.grad)
+        return x.add_(x.grad, alpha=0.1)
 
     for f in (add_y, add_grad):
         jitted_f = executor.make_callable(f)
