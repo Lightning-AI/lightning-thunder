@@ -238,8 +238,6 @@ def get_nvfuser_fusion_definition(trace: TraceCtx, name: str, warn_if_fusion_una
         return None
 
     for bsym in trace.bound_symbols:
-        if bsym.sym.is_fusion:
-            print(bsym.sym.name)
         if bsym.sym.is_fusion and bsym.sym.name == name:
             _, fusion_ctx, _ = bsym.gather_ctxs()
             if (fusion_definition := fusion_ctx.get(name, None)) is not None:
