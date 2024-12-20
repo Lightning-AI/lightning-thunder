@@ -865,7 +865,9 @@ class nvFuserExecutor(FusionExecutor):
 
             return _can_fuse_node(a) and _can_fuse_node(b)
 
-        bound_symbol_groups = fuse_bound_symbols(trace, _should_fuse)
+        bound_symbol_groups = fuse_bound_symbols(
+            trace, lambda bsym: self.can_fuse(bsym) and self.has_cuda_input_or_output(bsym)
+        )  # _should_fuse)
 
         # Counts how many fusions (per executor) have been constructed
         #   (Used to name fusions like nvFusion0, nvFusion1, ...)

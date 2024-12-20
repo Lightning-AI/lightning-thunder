@@ -173,7 +173,7 @@ class TorchCompileExecutor(FusionExecutor):
 
             return _can_fuse_node(a) and _can_fuse_node(b)
 
-        bound_symbol_groups = fuse_bound_symbols(trace, _should_fuse)
+        bound_symbol_groups = fuse_bound_symbols(trace, self.can_fuse)
 
         fused_bsyms = []
         # Counts how many fusions (per executor) have been constructed
