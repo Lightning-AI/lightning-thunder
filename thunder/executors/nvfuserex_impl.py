@@ -171,8 +171,8 @@ _low_precision_floats = (dtypes.float16, dtypes.float16_, dtypes.bfloat16, dtype
 
 
 def device_supports_fp8() -> bool:
-    cuda_major, _ = torch.cuda.get_device_capability()
-    return cuda_major > 8
+    cuda_major, cuda_minor = torch.cuda.get_device_capability()
+    return (cuda_major, cuda_minor) >= (8, 9)
 
 
 def is_supported_dtype(dtype: type | dtypes.dtype, *, allow_low_precision_floats: bool = True) -> bool:
