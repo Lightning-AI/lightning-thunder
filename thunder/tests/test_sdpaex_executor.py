@@ -35,16 +35,17 @@ def device_version_support(
     "dtype", [torch.float32, torch.bfloat16, torch.float16], ids=("float32", "bfloat16", "float16")
 )
 @pytest.mark.parametrize("device,", ["cuda"])
+@pytest.mark.parametrize("requires_grad", [True, False])
 @requiresCUDA
-def test_sdpa(device: str, dtype: torch.dtype):
+def test_sdpa(device: str, dtype: torch.dtype, requires_grad: bool):
     batch = 10
     seq_len = 128
     num_heads = 4
     dim_per_head = 32
 
-    query = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda")
-    key = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda")
-    value = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda")
+    query = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda", requires_grad=requires_grad)
+    key = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda", requires_grad=requires_grad)
+    value = torch.randn([batch, seq_len, num_heads, dim_per_head], device="cuda", requires_grad=requires_grad)
 
     def fn(query, key, value):
         return torch.nn.functional.scaled_dot_product_attention(query, key, value)
@@ -62,6 +63,12 @@ def test_sdpa(device: str, dtype: torch.dtype):
     assert any(
         bsym.sym.name == "sdpaex_grad_forward_scaled_dot_product_efficient_attention" for bsym in extrace.bound_symbols
     )
+
+    if requires_grad:
+        grad_output = torch.rand_like(thunder_result)
+        actual_grads = torch.autograd.grad(thunder_result, (query, key, value), grad_outputs=grad_output)
+        expected_grads = torch.autograd.grad(torch_result, (query, key, value), grad_outputs=grad_output)
+        torch.testing.assert_close(actual_grads, expected_grads)
 
 
 @requiresCUDA
