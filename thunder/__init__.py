@@ -151,7 +151,7 @@ __all__ = [
 ]
 
 
-from thunder.__about__ import __version__
+from thunder.__about__ import *. # import all
 
 
 # TODO maybe move these aliases to the core language?
