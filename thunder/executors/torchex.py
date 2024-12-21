@@ -1403,11 +1403,37 @@ _register_implementation(prims.copy_with_setitem, copy_with_setitem_impl, checke
 #
 
 matmul = _register_torch_operation("matmul")
+_scaled_mm = _register_torch_operation("_scaled_mm")
 outer = _register_torch_operation("outer")
+
+
+def _scaled_mm_transform(
+    a: TensorLike,
+    b: TensorLike,
+    scale_a: TensorLike,
+    scale_b: TensorLike,
+    bias: TensorLike | None = None,
+    scale_result: TensorLike | None = None,
+    out_dtype: dtypeLike | None = None,
+    use_fast_accum: bool = False,
+):
+
+    def is_column_major(mat: TensorLike) -> bool:
+        return mat.stride()[0] == 1 and mat.stride()[0] > 1
+
+    result_dtype: torch.dtype = to_torch_dtype(a.dtype if out_dtype is None else out_dtype)
+    if not is_column_major(b):
+        b = b.t().contiguous().t()
+
+    return _scaled_mm(a, b, scale_a, scale_b, bias, scale_result, result_dtype, use_fast_accum)
+
 
 _register_implementation(prims.matmul, matmul, checker=_always_executable)
 
 _register_implementation(ltorch.matmul, matmul, checker=_always_executable)
+_register_implementation(
+    ltorch._scaled_mm, _scaled_mm, checker=_always_executable, execution_transform=_scaled_mm_transform
+)
 _register_implementation(ltorch.outer, outer, checker=_always_executable)
 
 #
@@ -2220,3 +2246,81 @@ _register_implementation(prims.shape, shape, checker=_always_executable)
 
 shallow_copy = ex.register_operator("shallow_copy", meta=prims.shallow_copy, fn=lambda x: x)
 _register_implementation(prims.shallow_copy, shallow_copy, checker=_always_executable)
+
+
+def _tensor_subclass_ctor(cls, name, shape, device, dtype, requires_grad, tensors, non_tensors):
+    new_non_tensors = []
+    for a in non_tensors:
+        if isinstance(a, dtypes.dtype):
+            new_non_tensors.append(to_torch_dtype(a))
+        elif isinstance(a, devices.Device):
+            new_non_tensors.append(to_torch_device(a))
+        else:
+            new_non_tensors.append(a)
+    return cls(*tensors, *new_non_tensors)
+
+
+def _bind_postprocess_of_tensor_subclass_ctor(bsym: BoundSymbol) -> None:
+    from thunder.core.prims import get_nested_types, filter_types
+
+    cls, _name, _shape, _device, _dtype, _requires_grad, _tensors, non_tensors = bsym.args
+    filtered_types = (cls,)
+    if non_tensors:
+        types = get_nested_types(non_tensors)
+        filtered_types += filter_types(types)
+    new_imports = {t.__name__: t for t in filtered_types}
+    bsym._import_ctx.update(new_imports)
+
+
+tensor_subclass_ctor = ex.register_operator(
+    "tensor_subclass_ctor",
+    meta=prims.tensor_subclass_ctor,
+    fn=_tensor_subclass_ctor,
+    bind_postprocess=_bind_postprocess_of_tensor_subclass_ctor,
+    python_printer=prims.printer_of_tensor_subclass_ctor,
+)
+_register_implementation(prims.tensor_subclass_ctor, tensor_subclass_ctor, checker=_always_executable)
+
+
+def flatten_tensor_subclass_impl(t):
+    tensor_attr_names, metadata = t.__tensor_flatten__()
+    tensors = tuple(getattr(t, name) for name in tensor_attr_names)
+    return tensors
+
+
+flatten_tensor_subclass = ex.register_operator(
+    "flatten_tensor_subclass",
+    meta=prims.flatten_tensor_subclass.meta,
+    fn=flatten_tensor_subclass_impl,
+)
+_register_implementation(
+    prims.flatten_tensor_subclass,
+    flatten_tensor_subclass,
+    checker=_always_executable,
+)
+
+
+def unflatten_tensor_subclass_impl(
+    tensor_subclass_type: torch._C._TensorMeta,
+    inner_tensors: dict[str, TensorLike],
+    metadata: dict,
+):
+    for key in metadata:
+        v = metadata[key]
+        if isinstance(v, dtypes.dtype):
+            metadata[key] = to_torch_dtype(v)
+        elif isinstance(v, devices.Device):
+            metadata[key] = to_torch_device(v)
+    return tensor_subclass_type.__tensor_unflatten__(inner_tensors, metadata, -1, -1)
+
+
+unflatten_tensor_subclass = ex.register_operator(
+    "unflatten_tensor_subclass",
+    meta=prims.unflatten_tensor_subclass.meta,
+    fn=unflatten_tensor_subclass_impl,
+)
+_register_implementation(
+    prims.unflatten_tensor_subclass,
+    unflatten_tensor_subclass,
+    checker=_always_executable,
+)
