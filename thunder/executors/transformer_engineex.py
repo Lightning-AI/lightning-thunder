@@ -24,6 +24,7 @@ from thunder.core.vjp_utils import disable_caching_split_forward_and_backward
 from thunder.extend import OperatorExecutor, register_executor
 from thunder.core.compile_data import get_compile_option, get_compile_data
 from thunder.distributed import FSDPType
+from thunder import torch as ltorch
 from thunder.executors.utils import Context, set_saved_tensors
 
 
@@ -415,6 +416,7 @@ if TE_AVAILABLE:
 
 IMPORT_CTX_TE_KEY = "transformer_engine"
 FP8_RECIPE_KEY = "te_fp8_recipe"
+TE_FWD_SYMBOL_PREFIX = "te_linear_"
 
 
 # Creates a new stateful operator for each invocation of `linear`.
@@ -423,7 +425,7 @@ def _create_fp8_linear_bound_symbol(
 ) -> tuple[torch.Tensor, AnyProxy | None]:
     linear_fn = partial(TELinear(w.shape[1], w.shape[0]), is_grad_enabled=is_grad_enabled)
     global LINEAR_CALLS_COUNTER
-    name = f"te_linear_{LINEAR_CALLS_COUNTER}"
+    name = f"{TE_FWD_SYMBOL_PREFIX}{LINEAR_CALLS_COUNTER}"
 
     desc = "transformer_engine_ex: Optional fp8_recipe for `fp8_autocast` context manager."
     if (fp8_recipe := get_compile_option(FP8_RECIPE_KEY, desc)) is None:
@@ -438,7 +440,12 @@ def _create_fp8_linear_bound_symbol(
 
     meta_fn = make_te_linear_meta(is_grad_enabled=is_grad_enabled)
     sym = Symbol(
-        name=name, meta=meta_fn, is_prim=True, executor=transformer_engine_ex, _bind_postprocess=bind_postprocess
+        name=name,
+        id=name,
+        meta=meta_fn,
+        is_prim=True,
+        executor=transformer_engine_ex,
+        _bind_postprocess=bind_postprocess,
     )
     bsym = sym.bind(a, w, b, output=meta_fn(a, w, b))
 
@@ -515,7 +522,7 @@ def _linear_grad(a: TensorProxy, w: TensorProxy, b: TensorProxy) -> TensorProxy:
     return out
 
 
-# Registers the implementation for torch.nn.functional.linear
+# Registers the implementation for both prims.linear and torch.nn.functional.linear
 transformer_engine_ex.register_implementation(
     prims.linear,
     checker=_linear_checker,
@@ -523,12 +530,25 @@ transformer_engine_ex.register_implementation(
     grad_transform=_linear_grad,
 )
 
+transformer_engine_ex.register_implementation(
+    ltorch.linear,
+    checker=_linear_checker,
+    execution_transform=_linear_transform,
+    grad_transform=_linear_grad,
+)
 
-def _is_te_linear_enabled(import_ctx, object_ctx):
-    # These keys are present in `import_ctx` and `object_ctx` only if
-    # we actually replaced a linear call with a new TE operator.
-    is_te_exec_enabled = IMPORT_CTX_TE_KEY in import_ctx and FP8_RECIPE_KEY in object_ctx
-    return is_te_exec_enabled
+
+def _is_te_linear_fwd_present(bsyms):
+    """
+    Returns True if any bsym is a Symbol for forward TE Linear.
+    Useful, to determine if trace should be wrapped with fp8_autocast.
+    """
+    for bsym in bsyms:
+        sym_id = bsym.sym.id
+        if type(sym_id) == str and sym_id.startswith(TE_FWD_SYMBOL_PREFIX):
+            return True
+
+    return False
 
 
 TE_CTX_STR = f"@{IMPORT_CTX_TE_KEY}.fp8_autocast(fp8_recipe={FP8_RECIPE_KEY})"
