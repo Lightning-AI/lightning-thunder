@@ -3588,6 +3588,9 @@ def matmul(a: TensorLike, b: TensorLike, /) -> TensorLike:
     return prims.matmul(a, b)
 
 
+# TODO(crcrpar): Add nvfuser support of `matmul(a.float() * scale_a, b.float() * scale_b) + bias`
+# So far I haven't managed to get a nice result from nvfuser region as I left
+# https://github.com/Lightning-AI/lightning-thunder/pull/1415/files#r1892875183
 # reference: https://github.com/pytorch/pytorch/blob/6d4cd3e/torch/_meta_registrations.py#L5566
 @torchsymbol(torch._scaled_mm, is_method=False)
 def _scaled_mm(
