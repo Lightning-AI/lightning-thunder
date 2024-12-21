@@ -11,6 +11,7 @@ from .utils import (
     trace_with_replaced_proxy_metadata,
 )
 
+from .quantization_cpu import quantize_4bit_cpu
 
 bitsandbytes_executor = None
 
@@ -50,10 +51,32 @@ class BitsAndBytesLinearQuant4bit(Transform):
         get_bitsandbytes_executor()
 
     def quantize_weight(self, w):
-        # todo: revisit staying on CPU when bnb supports it
         if w.device.type == "meta":
-            w_work = torch.zeros_like(w, device="cuda")
-        elif w.device.type != "cuda":
+            n = w.numel()
+            output_shape = ((n + 1) // 2, 1)
+            blocksize = 64
+            blocks = n // blocksize
+            blocks += 1 if n % blocksize > 0 else 0
+            # cuda absmax dtype is torch.float32 instead of dtype=A.dtype
+            absmax = torch.zeros((blocks,), device=w.device, dtype=torch.float32)
+            quant_type = "nf4"
+            code = bitsandbytes.functional.get_4bit_type(quant_type, device=w.device)
+
+            # Return only shape and dtype for meta tensors without calculation
+            state = bitsandbytes.functional.QuantState(
+                absmax=absmax,
+                shape=w.shape,
+                dtype=w.dtype,
+                blocksize=64,
+                code=code,
+                quant_type=quant_type,
+            )
+            return torch.empty(output_shape, device="meta", dtype=torch.uint8), state
+
+        if w.device.type == "cpu":
+            return quantize_4bit_cpu(w, quant_type="nf4")
+
+        if w.device.type != "cuda":
             with torch.no_grad():
                 w_work = w.to("cuda")
         else:
