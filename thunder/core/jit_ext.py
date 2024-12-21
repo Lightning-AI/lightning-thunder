@@ -95,6 +95,7 @@ from thunder.core.interpreter import (
     PseudoInst,
     ProvenanceRecord,
     interpreter_needs_wrap,
+    ThunderInterpreterObject,
 )
 from thunder.core.langctxs import set_langctx, reset_langctx, Languages, resolve_language
 from thunder.core.baseutils import extract_callable_name
@@ -109,7 +110,7 @@ from thunder.common import CompileData, CompileStats
 from thunder.core.trace import TraceCtx, TraceResults
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.clang import _clang_fn_set
-from thunder.core.pytree import tree_map, tree_iter
+from thunder.core.pytree import tree_iter, tree_map
 from thunder.core.compile_data import compile_data_and_stats
 
 #
@@ -337,7 +338,7 @@ class JitCtx:
                     )
             return proxy_s
         else:
-            raise ValueError("cannot proxify value of {type(uvalue).__type} objects")
+            raise ValueError(f"cannot proxify value of {type(uvalue).__type__} objects")
 
 
 _jit_ctx = contextvars.ContextVar("jitctx")
@@ -497,6 +498,48 @@ def _general_jit_ordered_dict_setitem(d, key, value):
     return dict_setitem_lookaside(d, key, value)
 
 
+_TORCH_DYNAMIC_TYPES = {
+    torch.amp.autocast_mode.autocast,
+    torch.autograd.grad_mode.set_grad_enabled,
+    torch.autograd.grad_mode.no_grad,
+}
+
+
+def is_created_during_tracing(provenance):
+    if (
+        provenance.inst is PseudoInst.OPAQUE
+        and provenance.inputs[0].inst is PseudoInst.CONSTANT
+        and provenance.inputs[0].value == object.__new__
+    ):
+        return True
+    if provenance.inst is PseudoInst.NEW:
+        return True
+    return False
+
+
+@interpreter_needs_wrap
+def _raw_object_setattr(obj: Any, name: str, value: Any):
+    return object.__setattr__(obj, name, value)
+
+
+@register_general_jit_lookaside(object.__setattr__)
+def _general_jit_object_setattr_lookaside(obj: Any, name: str, value: Any):
+    uobj = unwrap(obj)
+    if is_created_during_tracing(obj.provenance) or type(uobj) in _TORCH_DYNAMIC_TYPES:
+        return _raw_object_setattr(obj, name, value)
+
+    if should_register_for_prologue(obj.provenance):
+        print("##existing###", type(unwrap(obj)), unwrap(name), obj.provenance)
+    d = _interpret_call(getattr, obj, wrap_const("__dict__"))
+    if d is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return d
+    d.provenance.ext_flag |= EXT_FLAG_IS_MODULE_MEMBER_DICT
+    ud = unwrap(d)
+    assert type(ud) == dict
+    res = _interpret_call(ud.__setitem__, name, value)
+    return res
+
+
 @register_general_jit_lookaside(setattr)
 def _general_jit_setattr_lookaside(obj: Any, name: str, value: Any):
     setattr_lookaside = default_lookaside(setattr)
@@ -505,8 +548,10 @@ def _general_jit_setattr_lookaside(obj: Any, name: str, value: Any):
     uobj = unwrap(obj)
     uname = unwrap(name)
     if isinstance(uobj, torch.nn.Module):
-        # 1) modify the inner thing
-        # 2) divert the actual setattr...
+        # 1) populate the wrappeers for the member dicts
+        # 2) let the original setattr do it's thing by modifying the
+        #    the member dict
+        # This might generalize to other things, too...
         for n in MODULE_MEMBER_DICT_ATTRS:
             member_dict = _interpret_call(getattr, obj, wrap_const(n))
             member_dict.provenance.ext_flag |= EXT_FLAG_IS_MODULE_MEMBER_DICT
@@ -669,9 +714,13 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
 
     custom_autograd_function_cls = unwrap(obj)
     custom_forward = custom_autograd_function_cls.forward
-    ctx = torch.autograd.function.FunctionCtx()
+    typ = torch.autograd.function.FunctionCtx
+    ctx = typ()
     ctx_proxy = proxy(ctx, name=None, history=None)
-    wrapped_ctx = wrap_const(ctx_proxy)
+    wrapped_ctx = wrap_const(
+        ctx_proxy, provenance=ProvenanceRecord(PseudoInst.NEW, inputs=[wrap_const(typ).provenance])
+    )
+    print("###ctx", wrapped_ctx.provenance)
     trace_of_fwd, fwd_output_provenance = _convert_pytorchfunc_to_thundertrace(
         custom_forward, True, wrapped_ctx, *args, **kwargs
     )
@@ -1190,10 +1239,10 @@ def _general_jit_global_callback(orig_value: Any, name: str) -> Any:
     return orig_value
 
 
-_safe_provenance_inst = {
+_input_provenance_inst = {
     "INPUT_ARGS",
     "INPUT_KWARGS",
-    "INPUT_FN",
+    "INPUT_FN",  # or self
     "LOAD_ATTR",
     "CONSTANT",
     "BINARY_SUBSCR",
@@ -1208,7 +1257,7 @@ def should_register_for_prologue(pr):
         inst = inst.opname
     else:
         inst = inst.value
-    if inst not in _safe_provenance_inst:
+    if inst not in _input_provenance_inst:
         return False
     if inst == "CONSTANT" and callable(pr.value):
         if pr.value.__name__ != "__getitem__" and pr.value != GetSetDescriptorType.__get__:
@@ -1713,27 +1762,51 @@ def process_recorded_modifications(ctx, epilogue_trace):
             for k, (inst, *args) in last_modification.items():
                 if inst == PseudoInst.STORE_SUBSCR:
                     (value,) = args
-                    assert isinstance(value.value, Proxy)
+                    print("####store#####", value.value, modified_object.provenance)
+                    assert isinstance(value.value, (Proxy, int, tuple))  ## todo: better criterion
 
-                    assert modified_object.provenance.inst is PseudoInst.LOAD_ATTR
-                    assert modified_object.provenance.inputs[1].inst is PseudoInst.CONSTANT
-                    assert modified_object.provenance.inputs[1].value == "_buffers"
+                    if (
+                        modified_object.provenance.inst is PseudoInst.LOAD_ATTR
+                        and modified_object.provenance.inputs[1].inst is PseudoInst.CONSTANT
+                        and modified_object.provenance.inputs[1].value == "_buffers"
+                    ):
+                        print("###store1")
+                        typ, name, root_module_provenance = get_parameter_or_buffer_or_submodule_name_and_root(
+                            modified_object.provenance.inputs[0]
+                        )
+                        assert typ == "_modules"
+                        root_module_proxy = root_for_provenances.get(root_module_provenance)
+                        if root_module_proxy is None:
+                            ## we want this to created in the compute trace context for namespace...
+                            root_module_proxy = Proxy(history=root_module_provenance)
+                            epilogue_trace.add_name(root_module_proxy.name)
+                            root_for_provenances[root_module_provenance] = root_module_proxy
 
-                    typ, name, root_module_provenance = get_parameter_or_buffer_or_submodule_name_and_root(
-                        modified_object.provenance.inputs[0]
-                    )
-                    assert typ == "_modules"
-                    root_module_proxy = root_for_provenances.get(root_module_provenance)
-                    if root_module_proxy is None:
-                        ## we want this to created in the compute trace context for namespace...
-                        root_module_proxy = Proxy(history=root_module_provenance)
-                        epilogue_trace.add_name(root_module_proxy.name)
-                        root_for_provenances[root_module_provenance] = root_module_proxy
-
-                    name = ".".join(name + [k])
-                    with tracectx(epilogue_trace):
-                        bsym = prims.pack_buffer.bind(root_module_proxy, name, value.value, output=None)
-                        epilogue_trace.bound_symbols.append(bsym)
+                        name = ".".join(name + [k])
+                        with tracectx(epilogue_trace):
+                            bsym = prims.pack_buffer.bind(root_module_proxy, name, value.value, output=None)
+                            epilogue_trace.bound_symbols.append(bsym)
+                    elif (
+                        modified_object.provenance.inst is PseudoInst.LOAD_ATTR
+                        and modified_object.provenance.inputs[1].inst is PseudoInst.CONSTANT
+                        and modified_object.provenance.inputs[1].value == "__dict__"
+                    ):
+                        print(
+                            "###store2",
+                        )
+                        name = k
+                        setattr_obj_provenance = modified_object.provenance.inputs[0]
+                        if hasattr(setattr_obj_provenance, "proxy"):
+                            setattr_obj_proxy = setattr_obj_provenance.proxy
+                        else:
+                            ## we want this to be created in the compute trace context for namespace...
+                            setattr_obj_proxy = Proxy(history=setattr_obj_provenance)
+                            epilogue_trace.add_name(setattr_obj_proxy.name)
+                        with tracectx(epilogue_trace):
+                            bsym = prims.pack_attr.bind(setattr_obj_proxy, name, value.value, output=None)
+                            epilogue_trace.bound_symbols.append(bsym)
+                    else:
+                        raise NotImplementedError(f"Modifications of {modified_object.provenance} are not supported")
                 else:
                     raise NotImplementedError(f"Modifications {inst} on dicts are not supported")
         else:
