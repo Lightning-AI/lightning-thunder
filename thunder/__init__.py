@@ -72,7 +72,7 @@ from thunder.core.proxies import (
 )
 from thunder.core.interpreter import print_interpreter_log, print_to_log
 from thunder.core.jit_ext import thunder_general_jit
-from thunder.executors.torch_autograd import split_forward_backward, ThunderFunction
+from thunder.executors.torch_autograd import split_forward_backward, ThunderFunction1, ThunderFunction2
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
@@ -751,14 +751,19 @@ def jit(
             # resulting tensors to PyTorch's Autograd graph using the
             # ThunderFunction (which is a torch.autograd.Function subclass)
             data_for_autograd, (saved_tensors, saved_other) = result
-            ThunderFunction.apply(
+            side_channel = {}
+            dummy_res = ThunderFunction1.apply(
                 cache_entry.return_none_instead_of_grads,
                 cache_entry.backward_fn,
+                side_channel,
                 saved_tensors,
                 saved_other,
                 data_for_autograd["flat_output"],
                 *data_for_autograd["flat_args"],
             )
+            # we need to pass the inputs to avoid "leave has moved inside the graph"
+            # if the function returns an argument as is
+            ThunderFunction2.apply(dummy_res, side_channel, *data_for_autograd["flat_args"])
             result = data_for_autograd["output"]
 
         return result
