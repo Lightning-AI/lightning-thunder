@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 from enum import auto, Enum
 from numbers import Number
-from typing import Any
+from typing import Any, ClassVar
 from collections.abc import Callable
 from collections.abc import Sequence
 
@@ -1223,7 +1223,7 @@ def _infer_tensor_properties(
     _thunder_fsdp_padding_size = None
 
     if like is not None:
-        baseutils.check_type(like, (TensorProxy, FutureTensorProxy))
+        baseutils.check_type(like, (TensorProxy, FutureTensorProxy, SubclassTensorProxy))
         _shape = tuple(like.shape)
         _device = like.device
         _dtype = like.true_dtype
@@ -1878,6 +1878,166 @@ class TensorProxy(Proxy, TensorProxyInterface):
     def real(self):
         method = resolve_method("real", self)
         return method(self)
+
+
+class SubclassTensorProxy(TensorProxy):
+    SUBCLASS_TYPE_ATTR: ClassVar[str] = "_subclass_type"
+    _tensors: list[TensorProxy]
+    _non_tensors: list[Any]
+    _subclass_type: torch._C._TensorMeta
+
+    _tensor_attr_names: list[str] | None
+    _non_tensor_attr_names: list[str] | None
+
+    def __init__(self, *args, **kwargs):
+        from thunder.core.pytree import tree_flatten
+
+        kwarg_tensors = kwargs.pop("tensors", [])
+        kwarg_non_tensors = kwargs.pop("non_tensors", [])
+        subclass_type = kwargs.pop("subclass_type", None)
+
+        has_name_before_init = hasattr(self, "_name")
+        # If tensors (and non_tensors) are not empty, then it should be the path of `_make_wrapper_subclass`
+        # where `self` should already have gotten its name.
+        flat_args, spec = tree_flatten((args, kwargs))
+        tensors: list[TensorProxy] = []
+        non_tensors: list[Any] = []
+        for t in args + tuple(kwargs.values()):
+            if type(t) is SubclassTensorProxy:
+                continue
+            if type(t) is TensorProxy:
+                tensors.append(t)
+            else:
+                non_tensors.append(t)
+
+        is_dunder_init_following_make_wrapper_subclass: bool = False
+        if tensors:
+            baseutils.check(
+                has_name_before_init
+                and not kwarg_tensors
+                and not kwarg_non_tensors
+                and self._subclass_type is not None,
+                lambda: (
+                    f"{flat_args=} indicates this instance is created by"
+                    "`torch.Tensor._make_wrapper_subclass`'s lookaside but `name` is not set"
+                ),
+            )
+            is_dunder_init_following_make_wrapper_subclass = True
+
+        if not is_dunder_init_following_make_wrapper_subclass:
+            super().__init__(*args, **kwargs)
+
+            self._tensors = kwarg_tensors
+            self._non_tensors = kwarg_non_tensors
+            self._subclass_type = subclass_type
+        else:
+            # TODO(crcrpar): Think about materializing `self` so that we can
+            # call `__tensor_init__` to know each attribute names.
+            from dataclasses import replace
+            import inspect
+            from thunder.core import prims
+
+            bsym = prims.tensor_subclass_ctor.bind(
+                self._subclass_type,
+                self.name,
+                self.shape,
+                self.device,
+                self.dtype,
+                self.requires_grad,
+                self._tensors,
+                self._non_tensors,
+                output=self,
+            )
+            cls_module = inspect.getmodule(self._subclass_type)
+            bsym.sym = replace(bsym.sym, _module=cls_module)
+
+            # NOTE(crcrpar): A callable being `thunder.jit`ed can call `MySubclassTensor(...)`
+            # inside of it either directly or indirectly: indirect way is to call it through
+            # a custom `torch.autograd.Function` as in
+            # https://github.com/pytorch/ao/blob/000a490/torchao/float8/float8_tensor.py#L139-L209.
+            # If it's a direct call, `trace.bound_symbols` and `trace.scopes[-1]` are identical,
+            # but not, otherwise. As [the lookasdie of `torch.autograd.Function`](
+            # https://github.com/Lightning-AI/lightning-thunder/blob/3d42c10/thunder/core/jit_ext.py#L655)
+            # puts the temporary scope to the current trace.
+            current_trace = get_tracectx()
+            if id(current_trace.bound_symbols) == id(cur_tail_scope := current_trace.scopes[-1]):
+                current_trace.add_bound_symbol(bsym)
+            else:
+                cur_tail_scope.append(bsym)
+
+            if not self._tensors and not self._non_tensors:
+                for a in tensors:
+                    self._tensors.append(a)
+                for a in non_tensors:
+                    self._non_tensors.append(a)
+            baseutils.check(self._tensors, lambda: f"`{self._name}._tensors` must not be empty")
+
+    def __tensor_flatten__(self) -> tuple[list[TensorProxy], dict[str, Any]]:
+        return self._tensor_attr_names, self.metadata
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        return dict(zip(self._non_tensor_attr_names, self._non_tensors))
+
+    def replace(self, **changes):
+        r"""Return a copy of the SubclassTensorProxy object with new values for the specified fields as given to the constructor as arguments.
+        Valid keyword arguments are ``name``, ``history``, ``shape``, ``dtype``, ``device``, ``requires_grad``, ``distparallel_type``,  ``thunder_fsdp_padding_size``.
+        ``like`` is also a valid keyword and will take metadata from the tensor proxy argument
+        in preference to the old values but overridable by keyword arguments.
+        Note that the copy will use the current (environment) tracectx."""
+
+        like = changes.get("like")
+        (
+            shape,
+            device,
+            dtype,
+            true_dtype,
+            numel,
+            ndim,
+            requires_grad,
+            grad,
+            distparallel_type,
+            thunder_fsdp_padding_size,
+        ) = _infer_tensor_properties(
+            like,
+            changes.get("shape", self._shape if like is None else None),
+            changes.get("device", self._device if like is None else None),
+            changes.get("dtype", self._dtype if like is None else None),
+            changes.get("requires_grad", self._requires_grad if like is None else None),
+            changes.get("grad", self._grad if like is None else None),
+            changes.get("distparallel_type", self._distparallel_type if like is None else None),
+            changes.get("thunder_fsdp_padding_size", self._thunder_fsdp_padding_size if like is None else None),
+        )
+        name = changes.get("name", self.name)
+        history = changes.get("history", self.history)
+        tags = changes.get("tags", self.tags)
+        p = SubclassTensorProxy(
+            name=name,
+            tags=tags,
+            shape=shape,
+            device=device,
+            dtype=dtype,
+            requires_grad=requires_grad,
+            distparallel_type=distparallel_type,
+            thunder_fsdp_padding_size=thunder_fsdp_padding_size,
+            history=history,
+            tensors=self._tensors,
+            non_tensors=self._non_tensors,
+            subclass_type=self._subclass_type,
+        )
+        if hasattr(self, "_tensor_attr_names") and hasattr(self, "_non_tensor_attr_names"):
+            p._tensor_attr_names = self._tensor_attr_names
+            p._non_tensor_attr_names = self._non_tensor_attr_names
+            for name, value in zip(p._tensor_attr_names + p._non_tensor_attr_names, p._tensors + p._non_tensors):
+                setattr(p, name, value)
+        return p
+
+    def __repr__(self):
+        tensors, metadata = {}, {}
+        if hasattr(self, "_tensor_attr_names"):
+            tensor_names, metadata = self.__tensor_flatten__()
+            tensors = {n: getattr(self, n) for n in tensor_names}
+        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self._shape}, {tensors=}, {metadata=})>'
 
 
 class TorchAutogradFunctionCtxProxy(Proxy, TorchAutogradFunctionCtxProxyInterface):

@@ -2220,3 +2220,37 @@ _register_implementation(prims.shape, shape, checker=_always_executable)
 
 shallow_copy = ex.register_operator("shallow_copy", meta=prims.shallow_copy, fn=lambda x: x)
 _register_implementation(prims.shallow_copy, shallow_copy, checker=_always_executable)
+
+
+def _tensor_subclass_ctor(cls, name, shape, device, dtype, requires_grad, tensors, non_tensors):
+    new_non_tensors = []
+    for a in non_tensors:
+        if isinstance(a, dtypes.dtype):
+            new_non_tensors.append(to_torch_dtype(a))
+        elif isinstance(a, devices.Device):
+            new_non_tensors.append(to_torch_device(a))
+        else:
+            new_non_tensors.append(a)
+    return cls(*tensors, *new_non_tensors)
+
+
+def _bind_postprocess_of_tensor_subclass_ctor(bsym: BoundSymbol) -> None:
+    from thunder.core.prims import get_nested_types, filter_types
+
+    cls, _name, _shape, _device, _dtype, _requires_grad, _tensors, non_tensors = bsym.args
+    filtered_types = (cls,)
+    if non_tensors:
+        types = get_nested_types(non_tensors)
+        filtered_types += filter_types(types)
+    new_imports = {t.__name__: t for t in filtered_types}
+    bsym._import_ctx.update(new_imports)
+
+
+tensor_subclass_ctor = ex.register_operator(
+    "tensor_subclass_ctor",
+    meta=prims.tensor_subclass_ctor,
+    fn=_tensor_subclass_ctor,
+    bind_postprocess=_bind_postprocess_of_tensor_subclass_ctor,
+    python_printer=prims.printer_of_tensor_subclass_ctor,
+)
+_register_implementation(prims.tensor_subclass_ctor, tensor_subclass_ctor, checker=_always_executable)
