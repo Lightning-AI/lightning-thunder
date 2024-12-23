@@ -2111,6 +2111,7 @@ _cls_to_number_proxy_map = {
 
 # TODO: move this function to jit_ext.py
 def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple = None) -> TensorProxy:
+    from torch._subclasses.fake_tensor import FakeTensor
     from thunder.core.interpreter import ProvenanceRecord, PseudoInst, wrap_const
 
     if hasattr(t, "_thunder_device"):
@@ -2145,8 +2146,8 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
     else:
         # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
         shape = tuple(t.shape)
-    return TensorProxy(
-        name,
+    ctor_kwargs = dict(
+        name=name,
         shape=tuple(shape),
         device=device,
         dtype=dtype,
@@ -2156,6 +2157,39 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
         history=history,
         thunder_fsdp_padding_size=_thunder_fsdp_padding_size,
     )
+    # n.b.(crcrpar): :class:`thunder.dynamo.ThunderCompiler.__call__` takes torch.fx GraphModule
+    # where `FakeTensor` seems to be used, leading to failures observed in e.g.
+    # https://github.com/Lightning-AI/lightning-thunder/actions/runs/11689709564/job/32553053319#step:10:5747
+    # https://dev.azure.com/Lightning-AI/lightning/_build/results?buildId=219328&view=logs&jobId=5b0799f7-725e-5b16-9b83-c0a5a25d03f0&j=5b0799f7-725e-5b16-9b83-c0a5a25d03f0
+    if (
+        isinstance(t, torch.Tensor)
+        and type(t) not in (torch.Tensor, torch.nn.Parameter, FakeTensor)
+        and hasattr(t, "__tensor_flatten__")
+        and hasattr(t, "__tensor_unflatten__")
+    ):
+        baseutils.check(
+            hasattr(t, "__tensor_flatten__") and hasattr(t, "__tensor_unflatten__"),
+            lambda: f"{t=} seems to be a tensor subclass but not traceable",
+        )
+        tensor_attr_names, metadata = t.__tensor_flatten__()
+        tensors = [tensorproxy(getattr(t, name), name=None, history=history) for name in tensor_attr_names]
+        ctor_kwargs.update(
+            {
+                "tensors": tensors,
+                "non_tensors": list(metadata.values()),
+                "subclass_type": type(t),
+            }
+        )
+        p = SubclassTensorProxy(**ctor_kwargs)
+        p._tensor_attr_names = tensor_attr_names
+        p._non_tensor_attr_names = list(metadata.keys())
+        for name, tensor in zip(tensor_attr_names, tensors):
+            setattr(p, name, tensor)
+        for name, value in metadata.items():
+            setattr(p, name, value)
+        return p
+    else:
+        return TensorProxy(**ctor_kwargs)
 
 
 def futuretensorproxy(
