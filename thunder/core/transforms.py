@@ -2509,8 +2509,6 @@ nondifferentiable_vjp_symbols: set[prims.PrimIDs] = {
     prims.PrimIDs.BITWISE_XOR,
     prims.PrimIDs.SIGNBIT,
     prims.PrimIDs.FULL,
-    prims.PrimIDs.FLATTEN_TENSOR_SUBCLASS,
-    prims.PrimIDs.UNFLATTEN_TENSOR_SUBCLASS,
 }
 
 
