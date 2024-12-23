@@ -73,6 +73,7 @@ from thunder.core.proxies import (
 from thunder.core.interpreter import print_interpreter_log, print_to_log
 from thunder.core.jit_ext import thunder_general_jit
 from thunder.executors.torch_autograd import split_forward_backward, connect_to_autograd
+from thunder.transforms.tensor_wrapper_subclass import unroll_tensor_subclasses
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
@@ -372,7 +373,7 @@ def jit(
         data_ptr_to_tensor_group_index = {}
         tensor_group_index_to_tensor_indices = defaultdict(list)
         for idx, t in enumerate(flat_args):
-            if pytorch.is_tensor(t) and t.layout == pytorch.strided:
+            if type(t) in {pytorch.Tensor, pytorch.nn.Parameter} and t.layout == pytorch.strided:
                 data_ptr = t.untyped_storage().data_ptr()
                 if data_ptr not in data_ptr_to_tensor_group_index:
                     data_ptr_to_tensor_group_index[data_ptr] = len(data_ptr_to_tensor_group_index)
