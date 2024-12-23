@@ -2317,7 +2317,6 @@ def printer_of_tensor_subclass_ctor(
     from itertools import chain
     from thunder.core import baseutils
     from thunder.core import codeutils
-    from thunder.core.prims import filter_types_for_tensor_wrapper_subclass
 
     baseutils.check(not kwarg_printables, lambda: f"No kwargs are supported but {kwarg_printables = }")
 
@@ -2365,12 +2364,6 @@ def printer_of_tensor_subclass_ctor(
         header_lines = (f"# {line}" for line in header_lines)
         return chain(header_lines, [s])
 
-    filtered_types = (cls,)
-    if non_tensors:
-        types = get_nested_types([t.obj if isinstance(t, codeutils.ContextObject) else t for t in non_tensors])
-        filtered_types += filter_types(types)
-    new_imports = {t.__name__: t for t in filtered_types}
-    bsym._import_ctx.update(new_imports)
     return s
 
 
