@@ -1406,12 +1406,43 @@ _register_implementation(prims.copy_with_setitem, copy_with_setitem_impl, checke
 #
 
 matmul = _register_torch_operation("matmul")
+_scaled_mm = _register_torch_operation("_scaled_mm")
 outer = _register_torch_operation("outer")
 
 _register_implementation(prims.matmul, matmul, checker=_always_executable)
 
 _register_implementation(ltorch.matmul, matmul, checker=_always_executable)
 _register_implementation(ltorch.outer, outer, checker=_always_executable)
+
+
+def _scaled_mm_transform(
+    a: TensorLike,
+    b: TensorLike,
+    scale_a: TensorLike,
+    scale_b: TensorLike,
+    bias: TensorLike | None = None,
+    scale_result: TensorLike | None = None,
+    out_dtype: dtypeLike | None = None,
+    use_fast_accum: bool = False,
+):
+
+    def is_column_major(mat: TensorLike) -> bool:
+        return mat.stride()[0] == 1 and mat.stride()[0] > 1
+
+    result_dtype: torch.dtype = to_torch_dtype(a.dtype if out_dtype is None else out_dtype)
+    if not is_column_major(b):
+        b = b.t().contiguous().t()
+
+    return _scaled_mm(a, b, scale_a, scale_b, bias, scale_result, result_dtype, use_fast_accum)
+
+
+_register_implementation(
+    ltorch._scaled_mm, _scaled_mm, checker=_always_executable, execution_transform=_scaled_mm_transform
+)
+_register_implementation(
+    ltorch.core_aten_scaled_mm, _scaled_mm, checker=_always_executable, execution_transform=_scaled_mm_transform
+)
+
 
 #
 # Normalization operations
