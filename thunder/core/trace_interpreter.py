@@ -128,8 +128,11 @@ def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, *
                     old = old.replace(shape=new._shape)
 
             if isinstance(new, VJPDual):
-                swap_map[variableify(new.primal)] = old
-                new.primal = old
+                # note(crcrpar): Without this sanity check, `subclass.__tensor_flatten__`,
+                # seems to cause `new.primal` == `old`, leading to a cycle in swapping.
+                if (key := variableify(new.primal)) != variableify(old):
+                    swap_map[variableify(new.primal)] = old
+                    new.primal = old
             else:
                 assert isinstance(new, ProxyInterface), (old, new)
                 swap_map[variableify(new)] = old

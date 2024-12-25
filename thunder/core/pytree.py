@@ -1,3 +1,4 @@
+from enum import Enum
 from functools import partial
 from types import FunctionType
 import dataclasses
@@ -64,6 +65,7 @@ def tree_flatten(args, namespace=OPTREE_NAMESPACE):
         and not is_likely_from_collections_namedtuple(args)
         and not dataclasses.is_dataclass(args)
         and not type(args).__module__.startswith("torch.return_types")
+        and not issubclass(type(args), Enum)
     ):
         raise TypeError(f"tree_flatten of type {type(args)} is not supported.")
     return optree.tree_flatten(args, none_is_leaf=True, namespace=namespace)

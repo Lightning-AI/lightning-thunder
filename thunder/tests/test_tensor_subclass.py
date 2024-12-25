@@ -1,16 +1,27 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+from lightning_utilities.core.imports import package_available
 import pytest
 import torch
+import torch.nn as nn
 from torch.utils import _pytree as pytree
 
 import thunder
-from thunder.tests.framework import instantiate
+from thunder.dynamo.compiler import ThunderCompiler
+from thunder.tests.framework import (
+    DynamoThunderExecutor,
+    TorchExecutor,
+    instantiate,
+    nvFuserExecutor,
+)
 from thunder.tests.make_tensor import make_tensor
 
 if TYPE_CHECKING:
     from typing import Any
+
+
+TORCHAO_AVAILABLE = package_available("torchao")
 
 
 @torch._dynamo.allow_in_graph
@@ -232,3 +243,71 @@ def test_func_of_subclass_simple_math(executor, device, _, requires_grad):
     torch.testing.assert_close(expected, actual)
     if requires_grad:
         actual.mean().backward()
+
+
+@instantiate(
+    dtypes=(thunder.core.dtypes.float32, thunder.core.dtypes.bfloat16),
+    devicetypes=(thunder.core.devices.DeviceType.CUDA,),
+    executors=(TorchExecutor, nvFuserExecutor, DynamoThunderExecutor),
+    decorators=(
+        pytest.mark.skipif(
+            not (TORCHAO_AVAILABLE and torch.cuda.get_device_capability() >= (8, 9)),
+            reason="Requires capability >= 8.9 and torchao",
+        ),
+        pytest.mark.parametrize("bias", (True, False)),
+    ),
+)
+def test_torchao_float8_linear(executor, device, dtype, bias):
+    from torchao.float8 import convert_to_float8_training
+
+    batch_size, in_features, out_features = 16, 32, 64
+    device = torch.device("cuda")
+    torch_dtype = thunder.core.dtypes.to_torch_dtype(dtype)
+
+    model = nn.Sequential(
+        nn.Linear(in_features, out_features, bias=bias),
+        nn.GELU(approximate="tanh"),
+        nn.Linear(out_features, out_features, bias=bias),
+    ).to(device=device, dtype=torch_dtype)
+    fp8_model = convert_to_float8_training(model)
+    x = make_tensor((batch_size, in_features), device=device, dtype=torch_dtype)
+
+    expected: torch.Tensor
+    jitted: nn.Module
+    backend: ThunderCompiler | None = None
+
+    if is_thunderfx := executor == DynamoThunderExecutor:
+        torch._dynamo.reset()
+        expected = torch.compile(fp8_model)(x)
+        backend = ThunderCompiler()
+        jitted = torch.compile(fp8_model, backend=backend)
+    else:
+        expected = fp8_model(x)
+        jitted = executor.make_callable(fp8_model)
+
+    if bias and dtype == thunder.core.dtypes.bfloat16 and executor == nvFuserExecutor:
+        with pytest.raises(
+            RuntimeError, match="Failed to compute the min-cut on the graph due to a path with infinite capacity"
+        ):
+            jitted(x)
+        return
+    actual = jitted(x)
+    if bias and dtype == thunder.core.dtypes.bfloat16 and executor == DynamoThunderExecutor:
+        with pytest.raises(AssertionError, match="Tensor-likes are not close"):
+            torch.testing.assert_close(actual, expected)
+        return
+
+    if (dtype == thunder.core.dtypes.bfloat16 and executor != DynamoThunderExecutor) or (
+        not bias and dtype == thunder.core.dtypes.bfloat16 and executor == DynamoThunderExecutor
+    ):
+        pytest.xfail("numerical error")
+    torch.testing.assert_close(actual, expected)
+
+    # TODO(crcrpar): Think of how to push tensor subclasses to `thunder.jit`.
+    # Currently no subgraphs go to thunder.jit.
+    if is_thunderfx:
+        for subgraph in backend.subgraph_infos:
+            if not bias and dtype == thunder.core.dtypes.bfloat16:
+                assert not subgraph.thunder_compiled_fns
+            else:
+                assert subgraph.thunder_compiled_fns
