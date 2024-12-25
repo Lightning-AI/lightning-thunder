@@ -740,6 +740,9 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
            So far, non-tensor ``ctx`` attributes seem to be folded into a trace.
     """
     from thunder.core.baseutils import check, sequencify
+    from thunder.core.trace_interpreter import interpret_trace
+    from thunder.core.transforms import dce
+    from thunder.core.pytree import tree_flatten, tree_unflatten
 
     custom_autograd_function_cls = unwrap(obj)
     custom_forward = custom_autograd_function_cls.forward
@@ -755,25 +758,36 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
     if trace_of_fwd is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return trace_of_fwd
 
-    # Forward.
+    # augmented forward trace.
     unwrapped_custom_forward_args = tree_map(lambda a: unwrap(a), args)
-    trace_of_fwd._siginfo = SigInfo.from_name_and_args(
-        custom_autograd_function_cls.__name__,
-        unwrapped_custom_forward_args,
-    )
-    trace_of_fwd.args = unwrapped_custom_forward_args
     unpack_bsyms = [
         prims.unpack_trivial.bind(a, name=a.name, output=a)
-        for a in filter(lambda a: isinstance(a, Proxy), trace_of_fwd.args)
+        for a in filter(lambda a: isinstance(a, Proxy), unwrapped_custom_forward_args)
     ]
-    trace_of_fwd.bound_symbols = unpack_bsyms + trace_of_fwd.bound_symbols
 
-    @wraps(trace_of_fwd.python_callable())
+    augmented_bsym_output: tuple[tuple[TensorProxy, ...], tuple[TensorProxy, ...]] = (
+        tuple(sequencify(trace_of_fwd.output)),
+        ctx_proxy.saved_tensors,
+    )
+    trace_of_augmented_fwd = TraceCtx()
+    trace_of_augmented_fwd.bound_symbols.extend((unpack_bsyms + trace_of_fwd.bound_symbols)[:-1])
+    with tracectx(trace_of_augmented_fwd):
+        prims.python_return(augmented_bsym_output)
+    trace_of_augmented_fwd._siginfo = SigInfo.from_name_and_args(
+        custom_autograd_function_cls.__name__, unwrapped_custom_forward_args
+    )
+    trace_of_augmented_fwd.args = unwrapped_custom_forward_args
+    trace_of_augmented_fwd = dce(trace_of_augmented_fwd)
+    _, spec_of_fwd_output = tree_flatten(trace_of_fwd.output)
+
+    @wraps(trace_of_augmented_fwd.python_callable())
     def core_of_forward(*args, **kwargs):
-        return thunder.core.trace_interpreter.interpret_trace(trace_of_fwd, *args, **kwargs)
+        output, _ = interpret_trace(trace_of_augmented_fwd, *args, **kwargs)
+        flat_output, _ = tree_flatten(output)
+        return tree_unflatten(flat_output, spec_of_fwd_output)
 
     custom_fwd_sym = get_jit_ctx().ad_hoc_executor.register_operator(
-        trace_of_fwd._siginfo.name,
+        custom_autograd_function_cls.__name__,
         like=core_of_forward,
     )
     unwrapped_forward_result = custom_fwd_sym(*unwrapped_custom_forward_args)
@@ -781,17 +795,6 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         unwrapped_forward_result,
         provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, inputs=[obj.provenance, fwd_output_provenance]),
     )
-
-    augmented_bsym_output: tuple[tuple[TensorProxy, ...], tuple[TensorProxy, ...]] = (
-        tuple(sequencify(trace_of_fwd.output)),
-        ctx_proxy.saved_tensors,
-    )
-    trace_of_augmented_fwd = TraceCtx()
-    trace_of_augmented_fwd.bound_symbols.extend(trace_of_fwd.bound_symbols[:-1])
-    with tracectx(trace_of_augmented_fwd):
-        prims.python_return(augmented_bsym_output)
-    trace_of_augmented_fwd._siginfo = SigInfo.from_name_and_args(custom_fwd_sym.name, unwrapped_custom_forward_args)
-    trace_of_augmented_fwd.args = unwrapped_custom_forward_args
 
     # Backward definition
     custom_backward = custom_autograd_function_cls.backward
@@ -821,6 +824,7 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads,
     )
     bwd_trace_impl.args = tuple(ctx_proxy.saved_consts + ctx_proxy.saved_tensors + grads)
+    bwd_trace_impl = dce(bwd_trace_impl)
 
     @wraps(bwd_trace_impl.python_callable())
     def bwd_impl_callable(*args, **kwargs):
@@ -846,6 +850,24 @@ def _general_jit_torch_autograd_function_apply_lookaside(obj: Any, *args, **kwar
         execution_transform=core_of_forward,
         grad_transform=grad_transform,
     )
+
+    added_bsym: BoundSymbol = get_jit_ctx().computation_trace.scopes[-1][-1]
+    import_ctx, call_ctx, object_ctx = {}, {}, {}
+    for bsym in trace_of_fwd.bound_symbols:
+        cur_import_ctx, cur_call_ctx, cur_object_ctx = bsym.gather_ctxs()
+        import_ctx.update(cur_import_ctx)
+        call_ctx.update(cur_call_ctx)
+        object_ctx.update(cur_object_ctx)
+
+    if import_ctx:
+        added_bsym._import_ctx.update(import_ctx)
+    if call_ctx:
+        if added_bsym._call_ctx is not None:
+            added_bsym._call_ctx.update(call_ctx)
+        else:
+            added_bsym._call_ctx = call_ctx
+    if object_ctx:
+        added_bsym._object_ctx.update(object_ctx)
     return forward_result
 
 
