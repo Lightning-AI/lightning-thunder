@@ -620,6 +620,21 @@ def full(
     return clang.full(shape, fill_value, device=device, dtype=dtype)
 
 
+@torchsymbol(torch.ops.aten.full, torch.ops.aten.full.default, id="torch.ops.aten.full")
+def core_aten_full(
+    size: Sequence[int],
+    fill_value: NumberLike,
+    *,
+    dtype: None | dtypeLike = None,
+    layout: None | torhc.layout = None,
+    device: None | DeviceLike = None,
+    pin_memory: None | bool = None,
+):
+    device = to_device(maybe_get_default_device(device))
+    dtype = _infer_full_dtype(fill_value, dtype)
+    return clang.full(size, fill_value, device=device, dtype=dtype)
+
+
 @torchsymbol(torch.full_like)
 def full_like(
     a: TensorLike, /, fill_value: NumberLike, *, device: None | DeviceLike = None, dtype: None | dtypeLike = None
@@ -771,6 +786,34 @@ def randn(
     return prims.randn(shape, device=device, dtype=dtype)
 
 
+@torchsymbol(torch.ops.aten.randn, torch.ops.aten.randn.default, id="torch.ops.aten.randn")
+def core_aten_randn(
+    size: Sequence[int],
+    *,
+    dtype: dtypeLike | None = None,
+    layout: torch.layout | None = None,
+    device: DeviceLike | None = None,
+    pin_memory: bool | None = None,
+) -> TensorProxy:
+    if layout is None:
+        layout = torch.strided
+    if pin_memory is None:
+        pin_memory = False
+    utils.check(
+        not requires_grad, lambda: "requires_grad=True is not yet supported within thunder.jit", NotImplementedError
+    )
+    utils.check(layout == torch.strided, lambda: "Only torch.strided layout is supported", NotImplementedError)
+    utils.check(not pin_memory, lambda: "pin_memory=True is not supported within thunder.jit", NotImplementedError)
+    # NOTE: Currently, we don't model randomness
+    utils.check(generator is None, lambda: "generator is not None which is currently unsupported", NotImplementedError)
+    utils.check(out is None, lambda: "out is not None which is currently unsupported", NotImplementedError)
+
+    device = to_device(maybe_get_default_device(device))
+    dtype = to_dtype(maybe_get_default_dtype(dtype))
+    shape = tuple(utils.extract_shape_from_varargs(shape))
+    return prims.randn(shape, device=device, dtype=dtype)
+
+
 @torchsymbol(torch.randn_like)
 def randn_like(
     a,
@@ -827,8 +870,7 @@ def zeros_like(a: TensorLike, /, *, device: DeviceLike | None = None, dtype: dty
     return full_like(a, 0, device=device, dtype=dtype)
 
 
-@torchsymbol(torch.empty)
-def empty(
+def _empty_impl(
     *size: int,
     device: None | DeviceLike = None,
     dtype: None | dtypeLike = None,
@@ -858,6 +900,43 @@ def empty(
     return clang.empty(size, device=device, dtype=dtype)
 
 
+@torchsymbol(torch.empty)
+def empty(
+    *size: int,
+    device: None | DeviceLike = None,
+    dtype: None | dtypeLike = None,
+    out: None | TensorLike = None,
+    layout: torch.layout = torch.strided,
+    requires_grad: bool = False,
+    pin_memory: bool = False,
+    memory_format: torch.memory_format = torch.contiguous_format,
+) -> TensorLike:
+    return _empty_impl(
+        *size,
+        device=device,
+        dtype=dtype,
+        out=out,
+        layout=layout,
+        requires_grad=requires_grad,
+        pin_memory=pin_memory,
+        memory_format=memory_format,
+    )
+
+
+@torchsymbol(torch.ops.aten.empty.memory_format, id="torch.ops.aten.empty.memory_format")
+def core_aten_empry_memory_format(
+    *size: int,
+    dtype: None | dtypeLike = None,
+    layout: torch.layout = torch.strided,
+    device: None | DeviceLike = None,
+    pin_memory: bool = False,
+    memory_format: torch.memory_format = torch.contiguous_format,
+) -> TensorLike:
+    return _empty_impl(
+        *size, device=device, dtype=dtype, out=out, layout=layout, pin_memory=pin_memory, memory_format=memory_format
+    )
+
+
 #
 # Shape operations
 #
@@ -866,6 +945,11 @@ def empty(
 # TODO Update this to take a *args series of tensors or a sequence of tensors
 @torchsymbol(torch.cat)
 def cat(tensors: Sequence[TensorLike], dim: int = 0) -> TensorLike:
+    return clang.cat(tensors, dim)
+
+
+@torchsymbol(torch.ops.aten.cat, torch.ops.aten.cat.default, id="torch.ops.aten.cat")
+def core_aten_cat(tensors: Sequence[TensorLike], dim: int = 0) -> TensorLike:
     return clang.cat(tensors, dim)
 
 
@@ -939,9 +1023,24 @@ def diagonal(a: TensorLike, /, offset: int = 0, dim1: int = 0, dim2: int = 1) ->
     return clang.diagonal(a, offset, dim1, dim2)
 
 
+@torchsymbol(torch.ops.aten.diagonal, torch.ops.aten.diagonal.default, id="torch.ops.aten.diagonal")
+def core_aten_diagonal(a: TensorLike, /, offset: int = 0, dim1: int = 0, dim2: int = 1) -> TensorLike:
+    return clang.diagonal(a, offset, dim1, dim2)
+
+
 @torchsymbol(torch.Tensor.expand, is_method=True)
 def expand(a: TensorLike, /, *shape: int) -> TensorLike:
     return clang.expand(a, *shape)
+
+
+@torchsymbol(torch.ops.aten.expand, torch.ops.aten.expand.default, id="torch.ops.aten.expand")
+def core_aten_expand(a: TensorLike, size: Sequence[int], *, implicit: bool = False):
+    utils.check(
+        not implicit,
+        lambda: f"`torch.ops.aten.expand` with {implicit=} is not supported",
+        exception_type=NotImplementedError,
+    )
+    return clang.expand(a, *size)
 
 
 @torchsymbol(torch.Tensor.expand_as, is_method=True)
@@ -954,8 +1053,7 @@ def flatten(a: TensorLike, /, start_dim: int = 0, end_dim: int = -1) -> TensorLi
     return clang.flatten(a, start_dim, end_dim)
 
 
-@torchsymbol(torch.flip, is_method=True)
-def flip(a: TensorLike, /, *dims: int) -> TensorLike:
+def _flip_impl(a: TensorLike, /, *dims: int) -> TensorLike:
     dims = utils.extract_shape_from_varargs(dims)
 
     # PyTorch supports 0-dim inputs with len(dims) <= 1
@@ -971,6 +1069,16 @@ def flip(a: TensorLike, /, *dims: int) -> TensorLike:
         return clang.flip(a, ())
 
     return clang.flip(a, dims)
+
+
+@torchsymbol(torch.flip, is_method=True)
+def flip(a: TensorLike, /, *dims: int) -> TensorLike:
+    return _flip_impl(a, *dims)
+
+
+@torchsymbol(torch.ops.aten.flip, torch.ops.aten.flip.default, id="torch.ops.aten.flip")
+def core_aten_flip(a: TensorLike, dims: Sequence[int]) -> TensorLike:
+    return _flip_impl(a, *dims)
 
 
 # fake out of place variant
@@ -1055,8 +1163,13 @@ def permute(a: TensorLike, /, *dims: int) -> TensorLike:
     return clang.transpose(a, dims)
 
 
-@torchsymbol(torch.Tensor.repeat, is_method=True)
-def repeat(a: TensorLike, /, *repeats: int) -> TensorLike:
+@torchsymbol(torch.ops.aten.permute, torch.ops.aten.permute.default, id="torch.ops.aten.permute")
+def core_aten_permute(a: TensorLike, dims: Sequence[int]) -> TensorLike:
+    dims = utils.extract_shape_from_varargs(dims)
+    return clang.transpose(a, dims)
+
+
+def _repeat_impl(a: TensorLike, /, *repeats: int) -> TensorLike:
     repeats = utils.extract_shape_from_varargs(repeats)
     utils.check_valid_shape(repeats)
     utils.check(a.ndim <= len(repeats), f"Expected {a.ndim=} <= {len(repeats)=}")
@@ -1074,6 +1187,16 @@ def repeat(a: TensorLike, /, *repeats: int) -> TensorLike:
         tuple(new_dims + offset for offset in range(1, 2 * a.ndim, 2)),
     )
     return reshape(a, out_shape)
+
+
+@torchsymbol(torch.Tensor.repeat, is_method=True)
+def repeat(a: TensorLike, /, *repeats: int) -> TensorLike:
+    return _repeat_impl(a, *repeats)
+
+
+@torchsymbol(torch.ops.aten.repeat, torch.ops.aten.repeat.default, id="torch.ops.aten.repeat")
+def core_aten_repeat(a: TensorProxy, repeats: Sequence[int]) -> TensorProxy:
+    return _repeat_impl(a, *repeats)
 
 
 @torchsymbol(torch.reshape, is_method=True)
@@ -1094,8 +1217,7 @@ def unflatten(a: TensorLike, /, dim: int, sizes=Sequence[int]) -> TensorLike:
     return a.view(a.shape[:dim] + tuple(sizes) + a.shape[dim + 1 :])
 
 
-@torchsymbol(torch.select, is_method=True)
-def select(a: TensorLike, /, dim: int, index: int):
+def _select_impl(a: TensorLike, /, dim: int, index: int):
     # dim check
     utils.check(
         a.ndim != 0,
@@ -1116,6 +1238,16 @@ def select(a: TensorLike, /, dim: int, index: int):
     # while `slice_in_dim` preserves the sliced dim, hence the `squeeze`
     a_sliced = clang.slice_in_dim(a, wrapped_index, wrapped_index + 1, dim=dim)
     return squeeze(a_sliced, dim)
+
+
+@torchsymbol(torch.select, is_method=True)
+def select(a: TensorLike, /, dim: int, index: int):
+    return _select_impl(a, dim, index)
+
+
+@torchsymbol(torch.ops.aten.select.int, id="torch.ops.aten.select.int")
+def core_aten_select(a: TensorProxy, dim: int, index: int):
+    return _select_impl(a, dim, index)
 
 
 # TODO consider revising this to just call _split_indices
@@ -1233,8 +1365,7 @@ def stack(tensors: Sequence[TensorLike], /, dim: int = 0) -> TensorLike:
 
 
 # See https://pytorch.org/docs/master/generated/torch.squeeze.html
-@torchsymbol(torch.squeeze, is_method=True)
-def squeeze(a: TensorLike, /, dim: None | int | Sequence[int] = None) -> TensorLike:
+def _squeeze_impl(a: TensorLike, /, dim: None | int | Sequence[int] = None) -> TensorLike:
     # Converts dim to a tuple of numbers
     dims = dim
     if dim is None:
@@ -1256,6 +1387,21 @@ def squeeze(a: TensorLike, /, dim: None | int | Sequence[int] = None) -> TensorL
     return clang.squeeze(a, dims)
 
 
+@torchsymbol(torch.squeeze, is_method=True)
+def squeeze(a: TensorLike, /, dim: None | int | Sequence[int] = None) -> TensorLike:
+    return _squeeze_impl(a, dim)
+
+
+@torchsymbol(torch.ops.aten.squeeze.dim, id="torch.ops.aten.squeeze.dim")
+def core_aten_squeeze_dim(a: TensorProxy, dim: int) -> TensorLike:
+    return _squeeze_impl(a, dim)
+
+
+@torchsymbol(torch.ops.aten.squeeze.dims, id="torch.ops.aten.squeeze.dims")
+def core_aten_squeeze_dims(a: TensorProxy, dim: Sequence[int]) -> TensorLike:
+    return _squeeze_impl(a, dim)
+
+
 @torchsymbol(torch.t, is_method=True)
 def t(a: TensorLike, /) -> TensorLike:
     utils.check(
@@ -1264,6 +1410,18 @@ def t(a: TensorLike, /) -> TensorLike:
         RuntimeError,
     )
     return prims.transpose(a, (1, 0)) if a.ndim == 2 else a
+
+
+@torchsymbol(torch.ops.aten.t.default, id="torch.ops.aten.t.default")
+def core_aten_t(a: TensorProxy) -> TensorProxy:
+    utils.check(
+        a.ndim <= 2,
+        lambda: f"t() expects a tensor with <= 2 dimensions, but self is {a.ndim}D",
+        RuntimeError,
+    )
+    if a.ndim != 2:
+        return a
+    return transpose(a, 0, 1)
 
 
 @run_once
@@ -1306,14 +1464,23 @@ def tensor_split(a: TensorLike, /, indices_or_sections, dim=0):
     return _split_indices(a, indices_or_sections, dim)
 
 
-@torchsymbol(torch.transpose, is_method=True)
-def transpose(a: TensorLike, /, dim0: int, dim1: int) -> TensorLike:
+def _transpose_impl(a: TensorLike, /, dim0: int, dim1: int) -> TensorLike:
     dim0, dim1 = utils.canonicalize_dims(a.ndim, (dim0, dim1))
 
     permutation = list(range(0, a.ndim))
     permutation[dim0] = dim1
     permutation[dim1] = dim0
     return clang.transpose(a, permutation)
+
+
+@torchsymbol(torch.transpose, is_method=True)
+def transpose(a: TensorLike, /, dim0: int, dim1: int) -> TensorLike:
+    return _transpose_impl(a, dim0, dim1)
+
+
+@torchsymbol(torch.ops.aten.transpose.int, id="torch.ops.aten.transpose.int")
+def core_aten_transpose(a: TensorProxy, dim0: int, dim1: int) -> TensorProxy:
+    return _transpose_impl(a, dim0, dim1)
 
 
 @torchsymbol(torch.unbind, is_method=True)
@@ -1335,12 +1502,22 @@ def unsqueeze(a: TensorLike, /, dim: int) -> TensorLike:
     return clang.unsqueeze(a, dim)
 
 
+@torchsymbol(torch.ops.aten.unsqueeze, torch.ops.aten.unsqueeze.default, id="torch.ops.aten.unsqueeze")
+def core_aten_unsqueeze(a: TensorProxy, dim: int) -> TensorProxy:
+    return clang.unsqueeze(a, dim)
+
+
 # TODO Review view functionalization
 # TODO Add type annotations
 @torchsymbol(torch.Tensor.view, is_method=True)
 def view(a: TensorLike, /, *shape) -> TensorLike:
     shape = utils.extract_shape_from_varargs(shape)
     return reshape(a, shape)
+
+
+@torchsymbol(torch.ops.aten.view, torch.ops.aten.view.default, id="torch.ops.aten.view")
+def core_aten_view(a: TensorProxy, size: Sequence[int]) -> TensorProxy:
+    return reshape(a, size)
 
 
 @torchsymbol(torch.Tensor.view_as, is_method=True)
@@ -1389,6 +1566,11 @@ def asin(a):
     return clang.asin(a)
 
 
+@torchsymbol(torch.ops.aten.asin, torch.ops.aten.asin.default, id="torch.ops.aten.asin")
+def core_aten_asin(a):
+    return clang.asin(a)
+
+
 @torchsymbol(torch.asin_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def asin_(a):
     return _copy_(a, asin(a))
@@ -1396,6 +1578,11 @@ def asin_(a):
 
 @torchsymbol(torch.asinh, is_method=True)
 def asinh(a):
+    return clang.asinh(a)
+
+
+@torchsymbol(torch.ops.aten.asinh, torch.ops.aten.asinh.default, id="torch.ops.aten.asinh")
+def core_aten_asinh(a):
     return clang.asinh(a)
 
 
@@ -1409,6 +1596,11 @@ def atan(a):
     return clang.atan(a)
 
 
+@torchsymbol(torch.ops.aten.atan, torch.ops.aten.atan.default, id="torch.ops.aten.atan")
+def core_aten_atan(a):
+    return clang.atan(a)
+
+
 @torchsymbol(torch.atan_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def atan_(a):
     return _copy_(a, atan(a))
@@ -1419,6 +1611,11 @@ def atanh(a):
     return clang.atanh(a)
 
 
+@torchsymbol(torch.ops.aten.atanh, torch.ops.aten.atanh.default, id="torch.ops.aten.atanh")
+def core_aten_atanh(a):
+    return clang.atanh(a)
+
+
 @torchsymbol(torch.atanh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def atanh_(a):
     return _copy_(a, atanh(a))
@@ -1426,6 +1623,11 @@ def atanh_(a):
 
 @torchsymbol(torch.bitwise_not, is_method=True)
 def bitwise_not(a):
+    return clang.bitwise_not(a)
+
+
+@torchsymbol(torch.ops.aten.bitwise_not, torch.ops.aten.bitwise_not.default, id="torch.ops.aten.bitwise_not")
+def core_aten_bitwise_not(a):
     return clang.bitwise_not(a)
 
 
@@ -1449,6 +1651,11 @@ def cos(a):
     return clang.cos(a)
 
 
+@torchsymbol(torch.ops.aten.cos, torch.ops.aten.cos.default, id="torch.ops.aten.cos")
+def core_aten_cos(a):
+    return clang.cos(a)
+
+
 @torchsymbol(torch.cos_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def cos_(a):
     return _copy_(a, cos(a))
@@ -1456,6 +1663,11 @@ def cos_(a):
 
 @torchsymbol(torch.cosh, is_method=True)
 def cosh(a):
+    return clang.cosh(a)
+
+
+@torchsymbol(torch.ops.aten.cosh, torch.ops.aten.cosh.default, id="torch.ops.aten.cosh")
+def core_aten_cosh(a):
     return clang.cosh(a)
 
 
@@ -1476,6 +1688,11 @@ def digamma_(a):
 
 @torchsymbol(torch.erf, is_method=True)
 def erf(a):
+    return clang.erf(a)
+
+
+@torchsymbol(torch.ops.aten.erf, torch.ops.aten.erf.default, id="torch.ops.aten.erf")
+def core_aten_erf(a):
     return clang.erf(a)
 
 
@@ -1506,6 +1723,11 @@ def erfinv_(a):
 
 @torchsymbol(torch.exp, is_method=True)
 def exp(a):
+    return clang.exp(a)
+
+
+@torchsymbol(torch.ops.aten.exp, torch.ops.aten.exp.default, id="torch.ops.aten.exp")
+def core_aten_exp(a):
     return clang.exp(a)
 
 
@@ -1563,6 +1785,11 @@ def expm1(a):
     return clang.expm1(a)
 
 
+@torchsymbol(torch.ops.aten.expm1, torch.ops.aten.expm1.default, id="torch.ops.aten.expm1")
+def core_aten_expm1(a):
+    return clang.expm1(a)
+
+
 @torchsymbol(torch.expm1_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def expm1_(a):
     return _copy_(a, expm1(a))
@@ -1570,6 +1797,11 @@ def expm1_(a):
 
 @torchsymbol(torch.floor, is_method=True)
 def floor(a):
+    return clang.floor(a)
+
+
+@torchsymbol(torch.ops.aten.floor, torch.ops.aten.floor.default, id="torch.ops.aten.floor")
+def core_aten_floor(a):
     return clang.floor(a)
 
 
@@ -1598,6 +1830,11 @@ def log(a):
     return clang.log(a)
 
 
+@torchsymbol(torch.ops.aten.log, torch.ops.aten.log.default, id="torch.ops.aten.log")
+def core_aten_log(a):
+    return clang.log(a)
+
+
 @torchsymbol(torch.log_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def log_(a):
     return _copy_(a, log(a))
@@ -1605,6 +1842,11 @@ def log_(a):
 
 @torchsymbol(torch.log10, is_method=True)
 def log10(a):
+    return clang.log10(a)
+
+
+@torchsymbol(torch.ops.aten.log10, torch.ops.aten.log10.default, id="torch.ops.aten.log10")
+def core_aten_log10(a):
     return clang.log10(a)
 
 
@@ -1618,6 +1860,11 @@ def log1p(a):
     return clang.log1p(a)
 
 
+@torchsymbol(torch.ops.aten.log1p, torch.ops.aten.log1p.default, id="torch.ops.aten.log1p")
+def core_aten_log1p(a):
+    return clang.log1p(a)
+
+
 @torchsymbol(torch.log1p_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def log1p_(a):
     return _copy_(a, log1p(a))
@@ -1625,6 +1872,11 @@ def log1p_(a):
 
 @torchsymbol(torch.log2, is_method=True)
 def log2(a):
+    return clang.log2(a)
+
+
+@torchsymbol(torch.ops.aten.log2, torch.ops.aten.log2.default, id="torch.ops.aten.log2")
+def core_aten_log2(a):
     return clang.log2(a)
 
 
@@ -1644,6 +1896,11 @@ def neg(a):
     return clang.neg(a)
 
 
+@torchsymbol(torch.ops.aten.neg, torch.ops.aten.neg.default, id="torch.ops.aten.neg")
+def core_aten_neg(a):
+    return clang.neg(a)
+
+
 @torchsymbol(torch.neg_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def neg_(a):
     return _copy_(a, neg(a))
@@ -1651,6 +1908,11 @@ def neg_(a):
 
 @torchsymbol(torch.reciprocal, is_method=True)
 def reciprocal(a):
+    return clang.reciprocal(a)
+
+
+@torchsymbol(torch.ops.aten.reciprocal, torch.ops.aten.reciprocal.default, id="torch.ops.aten.reciprocal")
+def core_aten_reciprocal(a):
     return clang.reciprocal(a)
 
 
@@ -1664,6 +1926,11 @@ def round(a):
     return clang.round(a)
 
 
+@torchsymbol(torch.ops.aten.round, torch.ops.aten.round.default, id="torch.ops.aten.round")
+def core_aten_round(a):
+    return clang.round(a)
+
+
 @torchsymbol(torch.round_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def round_(a):
     return _copy_(a, round(a))
@@ -1671,6 +1938,11 @@ def round_(a):
 
 @torchsymbol(torch.rsqrt, is_method=True)
 def rsqrt(a):
+    return clang.rsqrt(a)
+
+
+@torchsymbol(torch.ops.aten.rsqrt, torch.ops.aten.rsqrt.default, id="torch.ops.aten.rsqrt")
+def core_aten_rsqrt(a):
     return clang.rsqrt(a)
 
 
@@ -1683,6 +1955,11 @@ def rsqrt_(a):
 # TODO Add sgn
 @torchsymbol(torch.sign, is_method=True)
 def sign(a):
+    return clang.sign(a)
+
+
+@torchsymbol(torch.ops.aten.sign, torch.ops.aten.sign.default, id="torch.ops.aten.sign")
+def core_aten_sign(a):
     return clang.sign(a)
 
 
@@ -1701,6 +1978,11 @@ def sin(a):
     return clang.sin(a)
 
 
+@torchsymbol(torch.ops.aten.sin, torch.ops.aten.sin.default, id="torch.ops.aten.sin")
+def core_aten_sin(a):
+    return clang.sin(a)
+
+
 @torchsymbol(torch.sin_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def sin_(a):
     return _copy_(a, sin(a))
@@ -1708,6 +1990,11 @@ def sin_(a):
 
 @torchsymbol(torch.sinh, is_method=True)
 def sinh(a):
+    return clang.sinh(a)
+
+
+@torchsymbol(torch.ops.aten.sinh, torch.ops.aten.sinh.default, id="torch.ops.aten.sinh")
+def core_aten_sinh(a):
     return clang.sinh(a)
 
 
@@ -1721,6 +2008,11 @@ def sqrt(a):
     return clang.sqrt(a)
 
 
+@torchsymbol(torch.ops.aten.sqrt, torch.ops.aten.sqrt.default, id="torch.ops.aten.sqrt")
+def core_aten_sqrt(a):
+    return clang.sqrt(a)
+
+
 @torchsymbol(torch.sqrt_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def sqrt_(a):
     return _copy_(a, sqrt(a))
@@ -1728,6 +2020,11 @@ def sqrt_(a):
 
 @torchsymbol(torch.tan, is_method=True)
 def tan(a):
+    return clang.tan(a)
+
+
+@torchsymbol(torch.ops.aten.tan, torch.ops.aten.tan.default, id="torch.ops.aten.tan")
+def core_aten_tan(a):
     return clang.tan(a)
 
 
@@ -1741,6 +2038,11 @@ def tanh(a):
     return clang.tanh(a)
 
 
+@torchsymbol(torch.ops.aten.tanh, torch.ops.aten.tanh.default, id="torch.ops.aten.tanh")
+def core_aten_tanh(a):
+    return clang.tanh(a)
+
+
 @torchsymbol(torch.tanh_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def tanh_(a):
     return _copy_(a, tanh(a))
@@ -1748,6 +2050,11 @@ def tanh_(a):
 
 @torchsymbol(torch.trunc, is_method=True)
 def trunc(a):
+    return clang.trunc(a)
+
+
+@torchsymbol(torch.ops.aten.trunc, torch.ops.aten.trunc.default, id="torch.ops.aten.trunc")
+def core_aten_trunc(a):
     return clang.trunc(a)
 
 
@@ -1796,8 +2103,7 @@ def elu(a: TensorProxy, /, alpha: float = 1.0, inplace: bool = False) -> TensorL
 _inplace_to_out_of_place[elu] = elu, 2
 
 
-@torchsymbol(torch.nn.functional.gelu, is_method=False)
-def gelu(a: TensorProxy, /, *, approximate: str = "none") -> TensorLike:
+def _gelu_impl(a: TensorProxy, /, *, approximate: str = "none") -> TensorLike:
     if approximate == "none":
         # gelu(a) = a * Phi(a), where Phi is the cdf for the Normal Gaussian.
         # We use the error function to compute Phi.
@@ -1808,6 +2114,16 @@ def gelu(a: TensorProxy, /, *, approximate: str = "none") -> TensorLike:
         return 0.5 * a * (1.0 + tanh(math.sqrt(2.0 / math.pi) * (a + 0.044715 * a_pow_3)))
     else:
         raise ValueError(f"gelu does not support the approximate={approximate} argument")
+
+
+@torchsymbol(torch.nn.functional.gelu, is_method=False)
+def gelu(a: TensorProxy, /, *, approximate: str = "none") -> TensorLike:
+    return _gelu_impl(a, approximate=approximate)
+
+
+@torchsymbol(torch.ops.aten.gelu, torch.ops.aten.gelu.default, id="torch.ops.aten.gelu")
+def core_aten_gelu(a: TensorProxy, /, *, approximate: str = "none") -> TensorLike:
+    return _gelu_impl(a, approximate=approximate)
 
 
 @torchsymbol(torch.nn.functional.leaky_relu, is_method=False)
@@ -1821,6 +2137,12 @@ def leaky_relu(a: TensorProxy, /, negative_slope: float = 0.01, inplace: bool = 
 _inplace_to_out_of_place[leaky_relu] = leaky_relu, 2
 
 
+@torchsymbol(torch.ops.aten.leaky_relu, torch.ops.aten.leaky_relu.default, id="torch.ops.aten.leaky_relu")
+def core_aten_leaky_relu(a: TensorProxy, negative_slope: float = 0.01) -> TensorLike:
+    out = where(a > 0, a, a * negative_slope)
+    return out
+
+
 @torchsymbol(torch.nn.functional.logsigmoid, is_method=False)
 def logsigmoid(a: TensorProxy, /) -> TensorLike:
     return where(a > 0, -log1p(exp(-a)), a - log1p(exp(a)))
@@ -1829,7 +2151,6 @@ def logsigmoid(a: TensorProxy, /) -> TensorLike:
 # TODO Should this use clamp? -- Would that propagate NaNs properly?
 @torchsymbol(torch.relu, torch.nn.functional.relu, id="torch.relu", is_method=True)
 def relu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
-
     out = where(a > 0, a, 0)
     if inplace:
         return _copy_(a, out)
@@ -1837,6 +2158,11 @@ def relu(a: TensorLike, /, inplace: bool = False) -> TensorLike:
 
 
 _inplace_to_out_of_place[relu] = relu, 1
+
+
+@torchsymbol(torch.ops.aten.relu, torch.ops.aten.relu.default, id="torch.ops.aten.relu")
+def core_aten_relu(a: TensorLike) -> TensorLike:
+    return where(a > 0, a, 0)
 
 
 @torchsymbol(torch.relu_, torch.nn.functional.relu_, id="torch.relu_", is_method=True)
@@ -1978,15 +2304,22 @@ def tanhshrink(a: TensorLike, /) -> TensorLike:
 
 _inplace_to_out_of_place[tanhshrink] = tanhshrink, -1
 
+
 #
 # Elementwise binary operations
 #
-
-
 @torchsymbol(torch.add, is_method=True)
 def add(
     a: NumberLike | TensorLike, b: NumberLike | TensorLike, /, *, alpha: Number | TensorLike = 1
 ) -> Number | TensorLike:
+    if isinstance(alpha, TensorProxy) or alpha != 1:
+        b = b * alpha
+
+    return clang.add(a, b)
+
+
+@torchsymbol(torch.ops.aten.add.Scalar, torch.ops.aten.add.Tensor, id="torch.ops.aten.add")
+def core_aten_add(a: TensorLike, b: NumberLike | TensorLike, *, alpha: Number | TensorLike = 1) -> TensorLike:
     if isinstance(alpha, TensorProxy) or alpha != 1:
         b = b * alpha
 
@@ -2009,6 +2342,11 @@ def atan2(a, b, /):
     return clang.atan2(a, b)
 
 
+@torchsymbol(torch.ops.aten.atan2, torch.ops.aten.atan2.default, id="torch.ops.aten.atan2")
+def core_aten_atan2(a, b):
+    return clang.atan2(a, b)
+
+
 @torchsymbol(torch.Tensor.atan2_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def atan2_(a, b, /):
     return _copy_(a, atan2(a, b))
@@ -2016,6 +2354,11 @@ def atan2_(a, b, /):
 
 @torchsymbol(torch.bitwise_and, is_method=True)
 def bitwise_and(a, b, /):
+    return clang.bitwise_and(a, b)
+
+
+@torchsymbol(torch.ops.aten.bitwise_and.Scalar, torch.ops.aten.bitwise_and.Tensor, id="torch.ops.aten.bitwise_and")
+def core_aten_bitwise_and(a, b, /):
     return clang.bitwise_and(a, b)
 
 
@@ -2029,6 +2372,11 @@ def bitwise_or(a, b, /):
     return clang.bitwise_or(a, b)
 
 
+@torchsymbol(torch.ops.aten.bitwise_or.Scalar, torch.ops.aten.bitwise_or.Tensor, id="torch.ops.aten.bitwise_or")
+def core_aten_bitwise_or(a, b, /):
+    return clang.bitwise_or(a, b)
+
+
 @torchsymbol(torch.Tensor.bitwise_or_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def bitwise_or_(a, b, /):
     return _copy_(a, bitwise_or(a, b))
@@ -2036,6 +2384,11 @@ def bitwise_or_(a, b, /):
 
 @torchsymbol(torch.bitwise_xor, is_method=True)
 def bitwise_xor(a, b, /):
+    return clang.bitwise_xor(a, b)
+
+
+@torchsymbol(torch.ops.aten.bitwise_xor.Scalar, torch.ops.aten.bitwise_xor.Tensor, id="torch.ops.aten.bitwise_xor")
+def core_aten_bitwise_xor(a, b, /):
     return clang.bitwise_xor(a, b)
 
 
@@ -2054,9 +2407,7 @@ def copysign_(a, b, /):
     return _copy_(a, copysign(a, b))
 
 
-# TODO Implement div
-@torchsymbol(torch.div, is_method=True)
-def div(
+def _div_impl(
     a: Number | TensorLike,
     b: Number | TensorLike,
     /,
@@ -2076,6 +2427,28 @@ def div(
         raise ValueError(f"div does not support the rounding_mode={rounding_mode} argument")
 
 
+# TODO Implement div
+@torchsymbol(torch.div, is_method=True)
+def div(
+    a: Number | TensorLike,
+    b: Number | TensorLike,
+    *,
+    rounding_mode: None | str = None,
+    out: None | TensorLike = None,
+) -> Number | TensorLike:
+    return _div_impl(a, b, rounding_mode=rounding_mode, out=out)
+
+
+@torchsymbol(torch.ops.aten.div.Scalar, torch.ops.aten.div.Tensor, id="torch.ops.aten.div")
+def core_aten_div(a: TensorLike, b: Number | TensorLike) -> TensorLike:
+    return _div_impl(a, b)
+
+
+@torchsymbol(torch.ops.aten.div.Scalar_mode, torch.ops.aten.div.Tensor_mode, id="torch.ops.aten.div_mode")
+def core_aten_div_mode(a: TensorLike, b: Number | TensorLike, *, rounding_mode: None | str = None) -> TensorLike:
+    return _div_impl(a, b, rounding_mode=rounding_mode)
+
+
 @torchsymbol(torch.Tensor.div_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def div_(
     a: TensorLike,
@@ -2089,6 +2462,11 @@ def div_(
 
 @torchsymbol(torch.eq, is_method=True)
 def eq(a, b, /):
+    return clang.eq(a, b)
+
+
+@torchsymbol(torch.ops.aten.eq.Scalar, torch.ops.aten.eq.Tensor, id="torch.ops.aten.eq")
+def core_aten_eq(a, b):
     return clang.eq(a, b)
 
 
@@ -2112,6 +2490,11 @@ def fmod(a, b, /):
     return clang.fmod(a, b)
 
 
+@torchsymbol(torch.ops.aten.fmod.Scalar, torch.ops.aten.fmod.Tensor, id="torch.ops.aten.fmod")
+def core_aten_fmod(a, b):
+    return clang.fmod(a, b)
+
+
 @torchsymbol(torch.Tensor.fmod_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def fmod_(a, b, /):
     return _copy_(a, fmod(a, b))
@@ -2119,6 +2502,11 @@ def fmod_(a, b, /):
 
 @torchsymbol(torch.ge, is_method=True)
 def ge(a, b, /):
+    return clang.ge(a, b)
+
+
+@torchsymbol(torch.ops.aten.ge.Scalar, torch.ops.aten.ge.Tensor, id="torch.ops.aten.ge")
+def core_aten_ge(a, b):
     return clang.ge(a, b)
 
 
@@ -2132,6 +2520,11 @@ def gt(a, b, /):
     return clang.gt(a, b)
 
 
+@torchsymbol(torch.ops.aten.gt.Scalar, torch.ops.aten.gt.Tensor, id="torch.ops.aten.gt")
+def core_aten_gt(a, b):
+    return clang.gt(a, b)
+
+
 @torchsymbol(torch.Tensor.gt_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def gt_(a, b, /):
     return _copy_(a, gt(a, b))
@@ -2139,6 +2532,11 @@ def gt_(a, b, /):
 
 @torchsymbol(torch.logical_and, is_method=True)
 def logical_and(a, b, /):
+    return clang.logical_and(a, b)
+
+
+@torchsymbol(torch.ops.aten.logical_and, torch.ops.aten.logical_and.default, id="torch.ops.aten.logical_and")
+def core_aten_logical_and(a, b):
     return clang.logical_and(a, b)
 
 
@@ -2152,6 +2550,11 @@ def logical_not(a: TensorLike, /) -> TensorLike:
     return clang.logical_not(a)
 
 
+@torchsymbol(torch.ops.aten.logical_not, torch.ops.aten.logical_not.default, id="torch.ops.aten.logical_not")
+def core_aten_logical_not(a: TensorLike, /) -> TensorLike:
+    return clang.logical_not(a)
+
+
 @torchsymbol(torch.Tensor.logical_not_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def logical_not_(a: TensorLike, /) -> TensorLike:
     return _copy_(a, logical_not(a))
@@ -2159,6 +2562,11 @@ def logical_not_(a: TensorLike, /) -> TensorLike:
 
 @torchsymbol(torch.le, is_method=True)
 def le(a, b, /):
+    return clang.le(a, b)
+
+
+@torchsymbol(torch.ops.aten.le.Scalar, torch.ops.aten.le.Tensor, id="torch.ops.aten.le")
+def core_aten_le(a, b):
     return clang.le(a, b)
 
 
@@ -2172,6 +2580,11 @@ def lt(a, b, /):
     return clang.lt(a, b)
 
 
+@torchsymbol(torch.ops.aten.lt.Scalar, torch.ops.aten.lt.Tensor, id="torch.ops.aten.lt")
+def core_aten_lt(a, b):
+    return clang.lt(a, b)
+
+
 @torchsymbol(torch.Tensor.lt_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def lt_(a, b, /):
     return _copy_(a, lt(a, b))
@@ -2182,8 +2595,18 @@ def maximum(a: TensorProxy, b: TensorProxy) -> TensorProxy:
     return clang.maximum(a, b)
 
 
+@torchsymbol(torch.ops.aten.maximum, torch.ops.aten.maximum.default, id="torch.ops.aten.maximum")
+def core_aten_maximum(a: TensorProxy, b: TensorProxy) -> TensorProxy:
+    return clang.maximum(a, b)
+
+
 @torchsymbol(torch.minimum, is_method=True)
 def minimum(a: TensorProxy, b: TensorProxy) -> TensorProxy:
+    return clang.minimum(a, b)
+
+
+@torchsymbol(torch.ops.aten.minimum, torch.ops.aten.minimum.default, id="torch.ops.aten.minimum")
+def core_aten_minimum(a: TensorProxy, b: TensorProxy) -> TensorProxy:
     return clang.minimum(a, b)
 
 
@@ -2203,6 +2626,11 @@ def mul(a, b, /):
     return clang.mul(a, b)
 
 
+@torchsymbol(torch.ops.aten.mul.Scalar, torch.ops.aten.mul.Tensor, id="torch.ops.aten.mul")
+def core_aten_mul(a, b):
+    return clang.mul(a, b)
+
+
 @torchsymbol(torch.Tensor.mul_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def mul_(a, b, /):
     return _copy_(a, mul(a, b))
@@ -2210,6 +2638,11 @@ def mul_(a, b, /):
 
 @torchsymbol(torch.ne, is_method=True)
 def ne(a, b, /):
+    return clang.ne(a, b)
+
+
+@torchsymbol(torch.ops.aten.ne.Scalar, torch.ops.aten.ne.Tensor, id="torch.ops.aten.ne")
+def core_aten_ne(a, b):
     return clang.ne(a, b)
 
 
@@ -2256,6 +2689,16 @@ def pow(a, b, /):
     return clang.pow(a, b)
 
 
+@torchsymbol(
+    torch.ops.aten.pow.Scalar,
+    torch.ops.aten.pow.Tensor_Scalar,
+    torch.ops.aten.pow.Tensor_Tensor,
+    id="torch.ops.aten.pow",
+)
+def core_aten_pow(a, b):
+    return clang.pow(a, b)
+
+
 @torchsymbol(torch.Tensor.pow_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def pow_(a, b, /):
     return _copy_(a, pow(a, b))
@@ -2266,6 +2709,11 @@ def remainder(a, b, /):
     return clang.remainder(a, b)
 
 
+@torchsymbol(torch.ops.aten.remainder.Scalar, torch.ops.aten.remainder.Tensor, id="torch.ops.aten.remainder")
+def core_aten_remainder(a, b):
+    return clang.remainder(a, b)
+
+
 @torchsymbol(torch.Tensor.remainder_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def remainder_(a, b, /):
     return _copy_(a, remainder(a, b))
@@ -2273,6 +2721,14 @@ def remainder_(a, b, /):
 
 @torchsymbol(torch.sub, is_method=True)
 def sub(a, b, /, *, alpha: NumberLike | TensorLike = 1):
+    if isinstance(alpha, TensorProxy) or alpha != 1:
+        b = b * alpha
+
+    return clang.sub(a, b)
+
+
+@torchsymbol(torch.ops.aten.sub.Scalar, torch.ops.aten.sub.Tensor, id="torch.ops.aten.sub")
+def core_aten_sub(a, b, /, *, alpha: NumberLike | TensorLike = 1):
     if isinstance(alpha, TensorProxy) or alpha != 1:
         b = b * alpha
 
@@ -2358,8 +2814,7 @@ def lerp_(start: TensorLike, end: TensorLike, weight: Number | TensorLike) -> Te
 #
 
 
-@torchsymbol(torch.clamp, is_method=True)
-def clamp(
+def _clamp_impl(
     a: TensorLike,
     /,
     min: None | Number | TensorLike = None,
@@ -2391,6 +2846,25 @@ def clamp(
         a = where(a != a, a, where(a < max, a, max))
 
     return a
+
+
+@torchsymbol(torch.clamp, is_method=True)
+def clamp(
+    a: TensorLike,
+    /,
+    min: None | Number | TensorLike = None,
+    max: None | Number | TensorLike = None,
+) -> TensorLike:
+    return _clamp_impl(a, min=min, max=max)
+
+
+@torchsymbol(torch.ops.aten.clamp, torch.ops.aten.clamp.default, torch.ops.aten.clamp.Tensor, id="torch.ops.aten.clamp")
+def core_aten_clamp(
+    a: TensorLike,
+    min: None | Number | TensorLike = None,
+    max: None | Number | TensorLike = None,
+) -> TensorLike:
+    return _clamp_impl(a, min=min, max=max)
 
 
 @torchsymbol(torch.clamp_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
@@ -2490,6 +2964,20 @@ def where(
     b: None | Number | TensorLike = None,
     /,
 ) -> TensorLike:
+    utils.check(
+        isinstance(a, (Number, NumberProxy, TensorProxy)) and isinstance(b, (Number, NumberProxy, TensorProxy)),
+        lambda: f"torch.where() does not support only specifying a condition",
+        exception_type=NotImplementedError,
+    )
+    return clang.where(pred, a, b)
+
+
+@torchsymbol(torch.ops.aten.where.self, id="torch.ops.aten.where")
+def core_aten_where(
+    condition: TensorLike,
+    self: TensorLike,
+    other: TensorLike,
+) -> TensorProxy:
     utils.check(
         isinstance(a, (Number, NumberProxy, TensorProxy)) and isinstance(b, (Number, NumberProxy, TensorProxy)),
         lambda: f"torch.where() does not support only specifying a condition",
@@ -2728,15 +3216,18 @@ def amin(a, /, dim=None, keepdim: bool = False):
 
 # NOTE: Using name `torch_max` to avoid conflict with Python's `max`
 @overload
-def torch_max(a: TensorLike, /) -> TensorLike: ...
+def torch_max(a: TensorLike, /) -> TensorLike:
+    ...
 
 
 @overload
-def torch_max(a: TensorLike, /, dim: NumberLike, keepdim: bool = False) -> tuple[TensorLike, TensorLike]: ...
+def torch_max(a: TensorLike, /, dim: NumberLike, keepdim: bool = False) -> tuple[TensorLike, TensorLike]:
+    ...
 
 
 @overload
-def torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike: ...
+def torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike:
+    ...
 
 
 @torchsymbol(torch.max, is_method=True, method_name="max", id="torch.max")
@@ -2783,6 +3274,15 @@ def clone(a: TensorProxy, *, memory_format=torch.preserve_format) -> TensorProxy
     return prims.clone(a)
 
 
+@torchsymbol(torch.ops.aten.clone, torch.ops.aten.clone.default, id="torch.ops.aten.clone")
+def core_aten_clone(a: TensorProxy, *, memory_format: None | torch.memory_format = None) -> TensorProxy:
+    if memory_format is None:
+        memory_format = torch.preserve_format
+    if memory_format is not torch.preserve_format:
+        raise NotImplementedError("only preserve_format is currently supported")
+    return prims.clone(a)
+
+
 # Because we do not use @torchsymbol, we need to manually register the
 # implementation.
 register_function(torch.clone, clone)
@@ -2803,8 +3303,7 @@ def glu(a: TensorProxy, /, dim: int = -1) -> TensorProxy:
     return out
 
 
-@torchsymbol(torch.mean, is_method=True)
-def mean(a: TensorProxy, /, dim=None, keepdim: bool = False, *, dtype=None) -> TensorProxy:
+def _mean_impl(a: TensorProxy, /, dim=None, keepdim: bool = False, *, dtype=None) -> TensorProxy:
     dtype = dtype if dtype is not None else a.dtype
     utils.check(
         not utils.is_integer_dtype(dtype) and not utils.is_boolean_dtype(dtype),
@@ -2828,10 +3327,65 @@ def mean(a: TensorProxy, /, dim=None, keepdim: bool = False, *, dtype=None) -> T
     return result
 
 
+@torchsymbol(torch.mean, is_method=True)
+def mean(a: TensorProxy, /, dim=None, keepdim: bool = False, *, dtype=None) -> TensorProxy:
+    return _mean_impl(a, dim=dim, keepdim=keepdim, dtype=dtype)
+
+
+@torchsymbol(torch.ops.aten.mean, torch.ops.aten.mean.default, id="torch.ops.aten.mean")
+def core_aten_mean(a: TensorProxy, *, dtype=None) -> TensorProxy:
+    return _mean_impl(a, dtype=dtype)
+
+
+@torchsymbol(torch.ops.aten.mean.dim, id="torch.ops.aten.mean.dim")
+def core_aten_mean(a: TensorProxy, dim: int, keepdim: bool = False, *, dtype=None) -> TensorProxy:
+    return _mean_impl(a, dim=dim, keepdim=keepdim, dtype=dtype)
+
+
 @torchsymbol(torch.prod, is_method=True)
 def prod(
     a: TensorProxy, /, dim: None | Sequence[int] = None, keepdim: bool = False, *, dtype: None | dtypeLike = None
 ) -> TensorProxy:
+    # Promotes all exact dtypes to int64
+    if dtype is None:
+        if utils.is_exact_dtype(a.dtype):
+            dtype = dtypes.int64
+        else:
+            dtype = a.dtype
+
+    result = _reduction(
+        a,
+        prims.prod,
+        dims=dim,
+        keepdims=keepdim,
+        dtype=dtype,
+        output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
+    )
+
+    return result
+
+
+@torchsymbol(torch.ops.aten.prod, torch.ops.aten.prod.default, id="torch.ops.aten.prod")
+def core_aten_prod(a: TensorProxy, *, dtype: None | dtypeLike = None) -> TensorProxy:
+    # Promotes all exact dtypes to int64
+    if dtype is None:
+        if utils.is_exact_dtype(a.dtype):
+            dtype = dtypes.int64
+        else:
+            dtype = a.dtype
+
+    result = _reduction(
+        a,
+        prims.prod,
+        dtype=dtype,
+        output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
+    )
+
+    return result
+
+
+@torchsymbol(torch.ops.aten.prod.dim_int, id="torch.ops.aten.prod.dim_int")
+def core_aten_prod(a: TensorProxy, dim: int, keepdim: bool = False, *, dtype: None | dtypeLike = None) -> TensorProxy:
     # Promotes all exact dtypes to int64
     if dtype is None:
         if utils.is_exact_dtype(a.dtype):
@@ -2874,6 +3428,27 @@ def sum(
     return result
 
 
+@torchsymbol(torch.ops.aten.sum.dim_IntList, id="torch.ops.aten.sum.dim_IntList")
+def core_aten_sum(a: TensorProxy, dim: int, keepdim: bool = False, *, dtype: dtypeLike | None = None) -> TensorProxy:
+    # Promotes all exact dtypes to int64
+    if dtype is None:
+        if utils.is_exact_dtype(a.dtype):
+            dtype = dtypes.int64
+        else:
+            dtype = a.dtype
+
+    result = _reduction(
+        a,
+        prims.sum,
+        dims=dim,
+        keepdims=keepdim,
+        dtype=dtype,
+        output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.SAME,
+    )
+
+    return result
+
+
 def _sum_grad(
     a: TensorLike, /, dim: None | int | Sequence[int] = None, keepdim: bool = False, *, dtype: None | dtypeLike = None
 ) -> TensorLike:
@@ -2897,15 +3472,24 @@ def _sum_grad(
 register_grad(sum, _sum_grad)
 
 
-# NOTE This decomposition can not be efficiently fused, so make it primitive
-@torchsymbol(torch.cumsum, is_method=True, is_prim=True)
-def cumsum(a: TensorLike, dim: int, *, dtype: None | dtypeLike = None) -> TensorLike:
+def _cumsum_impl(a: TensorLike, dim: int, *, dtype: None | dtypeLike = None) -> TensorLike:
     # check the input dimension
     utils.canonicalize_dim(a.ndim, dim)
     if dtype is None:
         return TensorProxy(like=a)
     else:
         return TensorProxy(like=a, dtype=to_dtype(dtype))
+
+
+# NOTE This decomposition can not be efficiently fused, so make it primitive
+@torchsymbol(torch.cumsum, is_method=True, is_prim=True)
+def cumsum(a: TensorLike, dim: int, *, dtype: None | dtypeLike = None) -> TensorLike:
+    return _cumsum_impl(a, dim, dtype=dtype)
+
+
+@torchsymbol(torch.ops.aten.cumsum, torch.ops.aten.cumsum.default, is_prim=True, id="torch.ops.aten.cumsum")
+def core_aten_cumsum(a: TensorLike, dim: int, *, dtype: None | dtypeLike = None) -> TensorLike:
+    return _cumsum_impl(a, dim, dtype=dtype)
 
 
 @torchsymbol(torch.Tensor.cumsum_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
@@ -2925,6 +3509,45 @@ def var(
     result = _reduction(
         a,
         partial(prims.var, correction=correction),
+        dims=dim,
+        keepdims=keepdim,
+        dtype=None,
+        has_identity=True,
+        output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.COMPLEX_TO_FLOAT,
+    )
+    return result
+
+
+@torchsymbol(torch.ops.aten.var.correction, id="torch.ops.aten.var.correction")
+def core_aten_var_correction(
+    a: TensorProxy,
+    dim: int | None = None,
+    *,
+    correction: NumberLike | None = None,
+    keepdim: bool = False,
+) -> TensorProxy:
+    result = _reduction(
+        a,
+        partial(prims.var, correction=correction if correction is not None else -1),
+        dims=dim,
+        keepdims=keepdim,
+        dtype=None,
+        has_identity=True,
+        output_dtype_kind=REDUCTION_OUTPUT_TYPE_KIND.COMPLEX_TO_FLOAT,
+    )
+    return result
+
+
+@torchsymbol(torch.ops.aten.var.dim, id="torch.ops.aten.var.dim")
+def core_aten_var_dim(
+    a: TensorProxy,
+    dim: int | None = None,
+    unbiased: bool = True,
+    keepdim: bool = False,
+) -> TensorProxy:
+    result = _reduction(
+        a,
+        partial(prims.var, correction=1 if unbiased else 0),
         dims=dim,
         keepdims=keepdim,
         dtype=None,
@@ -2972,11 +3595,23 @@ def topk(
     return clang.topk(a, k, dim, largest, sorted, out=out)
 
 
+@torchsymbol(torch.ops.aten.topk, torch.ops.aten.topk.default, id="torch.ops.aten.topk")
+def core_aten_topk(
+    a: TensorLike, /, k: int, dim: int = -1, largest: bool = True, sorted: bool = True
+) -> (TensorLike, TensorLike):
+    return clang.topk(a, k, dim, largest, sorted)
+
+
 @torchsymbol(torch.sort, is_method=True)
 def sort(
     a: TensorLike, /, dim: None | int = None, descending: bool = False, stable: bool = False, *, out=None
 ) -> (TensorLike, TensorLike):
     return clang.sort(a, dim, descending, stable, out=out)
+
+
+@torchsymbol(torch.ops.aten.sort, torch.ops.aten.sort.default, id="torch.ops.aten.sort")
+def core_aten_sort(a: TensorLike, /, dim: int = -1, descending: bool = False) -> (TensorLike, TensorLike):
+    return clang.sort(a, dim, descending)
 
 
 #
@@ -3010,15 +3645,25 @@ def index_select(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
     return clang.take(a, index, dim)
 
 
+@torchsymbol(torch.ops.aten.index_select, torch.ops.aten.index_select.default, id="torch.ops.aten.index_select")
+def core_aten_index_select(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
+    return clang.take(a, index, dim)
+
+
 @torchsymbol(torch.gather, is_method=True)
 def gather(a: TensorLike, /, dim: int, index: TensorLike) -> TensorLike:
     return clang.gather(a, indices=index, dim=dim)
 
 
+@torchsymbol(torch.ops.aten.gather, torch.ops.aten.gather.default, id="torch.ops.aten.gather")
+def core_aten_gather(a: TensorLike, /, dim: int, index: TensorLike, *, sparse_grad: bool = False) -> TensorLike:
+    utils.check(not sparse_grad, lambda: f"{sparse_grad=} is not supported", exception_type=NotImplementedError)
+    return clang.gather(a, indices=index, dim=dim)
+
+
 # NOTE: PyTorch uses `src` for torch.Tensor arguments and `value` for scalars
 # when referencing the source of the values
-@torchsymbol(torch.scatter, is_method=True)
-def scatter(
+def _scatter_impl(
     a: TensorLike,
     /,
     dim: int,
@@ -3041,6 +3686,40 @@ def scatter(
         return clang.scatter(a, index, src, dim)
     else:
         return clang.scatter(a, index, value, dim)
+
+
+@torchsymbol(torch.scatter, is_method=True)
+def scatter(
+    a: TensorLike,
+    /,
+    dim: int,
+    index: TensorLike,
+    src: TensorLike | None = None,
+    *,
+    value: None | Number = None,
+    reduce: None | str = None,
+) -> TensorLike:
+    return _scatter_impl(a, dim, index, src, value=value, reduce=reduce)
+
+
+@torchsymbol(torch.ops.aten.scatter.src, id="torch.ops.aten.scatter.src")
+def core_aten_scatter_tensor(
+    a: TensorProxy,
+    dim: int,
+    index: TensorProxy,
+    src: TensorProxy,
+) -> TensorLike:
+    return _scatter_impl(a, dim, index, src)
+
+
+@torchsymbol(torch.ops.aten.scatter.value, id="torch.ops.aten.scatter.value")
+def core_aten_scatter_value(
+    a: TensorProxy,
+    dim: int,
+    index: TensorProxy,
+    value: Number,
+) -> TensorLIke:
+    return _scatter_impl(a, dim, index, value=value)
 
 
 @torchsymbol(torch.Tensor.scatter_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
@@ -3075,6 +3754,11 @@ def scatter_add(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike) 
     return clang.scatter_add(a, indices=index, value=src, dim=dim)
 
 
+@torchsymbol(torch.ops.aten.scatter_add, torch.ops.aten.scatter_add.default, id="torch.ops.aten.scatter_add")
+def core_aten_scatter_add(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike) -> TensorLike:
+    return clang.scatter_add(a, indices=index, value=src, dim=dim)
+
+
 @torchsymbol(torch.Tensor.scatter_add_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def scatter_add_(a: TensorLike, /, dim: int, index: TensorLike, src: TensorLike) -> TensorLike:
     return _copy_(a, scatter_add(a, dim, index, src))
@@ -3087,6 +3771,13 @@ def take_along_dim(a: TensorLike, /, indices: TensorLike, dim: int) -> TensorLik
 
 @torchsymbol(torch.index_put, is_method=True)
 def index_put(
+    a: TensorLike, /, indices: Sequence[TensorLike], values: TensorLike, accumulate: bool = False
+) -> TensorLike:
+    return clang.index_put(a, indices, values, accumulate)
+
+
+@torchsymbol(torch.ops.aten.index_put, torch.ops.aten.index_put.default, id="torch.ops.aten.index_put")
+def core_aten_index_put(
     a: TensorLike, /, indices: Sequence[TensorLike], values: TensorLike, accumulate: bool = False
 ) -> TensorLike:
     return clang.index_put(a, indices, values, accumulate)
@@ -3798,6 +4489,19 @@ def layer_norm(
     return _native_layer_norm(a, normalized_shape, weight, bias, eps)[0]
 
 
+@torchsymbol(
+    torch.ops.aten.native_layer_norm, torch.ops.aten.native_layer_norm.default, id="torch.ops.aten.native_layer_norm"
+)
+def core_aten_layer_norm(
+    a: TensorLike,
+    normalized_shape: Sequence[int],
+    weight: TensorLike | None,
+    bias: TensorLike | None,
+    eps: NumberLike,
+) -> tuple[TensorProxy, TensorProxy, TensorProxy]:
+    return _native_layer_norm(a, normalized_shape, weight, bias, eps)
+
+
 def rms_norm(
     a: TensorLike,
     /,
@@ -3981,8 +4685,12 @@ def bmm(a: TensorLike, b: TensorLike, /) -> TensorLike:
     return matmul(a, b)
 
 
-@torchsymbol(torch.convolution, is_method=False)
-def convolution(
+@torchsymbol(torch.ops.aten.bmm, torch.ops.aten.bmm.default, id="torch.ops.aten.bmm")
+def core_aten_bmm(a: TensorLike, b: TensorLike, /) -> TensorLike:
+    return matmul(a, b)
+
+
+def _convolution_impl(
     a: TensorLike,
     weight: TensorLike,
     bias: None | TensorLike,
@@ -4010,6 +4718,36 @@ def convolution(
         output_padding,
         groups,
     )
+
+
+@torchsymbol(torch.convolution, is_method=False)
+def convolution(
+    a: TensorLike,
+    weight: TensorLike,
+    bias: None | TensorLike,
+    stride: Sequence[int],
+    padding: Sequence[int],
+    dilation: Sequence[int],
+    transposed: bool,
+    output_padding: Sequence[int],
+    groups: int,
+) -> TensorLike:
+    return _convolution_impl(a, weight, bias, stride, padding, dilation, transposed, output_padding, groups)
+
+
+@torchsymbol(torch.ops.aten.convolution, torch.ops.aten.convolution.default, id="torch.ops.aten.convolution")
+def core_aten_convolution(
+    a: TensorLike,
+    weight: TensorLike,
+    bias: None | TensorLike,
+    stride: Sequence[int],
+    padding: Sequence[int],
+    dilation: Sequence[int],
+    transposed: bool,
+    output_padding: Sequence[int],
+    groups: int,
+) -> TensorLike:
+    return _convolution_impl(a, weight, bias, stride, padding, dilation, transposed, output_padding, groups)
 
 
 # Helper functions that are useful for "window"-based ops
@@ -4324,6 +5062,18 @@ def avg_pool1d(
     return _avg_pool_helper(1, a, kernel_size, stride, padding, ceil_mode, count_include_pad, divisor_override)
 
 
+@torchsymbol(torch.ops.aten.avg_pool1d, torch.ops.aten.avg_pool1d.default, id="torch.ops.aten.avg_pool1d")
+def core_aten_avg_pool1d(
+    a: TensorProxy,
+    kernel_size: int | Sequence[int],
+    stride: Sequence[int] = [],
+    padding: int = 0,
+    ceil_mode: bool = False,
+    count_include_pad: bool = True,
+) -> TensorProxy:
+    return _avg_pool_helper(1, a, kernel_size, stride, padding, ceil_mode, count_include_pad, divisor_override)
+
+
 @torchsymbol(torch.nn.functional.avg_pool2d, id="torch.nn.functional.avg_pool2d", is_method=False)
 def avg_pool2d(
     a: TensorProxy,
@@ -4338,8 +5088,35 @@ def avg_pool2d(
     return _avg_pool_helper(2, a, kernel_size, stride, padding, ceil_mode, count_include_pad, divisor_override)
 
 
+@torchsymbol(torch.ops.aten.avg_pool2d, torch.ops.aten.avg_pool2d.default, id="torch.ops.aten.avg_pool2d")
+def core_aten_avg_pool2d(
+    a: TensorProxy,
+    kernel_size: int | Sequence[int],
+    stride: int | Sequence[int] | None = None,
+    padding: int | Sequence[int] = 0,
+    ceil_mode: bool = False,
+    count_include_pad: bool = True,
+    divisor_override: NumberLike | None = None,
+) -> TensorProxy:
+    return _avg_pool_helper(2, a, kernel_size, stride, padding, ceil_mode, count_include_pad, divisor_override)
+
+
 @torchsymbol(torch.nn.functional.avg_pool3d, id="torch.nn.functional.avg_pool3d", is_method=False)
 def avg_pool3d(
+    a: TensorProxy,
+    /,
+    kernel_size: int | Sequence[int],
+    stride: int | Sequence[int] | None = None,
+    padding: int | Sequence[int] = 0,
+    ceil_mode: bool = False,
+    count_include_pad: bool = True,
+    divisor_override: NumberLike | None = None,
+) -> TensorProxy:
+    return _avg_pool_helper(3, a, kernel_size, stride, padding, ceil_mode, count_include_pad, divisor_override)
+
+
+@torchsymbol(torch.ops.aten.avg_pool3d, torch.ops.aten.avg_pool3d.default, id="torch.ops.aten.avg_pool3d")
+def core_aten_avg_pool3d(
     a: TensorProxy,
     /,
     kernel_size: int | Sequence[int],
@@ -4442,6 +5219,22 @@ def max_pool2d(
     return _max_pool_helper(2, a, kernel_size, stride, padding, dilation, return_indices, ceil_mode)
 
 
+@torchsymbol(
+    torch.ops.aten.max_pool2d_with_indices,
+    torch.ops.aten.max_pool2d_with_indices.default,
+    id="torch.ops.aten.max_pool2d_with_indices",
+)
+def core_aten_max_pool2d_with_indices(
+    a: TensorProxy,
+    kernel_size: int | Sequence[int],
+    stride: int | Sequence[int] | None = None,
+    padding: int | Sequence[int] = 0,
+    dilation: int | Sequence[int] = 1,
+    ceil_mode: bool = False,
+) -> tuple[TensorProxy, TensorProxy]:
+    return _max_pool_helper(2, a, kernel_size, stride, padding, dilation, True, ceil_mode)
+
+
 @torchsymbol(torch.max_pool3d, torch.nn.functional.max_pool3d, id="torch.nn.functional.max_pool3d", is_method=False)
 def max_pool3d(
     a: TensorProxy,
@@ -4454,6 +5247,22 @@ def max_pool3d(
     ceil_mode: bool = False,
 ) -> TensorProxy:
     return _max_pool_helper(3, a, kernel_size, stride, padding, dilation, return_indices, ceil_mode)
+
+
+@torchsymbol(
+    torch.ops.aten.max_pool3d_with_indices,
+    torch.ops.aten.max_pool3d_with_indices.default,
+    id="torch.ops.aten.max_pool3d_with_indices",
+)
+def core_aten_max_pool3d_with_indices(
+    a: TensorProxy,
+    kernel_size: int | Sequence[int],
+    stride: int | Sequence[int] | None = None,
+    padding: int | Sequence[int] = 0,
+    dilation: int | Sequence[int] = 1,
+    ceil_mode: bool = False,
+) -> tuple[TensorProxy, TensorProxy]:
+    return _max_pool_helper(3, a, kernel_size, stride, padding, dilation, True, ceil_mode)
 
 
 @torchsymbol(torch.conv1d, torch.nn.functional.conv1d, id="torch.nn.functional.conv1d", is_method=False)
@@ -4750,8 +5559,30 @@ def dropout(a: TensorProxy, /, p: NumberLike = 0.5, training: bool = True, inpla
 _inplace_to_out_of_place[dropout] = dropout, 3
 
 
-@torchsymbol(torch.nn.functional.embedding, id="torch.nn.functional.embedding")
-def embedding(
+@torchsymbol(torch.ops.aten.native_dropout, torch.ops.aten.native_dropout.default, id="torch.ops.aten.native_dropout")
+def core_aten_dropout(a: TensorProxy, p: NumberLike, train: bool) -> tuple[TensorProxy, TensorProxy]:
+    if not train:
+        return a
+
+    utils.check(
+        p <= 1 and p >= 0,
+        lambda: f"Dropout probability has to be between 0 and 1, but got, {p}",
+    )
+
+    dropout_mask = _dropout_helper(a, 1 - p)
+    if p == 1:
+        return zeros_like(a), dropout_mask
+
+    if p == 0:
+        return a, dropout_mask
+
+    scale = 1 / (1 - p)
+
+    out = a * dropout_mask * scale
+    return out, dropout_mask
+
+
+def _embedding_impl(
     a: TensorLike, /, weight, padding_idx=None, max_norm=None, norm_type=2.0, scale_grad_by_freq=False, sparse=False
 ) -> TensorLike:
     # TODO: add embedding_renorm_ so we can remove embedding prim
@@ -4779,7 +5610,35 @@ def embedding(
     return reshape(flatten_output, output_shape)
 
 
-@torchsymbol(torch.ops.aten.embedding_backward)
+@torchsymbol(torch.nn.functional.embedding, id="torch.nn.functional.embedding")
+def embedding(
+    a: TensorLike, /, weight, padding_idx=None, max_norm=None, norm_type=2.0, scale_grad_by_freq=False, sparse=False
+) -> TensorLike:
+    return _embedding_impl(
+        a,
+        weight,
+        padding_idx=padding_idx,
+        max_norm=max_norm,
+        norm_type=norm_type,
+        scale_grad_by_freq=scale_grad_by_freq,
+        sparse=sparse,
+    )
+
+
+@torchsymbol(torch.ops.aten.embedding, torch.ops.aten.embedding.default, id="torch.ops.aten.embedding")
+def core_aten_embedding(
+    weight: TensorLike,
+    indices: TensorLike,
+    padding_idx: int = -1,
+    scale_grad_by_freq: bool = False,
+    sparse: bool = False,
+) -> TensorLike:
+    return _embedding_impl(
+        indices, weight, padding_idx=padding_idx, scale_grad_by_freq=scale_grad_by_freq, sparse=sparse
+    )
+
+
+@torchsymbol(torch.ops.aten.embedding_backward, torch.ops.aten.embedding_dense_backward)
 def embedding_backward(grad, indices, num_weights, padding_idx, scale_grad_by_freq, sparse):
     result = prims.embedding_backward(grad, indices, num_weights, padding_idx, scale_grad_by_freq, sparse)
     return result
@@ -4803,15 +5662,17 @@ def one_hot(a: TensorLike, /, num_classes: int) -> TensorLike:
     return scatter_add(canvas, dim=-1, index=index, src=src)
 
 
-@torchsymbol(torch.group_norm, torch.nn.functional.group_norm, id="torch.nn.functional.group_norm", is_method=False)
-def group_norm(
+# @torchsymbol(torch.group_norm, torch.nn.functional.group_norm, id="torch.nn.functional.group_norm", is_method=False)
+# def group_norm(
+def _group_norm_impl(
     a: TensorProxy,
     /,
     num_groups: int,
     weight: None | TensorProxy = None,
     bias: None | TensorProxy = None,
     eps: float = 1e-5,
-) -> TensorProxy:
+    return_stats: bool = False,
+) -> tuple[TensorProxy, TensorProxy, TensorProxy]:
     utils.check(a.ndim >= 2, lambda: f"group_norm: {a.ndim=} should be at least 2")
 
     batch_size, num_channels, *inner_dims = a.shape
@@ -4839,7 +5700,7 @@ def group_norm(
 
     # Perform Normalization (yes, subtract mean, divide by sd) over all the dims
     # but the batch and the group dim.
-    res, *_ = _normalize(a_groupped, norm_dims=range(2, a_groupped.ndim), eps=eps)
+    res, mean, rstd = _normalize(a_groupped, norm_dims=range(2, a_groupped.ndim), eps=eps)
     # Restore the channel dimension
     res = view(res, a.shape)
 
@@ -4855,7 +5716,38 @@ def group_norm(
         res = res + bias
 
     res = to(res, a.dtype)
-    return res
+    if return_stats:
+        return res, mean, rstd
+    else:
+        return res
+
+
+@torchsymbol(torch.group_norm, torch.nn.functional.group_norm, id="torch.nn.functional.group_norm", is_method=False)
+def group_norm(
+    a: TensorProxy,
+    /,
+    num_groups: int,
+    weight: None | TensorProxy = None,
+    bias: None | TensorProxy = None,
+    eps: float = 1e-5,
+) -> TensorProxy:
+    return _group_norm_impl(a, num_groups, weight, bias, eps, return_stats=False)
+
+
+@torchsymbol(
+    torch.ops.aten.native_group_norm, torch.ops.aten.native_group_norm.default, id="torch.ops.aten.native_group_norm"
+)
+def core_aten_group_norm(
+    a: TensorProxy,
+    weight: TensorProxy | None,
+    bias: TensorProxy | None,
+    N: int,
+    C: int,
+    HxW: int,
+    group: int,
+    eps: float,
+) -> tuple[TensorProxy, TensorProxy, TensorProxy]:
+    return _group_norm_impl(a, num_groups, weight, bias, eps, return_stats=True)
 
 
 def _interpolate_scale_factor_helper(
@@ -5337,6 +6229,11 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.
 
 @torchsymbol(torch.sigmoid, torch.nn.functional.sigmoid, torch.special.expit, is_method=True)
 def sigmoid(a: TensorLike, /) -> TensorLike:
+    return clang.sigmoid(a)
+
+
+@torchsymbol(torch.ops.aten.sigmoid, torch.ops.aten.sigmoid.default, id="torch.ops.aten.sigmoid")
+def core_aten_sigmoid(a: TensorLike) -> TensorLike:
     return clang.sigmoid(a)
 
 
