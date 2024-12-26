@@ -1157,3 +1157,56 @@ def test_no_shape_only_fusion_region(executor, device: str, thunder_dtype: dtype
 
     # Make sure there is a fusion symbol.
     assert any(bsym.sym.is_fusion for bsym in fwd_trace.bound_symbols)
+
+@instantiate(
+    dtypes=(thunder.float16, ),
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(nvFuserExecutor,),
+    decorators=(
+        pytest.mark.skipif(
+            nvfuser_version() is None or nvfuser_version() < LooseVersion("0.2.25"),
+            reason="Requires nvFuser version 0.2.25 or later",
+        ),
+        # pytest.mark.skipif(
+        #     torch.cuda.is_available() and torch.cuda.get_device_capability(0)[0] < 9,
+        #     reason="Requires CUDA compute capability >= 9.0",
+        # ),
+        # pytest.mark.parametrize("dropout_p", [0.0, 0.2]),
+        # pytest.mark.parametrize("is_causal", [False, True]),
+        # pytest.mark.parametrize("scale", [None, 1e-3]),
+    ),
+)
+def test_embedding(
+    executor,
+    device: str,
+    thunder_dtype: dtypes.dtype,
+    # dropout_p: None | float,
+    # is_causal: None | bool,
+    # scale: None | float,
+):
+
+    def embedding_fn(input, weight):
+        return torch.nn.functional.embedding(
+            input, weight
+        )
+
+    # torch.manual_seed(0)
+    dtype = ltorch.to_torch_dtype(thunder_dtype)
+
+    N, S = 10, 3
+    input = torch.randint(N, (S,), dtype=torch.int64, device='cuda', requires_grad=False)
+    weight = torch.randn(N, S, dtype=torch.bfloat16, device='cuda', requires_grad=True)
+    grad_out = torch.randn(S, S, dtype=torch.bfloat16, device='cuda')
+
+    compiled_func = thunder.jit(embedding_fn, executors_list=executor.executors_list(), nv_enable_embedding=True)
+    out = compiled_func(input, weight)
+    # out.backward(grad_out)
+    fwd_trace = thunder.last_traces(compiled_func)[-1]
+    breakpoint()
+    # bwd_trace = thunder.last_backward_traces(compiled_func)[-1]
+    fwd_fusion = examine.get_fusions(fwd_trace)
+    # bwd_fusion = examine.get_fusions(bwd_trace)
+
+    # assert len(fwd_fusion) == 1
+    # assert len(bwd_fusion) == 1
+    print (fwd_trace)
