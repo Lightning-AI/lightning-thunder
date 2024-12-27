@@ -1,120 +1,80 @@
-import thunder
+from __future__ import annotations
 import math
-from typing import Any, Optional, Dict, Tuple, Literal
-import builtins
+from typing import Any
 import collections
-from collections.abc import ValuesView, Iterable, Iterator
 from collections.abc import Callable, Sequence
 import dataclasses
-import weakref
-import random
-from functools import partial, wraps, reduce
-import linecache
-import operator
-import copy
+from functools import wraps
 import contextvars
 from contextlib import contextmanager
 import dis
 import warnings
-from enum import Enum, auto
-from io import StringIO
-import inspect
-import time
+from types import (
+    BuiltinMethodType,
+    CellType,
+    FunctionType,
+    GetSetDescriptorType,
+    MethodDescriptorType,
+    MethodType,
+    ModuleType,
+    NoneType,
+    UnionType,
+    WrapperDescriptorType,
+)
 
+import torch
+import torch.utils.checkpoint
+
+import thunder
 from thunder.core.compile_data import compile_data_and_stats, get_cache_option, get_compile_data
 import thunder.clang as clang
 import thunder.core.transforms
 import thunder.core.baseutils as baseutils
 import thunder.core.codeutils as codeutils
-from thunder.core.baseutils import run_once
-
-from types import (
-    CellType,
-    ClassMethodDescriptorType,
-    CodeType,
-    CoroutineType,
-    FrameType,
-    FunctionType,
-    MethodType,
-    MethodDescriptorType,
-    ModuleType,
-    NoneType,
-    BuiltinFunctionType,
-    BuiltinMethodType,
-    MethodWrapperType,
-    WrapperDescriptorType,
-    TracebackType,
-    CellType,
-    ModuleType,
-    CodeType,
-    BuiltinFunctionType,
-    FunctionType,
-    MethodType,
-    GetSetDescriptorType,
-    UnionType,
-)
-
-import torch
-import torch.utils.checkpoint
 from thunder.core.proxies import (
+    AnyProxy,
     DistParallelType,
-    proxy,
+    NumberProxy,
     Proxy,
     ProxyInterface,
     ProxyTag,
-    AnyProxy,
-    NumberProxy,
-    StringProxy,
     TensorProxy,
-    FutureTensorProxy,
     Variable,
-    variableify,
-    unvariableify,
     is_proxy_name_available,
+    proxy,
+    unvariableify,
+    variableify,
 )
 from thunder.core.trace import set_tracectx, reset_tracectx, tracectx, from_trace
 from thunder.core.interpreter import (
-    InterpreterLogItem,
-    InterpreterFrame,
-    interpret,
-    _interpret_call,
-    CapsuleType,
-    default_callbacks,
     INTERPRETER_CALLBACKS,
     INTERPRETER_SIGNALS,
-    default_opcode_interpreter,
-    _default_lookaside_map,
+    InterpreterRuntimeCtx,
+    ProvenanceRecord,
+    PseudoInst,
+    ThunderInterpreterObject,
+    WrappedValue,
+    _interpret_call,
+    default_callbacks,
     default_lookaside,
     do_raise,
     get_interpreterruntimectx,
-    InterpreterRuntimeCtx,
+    interpret,
+    interpreter_needs_wrap,
     is_opaque,
-    Py_NULL,
-    member_descriptor,
-    WrappedValue,
     unwrap,
     wrap,
     wrap_const,
-    PseudoInst,
-    ProvenanceRecord,
-    interpreter_needs_wrap,
-    ThunderInterpreterObject,
 )
 from thunder.core.langctxs import set_langctx, reset_langctx, Languages, resolve_language
-from thunder.core.baseutils import extract_callable_name
-from thunder.core.codeutils import get_siginfo, SigInfo
+from thunder.core.codeutils import SigInfo
 import thunder.core.prims as prims
-from thunder.common import transform_for_execution
 from thunder.core.options import CACHE_OPTIONS, SHARP_EDGES_OPTIONS, DebugOptions
-from thunder.core.symbol import Symbol, BoundSymbol, is_traceable
-
-from thunder.extend import Executor
-from thunder.common import CompileData, CompileStats
+from thunder.core.symbol import Symbol
 from thunder.core.trace import TraceCtx, TraceResults
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.clang import _clang_fn_set
 from thunder.core.pytree import tree_map, tree_iter
-from thunder.core.compile_data import compile_data_and_stats
 
 #
 # jit_ext.py implements extensions of thunder's interpreter
