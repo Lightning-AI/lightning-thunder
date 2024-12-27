@@ -1723,7 +1723,7 @@ def bind_inputs(name, trace, input_vars, input_proxies):
     trace.args = input_proxies
 
 
-def _get_process_group_from(*fn_and_args) -> Optional["ProcessGroup"]:
+def _get_process_group_from(*fn_and_args) -> Optional[ProcessGroup]:
     # `ddp` and `fsdp` transforms add attribute `procses_group_for_ddp`
     # on the Module that they wrap. This module could be passed to `thunder.jit`
     # as the function to be jitted or as an argument of the function to be jitted.
@@ -1778,7 +1778,7 @@ def thunder_general_jit(
     compile_data = get_compile_data()
     executor_lookasides = {k: interpreter_needs_wrap(v) for k, v in compile_data.executor_lookasides.items()}
 
-    process_group_for_ddp: Optional["ProcessGroup"] = _get_process_group_from(fn, *args, *kwargs.values())
+    process_group_for_ddp: Optional[ProcessGroup] = _get_process_group_from(fn, *args, *kwargs.values())
     ctx: JitCtx = JitCtx(
         prologue_trace,
         computation_trace,
