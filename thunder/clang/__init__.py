@@ -22,7 +22,9 @@ from thunder.core.proxies import (
     NumberLike,
     NumberProxy,
     Proxy,
+    SubclassTensorProxy,
     TensorProxy,
+    proxy,
     pytype,
     pyval,
 )
@@ -62,7 +64,7 @@ class clangop:
 
 # Checks a tensor's shape and metadata (for use with cache check)
 @clangop()
-def check_tensor_shape_and_metadata(t: TensorProxy, /) -> None:
+def check_tensor_shape_and_metadata(t: TensorProxy | SubclassTensorProxy, /) -> None:
     return prims.check_tensor_shape_and_metadata(
         t,
         # replace Proxy entries with `-1`s as wild card, as we any value is
