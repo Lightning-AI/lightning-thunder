@@ -724,7 +724,6 @@ class NumberProxy(Proxy, NumberProxyInterface):
     # fn is the function to call if executing outside a language context
     @staticmethod
     def _elementwise_unary_helper(a, name, fn, type_promotion_kind=None):
-
         vala = pyval(a)
 
         trace: None | TraceCtx = get_tracectx()
@@ -2073,18 +2072,28 @@ class SubclassTensorProxy(TensorProxy):
         base_str = f"{self.device.device_str()} {self.dtype.shortname()}{list(self._shape)}"
 
         if self._subclass_type is not None:
-            type_str = f"{self._subclass_type.__name__} of {base_str}"
+            type_str = f"{self._subclass_type.__name__}[{base_str}]"
         else:
             type_str = base_str
 
         if self._tensors:
-            if (tensor_attr_names := getattr(self, "_tensor_attr_names", [])):
-                tensor_attr_type_str = ", ".join([
-                    f"{name}: {t.type_string()}" for name, t in zip(tensor_attr_names, self._tensors)
-                ])
+            if tensor_attr_names := getattr(self, "_tensor_attr_names", []):
+                tensor_attr_type_str = ", ".join(
+                    [f"{name}: {t.type_string()}" for name, t in zip(tensor_attr_names, self._tensors)]
+                )
             else:
                 tensor_attr_type_str = ", ".join([t.type_string() for t in self._tensors])
-            type_str = type_str + f" ({tensor_attr_type_str})"
+
+            if self._non_tensors:
+                if non_tensor_attr_names := getattr(self, "_non_tensor_attr_names", []):
+                    non_tensor_attr_type_str = ", ".join(
+                        [f"{name}: {v}" for name, v in zip(non_tensor_attr_names, self._non_tensors)]
+                    )
+                else:
+                    non_tensor_attr_type_str = ", ".join(str(v) for v in self._non_tensors)
+                type_str = type_str + f" (tensors: {tensor_attr_type_str}, constants: {non_tensor_attr_type_str})"
+            else:
+                type_str = type_str + f" ({tensor_attr_type_str})"
 
         return type_str
 
