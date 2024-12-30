@@ -80,7 +80,7 @@ class ThunderFunction(torch.autograd.Function):
         def detach_if_tensor(t):
             # Some operations may claim to return Tensor (as per their meta function)
             # but may return None at Runtime (eg. noticed this for sdpa)
-            if isinstance(t, torch.Tensor):
+            if isinstance(t, torch.Tensor) and t._base is not None:
                 return t.detach()
             return t
 
