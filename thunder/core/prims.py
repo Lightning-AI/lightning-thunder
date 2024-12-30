@@ -4100,12 +4100,11 @@ embedding = make_prim(PrimIDs.EMBEDDING, "embedding", meta=embedding_meta)
 
 # TODO Update this so it's not a prim
 # TODO Add annotations
-# TODO Review requires_grad=False -- what about double backward?
 # TODO Once we have fusible index_put we can implement it using primitives
 # For now we just use the PyTorch implementation
 def embedding_backward_meta(grad, indices, num_weights, padding_idx, scale_grad_by_freq, sparse):
     shape = (num_weights, grad.shape[-1])
-    return TensorProxy(shape=shape, device=grad.device, dtype=grad.dtype, requires_grad=False)
+    return TensorProxy(shape=shape, device=grad.device, dtype=grad.dtype)
 
 
 embedding_backward = make_prim(PrimIDs.EMBEDDING_BACKWARD, "embedding_backward", meta=embedding_backward_meta)
