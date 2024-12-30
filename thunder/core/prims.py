@@ -3078,7 +3078,7 @@ def _multinomial_meta(
 
     shape = (*input.shape[:-1], num_samples)
 
-    return TensorProxy(shape=shape, device=input.device, dtype=dtypes.int64, requires_grad=False)
+    return TensorProxy(shape=shape, device=input.device, dtype=dtypes.int64)
 
 
 multinomial = make_prim(
