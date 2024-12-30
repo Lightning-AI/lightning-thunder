@@ -1516,7 +1516,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             inputs = [from_provenance(i, new_output=True) for i in provenance.inputs]
             obj, idx = inputs
             if new_output:
-                output = Proxy("subscr")  # name? collectify?
+                output = Proxy(prefix="subscr")  # name? collectify?
             else:
                 output = p
             if isinstance(idx, (int, str, Proxy)):
