@@ -2946,7 +2946,7 @@ def _empty_meta(
     utils.check_type(dtype, dtypes.dtype)
     utils.check_type(shape, tuple)
     utils.check_valid_shape(shape)
-    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
+    return TensorProxy(shape=shape, device=device, dtype=dtype)
 
 
 empty = make_prim(PrimIDs.EMPTY, "empty", meta=_empty_meta)
