@@ -2772,10 +2772,6 @@ exogenous_like = make_prim(
 )
 
 
-# TODO Review always setting requires_grad=False
-#   Logically these tensors are constructed intermediate to a trace, so there's no mechanism for a user to
-#   extract their grad, but we could support compiling forward and backward and accessing grad attributes
-#   in the future
 def _full_meta(
     shape: tuple[int, ...], fill_value: Number, *, device: devices.Device, dtype: dtypes.dtype
 ) -> TensorProxy:
@@ -2791,7 +2787,7 @@ def _full_meta(
 
     utils.check_type(shape, tuple)
     utils.check_valid_shape(shape)
-    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
+    return TensorProxy(shape=shape, device=device, dtype=dtype)
 
 
 full = make_prim(
