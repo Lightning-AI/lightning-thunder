@@ -2725,8 +2725,7 @@ def _where_meta(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number |
     shapes = tuple(x.shape for x in (pred, a, b) if isinstance(x, TensorProxy))
     resultshape = shapes[0]
 
-    requires_grad = (isinstance(a, TensorProxy) and a.requires_grad) or (isinstance(b, TensorProxy) and b.requires_grad)
-    return TensorProxy(shape=resultshape, device=resultdevice, dtype=dtype, requires_grad=requires_grad)
+    return TensorProxy(shape=resultshape, device=resultdevice, dtype=dtype)
 
 
 where = make_prim(
