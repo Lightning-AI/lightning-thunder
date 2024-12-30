@@ -1851,6 +1851,52 @@ class TensorProxy(Proxy, TensorProxyInterface):
         return method(self)
 
 
+class RuntimeTensorProxy(TensorProxy):
+    def __init__(
+        self,
+        name: str | None = None,
+        *,
+        like: TensorProxy | None = None,
+        shape: ShapeLike | None = None,
+        device: devices.Device | None = None,
+        dtype: dtypes.dtype | None = None,
+        grad: TensorProxy | None = None,
+        prefix: None | str = None,
+        distparallel_type: DistParallelType | None = None,
+        history: None | tuple = None,
+        tags: set | None = None,
+        thunder_fsdp_padding_size: int | None = None,
+        requires_grad: bool = False,
+        is_leaf: bool = True,
+    ):
+        super().__init__(
+            name,
+            like=like,
+            shape=shape,
+            device=device,
+            dtype=dtype,
+            grad=grad,
+            prefix=prefix,
+            distparallel_type=distparallel_type,
+            history=history,
+            tags=tags,
+            thunder_fsdp_padding_size=thunder_fsdp_padding_size,
+        )
+        self._requires_grad = requires_grad
+        self._is_leaf = is_leaf
+
+    def __repr__(self):
+        return f'<{type(self).__name__}(name="{self.name}", dtype={self.dtype}, shape={self.shape}, requires_grad={self.requires_grad}, is_leaf={self.is_leaf})>'
+
+    @property
+    def requires_grad(self):
+        return self._requires_grad
+
+    @property
+    def is_leaf(self):
+        return self._is_leaf
+
+
 class TorchAutogradFunctionCtxProxy(Proxy, TorchAutogradFunctionCtxProxyInterface):
     def __init__(
         self,
@@ -1956,7 +2002,7 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
     else:
         # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
         shape = tuple(t.shape)
-    return TensorProxy(
+    return RuntimeTensorProxy(
         name,
         shape=tuple(shape),
         device=device,
@@ -1965,6 +2011,8 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
         distparallel_type=distparallel_type,
         history=history,
         thunder_fsdp_padding_size=_thunder_fsdp_padding_size,
+        requires_grad=t.requires_grad,
+        is_leaf=t.is_leaf,
     )
 
 
