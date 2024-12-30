@@ -2817,7 +2817,7 @@ def _iota_meta(
 
     shape = () if length == 0 else (length,)
 
-    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
+    return TensorProxy(shape=shape, device=device, dtype=dtype)
 
 
 iota = make_prim(PrimIDs.IOTA, "iota", meta=_iota_meta)
