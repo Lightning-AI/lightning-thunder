@@ -2824,10 +2824,6 @@ iota = make_prim(PrimIDs.IOTA, "iota", meta=_iota_meta)
 
 
 # TODO Should the uniform prim include minval maxval or always be [0, 1)?
-# TODO Review always setting requires_grad=False
-#   Logically these tensors are constructed intermediate to a trace, so there's no mechanism for a user to
-#   extract their grad, but we could support compiling forward and backward and accessing grad attributes
-#   in the future
 def _uniform_meta(
     shape: Sequence[int], minval: Number, maxval: Number, *, device: devices.Device, dtype: dtypes.dtype
 ) -> TensorProxy:
@@ -2837,7 +2833,7 @@ def _uniform_meta(
     utils.check_type(device, devices.Device)
     utils.check_type(dtype, dtypes.dtype)
 
-    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
+    return TensorProxy(shape=shape, device=device, dtype=dtype)
 
 
 uniform = make_prim(
