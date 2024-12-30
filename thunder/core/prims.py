@@ -2910,7 +2910,7 @@ def _uniform_philox_meta(
     utils.check_same_shape(shape, seed, offset)
     utils.check_same_device(device, seed, offset)
 
-    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
+    return TensorProxy(shape=shape, device=device, dtype=dtype)
 
 
 uniform_philox = make_prim(
