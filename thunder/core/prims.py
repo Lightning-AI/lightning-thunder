@@ -2397,18 +2397,15 @@ def _elementwise_binary_meta_factory(
             tensor = a if (isinstance(a, TensorProxy) and not utils.is_cpu_scalar_tensor(a)) else b
         else:
             tensor = a if isinstance(a, TensorProxy) else b
-        requires_grad = (isinstance(a, TensorProxy) and a.requires_grad) or (
-            isinstance(b, TensorProxy) and b.requires_grad
-        )
 
         if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.SAME:
             # NOTE that this is not just like=tensor, because one tensor could have a weak dtype
             #   and the other a strong dtype, and these are the "same"
-            return TensorProxy(like=tensor, dtype=dtype, requires_grad=requires_grad)
+            return TensorProxy(like=tensor, dtype=dtype)
         if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.ALWAYS_BOOL:
-            return TensorProxy(like=tensor, dtype=dtypes.bool8, requires_grad=requires_grad)
+            return TensorProxy(like=tensor, dtype=dtypes.bool8)
         if output_dtype_kind == ELEMENTWISE_PRIM_OUTPUT_DTYPE_KIND.COMPLEX_TO_FLOAT and dtypes.is_complex_dtype(dtype):
-            return TensorProxy(like=tensor, dtype=dtypes.corresponding_real_dtype(dtype), requires_grad=requires_grad)
+            return TensorProxy(like=tensor, dtype=dtypes.corresponding_real_dtype(dtype))
 
         raise AssertionError(f"Unknown {output_dtype_kind=}")
 
