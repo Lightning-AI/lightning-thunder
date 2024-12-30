@@ -92,11 +92,8 @@ def is_proxy_name_available(name: None | str = None):
 
 
 def make_proxy_name(*, name: None | str = None, prefix: None | str = None) -> str:
-    if register_proxy_name(name):
-        return name
-
     trc = get_tracectx()
-    return trc.make_name(prefix=prefix)
+    return trc.make_name(name=name, prefix=prefix)
 
 
 class ProxyTag(TagBase):
