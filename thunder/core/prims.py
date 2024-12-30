@@ -2663,11 +2663,7 @@ def _lerp_meta(start: TensorProxy, end: TensorProxy, weight: Number | TensorProx
     utils.check_same_shape(start, end, weight)
     utils.check_same_device(start, end, weight)
 
-    requires_grad = (
-        start.requires_grad or end.requires_grad or (isinstance(weight, TensorProxy) and weight.requires_grad)
-    )
-
-    return TensorProxy(like=start, dtype=dtype, requires_grad=requires_grad)
+    return TensorProxy(like=start, dtype=dtype)
 
 
 lerp = make_prim(
