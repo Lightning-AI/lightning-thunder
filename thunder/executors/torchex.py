@@ -2235,13 +2235,13 @@ def _tensor_subclass_ctor(cls, name, shape, device, dtype, requires_grad, tensor
 
 
 def _bind_postprocess_of_tensor_subclass_ctor(bsym: BoundSymbol) -> None:
-    from thunder.core.prims import get_nested_types, filter_types
+    from thunder.core.prims import get_nested_types, filter_types_for_tensor_wrapper_subclass
 
     cls, _name, _shape, _device, _dtype, _requires_grad, _tensors, non_tensors = bsym.args
     filtered_types = (cls,)
     if non_tensors:
         types = get_nested_types(non_tensors)
-        filtered_types += filter_types(types)
+        filtered_types += filter_types_for_tensor_wrapper_subclass(types)
     new_imports = {t.__name__: t for t in filtered_types}
     bsym._import_ctx.update(new_imports)
 
@@ -2254,3 +2254,47 @@ tensor_subclass_ctor = ex.register_operator(
     python_printer=prims.printer_of_tensor_subclass_ctor,
 )
 _register_implementation(prims.tensor_subclass_ctor, tensor_subclass_ctor, checker=_always_executable)
+
+
+def flatten_tensor_subclass_impl(t):
+    tensor_attr_names, metadata = t.__tensor_flatten__()
+    tensors = tuple(getattr(t, name) for name in tensor_attr_names)
+    return tensors
+
+
+flatten_tensor_subclass = ex.register_operator(
+    "flatten_tensor_subclass",
+    meta=prims.flatten_tensor_subclass.meta,
+    fn=flatten_tensor_subclass_impl,
+)
+_register_implementation(
+    prims.flatten_tensor_subclass,
+    flatten_tensor_subclass,
+    checker=_always_executable,
+)
+
+
+def unflatten_tensor_subclass_impl(
+    tensor_subclass_type: torch._C._TensorMeta,
+    inner_tensors: dict[str, TensorLike],
+    metadata: dict,
+):
+    for key in metadata:
+        v = metadata[key]
+        if isinstance(v, dtypes.dtype):
+            metadata[key] = to_torch_dtype(v)
+        elif isinstance(v, devices.Device):
+            metadata[key] = to_torch_device(v)
+    return tensor_subclass_type.__tensor_unflatten__(inner_tensors, metadata, -1, -1)
+
+
+unflatten_tensor_subclass = ex.register_operator(
+    "unflatten_tensor_subclass",
+    meta=prims.unflatten_tensor_subclass.meta,
+    fn=unflatten_tensor_subclass_impl,
+)
+_register_implementation(
+    prims.unflatten_tensor_subclass,
+    unflatten_tensor_subclass,
+    checker=_always_executable,
+)

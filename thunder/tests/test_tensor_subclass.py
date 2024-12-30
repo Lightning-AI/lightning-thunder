@@ -180,3 +180,55 @@ def test_func_calling_converter(executor, device, _):
     expected = g(x)
     actual = jitted(x)
     torch.testing.assert_close((expected._x, expected._scale), (actual._x, actual._scale))
+
+
+@instantiate(
+    dtypes=(thunder.core.dtypes.float32,),
+    decorators=(pytest.mark.parametrize("requires_grad", (False, True), ids=("fwd_only", "with_bwd")),),
+)
+def test_func_of_subclass_simple_math(executor, device, _, requires_grad):
+
+    def f(x: ScaleTensorSubclass, y: ScaleTensorSubclass) -> torch.Tensor:
+        out = x + y
+        return out
+
+    jitted = executor.make_callable(f)
+
+    dtype = torch.float32
+    shape = (2, 2)
+    x = ScaleTensorSubclass(
+        make_tensor(shape, device=device, dtype=dtype, requires_grad=requires_grad),
+        make_tensor((), device=device, dtype=dtype),
+    )
+    y = ScaleTensorSubclass(
+        make_tensor(shape, device=device, dtype=dtype, requires_grad=requires_grad),
+        make_tensor((), device=device, dtype=dtype),
+    )
+
+    expected = f(x, y)
+    actual = jitted(x, y)
+    assert type(expected) is type(actual)
+    torch.testing.assert_close(expected, actual)
+    if requires_grad:
+        actual.mean().backward()
+
+    def g(x: ScaleTensorSubclass, data: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+        y = EncapsulateXandScale.apply(data, scale)
+        out = x + y
+        return out
+
+    jitted = executor.make_callable(g)
+
+    x = ScaleTensorSubclass(
+        make_tensor(shape, device=device, dtype=dtype, requires_grad=requires_grad),
+        make_tensor((), device=device, dtype=dtype),
+    )
+    data = make_tensor(shape, device=device, dtype=dtype, requires_grad=requires_grad)
+    scale = make_tensor((), device=device, dtype=dtype)
+
+    expected = g(x, data, scale)
+    actual = jitted(x, data, scale)
+    assert type(expected) is type(actual)
+    torch.testing.assert_close(expected, actual)
+    if requires_grad:
+        actual.mean().backward()
