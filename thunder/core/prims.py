@@ -3854,8 +3854,7 @@ def linear_meta(a: TensorProxy, w: TensorProxy, bias: None | TensorProxy) -> Ten
 
     out_shape = batch_dims + (out_length,)
 
-    requires_grad = any((a.requires_grad, w.requires_grad, False if bias is None else bias.requires_grad))
-    return TensorProxy(shape=out_shape, device=a.device, dtype=dtype, requires_grad=requires_grad)
+    return TensorProxy(shape=out_shape, device=a.device, dtype=dtype)
 
 
 linear = make_prim(
