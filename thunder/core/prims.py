@@ -3027,9 +3027,7 @@ def _tensor_from_sequence_meta(
         # NOTE: In future, we should rely on something like [thunder/torch].get_default_dtype.
         dtype = inferred_dtype if inferred_dtype is not None else float
 
-    # We set `requires_grad` to False as this tensor will show up only in trace and
-    # user won't have access to it. See also, the note on _full_meta.
-    return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
+    return TensorProxy(shape=shape, device=device, dtype=dtype)
 
 
 # Prim to construct a Tensor from sequence/nested sequence of Numbers.
