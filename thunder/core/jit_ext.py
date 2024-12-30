@@ -1454,7 +1454,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 obj = orig_modules.get(id(obj), obj)
 
             if new_output:
-                output = Proxy("obj")
+                output = Proxy(prefix="obj")
             else:
                 output = p
             param_ordering[id(output)] = (output, param_ordering[id(orig_obj)][1] + [math.inf, "." + str(name)])
