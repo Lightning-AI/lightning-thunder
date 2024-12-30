@@ -467,7 +467,7 @@ def jit(
                     ) = cache_entry
                     try:
                         inps, pro_to_epi = pro(*args, **kwargs)
-                    except Exception as _:
+                    except Exception:
                         continue
 
                     # Updates cache statistics
