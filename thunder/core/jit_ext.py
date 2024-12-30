@@ -1472,7 +1472,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             typ, name, root_module_provenance = get_parameter_or_buffer_or_submodule_name_and_root(provenance)
             root_module = from_provenance(root_module_provenance, new_output=True)
             if new_output:
-                output = Proxy("m")  # name? collectify?
+                output = Proxy(prefix="m")  # name? collectify?
             else:
                 output = p
 
