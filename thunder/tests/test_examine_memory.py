@@ -5,7 +5,7 @@ import torch
 import thunder
 from thunder.core.pytree import tree_map
 import thunder.torch as ltorch
-from thunder.examine.memory_caculation import get_alloc_memory
+from thunder.examine.memory_calculation import get_alloc_memory
 
 from thunder.tests.framework import requiresCUDA, TorchExecutor
 from thunder.tests.make_tensor import make_tensor

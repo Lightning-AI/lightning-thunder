@@ -151,8 +151,7 @@ __all__ = [
 ]
 
 
-def __version__():
-    return LooseVersion("0.0.1")
+from thunder.__about__ import *  # import all
 
 
 # TODO maybe move these aliases to the core language?
