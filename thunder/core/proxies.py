@@ -93,6 +93,8 @@ def is_proxy_name_available(name: None | str = None):
 
 def make_proxy_name(*, name: None | str = None, prefix: None | str = None) -> str:
     trc = get_tracectx()
+    if trc is None:
+        return name
     return trc.make_name(name=name, prefix=prefix)
 
 
