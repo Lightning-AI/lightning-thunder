@@ -3216,18 +3216,15 @@ def amin(a, /, dim=None, keepdim: bool = False):
 
 # NOTE: Using name `torch_max` to avoid conflict with Python's `max`
 @overload
-def torch_max(a: TensorLike, /) -> TensorLike:
-    ...
+def torch_max(a: TensorLike, /) -> TensorLike: ...
 
 
 @overload
-def torch_max(a: TensorLike, /, dim: NumberLike, keepdim: bool = False) -> tuple[TensorLike, TensorLike]:
-    ...
+def torch_max(a: TensorLike, /, dim: NumberLike, keepdim: bool = False) -> tuple[TensorLike, TensorLike]: ...
 
 
 @overload
-def torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike:
-    ...
+def torch_max(a: TensorLike, b: TensorLike, /) -> TensorLike: ...
 
 
 @torchsymbol(torch.max, is_method=True, method_name="max", id="torch.max")
