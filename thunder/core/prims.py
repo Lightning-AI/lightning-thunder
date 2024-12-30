@@ -2954,7 +2954,7 @@ empty = make_prim(PrimIDs.EMPTY, "empty", meta=_empty_meta)
 
 # TODO(crcrpar): Cover `memory_format` kwarg
 def _clone_meta(a: TensorProxy, **kwargs) -> TensorProxy:
-    return TensorProxy(like=a, requires_grad=a.requires_grad)
+    return TensorProxy(like=a)
 
 
 clone = make_prim(PrimIDs.CLONE, "clone", meta=_clone_meta)
