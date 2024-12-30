@@ -3167,8 +3167,7 @@ def cat_meta(tensors: list[TensorProxy], /, dim: int) -> TensorProxy:
             )
         shape[dim] = shape[dim] + ai.shape[dim]
 
-    requires_grad = any(list([t.requires_grad for t in tensors]))
-    return TensorProxy(like=tensors[0], shape=shape, requires_grad=requires_grad)
+    return TensorProxy(like=tensors[0], shape=shape)
 
 
 cat = make_prim(
