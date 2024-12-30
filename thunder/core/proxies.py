@@ -1968,25 +1968,6 @@ def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple =
     )
 
 
-def futuretensorproxy(
-    t: torch.Tensor | TensorProxy | FutureTensorProxy, /, *, name: None | str, history: None | tuple = None
-) -> FutureTensorProxy:
-    if hasattr(t, "_thunder_device"):
-        torch_device = t._thunder_device
-    else:
-        torch_device = t.device
-    device = devices.to_device(torch_device)
-    dtype = dtypes.to_dtype(t.dtype)
-    # NOTE Without tuple(t.shape) then the shape would be a torch.Size object
-    return FutureTensorProxy(
-        name,
-        shape=tuple(t.shape),
-        device=device,
-        dtype=dtype,
-        history=history,
-    )
-
-
 def numberproxy(cls: type, value: Number | None, constraint: None | CONSTRAINT = None) -> NumberProxy:
     pcls = _cls_to_number_proxy_map[cls]
     return pcls(value=value, constraint=constraint)
