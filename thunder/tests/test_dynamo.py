@@ -1,6 +1,9 @@
 import pytest
 import warnings
 import itertools
+import os
+import subprocess
+import sys
 import torch
 import torch.fx
 import torch.nn as nn
@@ -8,7 +11,7 @@ import torch.nn.functional as F
 from looseversion import LooseVersion
 
 from thunder import dtypes
-from thunder.dynamo import ThunderCompiler
+from thunder.dynamo import thunderfx
 from thunder.dynamo.utils import CompilerType
 from thunder.dynamo.compiler_graph_benchmark import ThunderCompilerGraphBenchmarking
 from thunder import last_traces
@@ -48,10 +51,8 @@ def reset_torch_dynamo():
     decorators=(pytest.mark.parametrize("dynamic", (True, False, None), ids=("dynamic", "static", "auto")),),
 )
 def test_basic(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
-    backend = ThunderCompiler()
     x = torch.ones(2, dtype=dtype, device=device, requires_grad=True)
 
-    @torch.compile(backend=backend, dynamic=dynamic)
     def func(x):
         x = torch.sin(x)
         if x.sum() > 0:
@@ -59,13 +60,15 @@ def test_basic(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None)
         else:
             return x - 1
 
-    out = func(x)
+    compiled = thunderfx(func, dynamic=dynamic)
+    out = compiled(x)
 
     # out should have grad_fn and its name should be ThunderFunctionBackward
     assert out.grad_fn is not None
     assert out.grad_fn.name() == "ThunderFunctionBackward"
 
     # We record the GraphModules that was compiled by ThunderCompiler
+    backend = compiled._backend
     assert len(backend.subgraph_infos) == 2  # 2 due to data-dependent flow
 
     for subgraph_info in backend.subgraph_infos:
@@ -90,8 +93,6 @@ def test_basic(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None)
 def test_basic_splitter(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
     x = torch.ones(2, 2, device=device, dtype=dtype, requires_grad=True)
 
-    backend = ThunderCompiler()
-
     def func(x):
         # torch.sinc has automatic fallback registered,
         # so that operation will be given to inductor.
@@ -99,7 +100,7 @@ def test_basic_splitter(executor, device: str, dtype: dtypes.dtype, dynamic: boo
         y = torch.sinc(x) + torch.cos(x)
         return y + 1
 
-    cfunc = torch.compile(func, backend=backend, dynamic=dynamic)
+    cfunc = thunderfx(func, dynamic=dynamic)
     expected = torch.compile(func, dynamic=False)(x)
     actual = cfunc(x)
 
@@ -109,6 +110,7 @@ def test_basic_splitter(executor, device: str, dtype: dtypes.dtype, dynamic: boo
     expected_grad = torch.autograd.grad(expected, x, g)
     torch.testing.assert_close(actual_grad, expected_grad)
 
+    backend = cfunc._backend
     assert len(backend.subgraph_infos) == 1
     assert len(backend.subgraph_infos[0].submodule_to_compiled_functions) > 1  # Verify that the subgraph was split.
     assert any(
@@ -133,8 +135,6 @@ def test_basic_splitter(executor, device: str, dtype: dtypes.dtype, dynamic: boo
 def test_splitter_autocast_ctx(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
     x = torch.rand(2, 2, device=device, dtype=dtype, requires_grad=True)
 
-    backend = ThunderCompiler()
-
     def func(x):
         x = x + 2
         with torch.autocast("cpu"):
@@ -143,7 +143,7 @@ def test_splitter_autocast_ctx(executor, device: str, dtype: dtypes.dtype, dynam
 
     expected = torch.compile(func, dynamic=False)(x)
 
-    cfunc = torch.compile(func, backend=backend, dynamic=dynamic)
+    cfunc = thunderfx(func, dynamic=dynamic)
     actual = cfunc(x)
 
     g = torch.rand_like(actual)
@@ -152,6 +152,7 @@ def test_splitter_autocast_ctx(executor, device: str, dtype: dtypes.dtype, dynam
     expected_grad = torch.autograd.grad(expected, x, g)
     torch.testing.assert_close(actual_grad, expected_grad)
 
+    backend = cfunc._backend
     assert len(backend.subgraph_infos) == 1
     assert len(backend.subgraph_infos[0].split_reasons) == 0
     compiled_functions = tuple(backend.subgraph_infos[0].submodule_to_compiled_functions.values())
@@ -174,8 +175,6 @@ def test_splitter_autocast_ctx(executor, device: str, dtype: dtypes.dtype, dynam
 def test_splitter_autocast_ctx_with_graph_break(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
     x = torch.rand(2, 2, device=device, dtype=dtype, requires_grad=True)
 
-    backend = ThunderCompiler()
-
     def func(x):
         x = x + 2
         with torch.autocast(device):
@@ -184,7 +183,7 @@ def test_splitter_autocast_ctx_with_graph_break(executor, device: str, dtype: dt
             return torch.matmul(x, y)
 
     expected = torch.compile(func, dynamic=dynamic)(x)
-    cfunc = torch.compile(func, backend=backend, dynamic=dynamic)
+    cfunc = thunderfx(func, dynamic=dynamic)
     actual = cfunc(x)
 
     g = torch.rand_like(actual)
@@ -193,6 +192,7 @@ def test_splitter_autocast_ctx_with_graph_break(executor, device: str, dtype: dt
     expected_grad = torch.autograd.grad(expected, x, g)
     torch.testing.assert_close(actual_grad, expected_grad)
 
+    backend = cfunc._backend
     # 2 subgraphs due to graph-break
     assert len(backend.subgraph_infos) == 2
     for subgraph_info in backend.subgraph_infos:
@@ -217,8 +217,6 @@ def test_splitter_autocast_ctx_with_graph_break(executor, device: str, dtype: dt
 def test_splitter_autocast_ctx_with_split(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
     x = torch.rand(2, 2, device=device, dtype=dtype, requires_grad=True)
 
-    backend = ThunderCompiler()
-
     def func(x):
         x = x + 2
         with torch.autocast(device):
@@ -230,7 +228,7 @@ def test_splitter_autocast_ctx_with_split(executor, device: str, dtype: dtypes.d
             return torch.matmul(x, y)
 
     expected = torch.compile(func, dynamic=dynamic)(x)
-    cfunc = torch.compile(func, backend=backend, dynamic=dynamic)
+    cfunc = thunderfx(func, dynamic=dynamic)
     actual = cfunc(x)
 
     g = torch.rand_like(actual)
@@ -239,6 +237,7 @@ def test_splitter_autocast_ctx_with_split(executor, device: str, dtype: dtypes.d
     expected_grad = torch.autograd.grad(expected, x, g)
     torch.testing.assert_close(actual_grad, expected_grad)
 
+    backend = cfunc._backend
     assert len(backend.subgraph_infos) == 1  # no graph break in dynamo
 
     subgraph_info = backend.subgraph_infos[0]
@@ -283,10 +282,10 @@ def test_splitter_autograd_function(executor, device: str, dtype: dtypes.dtype, 
 
     expected = torch.compile(func, dynamic=dynamic)(x)
 
-    backend = ThunderCompiler()
-    cfunc = torch.compile(func, backend=backend, dynamic=dynamic)
+    cfunc = thunderfx(func, dynamic=dynamic)
     actual = cfunc(x)
 
+    backend = cfunc._backend
     targets = (node.target for node in backend.subgraph_infos[0].split_graph_module.graph.nodes)
     assert any(target.startswith("thunder_") for target in targets)
     assert any(target.startswith("inductor_") for target in targets)
@@ -307,20 +306,20 @@ def test_splitter_autograd_function(executor, device: str, dtype: dtypes.dtype, 
 )
 def test_force_skip_lazy_graph_module(executor, device: str, dtype: dtypes.dtype):
     with torch.fx._lazy_graph_module._force_skip_lazy_graph_module():
-        backend = ThunderCompiler()
         x = torch.ones(2, dtype=dtype, device=device, requires_grad=True)
 
-        @torch.compile(backend=backend)
         def func(x):
             x = torch.sin(x)
             return x + 2
 
-        out = func(x)
+        cfunc = thunderfx(func)
+        out = cfunc(x)
 
         # out should have grad_fn and its name should be ThunderFunctionBackward
         assert out.grad_fn is not None
         assert out.grad_fn.name() == "ThunderFunctionBackward"
 
+        backend = cfunc._backend
         # We record the GraphModules that was compiled by ThunderCompiler
         assert len(backend.subgraph_infos) == 1
 
@@ -337,25 +336,24 @@ def test_force_skip_lazy_graph_module(executor, device: str, dtype: dtypes.dtype
 def test_cat_no_split(executor, device: str, dtype: dtypes.dtype, cat_kwarg):
     # fx.Node for `torch.cat` receives `torch.fx.immutable_collections.immutable_list` as Node.args.
     # This test verifies that we don't cause a split because of this.
-    backend = ThunderCompiler()
     x = torch.ones(2, dtype=dtype, device=device, requires_grad=True)
 
     if not cat_kwarg:
 
-        @torch.compile(backend=backend)
         def func(x):
             x = torch.cat([x, x])
             return x + 2
 
     else:
 
-        @torch.compile(backend=backend)
         def func(x):
             x = torch.cat(tensors=[x, x])
             return x + 2
 
-    out = func(x)
+    cfunc = thunderfx(func)
+    out = cfunc(x)
 
+    backend = cfunc._backend
     # We record the GraphModules that was compiled by ThunderCompiler
     assert len(backend.subgraph_infos) == 1
 
@@ -372,16 +370,15 @@ def test_method_only_registrations(executor, device: str, dtype: dtypes.dtype):
     # In thunder, some operations are registered only as methods and put in a different map (accessible via torchctx).
     # This test is to verify that we consider those methods as supported in `thunder` and don't cause a split because of them.
 
-    backend = ThunderCompiler()
-
-    @torch.compile(backend=backend)
     def func(x):
         y = x.float()
         return y.sin()
 
     x = torch.randn(3, 3, device=device, dtype=dtype)
-    o = func(x)
+    cfunc = thunderfx(func)
+    o = cfunc(x)
 
+    backend = cfunc._backend
     # We record the GraphModules that was compiled by ThunderCompiler
     assert len(backend.subgraph_infos) == 1
 
@@ -397,7 +394,6 @@ def test_method_only_registrations(executor, device: str, dtype: dtypes.dtype):
 def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
     # Verify that `torch.where(cond)` leads to graph break and `torch.where(cond, x, y)`
     # is correctly passed to `thunder`.
-    backend = ThunderCompiler()
 
     def func(x):
         y = x[torch.where(x > 0.5)]  # This will lead to graph-break
@@ -405,9 +401,11 @@ def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
         return y.sin()
 
     x = torch.randn(3, 3, device=device, dtype=dtype, requires_grad=True)
-    actual = torch.compile(func, backend=backend)(x)
+    cfunc = thunderfx(func)
+    actual = cfunc(x)
     expected = torch.compile(func, backend="eager")(x)
 
+    backend = cfunc._backend
     # We record the GraphModules that was compiled by ThunderCompiler
     assert len(backend.subgraph_infos) == 2  # There were 2 graphs.
 
@@ -448,11 +446,7 @@ def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
             reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
         ),
         pytest.mark.skipif(
-            LooseVersion(torch.__version__) < LooseVersion("2.6.0"),
-            reason="Skip until the Torch bug is fixed - https://github.com/pytorch/pytorch/pull/139275",
-        ),
-        pytest.mark.skipif(
-            version_between(torch.__version__, min_ver="2.6.0a0", max_ver="2.6.0a99"),
+            version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
             reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
         ),
     ),
@@ -498,7 +492,6 @@ def test_thundercompiler_optim_step(executor, device, dtype, optim):
 
 @instantiate(dtypes=NOTHING, executors=[DynamoThunderExecutor])
 def test_no_grad_ctx_manager(executor, device: str, dtype: dtypes.dtype):
-    backend = ThunderCompiler()
 
     def func(x):
         with torch.no_grad():
@@ -507,9 +500,11 @@ def test_no_grad_ctx_manager(executor, device: str, dtype: dtypes.dtype):
         return y + x
 
     x = torch.randn(3, 3, device=device, dtype=dtype, requires_grad=True)
-    actual = torch.compile(func, backend=backend)(x)
+    cfunc = thunderfx(func)
+    actual = cfunc(x)
     expected = torch.compile(func, backend="eager")(x)
 
+    backend = cfunc._backend
     # We record the GraphModules that was compiled by ThunderCompiler
     assert len(backend.subgraph_infos) == 1
 
@@ -530,10 +525,9 @@ def test_empty_autocast():
     autocast_ops = (torch.amp.autocast_mode._enter_autocast, torch.amp.autocast_mode._exit_autocast)
 
     def _call_thunder_backend(fn, args):
-        backend = ThunderCompiler()
-        jf = torch.compile(backend=backend)(f)
+        jf = thunderfx(f)
         jf(*args)
-        return backend
+        return jf._backend
 
     # autocast region is removed
     def f():
@@ -558,7 +552,7 @@ def test_empty_autocast():
 
     all_nodes = itertools.chain(
         backend.subgraph_infos[0].split_graph_module.graph.nodes,
-        backend.subgraph_infos[0].split_graph_module.thunder_1.graph.nodes,
+        backend.subgraph_infos[0].split_graph_module.thunder_0.graph.nodes,
     )
     assert all(node.target not in autocast_ops for node in all_nodes)
 
@@ -575,7 +569,7 @@ def test_empty_autocast():
     backend = _call_thunder_backend(f, (x,))
     all_nodes = itertools.chain(
         backend.subgraph_infos[0].split_graph_module.graph.nodes,
-        backend.subgraph_infos[0].split_graph_module.thunder_1.graph.nodes,
+        backend.subgraph_infos[0].split_graph_module.thunder_0.graph.nodes,
     )
     assert sum(node.target in autocast_ops for node in all_nodes) == 2
 
@@ -668,10 +662,7 @@ def test_ThunderCompilerGraphBenchmarking_checkpoint(benchmark):
     x = torch.randn(5, 10).cuda().requires_grad_()
     model = SimpleModel().cuda().train()
 
-    exe_backend = ThunderCompiler()
-    backend = ThunderCompilerGraphBenchmarking(
-        benchmark, executors={"inductor": torch.compile, "thunderfx": torch.compile(backend=exe_backend)}
-    )
+    backend = ThunderCompilerGraphBenchmarking(benchmark, executors={"inductor": torch.compile, "thunderfx": thunderfx})
     # Using torch.compile here fails with "TypeError: cannot pickle '_io.TextIOWrapper' object" in
     # https://github.com/Lightning-AI/pytorch-lightning/blob/828fd998961f6a60f92c35254bb94d6e049ad069/src/lightning/fabric/wrappers.py#L421
     jf = torch._dynamo.optimize(backend=backend)(model)
@@ -704,8 +695,7 @@ def test_checkpoint_converter():
     ref_model = SimpleModel().cuda().train()
     ref_model.load_state_dict(model.state_dict())
 
-    backend = ThunderCompiler()
-    jf = torch.compile(backend=backend)(model)
+    jf = thunderfx(model)
 
     ref_out = ref_model(x_ref)
     out = jf(x)
@@ -744,9 +734,9 @@ def test_checkpoint_converter_submodule():
 
     x = torch.randn(5, 10, device="cuda", requires_grad=True)
     model = SimpleModel().cuda()
-    backend = ThunderCompiler()
-    jf = torch.compile(backend=backend)(model)
+    jf = thunderfx(model)
     out = jf(x)
+    backend = jf._backend
 
     subgraph_info = backend.subgraph_infos[0]
     split_m = subgraph_info.split_graph_module
@@ -782,3 +772,182 @@ def test_checkpoint_converter_submodule():
     for n in submodule.graph.nodes:
         if n.op == "call_function":
             assert isinstance(n.target, Symbol)
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=[DynamoThunderExecutor],
+    decorators=(pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro")),),
+)
+def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, use_pytest_benchmark, tmp_path):
+    if IS_WINDOWS and use_pytest_benchmark:
+        pytest.skip(
+            "Skipping on Windows because this uses torch.compile (see https://github.com/Lightning-AI/lightning-thunder/issues/1326)"
+        )
+
+    from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform
+    from thunder import nvfuser_executor
+    from thunder.transforms.cudagraph import CUDAGraphTransform
+
+    def func(x):
+        x = torch.sin(x)
+        if x.sum() > 0:
+            return x + 1
+        else:
+            return x - 1
+
+    if device.startswith("cuda"):
+        cfunc = thunderfx(
+            func,
+            transforms=[
+                NvtxProfileTransform(),
+                CUDAGraphTransform(),
+            ],
+            executors=[nvfuser_executor],
+            cache="constant values",
+            langctx=None,
+            record_history=False,
+        )
+    else:
+        cfunc = thunderfx(func, executors=None)
+    # Test non-contiguous input tensor
+    x = make_tensor((4, 4), low=3, high=10, dtype=torch.int64, device=device, noncontiguous=True)
+
+    out = cfunc(x)
+    cfunc._backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark=use_pytest_benchmark)
+
+    s1 = f"{tmp_path}/graph0_thunder_0.py"
+    s2 = f"{tmp_path}/graph1_thunder_0.py"
+    assert os.path.exists(s1)
+    assert os.path.exists(s2)
+    cmd = [sys.executable]
+    if use_pytest_benchmark:
+        cmd = cmd + ["-m", "pytest"]
+    cmd1 = cmd + [s1]
+    cmd2 = cmd + [s2]
+    result1 = subprocess.run(cmd1, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    result2 = subprocess.run(cmd2, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+    assert result1.returncode == 0, f"Reproducer {s1} failed: {result1}"
+    assert result2.returncode == 0, f"Reproducer {s2} failed: {result2}"
+
+
+@requiresCUDA
+@pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro"))
+def test_dynamo_reproducer_submodules(use_pytest_benchmark, tmp_path):
+    from thunder.tests.distributed.helper import ToyModel
+    import torch.nn as nn
+
+    class SimpleModel(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.sub_mod = ToyModel()
+            self.seq = nn.Sequential(self.sub_mod, nn.ReLU())
+
+        def forward(self, x):
+            x = torch.sin(x)
+            x = self.seq(x)
+            return x
+
+    x = torch.randn(1, ToyModel.N_IN, device="cuda", requires_grad=True)
+    model = SimpleModel().cuda()
+    jf = thunderfx(model)
+    out = jf(x)
+    jf._backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark=use_pytest_benchmark)
+
+    s1 = f"{tmp_path}/graph0_thunder_0.py"
+    assert os.path.exists(s1)
+    cmd = [sys.executable]
+    if use_pytest_benchmark:
+        cmd = cmd + ["-m", "pytest"]
+    cmd1 = cmd + [s1]
+    result1 = subprocess.run(cmd1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    assert result1.returncode == 0, f"Reproducer {s1} failed: {result1}"
+
+
+def test_deepcopy_graph_module():
+    class MyModule(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+
+        def forward(self, x):
+            y = x + 1
+
+    m = MyModule()
+    gm = torch.fx.symbolic_trace(m)
+    n = gm.graph.find_nodes(op="output")
+    gm.graph.erase_node(n[0])
+    import thunder
+
+    _, subgraph_info = thunder.dynamo.splitter._splitter(gm, thunder.jit, thunder.jit, [])
+    original_split_gm = subgraph_info.original_split_graph_module
+    assert original_split_gm.graph.find_nodes(op="output")
+    for subm in original_split_gm.children():
+        assert subm.graph.find_nodes(op="output")
+    import copy
+
+    # No assertion error
+    copy_gm = copy.deepcopy(original_split_gm)
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=[DynamoThunderExecutor],
+    decorators=(pytest.mark.parametrize("use_pytest_benchmark", (True, False), ids=("benchmark", "repro")),),
+)
+def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use_pytest_benchmark, tmp_path):
+    if IS_WINDOWS and use_pytest_benchmark:
+        pytest.skip(
+            "Skipping on Windows because this uses torch.compile (see https://github.com/Lightning-AI/lightning-thunder/issues/1326)"
+        )
+
+    x = torch.ones(2, 2, device=device, dtype=dtype, requires_grad=True)
+
+    def func(x):
+        # torch.sinc has automatic fallback registered,
+        # so that operation will be given to inductor.
+        x = x.exp()
+        y = torch.sinc(x) + torch.cos(x)
+        y = y + torch.sinc(x)
+        return y + 1
+
+    cfunc = thunderfx(func)
+    actual = cfunc(x)
+    cfunc._backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark)
+
+    def check(file_name, cmd):
+        assert os.path.exists(file_name)
+        cmd = cmd + [file_name]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        assert result.returncode == 0, f"Reproducer {file_name} failed: {result}"
+
+    s1 = f"{tmp_path}/graph0_thunder_0.py"
+    s2 = f"{tmp_path}/graph0_thunder_2.py"
+    s3 = f"{tmp_path}/graph0_thunder_4.py"
+    cmd = [sys.executable]
+    if use_pytest_benchmark:
+        cmd = cmd + ["-m", "pytest"]
+    for fname in [s1, s2, s3]:
+        check(fname, cmd)
+
+
+@requiresCUDA
+def test_thunderfx():
+    def foo(x):
+        return torch.sin(x) + torch.cos(x)
+
+    x = torch.randn(4, 4, device="cuda", requires_grad=True)
+    cfoo = thunderfx(foo)
+    cfoo(x)
+    thunder_compiled_fns = cfoo._backend.subgraph_infos[0].thunder_compiled_fns
+    assert len(thunder_compiled_fns) == 1
+    assert last_traces(thunder_compiled_fns[0])
+
+    from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform
+
+    cfoo = thunderfx(foo, dynamic=True, transforms=[NvtxProfileTransform()])
+    cfoo(x)
+    thunder_compiled_fns = cfoo._backend.subgraph_infos[0].thunder_compiled_fns
+    assert len(thunder_compiled_fns) == 1
+    trc = last_traces(thunder_compiled_fns[-1])[-1]
+    assert any(bsym.sym.id == "nvtx_range_push" for bsym in trc.bound_symbols)

@@ -301,10 +301,12 @@ def _scaled_dot_product_efficient_attention_backward_impl(
     if attn_mask is None:
         grad_input_mask.append(False)
     else:
-        grad_input_mask.append(attn_mask.requires_grad)
+        # Cannot rely on the requires_grad in the meta function,
+        # so here the gradient of attn_mask is always calculated
+        grad_input_mask.append(True)
 
     # Reference: https://github.com/pytorch/pytorch/blob/v2.0.1/aten/src/ATen/native/transformers/cuda/attention_backward.cu#L394-L415
-    return torch.ops.aten._scaled_dot_product_efficient_attention_backward(
+    grad_q, grad_k, grad_v, grad_attn_mask = torch.ops.aten._scaled_dot_product_efficient_attention_backward(
         grad_out,
         _sdpa_enforce_input_tensor_contiguity(query),
         _sdpa_enforce_input_tensor_contiguity(key),
@@ -319,6 +321,13 @@ def _scaled_dot_product_efficient_attention_backward_impl(
         is_causal,
         scale=scale,
     )
+
+    if attn_mask is not None and not utils.same_shape(grad_attn_mask.shape, attn_mask.shape):
+        # Needs to sum over the number of heads dimension in grad_attn_mask
+        # if the number of heads in attention mask is expanded in _attention_mask_memory_efficient_helper.
+        grad_attn_mask = torch.sum(grad_attn_mask, dim=1, keepdim=True)
+
+    return grad_q, grad_k, grad_v, grad_attn_mask
 
 
 sdpea_bwd = sdpa_ex.register_operator(

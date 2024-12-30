@@ -299,8 +299,14 @@ def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = Fals
     # dirty little trick for speed: skip the prologue, however, the prologue is required when
     # there are non-differentiable kwargs
     jf = executor.make_callable(f, disable_torch_autograd=True)
+
+    # if there are things the prologue passes to the epilogue, we need the prologue
+    # this happens e.g. if the function returns inputs
+    prologue_trc = thunder.compile_data(jf).get_computation_and_inputs(*primals)[0].prologue_traces[-1]
+    prologue_required = prologue_required or prologue_trc.output[1]  # non-empty prologue_to_epilogue
+
     if prologue_required:
-        comp_f = thunder.jit(f, disable_torch_autograd=True)
+        comp_f = jf
     else:
         comp_f = thunder.compile_data(jf).get_computation_and_inputs(*primals)[0].computation_fn
 
@@ -408,8 +414,8 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
         if len(filtered_args) == 0:
             continue
-        if op.singularity_fn is not None:
-            filtered_args = [push_away_from_singularities(arg, op.singularity_fn, eps) for arg in filtered_args]
+        if (singularity_fn := op.singularity_fn_producer(sample)) is not None:
+            filtered_args = [push_away_from_singularities(arg, singularity_fn, eps) for arg in filtered_args]
         at_least_one_differentiable_input = True
         result = run_snippet(
             snippet_vjp_correctness,
@@ -621,6 +627,21 @@ def test_vjp_correctness_zeta_manual(op, device, dtype, executor, comp):
         assert grad_lhs is None, "grad_lhs should be None"
         comp(actual_out, out, equal_nan=True)
         comp(grad_rhs, expected_grad[0], equal_nan=True)
+
+
+@ops((get_opinfo("item"),), supported_dtypes=(dtypes.float64,))
+def test_vjp_correctness_torch_item_manual(op, device, dtype, executor, comp):
+    from thunder.torch import item
+
+    for sample in op.sample_inputs(device, dtype, requires_grad=True, no_rhs_numbers=True):
+        out = op.torch_reference(*sample.args, **sample.kwargs)
+        flat_op, flat_args, spec = flatten_func(item, sample.args, sample.kwargs)
+        initial_trace = thunder.trace()(vjp(flat_op), flat_args, (None,))
+        actual_out, (grad_in,) = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(
+            flat_args, (None,)
+        )
+        assert grad_in is None, "grad_in should be None"
+        comp(actual_out, out, equal_nan=True)
 
 
 @ops((get_opinfo("nll_loss"),), supported_dtypes=(dtypes.float64,))
@@ -1391,7 +1412,7 @@ def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype,
             op.torch_reference,
             sample,
             lambda a, b, **kwargs: comp(a, b, equal_nan=True, **kwargs),
-            op.singularity_fn,
+            op.singularity_fn_producer(sample),
         )
 
         # See [NOTE] dynamo reset
@@ -1472,9 +1493,6 @@ def test_populate_grads_mlp(executor, device, dtype):
 
 @instantiate(dtypes=(thunder.float32,))
 def test_populate_grads_csa(executor, device, dtype):
-    if version_between(torch.__version__, min_ver="2.6.0a0", max_ver="2.6.0"):
-        pytest.skip("https://github.com/Lightning-AI/lightning-thunder/issues/1254")
-
     from thunder.benchmarks import NanoGPTCSABenchmark, NanoGPTConfig
 
     # NOTE Currently setting dropout to zero for reproducibility, other settings taken from gpt2 config
@@ -1502,9 +1520,6 @@ def test_populate_grads_csa(executor, device, dtype):
 
 @instantiate(dtypes=(thunder.float32,))
 def test_populate_grads_block(executor, device, dtype):
-    if version_between(torch.__version__, min_ver="2.6.0a0", max_ver="2.6.0"):
-        pytest.skip("https://github.com/Lightning-AI/lightning-thunder/issues/1254")
-
     from thunder.benchmarks import NanoGPTBlockBenchmark, NanoGPTConfig
 
     # NOTE Currently setting dropout to zero for reproducibility, other settings taken from gpt2 config
@@ -1838,3 +1853,36 @@ def test_grad_split_unused_output(device):
     actual_grad = torch.autograd.grad(actual, x, grad_o)
     expected_grad = torch.autograd.grad(expected, x, grad_o)
     torch.testing.assert_close(actual_grad, expected_grad)
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_adhoc_executor_grad(executor, device, _):
+    import torch
+    import thunder
+
+    x = torch.ones(2, device=device, requires_grad=True)
+
+    class Sin(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, x):
+            ctx.save_for_backward(x)
+            return torch.sin(x)
+
+        @staticmethod
+        def backward(ctx, g):
+            (x,) = ctx.saved_tensors
+            return g * torch.cos(x) * 200
+
+    def func(x):
+        return Sin.apply(x)
+
+    cfunc = thunder.jit(func)
+    actual = cfunc(x)
+    (actual_gr,) = torch.autograd.grad(actual.sum(), x)
+    expected = func(x)
+    (expected_gr,) = torch.autograd.grad(expected.sum(), x)
+
+    torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(actual_gr, expected_gr)

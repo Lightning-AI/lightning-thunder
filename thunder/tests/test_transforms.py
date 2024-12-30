@@ -5,7 +5,7 @@ import pytest
 
 import thunder
 from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform, nvtx_push, nvtx_pop
-from thunder.tests.framework import requiresCUDA, version_between
+from thunder.tests.framework import requiresCUDA, version_between, BITSANDBYTES_AVAILABLE
 
 
 @requiresCUDA
@@ -74,7 +74,8 @@ def test_nvtx_transform():
 @requiresCUDA
 def test_materialization():
     from thunder.transforms import MaterializationTransform
-    from litgpt.config import Config
+    from thunder.tests.litgpt_model import Config
+
     from litgpt.model import GPT
 
     config = Config.from_name("llama2-like")
@@ -113,15 +114,15 @@ def test_materialization():
 
 
 @pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0a0", max_ver="2.6.0a99"),
+    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
     reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1413",
 )
-@pytest.mark.skipif(not package_available("bitsandbytes"), reason="`bitsandbytes` is not available")
+@pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
 @requiresCUDA
 def test_quantization_on_meta():
     from thunder.transforms import MaterializationTransform
     from thunder.transforms.quantization import BitsAndBytesLinearQuant4bit, get_bitsandbytes_executor
-    from litgpt.config import Config
+    from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
 
     bitsandbytes_executor = get_bitsandbytes_executor()
@@ -190,13 +191,10 @@ def test_quantization_on_meta():
 
 
 @pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0a0", max_ver="2.6.0a99"),
+    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
     reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1413",
 )
-@pytest.mark.skipif(
-    not package_available("bitsandbytes"),
-    reason="`bitsandbytes` is not available",
-)
+@pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
 @requiresCUDA
 def test_nvfuser_cse():
     with torch.device("cuda"):
@@ -301,10 +299,10 @@ def test_cudagraph_warmup_runs_with_correct_buffers():
 
 
 @pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0a0", max_ver="2.6.0a99"),
+    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
     reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1413",
 )
-@pytest.mark.skipif(not package_available("bitsandbytes"), reason="`bitsandbytes` is not available")
+@pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
 @requiresCUDA
 def test_materialization_init():
     from thunder.transforms import MaterializationTransform
@@ -626,3 +624,24 @@ def test_cudagraph_empty_inputs():
     assert_close(jfn(), fn())
 
     assert any(("CUDAGraph" in bsym.sym.name) for bsym in thunder.last_traces(jfn)[-1].bound_symbols)
+
+
+def test_disable_params_and_buffer_check():
+    from thunder.tests.litgpt_model import Config
+    from litgpt.model import GPT
+    from thunder.transforms.extraction_only_prologue_transform import ExtractionOnlyPrologueTransform
+
+    model = GPT(Config.from_name("llama1-like", n_layer=1))
+    x = torch.randint(model.max_seq_length, (2, 5))
+    cmodel = thunder.jit(model, transforms=[ExtractionOnlyPrologueTransform()])
+    _ = cmodel(x)
+    prologue_trc = thunder.last_prologue_traces(cmodel)[-1]
+
+    check_bsyms = tuple(
+        filter(
+            lambda bsym: bsym.sym.id == thunder.executors.pythonex.check_tensor_shape_and_metadata.id,
+            prologue_trc.bound_symbols,
+        )
+    )
+
+    assert len(check_bsyms) == 1  # We only have the check for input.
