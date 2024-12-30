@@ -63,7 +63,6 @@ from thunder.core.proxies import (
     StringProxy,
     TensorProxy,
     FutureTensorProxy,
-    make_proxy_name,
     Variable,
     variableify,
     unvariableify,
