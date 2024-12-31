@@ -3117,14 +3117,12 @@ def test_debug_options():
 
 def test_default_tensor_proxy():
     from thunder.core.proxies import TensorProxy
-    from thunder.core.trace import detached_trace
     from thunder.core.dtypes import float32
     from thunder.core.devices import cpu
 
     # It should be possible to create a TensorProxy with default values for all
     # optional arguments
-    with detached_trace():
-        t = TensorProxy(shape=(1,), device=cpu, dtype=float32)
+    t = TensorProxy(shape=(1,), device=cpu, dtype=float32)
     assert not t.requires_grad
     assert t.device == cpu
     assert t.dtype == float32
@@ -3132,11 +3130,9 @@ def test_default_tensor_proxy():
 
 def test_proxy_same_name():
     from thunder.core.proxies import TensorProxy
-    from thunder.core.trace import detached_trace
     from thunder.core.dtypes import float32
     from thunder.core.devices import cpu
 
-    with detached_trace():
-        for _ in range(2):
-            t = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
-            assert t.name == "test"
+    for _ in range(2):
+        t = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
+        assert t.name == "test"
