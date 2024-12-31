@@ -1967,7 +1967,7 @@ _cls_to_number_proxy_map = {
 
 
 # TODO: move this function to jit_ext.py
-def tensorproxy(t: torch.Tensor, /, *, name: None | str, history: None | tuple = None) -> TensorProxy:
+def tensorproxy(t: torch.Tensor, /, *, name: None | str = None, history: None | tuple = None) -> TensorProxy:
     from thunder.core.interpreter import ProvenanceRecord, PseudoInst, wrap_const
 
     if hasattr(t, "_thunder_device"):
