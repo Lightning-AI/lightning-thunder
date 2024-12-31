@@ -81,6 +81,7 @@ class ThunderFunction(torch.autograd.Function):
             # Some operations may claim to return Tensor (as per their meta function)
             # but may return None at Runtime (eg. noticed this for sdpa)
             if isinstance(t, torch.Tensor) and t._base is not None:
+                # Only detach if the Tensor is a view.
                 return t.detach()
             return t
 
