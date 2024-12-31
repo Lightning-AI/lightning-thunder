@@ -419,10 +419,6 @@ def test_thunderfx_mistral_nemo_small():
     assert mdl._backend.subgraph_infos, "Should have at least 1 subgraph"
 
 
-@pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
-    reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
-)
 @thunder.tests.framework.requiresCUDA
 @pytest.mark.parametrize("model_id", ["Qwen/Qwen2.5-7B-Instruct", "microsoft/Phi-3-mini-128k-instruct"])
 def test_hf_for_nemo(model_id):
