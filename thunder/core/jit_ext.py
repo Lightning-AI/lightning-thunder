@@ -1588,7 +1588,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             if provenance.ext_flag & EXT_FLAG_IS_MODULE:
                 assert prologue_trace.bound_symbols[-1].output is res
                 if prologue_trace.bound_symbols[-1].sym != prims.unpack_submodule:
-                    orig_module = Proxy("module")
+                    orig_module = Proxy(prefix="module")
                     prologue_trace.bound_symbols[-1].output = orig_module
                     bsym = prims.unpack_thunder_module.bind(orig_module, output=res)
                     orig_modules[id(res)] = orig_module
