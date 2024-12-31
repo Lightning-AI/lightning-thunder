@@ -48,6 +48,7 @@ from thunder.core.proxies import (
     DictProxy,
     numberproxy,
     ProxyTag,
+    tensorproxy,
 )
 from thunder.core.pytree import tree_map, tree_flatten, tree_unflatten
 from thunder.core.symbol import Symbol
@@ -5917,7 +5918,6 @@ def _get_fake_arg(inp: Any):
         return torch.empty(
             inp.shape,
             dtype=_thunder_to_torch_dtype_map[inp.dtype],
-            requires_grad=inp.requires_grad,
             device=devices.to_torch_device(inp.device),
         )
     elif isinstance(inp, (TupleProxy, ListProxy, DictProxy)):
@@ -5941,12 +5941,7 @@ def _fake_type_to_thunder(inp: Any):
     if isinstance(inp, tuple(_cls_to_number_proxy_map.keys())):
         return numberproxy(builtins.type(inp), inp)
     elif isinstance(inp, FakeTensor):
-        return TensorProxy(
-            shape=inp.shape,
-            device=to_device(inp.device),
-            dtype=_torch_to_thunder_dtype_map[inp.dtype],
-            requires_grad=inp.requires_grad,
-        )
+        return tensorproxy(inp)
     elif isinstance(inp, torch.Size):
         return tuple(inp)
     elif isinstance(inp, torch.device):
