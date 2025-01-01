@@ -67,7 +67,7 @@ def test_find_producer_symbols(executor, device, _):
     # We will try to find a subgraph for rematerializing __c and __d
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
     initial_trace = thunder.trace()(func, t0)
-    compiled_func = thunder.jit(initial_trace.python_callable())
+    compiled_func = thunder.jit(initial_trace.python_callable(), use_rematerialization=True)
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
@@ -117,7 +117,7 @@ def test_find_producer_symbols(executor, device, _):
 def test_apply_rematerialization_producer(executor, device, _):
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
     initial_trace = thunder.trace()(func, t0)
-    compiled_func = thunder.jit(initial_trace.python_callable())
+    compiled_func = thunder.jit(initial_trace.python_callable(), use_rematerialization=True)
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
@@ -151,7 +151,7 @@ def test_apply_rematerialization_producer(executor, device, _):
 def test_apply_rematerialization_consumer(executor, device, _):
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
     initial_trace = thunder.trace()(func, t0)
-    compiled_func = thunder.jit(initial_trace.python_callable())
+    compiled_func = thunder.jit(initial_trace.python_callable(), use_rematerialization=True)
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
@@ -217,7 +217,7 @@ def test_apply_rematerialization_consumer_early_exit(executor, device, _):
 
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
     initial_trace = thunder.trace()(foo, t0)
-    compiled_func = thunder.jit(initial_trace.python_callable())
+    compiled_func = thunder.jit(initial_trace.python_callable(), use_rematerialization=True)
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
@@ -256,7 +256,7 @@ def test_find_nvfuser_producer_consumer_pairs(executor, device, _):
 
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
     initial_trace = thunder.trace()(func, t0)
-    compiled_func = thunder.jit(initial_trace.python_callable())
+    compiled_func = thunder.jit(initial_trace.python_callable(), use_rematerialization=True)
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
@@ -308,7 +308,7 @@ def test_find_filtered_producer_consumer_pairs_multiple_consumers(executor, devi
         return t3, t4
 
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
-    compiled_func = executor.make_callable(func)
+    compiled_func = executor.make_callable(func, enable_saved_for_backward_recomputation=False)
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[0]
@@ -368,7 +368,12 @@ def test_find_fusion_producer_consumer_pairs_multiple_producers(executor, device
     from thunder.executors.torch_compile import torch_compile_cat_ex
 
     try:
-        compiled_func = thunder.jit(func, executors=(torch_compile_cat_ex, thunder.nvfuser_executor))
+        compiled_func = thunder.jit(
+            func,
+            executors=(torch_compile_cat_ex, thunder.nvfuser_executor),
+            use_rematerialization=True,
+            enable_saved_for_backward_recomputation=False,
+        )
         _ = compiled_func(
             t0,
             t1,
@@ -390,7 +395,7 @@ def test_find_fusion_producer_consumer_pairs_multiple_producers(executor, device
 def test_find_cut(executor, device, _):
     t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
     intial_trace = thunder.trace()(func, t0)
-    compiled_func = thunder.jit(intial_trace.python_callable())
+    compiled_func = thunder.jit(intial_trace.python_callable(), use_rematerialization=True)
     _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
@@ -417,7 +422,7 @@ def test_find_cut_dropout(executor, device, _):
 
     with patch("thunder.core.rematerialization.replace_uniform", new=replace_uniform_mock):
         intial_trace = thunder.trace()(func_with_dropout, t0)
-        compiled_func = thunder.jit(intial_trace.python_callable())
+        compiled_func = thunder.jit(intial_trace.python_callable(), use_rematerialization=True)
         _ = compiled_func(t0)
     traces = thunder.last_traces(compiled_func)
     trace = traces[-1]
@@ -458,10 +463,12 @@ def test_rematerialization(executor, device, _):
 
     # Result with rematerialization and without rematerialization should match
     initial_trace = thunder.trace()(func, t0)
-    result_with_remat = thunder.jit(initial_trace.python_callable())(t0)
+    result_with_remat = thunder.jit(initial_trace.python_callable(), use_rematerialization=True)(t0)
     assert not isinstance(result_with_remat, Exception)
 
-    result_without_remat = disable_rematerialization_in_nvfuser_fusion(thunder.jit(initial_trace.python_callable()))(t0)
+    result_without_remat = disable_rematerialization_in_nvfuser_fusion(
+        thunder.jit(initial_trace.python_callable(), use_rematerialization=True)
+    )(t0)
 
     torch.testing.assert_close(result_with_remat, result_without_remat)
 
@@ -473,7 +480,7 @@ def test_rematerialization_name_collision():
     def forward(x):
         return x.softmax(dim=1, dtype=torch.float)
 
-    jforward = thunder.jit(forward)
+    jforward = thunder.jit(forward, use_rematerialization=True)
 
     x = torch.randn([32768, 8], dtype=torch.bfloat16, device="cuda", requires_grad=True)
 
@@ -514,7 +521,7 @@ def test_not_rematerialize_matmul():
 
     # At the time of writing, linear and matmul are not fused into nvFuser
     # regions by default therefore, we should enable them separately
-    jmodel = thunder.jit(model, nv_enable_linear=True, nv_enable_matmul=True)
+    jmodel = thunder.jit(model, nv_enable_linear=True, nv_enable_matmul=True, use_rematerialization=True)
     jmodel(inp)
 
     def assert_subsymbol_count(trace: TraceCtx, /, num_linears: int, num_matmuls: int):
