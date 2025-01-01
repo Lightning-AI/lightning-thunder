@@ -62,6 +62,7 @@ from thunder.core.proxies import (
     NumberProxy,
     StringProxy,
     TensorProxy,
+    SubclassTensorProxy,
     FutureTensorProxy,
     make_proxy_name,
     Variable,
@@ -861,6 +862,42 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
         grad_transform=grad_transform,
     )
     return output
+
+
+@register_general_jit_lookaside(torch.Tensor._make_wrapper_subclass)
+def _make_wrapper_subclass(
+    cls: torch._C._TensorMeta,
+    size: Sequence[int],
+    strides: Sequence[int] | None = None,
+    storage_offset: int | None = None,
+    memory_format: torch.memory_format | None = None,
+    dtype: torch.dtype | None = None,
+    layout: torch.layout | None = torch.strided,
+    device: torch.device | None = None,
+    pin_memory: bool = False,
+    requires_grad: bool = False,
+    dispatch_sizes_strides_policy: str | None = None,
+    dispatch_device: bool = False,
+    dispatch_layout: bool = False,
+    _extra_dispatch_keys: torch.DispatchKeySet | None = None,
+    storage_size: int | None = None,
+):
+    ucls = unwrap(cls)
+    usize = unwrap(size)
+    udtype = unwrap(dtype)
+    udevice = unwrap(device)
+    urequires_grad = unwrap(requires_grad)
+
+    subclass = SubclassTensorProxy(
+        None,
+        shape=usize,
+        device=udevice,
+        dtype=udtype,
+        requires_grad=urequires_grad,
+        history=ProvenanceRecord(PseudoInst.LOOKASIDE, [cls.provenance]),
+        subclass_type=ucls,
+    )
+    return wrap(subclass, provenance=ProvenanceRecord(PseudoInst.LOOKASIDE, [cls.provenance]))
 
 
 @register_general_jit_lookaside(torch.autocast.__enter__)
