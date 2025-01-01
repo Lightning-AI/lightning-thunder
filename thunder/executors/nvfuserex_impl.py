@@ -2101,6 +2101,8 @@ register_supported(PrimIDs.VAR_MEAN, var_mean, _var_mean_check)
 def _copy__check(
     copy_from: TensorProxy,
     copy_to: TensorProxy,
+    *,
+    grad_enabled: bool,
 ) -> bool:
     return are_supported_tensors(copy_from, copy_to)
 
@@ -2109,6 +2111,7 @@ def copy_(
     copy_from: TensorProxy,
     copy_to: TensorProxy,
     *,
+    grad_enabled: bool,
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:
