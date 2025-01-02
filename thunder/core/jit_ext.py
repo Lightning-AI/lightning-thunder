@@ -146,7 +146,9 @@ class JITSharpEdgeError(RuntimeError):
 def _general_jit_sharp_edge(desc: str, value: Any, /) -> Any | INTERPRETER_SIGNALS:
     sharp_edges: SHARP_EDGES_OPTIONS = get_jit_ctx().sharp_edges
 
-    s: str = f"{desc} This is currently considered a sharp edge even with interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON. For cases in which we are overly strict, please file an issue. Thank you!"
+    s: str = (
+        f"{desc} This is currently considered a sharp edge even with interpretation=INTERPRETATION_OPTIONS.TRANSLATE_PYTHON. For cases in which we are overly strict, please file an issue. Thank you!"
+    )
 
     if sharp_edges is SHARP_EDGES_OPTIONS.ERROR:
         return do_raise(JITSharpEdgeError(s))
