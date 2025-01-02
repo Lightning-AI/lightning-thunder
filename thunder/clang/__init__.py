@@ -20,15 +20,16 @@ import thunder.core.dtypes as dtypes
 from thunder.core import utils
 import thunder.core.prims as prims
 from thunder.core.proxies import (
-    IntegerProxy,
-    NumberProxy,
-    NumberLike,
-    TensorProxy,
-    pyval,
-    pytype,
-    proxy,
     AnyProxy,
+    IntegerProxy,
+    NumberLike,
+    NumberProxy,
     Proxy,
+    SubclassTensorProxy,
+    TensorProxy,
+    proxy,
+    pytype,
+    pyval,
 )
 import thunder.core.devices as devices
 
@@ -67,7 +68,7 @@ class clangop:
 
 # Checks a tensor's shape and metadata (for use with cache check)
 @clangop()
-def check_tensor_shape_and_metadata(t: TensorProxy, /) -> None:
+def check_tensor_shape_and_metadata(t: TensorProxy | SubclassTensorProxy, /) -> None:
     return prims.check_tensor_shape_and_metadata(
         t,
         # replace Proxy entries with `-1`s as wild card, as we any value is

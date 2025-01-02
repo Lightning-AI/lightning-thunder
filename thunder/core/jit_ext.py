@@ -1719,9 +1719,12 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
 
     with tracectx(prologue_trace):
         for prim, *args in ctx._constraints:
+            subclass_tensor: SubclassTensorProxy | None = None
             for a in args:
                 if isinstance(a, Proxy):
                     unpack(a)
+                if isinstance(a, SubclassTensorProxy):
+                    subclass_tensor = a
             # unpacking Proxy in TensorProxy.shape which is used in `check_tensor_shape_and_metadata`
             if prim == clang.check_tensor_shape_and_metadata:
                 for s in a.shape:
@@ -1729,6 +1732,13 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                         unpack(s)
 
             prim(*args)
+
+            if isinstance(subclass_tensor, SubclassTensorProxy):
+                for t in prims.flatten_tensor_subclass(subclass_tensor):
+                    for s in t.shape:
+                        if isinstance(s, Proxy):
+                            unpack(s)
+                    prim(t)
 
         cache_info = thunder._get_cache_info()
         # assert len of cache info to ensure that we're not missing anything?
