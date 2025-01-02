@@ -60,10 +60,24 @@ def rename_bwd_trace_outputs(bwd_trace: TraceCtx, fwd_trace: TraceCtx) -> TraceC
     return renamed_bwd_trace
 
 
-class ThunderFunction(torch.autograd.Function):
+# We split the autograd.Function into two parts because this allows
+# the args to the ThunderFunction2.backward to go out of scope
+# and the tensors (the grad_outs matching the flattened output) to be
+# deallocated when they have been processed by the compiled backward function.
+# For the correspondence between the functions hidden from autograd, we use
+# a side channel (an empt dict) passed as an argument. To link the two
+# functions in autograd, we use a dummy tensor on the meta device.
+class ThunderFunction1(torch.autograd.Function):
     @staticmethod
     def forward(
-        ctx, return_none_instead_of_grads, compiled_backward, saved_tensors, saved_other, flat_output, *flat_args
+        ctx,
+        return_none_instead_of_grads,
+        compiled_backward,
+        side_channel,
+        saved_tensors,
+        saved_other,
+        flat_output,
+        *flat_args,
     ):
         # Here we just propagate the tensors through the autograd graph
         ctx.return_none_instead_of_grads = return_none_instead_of_grads
@@ -85,17 +99,22 @@ class ThunderFunction(torch.autograd.Function):
             return t
 
         saved_tensors = tuple(map(detach_if_tensor, saved_tensors))
+        assert not side_channel
+        ctx.side_channel = side_channel
+        ctx.side_channel["fw"] = flat_output
 
         # We must save tensors using ctx.save_for_backward
         ctx.save_for_backward(*saved_tensors)
-        return flat_output
+        return torch.randn(1, device="meta", requires_grad=True)
 
     # NOTE: If `torch.autograd.function.once_differentiable` is to be removed,
     # one must take care of correctly removing the `detach_if_tensor` above.
     # For more context, see NOTE [Saved view of output of torch.autograd.Function leaks] above.
     @staticmethod
     @torch.autograd.function.once_differentiable
-    def backward(ctx, *args):
+    def backward(ctx, _):
+        args = ctx.side_channel.pop("bw")
+        assert not ctx.side_channel
         # ctx.saved_tensors is a tuple of tensors saved in forward. Our compiled
         # backward is a really long function that takes all the tensors saved in
         # forward and gradually uses them to compute the gradients of the
@@ -114,16 +133,33 @@ class ThunderFunction(torch.autograd.Function):
         ctx.maybe_clear_saved_tensors()  # Delete the reference to all saved tensors in the context
         grads = ctx.compiled_backward([saved_tensors_list, ctx.saved_other], args)
 
+        assert not args
         # Inside the compiled backward we must clear the saved_tensors_list
         assert not saved_tensors_list, "saved_tensors_list must be empty after calling compiled_backward"
         # TODO(crcrpar): Remove if-else once `dist_prims.stash_grad_for_fsdp` starts to return `None`
         # NOTE(crcrpar): In fsdp no-sync, unsharded gradients are attached and accumulated to their parameters as the attr of `_thunder_fsdp_unsharded_grad` in order to avoid shape mismatch of a param and its grad. When exiting the no_sync context, the accumulated, unsharded gradients are reduce-scattered into the attr of `grad` and `_thunder_fsdp_unsharded_grad` is removed.
         if not ctx.return_none_instead_of_grads:
-            return (None, None, None, None, None, *grads)
+            return (None, None, None, None, None, None, *grads)
         else:
             n_grads = len(grads)
             del grads
-            return (None, None, None, None, None, *([None] * n_grads))
+            return (None, None, None, None, None, None, *([None] * n_grads))
+
+
+class ThunderFunction2(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, dummy, side_channel, *args):
+        ctx.side_channel = side_channel
+        ctx.num_args = len(args)
+        res = ctx.side_channel.pop("fw")
+        assert not ctx.side_channel
+        return res
+
+    @staticmethod
+    def backward(ctx, *args):
+        assert not ctx.side_channel
+        ctx.side_channel["bw"] = list(args)
+        return torch.randn(1, device="meta"), None, *([None] * ctx.num_args)
 
 
 def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stats, /, *flat_args):
@@ -344,5 +380,9 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     fw_extrace._include_te_fp8_autocast = True
     # We only want the forward function to be called with `te.fp8_autocast` manager.
     bw_extrace._include_te_fp8_autocast = False
+
+    if len(bw_extrace.bound_symbols) == 1:
+        # only return, no unpacking, so no gradient is calculated
+        bw_extrace = None
 
     return fw_extrace, bw_extrace

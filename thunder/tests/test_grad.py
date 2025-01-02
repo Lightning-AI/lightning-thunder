@@ -1752,10 +1752,10 @@ def test_torch_checkpoint():
 
         # With activation checkpointing, we are saving only the original input.
         # The intermediate values are recomputed during backward pass.
-        assert len(out.grad_fn.saved_tensors) == 2
+        assert len(out.grad_fn.next_functions[0][0].saved_tensors) == 2
         # We detach the saved tensors (which returns a new Python tensor backed by same storage)
-        assert out.grad_fn.saved_tensors[0].data_ptr() == x.data_ptr()
-        assert out.grad_fn.saved_tensors[1].data_ptr() == y.data_ptr()
+        assert out.grad_fn.next_functions[0][0].saved_tensors[0].data_ptr() == x.data_ptr()
+        assert out.grad_fn.next_functions[0][0].saved_tensors[1].data_ptr() == y.data_ptr()
 
         g = torch.ones_like(out)
         out.backward(g)
