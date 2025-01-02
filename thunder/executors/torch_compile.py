@@ -56,6 +56,12 @@ def to_torch_translator(bsym: BoundSymbol) -> Callable:
         if torch_op is None:
             raise RuntimeError("op not found for {bsym.sym.name}")
 
+        # NOTE(crcrpar): Currently `ltorch.t` is mapped to `torchex.transpose`
+        # thus `args` needs to be updated to have dim0 and dim1
+        if bsym.sym.id == "torch.t":
+            utils.check(len(args) == 1, lambda: f"{bsym.sym.id} takes only one argument but {args=}")
+            args = args + (0, 1)
+
         return torch_op(*args, **kwargs)
 
     return _to_torch
