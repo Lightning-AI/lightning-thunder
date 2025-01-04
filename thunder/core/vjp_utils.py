@@ -10,7 +10,7 @@ from thunder.core.proxies import Proxy, variableify, TensorProxy
 from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import from_trace, TraceCtx, TraceTag
-from thunder.core.transform_common import dce
+from thunder.core.transform_common import cse, dce
 
 
 _cache = {}
@@ -60,6 +60,8 @@ def make_aug_forward_and_backward(bsym: BoundSymbol) -> tuple[Callable, Callable
         return cached_result
 
     joint_trace = thunder.trace(inline_trace=False, use_dce=False)(joint_forward_backward, *bsym.args, **bsym.kwargs)
+    joint_trace = cse(joint_trace)
+    joint_trace = dce(joint_trace)
     consumers = utils.consumers(joint_trace)
 
     def find_backward_input(forward_output):

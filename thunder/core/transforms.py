@@ -75,6 +75,7 @@ from thunder.clang import (
     convolution,
 )
 from thunder.core.transform_common import (
+    cse,
     dce,
     Transform,
     wrap_return_value_together_with_arguments,
@@ -2349,6 +2350,8 @@ def decomposed_fn_aug_fwd_rule(*args, decomposed_fn, **kwargs):
     """
     trace = construct_trace()(decomposed_fn, *args, **kwargs)
     trace = unwrap_one_level_of_subsymbols(trace)
+    # cse runs to remove duplicated prims.shape at top level.
+    trace = cse(trace)
     # There may be a dead node like "_ = prims.convert_element_type(0, float)"
     # in the trace. We need to remove it before we can use the trace for
     # augmented_forward_pass.
@@ -2366,6 +2369,7 @@ def decomposed_fn_backward_rule(decomposed_fn, args, kwargs, saved_for_backward,
     kwargs = {} if kwargs is None else kwargs
     trace = construct_trace()(decomposed_fn, *args, **kwargs)
     trace = unwrap_one_level_of_subsymbols(trace)
+    trace = cse(trace)
     trace = dce(trace)
     # bound_symbols = iter_bound_symbols(trace.bound_symbols)
     # reconstructed_env = {
