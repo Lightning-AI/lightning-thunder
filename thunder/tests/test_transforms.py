@@ -517,7 +517,6 @@ def test_lora_transform_linear():
 
 
 def test_constant_folding():
-
     # Helper to verify we see the expected constant tensors
     # in exec_trace.
     def assert_in_trace(exec_trace, sym, arg_vals):
@@ -645,3 +644,33 @@ def test_disable_params_and_buffer_check():
     )
 
     assert len(check_bsyms) == 1  # We only have the check for input.
+
+
+def test_dce_duplicate_number_proxies():
+    from thunder.core.prims import PrimIDs
+
+    def fn(x):
+        shape_0 = x.shape
+        shape_1 = x.shape  # duplicate shape query
+        return sum(shape_0)
+
+    # symbolic values is necessary to have the shape query in trace
+    jfn = thunder.jit(fn, cache="symbolic values")
+
+    a = torch.randn(2, 3, 4, 5)
+    out = jfn(a)
+
+    def _count_shape_query(trace):
+        count = 0
+        for bsym in trace.bound_symbols:
+            if bsym.sym.id == PrimIDs.SHAPE:
+                count += 1
+        return count
+
+    # original two shape queries should both exist in the original trace
+    trace = thunder.last_traces(jfoo)[0]
+    assert _count_shape_query(trace) == 2
+
+    # dce should remove duplicate shape queries
+    trace = thunder.core.transforms.dce(trace)
+    assert _count_shape_query(trace) == 1
