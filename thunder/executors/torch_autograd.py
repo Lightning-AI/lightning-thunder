@@ -103,9 +103,9 @@ class ThunderFunction(torch.autograd.Function):
         # We must save tensors using ctx.save_for_backward
         ctx.save_for_backward(*saved_tensors)
 
+        ctx.side_channel = side_channel
         if side_channel is not None:
             assert not side_channel
-            ctx.side_channel = side_channel
             ctx.side_channel["fw"] = flat_output
 
             return torch.randn(1, device="meta", requires_grad=True)
@@ -117,9 +117,12 @@ class ThunderFunction(torch.autograd.Function):
     # For more context, see NOTE [Saved view of output of torch.autograd.Function leaks] above.
     @staticmethod
     @torch.autograd.function.once_differentiable
-    def backward(ctx, _):
-        args = ctx.side_channel.pop("bw")
-        assert not ctx.side_channel
+    def backward(ctx, *raw_args):
+        if ctx.side_channel is not None:
+            args = ctx.side_channel.pop("bw")
+            assert not ctx.side_channel
+        else:
+            args = list(raw_args)
         # ctx.saved_tensors is a tuple of tensors saved in forward. Our compiled
         # backward is a really long function that takes all the tensors saved in
         # forward and gradually uses them to compute the gradients of the
@@ -176,7 +179,16 @@ def connect_to_autograd(
     saved_other,
     return_none_instead_of_grads,
 ):
-    side_channel = {}
+    # PyTorch seems to not like our side channel trick when capturing graphs
+    # through dynamo and using cuda graphs.
+    # Of course, the real trick is to use the CUDAGraphTransform instead
+    # of having something else apply it while introducing funny additional
+    # conditions for success.
+    if not torch.cuda.graphs.is_current_stream_capturing():
+        side_channel = {}
+    else:
+        side_channel = None
+
     dummy_res = ThunderFunction.apply(
         return_none_instead_of_grads,
         backward_fn,
@@ -186,9 +198,10 @@ def connect_to_autograd(
         flat_output,
         *flat_args,
     )
-    # we need to pass the inputs to avoid "leave has moved inside the graph"
-    # if the function returns an argument as is
-    ThunderOutputFunction.apply(dummy_res, side_channel, *flat_args)
+    if side_channel is not None:
+        # we need to pass the inputs to avoid "leave has moved inside the graph"
+        # if the function returns an argument as is
+        ThunderOutputFunction.apply(dummy_res, side_channel, *flat_args)
 
 
 def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stats, /, *flat_args):
