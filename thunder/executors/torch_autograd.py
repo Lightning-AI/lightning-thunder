@@ -185,7 +185,7 @@ def connect_to_autograd(
     # Of course, the real trick is to use the CUDAGraphTransform instead
     # of having something else apply it while introducing funny additional
     # conditions for success.
-    if not is_cudagraph_capturing:
+    if not is_cudagraph_capturing():
         side_channel = {}
     else:
         side_channel = None
