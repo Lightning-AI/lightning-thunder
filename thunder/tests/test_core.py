@@ -2510,8 +2510,8 @@ def test_grad_ctx():
         return x + 1
 
     x = torch.randn(3, 3, requires_grad=True)
-    thunder.jit(foo2)(x).sum().backward()
-    assert x.grad is None
+    res = thunder.jit(foo2)(x)
+    assert not res.requires_grad
 
     # Test `no_grad` ctx correctly disable gradient computation
     def foo3(x):
