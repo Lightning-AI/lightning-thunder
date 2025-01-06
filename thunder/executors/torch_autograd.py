@@ -11,6 +11,7 @@ from thunder.core.symbol import BoundSymbol
 from thunder.core.trace import TraceCtx, from_trace, set_tracectx, reset_tracectx
 from thunder.core.transform_common import replace_redundant_inputs
 from thunder.core.vjp_utils import get_saved_for_backward_tensors, set_saved_for_backward_tensors
+from .utils import is_cudagraph_capturing
 
 if TYPE_CHECKING:
     from thunder.core.trace import VariableInterface
@@ -184,7 +185,7 @@ def connect_to_autograd(
     # Of course, the real trick is to use the CUDAGraphTransform instead
     # of having something else apply it while introducing funny additional
     # conditions for success.
-    if not torch.cuda.graphs.is_current_stream_capturing():
+    if not is_cudagraph_capturing:
         side_channel = {}
     else:
         side_channel = None
