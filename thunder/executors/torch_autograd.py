@@ -61,13 +61,13 @@ def rename_bwd_trace_outputs(bwd_trace: TraceCtx, fwd_trace: TraceCtx) -> TraceC
 
 
 # We split the autograd.Function into two parts because this allows
-# the args to the ThunderFunction2.backward to go out of scope
+# the args to the ThunderOutputFunction.backward to go out of scope
 # and the tensors (the grad_outs matching the flattened output) to be
 # deallocated when they have been processed by the compiled backward function.
 # For the correspondence between the functions hidden from autograd, we use
 # a side channel (an empt dict) passed as an argument. To link the two
 # functions in autograd, we use a dummy tensor on the meta device.
-class ThunderFunction1(torch.autograd.Function):
+class ThunderFunction(torch.autograd.Function):
     @staticmethod
     def forward(
         ctx,
@@ -99,13 +99,18 @@ class ThunderFunction1(torch.autograd.Function):
             return t
 
         saved_tensors = tuple(map(detach_if_tensor, saved_tensors))
-        assert not side_channel
-        ctx.side_channel = side_channel
-        ctx.side_channel["fw"] = flat_output
 
         # We must save tensors using ctx.save_for_backward
         ctx.save_for_backward(*saved_tensors)
-        return torch.randn(1, device="meta", requires_grad=True)
+
+        if side_channel is not None:
+            assert not side_channel
+            ctx.side_channel = side_channel
+            ctx.side_channel["fw"] = flat_output
+
+            return torch.randn(1, device="meta", requires_grad=True)
+        else:
+            return flat_output
 
     # NOTE: If `torch.autograd.function.once_differentiable` is to be removed,
     # one must take care of correctly removing the `detach_if_tensor` above.
@@ -146,7 +151,7 @@ class ThunderFunction1(torch.autograd.Function):
             return (None, None, None, None, None, None, *([None] * n_grads))
 
 
-class ThunderFunction2(torch.autograd.Function):
+class ThunderOutputFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, dummy, side_channel, *args):
         ctx.side_channel = side_channel
@@ -160,6 +165,30 @@ class ThunderFunction2(torch.autograd.Function):
         assert not ctx.side_channel
         ctx.side_channel["bw"] = list(args)
         return torch.randn(1, device="meta"), None, *([None] * ctx.num_args)
+
+
+def connect_to_autograd(
+    *,
+    backward_fn,
+    flat_args,
+    flat_output,
+    saved_tensors,
+    saved_other,
+    return_none_instead_of_grads,
+):
+    side_channel = {}
+    dummy_res = ThunderFunction.apply(
+        return_none_instead_of_grads,
+        backward_fn,
+        side_channel,
+        saved_tensors,
+        saved_other,
+        flat_output,
+        *flat_args,
+    )
+    # we need to pass the inputs to avoid "leave has moved inside the graph"
+    # if the function returns an argument as is
+    ThunderOutputFunction.apply(dummy_res, side_channel, *flat_args)
 
 
 def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stats, /, *flat_args):
