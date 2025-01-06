@@ -151,8 +151,7 @@ __all__ = [
 ]
 
 
-def __version__():
-    return LooseVersion("0.0.1")
+from thunder.__about__ import *  # import all
 
 
 # TODO maybe move these aliases to the core language?
@@ -468,7 +467,7 @@ def jit(
                     ) = cache_entry
                     try:
                         inps, pro_to_epi = pro(*args, **kwargs)
-                    except Exception as _:
+                    except Exception:
                         continue
 
                     # Updates cache statistics
