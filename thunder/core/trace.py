@@ -84,8 +84,8 @@ class TraceCtx:
         self.args = None
         self.kwargs = {}
 
-        self.bound_symbols: list[BoundSymbolInterface] = []
-        self.scopes = [self.bound_symbols]
+        self._bound_symbols: list[BoundSymbolInterface] = []
+        self.scopes = [self._bound_symbols]
 
         self.name_ctr = 0
         self.obj_name_ctr = 0
@@ -129,6 +129,16 @@ class TraceCtx:
         # This is a detail for enabling transformer_engine's autocast manager.
         # We only want the forward function to be called with ctx manager.
         self._include_te_fp8_autocast = False
+
+    @property
+    def bound_symbols(self) -> list[BoundSymbolInterface]:
+        return self._bound_symbols
+
+    @bound_symbols.setter
+    def bound_symbols(self, bsyms: list[BoundSymbolInterface]):
+        assert self.scopes[0] is self._bound_symbols
+        self._bound_symbols = bsyms
+        self.scopes[0] = bsyms
 
     @property
     def tags(self):
@@ -247,8 +257,10 @@ class TraceCtx:
 
     def push_scope(self, scope: list) -> None:
         self.scopes.append(scope)
+        assert self.scopes[0] is self.bound_symbols
 
     def pop_scope(self) -> list:
+        assert self.scopes[0] is self.bound_symbols
         return self.scopes.pop()
 
     def peek_scope(self) -> list | None:
