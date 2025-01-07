@@ -283,7 +283,11 @@ class JitCtx:
             # We tag this here (rather than below in unpack_parameter_or_buffer_or_submodule below) because
             # thunderfx does not properly see the module, but does see that we are dealing with a parameter.
             if isinstance(uvalue, torch.nn.Parameter):
-                p.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
+                # NOTE - Update `p_orig` as in Distributed scenario
+                #        it is the proxy for the Parameter on device.
+                #        In `jit(ddp(model))` or `jit(fsdp(model))` scenario,
+                #        proxy `p` will be the proxy for synced parameter.
+                p_orig.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
 
             if p is not uvalue:
                 value.register_proxy(p)
