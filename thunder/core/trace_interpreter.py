@@ -322,9 +322,6 @@ class TraceSubstitutionProcessor:
                     self.new_trace.bound_symbols.append(bsym.from_bsym())
                     continue
 
-                args = tree_map(self.read, bsym.args)
-                kwargs = tree_map(self.read, bsym.kwargs)
-
                 # this should be prettier
                 self.replacement_result = self.NULL
                 self.new_bsyms = []
