@@ -1,36 +1,31 @@
-import math
+from __future__ import annotations
+from collections import namedtuple
+from collections.abc import Callable, Sequence
 from functools import partial, reduce
 from numbers import Number
-from typing import Union, List, Optional, Any
-from collections.abc import Callable
-from collections.abc import Sequence
-from collections import namedtuple
+from types import EllipsisType
+from typing import Any, Union
+import math
 import operator
-from types import EllipsisType, NoneType
-import copy
-import time
 import warnings
 
-from thunder.core.baseutils import run_once
-from thunder.core.compile_data import using_symbolic_values
 from thunder.clang.langctx import register_method
-from thunder.core.langctxs import langctx, Languages
-
-import thunder.core.dtypes as dtypes
 from thunder.core import utils
+from thunder.core.baseutils import run_once
+from thunder.core.langctxs import langctx, Languages
+import thunder.core.devices as devices
+import thunder.core.dtypes as dtypes
 import thunder.core.prims as prims
 from thunder.core.proxies import (
-    IntegerProxy,
-    NumberProxy,
-    NumberLike,
-    TensorProxy,
-    pyval,
-    pytype,
-    proxy,
     AnyProxy,
+    IntegerProxy,
+    NumberLike,
+    NumberProxy,
     Proxy,
+    TensorProxy,
+    pytype,
+    pyval,
 )
-import thunder.core.devices as devices
 
 # This file defines the operations in thunder.jit's "core" language.
 #

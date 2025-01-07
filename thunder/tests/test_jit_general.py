@@ -1194,7 +1194,7 @@ def test_custom_autograd_function():
     x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
     model = Model().to(dtype=torch.float64)
     jitted = thunder.jit(model)
-    gradcheck(jitted, (x,))
+    gradcheck(jitted, (x,), check_batched_grad=False)
 
     jitted.zero_grad()
     x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)

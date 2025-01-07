@@ -318,15 +318,14 @@ def insert_inplace(
         trc._complete = False
 
         # Creates a temporary scope to record these operations in
-        old_scope = trc.scopes
         scope = []
-        trc.scopes = [scope]
+        trc.push_scope(scope)
 
         fn()
         _insert_extend_list(trc.bound_symbols, idx, scope)
 
     finally:
-        trc.scopes = old_scope
+        trc.pop_scope()
         trc._complete = True
         reset_tracectx(tracectx_tok)
 
@@ -356,16 +355,15 @@ def replace_inplace(
         trc._complete = False
 
         # Creates a temporary scope to record these operations in
-        old_scope = trc.scopes
         scope = []
-        trc.scopes = [scope]
+        trc.push_scope(scope)
 
         fn(trc.bound_symbols[idx])
         del trc.bound_symbols[idx]
         _insert_extend_list(trc.bound_symbols, idx, scope)
 
     finally:
-        trc.scopes = old_scope
+        trc.pop_scope()
         trc._complete = True
         reset_tracectx(tracectx_tok)
 
@@ -407,9 +405,8 @@ def visitor_transform(trace_from: Trace, visit: Callable, *, provenance: None | 
                 # Creates a temporary scope to support copying the original bsym BEFORE
                 #   the operations performed by visit(), even though this doesn't know whether to
                 #   copy the original bsym until after visit() completes
-                old_scope = trc.scopes
                 scope = []
-                trc.scopes = [scope]
+                trc.push_scope(scope)
 
                 visit_type = visit(bsym)
 
@@ -426,7 +423,7 @@ def visitor_transform(trace_from: Trace, visit: Callable, *, provenance: None | 
 
             finally:
                 # Restores the trc's scope
-                trc.scopes = old_scope
+                trc.pop_scope()
 
         if provenance is not None:
             trc.set_provenance(TraceProvenance(provenance))

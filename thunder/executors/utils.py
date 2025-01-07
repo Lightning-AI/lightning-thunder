@@ -21,6 +21,18 @@ from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
 from thunder.core.compile_data import get_compile_option
 
 
+try:
+    torch.cuda.graphs.is_current_stream_capturing()
+
+    def is_cudagraph_capturing():
+        return torch.cuda.graphs.is_current_stream_capturing()
+
+except RuntimeError:
+    # no cudagraph support (CPU only, ROCm, ...)
+    def is_cudagraph_capturing():
+        return False
+
+
 # TODO Make these tags
 comment_symbols = {
     PrimIDs.COMMENT,
