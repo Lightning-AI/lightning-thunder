@@ -3122,6 +3122,6 @@ def test_proxy_same_name():
     from thunder.core.devices import cpu
 
     with detached_trace():
-        for _ in range(2):
-            t = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32, requires_grad=True)
-            assert t.name == "test"
+        t = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32, requires_grad=True)
+        with pytest.raises(RuntimeError, match="already used"):
+            t2 = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32, requires_grad=True)
