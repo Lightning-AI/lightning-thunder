@@ -253,6 +253,7 @@ class JitCtx:
             name_postfix = _infer_name_postfix_from_provenance(value.provenance)
             if name_postfix:
                 name = f"t{name_postfix}"
+                self.computation_trace.names.discard(name)
             else:
                 name = None
 
