@@ -243,3 +243,43 @@ def test_te_trace_metadata_propagation():
 
     # Verify that we have `te_linear` in the trace.
     assert any(bsym.sym.name.startswith("te_linear") for bsym in fwd_traces[-1].bound_symbols)
+
+
+@requiresCUDA
+def test_checkpointing_with_transformer_engine():
+    def fn(x, w):
+        return torch.utils.checkpoint.checkpoint(lambda x, w: torch.nn.functional.linear(x, w), x, w)
+
+    te_linear_ckpt = te.Linear(16, 16)
+
+    def fn_checkpoint_eager(x):
+        return torch.utils.checkpoint.checkpoint(lambda x: te_linear_ckpt(x), x, use_reentrant=True)
+
+    # NOTE: Currently, checkpointing is supported via thunderfx path
+    from thunder.dynamo import thunderfx
+
+    x = torch.rand(16, 16, device="cuda", requires_grad=True)
+    w = te_linear_ckpt.weight.detach().clone()
+    w.requires_grad = True
+
+    actual = thunderfx(
+        fn,
+        executors=[
+            transformer_engine_ex,
+        ],
+    )(x, w)
+
+    x_ref = x.detach().clone()
+    x_ref.requires_grad = True
+    with te.fp8_autocast():
+        expected = fn_checkpoint_eager(x_ref)
+
+    torch.testing.assert_close(actual, expected, rtol=1e-1, atol=1e-1)
+
+    grad_output = torch.rand_like(actual)
+
+    actual.backward(grad_output)
+    expected.backward(grad_output)
+
+    torch.testing.assert_close(x.grad, x_ref.grad, rtol=1e-1, atol=1e-1)
+    torch.testing.assert_close(w.grad, te_linear_ckpt.weight.grad, rtol=1e-1, atol=1e-1)
