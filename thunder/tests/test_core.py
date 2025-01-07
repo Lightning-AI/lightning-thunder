@@ -2510,8 +2510,8 @@ def test_grad_ctx():
         return x + 1
 
     x = torch.randn(3, 3, requires_grad=True)
-    thunder.jit(foo2)(x).sum().backward()
-    assert x.grad is None
+    res = thunder.jit(foo2)(x)
+    assert not res.requires_grad
 
     # Test `no_grad` ctx correctly disable gradient computation
     def foo3(x):
@@ -3137,6 +3137,6 @@ def test_proxy_same_name():
     from thunder.core.devices import cpu
 
     with detached_trace():
-        for _ in range(2):
-            t = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
-            assert t.name == "test"
+        t = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
+        with pytest.raises(RuntimeError, match="already used"):
+            t2 = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)

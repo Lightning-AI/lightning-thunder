@@ -72,7 +72,7 @@ from thunder.core.proxies import (
 )
 from thunder.core.interpreter import print_interpreter_log, print_to_log
 from thunder.core.jit_ext import thunder_general_jit
-from thunder.executors.torch_autograd import split_forward_backward, ThunderFunction
+from thunder.executors.torch_autograd import split_forward_backward, connect_to_autograd
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
@@ -467,7 +467,7 @@ def jit(
                     ) = cache_entry
                     try:
                         inps, pro_to_epi = pro(*args, **kwargs)
-                    except Exception as _:
+                    except Exception:
                         continue
 
                     # Updates cache statistics
@@ -750,13 +750,14 @@ def jit(
             # resulting tensors to PyTorch's Autograd graph using the
             # ThunderFunction (which is a torch.autograd.Function subclass)
             data_for_autograd, (saved_tensors, saved_other) = result
-            ThunderFunction.apply(
-                cache_entry.return_none_instead_of_grads,
-                cache_entry.backward_fn,
-                saved_tensors,
-                saved_other,
-                data_for_autograd["flat_output"],
-                *data_for_autograd["flat_args"],
+
+            connect_to_autograd(
+                backward_fn=cache_entry.backward_fn,
+                flat_args=data_for_autograd["flat_args"],
+                flat_output=data_for_autograd["flat_output"],
+                saved_tensors=saved_tensors,
+                saved_other=saved_other,
+                return_none_instead_of_grads=cache_entry.return_none_instead_of_grads,
             )
             result = data_for_autograd["output"]
 
