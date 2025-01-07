@@ -381,7 +381,7 @@ def test_saved_for_backward_recomputation():
     fwd_trace = None
 
     for trace in thunder.last_traces(jmodel):
-        if str(trace.get_provenance()) == "# Constructed by Augmented forward pass":
+        if thunder.core.trace.TraceTag.AUGMENTED_FORWARD in trace.tags:
             fwd_trace = trace
             break
 
@@ -433,6 +433,7 @@ def test_saved_for_backward_recomputation():
             filter(lambda x: isinstance(x.output, TensorProxy), new_bwd.bound_symbols[6:]),
         )
     )
+
     # check that all the fwd are recomputed
     for rematerializable in all_rematerializable:
         assert rematerializable in bwd_bsym_out

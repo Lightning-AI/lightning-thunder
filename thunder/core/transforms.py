@@ -3153,10 +3153,14 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
     forward_trace.set_provenance(TraceProvenance("Augmented forward pass"))
     backward_trace.set_provenance(TraceProvenance("Backward pass"))
 
+    remat_policy: None | Callable[[set[Variable]], set[Variable]] = get_compile_option(
+        "recomputation_policy",
+        "A callable that accepts a set of variables and returns a set of the variables that are allowed to be recomputed from the forward in the backward trace. The compile option `enable_saved_for_backward_recomputation` needs to be true for this policy to take effect.",
+    )
     enable_saved_for_backward_recomputation: None | bool = get_compile_option(
         "enable_saved_for_backward_recomputation", "Enable save for backward tensors recomputation."
     )
-    if enable_saved_for_backward_recomputation is None:
+    if enable_saved_for_backward_recomputation is None or remat_policy:
         enable_saved_for_backward_recomputation = True
     if enable_saved_for_backward_recomputation:
         forward_trace, backward_trace = recompute_saved_for_backward(forward_trace, backward_trace)
@@ -3187,6 +3191,22 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
     fwd_trace_args = OrderedSet(variableify(j) for j in fwd_trace.args)
     old_saved_for_bwd = OrderedSet(variableify(j) for j in saved_for_bw)
 
+    remat_policy: None | Callable[[set[Variable]], set[Variable]] = get_compile_option(
+        "recomputation_policy",
+        "A callable that accepts a set of variables and returns a set of the variables that are allowed to be recomputed from the forward in the backward trace. The compile option `enable_saved_for_backward_recomputation` needs to be true for this policy to take effect.",
+    )
+
+    enable_saved_for_backward_recomputation: None | bool = get_compile_option(
+        "enable_saved_for_backward_recomputation", "Enable save for backward tensors recomputation."
+    )
+
+    if remat_policy:
+        for v in remat_policy(old_saved_for_bwd - fwd_trace_args):
+            unvariableify(v).tags.add(ProxyTag.RECOMPUTE_IN_BACKWARD)
+    elif enable_saved_for_backward_recomputation:
+        for v in old_saved_for_bwd - fwd_trace_args:
+            unvariableify(v).tags.add(ProxyTag.RECOMPUTE_IN_BACKWARD)
+
     all_proxies = fwd_trace_args.copy()
     all_recomputable_proxies = OrderedSet()
 
@@ -3203,15 +3223,7 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
             if ProxyTag.RECOMPUTE_IN_BACKWARD in o.tags and not has_tags(bsym, {prims.OpTags.RANDOM_OP}):
                 all_recomputable_proxies.add(vo)
 
-    remat_policy: None | Callable[[set[Variable]], set[Variable]] = get_compile_option(
-        "recomputation_policy",
-        "A callable that accepts a set of variables and returns a set of the variables that are allowed to be recomputed from the forward in the backward trace. The compile option `enable_saved_for_backward_recomputation` needs to be true for this policy to take effect.",
-    )
-
-    if remat_policy:
-        rematerializable = remat_policy(old_saved_for_bwd - fwd_trace_args)
-    else:
-        rematerializable = old_saved_for_bwd & all_recomputable_proxies
+    rematerializable = old_saved_for_bwd & all_recomputable_proxies
 
     if not rematerializable:
         return fwd_trace, bwd_trace
