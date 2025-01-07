@@ -82,6 +82,9 @@ class ThunderFunction(torch.autograd.Function):
             # but may return None at Runtime (eg. noticed this for sdpa)
             if isinstance(t, torch.Tensor) and t._base is not None:
                 # Only detach if the Tensor is a view.
+                # This is needed because TransformerEngine can create (non-view) tensors that have different
+                # metadata on the `t.detach()` output than on `t`. (They should not, but what can we do.)
+                # See https://github.com/Lightning-AI/lightning-thunder/pull/1600 for details.
                 return t.detach()
             return t
 
