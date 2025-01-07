@@ -645,3 +645,44 @@ def test_disable_params_and_buffer_check():
     )
 
     assert len(check_bsyms) == 1  # We only have the check for input.
+
+
+def test_disable_params_check_thunderfx():
+    from thunder.tests.litgpt_model import Config
+    from litgpt.model import GPT
+    from thunder.transforms.extraction_only_prologue_transform import ExtractionOnlyPrologueTransform
+    from thunder.dynamo import thunderfx
+
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc1 = torch.nn.Linear(16, 16)
+            self.register_buffer(
+                "buffer",
+                torch.randn(
+                    16,
+                ),
+            )
+            self.fc2 = torch.nn.Linear(16, 16)
+
+        def forward(self, x):
+            return self.fc1(x) + self.buffer + self.fc2(x)
+
+    model = Model()
+    x = torch.randn(16, 16)
+    cmodel = thunderfx(model, transforms=[ExtractionOnlyPrologueTransform()])
+    _ = cmodel(x)
+    tfn = cmodel._backend.subgraph_infos[0].thunder_compiled_fns[0]
+    prologue_trc = thunder.last_prologue_traces(tfn)[-1]
+
+    check_bsyms = tuple(
+        filter(
+            lambda bsym: bsym.sym.id == thunder.executors.pythonex.check_tensor_shape_and_metadata.id,
+            prologue_trc.bound_symbols,
+        )
+    )
+
+    # Currently we don't detect buffers on thunderfx path and hence don't remove
+    # the corresponding checks from prologue.
+    # This will fails when we detect buffers and remove their checks from prologue.
+    assert len(check_bsyms) == 2  # 1 check for input and 1 for buffer (and 0 for parameters)
