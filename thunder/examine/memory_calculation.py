@@ -10,7 +10,7 @@ from thunder.core.pytree import tree_iter
 from thunder.executors import pythonex
 
 # Arguments are considered independently, so we ignore all unpacking operations on them
-memory_calculate_skip_list = (PrimIDs.RETURN, PrimIDs.UNPACK_TRIVIAL, PrimIDs.UNPACK_SEQUENCE)
+memory_calculate_skip_list = (PrimIDs.RETURN, PrimIDs.UNPACK_TRIVIAL)
 
 # List of operators that considered no memory changes occurred in Thunder.
 # NOTE: for the operators have different input and output shape, such as expand,
@@ -111,7 +111,7 @@ def del_op_memory(bsym: BoundSymbol, tensor_to_memory_data: ProxyDict, name_to_a
     tensor_args = (x for x in bsym.flat_proxy_args if isinstance(x, (TensorProxy, FutureTensorProxy)))
     memory_size = 0
     for a in tensor_args:
-        assert a in tensor_to_memory_data
+        assert a in tensor_to_memory_data, f"{a.name} is unknown"
         cnt_a = tensor_to_memory_data[a].decr_ref()
 
         if cnt_a == 0:
@@ -128,8 +128,8 @@ def clear_mutable_collection_argument_memory(
     # Clearing the collection forces the interpreter to release references to its elements,
     # even if the collection was an argument.
     # So we cancel the n += 1 (see get_alloc_memory) for tensors contained in such a collection
-    if not is_argument:
-        return 0
+    # if not is_argument:
+    return 0
 
     collection_proxy = bsym.flat_proxy_args[0]
     if not isinstance(collection_proxy.collection(), (MutableSequence, MutableMapping, MutableSet)):
@@ -147,7 +147,7 @@ def clear_mutable_collection_argument_memory(
     return memory_size
 
 
-def get_alloc_memory(trc: TraceCtx) -> tuple[int, dict[str, int]]:
+def get_alloc_memory(trc: TraceCtx, *, annotate=False) -> tuple[int, dict[str, int]]:
     """
     Calculate the memory usage based on the executable trace.
     The memory calculation is based only on the compile-time trace, i.e. the input and output shape
@@ -186,9 +186,14 @@ def get_alloc_memory(trc: TraceCtx) -> tuple[int, dict[str, int]]:
         impl = memory_calculate_impls.get(bsym.sym.id, default_alloc_memory)
         if impl is clear_mutable_collection_argument_memory:
             is_argument = bsym.flat_proxy_args[0].name in arg_names
+            print(bsym.flat_proxy_args[0].name, is_argument)
             impl = partial(impl, is_argument=is_argument)
 
         allocated += impl(bsym, tensor_to_memory_data, name_to_alloc_memory)
+        if annotate:
+            if bsym.header:
+                bsym.header += " "
+            bsym.header += f"mem after next op: ~{allocated/(2**30):2f}GB"
         max_allocated = max(max_allocated, allocated)
 
     return max_allocated, name_to_alloc_memory

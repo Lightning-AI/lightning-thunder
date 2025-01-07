@@ -547,9 +547,9 @@ class Benchmark_litGPT:
                 " Checkpointing will be ignored."
             )
             return
-
         check_fn = lambda submodule: isinstance(submodule, Block)
         apply_activation_checkpointing(self.model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=check_fn)
+        print(self.model)
 
     # TODO(crcrpar): Think of apply `torch.compile` or `thunder.jit` per block/module
     # like https://github.com/pytorch/torchtitan/blob/cfc0f4e/torchtitan/parallelisms/parallelize_llama.py#L275-L284
@@ -886,12 +886,20 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
                         print(f"##########\n#Graph{gid}-ThunderFn{subgid} last backward trace\n##########")
                         print(thunder.last_backward_traces(thunder_fn)[-1])
             else:
+                from thunder.examine.memory_calculation import get_alloc_memory
+                from thunder.executors.passes import del_last_used
+
                 for i, f_traces in enumerate(fwd_traces, start=1):
                     print(f"##########\n#{i}-th ThunderModule\n##########")
-                    print(f_traces[-1])
+                    print(f_traces)
                 for i, b_traces in enumerate(bwd_traces, start=1):
                     print(f"##########\n#{i}-th ThunderModule\n##########")
-                    print(b_traces[-1])
+                    for tr in b_traces:
+                        dltr = del_last_used(tr)
+                        print(dltr)
+                        tr_peak_memory, _ = get_alloc_memory(dltr)
+                        print(f"# the following trace uses ~{tr_peak_memory/(2**30):.2f}GB memory")
+                        print(dltr)
 
     if global_rank in [0, None]:
         if return_metrics_as_json:
