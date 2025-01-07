@@ -280,6 +280,8 @@ class JitCtx:
             # We assume that a Parameter's underlying storage won't be changed.
             # We tag Parameter's proxy with `STATIC_MEMORY_LOCATION` tag so that
             # other transforms (eg. CUDAGraph) can use this information.
+            # We tag this here (rather than below in unpack_parameter_or_buffer_or_submodule below) because
+            # thunderfx does not properly see the module, but does see that we are dealing with a parameter.
             if isinstance(uvalue, torch.nn.Parameter):
                 p.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
 
