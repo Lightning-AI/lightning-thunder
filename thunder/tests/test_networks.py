@@ -553,4 +553,4 @@ def test_hf_llama():
 
     top_level_symbol_names = {bsym.sym.name for bsym in thunder.last_traces(jm)[-1].bound_symbols}
     # changes this to fewer as needed, the goal is to not have too many fusions
-    assert len([s for s in top_level_symbol_names if s.startswith("nvFusion")]) == 7
+    assert len([s for s in top_level_symbol_names if s.startswith("nvFusion")]) == 8

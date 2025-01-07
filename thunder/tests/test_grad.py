@@ -1938,6 +1938,7 @@ def test_adhoc_executor_grad(executor, device, _):
     torch.testing.assert_close(actual, expected)
     torch.testing.assert_close(actual_gr, expected_gr)
 
+
 @pytest.mark.parametrize("device", ("cuda", "cpu"))
 def test_backward_recomputation_decomposed_ops(device):
     if device == "cuda" and not torch.cuda.is_available():
@@ -1951,8 +1952,8 @@ def test_backward_recomputation_decomposed_ops(device):
     a = torch.randn(2, 2, device=device, requires_grad=True)
     res = jfn(a)
     res2 = jfn2(a)
-    assert len(res.grad_fn.saved_tensors) == 3  # should be decomposed
-    assert len(res2.grad_fn.saved_tensors) == 1
+    assert len(res.grad_fn.next_functions[0][0].saved_tensors) == 3  # should be decomposed
+    assert len(res2.grad_fn.next_functions[0][0].saved_tensors) == 1
 
     if NVFUSER_AVAILABLE and device == "cuda":
         # check everything is fused
