@@ -123,7 +123,7 @@ def transform_for_execution(trace: TraceCtx, executors_list: Sequence[Executor])
     if torch.distributed.is_available():
         # Apply AllReduce bucketing if possible & needed
         from thunder.distributed.transforms.ddp import apply_bucketing_to_grad_allreduce
-
+        trace = dce(trace)
         trace = apply_bucketing_to_grad_allreduce(trace)
 
     trace = dce(trace)
