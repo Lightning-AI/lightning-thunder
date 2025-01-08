@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING
 import torch
 
 import thunder.core.utils as utils
-from thunder.core.compile_data import get_compile_option
 from thunder.core.prims import PrimIDs
 from thunder.core.proxies import TensorProxy, variableify
 from thunder.core.pytree import tree_flatten
@@ -350,11 +349,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     )
     bw_traces.append(bw_extrace)
 
-    use_rematerialization: None | bool = get_compile_option(
-        "use_forward_backward_rematerialization", "use rematerialization of saved for backward values in fusions"
-    )
-    if use_rematerialization:
-        fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extrace, bw_extrace)
+    fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extrace, bw_extrace)
     fw_traces.append(fw_extrace)
     bw_traces.append(bw_extrace)
 
