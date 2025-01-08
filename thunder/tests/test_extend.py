@@ -265,10 +265,10 @@ def test_validate_executors():
 
 
 def test_transient_operator_executor():
-    from thunder.extend import TransientOperatorExecutor
+    from thunder.extend import TemporaryExecutor
     from functools import partial
 
-    executor = TransientOperatorExecutor()
+    executor = TemporaryExecutor()
     op = executor.register_operator(
         name="temp_add",
         like=thunder.torch.add,

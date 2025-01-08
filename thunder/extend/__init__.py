@@ -273,7 +273,7 @@ class OperatorExecutor(Executor):
         self.implmap[_id] = impl
 
 
-class TransientOperatorExecutor(OperatorExecutor):
+class TemporaryExecutor(OperatorExecutor):
     """
     A specialized executor for managing temporary operator registrations at runtime.
 
@@ -288,7 +288,7 @@ class TransientOperatorExecutor(OperatorExecutor):
         - Maintains isolation between different temporary registrations
 
     Example:
-        >>> executor = TransientOperatorExecutor()
+        >>> executor = TemporaryExecutor()
         >>> op = executor.register_operator(
         ...     name="temp_add",
         ...     like=thunder.torch.add,
@@ -373,7 +373,7 @@ class TransientOperatorExecutor(OperatorExecutor):
         return symbol
 
     def __repr__(self) -> str:
-        return f"<thunder.extend.TransientOperatorExecutor object {id(self)}>"
+        return f"<thunder.extend.TemporaryExecutor object {id(self)}>"
 
 
 def single_op_executor(
