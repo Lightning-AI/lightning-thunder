@@ -321,10 +321,12 @@ def _scaled_dot_product_efficient_attention_backward_impl(
         is_causal,
         scale=scale,
     )
-    if not utils.same_shape(grad_attn_mask.shape, attn_mask.shape):
+
+    if attn_mask is not None and not utils.same_shape(grad_attn_mask.shape, attn_mask.shape):
         # Needs to sum over the number of heads dimension in grad_attn_mask
         # if the number of heads in attention mask is expanded in _attention_mask_memory_efficient_helper.
         grad_attn_mask = torch.sum(grad_attn_mask, dim=1, keepdim=True)
+
     return grad_q, grad_k, grad_v, grad_attn_mask
 
 
