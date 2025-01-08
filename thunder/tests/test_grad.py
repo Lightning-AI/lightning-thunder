@@ -27,6 +27,7 @@ from thunder.tests.framework import (
     run_snippet,
     assert_closer,
     IN_CI,
+    NVFUSER_AVAILABLE,
     requiresCUDA,
     version_between,
 )
@@ -1752,10 +1753,10 @@ def test_torch_checkpoint():
 
         # With activation checkpointing, we are saving only the original input.
         # The intermediate values are recomputed during backward pass.
-        assert len(out.grad_fn.saved_tensors) == 2
+        assert len(out.grad_fn.next_functions[0][0].saved_tensors) == 2
         # We detach the saved tensors (which returns a new Python tensor backed by same storage)
-        assert out.grad_fn.saved_tensors[0].data_ptr() == x.data_ptr()
-        assert out.grad_fn.saved_tensors[1].data_ptr() == y.data_ptr()
+        assert out.grad_fn.next_functions[0][0].saved_tensors[0].data_ptr() == x.data_ptr()
+        assert out.grad_fn.next_functions[0][0].saved_tensors[1].data_ptr() == y.data_ptr()
 
         g = torch.ones_like(out)
         out.backward(g)
@@ -1886,3 +1887,31 @@ def test_adhoc_executor_grad(executor, device, _):
 
     torch.testing.assert_close(actual, expected)
     torch.testing.assert_close(actual_gr, expected_gr)
+
+
+@pytest.mark.parametrize("device", ("cuda", "cpu"))
+def test_backward_recomputation_decomposed_ops(device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+
+    def fn(a):
+        return torch.nn.functional.gelu(a)
+
+    jfn = thunder.jit(fn, enable_saved_for_backward_recomputation=False)
+    jfn2 = thunder.jit(fn, enable_saved_for_backward_recomputation=True)
+    a = torch.randn(2, 2, device=device, requires_grad=True)
+    res = jfn(a)
+    res2 = jfn2(a)
+    assert len(res.grad_fn.next_functions[0][0].saved_tensors) == 3  # should be decomposed
+    assert len(res2.grad_fn.next_functions[0][0].saved_tensors) == 1
+
+    if NVFUSER_AVAILABLE and device == "cuda":
+        # check everything is fused
+        assert {bsym.sym.name for bsym in thunder.last_backward_traces(jfn2)[-1].bound_symbols} == {
+            "nvFusion0",
+            "clear_mutable_collection",
+            "python_return",
+            "python_del",
+            "unpack_sequence",
+            "unpack_trivial",
+        }

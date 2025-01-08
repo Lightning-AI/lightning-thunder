@@ -11,7 +11,7 @@ from thunder.core.proxies import Proxy, ProxyTag, unvariableify
 from thunder.core.symbol import BoundSymbol, Symbol
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance, get_tracectx, set_tracectx, reset_tracectx
 from thunder.executors.utils import Region
-from thunder.executors.data_dependent_partition import fuse_bound_symbols, Node
+from thunder.extend import fuse_bound_symbols
 
 
 @dataclass(**utils.default_dataclass_params)
@@ -271,19 +271,6 @@ class CUDAGraphTransform(Transform):
     def transform_trace_post_optimization(self, trace: TraceCtx, **kwargs) -> TraceCtx:
         start_time_ns: int = time.perf_counter_ns()
 
-        def _should_fuse(a: Node, b: Node):
-            # TODO: modify the logic to be able to potentially better handle
-            # islands around data-dependent ops once these are supported by Thunder.
-
-            def _can_fuse_node(n: Node):
-                if len(n.group_bsyms) > 1:
-                    return True
-
-                bsym: BoundSymbol = n.group_bsyms[0]
-                return self.can_fuse(bsym)
-
-            return _can_fuse_node(a) and _can_fuse_node(b)
-
         fused_trace: TraceCtx = from_trace(trace)
         # Tracking CollectionProxies that are being consumed
         # by the `clear_collection_names`.
@@ -291,7 +278,7 @@ class CUDAGraphTransform(Transform):
         fused_trace.clear_collection_names = set()
         fused_trace_tok = set_tracectx(fused_trace)
 
-        bound_symbols_groups = fuse_bound_symbols(trace, _should_fuse)
+        bound_symbols_groups = fuse_bound_symbols(trace, self.can_fuse)
 
         producers, consumers = utils.producers_and_consumers(trace)
 
