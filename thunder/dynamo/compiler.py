@@ -143,5 +143,36 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
 
     backend = ThunderCompiler(**thunder_options)
     compiled = torch.compile(fn, backend=backend, **torch_compile_options)
-    compiled._backend = backend
-    return compiled
+
+    # We return this object instead of just the raw `compiled` Callable so that
+    # we have a place to hang the `last_traces` property.
+    class CompiledObject:
+        def __init__(self, be, func: Callable):
+            self._backend = backend
+            self._func = func
+
+        def __call__(self, *args, **kwargs):
+            return self._func(*args, **kwargs)
+
+        @property
+        def last_traces(self) -> [Trace]:
+            """
+            Get the Thunder traces for all subgraphs of a ThunderFX callable.
+
+            .. note:: The object must have been invoked before calling this
+                      function.
+            """
+            rv: [Trace] = []
+            for sinfo in self._backend.subgraph_infos:
+                for th_fqn in sinfo.thunder_compiled_fns:
+                    trcs = thunder.last_traces(th_fqn)
+                    if trcs is not None and trcs != []:
+                        rv.append(trcs[-1])
+                    del trcs
+
+                    trcs_bw = thunder.last_backward_traces(th_fqn)
+                    if trcs_bw is not None and trcs_bw != []:
+                        rv.append(trcs_bw[-1])
+
+    c = CompiledObject(backend, compiled)
+    return c

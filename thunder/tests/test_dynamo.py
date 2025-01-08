@@ -988,11 +988,7 @@ def test_thunderfx_last_traces():
     x = torch.randn((4, 4))
     cfoo = thunderfx(foo)
     cfoo(x)
-    assert thunder.dynamo.last_traces(cfoo) is not ''
-
-    # Needs to be a thunderfx function else we give an error.
-    with pytest.raises(ValueError):
-        thunder.dynamo.last_traces(foo)
+    assert cfoo.last_traces is not ''
 
     # Call it w/o invoking the function first.
     dfoo = thunderfx(foo)
