@@ -981,6 +981,7 @@ def test_thunderfx():
     trc = last_traces(thunder_compiled_fns[-1])[-1]
     assert any(bsym.sym.id == "nvtx_range_push" for bsym in trc.bound_symbols)
 
+
 def test_thunderfx_last_traces():
     def foo(x):
         return torch.sin(x) + torch.cos(x)
