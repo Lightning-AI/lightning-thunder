@@ -815,7 +815,10 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
     with tracectx(trace_of_forward):
         prims.python_return(*(sequencify(output)))
 
+    # See NOTE: `autograd_function_apply` and `no_grad` interaction for details about
+    # `thunder.torch.call_higher_order_function_and_consider_outer_autograd_setting`
     @wraps(aug_fwd_trace.python_callable())
+    @thunder.torch.call_higher_order_function_and_consider_outer_autograd_setting
     def forward(*args, **kwargs):
         return interpret_trace(trace_of_forward, *args, **kwargs)
 
