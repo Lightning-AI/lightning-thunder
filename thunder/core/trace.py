@@ -220,7 +220,7 @@ class TraceCtx:
     #   just records the given name
     def make_name(self, name: str | None = None, *, prefix: str | None = None) -> str:
         if name is not None:
-            self.names.add(name)
+            self.add_name(name)
             return name
 
         return self._make_name(prefix=prefix)

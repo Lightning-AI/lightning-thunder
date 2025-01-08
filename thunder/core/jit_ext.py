@@ -63,7 +63,6 @@ from thunder.core.proxies import (
     StringProxy,
     TensorProxy,
     FutureTensorProxy,
-    make_proxy_name,
     Variable,
     variableify,
     unvariableify,
@@ -254,6 +253,7 @@ class JitCtx:
             name_postfix = _infer_name_postfix_from_provenance(value.provenance)
             if name_postfix:
                 name = f"t{name_postfix}"
+                self.computation_trace.names.discard(name)
             else:
                 name = None
 
@@ -1455,7 +1455,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 obj = orig_modules.get(id(obj), obj)
 
             if new_output:
-                output = Proxy("obj")
+                output = Proxy(prefix="obj")
             else:
                 output = p
             param_ordering[id(output)] = (output, param_ordering[id(orig_obj)][1] + [math.inf, "." + str(name)])
@@ -1473,7 +1473,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             typ, name, root_module_provenance = get_parameter_or_buffer_or_submodule_name_and_root(provenance)
             root_module = from_provenance(root_module_provenance, new_output=True)
             if new_output:
-                output = Proxy("m")  # name? collectify?
+                output = Proxy(prefix="m")  # name? collectify?
             else:
                 output = p
 
@@ -1517,7 +1517,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             inputs = [from_provenance(i, new_output=True) for i in provenance.inputs]
             obj, idx = inputs
             if new_output:
-                output = Proxy("subscr")  # name? collectify?
+                output = Proxy(prefix="subscr")  # name? collectify?
             else:
                 output = p
             if isinstance(idx, (int, str, Proxy)):
@@ -1589,7 +1589,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             if provenance.ext_flag & EXT_FLAG_IS_MODULE:
                 assert prologue_trace.bound_symbols[-1].output is res
                 if prologue_trace.bound_symbols[-1].sym != prims.unpack_submodule:
-                    orig_module = Proxy("module")
+                    orig_module = Proxy(prefix="module")
                     prologue_trace.bound_symbols[-1].output = orig_module
                     bsym = prims.unpack_thunder_module.bind(orig_module, output=res)
                     orig_modules[id(res)] = orig_module
