@@ -173,6 +173,7 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
                     trcs_bw = thunder.last_backward_traces(th_fqn)
                     if trcs_bw is not None and trcs_bw != []:
                         rv.append(trcs_bw[-1])
+            return rv
 
     c = CompiledObject(backend, compiled)
     return c
