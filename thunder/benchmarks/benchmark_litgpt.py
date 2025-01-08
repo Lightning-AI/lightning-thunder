@@ -541,10 +541,6 @@ class Benchmark_litGPT:
         return model
 
     def setup_activation_checkpointing(self):
-        if "thunder" in self.compile and "dynamo" not in self.compile:
-            # checkpointing is an option to thunder.jit
-            return
-
         if any(isinstance(mod, CheckpointWrapper) for mod in self.model.modules()):
             warnings.warn(
                 "FSDP checkpointing is configured, but the model already contains checkpointed layers."
