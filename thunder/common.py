@@ -649,14 +649,10 @@ def transform_for_execution(
 
     # TODO If only_execute_prims, then flatten to prims here
 
-    # Runs passes that are generally useful
-    dce_trace = dce(trace)
-    traces.append(dce_trace)
-
     # cse_trace = cse(dce_trace)
     # traces.append(cse_trace)
 
-    extrace = executors.passes.transform_for_execution(dce_trace, executors_list)
+    extrace = executors.passes.transform_for_execution(trace, executors_list)
 
     traces.append(extrace)
 

@@ -2110,7 +2110,7 @@ def test_no_passthrough_symbol(executor, device, _):
     compiled = executor.make_callable(func)
     out = compiled(x)
     assert out is x
-    initial_trace_with_dce = thunder.last_traces(compiled)[4]
+    initial_trace_with_dce = thunder.last_traces(compiled)[3]
     assert "Constructed by Dead Code Elimination" in str(initial_trace_with_dce)
     assert len(initial_trace_with_dce.bound_symbols) == 2
     assert initial_trace_with_dce.bound_symbols[0].sym.id == prims.PrimIDs.UNPACK_TRIVIAL
