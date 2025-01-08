@@ -351,7 +351,7 @@ def split_forward_backward(computation_trc: TraceCtx, compile_data, compile_stat
     bw_traces.append(bw_extrace)
 
     use_rematerialization: None | bool = get_compile_option(
-        "use_rematerialization", "use rematerialization of parameters"
+        "use_forward_backward_rematerialization", "use rematerialization of saved for backward values in fusions"
     )
     if use_rematerialization:
         fw_extrace, bw_extrace = rematerialize_forward_and_backward(fw_extrace, bw_extrace)

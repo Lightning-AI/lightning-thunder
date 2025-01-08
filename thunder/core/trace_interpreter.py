@@ -185,6 +185,9 @@ def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, *
                 # TODO: what to do with bsym header? Maybe have a combined from_bsym_swap_proxies and from_bsym?
                 for o in new_bsym.flat_proxy_outs:
                     if variableify(o) not in swap_map:
+                        # when we decompose to compute the forward/backward, we mark intermediates as to be recomputed in the backward.
+                        # Typically our decompositions are for things that will then be fused together.
+                        # We could refine this heuristic to exclude "expensive" operations.
                         o.tags.add(ProxyTag.RECOMPUTE_IN_BACKWARD)
                 new_trace.bound_symbols.append(
                     new_bsym.from_bsym_swap_proxies(swap_map).from_bsym(

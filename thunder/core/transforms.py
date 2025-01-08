@@ -3282,7 +3282,6 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
     new_fwd_trace = from_trace(fwd_trace)
     new_fwd_trace.bound_symbols = fwd_trace.bound_symbols.copy()
 
-    # TODO: fix ordering...
     new_c0 = tuple(unvariableify(i) for i in saved_tensors)
     new_c1 = tuple(unvariableify(i) for i in saved_nontensors)
 
