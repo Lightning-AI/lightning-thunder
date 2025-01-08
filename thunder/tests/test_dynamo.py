@@ -988,8 +988,8 @@ def test_thunderfx_last_traces():
     x = torch.randn((4, 4))
     cfoo = thunderfx(foo)
     cfoo(x)
-    assert cfoo.last_traces is not ''
+    assert cfoo.last_traces != []
 
     # Call it w/o invoking the function first.
     dfoo = thunderfx(foo)
-    assert thunder.dynamo.last_traces(dfoo) is ''
+    assert dfoo.last_traces == []
