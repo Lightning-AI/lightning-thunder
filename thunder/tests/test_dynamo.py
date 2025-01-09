@@ -1040,3 +1040,17 @@ def test_thunderfx_meta_tensor():
     thfoo = thunderfx(foo)
     out = thfoo(t0)
     assert out.device.type == "meta"
+
+    
+@requiresCUDA
+def test_report(tmp_path):
+    def foo(x):
+        y = x.sin()
+        torch._dynamo.graph_break()
+        return y + x.cos()
+
+    x = torch.randn(4, 4, device="cuda", requires_grad=True)
+
+    from thunder.dynamo.compiler import thunderfx_examine
+
+    thunderfx_examine(foo, x, folder_path=tmp_path)

@@ -835,7 +835,7 @@ def check_assertion(expected, actual):
         return e  # Return the caught exception
 result = {{}}
 result["thunder"] = check_assertion(eager_result, thunder_result)
-result["inductor"] = check_assertion(eager_result+1, inductor_result)
+result["torch_inductor"] = check_assertion(eager_result, inductor_result)
 
 print(result)
 """
