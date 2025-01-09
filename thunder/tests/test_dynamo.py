@@ -979,3 +979,17 @@ def test_thunderfx():
     assert len(thunder_compiled_fns) == 1
     trc = last_traces(thunder_compiled_fns[-1])[-1]
     assert any(bsym.sym.id == "nvtx_range_push" for bsym in trc.bound_symbols)
+
+
+@requiresCUDA
+def test_report(tmp_path):
+    def foo(x):
+        y = x.sin()
+        torch._dynamo.graph_break()
+        return y + x.cos()
+
+    x = torch.randn(4, 4, device="cuda", requires_grad=True)
+
+    from thunder.dynamo.compiler import thunderfx_examine
+
+    thunderfx_examine(foo, x, folder_path=tmp_path)
