@@ -2273,6 +2273,10 @@ def remove_redundant_casts(trace: TraceCtx) -> tuple[TraceCtx, list[TraceCtx]]:
 
 def _linear_check(a: TensorProxy, b: TensorProxy, bias: TensorProxy | None) -> bool:
     enable_linear: None | bool = get_compile_option("nv_enable_linear", "Enable nvFuser linear.")
+    # Enable linear by default if nvFuser version is 0.2.23 or later
+    # Because nvFuser 0.2.23 has a fix for https://github.com/NVIDIA/Fuser/issues/3369
+    if enable_linear is None and nvfuser_version() >= LooseVersion("0.2.23"):
+        enable_linear = True
     if not enable_linear:
         return False
     # Verify linear inputs and bias (optional) are supported tensors.
