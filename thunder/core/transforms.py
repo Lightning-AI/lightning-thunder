@@ -3266,18 +3266,18 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
             compute_proxy_from_producer(p)
         for o in producer_bsym.flat_proxy_outs:
             have_in_backward.add(variableify(o))
-        new_bwd_trace.bound_symbols.append(producer_bsym)
+        new_bwd_trace.bound_symbols.append(producer_bsym.from_bsym())
 
     for idx, bsym in enumerate(bwd_trace.bound_symbols):
         if idx in {4, 5}:
             # handled later
-            new_bwd_trace.bound_symbols.append(bsym)
+            new_bwd_trace.bound_symbols.append(bsym.from_bsym())
         else:
             for p in bsym.flat_proxy_args:
                 compute_proxy_from_producer(p)
             for o in bsym.flat_proxy_outs:
                 have_in_backward.add(variableify(o))
-            new_bwd_trace.bound_symbols.append(bsym)
+            new_bwd_trace.bound_symbols.append(bsym.from_bsym())
 
     new_fwd_trace = from_trace(fwd_trace)
     new_fwd_trace.bound_symbols = fwd_trace.bound_symbols.copy()

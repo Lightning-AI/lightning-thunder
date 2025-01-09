@@ -1943,7 +1943,8 @@ def test_backward_recomputation_decomposed_ops(device):
     def fn(a):
         return torch.nn.functional.gelu(a)
 
-    jfn = thunder.jit(fn, enable_saved_for_backward_recomputation=False)
+    # rematerialization will also trigger recomputation here.
+    jfn = thunder.jit(fn, executors=(), enable_saved_for_backward_recomputation=False)
     jfn2 = thunder.jit(fn, enable_saved_for_backward_recomputation=True)
     a = torch.randn(2, 2, device=device, requires_grad=True)
     res = jfn(a)
