@@ -724,6 +724,8 @@ def reproducer(
     folder: str | os.PathLike,
     graph_name: str,
     use_pytest_benchmark: bool = False,
+    check_consistency: bool = False,
+    save_input_tensor: bool = False,
 ):
     folder = Path(folder)
     folder.mkdir(exist_ok=True)
@@ -733,6 +735,25 @@ def reproducer(
     readable = _readable(gm, "DynamoModule", print_output=False)
     has_cuda_args = any(hasattr(arg, "device") and arg.device.type == "cuda" for arg in args)
     thunder_options_str = thunder_options_to_str(thunder_options)
+    TORCH_INDUCTOR_FUNCTION_STR = """
+# NOTE: The reproducer function has already been processed by TorchDynamo.
+# If we let it go through TorchDynamo again, it could be segmented further.
+# To avoid this, we directly use Inductor here.
+# See issue https://github.com/Lightning-AI/lightning-thunder/issues/1521
+def torch_inductor(fn, inputs):
+    from torch._inductor import compile as inductor_compile
+    from torch.fx import symbolic_trace
+
+    fx_graph = symbolic_trace(fn)
+    return inductor_compile(fx_graph, inputs)
+"""
+    EXECUTOR_DICT_CODE_STR = f"""{TORCH_INDUCTOR_FUNCTION_STR}
+
+bench_executors_dict = {{}}
+bench_executors_dict["thunder"]=partial(thunder.jit, {thunder_options_str})
+bench_executors_dict["torch_inductor"]=torch_inductor
+bench_executors_dict["eager"]=None
+"""
 
     # split reason
     split_reason_str = "Split Information:\n"
@@ -770,22 +791,7 @@ Versions of Thunder related libraries:
             code_str += "from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform\n"
         if use_pytest_benchmark:
             code_str += f"""import pytest
-
-# NOTE: The reproducer function has already been processed by TorchDynamo.
-# If we let it go through TorchDynamo again, it could be segmented further.
-# To avoid this, we directly use Inductor here.
-# See issue https://github.com/Lightning-AI/lightning-thunder/issues/1521
-def torch_inductor(fn, inputs):
-    from torch._inductor import compile as inductor_compile
-    from torch.fx import symbolic_trace
-
-    fx_graph = symbolic_trace(fn)
-    return inductor_compile(fx_graph, inputs)
-
-bench_executors_dict = {{}}
-bench_executors_dict["thunder"]=partial(thunder.jit, {thunder_options_str})
-bench_executors_dict["torch_inductor"]=torch_inductor
-bench_executors_dict["eager"]=None
+{EXECUTOR_DICT_CODE_STR}
 """
             if has_cuda_args:
                 code_str += f"""bench_executors_dict["thunder_cugraph"]=partial(thunder.jit, transform=CUDAGraphTransform())\n"""
@@ -804,12 +810,35 @@ executor_ids = list(bench_executors_dict.keys())
 
         if any(arg is None for arg in args):
             func_str += f"# Warning: The inputs that cannot be inferred are set to None, requiring the user to manually give inputs according to the code\n"
-        input_str = f"""inputs = [\n{chr(10).join(arg_like(a) for a in args)}\n"""
-        func_str += f"{_addindent(input_str, 4)}\n]\n"
+        if save_input_tensor:
+            example_inputs = eval(f"[\n{chr(10).join(arg_like(a) for a in args)}]")
+            input_file_name = folder / f"{graph_name}_inputs.pt"
+            torch.save(example_inputs, input_file_name)
+            func_str += f"inputs = torch.load('{input_file_name}')\n"
+        else:
+            input_str = f"""inputs = [\n{chr(10).join(arg_like(a) for a in args)}\n"""
+            func_str += f"{_addindent(input_str, 4)}\n]\n"
 
         if not use_pytest_benchmark:
             func_str += f"compiled = thunder.jit(DynamoModule(), {thunder_options_str})\n"
-            func_str += "compiled(*inputs)"
+            func_str += "thunder_result = compiled(*inputs)"
+            if check_consistency:
+                func_str += f"""
+{TORCH_INDUCTOR_FUNCTION_STR}
+eager_result = DynamoModule()(*inputs)\n
+inductor_result = torch_inductor(DynamoModule(), inputs)(*inputs)
+def check_assertion(expected, actual):
+    try:
+        torch.testing.assert_close(expected, actual)
+        return None  # No exception, return None
+    except AssertionError as e:
+        return e  # Return the caught exception
+result = {{}}
+result["thunder"] = check_assertion(eager_result, thunder_result)
+result["inductor"] = check_assertion(eager_result+1, inductor_result)
+
+print(result)
+"""
         else:
             func_str = f"""{func_str}
 mod = DynamoModule()

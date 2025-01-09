@@ -75,7 +75,13 @@ class ThunderCompiler:
         self.subgraph_infos.append(subgraph_info)
         return split_module
 
-    def save_reproducer_to_folder(self, reproducer_folder: str | PathLike, use_pytest_benchmark: bool = False):
+    def save_reproducer_to_folder(
+        self,
+        reproducer_folder: str | PathLike,
+        use_pytest_benchmark: bool = False,
+        check_consistency=False,
+        save_input_tensor=False,
+    ):
         """
         Save the reproducer script for the GraphModule executed by Thunder to the specified ``reproducer_folder``.
         Each saved script is named as "graph[graph_id]_thunder_[module_id]", where:
@@ -115,6 +121,8 @@ class ThunderCompiler:
                     reproducer_folder,
                     f"graph{graph_idx}_{cur_name}",
                     use_pytest_benchmark,
+                    check_consistency=check_consistency,
+                    save_input_tensor=save_input_tensor,
                 )
 
 
