@@ -63,7 +63,6 @@ __all__ = [
 
 # NOTE torch is a requirement
 import torch
-import torch.utils.checkpoint
 import torch._higher_order_ops.wrap
 
 import warnings
@@ -5325,7 +5324,6 @@ register_function(torch._C._functorch.unwrap_if_dead, _unwrap_if_dead)
 
 
 @torchsymbol(
-    torch.utils.checkpoint.checkpoint,
     torch.ops.higher_order.tag_activation_checkpoint,
     id="activation_checkpoint",
 )
@@ -5655,6 +5653,33 @@ else:
         utils.check(False, lambda: "torch.distributed is not available")
 
 
+def call_higher_order_function_and_consider_outer_autograd_setting(fn):
+    # In case of higher order function like `autograd_function_apply`,
+    # whether the output should be tagged with `DETACHED_AUTOGRAD_GRAPH`
+    # depends on whether `autograd_function_apply` was called with grad enabled or not.
+    # It shouldn't depend on whether grad was enabled or disabled inside the function (`fwd` in case of `autograd_function_apply`)
+    # called by the higher order operator.
+
+    def remove_detached_tag(proxy):
+        if isinstance(proxy, TensorProxy):
+            # Remote the DETACH_AUTOGRAD_GRAPH tag from the result.
+            # We need to remove name from trace, otherwise replace will return a proxy with new name.
+            proxy.tags.remove(ProxyTag.DETACHED_AUTOGRAD_GRAPH)
+            return proxy
+        return proxy
+
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        is_grad_enabled = get_compile_data().is_grad_enabled
+
+        result, saved_for_backward = fn(*args, **kwargs)
+        if is_grad_enabled:
+            result = tree_map(remove_detached_tag, result)
+        return result, saved_for_backward
+
+    return wrapper
+
+
 # ref: https://github.com/pytorch/pytorch/blob/b99ef1a/torch/_functorch/autograd_function.py#L715-L752
 @torchsymbol(
     torch.ops.higher_order.autograd_function_apply,
@@ -5668,7 +5693,7 @@ def autograd_function_apply(
     args_tensor_mask: Sequence[bool] | None,
     non_differentiable_idx: Sequence[int] | None = None,
 ) -> TensorProxy | tuple[TensorProxy, ...]:
-    result, saved_for_backward = fwd(None, *args)
+    result, saved_for_backward = call_higher_order_function_and_consider_outer_autograd_setting(fwd)(None, *args)
     return result
 
 

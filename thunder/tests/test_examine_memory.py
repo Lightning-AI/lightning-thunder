@@ -5,7 +5,7 @@ import torch
 import thunder
 from thunder.core.pytree import tree_map
 import thunder.torch as ltorch
-from thunder.examine.memory_caculation import get_alloc_memory
+from thunder.examine.memory_calculation import get_alloc_memory
 
 from thunder.tests.framework import requiresCUDA, TorchExecutor
 from thunder.tests.make_tensor import make_tensor
@@ -113,7 +113,7 @@ def test_nanogpt_block():
 
     # Actual memory usage may vary depending on hardware and cuBLAS settings.
     # We are checking the estimated memory against a fixed value for consistency.
-    assert max_mem_fw[0] == 381754368
-    assert sum(max_mem_fw[1].values()) == 375462912
-    assert max_mem_bw[0] == 437292032
-    assert sum(max_mem_bw[1].values()) == 40934400
+    assert max_mem_fw[0] == 262183936
+    assert sum(max_mem_fw[1].values()) == 135306240
+    assert max_mem_bw[0] == 484833280
+    assert sum(max_mem_bw[1].values()) == 169915392
