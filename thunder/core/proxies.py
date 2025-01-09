@@ -393,8 +393,17 @@ class Proxy(VariableInterface, ProxyInterface):
 # Unlike many other proxies, this does not mimic the type of the object it wraps
 # TODO RC1 Rename ._o to ._value for consistency
 class AnyProxy(Proxy):
-    def __init__(self, o: Any, /, *, name: str | None = None, history: None | tuple = None, tags: set | None = None):
-        super().__init__(name=name, history=history, tags=tags)
+    def __init__(
+        self,
+        o: Any,
+        /,
+        *,
+        prefix: str | None = None,
+        name: str | None = None,
+        history: None | tuple = None,
+        tags: set | None = None,
+    ):
+        super().__init__(prefix=prefix, name=name, history=history, tags=tags)
         self._o = o
 
     def __repr__(self) -> str:
