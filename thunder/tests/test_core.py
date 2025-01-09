@@ -3113,3 +3113,15 @@ def test_debug_options():
 
     print(DebugOptions.__dict__)
     assert dill.dumps(dict(DebugOptions.__dict__)) == initial_state
+
+
+def test_proxy_same_name():
+    from thunder.core.proxies import TensorProxy
+    from thunder.core.trace import detached_trace
+    from thunder.core.dtypes import float32
+    from thunder.core.devices import cpu
+
+    with detached_trace():
+        t = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32, requires_grad=True)
+        with pytest.raises(RuntimeError, match="already used"):
+            t2 = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32, requires_grad=True)
