@@ -555,3 +555,32 @@ def test_hf_llama():
     top_level_symbol_names = {bsym.sym.name for bsym in thunder.last_traces(jm)[-1].bound_symbols}
     # changes this to fewer as needed, the goal is to not have too many fusions
     assert len([s for s in top_level_symbol_names if s.startswith("nvFusion")]) == 7
+
+
+@requiresCUDA
+def test_memory_litgpt_llama3():
+    from thunder.tests import litgpt_model
+
+    def forward_backward_peak(m, inp):
+        torch.cuda.reset_peak_memory_stats(device=None)
+        mem_before = torch.cuda.max_memory_allocated()
+        res = m(inp)
+        res.sum().backward()
+        mem_after = torch.cuda.max_memory_allocated()
+        return (mem_after - mem_before) / 2**20
+
+    with torch.device("cuda"):
+        m = litgpt_model.GPT.from_name("llama2-like").bfloat16()
+        inp = torch.ones((1, 2048), dtype=torch.int64)
+
+    # warmup, allocate grads etc.
+    forward_backward_peak(m, inp)
+    forward_backward_peak(m, inp)
+    jm = thunder.jit(m)
+    forward_backward_peak(jm, inp)
+    forward_backward_peak(jm, inp)
+
+    mem_thunder = forward_backward_peak(jm, inp)
+    mem_eager = forward_backward_peak(m, inp)
+
+    assert mem_thunder < mem_eager
