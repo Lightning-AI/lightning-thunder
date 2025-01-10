@@ -367,10 +367,6 @@ def test_quantization():
         assert_close(v, sd2[k])
 
 
-@pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
-    reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
-)
 @thunder.tests.framework.requiresCUDA
 def test_thunderfx_mistral_nemo_small():
     """
@@ -422,10 +418,6 @@ def test_thunderfx_mistral_nemo_small():
 
 
 # disabled "Qwen/Qwen2.5-7B-Instruct" see https://github.com/NVIDIA/Fuser/issues/3682
-@pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
-    reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
-)
 @thunder.tests.framework.requiresCUDA
 @pytest.mark.parametrize("model_id", ["microsoft/Phi-3-mini-128k-instruct"])
 def test_hf_for_nemo(model_id):
