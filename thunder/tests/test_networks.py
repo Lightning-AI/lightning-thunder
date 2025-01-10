@@ -122,8 +122,16 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
     assert _there_is_cudagraph_sym(thunder.last_traces(tom)[-1])
 
 
-@instantiate(dtypes=(thunder.float32,), devicetypes=(thunder.devices.DeviceType.CUDA,))
-@requiresCUDA
+@instantiate(
+    dtypes=(thunder.float32,),
+    devicetypes=(thunder.devices.DeviceType.CUDA,),
+    decorators=(
+        pytest.mark.skipif(
+            version_between(torch.__version__, min_ver="2.7.0dev0", max_ver="2.7.0a99"),
+            reason="CUDA error: misaligned address",
+        ),
+    ),
+)
 def test_nanogpt_complete_cudagraphs_autograd(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
 
@@ -224,12 +232,6 @@ def test_nanogpt_mlp(executor, device, dtype):
 @instantiate(
     dtypes=(thunder.float32,),
     executors=all_test_executors_and_dynamo,
-    decorators=(
-        pytest.mark.skipif(
-            version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
-            reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
-        ),
-    ),
 )
 def test_nanogpt_gelu(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
