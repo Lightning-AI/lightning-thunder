@@ -2409,7 +2409,7 @@ def tril_(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = No
     return prims.copy_(tril(a, diagonal, fill_value=fill_value), a)
 
 
-# NOTE triu is the same as tril except that we modify the inequality to return the upper triangluar
+# NOTE triu is the same as tril except that we modify the inequality to return the upper triangular
 # NOTE matrix instead of the lower triangular matrix.
 @torchsymbol(torch.triu, is_method=True)
 def triu(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = None) -> TensorLike:

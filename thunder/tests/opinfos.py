@@ -2918,13 +2918,13 @@ triu_opinfo = OpInfo(
     sample_input_generator=tril_sample_generator,
     torch_reference=torch.triu,
     test_directives=(
-        # Not all PyTorch versions support complex32 tril
+        # Not all PyTorch versions support complex32 triu
         DecorateInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
             dtypes=(datatypes.complex32,),
         ),
-        # PyTorch 2.0 doesn't support CUDA bfloat16 tril
+        # PyTorch 2.0 doesn't support CUDA bfloat16 triu
         DecorateInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
