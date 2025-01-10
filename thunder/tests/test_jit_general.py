@@ -1268,6 +1268,39 @@ def test_autograd_function_apply():
 
 
 def test_autograd_function_apply_with_no_grad():
+    # This case is using `torch` operations
+    def forward(_, x):
+        saved_for_backward = (x,)
+
+        with torch.no_grad():
+            sin = torch.sin(x)
+        return sin, saved_for_backward
+
+    def backward(_, grad_output, *saved_tensors):
+        return grad_output * 2
+
+    def my_sin(x):
+        res = torch.ops.higher_order.autograd_function_apply(
+            forward,
+            backward,
+            x,
+            args_tensor_mask=[True],
+            non_differentiable_idx=[],
+        )
+        return res
+
+    jitted = thunder.jit(my_sin)
+    x = torch.randn((2, 2), requires_grad=True)
+
+    out = jitted(x)
+    grad = torch.rand_like(out)
+    out.backward(grad)
+
+    # Verify that `backward` was applied.
+    torch.testing.assert_close(x.grad, grad * 2)
+
+    # This is using `thunder` operations
+    # NOTE - This takes a different codepath compared to above.
     def forward(_, x):
         saved_for_backward = (x,)
         thunder.torch._set_grad_enabled_with_warning(False)
