@@ -24,10 +24,6 @@ def test_recipe_basic_bert():
     assert_close(actual, expected)
 
 
-@pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
-    reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
-)
 def test_recipe_basic_bert_dynamo():
     bert = transformers.BertForSequenceClassification(transformers.BertConfig())
     del bert.bert.encoder.layer[1:]
