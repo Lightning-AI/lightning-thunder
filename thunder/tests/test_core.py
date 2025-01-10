@@ -1,5 +1,5 @@
 import operator
-import os
+import tempfile
 import traceback
 from functools import partial, reduce
 from itertools import product
@@ -3141,17 +3141,13 @@ def test_save_trace():
 
     fwd_trace = thunder.last_traces(jfn)[-1]
 
-    trace_filename = "temp_trace.py"
-    try:
-        fwd_trace.save_trace(trace_filename)
+    with tempfile.NamedTemporaryFile("w+") as tmp_file:
+        fwd_trace.save_trace(tmp_file.name)
 
-        with open(trace_filename) as f:
-            trace_contents = f.readlines()
+        trace_contents = tmp_file.readlines()
 
         # Verify we find a few expected things in the
         # saved trace.
         trace_contents = "".join(trace_contents)
         assert ".add" in trace_contents
         assert "@torch.no_grad" in trace_contents
-    finally:
-        os.remove(trace_filename)
