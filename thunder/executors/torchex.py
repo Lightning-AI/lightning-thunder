@@ -1099,6 +1099,7 @@ clamp = _register_torch_operation("clamp")
 where = _register_torch_operation("where")
 masked_fill = _register_torch_operation("masked_fill", module=torch.Tensor)
 tril = _register_torch_operation("tril")
+triu = _register_torch_operation("triu")
 
 
 def _where_prim_checker(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number | TensorProxy) -> bool:
@@ -1133,11 +1134,21 @@ def _tril_transform(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | N
     return tril(a, diagonal)
 
 
+# NOTE PyTorch's triu like tril does not have a fill_value parameter
+def _triu_checker(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = None) -> bool:
+    return fill_value is None
+
+
+def _triu_transform(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = None) -> TensorLike:
+    return triu(a, diagonal)
+
+
 _register_implementation(prims.where, where, checker=_where_prim_checker)
 
 _register_implementation(ltorch.clamp, clamp, checker=_always_executable)
 _register_implementation(ltorch.masked_fill, masked_fill, checker=_masked_fill_checker)
 _register_implementation(ltorch.tril, checker=_tril_checker, execution_transform=_tril_transform)
+_register_implementation(ltorch.triu, checker=_triu_checker, execution_transform=_triu_transform)
 _register_implementation(ltorch.where, where, checker=_always_executable)
 
 

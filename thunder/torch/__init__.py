@@ -2409,6 +2409,29 @@ def tril_(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = No
     return prims.copy_(tril(a, diagonal, fill_value=fill_value), a)
 
 
+# NOTE triu is the same as tril except that we modify the inequality to return the upper triangular
+# NOTE matrix instead of the lower triangular matrix.
+@torchsymbol(torch.triu, is_method=True)
+def triu(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = None) -> TensorLike:
+    utils.check(a.ndim >= 2, lambda: f"triu: a ({a.ndim=}) must have at least two dimensions")
+
+    nrows, ncols = a.shape[-2:]
+    row_numbers = arange(nrows, device=a.device).unsqueeze(-1)
+    col_numbers = arange(ncols, device=a.device).unsqueeze(-2)
+
+    mask = (col_numbers - row_numbers) >= diagonal
+
+    if fill_value is None:
+        fill_value = 0
+
+    return _mask_tensor(a, mask, fill_value)
+
+
+@torchsymbol(torch.Tensor.triu_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def triu_(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = None) -> TensorLike:
+    return prims.copy_(triu(a, diagonal, fill_value=fill_value), a)
+
+
 @torchsymbol(torch.where, is_method=True)
 def where(
     pred: TensorLike,
