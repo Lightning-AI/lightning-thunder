@@ -1,4 +1,5 @@
 import operator
+import os
 import traceback
 from functools import partial, reduce
 from itertools import product
@@ -3125,3 +3126,32 @@ def test_proxy_same_name():
         t = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32, requires_grad=True)
         with pytest.raises(RuntimeError, match="already used"):
             t2 = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32, requires_grad=True)
+
+
+def test_save_trace():
+    def fn(x):
+        return x + 1
+
+    jfn = thunder.jit(fn)
+    jfn(
+        torch.rand(
+            3,
+        )
+    )
+
+    fwd_trace = thunder.last_traces(jfn)[-1]
+
+    trace_filename = "temp_trace.py"
+    try:
+        fwd_trace.save_trace(trace_filename)
+
+        with open(trace_filename) as f:
+            trace_contents = f.readlines()
+
+        # Verify we find a few expected things in the
+        # saved trace.
+        trace_contents = "".join(trace_contents)
+        assert ".add" in trace_contents
+        assert "@torch.no_grad" in trace_contents
+    finally:
+        os.remove(trace_filename)
