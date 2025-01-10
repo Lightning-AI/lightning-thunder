@@ -157,7 +157,8 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
         @property
         def last_traces(self) -> [Trace]:
             """
-            Get the Thunder traces for all subgraphs of a ThunderFX callable.
+            Get the Thunder traces for all the forward subgraphs of a ThunderFX
+            callable.
 
             .. note:: The object must have been invoked before calling this
                       function.
@@ -169,7 +170,20 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
                     if trcs is not None and trcs != []:
                         rv.append(trcs[-1])
                     del trcs
+            return rv
 
+        @property
+        def last_backward_traces(self) -> [Trace]:
+            """
+            Get the Thunder traces for all the backward subgraphs of a
+            ThunderFX callable.
+
+            .. note:: The object must have been invoked before calling this
+                      function.
+            """
+            rv: [Trace] = []
+            for sinfo in self._backend.subgraph_infos:
+                for th_fqn in sinfo.thunder_compiled_fns:
                     trcs_bw = thunder.last_backward_traces(th_fqn)
                     if trcs_bw is not None and trcs_bw != []:
                         rv.append(trcs_bw[-1])

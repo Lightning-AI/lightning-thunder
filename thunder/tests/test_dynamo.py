@@ -986,11 +986,13 @@ def test_thunderfx_last_traces():
     def foo(x):
         return torch.sin(x) + torch.cos(x)
 
-    x = torch.randn((4, 4))
+    x = torch.randn((4, 4), requires_grad=True)
     cfoo = thunderfx(foo)
     cfoo(x)
     assert cfoo.last_traces != []
+    assert cfoo.last_backward_traces != []
 
     # Call it w/o invoking the function first.
     dfoo = thunderfx(foo)
     assert dfoo.last_traces == []
+    assert dfoo.last_backward_traces == []
