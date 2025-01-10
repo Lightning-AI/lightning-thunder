@@ -3220,7 +3220,9 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
 
             proxy_names_to_producers[o.name] = bsym
             all_proxies.add(vo)
-            if ProxyTag.RECOMPUTE_IN_BACKWARD in o.tags and not has_tags(bsym, {prims.OpTags.RANDOM_OP}):
+            if ProxyTag.RECOMPUTE_IN_BACKWARD in o.tags and not has_tags(
+                bsym, {prims.OpTags.RANDOM_OP, prims.OpTags.DONT_RECOMPUTE_IN_BACKWARD}
+            ):
                 all_recomputable_proxies.add(vo)
 
     rematerializable = old_saved_for_bwd & all_recomputable_proxies

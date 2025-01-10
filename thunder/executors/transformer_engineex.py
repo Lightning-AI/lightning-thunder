@@ -438,7 +438,12 @@ def _create_fp8_linear_bound_symbol(
 
     meta_fn = make_te_linear_meta(is_grad_enabled=is_grad_enabled)
     sym = Symbol(
-        name=name, meta=meta_fn, is_prim=True, executor=transformer_engine_ex, _bind_postprocess=bind_postprocess
+        name=name,
+        meta=meta_fn,
+        is_prim=True,
+        executor=transformer_engine_ex,
+        _bind_postprocess=bind_postprocess,
+        tags=(prims.OpTags.DONT_RECOMPUTE_IN_BACKWARD,),
     )
     bsym = sym.bind(a, w, b, output=meta_fn(a, w, b))
 
