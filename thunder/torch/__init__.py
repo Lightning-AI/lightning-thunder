@@ -2410,7 +2410,7 @@ def tril_(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = No
 
 
 # NOTE triu is the same as tril except that we modify the inequality to return the upper triangular
-# NOTE matrix instead of the lower triangular matrix.
+# NOTE matrix instead of the lower triangular matrix.Alternatively, triu is tril applied to a transposed input.
 @torchsymbol(torch.triu, is_method=True)
 def triu(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = None) -> TensorLike:
     utils.check(a.ndim >= 2, lambda: f"triu: a ({a.ndim=}) must have at least two dimensions")
