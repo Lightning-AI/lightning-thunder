@@ -128,7 +128,7 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
     decorators=(
         pytest.mark.skipif(
             version_between(torch.__version__, min_ver="2.7.0dev0", max_ver="2.7.0a99"),
-            reason="CUDA error: misaligned address",
+            reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1629",
         ),
     ),
 )
@@ -367,6 +367,10 @@ def test_quantization():
         assert_close(v, sd2[k])
 
 
+@pytest.mark.skipif(
+    version_between(torch.__version__, min_ver="2.7.0dev0", max_ver="2.7.0a99"),
+    reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1629",
+)
 @thunder.tests.framework.requiresCUDA
 def test_thunderfx_mistral_nemo_small():
     """
