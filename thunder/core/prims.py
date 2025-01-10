@@ -291,6 +291,8 @@ class OpTags(Enum):
     AUTO_REGISTERED = auto()
     # Label for operations representing enter/exit of context managers.
     CTX_MANAGER_ENTER_EXIT_OP = auto()
+    # Label to explicitly disable an operation from recomputing in backward - see function `recompute_saved_for_backward`.
+    DONT_RECOMPUTE_IN_BACKWARD = auto()
 
 
 # TODO RC1 Document this function and describe the parts of a primitive

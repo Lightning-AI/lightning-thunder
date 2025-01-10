@@ -327,7 +327,7 @@ def make_te_linear_meta(is_grad_enabled: bool = False):
         output_shape[-1] = w.shape[0]
         if is_grad_enabled:
             global LINEAR_CALLS_COUNTER
-            ctx_dict = AnyProxy(object(), name=f"ctx_te_{LINEAR_CALLS_COUNTER}")
+            ctx_dict = AnyProxy(object(), prefix=f"ctx_te_{LINEAR_CALLS_COUNTER}")
 
             # It's not critical to model the exact shape and dtype of
             # saved_tensors since they are not used in Thunder's meta functions.
@@ -438,7 +438,12 @@ def _create_fp8_linear_bound_symbol(
 
     meta_fn = make_te_linear_meta(is_grad_enabled=is_grad_enabled)
     sym = Symbol(
-        name=name, meta=meta_fn, is_prim=True, executor=transformer_engine_ex, _bind_postprocess=bind_postprocess
+        name=name,
+        meta=meta_fn,
+        is_prim=True,
+        executor=transformer_engine_ex,
+        _bind_postprocess=bind_postprocess,
+        tags=(prims.OpTags.DONT_RECOMPUTE_IN_BACKWARD,),
     )
     bsym = sym.bind(a, w, b, output=meta_fn(a, w, b))
 
