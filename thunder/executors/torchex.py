@@ -1148,6 +1148,7 @@ _register_implementation(prims.where, where, checker=_where_prim_checker)
 _register_implementation(ltorch.clamp, clamp, checker=_always_executable)
 _register_implementation(ltorch.masked_fill, masked_fill, checker=_masked_fill_checker)
 _register_implementation(ltorch.tril, checker=_tril_checker, execution_transform=_tril_transform)
+_register_implementation(ltorch.triu, checker=_triu_checker, execution_transform=_triu_transform)
 _register_implementation(ltorch.where, where, checker=_always_executable)
 
 
