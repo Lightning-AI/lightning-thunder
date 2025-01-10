@@ -35,11 +35,10 @@ def thunderfx_save_report(
     try:
         compiled = thunderfx(fn, **compile_kwargs) if compile_kwargs is not None else thunderfx(fn)
         compiled(*args, **kwargs)
-        backend = compiled._backend
     except Exception as e:
         print(f"Failed to run the function using ThunderFX with exception: {e}")
         try:
-            backend.save_reproducer_to_folder(folder_path)
+            compiled._backend.save_reproducer_to_folder(folder_path)
         except Exception as repro_e:
             print(f"Failed to save reproducer due to {repro_e}")
             return
@@ -49,7 +48,7 @@ def thunderfx_save_report(
     if not check_benchmark and not check_consistency:
         return
 
-    thunder_graph_names = get_thunder_graph_names(backend.subgraph_infos)
+    thunder_graph_names = get_thunder_graph_names(compiled._backend.subgraph_infos)
     EXECUTOR_NAMES = ("eager", "thunder", "torch_inductor")
 
     report_result: dict[str, list] = {}
