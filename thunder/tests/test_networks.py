@@ -128,7 +128,7 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
     decorators=(
         pytest.mark.skipif(
             version_between(torch.__version__, min_ver="2.7.0dev0", max_ver="2.7.0a99"),
-            reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1629",
+            reason="https://github.com/lightning-ai/lightning-thunder/pull/1629",
         ),
     ),
 )
