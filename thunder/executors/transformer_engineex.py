@@ -327,7 +327,7 @@ def make_te_linear_meta(is_grad_enabled: bool = False):
         output_shape[-1] = w.shape[0]
         if is_grad_enabled:
             global LINEAR_CALLS_COUNTER
-            ctx_dict = AnyProxy(object(), name=f"ctx_te_{LINEAR_CALLS_COUNTER}")
+            ctx_dict = AnyProxy(object(), prefix=f"ctx_te_{LINEAR_CALLS_COUNTER}")
 
             # It's not critical to model the exact shape and dtype of
             # saved_tensors since they are not used in Thunder's meta functions.
