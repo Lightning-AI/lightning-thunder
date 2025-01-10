@@ -122,8 +122,16 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
     assert _there_is_cudagraph_sym(thunder.last_traces(tom)[-1])
 
 
-@instantiate(dtypes=(thunder.float32,), devicetypes=(thunder.devices.DeviceType.CUDA,))
-@requiresCUDA
+@instantiate(
+    dtypes=(thunder.float32,),
+    devicetypes=(thunder.devices.DeviceType.CUDA,),
+    decorators=(
+        pytest.mark.skipif(
+            version_between(torch.__version__, min_ver="2.7.0dev0", max_ver="2.7.0a99"),
+            reason="https://github.com/lightning-ai/lightning-thunder/pull/1629",
+        ),
+    ),
+)
 def test_nanogpt_complete_cudagraphs_autograd(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
 
@@ -224,12 +232,6 @@ def test_nanogpt_mlp(executor, device, dtype):
 @instantiate(
     dtypes=(thunder.float32,),
     executors=all_test_executors_and_dynamo,
-    decorators=(
-        pytest.mark.skipif(
-            version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
-            reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
-        ),
-    ),
 )
 def test_nanogpt_gelu(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
@@ -366,8 +368,8 @@ def test_quantization():
 
 
 @pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
-    reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
+    version_between(torch.__version__, min_ver="2.7.0dev0", max_ver="2.7.0a99"),
+    reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1629",
 )
 @thunder.tests.framework.requiresCUDA
 def test_thunderfx_mistral_nemo_small():
@@ -420,10 +422,6 @@ def test_thunderfx_mistral_nemo_small():
 
 
 # disabled "Qwen/Qwen2.5-7B-Instruct" see https://github.com/NVIDIA/Fuser/issues/3682
-@pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
-    reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
-)
 @thunder.tests.framework.requiresCUDA
 @pytest.mark.parametrize("model_id", ["microsoft/Phi-3-mini-128k-instruct"])
 def test_hf_for_nemo(model_id):
