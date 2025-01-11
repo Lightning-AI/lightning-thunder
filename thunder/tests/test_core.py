@@ -1,4 +1,5 @@
 import operator
+import os
 import tempfile
 import traceback
 from functools import partial, reduce
@@ -3141,10 +3142,12 @@ def test_save_trace():
 
     fwd_trace = thunder.last_traces(jfn)[-1]
 
-    with tempfile.NamedTemporaryFile("w+") as tmp_file:
-        fwd_trace.save_trace(tmp_file.name)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        trace_name = os.path.join(tmp_dir, "tmp_trace.py")
+        fwd_trace.save_trace(trace_name)
 
-        trace_contents = tmp_file.readlines()
+        with open(trace_name) as f:
+            trace_contents = f.readlines()
 
         # Verify we find a few expected things in the
         # saved trace.
