@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from looseversion import LooseVersion
 
+import thunder
 from thunder import dtypes
 from thunder.dynamo import thunderfx
 from thunder.dynamo.utils import CompilerType
@@ -979,3 +980,19 @@ def test_thunderfx():
     assert len(thunder_compiled_fns) == 1
     trc = last_traces(thunder_compiled_fns[-1])[-1]
     assert any(bsym.sym.id == "nvtx_range_push" for bsym in trc.bound_symbols)
+
+
+def test_thunderfx_last_traces():
+    def foo(x):
+        return torch.sin(x) + torch.cos(x)
+
+    x = torch.randn((4, 4), requires_grad=True)
+    cfoo = thunderfx(foo)
+    cfoo(x)
+    assert cfoo.last_traces != []
+    assert cfoo.last_backward_traces != []
+
+    # Call it w/o invoking the function first.
+    dfoo = thunderfx(foo)
+    assert dfoo.last_traces == []
+    assert dfoo.last_backward_traces == []
