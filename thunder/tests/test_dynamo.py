@@ -26,6 +26,7 @@ from thunder.tests.framework import (
     version_between,
 )
 from thunder.tests.make_tensor import make_tensor
+from thunder.dynamo.report import thunderfx_save_report
 
 
 # This will be applied to all tests in this file.
@@ -979,3 +980,19 @@ def test_thunderfx():
     assert len(thunder_compiled_fns) == 1
     trc = last_traces(thunder_compiled_fns[-1])[-1]
     assert any(bsym.sym.id == "nvtx_range_push" for bsym in trc.bound_symbols)
+
+
+@requiresCUDA
+def test_report(tmp_path):
+    def foo(x):
+        y = x.sin()
+        torch._dynamo.graph_break()
+        return y + x.cos()
+
+    x = torch.randn(4, 4, device="cuda", requires_grad=True)
+    thunderfx_save_report(foo, x, folder_path=tmp_path)
+
+    from unittest.mock import patch
+
+    with patch("torch.compile", side_effect=Exception("compilation raises exception")):
+        thunderfx_save_report(foo, x, folder_path=tmp_path, check_consistency=False)
