@@ -697,7 +697,8 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
             break
     assert len(old_saved_for_backward_fw) == len(old_saved_for_backward_bw)
     new_required_for_bakward_fw_to_bw_map = {x.name: y for x, y in zip(old_saved_for_backward_bw, old_saved_for_backward_fw) if x is not None}
-    new_required_for_backward = tuple([new_required_for_bakward_fw_to_bw_map[a.name] for a in new_required_for_backward])
+    new_required_for_backward = tuple(new_required_for_bakward_fw_to_bw_map[a.name] if a.name in new_required_for_bakward_fw_to_bw_map else a for a in new_required_for_backward)
+
     _update_forward_with_new_saved_for_backward(new_fw_trace, new_required_for_backward)
 
     # prims.python_return was updated and now DCE can remove the unused
