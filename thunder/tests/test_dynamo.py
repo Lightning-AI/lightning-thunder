@@ -263,7 +263,10 @@ def test_splitter_autocast_ctx_with_split(executor, device: str, dtype: dtypes.d
     ),
 )
 def test_splitter_autograd_function(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
-    x = torch.ones(2, device=device, dtype=dtype, requires_grad=True)
+    # Workaround for "RuntimeError: Triton Error [CUDA]: an illegal memory access was encountered"
+    # https://github.com/pytorch/pytorch/issues/124565
+    if device != "cpu":
+        torch.empty(1, device="cuda", requires_grad=True).backward()
 
     class Sin(torch.autograd.Function):
         @staticmethod
@@ -280,6 +283,7 @@ def test_splitter_autograd_function(executor, device: str, dtype: dtypes.dtype, 
         y = torch.cos(x) + Sin.apply(x)
         return torch.matmul(x, y)
 
+    x = torch.ones(2, device=device, dtype=dtype, requires_grad=True)
     expected = torch.compile(func, dynamic=dynamic)(x)
 
     cfunc = thunderfx(func, dynamic=dynamic)
