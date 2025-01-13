@@ -1,4 +1,4 @@
-from collections import defaultdict, namedtuple
+from collections import namedtuple
 from collections.abc import Callable, Generator, Iterable, Sequence
 from functools import partial, wraps
 import itertools
@@ -384,7 +384,7 @@ class OpInfo:
         # singularity_fn_producers are expected to produce a singularity_fn based on a given SampleInput.
         # This can be useful in cases when the definition of the op function invovles kwargs of the input.
         self.singularity_fn_producer = (
-            (lambda sample: singularity_fn) if singularity_fn_producer is None else singularity_fn_producer
+            (lambda _: singularity_fn) if singularity_fn_producer is None else singularity_fn_producer
         )
         self.test_torch_compile_executor = test_torch_compile_executor
 
