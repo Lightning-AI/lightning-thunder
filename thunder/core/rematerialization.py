@@ -687,7 +687,7 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
     )
     new_fw_trace.bound_symbols.append(replace(fw_trace.bound_symbols[-1], args=fw_trace.bound_symbols[-1].args))
 
-    # outputs required for backward may have different names between forward and backward. 
+    # outputs required for backward may have different names between forward and backward.
     # Rematerialisation may remove some outs from the forward.
     old_saved_for_backward_fw = (*fw_trace.bound_symbols[-1].args[1][0], *fw_trace.bound_symbols[-1].args[1][1])
     old_saved_for_backward_bw = []
@@ -695,7 +695,11 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
         if bsym.sym.id == PrimIDs.UNPACK_SEQUENCE:
             flattened_args = tree_flatten(bw_trace.args[1])[0]
             proxy_names = {y.name for y in flattened_args if isinstance(y, ProxyInterface)}
-            if all(not isinstance(out, CollectionProxy) and out.name not in proxy_names for out in bsym.flat_outs if out is not None):
+            if all(
+                not isinstance(out, CollectionProxy) and out.name not in proxy_names
+                for out in bsym.flat_outs
+                if out is not None
+            ):
                 old_saved_for_backward_bw += bsym.flat_outs
     assert len(old_saved_for_backward_fw) == len(old_saved_for_backward_bw)
     new_required_for_bakward_fw_to_bw_map = {
