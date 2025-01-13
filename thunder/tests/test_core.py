@@ -333,6 +333,7 @@ def test_optimizer_unpack(executor, device, dtype):
                     params.append(p)
                     grads.append(p.grad)
 
+        @torch.no_grad
         def step(self):
             for group in self.param_groups:
                 params = []
