@@ -12,7 +12,7 @@ import networkx as nx
 from thunder.core import prims, utils
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
 from thunder.core.prims import PrimIDs
-from thunder.core.proxies import TensorProxy, variableify, NumberProxy
+from thunder.core.proxies import TensorProxy, variableify, NumberProxy, CollectionProxy
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import has_tags
 from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
@@ -673,13 +673,6 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
         sorted({x.name: x for x in new_required_for_backward}.values(), key=lambda a: a.name)
     )  # Removes duplicates and sorts by name
 
-    # Now construct the updated backward and forward traces
-    new_bw_trace = from_trace(bw_trace)
-    new_bw_trace.set_provenance(TraceProvenance("Rematerialization"))
-    new_bw_trace.bound_symbols = new_bw_bsyms
-    new_bw_trace.bound_symbols.append(bw_trace.bound_symbols[-1].from_bsym_swap_proxies(swapmap))
-    _update_backward_with_new_saved_for_backward(new_bw_trace, new_required_for_backward)
-
     new_fw_trace = from_trace(fw_trace)
     new_fw_trace.set_provenance(TraceProvenance("Rematerialization"))
     new_fw_trace.bound_symbols = list(
@@ -690,12 +683,22 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
     # outputs required for backward may have different names between forward and backward. 
     # Rematerialisation may remove some outs from the forward.
     old_saved_for_backward_fw = fw_trace.bound_symbols[-1].args[1][0]
-    old_saved_for_backward_bw = tree_flatten(bw_trace.args[0])[0]
+    old_saved_for_backward_bw = []
+    for bsym in utils.find_producer_symbols(bw_trace, new_required_for_backward, bw_trace.args):
+        if bsym.sym.id == PrimIDs.UNPACK_SEQUENCE and not isinstance(bsym.flat_outs[0], CollectionProxy):
+            old_saved_for_backward_bw = bsym.flat_outs
+            break
     assert len(old_saved_for_backward_fw) == len(old_saved_for_backward_bw)
-    new_required_for_bakward_fw_to_bw_map = {x.name: y for x, y in zip(old_saved_for_backward_bw, old_saved_for_backward_fw)}
+    new_required_for_bakward_fw_to_bw_map = {x.name: y for x, y in zip(old_saved_for_backward_bw, old_saved_for_backward_fw) if x is not None}
     new_required_for_backward = tuple([new_required_for_bakward_fw_to_bw_map[a.name] for a in new_required_for_backward])
-
     _update_forward_with_new_saved_for_backward(new_fw_trace, new_required_for_backward)
+
+    # Now construct the updated backward and forward traces
+    new_bw_trace = from_trace(bw_trace)
+    new_bw_trace.set_provenance(TraceProvenance("Rematerialization"))
+    new_bw_trace.bound_symbols = new_bw_bsyms
+    new_bw_trace.bound_symbols.append(bw_trace.bound_symbols[-1].from_bsym_swap_proxies(swapmap))
+    _update_backward_with_new_saved_for_backward(new_bw_trace, new_required_for_backward)
 
     # prims.python_return was updated and now DCE can remove the unused
     # variables and symbols
