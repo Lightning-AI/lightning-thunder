@@ -12,7 +12,7 @@ import networkx as nx
 from thunder.core import prims, utils
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
 from thunder.core.prims import PrimIDs
-from thunder.core.proxies import TensorProxy, variableify, NumberProxy
+from thunder.core.proxies import TensorProxy, variableify, NumberProxy, CollectionProxy
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import has_tags
 from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
@@ -686,6 +686,30 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
         bsym for bsym in joint_extrace.bound_symbols[: len(fw_trace.bound_symbols) - 1] if bsym.sym.id != PrimIDs.DEL
     )
     new_fw_trace.bound_symbols.append(replace(fw_trace.bound_symbols[-1], args=fw_trace.bound_symbols[-1].args))
+
+    # outputs required for backward may have different names between forward and backward.
+    # Rematerialisation may remove some outs from the forward.
+    old_saved_for_backward_fw = (*fw_trace.bound_symbols[-1].args[1][0], *fw_trace.bound_symbols[-1].args[1][1])
+    old_saved_for_backward_bw = []
+    for bsym in bw_trace.bound_symbols:
+        if bsym.sym.id == PrimIDs.UNPACK_SEQUENCE:
+            flattened_args = tree_flatten(bw_trace.args[1])[0]
+            proxy_names = {y.name for y in flattened_args if isinstance(y, ProxyInterface)}
+            if all(
+                not isinstance(out, CollectionProxy) and out.name not in proxy_names
+                for out in bsym.flat_outs
+                if out is not None
+            ):
+                old_saved_for_backward_bw += bsym.flat_outs
+    assert len(old_saved_for_backward_fw) == len(old_saved_for_backward_bw)
+    new_required_for_bakward_fw_to_bw_map = {
+        x.name: y for x, y in zip(old_saved_for_backward_bw, old_saved_for_backward_fw) if x is not None
+    }
+    new_required_for_backward = tuple(
+        new_required_for_bakward_fw_to_bw_map[a.name] if a.name in new_required_for_bakward_fw_to_bw_map else a
+        for a in new_required_for_backward
+    )
+
     _update_forward_with_new_saved_for_backward(new_fw_trace, new_required_for_backward)
 
     # prims.python_return was updated and now DCE can remove the unused
