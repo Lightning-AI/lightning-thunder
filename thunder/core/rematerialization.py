@@ -673,6 +673,13 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
         sorted({x.name: x for x in new_required_for_backward}.values(), key=lambda a: a.name)
     )  # Removes duplicates and sorts by name
 
+    # Now construct the updated backward and forward traces
+    new_bw_trace = from_trace(bw_trace)
+    new_bw_trace.set_provenance(TraceProvenance("Rematerialization"))
+    new_bw_trace.bound_symbols = new_bw_bsyms
+    new_bw_trace.bound_symbols.append(bw_trace.bound_symbols[-1].from_bsym_swap_proxies(swapmap))
+    _update_backward_with_new_saved_for_backward(new_bw_trace, new_required_for_backward)
+
     new_fw_trace = from_trace(fw_trace)
     new_fw_trace.set_provenance(TraceProvenance("Rematerialization"))
     new_fw_trace.bound_symbols = list(
@@ -692,13 +699,6 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
     new_required_for_bakward_fw_to_bw_map = {x.name: y for x, y in zip(old_saved_for_backward_bw, old_saved_for_backward_fw) if x is not None}
     new_required_for_backward = tuple([new_required_for_bakward_fw_to_bw_map[a.name] for a in new_required_for_backward])
     _update_forward_with_new_saved_for_backward(new_fw_trace, new_required_for_backward)
-
-    # Now construct the updated backward and forward traces
-    new_bw_trace = from_trace(bw_trace)
-    new_bw_trace.set_provenance(TraceProvenance("Rematerialization"))
-    new_bw_trace.bound_symbols = new_bw_bsyms
-    new_bw_trace.bound_symbols.append(bw_trace.bound_symbols[-1].from_bsym_swap_proxies(swapmap))
-    _update_backward_with_new_saved_for_backward(new_bw_trace, new_required_for_backward)
 
     # prims.python_return was updated and now DCE can remove the unused
     # variables and symbols
