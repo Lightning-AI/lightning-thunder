@@ -263,7 +263,10 @@ def test_splitter_autocast_ctx_with_split(executor, device: str, dtype: dtypes.d
     ),
 )
 def test_splitter_autograd_function(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
-    x = torch.ones(2, device=device, dtype=dtype, requires_grad=True)
+    # Workaround for "RuntimeError: Triton Error [CUDA]: an illegal memory access was encountered"
+    # https://github.com/pytorch/pytorch/issues/124565
+    if device != "cpu":
+        torch.empty(1, device="cuda", requires_grad=True).backward()
 
     class Sin(torch.autograd.Function):
         @staticmethod
@@ -274,21 +277,29 @@ def test_splitter_autograd_function(executor, device: str, dtype: dtypes.dtype, 
         @staticmethod
         def backward(ctx, g):
             (x,) = ctx.saved_tensors
-            return g * torch.cos(x)
+            return g * torch.cos(x) * 100
 
     def func(x):
         y = torch.cos(x) + Sin.apply(x)
         return torch.matmul(x, y)
 
+    x = torch.ones(2, device=device, dtype=dtype, requires_grad=True)
     expected = torch.compile(func, dynamic=dynamic)(x)
 
     cfunc = thunderfx(func, dynamic=dynamic)
     actual = cfunc(x)
 
     backend = cfunc._backend
-    targets = (node.target for node in backend.subgraph_infos[0].split_graph_module.graph.nodes)
-    assert any(target.startswith("thunder_") for target in targets)
-    assert any(target.startswith("inductor_") for target in targets)
+    assert len(backend.subgraph_infos) == 1  # no graph break in dynamo
+    subgraph_info = backend.subgraph_infos[0]
+    assert len(subgraph_info.split_reasons) == 0  # no split
+    assert len(subgraph_info.thunder_compiled_fns) == 1
+    jfunc = subgraph_info.thunder_compiled_fns[0]
+    trc = last_traces(jfunc)[0]
+    assert any(
+        isinstance(bsym.sym.id, str) and bsym.sym.id.startswith("higher_order_autograd_function_apply")
+        for bsym in trc.bound_symbols
+    )
 
     # Verify forward pass
     torch.testing.assert_close(actual, expected)
