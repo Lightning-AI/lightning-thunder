@@ -276,6 +276,19 @@ class JitCtx:
                 p = p_new
             else:
                 p_orig = p
+
+            # We assume that a Parameter's underlying storage won't be changed.
+            # We tag Parameter's proxy with `STATIC_MEMORY_LOCATION` tag so that
+            # other transforms (eg. CUDAGraph) can use this information.
+            # We tag this here (rather than below in unpack_parameter_or_buffer_or_submodule below) because
+            # thunderfx does not properly see the module, but does see that we are dealing with a parameter.
+            if isinstance(uvalue, torch.nn.Parameter):
+                # NOTE - Update `p_orig` as in Distributed scenario
+                #        it is the proxy for the Parameter on device.
+                #        In `jit(ddp(model))` or `jit(fsdp(model))` scenario,
+                #        proxy `p` will be the proxy for synced parameter.
+                p_orig.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
+
             if p is not uvalue:
                 value.register_proxy(p)
             # TODO: other caching modes
@@ -1530,7 +1543,9 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             name = ".".join(name)
             if typ == "_parameters":
                 bsym = prims.unpack_parameter.bind(root_module, name, output=output)
-                output.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
+                assert (
+                    ProxyTag.STATIC_MEMORY_LOCATION in output.tags
+                ), "Parameter was not tagged with STATIC_MEMORY_LOCATION"
             elif typ == "_buffers":
                 bsym = prims.unpack_buffer.bind(root_module, name, output=output)
                 output.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
