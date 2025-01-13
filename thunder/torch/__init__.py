@@ -2409,6 +2409,29 @@ def tril_(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = No
     return prims.copy_(tril(a, diagonal, fill_value=fill_value), a)
 
 
+# NOTE triu is the same as tril except that we modify the inequality to return the upper triangular
+# NOTE matrix instead of the lower triangular matrix.
+@torchsymbol(torch.triu, is_method=True)
+def triu(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = None) -> TensorLike:
+    utils.check(a.ndim >= 2, lambda: f"triu: a ({a.ndim=}) must have at least two dimensions")
+
+    nrows, ncols = a.shape[-2:]
+    row_numbers = arange(nrows, device=a.device).unsqueeze(-1)
+    col_numbers = arange(ncols, device=a.device).unsqueeze(-2)
+
+    mask = (col_numbers - row_numbers) >= diagonal
+
+    if fill_value is None:
+        fill_value = 0
+
+    return _mask_tensor(a, mask, fill_value)
+
+
+@torchsymbol(torch.Tensor.triu_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def triu_(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = None) -> TensorLike:
+    return prims.copy_(triu(a, diagonal, fill_value=fill_value), a)
+
+
 @torchsymbol(torch.where, is_method=True)
 def where(
     pred: TensorLike,
@@ -5654,6 +5677,7 @@ else:
 
 
 def call_higher_order_function_and_consider_outer_autograd_setting(fn):
+    # NOTE: `autograd_function_apply` and `no_grad` interaction
     # In case of higher order function like `autograd_function_apply`,
     # whether the output should be tagged with `DETACHED_AUTOGRAD_GRAPH`
     # depends on whether `autograd_function_apply` was called with grad enabled or not.
@@ -5662,9 +5686,13 @@ def call_higher_order_function_and_consider_outer_autograd_setting(fn):
 
     def remove_detached_tag(proxy):
         if isinstance(proxy, TensorProxy):
-            # Remote the DETACH_AUTOGRAD_GRAPH tag from the result.
+            # Remove the DETACH_AUTOGRAD_GRAPH tag from the result.
             # We need to remove name from trace, otherwise replace will return a proxy with new name.
-            proxy.tags.remove(ProxyTag.DETACHED_AUTOGRAD_GRAPH)
+            #
+            # Reason for if below : Not all output TensorProxy may have ProxyTag.DETACH_AUTOGRAD_GRAPH
+            # (eg. when one of the input is saved for backward and returned from forward).
+            if ProxyTag.DETACHED_AUTOGRAD_GRAPH in proxy.tags:
+                proxy.tags.remove(ProxyTag.DETACHED_AUTOGRAD_GRAPH)
             return proxy
         return proxy
 
@@ -5672,10 +5700,10 @@ def call_higher_order_function_and_consider_outer_autograd_setting(fn):
     def wrapper(*args, **kwargs):
         is_grad_enabled = get_compile_data().is_grad_enabled
 
-        result, saved_for_backward = fn(*args, **kwargs)
+        result = fn(*args, **kwargs)
         if is_grad_enabled:
             result = tree_map(remove_detached_tag, result)
-        return result, saved_for_backward
+        return result
 
     return wrapper
 
