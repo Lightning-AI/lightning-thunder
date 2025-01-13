@@ -692,11 +692,19 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
     old_saved_for_backward_fw = (*fw_trace.bound_symbols[-1].args[1][0], *fw_trace.bound_symbols[-1].args[1][1])
     old_saved_for_backward_bw = []
     for bsym in bw_trace.bound_symbols:
-        if bsym.sym.id == PrimIDs.UNPACK_SEQUENCE and all(not isinstance(out, CollectionProxy) and out.name not in (y.name for y in tree_flatten(bw_trace.args[1])[0] if isinstance(y, ProxyInterface)) for out in bsym.flat_outs):
-            old_saved_for_backward_bw += bsym.flat_outs
+        if bsym.sym.id == PrimIDs.UNPACK_SEQUENCE:
+            flattened_args = tree_flatten(bw_trace.args[1])[0]
+            proxy_names = {y.name for y in flattened_args if isinstance(y, ProxyInterface)}
+            if all(not isinstance(out, CollectionProxy) and out.name not in proxy_names for out in bsym.flat_outs):
+                old_saved_for_backward_bw += bsym.flat_outs
     assert len(old_saved_for_backward_fw) == len(old_saved_for_backward_bw)
-    new_required_for_bakward_fw_to_bw_map = {x.name: y for x, y in zip(old_saved_for_backward_bw, old_saved_for_backward_fw) if x is not None}
-    new_required_for_backward = tuple(new_required_for_bakward_fw_to_bw_map[a.name] if a.name in new_required_for_bakward_fw_to_bw_map else a for a in new_required_for_backward)
+    new_required_for_bakward_fw_to_bw_map = {
+        x.name: y for x, y in zip(old_saved_for_backward_bw, old_saved_for_backward_fw) if x is not None
+    }
+    new_required_for_backward = tuple(
+        new_required_for_bakward_fw_to_bw_map[a.name] if a.name in new_required_for_bakward_fw_to_bw_map else a
+        for a in new_required_for_backward
+    )
 
     _update_forward_with_new_saved_for_backward(new_fw_trace, new_required_for_backward)
 
