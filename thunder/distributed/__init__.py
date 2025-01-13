@@ -260,8 +260,7 @@ def ddp(
             tdist.init_process_group(backend="nccl")
 
             model = MyModel().to(LOCAL_RANK)
-            ddp_model = dist.ddp(model)
-            compiled = thunder.jit(ddp_model)
+            compiled = dist.ddp(thunder.jit(model))
             optimizer = torch.optim.AdamW(compiled.parameters())
             losses = []
             loss_all_reduce_workers = []
@@ -294,73 +293,19 @@ def ddp(
     )
     from thunder.core.module import ThunderModule
 
-    if isinstance(model, ThunderModule):
-        from thunder.distributed.transforms.ddp_v2 import DDPTransform
-        from thunder.core.transforms import add_transform
+    assert isinstance(model, ThunderModule), "Thunder DDP only works on ThunderModules"
+    from thunder.distributed.transforms.ddp_v2 import DDPTransform
+    from thunder.core.transforms import add_transform
 
-        process_group = copy_default_process_group()
-        utils.check(process_group is not None, lambda: "The default process group is None")
-        # will insert syncs for parameters (and gradient syncs in the backward pass, this is handled by thunder)
-        # usually, other transforms will remove the forward syncs inserted by this transform.
-        transform_from_trace_to_ddp_trace = DDPTransform(
-            process_group=process_group, bucket_size_in_mb=bucket_size_in_mb, broadcast_from=broadcast_from
-        )
-        model_new = add_transform(model, transform=transform_from_trace_to_ddp_trace)
-        return model_new
-
-    pg = copy_default_process_group()
-    utils.check(pg is not None, lambda: "The default process group is None")
-    model.use_ddp = True
-    model.process_group_for_ddp = pg
-    model.bucket_size_in_mb = bucket_size_in_mb
-
-    # Infers device information from model
-    # TODO Verify parameters are not partially initialized
-    # TODO Handle buffers
-    named_params = model.named_parameters()
-    _, first_param = next(named_params)
-    device = first_param.device
-    devicetype = device.type
-    deviceindex = device.index
-    for name, param in named_params:
-        utils.check(
-            param.device.type == devicetype,
-            lambda: (
-                "Trying to ddp a model with parameters on devices with different device types, "
-                f"including {devicetype} and {param.device.type} for {name!r}"
-            ),
-        )
-        utils.check(
-            deviceindex == param.device.index,
-            lambda: (
-                "Trying to ddp a model with parameters on multiple devices, including devices "
-                f"{deviceindex} and {param.device.index} for {name!r}, but currently only models with all their "
-                "parameters on one device are supported"
-            ),
-        )
-
-    # Note [DistributedDataParallel and distparallel_type]
-    # If model was wrapped with thunder.distributed.ddp it would have a
-    # .use_ddp attribute set to True and all parameters would be already
-    # broadcasted to all other processes. So that our tracing is aware of
-    # this we need to mark the distparallel_type of model's parameters as
-    # thunder.proxies.DistParallelType.REPLICATED
-    for p in model.parameters():
-        p.distparallel_type = DistParallelType.REPLICATED
-
-    if broadcast_from is None:
-        return model
-
-    # Starts broadcasts
-    # TODO Make these broadcast asyncs
-    # TODO Perform up to two broadcasts at a time
-    # See issue "Update ddp to use async broadcasts"
-    # TODO "Bucket" small tensors together before broadcasting
-    with torch.no_grad():
-        for param in model.parameters():
-            tdist.broadcast(param, src=broadcast_from, group=pg, async_op=False)
-
-    return model
+    process_group = copy_default_process_group()
+    utils.check(process_group is not None, lambda: "The default process group is None")
+    # will insert syncs for parameters (and gradient syncs in the backward pass, this is handled by thunder)
+    # usually, other transforms will remove the forward syncs inserted by this transform.
+    transform_from_trace_to_ddp_trace = DDPTransform(
+        process_group=process_group, bucket_size_in_mb=bucket_size_in_mb, broadcast_from=broadcast_from
+    )
+    model_new = add_transform(model, transform=transform_from_trace_to_ddp_trace)
+    return model_new
 
 
 class FSDPType(Enum):
@@ -473,55 +418,28 @@ def fsdp(
         lambda: "fsdp requires torch distributed to be available (but it's not)",
     )
 
-    if isinstance(model, ThunderModule):
-        from thunder.core.transforms import add_transform
-        from thunder.distributed.transforms.fsdp_v2 import FSDPTransform
-        from thunder.transforms import MaterializationTransform
+    assert isinstance(model, ThunderModule), "only ThunderModules support the FSDP Transform"
+    from thunder.core.transforms import add_transform
+    from thunder.distributed.transforms.fsdp_v2 import FSDPTransform
+    from thunder.transforms import MaterializationTransform
 
-        if device is None:
-            local_rank = int(os.environ["LOCAL_RANK"])
-            device = torch.device("cuda", local_rank)
-        return add_transform(
-            model,
-            transform=[
-                FSDPTransform(
-                    device=device,
-                    broadcast_from=broadcast_from,
-                    sharding_strategy=sharding_strategy,
-                    bucketing_strategy=bucketing_strategy,
-                    release_original_parameters=True,
-                    move_state_dict_to_cpu=False if move_state_dict_to_cpu is None else move_state_dict_to_cpu,
-                ),
-                MaterializationTransform(device, init=MaterializationTransform.init_from_original_module_init()),
-            ],
-        )
-
-    if move_state_dict_to_cpu is not None:
-        import warnings
-
-        warnings.warn(
-            "`move_state_dict_to_cpu` is only effective when `model` is `ThunderModule`, i.e., `thunder.jit(model)`"
-        )
-    process_group = copy_default_process_group()
-    utils.check(process_group is not None, lambda: "The default process group is None")
-    model.use_fsdp = True
-    model.process_group_for_ddp = process_group
-    model.sharding_strategy = sharding_strategy
-    model.bucketing_strategy = bucketing_strategy
-
-    # Shard the parameters
-    _shard_params(model, process_group, device, broadcast_from, allow_padding_for_fsdp=True)
-
-    # See Note [DistributedDataParallel and distparallel_type]
-    # If model was wrapped with thunder.distributed.fsdp it would have a
-    # .use_fsdp attribute set to True and all parameters would be already
-    # sharded across all other processes. So that our tracing is aware of
-    # this we need to mark the distparallel_type of model's parameters as
-    # thunder.proxies.DistParallelType.FULLY_SHARDED
-    for p in model.parameters():
-        p.distparallel_type = DistParallelType.FULLY_SHARDED
-
-    return model
+    if device is None:
+        local_rank = int(os.environ["LOCAL_RANK"])
+        device = torch.device("cuda", local_rank)
+    return add_transform(
+        model,
+        transform=[
+            FSDPTransform(
+                device=device,
+                broadcast_from=broadcast_from,
+                sharding_strategy=sharding_strategy,
+                bucketing_strategy=bucketing_strategy,
+                release_original_parameters=True,
+                move_state_dict_to_cpu=False if move_state_dict_to_cpu is None else move_state_dict_to_cpu,
+            ),
+            MaterializationTransform(device, init=MaterializationTransform.init_from_original_module_init()),
+        ],
+    )
 
 
 @torch.no_grad()

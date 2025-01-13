@@ -113,9 +113,10 @@ class DDPTest(DistributedParallelTestCase):
         device = torch.device("cuda", self.rank)
         m = ToyModel().to(device)
         cm = thunder.jit(
-            ddp(m, bucket_size_in_mb=bucket_size_in_mb),
+            m,
             executors=executors_map[executor].executors_list(),
         )
+        cm = ddp(cm, bucket_size_in_mb=bucket_size_in_mb)
         x = torch.ones((2, 12)).to(device)
         cm(x).mean().backward()
 
@@ -156,12 +157,12 @@ class DDPTest(DistributedParallelTestCase):
 
         def get_model_and_optimizer(device):
             m = ToyModel().to(device)
-            ddp_m = ddp(m, bucket_size_in_mb=bucket_size_in_mb)
-            jitted_ddp_m = thunder.jit(
-                ddp_m,
+            jitted_m = thunder.jit(
+                m,
                 cache_mode=CACHE_OPTIONS.CONSTANT_VALUES,
                 executors=executors_map[executor].executors_list(),
             )
+            jitted_ddp_m = ddp(jitted_m, bucket_size_in_mb=bucket_size_in_mb)
             optimizer = torch.optim.SGD(jitted_ddp_m.parameters(), lr=1e-3)
             return jitted_ddp_m, optimizer
 
@@ -264,16 +265,8 @@ class DDPTest(DistributedParallelTestCase):
             assert allreduced_grads == 1
 
         with device:
-            jit_ddp_model = Model()
             ddp_jit_model = Model()
             x = torch.ones(4, 16)
-
-        # Check `jit(ddp(model))` works
-        jit_ddp_model.fc1.weight = jit_ddp_model.fc2.weight
-
-        jit_ddp_model = thunder.jit(thunder.distributed.ddp(jit_ddp_model), executors=["torch"])
-
-        _test_model_output_and_gradients(jit_ddp_model, x)
 
         # Check `ddp(jit(model))` works
         ddp_jit_model.fc1.weight = ddp_jit_model.fc2.weight
