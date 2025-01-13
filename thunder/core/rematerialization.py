@@ -686,6 +686,15 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
         bsym for bsym in joint_extrace.bound_symbols[: len(fw_trace.bound_symbols) - 1] if bsym.sym.id != PrimIDs.DEL
     )
     new_fw_trace.bound_symbols.append(replace(fw_trace.bound_symbols[-1], args=fw_trace.bound_symbols[-1].args))
+
+    # outputs required for backward may have different names between forward and backward. 
+    # Rematerialisation may remove some outs from the forward.
+    old_saved_for_backward_fw = fw_trace.bound_symbols[-1].args[1][0]
+    old_saved_for_backward_bw = tree_flatten(bw_trace.args[0])[0]
+    assert len(old_saved_for_backward_fw) == len(old_saved_for_backward_bw)
+    new_required_for_bakward_fw_to_bw_map = {x.name: y for x, y in zip(old_saved_for_backward_bw, old_saved_for_backward_fw)}
+    new_required_for_backward = tuple([new_required_for_bakward_fw_to_bw_map[a.name] for a in new_required_for_backward])
+
     _update_forward_with_new_saved_for_backward(new_fw_trace, new_required_for_backward)
 
     # prims.python_return was updated and now DCE can remove the unused
