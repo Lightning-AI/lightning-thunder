@@ -294,6 +294,10 @@ def del_last_used(trace: TraceCtx, *, clear_mutable_collections=False) -> TraceC
     elapsed_time_ns = end_time_ns - start_time_ns
     elapsed_time_millis = elapsed_time_ns // 1000000
 
-    del_trace.set_provenance(TraceProvenance(f"Delete Last Used (took {elapsed_time_millis} milliseconds)"))
+    del_trace.set_provenance(
+        TraceProvenance(
+            f"{trace.get_provenance().pss} followed by Delete Last Used (took {elapsed_time_millis} milliseconds)"
+        )
+    )
 
     return del_trace
