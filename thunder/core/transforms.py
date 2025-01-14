@@ -3168,7 +3168,7 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
     return ForwardBackwardTraces(forward_trace, backward_trace)
 
 
-def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace, do_it=False) -> tuple[Trace, Trace]:
+def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Trace, Trace]:
     """Generates the pair of traces with rematerializaion of the saved-for-backward tensors.
     Args:
         fwd_trace (Trace): forward trace where to get the saved for backward from.
@@ -3252,35 +3252,14 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace, do_it=False
     # args will be added from unpack_trivial
     have_in_backward = saved_tensors | saved_nontensors
 
-    # outputs required for backward may have different names between forward and backward.
-    # Rematerialisation may remove some outs from the forward.
-    old_saved_for_backward_fw = (
-        *fwd_trace.bound_symbols[-1].args[1][0],
-        *fwd_trace.bound_symbols[-1].args[1][1]
-    )
-    old_saved_for_backward_bw = []
-    for bsym in bwd_trace.bound_symbols:
-        if bsym.sym.id == prims.PrimIDs.UNPACK_SEQUENCE:
-            flattened_args = tree_flatten(bwd_trace.args[1])[0]
-            proxy_names = {y.name for y in flattened_args if isinstance(y, Proxy)}
-            if all(
-                not isinstance(out, CollectionProxy) and out.name not in proxy_names
-                for out in bsym.flat_outs if out is not None
-            ):
-                old_saved_for_backward_bw += bsym.flat_outs
-    assert len(old_saved_for_backward_fw) == len(old_saved_for_backward_bw)
-    new_required_for_bakward_fw_to_bw_map = {
-        x.name: y for x, y in zip(old_saved_for_backward_fw, old_saved_for_backward_bw)
-        if x is not None
-    }
-    new_required_for_bakward_fw_to_bw_map_mirror = {
-        y.name: x for x, y in zip(old_saved_for_backward_fw, old_saved_for_backward_bw)
-        if x is not None
-    }
+    from thunder.core.rematerialization import match_fw_and_bw_saved_for_bw_proxies
+
+    new_required_for_backward_fw_to_bw_map, \
+    new_required_for_backward_bw_to_fw_map = match_fw_and_bw_saved_for_bw_proxies(fwd_trace, bwd_trace)
     all_recomputable_proxies = all_recomputable_proxies.union(
         OrderedSet(
-            variableify(new_required_for_bakward_fw_to_bw_map[unvariableify(a).name])
-            if unvariableify(a).name in new_required_for_bakward_fw_to_bw_map else a
+            variableify(new_required_for_backward_fw_to_bw_map[unvariableify(a).name])
+            if unvariableify(a).name in new_required_for_backward_fw_to_bw_map else a
             for a in all_recomputable_proxies
         )
     )
@@ -3297,7 +3276,7 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace, do_it=False
                 saved_nontensors.add(vp)
             return
         if p.name not in proxy_names_to_producers:
-            producer_bsym = proxy_names_to_producers[new_required_for_bakward_fw_to_bw_map_mirror[p.name].name]
+            producer_bsym = proxy_names_to_producers[new_required_for_backward_bw_to_fw_map[p.name].name]
         else:
             producer_bsym = proxy_names_to_producers[p.name]
         for p in producer_bsym.flat_proxy_args:
