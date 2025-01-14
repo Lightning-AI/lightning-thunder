@@ -63,7 +63,6 @@ __all__ = [
 
 # NOTE torch is a requirement
 import torch
-import torch.utils.checkpoint
 import torch._higher_order_ops.wrap
 
 import warnings
@@ -2408,6 +2407,29 @@ def tril(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = Non
 @torchsymbol(torch.Tensor.tril_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def tril_(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = None) -> TensorLike:
     return prims.copy_(tril(a, diagonal, fill_value=fill_value), a)
+
+
+# NOTE triu is the same as tril except that we modify the inequality to return the upper triangular
+# NOTE matrix instead of the lower triangular matrix.
+@torchsymbol(torch.triu, is_method=True)
+def triu(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = None) -> TensorLike:
+    utils.check(a.ndim >= 2, lambda: f"triu: a ({a.ndim=}) must have at least two dimensions")
+
+    nrows, ncols = a.shape[-2:]
+    row_numbers = arange(nrows, device=a.device).unsqueeze(-1)
+    col_numbers = arange(ncols, device=a.device).unsqueeze(-2)
+
+    mask = (col_numbers - row_numbers) >= diagonal
+
+    if fill_value is None:
+        fill_value = 0
+
+    return _mask_tensor(a, mask, fill_value)
+
+
+@torchsymbol(torch.Tensor.triu_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
+def triu_(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = None) -> TensorLike:
+    return prims.copy_(triu(a, diagonal, fill_value=fill_value), a)
 
 
 @torchsymbol(torch.where, is_method=True)
@@ -5325,7 +5347,6 @@ register_function(torch._C._functorch.unwrap_if_dead, _unwrap_if_dead)
 
 
 @torchsymbol(
-    torch.utils.checkpoint.checkpoint,
     torch.ops.higher_order.tag_activation_checkpoint,
     id="activation_checkpoint",
 )
@@ -5655,6 +5676,38 @@ else:
         utils.check(False, lambda: "torch.distributed is not available")
 
 
+def call_higher_order_function_and_consider_outer_autograd_setting(fn):
+    # NOTE: `autograd_function_apply` and `no_grad` interaction
+    # In case of higher order function like `autograd_function_apply`,
+    # whether the output should be tagged with `DETACHED_AUTOGRAD_GRAPH`
+    # depends on whether `autograd_function_apply` was called with grad enabled or not.
+    # It shouldn't depend on whether grad was enabled or disabled inside the function (`fwd` in case of `autograd_function_apply`)
+    # called by the higher order operator.
+
+    def remove_detached_tag(proxy):
+        if isinstance(proxy, TensorProxy):
+            # Remove the DETACH_AUTOGRAD_GRAPH tag from the result.
+            # We need to remove name from trace, otherwise replace will return a proxy with new name.
+            #
+            # Reason for if below : Not all output TensorProxy may have ProxyTag.DETACH_AUTOGRAD_GRAPH
+            # (eg. when one of the input is saved for backward and returned from forward).
+            if ProxyTag.DETACHED_AUTOGRAD_GRAPH in proxy.tags:
+                proxy.tags.remove(ProxyTag.DETACHED_AUTOGRAD_GRAPH)
+            return proxy
+        return proxy
+
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        is_grad_enabled = get_compile_data().is_grad_enabled
+
+        result = fn(*args, **kwargs)
+        if is_grad_enabled:
+            result = tree_map(remove_detached_tag, result)
+        return result
+
+    return wrapper
+
+
 # ref: https://github.com/pytorch/pytorch/blob/b99ef1a/torch/_functorch/autograd_function.py#L715-L752
 @torchsymbol(
     torch.ops.higher_order.autograd_function_apply,
@@ -5668,7 +5721,7 @@ def autograd_function_apply(
     args_tensor_mask: Sequence[bool] | None,
     non_differentiable_idx: Sequence[int] | None = None,
 ) -> TensorProxy | tuple[TensorProxy, ...]:
-    result, saved_for_backward = fwd(None, *args)
+    result, saved_for_backward = call_higher_order_function_and_consider_outer_autograd_setting(fwd)(None, *args)
     return result
 
 

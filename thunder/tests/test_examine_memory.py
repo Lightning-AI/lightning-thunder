@@ -113,7 +113,7 @@ def test_nanogpt_block():
 
     # Actual memory usage may vary depending on hardware and cuBLAS settings.
     # We are checking the estimated memory against a fixed value for consistency.
-    assert max_mem_fw[0] == 381754368
-    assert sum(max_mem_fw[1].values()) == 375462912
-    assert max_mem_bw[0] == 437292032
+    assert max_mem_fw[0] == 262183936
+    assert sum(max_mem_fw[1].values()) == 135306240
+    assert max_mem_bw[0] == 375516160
     assert sum(max_mem_bw[1].values()) == 40934400

@@ -122,8 +122,16 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
     assert _there_is_cudagraph_sym(thunder.last_traces(tom)[-1])
 
 
-@instantiate(dtypes=(thunder.float32,), devicetypes=(thunder.devices.DeviceType.CUDA,))
-@requiresCUDA
+@instantiate(
+    dtypes=(thunder.float32,),
+    devicetypes=(thunder.devices.DeviceType.CUDA,),
+    decorators=(
+        pytest.mark.skipif(
+            version_between(torch.__version__, min_ver="2.7.0dev0", max_ver="2.7.0a99"),
+            reason="https://github.com/lightning-ai/lightning-thunder/pull/1629",
+        ),
+    ),
+)
 def test_nanogpt_complete_cudagraphs_autograd(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
 
@@ -224,12 +232,6 @@ def test_nanogpt_mlp(executor, device, dtype):
 @instantiate(
     dtypes=(thunder.float32,),
     executors=all_test_executors_and_dynamo,
-    decorators=(
-        pytest.mark.skipif(
-            version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
-            reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
-        ),
-    ),
 )
 def test_nanogpt_gelu(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
@@ -366,8 +368,8 @@ def test_quantization():
 
 
 @pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
-    reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
+    version_between(torch.__version__, min_ver="2.7.0dev0", max_ver="2.7.0a99"),
+    reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1629",
 )
 @thunder.tests.framework.requiresCUDA
 def test_thunderfx_mistral_nemo_small():
@@ -419,12 +421,9 @@ def test_thunderfx_mistral_nemo_small():
     assert mdl._backend.subgraph_infos, "Should have at least 1 subgraph"
 
 
-@pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
-    reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
-)
+# disabled "Qwen/Qwen2.5-7B-Instruct" see https://github.com/NVIDIA/Fuser/issues/3682
 @thunder.tests.framework.requiresCUDA
-@pytest.mark.parametrize("model_id", ["Qwen/Qwen2.5-7B-Instruct", "microsoft/Phi-3-mini-128k-instruct"])
+@pytest.mark.parametrize("model_id", ["microsoft/Phi-3-mini-128k-instruct"])
 def test_hf_for_nemo(model_id):
     from thunder.dynamo import thunderfx
     from transformers import AutoConfig, AutoModelForCausalLM
@@ -553,4 +552,33 @@ def test_hf_llama():
 
     top_level_symbol_names = {bsym.sym.name for bsym in thunder.last_traces(jm)[-1].bound_symbols}
     # changes this to fewer as needed, the goal is to not have too many fusions
-    assert len([s for s in top_level_symbol_names if s.startswith("nvFusion")]) == 6
+    assert len([s for s in top_level_symbol_names if s.startswith("nvFusion")]) == 7
+
+
+@requiresCUDA
+def test_memory_litgpt_llama3():
+    from thunder.tests import litgpt_model
+
+    def forward_backward_peak(m, inp):
+        torch.cuda.reset_peak_memory_stats(device=None)
+        mem_before = torch.cuda.max_memory_allocated()
+        res = m(inp)
+        res.sum().backward()
+        mem_after = torch.cuda.max_memory_allocated()
+        return (mem_after - mem_before) / 2**20
+
+    with torch.device("cuda"):
+        m = litgpt_model.GPT.from_name("llama2-like").bfloat16()
+        inp = torch.ones((1, 2048), dtype=torch.int64)
+
+    # warmup, allocate grads etc.
+    forward_backward_peak(m, inp)
+    forward_backward_peak(m, inp)
+    jm = thunder.jit(m)
+    forward_backward_peak(jm, inp)
+    forward_backward_peak(jm, inp)
+
+    mem_thunder = forward_backward_peak(jm, inp)
+    mem_eager = forward_backward_peak(m, inp)
+
+    assert mem_thunder < mem_eager

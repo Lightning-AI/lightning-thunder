@@ -63,7 +63,6 @@ from thunder.core.proxies import (
     StringProxy,
     TensorProxy,
     FutureTensorProxy,
-    make_proxy_name,
     Variable,
     variableify,
     unvariableify,
@@ -254,6 +253,7 @@ class JitCtx:
             name_postfix = _infer_name_postfix_from_provenance(value.provenance)
             if name_postfix:
                 name = f"t{name_postfix}"
+                self.computation_trace.names.discard(name)
             else:
                 name = None
 
@@ -828,7 +828,10 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
     with tracectx(trace_of_forward):
         prims.python_return(*(sequencify(output)))
 
+    # See NOTE: `autograd_function_apply` and `no_grad` interaction for details about
+    # `thunder.torch.call_higher_order_function_and_consider_outer_autograd_setting`
     @wraps(aug_fwd_trace.python_callable())
+    @thunder.torch.call_higher_order_function_and_consider_outer_autograd_setting
     def forward(*args, **kwargs):
         return interpret_trace(trace_of_forward, *args, **kwargs)
 
@@ -912,7 +915,11 @@ def _general_jit_torch_finfo_lookaside(dtype: thunder.dtypes.dtype):
 def _general_jit_torch_checkpoint_lookaside(
     function: Callable,
     *args,
-    **kwargs: Any,
+    context_fn: None | Callable[..., Any] = None,
+    debug: None | bool = None,
+    determinism_check: None | str = None,
+    preserve_rng_state: None | bool = None,
+    use_reentrant: bool = False,
 ):
     """
     This function does preprocessing of the `function` argument before
@@ -930,17 +937,48 @@ def _general_jit_torch_checkpoint_lookaside(
         The result of calling `thunder.torch.checkpoint` with the preprocessed
         `function` and its arguments.
     """
-    from thunder.torch import checkpoint
 
-    # It should be possible to call the general_thunder_jit here to handle the
-    # conversion from torch to thunder but it doesn't work now
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/1126
-    # TODO: Convert the function to a Thunder function
-    def thunder_function(*args, **kwargs):
-        return unwrap(function)(*args, **kwargs)
+    if unwrap(use_reentrant):
+        return do_raise(
+            "torch.checkpoint: use_reentrant=True is not supported in Thunder",
+        )
+    # NOTE: Thunder currently ignores the context_fn, debug, determinism_check, preserve_rng_state arguments
+    # Let's raise a warning if any of these arguments are passed
+    if unwrap(context_fn) is not None:
+        warnings.warn("torch.checkpoint: context_fn is not supported in Thunder and will be ignored")
+    if unwrap(debug) is not None:
+        warnings.warn("torch.checkpoint: debug is not supported in Thunder and will be ignored")
+    if unwrap(determinism_check) is not None:
+        warnings.warn("torch.checkpoint: determinism_check is not supported in Thunder and will be ignored")
+    if unwrap(preserve_rng_state) is not None:
+        warnings.warn("torch.checkpoint: preserve_rng_state is not supported in Thunder and will be ignored")
 
-    wrapped_thunder_function = wrap_const(thunder_function)
-    return interpreter_needs_wrap(checkpoint)(wrapped_thunder_function, *args, **kwargs)
+    jit_ctx: JitCtx = get_jit_ctx()
+    jit_ctx.computation_trace.push_scope([])
+
+    input_output_proxy_names = set()
+
+    def add_input_output_proxy_name(p):
+        if isinstance(p, Proxy):
+            input_output_proxy_names.add(p.name)
+
+    tree_map(add_input_output_proxy_name, [unwrap(a) for a in args])
+
+    res = _interpret_call(function, *args)
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return res
+
+    tree_map(add_input_output_proxy_name, unwrap(res))
+
+    new_bsyms = jit_ctx.computation_trace.pop_scope()
+    jit_ctx.computation_trace.bound_symbols.extend(new_bsyms)
+
+    for bsym in new_bsyms:
+        for o in bsym.flat_proxy_outs:
+            if o.name not in input_output_proxy_names:
+                o.tags.add(ProxyTag.RECOMPUTE_IN_BACKWARD)
+
+    return res
 
 
 # Adds proxy methods
@@ -1468,7 +1506,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
                 obj = orig_modules.get(id(obj), obj)
 
             if new_output:
-                output = Proxy("obj")
+                output = Proxy(prefix="obj")
             else:
                 output = p
             param_ordering[id(output)] = (output, param_ordering[id(orig_obj)][1] + [math.inf, "." + str(name)])
@@ -1486,7 +1524,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             typ, name, root_module_provenance = get_parameter_or_buffer_or_submodule_name_and_root(provenance)
             root_module = from_provenance(root_module_provenance, new_output=True)
             if new_output:
-                output = Proxy("m")  # name? collectify?
+                output = Proxy(prefix="m")  # name? collectify?
             else:
                 output = p
 
@@ -1532,7 +1570,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             inputs = [from_provenance(i, new_output=True) for i in provenance.inputs]
             obj, idx = inputs
             if new_output:
-                output = Proxy("subscr")  # name? collectify?
+                output = Proxy(prefix="subscr")  # name? collectify?
             else:
                 output = p
             if isinstance(idx, (int, str, Proxy)):
@@ -1604,7 +1642,7 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             if provenance.ext_flag & EXT_FLAG_IS_MODULE:
                 assert prologue_trace.bound_symbols[-1].output is res
                 if prologue_trace.bound_symbols[-1].sym != prims.unpack_submodule:
-                    orig_module = Proxy("module")
+                    orig_module = Proxy(prefix="module")
                     prologue_trace.bound_symbols[-1].output = orig_module
                     bsym = prims.unpack_thunder_module.bind(orig_module, output=res)
                     orig_modules[id(res)] = orig_module

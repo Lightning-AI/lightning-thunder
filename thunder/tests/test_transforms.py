@@ -381,7 +381,7 @@ def test_saved_for_backward_recomputation():
     fwd_trace = None
 
     for trace in thunder.last_traces(jmodel):
-        if str(trace.get_provenance()) == "# Constructed by Augmented forward pass":
+        if thunder.core.trace.TraceTag.AUGMENTED_FORWARD in trace.tags:
             fwd_trace = trace
             break
 
@@ -433,6 +433,7 @@ def test_saved_for_backward_recomputation():
             filter(lambda x: isinstance(x.output, TensorProxy), new_bwd.bound_symbols[6:]),
         )
     )
+
     # check that all the fwd are recomputed
     for rematerializable in all_rematerializable:
         assert rematerializable in bwd_bsym_out
@@ -686,3 +687,166 @@ def test_disable_params_check_thunderfx():
     # the corresponding checks from prologue.
     # This will fails when we detect buffers and remove their checks from prologue.
     assert len(check_bsyms) == 2  # 1 check for input and 1 for buffer (and 0 for parameters)
+
+
+def test_buffer_dtype_casting():
+    import torch.nn as nn
+    import itertools
+
+    from typing import Any, Optional, Tuple, Union, List
+
+    class CastBuffers(thunder.core.transform_common.Transform):
+        def __init__(self):
+            self.cast_states = {}
+
+        def transform_module(self, model: thunder.ThunderModule):
+            self.thunder_module = model
+            for n, b in model._model.named_buffers():
+                qb = b.to(torch.bfloat16)
+                self.cast_states[n] = {
+                    "dtype": b.dtype,
+                    "shape": tuple(b.shape),
+                    "qb.dtype": qb.dtype,
+                    "qb.shape": tuple(qb.shape),
+                }
+                model._overrides_buffers[n] = qb
+
+        def transform_traces_pre_prologue(self, prologue_trace, computation_trace, epilogue_trace, **kwargs):
+            tm = self.thunder_module
+            from thunder.core.trace import tracectx
+
+            checks = thunder.transforms.utils.get_checks(prologue_trace)
+
+            prologue_proxy_map = {
+                get_param_bsym.output.name: dict(
+                    shape=self.cast_states[model_weight_name]["qb.shape"],
+                    dtype=thunder.dtypes.to_dtype(self.cast_states[model_weight_name]["qb.dtype"]),
+                )
+                for model_weight_name, (check_bsym, get_param_bsym) in checks.items()
+                if model_weight_name in self.cast_states
+            }
+
+            # here we switch the prologue_trace to a copy with new metadata
+            prologue_trace = thunder.transforms.quantization.trace_with_replaced_proxy_metadata(
+                prologue_trace, prologue_proxy_map
+            )
+
+            checks = thunder.transforms.utils.get_checks(prologue_trace)
+            for n, qs in self.cast_states.items():
+                check, get_param = checks[n]
+                # check has args: tensor, shape, device, dtype, requires_grad
+                proxy, _, device, _, requires_grad = check.args
+                check.args = (
+                    proxy,
+                    qs["qb.shape"],
+                    device,
+                    qs["qb.dtype"],
+                    False,
+                )
+
+            computation_proxy_map = {
+                csym.name: dict(
+                    shape=psym.shape,
+                    dtype=psym.dtype,
+                )
+                for psym, csym in zip(prologue_trace.bound_symbols[-1].args[0][0], computation_trace.args)
+                if psym.shape != csym.shape or psym.dtype != csym.dtype
+            }
+
+            new_computation_trace = thunder.transforms.quantization.trace_with_replaced_proxy_metadata(
+                computation_trace, computation_proxy_map
+            )
+
+            producers, consumers = thunder.core.utils.producers_and_consumers(new_computation_trace)
+
+            bound_symbols = new_computation_trace.bound_symbols
+            new_computation_trace.bound_symbols = []
+
+            new_computation_trace._siginfo.args = [(a.name, None) for a in new_computation_trace.args]
+
+            computation_proxy_map = {}
+            new_bound_symbols = []
+            for bsym in bound_symbols:
+                if bsym.sym == thunder.torch.to and producers[bsym.args[0]].sym == thunder.core.prims.unpack_trivial:
+                    inp = bsym.args[0]
+                    args = (inp, inp.dtype, *bsym.args[2:])
+                    computation_proxy_map[bsym.output.name] = dict(shape=inp.shape, dtype=inp.dtype)
+                    assert (
+                        len(bsym.subsymbols) == 1 and bsym.subsymbols[0].sym == thunder.core.prims.convert_element_type
+                    )
+                    subsymbols = [bsym.subsymbols[0].from_bsym(args=(inp, inp.dtype))]
+                    new_bound_symbols.append(bsym.from_bsym(args=args, subsymbols=subsymbols))
+                else:
+                    new_bound_symbols.append(bsym.from_bsym())
+
+            new_computation_trace.bound_symbols = new_bound_symbols
+
+            new_computation_trace = thunder.transforms.quantization.trace_with_replaced_proxy_metadata(
+                new_computation_trace, computation_proxy_map
+            )
+
+            new_computation_trace.set_provenance(thunder.core.trace.TraceProvenance("Dtype Convert"))
+            return prologue_trace, new_computation_trace, epilogue_trace
+
+    class cast(nn.Module):
+        def __init__(
+            self,
+            k_shape: tuple[int, int, int, int],
+            v_shape: tuple[int, int, int, int],
+            device: torch.device | None = None,
+            dtype: torch.dtype | None = None,
+        ) -> None:
+            super().__init__()
+            self.register_buffer("k", torch.zeros(k_shape, device=device, dtype=dtype), persistent=False)
+            self.register_buffer("v", torch.zeros(v_shape, device=device, dtype=dtype), persistent=False)
+
+        def forward(self, k: torch.Tensor, v: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+            # move the buffer to the activation dtype for when AMP is used
+            self.k = self.k.to(k.dtype)
+            self.v = self.v.to(v.dtype)
+            # update the cache
+            return self.k, self.v
+
+    # BUG: issue: 1637
+    class ParentModule(nn.Module):
+        def __init__(
+            self,
+            k_shape: tuple[int, int, int, int],
+            v_shape: tuple[int, int, int, int],
+            device: torch.device | None = None,
+            dtype: torch.dtype | None = None,
+        ):
+            super().__init__()
+            self.cast_module = cast(k_shape, v_shape, device=device, dtype=dtype)
+
+        def forward(self, k: torch.Tensor, v: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+            return self.cast_module(k, v)
+
+    with torch.device("cpu"):
+        k_shape = (2, 3, 4, 5)
+        v_shape = (2, 3, 4, 5)
+        device = torch.device("cpu")
+        dtype = torch.float32
+        model = ParentModule(k_shape, v_shape, device=device, dtype=dtype).eval().requires_grad_(False)
+
+    k = torch.randn(2, 3, 4, 5, device=device, dtype=torch.half)
+    v = torch.randn(2, 3, 4, 5, device=device, dtype=torch.half)
+    cast_jit = thunder.jit(
+        model,
+        transforms=[
+            CastBuffers(),
+        ],
+    )
+    output_k, output_v = cast_jit(k, v)
+
+    def check_dtypes(bsym):
+        for a in itertools.chain(bsym.flat_args, bsym.flat_outs):
+            if isinstance(a, thunder.TensorProxy):
+                assert a.dtype == thunder.dtypes.bfloat16
+        for sbsym in bsym.subsymbols:
+            check_dtypes(sbsym)
+
+    for tr in thunder.last_traces(cast_jit):
+        if str(tr.get_provenance()) == "# Constructed by Dtype Convert":
+            for bsym in tr.bound_symbols:
+                check_dtypes(bsym)

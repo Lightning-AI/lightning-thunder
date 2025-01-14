@@ -65,7 +65,7 @@ def test_basic(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None)
 
     # out should have grad_fn and its name should be ThunderFunctionBackward
     assert out.grad_fn is not None
-    assert out.grad_fn.name() == "ThunderFunctionBackward"
+    assert out.grad_fn.name() == "ThunderOutputFunctionBackward"
 
     # We record the GraphModules that was compiled by ThunderCompiler
     backend = compiled._backend
@@ -317,7 +317,7 @@ def test_force_skip_lazy_graph_module(executor, device: str, dtype: dtypes.dtype
 
         # out should have grad_fn and its name should be ThunderFunctionBackward
         assert out.grad_fn is not None
-        assert out.grad_fn.name() == "ThunderFunctionBackward"
+        assert out.grad_fn.name() == "ThunderOutputFunctionBackward"
 
         backend = cfunc._backend
         # We record the GraphModules that was compiled by ThunderCompiler
@@ -445,10 +445,6 @@ def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
             IS_WINDOWS,
             reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
         ),
-        pytest.mark.skipif(
-            version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
-            reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
-        ),
     ),
 )
 @requiresCUDA
@@ -509,9 +505,41 @@ def test_no_grad_ctx_manager(executor, device: str, dtype: dtypes.dtype):
     assert len(backend.subgraph_infos) == 1
 
     for subgraph_info in backend.subgraph_infos:
-        assert len(subgraph_info.split_reasons) > 1  # Verify there were splits in the subgraph.
+        assert len(subgraph_info.split_reasons) == 0  # Verify there were splits in the subgraph.
         assert isinstance(subgraph_info.original_graph_module, torch.fx.GraphModule)
-        assert any("has been manually disabled" in split_reason.info for split_reason in subgraph_info.split_reasons)
+
+    torch.testing.assert_close(actual, expected)
+
+    g = torch.randn_like(actual)
+    actual_grad = torch.autograd.grad(actual, x, g)
+    expected_grad = torch.autograd.grad(expected, x, g)
+    torch.testing.assert_close(actual_grad, expected_grad)
+
+
+@instantiate(dtypes=NOTHING, executors=[DynamoThunderExecutor])
+def test_no_grad_enabled_grad_nested_ctx_manager(executor, device: str, dtype: dtypes.dtype):
+
+    def func(x):
+        with torch.no_grad():
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                y = x @ x
+
+            with torch.enable_grad():
+                z = x.sin()
+        return y + x + z
+
+    x = torch.randn(3, 3, device=device, dtype=dtype, requires_grad=True)
+    cfunc = thunderfx(func)
+    actual = cfunc(x)
+    expected = torch.compile(func, backend="eager")(x)
+
+    backend = cfunc._backend
+    # We record the GraphModules that was compiled by ThunderCompiler
+    assert len(backend.subgraph_infos) == 1
+
+    for subgraph_info in backend.subgraph_infos:
+        assert len(subgraph_info.split_reasons) == 0  # Verify there were splits in the subgraph.
+        assert isinstance(subgraph_info.original_graph_module, torch.fx.GraphModule)
 
     torch.testing.assert_close(actual, expected)
 

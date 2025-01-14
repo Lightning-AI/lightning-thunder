@@ -6,7 +6,7 @@ from thunder.core.pytree import tree_map, tree_flatten_with_dataclass
 from thunder.core.trace import VariableInterface, from_trace, tracectx
 from thunder.core.baseutils import ProxyInterface, TensorProxyInterface
 from thunder.core.utils import safe_map_flat, sequencify
-from thunder.core.proxies import variableify
+from thunder.core.proxies import variableify, ProxyTag
 from thunder.core.transform_common import VJPDual
 
 
@@ -183,6 +183,12 @@ def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, *
 
             for new_bsym in new_bsyms:
                 # TODO: what to do with bsym header? Maybe have a combined from_bsym_swap_proxies and from_bsym?
+                for o in new_bsym.flat_proxy_outs:
+                    if variableify(o) not in swap_map:
+                        # when we decompose to compute the forward/backward, we mark intermediates as to be recomputed in the backward.
+                        # Typically our decompositions are for things that will then be fused together.
+                        # We could refine this heuristic to exclude "expensive" operations.
+                        o.tags.add(ProxyTag.RECOMPUTE_IN_BACKWARD)
                 new_trace.bound_symbols.append(
                     new_bsym.from_bsym_swap_proxies(swap_map).from_bsym(
                         source_filename=bsym.source_filename, source_positions=bsym.source_positions
@@ -265,11 +271,11 @@ class TraceSubstitutionProcessor:
                     old = old.replace(shape=new._shape)
 
             if isinstance(new, VJPDual):
-                self.swap_map[variableify(new.primal)] = old
+                self.swap_map[variableify(old.primal)] = new
                 new.primal = old
             else:
                 assert isinstance(new, ProxyInterface), (old, new)
-                self.swap_map[variableify(new)] = old
+                self.swap_map[variableify(old)] = new
 
     def do_swap(self, v):
         if isinstance(v, VJPDual):
@@ -314,6 +320,7 @@ class TraceSubstitutionProcessor:
     def __call__(self):
         with tracectx(self.new_trace):
             self.unprocessed_bsyms = self.trace.bound_symbols[:]
+            self.swap_map = {}
 
             while self.unprocessed_bsyms:
                 bsym = self.unprocessed_bsyms.pop(0)
@@ -321,9 +328,6 @@ class TraceSubstitutionProcessor:
                 if self.have_processed_args and bsym.sym.id in trace_interpreter_skip_list:
                     self.new_trace.bound_symbols.append(bsym.from_bsym())
                     continue
-
-                args = tree_map(self.read, bsym.args)
-                kwargs = tree_map(self.read, bsym.kwargs)
 
                 # this should be prettier
                 self.replacement_result = self.NULL
@@ -335,7 +339,6 @@ class TraceSubstitutionProcessor:
                     assert self.replacement_result is not self.NULL, "Need to call set_result if producing new bsyms"
 
                 if self.replacement_result is not self.NULL:
-                    self.swap_map = {}
 
                     # TODO: if inputs are returned, the old outputs should be mapped on the new ones (= the inputs) instead of the other way round
                     if not self.new_bsyms:
