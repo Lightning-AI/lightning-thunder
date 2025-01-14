@@ -1837,13 +1837,12 @@ def process_recorded_modifications(ctx, epilogue_trace):
                 if inst == PseudoInst.STORE_SUBSCR:
                     (value,) = args
 
-                    assert isinstance(value.value, (Proxy, int, tuple))  ## todo: better criterion
-
                     if (
                         modified_object.provenance.inst is PseudoInst.LOAD_ATTR
                         and modified_object.provenance.inputs[1].inst is PseudoInst.CONSTANT
                         and modified_object.provenance.inputs[1].value == "_buffers"
                     ):
+                        assert isinstance(value.value, (Proxy, int, tuple, NoneType))  ## todo: better criterion
                         typ, name, root_module_provenance = get_parameter_or_buffer_or_submodule_name_and_root(
                             modified_object.provenance.inputs[0]
                         )
@@ -1867,6 +1866,7 @@ def process_recorded_modifications(ctx, epilogue_trace):
                         name = k
                         setattr_obj_provenance = modified_object.provenance.inputs[0]
                         if hasattr(setattr_obj_provenance, "proxy"):
+                            assert isinstance(value.value, (Proxy, int, tuple, NoneType))  ## todo: better criterion
                             setattr_obj_proxy = setattr_obj_provenance.proxy
                             with tracectx(epilogue_trace):
                                 bsym = prims.pack_attr.bind(setattr_obj_proxy, name, value.value, output=None)
