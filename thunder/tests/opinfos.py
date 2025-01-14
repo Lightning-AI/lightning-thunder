@@ -25,7 +25,7 @@ from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
 import thunder.executors as executors
 from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator, IS_WINDOWS
-from thunder.tests.make_tensor import make_tensor
+from thunder.tests.make_tensor import make_tensor, make_tensor_like
 import thunder.tests.bf16
 import thunder.torch as ltorch
 
@@ -58,16 +58,6 @@ def prims_wrapper(prim):
 
 def round_remainder(x, y):
     return x - torch.round(x / y) * y
-
-
-def push_away_from_singularities(x, singularity_fn, eps):
-    """This function takes a tensor and moves individual values away
-    from singularities in `eps` increments, until they are further than
-    `eps` away from them. The `singularity_fn`  returns the (signed)
-    distance from `x` to the nearest singularity."""
-    x_dist = singularity_fn(x)
-    x_ = torch.where((x_dist >= 0) & (x_dist < eps), x + eps, x)
-    return torch.where((x_dist <= 0) & (x_dist > -eps), x_ - eps, x_)
 
 
 # Randomly select a fraction of the elements in a tensor and set them to specified value
@@ -208,10 +198,24 @@ class SampleInput:
         args, kwargs = tree_map(_to, self.args), tree_map(_to, self.kwargs)
         return SampleInput(*args, **kwargs)
 
-    def remove_singularities(self, singularity_fn, eps):
+    def remove_singularities(self, op, eps):
+
+        singularity_fn = op.singularity_fn_producer(self)
+        if singularity_fn is None:
+            return self
+
+        def _push_away_from_singularities(x, dist_fn, eps):
+            """This function takes a tensor and moves individual values away
+            from singularities in `eps` increments, until they are further than
+            `eps` away from them. The `dist_fn` returns the (signed)
+            distance from `x` to the nearest singularity."""
+            x_dist = dist_fn(x)
+            x_ = torch.where((x_dist >= 0) & (x_dist < eps), x + eps, x)
+            return torch.where((x_dist < 0) & (x_dist > -eps), x_ - eps, x_)
+
         def _remove_singularities(x):
             if isinstance(x, torch.Tensor) and datatypes.is_float_dtype(datatypes.to_dtype(x)):
-                return push_away_from_singularities(x, singularity_fn, eps)
+                return _push_away_from_singularities(x, singularity_fn, eps)
 
             return x
 
@@ -2195,11 +2199,20 @@ lt_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(lt_opinfo)
 
+
+def min_max_singularity_fn_producer(sample):
+    a, b = sample.args
+    if a.shape == b.shape or b.shape == ():
+        return lambda x: x - b if x is a else make_tensor_like(x, low=1)
+    return lambda x: x - a if x is b else make_tensor_like(x, low=1)
+
+
 maximum_opinfo = OpInfo(
     clang.maximum,
     sample_input_generator=partial(elementwise_binary_generator, no_rhs_numbers=True),
     torch_reference=torch.maximum,
     supports_grad=True,
+    singularity_fn_producer=min_max_singularity_fn_producer,
 )
 elementwise_binary_ops.append(maximum_opinfo)
 
@@ -2207,6 +2220,7 @@ minimum_opinfo = OpInfo(
     clang.minimum,
     sample_input_generator=partial(elementwise_binary_generator, no_rhs_numbers=True),
     torch_reference=torch.minimum,
+    singularity_fn_producer=min_max_singularity_fn_producer,
 )
 elementwise_binary_ops.append(minimum_opinfo)
 
