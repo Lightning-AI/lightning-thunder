@@ -3252,6 +3252,22 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
     # args will be added from unpack_trivial
     have_in_backward = saved_tensors | saved_nontensors
 
+    from thunder.core.rematerialization import match_fw_and_bw_saved_for_bw_proxies
+
+    new_required_for_backward_fw_to_bw_map, new_required_for_backward_bw_to_fw_map = (
+        match_fw_and_bw_saved_for_bw_proxies(fwd_trace, bwd_trace)
+    )
+    all_recomputable_proxies = all_recomputable_proxies.union(
+        OrderedSet(
+            (
+                variableify(new_required_for_backward_fw_to_bw_map[unvariableify(a).name])
+                if unvariableify(a).name in new_required_for_backward_fw_to_bw_map
+                else a
+            )
+            for a in all_recomputable_proxies
+        )
+    )
+
     def compute_proxy_from_producer(p):
         vp = variableify(p)
         if vp in have_in_backward:
@@ -3263,7 +3279,10 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
             else:
                 saved_nontensors.add(vp)
             return
-        producer_bsym = proxy_names_to_producers[p.name]
+        if p.name not in proxy_names_to_producers:
+            producer_bsym = proxy_names_to_producers[new_required_for_backward_bw_to_fw_map[p.name].name]
+        else:
+            producer_bsym = proxy_names_to_producers[p.name]
         for p in producer_bsym.flat_proxy_args:
             compute_proxy_from_producer(p)
         for o in producer_bsym.flat_proxy_outs:
