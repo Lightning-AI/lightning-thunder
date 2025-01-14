@@ -128,6 +128,7 @@ class PrimIDs(Enum):
     UNPACK_THUNDER_MODULE = auto()
     CONSTRUCT_TUPLE = auto()
     PACK_BUFFER = auto()
+    PACK_ATTR = auto()
     PACK_SETITEM = auto()
     SHAPE = auto()
     # TODO: UNPACK_SET
@@ -1202,6 +1203,48 @@ pack_buffer = make_prim(
     meta=pack_buffer_meta,
     python_printer=pack_buffer_printer,
     python_impl=pack_buffer_impl,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
+# NOTE PACK_ATTR is intended only to be bound to directly, and not called
+def pack_attr_meta(o: Any, key: Any, value: Any) -> Any:
+    raise NotImplementedError
+
+
+def pack_attr_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(arg_printables) == 3,
+        lambda: f"Expected three arguments for pack_attr but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for pack_attr but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    # Converts printables to strings
+    obj, key, value = arg_printables
+    obj_str = codeutils.prettyprint(obj)
+    key_str = key
+    value_str = codeutils.prettyprint(value)
+    return f"{obj_str}.{key_str} = {value_str}"
+
+
+def pack_attr_impl(o: Any, key: Any, v: Any) -> None:
+    o[key] = v
+    return None
+
+
+pack_attr = make_prim(
+    PrimIDs.PACK_ATTR,
+    "pack_attr",
+    meta=pack_attr_meta,
+    python_printer=pack_attr_printer,
+    python_impl=pack_attr_impl,
     tags=(OpTags.DONT_DCE,),
 )
 
