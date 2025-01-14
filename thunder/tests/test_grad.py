@@ -409,8 +409,7 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
         # for non-differentiable arguments like dtypes so that the test will
         # execute properly.
         sample = sample.thunder()  # converts torch.dtype to thunder.dtype
-
-        sample = sample.remove_singularities(op, eps)  # !!! revisited this change
+        sample = sample.remove_singularities(op, eps)
 
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
 
