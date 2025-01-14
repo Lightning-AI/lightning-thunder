@@ -553,7 +553,7 @@ def _raw_object_setattr(obj: Any, name: str, value: Any):
 @register_general_jit_lookaside(object.__setattr__)
 def _general_jit_object_setattr_lookaside(obj: Any, name: str, value: Any):
     uobj = unwrap(obj)
-    if is_created_during_tracing(obj.provenance) or type(uobj) in _TORCH_DYNAMIC_TYPES:
+    if is_created_during_tracing(obj.provenance) or type(uobj) in _TORCH_DYNAMIC_TYPES or not hasattr(uobj, "__dict__"):
         return _raw_object_setattr(obj, name, value)
 
     if should_register_for_prologue(obj.provenance) and (obj.original_value is obj.nothing):
