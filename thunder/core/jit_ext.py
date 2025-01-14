@@ -270,7 +270,7 @@ class JitCtx:
                 #        it is the proxy for the Parameter on device.
                 #        In `jit(ddp(model))` or `jit(fsdp(model))` scenario,
                 #        proxy `p` will be the proxy for synced parameter.
-                p_orig.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
+                p.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
 
             if p is not uvalue:
                 value.register_proxy(p)
