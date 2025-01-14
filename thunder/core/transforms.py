@@ -3254,12 +3254,16 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
 
     from thunder.core.rematerialization import match_fw_and_bw_saved_for_bw_proxies
 
-    new_required_for_backward_fw_to_bw_map, \
-    new_required_for_backward_bw_to_fw_map = match_fw_and_bw_saved_for_bw_proxies(fwd_trace, bwd_trace)
+    new_required_for_backward_fw_to_bw_map, new_required_for_backward_bw_to_fw_map = (
+        match_fw_and_bw_saved_for_bw_proxies(fwd_trace, bwd_trace)
+    )
     all_recomputable_proxies = all_recomputable_proxies.union(
         OrderedSet(
-            variableify(new_required_for_backward_fw_to_bw_map[unvariableify(a).name])
-            if unvariableify(a).name in new_required_for_backward_fw_to_bw_map else a
+            (
+                variableify(new_required_for_backward_fw_to_bw_map[unvariableify(a).name])
+                if unvariableify(a).name in new_required_for_backward_fw_to_bw_map
+                else a
+            )
             for a in all_recomputable_proxies
         )
     )
