@@ -16,6 +16,7 @@ from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.torch.langctx import torchctx
 from thunder.core.utils import check
+import thunder
 
 if TYPE_CHECKING:
     from thunder.core.symbol import Symbol
@@ -827,3 +828,35 @@ with record_peak_allocated_memory(benchmark):
 
         if not use_pytest_benchmark:
             print(f"\ntest_{graph_name}()", file=f)
+
+def last_traces(c: Callable) -> str:
+    """
+    Get the Thunder traces for all subgraphs of a ThunderFX callable.
+
+    .. code-block:: python
+
+        def fn(x):
+            return torch.sin(x)
+        func = thunder.dynamo.thunderfx(fn)
+        func(torch.randn((42)))
+        print(thunder.dynamo.last_traces(func))
+
+    .. note:: The Callable `c` must be created by `thunder.dynamo.thunderfx`.
+
+    .. note:: The Callable `c` must be invoked before calling this function.
+    """
+    if getattr(c, '_backend', None) == None:
+        raise ValueError("Not a ThunderFX-compiled function.")
+    rv: str = ""
+    for sinfo in c._backend.subgraph_infos:
+        for th_fqn in sinfo.thunder_compiled_fns:
+            trcs = thunder.last_traces(th_fqn)
+            if trcs is not None and trcs != []:
+                rv += str(trcs[-1])
+            del trcs
+
+            trcs_bw = thunder.last_backward_traces(th_fqn)
+            if trcs_bw is not None and trcs_bw != []:
+                print(f"{trcs_bw=}")
+                rv += str(trcs_bw[-1])
+    return rv
