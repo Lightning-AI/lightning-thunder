@@ -35,6 +35,7 @@ jobs:
           - { os: "ubuntu-22.04", python-version: "3.12", requires: "latest" }
         exclude:
           - { os: "windows-2022", suite: "ops" }
+          - { os: "windows-2022", suite: "grads" }
 
     # Timeout: https://stackoverflow.com/a/59076067/4521646
     timeout-minutes: 35
