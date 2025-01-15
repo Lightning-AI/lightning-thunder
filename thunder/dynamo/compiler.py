@@ -145,7 +145,7 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
     compiled = torch.compile(fn, backend=backend, **torch_compile_options)
 
     # We return this object instead of just the raw `compiled` Callable so that
-    # we have a place to hang the `last_traces` property.
+    # we have a place to hang the `last_*traces` properties.
     class CompiledObject:
         def __init__(self, be, func: Callable):
             self._backend = backend
