@@ -16,7 +16,6 @@ from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.torch.langctx import torchctx
 from thunder.core.utils import check
-import thunder
 
 if TYPE_CHECKING:
     from thunder.core.symbol import Symbol
