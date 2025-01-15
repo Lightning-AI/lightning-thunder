@@ -169,7 +169,7 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
             for sinfo in self._backend.subgraph_infos:
                 for th_fqn in sinfo.thunder_compiled_fns:
                     trcs = thunder.last_traces(th_fqn)
-                    if trcs is not None and trcs != []:
+                    if trcs != []:
                         rv.append(trcs[-1])
                     del trcs
             return rv
@@ -189,7 +189,7 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
             for sinfo in self._backend.subgraph_infos:
                 for th_fqn in sinfo.thunder_compiled_fns:
                     trcs_bw = thunder.last_backward_traces(th_fqn)
-                    if trcs_bw is not None and trcs_bw != []:
+                    if trcs_bw != []:
                         rv.append(trcs_bw[-1])
             return rv
 
