@@ -164,6 +164,8 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
                       function.
             """
             rv: [Trace] = []
+            if not self._backend.subgraph_infos:
+              warnings.warn("Must invoke the function before using last_traces")
             for sinfo in self._backend.subgraph_infos:
                 for th_fqn in sinfo.thunder_compiled_fns:
                     trcs = thunder.last_traces(th_fqn)
@@ -182,6 +184,8 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
                       function.
             """
             rv: [Trace] = []
+            if not self._backend.subgraph_infos:
+              warnings.warn("last_backward_traces used before function invoked")
             for sinfo in self._backend.subgraph_infos:
                 for th_fqn in sinfo.thunder_compiled_fns:
                     trcs_bw = thunder.last_backward_traces(th_fqn)

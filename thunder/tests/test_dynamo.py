@@ -994,5 +994,9 @@ def test_thunderfx_last_traces():
 
     # Call it w/o invoking the function first.
     dfoo = thunderfx(foo)
-    assert dfoo.last_traces == []
-    assert dfoo.last_backward_traces == []
+    with warnings.catch_warnings(record=True) as w:
+      warnings.simplefilter("always")
+      assert dfoo.last_traces == []
+      assert "Must invoke" in str(w[0].message)
+      assert dfoo.last_backward_traces == []
+      assert "before function invoked" in str(w[1].message)
