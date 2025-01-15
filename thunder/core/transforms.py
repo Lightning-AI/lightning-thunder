@@ -3283,3 +3283,23 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
     )
 
     return new_fwd_trace, new_bwd_trace
+
+def remove_transient_outs_from_prologue(prologue_trc: Trace, computation_trc: Trace) -> Trace:
+    
+    rets = computation_trc.output["output"][0]
+    excluded_proxies = set([p.name for p in rets])
+
+    new_prologue_trc = from_trace(prologue_trc)
+    for bsym in prologue_trc.bound_symbols:
+        if any([p.name in excluded_proxies for p in bsym.flat_proxy_outs]) or any([p.name in excluded_proxies for p in bsym.flat_proxy_args]):
+            continue
+        if bsym.sym.name == "check_len":
+            new_prologue_trc.bound_symbols.append(bsym.from_bsym(args=[bsym.flat_args[0], 0]))
+            continue
+        new_prologue_trc.bound_symbols.append(bsym.from_bsym())
+
+    return_bsym = prologue_trc.bound_symbols[-1]
+    full_new_rets = [tuple([tuple(return_bsym.args[0][0][len(excluded_proxies):]), tuple(return_bsym.args[0][1])])]
+    new_prologue_trc.bound_symbols.append(return_bsym.from_bsym(args=full_new_rets))
+
+    return new_prologue_trc
