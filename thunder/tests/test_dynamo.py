@@ -10,7 +10,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from looseversion import LooseVersion
 
-import thunder
 from thunder import dtypes
 from thunder.dynamo import thunderfx
 from thunder.dynamo.utils import CompilerType
