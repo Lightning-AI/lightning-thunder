@@ -54,7 +54,7 @@ def to_torch_translator(bsym: BoundSymbol) -> Callable:
             torch_op = pytorch_ex.opmap.get(bsym.subsymbols[0].sym.name)
 
         if torch_op is None:
-            raise RuntimeError("op not found for {bsym.sym.name}")
+            raise RuntimeError(f"op not found for {bsym.sym.name}")
 
         return torch_op(*args, **kwargs)
 

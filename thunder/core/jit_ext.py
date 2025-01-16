@@ -196,7 +196,6 @@ class JitCtx:
         computation_trace,
         *,
         sharp_edges: SHARP_EDGES_OPTIONS,
-        process_group_for_ddp=None,
         executor_lookasides,
         ad_hoc_executor,
     ):
@@ -204,7 +203,6 @@ class JitCtx:
         self._prologue_trace = prologue_trace
         self._computation_trace: TraceCtx = computation_trace
         self._constraints = []
-        self._process_group_for_ddp = process_group_for_ddp
         self._additional_outputs = collections.defaultdict(list)
         self._proxy_swapmap: dict[Variable, Proxy] = {}
         self._executor_lookasides: dict[Callable, Callable] = executor_lookasides
@@ -262,29 +260,27 @@ class JitCtx:
             # TensorProxy attributes should be considered derived quantities, so we flag TensorProxies here
             value.provenance.ext_flag |= EXT_FLAG_IS_TENSOR_PROXY
 
-            if isinstance(p, TensorProxy) and p.distparallel_type in (
-                DistParallelType.REPLICATED,
-                DistParallelType.FULLY_SHARDED,
-            ):
-                p_new = thunder.distributed.prims.synchronize(
-                    p,
-                    self._process_group_for_ddp,
-                )
-                if isinstance(p.thunder_fsdp_padding_size, int):
-                    p_new = p_new[: (p_new.shape[0] - p.thunder_fsdp_padding_size)]
-                p_orig = p
-                p = p_new
-            else:
-                p_orig = p
+            # We assume that a Parameter's underlying storage won't be changed.
+            # We tag Parameter's proxy with `STATIC_MEMORY_LOCATION` tag so that
+            # other transforms (eg. CUDAGraph) can use this information.
+            # We tag this here (rather than below in unpack_parameter_or_buffer_or_submodule below) because
+            # thunderfx does not properly see the module, but does see that we are dealing with a parameter.
+            if isinstance(uvalue, torch.nn.Parameter):
+                # NOTE - Update `p_orig` as in Distributed scenario
+                #        it is the proxy for the Parameter on device.
+                #        In `jit(ddp(model))` or `jit(fsdp(model))` scenario,
+                #        proxy `p` will be the proxy for synced parameter.
+                p.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
+
             if p is not uvalue:
                 value.register_proxy(p)
             # TODO: other caching modes
             co: CACHE_OPTIONS = get_cache_option()
             if co is CACHE_OPTIONS.CONSTANT_VALUES:
-                self.add_constraint((clang.check_tensor_shape_and_metadata, p_orig))
+                self.add_constraint((clang.check_tensor_shape_and_metadata, p))
             elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
                 # TODO: establish guarding logic to allow non-broadcast shape change
-                self.add_constraint((clang.check_tensor_shape_and_metadata, p_orig))
+                self.add_constraint((clang.check_tensor_shape_and_metadata, p))
             elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
                 raise NotImplementedError(f"Unsupported cache option {co}")
             return p
@@ -1545,7 +1541,9 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             name = ".".join(name)
             if typ == "_parameters":
                 bsym = prims.unpack_parameter.bind(root_module, name, output=output)
-                output.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
+                assert (
+                    ProxyTag.STATIC_MEMORY_LOCATION in output.tags
+                ), "Parameter was not tagged with STATIC_MEMORY_LOCATION"
             elif typ == "_buffers":
                 bsym = prims.unpack_buffer.bind(root_module, name, output=output)
                 output.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
@@ -1813,20 +1811,6 @@ def bind_inputs(name, trace, input_vars, input_proxies):
     trace.args = input_proxies
 
 
-def _get_process_group_from(*fn_and_args) -> Optional["ProcessGroup"]:
-    # `ddp` and `fsdp` transforms add attribute `procses_group_for_ddp`
-    # on the Module that they wrap. This module could be passed to `thunder.jit`
-    # as the function to be jitted or as an argument of the function to be jitted.
-    found_pg = None
-    for fn_or_arg in fn_and_args:
-        pg = getattr(fn_or_arg, "process_group_for_ddp", None)
-        if pg is not None and found_pg is None:
-            found_pg = pg
-        elif pg is not None and pg != found_pg:
-            raise NotImplementedError("jitting modules with different ProcessGroup is not supported currently.")
-    return found_pg
-
-
 def update_tags(proxy_swapmap: dict[Variable, Proxy]) -> None:
     for old, new in proxy_swapmap.items():
         new.tags.update(unvariableify(old).tags)
@@ -1868,12 +1852,10 @@ def thunder_general_jit(
     compile_data = get_compile_data()
     executor_lookasides = {k: interpreter_needs_wrap(v) for k, v in compile_data.executor_lookasides.items()}
 
-    process_group_for_ddp: Optional["ProcessGroup"] = _get_process_group_from(fn, *args, *kwargs.values())
     ctx: JitCtx = JitCtx(
         prologue_trace,
         computation_trace,
         sharp_edges=sharp_edges,
-        process_group_for_ddp=process_group_for_ddp,
         executor_lookasides=executor_lookasides,
         ad_hoc_executor=ad_hoc_executor,
     )

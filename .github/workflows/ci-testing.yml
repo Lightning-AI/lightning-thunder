@@ -29,12 +29,13 @@ jobs:
         os: ["ubuntu-22.04", "macOS-14", "windows-2022"]
         python-version: ["3.10"]
         requires: ["latest", "nightly"] # , 'oldest'
-        suite: ["core", "ops"]
+        suite: ["core", "ops", "grads"]
         include:
           - { os: "ubuntu-22.04", python-version: "3.11", requires: "latest" }
           - { os: "ubuntu-22.04", python-version: "3.12", requires: "latest" }
         exclude:
           - { os: "windows-2022", suite: "ops" }
+          - { os: "windows-2022", suite: "grads" }
 
     # Timeout: https://stackoverflow.com/a/59076067/4521646
     timeout-minutes: 35
@@ -118,7 +119,16 @@ jobs:
         if: matrix.python-version == '3.10' && matrix.suite == 'ops' && runner.os != 'Windows'
         run: |
           coverage run --source thunder -m \
-            pytest thunder/tests/test_ops.py thunder/tests/test_grad.py \
+            pytest thunder/tests/test_ops.py \
+              -v --datefmt="%Y%m%d-%H:%M:%S.%f" \
+              --random-order-seed=$GITHUB_RUN_ID \
+              -n 4 --durations=250
+
+      - name: Testing Grads
+        if: matrix.python-version == '3.10' && matrix.suite == 'grads' && runner.os != 'Windows'
+        run: |
+          coverage run --source thunder -m \
+            pytest thunder/tests/test_grad.py \
               -v --datefmt="%Y%m%d-%H:%M:%S.%f" \
               --random-order-seed=$GITHUB_RUN_ID \
               -n 4 --durations=250
@@ -129,7 +139,7 @@ jobs:
         run: |
           python -m pytest \
             thunder/tests/test_interpreter.py \
-            -v --durations=50 --cov=thunder
+            -v -n 4 --durations=50 --cov=thunder
           python -m pytest thunder/tests/test_jit_general.py -v --durations=50 --cov=thunder
 
       - name: Statistics

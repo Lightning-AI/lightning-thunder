@@ -29,22 +29,6 @@ comment_symbols = {prims.PrimIDs.COMMENT, prims.PrimIDs.UNPACK_TRIVIAL}
 # Transforms a trace by determining which execution transforms to call given the list of executors in priority order
 # This pass tries to preserve the original trace and proxies.
 def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: Sequence[Executor]) -> TraceCtx:
-    start_time_ns = time.perf_counter_ns()
-
-    swapmap: dict[Variable, Proxy] = {}
-
-    def update_swapmap(o: Any, no: Any) -> None:
-        if isinstance(o, Proxy):
-            check(
-                isinstance(no, Proxy),
-                lambda: f"Expected an execution transform to produce outputs with the same type, but found {type(o)} and {type(no)}",
-            )
-
-            vo = variableify(o)
-            vno = variableify(no)
-            if vo == vno:
-                return
-            swapmap[vno] = o
 
     # This processes the bsyms to map symbols to operator executors:
     # - if a bsym has a python impl, that will be called, so we can keep it.
@@ -103,6 +87,8 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
             cutils.check(not bsym.sym.is_prim, lambda: f"Failed to find an executor for bound symbol {bsym=}")
             ### OUTPUTS to map
             self.add_unprocessed_bsyms(bsym.subsymbols[:])
+
+    start_time_ns = time.perf_counter_ns()
 
     extrace, _ = OpExProcessor(trace)()
 

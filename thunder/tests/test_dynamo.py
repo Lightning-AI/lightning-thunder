@@ -990,3 +990,33 @@ def test_thunderfx():
     assert len(thunder_compiled_fns) == 1
     trc = last_traces(thunder_compiled_fns[-1])[-1]
     assert any(bsym.sym.id == "nvtx_range_push" for bsym in trc.bound_symbols)
+
+
+def test_get_example_input_tensor_metadata():
+    from thunder.dynamo.utils import _get_example_input_tensor_metadata
+    from torch._subclasses.fake_tensor import FakeTensorMode
+
+    int_tensor = torch.arange(1, 11, dtype=torch.int)
+    meta_int_tensor = _get_example_input_tensor_metadata(int_tensor)
+    assert meta_int_tensor.dtype == torch.int and meta_int_tensor.min_val >= 1 and meta_int_tensor.max_val < 11
+
+    fake_mode = FakeTensorMode()
+    fake_tensor = fake_mode.from_tensor(torch.empty(4, 4, dtype=torch.float32))
+    meta_fake_tensor = _get_example_input_tensor_metadata(fake_tensor)
+    assert meta_fake_tensor.shape == (4, 4) and meta_fake_tensor.dtype == torch.float32
+
+    t0 = torch.randn((5, 10), device="meta")
+    meta_t0 = _get_example_input_tensor_metadata(t0)
+    assert meta_t0.min_val == None and meta_t0.max_val == None and meta_t0.device.type == "meta"
+
+
+def test_thunderfx_meta_tensor():
+    def foo(x):
+        y = torch.sin(x)
+        return y
+
+    t0 = torch.randn((5, 10), device="meta")
+
+    thfoo = thunderfx(foo)
+    out = thfoo(t0)
+    assert out.device.type == "meta"

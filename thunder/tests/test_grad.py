@@ -32,7 +32,7 @@ from thunder.tests.framework import (
     version_between,
 )
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
-from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops, get_opinfo
+from thunder.tests.opinfos import get_opinfo, opinfos, tensor_creation_ops
 
 # TODO: Move this to thunder.tests.opinfos
 op_skip = {
@@ -409,14 +409,14 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
         # for non-differentiable arguments like dtypes so that the test will
         # execute properly.
         sample = sample.thunder()  # converts torch.dtype to thunder.dtype
+        sample = sample.remove_singularities(op, eps)
 
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
 
         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
         if len(filtered_args) == 0:
             continue
-        if (singularity_fn := op.singularity_fn_producer(sample)) is not None:
-            filtered_args = [push_away_from_singularities(arg, singularity_fn, eps) for arg in filtered_args]
+
         at_least_one_differentiable_input = True
         result = run_snippet(
             snippet_vjp_correctness,
@@ -1302,9 +1302,7 @@ def test_backward_none_propagation(executor, device, _):
 # TODO Add more module tests
 
 
-def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp, singularity_fn):
-    if singularity_fn:
-        sample = sample.remove_singularities(singularity_fn, 1e-2)
+def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
 
     args, kwargs = sample.args, sample.kwargs
 
@@ -1404,6 +1402,8 @@ def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype,
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
         comp = sample.comp if sample.comp is not None else comp
 
+        sample = sample.remove_singularities(op, 1e-2)
+
         result = run_snippet(
             snippet_phantom_grad_vs_torch_consistency,
             op,
@@ -1413,7 +1413,6 @@ def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype,
             op.torch_reference,
             sample,
             lambda a, b, **kwargs: comp(a, b, equal_nan=True, **kwargs),
-            op.singularity_fn_producer(sample),
         )
 
         # See [NOTE] dynamo reset

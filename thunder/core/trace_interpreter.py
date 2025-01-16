@@ -271,11 +271,11 @@ class TraceSubstitutionProcessor:
                     old = old.replace(shape=new._shape)
 
             if isinstance(new, VJPDual):
-                self.swap_map[variableify(new.primal)] = old
+                self.swap_map[variableify(old.primal)] = new
                 new.primal = old
             else:
                 assert isinstance(new, ProxyInterface), (old, new)
-                self.swap_map[variableify(new)] = old
+                self.swap_map[variableify(old)] = new
 
     def do_swap(self, v):
         if isinstance(v, VJPDual):
@@ -320,6 +320,7 @@ class TraceSubstitutionProcessor:
     def __call__(self):
         with tracectx(self.new_trace):
             self.unprocessed_bsyms = self.trace.bound_symbols[:]
+            self.swap_map = {}
 
             while self.unprocessed_bsyms:
                 bsym = self.unprocessed_bsyms.pop(0)
@@ -338,7 +339,6 @@ class TraceSubstitutionProcessor:
                     assert self.replacement_result is not self.NULL, "Need to call set_result if producing new bsyms"
 
                 if self.replacement_result is not self.NULL:
-                    self.swap_map = {}
 
                     # TODO: if inputs are returned, the old outputs should be mapped on the new ones (= the inputs) instead of the other way round
                     if not self.new_bsyms:
