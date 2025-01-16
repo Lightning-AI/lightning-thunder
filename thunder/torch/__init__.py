@@ -2434,7 +2434,7 @@ def triu(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = Non
 
 @torchsymbol(torch.Tensor.triu_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def triu_(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = None) -> TensorLike:
-    return prims.copy_(triu(a, diagonal, fill_value=fill_value), a)
+    return _copy_(a, triu(a, diagonal, fill_value=fill_value))
 
 
 @torchsymbol(torch.where, is_method=True)
