@@ -581,4 +581,12 @@ def test_memory_litgpt_llama3():
     mem_thunder = forward_backward_peak(jm, inp)
     mem_eager = forward_backward_peak(m, inp)
 
+    # assert that attention is not automatically recomputed, see
+    # https://github.com/Lightning-AI/lightning-thunder/issues/1646
+    assert not {
+        bsym.sym.name
+        for bsym in thunder.last_backward_traces(jm)[-1].bound_symbols
+        if "attention" in bsym.sym.name and "forward" in bsym.sym.name
+    }
+
     assert mem_thunder < mem_eager

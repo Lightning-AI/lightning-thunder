@@ -185,7 +185,7 @@ def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, *
             for new_bsym in new_bsyms:
                 # TODO: what to do with bsym header? Maybe have a combined from_bsym_swap_proxies and from_bsym?
                 if not has_tags(
-                    new_bsym,
+                    bsym,
                     {
                         prims.OpTags.RANDOM_OP,
                         prims.OpTags.DONT_RECOMPUTE_IN_BACKWARD,
