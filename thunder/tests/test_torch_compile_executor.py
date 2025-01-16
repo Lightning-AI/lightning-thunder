@@ -38,6 +38,7 @@ def test_torch_compile_litgpt():
 # https://github.com/Lightning-AI/lightning-thunder/issues/292 The issue was
 # that the CSE pass was not being run correctly on the TorchCompile region.
 # Here we test that everything works as expected.
+@pytest.mark.skip(reason="https://github.com/NVIDIA/Fuser/issues/3688")
 @pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported")
 @requiresCUDA
 @pytest.mark.skipif(not device_supports_bf16(torch.device("cuda")), reason="bf16 is not supported")

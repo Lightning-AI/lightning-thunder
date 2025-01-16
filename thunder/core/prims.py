@@ -291,6 +291,8 @@ class OpTags(Enum):
     AUTO_REGISTERED = auto()
     # Label for operations representing enter/exit of context managers.
     CTX_MANAGER_ENTER_EXIT_OP = auto()
+    # Label to explicitly disable an operation from recomputing in backward - see function `recompute_saved_for_backward`.
+    DONT_RECOMPUTE_IN_BACKWARD = auto()
 
 
 # TODO RC1 Document this function and describe the parts of a primitive
@@ -2795,6 +2797,7 @@ get_and_update_rng_state = make_prim(
     PrimIDs.GET_AND_UPDATE_RNG_STATE,
     "get_and_update_rng_state",
     meta=_get_and_update_rng_state_meta,
+    tags=(OpTags.RANDOM_OP,),  # RANDOM_OP here is a short hand for "uses / modifies the random state"
 )
 
 
@@ -3585,7 +3588,7 @@ def stride_order_meta(a: TensorProxy, /, order: Sequence[int]) -> TensorProxy:
 # TODO Consider a more general stride manipulation primitive, like PyTorch's
 #   as_strided or set_strided operations
 # See clang.stride_order for this prim's documentation
-stride_order = make_prim(PrimIDs.STRIDE_ORDER, "stride_order", meta=stride_order_meta)
+stride_order = make_prim(PrimIDs.STRIDE_ORDER, "stride_order", meta=stride_order_meta, tags=(OpTags.SHAPE_OP,))
 
 #
 # Reduction prims

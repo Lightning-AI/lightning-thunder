@@ -229,6 +229,7 @@ class Benchmark_litGPT:
         fsdp_bucket_params: float | None = None,
         checkpoint_activations: bool = False,
         n_layers: int | None = None,
+        block_size: int | None = None,
         profiler_start: int = 15,
         profiler_stop: int = 15,
         skip_data_sync: bool = False,
@@ -359,6 +360,9 @@ class Benchmark_litGPT:
 
         if n_layers is not None:
             self.config.n_layer = n_layers
+
+        if block_size is not None:
+            self.config.block_size = block_size
 
         # Initialize the model
         t0 = time.perf_counter()
@@ -537,10 +541,6 @@ class Benchmark_litGPT:
         return model
 
     def setup_activation_checkpointing(self):
-        if "thunder" in self.compile and "dynamo" not in self.compile:
-            # checkpointing is an option to thunder.jit
-            return
-
         if any(isinstance(mod, CheckpointWrapper) for mod in self.model.modules()):
             warnings.warn(
                 "FSDP checkpointing is configured, but the model already contains checkpointed layers."
