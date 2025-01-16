@@ -5206,7 +5206,7 @@ def mse_loss(
 
 # TODO Add annotations
 # NOTE The scale parameter is kwarg-only in PyTorch
-@torchsymbol(torch.nn.functional.scaled_dot_product_attention)
+@torchsymbol(torch.nn.functional.scaled_dot_product_attention, tags=(prims.OpTags.DONT_AUTO_RECOMPUTE_IN_BACKWARD,))
 def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, *, scale=None):
     for arg_name, arg in zip(("query", "key", "value"), (query, key, value)):
         utils.check(
