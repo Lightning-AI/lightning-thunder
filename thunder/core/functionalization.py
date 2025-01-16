@@ -2,7 +2,6 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from thunder.core.compile_data import get_compile_data
 import thunder.core.prims as prims
 from thunder.core.proxies import variableify, TensorProxy, unvariableify, ProxyInterface
 from thunder.core.pytree import tree_flatten, tree_unflatten
@@ -500,12 +499,8 @@ def apply_functionalization_to_canonicalized_trace(
                     copy_from_for_new_copy = reshaped_copy_from
                 else:
                     copy_from_for_new_copy = copy_from
-                cd = get_compile_data()
-                grad_enabled = cd.is_grad_enabled if cd is not None else False
-                new_copy_return = prims.copy_.meta(copy_from_for_new_copy, new_copy_to, grad_enabled=grad_enabled)
-                new_copy_bsym = prims.copy_.bind(
-                    copy_from_for_new_copy, new_copy_to, grad_enabled=grad_enabled, output=new_copy_return
-                )
+                new_copy_return = prims.copy_.meta(copy_from_for_new_copy, new_copy_to)
+                new_copy_bsym = prims.copy_.bind(copy_from_for_new_copy, new_copy_to, output=new_copy_return)
                 copy_bsyms.append(new_copy_bsym)
         else:
             var_copy_to = variableify(copy_to)
