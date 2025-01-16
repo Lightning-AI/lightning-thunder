@@ -7,3 +7,4 @@ thunder.transforms
     :toctree: generated/
 
     MaterializationTransform
+    ConstantFolding

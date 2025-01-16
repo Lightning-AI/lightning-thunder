@@ -1,3 +1,5 @@
+import importlib
+import warnings
 import os
 from collections.abc import Callable
 from enum import auto, Enum
@@ -25,15 +27,18 @@ from thunder.benchmarks import (
     LitGPTGeluBenchmark,
     NanoGPTLayerNormBenchmark,
     ResNet50Benchmark,
+    TorchbenchBenchmark,
     thunder_apex_executor,
     thunder_apex_nvfuser_executor,
     thunder_cudnn_executor,
     thunder_cudnn_nvfuser_executor,
     thunder_executor,
+    thunderfx_executor,
     thunder_sdpa_torch_compile_nvfuser_executor,
     torch_compile_executor,
     torch_executor,
     thunder_transformerengine_executor,
+    record_peak_allocated_memory,
 )
 from thunder.core.interpreter import interpret
 
@@ -76,61 +81,6 @@ parametrize_compute_type_only_training = pytest.mark.parametrize(
 )
 
 
-import functools
-
-
-def timer_and_memory_stats(benchmark) -> float:
-    """
-    Make a timer that also records the peak allocated memory.
-
-    pytest-benchmark has the following benchmarking code structure:
-
-    start = timer()
-    for _ in loops_range:
-        function_to_benchmark(*args, **kwargs)
-    end = timer()
-
-    So the information about the peak allocated memory should be recorded
-    after the function_to_benchmark call and we need to reset the peak memory
-    stats before the function_to_benchmark call.
-
-    If reset_peak_memory_stats is called inside the function_to_benchmark call,
-    the peak memory stats will be reset multiple times and the peak memory
-    stats may not be accurate.
-
-    Args:
-        benchmark: The pytest-benchmark object
-
-    Returns:
-        The decorator that records the peak allocated memory
-    """
-
-    def deco(old_timer):
-        @functools.wraps(old_timer)
-        def timer():
-            ret = old_timer()
-            benchmark.extra_info["max_allocated_memory_MB"] = torch.cuda.max_memory_allocated() / (1024 * 1024.0)
-            torch.cuda.reset_peak_memory_stats()
-            return ret
-
-        return timer
-
-    return deco
-
-
-from contextlib import contextmanager
-
-
-@contextmanager
-def record_peak_allocated_memory(benchmark):
-    old_timer = benchmark._timer
-    benchmark._timer = timer_and_memory_stats(benchmark)(benchmark._timer)
-    try:
-        yield
-    finally:
-        benchmark._timer = old_timer
-
-
 def benchmark_for_compute_type(compute_type: ComputeType, benchmark, fn: Callable, args, kwargs):
     with record_peak_allocated_memory(benchmark):
         match compute_type:
@@ -148,15 +98,17 @@ def interpreter_fwd(module: Callable):
     return fn_
 
 
-executors = (
-    torch_executor,
-    torch_compile_executor,
-    thunder_executor,
-)
+executors = (torch_executor, torch_compile_executor, thunder_executor)
 executors_ids = (
     "torch",
     "torch.compile",
     "thunder",
+)
+
+torchbench_executors = (*executors, thunderfx_executor)
+torchbench_executors_ids = (
+    *executors_ids,
+    "thunderfx",
 )
 
 apex_executors = (thunder_apex_executor, thunder_apex_nvfuser_executor)
@@ -807,6 +759,74 @@ def test_resnet50(benchmark, executor: Callable, compute_type: ComputeType):
     b = ResNet50Benchmark(
         64, (3, 224, 224), device="cuda:0", dtype=torch.bfloat16, requires_grad=is_requires_grad(compute_type)
     )
+
+    args, kwargs = b.make_batch()
+    fn = executor(b.fn())
+
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
+
+
+#
+# Torchbench benchmarks
+#
+# To setup torchbenchmark please follow the instructions to
+# install it as a libraty here https://github.com/pytorch/benchmark .
+# To install canary models make sure to add `--canary` to `python install.py`.
+
+torchbench_models = []
+torchbench_canary_models = []
+if importlib.util.find_spec("torchbenchmark"):
+    from torchbenchmark import _list_canary_model_paths, _list_model_paths
+
+    torchbench_models = [os.path.basename(x) for x in _list_model_paths()]
+    torchbench_canary_models = [os.path.basename(x) for x in _list_canary_model_paths()]
+
+
+@pytest.mark.skipif(not torchbench_models, reason="requires torchbenchmark to be installed")
+@pytest.mark.parametrize(
+    "module_name,",
+    torchbench_models,
+    ids=torchbench_models,
+)
+@pytest.mark.parametrize(
+    "executor,",
+    torchbench_executors,
+    ids=torchbench_executors_ids,
+)
+@parametrize_compute_type
+def test_torchbench(benchmark, module_name, executor, compute_type: ComputeType):
+    if not importlib.util.find_spec("torchbenchmark.models." + module_name):
+        pytest.skip(f"model {module_name} not installed")
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FutureWarning)
+        b = TorchbenchBenchmark(module_name, device="cuda", requires_grad=is_requires_grad(compute_type))
+
+    args, kwargs = b.make_batch()
+    fn = executor(b.fn())
+
+    benchmark_for_compute_type(compute_type, benchmark, fn, args, kwargs)
+
+
+@pytest.mark.skipif(not torchbench_canary_models, reason="requires torchbenchmark to be installed with flag --canary")
+@pytest.mark.parametrize(
+    "module_name,",
+    torchbench_canary_models,
+    ids=torchbench_canary_models,
+)
+@pytest.mark.parametrize(
+    "executor,",
+    torchbench_executors,
+    ids=torchbench_executors_ids,
+)
+@parametrize_compute_type
+def test_torchbench_canary(benchmark, module_name, executor, compute_type: ComputeType):
+    if not importlib.util.find_spec("torchbenchmark.models." + module_name):
+        pytest.skip(f"model {module_name} not installed")
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FutureWarning)
+        b = TorchbenchBenchmark(module_name, device="cuda", requires_grad=is_requires_grad(compute_type))
 
     args, kwargs = b.make_batch()
     fn = executor(b.fn())

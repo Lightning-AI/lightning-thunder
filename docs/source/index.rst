@@ -89,6 +89,7 @@ The compiled function ``jitted_foo`` takes and returns PyTorch tensors, just lik
    Thunder step by step <basic/inspecting_traces>
    The sharp edges <basic/sharp_edges>
    Train a MLP on MNIST <basic/mlp_mnist>
+   Hello world ThunderFX <notebooks/hello_world_thunderfx>
    FAQ <basic/faq>
 
 .. toctree::
@@ -102,6 +103,7 @@ The compiled function ``jitted_foo`` takes and returns PyTorch tensors, just lik
    FSDP Under the Hood Tutorial <notebooks/dev_tutorials/fsdp_tutorial>
    Benchmarking Thunder <intermediate/benchmarking>
    Writing a Transform <notebooks/writing_a_trace_transform_cpu_offloading>
+   Using Liger-Kernel with Thunder <notebooks/liger_kernel>
 
 .. toctree::
    :maxdepth: 1
@@ -143,6 +145,7 @@ API reference
    reference/torch/index
    reference/extend/index
    reference/transforms/index
+   reference/dynamo/index
 
 
 Indices and tables

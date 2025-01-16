@@ -1,36 +1,31 @@
-import math
+from __future__ import annotations
+from collections import namedtuple
+from collections.abc import Callable, Sequence
 from functools import partial, reduce
 from numbers import Number
-from typing import Union, List, Optional, Any
-from collections.abc import Callable
-from collections.abc import Sequence
-from collections import namedtuple
+from types import EllipsisType
+from typing import Any, Union
+import math
 import operator
-from types import EllipsisType, NoneType
-import copy
-import time
 import warnings
 
-from thunder.core.baseutils import run_once
-from thunder.core.compile_data import using_symbolic_values
 from thunder.clang.langctx import register_method
-from thunder.core.langctxs import langctx, Languages
-
-import thunder.core.dtypes as dtypes
 from thunder.core import utils
+from thunder.core.baseutils import run_once
+from thunder.core.langctxs import langctx, Languages
+import thunder.core.devices as devices
+import thunder.core.dtypes as dtypes
 import thunder.core.prims as prims
 from thunder.core.proxies import (
-    IntegerProxy,
-    NumberProxy,
-    NumberLike,
-    TensorProxy,
-    pyval,
-    pytype,
-    proxy,
     AnyProxy,
+    IntegerProxy,
+    NumberLike,
+    NumberProxy,
     Proxy,
+    TensorProxy,
+    pytype,
+    pyval,
 )
-import thunder.core.devices as devices
 
 # This file defines the operations in thunder.jit's "core" language.
 #
@@ -65,11 +60,13 @@ class clangop:
 #
 
 
-# Checks a tensor's shape and metadata (for use with "constant value" caching)
+# Checks a tensor's shape and metadata (for use with cache check)
 @clangop()
 def check_tensor_shape_and_metadata(t: TensorProxy, /) -> None:
     return prims.check_tensor_shape_and_metadata(
         t,
+        # replace Proxy entries with `-1`s as wild card, as we any value is
+        # allowed for proxy entries
         tuple(t.shape),
         t.device.device_str(),
         dtypes.to_torch_dtype(t.dtype),
@@ -972,6 +969,11 @@ def getitem(a: TensorLike, /, key) -> TensorLike:
         (a.ndim == 0 and (len(sig.basic) + len(sig.advanced)) <= 1) or (a.ndim >= len(sig.basic) + len(sig.advanced)),
         lambda: f"{key=} tries to index more dimensions than {a.ndim=}",
     )
+
+    # FIXME: This is a quick WAR to avoid accessing shape attribute of a without
+    # definition. This needs to be done properly somewhere else. See issue
+    # github.com/Lightning-AI/lightning-thunder/issues/1253
+    old_shape = prims.shape(a)
 
     # We do not support mixing basic and advanced indexing together yet,
     # but a very special case when there is a single advanced index which

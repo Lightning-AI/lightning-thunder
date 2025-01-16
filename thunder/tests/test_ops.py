@@ -239,18 +239,60 @@ def test_notimplemented_interpolate_antialias():
         tfoo()
 
 
-def test_setitem():
-    def fn(a):
-        a[:3] = 2
+@pytest.mark.parametrize("requires_grad", (True, False))
+def test_setitem(requires_grad):
+
+    def _test_forward_and_backward(fn, a, value):
+        a_ref = a.detach().clone()
+        a_ref.requires_grad_(a.requires_grad)
+
+        if isinstance(value, torch.Tensor):
+            value_ref = value.detach().clone()
+            value_ref.requires_grad_(value.requires_grad)
+        else:
+            value_ref = value
+
+        out_ref = fn(a_ref, value_ref)
+        jf = thunder.jit(fn)
+        out = jf(a, value)
+        assert_close(a, a_ref)
+        assert_close(out, out_ref)
+
+        if requires_grad:
+            g = torch.randn_like(out)
+            inputs = (a, value) if isinstance(value, torch.Tensor) else (a,)
+            actual_grad = torch.autograd.grad(out, inputs, g)
+
+            inputs_ref = (a_ref, value_ref) if isinstance(value, torch.Tensor) else (a_ref,)
+            expected_grad = torch.autograd.grad(out_ref, inputs_ref, g)
+            assert_close(actual_grad, expected_grad)
+
+    def clone_if_requires_grad(a):
+        if requires_grad:
+            # Withou the clone
+            # PyTorch eager errors with
+            # `RuntimeError: a view of a leaf Variable that requires grad is being used in an in-place operation.`
+            # and thunder has silent correctness issue - https://github.com/Lightning-AI/lightning-thunder/issues/1284
+            return a.clone()
+        return a
+
+    def fn(a, value):
+        a = clone_if_requires_grad(a)
+        a[:3] = value
         return a * 2
 
-    a_ref = torch.ones(5)
-    out_ref = fn(a_ref)
-    a = torch.ones(5)
-    jf = thunder.jit(fn)
-    out = jf(a)
-    assert_close(a, a_ref)
-    assert_close(out, out_ref)
+    # set value: scalar
+    _test_forward_and_backward(fn, torch.randn(5, requires_grad=requires_grad), 2.0)
+
+    # set value: tensor which needs to be broadcasted
+    _test_forward_and_backward(
+        fn, torch.randn(5, requires_grad=requires_grad), torch.tensor(2.0, requires_grad=requires_grad)
+    )
+
+    # set value: tensor of same rank
+    _test_forward_and_backward(
+        fn, torch.randn(5, requires_grad=requires_grad), torch.tensor([1.0, 2.0, 3.0], requires_grad=requires_grad)
+    )
 
 
 # TODO: Add random operator support to OpInfo

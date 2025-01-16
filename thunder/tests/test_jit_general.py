@@ -17,7 +17,6 @@ from lightning_utilities import compare_version
 import thunder
 from thunder.core.interpreter import is_jitting, InterpreterError
 
-from thunder.tests import litgpt_model
 from thunder.tests.framework import version_between, requiresCUDA
 import thunder.clang as clang
 from thunder.core.options import CACHE_OPTIONS
@@ -676,22 +675,29 @@ def test_nanogpt():
     ("cpu", "cuda", "meta"),
 )
 def test_litgpt_variants(name, device):
+    from thunder.tests.litgpt_model import Config
+    from litgpt.model import GPT
+
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
+    if device == "cuda" and name == "falcon-40b-like":
+        pytest.skip("NVFuser reenable when https://github.com/NVIDIA/Fuser/issues/3505 is fixed, Thunder issue #1504")
+    if device == "cuda" and name == "falcon-7b-like":
+        pytest.skip("NVFuser reenable when https://github.com/NVIDIA/Fuser/issues/3292 is fixed")
 
     device = torch.device(device)
 
     x = torch.randint(0, 200, (5, 5), device=device)
-    config = litgpt_model.Config.from_name(name)
+    config = Config.from_name(name)
 
     with device:
-        reference = litgpt_model.GPT(config)
+        reference = GPT(config)
     expected_logits = reference(x)
 
     expected_logits.sum().backward()
 
     with device:
-        model = litgpt_model.GPT(config)
+        model = GPT(config)
     model.load_state_dict(reference.state_dict())
     tom = thunder.jit(model, executors=nvfuserex if device.type == "cuda" else torchex)
     actual_logits = tom(x)
@@ -731,6 +737,8 @@ def test_litgpt_variants(name, device):
     ("cpu", "cuda"),
 )
 def test_litgpt_variants_kvcache(name, device):
+    from thunder.tests.litgpt_model import Config
+    from litgpt.model import GPT
     import torch._dynamo  # this monkeypatches torch.manual_seed
 
     if device == "cuda" and not torch.cuda.is_available():
@@ -738,10 +746,10 @@ def test_litgpt_variants_kvcache(name, device):
 
     device = torch.device(device)
     x = torch.randint(0, 200, (1, 2), device=device)
-    config = litgpt_model.Config.from_name(name)
+    config = Config.from_name(name)
 
     with device:
-        model = litgpt_model.GPT(config)
+        model = GPT(config)
         model.max_seq_length = 3
 
     for p in model.parameters():
@@ -777,22 +785,25 @@ def test_litgpt_variants_kvcache(name, device):
     ("cpu", "cuda"),
 )
 def test_tom_overrides_proxy(device):
+    from thunder.tests.litgpt_model import Config
+    from litgpt.model import GPT
+
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
 
     device = torch.device(device)
 
     x = torch.randint(0, 200, (5, 5), device=device)
-    config = litgpt_model.Config.from_name("llama2-like")
+    config = Config.from_name("llama2-like")
 
     with device:
-        reference = litgpt_model.GPT(config)
+        reference = GPT(config)
     expected_logits = reference(x)
 
     expected_logits.sum().backward()
 
     with device:
-        model = litgpt_model.GPT(config)
+        model = GPT(config)
     model.load_state_dict(reference.state_dict())
     tom = thunder.jit(model, executors=nvfuserex if device.type == "cuda" else torchex)
 
@@ -829,20 +840,13 @@ def test_tom_overrides_proxy(device):
         assert v is params_actual[k]
 
 
-@pytest.mark.parametrize(
-    "device",
-    ("cpu", "cuda"),
-)
-def test_cache_symbolic_values_basic(device):
-    if device == "cuda" and not torch.cuda.is_available():
-        pytest.skip("CUDA not available")
-
+def test_cache_symbolic_values_basic():
     def foo(a, scalar):
         return (a * scalar).sum(scalar)
 
     jfoo = thunder.jit(foo, cache="symbolic values")
 
-    a = torch.randn((2, 2, 2), device=device)
+    a = torch.randn((2, 2, 2), device="cpu")
     b = 1
 
     actual = jfoo(a, b)
@@ -1025,7 +1029,6 @@ def test_load_original_state_dict():
     ids=("remove_duplicate=False", "remove_duplicate=True"),
 )
 def test_named_params_and_named_buffers(prefix, recurse, remove_duplicate):
-
     buffer_tensor = torch.tensor([1.0])
 
     class SubMod(torch.nn.Module):
@@ -1111,15 +1114,8 @@ def test_isinstance_parameter():
     torch.testing.assert_close(actual, expected)
 
 
-@pytest.mark.parametrize(
-    "device",
-    ("cpu", "cuda"),
-)
-def test_cache_symbolic_values_reshape(device):
-    if not torch.cuda.is_available():
-        pytest.skip("CUDA not available")
-
-    a = torch.randn((4, 8, 6), device=device)
+def test_cache_symbolic_values_reshape():
+    a = torch.randn((4, 8, 6), device="cpu")
 
     def foo(t, batch_size):
         return t.reshape(batch_size, -1).sum(-1)
@@ -1146,7 +1142,6 @@ def test_custom_autograd_function():
     from torch.testing._internal.common_utils import gradcheck
 
     class MyFunction(torch.autograd.Function):
-
         @staticmethod
         def forward(ctx, x: torch.Tensor) -> torch.Tensor:
             return x * 2.0
@@ -1186,7 +1181,7 @@ def test_custom_autograd_function():
             (x, weight) = ctx.saved_tensors
             assert weight.shape == ctx.shape  # really bogus, just to use ctx.shape
             scaler2 = ctx.shape[0] / ctx.shape[1]
-            return torch.matmul(grad_output, weight) * ctx.scaler, torch.matmul(grad_output.t(), x) / scaler2
+            return torch.matmul(grad_output, weight) * ctx.scaler, torch.matmul(grad_output.t(), x) / scaler2, None
 
     class Model(torch.nn.Module):
         def __init__(self):
@@ -1199,8 +1194,177 @@ def test_custom_autograd_function():
     x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
     model = Model().to(dtype=torch.float64)
     jitted = thunder.jit(model)
+    gradcheck(jitted, (x,), check_batched_grad=False)
 
-    gradcheck(jitted, (x,))
+    jitted.zero_grad()
+    x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
+    out = jitted(x)
+    out.backward(torch.rand_like(out))
+    assert jitted.l1.weight.grad is not None
+
+
+def test_autograd_function_apply():
+
+    # see https://github.com/Lightning-AI/lightning-thunder/issues/1248#issuecomment-2388655917
+    # for why `torch.foo` instead of `torch.Tensor.foo`
+    def forward(ctx, x):
+        saved_for_backward = (x,)
+        return torch.sin(x), saved_for_backward
+
+    def backward(ctx, grad_output, *saved_tensors):
+        (x,) = saved_tensors
+        return grad_output * torch.cos(x)
+
+    def my_sin(x):
+        return torch.ops.higher_order.autograd_function_apply(
+            forward,
+            backward,
+            x,
+            args_tensor_mask=[True],
+            non_differentiable_idx=[],
+        )
+
+    jitted = thunder.jit(my_sin)
+    x = torch.randn((2, 2), requires_grad=True)
+    x_ref = x.clone().detach().requires_grad_()
+
+    y = jitted(x)
+    y_ref = my_sin(x_ref)
+    torch.testing.assert_close(y, y_ref)
+
+    grad = torch.rand_like(y)
+    actual_grad = torch.autograd.grad(y, x, grad)
+    expect_grad = torch.autograd.grad(y_ref, x_ref, grad)
+    torch.testing.assert_close(actual_grad, expect_grad)
+
+    def wrong_backward(ctx, grad_output, *saved_tensors):
+        (x,) = saved_tensors
+        return grad_output * x.sin()
+
+    def my_sin_with_wrong_backward(x):
+        return torch.ops.higher_order.autograd_function_apply(
+            forward,
+            wrong_backward,
+            x,
+            args_tensor_mask=[True],
+            non_differentiable_idx=[],
+        )
+
+    jitted = thunder.jit(my_sin_with_wrong_backward)
+    x = torch.randn((2, 2), requires_grad=True)
+    x_ref = x.clone().detach().requires_grad_()
+
+    y = jitted(x)
+    y_ref = my_sin_with_wrong_backward(x_ref)
+    actual_grad = torch.autograd.grad(y, x, grad)
+    expect_grad = torch.autograd.grad(y_ref, x_ref, grad)
+    torch.testing.assert_close(actual_grad, expect_grad)
+
+    from torch.autograd.gradcheck import GradcheckError
+    from torch.testing._internal.common_utils import gradcheck
+
+    with pytest.raises(GradcheckError):
+        gradcheck(jitted, (x,))
+
+
+def test_autograd_function_apply_with_no_grad():
+    # This case is using `torch` operations
+    def forward(_, x):
+        saved_for_backward = (x,)
+
+        with torch.no_grad():
+            sin = torch.sin(x)
+        return sin, saved_for_backward
+
+    def backward(_, grad_output, *saved_tensors):
+        return grad_output * 2
+
+    def my_sin(x):
+        res = torch.ops.higher_order.autograd_function_apply(
+            forward,
+            backward,
+            x,
+            args_tensor_mask=[True],
+            non_differentiable_idx=[],
+        )
+        return res
+
+    jitted = thunder.jit(my_sin)
+    x = torch.randn((2, 2), requires_grad=True)
+
+    out = jitted(x)
+    grad = torch.rand_like(out)
+    out.backward(grad)
+
+    # Verify that `backward` was applied.
+    torch.testing.assert_close(x.grad, grad * 2)
+
+    # This is using `thunder` operations
+    # NOTE - This takes a different codepath compared to above.
+    def forward(_, x):
+        saved_for_backward = (x,)
+        thunder.torch._set_grad_enabled_with_warning(False)
+        sin = thunder.torch.sin(x)
+        thunder.torch._set_grad_enabled_with_warning(True)
+        return sin, saved_for_backward
+
+    def backward(_, grad_output, *saved_tensors):
+        # NOTE - This is incorrect on purpose
+        return grad_output * 2
+
+    def fn(x):
+        res = thunder.torch.autograd_function_apply(
+            forward,
+            backward,
+            x,
+            args_tensor_mask=[True],
+            non_differentiable_idx=[],
+        )
+        return res
+
+    jitted = thunder.jit(fn)
+    x = torch.randn((2, 2), requires_grad=True)
+
+    out = jitted(x)
+    grad = torch.rand_like(out)
+    out.backward(grad)
+
+    # Verify that `backward` was applied.
+    torch.testing.assert_close(x.grad, grad * 2)
+
+
+def test_autograd_function_empty_forward():
+    class Fn(torch.autograd.Function):
+        @staticmethod
+        def forward(self, x):
+            return x
+
+        @staticmethod
+        def backward(self, grad_x):
+            return 2 * grad_x
+
+    def fn(x):
+        # TODO: there still is a bug when the result is directly returned
+        return Fn.apply(x) * 3
+
+    a = torch.randn(2)
+    jfn = thunder.jit(fn)
+
+    ref = fn(a)
+    out = jfn(a)
+
+    assert_close(out, ref)
+
+    a = torch.randn(2, requires_grad=True)
+    go = torch.randn_like(a)
+
+    ref = fn(a)
+    out = jfn(a)
+    (grad,) = torch.autograd.grad(out, a, go)
+    (grad_ref,) = torch.autograd.grad(ref, a, go)
+
+    assert_close(out, ref)
+    assert_close(grad, grad_ref)
 
 
 @requiresCUDA  # I have not found a good other object to use
@@ -1303,3 +1467,85 @@ def test_args_order():
     fn(*args)
 
     assert [a.name for a in thunder.last_traces(fn)[-1].args] == [f"a{i}" for i in range(11)]
+
+
+def test_cache_symbolic_values_dynamic_shape():
+    def foo(a):
+        return a.relu()
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+
+    a = torch.randn((2, 2, 2), device="cpu")
+
+    actual = jfoo(a)
+    expected = foo(a)
+
+    assert_close(actual, expected)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    a = torch.randn((3, 4, 5), device="cpu")
+
+    actual = jfoo(a)
+    expected = foo(a)
+
+    assert_close(actual, expected)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1
+
+
+def test_cache_symbolic_values_reshape_numel():
+    def foo(a):
+        a = torch.reshape(a, [a.numel()])
+        return a.relu()
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+
+    a = torch.randn(2, 3, 8, requires_grad=True, device="cpu")
+
+    actual = jfoo(a)
+    expected = foo(a)
+
+    assert_close(actual, expected)
+
+
+def test_cache_symbolic_values_slice():
+    def foo(a):
+        a = a[..., : a.shape[-1]]
+        return a.relu()
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+
+    a = torch.randn(2, 3, 8, requires_grad=True, device="cpu")
+
+    actual = jfoo(a)
+    expected = foo(a)
+
+    assert_close(actual, expected)
+
+
+def test_cache_symbolic_values_dict():
+    def foo(a, v):
+        return a[v].relu()
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+
+    a = {
+        2: torch.randn(2, 3, 8, requires_grad=True, device="cpu"),
+        5: torch.randn(4, 8, requires_grad=True, device="cpu"),
+    }
+
+    actual = jfoo(a, 2)
+    expected = foo(a, 2)
+
+    assert_close(actual, expected)
+
+    b = {
+        "a": torch.randn(2, 8, requires_grad=True, device="cpu"),
+        "b": torch.randn(7, requires_grad=True, device="cpu"),
+    }
+
+    actual = jfoo(b, "b")
+    expected = foo(b, "b")
+
+    assert_close(actual, expected)

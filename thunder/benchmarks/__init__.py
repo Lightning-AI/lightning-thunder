@@ -3,12 +3,14 @@ import sys
 import tempfile
 import textwrap
 import time
+from collections import UserDict
 from collections.abc import Callable
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
 from numbers import Number
 from typing import Any
+from contextlib import contextmanager
 
 import torch
 import torch.multiprocessing as mp
@@ -17,6 +19,7 @@ from lightning_utilities.core.imports import package_available
 from torch.testing import make_tensor
 
 import thunder
+import thunder.dynamo
 import thunder.core.devices as Devices
 import thunder.core.dtypes as dtypes
 import thunder.executors as executors
@@ -29,9 +32,10 @@ from thunder.executors.transformer_engineex import transformer_engine_ex, TE_AVA
 from thunder.executors.sdpaex import sdpa_ex
 from thunder.executors.torch_compile import torch_compile_cat_ex, torch_compile_ex
 from thunder.transforms.cudagraph import CUDAGraphTransform
-from thunder.tests import nanogpt_model, hf_bart_self_attn, litgpt_model
-from thunder.tests.litgpt_model import Config as LitGPTConfig
+from thunder.tests import nanogpt_model, hf_bart_self_attn
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
+
+MAX_ALLOCATED_MEMORY_KEYWORD = "max_allocated_memory_MB"
 
 # List of all benchmarks
 benchmarks: list = []
@@ -706,6 +710,13 @@ def torch_compile_executor(fn: Callable) -> Callable:
     return torch.compile(fn)
 
 
+def thunderfx_executor(fn: Callable) -> Callable:
+    torch.backends.cuda.matmul.allow_tf32 = True
+    backend = thunder.dynamo.ThunderCompiler()
+    torch._dynamo.reset()
+    return torch.compile(fn, backend=backend)
+
+
 def thunder_torch_executor(fn: Callable) -> Callable:
     torch.backends.cuda.matmul.allow_tf32 = True
     return thunder.jit(fn, executors=[thunder.pytorch_executor])
@@ -780,9 +791,6 @@ def default_torch_ddp_executor(_) -> Callable:
 
 @dataclass(frozen=True)
 class get_default_torch_fsdp_executor:
-    from torch.distributed.fsdp import ShardingStrategy
-
-    sharding_strategy: ShardingStrategy
     apply_torch_compile: bool
     auto_wrap_policy: Any | None
 
@@ -1212,12 +1220,14 @@ class LitGPTGeluBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def __init__(
         self,
-        config: str | LitGPTConfig,
+        config: str,
         batchdims: Sequence[int],
         device: str,
         dtype: dtypes.dtype,
         requires_grad: bool,
     ) -> None:
+        from litgpt.config import Config as LitGPTConfig
+
         super().__init__()
 
         self.config = LitGPTConfig.from_name(config) if not isinstance(config, LitGPTConfig) else config
@@ -1281,13 +1291,15 @@ class LitGPTSwigluBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def __init__(
         self,
-        config: str | LitGPTConfig,
+        config: str,
         batchdims: Sequence[int],
         device: str,
         dtype: dtypes.dtype,
         requires_grad: bool,
         use_liger: bool = False,
     ) -> None:
+        from litgpt.config import Config as LitGPTConfig
+
         super().__init__()
 
         self.config = LitGPTConfig.from_name(config) if not isinstance(config, LitGPTConfig) else config
@@ -1940,12 +1952,14 @@ class LlamaMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def __init__(
         self,
-        config: str | LitGPTConfig = "Llama-2-7b-hf",
+        config: str = "Llama-2-7b-hf",
         batchdims: Sequence[int] = (16,),
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.bfloat16,
         requires_grad: bool = True,
     ) -> None:
+        from litgpt.config import Config as LitGPTConfig
+
         super().__init__()
 
         self.config = LitGPTConfig.from_name(config) if not isinstance(config, LitGPTConfig) else config
@@ -1967,11 +1981,9 @@ class LlamaMLPBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (make(shape),), {}
 
     def fn(self) -> Callable:
-        module = (
-            litgpt_model.LLaMAMLP(self.config)
-            .to(device=self.device, dtype=self.tdtype)
-            .requires_grad_(self.requires_grad)
-        )
+        from litgpt.model import LLaMAMLP
+
+        module = LLaMAMLP(self.config).to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
         return module
 
 
@@ -2011,12 +2023,14 @@ class LitGPTCausalSelfAttentionBenchmark(Benchmark, metaclass=UserFacingBenchmar
 
     def __init__(
         self,
-        config: str | LitGPTConfig = "Llama-2-7b-hf",
+        config: str = "Llama-2-7b-hf",
         batchdims: Sequence[int] = (16,),
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.bfloat16,
         requires_grad: bool = True,
     ) -> None:
+        from litgpt.config import Config as LitGPTConfig
+
         super().__init__()
 
         self.config = LitGPTConfig.from_name(config) if not isinstance(config, LitGPTConfig) else config
@@ -2037,8 +2051,10 @@ class LitGPTCausalSelfAttentionBenchmark(Benchmark, metaclass=UserFacingBenchmar
         return (x, cos, sin, mask, input_pos), {}
 
     def fn(self) -> Callable:
+        from litgpt.model import CausalSelfAttention
+
         module = (
-            litgpt_model.CausalSelfAttention(self.config)
+            CausalSelfAttention(self.config)
             .to(device=self.device, dtype=self.tdtype)
             .requires_grad_(self.requires_grad)
         )
@@ -2118,8 +2134,10 @@ class LlamaRMSNormBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (make(shape),), {}
 
     def fn(self) -> Callable:
+        from litgpt.model import RMSNorm
+
         module = (
-            litgpt_model.RMSNorm(self.size, self.dim, self.eps)
+            RMSNorm(self.size, self.dim, self.eps)
             .to(device=self.device, dtype=self.tdtype)
             .requires_grad_(self.requires_grad)
         )
@@ -2167,7 +2185,7 @@ class LitGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def __init__(
         self,
-        config: LitGPTConfig,
+        config,
         batchdims: Sequence[int] = (8,),
         indices_dtype: dtypes.dtype = thunder.int64,
         device: str = "cuda",
@@ -2200,11 +2218,9 @@ class LitGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (x,), {}
 
     def fn(self) -> Callable:
-        gpt = (
-            litgpt_model.GPT(self.config)
-            .to(device=self.device, dtype=self.model_tdtype)
-            .requires_grad_(self.requires_grad)
-        )
+        from litgpt.model import GPT
+
+        gpt = GPT(self.config).to(device=self.device, dtype=self.model_tdtype).requires_grad_(self.requires_grad)
         return gpt
 
     def postprocess_for_backward(self, output: torch.Tensor) -> torch.Tensor | None:
@@ -2221,6 +2237,8 @@ class LitGPTBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 # "scaled_dot_product_attention" call.
 class QKVSplitRope(nn.Module):
     def __init__(self, config, use_apex) -> None:
+        from litgpt.model import apply_rope
+
         self.fused_apply_rotary_pos_emb_cached = None
         if use_apex:
             try:
@@ -2232,7 +2250,7 @@ class QKVSplitRope(nn.Module):
 
         super().__init__()
         self.config = config
-        self.apply_rope = litgpt_model.apply_rope
+        self.apply_rope = apply_rope
         self.use_apex = use_apex
 
     def forward(
@@ -2323,13 +2341,15 @@ class LlamaQKVSplitRopeBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 
     def __init__(
         self,
-        config: str | LitGPTConfig = "Llama-2-7b-hf",
+        config: str = "Llama-2-7b-hf",
         batchdims: Sequence[int] = (16,),
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.bfloat16,
         requires_grad: bool = True,
         use_apex: bool = False,
     ) -> None:
+        from litgpt.config import Config as LitGPTConfig
+
         super().__init__()
 
         self.config = LitGPTConfig.from_name(config) if not isinstance(config, LitGPTConfig) else config
@@ -2634,7 +2654,7 @@ class LitGPTSDPABenchmark(NanoGPTSDPABenchmark):
 
     def __init__(
         self,
-        config: str | LitGPTConfig = "Llama-2-7b-hf",
+        config: str = "Llama-2-7b-hf",
         batchdims: Sequence[int] = (16,),
         device: str = "cuda",
         dtype: dtypes.dtype = thunder.bfloat16,
@@ -2823,6 +2843,9 @@ class GPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         dtype: thunder.dtypes.dtype | torch.dtype | str = thunder.bfloat16,
         requires_grad: bool = True,
     ) -> None:
+        from litgpt.model import build_rope_cache
+        from litgpt.config import Config as LitGPTConfig
+
         super().__init__()
 
         self.config = LitGPTConfig.from_name(config)
@@ -2838,9 +2861,7 @@ class GPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         # Sets required benchmark parameters
         self.devices: list[str] = [device]
 
-        self.cos, self.sin = litgpt_model.build_rope_cache(
-            seq_len=seq_length, n_elem=self.config.rope_n_elem, device=self.device
-        )
+        self.cos, self.sin = build_rope_cache(seq_len=seq_length, n_elem=self.config.rope_n_elem, device=self.device)
 
     def make_batch(self) -> tuple[list, dict]:
         make = partial(make_tensor, device=self.device, dtype=self.tdtype, requires_grad=self.requires_grad)
@@ -2850,9 +2871,9 @@ class GPTBlockBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return (a, self.cos, self.sin), {}
 
     def fn(self) -> Callable:
-        model = (
-            litgpt_model.Block(self.config).to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
-        )
+        from litgpt.model import Block
+
+        model = Block(self.config).to(device=self.device, dtype=self.tdtype).requires_grad_(self.requires_grad)
         return model
 
 
@@ -2940,6 +2961,58 @@ class ResNet50Benchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
         return model
 
 
+class TorchbenchBenchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
+    _args = (
+        BenchmarkArg(
+            name="module_name",
+            description="The torchbenchmark module name (str).",
+        ),
+        BenchmarkArg(
+            name="device",
+            description="A device (str) to run on {'cpu' | 'cuda'}. Default is 'cuda'.",
+        ),
+        BenchmarkArg(
+            name="requires_grad",
+            description="Whether the model parameters require grad. Default is True.",
+        ),
+    )
+
+    @classmethod
+    @property
+    def name(cls) -> str:
+        return "torchbench"
+
+    @classmethod
+    @property
+    def description(cls) -> str:
+        return "Torchbench fixture"
+
+    @classmethod
+    @property
+    def args(cls) -> tuple[BenchmarkArg, ...]:
+        return cls._args
+
+    def __init__(self, module_name, device: str = "cuda", requires_grad: bool = True):
+        import importlib
+
+        module = importlib.import_module(f"torchbenchmark.models.{module_name}")
+        self.benchmark_cls = getattr(module, "Model", None)
+
+        benchmark = self.benchmark_cls(test="train" if requires_grad else "eval", device=device)
+
+        model, example = benchmark.get_module()
+        self.model = model
+        self.example_input = example
+
+    def make_batch(self) -> tuple[list, dict]:
+        if isinstance(self.example_input, (dict, UserDict)):
+            return [], self.example_input
+        return self.example_input, {}
+
+    def fn(self) -> Callable:
+        return self.model
+
+
 # TODO Add descriptions to the executors when listed, and list them alphabetically
 # TODO Allow querying benchmark for details
 # TODO Allow specifying benchmark arguments
@@ -2958,3 +3031,55 @@ class ResNet50Benchmark(Benchmark, metaclass=UserFacingBenchmarkMeta):
 #     if args.listbenchmarks:
 #         list_benchmarks(use_classname=False)
 #         sys.exit(0)
+
+
+def timer_and_memory_stats(benchmark) -> float:
+    """
+    Make a timer that also records the peak allocated memory.
+
+    pytest-benchmark has the following benchmarking code structure:
+
+    start = timer()
+    for _ in loops_range:
+        function_to_benchmark(*args, **kwargs)
+    end = timer()
+
+    So the information about the peak allocated memory should be recorded
+    after the function_to_benchmark call and we need to reset the peak memory
+    stats before the function_to_benchmark call.
+
+    If reset_peak_memory_stats is called inside the function_to_benchmark call,
+    the peak memory stats will be reset multiple times and the peak memory
+    stats may not be accurate.
+
+    Args:
+        benchmark: The pytest-benchmark object
+
+    Returns:
+        The decorator that records the peak allocated memory
+    """
+
+    def deco(old_timer):
+        import functools
+
+        @functools.wraps(old_timer)
+        def timer():
+            ret = old_timer()
+            # Max allocated memory is recorded in MB
+            benchmark.extra_info[MAX_ALLOCATED_MEMORY_KEYWORD] = torch.cuda.max_memory_allocated() / (1024 * 1024.0)
+            torch.cuda.reset_peak_memory_stats()
+            return ret
+
+        return timer
+
+    return deco
+
+
+@contextmanager
+def record_peak_allocated_memory(benchmark):
+    old_timer = benchmark._timer
+    benchmark._timer = timer_and_memory_stats(benchmark)(benchmark._timer)
+    try:
+        yield
+    finally:
+        benchmark._timer = old_timer

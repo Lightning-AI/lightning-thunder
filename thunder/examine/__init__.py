@@ -5,7 +5,8 @@ import traceback
 
 import thunder
 from thunder.core.trace import TraceCtx
-from thunder.core.proxies import TensorProxy
+from thunder.core.transforms import bsym_list_to_dag, Node
+from thunder.core.proxies import TensorProxy, CollectionProxy
 from thunder.core.symbol import BoundSymbol
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.torch.default_torch_ops import torch_auto_registered_ops
@@ -13,6 +14,7 @@ from thunder.core.langctxs import resolve_language, LanguageContext, Languages
 import torch
 from warnings import warn
 from itertools import chain
+import importlib
 
 
 # TODO Maybe make collect_into a set?
@@ -263,8 +265,138 @@ def get_nvfuser_repro(trace: TraceCtx, fusion_name: str, /) -> str:
         )
 
     fd = fusion.last_used
-    get_repro = getattr(fd, "getReproString", None)
+    # The API for nvFuser version >=2.14
+    get_repro = getattr(fd, "repro_script_for", None)
+    # The legacy nvFuser API
+    if get_repro is None:
+        get_repro = getattr(fd, "getReproString", None)
     if get_repro is None:
         raise RuntimeError("The installed version of nvFuser does not support repro generation unless on crash.")
 
     return get_repro(fusion.last_inputs)
+
+
+# Copied from `pytorchviz` which has MIT License (Thank you!)
+# See https://github.com/szagoruyko/pytorchviz/blob/0adcd83af8aa7ab36d6afd139cabbd9df598edb7/torchviz/dot.py#L180
+def resize_graph(dot, size_per_element=0.15, min_size=12):
+    """Resize the graph according to how much content it contains.
+
+    Modify the graph in place.
+    """
+    # Get the approximate number of nodes and edges
+    num_rows = len(dot.body)
+    content_size = num_rows * size_per_element
+    size = max(min_size, content_size)
+    size_str = str(size) + "," + str(size)
+    dot.graph_attr.update(size=size_str)
+
+
+def _repr_proxy(t_proxy, show_metadata=False):
+    if isinstance(t_proxy, TensorProxy):
+        # Should we just delegate to TensorProxy.__repr__ ?
+        extra_meta = f"\n shape:{t_proxy.shape} \n dtype:{t_proxy.dtype}" if show_metadata else ""
+        return f"name:{t_proxy.name}" + extra_meta
+
+    # For any other proxy, we just print the name.
+    return f"name:{t_proxy.name}"
+
+
+def make_trace_dot(trace: TraceCtx, show_metadata=False):
+    """
+    Creates a directed graph of the given trace.
+
+    This function is intended to be used to use graphviz to visualize the computation graph of a trace.
+    Beware, rendering out a graph for large traces might take a while.
+
+    Roots nodes are colored "green", intermediates are colored "lightblue" and leaves are colored "orange"
+
+    Requires graphviz to be installed, for more information check out -> https://graphviz.readthedocs.io/en/stable/index.html
+
+    .. note::
+        To improve the rendering time, one can update `nslimit` and `nslimit1` graph attributes on the returned Digraph before
+        calling the `render`.
+        Eg. dot_graph.graph_attr["nslimit"] = 5
+
+        Refer the following links for more details:
+        [1] https://graphviz.org/docs/attrs/nslimit/
+        [2] https://graphviz.org/docs/attrs/nslimit1/
+
+
+    Args:
+        trace (TraceCtx): The Thunder trace to be made into a graph.
+        show_metadata (bool): Add more meta-data (like shape, dtype) to the nodes representing the Tensor. Defaults to False.
+
+    Returns:
+        graphviz.Digraph: A graphviz directed graph.
+    """
+    if not importlib.util.find_spec("graphviz"):
+        warn("graphviz is not available. Graph cannot be created.")
+        return
+
+    import graphviz
+
+    node_attr = dict(
+        style="filled", shape="box", align="left", fontsize="10", ranksep="0.1", height="0.2", fontname="monospace"
+    )
+    dot = graphviz.Digraph(
+        node_attr=node_attr,
+        graph_attr=dict(size="10,10"),
+    )
+    dot.strict = True
+
+    roots, leaves = bsym_list_to_dag(trace.bound_symbols)
+    leaves_id = {id(leaf) for leaf in leaves}
+    roots_id = {id(root) for root in roots}
+
+    def _get_color(node_id):
+        if node_id in roots_id:
+            return "green"
+        if node_id in leaves_id:
+            return "orange"
+        return "lightblue"
+
+    # All roots will be positioned at same level due to `rank`:`same`.
+    roots_g = graphviz.Digraph(graph_attr={"rank": "same"})
+    for root in roots:
+        roots_g.node(str(id(root)), root.bsym.python(indent=0, print_depth=1)[0], fillcolor=_get_color(str(id(root))))
+    dot.subgraph(roots_g)  # Add roots_g to main graph.
+
+    stack = [*roots]
+    visited = set()
+
+    # Breadth first
+    while stack:
+        node: Node = stack.pop(0)
+        node_id = id(node)
+        visited.add(node_id)
+        color = _get_color(node_id)
+
+        # Unpacking collection might be a multi-line.
+        node_repr = "\n".join(node.bsym.python(indent=0, print_depth=1))
+        node_repr = node_repr.replace("\\", "")
+        dot.node(str(node_id), node_repr, fillcolor=color)
+
+        # Add node for args and connect args
+        for arg in node.bsym.flat_args:
+            # We have collection proxies in backward
+            if isinstance(arg, (TensorProxy, CollectionProxy)):
+                arg_id = arg.name
+                dot.node(arg_id, _repr_proxy(arg, show_metadata))
+                dot.edge(arg_id, str(node_id))
+
+        # Connect outputs
+        for out in node.bsym.flat_outs:
+            # We have collection proxies in backward
+            if isinstance(out, (TensorProxy, CollectionProxy)):
+                out_id = out.name
+                dot.edge(str(node_id), out_id)
+
+        # Add children for exploration
+        for child in node.children:
+            child_id = id(child)
+            if child_id not in visited and not str(child.bsym).startswith("#"):
+                stack.append(child)
+
+    # Resize graph based on number of nodes
+    resize_graph(dot)
+    return dot

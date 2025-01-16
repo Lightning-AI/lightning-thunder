@@ -27,11 +27,12 @@ from thunder.tests.framework import (
     run_snippet,
     assert_closer,
     IN_CI,
+    NVFUSER_AVAILABLE,
     requiresCUDA,
     version_between,
 )
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
-from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops, get_opinfo
+from thunder.tests.opinfos import get_opinfo, opinfos, tensor_creation_ops
 
 # TODO: Move this to thunder.tests.opinfos
 op_skip = {
@@ -266,7 +267,7 @@ def _dot(x, y):
     return sum([_tensor_dot(a, b) for a, b in zip(x, y)])
 
 
-def check_vjp(f, *primals, comp, executor="torch"):
+def check_vjp(f, *primals, comp, executor="torch", set_compile_data: bool = False, prologue_required: bool = False):
     """Check that the vector-Jacobian product of a function is correct.
 
     Args:
@@ -281,7 +282,7 @@ def check_vjp(f, *primals, comp, executor="torch"):
     """
     # Let f be a function from vectors of size n to vectors of size m.
     # Its Jacobian is a matrix J of size m x n.
-    # The adjoint property is J^* J = I, where J^* is the conjugate transpose (adjoint) of J.
+    # Represent by J^* the conjugate transpose (adjoint) of J.
     # J^* is a matrix of size n x m.
     # For any vector v of size m, J^* v is a vector of size n.
     # For any vector u of size n, J u is a vector of size m.
@@ -296,16 +297,30 @@ def check_vjp(f, *primals, comp, executor="torch"):
 
     u = tree_map(make, primals)
 
-    # dirty little trick for speed: skip the prologue
+    # dirty little trick for speed: skip the prologue, however, the prologue is required when
+    # there are non-differentiable kwargs
     jf = executor.make_callable(f, disable_torch_autograd=True)
-    comp_f = thunder.compile_data(jf).get_computation_and_inputs(*primals)[0].computation_fn
+
+    # if there are things the prologue passes to the epilogue, we need the prologue
+    # this happens e.g. if the function returns inputs
+    prologue_trc = thunder.compile_data(jf).get_computation_and_inputs(*primals)[0].prologue_traces[-1]
+    prologue_required = prologue_required or prologue_trc.output[1]  # non-empty prologue_to_epilogue
+
+    if prologue_required:
+        comp_f = jf
+    else:
+        comp_f = thunder.compile_data(jf).get_computation_and_inputs(*primals)[0].computation_fn
 
     outs_p, J_u = numerical_jvp(comp_f)(primals, u)
 
     multiple_results = isinstance(outs_p, Sequence)
 
     v = tree_map(make, outs_p)
-    initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
+    if set_compile_data:
+        with thunder.core.compile_data.compile_data_and_stats(thunder.compile_data(jf), None):
+            initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
+    else:
+        initial_trace_vjp_f = thunder.trace()(vjp(f), primals, v)
     _, J_star_v = executor.make_callable(initial_trace_vjp_f.python_callable(), disable_torch_autograd=True)(primals, v)
 
     if not multiple_results:
@@ -362,11 +377,22 @@ def _make_differentiable_wrapper(func, args):
     return wrapper, filtered_args
 
 
-def snippet_vjp_correctness(func, args, comp, executor):
-    check_vjp(func, *args, comp=comp, executor=executor)
+def snippet_vjp_correctness(func, args, comp, executor, set_compile_data, prologue_required):
+    check_vjp(
+        func,
+        *args,
+        comp=comp,
+        executor=executor,
+        set_compile_data=set_compile_data,
+        prologue_required=prologue_required,
+    )
 
 
 # TODO Use the given comparator
+# TODO(crcrpar): Reason special-casing `adaptive_avg_pool2d` -- https://github.com/Lightning-AI/lightning-thunder/issues/1178
+# With the slight revert for the mentioned issue, the VJP rule for `adaptive_avg_pool2d` is unavailable
+# unless compile data is available, as it's registered to `TorchExecutor.implmap` but not to
+# `thunder.core.transforms.augmented_forward_impls`.
 @ops((op for op in opinfos if op.name in supported_vjp_ops), supported_dtypes=(dtypes.float64,))
 def test_vjp_correctness(op, device, dtype, executor, comp):
     at_least_one_differentiable_input = False
@@ -383,14 +409,14 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
         # for non-differentiable arguments like dtypes so that the test will
         # execute properly.
         sample = sample.thunder()  # converts torch.dtype to thunder.dtype
+        sample = sample.remove_singularities(op, eps)
 
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
 
         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
         if len(filtered_args) == 0:
             continue
-        if op.singularity_fn is not None:
-            filtered_args = [push_away_from_singularities(arg, op.singularity_fn, eps) for arg in filtered_args]
+
         at_least_one_differentiable_input = True
         result = run_snippet(
             snippet_vjp_correctness,
@@ -401,6 +427,8 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
             filtered_args,
             comp,
             executor,
+            "adaptive_avg_pool2d" in op.name,
+            len(sample.kwargs) != 0,
         )
         if result is not None:
             return result
@@ -600,6 +628,21 @@ def test_vjp_correctness_zeta_manual(op, device, dtype, executor, comp):
         assert grad_lhs is None, "grad_lhs should be None"
         comp(actual_out, out, equal_nan=True)
         comp(grad_rhs, expected_grad[0], equal_nan=True)
+
+
+@ops((get_opinfo("item"),), supported_dtypes=(dtypes.float64,))
+def test_vjp_correctness_torch_item_manual(op, device, dtype, executor, comp):
+    from thunder.torch import item
+
+    for sample in op.sample_inputs(device, dtype, requires_grad=True, no_rhs_numbers=True):
+        out = op.torch_reference(*sample.args, **sample.kwargs)
+        flat_op, flat_args, spec = flatten_func(item, sample.args, sample.kwargs)
+        initial_trace = thunder.trace()(vjp(flat_op), flat_args, (None,))
+        actual_out, (grad_in,) = executor.make_callable(initial_trace.python_callable(), disable_torch_autograd=True)(
+            flat_args, (None,)
+        )
+        assert grad_in is None, "grad_in should be None"
+        comp(actual_out, out, equal_nan=True)
 
 
 @ops((get_opinfo("nll_loss"),), supported_dtypes=(dtypes.float64,))
@@ -1127,7 +1170,7 @@ def test_forward_and_backward_from_trace(executor, device, _):
     from thunder.clang import cos, sin
     import thunder.torch as ltorch
     from thunder.core.transforms import forward_and_backward_from_trace, value_and_grad
-    from thunder.core.transform_common import wrap_return_value_together_with_argments
+    from thunder.core.transform_common import wrap_return_value_together_with_arguments
 
     def func(a, b, *, c):
         d = a + b + c
@@ -1138,7 +1181,7 @@ def test_forward_and_backward_from_trace(executor, device, _):
     b = make_tensor((2, 3), device=device, dtype=torch.float64, requires_grad=True)
     c = make_tensor((3,), device=device, dtype=torch.float64, requires_grad=True)
     initial_trace = trace(inline_trace=False)(func, a, b, c=c)
-    wrapped_trace = wrap_return_value_together_with_argments(initial_trace)
+    wrapped_trace = wrap_return_value_together_with_arguments(initial_trace)
     fw_trace, bw_trace = forward_and_backward_from_trace(wrapped_trace)
     fw = executor.make_callable(fw_trace)
     bw = executor.make_callable(bw_trace)
@@ -1259,9 +1302,7 @@ def test_backward_none_propagation(executor, device, _):
 # TODO Add more module tests
 
 
-def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp, singularity_fn):
-    if singularity_fn:
-        sample = sample.remove_singularities(singularity_fn, 1e-2)
+def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
 
     args, kwargs = sample.args, sample.kwargs
 
@@ -1361,6 +1402,8 @@ def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype,
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
         comp = sample.comp if sample.comp is not None else comp
 
+        sample = sample.remove_singularities(op, 1e-2)
+
         result = run_snippet(
             snippet_phantom_grad_vs_torch_consistency,
             op,
@@ -1370,7 +1413,6 @@ def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype,
             op.torch_reference,
             sample,
             lambda a, b, **kwargs: comp(a, b, equal_nan=True, **kwargs),
-            op.singularity_fn,
         )
 
         # See [NOTE] dynamo reset
@@ -1685,6 +1727,93 @@ def test_get_saved_for_backward_tensors_error():
         get_saved_for_backward_tensors(execution_trace)
 
 
+def test_torch_checkpoint():
+    import torch.utils.checkpoint
+    import torch._higher_order_ops.wrap
+
+    def fn_to_checkpoint(x, y):
+        return x.sin().cos().exp().mul(y)
+
+    checkpoint_fns = (
+        thunder.torch.checkpoint,
+        partial(torch.utils.checkpoint.checkpoint, use_reentrant=False),
+        torch.ops.higher_order.tag_activation_checkpoint,
+    )
+
+    for checkpoint_fn in checkpoint_fns:
+
+        def f(x, y):
+            return checkpoint_fn(fn_to_checkpoint, x, y)
+
+        x = make_tensor((2, 2), device="cpu", dtype=torch.float32, requires_grad=True)
+        y = make_tensor((2, 2), device="cpu", dtype=torch.float32, requires_grad=True)
+        jf = thunder.jit(f)
+        out = jf(x, y)
+
+        # With activation checkpointing, we are saving only the original input.
+        # The intermediate values are recomputed during backward pass.
+        assert len(out.grad_fn.next_functions[0][0].saved_tensors) == 2
+        # We detach the saved tensors (which returns a new Python tensor backed by same storage)
+        # the order seems to be non-deterministic sometimes
+        assert {t.data_ptr() for t in out.grad_fn.next_functions[0][0].saved_tensors} == {x.data_ptr(), y.data_ptr()}
+
+        g = torch.ones_like(out)
+        out.backward(g)
+
+        x_ref = x.detach().requires_grad_()
+        y_ref = y.detach().requires_grad_()
+        out_ref = fn_to_checkpoint(x_ref, y_ref)
+        out_ref.backward(g)
+        torch.testing.assert_close(x.grad, x_ref.grad)
+        torch.testing.assert_close(y.grad, y_ref.grad)
+
+
+@requiresCUDA
+def test_checkpoint_max_memory():
+    import torch.utils.checkpoint
+
+    class Checkpoint(torch.nn.Module):
+        def __init__(self, module):
+            super().__init__()
+            self.module = module
+
+        def forward(self, *args):
+            return torch.utils.checkpoint.checkpoint(self.module, *args, use_reentrant=False)
+
+    with torch.device("cuda:0"):
+        m = torch.nn.Sequential(
+            torch.nn.Linear(1024, 16),
+            torch.nn.ReLU(),
+            *[
+                Checkpoint(
+                    torch.nn.Sequential(
+                        torch.nn.Linear(16, 2048),
+                        torch.nn.Linear(2048, 16),
+                        torch.nn.ReLU(),
+                    )
+                )
+                for _ in range(10)
+            ],
+            torch.nn.Linear(16, 1024),
+        )
+        inps = torch.randn(512, 1024, requires_grad=True)
+
+    jm = thunder.jit(m, executors=())  # no rematerialization
+    res = jm(inps)
+    res.sum().backward()
+
+    torch.cuda.reset_peak_memory_stats()
+    mem_base = torch.cuda.memory_allocated()
+    res = jm(inps)
+    res.sum().backward()
+    mem_max = torch.cuda.max_memory_allocated()
+    # without chewckpointing the peak mem about 43MB.
+    # With checkpointing as coded in the model and recomputation where the
+    # values are used, we get a little over 10MB, so we put the barrier at 16MB
+    mb_used = (mem_max - mem_base) / 2**20
+    assert mb_used < 16
+
+
 def test_inconsistent_output_length_grad_transform():
     from thunder.extend import OperatorExecutor
     from thunder.core.proxies import AnyProxy, TensorProxy
@@ -1742,3 +1871,93 @@ def test_grad_softmax_dtype(device):
     actual_grad = torch.autograd.grad(actual, x, grad_o)
     expected_grad = torch.autograd.grad(expected, x, grad_o)
     torch.testing.assert_close(actual_grad, expected_grad)
+
+
+@pytest.mark.parametrize("device", ("cuda", "cpu"))
+def test_grad_split_unused_output(device):
+    # Test to verify that the grad rule for split is
+    # correct even if few of the outputs are unused
+    # (leading to `grad=None` for them).
+
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+
+    def forward(x):
+        x_1, x_2, x_3 = torch.split(x, 2)
+        return x_1
+
+    jforward = thunder.jit(forward)
+
+    x = torch.randn([5, 2], dtype=torch.bfloat16, device=device, requires_grad=True)
+
+    actual = jforward(x)
+    expected = forward(x)
+    torch.testing.assert_close(actual, expected)
+
+    grad_o = torch.randn_like(actual)
+
+    actual_grad = torch.autograd.grad(actual, x, grad_o)
+    expected_grad = torch.autograd.grad(expected, x, grad_o)
+    torch.testing.assert_close(actual_grad, expected_grad)
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_adhoc_executor_grad(executor, device, _):
+    import torch
+    import thunder
+
+    x = torch.ones(2, device=device, requires_grad=True)
+
+    class Sin(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, x):
+            ctx.save_for_backward(x)
+            return torch.sin(x)
+
+        @staticmethod
+        def backward(ctx, g):
+            (x,) = ctx.saved_tensors
+            return g * torch.cos(x) * 200
+
+    def func(x):
+        return Sin.apply(x)
+
+    cfunc = thunder.jit(func)
+    actual = cfunc(x)
+    (actual_gr,) = torch.autograd.grad(actual.sum(), x)
+    expected = func(x)
+    (expected_gr,) = torch.autograd.grad(expected.sum(), x)
+
+    torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(actual_gr, expected_gr)
+
+
+@pytest.mark.parametrize("device", ("cuda", "cpu"))
+def test_backward_recomputation_decomposed_ops(device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+
+    def fn(a):
+        return torch.nn.functional.gelu(a)
+
+    # rematerialization will also trigger recomputation here.
+    jfn = thunder.jit(fn, executors=(), enable_saved_for_backward_recomputation=False)
+    jfn2 = thunder.jit(fn, enable_saved_for_backward_recomputation=True)
+    a = torch.randn(2, 2, device=device, requires_grad=True)
+    res = jfn(a)
+    res2 = jfn2(a)
+    assert len(res.grad_fn.next_functions[0][0].saved_tensors) == 3  # should be decomposed
+    assert len(res2.grad_fn.next_functions[0][0].saved_tensors) == 1
+
+    if NVFUSER_AVAILABLE and device == "cuda":
+        # check everything is fused
+        assert {bsym.sym.name for bsym in thunder.last_backward_traces(jfn2)[-1].bound_symbols} == {
+            "nvFusion0",
+            "clear_mutable_collection",
+            "python_return",
+            "python_del",
+            "unpack_sequence",
+            "unpack_trivial",
+        }

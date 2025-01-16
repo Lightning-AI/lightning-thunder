@@ -2,23 +2,62 @@
 #   This feature is available in Python 3.7 and later.
 #   This import (like all __future__ imports) must be at the beginning of the file.
 from __future__ import annotations
-from enum import Enum
-import functools
-import os
-import dis
-
-import sys
-import collections.abc
-from numbers import Number
-from typing import Any, Type, Union, Optional, Tuple, List
-from collections.abc import Callable
 from collections.abc import Sequence
+from enum import Enum
 from types import MappingProxyType, ModuleType, CodeType, EllipsisType, FunctionType, MethodType
-import re
+from typing import TYPE_CHECKING
+import collections.abc
+import dis
+import functools
 import inspect
+import os
+import re
+import sys
 
 import torch
 import numpy as np
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from numbers import Number
+    from typing import Any
+
+
+__all__ = [
+    "BoundSymbolInterface",
+    "NumberProxyInterface",
+    "ProxyInterface",
+    "SymbolInterface",
+    "TagBase",
+    "TensorProxyInterface",
+    "TermColors",
+    "TorchAutogradFunctionCtxProxyInterface",
+    "build_callable",
+    "check",
+    "check_type",
+    "check_types",
+    "check_valid_length",
+    "check_valid_shape",
+    "default_dataclass_params",
+    "extract_callable_name",
+    "fnprint",
+    "get_module",
+    "indent",
+    "init_colors",
+    "init_windows_terminal",
+    "is_base_printable",
+    "is_base_printable_literal",
+    "is_base_printable_type",
+    "is_base_printable_value",
+    "is_collection",
+    "print_base_printable",
+    "print_base_type",
+    "print_number",
+    "print_type",
+    "run_once",
+    "sequencify",
+    "warn_term_variable_once",
+]
 
 
 #
@@ -132,12 +171,13 @@ def check_types(xs: Sequence[Any], types: type | Sequence[type]):
 def check_valid_length(length: int):
     """Validates that an object represents a valid dimension length."""
 
-    # maybe we should skip the check for IntegerProxy in general
-    check_type(length, (int, NumberProxyInterface))
-    check(length >= 0, lambda: f"Found invalid length {length}!")
+    # skip the check for NumberProxy in general
+    if not isinstance(length, NumberProxyInterface):
+        check_type(length, (int))
+        check(length >= 0, lambda: f"Found invalid length {length}!")
 
 
-def check_valid_shape(shape: tuple[int, ...] | list[int]):
+def check_valid_shape(shape: tuple[int, NumberProxy, ...] | list[int]):
     """Validates that a sequence represents a valid shape."""
 
     check_type(shape, (tuple, list))
@@ -168,6 +208,17 @@ def sequencify(x: Any) -> Sequence:
 
 def get_module(name: str) -> Any:
     return sys.modules[name]
+
+
+def is_likely_from_collections_namedtuple(tuple_type):
+    from collections import namedtuple
+
+    # Check if tuple_type code object is coming from namedtuple
+    return (
+        hasattr(tuple_type, "__repr__")
+        and hasattr(tuple_type.__repr__, "__code__")
+        and tuple_type.__repr__.__code__ in namedtuple.__code__.co_consts
+    )
 
 
 #
@@ -280,6 +331,12 @@ def _print_complex_number(c: complex) -> str:
     return f"complex({real_str}, {imag_str})"
 
 
+def _print_slice(s: slice) -> str:
+    val = (s.start, s.stop, s.step)
+
+    return f"slice({','.join(map(lambda x: x.name if isinstance(x, ProxyInterface) else str(x), val))})"
+
+
 def print_number(n: Number) -> str:
     if isinstance(n, complex):
         return _print_complex_number(n)
@@ -388,7 +445,7 @@ _printable_value_types = {
     int: lambda b: str(b),
     float: _print_float_number,
     complex: _print_complex_number,
-    slice: lambda slc: str(slc),
+    slice: _print_slice,
 }
 
 

@@ -12,8 +12,9 @@ from thunder.core.options import (
     resolve_cache_option,
     SHARP_EDGES_OPTIONS,
     resolve_sharp_edges_option,
+    DebugOptions,
 )
-from thunder.core.utils import check, is_collection
+from thunder.core.utils import check, is_collection, AutocastStack
 from thunder.core.pytree import tree_flatten, tree_map
 from thunder.core.compile_data import compile_data_and_stats
 import thunder.core.langctxs as langctxs
@@ -47,13 +48,23 @@ import torch as torch
 import numpy as np
 import thunder
 
+
+__all__ = [
+    "CompileStats",
+    "CompileData",
+    "cache_put",
+    "cache_get",
+    "trace",
+    "transform_for_execution",
+    "transform_to_torch_types",
+]
+
 #
 # Datastructures for compiled functions
 #
 
 
 # Holds statistics and caches for a compiled function
-# TODO RC1 Update last_executed to last_computation
 # TODO RC1 Review how autograd traces are presented
 class CompileStats:
     """A class holding statistics and caches for a compiled function.
@@ -65,7 +76,7 @@ class CompileStats:
         See :mod:`thunder` for more of such utility functions.
 
     Attributes:
-        last_executed:
+        last_computation (Callable):
         last_traces (Sequence[TraceCtx]):
         last_prologue (TraceCtx):
         last_prologue_traces (Sequence[TraceCtx]):
@@ -96,7 +107,7 @@ class CompileStats:
 
     def __init__(self):
         # Callables and traces
-        self.last_executed = None
+        self.last_computation = None
         self.last_traces = None
         self.last_prologue = None
         self.last_prologue_traces = None
@@ -188,11 +199,11 @@ class CompileData:
         only_execute_prims: bool = False,
         disable_preprocessing: bool = False,
         disable_torch_autograd_support: bool = False,
-        use_rematerialization: bool = False,
         debug_log: None | StringIO = None,
         compile_options: dict[str, Any] = {},
         get_computation_and_inputs: Callable | None = None,
         executor_lookasides: dict[Callable, Callable] | None = None,
+        debug_options: DebugOptions | None = None,
     ):
         # Records whether we're using the thunder.jit() entrypoint or not
         #   The thunder.jit() entrypoint introduces important architectural updates,
@@ -208,6 +219,13 @@ class CompileData:
 
         # Resolves cache option
         self.cache_option = resolve_cache_option(cache_option)
+
+        # State for pytorch autocast context managers.
+        self.autocast_stack: AutocastStack = AutocastStack()
+
+        # State to query whether grad is enabled or disabled using
+        # torch.no_grad/torch.enable_grad/torch._C._set_grad_enabled
+        self.is_grad_enabled: bool = True
 
         #
         # Gathers additional metadata
@@ -243,9 +261,9 @@ class CompileData:
         self.fn = fn
         self.only_execute_prims = only_execute_prims
         self.disable_preprocessing = disable_preprocessing
-        self.use_rematerialization = use_rematerialization
         self.disable_torch_autograd_support = disable_torch_autograd_support
         self.debug_log = debug_log
+        self.debug_options = DebugOptions() if debug_options is None else debug_options
 
         # TODO Consider validating that this dict has exclusively string keys
         self.compile_options = compile_options
@@ -291,6 +309,13 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs, *, rename_proxies: bool
             return proxy(x, name=name)
 
         if isinstance(x, Proxy):
+            # register proxy name used by NumberProxies in TensorProxy.shape
+            if isinstance(x, TensorProxy):
+                for s_p in filter(lambda s: isinstance(s, Proxy), x._shape):
+                    # TODO need to avoid name conflict here, since s_p.name
+                    # could have conflicted with something defined earlier in
+                    # the trace.
+                    get_tracectx().names.add(s_p.name)
             if not rename_proxies:
                 get_tracectx().names.add(x.name)
                 return x
@@ -618,21 +643,16 @@ def transform_for_execution(
     executors_list: Sequence[Executor],
     *,
     only_execute_prims=False,
-    use_rematerialization=True,
     use_del_last_used=True,
 ) -> list[TraceCtx]:
     traces: list[TraceCtx] = []
 
     # TODO If only_execute_prims, then flatten to prims here
 
-    # Runs passes that are generally useful
-    dce_trace = dce(trace)
-    traces.append(dce_trace)
-
     # cse_trace = cse(dce_trace)
     # traces.append(cse_trace)
 
-    extrace = executors.passes.transform_for_execution(dce_trace, executors_list)
+    extrace = executors.passes.transform_for_execution(trace, executors_list)
 
     traces.append(extrace)
 
@@ -661,7 +681,6 @@ def _execute_trace(
             trc,
             executors_list=compile_data.executors_list,
             only_execute_prims=compile_data.only_execute_prims,
-            use_rematerialization=compile_data.use_rematerialization,
         )
     extrace = extraces[-1]
 
@@ -702,6 +721,6 @@ def transform_to_torch_types(trace: TraceCtx):
     last = trace.bound_symbols[-1]
     assert last.sym.id == prims.PrimIDs.RETURN
     new_args = tree_map(map_to_torch, last.args)
-    new_bsym = prims.python_return.bind(*new_args, output=())
+    new_bsym = prims.python_return.bind(*new_args, output=None)
     trace.bound_symbols[-1] = new_bsym
     return trace

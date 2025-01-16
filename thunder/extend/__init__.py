@@ -1,23 +1,19 @@
+from collections.abc import Callable, Sequence, Hashable
 import enum
-import sys
-import os
 import itertools
-from typing import Any
-from collections.abc import Sequence
-from collections.abc import Callable
-from collections.abc import Hashable
+import os
+import sys
 from types import ModuleType
-import warnings
-from functools import cache, partial
+from typing import Any
 
 import torch.cuda
 
-
-from thunder.core.utils import check
+from thunder.core.devices import to_torch_device
+from thunder.core.dtypes import to_torch_dtype
+from thunder.core.proxies import Proxy, TensorProxy, proxy
+from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
 from thunder.core.trace import TraceCtx
-from thunder.core.proxies import Proxy
-from thunder.core.baseutils import run_once
 
 __all__ = [
     "register_executor",
@@ -79,7 +75,7 @@ class Executor:
         return self._opmap
 
     def __repr__(self) -> str:
-        return f"thunder.extend.OperatorExecutor('{str(self.name)}')"
+        return f"{self.__class__.__module__}.{self.__class__.__name__}('{str(self.name)}')"
 
     def __hash__(self) -> int:
         return hash(self.name)
@@ -275,6 +271,85 @@ class OperatorExecutor(Executor):
 
         _id = sym_or_id.id if isinstance(sym_or_id, Symbol) else sym_or_id
         self.implmap[_id] = impl
+
+
+class AdHocExecutor(OperatorExecutor):
+    """An "Anonymous" executor to be used for temporary registrations"""
+
+    def __init__(self):
+        super().__init__(f"__ad_hoc_executor_{id(self)}")
+        self.counter = 0  # a counter to disambiguate names
+
+    def register_operator(
+        self,
+        name: str,
+        *,
+        like: None | Symbol = None,
+        meta: None | Callable = None,
+        tags: None | list[Any] = None,
+        module: None | type | ModuleType = None,
+        fn: None | Callable = None,
+        bind_postprocess: None | Callable = None,
+        replaces: None | Callable = None,
+        python_printer: Callable = default_python_printer,
+    ) -> Symbol:
+        op = super().register_operator(
+            f"{name}_{id(self)}_{self.counter}",
+            like=like,
+            meta=meta,
+            tags=tags,
+            module=module,
+            fn=fn,
+            bind_postprocess=bind_postprocess,
+            replaces=replaces,
+            python_printer=python_printer,
+        )
+        self.counter += 1
+        return op
+
+    def register_operator_for_opaque_function(self, fn):
+        def get_name(fn):
+            mod = sys.modules[fn.__module__]
+            if getattr(mod, fn.__name__) == fn:
+                return f"{fn.__module__}.{fn.__name__}"
+            raise RuntimeError("could not find name")
+
+        def auto_meta(fn):
+            def meta(*args, **kwargs):
+                concrete_args = []
+                for a in args:
+                    if isinstance(a, TensorProxy):
+                        dtype = to_torch_dtype(a.dtype)
+                        if dtype.is_floating_point:
+                            t = torch.randn(
+                                a.shape,
+                                dtype=dtype,
+                                device=to_torch_device(a.device),
+                                requires_grad=a.requires_grad,
+                            )
+                        else:
+                            t = torch.ones(
+                                a.shape,
+                                dtype=dtype,
+                                device=to_torch_device(a.device),
+                                requires_grad=a.requires_grad,
+                            )
+                        concrete_args.append(t)
+                    else:
+                        concrete_args.append(a)
+                results = fn(*concrete_args, **kwargs)
+                meta_results = tree_map(lambda r: proxy(r) if isinstance(r, torch.Tensor) else r, results)
+                return meta_results
+
+            return meta
+
+        name = get_name(fn).replace(".", "_")
+        meta = auto_meta(fn)
+        symbol = self.register_operator(name, fn=fn, meta=meta, replaces=fn)
+        return symbol
+
+    def __repr__(self) -> str:
+        return f"<thunder.extend.AdHocExecutor object {id(self)}>"
 
 
 def single_op_executor(
@@ -482,3 +557,24 @@ def add_executor_lists(
             new_exc_list.append(exc)
 
     return new_exc_list
+
+
+def fuse_bound_symbols(trace: TraceCtx, can_fuse: Callable):
+    """Utility function for creating fusions in the `trace`.
+    `can_fuse` should be a callable mapping a BoundSymbol argument
+    to bool, whether the symbol is fusible.
+    Returns the bound symbols as a list of lists of bound symbols,
+    each element representing a fusion (if it contains multiple) or
+    single elements."""
+    fusions = [[]]
+    for bsym in trace.bound_symbols:
+        if can_fuse(bsym):
+            fusions[-1].append(bsym)
+        else:
+            if fusions[-1]:
+                fusions.append([])
+            fusions[-1].append(bsym)
+            fusions.append([])
+    if not fusions[-1]:
+        del fusions[-1]
+    return fusions

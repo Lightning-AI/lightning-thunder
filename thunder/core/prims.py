@@ -166,6 +166,7 @@ class PrimIDs(Enum):
     TRANSPOSE = auto()
     UNFOLD = auto()
     VIEW = auto()
+    SHALLOW_COPY = auto()  # a view copy
     # Memory layout prims (Experimental)
     STRIDE_ORDER = auto()
     # Elementwise unary prims
@@ -281,12 +282,19 @@ class OpTags(Enum):
     SHAPE_OP = auto()
     REDUCTION_OP = auto()
     RANDOM_OP = auto()
+    MATMUL_OP = auto()
     # Ops that might cause a device sync
     DEVICE_SYNC_OP = auto()
     # Labels operations that should not be removed by the dead code elimination (DCE) pass
     DONT_DCE = auto()
     IN_PLACE = auto()
     AUTO_REGISTERED = auto()
+    # Label for operations representing enter/exit of context managers.
+    CTX_MANAGER_ENTER_EXIT_OP = auto()
+    # Label to explicitly disable an operation from recomputing in backward - see function `recompute_saved_for_backward`.
+    DONT_RECOMPUTE_IN_BACKWARD = auto()
+    # Don't automatically tag operation to be recomputed in backward
+    DONT_AUTO_RECOMPUTE_IN_BACKWARD = auto()
 
 
 # TODO RC1 Document this function and describe the parts of a primitive
@@ -469,6 +477,8 @@ def _collectify(x: Any, *, name: str | None = None) -> Any:
         return x
     if baseutils.is_collection(x):
         return CollectionProxy(x, name=name)
+    if isinstance(x, slice):
+        return CollectionProxy((x.start, x.stop, x.step), name=name)
 
     return x
 
@@ -476,7 +486,7 @@ def _collectify(x: Any, *, name: str | None = None) -> Any:
 # TODO RC1 Align with ASSERT_TENSOR_METADATA
 # NOTE The device is stored as a string for easier, more readable comparisons
 def _check_tensor_shape_and_metadata_meta(
-    t: TensorProxy, shape: tuple[int, ...], device: str, dtype: torch.dtype, requires_grad: bool
+    t: TensorProxy, shape: tuple[int, NumberProxy, ...], device: str, dtype: torch.dtype, requires_grad: bool
 ) -> None:
     # Validates types
     baseutils.check_type(t, TensorProxy)
@@ -1649,8 +1659,8 @@ python_del = make_prim(
 )
 
 
-def _return_meta(*args) -> Any:
-    return args
+def _return_meta(*args) -> None:
+    return None
 
 
 def return_printer(
@@ -1658,7 +1668,7 @@ def return_printer(
 ):
     utils.check(
         len(kwarg_printables) == 0,
-        lambda: f"Expected no kwargs for del but got {kwarg_printables}",
+        lambda: f"Expected no kwargs for return but got {kwarg_printables}",
         exception_type=AssertionError,
     )
 
@@ -1671,9 +1681,8 @@ def return_printer(
     return f"return {arg_str}"
 
 
-# NOTE This wrapper for del is necessary because python_impl=del is invalid syntax (del is not a regular function)
-def _return_impl(*args) -> Any:
-    return args
+def _return_impl(*args) -> None:
+    return None
 
 
 python_return = make_prim(
@@ -2790,6 +2799,7 @@ get_and_update_rng_state = make_prim(
     PrimIDs.GET_AND_UPDATE_RNG_STATE,
     "get_and_update_rng_state",
     meta=_get_and_update_rng_state_meta,
+    tags=(OpTags.RANDOM_OP,),  # RANDOM_OP here is a short hand for "uses / modifies the random state"
 )
 
 
@@ -3155,7 +3165,7 @@ pad = make_prim(
 )
 
 
-def reshape_meta(a: TensorProxy, /, shape: tuple[int, ...]) -> TensorProxy:
+def reshape_meta(a: TensorProxy, /, shape: tuple[int, NumberProxy, ...]) -> TensorProxy:
     # Validates inputs
     utils.check_type(a, TensorProxy)
     utils.check_valid_shape(shape)
@@ -3538,6 +3548,13 @@ transpose = make_prim(PrimIDs.TRANSPOSE, "transpose", meta=transpose_meta, tags=
 view = make_prim(PrimIDs.VIEW, "view", meta=reshape_meta, tags=(OpTags.SHAPE_OP,))
 
 
+def shallow_copy_meta(a: TensorProxy, /) -> TensorProxy:
+    return TensorProxy(like=a)
+
+
+shallow_copy = make_prim(PrimIDs.SHALLOW_COPY, "shallow_copy", meta=shallow_copy_meta, tags=(OpTags.SHAPE_OP,))
+
+
 def unfold_meta(a: TensorProxy, /, dim: int, size: int, step: int) -> TensorProxy:
     dim = utils.canonicalize_dim(a.ndim, dim)
     max_size = 1 if a.ndim == 0 else a.shape[dim]
@@ -3573,7 +3590,7 @@ def stride_order_meta(a: TensorProxy, /, order: Sequence[int]) -> TensorProxy:
 # TODO Consider a more general stride manipulation primitive, like PyTorch's
 #   as_strided or set_strided operations
 # See clang.stride_order for this prim's documentation
-stride_order = make_prim(PrimIDs.STRIDE_ORDER, "stride_order", meta=stride_order_meta)
+stride_order = make_prim(PrimIDs.STRIDE_ORDER, "stride_order", meta=stride_order_meta, tags=(OpTags.SHAPE_OP,))
 
 #
 # Reduction prims
@@ -3765,7 +3782,9 @@ def linear_meta(a: TensorProxy, w: TensorProxy, bias: None | TensorProxy) -> Ten
     return TensorProxy(shape=out_shape, device=a.device, dtype=dtype, requires_grad=requires_grad)
 
 
-linear = make_prim(PrimIDs.LINEAR, "linear", meta=linear_meta)
+linear = make_prim(
+    PrimIDs.LINEAR, "linear", meta=linear_meta, tags=(OpTags.MATMUL_OP, OpTags.DONT_AUTO_RECOMPUTE_IN_BACKWARD)
+)
 
 
 def matmul_meta(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
@@ -3824,7 +3843,9 @@ def matmul_meta(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
     return TensorProxy(like=a, shape=shape)
 
 
-matmul = make_prim(PrimIDs.MATMUL, "matmul", meta=matmul_meta)
+matmul = make_prim(
+    PrimIDs.MATMUL, "matmul", meta=matmul_meta, tags=(OpTags.MATMUL_OP, OpTags.DONT_AUTO_RECOMPUTE_IN_BACKWARD)
+)
 
 #
 # NN prims
@@ -4018,6 +4039,8 @@ embedding_backward = make_prim(PrimIDs.EMBEDDING_BACKWARD, "embedding_backward",
 def copy__meta(
     copy_from: TensorProxy,
     copy_to: TensorProxy,
+    *,
+    grad_enabled: bool,
 ):
     utils.check_type(copy_from, TensorProxy)
     utils.check_type(copy_to, TensorProxy)

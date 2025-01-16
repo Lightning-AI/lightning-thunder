@@ -1,4 +1,6 @@
 import operator
+import os
+import tempfile
 import traceback
 from functools import partial, reduce
 from itertools import product
@@ -16,6 +18,7 @@ import thunder
 from thunder import last_traces, cache_option, cache_hits, cache_misses
 import thunder.examine as examine
 import thunder.clang as clang
+import thunder.core.profile
 import thunder.core.proxies as proxies
 import thunder.tests.bf16
 import thunder.torch as ltorch
@@ -236,6 +239,125 @@ def test_nested_empty_tuple_unpack(executor, device, dtype):
     }
 
     cfoo(inp)
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_grad_unpack(executor, device, dtype):
+    tdtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=tdtype, requires_grad=True)
+    a.grad = make_tensor((2, 2), device=device, dtype=tdtype)
+
+    def get_grad_times_two(a):
+        return a.grad * 2
+
+    jitted_get_grad_times_two = executor.make_callable(get_grad_times_two)
+    actual = jitted_get_grad_times_two(a)
+    expected = a.grad * 2
+    assert_close(actual, expected)
+
+    # a.grad is unpacked before a
+    def grad_first(a):
+        return a.grad + a
+
+    # a.grad is unpacked after a
+    def grad_second(a):
+        return a + a.grad
+
+    jitted_grad_first = executor.make_callable(grad_first)
+    jitted_grad_second = executor.make_callable(grad_second)
+    actual_first = jitted_grad_first(a)
+    actual_second = jitted_grad_second(a)
+    expected = a + a.grad
+    assert_close(actual_first, expected)
+    assert_close(actual_second, expected)
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_grad_no_recompile(executor, device, dtype):
+    # Checks that having .grad or not does not cause recompile
+
+    def foo(a):
+        return a * 2
+
+    cfoo = executor.make_callable(foo)
+
+    tdtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=tdtype, requires_grad=True)
+    a.grad = make_tensor((2, 2), device=device, dtype=tdtype)
+    cfoo(a)
+    assert thunder.cache_misses(cfoo) == 1
+
+    a.grad = None
+    cfoo(a)
+    assert thunder.cache_misses(cfoo) == 1
+
+    b = make_tensor((3, 3), device=device, dtype=tdtype, requires_grad=True)
+    cfoo(b)
+    assert thunder.cache_misses(cfoo) == 2
+
+    b.grad = make_tensor((3, 3), device=device, dtype=tdtype)
+    cfoo(b)
+    assert thunder.cache_misses(cfoo) == 2
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_grad_recompile(executor, device, dtype):
+    # Checks that change in the metadata of a.grad causes recompile
+
+    def foo(a):
+        return a.grad * 2
+
+    cfoo = executor.make_callable(foo)
+
+    tdtype = ltorch.to_torch_dtype(dtype)
+    a = make_tensor((2, 2), device=device, dtype=tdtype, requires_grad=True)
+    a.grad = make_tensor((2, 2), device=device, dtype=tdtype)
+    cfoo(a)
+    assert thunder.cache_misses(cfoo) == 1
+
+    b = make_tensor((3, 3), device=device, dtype=tdtype, requires_grad=True)
+    b.grad = make_tensor((3, 3), device=device, dtype=tdtype)
+    cfoo(b)
+    assert thunder.cache_misses(cfoo) == 2
+
+
+@instantiate(dtypes=(thunder.float32,))
+def test_optimizer_unpack(executor, device, dtype):
+    class Optimizer(torch.optim.Optimizer):
+        def __init__(self, params):
+            self.param_groups = [{"params": params}]
+
+        def _init_group(self, group, params, grads):
+            for p in group["params"]:
+                if p.grad is not None:
+                    params.append(p)
+                    grads.append(p.grad)
+
+        @torch.no_grad
+        def step(self):
+            for group in self.param_groups:
+                params = []
+                grads = []
+                self._init_group(group, params, grads)
+                for param, grad in zip(params, grads):
+                    param -= 0.1 * grad
+
+    tdtype = ltorch.to_torch_dtype(dtype)
+
+    a = make_tensor((2, 2), device=device, dtype=tdtype, requires_grad=True)
+    ref_a = a.detach().clone()
+    a.grad = make_tensor((2, 2), device=device, dtype=tdtype)
+
+    b = make_tensor((2, 2), device=device, dtype=tdtype)
+    ref_b = b.detach().clone()
+
+    optimizer = Optimizer([a, b])
+    cstep = executor.make_callable(optimizer.step)
+    cstep()
+
+    expected_a = ref_a - 0.1 * a.grad
+    assert_close(a, expected_a)
+    assert_close(b, ref_b)
 
 
 @instantiate(dtypes=(thunder.float32,))
@@ -541,6 +663,17 @@ def test_to_printable_not_collection():
     for inp in inps:
         out = codeutils.to_printable(None, inp)
         assert inp is out
+
+
+def test_to_printable_collection():
+    from collections import namedtuple
+
+    MyTuple = namedtuple("MyTuple", ["x", "y"])
+
+    inps = (MyTuple("abc", "def"),)
+    for inp in inps:
+        out = codeutils.to_printable(None, inp)
+        assert inp == out
 
 
 #
@@ -1980,7 +2113,7 @@ def test_no_passthrough_symbol(executor, device, _):
     compiled = executor.make_callable(func)
     out = compiled(x)
     assert out is x
-    initial_trace_with_dce = thunder.last_traces(compiled)[2]
+    initial_trace_with_dce = thunder.last_traces(compiled)[3]
     assert "Constructed by Dead Code Elimination" in str(initial_trace_with_dce)
     assert len(initial_trace_with_dce.bound_symbols) == 2
     assert initial_trace_with_dce.bound_symbols[0].sym.id == prims.PrimIDs.UNPACK_TRIVIAL
@@ -2361,27 +2494,81 @@ def test_torch_device():
 
 
 def test_grad_ctx():
+    # NOTE - This test would start failing if tags on Proxies are dropped
+    # as the computation under `no_grad` won't be treated as constant
+    # and grad won't match with PyTorch eager.
+
+    # Test `enable_grad` on a function works correctly
     @torch.enable_grad()
     def foo1(x):
         return x + 1
 
     x = torch.randn(3, 3, requires_grad=True)
-    with pytest.warns(UserWarning, match="have no effect under thunder.jit"):
-        thunder.jit(foo1)(x).sum().backward()
-
+    thunder.jit(foo1)(x).sum().backward()
     assert x.grad is not None
 
+    # Test `no_grad` on a function works correctly
     @torch.no_grad()
     def foo2(x):
         return x + 1
 
     x = torch.randn(3, 3, requires_grad=True)
-    with pytest.warns(UserWarning, match="have no effect under thunder.jit"):
-        thunder.jit(foo2)(x).sum().backward()
+    res = thunder.jit(foo2)(x)
+    assert not res.requires_grad
 
-    # `torch.no_grad` has no effect on thunder's autodiff which determines whether to compute grad based on `requires_grad=True`.
-    # Thus when backward is called it computes grad for the input.
-    assert x.grad is not None
+    # Test `no_grad` ctx correctly disable gradient computation
+    def foo3(x):
+        with torch.no_grad():
+            y = x * 3
+        return x * 2 + y
+
+    x = torch.randn(3, 3, requires_grad=True)
+    with torch.no_grad():
+        x_ref = x.clone()
+        x_ref.requires_grad_(True)
+
+    foo3(x_ref).sum().backward()
+    thunder.jit(foo3)(x).sum().backward()
+    # Verify the gradients match
+    torch.testing.assert_close(x.grad, x_ref.grad)
+
+    # Test nested `no_grad` and `enable_grad`
+    def foo4(x):
+        with torch.enable_grad():
+            with torch.no_grad():
+                y = x * 3
+            z = x * 4
+        return x * 2 + y + z
+
+    x = torch.randn(3, 3, requires_grad=True)
+    with torch.no_grad():
+        x_ref = x.clone()
+        x_ref.requires_grad_(True)
+
+    foo4(x_ref).sum().backward()
+    thunder.jit(foo4)(x).sum().backward()
+    # Verify the gradients match
+    torch.testing.assert_close(x.grad, x_ref.grad)
+
+    def foo5(x):
+        return x * 2
+
+    x = torch.randn(3, 3, requires_grad=True)
+    with torch.no_grad():
+        x_ref = x.clone()
+        x_ref.requires_grad_(True)
+
+    jfoo = thunder.jit(foo5)
+    with torch.no_grad():
+        o = jfoo(x)
+        assert o.grad_fn is None
+        assert thunder.cache_misses(jfoo) == 1  # First compilation
+
+    # Running it out of `torch.no_grad`, should lead to recompile.
+    foo5(x_ref).sum().backward()
+    jfoo(x).sum().backward()
+    torch.testing.assert_close(x.grad, x_ref.grad)
+    assert thunder.cache_misses(jfoo) == 2
 
 
 def test_serialize_trace():
@@ -2714,6 +2901,7 @@ def test_reshape_noop_prims(requires_grad):
 
 
 @requiresCUDA
+@thunder.tests.framework.requiresNVFuser
 def test_bound_symbol_sort_stability():
     class LlamaMLPLike(torch.nn.Module):
         def __init__(self) -> None:
@@ -2798,3 +2986,172 @@ def test_user_module_is_freed():
     del mod
     del opt_mod
     assert ref_mod() is None
+
+
+@pytest.mark.parametrize("requires_grad", [True, False])
+def test_return_bsym_has_none_output(requires_grad):
+    def fn(x):
+        return x + 1
+
+    x = torch.tensor([3.0], requires_grad=requires_grad)
+    jfn = thunder.jit(fn)
+    jfn(x)
+
+    for trace in thunder.last_traces(jfn):
+        return_bsym = trace.bound_symbols[-1]
+        assert return_bsym.sym.id == thunder.prims.PrimIDs.RETURN
+        assert return_bsym.output is None
+
+    if requires_grad:
+        for trace in thunder.last_backward_traces(jfn):
+            return_bsym = trace.bound_symbols[-1]
+            assert return_bsym.sym.id == thunder.prims.PrimIDs.RETURN
+            assert return_bsym.output is None
+
+
+def test_indexing_with_hashable_object():
+    class HashableClass:
+        def __hash__(self):
+            return id(self)
+
+    h = HashableClass()
+    d = {h: 1, 1: 0}
+
+    def fn():
+        return d[h]
+
+    jfn = thunder.jit(fn)
+    assert jfn() == 1
+    assert thunder.cache_misses(jfn) == 1  # Due to first compilation.
+
+    # Call jfn with no changes
+    # this should be cache hit.
+    assert jfn() == 1
+    assert thunder.cache_hits(jfn) == 1
+    assert thunder.cache_misses(jfn) == 1
+
+    # Change the value of the captured dict.
+    # This should be a cache miss, verify that.
+    d[h] = 2
+    assert jfn() == 2  # Verify that jfn now returns 2
+    assert thunder.cache_hits(jfn) == 1
+    assert thunder.cache_misses(jfn) == 2
+
+
+def test_profiling_decorator():
+    @thunder.core.profile.annotate_for_profile("compile_and_run")
+    def foo():
+        def bar(a: torch.Tensor):
+            t0 = torch.add(a, 42)
+            t1 = torch.mul(t0, 0.25)
+            return t1
+
+        baz = thunder.jit(bar)
+        baz(torch.randn(19))
+
+    foo()
+
+
+def test_saved_view_of_output_of_autograd_function_does_not_leak():
+    # Verify that we have side-stepped the bug in torch.autograd.Function
+    # where saving a view of the output for backward leads to leak.
+    # See NOTE [Saved view of output of torch.autograd.Function leaks]
+    def fn(idx, weight):
+        tok_emb = torch.nn.functional.embedding(idx, weight)
+        emb = torch.reshape(tok_emb, (2, 32))
+        matmul = emb @ emb.T
+        return tok_emb, matmul
+
+    weight = make_tensor((16, 32), dtype=torch.float, device="cpu", requires_grad=True)
+    x = make_tensor((1, 2), dtype=torch.int64, low=0, high=10, device="cpu")
+
+    jfn = thunder.jit(fn)
+
+    # Computation Trace for jfn
+    # We save view of the output `tok_emb` for backward.
+    # @torch.no_grad()
+    # @no_autocast
+    # def computation(idx, t_wte_weight):
+    #   # idx: "cuda:0 i64[1, 2]"
+    #   # t_wte_weight: "cuda:0 f32[16, 32]"
+    #   tok_emb = torch.nn.functional.embedding(idx, t_wte_weight, None, None, 2.0, False, False)  # tok_emb: "cuda:0 f32[1, 2, 32]"
+    #   [emb, t4] = nvFusion0(tok_emb)
+    #       # emb = prims.reshape(tok_emb, (2, 32))  # emb: "cuda:0 f32[2, 32]"
+    #       # t4 = prims.transpose(emb, (1, 0))  # t4: "cuda:0 f32[32, 2]"
+    #   matmul = torch.matmul(emb, t4)  # matmul: "cuda:0 f32[2, 2]"
+    #   return {'output': (tok_emb, matmul), 'flat_args': [idx, t_wte_weight], 'flat_output': (tok_emb, matmul)}, ((emb, idx, t4), ())
+
+    prev_iter_refs = []
+    for iter_n in range(4):
+        tok_emb, _ = jfn(x, weight)
+        if iter_n < 3:
+            prev_iter_refs.append(weakref.ref(tok_emb))
+
+    for ref in prev_iter_refs:
+        assert ref() is None
+
+
+def test_debug_options():
+    from thunder import DebugOptions
+    import dill
+
+    initial_state = dill.dumps(dict(DebugOptions.__dict__))
+    print(DebugOptions.__dict__)
+    DebugOptions.register_option("test_option", bool, False, "Test Option")
+
+    assert "Test Option" in DebugOptions.__doc__
+
+    do = DebugOptions(test_option=True)
+    assert do.test_option is True
+
+    with pytest.raises(TypeError, match="test_option"):
+        do = DebugOptions(test_option=5)
+
+    del DebugOptions._docs["test_option"]
+    del DebugOptions._defaults["test_option"]
+    del DebugOptions.__annotations__["test_option"]
+    del DebugOptions.test_option
+
+    DebugOptions._set_docstring()
+
+    print(DebugOptions.__dict__)
+    assert dill.dumps(dict(DebugOptions.__dict__)) == initial_state
+
+
+def test_proxy_same_name():
+    from thunder.core.proxies import TensorProxy
+    from thunder.core.trace import detached_trace
+    from thunder.core.dtypes import float32
+    from thunder.core.devices import cpu
+
+    with detached_trace():
+        t = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32, requires_grad=True)
+        with pytest.raises(RuntimeError, match="already used"):
+            t2 = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32, requires_grad=True)
+
+
+def test_save_trace():
+    def fn(x):
+        return x + 1
+
+    jfn = thunder.jit(fn)
+    jfn(
+        torch.rand(
+            3,
+        )
+    )
+
+    fwd_trace = thunder.last_traces(jfn)[-1]
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        trace_name = os.path.join(tmp_dir, "tmp_trace.py")
+        fwd_trace.save_trace(trace_name)
+
+        with open(trace_name) as f:
+            trace_contents = f.readlines()
+
+        # Verify we find a few expected things in the
+        # saved trace.
+        trace_contents = "".join(trace_contents)
+        assert ".add" in trace_contents
+        assert "@torch.no_grad" in trace_contents

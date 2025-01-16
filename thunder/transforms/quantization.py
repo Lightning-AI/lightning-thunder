@@ -2,16 +2,13 @@ from collections.abc import Sequence
 
 import thunder
 from thunder.core.transform_common import Transform
-from thunder.core.trace import TraceCtx
-from thunder.core.pytree import tree_map
-from thunder.core import utils
 from thunder.core import prims
 import torch
 
 from .utils import (
-    get_orig_and_thunder_module_proxies_from_prologue,
     get_checks,
     add_trace_output,
+    trace_with_replaced_proxy_metadata,
 )
 
 
@@ -44,44 +41,6 @@ def get_bitsandbytes_executor():
             "bnb_matmul_nf4", meta=bnb_matmul_nf4_meta, fn=bnb_matmul_nf4_impl
         )
     return bitsandbytes_executor
-
-
-def trace_with_replaced_proxy_metadata(trace: TraceCtx, proxy_replacement_metadata) -> TraceCtx:
-    t = TraceCtx(trace.fn, prologue=trace.prologue)
-
-    proxymap: dict[str, thunder.Proxy] = {}
-
-    def map_proxy(p):
-        if isinstance(p, thunder.Proxy):
-            return proxymap[p.name]
-        return p
-
-    def create_proxy(p):
-        if isinstance(p, thunder.Proxy):
-            if p.name in proxymap:  # happens with subsymbols
-                return p
-            with thunder.core.trace.tracectx(t):
-                np = p.replace(**proxy_replacement_metadata.get(p.name, {}))
-                proxymap[p.name] = np
-                return np
-        return p
-
-    def process_bound_symbols(src_bound_symbols, target_bound_symbols):
-        for bsym in src_bound_symbols:
-            new_args = tree_map(map_proxy, bsym.args)
-            new_kwargs = tree_map(map_proxy, bsym.kwargs)
-            new_output = tree_map(create_proxy, bsym.output)
-            new_bsym = bsym.from_bsym(output=new_output, args=new_args, kwargs=new_kwargs, subsymbols=[])
-            target_bound_symbols.append(new_bsym)
-            if len(bsym.subsymbols) > 0:
-                process_bound_symbols(bsym.subsymbols, new_bsym.subsymbols)
-
-    process_bound_symbols(trace.bound_symbols, t.bound_symbols)
-
-    t.args = tree_map(map_proxy, trace.args)
-    t.kwargs = tree_map(map_proxy, trace.kwargs)
-    t._siginfo = trace._siginfo
-    return t
 
 
 class BitsAndBytesLinearQuant4bit(Transform):
@@ -263,6 +222,7 @@ class BitsAndBytesLinearQuant4bit(Transform):
         new_computation_trace.bound_symbols = []
 
         new_computation_trace.args = (*new_computation_trace.args, *new_compute_inputs)
+        new_computation_trace.names.update(i.name for i in new_compute_inputs)
         new_computation_trace._siginfo.args = [(a.name, None) for a in new_computation_trace.args]
 
         with tracectx(new_computation_trace):

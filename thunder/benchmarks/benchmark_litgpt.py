@@ -114,11 +114,13 @@ def swap_linear_layers_for_te(model: torch.nn.Module, device: Any, swap_layernor
 
             if isinstance(m, torch.nn.Linear):
                 has_bias = m.bias is not None
-                new_linear = te.Linear(m.in_features, m.out_features, bias=has_bias, device=device)
+                # Pass device as str (as there is a bug in TransformerEngine's handling of torch.device)
+                new_linear = te.Linear(m.in_features, m.out_features, bias=has_bias, device=str(device))
                 setattr(module, n, new_linear)
 
             if swap_layernorm and isinstance(m, torch.nn.LayerNorm):
-                new_layernorm = te.LayerNorm(m.normalized_shape[0], eps=m.eps, device=device)
+                # Pass device as str (as there is a bug in TransformerEngine's handling of torch.device)
+                new_layernorm = te.LayerNorm(m.normalized_shape[0], eps=m.eps, device=str(device))
                 setattr(module, n, new_layernorm)
 
     initial_params_cnt = parameters_cnt(model)
@@ -221,12 +223,13 @@ class Benchmark_litGPT:
         global_batch_size: int | None = None,
         model_name: str = "Llama-2-7b-hf",
         shard_mode: str = "zero2",
-        bucketing_mode: str = "none",
+        bucketing_mode: str | None = None,
         sharding_size: int | None = None,
         ddp_bucket_size: float = 256.0,
         fsdp_bucket_params: float | None = None,
         checkpoint_activations: bool = False,
         n_layers: int | None = None,
+        block_size: int | None = None,
         profiler_start: int = 15,
         profiler_stop: int = 15,
         skip_data_sync: bool = False,
@@ -238,6 +241,7 @@ class Benchmark_litGPT:
         use_torchao_fp8_linear: bool = False,
         use_torchao_fp8_allgather: bool = False,
         use_torchao_fp8_precompute_scale_for_fsdp: bool = False,
+        fp8_shard_intermediate_activation: bool = False,
     ):
         seed = 1337
         torch.manual_seed(seed)
@@ -271,6 +275,7 @@ class Benchmark_litGPT:
         self.is_thunder_as_torchcompile_backend = False
         self.dump_thunder_traces = dump_thunder_traces
         self.dump_memory_snapshot = dump_memory_snapshot
+        self.fp8_shard_intermediate_activation = fp8_shard_intermediate_activation
 
         if use_torchao_fp8_linear:
 
@@ -301,7 +306,7 @@ class Benchmark_litGPT:
                 world_size % self.sharding_size == 0
             ), f"World size {world_size} is not divisible by the sharding size {self.sharding_size}"
 
-        if self.bucketing_mode != "none" and self.distributed_mode not in FSDP_MODES:
+        if self.bucketing_mode is not None and self.distributed_mode not in FSDP_MODES:
             warnings.warn(
                 f"--bucketing_mode {self.bucketing_mode} will be ignored as "
                 f" it is only used for FSDP style parallelism but running {self.distributed_mode}"
@@ -356,6 +361,9 @@ class Benchmark_litGPT:
         if n_layers is not None:
             self.config.n_layer = n_layers
 
+        if block_size is not None:
+            self.config.block_size = block_size
+
         # Initialize the model
         t0 = time.perf_counter()
         print(f"Loading model with {self.config.__dict__}")
@@ -363,11 +371,6 @@ class Benchmark_litGPT:
             check_and_update_config_for_te_if_needed(self.config)
         self.model = self.init_model()
         print(f"Time to instantiate model: {time.perf_counter() - t0:.02f} seconds.")
-
-        if self.use_te_fp8_autocast:
-            is_wo_layernorm = self.low_precision_mode == "fp8-delayed-te-wo_layernorm"
-            swap_linear_layers_for_te(self.model, device, swap_layernorm=not is_wo_layernorm)
-            self.model.to(torch.bfloat16)
 
         # Setup the distributed algorithm choices
         if distributed_first := (self.compile in ("eager", "inductor") or "dynamo" in self.compile):
@@ -405,8 +408,14 @@ class Benchmark_litGPT:
         init_device = torch.device("meta") if self.distributed_mode in FSDP_MODES else self.device
         with init_device:
             model = GPT(self.config)
-        model.to(dtype=torch.bfloat16)
+
+        # Handle fp8 related Linear layer swapping (for torchao or TransformerEngine)
         model = self._torchao_fp8_handler.convert_model_to_fp8(model)
+        if self.use_te_fp8_autocast:
+            is_wo_layernorm = self.low_precision_mode == "fp8-delayed-te-wo_layernorm"
+            swap_linear_layers_for_te(model, init_device, swap_layernorm=not is_wo_layernorm)
+
+        model.to(dtype=torch.bfloat16)
         return model
 
     def setup_distributed(self, model):
@@ -428,6 +437,7 @@ class Benchmark_litGPT:
                 from thunder.distributed import fsdp, FSDPType, FSDPBucketingStrategy
 
                 sharding_strategy = {"zero2": FSDPType.ZERO2, "zero3": FSDPType.ZERO3}[self.shard_mode]
+                self.bucketing_mode = self.bucketing_mode or "none"
                 bucketing_strategy = {
                     "none": FSDPBucketingStrategy.NONE,
                     "block": FSDPBucketingStrategy.BLOCK,
@@ -453,9 +463,10 @@ class Benchmark_litGPT:
                 )
             elif self.distributed_mode == "fsdp2":
                 # reference: https://github.com/pytorch/torchtitan/blob/6e7a183/docs/fsdp.md
+                from functools import partial
                 from torch.distributed._composable.fsdp import fully_shard, MixedPrecisionPolicy
 
-                if self.bucketing_mode != "none":
+                if self.bucketing_mode is not None:
                     warnings.warn(f"fsdp2 ignores {self.bucketing_mode=}")
 
                 torch.cuda.set_device(local_rank)
@@ -467,25 +478,25 @@ class Benchmark_litGPT:
 
                 reshard_after_forward: bool = self.shard_mode == "zero3"
 
+                _apply_fully_shard = partial(
+                    fully_shard,
+                    mesh=mesh,
+                    reshard_after_forward=reshard_after_forward,
+                    mp_policy=MixedPrecisionPolicy(
+                        param_dtype=torch.bfloat16,
+                        reduce_dtype=torch.bfloat16,
+                    ),
+                )
+
                 # for transformer_block in model.transformer.modules():
                 for transformer_block in model.modules():
                     if isinstance(transformer_block, Block):
-                        fully_shard(
-                            transformer_block,
-                            mesh=mesh,
-                            reshard_after_forward=reshard_after_forward,
-                            mp_policy=MixedPrecisionPolicy(
-                                param_dtype=torch.bfloat16,
-                                reduce_dtype=torch.bfloat16,
-                            ),
-                        )
+                        _apply_fully_shard(transformer_block)
 
-                fully_shard(
-                    model,
-                    mesh=mesh,
-                    reshard_after_forward=reshard_after_forward,
-                    mp_policy=MixedPrecisionPolicy(param_dtype=torch.bfloat16, reduce_dtype=torch.bfloat16),
-                )
+                _apply_fully_shard(model.lm_head)
+                _apply_fully_shard(model.transformer["wte"])
+                _apply_fully_shard(model.transformer["ln_f"])
+                _apply_fully_shard(model)
                 model.to_empty(device=self.device)
                 model.apply(model._init_weights)
 
@@ -503,6 +514,7 @@ class Benchmark_litGPT:
                 )
                 zero_bucket_wrap_policy = lambda module, recurse, nonwrapped_numel: nonwrapped_numel >= 0
 
+                self.bucketing_mode = self.bucketing_mode or "block"
                 custom_wrap_policy = {
                     "block": litgpt_auto_wrap_policy,
                     "size": size_auto_wrap_policy,
@@ -529,10 +541,6 @@ class Benchmark_litGPT:
         return model
 
     def setup_activation_checkpointing(self):
-        if "thunder" in self.compile:
-            # checkpointing is an option to thunder.jit
-            return
-
         if any(isinstance(mod, CheckpointWrapper) for mod in self.model.modules()):
             warnings.warn(
                 "FSDP checkpointing is configured, but the model already contains checkpointed layers."
@@ -568,37 +576,24 @@ class Benchmark_litGPT:
 
                 executors.insert(0, transformer_engine_ex)
 
-            jit_options = {
-                "enable_saved_for_backward_recomputation": self.checkpoint_activations,
-                "recomputation_policy": None,
-            }
-
             if "dynamo" in self.compile:
                 if self.distributed_mode == "fsdp2":
                     print("Resetting cache size for when fsdp2 and using thunder as backend torch.compile")
                     import torch._dynamo.config as dynamo_config
 
                     dynamo_config.cache_size_limit = 64
-                    if "transformerengine" in self.compile:
-                        # [rank0]:   File "/opt/pytorch/lightning-thunder/thunder/executors/transformer_engineex.py", line 410, in _te_functional_linear_backward_impl
-                        # [rank0]:     grads = _Linear.backward(ctx, g)
-                        # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/transformer_engine/pytorch/module/linear.py", line 449, in backward
-                        # [rank0]:     weight_fp8.transpose_2d(),
-                        # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/transformer_engine/pytorch/float8_tensor.py", line 625, in transpose_2d
-                        # [rank0]:     if self._transpose is None:
-                        # [rank0]:   File "/usr/local/lib/python3.10/dist-packages/transformer_engine/pytorch/float8_tensor.py", line 39, in get_func
-                        # [rank0]:     return self._fp8_attrs[name]
-                        # [rank0]: AttributeError: 'Float8Tensor' object has no attribute '_fp8_attrs'
-                        raise ValueError(
-                            "TransformerEngine executor cannot be used as an executor of Thunder when Thunder is used as torch.compile backend"
-                        )
-                backend = ThunderCompiler(executors=executors, **jit_options)
+
+                self.backend = ThunderCompiler(executors=executors)
                 # Because Lightning Fabric is imported in this script it monkey patches the torch.compile function
                 # https://github.com/Lightning-AI/pytorch-lightning/blob/828fd998961f6a60f92c35254bb94d6e049ad069/src/lightning/fabric/wrappers.py#L421
                 # using __wrapped__ to access the original torch.compile function did not work
                 # so we are using the lower level torch._dynamo.optimize function
-                model = torch._dynamo.optimize(backend=backend)(model)
+                model = torch._dynamo.optimize(backend=self.backend)(model)
             else:
+                jit_options = {
+                    "enable_saved_for_backward_recomputation": self.checkpoint_activations,
+                }
+                jit_options["fp8_shard_intermediate_activation"] = self.fp8_shard_intermediate_activation
                 model = thunder.jit(model, executors=executors, **jit_options)
 
         elif self.compile != "eager":
@@ -695,6 +690,23 @@ class Benchmark_litGPT:
                     logits = self.model(input_ids)
             else:
                 logits = self.model(input_ids)
+            # This information is accurate only in the case when torch.compile
+            # uses a single graph for the entire forward pass In the case of
+            # torch.compile using multiple graphs, the saved_tensors will be
+            # from the last graph For Thunder, the saved_tensors will be from
+            # its only graph There's no easy way to get the saved_tensors from
+            # the entire forward pass in the case of multiple graphs or PyTorch
+            # Eager mode. It's still useful for single-GPU and single-graph
+            # cases.
+            saved_tensors = getattr(logits.grad_fn, "saved_tensors", None)
+            saved_tensors_len = None
+            saved_tensors_size_in_mib = None
+            if saved_tensors:
+                saved_tensors_len = len([t for t in saved_tensors if t is not None])
+                saved_tensors_size_in_mib = (
+                    sum(t.numel() * t.element_size() for t in saved_tensors if t is not None) / 1024**2
+                )
+                del saved_tensors
             logits = logits.reshape(-1, logits.size(-1))
             targets = targets.reshape(-1)
             loss = (
@@ -735,6 +747,8 @@ class Benchmark_litGPT:
         if global_rank in [0, None]:
             # print(f"Total time: {(t1 - t0):.2f}s")
             self.perf_metrics["average_iter_time"] = ((t1 - t0) * 1000) / (self.max_iters - self.warmup_iters)
+            self.perf_metrics["saved_for_backward_tensor_size_mib"] = saved_tensors_size_in_mib
+            self.perf_metrics["saved_for_backward_number_of_tensors"] = saved_tensors_len
 
     def add_perf_metrics(self):
         if self.throughput:
@@ -827,9 +841,18 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
 
         print(f"Average iter time: {benchmark.perf_metrics['average_iter_time']:.2f} ms")
         print(f"Memory used: {benchmark.perf_metrics['memory_used_GB']:.02f} GB")
-        print(f"Tokens/s: {benchmark.perf_metrics['tokens_per_sec']:.02f}")
-        print(f"Tokens/s/GPU: {(benchmark.perf_metrics['tokens_per_sec']/world_size):.02f}")
-        print(f"TFLOP/s: {benchmark.perf_metrics['model_flop_per_sec'] / 1e12:.02f}")
+        if benchmark.perf_metrics["saved_for_backward_tensor_size_mib"] is not None:
+            print(f"Saved for backward size: {benchmark.perf_metrics['saved_for_backward_tensor_size_mib']:.02f} MiB")
+            print(
+                f"Saved for backward number of tensors: {benchmark.perf_metrics['saved_for_backward_number_of_tensors']}"
+            )
+
+        tokens_per_sec = benchmark.perf_metrics.get("tokens_per_sec")
+        if tokens_per_sec:
+            print(f"Tokens/s: {tokens_per_sec:.02f}")
+            print(f"Tokens/s/GPU: {(tokens_per_sec / world_size):.02f}")
+        if benchmark.throughput:
+            print(f"TFLOP/s: {benchmark.perf_metrics['model_flop_per_sec'] / 1e12:.02f}")
 
         if benchmark.dump_memory_snapshot:
             file_name = f"{benchmark.model_name}_{benchmark.compile}_{benchmark.distributed_mode}"
@@ -851,16 +874,24 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
                 for jitted in benchmark.thunder_as_torch_compile_backend.gm_to_thunder.values():
                     fwd_traces.append(thunder.last_traces(jitted))
                     bwd_traces.append(thunder.last_backward_traces(jitted))
-            else:
+            elif "dynamo" not in benchmark.compile:
                 fwd_traces = [thunder.last_traces(benchmark.model)]
                 bwd_traces = [thunder.last_backward_traces(benchmark.model)]
 
-            for i, f_traces in enumerate(fwd_traces, start=1):
-                print(f"##########\n#{i}-th ThunderModule\n##########")
-                print(f_traces[-1])
-            for i, b_traces in enumerate(bwd_traces, start=1):
-                print(f"##########\n#{i}-th ThunderModule\n##########")
-                print(b_traces[-1])
+            if "dynamo" in benchmark.compile:
+                for gid, infos in enumerate(benchmark.backend.subgraph_infos):
+                    for subgid, thunder_fn in enumerate(infos.thunder_compiled_fns):
+                        print(f"##########\n#Graph{gid}-ThunderFn{subgid} last forward trace\n##########")
+                        print(thunder.last_traces(thunder_fn)[-1])
+                        print(f"##########\n#Graph{gid}-ThunderFn{subgid} last backward trace\n##########")
+                        print(thunder.last_backward_traces(thunder_fn)[-1])
+            else:
+                for i, f_traces in enumerate(fwd_traces, start=1):
+                    print(f"##########\n#{i}-th ThunderModule\n##########")
+                    print(f_traces[-1])
+                for i, b_traces in enumerate(bwd_traces, start=1):
+                    print(f"##########\n#{i}-th ThunderModule\n##########")
+                    print(b_traces[-1])
 
     if global_rank in [0, None]:
         if return_metrics_as_json:

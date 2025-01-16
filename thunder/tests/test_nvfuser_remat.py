@@ -4,6 +4,7 @@ from functools import partial, wraps
 import torch
 
 import thunder
+import thunder.examine
 from thunder import torch as ttorch
 
 from thunder.core import utils, devices
@@ -15,10 +16,13 @@ from thunder.core.rematerialization import (
     find_filtered_producer_consumer_pairs,
     find_nvfuser_producer_consumer_pairs,
 )
+from thunder.core import prims
 from thunder.core.transforms import value_and_grad
+from thunder.core.trace import TraceCtx
 from thunder.examine import get_fusions
 from thunder.tests.framework import instantiate, NOTHING, nvFuserExecutor, TorchExecutor, requiresCUDA
 from thunder.tests.make_tensor import make_tensor
+import thunder.torch as ltorch
 
 
 @value_and_grad
@@ -202,6 +206,41 @@ def test_apply_rematerialization_consumer(executor, device, _):
 @instantiate(
     dtypes=NOTHING,
     executors=(nvFuserExecutor,),
+)
+@disable_rematerialization_in_nvfuser_fusion
+def test_apply_rematerialization_consumer_early_exit(executor, device, _):
+    @value_and_grad
+    def foo(t0):
+        t1 = ttorch.exp(t0)
+        t2 = ttorch.matmul(t1, t1)
+        return t2
+
+    t0 = make_tensor(2, 2, dtype=torch.float32, device=device)
+    initial_trace = thunder.trace()(foo, t0)
+    compiled_func = thunder.jit(initial_trace.python_callable())
+    _ = compiled_func(t0)
+    traces = thunder.last_traces(compiled_func)
+    trace = traces[-1]
+    nvfuser_symbols = tuple(filter(lambda x: x.sym.name.startswith("nvFusion"), trace.bound_symbols))
+    assert len(nvfuser_symbols) == 2
+
+    producer = nvfuser_symbols[0]
+    consumer = nvfuser_symbols[1]
+
+    # Create a cut that has t0 as extra information and
+    # that contains all arguments(t2) from consumer.
+    cut = ("t0", "t2")
+    new_consumer = apply_rematerialization_for_consumer(producer, consumer, cut)
+
+    # Check that the new consumer is the old consumer
+    assert id(new_consumer) == id(consumer)
+    assert tuple(new_consumer.subsymbols) == tuple(consumer.subsymbols)
+
+
+@instantiate(
+    dtypes=NOTHING,
+    executors=(nvFuserExecutor,),
+    decorators=(pytest.mark.skip(reason="temporarily disabled horizontal fusion"),),
 )
 def test_find_nvfuser_producer_consumer_pairs(executor, device, _):
     n_fusion_regions = 7
@@ -449,3 +488,46 @@ def test_rematerialization_name_collision():
     expected_grad = torch.autograd.grad(expected, x, grad_output)
 
     torch.testing.assert_close(actual_grad, expected_grad)
+
+
+@requiresCUDA
+def test_not_rematerialize_matmul():
+    nn = torch.nn
+
+    class MLP(nn.Module):
+        def __init__(self, embedding_size: int) -> None:
+            super().__init__()
+            self.layers = nn.Sequential(
+                nn.Linear(embedding_size, embedding_size * 4),
+                nn.GELU(),
+                nn.Linear(embedding_size * 4, embedding_size),
+                nn.Dropout(),
+            )
+
+        def forward(self, x):
+            return self.layers(x)
+
+    batch_size, sequence_length, embedding_size = 2, 3, 4
+    inp = torch.randn(batch_size, sequence_length, embedding_size, device="cuda", requires_grad=True)
+
+    model = MLP(embedding_size)
+    model.to("cuda")
+
+    # At the time of writing, linear and matmul are not fused into nvFuser
+    # regions by default therefore, we should enable them separately
+    jmodel = thunder.jit(model, nv_enable_linear=True, nv_enable_matmul=True)
+    jmodel(inp)
+
+    def assert_subsymbol_count(trace: TraceCtx, /, num_linears: int, num_matmuls: int, num_fusions: int):
+        fusions = thunder.examine.get_fusion_symbols(trace)
+        assert len(fusions) == num_fusions
+
+        subsymbol_ids = [subsymbol.sym.id for f in fusions for subsymbol in f.subsymbols]
+        assert subsymbol_ids.count(prims.PrimIDs.LINEAR) == num_linears
+        assert subsymbol_ids.count(prims.PrimIDs.MATMUL) == num_matmuls
+
+    fw_trace = thunder.last_traces(jmodel)[-1]
+    assert_subsymbol_count(fw_trace, num_linears=2, num_matmuls=0, num_fusions=2)
+
+    bw_trace = thunder.last_backward_traces(jmodel)[-1]
+    assert_subsymbol_count(bw_trace, num_linears=0, num_matmuls=4, num_fusions=1)

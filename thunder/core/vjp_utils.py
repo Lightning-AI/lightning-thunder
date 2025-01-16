@@ -1,5 +1,5 @@
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from functools import wraps
 from inspect import Parameter, Signature
 from itertools import chain
@@ -104,7 +104,7 @@ def make_aug_forward_and_backward(bsym: BoundSymbol) -> tuple[Callable, Callable
         prims.PrimIDs.GET_GRAD,
     )
     backward_bsyms = [bsym for bsym in backward_bsyms if bsym.sym.id not in skip]
-    backward_bsyms.append(prims.python_return.bind(bw_outputs, output=()))
+    backward_bsyms.append(prims.python_return.bind(bw_outputs, output=None))
 
     forward_input_proxies = tree_flatten((joint_trace.args, joint_trace.kwargs))[0]
     forward_input_proxies = [arg for arg in forward_input_proxies if isinstance(arg, Proxy)]
@@ -131,7 +131,7 @@ def make_aug_forward_and_backward(bsym: BoundSymbol) -> tuple[Callable, Callable
     return_bsym = augmented_forward_trace.bound_symbols[-1]
     assert return_bsym.sym.id == PrimIDs.RETURN
     augmented_forward_trace.bound_symbols[-1] = prims.python_return.bind(
-        (joint_trace.output, saved_for_backward), output=()
+        (joint_trace.output, saved_for_backward), output=None
     )
     # Remove put/get grad and backward symbols from augmented forward trace
     augmented_forward_trace = dce(augmented_forward_trace)
@@ -156,7 +156,7 @@ def make_aug_forward_and_backward(bsym: BoundSymbol) -> tuple[Callable, Callable
         additional_saved = [o for bsym in same_bsyms for o in bsym.flat_proxy_outs]
         saved_for_backward += list({variableify(arg): arg for arg in additional_saved}.values())
         augmented_forward_trace.bound_symbols[-1] = prims.python_return.bind(
-            (joint_trace.output, saved_for_backward), output=()
+            (joint_trace.output, saved_for_backward), output=None
         )
 
     backward_params = [
@@ -229,3 +229,22 @@ def get_saved_for_backward_tensors(trace: TraceCtx) -> tuple[TensorProxy]:
         lambda: "All saved tensors must be TensorProxy or None",
     )
     return tuple(saved_tensors)
+
+
+def set_saved_for_backward_tensors(trace: TraceCtx, saved_tensors: Sequence[TensorProxy]):
+    """
+    Given a trace, return the tensors that are saved for backward in the trace.
+
+    Args:
+        trace: The trace to set saved tensors for.
+        saved_tensors: proxies for the tensors to save.
+    """
+    utils.check(
+        all(isinstance(t, TensorProxy) or t is None for t in saved_tensors),
+        lambda: "All saved tensors must be TensorProxy or None",
+    )
+    ret_node = trace.bound_symbols.pop(-1)
+    assert ret_node.sym == prims.python_return
+    output = ret_node.args
+    output = (output[0], (tuple(saved_tensors), *output[1][1:]), *output[2:])
+    trace.bound_symbols.append(ret_node.from_bsym(args=output))

@@ -21,7 +21,8 @@ from thunder.core.utils import FrozenDict, make_hashable
 from thunder.core.pytree import tree_flatten_with_dataclass, tree_unflatten, tree_map
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
-from thunder.core.proxies import Proxy, NumberProxy, variableify, CollectionProxy
+from thunder.core.proxies import Proxy, TensorProxy, NumberProxy, variableify, CollectionProxy, ProxyTag
+from thunder.core.compile_data import get_compile_data
 
 from thunder.core.trace import (
     get_tracectx,
@@ -83,7 +84,7 @@ def default_python_printer(
         kwarg_str = ", ".join(f"{k}={codeutils.prettyprint(v)}" for k, v in kwarg_printables.items())
 
     result_str: str
-    if bsym.output is None or (codeutils.is_collection(bsym.output) and len(bsym.output) == 0):
+    if bsym.output is None or (baseutils.is_collection(bsym.output) and len(bsym.output) == 0):
         result_str = ""
     else:
         result_str = f"{codeutils.prettyprint(out_printables, literals_as_underscores=True)} = "
@@ -230,7 +231,9 @@ class Symbol:
             raise ValueError("Cannot serialize a symbol without a module and executor.")
 
         if self.executor is None:
-            assert getattr(sys.modules[self.module.__name__], self.name, None) is self
+            assert (
+                getattr(sys.modules[self.module.__name__], self.name, None) is self
+            ), f"{self.module.__name__}.{self.name} is not {self}"
         else:
             assert thunder.get_executor(self.executor.name).opmap.get(self.name) is self
 
@@ -319,6 +322,20 @@ class Symbol:
             trace.push_scope(subsymbols)
             result = self.meta(*args, **kwargs)
             trace.pop_scope()
+
+        cd = get_compile_data()
+        if cd is not None and not cd.is_grad_enabled:
+            # If grad is disabled using `torch.no_grad` or `torch._C._set_grad_enabled(False)`,
+            # tag the results with `DETACHED_AUTOGRAD_GRAPH` which makes this Symbol a constant for
+            # vjp transform (applied later).
+            def tag_tensorproxy_output_as_detached(proxy):
+                if isinstance(proxy, TensorProxy):
+                    # We need to remove name from trace, otherwise replace will return a proxy with new name.
+                    trace.names.remove(proxy.name)
+                    return proxy.replace(tags=(ProxyTag.DETACHED_AUTOGRAD_GRAPH,))
+                return proxy
+
+            result = tree_map(tag_tensorproxy_output_as_detached, result)
 
         bsym = self.bind(*args, **kwargs, output=result, subsymbols=subsymbols)
         symbols_list = trace.peek_scope()
@@ -602,18 +619,23 @@ class BoundSymbol(BoundSymbolInterface):
             # NOTE If the call ctx was specified directly, then no import is needed to call the function
             import_ctx = {}
         else:
+            from thunder.extend import AdHocExecutor
+
             # BoundSymbols of Symbols without Python implementations (either because they
             #   have Python implementations or defined call ctxs) are assumed to need
             #   a module import to run properly
-            assert self.sym.module is not None  # TODO: Is this a valid assumption?
-            module_name = self.sym.module.__name__
-            import_ctx = {module_name: self.sym.module}
+            if isinstance(self.sym.executor, AdHocExecutor):
+                import_ctx = {}
+            else:
+                assert self.sym.module is not None  # TODO: Is this a valid assumption?
+                module_name = self.sym.module.__name__
+                import_ctx = {module_name: self.sym.module}
 
-            # TODO Include the other modules on the path?
-            # Also includes the root module of this (potential) submodule
-            if "." in module_name:
-                root_name = module_name.split(".")[0]
-                import_ctx[root_name] = sys.modules[root_name]
+                # TODO Include the other modules on the path?
+                # Also includes the root module of this (potential) submodule
+                if "." in module_name:
+                    root_name = module_name.split(".")[0]
+                    import_ctx[root_name] = sys.modules[root_name]
 
         self._import_ctx.update(import_ctx)
         return self._import_ctx
@@ -623,9 +645,6 @@ class BoundSymbol(BoundSymbolInterface):
         self._out_printables, self._arg_printables, self._kwarg_printables
 
         return self._object_ctx
-
-    # def set_output(self, output: Any):
-    #     self.output = output
 
     def name_with_module(self):
         # Short-circuits if the symbol has no associated module

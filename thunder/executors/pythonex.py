@@ -45,11 +45,15 @@ def _never_executable(*args, **kwargs) -> bool:
 # Unpacking primitives
 #
 def _check_tensor_shape_and_metadata_impl(
-    t: torch.Tensor, shape: tuple[int, ...], device: str, dtype: torch.dtype, requires_grad: bool
+    t: torch.Tensor, shape: tuple[int, NumberProxy, ...], device: str, dtype: torch.dtype, requires_grad: bool
 ) -> None:
     assert isinstance(t, torch.Tensor), f"expected Tensor, got {type(t).__name__}"
     assert (
-        tuple(t.shape) == shape and str(t.device) == device and t.dtype == dtype and t.requires_grad == requires_grad
+        len(t.shape) == len(shape)
+        and all(map(lambda x, ref: isinstance(ref, NumberProxy) or x == ref, t.shape, shape))
+        and str(t.device) == device
+        and t.dtype == dtype
+        and t.requires_grad == requires_grad
     ), f"expected tensor with {shape}, {device}, {dtype}, {requires_grad=}, got {tuple(t.shape)}, {str(t.device)}, {t.dtype}, {requires_grad}"
 
 
@@ -340,6 +344,7 @@ ne = ex.register_operator("ne", like=prims.ne, module=operator)
 pythonex_pow = ex.register_operator("pow", like=prims.pow, module=operator)
 sub = ex.register_operator("sub", like=prims.sub, module=operator)
 div = ex.register_operator("div", like=prims.div, fn=_div_prim_impl)
+shape = ex.register_operator("shape", like=prims.shape, fn=lambda x: x.shape)
 
 # TODO: Restore truediv once we find it...
 # truediv = ex.register_operator("truediv", like=prims.truediv, module=operator)
@@ -363,6 +368,7 @@ ex.register_implementation(prims.ne, ne, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.pow, pythonex_pow, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.sub, sub, checker=_elementwise_binary_checker)
 ex.register_implementation(prims.div, div, checker=_elementwise_binary_checker)
+ex.register_implementation(prims.shape, shape, checker=_always_executable)
 
 
 def _sink(*args, **kwargs):

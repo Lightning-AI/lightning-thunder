@@ -1,21 +1,17 @@
 import time
-from collections.abc import Hashable, Callable, Sequence
-from dataclasses import dataclass, field
-from functools import lru_cache
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import torch
 
-from thunder import trace
 from thunder.core.transform_common import Transform
-from thunder.core.transforms import eval_trace
-from thunder.extend import FusionExecutor, register_executor
 from thunder.core import utils, prims
-from thunder.core.proxies import Proxy, ProxyTag, Variable, unvariableify
+from thunder.core.proxies import Proxy, ProxyTag, unvariableify
 from thunder.core.symbol import BoundSymbol, Symbol
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance, get_tracectx, set_tracectx, reset_tracectx
 from thunder.executors.utils import Region
-from thunder.executors.data_dependent_partition import fuse_bound_symbols, Node
+from thunder.extend import fuse_bound_symbols
 
 
 @dataclass(**utils.default_dataclass_params)
@@ -33,7 +29,10 @@ def to_arg_descriptor(*args):
         else:
             return type(arg), None, None, arg
 
-    dtypes, sizes, strides, non_tensor_args = zip(*map(extract_descriptor, args))
+    if args:
+        dtypes, sizes, strides, non_tensor_args = zip(*map(extract_descriptor, args))
+    else:
+        dtypes = sizes = strides = non_tensor_args = None
     return ArgsDescriptor(dtypes, sizes, strides, non_tensor_args)
 
 
@@ -159,7 +158,7 @@ class CUDAGraphRunner:
         region_trace.bound_symbols = bsyms
         region_trace.args = inputs
         region_trace.kwargs = {}
-        region_trace.bound_symbols.append(prims.python_return.bind(outputs, output=()))
+        region_trace.bound_symbols.append(prims.python_return.bind(outputs, output=None))
         return region_trace.python_callable()
 
     def make_cuda_graph_callable_from_symbols(
@@ -272,19 +271,6 @@ class CUDAGraphTransform(Transform):
     def transform_trace_post_optimization(self, trace: TraceCtx, **kwargs) -> TraceCtx:
         start_time_ns: int = time.perf_counter_ns()
 
-        def _should_fuse(a: Node, b: Node):
-            # TODO: modify the logic to be able to potentially better handle
-            # islands around data-dependent ops once these are supported by Thunder.
-
-            def _can_fuse_node(n: Node):
-                if len(n.group_bsyms) > 1:
-                    return True
-
-                bsym: BoundSymbol = n.group_bsyms[0]
-                return self.can_fuse(bsym)
-
-            return _can_fuse_node(a) and _can_fuse_node(b)
-
         fused_trace: TraceCtx = from_trace(trace)
         # Tracking CollectionProxies that are being consumed
         # by the `clear_collection_names`.
@@ -292,7 +278,7 @@ class CUDAGraphTransform(Transform):
         fused_trace.clear_collection_names = set()
         fused_trace_tok = set_tracectx(fused_trace)
 
-        bound_symbols_groups = fuse_bound_symbols(trace, _should_fuse)
+        bound_symbols_groups = fuse_bound_symbols(trace, self.can_fuse)
 
         producers, consumers = utils.producers_and_consumers(trace)
 
