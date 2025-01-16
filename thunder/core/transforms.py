@@ -1624,7 +1624,7 @@ augmented_forward_impls = {
     prims.PrimIDs.LOG2: lambda x: (prims.log2(x), (x,)),
     prims.PrimIDs.ZETA: lambda x, y: (prims.zeta(x, y), (x, y)),
     prims.PrimIDs.FMOD: lambda x, y: (prims.fmod(x, y), (x, y)),
-    prims.PrimIDs.COPY_: lambda x, y: (prims.copy_(x, y), tuple()),
+    prims.PrimIDs.COPY_: lambda x, y, grad_enabled: (prims.copy_(x, y, grad_enabled=grad_enabled), tuple()),
     prims.PrimIDs.CLONE: lambda x: (prims.clone(x), tuple()),
 }
 
