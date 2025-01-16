@@ -572,7 +572,7 @@ def jit(
             transform: Transform
             for transform in transforms:
                 thunder.core.utils.check_type(transform, Transform)
-                if isinstance(computation_trc, List):
+                if isinstance(computation_trc, list):
                     new_prologue_trc = []
                     new_computation_trc = []
                     for p_trc, c_trc in zip(prologue_trc, computation_trc):
@@ -601,7 +601,7 @@ def jit(
                     if epilogue_trc is not None:
                         epilogue_traces.append(epilogue_trc)
 
-            if isinstance(prologue_trc, List):
+            if isinstance(prologue_trc, list):
                 new_prologue_trc = []
                 for p_trc in prologue_trc:
                     new_p_trc = transform_for_execution(
@@ -628,12 +628,12 @@ def jit(
 
             from thunder.core.transforms import remove_transient_outs_from_prologue
 
-            if isinstance(prologue_trc, List):
+            if isinstance(prologue_trc, list):
                 new_prologue_trc = [prologue_trc[0]]
                 pro = [prologue_execution_timer(prologue_trc[0].python_callable(include_decorators=False))]
                 for i in range(1, len(prologue_trc)):
                     p_trc = prologue_trc[i]
-                    c_trc = computation_trc[i-1]
+                    c_trc = computation_trc[i - 1]
                     new_p_trc = remove_transient_outs_from_prologue(p_trc, c_trc)
                     new_prologue_trc.append(new_p_trc)
                     pro.append(prologue_execution_timer(new_p_trc.python_callable(include_decorators=False)))
@@ -650,7 +650,7 @@ def jit(
             cs.last_interpreter_log = last_interpreter_log
             cs.last_interpreted_instructions = (i for i in last_interpreter_log if isinstance(i, dis.Instruction))
 
-            if isinstance(pro, List):
+            if isinstance(pro, list):
                 cur_ins, cur_pro_to_epi = pro[0](*args, **kwargs)
                 inps = [cur_ins]
                 pro_to_epi = [cur_pro_to_epi]
@@ -661,14 +661,14 @@ def jit(
             else:
                 inps, pro_to_epi = pro(*args, **kwargs)
 
-            if isinstance(computation_trc, List):
+            if isinstance(computation_trc, list):
                 computation_traces.append([])
                 for c_trc in computation_trc:
                     computation_traces[-1].append(dce(c_trc))
             else:
                 computation_trc = dce(computation_trc)
                 computation_traces.append(computation_trc)
-            
+
             computation_trc = computation_traces[-1]
 
             backward_trc = None
@@ -689,8 +689,8 @@ def jit(
                 from thunder.executors.passes import transform_for_execution as transform_for_execution_pass
                 from thunder.executors.passes import _transform_for_operator_executor_execution
                 from thunder.distributed.utils import maybe_sort_waits
-                
-                if isinstance(computation_trc, List):
+
+                if isinstance(computation_trc, list):
                     new_computation_trc = []
                     for c_trc in computation_trc:
                         tmp_comp_trc = _transform_for_operator_executor_execution(c_trc, cd.executors_list)
@@ -722,7 +722,7 @@ def jit(
                     computation_trc = thunder.executors.passes.del_last_used(computation_trc)
 
             if not compile_options.get("disable_inplace_copy_check", False):
-                if isinstance(computation_trc, List):
+                if isinstance(computation_trc, list):
                     for c_trc in computation_trc:
                         thunder.core.transform_common._inplace_copy_sanity_check(c_trc)
                 else:
@@ -730,13 +730,11 @@ def jit(
 
             for transform in transforms:
                 # NOTE: `backward_trc` could be None.
-                if isinstance(computation_trc, List):
+                if isinstance(computation_trc, list):
                     new_computation_trc = []
                     for c_trc in computation_trc:
                         new_computation_trc.append(
-                            transform.transform_trace_post_optimization(
-                                c_trc, executors_list=cd.executors_list
-                            )
+                            transform.transform_trace_post_optimization(c_trc, executors_list=cd.executors_list)
                         )
                 else:
                     new_computation_trc = transform.transform_trace_post_optimization(
@@ -746,13 +744,11 @@ def jit(
                     computation_trc = new_computation_trc
                     computation_traces.append(computation_trc)
                 if backward_trc is not None:
-                    if isinstance(backward_trc, List):
+                    if isinstance(backward_trc, list):
                         new_backward_trc = []
                         for b_trc in backward_trc:
                             new_backward_trc.append(
-                                transform.transform_trace_post_optimization(
-                                    b_trc, executors_list=cd.executors_list
-                                )
+                                transform.transform_trace_post_optimization(b_trc, executors_list=cd.executors_list)
                             )
                     else:
                         new_backward_trc = transform.transform_trace_post_optimization(
@@ -763,14 +759,14 @@ def jit(
                         backward_traces.append(backward_trc)
 
             if backward_trc is not None:
-                if isinstance(backward_trc, List):
+                if isinstance(backward_trc, list):
                     backward_fn = [b_trc.python_callable() for b_trc in backward_trc]
                 else:
                     backward_fn = backward_trc.python_callable()
             else:
                 backward_fn = None
                 # We do not have to return auxiliary tensors, which will only be useful in backward pass
-                if isinstance(computation_trc, List):
+                if isinstance(computation_trc, list):
                     computation_traces.append([])
                     for c_trc in computation_trc:
                         computation_traces[-1].append(unwrap_return_value(c_trc))
@@ -779,7 +775,7 @@ def jit(
 
             computation_trc = computation_traces[-1]
 
-            if isinstance(computation_trc, List):
+            if isinstance(computation_trc, list):
                 comp = []
                 new_computation_trc = []
                 for c_trc in computation_trc:
@@ -792,7 +788,7 @@ def jit(
                 computation_trc = transform_to_torch_types(computation_trc)
                 comp = computation_trc.python_callable()
 
-            # TODO RC1 Update the cache 
+            # TODO RC1 Update the cache
             cache_entry = CacheEntry(
                 pro,
                 prologue_traces,
@@ -833,7 +829,7 @@ def jit(
         def wrapped(*args, **kwargs):
             cache_entry, inps, pro_to_epi = get_computation_and_inputs_fn(*args, **kwargs)
             decorated_computation_fn = cache_entry.computation_fn
-            if isinstance(decorated_computation_fn, List):
+            if isinstance(decorated_computation_fn, list):
                 new_decorated_computation_fn = []
                 for c_fn in decorated_computation_fn:
                     for decorator in decorators:
