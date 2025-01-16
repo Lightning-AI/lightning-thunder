@@ -997,3 +997,15 @@ def test_get_example_input_tensor_metadata():
     t0 = torch.randn((5, 10), device="meta")
     meta_t0 = _get_example_input_tensor_metadata(t0)
     assert meta_t0.min_val == None and meta_t0.max_val == None and meta_t0.device.type == "meta"
+
+
+def test_thunderfx_meta_tensor():
+    def foo(x):
+        y = torch.sin(x)
+        return y
+
+    t0 = torch.randn((5, 10), device="meta")
+
+    thfoo = thunderfx(foo)
+    out = thfoo(t0)
+    assert out.device.type == "meta"
