@@ -795,8 +795,8 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
     # N.B.(crcrpar) When `torch.compile(..., dynamic=True)`,
     # GraphModules' forward seem to take `SymInt` and other values
     # as its argument with some probability. Though that piece of information unfortunately
-    # does not seem to be indicated in ``args_tensor_`` nor ``non_differentiable_idx``.
-    # Thus we optimistically iterate over ``fwd_args`` and gather non-tensor values to ``fwd_args``.
+    # does not seem to be indicated in ``args_tensor_mask`` nor ``non_differentiable_idx``.
+    # Thus we optimistically iterate over ``fwd_args`` and gather non-tensor values whose index is >= `length_of_tensor_args` to ``fwd_args``.
     new_fwd_args = []
     for i, v in enumerate(fwd_args):
         if i < length_of_tensor_args:

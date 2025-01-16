@@ -190,8 +190,8 @@ def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
                         for e_v in example_value
                     )
                 else:
-                    # NOTE - This will be caught will be caught and be part of the SplitReason.
-                    raise TypeError(f"Received `make_input_proxy` received example_value which wasn't Tensor or Tuple")
+                    # NOTE - This will be caught and be part of the SplitReason.
+                    raise TypeError(f"`make_input_proxy` received example_value which wasn't Tensor or Tuple")
                 return proxy(example_value)
 
             # This is int, float, etc.
