@@ -586,7 +586,8 @@ def test_memory_litgpt_llama3():
     assert not {
         bsym.sym.name
         for bsym in thunder.last_backward_traces(jm)[-1].bound_symbols
-        if "attention" in bsym.sym.name and "forward" in bsym.sym.name
+        if ("attention" in bsym.sym.name or "sdpa" in bsym.sym.name)
+        and ("forward" in bsym.sym.name or "fwd" in bsym.sym.name)
     }
 
     assert mem_thunder < mem_eager
