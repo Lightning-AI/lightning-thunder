@@ -359,7 +359,7 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
         )
         return False, split_reason
 
-    # The checkpointed function must be fully supported by Thunder
+    # The higher order function must be fully supported by Thunder
     if target in (torch.ops.higher_order.tag_activation_checkpoint, torch.ops.higher_order.autograd_function_apply):
         m = node.graph.owning_module
         for arg_node in node.args:
