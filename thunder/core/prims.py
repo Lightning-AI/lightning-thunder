@@ -291,6 +291,10 @@ class OpTags(Enum):
     AUTO_REGISTERED = auto()
     # Label for operations representing enter/exit of context managers.
     CTX_MANAGER_ENTER_EXIT_OP = auto()
+    # Label to explicitly disable an operation from recomputing in backward - see function `recompute_saved_for_backward`.
+    DONT_RECOMPUTE_IN_BACKWARD = auto()
+    # Don't automatically tag operation to be recomputed in backward
+    DONT_AUTO_RECOMPUTE_IN_BACKWARD = auto()
 
 
 # TODO RC1 Document this function and describe the parts of a primitive
@@ -3778,7 +3782,9 @@ def linear_meta(a: TensorProxy, w: TensorProxy, bias: None | TensorProxy) -> Ten
     return TensorProxy(shape=out_shape, device=a.device, dtype=dtype, requires_grad=requires_grad)
 
 
-linear = make_prim(PrimIDs.LINEAR, "linear", meta=linear_meta, tags=(OpTags.MATMUL_OP,))
+linear = make_prim(
+    PrimIDs.LINEAR, "linear", meta=linear_meta, tags=(OpTags.MATMUL_OP, OpTags.DONT_AUTO_RECOMPUTE_IN_BACKWARD)
+)
 
 
 def matmul_meta(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
@@ -3837,7 +3843,9 @@ def matmul_meta(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
     return TensorProxy(like=a, shape=shape)
 
 
-matmul = make_prim(PrimIDs.MATMUL, "matmul", meta=matmul_meta, tags=(OpTags.MATMUL_OP,))
+matmul = make_prim(
+    PrimIDs.MATMUL, "matmul", meta=matmul_meta, tags=(OpTags.MATMUL_OP, OpTags.DONT_AUTO_RECOMPUTE_IN_BACKWARD)
+)
 
 #
 # NN prims
@@ -4031,6 +4039,8 @@ embedding_backward = make_prim(PrimIDs.EMBEDDING_BACKWARD, "embedding_backward",
 def copy__meta(
     copy_from: TensorProxy,
     copy_to: TensorProxy,
+    *,
+    grad_enabled: bool,
 ):
     utils.check_type(copy_from, TensorProxy)
     utils.check_type(copy_to, TensorProxy)

@@ -9,6 +9,7 @@ version: 2
 # reference: https://docs.readthedocs.io/en/stable/config-file/v2.html#sphinx
 sphinx:
   fail_on_warning: true
+  configuration: docs/conf.py
 
 build:
   os: "ubuntu-22.04"

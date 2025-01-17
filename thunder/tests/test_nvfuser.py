@@ -317,8 +317,8 @@ def test_cse_subsymbol_redundant_args(executor, device, _):
     nvf_0 = fusion_bsyms[0]
     nvf_1 = fusion_bsyms[1]
 
-    assert [t.name for t in tree_flatten(nvf_0.args)[0]] == ["t0", "z"]
-    assert [t.name for t in tree_flatten(nvf_1.args)[0]] == ["t0", "w", "t4"]
+    assert [t.name for t in tree_flatten(nvf_0.args)[0]] == ["t16", "z"]
+    assert [t.name for t in tree_flatten(nvf_1.args)[0]] == ["t16", "w", "t4"]
     assert len(nvf_0.subsymbols) == 4
     assert len(nvf_1.subsymbols) == 6
     assert [t.name for t in tree_flatten(nvf_0.output)[0]] == ["t4"]

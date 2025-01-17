@@ -71,17 +71,6 @@ def unvariableify(x: Any) -> Any:
     return x
 
 
-# Tries to register a proxy name and returns a boolean indicating success
-def register_proxy_name(name: None | str = None):
-    trc = get_tracectx()
-
-    if name is not None and not trc.has_name(name):
-        trc.add_name(name)
-        return True
-
-    return False
-
-
 def is_proxy_name_available(name: None | str = None):
     trc = get_tracectx()
 
@@ -92,11 +81,8 @@ def is_proxy_name_available(name: None | str = None):
 
 
 def make_proxy_name(*, name: None | str = None, prefix: None | str = None) -> str:
-    if register_proxy_name(name):
-        return name
-
     trc = get_tracectx()
-    return trc.make_name(prefix=prefix)
+    return trc.make_name(name=name, prefix=prefix)
 
 
 class ProxyTag(TagBase):
@@ -407,8 +393,17 @@ class Proxy(VariableInterface, ProxyInterface):
 # Unlike many other proxies, this does not mimic the type of the object it wraps
 # TODO RC1 Rename ._o to ._value for consistency
 class AnyProxy(Proxy):
-    def __init__(self, o: Any, /, *, name: str | None = None, history: None | tuple = None, tags: set | None = None):
-        super().__init__(name=name, history=history, tags=tags)
+    def __init__(
+        self,
+        o: Any,
+        /,
+        *,
+        prefix: str | None = None,
+        name: str | None = None,
+        history: None | tuple = None,
+        tags: set | None = None,
+    ):
+        super().__init__(prefix=prefix, name=name, history=history, tags=tags)
         self._o = o
 
     def __repr__(self) -> str:
