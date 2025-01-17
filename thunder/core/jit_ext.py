@@ -196,7 +196,6 @@ class JitCtx:
         computation_trace,
         *,
         sharp_edges: SHARP_EDGES_OPTIONS,
-        process_group_for_ddp=None,
         executor_lookasides,
         ad_hoc_executor,
     ):
@@ -204,7 +203,6 @@ class JitCtx:
         self._prologue_trace = prologue_trace
         self._computation_trace: TraceCtx = computation_trace
         self._constraints = []
-        self._process_group_for_ddp = process_group_for_ddp
         self._additional_outputs = collections.defaultdict(list)
         self._proxy_swapmap: dict[Variable, Proxy] = {}
         self._executor_lookasides: dict[Callable, Callable] = executor_lookasides
@@ -262,29 +260,27 @@ class JitCtx:
             # TensorProxy attributes should be considered derived quantities, so we flag TensorProxies here
             value.provenance.ext_flag |= EXT_FLAG_IS_TENSOR_PROXY
 
-            if isinstance(p, TensorProxy) and p.distparallel_type in (
-                DistParallelType.REPLICATED,
-                DistParallelType.FULLY_SHARDED,
-            ):
-                p_new = thunder.distributed.prims.synchronize(
-                    p,
-                    self._process_group_for_ddp,
-                )
-                if isinstance(p.thunder_fsdp_padding_size, int):
-                    p_new = p_new[: (p_new.shape[0] - p.thunder_fsdp_padding_size)]
-                p_orig = p
-                p = p_new
-            else:
-                p_orig = p
+            # We assume that a Parameter's underlying storage won't be changed.
+            # We tag Parameter's proxy with `STATIC_MEMORY_LOCATION` tag so that
+            # other transforms (eg. CUDAGraph) can use this information.
+            # We tag this here (rather than below in unpack_parameter_or_buffer_or_submodule below) because
+            # thunderfx does not properly see the module, but does see that we are dealing with a parameter.
+            if isinstance(uvalue, torch.nn.Parameter):
+                # NOTE - Update `p_orig` as in Distributed scenario
+                #        it is the proxy for the Parameter on device.
+                #        In `jit(ddp(model))` or `jit(fsdp(model))` scenario,
+                #        proxy `p` will be the proxy for synced parameter.
+                p.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
+
             if p is not uvalue:
                 value.register_proxy(p)
             # TODO: other caching modes
             co: CACHE_OPTIONS = get_cache_option()
             if co is CACHE_OPTIONS.CONSTANT_VALUES:
-                self.add_constraint((clang.check_tensor_shape_and_metadata, p_orig))
+                self.add_constraint((clang.check_tensor_shape_and_metadata, p))
             elif co is CACHE_OPTIONS.SYMBOLIC_VALUES:
                 # TODO: establish guarding logic to allow non-broadcast shape change
-                self.add_constraint((clang.check_tensor_shape_and_metadata, p_orig))
+                self.add_constraint((clang.check_tensor_shape_and_metadata, p))
             elif co not in (CACHE_OPTIONS.SAME_INPUT, CACHE_OPTIONS.NO_CACHING):
                 raise NotImplementedError(f"Unsupported cache option {co}")
             return p
@@ -815,7 +811,10 @@ def _general_jit_torch_ops_higher_order_autograd_function_apply(fwd, bwd, *fwd_a
     with tracectx(trace_of_forward):
         prims.python_return(*(sequencify(output)))
 
+    # See NOTE: `autograd_function_apply` and `no_grad` interaction for details about
+    # `thunder.torch.call_higher_order_function_and_consider_outer_autograd_setting`
     @wraps(aug_fwd_trace.python_callable())
+    @thunder.torch.call_higher_order_function_and_consider_outer_autograd_setting
     def forward(*args, **kwargs):
         return interpret_trace(trace_of_forward, *args, **kwargs)
 
@@ -899,7 +898,11 @@ def _general_jit_torch_finfo_lookaside(dtype: thunder.dtypes.dtype):
 def _general_jit_torch_checkpoint_lookaside(
     function: Callable,
     *args,
-    **kwargs: Any,
+    context_fn: None | Callable[..., Any] = None,
+    debug: None | bool = None,
+    determinism_check: None | str = None,
+    preserve_rng_state: None | bool = None,
+    use_reentrant: bool = False,
 ):
     """
     This function does preprocessing of the `function` argument before
@@ -917,17 +920,48 @@ def _general_jit_torch_checkpoint_lookaside(
         The result of calling `thunder.torch.checkpoint` with the preprocessed
         `function` and its arguments.
     """
-    from thunder.torch import checkpoint
 
-    # It should be possible to call the general_thunder_jit here to handle the
-    # conversion from torch to thunder but it doesn't work now
-    # See https://github.com/Lightning-AI/lightning-thunder/issues/1126
-    # TODO: Convert the function to a Thunder function
-    def thunder_function(*args, **kwargs):
-        return unwrap(function)(*args, **kwargs)
+    if unwrap(use_reentrant):
+        return do_raise(
+            "torch.checkpoint: use_reentrant=True is not supported in Thunder",
+        )
+    # NOTE: Thunder currently ignores the context_fn, debug, determinism_check, preserve_rng_state arguments
+    # Let's raise a warning if any of these arguments are passed
+    if unwrap(context_fn) is not None:
+        warnings.warn("torch.checkpoint: context_fn is not supported in Thunder and will be ignored")
+    if unwrap(debug) is not None:
+        warnings.warn("torch.checkpoint: debug is not supported in Thunder and will be ignored")
+    if unwrap(determinism_check) is not None:
+        warnings.warn("torch.checkpoint: determinism_check is not supported in Thunder and will be ignored")
+    if unwrap(preserve_rng_state) is not None:
+        warnings.warn("torch.checkpoint: preserve_rng_state is not supported in Thunder and will be ignored")
 
-    wrapped_thunder_function = wrap_const(thunder_function)
-    return interpreter_needs_wrap(checkpoint)(wrapped_thunder_function, *args, **kwargs)
+    jit_ctx: JitCtx = get_jit_ctx()
+    jit_ctx.computation_trace.push_scope([])
+
+    input_output_proxy_names = set()
+
+    def add_input_output_proxy_name(p):
+        if isinstance(p, Proxy):
+            input_output_proxy_names.add(p.name)
+
+    tree_map(add_input_output_proxy_name, [unwrap(a) for a in args])
+
+    res = _interpret_call(function, *args)
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return res
+
+    tree_map(add_input_output_proxy_name, unwrap(res))
+
+    new_bsyms = jit_ctx.computation_trace.pop_scope()
+    jit_ctx.computation_trace.bound_symbols.extend(new_bsyms)
+
+    for bsym in new_bsyms:
+        for o in bsym.flat_proxy_outs:
+            if o.name not in input_output_proxy_names:
+                o.tags.add(ProxyTag.RECOMPUTE_IN_BACKWARD)
+
+    return res
 
 
 # Adds proxy methods
@@ -1492,7 +1526,9 @@ def unpack_inputs(ctx, prologue_trace, pro_to_comp_inps, pro_to_epi_inps, args, 
             name = ".".join(name)
             if typ == "_parameters":
                 bsym = prims.unpack_parameter.bind(root_module, name, output=output)
-                output.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
+                assert (
+                    ProxyTag.STATIC_MEMORY_LOCATION in output.tags
+                ), "Parameter was not tagged with STATIC_MEMORY_LOCATION"
             elif typ == "_buffers":
                 bsym = prims.unpack_buffer.bind(root_module, name, output=output)
                 output.tags.add(ProxyTag.STATIC_MEMORY_LOCATION)
@@ -1760,20 +1796,6 @@ def bind_inputs(name, trace, input_vars, input_proxies):
     trace.args = input_proxies
 
 
-def _get_process_group_from(*fn_and_args) -> Optional["ProcessGroup"]:
-    # `ddp` and `fsdp` transforms add attribute `procses_group_for_ddp`
-    # on the Module that they wrap. This module could be passed to `thunder.jit`
-    # as the function to be jitted or as an argument of the function to be jitted.
-    found_pg = None
-    for fn_or_arg in fn_and_args:
-        pg = getattr(fn_or_arg, "process_group_for_ddp", None)
-        if pg is not None and found_pg is None:
-            found_pg = pg
-        elif pg is not None and pg != found_pg:
-            raise NotImplementedError("jitting modules with different ProcessGroup is not supported currently.")
-    return found_pg
-
-
 def update_tags(proxy_swapmap: dict[Variable, Proxy]) -> None:
     for old, new in proxy_swapmap.items():
         new.tags.update(unvariableify(old).tags)
@@ -1815,12 +1837,10 @@ def thunder_general_jit(
     compile_data = get_compile_data()
     executor_lookasides = {k: interpreter_needs_wrap(v) for k, v in compile_data.executor_lookasides.items()}
 
-    process_group_for_ddp: Optional["ProcessGroup"] = _get_process_group_from(fn, *args, *kwargs.values())
     ctx: JitCtx = JitCtx(
         prologue_trace,
         computation_trace,
         sharp_edges=sharp_edges,
-        process_group_for_ddp=process_group_for_ddp,
         executor_lookasides=executor_lookasides,
         ad_hoc_executor=ad_hoc_executor,
     )

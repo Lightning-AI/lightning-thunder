@@ -18,7 +18,7 @@ from thunder.executors.passes import (
     transform_for_execution,
 )
 from thunder.executors.utils import Region
-from thunder.extend import FusionExecutor, register_executor, ImplInfo
+from thunder.extend import FusionExecutor, register_executor, ImplInfo, fuse_bound_symbols
 from thunder.core.compile_data import get_compile_option
 from thunder.executors.torchex import ex as pytorch_ex
 
@@ -54,7 +54,7 @@ def to_torch_translator(bsym: BoundSymbol) -> Callable:
             torch_op = pytorch_ex.opmap.get(bsym.subsymbols[0].sym.name)
 
         if torch_op is None:
-            raise RuntimeError("op not found for {bsym.sym.name}")
+            raise RuntimeError(f"op not found for {bsym.sym.name}")
 
         return torch_op(*args, **kwargs)
 
@@ -160,18 +160,8 @@ class TorchCompileExecutor(FusionExecutor):
         fusedtrace: TraceCtx = from_trace(trace)
 
         producers, consumers = utils.producers_and_consumers(trace)
-        from thunder.executors.data_dependent_partition import fuse_bound_symbols, Node
 
-        def _should_fuse(a: Node, b: Node):
-            def _can_fuse_node(n: Node):
-                if len(n.group_bsyms) > 1:
-                    return True
-                bsym: BoundSymbol = n.group_bsyms[0]
-                return self.can_fuse(bsym)
-
-            return _can_fuse_node(a) and _can_fuse_node(b)
-
-        bound_symbol_groups = fuse_bound_symbols(trace, _should_fuse)
+        bound_symbol_groups = fuse_bound_symbols(trace, self.can_fuse)
 
         fused_bsyms = []
         # Counts how many fusions (per executor) have been constructed

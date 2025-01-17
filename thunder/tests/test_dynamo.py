@@ -445,10 +445,6 @@ def test_where_nonzero_overload(executor, device: str, dtype: dtypes.dtype):
             IS_WINDOWS,
             reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
         ),
-        pytest.mark.skipif(
-            version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
-            reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
-        ),
     ),
 )
 @requiresCUDA
@@ -509,9 +505,41 @@ def test_no_grad_ctx_manager(executor, device: str, dtype: dtypes.dtype):
     assert len(backend.subgraph_infos) == 1
 
     for subgraph_info in backend.subgraph_infos:
-        assert len(subgraph_info.split_reasons) > 1  # Verify there were splits in the subgraph.
+        assert len(subgraph_info.split_reasons) == 0  # Verify there were splits in the subgraph.
         assert isinstance(subgraph_info.original_graph_module, torch.fx.GraphModule)
-        assert any("has been manually disabled" in split_reason.info for split_reason in subgraph_info.split_reasons)
+
+    torch.testing.assert_close(actual, expected)
+
+    g = torch.randn_like(actual)
+    actual_grad = torch.autograd.grad(actual, x, g)
+    expected_grad = torch.autograd.grad(expected, x, g)
+    torch.testing.assert_close(actual_grad, expected_grad)
+
+
+@instantiate(dtypes=NOTHING, executors=[DynamoThunderExecutor])
+def test_no_grad_enabled_grad_nested_ctx_manager(executor, device: str, dtype: dtypes.dtype):
+
+    def func(x):
+        with torch.no_grad():
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                y = x @ x
+
+            with torch.enable_grad():
+                z = x.sin()
+        return y + x + z
+
+    x = torch.randn(3, 3, device=device, dtype=dtype, requires_grad=True)
+    cfunc = thunderfx(func)
+    actual = cfunc(x)
+    expected = torch.compile(func, backend="eager")(x)
+
+    backend = cfunc._backend
+    # We record the GraphModules that was compiled by ThunderCompiler
+    assert len(backend.subgraph_infos) == 1
+
+    for subgraph_info in backend.subgraph_infos:
+        assert len(subgraph_info.split_reasons) == 0  # Verify there were splits in the subgraph.
+        assert isinstance(subgraph_info.original_graph_module, torch.fx.GraphModule)
 
     torch.testing.assert_close(actual, expected)
 
@@ -951,3 +979,33 @@ def test_thunderfx():
     assert len(thunder_compiled_fns) == 1
     trc = last_traces(thunder_compiled_fns[-1])[-1]
     assert any(bsym.sym.id == "nvtx_range_push" for bsym in trc.bound_symbols)
+
+
+def test_get_example_input_tensor_metadata():
+    from thunder.dynamo.utils import _get_example_input_tensor_metadata
+    from torch._subclasses.fake_tensor import FakeTensorMode
+
+    int_tensor = torch.arange(1, 11, dtype=torch.int)
+    meta_int_tensor = _get_example_input_tensor_metadata(int_tensor)
+    assert meta_int_tensor.dtype == torch.int and meta_int_tensor.min_val >= 1 and meta_int_tensor.max_val < 11
+
+    fake_mode = FakeTensorMode()
+    fake_tensor = fake_mode.from_tensor(torch.empty(4, 4, dtype=torch.float32))
+    meta_fake_tensor = _get_example_input_tensor_metadata(fake_tensor)
+    assert meta_fake_tensor.shape == (4, 4) and meta_fake_tensor.dtype == torch.float32
+
+    t0 = torch.randn((5, 10), device="meta")
+    meta_t0 = _get_example_input_tensor_metadata(t0)
+    assert meta_t0.min_val == None and meta_t0.max_val == None and meta_t0.device.type == "meta"
+
+
+def test_thunderfx_meta_tensor():
+    def foo(x):
+        y = torch.sin(x)
+        return y
+
+    t0 = torch.randn((5, 10), device="meta")
+
+    thfoo = thunderfx(foo)
+    out = thfoo(t0)
+    assert out.device.type == "meta"
