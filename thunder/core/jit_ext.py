@@ -1806,6 +1806,7 @@ DebugOptions.register_option(
 )
 
 
+@thunder.core.profile.annotate_for_profile("thunder_general_jit")
 def thunder_general_jit(
     fn: Callable,
     args: tuple[Any, ...],

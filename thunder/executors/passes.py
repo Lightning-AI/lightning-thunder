@@ -10,6 +10,7 @@ import time
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance, VariableInterface
 import thunder.core.dtypes as dtypes
 import thunder.core.utils as cutils
+import thunder.core.profile
 from thunder.core.utils import ProxyDict, check, safe_map_flat
 from thunder.core.symbol import BoundSymbol
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
@@ -28,8 +29,8 @@ comment_symbols = {prims.PrimIDs.COMMENT, prims.PrimIDs.UNPACK_TRIVIAL}
 
 # Transforms a trace by determining which execution transforms to call given the list of executors in priority order
 # This pass tries to preserve the original trace and proxies.
+@thunder.core.profile.annotate_for_profile("_transform_for_operator_execution")
 def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: Sequence[Executor]) -> TraceCtx:
-
     # This processes the bsyms to map symbols to operator executors:
     # - if a bsym has a python impl, that will be called, so we can keep it.
     # - in the order of the executor list
@@ -88,23 +89,16 @@ def _transform_for_operator_executor_execution(trace: TraceCtx, executors_list: 
             ### OUTPUTS to map
             self.add_unprocessed_bsyms(bsym.subsymbols[:])
 
-    start_time_ns = time.perf_counter_ns()
-
     extrace, _ = OpExProcessor(trace)()
 
-    end_time_ns = time.perf_counter_ns()
-    elapsed_time_ns = end_time_ns - start_time_ns
-    elapsed_time_millis = elapsed_time_ns // 1000000
-    extrace.set_provenance(
-        TraceProvenance(f"Transform for operator executor execution (took {elapsed_time_millis} milliseconds)")
-    )
+    extrace.set_provenance(TraceProvenance("Transform for operator executor execution"))
+
     return extrace
 
 
+@thunder.core.profile.annotate_for_profile("transform_for_execution")
 def transform_for_execution(trace: TraceCtx, executors_list: Sequence[Executor]) -> TraceCtx:
     import torch
-
-    start_time_ns = time.perf_counter_ns()
 
     if torch.distributed.is_available():
         # Apply AllReduce bucketing if possible & needed
@@ -135,11 +129,7 @@ def transform_for_execution(trace: TraceCtx, executors_list: Sequence[Executor])
     # NOTE This occurs if a fusion executor declines to execute a symbol after running its fusion pass
     extrace = _transform_for_operator_executor_execution(extrace, get_always_executors())
 
-    end_time_ns = time.perf_counter_ns()
-    elapsed_time_ns = end_time_ns - start_time_ns
-    elapsed_time_millis = elapsed_time_ns // 1000000
-
-    extrace.set_provenance(TraceProvenance(f"Transform for execution (took {elapsed_time_millis} milliseconds)"))
+    extrace.set_provenance(TraceProvenance("Transform for execution"))
     return extrace
 
 
@@ -180,6 +170,7 @@ def _update_fusion_call_ctx(bsym: BoundSymbol) -> BoundSymbol:
     return bsym.sym.executor.fuse(fusion_bsym_to_region(bsym), counter)
 
 
+@thunder.core.profile.annotate_for_profile("update_fusion_call_ctx")
 def update_fusion_call_ctx(trace: TraceCtx) -> TraceCtx:
     """Updates the call context of the trace to be the current call context.
 
@@ -192,7 +183,6 @@ def update_fusion_call_ctx(trace: TraceCtx) -> TraceCtx:
     Returns:
         (TraceCtx): transformed trace
     """
-    start_time_ns = time.perf_counter_ns()
 
     new_trace = from_trace(trace)
     new_trace.bound_symbols = []
@@ -202,10 +192,7 @@ def update_fusion_call_ctx(trace: TraceCtx) -> TraceCtx:
         else:
             new_trace.bound_symbols.append(bsym)
 
-    end_time_ns = time.perf_counter_ns()
-    elapsed_time_ns = end_time_ns - start_time_ns
-    elapsed_time_millis = elapsed_time_ns // 1000000
-    new_trace.set_provenance(TraceProvenance(f"Update Call Context (took {elapsed_time_millis} milliseconds)"))
+    new_trace.set_provenance(TraceProvenance("Update Call Context"))
     return new_trace
 
 
@@ -255,6 +242,7 @@ def _del_last_used(bound_symbols, flattened_final_output, *, clear_mutable_colle
 
 
 # TODO Review deleting non-proxies
+@thunder.core.profile.annotate_for_profile("del_last_used")
 def del_last_used(trace: TraceCtx, *, clear_mutable_collections=False) -> TraceCtx:
     """Mark last used intermediates to be deleted. This lets the Python garbage collector free
         unused tensor memory.
@@ -265,8 +253,6 @@ def del_last_used(trace: TraceCtx, *, clear_mutable_collections=False) -> TraceC
     Returns:
         list: transformed trace
     """
-    start_time_ns = time.perf_counter_ns()
-
     del_trace = from_trace(trace)
 
     outs = cutils.sequencify(trace.output)
@@ -276,10 +262,5 @@ def del_last_used(trace: TraceCtx, *, clear_mutable_collections=False) -> TraceC
         trace.bound_symbols, flat_outs, clear_mutable_collections=clear_mutable_collections
     )
 
-    end_time_ns = time.perf_counter_ns()
-    elapsed_time_ns = end_time_ns - start_time_ns
-    elapsed_time_millis = elapsed_time_ns // 1000000
-
-    del_trace.set_provenance(TraceProvenance(f"Delete Last Used (took {elapsed_time_millis} milliseconds)"))
-
+    del_trace.set_provenance(TraceProvenance("Delete Last Used"))
     return del_trace
