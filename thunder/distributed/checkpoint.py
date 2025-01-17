@@ -167,15 +167,9 @@ def load_model_state_dict(state_dict: dict[str, Any], module: Module, options: S
             module.load_state_dict(state_dict, strict=options.strict)
 
     elif options.full_state_dict:
-        if not hasattr(module, "process_group_for_ddp"):
-            raise RuntimeError(f"Expected {module} to be FSDP transformed")
-        process_group = module.process_group_for_ddp
-        device = next(module.parameters()).device
-        _unshard_params(module, process_group, options.cpu_offload)
         if not options.rank0_only or rank == 0:
-            module.load_state_dict(state_dict, strict=options.strict)
-        # with rank0_only enabled, it's useful to broadcast so that the other shards are still loaded as expected
-        _shard_params(module, process_group, device, 0 if options.rank0_only else None)
+            # TODO: broadcast rank0 to others if options.rank0_only?
+            module.load_original_state_dict(state_dict)
     else:
         state_dict = tree_map(lambda t: DTensor.to_local(t) if isinstance(t, DTensor) else t, state_dict)
         module.load_state_dict(state_dict, strict=options.strict)
@@ -209,10 +203,6 @@ def load(module_state: dict[str, Any], path: Path, **kwargs: Any) -> None:
 
 def _split_state_dict(module: Module) -> tuple[dict[str, Any], dict[str, Any]]:
     """A flavor of ``module.state_dict()`` that returns parameters separated to everything else."""
-    params = {
-        param_name: param.detach()
-        for module_name, submodule in module.named_modules()
-        for param_name, param in submodule.named_parameters(recurse=False, prefix=module_name)
-    }
+    params = {param_name: param.detach() for param_name, param in module.named_parameters()}
     rest = {k: v for k, v in module.state_dict().items() if k not in params}
     return params, rest

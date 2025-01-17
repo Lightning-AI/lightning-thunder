@@ -2,6 +2,7 @@ from __future__ import annotations
 import os
 from contextvars import ContextVar
 from contextlib import contextmanager
+import pathlib
 from typing import Optional, Any, Tuple, Type, Dict, List, Union
 from collections.abc import Callable
 from collections.abc import Sequence, Hashable
@@ -520,6 +521,11 @@ class TraceCtx:
 
     def __repr__(self) -> str:
         return self.python(print_depth=-1)
+
+    def save_trace(self, filename: str | os.PathLike) -> None:
+        filename = pathlib.Path(filename)
+        with open(filename, "w") as f:
+            f.write(str(self))
 
 
 # Constructs a new trace by shallow copying parts of an existing trace
