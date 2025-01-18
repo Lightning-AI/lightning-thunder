@@ -1323,7 +1323,7 @@ _input_provenance_inst = {
 }
 
 
-def should_register_for_prologue(pr):
+def should_register_for_prologue(pr, _toplevel=True):
     inst = pr.inst
     if pr.ext_flag & EXT_FLAG_IS_TENSOR_PROXY:
         return False
@@ -1336,7 +1336,9 @@ def should_register_for_prologue(pr):
     if inst == "CONSTANT" and callable(pr.value):
         if pr.value.__name__ != "__getitem__" and pr.value != GetSetDescriptorType.__get__:
             return False
-    return all(should_register_for_prologue(i) for i in pr.inputs)
+    if not pr.inputs and _toplevel:
+        return False
+    return all(should_register_for_prologue(i, _toplevel=False) for i in pr.inputs)
 
 
 def _general_jit_wrap_callback(value):
@@ -1932,22 +1934,22 @@ def build_value_from_wrapped(wrapped_v):
     if hasattr(wrapped_v, "anyproxy"):
         return wrapped_v.anyproxy
 
-    if type(v) is str:
-        return v
+    # TODO: this bakes in the dtype/device
+    if isinstance(v, thunder.dtypes.dtype):
+        return thunder.dtypes.to_torch_dtype(v)
 
-    if isinstance(v, ProxyInterface):
-        return v
+    if isinstance(v, thunder.devices.Device):
+        return thunder.devices.to_torch_device(v)
 
-    if baseutils.is_base_printable(v):
-        return v
+    # inputs
+    if should_register_for_prologue(wrapped_v.provenance):
+        return AnyProxy(v, history=wrapped_v.provenance)
 
-    if isinstance(v, codeutils.ContextObject):
-        return v
-
-    if isinstance(v, (thunder.dtypes.dtype, thunder.devices.Device, torch.finfo)):
-        return v
-
-    if type(v) is type:
+    if (
+        type(v) in (str, type, object)
+        or isinstance(v, (ProxyInterface, codeutils.ContextObject, torch.finfo))
+        or baseutils.is_base_printable(v)
+    ):
         return v
 
     if dataclasses.is_dataclass(v):
@@ -1974,6 +1976,20 @@ def build_value_from_wrapped(wrapped_v):
             if witem is not None:
                 item = build_value_from_wrapped(witem)
             res_list.append(item)
+        return type(v)(res_list)
+
+    if isinstance(v, dict):
+        res_list = []
+        for k, item in v.items():
+            wkey = wrapped_v.key_wrappers.get(k)
+            if wkey is not None:
+                key = build_value_from_wrapped(wkey)
+            else:
+                key = k
+            witem = wrapped_v.item_wrappers.get(k)
+            if witem is not None:
+                item = build_value_from_wrapped(witem)
+            res_list.append((key, item))
         return type(v)(res_list)
 
     if baseutils.is_collection(v):
