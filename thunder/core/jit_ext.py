@@ -5,6 +5,7 @@ import builtins
 import collections
 from collections.abc import ValuesView, Iterable, Iterator
 from collections.abc import Callable, Sequence
+import dataclasses
 import weakref
 import random
 from functools import partial, wraps, reduce
@@ -23,6 +24,8 @@ import time
 from thunder.core.compile_data import compile_data_and_stats, get_cache_option, get_compile_data
 import thunder.clang as clang
 import thunder.core.transforms
+import thunder.core.baseutils as baseutils
+import thunder.core.codeutils as codeutils
 from thunder.core.baseutils import run_once
 
 from types import (
@@ -57,6 +60,7 @@ from thunder.core.proxies import (
     DistParallelType,
     proxy,
     Proxy,
+    ProxyInterface,
     ProxyTag,
     AnyProxy,
     NumberProxy,
@@ -560,8 +564,7 @@ def _general_jit_object_setattr_lookaside(obj: Any, name: str, value: Any):
         if getattr(obj.provenance, "proxy", None) is None:
             p: AnyProxy = AnyProxy(uobj, history=obj.provenance)
             obj.provenance.proxy = p
-            obj.register_proxy(p)
-            uobj = p
+            obj.anyproxy = p
 
     d = _interpret_call(getattr, obj, wrap_const("__dict__"))
     if d is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
@@ -1923,6 +1926,62 @@ DebugOptions.register_option(
 )
 
 
+def build_value_from_wrapped(wrapped_v):
+    v = unwrap(wrapped_v)
+
+    if hasattr(wrapped_v, "anyproxy"):
+        return wrapped_v.anyproxy
+
+    if type(v) is str:
+        return v
+
+    if isinstance(v, ProxyInterface):
+        return v
+
+    if baseutils.is_base_printable(v):
+        return v
+
+    if isinstance(v, codeutils.ContextObject):
+        return v
+
+    if isinstance(v, (thunder.dtypes.dtype, thunder.devices.Device, torch.finfo)):
+        return v
+
+    if type(v) is type:
+        return v
+
+    if dataclasses.is_dataclass(v):
+        # For a dataclass instance of class
+        # class MyContainer:
+        #    int i
+        #    float f
+        # This will be represented in the trace as `packagename1_MyContainer(i=x, f=y)` where `x` and `y` could be concrete number
+        # or proxies.
+        #
+        # NOTE: The `class` packagename1_MyContainer will present in `import_ctx` and passed to the compiled function.
+        # This is taken care of by function `to_printable`.
+
+        kwargs = {}
+        for k, uattr in v.__dict__.items():
+            if k in wrapped_v.attribute_wrappers:
+                uattr = build_value_from_wrapped(wrapped_v.attribute_wrappers[k])
+            kwargs[k] = uattr
+        return prims.python_dataclass_new(type(v), **kwargs)
+
+    if isinstance(v, (tuple, list)):
+        res_list = []
+        for witem, item in zip(wrapped_v.item_wrappers, v, strict=True):
+            if witem is not None:
+                item = build_value_from_wrapped(witem)
+            res_list.append(item)
+        return type(v)(res_list)
+
+    if baseutils.is_collection(v):
+        raise NotImplementedError(f"unhandled collection of type {type(v)}")
+
+    raise NotImplementedError(f"unhandled value of type {type(v)}")
+
+
 def thunder_general_jit(
     fn: Callable,
     args: tuple[Any, ...],
@@ -1983,7 +2042,8 @@ def thunder_general_jit(
             result_proxies = tuple(p for p in tree_iter(uresult) if isinstance(p, (TensorProxy, NumberProxy)))
             prims.python_return(result_proxies)
         with tracectx(epilogue_trace):
-            prims.python_return(uresult)
+            res = build_value_from_wrapped(result)
+            prims.python_return(res)
 
     pro_to_comp, pro_to_comp_set, computation_intermediates = get_computation_inputs_and_intermediates(
         computation_trace

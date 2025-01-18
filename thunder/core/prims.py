@@ -130,6 +130,7 @@ class PrimIDs(Enum):
     PACK_BUFFER = auto()
     PACK_ATTR = auto()
     PACK_SETITEM = auto()
+    DATACLASS_NEW = auto()
     SHAPE = auto()
     # TODO: UNPACK_SET
     # Utility prims
@@ -1288,6 +1289,33 @@ pack_setitem = make_prim(
     python_printer=pack_setitem_printer,
     python_impl=pack_setitem_impl,
     tags=(OpTags.DONT_DCE,),
+)
+
+
+def python_dataclass_new_meta(typ, **kwargs):
+    return AnyProxy(typ(**kwargs))
+
+
+def python_dataclass_new_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    (typ,) = arg_printables
+    outstr = codeutils.prettyprint(out_printables, literals_as_underscores=True)
+    typ_str = codeutils._generate_dataclass_class_name(typ)
+    kwarg_str = ", ".join(f"{k}={codeutils.prettyprint(v)}" for k, v in kwarg_printables.items())
+    return f"{outstr} = {typ_str}({kwarg_str})"
+
+
+def python_dataclass_new_impl(typ, **kwargs):
+    return typ(**kwargs)
+
+
+python_dataclass_new = make_prim(
+    PrimIDs.DATACLASS_NEW,
+    "python_dataclass_new",
+    meta=python_dataclass_new_meta,
+    python_printer=python_dataclass_new_printer,
+    python_impl=python_dataclass_new_impl,
 )
 
 
