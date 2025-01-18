@@ -263,7 +263,10 @@ def test_splitter_autocast_ctx_with_split(executor, device: str, dtype: dtypes.d
     ),
 )
 def test_splitter_autograd_function(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
-    x = torch.ones(2, device=device, dtype=dtype, requires_grad=True)
+    # Workaround for "RuntimeError: Triton Error [CUDA]: an illegal memory access was encountered"
+    # https://github.com/pytorch/pytorch/issues/124565
+    if device != "cpu":
+        torch.empty(1, device="cuda", requires_grad=True).backward()
 
     class Sin(torch.autograd.Function):
         @staticmethod
@@ -274,21 +277,29 @@ def test_splitter_autograd_function(executor, device: str, dtype: dtypes.dtype, 
         @staticmethod
         def backward(ctx, g):
             (x,) = ctx.saved_tensors
-            return g * torch.cos(x)
+            return g * torch.cos(x) * 100
 
     def func(x):
         y = torch.cos(x) + Sin.apply(x)
         return torch.matmul(x, y)
 
+    x = torch.ones(2, device=device, dtype=dtype, requires_grad=True)
     expected = torch.compile(func, dynamic=dynamic)(x)
 
     cfunc = thunderfx(func, dynamic=dynamic)
     actual = cfunc(x)
 
     backend = cfunc._backend
-    targets = (node.target for node in backend.subgraph_infos[0].split_graph_module.graph.nodes)
-    assert any(target.startswith("thunder_") for target in targets)
-    assert any(target.startswith("inductor_") for target in targets)
+    assert len(backend.subgraph_infos) == 1  # no graph break in dynamo
+    subgraph_info = backend.subgraph_infos[0]
+    assert len(subgraph_info.split_reasons) == 0  # no split
+    assert len(subgraph_info.thunder_compiled_fns) == 1
+    jfunc = subgraph_info.thunder_compiled_fns[0]
+    trc = last_traces(jfunc)[0]
+    assert any(
+        isinstance(bsym.sym.id, str) and bsym.sym.id.startswith("higher_order_autograd_function_apply")
+        for bsym in trc.bound_symbols
+    )
 
     # Verify forward pass
     torch.testing.assert_close(actual, expected)
@@ -979,3 +990,33 @@ def test_thunderfx():
     assert len(thunder_compiled_fns) == 1
     trc = last_traces(thunder_compiled_fns[-1])[-1]
     assert any(bsym.sym.id == "nvtx_range_push" for bsym in trc.bound_symbols)
+
+
+def test_get_example_input_tensor_metadata():
+    from thunder.dynamo.utils import _get_example_input_tensor_metadata
+    from torch._subclasses.fake_tensor import FakeTensorMode
+
+    int_tensor = torch.arange(1, 11, dtype=torch.int)
+    meta_int_tensor = _get_example_input_tensor_metadata(int_tensor)
+    assert meta_int_tensor.dtype == torch.int and meta_int_tensor.min_val >= 1 and meta_int_tensor.max_val < 11
+
+    fake_mode = FakeTensorMode()
+    fake_tensor = fake_mode.from_tensor(torch.empty(4, 4, dtype=torch.float32))
+    meta_fake_tensor = _get_example_input_tensor_metadata(fake_tensor)
+    assert meta_fake_tensor.shape == (4, 4) and meta_fake_tensor.dtype == torch.float32
+
+    t0 = torch.randn((5, 10), device="meta")
+    meta_t0 = _get_example_input_tensor_metadata(t0)
+    assert meta_t0.min_val == None and meta_t0.max_val == None and meta_t0.device.type == "meta"
+
+
+def test_thunderfx_meta_tensor():
+    def foo(x):
+        y = torch.sin(x)
+        return y
+
+    t0 = torch.randn((5, 10), device="meta")
+
+    thfoo = thunderfx(foo)
+    out = thfoo(t0)
+    assert out.device.type == "meta"

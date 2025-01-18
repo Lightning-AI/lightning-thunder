@@ -421,9 +421,8 @@ def test_thunderfx_mistral_nemo_small():
     assert mdl._backend.subgraph_infos, "Should have at least 1 subgraph"
 
 
-# disabled "Qwen/Qwen2.5-7B-Instruct" see https://github.com/NVIDIA/Fuser/issues/3682
 @thunder.tests.framework.requiresCUDA
-@pytest.mark.parametrize("model_id", ["microsoft/Phi-3-mini-128k-instruct"])
+@pytest.mark.parametrize("model_id", ["Qwen/Qwen2.5-7B-Instruct", "microsoft/Phi-3-mini-128k-instruct"])
 def test_hf_for_nemo(model_id):
     from thunder.dynamo import thunderfx
     from transformers import AutoConfig, AutoModelForCausalLM
@@ -579,6 +578,15 @@ def test_memory_litgpt_llama3():
 
     mem_thunder = forward_backward_peak(jm, inp)
     mem_eager = forward_backward_peak(m, inp)
+
+    # assert that attention is not automatically recomputed, see
+    # https://github.com/Lightning-AI/lightning-thunder/issues/1646
+    assert not {
+        bsym.sym.name
+        for bsym in thunder.last_backward_traces(jm)[-1].bound_symbols
+        if ("attention" in bsym.sym.name or "sdpa" in bsym.sym.name)
+        and ("forward" in bsym.sym.name or "fwd" in bsym.sym.name)
+    }
 
     assert mem_thunder < mem_eager
 
