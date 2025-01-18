@@ -3160,8 +3160,6 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
     enable_saved_for_backward_recomputation: None | bool = get_compile_option(
         "enable_saved_for_backward_recomputation", "Enable save for backward tensors recomputation."
     )
-    if enable_saved_for_backward_recomputation is None or remat_policy:
-        enable_saved_for_backward_recomputation = True
     if enable_saved_for_backward_recomputation:
         forward_trace, backward_trace = recompute_saved_for_backward(forward_trace, backward_trace)
 
