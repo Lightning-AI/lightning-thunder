@@ -9,6 +9,7 @@ from thunder.core.utils import safe_map_flat, sequencify
 from thunder.core.proxies import variableify, ProxyTag
 from thunder.core.transform_common import VJPDual
 from thunder.core.symbol import has_tags
+from thunder.core.compile_data import get_compile_option
 
 
 # TODO: Currently we use trace.args and trace.kwargs to get the arguments
@@ -81,6 +82,7 @@ def interpret_trace(trace, *args, symbol_mapper=None, with_env=False, **kwargs):
     return tree_map(read, trace.output)
 
 
+# TODO: refactor to use TraceSubstitutionProcessor to split out the gradient-specific part
 def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, **kwargs):
     """Interpret a trace.
 
@@ -184,7 +186,12 @@ def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, *
 
             for new_bsym in new_bsyms:
                 # TODO: what to do with bsym header? Maybe have a combined from_bsym_swap_proxies and from_bsym?
-                if not has_tags(
+                auto_recompute_intermediates: None | bool = get_compile_option(
+                    "auto_recompute_intermediates",
+                    "Whether to mark intermediates as up for recomputation. This experimental flag reduces the number tensors saved for backward, at the expense of more compute",
+                )
+
+                if auto_recompute_intermediates and not has_tags(
                     bsym,
                     {
                         prims.OpTags.RANDOM_OP,
