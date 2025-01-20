@@ -2295,10 +2295,6 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
 
     def copy(self, /):
         self.track_items()
-        assert self.item_wrappers is not None
-
-        pr = ProvenanceRecord(PseudoInst.LIST_COPY, inputs=[self.provenance])
-        self.provenance = pr
         assert type(self.item_wrappers) is list
 
         def impl(self):
