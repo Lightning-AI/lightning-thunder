@@ -267,7 +267,7 @@ CacheEntry = namedtuple(
 )
 
 
-def compile(fn: Callable, recipe: Recipe | None):
+def compile(fn: Callable, recipe: Recipe | None = None):
     if recipe is None:
         return thunder.jit(fn)
 
