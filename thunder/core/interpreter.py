@@ -926,6 +926,7 @@ class PseudoInst(str, enum.Enum):
     GET_LEN = "GET_LEN"
     BINARY_ADD = "BINARY_ADD"
     LIST_APPEND = "LIST_APPEND"
+    LIST_COPY = "LIST_COPY"
     LIST_EXTEND = "LIST_EXTEND"
     GET_ITER = "GET_ITER"
     CONTAINS_OP = "CONTAINS_OP"
@@ -2295,7 +2296,16 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
 
     def copy(self, /):
         self.track_items()
-        raise NotImplementedError("Sequence.copy, please file an issue")
+        assert self.item_wrappers is not None
+
+        pr = ProvenanceRecord(PseudoInst.LIST_COPY, inputs=[self.provenance])
+        self.provenance = pr
+        assert type(self.item_wrappers) is list
+
+        def impl(self):
+            return type(self)(self)
+
+        return _interpret_call(impl, self)
 
     def extend(self, iterable, /):
         self.track_items()
