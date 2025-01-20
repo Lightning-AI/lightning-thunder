@@ -2181,13 +2181,17 @@ class SequenceWrapperMethods(WrappedValue):
             l = []
             for _ in range(n):
                 l.extend(self)
-            return l
+            return type(self)(l)
 
         return _interpret_call(impl, self, n)
 
     def __rmul__(self, n, /):
         self.track_items()
-        return self.__mul__(n)
+
+        def impl(self, n):
+            return self.__mul__(n)
+
+        return _interpret_call(impl, self, n)
 
     def __len__(self):
         self.track_items()
