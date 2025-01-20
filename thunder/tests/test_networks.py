@@ -509,7 +509,6 @@ LLAMA_3_2_1B_CFG = {
 @requiresCUDA
 def test_hf_llama():
     from transformers.models.llama import LlamaForCausalLM, LlamaConfig
-    from transformers import DynamicCache
     from transformers.models.llama.modeling_llama import logger as llama_logger
     import logging
 
@@ -590,3 +589,74 @@ def test_memory_litgpt_llama3():
     }
 
     assert mem_thunder < mem_eager
+
+
+@requiresCUDA
+def test_hf_kvcache():
+    from transformers.models.llama import LlamaForCausalLM, LlamaConfig
+    from transformers.models.llama.modeling_llama import logger as llama_logger
+    import logging
+
+    # transformers logs a cache deprecation warning
+    llama_logger.setLevel(logging.CRITICAL)
+
+    config_args = LLAMA_3_2_1B_CFG.copy()
+    config_args["num_hidden_layers"] = 1
+    with torch.device("cuda"):
+        model = LlamaForCausalLM(LlamaConfig(**config_args)).to(torch.bfloat16).requires_grad_(False).eval()
+        model2 = LlamaForCausalLM(LlamaConfig(**config_args)).to(torch.bfloat16).requires_grad_(False).eval()
+        model2.load_state_dict(model.state_dict())
+
+    jm = thunder.jit(model)
+
+    j_static_cache = model._get_cache("static", 1, 128, "cuda", config_args)
+    ref_static_cache = model2._get_cache("static", 1, 128, "cuda", config_args)
+    assert j_static_cache is not ref_static_cache
+
+    args1 = dict(
+        cache_position=torch.tensor([0, 1, 2, 3, 4, 5], device="cuda:0"),
+        input_ids=torch.tensor([[128000, 791, 1401, 311, 2324, 374]], device="cuda:0"),
+        inputs_embeds=None,
+        attention_mask=torch.tensor([[1, 1, 1, 1, 1, 1]], device="cuda:0"),
+        use_cache=True,
+    )
+
+    args1["past_key_values"] = j_static_cache
+    res = jm(**args1)
+    args1["past_key_values"] = ref_static_cache
+    expected = model2(**args1)
+
+    assert res.past_key_values is j_static_cache
+    assert expected.past_key_values is ref_static_cache
+
+    # we cannot compare the StaticCache instances in assert_close
+    res["past_key_values"] = None
+    expected["past_key_values"] = None
+
+    assert_close(res, expected, rtol=1e-1, atol=1e-1)
+
+    assert_close(j_static_cache.key_cache, ref_static_cache.key_cache, rtol=1e-1, atol=1e-1)
+    assert_close(j_static_cache.value_cache, ref_static_cache.value_cache, rtol=1e-1, atol=1e-1)
+
+    res["past_key_values"] = j_static_cache
+    expected["past_key_values"] = ref_static_cache
+
+    args2 = dict(
+        cache_position=torch.tensor([6], device="cuda:0"),
+        input_ids=torch.tensor([[311]], device="cuda:0"),
+        inputs_embeds=None,
+        attention_mask=torch.tensor([[1, 1, 1, 1, 1, 1, 1]], device="cuda:0"),
+        use_cache=True,
+    )
+
+    res2 = jm(past_key_values=j_static_cache, **args2)
+    expected2 = model2(past_key_values=ref_static_cache, **args2)
+
+    assert res2.past_key_values is j_static_cache
+    assert expected2.past_key_values is ref_static_cache
+    res2["past_key_values"] = None
+    expected2["past_key_values"] = None
+    assert_close(res2, expected2, rtol=1e-1, atol=1e-1)
+
+    assert_close(j_static_cache.key_cache, ref_static_cache.key_cache, rtol=1e-1, atol=1e-1)
+    assert_close(j_static_cache.value_cache, ref_static_cache.value_cache, rtol=1e-1, atol=1e-1)
