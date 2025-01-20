@@ -1421,7 +1421,7 @@ class TensorProxy(Proxy, TensorProxyInterface):
         shape: ShapeLike | None = None,
         device: devices.Device | None = None,
         dtype: dtypes.dtype | None = None,
-        requires_grad: bool | None = None,
+        requires_grad: bool = False,
         grad: TensorProxy | None = None,
         prefix: None | str = None,
         distparallel_type: DistParallelType | None = None,
