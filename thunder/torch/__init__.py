@@ -145,6 +145,7 @@ class torchsymbol:
         id: str | None = None,
         is_prim: bool = False,
         tags: None | list[Any] = None,
+        out_of_place: Symbol | None = None
     ):
         self.torchfns = torchfns
         self.is_method = is_method or (method_name is not None)
@@ -155,6 +156,7 @@ class torchsymbol:
         # executors must execute it directly without decomposition.
         self.is_prim = is_prim
         self.tags = tags
+        self.out_of_place = out_of_place
 
     def __call__(self, fn: Callable) -> Symbol:
         _fn = langctx(Languages.TORCH)(fn)
@@ -208,7 +210,11 @@ class torchsymbol:
         if self.tags and prims.OpTags.IN_PLACE in self.tags:
             if self.id is not None:
                 name = self.id
-            _inplace_to_out_of_place[sym] = globals()[name[:-1]], -1
+            _inplace_to_out_of_place[sym] = (
+                self.out_of_place
+                if self.out_of_place is not None
+                else globals()[name[:-1]]
+            ), -1
 
         return sym
 
@@ -1760,6 +1766,11 @@ def trunc(a):
 @torchsymbol(torch.trunc_, is_method=True, tags=(prims.OpTags.IN_PLACE,))
 def trunc_(a):
     return _copy_(a, trunc(a))
+
+
+@torchsymbol(torch.zero_, is_method=True, tags=(prims.OpTags.IN_PLACE,), out_of_place=zeros_like)
+def zero_(a):
+    return _copy_(a, zeros_like(a))
 
 
 @torchsymbol(torch.real, is_method=False)
