@@ -170,6 +170,7 @@ class TorchAOFP8Handler:
             cast_config_grad_output=CastConfig(ScalingType.DYNAMIC),
             enable_fsdp_float8_all_gather=self.use_fp8_allgather and self.is_fsdp2,
             enable_pre_and_post_forward=False,
+            force_recompute_fp8_weight_in_bwd=self.is_fsdp2,
         )
         self.precompute_scale = (
             self.is_fsdp2 and self.use_fp8_allgather and self.use_torchao_fp8_precompute_float8_dynamic_scale_for_fsdp
