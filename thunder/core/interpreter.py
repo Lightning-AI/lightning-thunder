@@ -926,7 +926,6 @@ class PseudoInst(str, enum.Enum):
     GET_LEN = "GET_LEN"
     BINARY_ADD = "BINARY_ADD"
     LIST_APPEND = "LIST_APPEND"
-    LIST_COPY = "LIST_COPY"
     LIST_EXTEND = "LIST_EXTEND"
     GET_ITER = "GET_ITER"
     CONTAINS_OP = "CONTAINS_OP"
