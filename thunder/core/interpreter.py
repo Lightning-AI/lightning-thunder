@@ -2299,7 +2299,12 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
 
     def copy(self, /):
         self.track_items()
-        raise NotImplementedError("Sequence.copy, please file an issue")
+        assert type(self.item_wrappers) is list
+
+        def impl(self):
+            return type(self)(self)
+
+        return _interpret_call(impl, self)
 
     def extend(self, iterable, /):
         self.track_items()
