@@ -145,7 +145,7 @@ class torchsymbol:
         id: str | None = None,
         is_prim: bool = False,
         tags: None | list[Any] = None,
-        out_of_place: Symbol | None = None
+        out_of_place: Symbol | None = None,
     ):
         self.torchfns = torchfns
         self.is_method = is_method or (method_name is not None)
@@ -211,9 +211,7 @@ class torchsymbol:
             if self.id is not None:
                 name = self.id
             _inplace_to_out_of_place[sym] = (
-                self.out_of_place
-                if self.out_of_place is not None
-                else globals()[name[:-1]]
+                self.out_of_place if self.out_of_place is not None else globals()[name[:-1]]
             ), -1
 
         return sym
