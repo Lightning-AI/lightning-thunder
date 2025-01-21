@@ -1011,7 +1011,7 @@ def test_thunderfx_last_traces():
         assert dfoo.last_backward_traces == []
         assert "before function invoked" in str(w[1].message)
 
-        
+
 def test_get_example_input_tensor_metadata():
     from thunder.dynamo.utils import _get_example_input_tensor_metadata
     from torch._subclasses.fake_tensor import FakeTensorMode
