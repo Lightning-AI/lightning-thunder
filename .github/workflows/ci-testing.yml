@@ -135,13 +135,11 @@ jobs:
 
       - name: Testing interpreter
         if: matrix.python-version == '3.11' || matrix.python-version == '3.12'
-        #continue-on-error: true
         run: |
           python -m pytest \
             thunder/tests/test_interpreter.py \
+            thunder/tests/test_jit_general.py \
             -v -n 4 --durations=50 --cov=thunder
-          python -m pytest thunder/tests/test_jit_general.py -v --durations=50 --cov=thunder
-
       - name: Statistics
         run: |
           coverage report
