@@ -1,38 +1,29 @@
 from __future__ import annotations
 import operator
 import importlib
-from dataclasses import replace
-from contextlib import ContextDecorator
-from functools import wraps, partial
-from inspect import signature
-from itertools import groupby
+from functools import partial, wraps
 from numbers import Number
 from typing import TYPE_CHECKING
 from collections.abc import Callable
 from collections.abc import Hashable, Sequence
 from collections.abc import Sequence
 from types import ModuleType
-from enum import Enum, auto
 
 import torch
-import math
-from looseversion import LooseVersion
 
+from thunder.core.compile_data import get_compile_data
 import thunder.core.dtypes as dtypes
 from thunder.core.dtypes import to_torch_dtype, to_dtype
 import thunder.core.devices as devices
 from thunder.core.devices import to_torch_device, to_device
 import thunder.core.prims as prims
-from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, from_trace
-from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy, variableify, pytype
-from thunder.core.pytree import tree_flatten, tree_unflatten
-from thunder.core.symbol import Symbol, BoundSymbol
+from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy, pytype
+from thunder.core.symbol import Symbol
 from thunder.distributed.prims import DistributedReduceOps
 import thunder.distributed.prims as dist_prims
 import thunder.core.utils as utils
 
 import thunder.torch as ltorch
-from thunder.torch import DeviceLike, dtypeLike, TensorLike
 
 from thunder.extend import OperatorExecutor, register_executor, add_always_executor
 
@@ -148,9 +139,40 @@ _register_implementation(ltorch.to, checker=_always_executable, execution_transf
 
 
 def no_autocast(fn):
-    fn = torch.autocast(device_type="cpu", enabled=False, cache_enabled=False)(fn)
-    fn = torch.autocast(device_type="cuda", enabled=False, cache_enabled=False)(fn)
-    return fn
+    """
+    A decorator that disables torch.autocast for the duration of the decorated
+    function.
+
+    In Thunder this is useful when you want to ensure that the generated
+    function is not run with PyTorch's autocast enabled to execute exactly as
+    generated.
+
+    Args:
+        fn: The function to decorate.
+
+    Returns:
+        The decorated function.
+    """
+    # This decorator intentionally does not use the torch.autocast decorator
+    # because it is much slower than the implementation here. This is because
+    # the torch.autocast decorator has a lot more overhead to support various
+    # features that are not needed in Thunder.
+    from torch import set_autocast_enabled
+
+    prev_cpu = torch.is_autocast_cpu_enabled()
+    prev = torch.is_autocast_enabled()
+
+    @wraps(fn)
+    def no_autocast_fn(*args, **kwargs):
+        try:
+            set_autocast_enabled("cpu", False)
+            set_autocast_enabled("cuda", False)
+            return fn(*args, **kwargs)
+        finally:
+            set_autocast_enabled("cpu", prev_cpu)
+            set_autocast_enabled("cuda", prev)
+
+    return no_autocast_fn
 
 
 #
@@ -803,25 +825,41 @@ _register_elementwise_unary_implementation(ltorch.real, real)
 
 # nn.functional elementwise unary
 celu = _register_torch_operation("celu", module=torch.nn.functional)
+elu = _register_torch_operation("elu", module=torch.nn.functional)
 gelu = _register_torch_operation("gelu", module=torch.nn.functional)
+hardshrink = _register_torch_operation("hardshrink", module=torch.nn.functional)
+hardswish = _register_torch_operation("hardswish", module=torch.nn.functional)
+leaky_relu = _register_torch_operation("leaky_relu", module=torch.nn.functional)
+logsigmoid = _register_torch_operation("logsigmoid", module=torch.nn.functional)
+log_sigmoid_backward = _register_torch_operation(
+    "torch.ops.aten.log_sigmoid_backward", like=ltorch.log_sigmoid_backward
+)
 relu = _register_torch_operation("relu", module=torch.nn.functional)
 relu6 = _register_torch_operation("relu6", module=torch.nn.functional)
-hardswish = _register_torch_operation("hardswish", module=torch.nn.functional)
 selu = _register_torch_operation("selu", module=torch.nn.functional)
 silu = _register_torch_operation("silu", module=torch.nn.functional)
+tanhshrink = _register_torch_operation("tanhshrink", module=torch.nn.functional)
 
 
 def _elementwise_unary_with_inplace_checker(a: TensorProxy, /, inplace: bool = False) -> bool:
     return isinstance(a, TensorProxy) and not inplace
 
 
+_register_elementwise_unary_implementation(ltorch.elu, elu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.celu, celu, checker=_always_executable)
 _register_elementwise_unary_implementation(ltorch.gelu, gelu, checker=_always_executable)
+_register_elementwise_unary_implementation(ltorch.hardshrink, hardshrink, checker=_always_executable)
+_register_elementwise_unary_implementation(ltorch.hardswish, hardswish, checker=_elementwise_unary_with_inplace_checker)
+_register_elementwise_unary_implementation(ltorch.leaky_relu, leaky_relu, checker=_always_executable)
+_register_elementwise_unary_implementation(
+    ltorch.log_sigmoid_backward, log_sigmoid_backward, checker=_always_executable
+)
+_register_elementwise_unary_implementation(ltorch.logsigmoid, logsigmoid)
 _register_elementwise_unary_implementation(ltorch.relu, relu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.relu6, relu6, checker=_elementwise_unary_with_inplace_checker)
-_register_elementwise_unary_implementation(ltorch.hardswish, hardswish, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.selu, selu, checker=_elementwise_unary_with_inplace_checker)
 _register_elementwise_unary_implementation(ltorch.silu, silu, checker=_always_executable)
+_register_elementwise_unary_implementation(ltorch.tanhshrink, tanhshrink, checker=_always_executable)
 
 #
 # Elementwise binary operations
@@ -1053,6 +1091,7 @@ clamp = _register_torch_operation("clamp")
 where = _register_torch_operation("where")
 masked_fill = _register_torch_operation("masked_fill", module=torch.Tensor)
 tril = _register_torch_operation("tril")
+triu = _register_torch_operation("triu")
 
 
 def _where_prim_checker(pred: Number | TensorProxy, a: Number | TensorProxy, b: Number | TensorProxy) -> bool:
@@ -1087,11 +1126,21 @@ def _tril_transform(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | N
     return tril(a, diagonal)
 
 
+# NOTE PyTorch's triu like tril does not have a fill_value parameter
+def _triu_checker(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = None) -> bool:
+    return fill_value is None
+
+
+def _triu_transform(a: TensorLike, /, diagonal: int = 0, *, fill_value: None | Number = None) -> TensorLike:
+    return triu(a, diagonal)
+
+
 _register_implementation(prims.where, where, checker=_where_prim_checker)
 
 _register_implementation(ltorch.clamp, clamp, checker=_always_executable)
 _register_implementation(ltorch.masked_fill, masked_fill, checker=_masked_fill_checker)
 _register_implementation(ltorch.tril, checker=_tril_checker, execution_transform=_tril_transform)
+_register_implementation(ltorch.triu, checker=_triu_checker, execution_transform=_triu_transform)
 _register_implementation(ltorch.where, where, checker=_always_executable)
 
 
@@ -2156,12 +2205,16 @@ if has_einops:
     einops._backends._type2backend[TensorProxy] = EinopsThunderBackend()
 
 
-def _copy__impl(copy_from, copy_to):
+def _copy__impl(copy_from, copy_to, grad_enabled):
+    if grad_enabled and copy_to.is_leaf and copy_to.requires_grad:
+        raise RuntimeError("a leaf Variable that requires grad is being used in an in-place operation.")
     copy_to.copy_(copy_from)
     return copy_to
 
 
-copy_ = ex.register_operator("copy_", meta=prims.copy_, tags=(prims.OpTags.DONT_DCE,), fn=_copy__impl)
+copy_ = ex.register_operator(
+    "copy_", meta=prims.copy_, tags=(prims.OpTags.DONT_DCE,), fn=_copy__impl, module=torch.Tensor
+)
 _register_implementation(prims.copy_, copy_, checker=_always_executable)
 
 

@@ -12,6 +12,7 @@ import warnings
 
 from looseversion import LooseVersion
 import torch
+from torch import Tensor
 
 import thunder.core.dtypes as dtypes
 import thunder.torch as ltorch
@@ -39,7 +40,7 @@ from thunder.core.devices import Device, DeviceType, cpu
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
 from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs, NON_FUNCTIONAL_OPS
-from thunder.core.profile import add_markers
+from thunder.core.profile import annotate_for_profile
 from thunder.core.compile_data import get_compile_option
 
 from thunder.core.transforms import (
@@ -56,7 +57,7 @@ from thunder.executors.utils import (
 )
 
 from thunder.executors.passes import update_fusion_call_ctx
-from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor, add_default_executor
+from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor, add_default_executor, fuse_bound_symbols
 from thunder.executors.nvfuserex import nvfuser_version
 
 # NOTE This impl file is here because nvFuser may not be available, so it's imported conditionally
@@ -98,6 +99,17 @@ _lcdtype_to_nvdtype_map: dict[None | type | dtypes.dtype, DataType] = {
     # Null types
     None: DataType.Null,
 }
+
+
+_lcfp8_to_nvfp8_map: dict[dtypes.dtype, DataType] = {
+    dtypes.float8_e5m2: DataType.Float8_e5m2,
+    dtypes.float8_e5m2_: DataType.Float8_e5m2,
+    dtypes.float8_e4m3fn: DataType.Float8_e4m3fn,
+    dtypes.float8_e4m3fn_: DataType.Float8_e4m3fn,
+}
+
+
+_lcdtype_to_nvdtype_map.update(_lcfp8_to_nvfp8_map)
 
 
 def lcdtype_to_nvdtype(lcdtype: type | dtypes.dtype) -> DataType:
@@ -143,7 +155,14 @@ def is_supported_devicetype(devicetype: DeviceType) -> bool:
     return devicetype is DeviceType.CUDA
 
 
-_low_precision_floats = (dtypes.float16, dtypes.float16_, dtypes.bfloat16, dtypes.bfloat16_)
+_low_precision_floats = (dtypes.float16, dtypes.float16_, dtypes.bfloat16, dtypes.bfloat16_) + tuple(
+    _lcfp8_to_nvfp8_map.keys()
+)
+
+
+def device_supports_fp8() -> bool:
+    cuda_major, _ = torch.cuda.get_device_capability()
+    return cuda_major > 8
 
 
 def is_supported_dtype(dtype: type | dtypes.dtype, *, allow_low_precision_floats: bool = True) -> bool:
@@ -153,7 +172,7 @@ def is_supported_dtype(dtype: type | dtypes.dtype, *, allow_low_precision_floats
         if dtype in _low_precision_floats:
             return False
 
-    return dtype in _lcdtype_to_nvdtype_map
+    return dtype in _lcdtype_to_nvdtype_map and (device_supports_fp8() if dtype in _lcfp8_to_nvfp8_map else True)
 
 
 def is_supported_tensor(a: TensorProxy, *, allow_low_precision_floats: bool = True) -> bool:
@@ -348,7 +367,7 @@ def compute_symbolic_shape(
 
 def compute_contiguity(
     shape: torch.Size | Sequence[int], stride: Sequence[int]
-) -> tuple[[tuple[bool, ...], tuple[int, ...]]]:
+) -> tuple[tuple[bool, ...], tuple[int, ...]]:
     """
     Computes the contiguity and stride_order of a tensor using nvFuser's notion.
 
@@ -401,14 +420,11 @@ def compute_tensor_descriptor(
     return compute_symbolic_shape(proxy_shape, shape), *compute_contiguity(shape, stride)
 
 
-def get_tensor_descriptor(p: TensorProxy, t: torch.Tensor) -> tuple[tuple[int, ...], tuple[bool, ...], tuple[int, ...]]:
-    return compute_tensor_descriptor(p.shape, t.shape, t.stride())
-
-
-# TODO Inline the get_tensor_descriptor call
 def to_descriptors(proxy_args, args) -> tuple:
     def to_descriptor(proxy_arg, arg):
-        if isinstance(arg, Number):
+        if isinstance(arg, Tensor):
+            return (*compute_tensor_descriptor(proxy_arg._shape, arg.shape, arg.stride()), arg.dtype)
+        elif isinstance(arg, Number):
             return type(arg)
         elif isinstance(arg, tuple):
             if len(arg) != 0:
@@ -419,8 +435,6 @@ def to_descriptors(proxy_args, args) -> tuple:
                     exception_type=AssertionError,
                 )
             return type(arg)
-        elif isinstance(arg, torch.Tensor):
-            return (*get_tensor_descriptor(proxy_arg, arg), arg.dtype)
 
         raise ValueError(f"unrecognized type in arguments: {type(arg)}")
 
@@ -442,6 +456,8 @@ class FusionDefinitionWrapper:
     last_used: None | FusionDefinition = None
     last_inputs: None | Sequence[tuple] = None
     store_inputs: bool = False
+    enable_options: None | list[str] = None
+    disable_options: None | list[str] = None
 
     def __call__(self, *args):
         fd = self.get_fd(self.to_descriptors(args))
@@ -450,13 +466,38 @@ class FusionDefinitionWrapper:
         if self.store_inputs:
             self.last_inputs = args
 
+        kwargs = {}
         # Set device if set in one of the "factory" methods like full, iota, or uniform
-        kwargs = {"device": fd._selected_device} if hasattr(fd, "_selected_device") else {}
-        with add_markers(self.name):
+        if hasattr(fd, "_selected_device"):
+            kwargs["device"] = fd._selected_device
+
+        if nvfuser_version() >= LooseVersion("0.2.23"):
+            # nvFuser expects empty list instead of None values.
+            kwargs["_enable_options"] = self.enable_options if self.enable_options is not None else []
+            kwargs["_disable_options"] = self.disable_options if self.disable_options is not None else []
+
+        elif self.enable_options or self.disable_options:
+            warnings.warn(
+                f"nv_enable_options/nv_disable_options require nvFuser version 0.2.23 and above, found version {nvfuser_version()}. These options will be ignored."
+            )
+
+        with annotate_for_profile(self.name):
             return fd.execute(args, **kwargs)
 
     def __repr__(self):
         return f"FusionDefinitionWrapper({self.name})"
+
+
+def all_tagged(bsym: BoundSymbol, tag: prims.OpTags) -> bool:
+    """:obj:`True` if `bsym` and its subsymbols all are tagged with ``tag``."""
+    if not has_tags(bsym, {tag}):
+        return False
+
+    for sbsym in bsym.subsymbols:
+        if not has_tags(sbsym, {tag}):
+            return False
+
+    return True
 
 
 # Group bookend meta operations into separate regions
@@ -495,20 +536,10 @@ def group_bookend_meta_ops(producers, consumers, region: Region) -> Mapping[str,
                     return False
         return True
 
-    def all_tagged(bsym: BoundSymbol, tags: set[prims.OpTags]) -> bool:
-        if not has_tags(bsym, tags):
-            return False
-
-        for sbsym in bsym.subsymbols:
-            if not has_tags(sbsym, tags):
-                return False
-
-        return True
-
     # traversing all bound_symbols in topo order
     for bsym in region.bound_symbols:
         # we look at meta operations that can be moved to the front
-        if all_tagged(bsym, {prims.OpTags.SHAPE_OP}) and can_move_to_front(bsym):
+        if all_tagged(bsym, prims.OpTags.SHAPE_OP) and can_move_to_front(bsym):
             # when we remove a node, we add all the bsym's flat_outs to region_inputs
             front_meta_cluster.append(bsym)
             for out in bsym.flat_outs:
@@ -519,7 +550,7 @@ def group_bookend_meta_ops(producers, consumers, region: Region) -> Mapping[str,
             middle_cluster.append(bsym)
     # traversing all bound_symbols in reverse topo order
     for bsym in reversed(copy(middle_cluster)):
-        if all_tagged(bsym, {prims.OpTags.SHAPE_OP}) and can_move_to_rear(bsym):
+        if all_tagged(bsym, prims.OpTags.SHAPE_OP) and can_move_to_rear(bsym):
             middle_cluster.remove(bsym)
             rear_meta_cluster.insert(0, bsym)
 
@@ -544,6 +575,10 @@ def create_fusion_definition_wrapper(
     store_inputs: None | bool = get_compile_option(
         "nv_store_fusion_inputs", "Allow nvFuser to store fusion inputs for repro."
     )
+    enable_options: None | list[str] = get_compile_option("nv_enable_options", "List of NVFUSER_ENABLE options to set.")
+    disable_options: None | list[str] = get_compile_option(
+        "nv_disable_options", "List of NVFUSER_DISABLE options to set."
+    )
 
     tensor_indices = []
     for idx, x in enumerate(sorted_unique_inputs):
@@ -565,6 +600,8 @@ def create_fusion_definition_wrapper(
         get_fd.cache_info,
         get_fd.cache_clear,
         store_inputs=store_inputs,
+        enable_options=enable_options,
+        disable_options=disable_options,
     )
     return fdw
 
@@ -809,26 +846,12 @@ class nvFuserExecutor(FusionExecutor):
         fusedtrace: TraceCtx = from_trace(trace)
 
         producers, consumers = utils.producers_and_consumers(trace)
-        from thunder.executors.data_dependent_partition import Node, fuse_bound_symbols
 
         fused_bsyms = []
 
-        # TODO has_cuda_input_or_output is too restrictive a check on what should be fused
-        # TODO check whether a function would output a CPU tensor? -- can nvFuser fuse such operations?
-        #   ex. device_put to a CPU device from a CUDA device
-        def _should_fuse(a: Node, b: Node):
-            def _can_fuse_node(n: Node):
-                # if already merged, then node can be fused
-                if len(n.group_bsyms) > 1:
-                    return True
-                bsym: BoundSymbol = n.group_bsyms[0]
-                can_fuse: bool = self.can_fuse(bsym)
-                cuda_in_or_out: bool = self.has_cuda_input_or_output(bsym)
-                return can_fuse and cuda_in_or_out
-
-            return _can_fuse_node(a) and _can_fuse_node(b)
-
-        bound_symbol_groups = fuse_bound_symbols(trace, _should_fuse)
+        bound_symbol_groups = fuse_bound_symbols(
+            trace, lambda bsym: self.can_fuse(bsym) and self.has_cuda_input_or_output(bsym)
+        )  # _should_fuse)
 
         # Counts how many fusions (per executor) have been constructed
         #   (Used to name fusions like nvFusion0, nvFusion1, ...)
@@ -862,6 +885,12 @@ instantiated) this heuristic actually leads to worse code.
                 bookend_result = group_bookend_meta_ops(producers, consumers, region)
             else:
                 bookend_result = {"front_bsyms": [], "fusion": region, "rear_bsyms": []}
+
+            # Don't fuse a region which has only Shape Operations.
+            all_shape_ops = all(map(lambda bsym: all_tagged(bsym, prims.OpTags.SHAPE_OP), bsyms))
+            if all_shape_ops:
+                fused_bsyms.extend(bsyms)
+                continue
 
             if len(bsyms) == 1:
                 bsym: BoundSymbol = bsyms[0]
@@ -2058,6 +2087,8 @@ register_supported(PrimIDs.VAR_MEAN, var_mean, _var_mean_check)
 def _copy__check(
     copy_from: TensorProxy,
     copy_to: TensorProxy,
+    *,
+    grad_enabled: bool,
 ) -> bool:
     return are_supported_tensors(copy_from, copy_to)
 
@@ -2066,6 +2097,7 @@ def copy_(
     copy_from: TensorProxy,
     copy_to: TensorProxy,
     *,
+    grad_enabled: bool,
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:

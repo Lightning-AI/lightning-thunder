@@ -5,21 +5,6 @@ from thunder.core.trace import TraceCtx
 from thunder.core.pytree import tree_map
 
 
-def get_orig_and_thunder_module_proxies_from_prologue(prologue_trace):
-    modules_and_thunder_modules = [
-        (bsym.args[0], bsym.output) for bsym in prologue_trace.bound_symbols if bsym.sym is prims.unpack_thunder_module
-    ]
-
-    if len(modules_and_thunder_modules) != 1:
-        raise NotImplementedError("cannot deal with modules other than the compiled module")
-
-    ((orig_module_proxy, thunder_module_proxy),) = modules_and_thunder_modules
-    if prologue_producers[orig_module_proxy].sym is not prims.unpack_function_obj:
-        raise NotImplementedError("original module does not match the compiled module")
-
-    return orig_module_proxy, thunder_module_proxy
-
-
 def get_checks(prologue_trace):
     # returns a dictionary mapping model param names to (check bsym, get param bsym
     check_dict = {}
@@ -66,7 +51,7 @@ def trace_with_replaced_proxy_metadata(trace: TraceCtx, proxy_replacement_metada
     def create_proxy(p):
         if isinstance(p, thunder.Proxy):
             if p.name in proxymap:  # happens with subsymbols
-                return p
+                return proxymap[p.name]
             with thunder.core.trace.tracectx(t):
                 np = p.replace(**proxy_replacement_metadata.get(p.name, {}))
                 proxymap[p.name] = np

@@ -7,6 +7,7 @@ import thunder.core.dtypes as dtypes
 from thunder.core.proxies import Proxy, TensorProxy
 import thunder.core.utils as utils
 import thunder.core.devices as devices
+from thunder.core.prims import OpTags
 
 import thunder.torch as ltorch
 from thunder.torch import TensorLike
@@ -171,6 +172,7 @@ sdpea_gradfwd = sdpa_ex.register_operator(
     "sdpaex_grad_forward_scaled_dot_product_efficient_attention",
     meta=_grad_forward_scaled_dot_product_efficient_attention_meta,
     fn=_grad_forward_scaled_dot_product_efficient_attention_impl,
+    tags=(OpTags.DONT_AUTO_RECOMPUTE_IN_BACKWARD,),
 )
 
 
@@ -244,6 +246,7 @@ sdpfa_gradfwd = sdpa_ex.register_operator(
     "sdpafx_grad_forward_scaled_dot_product_efficient_attention",
     meta=_grad_forward_scaled_dot_product_flash_attention_meta,
     fn=_grad_forward_scaled_dot_product_flash_attention_impl,
+    tags=(OpTags.DONT_AUTO_RECOMPUTE_IN_BACKWARD,),
 )
 
 
@@ -301,10 +304,12 @@ def _scaled_dot_product_efficient_attention_backward_impl(
     if attn_mask is None:
         grad_input_mask.append(False)
     else:
-        grad_input_mask.append(attn_mask.requires_grad)
+        # Cannot rely on the requires_grad in the meta function,
+        # so here the gradient of attn_mask is always calculated
+        grad_input_mask.append(True)
 
     # Reference: https://github.com/pytorch/pytorch/blob/v2.0.1/aten/src/ATen/native/transformers/cuda/attention_backward.cu#L394-L415
-    return torch.ops.aten._scaled_dot_product_efficient_attention_backward(
+    grad_q, grad_k, grad_v, grad_attn_mask = torch.ops.aten._scaled_dot_product_efficient_attention_backward(
         grad_out,
         _sdpa_enforce_input_tensor_contiguity(query),
         _sdpa_enforce_input_tensor_contiguity(key),
@@ -319,6 +324,13 @@ def _scaled_dot_product_efficient_attention_backward_impl(
         is_causal,
         scale=scale,
     )
+
+    if attn_mask is not None and not utils.same_shape(grad_attn_mask.shape, attn_mask.shape):
+        # Needs to sum over the number of heads dimension in grad_attn_mask
+        # if the number of heads in attention mask is expanded in _attention_mask_memory_efficient_helper.
+        grad_attn_mask = torch.sum(grad_attn_mask, dim=1, keepdim=True)
+
+    return grad_q, grad_k, grad_v, grad_attn_mask
 
 
 sdpea_bwd = sdpa_ex.register_operator(
