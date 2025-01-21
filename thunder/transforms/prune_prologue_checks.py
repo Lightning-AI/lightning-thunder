@@ -26,18 +26,18 @@ class PrunePrologueChecks(thunder.core.transform_common.Transform):
         if not self.prune_all_checks:
             bsyms_to_skip = set()
             module_member_names = set()
-            seen_names = set()
 
             for bsym in prologue_trace.bound_symbols:
                 if bsym.sym in {prims.unpack_trivial, prims.unpack_cache_info}:
+                    # These don't have inputs but need to be skipped to not trigger false positives
                     continue
                 elif all(i.name in module_member_names for i in bsym.flat_proxy_args):
+                    # This has the special case of no proxy inputs, which is the case for unpack_function_obj,
+                    # the root of module_member_names
                     for o in bsym.flat_proxy_outs:
                         module_member_names.add(o.name)
                     if is_check(bsym):
                         bsyms_to_skip.add(bsym)
-                else:
-                    print(bsym)
 
             def should_skip_bsym(bsym):
                 return bsym in bsyms_to_skip
