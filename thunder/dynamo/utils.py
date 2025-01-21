@@ -15,7 +15,8 @@ from torch._subclasses.fake_tensor import FakeTensor
 from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.torch.langctx import torchctx
-from thunder.core.utils import check
+from thunder.core.utils import check, sequencify
+from thunder.core.pytree import tree_flatten
 
 if TYPE_CHECKING:
     from thunder.core.symbol import Symbol
@@ -724,7 +725,6 @@ def reproducer(
     folder: str | os.PathLike,
     graph_name: str,
     use_pytest_benchmark: bool = False,
-    check_consistency: bool = False,
     save_input_tensor: bool = False,
 ):
     folder = Path(folder)
@@ -753,6 +753,38 @@ bench_executors_dict = {{}}
 bench_executors_dict["thunder"]=partial(thunder.jit, {thunder_options_str})
 bench_executors_dict["torch_inductor"]=torch_inductor
 bench_executors_dict["eager"]=None
+"""
+
+    COMMAND_LINE_ARGS = f"""
+import argparse
+
+parser = argparse.ArgumentParser(description="Process some inputs for myscript.py.")
+
+parser.add_argument(
+    "--check_consistency",
+    type=bool,
+    default=False,
+    help="Whether to check consistency (default: False)"
+)
+parser.add_argument(
+    "--compute_type",
+    type=str,
+    choices=["forward", "forward+backward"],
+    default="forward",
+    help="Type of computation to perform (forward, forward+backward)"
+)
+parser.add_argument(
+    "--executor",
+    type=str,
+    choices=["torch_inductor", "thunder", "eager"],
+    default="thunder",
+    help="Type of computation to perform (thunder, torch_inductor, or eager)"
+)
+
+args = parser.parse_args()
+ex_name = args.executor
+compute_type = args.compute_type
+check_acc = args.check_consistency
 """
 
     # split reason
@@ -791,6 +823,7 @@ Versions of Thunder related libraries:
             code_str += "from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform\n"
         if use_pytest_benchmark:
             code_str += f"""import pytest
+from thunder.benchmarks.targets import parametrize_compute_type_only_training, benchmark_for_compute_type
 {EXECUTOR_DICT_CODE_STR}
 """
             if has_cuda_args:
@@ -803,9 +836,11 @@ executor_ids = list(bench_executors_dict.keys())
     "executor,",
     executors,
     ids=executor_ids,
-)"""
-            func_str = f"def test_{graph_name}(benchmark, executor):\n{readable}\n"
+)
+@parametrize_compute_type_only_training"""
+            func_str = f"def test_{graph_name}(benchmark, executor, compute_type):\n{readable}\n"
         else:
+            code_str += f"\n{EXECUTOR_DICT_CODE_STR}{COMMAND_LINE_ARGS}"
             func_str = f"def test_{graph_name}():\n{readable}\n"
 
         if any(arg is None for arg in args):
@@ -820,24 +855,15 @@ executor_ids = list(bench_executors_dict.keys())
             func_str += f"{_addindent(input_str, 4)}\n]\n"
 
         if not use_pytest_benchmark:
-            func_str += f"compiled = thunder.jit(DynamoModule(), {thunder_options_str})\n"
-            func_str += "thunder_result = compiled(*inputs)"
-            if check_consistency:
-                func_str += f"""
-{TORCH_INDUCTOR_FUNCTION_STR}
-eager_result = DynamoModule()(*inputs)\n
-inductor_result = torch_inductor(DynamoModule(), inputs)(*inputs)
-def check_assertion(expected, actual):
-    try:
-        torch.testing.assert_close(expected, actual)
-        return None  # No exception, return None
-    except AssertionError as e:
-        return e  # Return the caught exception
-result = {{}}
-result["thunder"] = check_assertion(eager_result, thunder_result)
-result["torch_inductor"] = check_assertion(eager_result, inductor_result)
+            func_str += f"""
+mod = DynamoModule()
+from thunder.dynamo.report import run_repro
 
-print(result)
+result = run_repro(bench_executors_dict, ex_name, mod, compute_type, *inputs)
+if check_acc:
+    eager_result = run_repro(bench_executors_dict, "eager", mod, compute_type, *inputs)
+    for (compute_t, eager_v), (_, cur_v) in zip(eager_result.items(), result.items()):
+        torch.testing.assert_close(eager_v, cur_v, msg=lambda e : f'{{compute_t}}: {{e}}')
 """
         else:
             func_str = f"""{func_str}
@@ -848,14 +874,8 @@ elif executor == torch_inductor:
     compiled = executor(mod, inputs)
 else:
     compiled = executor(mod)
-"""
-            if not has_cuda_args:
-                func_str += f"""benchmark(compiled, *inputs)"""
-            else:
-                func_str += f"""from thunder.benchmarks import record_peak_allocated_memory
 
-with record_peak_allocated_memory(benchmark):
-    benchmark(compiled, *inputs)
+benchmark_for_compute_type(compute_type, benchmark, compiled, inputs, {{}})
 """
         print(comment_str, file=f)
         print(code_str, file=f)
@@ -863,3 +883,22 @@ with record_peak_allocated_memory(benchmark):
 
         if not use_pytest_benchmark:
             print(f"\ntest_{graph_name}()", file=f)
+
+
+def run_backward(fn, *args, **kwargs):
+    result = fn(*args, **kwargs)
+    result = sequencify(result)
+
+    forward_inputs = tree_flatten((args, kwargs))[0]
+    forward_inputs = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, forward_inputs))
+    differentiable_tensor_result = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, result))
+
+    output_grads = []
+    for diff_result in differentiable_tensor_result:
+        output_grads.append(torch.ones_like(diff_result))
+
+    for i in forward_inputs:
+        i.grad = None
+
+    torch.autograd.backward(result, output_grads, inputs=forward_inputs)
+    return result, [t.grad for t in forward_inputs]

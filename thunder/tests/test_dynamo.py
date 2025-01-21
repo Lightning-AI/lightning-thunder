@@ -1042,7 +1042,7 @@ def test_thunderfx_meta_tensor():
     out = thfoo(t0)
     assert out.device.type == "meta"
 
-    
+
 @requiresCUDA
 def test_report(tmp_path):
     def foo(x):
@@ -1051,6 +1051,10 @@ def test_report(tmp_path):
         return y + x.cos()
 
     x = torch.randn(4, 4, device="cuda", requires_grad=True)
+    # cf = thunderfx(foo)
+    # cf(x)
+    # cf._backend.save_reproducer_to_folder(tmp_path)
+
     thunderfx_save_report(foo, x, folder_path=tmp_path)
 
     from unittest.mock import patch
