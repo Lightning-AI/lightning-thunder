@@ -7868,6 +7868,10 @@ if LooseVersion(torch.__version__) >= "2.4":
                 dtypes=(datatypes.float16,),
                 devicetypes=(devices.DeviceType.CUDA,),
             ),
+            DecorateInfo(
+                custom_comparator(partial(assert_close, atol=1e-1, rtol=2e-2)),
+                dtypes=(datatypes.bfloat16,),
+            ),
         ),
     )
     nn_ops.append(rms_norm_opinfo)
