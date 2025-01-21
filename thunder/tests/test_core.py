@@ -1,4 +1,6 @@
 import operator
+import os
+import tempfile
 import traceback
 from functools import partial, reduce
 from itertools import product
@@ -331,6 +333,7 @@ def test_optimizer_unpack(executor, device, dtype):
                     params.append(p)
                     grads.append(p.grad)
 
+        @torch.no_grad
         def step(self):
             for group in self.param_groups:
                 params = []
@@ -2110,7 +2113,7 @@ def test_no_passthrough_symbol(executor, device, _):
     compiled = executor.make_callable(func)
     out = compiled(x)
     assert out is x
-    initial_trace_with_dce = thunder.last_traces(compiled)[4]
+    initial_trace_with_dce = thunder.last_traces(compiled)[3]
     assert "Constructed by Dead Code Elimination" in str(initial_trace_with_dce)
     assert len(initial_trace_with_dce.bound_symbols) == 2
     assert initial_trace_with_dce.bound_symbols[0].sym.id == prims.PrimIDs.UNPACK_TRIVIAL
@@ -2510,8 +2513,8 @@ def test_grad_ctx():
         return x + 1
 
     x = torch.randn(3, 3, requires_grad=True)
-    thunder.jit(foo2)(x).sum().backward()
-    assert x.grad is None
+    res = thunder.jit(foo2)(x)
+    assert not res.requires_grad
 
     # Test `no_grad` ctx correctly disable gradient computation
     def foo3(x):
@@ -3113,3 +3116,57 @@ def test_debug_options():
 
     print(DebugOptions.__dict__)
     assert dill.dumps(dict(DebugOptions.__dict__)) == initial_state
+
+
+def test_default_tensor_proxy():
+    from thunder.core.proxies import TensorProxy
+    from thunder.core.trace import detached_trace
+    from thunder.core.dtypes import float32
+    from thunder.core.devices import cpu
+
+    # It should be possible to create a TensorProxy with default values for all
+    # optional arguments
+    with detached_trace():
+        t = TensorProxy(shape=(1,), device=cpu, dtype=float32)
+    assert not t.requires_grad
+    assert t.device == cpu
+    assert t.dtype == float32
+
+
+def test_proxy_same_name():
+    from thunder.core.proxies import TensorProxy
+    from thunder.core.trace import detached_trace
+    from thunder.core.dtypes import float32
+    from thunder.core.devices import cpu
+
+    with detached_trace():
+        t = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
+        with pytest.raises(RuntimeError, match="already used"):
+            t2 = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
+
+
+def test_save_trace():
+    def fn(x):
+        return x + 1
+
+    jfn = thunder.jit(fn)
+    jfn(
+        torch.rand(
+            3,
+        )
+    )
+
+    fwd_trace = thunder.last_traces(jfn)[-1]
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        trace_name = os.path.join(tmp_dir, "tmp_trace.py")
+        fwd_trace.save_trace(trace_name)
+
+        with open(trace_name) as f:
+            trace_contents = f.readlines()
+
+        # Verify we find a few expected things in the
+        # saved trace.
+        trace_contents = "".join(trace_contents)
+        assert ".add" in trace_contents
+        assert "@torch.no_grad" in trace_contents

@@ -72,7 +72,7 @@ from thunder.core.proxies import (
 )
 from thunder.core.interpreter import print_interpreter_log, print_to_log
 from thunder.core.jit_ext import thunder_general_jit
-from thunder.executors.torch_autograd import split_forward_backward, ThunderFunction
+from thunder.executors.torch_autograd import split_forward_backward, connect_to_autograd
 
 # NOTE This import is intentionally pytorch so that it thunder.torch doesn't import this
 import torch as pytorch
@@ -267,7 +267,7 @@ CacheEntry = namedtuple(
 )
 
 
-def compile(fn: Callable, recipe: Recipe | None):
+def compile(fn: Callable, recipe: Recipe | None = None):
     if recipe is None:
         return thunder.jit(fn)
 
@@ -333,7 +333,7 @@ def jit(
 
     # Resolve names of executors
     executors = resolve_executors(executors)
-    ad_hoc_executor = extend.AdHocExecutor()
+    ad_hoc_executor = extend.TemporaryExecutor()
     executors = (ad_hoc_executor, *executors)
 
     # TODO: verify that tutorials don't have false positives and enable warning by default
@@ -750,13 +750,14 @@ def jit(
             # resulting tensors to PyTorch's Autograd graph using the
             # ThunderFunction (which is a torch.autograd.Function subclass)
             data_for_autograd, (saved_tensors, saved_other) = result
-            ThunderFunction.apply(
-                cache_entry.return_none_instead_of_grads,
-                cache_entry.backward_fn,
-                saved_tensors,
-                saved_other,
-                data_for_autograd["flat_output"],
-                *data_for_autograd["flat_args"],
+
+            connect_to_autograd(
+                backward_fn=cache_entry.backward_fn,
+                flat_args=data_for_autograd["flat_args"],
+                flat_output=data_for_autograd["flat_output"],
+                saved_tensors=saved_tensors,
+                saved_other=saved_other,
+                return_none_instead_of_grads=cache_entry.return_none_instead_of_grads,
             )
             result = data_for_autograd["output"]
 

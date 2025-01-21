@@ -27,11 +27,12 @@ from thunder.tests.framework import (
     run_snippet,
     assert_closer,
     IN_CI,
+    NVFUSER_AVAILABLE,
     requiresCUDA,
     version_between,
 )
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
-from thunder.tests.opinfos import opinfos, push_away_from_singularities, tensor_creation_ops, get_opinfo
+from thunder.tests.opinfos import get_opinfo, opinfos, tensor_creation_ops
 
 # TODO: Move this to thunder.tests.opinfos
 op_skip = {
@@ -408,14 +409,14 @@ def test_vjp_correctness(op, device, dtype, executor, comp):
         # for non-differentiable arguments like dtypes so that the test will
         # execute properly.
         sample = sample.thunder()  # converts torch.dtype to thunder.dtype
+        sample = sample.remove_singularities(op, eps)
 
         flat_op, flat_args, spec = flatten_func(op.op, sample.args, sample.kwargs)
 
         filtered_op, filtered_args = _make_differentiable_wrapper(flat_op, flat_args)
         if len(filtered_args) == 0:
             continue
-        if (singularity_fn := op.singularity_fn_producer(sample)) is not None:
-            filtered_args = [push_away_from_singularities(arg, singularity_fn, eps) for arg in filtered_args]
+
         at_least_one_differentiable_input = True
         result = run_snippet(
             snippet_vjp_correctness,
@@ -1301,9 +1302,7 @@ def test_backward_none_propagation(executor, device, _):
 # TODO Add more module tests
 
 
-def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp, singularity_fn):
-    if singularity_fn:
-        sample = sample.remove_singularities(singularity_fn, 1e-2)
+def snippet_phantom_grad_vs_torch_consistency(op, torch_op, sample, comp):
 
     args, kwargs = sample.args, sample.kwargs
 
@@ -1403,6 +1402,8 @@ def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype,
     for sample in op.sample_inputs(device, dtype, requires_grad=True):
         comp = sample.comp if sample.comp is not None else comp
 
+        sample = sample.remove_singularities(op, 1e-2)
+
         result = run_snippet(
             snippet_phantom_grad_vs_torch_consistency,
             op,
@@ -1412,7 +1413,6 @@ def test_phantom_grad_vs_torch_consistency(op, device: str, dtype: dtypes.dtype,
             op.torch_reference,
             sample,
             lambda a, b, **kwargs: comp(a, b, equal_nan=True, **kwargs),
-            op.singularity_fn_producer(sample),
         )
 
         # See [NOTE] dynamo reset
@@ -1752,10 +1752,10 @@ def test_torch_checkpoint():
 
         # With activation checkpointing, we are saving only the original input.
         # The intermediate values are recomputed during backward pass.
-        assert len(out.grad_fn.saved_tensors) == 2
+        assert len(out.grad_fn.next_functions[0][0].saved_tensors) == 2
         # We detach the saved tensors (which returns a new Python tensor backed by same storage)
-        assert out.grad_fn.saved_tensors[0].data_ptr() == x.data_ptr()
-        assert out.grad_fn.saved_tensors[1].data_ptr() == y.data_ptr()
+        # the order seems to be non-deterministic sometimes
+        assert {t.data_ptr() for t in out.grad_fn.next_functions[0][0].saved_tensors} == {x.data_ptr(), y.data_ptr()}
 
         g = torch.ones_like(out)
         out.backward(g)
@@ -1766,6 +1766,52 @@ def test_torch_checkpoint():
         out_ref.backward(g)
         torch.testing.assert_close(x.grad, x_ref.grad)
         torch.testing.assert_close(y.grad, y_ref.grad)
+
+
+@requiresCUDA
+def test_checkpoint_max_memory():
+    import torch.utils.checkpoint
+
+    class Checkpoint(torch.nn.Module):
+        def __init__(self, module):
+            super().__init__()
+            self.module = module
+
+        def forward(self, *args):
+            return torch.utils.checkpoint.checkpoint(self.module, *args, use_reentrant=False)
+
+    with torch.device("cuda:0"):
+        m = torch.nn.Sequential(
+            torch.nn.Linear(1024, 16),
+            torch.nn.ReLU(),
+            *[
+                Checkpoint(
+                    torch.nn.Sequential(
+                        torch.nn.Linear(16, 2048),
+                        torch.nn.Linear(2048, 16),
+                        torch.nn.ReLU(),
+                    )
+                )
+                for _ in range(10)
+            ],
+            torch.nn.Linear(16, 1024),
+        )
+        inps = torch.randn(512, 1024, requires_grad=True)
+
+    jm = thunder.jit(m, executors=())  # no rematerialization
+    res = jm(inps)
+    res.sum().backward()
+
+    torch.cuda.reset_peak_memory_stats()
+    mem_base = torch.cuda.memory_allocated()
+    res = jm(inps)
+    res.sum().backward()
+    mem_max = torch.cuda.max_memory_allocated()
+    # without chewckpointing the peak mem about 43MB.
+    # With checkpointing as coded in the model and recomputation where the
+    # values are used, we get a little over 10MB, so we put the barrier at 16MB
+    mb_used = (mem_max - mem_base) / 2**20
+    assert mb_used < 16
 
 
 def test_inconsistent_output_length_grad_transform():
@@ -1886,3 +1932,32 @@ def test_adhoc_executor_grad(executor, device, _):
 
     torch.testing.assert_close(actual, expected)
     torch.testing.assert_close(actual_gr, expected_gr)
+
+
+@pytest.mark.parametrize("device", ("cuda", "cpu"))
+def test_backward_recomputation_decomposed_ops(device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+
+    def fn(a):
+        return torch.nn.functional.gelu(a)
+
+    # rematerialization will also trigger recomputation here.
+    jfn = thunder.jit(fn, executors=())
+    jfn2 = thunder.jit(fn, auto_recompute_intermediates=True)
+    a = torch.randn(2, 2, device=device, requires_grad=True)
+    res = jfn(a)
+    res2 = jfn2(a)
+    assert len(res.grad_fn.next_functions[0][0].saved_tensors) == 3  # should be decomposed
+    assert len(res2.grad_fn.next_functions[0][0].saved_tensors) == 1
+
+    if NVFUSER_AVAILABLE and device == "cuda":
+        # check everything is fused
+        assert {bsym.sym.name for bsym in thunder.last_backward_traces(jfn2)[-1].bound_symbols} == {
+            "nvFusion0",
+            "clear_mutable_collection",
+            "python_return",
+            "python_del",
+            "unpack_sequence",
+            "unpack_trivial",
+        }

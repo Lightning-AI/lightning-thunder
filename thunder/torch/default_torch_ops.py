@@ -2,6 +2,7 @@ import torch
 
 torch_auto_registered_ops = {
     torch: [
+        torch._native_multi_head_attention,
         torch.lobpcg,
         torch.unravel_index,
         torch.absolute,
@@ -293,7 +294,6 @@ torch_auto_registered_ops = {
         torch.trapz,
         torch.triangular_solve,
         torch.triplet_margin_loss,
-        torch.triu,
         torch.unbind_copy,
         torch.unfold_copy,
         torch.unique_consecutive,
@@ -609,7 +609,6 @@ torch_auto_registered_ops = {
         torch.Tensor.tolist,
         torch.Tensor.trace,
         torch.Tensor.triangular_solve,
-        torch.Tensor.triu,
         torch.Tensor.unique,
         torch.Tensor.unique_consecutive,
         torch.Tensor.unsafe_chunk,
