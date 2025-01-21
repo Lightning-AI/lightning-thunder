@@ -333,6 +333,7 @@ def test_optimizer_unpack(executor, device, dtype):
                     params.append(p)
                     grads.append(p.grad)
 
+        @torch.no_grad
         def step(self):
             for group in self.param_groups:
                 params = []
@@ -3117,6 +3118,21 @@ def test_debug_options():
     assert dill.dumps(dict(DebugOptions.__dict__)) == initial_state
 
 
+def test_default_tensor_proxy():
+    from thunder.core.proxies import TensorProxy
+    from thunder.core.trace import detached_trace
+    from thunder.core.dtypes import float32
+    from thunder.core.devices import cpu
+
+    # It should be possible to create a TensorProxy with default values for all
+    # optional arguments
+    with detached_trace():
+        t = TensorProxy(shape=(1,), device=cpu, dtype=float32)
+    assert not t.requires_grad
+    assert t.device == cpu
+    assert t.dtype == float32
+
+
 def test_proxy_same_name():
     from thunder.core.proxies import TensorProxy
     from thunder.core.trace import detached_trace
@@ -3124,9 +3140,9 @@ def test_proxy_same_name():
     from thunder.core.devices import cpu
 
     with detached_trace():
-        t = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32, requires_grad=True)
+        t = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
         with pytest.raises(RuntimeError, match="already used"):
-            t2 = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32, requires_grad=True)
+            t2 = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
 
 
 def test_save_trace():

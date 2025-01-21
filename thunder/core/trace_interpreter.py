@@ -8,6 +8,8 @@ from thunder.core.baseutils import ProxyInterface, TensorProxyInterface
 from thunder.core.utils import safe_map_flat, sequencify
 from thunder.core.proxies import variableify, ProxyTag
 from thunder.core.transform_common import VJPDual
+from thunder.core.symbol import has_tags
+from thunder.core.compile_data import get_compile_option
 
 
 # TODO: Currently we use trace.args and trace.kwargs to get the arguments
@@ -80,6 +82,7 @@ def interpret_trace(trace, *args, symbol_mapper=None, with_env=False, **kwargs):
     return tree_map(read, trace.output)
 
 
+# TODO: refactor to use TraceSubstitutionProcessor to split out the gradient-specific part
 def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, **kwargs):
     """Interpret a trace.
 
@@ -183,12 +186,25 @@ def interpret_trace_to_trace(trace, *args, symbol_mapper=None, with_env=False, *
 
             for new_bsym in new_bsyms:
                 # TODO: what to do with bsym header? Maybe have a combined from_bsym_swap_proxies and from_bsym?
-                for o in new_bsym.flat_proxy_outs:
-                    if variableify(o) not in swap_map:
-                        # when we decompose to compute the forward/backward, we mark intermediates as to be recomputed in the backward.
-                        # Typically our decompositions are for things that will then be fused together.
-                        # We could refine this heuristic to exclude "expensive" operations.
-                        o.tags.add(ProxyTag.RECOMPUTE_IN_BACKWARD)
+                auto_recompute_intermediates: None | bool = get_compile_option(
+                    "auto_recompute_intermediates",
+                    "Whether to mark intermediates as up for recomputation. This experimental flag reduces the number tensors saved for backward, at the expense of more compute",
+                )
+
+                if auto_recompute_intermediates and not has_tags(
+                    bsym,
+                    {
+                        prims.OpTags.RANDOM_OP,
+                        prims.OpTags.DONT_RECOMPUTE_IN_BACKWARD,
+                        prims.OpTags.DONT_AUTO_RECOMPUTE_IN_BACKWARD,
+                    },
+                ):
+                    # when we decompose to compute the forward/backward, we mark intermediates as to be recomputed in the backward.
+                    # Typically our decompositions are for things that will then be fused together.
+                    # We tag "expensive" operations (sdpa, matmul) as DONT_AUTO_RECOMPUTE_IN_BACKWARD to block this.
+                    for o in new_bsym.flat_proxy_outs:
+                        if variableify(o) not in swap_map:
+                            o.tags.add(ProxyTag.RECOMPUTE_IN_BACKWARD)
                 new_trace.bound_symbols.append(
                     new_bsym.from_bsym_swap_proxies(swap_map).from_bsym(
                         source_filename=bsym.source_filename, source_positions=bsym.source_positions
