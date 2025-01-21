@@ -28,12 +28,20 @@ class PrunePrologueChecks(thunder.core.transform_common.Transform):
             module_member_names = set()
 
             for bsym in prologue_trace.bound_symbols:
-                if bsym.sym in {prims.unpack_trivial, prims.unpack_cache_info}:
+                if bsym.sym in {prims.unpack_trivial, prims.unpack_cache_info, prims.python_return}:
                     # These don't have inputs but need to be skipped to not trigger false positives
+                    # python_return may have no inputs
                     continue
-                elif all(i.name in module_member_names for i in bsym.flat_proxy_args):
+                if bsym.sym is prims.unpack_function_obj:
+                    for o in bsym.flat_proxy_outs:
+                        module_member_names.add(o.name)
+                    continue
+
+                input_names = {i.name in module_member_names for i in bsym.flat_proxy_args}
+                if all(input_names):
                     # This has the special case of no proxy inputs, which is the case for unpack_function_obj,
                     # the root of module_member_names
+                    assert input_names, f"unexpected symbol {bsym.sym.name} without inputs"
                     for o in bsym.flat_proxy_outs:
                         module_member_names.add(o.name)
                     if is_check(bsym):
