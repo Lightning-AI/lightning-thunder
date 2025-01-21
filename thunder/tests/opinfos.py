@@ -7871,7 +7871,6 @@ if LooseVersion(torch.__version__) >= "2.4":
             DecorateInfo(
                 custom_comparator(partial(assert_close, atol=1e-1, rtol=2e-2)),
                 dtypes=(datatypes.bfloat16,),
-                devicetypes=(devices.DeviceType.CUDA,),
             ),
         ),
     )
