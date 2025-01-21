@@ -1,5 +1,5 @@
 [metadata]
-license-files = ["LICENSE"]
+license = "Apache-2.0"
 description-file = "README.md"
 
 [build-system]
