@@ -591,9 +591,7 @@ class Benchmark_litGPT:
                 # so we are using the lower level torch._dynamo.optimize function
                 model = torch._dynamo.optimize(backend=self.backend)(model)
             else:
-                jit_options = {
-                    "enable_saved_for_backward_recomputation": self.checkpoint_activations,
-                }
+                jit_options = {}
                 jit_options["fp8_shard_intermediate_activation"] = self.fp8_shard_intermediate_activation
                 model = thunder.jit(model, executors=executors, **jit_options)
 
