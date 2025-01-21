@@ -992,6 +992,26 @@ def test_thunderfx():
     assert any(bsym.sym.id == "nvtx_range_push" for bsym in trc.bound_symbols)
 
 
+def test_thunderfx_last_traces():
+    def foo(x):
+        return torch.sin(x) + torch.cos(x)
+
+    x = torch.randn((4, 4), requires_grad=True)
+    cfoo = thunderfx(foo)
+    cfoo(x)
+    assert cfoo.last_traces != []
+    assert cfoo.last_backward_traces != []
+
+    # Call it w/o invoking the function first.
+    dfoo = thunderfx(foo)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        assert dfoo.last_traces == []
+        assert "Must invoke" in str(w[0].message)
+        assert dfoo.last_backward_traces == []
+        assert "before function invoked" in str(w[1].message)
+
+
 def test_get_example_input_tensor_metadata():
     from thunder.dynamo.utils import _get_example_input_tensor_metadata
     from torch._subclasses.fake_tensor import FakeTensorMode
