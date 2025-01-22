@@ -8,23 +8,24 @@ from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform, nvtx_
 from thunder.tests.framework import requiresCUDA, version_between, BITSANDBYTES_AVAILABLE
 
 
+class MiniModel(torch.nn.Module):
+    def __init__(self, DIM) -> None:
+        super().__init__()
+        self.fc1 = torch.nn.Linear(DIM, DIM)
+        self.fc2 = torch.nn.Linear(DIM, DIM)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = torch.nn.functional.relu(x)
+        x = self.fc2(x)
+        return x
+
+
 @requiresCUDA
 def test_nvtx_transform():
     DIM = 2
 
-    class Model(torch.nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.fc1 = torch.nn.Linear(DIM, DIM)
-            self.fc2 = torch.nn.Linear(DIM, DIM)
-
-        def forward(self, x):
-            x = self.fc1(x)
-            x = torch.nn.functional.relu(x)
-            x = self.fc2(x)
-            return x
-
-    model = Model()
+    model = MiniModel(DIM)
     x = torch.randn(4, DIM)
 
     # Transform for profiling with NVTX markers.
@@ -753,3 +754,27 @@ def test_buffer_dtype_casting():
         if str(tr.get_provenance()) == "# Constructed by Dtype Convert":
             for bsym in tr.bound_symbols:
                 check_dtypes(bsym)
+
+
+def test_prune_prologue_checks():
+    DIM = 2
+    m = MiniModel(DIM)
+    inp = torch.randn(4, DIM)
+
+    def count_tensor_checks(tr):
+        return len([bsym for bsym in tr.bound_symbols if "check_tensor" in bsym.sym.name])
+
+    # without pruning: checks for 1 input and each parameter
+    jm = thunder.jit(m)
+    jm(inp)
+    assert count_tensor_checks(thunder.last_prologue_traces(jm)[-1]) == 1 + len(list(jm.parameters()))
+
+    # with default of pruning module checks: check for 1 input
+    jm = thunder.jit(m, transforms=(thunder.transforms.PrunePrologueChecks(),))
+    jm(inp)
+    assert count_tensor_checks(thunder.last_prologue_traces(jm)[-1]) == 1
+
+    # with pruning all checks: none left
+    jm = thunder.jit(m, transforms=(thunder.transforms.PrunePrologueChecks(prune_all_checks=True),))
+    jm(inp)
+    assert count_tensor_checks(thunder.last_prologue_traces(jm)[-1]) == 0
