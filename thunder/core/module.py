@@ -54,6 +54,7 @@ class ThunderModule(pytorch.nn.Module):
         self._overrides_buffers = dict(self._model.named_buffers())
         self._module_cache = {k: v for k, v in self._model.named_modules()}
         self._null = object()
+        self._thunder_needs_sync_grads = False
 
     def get_buffer(self, name):
         p = self._overrides_buffers.get(name, self._null)
@@ -77,7 +78,21 @@ class ThunderModule(pytorch.nn.Module):
         return self._model.get_submodule(name)
 
     def forward(self, *args, **kwargs):
-        res = self._forward_fn(*args, **kwargs)
+        from thunder.distributed import (
+            get_skip_data_parallel_grad_sync,
+            _sync_grads,
+        )
+
+        if not self._thunder_needs_sync_grads or get_skip_data_parallel_grad_sync():
+            print("running with", get_skip_data_parallel_grad_sync())
+            res = self._forward_fn(*args, **kwargs)
+        else:
+            print("running with no sync before syncing", get_skip_data_parallel_grad_sync())
+            with self.no_sync():
+                res = self._forward_fn(*args, **kwargs)
+            if not get_skip_data_parallel_grad_sync():
+                _sync_grads(self)
+            self._thunder_needs_sync_grads = False
         return res
 
     def _named_parameters_or_buffers(self, overrides, orig_iter, prefix="", recurse=True, remove_duplicate=True):
@@ -369,7 +384,6 @@ class ThunderModule(pytorch.nn.Module):
         from thunder.distributed import (
             set_skip_data_parallel_grad_sync,
             reset_skip_data_parallel_grad_sync,
-            _sync_grads,
         )
 
         token = set_skip_data_parallel_grad_sync(True)
@@ -377,7 +391,7 @@ class ThunderModule(pytorch.nn.Module):
             yield
         finally:
             reset_skip_data_parallel_grad_sync(token)
-            _sync_grads(self)
+            self._thunder_needs_sync_grads = True
 
     def __getattr__(self, name: str) -> Any:
         if name == "_model":

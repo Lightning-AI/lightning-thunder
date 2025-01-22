@@ -387,8 +387,8 @@ if torch.distributed.is_available():
 
             for iter_count, (x, y) in enumerate(dataloader):
                 loss = torch.zeros((), device=device)
-                with jitted_model.no_sync() if use_no_sync else nullcontext():
-                    for i in range(num_micro_batch - 1):
+                for i in range(num_micro_batch - 1):
+                    with jitted_model.no_sync() if use_no_sync and i < num_micro_batch - 2 else nullcontext():
                         cur_loss = run_fwd_bwd(
                             iter_count,
                             jitted_model,
@@ -426,6 +426,7 @@ if torch.distributed.is_available():
                     expected=ground_truth_grads[iter_count],
                     atol=5e-5,
                     rtol=5e-3,
+                    msg=lambda msg: f"divergence at {iter_count=}:\n↓{msg}"
                 )
                 if not use_no_sync:
                     torch.testing.assert_close(
