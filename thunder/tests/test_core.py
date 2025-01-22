@@ -16,6 +16,7 @@ from types import FunctionType
 
 import thunder
 from thunder import last_traces, cache_option, cache_hits, cache_misses
+import thunder.core.proxies
 import thunder.examine as examine
 import thunder.clang as clang
 import thunder.core.profile
@@ -3170,3 +3171,19 @@ def test_save_trace():
         trace_contents = "".join(trace_contents)
         assert ".add" in trace_contents
         assert "@torch.no_grad" in trace_contents
+
+
+def test_unpack_sequence_element_info():
+    def fn(x):
+        return x.sin().cos()
+
+    jfn = thunder.jit(fn)
+    jfn(torch.randn(3, requires_grad=True))
+
+    backward_trc = thunder.last_backward_traces(jfn)[-1]
+    for bsym in backward_trc.bound_symbols:
+        if bsym.sym.id == thunder.prims.PrimIDs.UNPACK_SEQUENCE and any(
+            isinstance(out, thunder.core.proxies.TensorProxy) for out in bsym.flat_outs
+        ):  # prims is unpack_sequence and any output is TensorProxy
+            # Verify that we print information about the unpacked TensorProxy.
+            assert "cpu f32[3]" in str(bsym)
