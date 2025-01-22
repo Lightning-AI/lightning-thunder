@@ -1,6 +1,5 @@
 [metadata]
-license = "Apache-2.0"
-license-files = []  # work around setup tools bug...
+license_file = "LICENSE"
 description-file = "README.md"
 
 [build-system]
