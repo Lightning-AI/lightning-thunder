@@ -1187,4 +1187,5 @@ def test_embedding(
       fwd_fusion = examine.get_fusions(fwd_trace)
 
       assert len(fwd_fusion) == 1
+      torch.testing.assert_close(out, expected_out)
       

@@ -1471,7 +1471,6 @@ def _get_gradfn_and_executor(
     bsym: BoundSymbol, *, executors_list: Sequence[Any] = tuple()
 ) -> tuple[Callable | None, Executor | None]:
     cd = get_compile_data()
-    breakpoint()
     executors_list = cd.executors_list if cd is not None else executors_list
     # Checks if the executor which has priority for this operation has a specific grad transform for it
     for ex in executors_list:
