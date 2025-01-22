@@ -1299,7 +1299,8 @@ pack_setitem = make_prim(
 
 
 def python_dataclass_new_meta(typ, **kwargs):
-    return AnyProxy(typ(**kwargs))
+    # we are cheating here, but instantiating a dataclass can be wild. typ(**kwargs)
+    return AnyProxy(None)
 
 
 def python_dataclass_new_printer(
