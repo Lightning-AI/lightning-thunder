@@ -1,0 +1,1 @@
+from thunder.recipes.hf_transformers import HFTransformers

@@ -15,9 +15,9 @@ def test_recipe_basic_bert():
 
     inp = torch.randint(1, 20, (1, 32))
 
-    from thunder.recipes.hf_bert import HFBertBasic
+    from thunder.recipes import HFTransformers
 
-    thunder_bert = thunder.compile(bert, recipe=HFBertBasic())
+    thunder_bert = thunder.compile(bert, recipe=HFTransformers())
 
     actual = thunder_bert(inp)
     expected = bert(inp)
