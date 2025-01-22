@@ -48,6 +48,7 @@ def make_aug_forward_and_backward(bsym: BoundSymbol) -> tuple[Callable, Callable
     import thunder
     from thunder.common import _make_cache_key
     from thunder.core.transforms import _get_gradfn_and_executor, eval_trace
+    from thunder.core.transform_common import cse, dce
 
     joint_forward_backward, executor = _get_gradfn_and_executor(bsym)
     utils.check(
@@ -60,6 +61,8 @@ def make_aug_forward_and_backward(bsym: BoundSymbol) -> tuple[Callable, Callable
         return cached_result
 
     joint_trace = thunder.trace(inline_trace=False, use_dce=False)(joint_forward_backward, *bsym.args, **bsym.kwargs)
+    joint_trace = cse(joint_trace)
+    joint_trace = dce(joint_trace)
     consumers = utils.consumers(joint_trace)
 
     def find_backward_input(forward_output):

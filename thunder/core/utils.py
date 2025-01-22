@@ -1128,11 +1128,17 @@ def find_producer_symbols(trace: TraceCtx, proxies: Sequence[Proxy], stop_proxie
         if p is not None:
             result.add(p)
             for arg in p.flat_args:
-                arg_name = arg.name if isinstance(arg, Proxy) else None
+                if not isinstance(arg, Proxy):
+                    continue
+                arg_name = arg.name
                 if arg_name not in map(lambda x: x.name, stop_proxies) and arg_name not in seen:
                     queue.append(arg)
                     seen.add(arg_name)
-    original_order = {bsym: i for i, bsym in enumerate(trace.bound_symbols)}
+    original_order = dict()
+    for i, bsym in enumerate(trace.bound_symbols):
+        if bsym not in original_order:
+            continue
+        original_order[bsym] = i
     return tuple(sorted(result, key=lambda x: original_order[x]))
 
 
