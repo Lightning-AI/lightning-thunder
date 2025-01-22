@@ -1161,7 +1161,7 @@ def test_no_shape_only_fusion_region(executor, device: str, thunder_dtype: dtype
 
 
 @instantiate(
-    dtypes=(thunder.float16,),
+    dtypes=(thunder.float16, thunder.bfloat16),
     devicetypes=(devices.DeviceType.CUDA,),
     executors=(nvFuserExecutor,),
     decorators=(
