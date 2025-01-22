@@ -15,8 +15,7 @@ from torch._subclasses.fake_tensor import FakeTensor
 from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.torch.langctx import torchctx
-from thunder.core.utils import check, sequencify
-from thunder.core.pytree import tree_flatten
+from thunder.core.utils import check
 
 if TYPE_CHECKING:
     from thunder.core.symbol import Symbol
@@ -897,22 +896,3 @@ else:
 
         if not use_pytest_benchmark:
             print(f"\ntest_{graph_name}()", file=f)
-
-
-def run_backward(fn, *args, **kwargs):
-    result = fn(*args, **kwargs)
-    result = sequencify(result)
-
-    forward_inputs = tree_flatten((args, kwargs))[0]
-    forward_inputs = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, forward_inputs))
-    differentiable_tensor_result = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, result))
-
-    output_grads = []
-    for diff_result in differentiable_tensor_result:
-        output_grads.append(torch.ones_like(diff_result))
-
-    for i in forward_inputs:
-        i.grad = None
-
-    torch.autograd.backward(result, output_grads, inputs=forward_inputs)
-    return result, [t.grad for t in forward_inputs]

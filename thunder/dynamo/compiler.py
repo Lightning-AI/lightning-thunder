@@ -120,7 +120,6 @@ class ThunderCompiler:
                     reproducer_folder,
                     f"graph{graph_idx}_{cur_name}",
                     use_pytest_benchmark,
-                    # check_consistency=check_consistency,
                     save_input_tensor=save_input_tensor,
                 )
 

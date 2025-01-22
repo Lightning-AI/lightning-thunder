@@ -4,17 +4,35 @@ import subprocess
 import sys
 from pathlib import Path
 import json
-import argparse
-
 import torch
+
 from thunder.dynamo.compiler import thunderfx
-from thunder.benchmarks.targets import ComputeType, backward_only
-from thunder.dynamo.utils import run_backward
+from thunder.core.utils import sequencify
+from thunder.core.pytree import tree_flatten
+
 
 if TYPE_CHECKING:
-    from thunder.dynamo.utils import SubgraphInfo
     from os import PathLike
     from collections.abc import Callable
+
+
+def run_backward(fn, *args, **kwargs):
+    result = fn(*args, **kwargs)
+    result = sequencify(result)
+
+    forward_inputs = tree_flatten((args, kwargs))[0]
+    forward_inputs = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, forward_inputs))
+    differentiable_tensor_result = list(filter(lambda x: isinstance(x, torch.Tensor) and x.requires_grad, result))
+
+    output_grads = []
+    for diff_result in differentiable_tensor_result:
+        output_grads.append(torch.ones_like(diff_result))
+
+    for i in forward_inputs:
+        i.grad = None
+
+    torch.autograd.backward(result, output_grads, inputs=forward_inputs)
+    return result, [t.grad for t in forward_inputs]
 
 
 def run_repro(executor_dict, executor_name, model, compute_type, *inputs) -> dict[str, float]:
