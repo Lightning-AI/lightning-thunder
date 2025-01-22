@@ -15,7 +15,6 @@ from thunder.executors.torch_compile import make_compiled as make_torch_compile_
 
 import torch
 from torch.utils.benchmark import Timer
-import triton
 from warnings import warn
 from itertools import chain
 import importlib
@@ -441,6 +440,7 @@ def _benchmark_fusion_region_with_nvfuser_and_torch_compile(bsym: BoundSymbol) -
     .. note:: The function assumes that the fusion has been previously executed and inputs are recorded.
     """
     assert "nvFusion" in bsym.sym.name, "Expected the BoundSymbol to be generated from nvFuser"
+    import triton  # Import triton here as it may not be available in CPU only setting.
 
     nvfuser_callable = bsym._call_ctx[bsym.sym.name]
     inputs = nvfuser_callable.last_inputs
