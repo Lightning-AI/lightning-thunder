@@ -2595,15 +2595,16 @@ ex.register_supported(
     grad_transform=scaled_dot_product_flash_attention_grad,
 )
 
+
 def _embedding_check(
-  input: TensorProxy, 
-  weight: TensorProxy,
-  padding_idx: None | int,
-  max_norm: None | float,
-  norm_type: None | float,
-  scale_grad_by_freq: None | bool,
-  sparse: None | bool,
-  ) -> bool:
+    input: TensorProxy,
+    weight: TensorProxy,
+    padding_idx: None | int,
+    max_norm: None | float,
+    norm_type: None | float,
+    scale_grad_by_freq: None | bool,
+    sparse: None | bool,
+) -> bool:
     if nvfuser_version() < LooseVersion("0.2.25"):
         return False
     enable_embedding: None | bool = get_compile_option("nv_enable_embedding", "Enable nvFuser embedding.")
@@ -2616,7 +2617,7 @@ def _embedding_check(
 
 
 def embedding(
-    input: TensorProxy, 
+    input: TensorProxy,
     weight: TensorProxy,
     padding_idx: None | int = None,
     max_norm: None | float = None,
@@ -2633,6 +2634,7 @@ def embedding(
         nv_inp = getnv(inp, fd, lc_to_nv_map) if inp is not None else None
         nv_inputs.append(nv_inp)
     return fd.ops.embedding_fwd(*nv_inputs)
+
 
 register_supported(PrimIDs.EMBEDDING, embedding, _embedding_check)
 register_supported(ltorch.embedding, embedding, _embedding_check)
