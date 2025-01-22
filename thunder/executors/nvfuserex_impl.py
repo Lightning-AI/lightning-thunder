@@ -960,8 +960,9 @@ ex = nvFuserExecutor()
 register_executor(ex)
 
 
-def register_supported(id: Hashable, translator: Callable, checker: Callable):
-    ex.register_supported(id, checker)
+def register_supported(sym_or_id: Hashable, translator: Callable, checker: Callable):
+    ex.register_supported(sym_or_id, checker)
+    id = sym_or_id.id if isinstance(sym_or_id, Symbol) else sym_or_id
     _translation_map[id] = translator
 
 
@@ -2606,7 +2607,6 @@ def _embedding_check(
     if nvfuser_version() < LooseVersion("0.2.25"):
         return False
     enable_embedding: None | bool = get_compile_option("nv_enable_embedding", "Enable nvFuser embedding.")
-    breakpoint()
     if not enable_embedding:
         return False
     # Verify input and weight are supported tensors.
@@ -2623,7 +2623,7 @@ def embedding(
     norm_type: None | float = 2.0,
     scale_grad_by_freq: None | bool = False,
     sparse: None | bool = False,
-    *
+    *,
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:
@@ -2632,6 +2632,7 @@ def embedding(
     for inp in inputs:
         nv_inp = getnv(inp, fd, lc_to_nv_map) if inp is not None else None
         nv_inputs.append(nv_inp)
-    return fd.ops.embedding(*nv_inputs)
+    return fd.ops.embedding_fwd(*nv_inputs)
 
 register_supported(PrimIDs.EMBEDDING, embedding, _embedding_check)
+register_supported(ltorch.embedding, embedding, _embedding_check)
