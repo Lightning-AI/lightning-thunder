@@ -11,7 +11,6 @@ from thunder.core.symbol import BoundSymbol
 from thunder.torch import _torch_to_thunder_function_map
 from thunder.torch.default_torch_ops import torch_auto_registered_ops
 from thunder.core.langctxs import resolve_language, LanguageContext, Languages
-
 import torch
 from warnings import warn
 from itertools import chain
@@ -401,15 +400,3 @@ def make_trace_dot(trace: TraceCtx, show_metadata=False):
     # Resize graph based on number of nodes
     resize_graph(dot)
     return dot
-
-
-BenchmarkComparisonData = collections.namedtuple(
-    "BenchmarkComparisonData",
-    [
-        "nvfuser_walltime",
-        "torch_compile_walltime",
-        "nvfuser_kernel_time",
-        "torch_compile_kernel_time",
-        "nvfuser_profiler_data",
-    ],
-)
