@@ -32,7 +32,6 @@ class HFTransformers(thunder.Recipe):
 
     @pretty_warnings
     def validate(self, model):
-        return
         version = LooseVersion(transformers.__version__)
         min_version = LooseVersion("4.46.0")
 
