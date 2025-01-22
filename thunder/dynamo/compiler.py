@@ -79,7 +79,6 @@ class ThunderCompiler:
         self,
         reproducer_folder: str | PathLike,
         use_pytest_benchmark: bool = False,
-        check_consistency=False,
         save_input_tensor=False,
     ):
         """
@@ -203,87 +202,3 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
 
     c = CompiledObject(backend, compiled)
     return c
-
-
-import subprocess
-import sys
-from pathlib import Path
-
-
-def thunderfx_examine(fn: Callable, *args, compile_kwargs: dict = None, folder_path="/tmp/thunderfx_report", **kwargs):
-    try:
-        compiled = thunderfx(fn, **compile_kwargs) if compile_kwargs is not None else thunderfx(fn)
-        compiled(*args, **kwargs)
-        backend = compiled._backend
-    except Exception as e:
-        print(f"Failed to run the function using ThunderFX with exception: {e}")
-        try:
-            backend.save_reproducer_to_folder(folder_path)
-        except Exception as repro_e:
-            print(f"Failed to save reproducer due to {repro_e}")
-        print(f"The reproducer file is saved in {folder_path}")
-
-    # Checks consistency with Torch eager
-    compiled._backend.save_reproducer_to_folder(folder_path, check_consistency=True)
-    folder = Path(folder_path)
-    if not folder.is_dir():
-        raise ValueError(f"{folder_path} is not a valid directory.")
-
-    res = {}
-    for file in folder.glob("*.py"):
-        tmp = eval(subprocess.run([sys.executable, folder / file], capture_output=True, text=True).stdout)
-        res[f"{file.name.rstrip('.py')}[eager]"] = ["None"]
-        for g_name, consistency in tmp.items():
-            # res.append({})
-            # res[-1]["name"] = f"{file.name}[{g_name}]"
-            # res[-1]["consistency"] = "yes" if consistency is None else consistency
-            g_ex_name = f"{file.name.rstrip('.py')}[{g_name}]"
-            res[g_ex_name] = ["yes" if consistency is None else str(consistency)]
-
-    # Benchmark
-    benchmark_folder = folder / "benchmark"
-    benchmark_folder.mkdir(parents=True)
-    compiled._backend.save_reproducer_to_folder(benchmark_folder, save_input_tensor=True, use_pytest_benchmark=True)
-
-    bench_res = []
-    benchmark_json_files = []
-    for file in benchmark_folder.glob("*.py"):
-        benchmark_json_files.append(str(benchmark_folder / f"{file.name.replace('.py', '.json')}"))
-        bench_res.append(
-            subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "pytest",
-                    benchmark_folder / file,
-                    "--benchmark-timer=torch.utils.benchmark.utils.timer.timer",
-                    "--benchmark-warmup=on",
-                    f"--benchmark-json={benchmark_json_files[-1]}",
-                ],
-                capture_output=True,
-                text=True,
-            )
-        )
-
-    import json
-
-    for tmp_json in benchmark_json_files:
-        with open(tmp_json) as file:
-            data = json.load(file)
-            for bk in data["benchmarks"]:
-                cur_name = bk["name"].lstrip("test_")
-                if cur_name in res:
-                    res[cur_name].append(bk["stats"]["mean"])
-                    res[cur_name].append(bk["extra_info"]["max_allocated_memory_MB"])
-
-    list_data = []
-    for g_name, values in res.items():
-        list_data.append({})
-        list_data[-1]["name"] = g_name
-        list_data[-1]["consistency"] = values[0]
-        list_data[-1]["performance_mean"] = values[1]
-        list_data[-1]["max_allocated_memory_MB"] = values[2]
-    json_data = {"report": list_data}
-
-    with open(folder / "report.json", "w") as f:
-        json.dump(json_data, f, indent=4)

@@ -26,7 +26,7 @@ from thunder.tests.framework import (
     version_between,
 )
 from thunder.tests.make_tensor import make_tensor
-from thunder.dynamo.report import thunderfx_save_report
+from thunder.dynamo.report import thunderfx_report
 
 
 # This will be applied to all tests in this file.
@@ -1051,13 +1051,9 @@ def test_report(tmp_path):
         return y + x.cos()
 
     x = torch.randn(4, 4, device="cuda", requires_grad=True)
-    # cf = thunderfx(foo)
-    # cf(x)
-    # cf._backend.save_reproducer_to_folder(tmp_path)
-
-    thunderfx_save_report(foo, x, folder_path=tmp_path)
+    thunderfx_report(foo, x, folder_path=tmp_path)
 
     from unittest.mock import patch
 
     with patch("torch.compile", side_effect=Exception("compilation raises exception")):
-        thunderfx_save_report(foo, x, folder_path=tmp_path, check_consistency=False)
+        thunderfx_report(foo, x, folder_path=tmp_path, check_consistency=False)

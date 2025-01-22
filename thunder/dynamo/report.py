@@ -17,13 +17,16 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
-def run_repro(ex_dict, ex_name, model, compute_type, *inputs):  # CLI options
-    if ex_name == "eager":
+def run_repro(executor_dict, executor_name, model, compute_type, *inputs) -> dict[str, float]:
+    """Helper function to execute the forward or backward pass based on the `compute_type` using the executor specified by `executor_name` in `executor_dict`.
+    If the execution fails, an error is raised. On success, the function returns a dictionary containing the forward results and gradient results.
+    """
+    if executor_name == "eager":
         compiled_fn = model
-    elif ex_name == "torch_inductor":
-        compiled_fn = ex_dict[ex_name](model, inputs)
+    elif executor_name == "torch_inductor":
+        compiled_fn = executor_dict[executor_name](model, inputs)
     else:
-        compiled_fn = ex_dict[ex_name](model)
+        compiled_fn = executor_dict[executor_name](model)
 
     results = {}
     match compute_type:
@@ -40,27 +43,22 @@ def run_repro(ex_dict, ex_name, model, compute_type, *inputs):  # CLI options
                 raise e
             results["forward"] = forward_result
             results["backward"] = grads
+        case _:
+            raise ValueError(
+                f"Invalid compute type: '{compute_type}'. Only 'forward' or 'forward+backward' are allowed."
+            )
     return results
 
 
-def get_thunder_graph_names(subgraph_infos: list[SubgraphInfo]):
-    thunder_graph_names = []
-    for graph_idx, subgraph_info in enumerate(subgraph_infos):
-        for node in subgraph_info.split_graph_module.graph.nodes:
-            target = node.target
-            if isinstance(target, str) and target.startswith("thunder_"):
-                thunder_graph_names.append(f"graph{graph_idx}_{target}")
-    return thunder_graph_names
-
-
-def thunderfx_save_report(
+def thunderfx_report(
     fn: Callable,
     *args,
     compile_kwargs: dict = None,
     folder_path: str | PathLike = "/tmp/thunderfx_report",
     check_consistency: bool = True,
     check_benchmark: bool = True,
-    save_benchmark_inputs: bool = True,
+    save_consistency_inputs: bool = False,
+    save_benchmark_inputs: bool = False,
     **kwargs,
 ):
     try:
@@ -76,27 +74,19 @@ def thunderfx_save_report(
         print(f"The reproducer file is saved in {folder_path}")
         return
     print("The input callable can be successfully executed by ThunderFX.")
+
     if not check_benchmark and not check_consistency:
         return
-
-    thunder_graph_names = get_thunder_graph_names(compiled._backend.subgraph_infos)
-    EXECUTOR_NAMES = ("eager", "thunder", "torch_inductor")
-
-    report_result: dict[str, list] = {}
-    for g_name in thunder_graph_names:
-        for ex in EXECUTOR_NAMES:
-            # Sets the consistency field to None for eager
-            report_result[f"{g_name}[{ex}]"] = [None] if ex == "eager" else []
 
     folder = Path(folder_path)
     # NOTE If the input folder path contains subfolders named 'benchmark' or 'consistency', they will be overwritten.
     folder.mkdir(exist_ok=True)
     # Checks consistency with Torch eager
     if check_consistency:
-        print("Verifying consistency between Thunder and Torch eager ...")
+        print("\nVerifying consistency between Thunder and Torch eager ...")
         consistency_folder = folder / "consistency"
         consistency_folder.mkdir(exist_ok=True)
-        compiled._backend.save_reproducer_to_folder(consistency_folder)
+        compiled._backend.save_reproducer_to_folder(consistency_folder, save_input_tensor=save_consistency_inputs)
         for file in consistency_folder.glob("*.py"):
             g_name = file.name.rstrip(".py")
             cmd = [sys.executable, folder / file, "--check_consistency=True", "--compute_type=forward+backward"]
@@ -109,10 +99,12 @@ def thunderfx_save_report(
 
     # Benchmark
     if check_benchmark:
-        print("Analyzing performance through benchmarking, this might take a moment...")
+        print("\nAnalyzing performance through benchmarking, this might take a moment...")
         benchmark_folder = folder / "benchmark"
         benchmark_folder.mkdir(exist_ok=True)
-        compiled._backend.save_reproducer_to_folder(benchmark_folder, save_input_tensor=True, use_pytest_benchmark=True)
+        compiled._backend.save_reproducer_to_folder(
+            benchmark_folder, save_input_tensor=save_benchmark_inputs, use_pytest_benchmark=True
+        )
 
         benchmark_json_files = []
         for file in benchmark_folder.glob("*.py"):
@@ -128,30 +120,31 @@ def thunderfx_save_report(
                     "--benchmark-group-by=param:compute_type",
                     f"--benchmark-json={benchmark_json_files[-1]}",
                     "--disable-warnings",
-                    "-q",
+                    "-q",  # reduce the output
                 ],
                 capture_output=True,
                 text=True,
             )
-        print(benchmark_result.stdout)
+            g_name = file.name.rstrip(".py")
+            if benchmark_result.returncode:
+                print(
+                    f"Failed to run the benchmarking script({benchmark_folder / file}), exception: {benchmark_result.stderr}"
+                )
+            else:
+                print(f"{g_name}:\n{benchmark_result.stdout}\n")
+
         print("Max allocated memory usage:")
         for tmp_json in benchmark_json_files:
             with open(tmp_json) as file:
                 data = json.load(file)
-                benchs = data["benchmarks"]
-                forward_benchs = [bench for bench in benchs if "forward" in bench["param"]]
-                backward_benchs = [bench for bench in benchs if "backward" in bench["param"]]
+                bench = data["benchmarks"]
 
-                forward_benchs_sorted = sorted(
-                    forward_benchs, key=lambda x: x["extra_info"]["max_allocated_memory_MB"], reverse=True
-                )
-                backward_benchs_sorted = sorted(
-                    backward_benchs, key=lambda x: x["extra_info"]["max_allocated_memory_MB"], reverse=True
-                )
-
-                for bk in forward_benchs_sorted:
+            def print_sorted_memory_info(compute_t: str):
+                filtered_bench = [b for b in bench if compute_t in b["param"]]
+                filtered_bench_sorted = sorted(filtered_bench, key=lambda x: x["extra_info"]["max_allocated_memory_MB"])
+                for bk in filtered_bench_sorted:
                     print(f"{bk['name'].lstrip('test_')}: {bk['extra_info']['max_allocated_memory_MB']/1000} GB")
                 print("\n")
-                for bk in backward_benchs_sorted:
-                    print(f"{bk['name'].lstrip('test_')}: {bk['extra_info']['max_allocated_memory_MB']/1000} GB")
-                print("\n")
+
+            print_sorted_memory_info("forward")
+            print_sorted_memory_info("backward")
