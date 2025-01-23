@@ -9,9 +9,9 @@ from utils import benchmark, benchmark_n
 
 def main():
     # model_name = "meta-llama/Llama-3.1-8B"
-    # model_name = "meta-llama/Llama-3.2-1B"
+    model_name = "meta-llama/Llama-3.2-1B"
     # model_name = "Qwen/Qwen2.5-7B-Instruct"
-    model_name = "microsoft/Phi-3.5-mini-instruct"
+    # model_name = "microsoft/Phi-3.5-mini-instruct"
     # model_name = "microsoft/phi-4"
 
     device = "cuda:0"
@@ -28,22 +28,30 @@ def main():
     reduce_overhead = True
     fuser = "nvfuser"
 
-    def generate(inp, cache=None):
-        model.generate(**inp, do_sample=False, past_key_values=cache, max_new_tokens=100)
+    def generate(inp):
+        model.generate(**inp, do_sample=False, max_new_tokens=100)
+        # model.generate(**inp, do_sample=False, cache_implementation="static", max_new_tokens=100)
 
     print(f"Eager: {benchmark_n(2, generate, x):.2f}ms")
 
-    thunder_model = thunder.compile(model, recipe=HFTransformers(reduce_overhead=reduce_overhead, fuser=fuser))
-    cache = thunder_model._get_cache("static", 1, 128, model.device, model.config.to_dict())
+    thunder_model = thunder.compile(model, recipe=HFTransformers(reduce_overhead=reduce_overhead, fuser=fuser, show_progress=True))
 
-    def thunder_generate(inp, cache=None):
-        thunder_model.generate(**inp, do_sample=False, past_key_values=cache, max_new_tokens=100)
+    # def thunder_generate(inp, cache=None):
+    #     thunder_model.generate(**inp, do_sample=False, past_key_values=cache, max_new_tokens=100)
  
-    print(f"Thunder: {benchmark_n(2, thunder_generate, x, cache=cache):.2f}ms")
+    # cache = thunder_model._get_cache("static", 1, 128, model.device, model.config.to_dict())
+    # print(f"Thunder: {benchmark_n(2, thunder_generate, x, cache=cache):.2f}ms")
 
-    # # torchcompile_model = torch.compile(model, mode="reduce-overhead" if reduce_overhead else "default")
-    # model.forward = torch.compile(model.forward, mode="reduce-overhead")
-    # print(f"Torch Compile: {benchmark_n(2, generate, x, cache='static'):.2f}ms")
+    def thunder_generate(inp):
+        thunder_model.generate(**inp, do_sample=False, cache_implementation="static", max_new_tokens=100)
+
+    print(f"Thunder: {benchmark_n(2, thunder_generate, x):.2f}ms")
+
+    def torch_compile_generate(inp):
+        model.generate(**inp, do_sample=False, cache_implementation="static", max_new_tokens=100)
+
+    model.forward = torch.compile(model.forward, mode="reduce-overhead")
+    print(f"Torch Compile: {benchmark_n(2, torch_compile_generate, x):.2f}ms")
 
 
 if __name__ == "__main__":

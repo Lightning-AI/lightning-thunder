@@ -1,5 +1,5 @@
 from distutils.version import LooseVersion
-from functools import wraps
+from functools import partial, wraps
 import warnings
 
 import transformers
@@ -25,18 +25,20 @@ def pretty_warnings(func):
 
 
 class HFTransformers(thunder.Recipe):
-    def __init__(self, reduce_overhead=True, fuser="nvfuser"):
+    def __init__(self, reduce_overhead=True, fuser="nvfuser", show_progress=False):
         super().__init__()
         self.reduce_overhead = reduce_overhead
         self.fuser = fuser
+        self.show_progress = show_progress
 
     @pretty_warnings
     def validate(self, model):
         version = LooseVersion(transformers.__version__)
         min_version = LooseVersion("4.46.0")
+        max_version = LooseVersion("4.46.3")
 
-        if version < min_version:
-            warnings.warn(f"`transformers` version {version} detected. The HFTransformers recipe supports >= {min_version}.")
+        if version < min_version or version > max_version:
+            warnings.warn(f"`transformers` version {version} detected. The HFTransformers recipe supports {min_version} to {max_version}.")
 
         supported = [
             transformers.BertPreTrainedModel,
@@ -51,6 +53,11 @@ class HFTransformers(thunder.Recipe):
 
         if not isinstance(model, transformers.PreTrainedModel):
             raise ValueError(f"The model must be an instance of PreTrainedModel, found {type(model)}")
+
+    def setup_config(self):
+        if not self.show_progress:
+            return {}
+        return dict(debug_options=thunder.DebugOptions(show_interpreter_progress=True))
 
     def setup_lookasides(self):
         warn_lookaside = thunder.Lookaside(
@@ -79,3 +86,13 @@ class HFTransformers(thunder.Recipe):
             return ex
 
         raise ValueError(f"Invalid fuser {self.fuser}. Allowed fusers: 'nvfuser', 'torch.compile'.")
+
+    def apply(self, model):
+        fix_generate = not isinstance(model, transformers.BertPreTrainedModel)
+        thunder_model = super().apply(model)
+
+        if fix_generate:
+            thunder_model.generate = partial(thunder_model.generate.__func__, thunder_model)
+            thunder_model._sample = partial(thunder_model._sample.__func__, thunder_model)
+
+        return thunder_model
