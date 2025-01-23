@@ -9,6 +9,7 @@ from thunder.executors.torchex import ex as pytorch_ex
 from thunder.executors.nvfuserex import nvfuserex
 from thunder.tests.bf16 import device_supports_bf16
 from thunder.tests.framework import requiresCUDA
+from torch.testing import assert_close
 
 
 def test_supported_ops_are_in_pytorch_executor():
@@ -20,6 +21,7 @@ def test_supported_ops_are_in_pytorch_executor():
 # appropriate visual studio config.
 @pytest.mark.skipif(not is_inductor_supported() or platform.system() == "Windows", reason="inductor unsupported")
 def test_torch_compile_litgpt():
+    from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
 
     model = GPT.from_name("llama1-like", n_layer=1)
@@ -36,11 +38,12 @@ def test_torch_compile_litgpt():
 # https://github.com/Lightning-AI/lightning-thunder/issues/292 The issue was
 # that the CSE pass was not being run correctly on the TorchCompile region.
 # Here we test that everything works as expected.
+@pytest.mark.skip(reason="https://github.com/NVIDIA/Fuser/issues/3688")
 @pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported")
 @requiresCUDA
 @pytest.mark.skipif(not device_supports_bf16(torch.device("cuda")), reason="bf16 is not supported")
 def test_torch_compile_cat_nvfuser_phi2_tanh():
-    from litgpt.config import Config
+    from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
 
     device = torch.device("cuda")
@@ -78,3 +81,44 @@ def test_torch_compile_cat_rope_single_fusion():
     backward_execution_trace = thunder.last_backward_traces(jfn)[-1]
     assert len(get_fusions(backward_execution_trace)) == 1
     assert len(backward_execution_trace.bound_symbols) == 14
+
+
+@pytest.mark.skipif(not is_inductor_supported() or platform.system() == "Windows", reason="inductor unsupported")
+def test_transform_for_execution_for_callable():
+    def fn(a):
+        return a.type("torch.DoubleTensor")
+
+    a = torch.randn(3)
+    jfn = thunder.jit(fn, executors=(thunder.executors.torch_compile.torch_compile_ex,))
+    assert_close(jfn(a), fn(a))
+
+
+@pytest.mark.skipif(not is_inductor_supported(), reason="inductor unsupported")
+@requiresCUDA
+@pytest.mark.skipif(not device_supports_bf16(torch.device("cuda")), reason="bf16 is not supported")
+def test_litgpt_fabric_for_callable():
+    from typing import Any, Optional, Tuple, Union, List, Dict
+    from collections.abc import Callable
+    from litgpt.model import Config, GPT
+    import torch.nn as nn
+
+    def jit(fn: Callable, executors: list[str]) -> Any:
+        assert executors is not None
+        return thunder.jit(fn, executors=executors)
+
+    def forward_and_loss(model: nn.Module, input_ids: torch.Tensor) -> torch.Tensor:
+        logits = model(input_ids)
+        return logits
+
+    forward_and_loss_jitted = jit(forward_and_loss, executors=("sdpa", "torchcompile", "nvfuser", "torch"))
+
+    config = Config(block_size=2, n_layer=2, n_embd=8, n_head=4, padded_vocab_size=8)
+
+    with torch.device("cuda"):
+        model = GPT(config)
+
+    input_ids = torch.zeros(1, 2, dtype=torch.int64, device="cuda")
+    out = forward_and_loss(model, input_ids)
+    out_jitted = forward_and_loss_jitted(model, input_ids)
+
+    assert_close(out, out_jitted)

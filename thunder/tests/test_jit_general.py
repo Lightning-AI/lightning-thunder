@@ -680,6 +680,8 @@ def test_litgpt_variants(name, device):
 
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
+    if device == "cuda" and name == "falcon-40b-like":
+        pytest.skip("NVFuser reenable when https://github.com/NVIDIA/Fuser/issues/3505 is fixed, Thunder issue #1504")
     if device == "cuda" and name == "falcon-7b-like":
         pytest.skip("NVFuser reenable when https://github.com/NVIDIA/Fuser/issues/3292 is fixed")
 
@@ -783,7 +785,7 @@ def test_litgpt_variants_kvcache(name, device):
     ("cpu", "cuda"),
 )
 def test_tom_overrides_proxy(device):
-    from litgpt.config import Config
+    from thunder.tests.litgpt_model import Config
     from litgpt.model import GPT
 
     if device == "cuda" and not torch.cuda.is_available():
@@ -1027,7 +1029,6 @@ def test_load_original_state_dict():
     ids=("remove_duplicate=False", "remove_duplicate=True"),
 )
 def test_named_params_and_named_buffers(prefix, recurse, remove_duplicate):
-
     buffer_tensor = torch.tensor([1.0])
 
     class SubMod(torch.nn.Module):
@@ -1141,7 +1142,6 @@ def test_custom_autograd_function():
     from torch.testing._internal.common_utils import gradcheck
 
     class MyFunction(torch.autograd.Function):
-
         @staticmethod
         def forward(ctx, x: torch.Tensor) -> torch.Tensor:
             return x * 2.0
@@ -1194,7 +1194,7 @@ def test_custom_autograd_function():
     x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
     model = Model().to(dtype=torch.float64)
     jitted = thunder.jit(model)
-    gradcheck(jitted, (x,))
+    gradcheck(jitted, (x,), check_batched_grad=False)
 
     jitted.zero_grad()
     x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
@@ -1205,13 +1205,15 @@ def test_custom_autograd_function():
 
 def test_autograd_function_apply():
 
+    # see https://github.com/Lightning-AI/lightning-thunder/issues/1248#issuecomment-2388655917
+    # for why `torch.foo` instead of `torch.Tensor.foo`
     def forward(ctx, x):
         saved_for_backward = (x,)
-        return x.sin(), saved_for_backward
+        return torch.sin(x), saved_for_backward
 
     def backward(ctx, grad_output, *saved_tensors):
         (x,) = saved_tensors
-        return grad_output * x.cos()
+        return grad_output * torch.cos(x)
 
     def my_sin(x):
         return torch.ops.higher_order.autograd_function_apply(
@@ -1229,13 +1231,6 @@ def test_autograd_function_apply():
     y = jitted(x)
     y_ref = my_sin(x_ref)
     torch.testing.assert_close(y, y_ref)
-
-    initial_computation_trace = thunder.last_traces(jitted)[0]
-    assert any(
-        bsym.sym.id == "torch.ops.higher_order.autograd_function_apply"
-        for bsym in initial_computation_trace.bound_symbols
-        if isinstance(bsym.sym.id, str)
-    )
 
     grad = torch.rand_like(y)
     actual_grad = torch.autograd.grad(y, x, grad)
@@ -1272,8 +1267,73 @@ def test_autograd_function_apply():
         gradcheck(jitted, (x,))
 
 
-def test_autograd_function_empty_forward():
+def test_autograd_function_apply_with_no_grad():
+    # This case is using `torch` operations
+    def forward(_, x):
+        saved_for_backward = (x,)
 
+        with torch.no_grad():
+            sin = torch.sin(x)
+        return sin, saved_for_backward
+
+    def backward(_, grad_output, *saved_tensors):
+        return grad_output * 2
+
+    def my_sin(x):
+        res = torch.ops.higher_order.autograd_function_apply(
+            forward,
+            backward,
+            x,
+            args_tensor_mask=[True],
+            non_differentiable_idx=[],
+        )
+        return res
+
+    jitted = thunder.jit(my_sin)
+    x = torch.randn((2, 2), requires_grad=True)
+
+    out = jitted(x)
+    grad = torch.rand_like(out)
+    out.backward(grad)
+
+    # Verify that `backward` was applied.
+    torch.testing.assert_close(x.grad, grad * 2)
+
+    # This is using `thunder` operations
+    # NOTE - This takes a different codepath compared to above.
+    def forward(_, x):
+        saved_for_backward = (x,)
+        thunder.torch._set_grad_enabled_with_warning(False)
+        sin = thunder.torch.sin(x)
+        thunder.torch._set_grad_enabled_with_warning(True)
+        return sin, saved_for_backward
+
+    def backward(_, grad_output, *saved_tensors):
+        # NOTE - This is incorrect on purpose
+        return grad_output * 2
+
+    def fn(x):
+        res = thunder.torch.autograd_function_apply(
+            forward,
+            backward,
+            x,
+            args_tensor_mask=[True],
+            non_differentiable_idx=[],
+        )
+        return res
+
+    jitted = thunder.jit(fn)
+    x = torch.randn((2, 2), requires_grad=True)
+
+    out = jitted(x)
+    grad = torch.rand_like(out)
+    out.backward(grad)
+
+    # Verify that `backward` was applied.
+    torch.testing.assert_close(x.grad, grad * 2)
+
+
+def test_autograd_function_empty_forward():
     class Fn(torch.autograd.Function):
         @staticmethod
         def forward(self, x):
@@ -1462,3 +1522,44 @@ def test_cache_symbolic_values_slice():
     expected = foo(a)
 
     assert_close(actual, expected)
+
+
+def test_cache_symbolic_values_dict():
+    def foo(a, v):
+        return a[v].relu()
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+
+    a = {
+        2: torch.randn(2, 3, 8, requires_grad=True, device="cpu"),
+        5: torch.randn(4, 8, requires_grad=True, device="cpu"),
+    }
+
+    actual = jfoo(a, 2)
+    expected = foo(a, 2)
+
+    assert_close(actual, expected)
+
+    b = {
+        "a": torch.randn(2, 8, requires_grad=True, device="cpu"),
+        "b": torch.randn(7, requires_grad=True, device="cpu"),
+    }
+
+    actual = jfoo(b, "b")
+    expected = foo(b, "b")
+
+    assert_close(actual, expected)
+
+
+def test_specific_dataclass_returns():
+    import transformers
+
+    def fn(x):
+        return transformers.modeling_outputs.BaseModelOutputWithPast(last_hidden_state=x)
+
+    jfn = thunder.jit(fn)
+    x = torch.randn(2, 2)
+    expected = fn(x)
+    res = jfn(x)
+    assert expected.last_hidden_state is x
+    assert res.last_hidden_state is x

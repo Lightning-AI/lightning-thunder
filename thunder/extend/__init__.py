@@ -1,26 +1,19 @@
+from collections.abc import Callable, Sequence, Hashable
 import enum
-import sys
-import os
 import itertools
-from typing import Any
-from collections.abc import Sequence
-from collections.abc import Callable
-from collections.abc import Hashable
+import os
+import sys
 from types import ModuleType
-import warnings
-from functools import cache, partial
+from typing import Any
 
 import torch.cuda
 
-
-from thunder.core.utils import check
+from thunder.core.devices import to_torch_device
+from thunder.core.dtypes import to_torch_dtype
+from thunder.core.proxies import Proxy, TensorProxy, proxy
+from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol, BoundSymbol, default_python_printer
 from thunder.core.trace import TraceCtx
-from thunder.core.proxies import Proxy, TensorProxy, proxy
-from thunder.core.baseutils import run_once
-from thunder.core.dtypes import to_torch_dtype
-from thunder.core.devices import to_torch_device
-from thunder.core.pytree import tree_map
 
 __all__ = [
     "register_executor",
@@ -280,8 +273,32 @@ class OperatorExecutor(Executor):
         self.implmap[_id] = impl
 
 
-class AdHocExecutor(OperatorExecutor):
-    """An "Anonymous" executor to be used for temporary registrations"""
+class TemporaryExecutor(OperatorExecutor):
+    """
+    A specialized executor for managing temporary operator registrations at runtime.
+
+    This executor generates unique identifiers for each registered operator by combining
+    the operator name with instance-specific identifiers. It's designed for scenarios
+    requiring dynamic operator registration without conflicting with existing operations.
+
+    Key Features:
+        - Creates unique operator names using instance ID and counter
+        - Supports runtime registration of operators
+        - Handles opaque function registration
+        - Maintains isolation between different temporary registrations
+
+    Example:
+        >>> executor = TemporaryExecutor()
+        >>> op = executor.register_operator(
+        ...     name="temp_add",
+        ...     like=thunder.torch.add,
+        ...     fn=lambda x, y: x + y
+        ... )
+
+    Note:
+        Operators registered through this executor are intended for temporary use
+        and should not be relied upon for permanent implementations.
+    """
 
     def __init__(self):
         super().__init__(f"__ad_hoc_executor_{id(self)}")
@@ -356,7 +373,7 @@ class AdHocExecutor(OperatorExecutor):
         return symbol
 
     def __repr__(self) -> str:
-        return f"<thunder.extend.AdHocExecutor object {id(self)}>"
+        return f"<thunder.extend.TemporaryExecutor object {id(self)}>"
 
 
 def single_op_executor(
@@ -564,3 +581,24 @@ def add_executor_lists(
             new_exc_list.append(exc)
 
     return new_exc_list
+
+
+def fuse_bound_symbols(trace: TraceCtx, can_fuse: Callable):
+    """Utility function for creating fusions in the `trace`.
+    `can_fuse` should be a callable mapping a BoundSymbol argument
+    to bool, whether the symbol is fusible.
+    Returns the bound symbols as a list of lists of bound symbols,
+    each element representing a fusion (if it contains multiple) or
+    single elements."""
+    fusions = [[]]
+    for bsym in trace.bound_symbols:
+        if can_fuse(bsym):
+            fusions[-1].append(bsym)
+        else:
+            if fusions[-1]:
+                fusions.append([])
+            fusions[-1].append(bsym)
+            fusions.append([])
+    if not fusions[-1]:
+        del fusions[-1]
+    return fusions

@@ -9,7 +9,7 @@ from functools import partial
 
 import thunder
 import thunder.core.prims as prims
-from thunder.core.baseutils import BoundSymbolInterface
+from thunder.core.baseutils import BoundSymbolInterface, NumberProxyInterface
 from thunder.core.proxies import Proxy, variableify, Variable, TensorProxy, unvariableify
 from thunder.core.pytree import tree_flatten, tree_iter, tree_map, tree_unflatten
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, has_tags
@@ -17,6 +17,7 @@ from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace, t
 from thunder.core.utils import ProxyDict, producers, check
 
 if TYPE_CHECKING:
+    from numbers import Number
     from typing import Any
     from thunder.core.module import ThunderModule
 
@@ -53,7 +54,11 @@ def _remove_noop_subsymbols(bsym: BoundSymbol) -> None:
     for sbsym in bsym.subsymbols:
         if len(sbsym.subsymbols) == 0 and not sbsym.sym.is_prim:
             continue
-
+        # if all outputs are constants, we elmininate the subsymbol
+        if not has_tags(bsym, {prims.OpTags.DONT_DCE}) and not any(
+            o is not None for o in sbsym.flat_proxy_outs
+        ):  # is not None to avoid cast to bool
+            continue
         _remove_noop_subsymbols(sbsym)
         nsbsyms.append(sbsym)
 
@@ -104,6 +109,29 @@ def _inplace_copy_sanity_check(extrace: Trace):
 
             check(copy_to_arg, "'copy_to' argument")
             check(copy_to_out, "output")
+
+
+def remove_duplicate_number_proxies(bsyms: Sequence[BoundSymbol]) -> list[BoundSymbol]:
+    """This removes duplicate number proxies when they are returned multiple times.
+    The remaining DCE pass does not see them (because they often are in a tuple?).
+    In particular, proxies may be extracted multiple times when using the thunder.jit's
+    symbolic constraints mode.
+    """
+    seen = set()
+
+    def keep_or_swap(p):
+        if not isinstance(p, NumberProxyInterface):
+            return p
+        if p.name in seen:
+            return p.value  # don't make it a duplicate
+        seen.add(p.name)
+        return p
+
+    new_bsyms = []
+    for bsym in bsyms:
+        output = tree_map(keep_or_swap, bsym.output)
+        new_bsyms.append(bsym.from_bsym(output=output))
+    return new_bsyms
 
 
 # TODO This calls variableify(), but we could directly construct Variable objects instead, which might slightly
@@ -169,7 +197,11 @@ def dce(trace: Trace, needed_proxies: None | set[Variable] = None) -> Trace:
                 needed_proxies.add(variableify(x))
 
     dcetrace = from_trace(trace)
-    dcetrace.bound_symbols = list(reversed(dced))
+    dced_bound_symbols = list(reversed(dced))
+    # duplicate number proxies happen with the symbolic shapes and are
+    # not covered by the above (due to being in tuples?).
+    dced_bound_symbols = remove_duplicate_number_proxies(dced_bound_symbols)
+    dcetrace.bound_symbols = dced_bound_symbols
 
     end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
@@ -399,6 +431,9 @@ class Transform(ABC):
     ) -> dict[str, Any]:
         return state_dict
 
+    def __repr__(self) -> str:
+        return f"{self.__class__.__module__}.{self.__class__.__name__}()"
+
 
 def order_proxies(bsyms: Sequence[BoundSymbol]) -> dict[str, int]:
     """computes a canonical ordering of proxies in the bound symbols based on the order of appearance
@@ -456,7 +491,7 @@ def canonicalize_proxies(bsyms: Sequence[BoundSymbol]) -> Sequence[BoundSymbol]:
     return output
 
 
-def wrap_return_value_together_with_argments(trace: Trace) -> Trace:
+def wrap_return_value_together_with_arguments(trace: Trace) -> Trace:
     last = trace.bound_symbols[-1]
     assert last.sym.id == prims.PrimIDs.RETURN
     flat_args, _ = tree_flatten((trace.args, trace.kwargs))
