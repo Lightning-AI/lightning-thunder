@@ -3097,11 +3097,12 @@ def test_debug_options():
     import dill
 
     initial_state = dill.dumps(dict(DebugOptions.__dict__))
-    print(DebugOptions.__dict__)
     DebugOptions.register_option("test_option", bool, False, "Test Option")
 
     assert "Test Option" in DebugOptions.__doc__
 
+    do = DebugOptions()
+    assert do.test_option is False
     do = DebugOptions(test_option=True)
     assert do.test_option is True
 
@@ -3114,8 +3115,6 @@ def test_debug_options():
     del DebugOptions.test_option
 
     DebugOptions._set_docstring()
-
-    print(DebugOptions.__dict__)
     assert dill.dumps(dict(DebugOptions.__dict__)) == initial_state
 
 
