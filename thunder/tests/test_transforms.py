@@ -776,7 +776,7 @@ def test_dce_duplicate_number_proxies():
         return count
 
     # original two shape queries should both exist in the original trace
-    trace = thunder.last_traces(jfoo)[0]
+    trace = thunder.last_traces(jfn)[0]
     assert _count_shape_query(trace) == 2
 
     # dce should remove duplicate shape queries
