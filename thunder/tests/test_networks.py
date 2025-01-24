@@ -406,7 +406,7 @@ def test_thunderfx_mistral_nemo_small():
     device = torch.device("cuda")
     model.to(device)
     model.train()
-    #mdl = thunder.dynamo.thunderfx(model)
+    # mdl = thunder.dynamo.thunderfx(model)
     mdl = thunder.jit(model)
 
     batch_size = 1
@@ -423,11 +423,12 @@ def test_thunderfx_mistral_nemo_small():
 
 
 nemo_models: list[str] = [
-  "microsoft/Phi-3-mini-128k-instruct",
-  "bigcode/starcoder2-7b",
-  "Qwen/Qwen2.5-7B-Instruct",
-  "Qwen/Qwen2-7B",
+    "microsoft/Phi-3-mini-128k-instruct",
+    "bigcode/starcoder2-7b",
+    "Qwen/Qwen2.5-7B-Instruct",
+    "Qwen/Qwen2-7B",
 ]
+
 
 @thunder.tests.framework.requiresCUDA
 @pytest.mark.parametrize("model_id", nemo_models)
@@ -453,7 +454,7 @@ def test_hf_for_nemo(model_id):
     # fullgraph=True used to work with transformers 4.45.2, but it doesn't work
     # with 4.46.2 because of re.findall usage in the loss function
     fullgraph = False
-    #compiled_model = thunderfx(model, fullgraph=fullgraph)
+    # compiled_model = thunderfx(model, fullgraph=fullgraph)
     compiled_model = thunder.jit(model, fullgraph=fullgraph)
 
     input_ids = torch.randint(0, configuration.vocab_size, (1, configuration.max_position_embeddings), device="cuda")
