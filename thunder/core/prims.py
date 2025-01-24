@@ -265,8 +265,6 @@ class PrimIDs(Enum):
     MATMUL = auto()
     # NN prims (Experimental!)
     CONVOLUTION = auto()
-    EMBEDDING = auto()
-    EMBEDDING_BACKWARD = auto()
     LINEAR = auto()
     PAD = auto()
     # Memory access methods
@@ -4077,39 +4075,6 @@ convolution = make_prim(
     "convolution",
     meta=convolution_meta,
 )
-
-
-def embedding_meta(
-    a: TensorProxy, /, weight, *, padding_idx=-1, max_norm=None, norm_type=2.0, scale_grad_by_freq=False, sparse=False
-) -> TensorProxy:
-    # TODO: canonicalize and validating padding idx with weight.shape[0]
-
-    if max_norm is not None:
-        raise NotImplementedError
-
-    utils.check(a.dtype == dtypes.int64, lambda: f"Expected a.dtype={a.dtype} to be int64")
-    utils.check(weight.ndim == 2, lambda: f"Expected weight (weight.shape={weight.shape} to be a matrix)")
-
-    shape = list(a.shape)
-    shape.append(weight.shape[1])
-
-    return TensorProxy(like=weight, shape=shape)
-
-
-embedding = make_prim(PrimIDs.EMBEDDING, "embedding", meta=embedding_meta)
-
-
-# TODO Update this so it's not a prim
-# TODO Add annotations
-# TODO Review requires_grad=False -- what about double backward?
-# TODO Once we have fusible index_put we can implement it using primitives
-# For now we just use the PyTorch implementation
-def embedding_backward_meta(grad, indices, num_weights, padding_idx, scale_grad_by_freq, sparse):
-    shape = (num_weights, grad.shape[-1])
-    return TensorProxy(shape=shape, device=grad.device, dtype=grad.dtype, requires_grad=False)
-
-
-embedding_backward = make_prim(PrimIDs.EMBEDDING_BACKWARD, "embedding_backward", meta=embedding_backward_meta)
 
 
 def copy__meta(

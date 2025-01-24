@@ -4710,17 +4710,17 @@ def embedding(
 ) -> TensorLike:
     # TODO: add embedding_renorm_ so we can remove embedding prim
     # NOTE: padding_idx has impact on backward and is not supported by take
-    if max_norm is not None or padding_idx is not None:
+    if max_norm is not None:
+        raise NotImplementedError("max_norm argument is currently not support. Please create an issue detailing your use case.")
+
+    if padding_idx is not None:
         padding_idx = padding_idx if padding_idx is not None else -1
-        return prims.embedding(
-            a,
-            weight,
-            padding_idx=padding_idx,
-            max_norm=max_norm,
-            norm_type=norm_type,
-            scale_grad_by_freq=scale_grad_by_freq,
-            sparse=sparse,
-        )
+
+        utils.check(a.dtype == dtypes.int64, lambda: f"Expected a.dtype={a.dtype} to be int64")
+        utils.check(weight.ndim == 2, lambda: f"Expected weight (weight.shape={weight.shape} to be a matrix)")
+        shape = list(a.shape)
+        shape.append(weight.shape[1])
+        return TensorProxy(like=weight, shape=shape)
 
     # padding_idx / sparse not used by forward
 
@@ -4733,10 +4733,12 @@ def embedding(
     return reshape(flatten_output, output_shape)
 
 
+# TODO Once we have fusible index_put we can implement it using primitives
+# For now we just use the PyTorch implementation
 @torchsymbol(torch.ops.aten.embedding_backward)
 def embedding_backward(grad, indices, num_weights, padding_idx, scale_grad_by_freq, sparse):
-    result = prims.embedding_backward(grad, indices, num_weights, padding_idx, scale_grad_by_freq, sparse)
-    return result
+    shape = (num_weights, grad.shape[-1])
+    return TensorProxy(shape=shape, device=grad.device, dtype=grad.dtype)
 
 
 @torchsymbol(torch.nn.functional.one_hot, id="torch.nn.functional.one_hot", is_method=False)

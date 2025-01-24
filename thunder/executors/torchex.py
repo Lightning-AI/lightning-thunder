@@ -1714,8 +1714,6 @@ def _pad_prim_impl(
 
 
 _register_implementation(prims.convolution, checker=_always_executable, execution_transform=_convolution_transform)
-_register_implementation(prims.embedding, embedding, checker=_always_executable)
-_register_implementation(prims.embedding_backward, embedding_backward, checker=_always_executable)
 _register_implementation(prims.linear, linear, checker=_always_executable)
 
 _register_implementation(ltorch.baddbmm, baddbmm, checker=_always_executable)
