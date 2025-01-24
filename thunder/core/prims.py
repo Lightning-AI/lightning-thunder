@@ -1818,6 +1818,7 @@ put_grad = make_prim(
     PrimIDs.PUT_GRAD,
     "put_grad",
     meta=_put_grad_meta,
+    tags=(OpTags.DONT_DCE,),
 )
 
 #

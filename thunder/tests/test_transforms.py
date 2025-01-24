@@ -820,7 +820,8 @@ def test_cache_symbolic_values_grad_matmul():
     b = torch.randn(4, 6)
     a_ref = a.clone()
     b_ref = b.clone()
-    map(set_requires_grad, (a, b, a_ref, b_ref))
+    for x in (a, b, a_ref, b_ref):
+        x.requires_grad_()
     actual = jfoo(a, b)
     expected = foo(a_ref, b_ref)
     actual.sum().backward()
@@ -836,7 +837,8 @@ def test_cache_symbolic_values_grad_matmul():
     b = torch.randn(8, 2)
     a_ref = a.clone()
     b_ref = b.clone()
-    map(set_requires_grad, (a, b, a_ref, b_ref))
+    for x in (a, b, a_ref, b_ref):
+        x.requires_grad_()
     actual = jfoo(a, b)
     expected = foo(a, b)
     actual.sum().backward()
