@@ -12,12 +12,12 @@ expecttest ==0.3.0  # for test_ddp.py
 hypothesis ~=6.122.1  # for test_ddp.py
 numpy >=1.23.0,<2  # for test_ops.py; not yet ready for numpy 2
 einops  # for test_einops.py
-litgpt==0.4.11  # for the model definition in tests and benchmarks
+litgpt>=0.5.6  # for the model definition in tests and benchmarks
 absl-py # thunder/benchmarks/test_benchmark_litgpt.py
 pandas # thunder/benchmarks/test_benchmark_litgpt.py
 xlsxwriter # thunder/benchmarks/test_benchmark_litgpt.py
 jsonargparse # thunder/benchmarks/benchmark_litgpt.py
-bitsandbytes==0.42.0  # fixed version!
+bitsandbytes==0.45.1
 transformers==4.46.3 # for test_networks.py
 
 # Installs JAX on Linux and MacOS
