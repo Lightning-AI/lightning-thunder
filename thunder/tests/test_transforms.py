@@ -807,3 +807,43 @@ def test_dce_duplicate_number_proxies():
     # dce should remove duplicate shape queries
     trace = thunder.core.transforms.dce(trace)
     assert _count_shape_query(trace) == 1
+
+
+def test_cache_symbolic_values_grad_matmul():
+    def foo(a, w):
+        return torch.nn.functional.linear(a, w)
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+    set_requires_grad = lambda x: x.requires_grad_()
+
+    a = torch.randn(2, 8, 6)
+    b = torch.randn(4, 6)
+    a_ref = a.clone()
+    b_ref = b.clone()
+    map(set_requires_grad, (a, b, a_ref, b_ref))
+    actual = jfoo(a, b)
+    expected = foo(a_ref, b_ref)
+    actual.sum().backward()
+    expected.sum().backward()
+
+    assert_close(actual, expected)
+    assert_close(a.grad, a_ref.grad)
+    assert_close(b.grad, b_ref.grad)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    a = torch.randn(4, 4, 2)
+    b = torch.randn(8, 2)
+    a_ref = a.clone()
+    b_ref = b.clone()
+    map(set_requires_grad, (a, b, a_ref, b_ref))
+    actual = jfoo(a, b)
+    expected = foo(a, b)
+    actual.sum().backward()
+    expected.sum().backward()
+
+    assert_close(actual, expected)
+    assert_close(a.grad, a_ref.grad)
+    assert_close(b.grad, b_ref.grad)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1

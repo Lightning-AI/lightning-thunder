@@ -803,13 +803,16 @@ class FrozenDict(_UserDictT[T, T1], Mapping[T, T1]):
     """
 
     @overload
-    def __init__(self, data: Mapping[T, T1]) -> None: ...
+    def __init__(self, data: Mapping[T, T1]) -> None:
+        ...
 
     @overload
-    def __init__(self, data: Iterable[T, T1]) -> None: ...
+    def __init__(self, data: Iterable[T, T1]) -> None:
+        ...
 
     @overload
-    def __init__(self, *args: Any, **kwargs: Any) -> None: ...
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        ...
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -895,7 +898,8 @@ def _safe_zip_gen(*args):
 
 
 @overload
-def safe_zip(x: Iterable[T], y: Iterable[T1], /) -> Iterable[tuple[T, T1]]: ...
+def safe_zip(x: Iterable[T], y: Iterable[T1], /) -> Iterable[tuple[T, T1]]:
+    ...
 
 
 def safe_zip(*args):
@@ -1136,7 +1140,11 @@ def find_producer_symbols(trace: TraceCtx, proxies: Sequence[Proxy], stop_proxie
                     seen.add(arg_name)
     original_order = dict()
     for i, bsym in enumerate(trace.bound_symbols):
-        if bsym not in original_order:
+        # Don't overwrite the order if it's already encountered. This is necessary for
+        # duplicated bsyms. i.e. duplicated shape queries for example. Keeping the first
+        # encounter ensures correct data dependency, such that the shape queries exists
+        # before any consumption.
+        if bsym in original_order:
             continue
         original_order[bsym] = i
     return tuple(sorted(result, key=lambda x: original_order[x]))
