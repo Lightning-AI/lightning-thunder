@@ -1,8 +1,8 @@
-__version__ = "0.2.0dev"
+__version__ = "0.2.1.dev0"
 __author__ = "Lightning-AI et al"
 __author_email__ = "community@lightning.ai"
 __license__ = "Apache 2.0"
-__copyright__ = f"2024 {__author__}"
+__copyright__ = f"2024, 2025 {__author__}"
 __homepage__ = "https://github.com/Lightning-AI/lightning-thunder"
 __docs__ = "Lightning Thunder project."
 
