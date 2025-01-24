@@ -4711,7 +4711,9 @@ def embedding(
     # TODO: add embedding_renorm_ so we can remove embedding prim
     # NOTE: padding_idx has impact on backward and is not supported by take
     if max_norm is not None:
-        raise NotImplementedError("max_norm argument is currently not support. Please create an issue detailing your use case.")
+        raise NotImplementedError(
+            "max_norm argument is currently not support. Please create an issue detailing your use case."
+        )
 
     if padding_idx is not None:
         padding_idx = padding_idx if padding_idx is not None else -1
