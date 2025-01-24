@@ -1,9 +1,21 @@
-from typing import List, Dict
+from contextlib import contextmanager
+from typing import Any
+import warnings
 
 from thunder.core.transform_common import Transform
 from thunder.extend import Executor, get_default_executors
 
 import torch
+
+
+@contextmanager
+def pretty_warnings():
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter("always", UserWarning)
+        yield
+        for warning in caught_warnings:
+            if issubclass(warning.category, UserWarning):
+                print(f"{warning.category.__name__}: {warning.message}")
 
 
 class Lookaside:
@@ -19,13 +31,10 @@ class Recipe:
     def __init__(self):
         pass
 
-    def validate(self, model):
-        # this is supposed to raise
+    @classmethod
+    def validate(cls, model):
+        # this is expected to raise if validation fails
         pass
-
-    # def setup_operators(self) -> List[Operator]:
-    #     # this is for registering custom kernels on the fly
-    #     return None
 
     def setup_lookasides(self) -> list[Lookaside] | None:
         return None
@@ -33,14 +42,15 @@ class Recipe:
     def setup_transforms(self) -> list[Transform] | None:
         return None
 
-    def setup_executors(self):
-        return get_default_executors()
+    def setup_executors(self) -> list[Executor]:
+        return list(get_default_executors())
 
-    def setup_config(self) -> dict:
+    def setup_config(self) -> dict[str, Any]:
         return {}
 
     def apply(self, model):
-        self.validate(model)
+        with pretty_warnings():
+            self.validate(model)
 
         self.config = self.setup_config()
         lookasides = self.setup_lookasides()

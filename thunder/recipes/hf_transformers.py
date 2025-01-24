@@ -1,38 +1,49 @@
 from distutils.version import LooseVersion
-from functools import partial, wraps
+from functools import partial
 import warnings
 
 import transformers
 
 import thunder
-from thunder.transforms.cudagraph import CUDAGraphTransform
-from thunder.transforms.prune_prologue_checks import PrunePrologueChecks
-from thunder.extend import get_default_executors
-from thunder import executors
+from thunder.recipes import BaseRecipe
 
 
-def pretty_warnings(func):
-    @wraps(func)
-    def wrapped(*args, **kwargs):
-        with warnings.catch_warnings(record=True) as caught_warnings:
-            warnings.simplefilter("always", UserWarning)
-            result = func(*args, **kwargs)
-            for warning in caught_warnings:
-                if issubclass(warning.category, UserWarning):
-                    print(f"{warning.category.__name__}: {warning.message}")
-            return result
-    return wrapped
-
-
-class HFTransformers(thunder.Recipe):
-    def __init__(self, reduce_overhead=True, fuser="nvfuser", show_progress=False):
+class InplaceIndexCopyTransform(thunder.Transform):
+    def __init__(self):
         super().__init__()
-        self.reduce_overhead = reduce_overhead
-        self.fuser = fuser
-        self.show_progress = show_progress
+        self.executor = thunder.extend.OperatorExecutor('inplace_index_copy_ex')
 
-    @pretty_warnings
-    def validate(self, model):
+        def inplace_index_copy_meta(buffer, dim, idx, val):
+            return thunder.TensorProxy(like=buffer)
+
+        def inplace_index_copy_impl(buffer, dim, idx, val):
+            return buffer.index_copy_(dim, idx, val)
+
+        self.inplace_index_copy = self.executor.register_operator('inplace_index_copy', fn=inplace_index_copy_impl, meta=inplace_index_copy_meta)
+
+    def get_executor(self):
+        return self.executor
+
+    def transform_traces_pre_prologue(self, pro, comp, epi, **kwargs):
+        comp_new = thunder.core.trace.from_trace(comp)
+        for bsym in comp.bound_symbols:
+            if bsym.sym == thunder.torch.index_copy:
+                bsym.args[0].tags.add(thunder.core.proxies.ProxyTag.STATIC_MEMORY_LOCATION)
+                bsym = bsym.from_bsym(sym=self.inplace_index_copy)
+            else:
+                bsym = bsym.from_bsym()
+            comp_new.bound_symbols.append(bsym)
+        return pro, comp_new, epi
+
+
+class HFTransformers(BaseRecipe):
+    def __init__(self, reduce_overhead=True, fuser="nvfuser", show_progress=False):
+        super().__init__(reduce_overhead=reduce_overhead, fuser=fuser, show_progress=show_progress)
+        # for kv-cache inplace ops
+        self.inplace_index_copy_transform = InplaceIndexCopyTransform()
+
+    @classmethod
+    def validate(cls, model):
         version = LooseVersion(transformers.__version__)
         min_version = LooseVersion("4.46.0")
         max_version = LooseVersion("4.46.3")
@@ -55,9 +66,13 @@ class HFTransformers(thunder.Recipe):
             raise ValueError(f"The model must be an instance of PreTrainedModel, found {type(model)}")
 
     def setup_config(self):
-        if not self.show_progress:
-            return {}
-        return dict(debug_options=thunder.DebugOptions(show_interpreter_progress=True))
+        config = super().setup_config()
+        config.update(
+            nv_enable_linear=True,
+            nv_enable_matmul=True,
+            nv_enable_sdpa=True
+        )
+        return config
 
     def setup_lookasides(self):
         warn_lookaside = thunder.Lookaside(
@@ -68,31 +83,20 @@ class HFTransformers(thunder.Recipe):
         return [warn_lookaside]
 
     def setup_transforms(self):
-        transforms = [PrunePrologueChecks()]
-
-        if self.reduce_overhead:
-            return transforms + [CUDAGraphTransform()]
-
-        return transforms
+        transforms = super().setup_transforms()
+        return [self.inplace_index_copy_transform] + transforms
 
     def setup_executors(self):
-        ex = get_default_executors()
-
-        if self.fuser == "nvfuser":
-            return ex
-        elif self.fuser == "torch.compile":
-            ex = [el for el in ex if el.name not in ["torchcompile_cat", "nvfuser"]]
-            ex.append(executors.torch_compile.torch_compile_ex)
-            return ex
-
-        raise ValueError(f"Invalid fuser {self.fuser}. Allowed fusers: 'nvfuser', 'torch.compile'.")
+        executors = super().setup_executors()
+        return [self.inplace_index_copy_transform.get_executor()] + executors
 
     def apply(self, model):
-        fix_generate = not isinstance(model, transformers.BertPreTrainedModel)
         thunder_model = super().apply(model)
 
-        if fix_generate:
+        if getattr(thunder_model, "generate", None):
             thunder_model.generate = partial(thunder_model.generate.__func__, thunder_model)
+
+        if getattr(thunder_model, "_sample", None):
             thunder_model._sample = partial(thunder_model._sample.__func__, thunder_model)
 
         return thunder_model
