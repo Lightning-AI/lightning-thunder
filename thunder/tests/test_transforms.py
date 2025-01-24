@@ -711,27 +711,12 @@ def test_buffer_dtype_casting():
             # update the cache
             return self.k, self.v
 
-    # BUG: issue: 1637
-    class ParentModule(nn.Module):
-        def __init__(
-            self,
-            k_shape: tuple[int, int, int, int],
-            v_shape: tuple[int, int, int, int],
-            device: torch.device | None = None,
-            dtype: torch.dtype | None = None,
-        ):
-            super().__init__()
-            self.cast_module = cast(k_shape, v_shape, device=device, dtype=dtype)
-
-        def forward(self, k: torch.Tensor, v: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-            return self.cast_module(k, v)
-
     with torch.device("cpu"):
         k_shape = (2, 3, 4, 5)
         v_shape = (2, 3, 4, 5)
         device = torch.device("cpu")
         dtype = torch.float32
-        model = ParentModule(k_shape, v_shape, device=device, dtype=dtype).eval().requires_grad_(False)
+        model = cast(k_shape, v_shape, device=device, dtype=dtype).eval().requires_grad_(False)
 
     k = torch.randn(2, 3, 4, 5, device=device, dtype=torch.half)
     v = torch.randn(2, 3, 4, 5, device=device, dtype=torch.half)

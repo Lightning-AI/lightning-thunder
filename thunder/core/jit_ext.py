@@ -1800,10 +1800,14 @@ def process_recorded_modifications(ctx, epilogue_trace):
                         and modified_object.provenance.inputs[1].value == "_buffers"
                     ):
                         assert isinstance(value.value, (Proxy, int, tuple, NoneType))  # todo: better criterion
-                        typ, name, root_module_provenance = get_parameter_or_buffer_or_submodule_name_and_root(
-                            modified_object.provenance.inputs[0]
-                        )
-                        assert typ == "_modules"
+                        if modified_object.provenance.inputs[0].inst is PseudoInst.INPUT_FN:
+                            name = [""]
+                            root_module_provenance = modified_object.provenance.inputs[0]
+                        else:
+                            typ, name, root_module_provenance = get_parameter_or_buffer_or_submodule_name_and_root(
+                                modified_object.provenance.inputs[0]
+                            )
+                            assert typ == "_modules"
                         root_module_proxy = root_for_provenances.get(root_module_provenance)
                         if root_module_proxy is None:
                             # we want this to created in the compute trace context for namespace...
