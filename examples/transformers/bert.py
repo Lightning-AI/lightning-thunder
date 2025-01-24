@@ -4,32 +4,33 @@ import transformers
 import thunder
 from thunder.recipes import HFTransformers
 
-from utils import benchmark
+from thunder.dev_utils.benchmark import benchmark
 
 
 def main():
-    # model = "bert-base-uncased"
-    model = "bert-large-uncased"
+    # model_name = "bert-base-uncased"
+    model_name = "bert-large-uncased"
 
+    tokenizer = transformers.AutoTokenizer.from_pretrained(model_name)
     with torch.device("cuda:0"):
-        config = transformers.AutoConfig.from_pretrained(model)
-        model = transformers.AutoModel.from_config(config)
+        model = transformers.AutoModelForCausalLM.from_pretrained(
+            model_name, torch_dtype=torch.bfloat16
+        )
         model.requires_grad_(False)
         model.eval()
 
-        inp = torch.randint(1, 20, (1, 512))
+        inp = tokenizer(["Hello world!"], return_tensors='pt')
 
     reduce_overhead = True
     fuser = "nvfuser"
-    use_cache = True
 
-    print(f"Eager: {benchmark(model, inp, use_cache=use_cache):.2f}ms")
+    print(f"Eager: {benchmark(model, **inp):.2f}ms")
 
-    thunder_model = thunder.compile(model, recipe=HFTransformers(reduce_overhead=reduce_overhead, fuser=fuser))
-    print(f"Thunder: {benchmark(thunder_model, inp, use_cache=use_cache):.2f}ms")
+    thunder_model = thunder.compile(model, recipe=HFTransformers(reduce_overhead=reduce_overhead, fuser=fuser, show_progress=True))
+    print(f"Thunder: {benchmark(thunder_model, **inp):.2f}ms")
 
     torchcompile_model = torch.compile(model, mode="reduce-overhead" if reduce_overhead else "default")
-    print(f"Torch Compile: {benchmark(torchcompile_model, inp, use_cache=use_cache):.2f}ms")
+    print(f"Torch Compile: {benchmark(torchcompile_model, **inp):.2f}ms")
 
 
 if __name__ == "__main__":

@@ -1,18 +1,24 @@
 import torch
 import torch.nn as nn
 
-model = nn.Sequential(
-    nn.Linear(2048, 4096),
-    nn.ReLU(),
-    nn.Linear(4096, 64)
-)
-
 import thunder
 
-compiled_model = thunder.compile(model, recipe=None)
-x = torch.randn(64, 2048)
-y = compiled_model(x)
 
-print(compiled_model)
+def main():
+    model = nn.Sequential(
+        nn.Linear(2048, 4096),
+        nn.ReLU(),
+        nn.Linear(4096, 64)
+    )
 
-# print(thunder.last_traces(compiled_model)[-1])
+    thunder_model = thunder.compile(model)
+    x = torch.randn(64, 2048)
+    y = thunder_model(x)
+
+    print(thunder_model)
+
+    print(thunder.last_traces(thunder_model)[-1])
+
+
+if __name__ == "__main__":
+    main()
