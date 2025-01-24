@@ -840,7 +840,7 @@ def test_cache_symbolic_values_grad_matmul():
     for x in (a, b, a_ref, b_ref):
         x.requires_grad_()
     actual = jfoo(a, b)
-    expected = foo(a, b)
+    expected = foo(a_ref, b_ref)
     actual.sum().backward()
     expected.sum().backward()
 
