@@ -3187,3 +3187,26 @@ def test_unpack_sequence_element_info():
         ):  # prims is unpack_sequence and any output is TensorProxy
             # Verify that we print information about the unpacked TensorProxy.
             assert "cpu f32[3]" in str(bsym)
+
+
+def test_apply_autograd_memory():
+    from thunder.executors.torch_autograd import connect_to_autograd
+
+    def foo():
+        def backward(*args):
+            return None
+
+        x = torch.randn(2, 2, requires_grad=True)
+        o = x.sum()
+
+        connect_to_autograd(
+            backward_fn=backward,
+            flat_args=(x,),
+            flat_output=(o,),
+            saved_tensors=(o,),
+            saved_other=(),
+            return_none_instead_of_grads=True,
+        )
+        return [weakref.ref(x), weakref.ref(o)]
+
+    assert not any(wr() for wr in foo())

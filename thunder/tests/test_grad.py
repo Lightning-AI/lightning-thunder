@@ -1752,10 +1752,10 @@ def test_torch_checkpoint():
 
         # With activation checkpointing, we are saving only the original input.
         # The intermediate values are recomputed during backward pass.
-        assert len(out.grad_fn.next_functions[0][0].saved_tensors) == 2
+        assert len(out.grad_fn.saved_tensors) == 2
         # We detach the saved tensors (which returns a new Python tensor backed by same storage)
         # the order seems to be non-deterministic sometimes
-        assert {t.data_ptr() for t in out.grad_fn.next_functions[0][0].saved_tensors} == {x.data_ptr(), y.data_ptr()}
+        assert {t.data_ptr() for t in out.grad_fn.saved_tensors} == {x.data_ptr(), y.data_ptr()}
 
         g = torch.ones_like(out)
         out.backward(g)
@@ -1948,8 +1948,8 @@ def test_backward_recomputation_decomposed_ops(device):
     a = torch.randn(2, 2, device=device, requires_grad=True)
     res = jfn(a)
     res2 = jfn2(a)
-    assert len(res.grad_fn.next_functions[0][0].saved_tensors) == 3  # should be decomposed
-    assert len(res2.grad_fn.next_functions[0][0].saved_tensors) == 1
+    assert len(res.grad_fn.saved_tensors) == 3  # should be decomposed
+    assert len(res2.grad_fn.saved_tensors) == 1
 
     if NVFUSER_AVAILABLE and device == "cuda":
         # check everything is fused
