@@ -105,12 +105,11 @@ class ThunderFunction(torch.autograd.Function):
 
         saved_tensors = tuple(map(detach_if_tensor, saved_tensors))
 
-        # We must save tensors using ctx.save_for_backward
-
         ctx.side_channel = side_channel
         if side_channel is not None:
             assert not side_channel
             ctx.side_channel["fw"] = flat_output
+            # We must save tensors using ctx.save_for_backward but
             # we want to save the tensors in the function returning the outputs to avoid memory leaks
             # (basically ref-cycles via output.grad_fn.next_functions[0, 0].saved_tensors[0] == output
             # PyTorch autograd handles this gracefully for output.grad_fn.saved_tensors)
