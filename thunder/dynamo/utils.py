@@ -824,6 +824,14 @@ Versions of Thunder related libraries:
         code_str += f"""# NOTE: This script requires `pytest-benchmark==4.0.0` to be installed.
 # To execute the script, run `pytest {graph_name}.py --benchmark-timer=torch.utils.benchmark.utils.timer.timer --benchmark-warmup=on --benchmark-group-by=param:compute_type`
 # To check the peak allocated CUDA memory, use --benchmark-json=json_file_name and look at the "max_allocated_memory_MB" field in the json file
+# To run tests for a specific compute_type or executor, use the pytest `-k` option.
+# For example:
+#   - `-k "thunder and forward"` will run only the forward pass with the Thunder executor.
+#
+# Available options:
+#   - compute_type: "forward", "backward"
+#   - executor: "eager", "thunder", "torch_inductor", "thunder_cugraph" (requires CUDA for thunder_cugraph)
+
 import pytest
 from thunder.benchmarks.targets import parametrize_compute_type_only_training, benchmark_for_compute_type
 """

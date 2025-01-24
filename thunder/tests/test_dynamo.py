@@ -9,6 +9,7 @@ import torch.fx
 import torch.nn as nn
 import torch.nn.functional as F
 from looseversion import LooseVersion
+from unittest.mock import patch
 
 from thunder import dtypes
 from thunder.dynamo import thunderfx
@@ -1044,7 +1045,7 @@ def test_thunderfx_meta_tensor():
 
 
 @requiresCUDA
-def test_report(tmp_path):
+def test_report(tmp_path, capsys):
     def foo(x):
         y = x.sin()
         torch._dynamo.graph_break()
@@ -1052,8 +1053,17 @@ def test_report(tmp_path):
 
     x = torch.randn(4, 4, device="cuda", requires_grad=True)
     thunderfx_report(foo, x, folder_path=tmp_path)
-
-    from unittest.mock import patch
+    captured = capsys.readouterr()
+    msg = captured.out
+    assert not captured.err
+    assert "Verifying consistency" in msg
+    assert "Analyzing performance through benchmarking" in msg
+    assert "The input callable can be successfully executed by ThunderFX." in msg
+    assert "Max allocated memory usage:" in msg
 
     with patch("torch.compile", side_effect=Exception("compilation raises exception")):
         thunderfx_report(foo, x, folder_path=tmp_path, check_consistency=False)
+        captured = capsys.readouterr()
+        assert not captured.err
+        assert "Failed to run the function using ThunderFX" in captured.out
+        assert "Failed to save reproducer" in captured.out
