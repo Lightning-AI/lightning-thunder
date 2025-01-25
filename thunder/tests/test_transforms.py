@@ -856,7 +856,7 @@ def test_cache_symbolic_values_grad_unsqueeze():
         cache = torch.arange(0, 128, 1)
         cache_unsqueezed = cache.unsqueeze(0)
         return x + cache_unsqueezed
-    
+
     jfoo = thunder.jit(foo, cache="symbolic values")
     set_requires_grad = lambda x: x.requires_grad_()
 
