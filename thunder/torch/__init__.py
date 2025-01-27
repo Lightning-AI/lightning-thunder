@@ -4711,6 +4711,7 @@ def embedding(
     # TODO: add embedding_renorm_ so we can remove embedding prim
     # NOTE: padding_idx has impact on backward and is not supported by take
     if max_norm is not None:
+        # See https://github.com/Lightning-AI/lightning-thunder/issues/1699
         raise NotImplementedError(
             "max_norm argument is currently not support. Please create an issue detailing your use case."
         )
