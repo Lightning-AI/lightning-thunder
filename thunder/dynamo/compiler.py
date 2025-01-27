@@ -4,6 +4,7 @@ from looseversion import LooseVersion
 from typing import TYPE_CHECKING
 import warnings
 import inspect
+from pathlib import Path
 
 import torch
 
@@ -75,7 +76,12 @@ class ThunderCompiler:
         self.subgraph_infos.append(subgraph_info)
         return split_module
 
-    def save_reproducer_to_folder(self, reproducer_folder: str | PathLike, use_pytest_benchmark: bool = False):
+    def save_reproducer_to_folder(
+        self,
+        reproducer_folder: str | PathLike,
+        use_pytest_benchmark: bool = False,
+        save_input_tensor=False,
+    ):
         """
         Save the reproducer script for the GraphModule executed by Thunder to the specified ``reproducer_folder``.
         Each saved script is named as "graph[graph_id]_thunder_[module_id]", where:
@@ -91,6 +97,8 @@ class ThunderCompiler:
         """
         if not self.subgraph_infos:
             raise TypeError(f"{self} doesn't seem to have been called yet.")
+        reproducer_folder = Path(reproducer_folder)
+        reproducer_folder.mkdir(exist_ok=True, parents=True)
 
         for graph_idx, subgraph_info in enumerate(self.subgraph_infos):
             thunder_module_names = []
@@ -115,6 +123,7 @@ class ThunderCompiler:
                     reproducer_folder,
                     f"graph{graph_idx}_{cur_name}",
                     use_pytest_benchmark,
+                    save_input_tensor=save_input_tensor,
                 )
 
 
