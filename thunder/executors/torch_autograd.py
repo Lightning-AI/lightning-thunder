@@ -105,16 +105,18 @@ class ThunderFunction(torch.autograd.Function):
 
         saved_tensors = tuple(map(detach_if_tensor, saved_tensors))
 
-        # We must save tensors using ctx.save_for_backward
-        ctx.save_for_backward(*saved_tensors)
-
         ctx.side_channel = side_channel
         if side_channel is not None:
             assert not side_channel
             ctx.side_channel["fw"] = flat_output
-
+            # We must save tensors using ctx.save_for_backward but
+            # we want to save the tensors in the function returning the outputs to avoid memory leaks
+            # (basically ref-cycles via output.grad_fn.next_functions[0, 0].saved_tensors[0] == output
+            # PyTorch autograd handles this gracefully for output.grad_fn.saved_tensors)
+            ctx.side_channel["tensors_to_save"] = saved_tensors
             return torch.randn(1, device="meta", requires_grad=True)
         else:
+            ctx.save_for_backward(*saved_tensors)
             return flat_output
 
     # NOTE: If `torch.autograd.function.once_differentiable` is to be removed,
@@ -125,25 +127,26 @@ class ThunderFunction(torch.autograd.Function):
     def backward(ctx, *raw_args):
         if ctx.side_channel is not None:
             args = ctx.side_channel.pop("bw")
+            saved_tensors_list = ctx.side_channel.pop("saved_tensors")
             assert not ctx.side_channel
         else:
             args = list(raw_args)
-        # ctx.saved_tensors is a tuple of tensors saved in forward. Our compiled
-        # backward is a really long function that takes all the tensors saved in
-        # forward and gradually uses them to compute the gradients of the
-        # inputs. Unfortunately, Python holds a reference to all arguments of a
-        # function until the function returns, even if we delete the variable
-        # "saved_tensors" inside the function, the tensors will still be held in
-        # memory until the function returns. Fortunately, Python passes mutable
-        # objects by reference, so we can just replace the saved_tensors with an
-        # empty list and the memory will be freed immediately. We must also
-        # delete the reference to the saved_tensors in the context, otherwise
-        # the memory will be freed only when the context is deleted.
-        saved_tensors_list = list(ctx.saved_tensors)  # Make a copy as we will mutate it
+            # ctx.saved_tensors is a tuple of tensors saved in forward. Our compiled
+            # backward is a really long function that takes all the tensors saved in
+            # forward and gradually uses them to compute the gradients of the
+            # inputs. Unfortunately, Python holds a reference to all arguments of a
+            # function until the function returns, even if we delete the variable
+            # "saved_tensors" inside the function, the tensors will still be held in
+            # memory until the function returns. Fortunately, Python passes mutable
+            # objects by reference, so we can just replace the saved_tensors with an
+            # empty list and the memory will be freed immediately. We must also
+            # delete the reference to the saved_tensors in the context, otherwise
+            # the memory will be freed only when the context is deleted.
+            saved_tensors_list = list(ctx.saved_tensors)  # Make a copy as we will mutate it
 
-        # This is an undocumented API, but it's the only way to clear the
-        # reference to the saved tensors in the context
-        ctx.maybe_clear_saved_tensors()  # Delete the reference to all saved tensors in the context
+            # This is an undocumented API, but it's the only way to clear the
+            # reference to the saved tensors in the context
+            ctx.maybe_clear_saved_tensors()  # Delete the reference to all saved tensors in the context
         grads = ctx.compiled_backward([saved_tensors_list, ctx.saved_other], args)
 
         assert not args
@@ -165,6 +168,7 @@ class ThunderOutputFunction(torch.autograd.Function):
         ctx.side_channel = side_channel
         ctx.num_args = len(args)
         res = ctx.side_channel.pop("fw")
+        ctx.save_for_backward(*ctx.side_channel.pop("tensors_to_save"))
         assert not ctx.side_channel
         return res
 
@@ -172,6 +176,8 @@ class ThunderOutputFunction(torch.autograd.Function):
     def backward(ctx, *args):
         assert not ctx.side_channel
         ctx.side_channel["bw"] = list(args)
+        ctx.side_channel["saved_tensors"] = list(ctx.saved_tensors)  # see above
+        ctx.maybe_clear_saved_tensors()  # Delete the reference to all saved tensors in the context
         return torch.randn(1, device="meta"), None, *([None] * ctx.num_args)
 
 
