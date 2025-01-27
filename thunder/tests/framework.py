@@ -163,6 +163,8 @@ class TestExecutor:
 
     @singledispatchmethod
     def make_callable(self, fn, **kwargs):
+        #print("using executors:", self.executors_list())
+        kwargs['nv_store_fusion_inputs'] = True
         return thunder.jit(fn, executors=self.executors_list(), **kwargs)
 
     @make_callable.register

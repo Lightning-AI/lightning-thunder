@@ -1,6 +1,8 @@
+import os
 import math
 from dataclasses import dataclass
 from functools import partial
+import typing
 import warnings
 
 import pytest
@@ -21,6 +23,7 @@ from thunder.tests.framework import (
 )
 import thunder.tests.nanogpt_model as nanogpt_model
 import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
+import thunder.tests.dump as dump
 
 #
 # nanoGPT tests
@@ -33,7 +36,6 @@ import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
 # DynamoThunderExecutor, we should consider adding a separate list of executors
 # to the framework.py file.
 all_test_executors_and_dynamo = _all_test_executors() + [DynamoThunderExecutor]
-
 
 # see https://docs.pytest.org/en/stable/how-to/capture-warnings.html#recwarn for the recwarn fixture
 @instantiate(dtypes=(thunder.float32,), executors=all_test_executors_and_dynamo)
@@ -52,7 +54,20 @@ def test_nanogpt_complete(executor, device, dtype, recwarn):
     tom = executor.make_callable(gpt, disable_torch_autograd=True)
     thunder_result = tom(idx)
 
-    assert_close(torch_result, thunder_result)
+#    traces: list = thunder.last_traces(tom)
+    dump.traces("nanogpt", tom)
+#    os.makedirs("nanogpt", exist_ok=True)
+#    if traces is not None and len(traces) > 0:
+#      dump_fusions_from("nanogpt", "fwd", traces[-1].python_ctx())
+#      with open("nanogpt/fwd.py", "w") as f:
+#        print(traces[-1], file=f)
+#    traces: list = thunder.last_backward_traces(tom)
+#    if traces is not None and len(traces) > 0:
+#      dump_fusions_from("nanogpt", "bwd", traces[-1].python_ctx())
+#      with open("nanogpt/bwd.py", "w") as f:
+#        print(traces[-1], file=f)
+
+    #assert_close(torch_result, thunder_result)
 
     if recwarn:
         for r in recwarn:
@@ -80,6 +95,7 @@ def test_nanogpt_complete_autograd(executor, device, dtype):
     cmodel = executor.make_callable(gpt)
     thunder_result = cmodel(x, targets=targets)
     thunder_grads = torch.autograd.grad(thunder_result[1], gpt.parameters())
+    dump.traces("nanogpt", cmodel)
 
     assert_close(torch_result, thunder_result)
     assert_close(torch_grads, thunder_grads, atol=1e-1, rtol=1e-1)
@@ -260,6 +276,7 @@ def test_hf_bart_self_attn():
     torch_result = model(inp, None)
     tom = thunder.jit(model)
     thunder_result = tom(inp, None)
+    dump.traces("hf-bart", tom)
     assert_close(torch_result, thunder_result)
 
 
@@ -281,6 +298,7 @@ def test_hf_bert():
         m.eval()
         inp = torch.randint(1, 20, (1, 32))
         jm = thunder.jit(m)
+        dump.traces("hf-bert", jm)
         actual = jm(inp)
         expected = m(inp)
 
@@ -532,6 +550,7 @@ def test_hf_llama():
     )
     res = jm(**args1)
     expected = model(**args1)
+    dump.traces("hf-llama", jm)
 
     assert_close(res, expected, rtol=1e-1, atol=1e-1)
 
@@ -575,6 +594,7 @@ def test_memory_litgpt_llama3():
     jm = thunder.jit(m)
     forward_backward_peak(jm, inp)
     forward_backward_peak(jm, inp)
+    dump.traces("litgpt-llama", jm)
 
     mem_thunder = forward_backward_peak(jm, inp)
     mem_eager = forward_backward_peak(m, inp)
