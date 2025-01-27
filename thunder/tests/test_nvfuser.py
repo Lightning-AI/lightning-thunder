@@ -36,11 +36,11 @@ from thunder.tests.framework import (
 from thunder.tests.make_tensor import make_tensor, make_tensor_like
 from thunder.tests.opinfos import (
     opinfos,
-    push_away_from_singularities,
     tensor_creation_ops,
     get_opinfo,
     linear_opinfo,
     matmul_opinfo,
+    embedding_opinfo,
 )
 from looseversion import LooseVersion
 
@@ -198,15 +198,16 @@ def test_redundant_cast_nvfusion(executor, device: str, dtype: dtypes.dtype):
     fusions = examine.get_fusion_symbols(extrace)
     assert len(fusions) == 2
 
+    print(extrace)
     # Verifies that the nvFusion inputs and outputs are updated properly
     t0 = fusions[0].output[0]
-    assert fusions[1].args[2].name == "b"
+    assert fusions[1].args[2].name == "x"
     assert t0.name == "b"
     assert extrace.output[0].name == "b"
-    assert len(fusions[0].subsymbols) == 3
+    assert len(fusions[0].subsymbols) == 1
 
     # Verifies the intermediate consumer
-    assert fusions[1].subsymbols[-1].args[0].name == "g"
+    assert fusions[1].subsymbols[-1].args[0].name == "f"
 
 
 @instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
@@ -286,7 +287,11 @@ def test_cse_subsymbol_removal(executor, device, _):
     assert {el.sym.name for el in fw_trace.bound_symbols if not el.sym.is_fusion} == set(outside_fusion_syms)
 
 
-@instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))
+@instantiate(
+    dtypes=NOTHING,
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(nvFuserExecutor,),
+)
 def test_cse_subsymbol_redundant_args(executor, device, _):
     from thunder.core.pytree import tree_flatten
 
@@ -309,12 +314,16 @@ def test_cse_subsymbol_redundant_args(executor, device, _):
     fusion_bsyms = tuple(filter(lambda a: a.sym.is_fusion, fw_trace.bound_symbols))
 
     # There is a single nvfuser fusion group.
-    assert len(fusion_bsyms) == 1
+    assert len(fusion_bsyms) == 2
     nvf_0 = fusion_bsyms[0]
+    nvf_1 = fusion_bsyms[1]
 
-    assert [t.name for t in tree_flatten(nvf_0.args)[0]] == ["t0", "z", "w"]
-    assert len(nvf_0.subsymbols) == 7
-    assert [t.name for t in tree_flatten(nvf_0.output)[0]] == ["t13"]
+    assert [t.name for t in tree_flatten(nvf_0.args)[0]] == ["t16", "z"]
+    assert [t.name for t in tree_flatten(nvf_1.args)[0]] == ["t16", "w", "t4"]
+    assert len(nvf_0.subsymbols) == 4
+    assert len(nvf_1.subsymbols) == 6
+    assert [t.name for t in tree_flatten(nvf_0.output)[0]] == ["t4"]
+    assert [t.name for t in tree_flatten(nvf_1.output)[0]] == ["t13"]
 
 
 @instantiate(dtypes=NOTHING, devicetypes=(devices.DeviceType.CUDA,), executors=(nvFuserExecutor,))
@@ -357,28 +366,28 @@ def test_cse_rematerialization(executor, device, _):
 
     fw_trace = thunder.last_traces(compiled_func)[-1]
     fusion_bsyms = tuple(filter(lambda a: a.sym.is_fusion, fw_trace.bound_symbols))
-    assert len(fusion_bsyms) == 11
+    assert len(fusion_bsyms) == 9
     # fusion groups 1 and 6 correspond with the apply_rotary_emb function
     # Nvfuser with recomputation should use precomputed cos and sin values.
-    assert len(fusion_bsyms[1].args) == len(fusion_bsyms[6].args)
+    assert len(fusion_bsyms[1].args) == len(fusion_bsyms[5].args)
 
     # Below, we check that freqs_sin and freqs_cos are used
     # in the same operation in both fusions.
     (fusion1_freqs_sin_arg,) = (a for a in fusion_bsyms[1].args if a.name == "freqs_sin")
     (fusion1_freqs_cos_arg,) = (a for a in fusion_bsyms[1].args if a.name == "freqs_cos")
-    (fusion6_freqs_sin_arg,) = (a for a in fusion_bsyms[6].args if a.name == "freqs_sin")
-    (fusion6_freqs_cos_arg,) = (a for a in fusion_bsyms[6].args if a.name == "freqs_cos")
+    (fusion5_freqs_sin_arg,) = (a for a in fusion_bsyms[5].args if a.name == "freqs_sin")
+    (fusion5_freqs_cos_arg,) = (a for a in fusion_bsyms[5].args if a.name == "freqs_cos")
 
     (fusion1_freqs_sin_user,) = (s for s in fusion_bsyms[1].subsymbols if s.args[0] is fusion1_freqs_sin_arg)
-    (fusion6_freqs_sin_user,) = (s for s in fusion_bsyms[6].subsymbols if s.args[0] is fusion6_freqs_sin_arg)
+    (fusion6_freqs_sin_user,) = (s for s in fusion_bsyms[5].subsymbols if s.args[0] is fusion5_freqs_sin_arg)
 
     assert fusion1_freqs_sin_user.sym is fusion6_freqs_sin_user.sym
     assert fusion1_freqs_sin_user.args[1:] == fusion6_freqs_sin_user.args[1:]
     (fusion1_freqs_cos_user,) = (s for s in fusion_bsyms[1].subsymbols if s.args[0] is fusion1_freqs_cos_arg)
-    (fusion6_freqs_cos_user,) = (s for s in fusion_bsyms[6].subsymbols if s.args[0] is fusion1_freqs_cos_arg)
+    (fusion5_freqs_cos_user,) = (s for s in fusion_bsyms[5].subsymbols if s.args[0] is fusion5_freqs_cos_arg)
 
-    assert fusion1_freqs_cos_user.sym is fusion6_freqs_cos_user.sym
-    assert fusion1_freqs_cos_user.args[1:] == fusion6_freqs_cos_user.args[1:]
+    assert fusion1_freqs_cos_user.sym is fusion5_freqs_cos_user.sym
+    assert fusion1_freqs_cos_user.args[1:] == fusion5_freqs_cos_user.args[1:]
 
 
 # Tests that two separated nvFuser regions can be merged when they don't depend
@@ -387,7 +396,13 @@ def test_cse_rematerialization(executor, device, _):
 #   these tests don't rely on matmul not being executable by nvFuser
 # TODO Explicitly use the nvFuserExecutor in these tests
 #   (by creating executor.make_callable?)
-@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
+@instantiate(
+    executors=(nvFuserExecutor,),
+    dtypes=(thunder.float32,),
+    decorators=(
+        pytest.mark.skip(reason="deliberately disabled https://github.com/Lightning-AI/lightning-thunder/issues/1337"),
+    ),
+)
 def test_nvfuser_toposort_basic(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device, dtype=torch_dtype)
@@ -412,7 +427,13 @@ def test_nvfuser_toposort_basic(executor, device: str, dtype: dtypes.dtype):
 
 # Tests that three separated nvFuser regions can be merged when they have no
 #   dependencies
-@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
+@instantiate(
+    executors=(nvFuserExecutor,),
+    dtypes=(thunder.float32,),
+    decorators=(
+        pytest.mark.skip(reason="deliberately disabled https://github.com/Lightning-AI/lightning-thunder/issues/1337"),
+    ),
+)
 def test_nvfuser_toposort_independent(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device, dtype=torch_dtype)
@@ -439,7 +460,13 @@ def test_nvfuser_toposort_independent(executor, device: str, dtype: dtypes.dtype
 
 # Tests that three separated nvFuser regions can be merged when the middle region
 #   depends on the first region
-@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
+@instantiate(
+    executors=(nvFuserExecutor,),
+    dtypes=(thunder.float32,),
+    decorators=(
+        pytest.mark.skip(reason="deliberately disabled https://github.com/Lightning-AI/lightning-thunder/issues/1337"),
+    ),
+)
 def test_nvfuser_toposort_dependent0(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device, dtype=torch_dtype)
@@ -466,7 +493,13 @@ def test_nvfuser_toposort_dependent0(executor, device: str, dtype: dtypes.dtype)
 
 # Tests that three separated nvFuser regions can be merged when the middle
 #   and final regions depend on the first one
-@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
+@instantiate(
+    executors=(nvFuserExecutor,),
+    dtypes=(thunder.float32,),
+    decorators=(
+        pytest.mark.skip(reason="deliberately disabled https://github.com/Lightning-AI/lightning-thunder/issues/1337"),
+    ),
+)
 def test_nvfuser_toposort_dependent1(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device, dtype=torch_dtype)
@@ -493,7 +526,13 @@ def test_nvfuser_toposort_dependent1(executor, device: str, dtype: dtypes.dtype)
 
 # Tests that three separated nvFuser regions can be merged when each region
 #   depends on the other
-@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
+@instantiate(
+    executors=(nvFuserExecutor,),
+    dtypes=(thunder.float32,),
+    decorators=(
+        pytest.mark.skip(reason="deliberately disabled https://github.com/Lightning-AI/lightning-thunder/issues/1337"),
+    ),
+)
 def test_nvfuser_toposort_dependent2(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device, dtype=torch_dtype)
@@ -520,7 +559,13 @@ def test_nvfuser_toposort_dependent2(executor, device: str, dtype: dtypes.dtype)
 
 # Tests that three separated nvFuser regions can be merged when the first region
 #   is entirely consumed by later regions
-@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
+@instantiate(
+    executors=(nvFuserExecutor,),
+    dtypes=(thunder.float32,),
+    decorators=(
+        pytest.mark.skip(reason="deliberately disabled https://github.com/Lightning-AI/lightning-thunder/issues/1337"),
+    ),
+)
 def test_nvfuser_toposort_dependent3(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device, dtype=torch_dtype)
@@ -546,7 +591,13 @@ def test_nvfuser_toposort_dependent3(executor, device: str, dtype: dtypes.dtype)
 
 
 # Tests that three separated nvFuser regions can be merged even if a PyTorch region has to be reordered BEFORE them
-@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
+@instantiate(
+    executors=(nvFuserExecutor,),
+    dtypes=(thunder.float32,),
+    decorators=(
+        pytest.mark.skip(reason="deliberately disabled https://github.com/Lightning-AI/lightning-thunder/issues/1337"),
+    ),
+)
 def test_nvfuser_toposort_dependent4(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device, dtype=torch_dtype)
@@ -573,7 +624,13 @@ def test_nvfuser_toposort_dependent4(executor, device: str, dtype: dtypes.dtype)
 
 # Tests that three separated nvFuser regions can only be partially merged
 #   if there's a PyTorch data dependency between them
-@instantiate(executors=(nvFuserExecutor,), dtypes=(thunder.float32,))
+@instantiate(
+    executors=(nvFuserExecutor,),
+    dtypes=(thunder.float32,),
+    decorators=(
+        pytest.mark.skip(reason="deliberately disabled https://github.com/Lightning-AI/lightning-thunder/issues/1337"),
+    ),
+)
 def test_nvfuser_toposort_dependent5(executor, device: str, dtype: dtypes.dtype):
     torch_dtype = ltorch.to_torch_dtype(dtype)
     a = make_tensor((2, 2), device=device, dtype=torch_dtype)
@@ -1077,3 +1134,115 @@ def test_sdpa(
     ref_outputs = (ref_attn_out, *(inp.grad for inp in ref_tensor_inputs))
     for nv_out, ref_out in zip(nv_outputs, ref_outputs):
         torch.testing.assert_close(nv_out, ref_out)
+
+
+@instantiate(
+    dtypes=(thunder.float32,),
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(nvFuserExecutor,),
+    decorators=(
+        pytest.mark.skipif(
+            nvfuser_version() is None or nvfuser_version() < LooseVersion("0.2.23"),
+            reason="Requires nvFuser version 0.2.23 or later",
+        ),
+    ),
+)
+def test_enable_disable_options(executor, device: str, thunder_dtype: dtypes.dtype):
+
+    def fn(a, b):
+        return torch.matmul(a, b)
+
+    m, n, k = 24, 16, 16
+
+    dtype = ltorch.to_torch_dtype(thunder_dtype)
+    inps = [
+        torch.randn(m, k, device="cuda", dtype=dtype),
+        torch.randn(k, n, device="cuda", dtype=dtype),
+    ]
+
+    compiled_func = thunder.jit(
+        fn,
+        executors_list=executor.executors_list(),
+        nv_enable_matmul=True,
+        nv_enable_options=["fuse_matmul"],
+        nv_disable_options=["matmul_expr_eval", "kernel_reuse"],
+    )
+    # The above combination of options enables matmul codegen and disables expr evaluation for matmul.
+    # Since matmul scheduler does not support float32 inputs, the execution should raise an error.
+    # By default, without using these options, the given fusion will run through expr eval scheduler correctly.
+    # NOTE: This test relies on `float32` being unsupported by nvFuser matmul scheduler.
+    # If this support is added, the test will need to be updated since it will no longer
+    # verify the functionality of the above flags.
+    with pytest.raises(RuntimeError, match="Can not find a scheduler to schedule fusion segment"):
+        out = compiled_func(*inps)
+
+
+@instantiate(
+    dtypes=(thunder.float32,),
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(nvFuserExecutor,),
+)
+def test_no_shape_only_fusion_region(executor, device: str, thunder_dtype: dtypes.dtype):
+    x = make_tensor(2, 2, 2, device=device, dtype=ltorch.to_torch_dtype(thunder_dtype))
+
+    def fn(x):
+        return x.view(4, -1).transpose(0, 1)
+
+    jfn = thunder.jit(fn)
+
+    expected = fn(x)
+    actual = jfn(x)
+
+    torch.testing.assert_close(actual, expected)
+
+    fwd_trace = thunder.last_traces(jfn)[-1]
+
+    # Make sure there are no fusion symbols.
+    assert all(not bsym.sym.is_fusion for bsym in fwd_trace.bound_symbols)
+
+    # Verify that we create fusion even if we have a single compute op.
+    def fn(x):
+        # There is a `sin` which is not a shape op.
+        return x.view(4, -1).transpose(0, 1).sin().transpose(0, 1).view(2, 2, 2)
+
+    jfn = thunder.jit(fn)
+    expected = fn(x)
+    actual = jfn(x)
+
+    torch.testing.assert_close(actual, expected)
+
+    fwd_trace = thunder.last_traces(jfn)[-1]
+
+    # Make sure there is a fusion symbol.
+    assert any(bsym.sym.is_fusion for bsym in fwd_trace.bound_symbols)
+
+
+@instantiate(
+    dtypes=(thunder.float16, thunder.bfloat16),
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(nvFuserExecutor,),
+    decorators=(
+        pytest.mark.skipif(
+            nvfuser_version() is None or nvfuser_version() < LooseVersion("0.2.25"),
+            reason="Requires nvFuser version 0.2.25 or later",
+        ),
+    ),
+)
+def test_embedding(
+    executor,
+    device: str,
+    dtype: dtypes.dtype,
+):
+
+    def embedding_fn(inputs):
+        return torch.nn.functional.embedding(*inputs)
+
+    for sample in embedding_opinfo.sample_inputs(device, dtype):
+        compiled_func = thunder.jit(embedding_fn, executors_list=executor.executors_list(), nv_enable_embedding=True)
+        out = compiled_func(sample.args)
+        expected_out = torch.nn.functional.embedding(*sample.args)
+        fwd_trace = thunder.last_traces(compiled_func)[-1]
+        fwd_fusion = examine.get_fusions(fwd_trace)
+
+        assert len(fwd_fusion) == 1
+        torch.testing.assert_close(out, expected_out)

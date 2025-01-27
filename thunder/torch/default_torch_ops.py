@@ -2,6 +2,7 @@ import torch
 
 torch_auto_registered_ops = {
     torch: [
+        torch._native_multi_head_attention,
         torch.lobpcg,
         torch.unravel_index,
         torch.absolute,
@@ -293,7 +294,6 @@ torch_auto_registered_ops = {
         torch.trapz,
         torch.triangular_solve,
         torch.triplet_margin_loss,
-        torch.triu,
         torch.unbind_copy,
         torch.unfold_copy,
         torch.unique_consecutive,
@@ -354,7 +354,6 @@ torch_auto_registered_ops = {
         torch.nn.functional.kl_div,
         torch.nn.functional.l1_loss,
         torch.nn.functional.local_response_norm,
-        torch.nn.functional.logsigmoid,
         torch.nn.functional.lp_pool1d,
         torch.nn.functional.lp_pool2d,
         torch.nn.functional.lp_pool3d,
@@ -385,7 +384,6 @@ torch_auto_registered_ops = {
         torch.nn.functional.softplus,
         torch.nn.functional.softshrink,
         torch.nn.functional.softsign,
-        torch.nn.functional.tanhshrink,
         torch.nn.functional.triplet_margin_loss,
         torch.nn.functional.triplet_margin_with_distance_loss,
         torch.nn.functional.unfold,
@@ -611,7 +609,6 @@ torch_auto_registered_ops = {
         torch.Tensor.tolist,
         torch.Tensor.trace,
         torch.Tensor.triangular_solve,
-        torch.Tensor.triu,
         torch.Tensor.unique,
         torch.Tensor.unique_consecutive,
         torch.Tensor.unsafe_chunk,

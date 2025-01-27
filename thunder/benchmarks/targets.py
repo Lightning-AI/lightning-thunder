@@ -39,6 +39,7 @@ from thunder.benchmarks import (
     torch_compile_executor,
     torch_executor,
     thunder_transformerengine_executor,
+    record_peak_allocated_memory,
 )
 from thunder.core.interpreter import interpret
 
@@ -57,7 +58,6 @@ IMPORTANT_CONFIGS = [
     "phi-2",
 ]
 RUN_ALL_CONFIGS = os.environ.get("THUNDER_BENCH_RUN_ALL_CONFIGS", "0") == "1"
-MAX_ALLOCATED_MEMORY_KEYWORD = "max_allocated_memory_MB"
 
 
 class ComputeType(Enum):
@@ -80,61 +80,6 @@ parametrize_compute_type_only_training = pytest.mark.parametrize(
     (ComputeType.TRAINING_FORWARD, ComputeType.TRAINING_BACKWARD),
     ids=("forward", "backward"),
 )
-
-
-import functools
-
-
-def timer_and_memory_stats(benchmark) -> float:
-    """
-    Make a timer that also records the peak allocated memory.
-
-    pytest-benchmark has the following benchmarking code structure:
-
-    start = timer()
-    for _ in loops_range:
-        function_to_benchmark(*args, **kwargs)
-    end = timer()
-
-    So the information about the peak allocated memory should be recorded
-    after the function_to_benchmark call and we need to reset the peak memory
-    stats before the function_to_benchmark call.
-
-    If reset_peak_memory_stats is called inside the function_to_benchmark call,
-    the peak memory stats will be reset multiple times and the peak memory
-    stats may not be accurate.
-
-    Args:
-        benchmark: The pytest-benchmark object
-
-    Returns:
-        The decorator that records the peak allocated memory
-    """
-
-    def deco(old_timer):
-        @functools.wraps(old_timer)
-        def timer():
-            ret = old_timer()
-            benchmark.extra_info[MAX_ALLOCATED_MEMORY_KEYWORD] = torch.cuda.max_memory_allocated() / (1024 * 1024.0)
-            torch.cuda.reset_peak_memory_stats()
-            return ret
-
-        return timer
-
-    return deco
-
-
-from contextlib import contextmanager
-
-
-@contextmanager
-def record_peak_allocated_memory(benchmark):
-    old_timer = benchmark._timer
-    benchmark._timer = timer_and_memory_stats(benchmark)(benchmark._timer)
-    try:
-        yield
-    finally:
-        benchmark._timer = old_timer
 
 
 def benchmark_for_compute_type(compute_type: ComputeType, benchmark, fn: Callable, args, kwargs):

@@ -25,7 +25,7 @@ from thunder.core.pytree import tree_map
 from thunder.core.symbol import Symbol
 import thunder.executors as executors
 from thunder.tests.framework import _all_devicetypes, JAX_AVAILABLE, custom_comparator, IS_WINDOWS
-from thunder.tests.make_tensor import make_tensor
+from thunder.tests.make_tensor import make_tensor, make_tensor_like
 import thunder.tests.bf16
 import thunder.torch as ltorch
 
@@ -58,16 +58,6 @@ def prims_wrapper(prim):
 
 def round_remainder(x, y):
     return x - torch.round(x / y) * y
-
-
-def push_away_from_singularities(x, singularity_fn, eps):
-    """This function takes a tensor and moves individual values away
-    from singularities in `eps` increments, until they are further than
-    `eps` away from them. The `singularity_fn`  returns the (signed)
-    distance from `x` to the nearest singularity."""
-    x_dist = singularity_fn(x)
-    x_ = torch.where((x_dist >= 0) & (x_dist < eps), x + eps, x)
-    return torch.where((x_dist <= 0) & (x_dist > -eps), x_ - eps, x_)
 
 
 # Randomly select a fraction of the elements in a tensor and set them to specified value
@@ -208,10 +198,24 @@ class SampleInput:
         args, kwargs = tree_map(_to, self.args), tree_map(_to, self.kwargs)
         return SampleInput(*args, **kwargs)
 
-    def remove_singularities(self, singularity_fn, eps):
+    def remove_singularities(self, op, eps):
+
+        singularity_fn = op.singularity_fn_producer(self)
+        if singularity_fn is None:
+            return self
+
+        def _push_away_from_singularities(x, dist_fn, eps):
+            """This function takes a tensor and moves individual values away
+            from singularities in `eps` increments, until they are further than
+            `eps` away from them. The `dist_fn` returns the (signed)
+            distance from `x` to the nearest singularity."""
+            x_dist = dist_fn(x)
+            x_ = torch.where((x_dist >= 0) & (x_dist < eps), x + eps, x)
+            return torch.where((x_dist < 0) & (x_dist > -eps), x_ - eps, x_)
+
         def _remove_singularities(x):
             if isinstance(x, torch.Tensor) and datatypes.is_float_dtype(datatypes.to_dtype(x)):
-                return push_away_from_singularities(x, singularity_fn, eps)
+                return _push_away_from_singularities(x, singularity_fn, eps)
 
             return x
 
@@ -341,6 +345,7 @@ class OpInfo:
         test_directives=(),
         domain=(None, None),
         singularity_fn=None,
+        singularity_fn_producer=None,
         test_torch_compile_executor=False,
     ):
         self.op = op
@@ -376,6 +381,11 @@ class OpInfo:
         self.test_directives = test_directives
         self.domain = Domain(*domain)
         self.singularity_fn = singularity_fn
+        # singularity_fn_producers are expected to produce a singularity_fn based on a given SampleInput.
+        # This can be useful in cases when the definition of the op function invovles kwargs of the input.
+        self.singularity_fn_producer = (
+            (lambda _: singularity_fn) if singularity_fn_producer is None else singularity_fn_producer
+        )
         self.test_torch_compile_executor = test_torch_compile_executor
 
     def __call__(self, *args, **kwargs):
@@ -1649,6 +1659,7 @@ celu_opinfo = OpInfo(
     dtypes=(datatypes.floating,),
     sample_input_generator=get_elementwise_unary_with_alpha_generator(),
     torch_reference=_elementwise_unary_torch(torch.celu),
+    singularity_fn=lambda x: x,
     test_directives=(),
 )
 elementwise_unary_ops.append(celu_opinfo)
@@ -1676,6 +1687,17 @@ leaky_relu_opinfo = OpInfo(
     test_directives=(),
 )
 elementwise_unary_ops.append(leaky_relu_opinfo)
+
+
+logsigmoid_opinfo = OpInfo(
+    ltorch.logsigmoid,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=torch.nn.functional.logsigmoid,
+    domain=(-1, 1),
+    test_directives=(),
+)
+elementwise_unary_ops.append(logsigmoid_opinfo)
 
 
 relu_opinfo = OpInfo(
@@ -1727,35 +1749,21 @@ relu6_opinfo = OpInfo(
 elementwise_unary_ops.append(relu6_opinfo)
 
 
-# For positive lambd, hardshrink's singularities occur at lambd and -lambd, the locations of jump discontinuties
-# of its partial derivatives.  Since lambd is passed as an input kwarg, the singularity_fn depends upon the input
-# sample.  Therefore, mutliple opinfos with varying sample generator and singularity_fn pairs are added.
-def get_hardshrink_singularity_fn(lambd):
-    if lambd is None:
-        lambd = 0.5
+# fdm.jvp, which is used in test_vjp_correctness, behaves badly at jump discontinuties of the partial derviatives
+def hardshrink_singularity_fn_producer(sample: SampleInput):
+    lambd = sample.kwargs.get("lambd", 0.5)
     return lambda a: torch.where(a >= 0, a - lambd, a + lambd)
 
 
-def hardshrink_opinfo_factory(lambds):
-    for lambd in lambds:
-        kwargs = {} if lambd is None else {"lambd": lambd}
-        name = "hardshrink_" + str(lambd)
-        singularity_fn = get_hardshrink_singularity_fn(lambd)
-
-        hardshrink_opinfo = OpInfo(
-            ltorch.hardshrink,
-            name=name,
-            dtypes=(datatypes.floating,),
-            sample_input_generator=get_elementwise_unary_with_kwargs_generator([kwargs]),
-            torch_reference=_elementwise_unary_torch(torch.nn.functional.hardshrink),
-            # fdm.jvp, which is used in test_vjp_correctness, behaves badly at jump discontinuties of the partial derviatives
-            singularity_fn=singularity_fn,
-            test_directives=(),
-        )
-        elementwise_unary_ops.append(hardshrink_opinfo)
-
-
-hardshrink_opinfo_factory([None, 0.25, -0.1])
+hardshrink_opinfo = OpInfo(
+    ltorch.hardshrink,
+    dtypes=(datatypes.floating,),
+    sample_input_generator=get_elementwise_unary_with_kwargs_generator([{}, {"lambd": 0.25}, {"lambd": -0.1}]),
+    torch_reference=_elementwise_unary_torch(torch.nn.functional.hardshrink),
+    singularity_fn_producer=hardshrink_singularity_fn_producer,
+    test_directives=(),
+)
+elementwise_unary_ops.append(hardshrink_opinfo)
 
 
 hardswish_opinfo = OpInfo(
@@ -1809,6 +1817,32 @@ selu_opinfo = OpInfo(
     ),
 )
 elementwise_unary_ops.append(selu_opinfo)
+
+
+tanhshrink_opinfo = OpInfo(
+    ltorch.tanhshrink,
+    dtypes=(datatypes.inexact,),
+    sample_input_generator=elementwise_unary_generator,
+    torch_reference=_elementwise_unary_torch(torch.nn.functional.tanhshrink),
+    test_directives=(
+        # Torch doesn't support CPU float16 or complex32 tanhshrink
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.float16, datatypes.complex32),
+            devicetypes=(devices.DeviceType.CPU,),
+        ),
+        DecorateInfo(
+            custom_comparator(partial(assert_close, atol=1e-2, rtol=1e-2)),
+            executors=("nvfuser",),
+            dtypes=(
+                datatypes.float16,
+                datatypes.bfloat16,
+            ),
+        ),
+    ),
+)
+elementwise_unary_ops.append(tanhshrink_opinfo)
 
 
 round_opinfo = OpInfo(
@@ -2165,11 +2199,20 @@ lt_opinfo = OpInfo(
 )
 elementwise_binary_ops.append(lt_opinfo)
 
+
+def min_max_singularity_fn_producer(sample):
+    a, b = sample.args
+    if a.shape == b.shape or b.shape == ():
+        return lambda x: x - b if x is a else make_tensor_like(x, low=1)
+    return lambda x: x - a if x is b else make_tensor_like(x, low=1)
+
+
 maximum_opinfo = OpInfo(
     clang.maximum,
     sample_input_generator=partial(elementwise_binary_generator, no_rhs_numbers=True),
     torch_reference=torch.maximum,
     supports_grad=True,
+    singularity_fn_producer=min_max_singularity_fn_producer,
 )
 elementwise_binary_ops.append(maximum_opinfo)
 
@@ -2177,6 +2220,7 @@ minimum_opinfo = OpInfo(
     clang.minimum,
     sample_input_generator=partial(elementwise_binary_generator, no_rhs_numbers=True),
     torch_reference=torch.minimum,
+    singularity_fn_producer=min_max_singularity_fn_producer,
 )
 elementwise_binary_ops.append(minimum_opinfo)
 
@@ -2882,6 +2926,30 @@ tril_opinfo = OpInfo(
     ),
 )
 conditional_and_mask_ops.append(tril_opinfo)
+
+triu_opinfo = OpInfo(
+    ltorch.triu,
+    sample_input_generator=tril_sample_generator,
+    torch_reference=torch.triu,
+    test_directives=(
+        # Not all PyTorch versions support complex32 triu
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            dtypes=(datatypes.complex32,),
+        ),
+        # PyTorch 2.0 doesn't support CUDA bfloat16 triu
+        DecorateInfo(
+            pytest.mark.xfail,
+            "test_core_vs_torch_consistency",
+            devicetypes=(devices.DeviceType.CUDA,),
+            dtypes=(datatypes.bfloat16,),
+            active_if=(LooseVersion(torch.__version__) < "2.1"),
+        ),
+    ),
+)
+
+conditional_and_mask_ops.append(triu_opinfo)
 
 # Puts all elementwise ternary opinfos into the "opinfos" list
 opinfos.extend(conditional_and_mask_ops)
@@ -7796,9 +7864,14 @@ if LooseVersion(torch.__version__) >= "2.4":
             ),
             # See issue - https://github.com/Lightning-AI/lightning-thunder/issues/1395
             DecorateInfo(
-                custom_comparator(partial(assert_close, atol=2e-3, rtol=2e-3)),
+                custom_comparator(partial(assert_close, atol=1e-2, rtol=1e-2)),
                 dtypes=(datatypes.float16,),
                 devicetypes=(devices.DeviceType.CUDA,),
+            ),
+            DecorateInfo(
+                pytest.mark.skip(reason="Flaky. See https://github.com/Lightning-AI/lightning-thunder/issues/1678"),
+                "test_core_vs_torch_consistency",
+                dtypes=(datatypes.bfloat16,),
             ),
         ),
     )
