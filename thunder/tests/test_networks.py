@@ -520,6 +520,7 @@ LLAMA_3_2_1B_CFG = {
 def test_hf_llama():
     from transformers.models.llama import LlamaForCausalLM, LlamaConfig
     from transformers.models.llama.modeling_llama import logger as llama_logger
+    from thunder.examine import get_fusion_symbols
     import logging
 
     # transformers logs a cache deprecation warning
@@ -558,9 +559,8 @@ def test_hf_llama():
     expected2 = model(past_key_values=res["past_key_values"], **args2)
     assert_close(res2, expected2, rtol=1e-1, atol=1e-1)
 
-    top_level_symbol_names = {bsym.sym.name for bsym in thunder.last_traces(jm)[-1].bound_symbols}
     # changes this to fewer as needed, the goal is to not have too many fusions
-    assert len([s for s in top_level_symbol_names if s.startswith("nvFusion")]) == 7
+    assert len(get_fusion_symbols(thunder.last_traces(jm)[-1])) == 7
 
 
 @requiresCUDA

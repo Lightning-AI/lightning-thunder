@@ -1549,3 +1549,42 @@ def test_cache_symbolic_values_dict():
     expected = foo(b, "b")
 
     assert_close(actual, expected)
+
+
+def test_specific_dataclass_returns():
+    import transformers
+
+    def fn(x):
+        return transformers.modeling_outputs.BaseModelOutputWithPast(last_hidden_state=x)
+
+    jfn = thunder.jit(fn)
+    x = torch.randn(2, 2)
+    expected = fn(x)
+    res = jfn(x)
+    assert expected.last_hidden_state is x
+    assert res.last_hidden_state is x
+
+
+def test_modulelist_idx():
+    class MyModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.l = torch.nn.ModuleList(
+                [
+                    torch.nn.Linear(4, 4),
+                    torch.nn.Linear(4, 4),
+                ]
+            )
+
+        def forward(self, x):
+            for m in self.l[:-1]:
+                x = m(x)
+            x = self.l[-1](x)
+            return x
+
+    m = MyModel()
+    jm = thunder.jit(m)
+    x = torch.randn(2, 4)
+    expected = m(x)
+    res = jm(x)
+    assert_close(res, expected)

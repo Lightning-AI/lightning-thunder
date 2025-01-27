@@ -878,6 +878,10 @@ def unpack_sequence_printer(
     parts.append(f"= {call_str}")
 
     lines = _make_parts_into_line_or_lines(parts)
+    # Add info about the unpacked elements as comments
+    for out in out_printables:
+        details = _make_parts_into_line_or_lines([f"# {codeutils.prettyprint(out, with_type=True)}"])
+        lines.extend(details)
     return lines
 
 
@@ -1295,7 +1299,8 @@ pack_setitem = make_prim(
 
 
 def python_dataclass_new_meta(typ, **kwargs):
-    return AnyProxy(typ(**kwargs))
+    # we are cheating here, but instantiating a dataclass can be wild. typ(**kwargs)
+    return AnyProxy(None)
 
 
 def python_dataclass_new_printer(

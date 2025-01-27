@@ -8,23 +8,24 @@ from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform, nvtx_
 from thunder.tests.framework import requiresCUDA, version_between, BITSANDBYTES_AVAILABLE
 
 
+class MiniModel(torch.nn.Module):
+    def __init__(self, DIM) -> None:
+        super().__init__()
+        self.fc1 = torch.nn.Linear(DIM, DIM)
+        self.fc2 = torch.nn.Linear(DIM, DIM)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = torch.nn.functional.relu(x)
+        x = self.fc2(x)
+        return x
+
+
 @requiresCUDA
 def test_nvtx_transform():
     DIM = 2
 
-    class Model(torch.nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.fc1 = torch.nn.Linear(DIM, DIM)
-            self.fc2 = torch.nn.Linear(DIM, DIM)
-
-        def forward(self, x):
-            x = self.fc1(x)
-            x = torch.nn.functional.relu(x)
-            x = self.fc2(x)
-            return x
-
-    model = Model()
+    model = MiniModel(DIM)
     x = torch.randn(4, DIM)
 
     # Transform for profiling with NVTX markers.
@@ -421,7 +422,6 @@ def test_lora_transform_linear():
 
 
 def test_constant_folding():
-
     # Helper to verify we see the expected constant tensors
     # in exec_trace.
     def assert_in_trace(exec_trace, sym, arg_vals):
@@ -710,27 +710,12 @@ def test_buffer_dtype_casting():
             # update the cache
             return self.k, self.v
 
-    # BUG: issue: 1637
-    class ParentModule(nn.Module):
-        def __init__(
-            self,
-            k_shape: tuple[int, int, int, int],
-            v_shape: tuple[int, int, int, int],
-            device: torch.device | None = None,
-            dtype: torch.dtype | None = None,
-        ):
-            super().__init__()
-            self.cast_module = cast(k_shape, v_shape, device=device, dtype=dtype)
-
-        def forward(self, k: torch.Tensor, v: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-            return self.cast_module(k, v)
-
     with torch.device("cpu"):
         k_shape = (2, 3, 4, 5)
         v_shape = (2, 3, 4, 5)
         device = torch.device("cpu")
         dtype = torch.float32
-        model = ParentModule(k_shape, v_shape, device=device, dtype=dtype).eval().requires_grad_(False)
+        model = cast(k_shape, v_shape, device=device, dtype=dtype).eval().requires_grad_(False)
 
     k = torch.randn(2, 3, 4, 5, device=device, dtype=torch.half)
     v = torch.randn(2, 3, 4, 5, device=device, dtype=torch.half)
@@ -753,3 +738,57 @@ def test_buffer_dtype_casting():
         if str(tr.get_provenance()) == "# Constructed by Dtype Convert":
             for bsym in tr.bound_symbols:
                 check_dtypes(bsym)
+
+
+def test_prune_prologue_checks():
+    DIM = 2
+    m = MiniModel(DIM)
+    inp = torch.randn(4, DIM)
+
+    def count_tensor_checks(tr):
+        return len([bsym for bsym in tr.bound_symbols if "check_tensor" in bsym.sym.name])
+
+    # without pruning: checks for 1 input and each parameter
+    jm = thunder.jit(m)
+    jm(inp)
+    assert count_tensor_checks(thunder.last_prologue_traces(jm)[-1]) == 1 + len(list(jm.parameters()))
+
+    # with default of pruning module checks: check for 1 input
+    jm = thunder.jit(m, transforms=(thunder.transforms.PrunePrologueChecks(),))
+    jm(inp)
+    assert count_tensor_checks(thunder.last_prologue_traces(jm)[-1]) == 1
+
+    # with pruning all checks: none left
+    jm = thunder.jit(m, transforms=(thunder.transforms.PrunePrologueChecks(prune_all_checks=True),))
+    jm(inp)
+    assert count_tensor_checks(thunder.last_prologue_traces(jm)[-1]) == 0
+
+
+def test_dce_duplicate_number_proxies():
+    from thunder.core.prims import PrimIDs
+
+    def fn(x):
+        shape_0 = x.shape
+        shape_1 = x.shape  # duplicate shape query
+        return sum(shape_0)
+
+    # symbolic values is necessary to have the shape query in trace
+    jfn = thunder.jit(fn, cache="symbolic values")
+
+    a = torch.randn(2, 3, 4, 5)
+    out = jfn(a)
+
+    def _count_shape_query(trace):
+        count = 0
+        for bsym in trace.bound_symbols:
+            if bsym.sym.id == PrimIDs.SHAPE:
+                count += 1
+        return count
+
+    # original two shape queries should both exist in the original trace
+    trace = thunder.last_traces(jfn)[0]
+    assert _count_shape_query(trace) == 2
+
+    # dce should remove duplicate shape queries
+    trace = thunder.core.transforms.dce(trace)
+    assert _count_shape_query(trace) == 1
