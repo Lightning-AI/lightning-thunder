@@ -2319,7 +2319,10 @@ def _matmul_check(
     b: TensorProxy,
 ) -> bool:
     enable_matmul: None | bool = get_compile_option("nv_enable_matmul", "Enable nvFuser matmul.")
-
+    # Enable matmul by default if nvFuser version is 0.2.23 or later
+    # Because nvFuser 0.2.23 has a fix for https://github.com/NVIDIA/Fuser/issues/3369
+    if enable_matmul is None and nvfuser_version() >= LooseVersion("0.2.23"):
+        enable_matmul = True
     if not enable_matmul or not are_supported_tensors(a, b):
         return False
     return True
