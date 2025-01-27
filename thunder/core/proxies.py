@@ -1219,7 +1219,7 @@ def _infer_tensor_properties(
 
     if like is not None:
         baseutils.check_type(like, (TensorProxy, FutureTensorProxy))
-        _shape = tuple(like.shape)
+        _shape = tuple(like._shape)
         _device = like.device
         _dtype = like.true_dtype
         _requires_grad = like.requires_grad
