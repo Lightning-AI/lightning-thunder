@@ -1134,12 +1134,14 @@ def find_producer_symbols(trace: TraceCtx, proxies: Sequence[Proxy], stop_proxie
                 if arg_name not in map(lambda x: x.name, stop_proxies) and arg_name not in seen:
                     queue.append(arg)
                     seen.add(arg_name)
+    # original_order maps from bound_symbol to the index/order of its occurence in the trace. The order is
+    # used to sort producer bound symbols to preserve the correctness of data dependency.
     original_order = dict()
     for i, bsym in enumerate(trace.bound_symbols):
-        # Don't overwrite the order if it's already encountered. This is necessary for
-        # duplicated bsyms. i.e. duplicated shape queries for example. Keeping the first
-        # encounter ensures correct data dependency, such that the shape queries exists
-        # before any consumption.
+        # Don't overwrite the order if it's already encountered. This is necessary for duplicate bsyms.
+        # e.g. duplicate shape queries. By preserving the smaller index, we ensure that the re-ordered
+        # shape queies would be placed before any consumers of its outputs, hence preserving the correctness
+        # of data dependency.
         if bsym in original_order:
             continue
         original_order[bsym] = i
