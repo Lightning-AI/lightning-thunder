@@ -18,7 +18,7 @@ from thunder.executors.passes import (
     transform_for_execution,
 )
 from thunder.executors.utils import Region
-from thunder.extend import FusionExecutor, register_executor, ImplInfo
+from thunder.extend import FusionExecutor, register_executor, ImplInfo, fuse_bound_symbols
 from thunder.core.compile_data import get_compile_option
 from thunder.executors.torchex import ex as pytorch_ex
 
@@ -54,7 +54,7 @@ def to_torch_translator(bsym: BoundSymbol) -> Callable:
             torch_op = pytorch_ex.opmap.get(bsym.subsymbols[0].sym.name)
 
         if torch_op is None:
-            raise RuntimeError("op not found for {bsym.sym.name}")
+            raise RuntimeError(f"op not found for {bsym.sym.name}")
 
         return torch_op(*args, **kwargs)
 
@@ -72,6 +72,7 @@ def make_compiled(
     region_trace = TraceCtx(None)
     region_trace.args = sorted_unique_inputs
     region_trace.kwargs = {}
+    region_trace.names = {a.name for a in region_trace.args}
     with tracectx(region_trace):
         for a in sorted_unique_inputs:
             prims.unpack_trivial(a, name=a.name)
@@ -79,9 +80,15 @@ def make_compiled(
     region_trace.bound_symbols += list(bsyms)
     region_trace.bound_symbols.append(prims.python_return.bind(sorted_unique_outputs, output=None))
     for bsym in region_trace.bound_symbols:
+        if bsym.sym == prims.unpack_trivial:
+            continue
         for o in bsym.flat_outs:
             if o is not None:
                 region_trace.add_name(o.name)
+        for sbsym in bsym.subsymbols:
+            for o in sbsym.flat_outs:
+                if o is not None and o.name not in region_trace.names:
+                    region_trace.add_name(o.name)
 
     # maybe make this the default if no sig info is present?
     region_trace._siginfo = SigInfo("to_be_compiled")
@@ -153,18 +160,8 @@ class TorchCompileExecutor(FusionExecutor):
         fusedtrace: TraceCtx = from_trace(trace)
 
         producers, consumers = utils.producers_and_consumers(trace)
-        from thunder.executors.data_dependent_partition import fuse_bound_symbols, Node
 
-        def _should_fuse(a: Node, b: Node):
-            def _can_fuse_node(n: Node):
-                if len(n.group_bsyms) > 1:
-                    return True
-                bsym: BoundSymbol = n.group_bsyms[0]
-                return self.can_fuse(bsym)
-
-            return _can_fuse_node(a) and _can_fuse_node(b)
-
-        bound_symbol_groups = fuse_bound_symbols(trace, _should_fuse)
+        bound_symbol_groups = fuse_bound_symbols(trace, self.can_fuse)
 
         fused_bsyms = []
         # Counts how many fusions (per executor) have been constructed

@@ -18,6 +18,7 @@ from thunder.tests.framework import (
     DynamoThunderExecutor,
     _all_test_executors,
     version_between,
+    BITSANDBYTES_AVAILABLE,
 )
 import thunder.tests.nanogpt_model as nanogpt_model
 import thunder.tests.hf_bart_self_attn as hf_bart_self_attn
@@ -123,8 +124,16 @@ def test_nanogpt_complete_cudagraphs(executor, device, dtype):
     assert _there_is_cudagraph_sym(thunder.last_traces(tom)[-1])
 
 
-@instantiate(dtypes=(thunder.float32,), devicetypes=(thunder.devices.DeviceType.CUDA,))
-@requiresCUDA
+@instantiate(
+    dtypes=(thunder.float32,),
+    devicetypes=(thunder.devices.DeviceType.CUDA,),
+    decorators=(
+        pytest.mark.skipif(
+            version_between(torch.__version__, min_ver="2.7.0dev0", max_ver="2.7.0a99"),
+            reason="https://github.com/lightning-ai/lightning-thunder/pull/1629",
+        ),
+    ),
+)
 def test_nanogpt_complete_cudagraphs_autograd(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
 
@@ -225,12 +234,6 @@ def test_nanogpt_mlp(executor, device, dtype):
 @instantiate(
     dtypes=(thunder.float32,),
     executors=all_test_executors_and_dynamo,
-    decorators=(
-        pytest.mark.skipif(
-            version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
-            reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
-        ),
-    ),
 )
 def test_nanogpt_gelu(executor, device, dtype):
     tdtype = ttorch.to_torch_dtype(dtype)
@@ -290,13 +293,9 @@ def test_hf_bert():
     version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
     reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1413",
 )
+@pytest.mark.skipif(not BITSANDBYTES_AVAILABLE, reason="`bitsandbytes` is not available")
 @requiresCUDA
 def test_quantization():
-    try:
-        import bitsandbytes
-    except (ImportError, RuntimeError):
-        pytest.skip("bitsandbytes not found")
-
     from thunder.tests import litgpt_model
     from lightning.fabric.plugins import BitsandbytesPrecision
 
@@ -371,8 +370,8 @@ def test_quantization():
 
 
 @pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
-    reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
+    version_between(torch.__version__, min_ver="2.7.0dev0", max_ver="2.7.0a99"),
+    reason="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1629",
 )
 @thunder.tests.framework.requiresCUDA
 def test_thunderfx_mistral_nemo_small():
@@ -409,8 +408,7 @@ def test_thunderfx_mistral_nemo_small():
     device = torch.device("cuda")
     model.to(device)
     model.train()
-    th_backend = thunder.dynamo.ThunderCompiler()
-    mdl = torch.compile(model, backend=th_backend)
+    mdl = thunder.dynamo.thunderfx(model)
 
     batch_size = 1
     iid_size = (batch_size, config.max_position_embeddings)
@@ -422,17 +420,13 @@ def test_thunderfx_mistral_nemo_small():
     grad_logits = torch.randn_like(logits)
     logits.backward(grad_logits)
 
-    assert th_backend.subgraph_infos, "Should have at least 1 subgraph"
+    assert mdl._backend.subgraph_infos, "Should have at least 1 subgraph"
 
 
-@pytest.mark.skipif(
-    version_between(torch.__version__, min_ver="2.6.0dev0", max_ver="2.6.0a99"),
-    reason="https://github.com/Lightning-AI/lightning-thunder/issues/1471",
-)
 @thunder.tests.framework.requiresCUDA
 @pytest.mark.parametrize("model_id", ["Qwen/Qwen2.5-7B-Instruct", "microsoft/Phi-3-mini-128k-instruct"])
 def test_hf_for_nemo(model_id):
-    from thunder.dynamo import ThunderCompiler
+    from thunder.dynamo import thunderfx
     from transformers import AutoConfig, AutoModelForCausalLM
 
     configuration = AutoConfig.from_pretrained(
@@ -453,8 +447,7 @@ def test_hf_for_nemo(model_id):
     # fullgraph=True used to work with transformers 4.45.2, but it doesn't work
     # with 4.46.2 because of re.findall usage in the loss function
     fullgraph = False
-    backend = ThunderCompiler()
-    compiled_model = torch.compile(model, backend=backend, fullgraph=fullgraph)
+    compiled_model = thunderfx(model, fullgraph=fullgraph)
 
     input_ids = torch.randint(0, configuration.vocab_size, (1, configuration.max_position_embeddings), device="cuda")
     ref_output = model(input_ids=input_ids, labels=input_ids)
@@ -469,7 +462,9 @@ def test_hf_for_nemo(model_id):
     torch.testing.assert_close(compiled_loss, ref_loss, rtol=1e-4, atol=1e-4)
 
     if fullgraph:
-        assert len(backend.subgraph_infos) == 1, "Should have exactly 1 subgraph because of fullgraph=True"
+        assert (
+            len(compiled_model._backend.subgraph_infos) == 1
+        ), "Should have exactly 1 subgraph because of fullgraph=True"
     loss_grad = torch.randn_like(compiled_loss)
 
     grads_ref = torch.autograd.grad(ref_loss, model.parameters(), grad_outputs=loss_grad)
@@ -516,13 +511,12 @@ LLAMA_3_2_1B_CFG = {
 @requiresCUDA
 def test_hf_llama():
     from transformers.models.llama import LlamaForCausalLM, LlamaConfig
-    from transformers import DynamicCache
     from transformers.models.llama.modeling_llama import logger as llama_logger
+    from thunder.examine import get_fusion_symbols
     import logging
 
     # transformers logs a cache deprecation warning
     llama_logger.setLevel(logging.CRITICAL)
-    model_id = "meta-llama/Llama-3.2-1B"
 
     config_args = LLAMA_3_2_1B_CFG.copy()
     config_args["num_hidden_layers"] = 1
@@ -557,7 +551,115 @@ def test_hf_llama():
     expected2 = model(past_key_values=res["past_key_values"], **args2)
     assert_close(res2, expected2, rtol=1e-1, atol=1e-1)
 
-    top_level_symbol_names = {bsym.sym.name for bsym in thunder.last_traces(jm)[-1].bound_symbols}
     # changes this to fewer as needed, the goal is to not have too many fusions
     num_of_nvfusion = 4 if nvfuser_version() >= LooseVersion("0.2.23") else 7
-    assert len([s for s in top_level_symbol_names if s.startswith("nvFusion")]) == num_of_nvfusion
+    assert len(get_fusion_symbols(thunder.last_traces(jm)[-1])) == num_of_nvfusion
+
+
+@requiresCUDA
+def test_memory_litgpt_llama3():
+    from thunder.tests import litgpt_model
+
+    def forward_backward_peak(m, inp):
+        torch.cuda.reset_peak_memory_stats(device=None)
+        mem_before = torch.cuda.max_memory_allocated()
+        res = m(inp)
+        res.sum().backward()
+        mem_after = torch.cuda.max_memory_allocated()
+        return (mem_after - mem_before) / 2**20
+
+    with torch.device("cuda"):
+        m = litgpt_model.GPT.from_name("llama2-like").bfloat16()
+        inp = torch.ones((1, 2048), dtype=torch.int64)
+
+    # warmup, allocate grads etc.
+    forward_backward_peak(m, inp)
+    forward_backward_peak(m, inp)
+    jm = thunder.jit(m)
+    forward_backward_peak(jm, inp)
+    forward_backward_peak(jm, inp)
+
+    mem_thunder = forward_backward_peak(jm, inp)
+    mem_eager = forward_backward_peak(m, inp)
+
+    # assert that attention is not automatically recomputed, see
+    # https://github.com/Lightning-AI/lightning-thunder/issues/1646
+    assert not {
+        bsym.sym.name
+        for bsym in thunder.last_backward_traces(jm)[-1].bound_symbols
+        if ("attention" in bsym.sym.name or "sdpa" in bsym.sym.name)
+        and ("forward" in bsym.sym.name or "fwd" in bsym.sym.name)
+    }
+
+    assert mem_thunder < mem_eager
+
+
+@requiresCUDA
+def test_hf_kvcache():
+    from transformers.models.llama import LlamaForCausalLM, LlamaConfig
+    from transformers.models.llama.modeling_llama import logger as llama_logger
+    import logging
+
+    # transformers logs a cache deprecation warning
+    llama_logger.setLevel(logging.CRITICAL)
+
+    config_args = LLAMA_3_2_1B_CFG.copy()
+    config_args["num_hidden_layers"] = 1
+    with torch.device("cuda"):
+        model = LlamaForCausalLM(LlamaConfig(**config_args)).to(torch.bfloat16).requires_grad_(False).eval()
+        model2 = LlamaForCausalLM(LlamaConfig(**config_args)).to(torch.bfloat16).requires_grad_(False).eval()
+        model2.load_state_dict(model.state_dict())
+
+    jm = thunder.jit(model)
+
+    j_static_cache = model._get_cache("static", 1, 128, "cuda", config_args)
+    ref_static_cache = model2._get_cache("static", 1, 128, "cuda", config_args)
+    assert j_static_cache is not ref_static_cache
+
+    args1 = dict(
+        cache_position=torch.tensor([0, 1, 2, 3, 4, 5], device="cuda:0"),
+        input_ids=torch.tensor([[128000, 791, 1401, 311, 2324, 374]], device="cuda:0"),
+        inputs_embeds=None,
+        attention_mask=torch.tensor([[1, 1, 1, 1, 1, 1]], device="cuda:0"),
+        use_cache=True,
+    )
+
+    args1["past_key_values"] = j_static_cache
+    res = jm(**args1)
+    args1["past_key_values"] = ref_static_cache
+    expected = model2(**args1)
+
+    assert res.past_key_values is j_static_cache
+    assert expected.past_key_values is ref_static_cache
+
+    # we cannot compare the StaticCache instances in assert_close
+    res["past_key_values"] = None
+    expected["past_key_values"] = None
+
+    assert_close(res, expected, rtol=1e-1, atol=1e-1)
+
+    assert_close(j_static_cache.key_cache, ref_static_cache.key_cache, rtol=1e-1, atol=1e-1)
+    assert_close(j_static_cache.value_cache, ref_static_cache.value_cache, rtol=1e-1, atol=1e-1)
+
+    res["past_key_values"] = j_static_cache
+    expected["past_key_values"] = ref_static_cache
+
+    args2 = dict(
+        cache_position=torch.tensor([6], device="cuda:0"),
+        input_ids=torch.tensor([[311]], device="cuda:0"),
+        inputs_embeds=None,
+        attention_mask=torch.tensor([[1, 1, 1, 1, 1, 1, 1]], device="cuda:0"),
+        use_cache=True,
+    )
+
+    res2 = jm(past_key_values=j_static_cache, **args2)
+    expected2 = model2(past_key_values=ref_static_cache, **args2)
+
+    assert res2.past_key_values is j_static_cache
+    assert expected2.past_key_values is ref_static_cache
+    res2["past_key_values"] = None
+    expected2["past_key_values"] = None
+    assert_close(res2, expected2, rtol=1e-1, atol=1e-1)
+
+    assert_close(j_static_cache.key_cache, ref_static_cache.key_cache, rtol=1e-1, atol=1e-1)
+    assert_close(j_static_cache.value_cache, ref_static_cache.value_cache, rtol=1e-1, atol=1e-1)

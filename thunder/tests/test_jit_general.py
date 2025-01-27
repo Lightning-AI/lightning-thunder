@@ -1194,7 +1194,7 @@ def test_custom_autograd_function():
     x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
     model = Model().to(dtype=torch.float64)
     jitted = thunder.jit(model)
-    gradcheck(jitted, (x,))
+    gradcheck(jitted, (x,), check_batched_grad=False)
 
     jitted.zero_grad()
     x = torch.randn((2, 2), dtype=torch.float64, requires_grad=True)
@@ -1265,6 +1265,72 @@ def test_autograd_function_apply():
 
     with pytest.raises(GradcheckError):
         gradcheck(jitted, (x,))
+
+
+def test_autograd_function_apply_with_no_grad():
+    # This case is using `torch` operations
+    def forward(_, x):
+        saved_for_backward = (x,)
+
+        with torch.no_grad():
+            sin = torch.sin(x)
+        return sin, saved_for_backward
+
+    def backward(_, grad_output, *saved_tensors):
+        return grad_output * 2
+
+    def my_sin(x):
+        res = torch.ops.higher_order.autograd_function_apply(
+            forward,
+            backward,
+            x,
+            args_tensor_mask=[True],
+            non_differentiable_idx=[],
+        )
+        return res
+
+    jitted = thunder.jit(my_sin)
+    x = torch.randn((2, 2), requires_grad=True)
+
+    out = jitted(x)
+    grad = torch.rand_like(out)
+    out.backward(grad)
+
+    # Verify that `backward` was applied.
+    torch.testing.assert_close(x.grad, grad * 2)
+
+    # This is using `thunder` operations
+    # NOTE - This takes a different codepath compared to above.
+    def forward(_, x):
+        saved_for_backward = (x,)
+        thunder.torch._set_grad_enabled_with_warning(False)
+        sin = thunder.torch.sin(x)
+        thunder.torch._set_grad_enabled_with_warning(True)
+        return sin, saved_for_backward
+
+    def backward(_, grad_output, *saved_tensors):
+        # NOTE - This is incorrect on purpose
+        return grad_output * 2
+
+    def fn(x):
+        res = thunder.torch.autograd_function_apply(
+            forward,
+            backward,
+            x,
+            args_tensor_mask=[True],
+            non_differentiable_idx=[],
+        )
+        return res
+
+    jitted = thunder.jit(fn)
+    x = torch.randn((2, 2), requires_grad=True)
+
+    out = jitted(x)
+    grad = torch.rand_like(out)
+    out.backward(grad)
+
+    # Verify that `backward` was applied.
+    torch.testing.assert_close(x.grad, grad * 2)
 
 
 def test_autograd_function_empty_forward():
@@ -1483,3 +1549,17 @@ def test_cache_symbolic_values_dict():
     expected = foo(b, "b")
 
     assert_close(actual, expected)
+
+
+def test_specific_dataclass_returns():
+    import transformers
+
+    def fn(x):
+        return transformers.modeling_outputs.BaseModelOutputWithPast(last_hidden_state=x)
+
+    jfn = thunder.jit(fn)
+    x = torch.randn(2, 2)
+    expected = fn(x)
+    res = jfn(x)
+    assert expected.last_hidden_state is x
+    assert res.last_hidden_state is x

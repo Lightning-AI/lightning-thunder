@@ -5,6 +5,9 @@ from pathlib import Path
 
 import pytest
 import torch
+
+if not torch.distributed.is_available():
+    pytest.skip(allow_module_level=True)
 from torch.distributed import distributed_c10d as c10d
 from torch.distributed._tensor import DTensor
 from torch.testing._internal import common_utils
@@ -134,7 +137,7 @@ class DistributedCheckpointTest(DistributedParallelTestCase):
         with pytest.raises(ValueError, match="cannot be used"):
             get_model_state_dict(model, options, self.rank)
 
-        sharded_model = thunder.distributed.fsdp(model)
+        sharded_model = thunder.distributed.fsdp(thunder.jit(model))
         assert has_fsdp_modules(model)
 
         # Sharding - full state dict
@@ -204,23 +207,27 @@ class DistributedCheckpointTest(DistributedParallelTestCase):
 
         # Sharding - full state dict
         for kwargs in ({"cpu_offload": True}, {"cpu_offload": False}, {"rank0_only": True}):
+            unsharded_model = MyModel(4).to(device=device)
+            unsharded_model.load_state_dict(state_dict)
             model = MyModel(4).to(device=device)
-            sharded_model = thunder.distributed.fsdp(model)
+            sharded_model = thunder.distributed.fsdp(thunder.jit(model))
             options = StateDictOptions(full_state_dict=True, **kwargs)
+            print("before", sharded_model.get_parameter("l.weight"))
             load_model_state_dict(state_dict, sharded_model, options, self.rank)
+            print("after", sharded_model.get_parameter("l.weight"))
             _unshard_params(sharded_model, pg)
-            torch.testing.assert_close(model.state_dict(), state_dict)
+            torch.testing.assert_close(unsharded_model.state_dict(), state_dict)
 
         # Create a sharded state_dict that can be loaded
         model = MyModel(4).to(device=device)
-        sharded_model_expected = thunder.distributed.fsdp(model)
+        sharded_model_expected = thunder.distributed.fsdp(thunder.jit(model))
         options = StateDictOptions(full_state_dict=False)
         sharded_state_dict = get_model_state_dict(sharded_model_expected, options, self.rank)
 
         # Sharding - sharded state dict
         for kwargs in ({"cpu_offload": True}, {"cpu_offload": False}, {"rank0_only": True}):
             model = MyModel(4).to(device=device)
-            sharded_model = thunder.distributed.fsdp(model)
+            sharded_model = thunder.distributed.fsdp(thunder.jit(model))
             options = StateDictOptions(full_state_dict=False, **kwargs)
             load_model_state_dict(sharded_state_dict, sharded_model, options, self.rank)
             torch.testing.assert_close(sharded_model.state_dict(), sharded_model_expected.state_dict())

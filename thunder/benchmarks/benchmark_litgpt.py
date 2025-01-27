@@ -170,6 +170,7 @@ class TorchAOFP8Handler:
             cast_config_grad_output=CastConfig(ScalingType.DYNAMIC),
             enable_fsdp_float8_all_gather=self.use_fp8_allgather and self.is_fsdp2,
             enable_pre_and_post_forward=False,
+            force_recompute_fp8_weight_in_bwd=self.is_fsdp2,
         )
         self.precompute_scale = (
             self.is_fsdp2 and self.use_fp8_allgather and self.use_torchao_fp8_precompute_float8_dynamic_scale_for_fsdp
@@ -229,6 +230,7 @@ class Benchmark_litGPT:
         fsdp_bucket_params: float | None = None,
         checkpoint_activations: bool = False,
         n_layers: int | None = None,
+        block_size: int | None = None,
         profiler_start: int = 15,
         profiler_stop: int = 15,
         skip_data_sync: bool = False,
@@ -359,6 +361,9 @@ class Benchmark_litGPT:
 
         if n_layers is not None:
             self.config.n_layer = n_layers
+
+        if block_size is not None:
+            self.config.block_size = block_size
 
         # Initialize the model
         t0 = time.perf_counter()
@@ -537,10 +542,6 @@ class Benchmark_litGPT:
         return model
 
     def setup_activation_checkpointing(self):
-        if "thunder" in self.compile and "dynamo" not in self.compile:
-            # checkpointing is an option to thunder.jit
-            return
-
         if any(isinstance(mod, CheckpointWrapper) for mod in self.model.modules()):
             warnings.warn(
                 "FSDP checkpointing is configured, but the model already contains checkpointed layers."
@@ -590,9 +591,7 @@ class Benchmark_litGPT:
                 # so we are using the lower level torch._dynamo.optimize function
                 model = torch._dynamo.optimize(backend=self.backend)(model)
             else:
-                jit_options = {
-                    "enable_saved_for_backward_recomputation": self.checkpoint_activations,
-                }
+                jit_options = {}
                 jit_options["fp8_shard_intermediate_activation"] = self.fp8_shard_intermediate_activation
                 model = thunder.jit(model, executors=executors, **jit_options)
 
