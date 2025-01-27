@@ -928,7 +928,15 @@ def _add_transform(
 
 # Maps exact inputs to truncation division
 def _div_prim_impl(a: Number | torch.Tensor, b: Number | torch.Tensor) -> torch.Tensor:
-    if dtypes.is_exact_dtype(to_dtype(a.dtype)) and dtypes.is_exact_dtype(to_dtype(a.dtype)):
+    def is_exact_number_or_exact_tensor(x):
+        if isinstance(x, (int, bool)):
+            return True
+        # We use PyTorch's dtype attribute (instead of `dtypes.is_exact_dtype`) so that torch.compile on prims.div works.
+        elif isinstance(x, torch.Tensor) and (not x.dtype.is_complex and not x.dtype.is_floating_point):
+            return True
+        return False
+
+    if is_exact_number_or_exact_tensor(a) and is_exact_number_or_exact_tensor(b):
         return torch.div(a, b, rounding_mode="trunc")
 
     return torch.true_divide(a, b)
