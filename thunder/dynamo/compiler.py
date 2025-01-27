@@ -4,6 +4,7 @@ from looseversion import LooseVersion
 from typing import TYPE_CHECKING
 import warnings
 import inspect
+from pathlib import Path
 
 import torch
 
@@ -96,6 +97,8 @@ class ThunderCompiler:
         """
         if not self.subgraph_infos:
             raise TypeError(f"{self} doesn't seem to have been called yet.")
+        reproducer_folder = Path(reproducer_folder)
+        reproducer_folder.mkdir(exist_ok=True, parents=True)
 
         for graph_idx, subgraph_info in enumerate(self.subgraph_infos):
             thunder_module_names = []

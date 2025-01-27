@@ -773,7 +773,7 @@ bench_executors_dict["eager"]=None
 bench_executors_dict["thunder_cugraph"]=partial(thunder.jit, transform=CUDAGraphTransform())
 """
 
-    COMMAND_LINE_ARGS = f"""
+    COMMAND_LINE_ARGS = """
 import argparse
 
 parser = argparse.ArgumentParser(description="Script for executing an FX graph with specified configurations.")
