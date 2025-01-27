@@ -52,6 +52,9 @@ def _remove_noop_subsymbols(bsym: BoundSymbol) -> None:
     nsbsyms: list[BoundSymbol] = []
     sbsym: BoundSymbol
     for sbsym in bsym.subsymbols:
+        # If all outputs are in the arguments, we eliminate the symbol
+        if all(o in sbsym.flat_variableified_proxy_args for o in sbsym.flat_variableified_proxy_outs):
+            continue
         # if all outputs are constants, we elmininate the subsymbol
         if not has_tags(bsym, {prims.OpTags.DONT_DCE}) and not any(
             o is not None for o in sbsym.flat_proxy_outs
