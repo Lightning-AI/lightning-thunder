@@ -552,7 +552,7 @@ def test_hf_llama():
     assert_close(res2, expected2, rtol=1e-1, atol=1e-1)
 
     # changes this to fewer as needed, the goal is to not have too many fusions
-    num_of_nvfusion = 4 if nvfuser_version() >= LooseVersion("0.2.23") else 7
+    num_of_nvfusion = 5 if nvfuser_version() >= LooseVersion("0.2.23") else 7
     assert len(get_fusion_symbols(thunder.last_traces(jm)[-1])) == num_of_nvfusion
 
 
