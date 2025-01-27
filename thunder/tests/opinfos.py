@@ -2527,6 +2527,7 @@ def div_sample_generator(op, device, dtype, requires_grad, **kwargs):
             # numerator, denominator, rounding_mode
             yield SampleInput(make(shape_a), make(shape_b), rounding_mode=rounding_mode)
             yield SampleInput(make(shape_a), number(), rounding_mode=rounding_mode)
+            yield SampleInput(number(), make(shape_a), rounding_mode=rounding_mode)
 
 
 div_opinfo = OpInfo(
@@ -2547,6 +2548,7 @@ div_opinfo = OpInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
             executors=("nvfuser",),
+            dtypes=(datatypes.bool8, datatypes.bfloat16, datatypes.float16, datatypes.float32),
         ),
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
     ),
