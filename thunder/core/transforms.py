@@ -2293,6 +2293,8 @@ def iter_bound_symbols(bound_symbols):
     for symbol in bound_symbols:
         if symbol.sym.id in trace_interpreter_skip_list:
             continue
+        elif symbol.sym.id == prims.PrimIDs.SHAPE:
+            continue
         elif symbol.output is None:
             continue
         else:
@@ -2319,8 +2321,8 @@ def reconstruct_forward_env_for_backward(trace, saved_for_backward):
 
     reconstructed_env = {}
 
-    for idx, sym in enumerate(bound_symbols):
-        k = sequencify(sym.output)[0].name
+    for idx, bsym in enumerate(bound_symbols):
+        k = sequencify(bsym.output)[0].name
         v = VJPDual(None, saved_for_backward[idx])
         reconstructed_env[k] = v
 
