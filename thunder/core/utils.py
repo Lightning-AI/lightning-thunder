@@ -1097,7 +1097,8 @@ def find_producer_symbols(trace: TraceCtx, proxies: Sequence[Proxy], stop_proxie
         stop_proxies: proxies to stop at
 
     Returns:
-        tuple of symbols that produce the given proxies
+        tuple of symbols that produce the given proxies. In case of duplicate bound_symbols in trace, e.g. prims.shape.
+        The returned tuple would drop the duplicates and only preserve the first encounter.
 
     Example:
         >>> import torch
