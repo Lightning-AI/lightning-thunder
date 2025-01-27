@@ -493,6 +493,35 @@ def _general_jit_ordered_dict_setitem(d, key, value):
     return dict_setitem_lookaside(d, key, value)
 
 
+@register_general_jit_lookaside(torch.nn.ModuleList.__getitem__)
+def torch_nn_ModuleList_getitem_lookaside(self, idx):
+    uself = unwrap(self)
+    uidx = unwrap(idx)
+    if isinstance(uidx, slice):
+
+        def impl(self, idx):
+            return list(self._modules.values())[idx]
+
+        modules = _interpret_call(impl, self, idx)
+        if modules is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+            return module_list
+        res = _interpret_call(lambda self: self.__class__(), self)
+        if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+            return res
+        res.provenance = ProvenanceRecord(PseudoInst.NEW, inputs=[wrap_const(uself.__class__).provenance])
+
+        def impl(res, modules):
+            res.extend(modules)
+            return res
+
+        return _interpret_call(impl, res, modules)
+
+    def impl(self, idx):
+        return self._modules[self._get_abs_string_index(idx)]
+
+    return _interpret_call(impl, self, idx)
+
+
 _TORCH_DYNAMIC_TYPES = {
     torch.amp.autocast_mode.autocast,
     torch.autograd.grad_mode.set_grad_enabled,
@@ -1819,6 +1848,14 @@ def process_recorded_modifications(ctx, epilogue_trace):
                     (value,) = args
 
                     if (
+                        modified_object.provenance.inst is PseudoInst.LOAD_ATTR
+                        and modified_object.provenance.inputs[0].inst is PseudoInst.NEW
+                        and modified_object.provenance.inputs[1].inst is PseudoInst.CONSTANT
+                        and modified_object.provenance.inputs[1].value == "_modules"
+                    ):
+                        # This is for slices of ModuleList. We might have to revisit if we want to return those
+                        pass
+                    elif (
                         modified_object.provenance.inst is PseudoInst.LOAD_ATTR
                         and modified_object.provenance.inputs[1].inst is PseudoInst.CONSTANT
                         and modified_object.provenance.inputs[1].value == "_buffers"
