@@ -87,16 +87,10 @@ def run_repro1(compiled_fn, compute_type, *inputs) -> dict[str, float]:
     results = {}
     match compute_type:
         case "forward":
-            try:
-                result = compiled_fn(*inputs)
-            except Exception as e:
-                raise e
+            result = compiled_fn(*inputs)
             results["forward"] = result
         case "forward+backward":
-            try:
-                forward_result, grads = run_backward(compiled_fn, *inputs)
-            except Exception as e:
-                raise e
+            forward_result, grads = run_backward(compiled_fn, *inputs)
             results["forward"] = forward_result
             results["backward"] = grads
         case _:
@@ -420,9 +414,6 @@ class FXReport:
         self.fx_graph_reports: list[FXGraphReportBase] = [
             graph_report_cls(g, f"graph{idx}") for idx, g in enumerate(graphs)
         ]
-
-    def make_full_reports(self):
-        pass
 
 
 def fx_report(fn: Callable, *args, use_benchmark: bool = False, **kwargs) -> FXReport:
