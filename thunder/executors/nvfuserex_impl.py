@@ -886,11 +886,17 @@ instantiated) this heuristic actually leads to worse code.
             else:
                 bookend_result = {"front_bsyms": [], "fusion": region, "rear_bsyms": []}
 
-            # Don't fuse a region which has only Shape Operations.
-            all_shape_ops = all(map(lambda bsym: all_tagged(bsym, prims.OpTags.SHAPE_OP), bsyms))
-            if all_shape_ops:
-                fused_bsyms.extend(bsyms)
-                continue
+            nv_enable_shape_only_fusion: None | bool = get_compile_option(
+                "nv_enable_shape_only_fusion",
+                "Allow nvFuser to create Fusion with shape only operations. Defaults to False.",
+            )
+
+            if not nv_enable_shape_only_fusion:
+                # Don't fuse a region which has only Shape Operations.
+                all_shape_ops = all(map(lambda bsym: all_tagged(bsym, prims.OpTags.SHAPE_OP), bsyms))
+                if all_shape_ops:
+                    fused_bsyms.extend(bsyms)
+                    continue
 
             if len(bsyms) == 1:
                 bsym: BoundSymbol = bsyms[0]
