@@ -1248,12 +1248,15 @@ def test_embedding(
         torch.testing.assert_close(out, expected_out)
 
 
-@instantiate(executors=(nvFuserExecutor,), dtypes=NOTHING,)
+@instantiate(
+    executors=(nvFuserExecutor,),
+    dtypes=NOTHING,
+)
 def test_slice_dynamic_extent(executor, device: str, dtype: dtypes.dtype):
     def foo(b):
         # TODO: 'device=device' doesn't work for "symbolic values" cache policy
         a = torch.arange(24, device="cuda").reshape(3, 8)
-        return a[..., : b]
+        return a[..., :b]
 
     jfoo = thunder.jit(foo, cache="symbolic values")
 
@@ -1263,7 +1266,7 @@ def test_slice_dynamic_extent(executor, device: str, dtype: dtypes.dtype):
 
     fw_trace = thunder.last_traces(jfoo)[-1]
     fusion_bsyms = tuple(filter(lambda a: a.sym.is_fusion, fw_trace.bound_symbols))
-    
+
     # There are two nvfuser fusion groups separated by the matmul operation.
     assert len(fusion_bsyms) == 1
 
