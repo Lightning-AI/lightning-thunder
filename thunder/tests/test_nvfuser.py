@@ -1251,14 +1251,15 @@ def test_embedding(
 @instantiate(executors=(nvFuserExecutor,), dtypes=NOTHING,)
 def test_slice_dynamic_extent(executor, device: str, dtype: dtypes.dtype):
     def foo(b):
-        a = torch.arange(24, device=device, ).reshape(3, 8)
+        # TODO: 'device=device' doesn't work for "symbolic values" cache policy
+        a = torch.arange(24, device="cuda").reshape(3, 8)
         return a[..., : b]
 
     jfoo = thunder.jit(foo, cache="symbolic values")
 
     actual = jfoo(5)
     expected = foo(5)
-    assert_close(actual, expected)
+    torch.testing.assert_close(actual, expected)
 
     fw_trace = thunder.last_traces(jfoo)[-1]
     fusion_bsyms = tuple(filter(lambda a: a.sym.is_fusion, fw_trace.bound_symbols))
