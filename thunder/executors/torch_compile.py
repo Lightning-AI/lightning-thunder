@@ -243,6 +243,42 @@ torch_compile_cat_ex._implmap = {
     op: ImplInfo(checker=cuda_device_checker) for op in pytorch_ex.implmap if op in supported_ops
 }
 
+# Similar to torchcomile_cat, this executor is meant to be used with nvfuser_executor to allow
+# inductor to claim cross_entropy computation.
+required_ops = {
+    prims.reshape.id,
+    "nll_loss_backward",
+    "log_softmax_backward",
+    "torch.log_softmax",
+    "torch.nn.functional.nll_loss",
+    "torch.nn.functional.cross_entropy",
+}
+torch_compile_xentropy = TorchCompileExecutor(name="torchcompile_xentropy", required_ops=required_ops)
+register_executor(torch_compile_xentropy)
+
+supported_ops = {
+    prims.broadcast_in_dim.id,
+    prims.convert_element_type.id,
+    prims.div.id,
+    prims.ne.id,
+    prims.neg.id,
+    prims.reshape.id,
+    prims.slice_prim.id,
+    prims.where.id,
+    "nll_loss_backward",
+    "log_softmax_backward",
+    "torch.log_softmax",
+    "torch.nn.functional.cross_entropy",
+    "torch.nn.functional.nll_loss",
+    "torch.sum",
+    "torch.take_along_dim",
+    "torch.Tensor.contiguous",
+}
+
+torch_compile_xentropy._implmap = {
+    op: ImplInfo(checker=cuda_device_checker) for op in pytorch_ex.implmap if op in supported_ops
+}
+
 
 torch_compile_ex = TorchCompileExecutor(name="torchcompile")
 register_executor(torch_compile_ex)
