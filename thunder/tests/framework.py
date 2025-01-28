@@ -224,6 +224,7 @@ class TorchCompileXentropyTestExecutor(TestExecutor):
     def version(self):
         return torch.__version__
 
+
 class TorchCompileCatTestExecutor(TestExecutor):
     name = "torchcompile_cat"
     supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
