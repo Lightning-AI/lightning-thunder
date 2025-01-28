@@ -123,7 +123,7 @@ def remove_duplicate_number_proxies(bsyms: Sequence[BoundSymbol]) -> list[BoundS
         if not isinstance(p, NumberProxyInterface):
             return p
         if p.name in seen:
-            return p.value  # don't make it a duplicate
+            return None  # don't make it a duplicate
         seen.add(p.name)
         return p
 
