@@ -1255,6 +1255,7 @@ def test_embedding(
 def test_slice_dynamic_extent(executor, device: str, dtype: dtypes.dtype):
     def foo(b):
         # TODO: 'device=device' doesn't work for "symbolic values" cache policy
+        # See issue: https://github.com/Lightning-AI/lightning-thunder/issues/1710
         a = torch.arange(24, device="cuda").reshape(3, 8)
         return a[..., :b]
 
