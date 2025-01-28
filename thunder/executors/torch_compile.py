@@ -216,11 +216,6 @@ def cuda_device_checker(*args, **kwargs):
 required_ops = {
     "torch.cat",
     prims.cat.id,
-    "nll_loss_backward",
-    "log_softmax_backward",
-    "torch.log_softmax",
-    "torch.nn.functional.nll_loss",
-    "torch.nn.functional.cross_entropy",
 }
 torch_compile_cat_ex = TorchCompileExecutor(name="torchcompile_cat", required_ops=required_ops)
 register_executor(torch_compile_cat_ex)
@@ -243,19 +238,7 @@ supported_ops = {
     # parallel residual paths are used in the transformer block
     prims.div.id,
     prims.erf.id,
-    # Ops needed to support fusing HF causal LM Loss.
-    prims.where.id,
-    prims.ne.id,
-    prims.take_along_axis.id,
-    "torch.take_along_dim",
-    "torch.Tensor.contiguous",
-    "torch.log_softmax",
-    "torch.nn.functional.nll_loss",
-    "torch.nn.functional.cross_entropy",
-    "nll_loss_backward",
-    "log_softmax_backward",
 }
-
 torch_compile_cat_ex._implmap = {
     op: ImplInfo(checker=cuda_device_checker) for op in pytorch_ex.implmap if op in supported_ops
 }
