@@ -4,6 +4,7 @@ from looseversion import LooseVersion
 from typing import TYPE_CHECKING
 import warnings
 import inspect
+from pathlib import Path
 
 import torch
 
@@ -75,7 +76,12 @@ class ThunderCompiler:
         self.subgraph_infos.append(subgraph_info)
         return split_module
 
-    def save_reproducer_to_folder(self, reproducer_folder: str | PathLike, use_pytest_benchmark: bool = False):
+    def save_reproducer_to_folder(
+        self,
+        reproducer_folder: str | PathLike,
+        use_pytest_benchmark: bool = False,
+        save_input_tensor=False,
+    ):
         """
         Save the reproducer script for the GraphModule executed by Thunder to the specified ``reproducer_folder``.
         Each saved script is named as "graph[graph_id]_thunder_[module_id]", where:
@@ -91,6 +97,8 @@ class ThunderCompiler:
         """
         if not self.subgraph_infos:
             raise TypeError(f"{self} doesn't seem to have been called yet.")
+        reproducer_folder = Path(reproducer_folder)
+        reproducer_folder.mkdir(exist_ok=True, parents=True)
 
         for graph_idx, subgraph_info in enumerate(self.subgraph_infos):
             thunder_module_names = []
@@ -115,6 +123,7 @@ class ThunderCompiler:
                     reproducer_folder,
                     f"graph{graph_idx}_{cur_name}",
                     use_pytest_benchmark,
+                    save_input_tensor=save_input_tensor,
                 )
 
 
@@ -143,5 +152,55 @@ def thunderfx(fn: Callable, /, **kwargs) -> Callable:
 
     backend = ThunderCompiler(**thunder_options)
     compiled = torch.compile(fn, backend=backend, **torch_compile_options)
-    compiled._backend = backend
-    return compiled
+
+    # We return this object instead of just the raw `compiled` Callable so that
+    # we have a place to hang the `last_*traces` properties.
+    class CompiledObject:
+        def __init__(self, be, func: Callable):
+            self._backend = backend
+            self._func = func
+
+        def __call__(self, *args, **kwargs):
+            return self._func(*args, **kwargs)
+
+        @property
+        def last_traces(self) -> [Trace]:
+            """
+            Get the Thunder traces for all the forward subgraphs of a ThunderFX
+            callable.
+
+            .. note:: The object must have been invoked before calling this
+                      function.
+            """
+            rv: [Trace] = []
+            if not self._backend.subgraph_infos:
+                warnings.warn("Must invoke the function before using last_traces")
+            for sinfo in self._backend.subgraph_infos:
+                for th_fqn in sinfo.thunder_compiled_fns:
+                    trcs = thunder.last_traces(th_fqn)
+                    if trcs != []:
+                        rv.append(trcs[-1])
+                    del trcs
+            return rv
+
+        @property
+        def last_backward_traces(self) -> [Trace]:
+            """
+            Get the Thunder traces for all the backward subgraphs of a
+            ThunderFX callable.
+
+            .. note:: The object must have been invoked before calling this
+                      function.
+            """
+            rv: [Trace] = []
+            if not self._backend.subgraph_infos:
+                warnings.warn("last_backward_traces used before function invoked")
+            for sinfo in self._backend.subgraph_infos:
+                for th_fqn in sinfo.thunder_compiled_fns:
+                    trcs_bw = thunder.last_backward_traces(th_fqn)
+                    if trcs_bw != []:
+                        rv.append(trcs_bw[-1])
+            return rv
+
+    c = CompiledObject(backend, compiled)
+    return c

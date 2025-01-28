@@ -16,6 +16,7 @@ from types import FunctionType
 
 import thunder
 from thunder import last_traces, cache_option, cache_hits, cache_misses
+import thunder.core.proxies
 import thunder.examine as examine
 import thunder.clang as clang
 import thunder.core.profile
@@ -3096,11 +3097,12 @@ def test_debug_options():
     import dill
 
     initial_state = dill.dumps(dict(DebugOptions.__dict__))
-    print(DebugOptions.__dict__)
     DebugOptions.register_option("test_option", bool, False, "Test Option")
 
     assert "Test Option" in DebugOptions.__doc__
 
+    do = DebugOptions()
+    assert do.test_option is False
     do = DebugOptions(test_option=True)
     assert do.test_option is True
 
@@ -3113,9 +3115,22 @@ def test_debug_options():
     del DebugOptions.test_option
 
     DebugOptions._set_docstring()
-
-    print(DebugOptions.__dict__)
     assert dill.dumps(dict(DebugOptions.__dict__)) == initial_state
+
+
+def test_default_tensor_proxy():
+    from thunder.core.proxies import TensorProxy
+    from thunder.core.trace import detached_trace
+    from thunder.core.dtypes import float32
+    from thunder.core.devices import cpu
+
+    # It should be possible to create a TensorProxy with default values for all
+    # optional arguments
+    with detached_trace():
+        t = TensorProxy(shape=(1,), device=cpu, dtype=float32)
+    assert not t.requires_grad
+    assert t.device == cpu
+    assert t.dtype == float32
 
 
 def test_proxy_same_name():
@@ -3125,9 +3140,9 @@ def test_proxy_same_name():
     from thunder.core.devices import cpu
 
     with detached_trace():
-        t = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32, requires_grad=True)
+        t = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
         with pytest.raises(RuntimeError, match="already used"):
-            t2 = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32, requires_grad=True)
+            t2 = TensorProxy(name="test", shape=(1,), device=cpu, dtype=float32)
 
 
 def test_save_trace():
@@ -3155,3 +3170,42 @@ def test_save_trace():
         trace_contents = "".join(trace_contents)
         assert ".add" in trace_contents
         assert "@torch.no_grad" in trace_contents
+
+
+def test_unpack_sequence_element_info():
+    def fn(x):
+        return x.sin().cos()
+
+    jfn = thunder.jit(fn)
+    jfn(torch.randn(3, requires_grad=True))
+
+    backward_trc = thunder.last_backward_traces(jfn)[-1]
+    for bsym in backward_trc.bound_symbols:
+        if bsym.sym.id == thunder.prims.PrimIDs.UNPACK_SEQUENCE and any(
+            isinstance(out, thunder.core.proxies.TensorProxy) for out in bsym.flat_outs
+        ):  # prims is unpack_sequence and any output is TensorProxy
+            # Verify that we print information about the unpacked TensorProxy.
+            assert "cpu f32[3]" in str(bsym)
+
+
+def test_apply_autograd_memory():
+    from thunder.executors.torch_autograd import connect_to_autograd
+
+    def foo():
+        def backward(*args):
+            return None
+
+        x = torch.randn(2, 2, requires_grad=True)
+        o = x.sum()
+
+        connect_to_autograd(
+            backward_fn=backward,
+            flat_args=(x,),
+            flat_output=(o,),
+            saved_tensors=(o,),
+            saved_other=(),
+            return_none_instead_of_grads=True,
+        )
+        return [weakref.ref(x), weakref.ref(o)]
+
+    assert not any(wr() for wr in foo())

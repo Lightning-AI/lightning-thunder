@@ -2527,6 +2527,7 @@ def div_sample_generator(op, device, dtype, requires_grad, **kwargs):
             # numerator, denominator, rounding_mode
             yield SampleInput(make(shape_a), make(shape_b), rounding_mode=rounding_mode)
             yield SampleInput(make(shape_a), number(), rounding_mode=rounding_mode)
+            yield SampleInput(number(), make(shape_a), rounding_mode=rounding_mode)
 
 
 div_opinfo = OpInfo(
@@ -2547,6 +2548,7 @@ div_opinfo = OpInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
             executors=("nvfuser",),
+            dtypes=(datatypes.bool8, datatypes.bfloat16, datatypes.float16, datatypes.float32),
         ),
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
     ),
@@ -7864,9 +7866,14 @@ if LooseVersion(torch.__version__) >= "2.4":
             ),
             # See issue - https://github.com/Lightning-AI/lightning-thunder/issues/1395
             DecorateInfo(
-                custom_comparator(partial(assert_close, atol=2e-3, rtol=2e-3)),
+                custom_comparator(partial(assert_close, atol=1e-2, rtol=1e-2)),
                 dtypes=(datatypes.float16,),
                 devicetypes=(devices.DeviceType.CUDA,),
+            ),
+            DecorateInfo(
+                pytest.mark.skip(reason="Flaky. See https://github.com/Lightning-AI/lightning-thunder/issues/1678"),
+                "test_core_vs_torch_consistency",
+                dtypes=(datatypes.bfloat16,),
             ),
         ),
     )

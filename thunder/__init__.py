@@ -267,7 +267,7 @@ CacheEntry = namedtuple(
 )
 
 
-def compile(fn: Callable, recipe: Recipe | None):
+def compile(fn: Callable, recipe: Recipe | None = None):
     if recipe is None:
         return thunder.jit(fn)
 
@@ -333,7 +333,7 @@ def jit(
 
     # Resolve names of executors
     executors = resolve_executors(executors)
-    ad_hoc_executor = extend.AdHocExecutor()
+    ad_hoc_executor = extend.TemporaryExecutor()
     executors = (ad_hoc_executor, *executors)
 
     # TODO: verify that tutorials don't have false positives and enable warning by default
