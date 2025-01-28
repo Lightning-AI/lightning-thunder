@@ -1067,3 +1067,28 @@ def test_report(tmp_path, capsys):
         assert not captured.err
         assert "Failed to run the function using ThunderFX" in captured.out
         assert "Failed to save reproducer" in captured.out
+
+
+@requiresCUDA
+def test_fxreport(tmp_path):
+    from thunder.dynamo.report import fx_report
+
+    def foo(x):
+        y = x.sin()
+        torch._dynamo.graph_break()
+        return y + x.cos()
+
+    x = torch.randn(4, 4, device="cuda", requires_grad=True)
+    results = fx_report(foo, x)
+    for r in results.fx_graph_reports:
+        r.write_eager_repro(tmp_path)
+        r.write_thunder_repro(tmp_path)
+        r.write_inductor_repro(tmp_path)
+        my_exe = "compiled_model = thunder.jit(model, transforms=[NvtxProfileTransform(),CUDAGraphTransform()], executors=[nvfuser_executor])"
+        my_imports = [
+            "import thunder",
+            "from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform",
+            "from thunder import nvfuser_executor",
+            "from thunder.transforms.cudagraph import CUDAGraphTransform",
+        ]
+        r.write_repro(tmp_path, "mythunder", custom_executor_str=my_exe, custom_import_str=my_imports)
