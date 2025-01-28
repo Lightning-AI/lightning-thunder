@@ -4075,7 +4075,6 @@ def tensor_subclass_ctor_meta(
         requires_grad=requires_grad,
         tensors=tensors,
         non_tensors=non_tensors,
-        history=[t.history for t in tensors],
     )
     return s
 
