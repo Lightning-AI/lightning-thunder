@@ -1,7 +1,5 @@
 from __future__ import annotations
 from collections import namedtuple
-from contextlib import nullcontext, contextmanager
-from dataclasses import dataclass, replace
 from enum import auto, Enum
 from itertools import chain, compress
 from functools import lru_cache, partial, wraps
@@ -15,27 +13,25 @@ import inspect
 import time
 import dataclasses
 
-import thunder
 import thunder.core.utils as utils
 from thunder.core import dtypes, prims
-from thunder.core.devices import cpu, Device
+from thunder.core.devices import Device
 from thunder.core.trace_interpreter import (
     interpret_trace as eval_trace,
     interpret_trace_to_trace,
     trace_interpreter_skip_list,
 )
 from thunder.core.proxies import (
-    CollectionProxy,
+    FloatProxy,
+    FutureTensorProxy,
     NumberProxy,
     Proxy,
-    TensorProxy,
-    FloatProxy,
-    variableify,
-    unvariableify,
-    FutureTensorProxy,
     ProxyTag,
+    TensorProxy,
+    unvariableify,
+    variableify,
 )
-from thunder.core.compile_data import get_compile_data, get_compile_option
+from thunder.core.compile_data import get_compile_data
 from thunder.core.langctxs import langctx, Languages
 from thunder.core.pytree import tree_flatten, tree_map, tree_unflatten, tree_flatten_with_dataclass
 from thunder.core.symbol import BoundSymbol, BoundSymbolInterface, Symbol, has_tags
@@ -55,22 +51,17 @@ from thunder.core.utils import (
     flatten_func,
     safe_map,
     safe_map_flat,
-    safe_zip,
-    unzip2,
     const_as,
     sequencify,
     OrderedSet,
     ProxyDict,
-    find_producer_symbols,
 )
 import thunder.clang as clang
 from thunder.clang import (
     empty,
-    full,
     full_like,
     unsqueeze,
     squeeze,
-    maybe_convert_to_dtype,
     slice_in_dim,
     reciprocal,
     convolution,
@@ -2431,7 +2422,6 @@ def index_put_aug_fwd(
 
 if torch.distributed.is_available():
     from torch.distributed import ReduceOp
-    from torch.distributed import distributed_c10d as c10d
     from torch._C._distributed_c10d import _resolve_process_group
 
     if TYPE_CHECKING:
@@ -2950,7 +2940,7 @@ def _update_forward_with_new_saved_for_backward(forward_trace: Trace, saved_for_
     saved_tensors, saved_other = _split_saved_for_backward_into_tensors_and_other(saved_for_backward)
     assert forward_trace.bound_symbols[-1].sym.id == prims.PrimIDs.RETURN
     new_return = (forward_trace.output[0], (saved_tensors, saved_other))
-    forward_trace.bound_symbols[-1] = replace(forward_trace.bound_symbols[-1], args=new_return)
+    forward_trace.bound_symbols[-1] = dataclasses.replace(forward_trace.bound_symbols[-1], args=new_return)
 
 
 def _update_backward_with_new_saved_for_backward(backward_trace: Trace, saved_for_backward: Sequence[Variable]) -> None:
@@ -3153,17 +3143,7 @@ def forward_and_backward_from_trace(trace: Trace, torch_autograd=False) -> Forwa
     forward_trace.set_provenance(TraceProvenance("Augmented forward pass"))
     backward_trace.set_provenance(TraceProvenance("Backward pass"))
 
-    remat_policy: None | Callable[[set[Variable]], set[Variable]] = get_compile_option(
-        "recomputation_policy",
-        "A callable that accepts a set of variables and returns a set of the variables that are allowed to be recomputed from the forward in the backward trace. The compile option `enable_saved_for_backward_recomputation` needs to be true for this policy to take effect.",
-    )
-    enable_saved_for_backward_recomputation: None | bool = get_compile_option(
-        "enable_saved_for_backward_recomputation", "Enable save for backward tensors recomputation."
-    )
-    if enable_saved_for_backward_recomputation is None or remat_policy:
-        enable_saved_for_backward_recomputation = True
-    if enable_saved_for_backward_recomputation:
-        forward_trace, backward_trace = recompute_saved_for_backward(forward_trace, backward_trace)
+    forward_trace, backward_trace = recompute_saved_for_backward(forward_trace, backward_trace)
 
     return ForwardBackwardTraces(forward_trace, backward_trace)
 
@@ -3190,22 +3170,6 @@ def recompute_saved_for_backward(fwd_trace: Trace, bwd_trace: Trace) -> tuple[Tr
     saved_for_bw = get_saved_for_backward_tensors(fwd_trace)
     fwd_trace_args = OrderedSet(variableify(j) for j in fwd_trace.args)
     old_saved_for_bwd = OrderedSet(variableify(j) for j in saved_for_bw)
-
-    remat_policy: None | Callable[[set[Variable]], set[Variable]] = get_compile_option(
-        "recomputation_policy",
-        "A callable that accepts a set of variables and returns a set of the variables that are allowed to be recomputed from the forward in the backward trace. The compile option `enable_saved_for_backward_recomputation` needs to be true for this policy to take effect.",
-    )
-
-    enable_saved_for_backward_recomputation: None | bool = get_compile_option(
-        "enable_saved_for_backward_recomputation", "Enable save for backward tensors recomputation."
-    )
-
-    if remat_policy:
-        for v in remat_policy(old_saved_for_bwd - fwd_trace_args):
-            unvariableify(v).tags.add(ProxyTag.RECOMPUTE_IN_BACKWARD)
-    elif enable_saved_for_backward_recomputation:
-        for v in old_saved_for_bwd - fwd_trace_args:
-            unvariableify(v).tags.add(ProxyTag.RECOMPUTE_IN_BACKWARD)
 
     all_proxies = fwd_trace_args.copy()
     all_recomputable_proxies = OrderedSet()

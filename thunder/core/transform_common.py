@@ -129,6 +129,9 @@ def remove_duplicate_number_proxies(bsyms: Sequence[BoundSymbol]) -> list[BoundS
 
     new_bsyms = []
     for bsym in bsyms:
+        # This allows us to remove the redundant `prims.shape()` call in dce.
+        if all(map(lambda x: isinstance(x, NumberProxyInterface) and x.name in seen, bsym.flat_outs)):
+            continue
         output = tree_map(keep_or_swap, bsym.output)
         new_bsyms.append(bsym.from_bsym(output=output))
     return new_bsyms

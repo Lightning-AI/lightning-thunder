@@ -722,6 +722,17 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     torch.testing.assert_close(out, out_ref)
     torch.testing.assert_close((a, b), (a_ref, b_ref))
 
+    def f(a):
+        return a.zero_()
+
+    a = make_tensor(shape, device=device, dtype=torch_dtype)
+    out_expected = torch.zeros_like(a)
+
+    jitted_f = executor.make_callable(f)
+    out = jitted_f(a)
+
+    torch.testing.assert_close(out, out_expected)
+
 
 @instantiate(dtypes=NOTHING)
 def test_reshape_flatten_error_out(executor, device, _):

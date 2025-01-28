@@ -756,6 +756,14 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
 
 def replace_uniform(trace: TraceCtx) -> TraceCtx:
     """For better rematerialization, replace the uniform operator with the stateless uniform_philox operator and manually update the RNG state."""
+    from thunder.core.compile_data import get_compile_option
+
+    disable_replace_uniform: None | bool = get_compile_option(
+        "disable_replace_uniform", "Disables the replace_uniform transform to avoid dropout rematerialization"
+    )
+    if disable_replace_uniform:
+        return trace
+
     start_time_ns = time.perf_counter_ns()
     from thunder.core.trace import VariableInterface
     from thunder.core.proxies import Proxy

@@ -678,6 +678,7 @@ def test_match_as(jit):
 def test_list(jit):
     def foo():
         l = [1, 2, 3]
+        l = l.copy()
         l[3:] = l[:2]
         l[0] = l[-1]
         del l[2]
@@ -3501,3 +3502,17 @@ def test_freeing_of_tensors():
         foo(i)
 
     assert l == ["run 0", "free 0", "run 1", "free 1", "run 2", "free 2"]
+
+
+def test_tuple_mul():
+
+    def fn(x):
+        d = x.dim() + 3
+        return x.shape[0:2] + (1,) * d + x.shape[2:]
+
+    jfn = thunder.jit(fn)
+    x = torch.randn(2, 2, 3, 3)
+
+    res = jfn(x)
+    expected = fn(x)
+    assert_close(res, expected)

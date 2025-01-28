@@ -40,6 +40,7 @@ from thunder.tests.opinfos import (
     get_opinfo,
     linear_opinfo,
     matmul_opinfo,
+    embedding_opinfo,
 )
 from looseversion import LooseVersion
 
@@ -1214,3 +1215,34 @@ def test_no_shape_only_fusion_region(executor, device: str, thunder_dtype: dtype
 
     # Make sure there is a fusion symbol.
     assert any(bsym.sym.is_fusion for bsym in fwd_trace.bound_symbols)
+
+
+@instantiate(
+    dtypes=(thunder.float16, thunder.bfloat16),
+    devicetypes=(devices.DeviceType.CUDA,),
+    executors=(nvFuserExecutor,),
+    decorators=(
+        pytest.mark.skipif(
+            nvfuser_version() is None or nvfuser_version() < LooseVersion("0.2.25"),
+            reason="Requires nvFuser version 0.2.25 or later",
+        ),
+    ),
+)
+def test_embedding(
+    executor,
+    device: str,
+    dtype: dtypes.dtype,
+):
+
+    def embedding_fn(inputs):
+        return torch.nn.functional.embedding(*inputs)
+
+    for sample in embedding_opinfo.sample_inputs(device, dtype):
+        compiled_func = thunder.jit(embedding_fn, executors_list=executor.executors_list(), nv_enable_embedding=True)
+        out = compiled_func(sample.args)
+        expected_out = torch.nn.functional.embedding(*sample.args)
+        fwd_trace = thunder.last_traces(compiled_func)[-1]
+        fwd_fusion = examine.get_fusions(fwd_trace)
+
+        assert len(fwd_fusion) == 1
+        torch.testing.assert_close(out, expected_out)

@@ -9,6 +9,7 @@ import torch.fx
 import torch.nn as nn
 import torch.nn.functional as F
 from looseversion import LooseVersion
+from unittest.mock import patch
 
 from thunder import dtypes
 from thunder.dynamo import thunderfx
@@ -26,6 +27,7 @@ from thunder.tests.framework import (
     version_between,
 )
 from thunder.tests.make_tensor import make_tensor
+from thunder.dynamo.report import thunderfx_report
 
 
 # This will be applied to all tests in this file.
@@ -263,7 +265,10 @@ def test_splitter_autocast_ctx_with_split(executor, device: str, dtype: dtypes.d
     ),
 )
 def test_splitter_autograd_function(executor, device: str, dtype: dtypes.dtype, dynamic: bool | None):
-    x = torch.ones(2, device=device, dtype=dtype, requires_grad=True)
+    # Workaround for "RuntimeError: Triton Error [CUDA]: an illegal memory access was encountered"
+    # https://github.com/pytorch/pytorch/issues/124565
+    if device != "cpu":
+        torch.empty(1, device="cuda", requires_grad=True).backward()
 
     class Sin(torch.autograd.Function):
         @staticmethod
@@ -274,21 +279,29 @@ def test_splitter_autograd_function(executor, device: str, dtype: dtypes.dtype, 
         @staticmethod
         def backward(ctx, g):
             (x,) = ctx.saved_tensors
-            return g * torch.cos(x)
+            return g * torch.cos(x) * 100
 
     def func(x):
         y = torch.cos(x) + Sin.apply(x)
         return torch.matmul(x, y)
 
+    x = torch.ones(2, device=device, dtype=dtype, requires_grad=True)
     expected = torch.compile(func, dynamic=dynamic)(x)
 
     cfunc = thunderfx(func, dynamic=dynamic)
     actual = cfunc(x)
 
     backend = cfunc._backend
-    targets = (node.target for node in backend.subgraph_infos[0].split_graph_module.graph.nodes)
-    assert any(target.startswith("thunder_") for target in targets)
-    assert any(target.startswith("inductor_") for target in targets)
+    assert len(backend.subgraph_infos) == 1  # no graph break in dynamo
+    subgraph_info = backend.subgraph_infos[0]
+    assert len(subgraph_info.split_reasons) == 0  # no split
+    assert len(subgraph_info.thunder_compiled_fns) == 1
+    jfunc = subgraph_info.thunder_compiled_fns[0]
+    trc = last_traces(jfunc)[0]
+    assert any(
+        isinstance(bsym.sym.id, str) and bsym.sym.id.startswith("higher_order_autograd_function_apply")
+        for bsym in trc.bound_symbols
+    )
 
     # Verify forward pass
     torch.testing.assert_close(actual, expected)
@@ -981,6 +994,26 @@ def test_thunderfx():
     assert any(bsym.sym.id == "nvtx_range_push" for bsym in trc.bound_symbols)
 
 
+def test_thunderfx_last_traces():
+    def foo(x):
+        return torch.sin(x) + torch.cos(x)
+
+    x = torch.randn((4, 4), requires_grad=True)
+    cfoo = thunderfx(foo)
+    cfoo(x)
+    assert cfoo.last_traces != []
+    assert cfoo.last_backward_traces != []
+
+    # Call it w/o invoking the function first.
+    dfoo = thunderfx(foo)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        assert dfoo.last_traces == []
+        assert "Must invoke" in str(w[0].message)
+        assert dfoo.last_backward_traces == []
+        assert "before function invoked" in str(w[1].message)
+
+
 def test_get_example_input_tensor_metadata():
     from thunder.dynamo.utils import _get_example_input_tensor_metadata
     from torch._subclasses.fake_tensor import FakeTensorMode
@@ -1009,3 +1042,28 @@ def test_thunderfx_meta_tensor():
     thfoo = thunderfx(foo)
     out = thfoo(t0)
     assert out.device.type == "meta"
+
+
+@requiresCUDA
+def test_report(tmp_path, capsys):
+    def foo(x):
+        y = x.sin()
+        torch._dynamo.graph_break()
+        return y + x.cos()
+
+    x = torch.randn(4, 4, device="cuda", requires_grad=True)
+    thunderfx_report(foo, x, folder_path=tmp_path)
+    captured = capsys.readouterr()
+    msg = captured.out
+    assert not captured.err
+    assert "Verifying consistency" in msg
+    assert "Analyzing performance through benchmarking" in msg
+    assert "The input callable can be successfully executed by ThunderFX." in msg
+    assert "Max allocated memory usage:" in msg
+
+    with patch("torch.compile", side_effect=Exception("compilation raises exception")):
+        thunderfx_report(foo, x, folder_path=tmp_path, check_consistency=False)
+        captured = capsys.readouterr()
+        assert not captured.err
+        assert "Failed to run the function using ThunderFX" in captured.out
+        assert "Failed to save reproducer" in captured.out

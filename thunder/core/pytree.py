@@ -87,6 +87,8 @@ _registered_dataclasses = set()
 def register_pytree_node_dataclass(cls):
     # We don't use `dataclasses.asdict` as it recursively flattens all data classes (including
     # thunder internal ones like `VJPDual` (and also it is relatively slower as it calls copy.deepcopy()).
+    assert cls is not type
+
     def unpack(cls) -> dict:
         return {field.name: getattr(cls, field.name) for field in dataclasses.fields(cls)}
 
@@ -97,7 +99,7 @@ def register_pytree_node_dataclass(cls):
 
 
 def _maybe_register_dataclass(t):
-    if dataclasses.is_dataclass(t) and t.__class__ not in _registered_dataclasses:
+    if dataclasses.is_dataclass(t) and not isinstance(t, type) and t.__class__ not in _registered_dataclasses:
         return True
     return False
 

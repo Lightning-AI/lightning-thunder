@@ -160,10 +160,15 @@ def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
     # We need to be under trace context to generate proxies.
     with thunder.core.trace.tracectx(TraceCtx()):
 
-        def make_tensor_proxy(arg_node):
+        def make_input_proxy(arg_node):
             # This is a Node in the graph representing a Tensor or tuple of Tensors or
             # a PyTorch object like one representing torch.autocast.
             if isinstance(arg_node, torch.fx.Node):
+                # Higher-order operator nodes take get_attr nodes as input to get the called module
+                if arg_node.op == "get_attr":
+                    attr = getattr(arg_node.graph.owning_module, arg_node.target)
+                    if isinstance(attr, torch.nn.Module):
+                        return attr
                 if "example_value" not in arg_node.meta:
                     # This is a non tensor object like `torch.autocast` ctx manager object.
                     return arg_node
@@ -185,15 +190,15 @@ def get_proxy_inputs_from_node(node: torch.fx.Node) -> tuple[tuple, dict]:
                         for e_v in example_value
                     )
                 else:
-                    # NOTE - This will be caught will be caught and be part of the SplitReason.
-                    raise TypeError(f"Received `make_tensor_proxy` received example_value which wasn't Tensor or Tuple")
+                    # NOTE - This will be caught and be part of the SplitReason.
+                    raise TypeError(f"`make_input_proxy` received example_value which wasn't Tensor or Tuple")
                 return proxy(example_value)
 
             # This is int, float, etc.
             return arg_node
 
-        proxy_args = torch.fx.map_arg(node.args, make_tensor_proxy)
-        proxy_kwargs = {k: torch.fx.map_arg(v, make_tensor_proxy) for k, v in node.kwargs.items()}
+        proxy_args = torch.fx.map_arg(node.args, make_input_proxy)
+        proxy_kwargs = {k: torch.fx.map_arg(v, make_input_proxy) for k, v in node.kwargs.items()}
         return proxy_args, proxy_kwargs
 
 
@@ -354,14 +359,16 @@ def is_node_supported_by_thunder(node: torch.fx.Node) -> tuple[bool, SplitReason
         )
         return False, split_reason
 
-    # The checkpointed function must be fully supported by Thunder
-    if target is torch.ops.higher_order.tag_activation_checkpoint:
+    # The higher order function must be fully supported by Thunder
+    if target in (torch.ops.higher_order.tag_activation_checkpoint, torch.ops.higher_order.autograd_function_apply):
         m = node.graph.owning_module
-        get_attr_node = node.args[0]
-        assert get_attr_node.op == "get_attr"
-        checkpointed_fn = getattr(m, get_attr_node.target)
-        is_module_supported, split_reason = is_graphmodule_supported_by_thunder(checkpointed_fn)
-        return is_module_supported, split_reason
+        for arg_node in node.args:
+            if arg_node.op == "get_attr":
+                called_module = getattr(m, arg_node.target)
+                is_module_supported, split_reason = is_graphmodule_supported_by_thunder(called_module)
+                if not is_module_supported:
+                    return is_module_supported, split_reason
+        return True, None
 
     # If thunder has a mapping for this operation, try executing the meta function and see.
     # We have a symbol for `torch.where`, but we don't support one overload of it.
@@ -709,25 +716,7 @@ def thunder_options_to_str(thunder_options: dict) -> str:
     return option_str
 
 
-def reproducer(
-    gm: torch.fx.GraphModule,
-    subgraph_info: SubgraphInfo,
-    thunder_options: dict,
-    args: tuple[torch.Tensor | ExampleInputMetaData],
-    folder: str | os.PathLike,
-    graph_name: str,
-    use_pytest_benchmark: bool = False,
-):
-    folder = Path(folder)
-    folder.mkdir(exist_ok=True)
-    torch_env, thunder_pkgs = get_env()
-    # Ideally we'd use print_readable, but we want verbose=False and there's no
-    # way to set that with print_readable.
-    readable = _readable(gm, "DynamoModule", print_output=False)
-    has_cuda_args = any(hasattr(arg, "device") and arg.device.type == "cuda" for arg in args)
-    thunder_options_str = thunder_options_to_str(thunder_options)
-
-    # split reason
+def get_split_reasons_string(subgraph_info: SubgraphInfo) -> str:
     split_reason_str = "Split Information:\n"
     if subgraph_info.split_reasons:
         num_submodules = len(subgraph_info.submodule_to_compiled_functions)
@@ -739,31 +728,28 @@ def reproducer(
             split_reason_str += f"  Split Reason {id}:\n    {split_reason.info}\n"
     else:
         split_reason_str += "The original graph is not split, and is entirely run by Thunder.\n"
+    return split_reason_str
 
-    with open(folder / f"{graph_name}.py", "w") as f:
-        comment_str = f'''"""
-Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:
-{torch_env}
 
-Versions of Thunder related libraries:
-{thunder_pkgs}
-
-'''
-        comment_str += f'{split_reason_str}"""\n'
-        del split_reason_str
-        if use_pytest_benchmark:
-            comment_str += f"""# NOTE: This script requires `pytest-benchmark==4.0.0` to be installed.
-# To execute the script, run `pytest {graph_name}.py --benchmark-timer=torch.utils.benchmark.utils.timer.timer --benchmark-warmup=on`
-# To check the peak allocated CUDA memory, use --benchmark-json=json_file_name and look at the "max_allocated_memory_MB" field in the json file"""
-        # The packages that are likely to be used by the code generated from the Torch GraphModule
-        code_str = "\n".join([v.import_str for v in torch.fx.graph._custom_builtins.values()])
-        code_str += f"\nfrom functools import partial\nimport thunder\n"
-        if has_cuda_args:
-            code_str += "from thunder.transforms.cudagraph import CUDAGraphTransform\n"
-            code_str += "from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform\n"
-        if use_pytest_benchmark:
-            code_str += f"""import pytest
-
+def reproducer(
+    gm: torch.fx.GraphModule,
+    subgraph_info: SubgraphInfo,
+    thunder_options: dict,
+    args: tuple[torch.Tensor | ExampleInputMetaData],
+    folder: str | os.PathLike,
+    graph_name: str,
+    use_pytest_benchmark: bool = False,
+    save_input_tensor: bool = False,
+):
+    folder = Path(folder)
+    folder.mkdir(exist_ok=True)
+    torch_env, thunder_pkgs = get_env()
+    # Ideally we'd use print_readable, but we want verbose=False and there's no
+    # way to set that with print_readable.
+    readable = _readable(gm, "DynamoModule", print_output=False)
+    has_cuda_args = any(hasattr(arg, "device") and arg.device.type == "cuda" for arg in args)
+    thunder_options_str = thunder_options_to_str(thunder_options)
+    TORCH_INDUCTOR_FUNCTION_STR = """
 # NOTE: The reproducer function has already been processed by TorchDynamo.
 # If we let it go through TorchDynamo again, it could be segmented further.
 # To avoid this, we directly use Inductor here.
@@ -774,37 +760,130 @@ def torch_inductor(fn, inputs):
 
     fx_graph = symbolic_trace(fn)
     return inductor_compile(fx_graph, inputs)
+"""
+    EXECUTOR_DICT_CODE_STR = f"""{TORCH_INDUCTOR_FUNCTION_STR}
 
 bench_executors_dict = {{}}
 bench_executors_dict["thunder"]=partial(thunder.jit, {thunder_options_str})
 bench_executors_dict["torch_inductor"]=torch_inductor
 bench_executors_dict["eager"]=None
 """
-            if has_cuda_args:
-                code_str += f"""bench_executors_dict["thunder_cugraph"]=partial(thunder.jit, transform=CUDAGraphTransform())\n"""
-            code_str += f"""
+    if has_cuda_args:
+        EXECUTOR_DICT_CODE_STR = f"""{EXECUTOR_DICT_CODE_STR}
+bench_executors_dict["thunder_cugraph"]=partial(thunder.jit, transform=CUDAGraphTransform())
+"""
+
+    COMMAND_LINE_ARGS = """
+import argparse
+
+parser = argparse.ArgumentParser(description="Script for executing an FX graph with specified configurations.")
+
+parser.add_argument(
+    "--check_consistency",
+    type=bool,
+    default=False,
+    help="Whether to check consistency (default: False)"
+)
+parser.add_argument(
+    "--compute_type",
+    type=str,
+    choices=["forward", "forward+backward"],
+    default="forward",
+    help="Type of computation to perform (forward, forward+backward)"
+)
+parser.add_argument(
+    "--executor",
+    type=str,
+    choices=["torch_inductor", "thunder", "eager"],
+    default="thunder",
+    help="Type of executors (thunder, torch_inductor, or eager)"
+)
+
+args = parser.parse_args()
+ex_name = args.executor
+compute_type = args.compute_type
+check_acc = args.check_consistency
+"""
+
+    # split reason
+    split_reason_str = get_split_reasons_string(subgraph_info)
+
+    comment_str = f'''"""
+Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:
+{torch_env}
+
+Versions of Thunder related libraries:
+{thunder_pkgs}
+
+{split_reason_str}"""
+'''
+    del split_reason_str, torch_env, thunder_pkgs
+
+    code_str = ""
+    if use_pytest_benchmark:
+        code_str += f"""# NOTE: This script requires `pytest-benchmark==4.0.0` to be installed.
+# To execute the script, run `pytest {graph_name}.py --benchmark-timer=torch.utils.benchmark.utils.timer.timer --benchmark-warmup=on --benchmark-group-by=param:compute_type`
+# To check the peak allocated CUDA memory, use --benchmark-json=json_file_name and look at the "max_allocated_memory_MB" field in the json file
+# To run tests for a specific compute_type or executor, use the pytest `-k` option.
+# For example:
+#   - `-k "thunder and forward"` will run only the forward pass with the Thunder executor.
+#
+# Available options:
+#   - compute_type: "forward", "backward"
+#   - executor: "eager", "thunder", "torch_inductor", "thunder_cugraph" (requires CUDA for thunder_cugraph)
+
+import pytest
+from thunder.benchmarks.targets import parametrize_compute_type_only_training, benchmark_for_compute_type
+"""
+    # The packages that are likely to be used by the code generated from the Torch GraphModule
+    code_str += "\n".join([v.import_str for v in torch.fx.graph._custom_builtins.values()])
+    code_str += f"\nfrom functools import partial\nimport thunder\n"
+    if has_cuda_args:
+        code_str += "from thunder.transforms.cudagraph import CUDAGraphTransform\n"
+        code_str += "from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform\n"
+
+    code_str += f"{EXECUTOR_DICT_CODE_STR}"
+    if use_pytest_benchmark:
+        code_str += f"""
 executors = list(bench_executors_dict.values())
 executor_ids = list(bench_executors_dict.keys())
 
 @pytest.mark.parametrize(
-    "executor,",
-    executors,
-    ids=executor_ids,
-)"""
-            func_str = f"def test_{graph_name}(benchmark, executor):\n{readable}\n"
-        else:
-            func_str = f"def test_{graph_name}():\n{readable}\n"
+"executor,",
+executors,
+ids=executor_ids,
+)
+@parametrize_compute_type_only_training"""
+        func_str = f"def test_{graph_name}(benchmark, executor, compute_type):\n{readable}\n"
+    else:
+        code_str += f"\n{COMMAND_LINE_ARGS}"
+        func_str = f"def test_{graph_name}():\n{readable}\n"
 
-        if any(arg is None for arg in args):
-            func_str += f"# Warning: The inputs that cannot be inferred are set to None, requiring the user to manually give inputs according to the code\n"
+    if any(arg is None for arg in args):
+        func_str += f"# Warning: The inputs that cannot be inferred are set to None, requiring the user to manually give inputs according to the code\n"
+    if save_input_tensor:
+        example_inputs = eval(f"[\n{chr(10).join(arg_like(a) for a in args)}]")
+        input_file_name = folder / f"{graph_name}_inputs.pt"
+        torch.save(example_inputs, input_file_name)
+        func_str += f"inputs = torch.load('{input_file_name}')\n"
+    else:
         input_str = f"""inputs = [\n{chr(10).join(arg_like(a) for a in args)}\n"""
         func_str += f"{_addindent(input_str, 4)}\n]\n"
+        del input_str
 
-        if not use_pytest_benchmark:
-            func_str += f"compiled = thunder.jit(DynamoModule(), {thunder_options_str})\n"
-            func_str += "compiled(*inputs)"
-        else:
-            func_str = f"""{func_str}
+    if not use_pytest_benchmark:
+        func_str += f"""
+mod = DynamoModule()
+from thunder.dynamo.report import run_repro
+
+result = run_repro(bench_executors_dict, ex_name, mod, compute_type, *inputs)
+if check_acc:
+    eager_result = run_repro(bench_executors_dict, "eager", mod, compute_type, *inputs)
+    for (compute_t, eager_v), (_, cur_v) in zip(eager_result.items(), result.items()):
+        torch.testing.assert_close(eager_v, cur_v, msg=lambda e : f'{{compute_t}}: {{e}}')
+"""
+    else:
+        func_str = f"""{func_str}
 mod = DynamoModule()
 if executor == None:
     compiled = mod
@@ -813,14 +892,12 @@ elif executor == torch_inductor:
 else:
     compiled = executor(mod)
 """
-            if not has_cuda_args:
-                func_str += f"""benchmark(compiled, *inputs)"""
-            else:
-                func_str += f"""from thunder.benchmarks import record_peak_allocated_memory
+        if not has_cuda_args:
+            func_str += f"""benchmark(compiled, *inputs)"""
+        else:
+            func_str += f"""benchmark_for_compute_type(compute_type, benchmark, compiled, inputs, {{}})"""
 
-with record_peak_allocated_memory(benchmark):
-    benchmark(compiled, *inputs)
-"""
+    with open(folder / f"{graph_name}.py", "w") as f:
         print(comment_str, file=f)
         print(code_str, file=f)
         print(_addindent(func_str, 4), file=f)

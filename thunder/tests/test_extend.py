@@ -262,3 +262,25 @@ def test_validate_executors():
     assert thunder.resolve_executors(("python", pytorch_executor)) == (pythonex, pytorch_executor)
     with pytest.raises(ValueError, match=re.compile("Expected an Executor or the name of a registered Executor")):
         assert thunder.resolve_executors(("python", "foo", pytorch_executor, "bar"))
+
+
+def test_transient_operator_executor():
+    from thunder.extend import TemporaryExecutor
+    from functools import partial
+
+    executor = TemporaryExecutor()
+    op = executor.register_operator(
+        name="temp_add",
+        like=thunder.torch.add,
+        fn=lambda a, b: a + b,
+    )
+
+    @partial(thunder.jit, executors=[executor])
+    def f(a, b):
+        return op(a, b)
+
+    a = torch.randn(4, 4, device="cpu")
+
+    assert_close(f(a, a), a + a)
+    assert thunder.last_traces(f)[-1].bound_symbols[2].sym.executor is executor
+    assert thunder.last_traces(f)[-1].bound_symbols[2].sym.name.startswith("temp_add")
