@@ -392,8 +392,12 @@ def _unpack_inputs(fn, tracectx: TraceCtx, args, kwargs, *, rename_proxies: bool
 
 # TODO Update cacheable types
 def _make_subkey_for(x: Any) -> tuple[bool, None | tuple]:
-    if isinstance(x, (torch.Tensor, TensorProxy)):
+    if isinstance(x, torch.Tensor):
         return True, (type(x), x.shape, x.device, x.dtype, x.requires_grad)
+
+    if isinstance(x, TensorProxy):
+        # calling _shape instead shape to avoid leaving a prims.shape in the trace
+        return True, (type(x), x._shape, x.device, x.dtype, x.requires_grad)
 
     # TODO Add NumPy ndarray support
     if isinstance(x, np.ndarray):
