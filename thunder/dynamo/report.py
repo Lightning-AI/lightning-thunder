@@ -433,11 +433,9 @@ def fx_report(fn: Callable, *args, use_benchmark: bool = False, **kwargs) -> FXR
         graphs.append(gm)
         return gm.forward
 
-    try:
-        compiled = torch.compile(fn, backend=helper_backend)
-        compiled(*args, **kwargs)
-    except Exception as e:
-        print(f"Failed to run the function using torch.compile with exception: {e}")
+    compiled = torch.compile(fn, backend=helper_backend)
+    compiled(*args, **kwargs)
+
     if use_benchmark:
         return FXReport(FXGraphBenchmarkReport, graphs)
     return FXReport(FXGraphReport, graphs)

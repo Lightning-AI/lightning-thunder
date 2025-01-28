@@ -1070,7 +1070,8 @@ def test_report(tmp_path, capsys):
 
 
 @requiresCUDA
-def test_fxreport(tmp_path):
+@pytest.mark.parametrize("use_benchmark", (True, False), ids=("benchmark", "repro"))
+def test_fxreport(use_benchmark, tmp_path):
     from thunder.dynamo.report import fx_report
 
     def foo(x):
@@ -1079,7 +1080,7 @@ def test_fxreport(tmp_path):
         return y + x.cos()
 
     x = torch.randn(4, 4, device="cuda", requires_grad=True)
-    results = fx_report(foo, x)
+    results = fx_report(foo, x, use_benchmark=use_benchmark)
     for r in results.fx_graph_reports:
         r.write_eager_repro(tmp_path)
         r.write_thunder_repro(tmp_path)
