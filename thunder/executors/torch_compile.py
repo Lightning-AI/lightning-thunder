@@ -246,7 +246,6 @@ torch_compile_cat_ex._implmap = {
 # Similar to torchcomile_cat, this executor is meant to be used with nvfuser_executor to allow
 # inductor to claim cross_entropy computation.
 required_ops = {
-    prims.reshape.id,
     "nll_loss_backward",
     "log_softmax_backward",
     "torch.log_softmax",
