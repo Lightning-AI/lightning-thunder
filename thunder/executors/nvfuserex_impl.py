@@ -133,13 +133,15 @@ def _define_constant(fd: FusionDefinition, constant: Any) -> Any:
     utils.check(False, lambda: f"Cannot translate {constant} of type {type(constant)} into an nvFuser constant")
 
 
-def getnv(x: Any, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
-    if isinstance(x, Proxy):
+def getnv(x: Any, fd: FusionDefinition, lc_to_nv_map: dict, inline_number: bool = False) -> Any:
+    if inline_number and isinstance(x, Number):
+        return x
+    elif isinstance(x, Proxy):
         return lc_to_nv_map[x]
-    if isinstance(x, (Number, dtypes.dtype, type, Device)):
+    elif isinstance(x, (Number, dtypes.dtype, type, Device)):
         return _define_constant(fd, x)
-    if isinstance(x, Sequence):
-        return tuple(getnv(i, fd, lc_to_nv_map) for i in x)
+    elif isinstance(x, Sequence):
+        return tuple(getnv(i, fd, lc_to_nv_map, inline_number) for i in x)
 
     utils.check(False, lambda: f"Cannot translate {x} of type {type(x)} to an nvFuser object")
 
@@ -1294,7 +1296,13 @@ def nv_slice(
 ) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
 
-    return fd.ops.slice(nva, start_indices, end_indices, strides)
+    # inline_number allows a simple FusionDefinition when all slice indices are python numbers.
+    inline_number = all(map(lambda x: not isinstance(x, Proxy), start_indices + end_indices + strides))
+    nv_start_indices = getnv(start_indices, fd, lc_to_nv_map, inline_number=inline_number)
+    nv_end_indices = getnv(end_indices, fd, lc_to_nv_map, inline_number=inline_number)
+    nv_strides = getnv(strides, fd, lc_to_nv_map, inline_number=inline_number)
+
+    return fd.ops.slice(nva, nv_start_indices, nv_end_indices, nv_strides)
 
 
 register_supported(PrimIDs.SLICE, nv_slice, _slice_check)
