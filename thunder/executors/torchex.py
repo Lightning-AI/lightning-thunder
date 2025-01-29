@@ -17,8 +17,10 @@ from thunder.core.dtypes import to_torch_dtype, to_dtype
 import thunder.core.devices as devices
 from thunder.core.devices import to_torch_device, to_device
 import thunder.core.prims as prims
-from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy, pytype
-from thunder.core.symbol import Symbol
+from thunder.core.proxies import NumberProxy, TensorProxy, FutureTensorProxy, variableify, pytype, Proxy
+from thunder.core.pytree import tree_flatten, tree_unflatten
+from thunder.core.symbol import Symbol, BoundSymbol
+from thunder.core.trace import TraceCtx, set_tracectx, reset_tracectx, from_trace
 from thunder.distributed.prims import DistributedReduceOps
 import thunder.distributed.prims as dist_prims
 import thunder.core.utils as utils
@@ -33,7 +35,10 @@ from thunder.core.transforms import (
 )
 
 if TYPE_CHECKING:
+    from typing import Any
+    from collections.abc import Iterable
     from thunder.common import CompileData
+    from thunder.core.codeutils import ContextObject, Printable
 
 ex = OperatorExecutor("torch", version=torch.__version__)
 register_executor(ex)
@@ -2303,11 +2308,77 @@ def _bind_postprocess_of_tensor_subclass_ctor(bsym: BoundSymbol) -> None:
     bsym._import_ctx.update(new_imports)
 
 
+def printer_of_tensor_subclass_ctor(
+    bsym: BoundSymbol,
+    out_printables: Any,
+    arg_printables: Sequence[Printable],
+    kwarg_printables: dict[str, Printable],
+) -> str | Iterable[str]:
+    from itertools import chain
+    from thunder.core import baseutils
+    from thunder.core import codeutils
+    from thunder.core.prims import filter_types
+
+    baseutils.check(not kwarg_printables, lambda: f"No kwargs are supported but {kwarg_printables = }")
+
+    # NOTE(crcrpar): It's not a context but at the moment Tensor subclass is treated as `ContextObject`.
+    wrapped_cls: ContextObject | torch._C._TensorMeta = arg_printables[0]
+    if isinstance(wrapped_cls, torch._C._TensorMeta):
+        cls = wrapped_cls
+    else:
+        cls: torch._C._TensorMeta = wrapped_cls.obj
+    tensors, non_tensors = arg_printables[-2:]
+    new_non_tensors = []
+    for a in non_tensors:
+        if isinstance(a, dtypes.dtype):
+            new_non_tensors.append(dtypes.to_torch_dtype(a))
+        elif isinstance(a, devices.Device):
+            new_non_tensors.append(devices.to_torch_device(a))
+        else:
+            new_non_tensors.append(a)
+
+    arg_str = ", ".join(codeutils.prettyprint(x) for x in [*tensors, *new_non_tensors])
+    kwarg_str = ""
+
+    result_str: str
+    if bsym.output is None or (baseutils.is_collection(bsym.output) and len(bsym.output) == 0):
+        result_str = ""
+    else:
+        result_str = f"{codeutils.prettyprint(out_printables, literals_as_underscores=True)} = "
+
+    # Creates a comment describing the output
+    comment_str: str
+    if isinstance(bsym.output, Proxy):
+        comment_str = f"  # {codeutils.prettyprint(out_printables, with_type=True)}"
+    else:
+        comment_str = ""
+
+    cls_with_module = f"{cls.__name__}"
+    s = f"{result_str}{cls_with_module}({arg_str}{', ' if (len(arg_str) > 0 and len(kwarg_str) > 0) else ''}{kwarg_str}){comment_str}"
+
+    if bsym.header:
+        header_lines = (
+            bsym.header
+            if isinstance(bsym.header, Sequence) and not isinstance(bsym.header, str)
+            else bsym.header.splitlines()
+        )
+        header_lines = (f"# {line}" for line in header_lines)
+        return chain(header_lines, [s])
+
+    filtered_types = (cls,)
+    if non_tensors:
+        types = get_nested_types([t.obj if isinstance(t, codeutils.ContextObject) else t for t in non_tensors])
+        filtered_types += filter_types(types)
+    new_imports = {t.__name__: t for t in filtered_types}
+    bsym._import_ctx.update(new_imports)
+    return s
+
+
 tensor_subclass_ctor = ex.register_operator(
     "tensor_subclass_ctor",
     meta=prims.tensor_subclass_ctor,
     fn=_tensor_subclass_ctor,
     bind_postprocess=_bind_postprocess_of_tensor_subclass_ctor,
-    python_printer=prims.printer_of_tensor_subclass_ctor,
+    python_printer=printer_of_tensor_subclass_ctor,
 )
 _register_implementation(prims.tensor_subclass_ctor, tensor_subclass_ctor, checker=_always_executable)
