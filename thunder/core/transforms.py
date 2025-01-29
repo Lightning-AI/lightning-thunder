@@ -619,13 +619,22 @@ def clear_grads(module: torch.nn.Module) -> None:
         b.grad = None
 
 
+# Grad functions for prims
+from thunder.core.prims import PrimIDs as pids, get_grad, put_grad
+
+
 _grad_fn_map: dict[Any, Callable] = {}
 
+_grad_skip_ids: set[PrimIDs] = set()
 
-def register_grad(sym_or_id: Symbol | Any, gradfn: Callable) -> None:
+
+def register_grad(sym_or_id: Symbol | Any, gradfn: Callable, skip: bool = False) -> None:
     id: Any = sym_or_id
     if isinstance(sym_or_id, Symbol):
         id = sym_or_id.id
+
+    if skip:
+        _grad_skip_ids.insert(id)
 
     # The gradfn are expected to be written in terms of torch functions by
     # default even if the original forward function could be written in terms of
@@ -635,10 +644,6 @@ def register_grad(sym_or_id: Symbol | Any, gradfn: Callable) -> None:
     # appropriate language context that will take precedence over the default
     # torch language context.
     _grad_fn_map[id] = langctx(Languages.TORCH)(gradfn)
-
-
-# Grad functions for prims
-from thunder.core.prims import PrimIDs as pids, get_grad, put_grad
 
 
 # A generalization of prims.put_grad to pytrees
@@ -658,13 +663,13 @@ def put_grads(a, g):
 #
 
 # NOTE prims.unpack_empty_dict creates no grad associations
-register_grad(pids.UNPACK_EMPTY_DICT, prims.unpack_empty_dict)
+register_grad(pids.UNPACK_EMPTY_DICT, prims.unpack_empty_dict, True)
 
 # NOTE prims.unpack_key creates no grad associations
-register_grad(pids.UNPACK_KEY, prims.unpack_key)
+register_grad(pids.UNPACK_KEY, prims.unpack_key, True)
 
 # NOTE prims.unpack_sequence creates no grad associations
-register_grad(pids.UNPACK_SEQUENCE, prims.unpack_sequence)
+register_grad(pids.UNPACK_SEQUENCE, prims.unpack_sequence, True)
 
 
 #
@@ -687,10 +692,10 @@ register_grad(pids.CONVERT_ELEMENT_TYPE, _convert_element_type_prim_grad)
 #
 
 # NOTE prims.full creates no grad associations
-register_grad(pids.FULL, prims.full)
+register_grad(pids.FULL, prims.full, True)
 
 # NOTE prims.iota creates no grad associations
-register_grad(pids.IOTA, prims.iota)
+register_grad(pids.IOTA, prims.iota, True)
 
 
 def _uniform_grad(shape, minval, maxval, *, device, dtype):
@@ -1118,12 +1123,12 @@ def _div_prim_grad(a: Number | TensorProxy, b: Number | TensorProxy, /) -> Numbe
 register_grad(pids.DIV, _div_prim_grad)
 
 # Comparison operators -- these create no grad associations
-register_grad(pids.EQ, prims.eq)
-register_grad(pids.NE, prims.ne)
-register_grad(pids.GE, prims.ge)
-register_grad(pids.GT, prims.gt)
-register_grad(pids.LE, prims.le)
-register_grad(pids.LT, prims.lt)
+register_grad(pids.EQ, prims.eq, True)
+register_grad(pids.NE, prims.ne, True)
+register_grad(pids.GE, prims.ge, True)
+register_grad(pids.GT, prims.gt, True)
+register_grad(pids.LE, prims.le, True)
+register_grad(pids.LT, prims.lt, True)
 
 
 def _mul_prim_grad(a: Number | TensorProxy, b: Number | TensorProxy, /) -> Number | TensorProxy:
@@ -1401,10 +1406,12 @@ def _maximum_grad(a: TensorProxy, b: TensorProxy, /):
 register_grad(pids.MAXIMUM, _maximum_grad)
 
 # This operation creates no grad associations
-register_grad(pids.ARGMAX, prims.argmax)
+register_grad(pids.ARGMAX, prims.argmax, True)
 
 # This operation creates no grad associations
-register_grad(pids.SHAPE, prims.shape)
+# NOTE we need to skip pids.SHAPE in grad transform, because `prims.shape` creates multiple outputs, which
+# breaks the assumption the in the pass that each symbol has a single output
+register_grad(pids.SHAPE, prims.shape, True)
 
 
 def _copy_with_setitem_grad(a: TensorProxy, index, value: Number | TensorProxy):
@@ -2292,6 +2299,8 @@ def iter_bound_symbols(bound_symbols):
     """
     for symbol in bound_symbols:
         if symbol.sym.id in trace_interpreter_skip_list:
+            continue
+        elif symbol.sym.id in _grad_skip_ids:
             continue
         elif symbol.output is None:
             continue
