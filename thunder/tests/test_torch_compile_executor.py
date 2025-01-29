@@ -4,7 +4,12 @@ import torch
 from torch._dynamo import is_inductor_supported
 
 import thunder
-from thunder.executors.torch_compile import supported_ops, torch_compile_ex, torch_compile_cat_ex
+from thunder.executors.torch_compile import (
+    supported_ops,
+    torch_compile_ex,
+    torch_compile_cat_ex,
+    torch_compile_xentropy_ex,
+)
 from thunder.executors.torchex import ex as pytorch_ex
 from thunder.executors.nvfuserex import nvfuserex
 from thunder.tests.bf16 import device_supports_bf16
