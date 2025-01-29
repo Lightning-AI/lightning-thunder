@@ -4134,45 +4134,6 @@ tensor_subclass_ctor = make_prim(
 )
 
 
-def printer_of_tensor_subclass_flatten(
-    bsym: BoundSymbol,
-    out_printables: Any,
-    arg_printables: Sequence[Printable],
-    kwarg_printables: dict[str, Printable],
-) -> str | Iterable[str]:
-    from itertools import chain
-
-    arg_str = (
-        ""
-        if (arg_printables is None or len(arg_printables) == 0)
-        else ", ".join(codeutils.prettyprint(x) for x in arg_printables)
-    )
-
-    result_str: str
-    if bsym.output is None or (baseutils.is_collection(bsym.output) and len(bsym.output) == 0):
-        result_str = ""
-    else:
-        result_str = f"{codeutils.prettyprint(out_printables, literals_as_underscores=True)} = "
-
-    # Creates a comment describing the output
-    comment_str = ""
-    if isinstance(bsym.output, Proxy):
-        comment_str = f"  # {codeutils.prettyprint(out_printables, with_type=True)}"
-
-    s = f"{result_str}{arg_str}.__tensor_flatten__(){comment_str}"
-
-    if bsym.header:
-        header_lines = (
-            bsym.header
-            if isinstance(bsym.header, Sequence) and not isinstance(bsym.header, str)
-            else bsym.header.splitlines()
-        )
-        header_lines = (f"# {line}" for line in header_lines)
-        return chain(header_lines, [s])
-
-    return s
-
-
 # NOTE(crcrpar): The behavior is different from PyTorch `subclass_tensor.__tensor_flatten__()`
 # that returns a list of tensor attr names and a dict of const metadata. In Thunder traces,
 # const values could be obviated and actual tensor proxies would be more useful
@@ -4187,59 +4148,7 @@ flatten_tensor_subclass = make_prim(
     PrimIDs.FLATTEN_TENSOR_SUBCLASS,
     "flatten_tensor_subclass",
     meta=flatten_tensor_subclass_meta,
-    python_printer=printer_of_tensor_subclass_flatten,
 )
-
-
-def printer_of_unflatten_tensor_subclass(
-    bsym: BoundSymbol,
-    out_printables: Any,
-    arg_printables: Sequence[Printable],
-    kwarg_printables: dict[str, Printable],
-) -> str | Iterable[str]:
-    from itertools import chain
-
-    wrapped_cls: ContextObject | torch._C._TensorMeta = arg_printables[0]
-    if isinstance(wrapped_cls, torch._C._TensorMeta):
-        cls = wrapped_cls
-    else:
-        cls: torch._C._TensorMeta = wrapped_cls.obj
-
-    arg_str = (
-        ""
-        if (arg_printables is None or len(arg_printables) == 0)
-        else ", ".join(codeutils.prettyprint(x) for x in arg_printables[1:])
-    )
-    kwarg_str: str
-
-    if len(kwarg_printables) == 0:
-        kwarg_str = ""
-    else:
-        kwarg_str = ", ".join(f"{k}={codeutils.prettyprint(v)}" for k, v in kwarg_printables.items())
-
-    result_str: str
-    if bsym.output is None or (baseutils.is_collection(bsym.output) and len(bsym.output) == 0):
-        result_str = ""
-    else:
-        result_str = f"{codeutils.prettyprint(out_printables, literals_as_underscores=True)} = "
-
-    # Creates a comment describing the output
-    comment_str = ""
-    if isinstance(bsym.output, Proxy):
-        comment_str = f"  # {codeutils.prettyprint(out_printables, with_type=True)}"
-
-    s = f"{result_str}{cls.__name__}.__tensor_unflatten__({arg_str}{', ' if (len(arg_str) > 0 and len(kwarg_str) > 0) else ''}{kwarg_str}){comment_str}"
-
-    if bsym.header:
-        header_lines = (
-            bsym.header
-            if isinstance(bsym.header, Sequence) and not isinstance(bsym.header, str)
-            else bsym.header.splitlines()
-        )
-        header_lines = (f"# {line}" for line in header_lines)
-        return chain(header_lines, [s])
-
-    return s
 
 
 def bind_postprocess_of_unflatten_tensor_subclass(bsym: BoundSymbol) -> None:
@@ -4289,6 +4198,5 @@ unflatten_tensor_subclass = make_prim(
     PrimIDs.UNFLATTEN_TENSOR_SUBCLASS,
     "unflatten_tensor_subclass",
     meta=unflatten_tensor_subclass_meta,
-    python_printer=printer_of_unflatten_tensor_subclass,
     _bind_postprocess=bind_postprocess_of_unflatten_tensor_subclass,
 )

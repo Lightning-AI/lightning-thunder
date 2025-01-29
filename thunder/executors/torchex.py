@@ -2258,7 +2258,7 @@ def printer_of_tensor_subclass_ctor(
     from itertools import chain
     from thunder.core import baseutils
     from thunder.core import codeutils
-    from thunder.core.prims import filter_types
+    from thunder.core.prims import filter_types_for_tensor_wrapper_subclass
 
     baseutils.check(not kwarg_printables, lambda: f"No kwargs are supported but {kwarg_printables = }")
 
