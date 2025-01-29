@@ -422,7 +422,6 @@ def test_lora_transform_linear():
 
 
 def test_constant_folding():
-
     # Helper to verify we see the expected constant tensors
     # in exec_trace.
     def assert_in_trace(exec_trace, sym, arg_vals):
@@ -711,27 +710,12 @@ def test_buffer_dtype_casting():
             # update the cache
             return self.k, self.v
 
-    # BUG: issue: 1637
-    class ParentModule(nn.Module):
-        def __init__(
-            self,
-            k_shape: tuple[int, int, int, int],
-            v_shape: tuple[int, int, int, int],
-            device: torch.device | None = None,
-            dtype: torch.dtype | None = None,
-        ):
-            super().__init__()
-            self.cast_module = cast(k_shape, v_shape, device=device, dtype=dtype)
-
-        def forward(self, k: torch.Tensor, v: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-            return self.cast_module(k, v)
-
     with torch.device("cpu"):
         k_shape = (2, 3, 4, 5)
         v_shape = (2, 3, 4, 5)
         device = torch.device("cpu")
         dtype = torch.float32
-        model = ParentModule(k_shape, v_shape, device=device, dtype=dtype).eval().requires_grad_(False)
+        model = cast(k_shape, v_shape, device=device, dtype=dtype).eval().requires_grad_(False)
 
     k = torch.randn(2, 3, 4, 5, device=device, dtype=torch.half)
     v = torch.randn(2, 3, 4, 5, device=device, dtype=torch.half)
@@ -778,3 +762,96 @@ def test_prune_prologue_checks():
     jm = thunder.jit(m, transforms=(thunder.transforms.PrunePrologueChecks(prune_all_checks=True),))
     jm(inp)
     assert count_tensor_checks(thunder.last_prologue_traces(jm)[-1]) == 0
+
+
+def test_dce_duplicate_number_proxies():
+    from thunder.core.prims import PrimIDs
+
+    def fn(x):
+        shape_0 = x.shape
+        shape_1 = x.shape  # duplicate shape query
+        return sum(shape_0)
+
+    # symbolic values is necessary to have the shape query in trace
+    jfn = thunder.jit(fn, cache="symbolic values")
+
+    a = torch.randn(2, 3, 4, 5)
+    out = jfn(a)
+
+    def _count_shape_query(trace):
+        count = 0
+        for bsym in trace.bound_symbols:
+            if bsym.sym.id == PrimIDs.SHAPE:
+                count += 1
+        return count
+
+    # original two shape queries should both exist in the original trace
+    trace = thunder.last_traces(jfn)[0]
+    assert _count_shape_query(trace) == 2
+
+    # dce should remove duplicate shape queries
+    trace = thunder.core.transforms.dce(trace)
+    assert _count_shape_query(trace) == 1
+
+
+def test_cache_symbolic_values_grad_matmul():
+    def foo(a, w):
+        return torch.nn.functional.linear(a, w)
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+    set_requires_grad = lambda x: x.requires_grad_()
+
+    a = torch.randn(2, 8, 6)
+    b = torch.randn(4, 6)
+    a_ref = a.clone()
+    b_ref = b.clone()
+    for x in (a, b, a_ref, b_ref):
+        x.requires_grad_()
+    actual = jfoo(a, b)
+    expected = foo(a_ref, b_ref)
+    actual.sum().backward()
+    expected.sum().backward()
+
+    assert_close(actual, expected)
+    assert_close(a.grad, a_ref.grad)
+    assert_close(b.grad, b_ref.grad)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 0
+
+    a = torch.randn(4, 4, 2)
+    b = torch.randn(8, 2)
+    a_ref = a.clone()
+    b_ref = b.clone()
+    for x in (a, b, a_ref, b_ref):
+        x.requires_grad_()
+    actual = jfoo(a, b)
+    expected = foo(a_ref, b_ref)
+    actual.sum().backward()
+    expected.sum().backward()
+
+    assert_close(actual, expected)
+    assert_close(a.grad, a_ref.grad)
+    assert_close(b.grad, b_ref.grad)
+    assert thunder.cache_misses(jfoo) == 1
+    assert thunder.cache_hits(jfoo) == 1
+
+
+def test_cache_symbolic_values_grad_unsqueeze():
+    def foo(x):
+        cache = torch.arange(0, 128, 1)
+        cache_unsqueezed = cache.unsqueeze(0)
+        return x + cache_unsqueezed
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+    set_requires_grad = lambda x: x.requires_grad_()
+
+    a = torch.randn(2, 8, 128)
+    a_ref = a.clone()
+    for x in (a, a_ref):
+        x.requires_grad_()
+    actual = jfoo(a)
+    expected = foo(a_ref)
+    actual.sum().backward()
+    expected.sum().backward()
+    assert_close(actual, expected)
+    assert_close(a.grad, a_ref.grad)
