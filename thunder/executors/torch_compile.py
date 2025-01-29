@@ -261,6 +261,7 @@ supported_ops = {
     prims.div.id,
     prims.ne.id,
     prims.neg.id,
+    prims.pad.id,
     prims.reshape.id,
     prims.slice_prim.id,
     prims.where.id,
