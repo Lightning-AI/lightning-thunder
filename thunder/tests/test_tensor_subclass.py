@@ -159,8 +159,6 @@ def test_func_of_subclass_ctor_wrapper(executor, device, _):
     actual = jitted(x, scale)
     torch.testing.assert_close((expected._x, expected._scale), (actual._x, actual._scale))
 
-    print(thunder.last_traces(jitted)[0])
-
 
 @instantiate(
     dtypes=(thunder.core.dtypes.float32,),
