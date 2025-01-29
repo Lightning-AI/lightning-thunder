@@ -634,7 +634,7 @@ def register_grad(sym_or_id: Symbol | Any, gradfn: Callable, skip: bool = False)
         id = sym_or_id.id
 
     if skip:
-        _grad_skip_ids.insert(id)
+        _grad_skip_ids.add(id)
 
     # The gradfn are expected to be written in terms of torch functions by
     # default even if the original forward function could be written in terms of
