@@ -38,6 +38,7 @@ try:
 except ImportError:
     sdpa_available = False
 
+
 world_size = int(os.environ.get("WORLD_SIZE", 1))
 local_rank = int(os.environ.get("LOCAL_RANK", 0))
 global_rank = int(os.environ.get("RANK", 0))
