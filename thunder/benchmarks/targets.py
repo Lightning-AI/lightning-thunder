@@ -882,6 +882,7 @@ def test_hf_transformers(benchmark, model_id: str, seq_length: int, batch_size: 
     if compute_type == ComputeType.TRAINING_BACKWARD:
         return_fn = lambda *args, **kwargs: fn(*args, **kwargs).loss
     else:
+        kwargs['labels'] = None
         return_fn = fn
 
     benchmark_for_compute_type(compute_type, benchmark, return_fn, args, kwargs)
