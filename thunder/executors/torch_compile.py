@@ -267,7 +267,6 @@ supported_ops = {
     "nll_loss_backward",
     "log_softmax_backward",
     "torch.log_softmax",
-    "torch.nn.functional.cross_entropy",
     "torch.nn.functional.nll_loss",
     "torch.sum",
     "torch.take_along_dim",
