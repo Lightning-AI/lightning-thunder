@@ -1074,17 +1074,18 @@ def test_report(tmp_path, capsys):
 def test_fxreport(use_benchmark, tmp_path):
     from thunder.dynamo.report import fx_report
 
-    def foo(x):
-        y = x.sin()
+    def foo(x, y):
+        z = x.sin()
         torch._dynamo.graph_break()
-        return y + x.cos()
+        return z + y.cos() + y.sin()
 
     x = torch.randn(4, 4, device="cuda", requires_grad=True)
-    results = fx_report(foo, x, use_benchmark=use_benchmark)
+    y = torch.randn(4, 4, device="cuda", requires_grad=True)
+    results = fx_report(foo, x, y)
     for r in results.fx_graph_reports:
-        r.write_eager_repro(tmp_path)
-        r.write_thunder_repro(tmp_path)
-        r.write_inductor_repro(tmp_path)
+        r.write_eager_repro(tmp_path, use_benchmark=use_benchmark)
+        r.write_thunder_repro(tmp_path, use_benchmark=use_benchmark)
+        r.write_inductor_repro(tmp_path, use_benchmark=use_benchmark)
         my_exe = "compiled_model = thunder.jit(model, transforms=[NvtxProfileTransform(),CUDAGraphTransform()], executors=[nvfuser_executor])"
         my_imports = [
             "import thunder",
@@ -1092,4 +1093,6 @@ def test_fxreport(use_benchmark, tmp_path):
             "from thunder import nvfuser_executor",
             "from thunder.transforms.cudagraph import CUDAGraphTransform",
         ]
-        r.write_repro(tmp_path, "mythunder", custom_executor_str=my_exe, custom_import_str=my_imports)
+        r.write_repro(
+            tmp_path, "mythunder", custom_executor_str=my_exe, custom_import_str=my_imports, use_benchmark=use_benchmark
+        )
