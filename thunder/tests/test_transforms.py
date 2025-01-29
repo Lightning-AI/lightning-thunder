@@ -799,7 +799,6 @@ def test_cache_symbolic_values_grad_matmul():
         return torch.nn.functional.linear(a, w)
 
     jfoo = thunder.jit(foo, cache="symbolic values")
-    set_requires_grad = lambda x: x.requires_grad_()
 
     a = torch.randn(2, 8, 6)
     b = torch.randn(4, 6)
@@ -843,9 +842,29 @@ def test_cache_symbolic_values_grad_unsqueeze():
         return x + cache_unsqueezed
 
     jfoo = thunder.jit(foo, cache="symbolic values")
-    set_requires_grad = lambda x: x.requires_grad_()
 
     a = torch.randn(2, 8, 128)
+    a_ref = a.clone()
+    for x in (a, a_ref):
+        x.requires_grad_()
+    actual = jfoo(a)
+    expected = foo(a_ref)
+    actual.sum().backward()
+    expected.sum().backward()
+    assert_close(actual, expected)
+    assert_close(a.grad, a_ref.grad)
+
+
+def test_cache_symbolic_values_grad_shape():
+    def foo(a):
+        b = torch.arange(0, 12, 1).reshape(1, 1, 3, 4)
+        a = a.unsqueeze(0)
+        a = a.unsqueeze(1)
+        return a + b
+
+    jfoo = thunder.jit(foo, cache="symbolic values")
+
+    a = torch.randn(3, 4)
     a_ref = a.clone()
     for x in (a, a_ref):
         x.requires_grad_()
