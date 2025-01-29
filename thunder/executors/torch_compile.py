@@ -252,8 +252,8 @@ required_ops = {
     "torch.nn.functional.nll_loss",
     "torch.nn.functional.cross_entropy",
 }
-torch_compile_xentropy = TorchCompileExecutor(name="torchcompile_xentropy", required_ops=required_ops)
-register_executor(torch_compile_xentropy)
+torch_compile_xentropy_ex = TorchCompileExecutor(name="torchcompile_xentropy", required_ops=required_ops)
+register_executor(torch_compile_xentropy_ex)
 
 supported_ops = {
     prims.broadcast_in_dim.id,
@@ -273,7 +273,7 @@ supported_ops = {
     "torch.Tensor.contiguous",
 }
 
-torch_compile_xentropy._implmap = {
+torch_compile_xentropy_ex._implmap = {
     op: ImplInfo(checker=cuda_device_checker) for op in pytorch_ex.implmap if op in supported_ops
 }
 
