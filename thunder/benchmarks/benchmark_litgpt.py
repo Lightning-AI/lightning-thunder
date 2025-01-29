@@ -31,7 +31,12 @@ try:
     transformer_engine_available = True
 except ImportError:
     transformer_engine_available = False
-
+    
+try:
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+    sdpa_available = True
+except ImportError:
+    sdpa_available = False
 
 world_size = int(os.environ.get("WORLD_SIZE", 1))
 local_rank = int(os.environ.get("LOCAL_RANK", 0))
@@ -580,7 +585,20 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
     """
 
     benchmark = Benchmark_litGPT(**kwargs)
-    benchmark.train()
+    
+    if sdpa_available:
+        with sdpa_kernel(
+            [
+                SDPBackend.CUDNN_ATTENTION,
+                SDPBackend.FLASH_ATTENTION,
+                SDPBackend.EFFICIENT_ATTENTION,
+                SDPBackend.MATH,
+            ],
+            set_priority=True,
+        ):
+            benchmark.train()
+    else:
+        benchmark.train()
 
     if global_rank in [0, None]:
         benchmark.add_perf_metrics()
