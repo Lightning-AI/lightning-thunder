@@ -508,6 +508,11 @@ LLAMA_3_2_1B_CFG = {
 
 @requiresCUDA
 def test_hf_llama():
+    import transformers
+
+    if version_between(transformers.__version__, min_ver="4.46.4"):
+        pytest.skip("Dynamic cache is not supported, see static cache 'test_hf_kvcache'")
+
     from transformers.models.llama import LlamaForCausalLM, LlamaConfig
     from transformers.models.llama.modeling_llama import logger as llama_logger
     from thunder.examine import get_fusion_symbols
