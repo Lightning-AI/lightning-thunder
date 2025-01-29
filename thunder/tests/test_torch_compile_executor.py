@@ -122,3 +122,20 @@ def test_litgpt_fabric_for_callable():
     out_jitted = forward_and_loss_jitted(model, input_ids)
 
     assert_close(out, out_jitted)
+
+
+@requiresCUDA
+def test_torch_compile_xentropy_loss():
+    from transformers.loss.loss_utils import ForCausalLMLoss
+
+    logits = torch.randn(1, 2, 6, device="cuda", requires_grad=True)
+    labels = torch.randint(0, 6, (1, 2), device="cuda")
+    vocab_size = 6
+
+    closs_fn = thunder.jit(ForCausalLMLoss, executors=[torch_compile_xentropy_ex])
+    _ = closs_fn(logits, labels, vocab_size, ignore_index=-1)
+    forward_trace = thunder.last_traces(closs_fn)[-1].python()
+
+    # make a single torch.compile region
+    assert "TorchCompile0" in forward_trace
+    assert "TorchCompile1" not in forward_trace
