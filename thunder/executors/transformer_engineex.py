@@ -47,7 +47,7 @@ if TE_AVAILABLE:
         from transformer_engine.common import recipe
         from transformer_engine.pytorch.module.linear import _Linear
         from transformer_engine.pytorch.module.base import TransformerEngineBaseModule
-        from transformer_engine.pytorch.fp8 import FP8GlobalStateManager
+        from transformer_engine.pytorch.fp8 import FP8GlobalStateManager, get_default_fp8_recipe
         from transformer_engine.pytorch.utils import check_dim_for_fp8_exec
         from transformer_engine.pytorch.cpu_offload import CPUOffloadEnabled
         import transformer_engine_torch as tex
@@ -197,14 +197,18 @@ class TELinear(TransformerEngineBaseModule):
         # so under grad mode we enable grad for input tensors
         # Ref: https://github.com/NVIDIA/TransformerEngine/blob/b957aa475bcbcf22405381d18bd7fefe4fb6b171/transformer_engine/pytorch/module/linear.py#L264
         grad_ctx = enable_grad(*tensor_inputs) if is_grad_enabled else nullcontext()
-        with grad_ctx, self.prepare_forward(inp, is_first_microbatch) as inp:
+        with grad_ctx, self.prepare_forward(inp) as inp:
             assert (
                 self.fp8 or not self.primary_weights_in_fp8
             ), "Need to run inside fp8_autocast region when weights are stored in FP8."
 
-            weight_fp8, weight_t_fp8 = self.get_fp8_weight_version_compat(
-                weight=weight, is_first_microbatch=is_first_microbatch, is_grad_enabled=is_grad_enabled
-            )
+            (
+                input_quantizer,
+                weight_quantizer,
+                output_quantizer,
+                grad_output_quantizer,
+                grad_input_quantizer,
+            ) = self._get_quantizers(False, False, is_grad_enabled)
 
             ctx = Context() if is_grad_enabled else None
 
@@ -215,31 +219,36 @@ class TELinear(TransformerEngineBaseModule):
             # Currently we do not support `tp` meaning tensor model parallel case.
             # We hard-code the arguments related to distributed for now.
             use_bias = bias is not None
+
             kwargs = {
                 "ctx": ctx,
                 "weight": weight,
-                "weight_fp8": weight_fp8,
                 "inp": inp,
                 "bias": torch.tensor([]) if not use_bias else bias,
-                "use_bias": bias is not None,
                 "is_first_microbatch": None,
                 "fp8": self.fp8,
                 "fp8_calibration": self.fp8_calibration,
-                "fp8_meta": self.fp8_meta,
+                "input_quantizer": input_quantizer,
+                "weight_quantizer": weight_quantizer,
+                "output_quantizer": output_quantizer,
+                "grad_output_quantizer": grad_output_quantizer,
+                "grad_input_quantizer": grad_input_quantizer,
                 "fuse_wgrad_accumulation": False,
+                "cpu_offloading": CPUOffloadEnabled,
                 "tp_group": None,
                 "tp_size": 1,
-                "sequence_parallel": self.sequence_parallel,
+                "sequence_parallel": False,
                 "tensor_parallel": False,
                 "activation_dtype": inp.dtype,
                 "parallel_mode": None,
                 "is_grad_enabled": is_grad_enabled,
-                "ub_name": None,
-                "cpu_offloading": CPUOffloadEnabled,
-                # ref: https://github.com/NVIDIA/TransformerEngine/blame/7c1828f80edc1405d4ef1a7780c9e0046beab5c7/transformer_engine/pytorch/module/linear.py#L84-L85
                 "ub_overlap_rs": False,
                 "ub_overlap_ag": False,
+                "ub_name": None,
+                "fp8_output": False,
                 "fsdp_group": self.pg,
+                "module": self,
+                "skip_fp8_weight_update": None,
             }
 
             # Optimistic key value insertion for the sake of compatibility with main branch
@@ -261,26 +270,30 @@ class TELinear(TransformerEngineBaseModule):
             saved_tensors = ctx.pop_saved_tensors() if is_grad_enabled else None
             return out, saved_tensors, ctx
 
-    def get_fp8_weight_version_compat(self, weight, is_first_microbatch, is_grad_enabled):
-        weight_t_fp8: torch.Tensor = None
-        weight_fp8: torch.Tensor = None
-        # Fetch the fp8 weights placeholders (for linear/gemm)
-        # Initialize FP8 weights workspace if needed
-        # FP8 cast to workspace buffer
-        update_workspace = is_first_microbatch is None or is_first_microbatch
-        skip_fp8_weight_update = None
-
-        weight_fp8 = self.get_fp8_workspace(
-            tensor=weight,
-            fp8_meta_forward=True,
-            fp8_meta_index=tex.FP8FwdTensors.GEMM1_WEIGHT,
-            cache_name=(None if is_first_microbatch is None else "weight"),
-            update_workspace=update_workspace,
-            skip_update_flag=skip_fp8_weight_update,
-            **{"with_transpose": is_grad_enabled} if not TE_VERSION_1_11_PLUS else {},
+    def _get_quantizers(self, fp8_output, fp8_grad, is_grad_enabled):
+        if not self.fp8:
+            return [None] * 5
+        grad_input_quantizer = None
+        grad_output_quantizer = None
+        output_quantizer = None
+        input_quantizer = self.quantizers["scaling_fwd"][tex.FP8FwdTensors.GEMM1_INPUT]
+        input_quantizer.internal = False
+        weight_quantizer = self.quantizers["scaling_fwd"][tex.FP8FwdTensors.GEMM1_WEIGHT]
+        weight_quantizer.internal = True
+        if fp8_output:
+            output_quantizer = self.quantizers["scaling_fwd"][tex.FP8FwdTensors.GEMM1_OUTPUT]
+        if is_grad_enabled:
+            grad_output_quantizer = self.quantizers["scaling_bwd"][tex.FP8BwdTensors.GRAD_OUTPUT1]
+            grad_output_quantizer.internal = True
+            if fp8_grad:
+                grad_input_quantizer = self.quantizers["scaling_bwd"][tex.FP8BwdTensors.GRAD_INPUT1]
+        return (
+            input_quantizer,
+            weight_quantizer,
+            output_quantizer,
+            grad_output_quantizer,
+            grad_input_quantizer,
         )
-
-        return weight_fp8, weight_t_fp8
 
     # This method is used for supporting TE v1.6 and v1.7.
     # v1.8 onwards the implementation of this has moved to `TransformerEngineBaseModule`
@@ -379,13 +392,13 @@ def _te_functional_linear_backward_impl(
     # NOTE - weight is ctx.saved_tensors[3] from TE v1.11 onwards
     # Hence we enable requires_grad for computation.
     # https://github.com/NVIDIA/TransformerEngine/blob/b957aa475bcbcf22405381d18bd7fefe4fb6b171/transformer_engine/pytorch/module/linear.py#L434
-    weight_t = saved_tensors[3] if TE_VERSION_1_11_PLUS else saved_tensors[2]
-    with set_saved_tensors(ctx, saved_tensors), enable_grad(weight_t):
+    # weight_t = saved_tensors[3] if TE_VERSION_1_11_PLUS else saved_tensors[2]
+    with set_saved_tensors(ctx, saved_tensors):  # , enable_grad(weight_t):
         grads = _Linear.backward(ctx, g)
 
     # Due to different in `_Linear.forward` API, position of
     # returned grad has changed.
-    grad_inputs = (grads[2], grads[0], grads[3])
+    grad_inputs = (grads[1], grads[0], grads[2])
     return grad_inputs
 
 
@@ -411,7 +424,7 @@ te_functional_linear_backward = transformer_engine_ex.register_operator(
 LINEAR_CALLS_COUNTER = 0
 
 if TE_AVAILABLE:
-    _DEFAULT_RECIPE = recipe.DelayedScaling()
+    _DEFAULT_RECIPE = get_default_fp8_recipe()
 
 IMPORT_CTX_TE_KEY = "transformer_engine"
 FP8_RECIPE_KEY = "te_fp8_recipe"

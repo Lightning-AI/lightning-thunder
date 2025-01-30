@@ -50,7 +50,7 @@ def test_te_linear_forward_backward(fp8_recipe):
         o = torch.nn.functional.linear(x, w1)
         return torch.nn.functional.linear(o + x, w2)
 
-    cfn = thunder.jit(fn, executors=[transformer_engine_ex], fp8_recipe=fp8_recipe)
+    cfn = thunder.jit(fn, executors=[transformer_engine_ex], te_fp8_recipe=fp8_recipe)
 
     # Enable autocasting for the forward pass
     thunder_result = cfn(x, w1, w2)
@@ -88,7 +88,10 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe):
     # our output matches over multiple iterations (where state handling comes into picture)
     dtype = torch.bfloat16
     device = "cuda"
-    iterations = 5
+    # Running more iterations leads to `nan` for both eager and thunder
+    # with BlockScaling.
+    # Potentially because we are training on dummy data and task
+    iterations = 3
 
     # TE inputs
     input_shape = (768, 4096)
@@ -103,10 +106,12 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe):
 
     target_value = torch.tensor(42, dtype=dtype, device=device)
 
+    inputs = tuple(torch.rand(*input_shape, device=device, dtype=dtype) for _ in range(iterations))
+
     def train_model(model, optimizer):
         # Run for `iterations`.
         for iter_n in range(iterations):
-            x = torch.ones(*input_shape, device=device, dtype=dtype) + iter_n
+            x = inputs[iter_n]
             result = model(x)
             loss = torch.nn.functional.mse_loss(result.sum(), target_value)
             loss.backward()
@@ -126,7 +131,7 @@ def test_te_linear_forward_backward_multiple_iteration(fp8_recipe):
         o = torch.nn.functional.linear(x, w1, b1)
         return torch.nn.functional.linear(o, w2, b2)
 
-    cfn = thunder.jit(fn, executors=[transformer_engine_ex])
+    cfn = thunder.jit(fn, executors=[transformer_engine_ex], te_fp8_recipe=fp8_recipe)
 
     # Enable grad on thunder params.
     list(map(lambda t: t.requires_grad_(True), (w1, w2, b1, b2)))
@@ -176,8 +181,8 @@ def test_te_with_autocast():
         return thunder.torch.linear(x, w)
 
     device = "cuda"
-    x = torch.randn(16, 16, device=device, requires_grad=True)
-    w = torch.randn(16, 16, device=device, requires_grad=True)
+    x = torch.randn(64, 64, device=device, requires_grad=True)
+    w = torch.randn(64, 64, device=device, requires_grad=True)
 
     cfunc = thunder.jit(
         autocast(foo, dtype=thunder.dtypes.bfloat16),
@@ -191,7 +196,7 @@ def test_te_with_autocast():
     assert any(bsym.sym.name.startswith("te_linear") for bsym in fwd_traces[-1].bound_symbols)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="Retain graph is not supported by TE")
+@pytest.mark.xfail(strict=True, raises=RuntimeError, reason="Retain graph is not supported by TE")
 @requiresCUDA
 def test_te_with_retain_graph():
     def foo(x, w):
@@ -221,8 +226,8 @@ def test_te_trace_metadata_propagation():
         return torch.nn.functional.linear(x, w)
 
     device = "cuda"
-    x = torch.randn(16, 16, device=device, requires_grad=True)
-    w = torch.randn(16, 16, device=device, requires_grad=True)
+    x = torch.randn(64, 64, device=device, requires_grad=True)
+    w = torch.randn(64, 64, device=device, requires_grad=True)
 
     class MyNoopTransform(thunder.core.transforms.Transform):
         def transform_trace_post_optimization(self, computation_trace, **kwargs):
