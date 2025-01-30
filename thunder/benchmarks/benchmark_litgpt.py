@@ -128,6 +128,7 @@ class Benchmark_litGPT:
         low_precision_mode: str = "none",
         max_iters: int = 45,
         warmup_iters: int = 25,
+        use_sdpa: bool = False,
     ):
         seed = 1337
         torch.manual_seed(seed)
@@ -158,6 +159,7 @@ class Benchmark_litGPT:
         self.micro_batch_size = micro_batch_size
         self.low_precision_mode = low_precision_mode
         self.use_te_fp8_autocast = is_transformer_engine(low_precision_mode) and "thunder" not in compile
+        self.use_sdpa = use_sdpa
 
         # Clarify benchmark assumptions
         if self.sharding_size is not None:
@@ -584,21 +586,32 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
     Runs a training benchmark for lit-GPT models and
     prints out the performance metrics.
     """
-
     benchmark = Benchmark_litGPT(**kwargs)
-    
-    if sdpa_available:
-        with sdpa_kernel(
-            [
-                SDPBackend.CUDNN_ATTENTION,
-                SDPBackend.FLASH_ATTENTION,
-                SDPBackend.EFFICIENT_ATTENTION,
-                SDPBackend.MATH,
-            ],
-            set_priority=True,
-        ):
-            benchmark.train()
-    else:
+
+    attention_ctx = nullcontext()
+    if sdpa_available and benchmark.use_sdpa:
+        try:
+            attention_ctx = sdpa_kernel(
+                [
+                    SDPBackend.CUDNN_ATTENTION,
+                    SDPBackend.FLASH_ATTENTION,
+                    SDPBackend.EFFICIENT_ATTENTION,
+                    SDPBackend.MATH,
+                ],
+                set_priority=True,  # might fail on older PyTorch versions
+            )
+        except TypeError:
+            # If set_priority isn't supported, fallback
+            attention_ctx = sdpa_kernel(
+                [
+                    SDPBackend.CUDNN_ATTENTION,
+                    SDPBackend.FLASH_ATTENTION,
+                    SDPBackend.EFFICIENT_ATTENTION,
+                    SDPBackend.MATH,
+                ]
+            )
+
+    with attention_ctx:
         benchmark.train()
 
     if global_rank in [0, None]:
