@@ -590,26 +590,17 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
 
     attention_ctx = nullcontext()
     if sdpa_available and benchmark.use_sdpa:
-        try:
-            attention_ctx = sdpa_kernel(
-                [
-                    SDPBackend.CUDNN_ATTENTION,
-                    SDPBackend.FLASH_ATTENTION,
-                    SDPBackend.EFFICIENT_ATTENTION,
-                    SDPBackend.MATH,
-                ],
-                set_priority=True,  # might fail on older PyTorch versions
-            )
-        except TypeError:
-            # If set_priority isn't supported, fallback
-            attention_ctx = sdpa_kernel(
-                [
-                    SDPBackend.CUDNN_ATTENTION,
-                    SDPBackend.FLASH_ATTENTION,
-                    SDPBackend.EFFICIENT_ATTENTION,
-                    SDPBackend.MATH,
-                ]
-            )
+        backends = [
+                SDPBackend.CUDNN_ATTENTION,
+                SDPBackend.FLASH_ATTENTION,
+                SDPBackend.EFFICIENT_ATTENTION,
+                SDPBackend.MATH,
+            ]
+        kwargs = {}
+        if LooseVersion(torch.__version__) >= LooseVersion("2.6.0"):
+            kwargs['set_priority'] = True
+    
+        attention_ctx = sdpa_kernel(backends, **kwargs)
 
     with attention_ctx:
         benchmark.train()
