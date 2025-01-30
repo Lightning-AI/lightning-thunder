@@ -34,10 +34,6 @@ torchao_available = package_available("torchao")
 if transformer_engine_available:
     import transformer_engine.pytorch as te
 
-    transformer_engine_available = True
-except ImportError:
-    transformer_engine_available = False
-
 try:
     from torch.nn.attention import SDPBackend, sdpa_kernel
     sdpa_available = True
