@@ -857,7 +857,7 @@ hf_seq_lengths = [4096 * 2**i for i in range(0, 6)]
     "seq_length",
     hf_seq_lengths,
 )
-@pytest.mark.parametrize("batch_size", range(1, 5))
+@pytest.mark.parametrize("batch_size", range(1, 5), ids=[f"BS{i}" for i in range(1, 5)])
 @pytest.mark.parametrize("model_id", hf_model_ids, ids=hf_model_ids)
 def test_hf_transformers(benchmark, model_id: str, seq_length: int, batch_size: int, peft: bool, executor, compute_type):
     if not importlib.util.find_spec("transformers"):
