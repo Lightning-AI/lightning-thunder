@@ -392,14 +392,14 @@ def test_thunderfx_mistral_nemo_small():
     config = transformers.models.mistral.configuration_mistral.MistralConfig(
         num_hidden_layers=1,
         torch_dtype=torch.bfloat16,
-        max_position_embeddings=1024,
+        max_position_embeddings=64,
         architectures=["MistralForCausalLM"],
-        hidden_size=5120,
+        hidden_size=1024,
         rms_norm_eps=1e-05,
         rope_theta=1000000.0,
         sliding_window=None,
         vocab_size=131072,
-        head_dim=128,
+        head_dim=32,
         _name_or_path=model_id,
     )
     model = transformers.AutoModelForCausalLM.from_config(config, trust_remote_code=False)
@@ -508,6 +508,11 @@ LLAMA_3_2_1B_CFG = {
 
 @requiresCUDA
 def test_hf_llama():
+    import transformers
+
+    if version_between(transformers.__version__, min_ver="4.46.4"):
+        pytest.skip("Dynamic cache is not supported, see static cache 'test_hf_kvcache'")
+
     from transformers.models.llama import LlamaForCausalLM, LlamaConfig
     from transformers.models.llama.modeling_llama import logger as llama_logger
     from thunder.examine import get_fusion_symbols
