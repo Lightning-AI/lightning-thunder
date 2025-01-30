@@ -36,6 +36,7 @@ if transformer_engine_available:
 
 try:
     from torch.nn.attention import SDPBackend, sdpa_kernel
+
     sdpa_available = True
 except ImportError:
     sdpa_available = False
@@ -824,14 +825,14 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
     attention_ctx = nullcontext()
     if sdpa_available and benchmark.use_sdpa:
         backends = [
-                SDPBackend.CUDNN_ATTENTION,
-                SDPBackend.FLASH_ATTENTION,
-                SDPBackend.EFFICIENT_ATTENTION,
-                SDPBackend.MATH,
-            ]
+            SDPBackend.CUDNN_ATTENTION,
+            SDPBackend.FLASH_ATTENTION,
+            SDPBackend.EFFICIENT_ATTENTION,
+            SDPBackend.MATH,
+        ]
         kwargs = {}
         if LooseVersion(torch.__version__) >= LooseVersion("2.6.0"):
-            kwargs['set_priority'] = True
+            kwargs["set_priority"] = True
 
         attention_ctx = sdpa_kernel(backends, **kwargs)
 
