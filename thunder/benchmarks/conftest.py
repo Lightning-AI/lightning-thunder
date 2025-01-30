@@ -9,7 +9,7 @@ from pytest import hookimpl, TestReport, Item, Parser
 import multiprocessing as mp
 import subprocess
 
-BENCHMARK_JSON_DIR = "isolated_benchmarks_reports"
+BENCHMARK_JSON_DIR = "benchmarks_reports"
 FAILED_BENCHMARK_LOGS_DIR = "failed_benchmarks_logs"
 
 
@@ -44,7 +44,6 @@ def launch_benchmark(target_file, target_name: str):
 
 
 def run_in_isolation(item: Item) -> TestReport:
-
     process = mp.Process(
         target=launch_benchmark,
         args=(
@@ -86,7 +85,6 @@ def pytest_runtest_protocol(item: Item, nextitem: Item):
 
 
 def pytest_runtestloop(session):
-    # Can it be saved as part of the config to avoid the global?
     global BENCHMARK_JSON_DIR, FAILED_BENCHMARK_LOGS_DIR
 
     if not session.config.getoption("--isolate-benchmarks"):
