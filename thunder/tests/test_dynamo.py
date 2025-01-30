@@ -841,7 +841,6 @@ def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, us
         cfunc = thunderfx(
             func,
             transforms=[
-                NvtxProfileTransform(),
                 CUDAGraphTransform(),
             ],
             executors=[nvfuser_executor],
@@ -857,8 +856,9 @@ def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, us
     out = cfunc(x)
     cfunc._backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark=use_pytest_benchmark)
 
-    s1 = f"{tmp_path}/graph0_thunder_0.py"
-    s2 = f"{tmp_path}/graph1_thunder_0.py"
+    suffix = "_benchmark" if use_pytest_benchmark else "_repro"
+    s1 = f"{tmp_path}/graph0_thunder_0{suffix}.py"
+    s2 = f"{tmp_path}/graph1_thunder_0{suffix}.py"
     assert os.path.exists(s1)
     assert os.path.exists(s2)
     cmd = [sys.executable]
@@ -866,8 +866,8 @@ def test_dynamo_reproducer_2graph(executor, device: str, dtype: dtypes.dtype, us
         cmd = cmd + ["-m", "pytest"]
     cmd1 = cmd + [s1]
     cmd2 = cmd + [s2]
-    result1 = subprocess.run(cmd1, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    result2 = subprocess.run(cmd2, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    result1 = subprocess.run(cmd1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    result2 = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
     assert result1.returncode == 0, f"Reproducer {s1} failed: {result1}"
     assert result2.returncode == 0, f"Reproducer {s2} failed: {result2}"
@@ -896,7 +896,8 @@ def test_dynamo_reproducer_submodules(use_pytest_benchmark, tmp_path):
     out = jf(x)
     jf._backend.save_reproducer_to_folder(tmp_path, use_pytest_benchmark=use_pytest_benchmark)
 
-    s1 = f"{tmp_path}/graph0_thunder_0.py"
+    suffix = "_benchmark" if use_pytest_benchmark else "_repro"
+    s1 = f"{tmp_path}/graph0_thunder_0{suffix}.py"
     assert os.path.exists(s1)
     cmd = [sys.executable]
     if use_pytest_benchmark:
@@ -962,9 +963,10 @@ def test_dynamo_reproducer_split(executor, device: str, dtype: dtypes.dtype, use
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         assert result.returncode == 0, f"Reproducer {file_name} failed: {result}"
 
-    s1 = f"{tmp_path}/graph0_thunder_0.py"
-    s2 = f"{tmp_path}/graph0_thunder_2.py"
-    s3 = f"{tmp_path}/graph0_thunder_4.py"
+    suffix = "_benchmark" if use_pytest_benchmark else "_repro"
+    s1 = f"{tmp_path}/graph0_thunder_0{suffix}.py"
+    s2 = f"{tmp_path}/graph0_thunder_2{suffix}.py"
+    s3 = f"{tmp_path}/graph0_thunder_4{suffix}.py"
     cmd = [sys.executable]
     if use_pytest_benchmark:
         cmd = cmd + ["-m", "pytest"]
@@ -1069,30 +1071,52 @@ def test_report(tmp_path, capsys):
         assert "Failed to save reproducer" in captured.out
 
 
-@requiresCUDA
 @pytest.mark.parametrize("use_benchmark", (True, False), ids=("benchmark", "repro"))
-def test_fxreport(use_benchmark, tmp_path):
+@instantiate(
+    dtypes=NOTHING,
+    executors=[DynamoThunderExecutor],
+    decorators=(pytest.mark.parametrize("use_benchmark", (True, False), ids=("benchmark", "repro")),),
+)
+def test_fxreport(executor, device: str, dtype: dtypes.dtype, use_benchmark, tmp_path):
     from thunder.dynamo.report import fx_report
 
     def foo(x, y):
-        z = x.sin()
-        torch._dynamo.graph_break()
-        return z + y.cos() + y.sin()
+        return x + y
 
-    x = torch.randn(4, 4, device="cuda", requires_grad=True)
-    y = torch.randn(4, 4, device="cuda", requires_grad=True)
+    x = torch.randn(4, 4, device=device, requires_grad=True)
+    y = torch.randn(4, 4, device=device, requires_grad=True)
     results = fx_report(foo, x, y)
     for r in results.fx_graph_reports:
         r.write_eager_repro(tmp_path, use_benchmark=use_benchmark)
         r.write_thunder_repro(tmp_path, use_benchmark=use_benchmark)
         r.write_inductor_repro(tmp_path, use_benchmark=use_benchmark)
-        my_exe = "compiled_model = thunder.jit(model, transforms=[NvtxProfileTransform(),CUDAGraphTransform()], executors=[nvfuser_executor])"
+        my_exe = "partial(thunder.jit, transforms=[NvtxProfileTransform(),CUDAGraphTransform()], executors=[nvfuser_executor])"
         my_imports = [
             "import thunder",
             "from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform",
             "from thunder import nvfuser_executor",
             "from thunder.transforms.cudagraph import CUDAGraphTransform",
+            "from functools import partial",
         ]
-        r.write_repro(
-            tmp_path, "mythunder", custom_executor_str=my_exe, custom_import_str=my_imports, use_benchmark=use_benchmark
-        )
+        if not use_benchmark:
+            r.write_repro(
+                tmp_path, f"{r.graph_name}_mythunder_repro.py", "mythunder", executor_str=my_exe, import_str=my_imports
+            )
+        else:
+            r.write_benchmark_repro(
+                tmp_path, f"{r.graph_name}_mythunder_benchmark.py", ["mythunder"], my_imports, executor_str=[my_exe]
+            )
+
+    def check(file_name, cmd):
+        cmd = cmd + [file_name]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        assert result.returncode == 0, f"Script {file_name} failed: {result}"
+
+    cmd = [sys.executable]
+    if use_benchmark:
+        cmd = cmd + ["-m", "pytest", "--benchmark-warmup-iterations=5"]
+    py_files = list(tmp_path.glob("*.py"))
+    assert len(py_files) == 4
+
+    for file in py_files:
+        check(tmp_path / file, cmd)

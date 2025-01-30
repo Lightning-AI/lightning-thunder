@@ -5,6 +5,8 @@ Environment information get from `torch.utils.collect_env.get_pretty_env_info()`
 
 Versions of Thunder related libraries:
 {thunder_pkgs}
+
+{extra_comment_str}
 """
 {torch_import_str}
 {import_str}
@@ -35,12 +37,16 @@ def test_{graph_name}():
 {inputs}
 
     model = DynamoModule()
-    from thunder.dynamo.report import run_repro1
+    from thunder.dynamo.report import run_repro
 
-    {custom_executor_str}
-    result = run_repro1(compiled_model, compute_type, *inputs)
+    executor={executor_str}
+    if executor == None:
+        compiled_model = model
+    else:
+        compiled_model = executor(model)
+    result = run_repro(compiled_model, compute_type, *inputs)
     if check_acc:
-        eager_result = run_repro1(model, compute_type, *inputs)
+        eager_result = run_repro(model, compute_type, *inputs)
         for (compute_t, eager_v), (_, cur_v) in zip(eager_result.items(), result.items()):
             torch.testing.assert_close(eager_v, cur_v, msg=lambda e : f'{{compute_t}}: {{e}}')
 
@@ -49,16 +55,18 @@ test_{graph_name}()
 '''
 
 
-benchmark_code_template = '''
+benchmark_multi_exe_code_template = '''
 """
 Environment information get from `torch.utils.collect_env.get_pretty_env_info()`:
 {torch_env}
 
 Versions of Thunder related libraries:
 {thunder_pkgs}
+
+{extra_comment_str}
 """
 # NOTE: This script requires `pytest-benchmark==4.0.0` to be installed.
-# To execute the script, run `pytest {graph_name}.py --benchmark-timer=torch.utils.benchmark.utils.timer.timer --benchmark-warmup=on --benchmark-group-by=param:compute_type`
+# To execute the script, run `pytest {graph_name}_benchmark.py --benchmark-timer=torch.utils.benchmark.utils.timer.timer --benchmark-warmup=on --benchmark-group-by=param:compute_type`
 # To check the peak allocated CUDA memory, use --benchmark-json=json_file_name and look at the "max_allocated_memory_MB" field in the json file
 # To run tests for a specific compute_type, use the pytest `-k` option.
 # For example:
@@ -68,18 +76,40 @@ Versions of Thunder related libraries:
 #   - compute_type: "forward", "backward"
 
 import pytest
-from thunder.benchmarks.targets import parametrize_compute_type_only_training, benchmark_for_compute_type
+from thunder.benchmarks.targets import parametrize_compute_type_only_training, benchmark_for_compute_type, ComputeType
 {torch_import_str}
 {import_str}
 
+# NOTE: The reproducer function has already been processed by TorchDynamo.
+# If we let it go through TorchDynamo again, it could be segmented further.
+# To avoid this, we directly use Inductor here.
+# See issue https://github.com/Lightning-AI/lightning-thunder/issues/1521
+def torch_inductor(fn, inputs):
+    from torch._inductor import compile as inductor_compile
+    from torch.fx import symbolic_trace
 
-@parametrize_compute_type_only_training
-def test_{graph_name}(benchmark, compute_type):
+    fx_graph = symbolic_trace(fn)
+    return inductor_compile(fx_graph, inputs)
+
+{executors}
+{executor_names}
+@pytest.mark.parametrize(
+    "executor",
+    executors,
+    ids=executor_names,
+)
+{compute_type_decorator}
+def test_{graph_name}(benchmark, executor, compute_type):
 {dynamo_module}
 
 {inputs}
 
     model = DynamoModule()
-    {custom_executor_str}
+    if executor == None:
+        compiled_model = model
+    elif executor == torch_inductor:
+        compiled_model = executor(model, inputs)
+    else:
+        compiled_model = executor(model)
     {call_benchmark}
 '''

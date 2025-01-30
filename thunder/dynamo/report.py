@@ -10,9 +10,10 @@ import textwrap
 
 import torch
 from thunder.core.pytree import tree_flatten
-from thunder.core.utils import check, sequencify
+from thunder.core.utils import sequencify
 from thunder.dynamo.compiler import thunderfx
 from thunder.dynamo.utils import _get_example_inputs_from_placeholder, _readable, arg_like, get_env
+from thunder.dynamo.repro_script_template import benchmark_multi_exe_code_template, repro_code_template
 
 
 if TYPE_CHECKING:
@@ -42,40 +43,7 @@ def run_backward(fn, *args, **kwargs):
     return result, [t.grad for t in forward_inputs]
 
 
-def run_repro(executor_dict, executor_name, model, compute_type, *inputs) -> dict[str, float]:
-    """Helper function to execute the forward or backward pass based on the `compute_type` using the executor specified by `executor_name` in `executor_dict`.
-    If the execution fails, an error is raised. On success, the function returns a dictionary containing the forward results and gradient results.
-    """
-    if executor_name == "eager":
-        compiled_fn = model
-    elif executor_name == "torch_inductor":
-        compiled_fn = executor_dict[executor_name](model, inputs)
-    else:
-        compiled_fn = executor_dict[executor_name](model)
-
-    results = {}
-    match compute_type:
-        case "forward":
-            try:
-                result = compiled_fn(*inputs)
-            except Exception as e:
-                raise e
-            results["forward"] = result
-        case "forward+backward":
-            try:
-                forward_result, grads = run_backward(compiled_fn, *inputs)
-            except Exception as e:
-                raise e
-            results["forward"] = forward_result
-            results["backward"] = grads
-        case _:
-            raise ValueError(
-                f"Invalid compute type: '{compute_type}'. Only 'forward' or 'forward+backward' are allowed."
-            )
-    return results
-
-
-def run_repro1(compiled_fn, compute_type, *inputs) -> dict[str, float]:
+def run_repro(compiled_fn, compute_type, *inputs) -> dict[str, float]:
     """Helper function to execute the forward or backward pass based on the `compute_type` using the executor specified by `executor_name` in `executor_dict`.
     If the execution fails, an error is raised. On success, the function returns a dictionary containing the forward results and gradient results.
     """
@@ -131,7 +99,7 @@ def thunderfx_report(
         print("\nVerifying consistency between Thunder and Torch eager ...")
         consistency_folder = folder / "consistency"
         consistency_folder.mkdir(exist_ok=True)
-        compiled._backend.save_reproducer_to_folder(consistency_folder, save_input_tensor=save_consistency_inputs)
+        compiled._backend.save_reproducer_to_folder(consistency_folder, serialize_inputs=save_consistency_inputs)
         for file in consistency_folder.glob("*.py"):
             g_name = file.name.rstrip(".py")
             cmd = [sys.executable, folder / file, "--check_consistency=True", "--compute_type=forward+backward"]
@@ -148,7 +116,7 @@ def thunderfx_report(
         benchmark_folder = folder / "benchmark"
         benchmark_folder.mkdir(exist_ok=True)
         compiled._backend.save_reproducer_to_folder(
-            benchmark_folder, save_input_tensor=save_benchmark_inputs, use_pytest_benchmark=True
+            benchmark_folder, serialize_inputs=save_benchmark_inputs, use_pytest_benchmark=True
         )
 
         benchmark_json_files = []
@@ -205,52 +173,73 @@ class FXGraphReport:
         example_input_metadata = map(partial(_get_example_inputs_from_placeholder, only_metadata=True), placeholders)
         return list(example_input_metadata)
 
-    def write_eager_repro(self, folder, use_benchmark: bool = False):
-        self.write_repro(folder, "eager", custom_executor_str="compiled_model=model", use_benchmark=use_benchmark)
+    def write_eager_repro(self, folder, use_benchmark: bool = False, serialize_inputs: bool = False):
+        if use_benchmark:
+            self.write_benchmark_repro(
+                folder,
+                f"{self.graph_name}_benchmark_eager.py",
+                ["eager"],
+                [],
+                executor_str=["None"],
+                serialize_inputs=serialize_inputs,
+            )
+        else:
+            self.write_repro(
+                folder,
+                f"{self.graph_name}_repro_eager.py",
+                "eager",
+                executor_str="None",
+                serialize_inputs=serialize_inputs,
+            )
 
-    def write_thunder_repro(self, folder, use_benchmark: bool = False):
-        thunder_compile_str = "compiled_model=thunder.jit(model)"
+    def write_thunder_repro(self, folder, use_benchmark: bool = False, serialize_inputs: bool = False):
+        thunder_compile_str = "thunder.jit"
         thunder_import_str = ["import thunder"]
-        self.write_repro(folder, "thunder", thunder_import_str, thunder_compile_str, use_benchmark)
+        if use_benchmark:
+            self.write_benchmark_repro(
+                folder,
+                f"{self.graph_name}_benchmark_thunder.py",
+                ["thunder"],
+                thunder_import_str,
+                [thunder_compile_str],
+            )
+        else:
+            self.write_repro(
+                folder,
+                f"{self.graph_name}_repro_thunder.py",
+                "thunder",
+                thunder_import_str,
+                thunder_compile_str,
+                serialize_inputs,
+            )
 
-    def write_inductor_repro(self, folder, use_benchmark: bool = False):
-        inductor_compile_str = "compiled_model=torch.compile(model)"
+    def write_inductor_repro(self, folder, use_benchmark: bool = False, serialize_inputs: bool = False):
+        inductor_compile_str = "torch.compile"
         inductor_import_str = ["import torch"]
-        self.write_repro(folder, "torchcompile", inductor_import_str, inductor_compile_str, use_benchmark)
+        if use_benchmark:
+            self.write_benchmark_repro(
+                folder,
+                f"{self.graph_name}_benchmark_torchcompile.py",
+                ["torchcompile"],
+                inductor_import_str,
+                ["torch_inductor"],
+                serialize_inputs,
+            )
+        else:
+            self.write_repro(
+                folder,
+                f"{self.graph_name}_repro_torchcompile.py",
+                "torchcompile",
+                inductor_import_str,
+                inductor_compile_str,
+                serialize_inputs,
+            )
 
-    def write_repro(
-        self,
-        folder: str | PathLike,
-        custom_executor_name: str = "",
-        custom_import_str: str = "",
-        custom_executor_str: str = "",
-        use_benchmark: bool = False,
-        save_input_tensor: bool = False,
-        inputs: Sequence[torch.Tensor | ExampleInputMetaData] = None,
-    ):
-        check(
-            "compiled_model" in custom_executor_str and "model" in custom_executor_str,
-            lambda: "custom_executor_str needs to be in the form `compiled_model=your_executor_code(model, your_other_args)`, the inputs of the `model` is named as `inputs`",
-            ValueError,
-        )
-        if inputs == None:
-            inputs = self.get_input_metadata()
-        has_cuda_args = any(hasattr(arg, "device") and arg.device.type == "cuda" for arg in inputs)
-        folder = Path(folder)
-        folder.mkdir(exist_ok=True)
-        torch_env, thunder_pkgs = get_env()
-        # Ideally we'd use print_readable, but we want verbose=False and there's no
-        # way to set that with print_readable.
-        readable = textwrap.indent(_readable(self.graph, "DynamoModule", print_output=False), "    ")
-
-        # The packages that are likely to be used by the code generated from the Torch GraphModule
-        torch_import_str = "\n".join([v.import_str for v in torch.fx.graph._custom_builtins.values()])
-        import_str = "\n".join(custom_import_str)
-
+    def _get_input_str(self, folder, inputs, serialize_inputs):
         input_str = ""
         if any(arg is None for arg in inputs):
             input_str += f"# Warning: The inputs that cannot be inferred are set to None, requiring the user to manually give inputs according to the code\n"
-        if save_input_tensor:
+        if serialize_inputs:
             example_inputs = eval(f"[\n{chr(10).join(arg_like(a) for a in inputs)}]")
             input_file_name = folder / f"{self.graph_name}_inputs.pt"
             torch.save(example_inputs, input_file_name)
@@ -259,50 +248,103 @@ class FXGraphReport:
             input_str = "inputs = [\n"
             input_str += textwrap.indent("\n".join(arg_like(a) for a in inputs), "    ")
             input_str += "\n]"
+        return input_str
 
-        input_str = textwrap.indent(input_str, "    ")
+    def write_benchmark_repro(
+        self,
+        folder: str | PathLike,
+        file_name: str,
+        executor_name_str: list,
+        import_str: list,
+        executor_str: list,
+        serialize_inputs: bool = False,
+        inputs: Sequence[torch.Tensor | ExampleInputMetaData] = None,
+        **kwargs,
+    ):
+        folder = Path(folder)
+        folder.mkdir(exist_ok=True, parents=True)
+        if inputs == None:
+            inputs = self.get_input_metadata()
+        has_cuda_args = any(hasattr(arg, "device") and arg.device.type == "cuda" for arg in inputs)
+        has_requires_grad_args = any(hasattr(arg, "requires_grad") and arg.requires_grad for arg in inputs)
+        torch_env, thunder_pkgs = get_env()
+        readable = textwrap.indent(_readable(self.graph, "DynamoModule", print_output=False), "    ")
+        # The packages that are likely to be used by the code generated from the Torch GraphModule
+        torch_import_str = "\n".join([v.import_str for v in torch.fx.graph._custom_builtins.values()])
+        import_str = "\n".join(import_str)
+        input_str = textwrap.indent(self._get_input_str(folder, inputs, serialize_inputs), "    ")
+        call_bench_str = f"benchmark_for_compute_type(compute_type, benchmark, compiled_model, inputs, {{}}, has_cuda={True if has_cuda_args else False})"
+        compute_type_decorator = (
+            "@parametrize_compute_type_only_training"
+            if has_requires_grad_args
+            else """@pytest.mark.parametrize("compute_type", (ComputeType.INFERENCE,), ids=("inference",))"""
+        )
 
-        if use_benchmark:
-            if has_cuda_args:
-                call_bench_str = (
-                    f"""benchmark_for_compute_type(compute_type, benchmark, compiled_model, inputs, {{}})"""
-                )
-            else:
-                call_bench_str = f"""benchmark(compiled, *inputs)"""
-            from thunder.dynamo.repro_script_template import benchmark_code_template
+        executor_names_str = f"executor_names={executor_name_str}"
+        executors_str = "executors=[\n    " + ",\n    ".join(executor_str) + "\n]"
+        extra_comment_str = kwargs.get("extra_comment_str") if "extra_comment_str" in kwargs else ""
+        code_str = benchmark_multi_exe_code_template.format(
+            torch_env=torch_env,
+            thunder_pkgs=thunder_pkgs,
+            torch_import_str=torch_import_str,
+            import_str=import_str,
+            dynamo_module=readable,
+            inputs=input_str,
+            executors=executors_str,
+            graph_name=self.graph_name,
+            call_benchmark=call_bench_str,
+            executor_names=executor_names_str,
+            compute_type_decorator=compute_type_decorator,
+            extra_comment_str=extra_comment_str,
+        )
+        with open(folder / file_name, "w") as f:
+            print(code_str, file=f)
 
-            code_str = benchmark_code_template.format(
-                torch_env=torch_env,
-                thunder_pkgs=thunder_pkgs,
-                torch_import_str=torch_import_str,
-                import_str=import_str,
-                dynamo_module=readable,
-                inputs=input_str,
-                custom_executor_str=custom_executor_str,
-                graph_name=self.graph_name,
-                call_benchmark=call_bench_str,
-            )
-        else:
-            from thunder.dynamo.repro_script_template import repro_code_template
+    def write_repro(
+        self,
+        folder: str | PathLike,
+        file_name: str,
+        executor_name: str = "",
+        import_str: str = "",
+        executor_str: str = "",
+        # use_benchmark: bool = False,
+        serialize_inputs: bool = False,
+        inputs: Sequence[torch.Tensor | ExampleInputMetaData] = None,
+        **kwargs,
+    ):
+        folder = Path(folder)
+        folder.mkdir(exist_ok=True, parents=True)
+        if inputs == None:
+            inputs = self.get_input_metadata()
+        torch_env, thunder_pkgs = get_env()
+        readable = textwrap.indent(_readable(self.graph, "DynamoModule", print_output=False), "    ")
+        # The packages that are likely to be used by the code generated from the Torch GraphModule
+        torch_import_str = "\n".join([v.import_str for v in torch.fx.graph._custom_builtins.values()])
+        import_str = "\n".join(import_str)
+        input_str = textwrap.indent(self._get_input_str(folder, inputs, serialize_inputs), "    ")
+        extra_comment_str = kwargs.get("extra_comment_str") if "extra_comment_str" in kwargs else ""
 
-            code_str = repro_code_template.format(
-                torch_env=torch_env,
-                thunder_pkgs=thunder_pkgs,
-                torch_import_str=torch_import_str,
-                import_str=import_str,
-                dynamo_module=readable,
-                inputs=input_str,
-                custom_executor_str=custom_executor_str,
-                graph_name=self.graph_name,
-            )
+        code_str = repro_code_template.format(
+            torch_env=torch_env,
+            thunder_pkgs=thunder_pkgs,
+            torch_import_str=torch_import_str,
+            import_str=import_str,
+            dynamo_module=readable,
+            inputs=input_str,
+            executor_str=executor_str,
+            graph_name=self.graph_name,
+            extra_comment_str=extra_comment_str,
+        )
 
-        with open(folder / f"{self.graph_name}_{custom_executor_name}.py", "w") as f:
+        with open(folder / file_name, "w") as f:
             print(code_str, file=f)
 
 
 class FXReport:
-    def __init__(self, graphs: list[torch.fx.GraphModule]):
-        self.fx_graph_reports: list[FXGraphReport] = [FXGraphReport(g, f"graph{idx}") for idx, g in enumerate(graphs)]
+    def __init__(self, graphs: list[torch.fx.GraphModule], graph_names: list[str] = None):
+        if graph_names is None:
+            graph_names = [f"graph{idx}" for idx in range(len(graphs))]
+        self.fx_graph_reports: list[FXGraphReport] = [FXGraphReport(g, name) for name, g in zip(graph_names, graphs)]
 
 
 def fx_report(fn: Callable, *args, **kwargs) -> FXReport:

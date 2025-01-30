@@ -8,9 +8,13 @@ from pathlib import Path
 
 import torch
 
-from thunder.core.baseutils import run_once
-from thunder.core.utils import safe_zip
-from thunder.dynamo.utils import recompile_graph, remove_empty_autocast, reproducer, CompilerType
+from thunder.dynamo.utils import (
+    recompile_graph,
+    remove_empty_autocast,
+    CompilerType,
+    get_split_reasons_string,
+    thunder_options_to_str,
+)
 from thunder.dynamo.splitter import _splitter
 from thunder.core.utils import check
 
@@ -80,7 +84,7 @@ class ThunderCompiler:
         self,
         reproducer_folder: str | PathLike,
         use_pytest_benchmark: bool = False,
-        save_input_tensor=False,
+        serialize_inputs=False,
     ):
         """
         Save the reproducer script for the GraphModule executed by Thunder to the specified ``reproducer_folder``.
@@ -99,6 +103,7 @@ class ThunderCompiler:
             raise TypeError(f"{self} doesn't seem to have been called yet.")
         reproducer_folder = Path(reproducer_folder)
         reproducer_folder.mkdir(exist_ok=True, parents=True)
+        thunder_options_str = thunder_options_to_str(self.thunder_options)
 
         for graph_idx, subgraph_info in enumerate(self.subgraph_infos):
             thunder_module_names = []
@@ -106,24 +111,60 @@ class ThunderCompiler:
                 target = node.target
                 if isinstance(target, str) and target.startswith("thunder_"):
                     thunder_module_names.append(target)
+            thunder_module_names = [f"graph{graph_idx}_{name}" for name in thunder_module_names]
             original_thunder_modules = (
                 m
                 for m, compiled_m in subgraph_info.submodule_to_compiled_functions.items()
                 if compiled_m.compiler == CompilerType.THUNDER
             )
             example_inputs = subgraph_info.thunder_compiled_fns_example_inputs
-            for cur_module, example_input, cur_name in safe_zip(
-                original_thunder_modules, example_inputs, thunder_module_names
-            ):
-                reproducer(
-                    cur_module,
-                    subgraph_info,
-                    self.thunder_options,
-                    example_input,
+            from thunder.dynamo.report import FXReport
+
+            result = FXReport(original_thunder_modules, thunder_module_names)
+            split_reason_str = get_split_reasons_string(subgraph_info)
+            for subgraph_idx, report in enumerate(result.fx_graph_reports):
+                if not use_pytest_benchmark:
+                    report.write_repro(
+                        reproducer_folder,
+                        f"{report.graph_name}_repro.py",
+                        "thunder",
+                        import_str=["import thunder"],
+                        executor_str="thunder.jit",
+                        serialize_inputs=serialize_inputs,
+                        inputs=example_inputs[subgraph_idx],
+                        extra_comment_str=split_reason_str,
+                    )
+                    continue
+                has_cuda_args = any(
+                    hasattr(arg, "device") and arg.device.type == "cuda" for arg in example_inputs[subgraph_idx]
+                )
+                executor_names_list = [
+                    "thunder",
+                    "torch_inductor",
+                    "eager",
+                ]
+                executors = [
+                    f"partial(thunder.jit, {thunder_options_str})",
+                    "torch_inductor",
+                    "None",
+                ]
+                import_str = ["from functools import partial", "import thunder"]
+
+                if has_cuda_args:
+                    executor_names_list.append("thunder_cudagraph")
+                    executors.append("partial(thunder.jit, transform=CUDAGraphTransform())")
+                    import_str.append("from thunder.transforms.cudagraph import CUDAGraphTransform")
+
+                executor_names = f"executor_names={executor_names_list}"
+                report.write_benchmark_repro(
                     reproducer_folder,
-                    f"graph{graph_idx}_{cur_name}",
-                    use_pytest_benchmark,
-                    save_input_tensor=save_input_tensor,
+                    f"{report.graph_name}_benchmark.py",
+                    executor_names,
+                    import_str=import_str,
+                    executor_str=executors,
+                    serialize_inputs=serialize_inputs,
+                    inputs=example_inputs[subgraph_idx],
+                    extra_comment_str=split_reason_str,
                 )
 
 
