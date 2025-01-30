@@ -4,7 +4,7 @@ import time
 import warnings
 from typing import Any
 from contextlib import nullcontext
-
+from looseversion import LooseVersion
 import torch
 import functools
 from torch.utils.data import DataLoader, IterableDataset
@@ -160,6 +160,12 @@ class Benchmark_litGPT:
         self.low_precision_mode = low_precision_mode
         self.use_te_fp8_autocast = is_transformer_engine(low_precision_mode) and "thunder" not in compile
         self.use_sdpa = use_sdpa
+        
+        if self.use_sdpa and sdpa_available and self.compile not in ["eager", "inductor"]:
+            warnings.warn(
+                "SDPA is enabled but the model is not compiled with eager or inductor. SDPA priority setting will be skipped."
+            )
+            self.use_sdpa = False
 
         # Clarify benchmark assumptions
         if self.sharding_size is not None:
