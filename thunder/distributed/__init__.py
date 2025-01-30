@@ -4,7 +4,6 @@ import os
 from itertools import chain
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
-import copy
 from enum import auto, Enum
 from typing import TYPE_CHECKING, Any
 from collections.abc import Generator
@@ -144,6 +143,10 @@ def _sync_grads(module: torch.nn.Module) -> None:
                 tdist.distributed_c10d.all_reduce(g, group=process_group)
         cm.wait()
     elif getattr(module, "use_fsdp", False):
+        from typing import cast
+        from thunder.core.module import ThunderModule
+
+        module = cast(ThunderModule, module)
 
         def prep_shard(
             g: torch.Tensor,
@@ -155,7 +158,16 @@ def _sync_grads(module: torch.nn.Module) -> None:
 
         rank: int = tdist.distributed_c10d.get_rank(process_group)
         world_size: int = tdist.distributed_c10d.get_world_size(process_group)
-        params_with_grad = tuple(filter(lambda p: hasattr(p, "_thunder_fsdp_unsharded_grad"), module.parameters()))
+
+        params_of_orig_module = list(module._model.get_parameter(name) for name, _ in module.named_parameters())
+        params_of_fsdp_module = list(module.get_parameter(name) for name, _ in module.named_parameters())
+
+        params_with_grad = []
+        params_to_attach_grad = []
+        for o, f in zip(params_of_orig_module, params_of_fsdp_module):
+            if hasattr(o, "_thunder_fsdp_unsharded_grad"):
+                params_with_grad.append(o)
+                params_to_attach_grad.append(f)
         if not params_with_grad:
             return
         unsharded_grads = [p._thunder_fsdp_unsharded_grad for p in params_with_grad]
@@ -166,9 +178,9 @@ def _sync_grads(module: torch.nn.Module) -> None:
                     s, u, op=tdist.distributed_c10d.ReduceOp.AVG, group=process_group
                 )
         cm.wait()
-        for p, g in zip(params_with_grad, sharded_grads):
+        for orig, p, g in zip(params_with_grad, params_to_attach_grad, sharded_grads):
             p.grad = g
-            del p._thunder_fsdp_unsharded_grad
+            del orig._thunder_fsdp_unsharded_grad
     else:
         import warnings
 
@@ -261,8 +273,7 @@ def ddp(
             tdist.init_process_group(backend="nccl")
 
             model = MyModel().to(LOCAL_RANK)
-            ddp_model = dist.ddp(model)
-            compiled = thunder.jit(ddp_model)
+            compiled = dist.ddp(thunder.jit(model))
             optimizer = torch.optim.AdamW(compiled.parameters())
             losses = []
             loss_all_reduce_workers = []
@@ -295,73 +306,19 @@ def ddp(
     )
     from thunder.core.module import ThunderModule
 
-    if isinstance(model, ThunderModule):
-        from thunder.distributed.transforms.ddp_v2 import DDPTransform
-        from thunder.core.transforms import add_transform
+    assert isinstance(model, ThunderModule), "Thunder DDP only works on ThunderModules"
+    from thunder.distributed.transforms.ddp_v2 import DDPTransform
+    from thunder.core.transforms import add_transform
 
-        process_group = copy_default_process_group()
-        utils.check(process_group is not None, lambda: "The default process group is None")
-        # will insert syncs for parameters (and gradient syncs in the backward pass, this is handled by thunder)
-        # usually, other transforms will remove the forward syncs inserted by this transform.
-        transform_from_trace_to_ddp_trace = DDPTransform(
-            process_group=process_group, bucket_size_in_mb=bucket_size_in_mb, broadcast_from=broadcast_from
-        )
-        model_new = add_transform(model, transform=transform_from_trace_to_ddp_trace)
-        return model_new
-
-    pg = copy_default_process_group()
-    utils.check(pg is not None, lambda: "The default process group is None")
-    model.use_ddp = True
-    model.process_group_for_ddp = pg
-    model.bucket_size_in_mb = bucket_size_in_mb
-
-    # Infers device information from model
-    # TODO Verify parameters are not partially initialized
-    # TODO Handle buffers
-    named_params = model.named_parameters()
-    _, first_param = next(named_params)
-    device = first_param.device
-    devicetype = device.type
-    deviceindex = device.index
-    for name, param in named_params:
-        utils.check(
-            param.device.type == devicetype,
-            lambda: (
-                "Trying to ddp a model with parameters on devices with different device types, "
-                f"including {devicetype} and {param.device.type} for {name!r}"
-            ),
-        )
-        utils.check(
-            deviceindex == param.device.index,
-            lambda: (
-                "Trying to ddp a model with parameters on multiple devices, including devices "
-                f"{deviceindex} and {param.device.index} for {name!r}, but currently only models with all their "
-                "parameters on one device are supported"
-            ),
-        )
-
-    # Note [DistributedDataParallel and distparallel_type]
-    # If model was wrapped with thunder.distributed.ddp it would have a
-    # .use_ddp attribute set to True and all parameters would be already
-    # broadcasted to all other processes. So that our tracing is aware of
-    # this we need to mark the distparallel_type of model's parameters as
-    # thunder.proxies.DistParallelType.REPLICATED
-    for p in model.parameters():
-        p.distparallel_type = DistParallelType.REPLICATED
-
-    if broadcast_from is None:
-        return model
-
-    # Starts broadcasts
-    # TODO Make these broadcast asyncs
-    # TODO Perform up to two broadcasts at a time
-    # See issue "Update ddp to use async broadcasts"
-    # TODO "Bucket" small tensors together before broadcasting
-    with torch.no_grad():
-        for param in model.parameters():
-            tdist.broadcast(param, src=broadcast_from, group=pg, async_op=False)
-
-    return model
+    process_group = copy_default_process_group()
+    utils.check(process_group is not None, lambda: "The default process group is None")
+    # will insert syncs for parameters (and gradient syncs in the backward pass, this is handled by thunder)
+    # usually, other transforms will remove the forward syncs inserted by this transform.
+    transform_from_trace_to_ddp_trace = DDPTransform(
+        process_group=process_group, bucket_size_in_mb=bucket_size_in_mb, broadcast_from=broadcast_from
+    )
+    model_new = add_transform(model, transform=transform_from_trace_to_ddp_trace)
+    return model_new
 
 
 class FSDPType(Enum):
@@ -422,163 +379,15 @@ def get_extract_bucket_name_from_tensor_proxy(granularity: FSDPBucketingStrategy
     return f
 
 
-# When the user calls fsdp(jitted_module), this function does the following
-# - It transforms the ThunderModule jitted_module, materializing and sharding the parameters as `overrides`
-#   in the ThunderModule.
-# - While doing that, it leaves the original user module alone.
-# - It then registers an early transform (callback that runs before prologue is executed) that transforms the
-#   prologue and compute trace.
-#
-# Note that for doing so, there are a few constraints / caveats:
-# - We do not have prologues/compute traces when we transform the module.
-# - We need to record the info from the module transformations because a later transform might modify the module further.
-
-
-def fsdp_transform_module(
-    thunder_model: ThunderModule,
-    *,
-    device: torch.device | None = None,
-    broadcast_from: int | None = None,
-    sharding_strategy: FSDPType = FSDPType.ZERO2,
-    bucketing_strategy: FSDPBucketingStrategy = FSDPBucketingStrategy.NONE,
-) -> ThunderModule:
-    from thunder import compile_data as get_compile_data
-    from thunder.core.transforms import add_transform
-    from thunder.core.module import ThunderModule
-    from thunder.distributed.transforms.fsdp_v2 import FSDPTraceTransform
-
-    process_group = copy_default_process_group()
-    utils.check(process_group is not None, lambda: "The default process group is None")
-    global_rank = tdist.get_rank(group=process_group)
-    world_size = tdist.get_world_size(group=process_group)
-    if device is None:
-        local_rank = int(os.environ["LOCAL_RANK"])
-        device = torch.device("cuda", local_rank)
-
-    cd = get_compile_data(thunder_model)
-    # TODO: promote use_fsdp and use_ddp to public members of CompileData
-    cd.use_fsdp = True
-    orig_module: torch.nn.Module = cd.fn
-    utils.check(
-        isinstance(orig_module, torch.nn.Module) and not isinstance(orig_module, ThunderModule),
-        lambda: f"CompileData.fn expected to be `nn.Module` but {type(orig_module)}",
-    )
-    orig_module.use_fsdp = True
-    orig_module.process_group_for_ddp = process_group
-    orig_module.bucketing_strategy = bucketing_strategy
-    orig_module.sharding_strategy = sharding_strategy
-
-    # modify module
-    sharded_params = {}
-    device_adjustments = {}
-    # We use `shared_params` dictionary to track the shared parameters.
-    # Key to this dictionary is the original parameter from the user's Module.
-    # Values are the copied and sharded parameter for the thunder module and meta-data related to sharding.
-    shared_params = WeakTensorKeyDictionary()
-
-    # NOTE: Shared Parameters in Trace
-    # Shared parameters in PyTorch eager are parameters of module which have different name but share the underlying tensor.
-    # For shared parameter, we replace all occurence shared parameter with it's corresponding `base` parameter.
-    # In our implementation `base` parameter is the parameter and corresponding name which we see the first time while
-    # iterating our parameters (see below). We track subsequent parameter which share the underlying Tensor with this `base` parameter
-    # in `shared_params_name` dictionary.
-    # Then while, transforming the trace - `see FSDPTraceTransform.transform_traces` - we replace all the proxy of shared parameter
-    # with the corresponding proxy of base parameter in the computation trace.
-
-    # This is used to track the shared parameters when the transform is applied.
-    # key - parameter name, value - `base` parameter name.
-    shared_params_name: dict[str, str] = {}
-    for module_name, _ in thunder_model._model.named_modules():
-        submodule = thunder_model.get_submodule(module_name)
-
-        # we use a copy to let the user's module alone (TODO: does this fully work?)
-        module_copy = copy.copy(submodule)
-        # TODO: we should probably populate the module copy with parameters that consider overrides
-
-        # Materialize meta-parameters on-device if necessary.
-        # This is done before sharding in case the materialization logic depends on the tensor shape.
-        # The tradeoff is that all of a module's direct parameters need to fit in device.
-        # Each module only initializes its own parameters and not those of its children (recurse=False)
-        if any(t.is_meta for t in chain(module_copy.parameters(recurse=False), module_copy.buffers(recurse=False))):
-            # TODO: we could also support calling a "param_init_fn" argument like PyTorch
-            _materialize(module_copy, device)
-            for n, p in module_copy.named_parameters(recurse=False, prefix=module_name):
-                thunder_model._overrides_parameters[n] = p
-                device_adjustments[n] = device
-            for n, b in module_copy.named_buffers(recurse=False, prefix=module_name):
-                thunder_model._overrides_buffers[n] = b
-                device_adjustments[n] = device
-        else:
-            # Move leftover params and buffers to device. This is at least required to broadcast.
-            # Cannot `submodule.to(device)` because we don't want it to recurse
-            for n, p in module_copy.named_parameters(recurse=False, prefix=module_name):
-                if p.device != device:
-                    thunder_model._overrides_parameters[n] = torch.nn.Parameter(
-                        p.to(device=device), requires_grad=p.requires_grad
-                    )
-                    device_adjustments[n] = device
-            for n, b in module_copy.named_buffers(recurse=False, prefix=module_name):
-                if b.device != device:
-                    thunder_model._overrides_buffers[n] = b.to(device=device)
-                    device_adjustments[n] = device
-
-        # Broadcast parameters if requested
-        if broadcast_from is not None:
-            for pn, _ in submodule.named_parameters(recurse=False, prefix=module_name):
-                tdist.broadcast(
-                    thunder_model.get_parameter(pn), src=broadcast_from, group=process_group, async_op=False
-                )
-            for pn, _ in submodule.named_buffers(recurse=False, prefix=module_name):
-                tdist.broadcast(thunder_model.get_buffer(pn), src=broadcast_from, group=process_group, async_op=False)
-
-        for pn, p in submodule.named_parameters(recurse=False, prefix=module_name):
-            # If there are shared params in the original user Module, we reuse the sharded copy created from the original parameter below.
-            # This way we re-create parameter sharing in thunder's copy of the Module.
-            if p in shared_params:
-                # Shared param names : current param - base param
-                shared_params_name[pn] = shared_params[p]["param_name"]
-                # Re-use the previous copy of this parameter.
-                thunder_model._overrides_parameters[pn] = shared_params[p]["param_copy"]
-                sharded_params[pn] = shared_params[p]["param_shard_meta"]
-                continue
-
-            # if we don't have an override or it is just the original, do create a copy
-            if thunder_model._overrides_parameters.get(pn, p) is p:
-                thunder_model._overrides_parameters[pn] = copy.copy(p)
-            # we collect shapes and devices because we do not know if other transforms also change it...
-            old_shape = thunder_model._overrides_parameters[pn].shape
-            _shard_param(
-                thunder_model._overrides_parameters[pn], global_rank, world_size, pn, allow_padding_for_fsdp=True
-            )
-            new_shape = thunder_model._overrides_parameters[pn].shape
-            sharded_params[pn] = (old_shape, new_shape, thunder_model._overrides_parameters[pn].device)
-
-            # Track the original param and it's corresponding copied shard and metadata.
-            shared_params[p] = {
-                "param_copy": thunder_model._overrides_parameters[pn],
-                "param_shard_meta": sharded_params[pn],
-                "param_name": pn,
-            }
-
-    transform_from_trace_to_fsdp_trace = FSDPTraceTransform(
-        sharded_params=sharded_params,
-        process_group=process_group,
-        shared_params_name=shared_params_name,
-    )
-    # add prologue + compute transform
-    thunder_model = add_transform(thunder_model, transform=transform_from_trace_to_fsdp_trace)
-
-    return thunder_model
-
-
 def fsdp(
-    model: torch.nn.Module,
+    model: torch.nn.Module | ThunderModule,
     *,
     device: torch.device | None = None,
     broadcast_from: int | None = None,
     sharding_strategy: FSDPType = FSDPType.ZERO2,
     bucketing_strategy: FSDPBucketingStrategy = FSDPBucketingStrategy.NONE,
-) -> torch.nn.Module:
+    move_state_dict_to_cpu: bool | None = None,
+) -> torch.nn.Module | ThunderModule:
     """Convert ``model`` into Fully Sharded Data Parallel.
 
     This splits ``model``'s parameters in their first dimension into ``world_size`` chunks
@@ -607,12 +416,14 @@ def fsdp(
             from a checkpoint in a single rank.
         sharding_strategy:
         bucketing_strategy:
+        move_state_dict_to_cpu: Move all-gather'ed parameters of :func:`~thunder.core.module.ThunderModule.original_state_dict` to CPU
+            as each all-gather is finished.
 
      Returns:
         :class:`torch.nn.Module`
 
     """
-    import thunder
+    from thunder.core.module import ThunderModule
 
     utils.check(isinstance(sharding_strategy, FSDPType), lambda: f"FSDPType.ZERO2 and FSDPType.ZERO3 are supported.")
     utils.check(
@@ -620,35 +431,28 @@ def fsdp(
         lambda: "fsdp requires torch distributed to be available (but it's not)",
     )
 
-    if isinstance(model, thunder.ThunderModule):
-        return fsdp_transform_module(
-            model,
-            device=device,
-            broadcast_from=broadcast_from,
-            sharding_strategy=sharding_strategy,
-            bucketing_strategy=bucketing_strategy,
-        )
+    assert isinstance(model, ThunderModule), "only ThunderModules support the FSDP Transform"
+    from thunder.core.transforms import add_transform
+    from thunder.distributed.transforms.fsdp_v2 import FSDPTransform
+    from thunder.transforms import MaterializationTransform
 
-    process_group = copy_default_process_group()
-    utils.check(process_group is not None, lambda: "The default process group is None")
-    model.use_fsdp = True
-    model.process_group_for_ddp = process_group
-    model.sharding_strategy = sharding_strategy
-    model.bucketing_strategy = bucketing_strategy
-
-    # Shard the parameters
-    _shard_params(model, process_group, device, broadcast_from, allow_padding_for_fsdp=True)
-
-    # See Note [DistributedDataParallel and distparallel_type]
-    # If model was wrapped with thunder.distributed.fsdp it would have a
-    # .use_fsdp attribute set to True and all parameters would be already
-    # sharded across all other processes. So that our tracing is aware of
-    # this we need to mark the distparallel_type of model's parameters as
-    # thunder.proxies.DistParallelType.FULLY_SHARDED
-    for p in model.parameters():
-        p.distparallel_type = DistParallelType.FULLY_SHARDED
-
-    return model
+    if device is None:
+        local_rank = int(os.environ["LOCAL_RANK"])
+        device = torch.device("cuda", local_rank)
+    return add_transform(
+        model,
+        transform=[
+            FSDPTransform(
+                device=device,
+                broadcast_from=broadcast_from,
+                sharding_strategy=sharding_strategy,
+                bucketing_strategy=bucketing_strategy,
+                release_original_parameters=True,
+                move_state_dict_to_cpu=False if move_state_dict_to_cpu is None else move_state_dict_to_cpu,
+            ),
+            MaterializationTransform(device, init=MaterializationTransform.init_from_original_module_init()),
+        ],
+    )
 
 
 @torch.no_grad()
@@ -698,7 +502,8 @@ def _shard_params(
             sharded_params[param] = True
 
 
-def _shard_param(
+@torch.no_grad()
+def _shard_tensor(
     param: torch.Tensor,
     rank: int,
     world_size: int,
@@ -706,7 +511,7 @@ def _shard_param(
     *,
     allow_padding_for_fsdp: bool = False,
     dim: int | None = None,
-) -> None:
+) -> tuple[torch.Tensor, int | None]:
 
     dim_to_shard = 0 if dim is None else dim
     if allow_padding_for_fsdp:
@@ -719,11 +524,11 @@ def _shard_param(
         if _thunder_fsdp_padding_size > 0:
             padded_param = torch.empty(padded_param_shape, device=param.device, dtype=param.dtype)
             padded_param[:orig_0dim_size].copy_(param)
-            param.data = padded_param.data.narrow(0, chunk_size * rank, chunk_size).clone()
-            param._thunder_fsdp_padding_size = _thunder_fsdp_padding_size
+            shard = padded_param.data.narrow(0, chunk_size * rank, chunk_size).clone()
+            return shard, _thunder_fsdp_padding_size
         else:
-            param.data = param.data.narrow(0, chunk_size * rank, chunk_size).clone()
-            param._thunder_fsdp_padding_size = None
+            shard = param.data.narrow(0, chunk_size * rank, chunk_size).clone()
+            return shard, None
     else:
         utils.check(
             param.shape[dim_to_shard] % world_size == 0,
@@ -736,7 +541,29 @@ def _shard_param(
         # NOTE This could be a ShardTensor to indicate other parts of the code
         # that it's sharded and should be treated differently
         shard = param.data.narrow(dim_to_shard, chunk_size * rank, chunk_size).clone()
-        param.data = shard
+        return shard, None
+
+
+def _shard_param(
+    param: torch.Tensor,
+    rank: int,
+    world_size: int,
+    name: str,
+    *,
+    allow_padding_for_fsdp: bool = False,
+    dim: int | None = None,
+) -> None:
+    shard, padding_size = _shard_tensor(
+        param,
+        rank,
+        world_size,
+        name,
+        allow_padding_for_fsdp=allow_padding_for_fsdp,
+        dim=dim,
+    )
+    param.data = shard
+    if allow_padding_for_fsdp:
+        param._thunder_fsdp_padding_size = padding_size
 
 
 @torch.no_grad()

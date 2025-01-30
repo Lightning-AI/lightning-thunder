@@ -17,7 +17,7 @@ defaults:
 env:
   #CI: "true"
   TORCH_URL_RC: "https://download.pytorch.org/whl/test/cpu/torch_test.html"
-  TORCH_URL_NIGHTLY: "https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html"
+  TORCH_URL_NIGHTLY: "https://download.pytorch.org/whl/nightly/cpu"
   TORCH_URL_STABLE: "https://download.pytorch.org/whl/cpu"
 
 jobs:
@@ -29,9 +29,13 @@ jobs:
         os: ["ubuntu-22.04", "macOS-14", "windows-2022"]
         python-version: ["3.10"]
         requires: ["latest", "nightly"] # , 'oldest'
+        suite: ["core", "ops", "grads"]
         include:
           - { os: "ubuntu-22.04", python-version: "3.11", requires: "latest" }
           - { os: "ubuntu-22.04", python-version: "3.12", requires: "latest" }
+        exclude:
+          - { os: "windows-2022", suite: "ops" }
+          - { os: "windows-2022", suite: "grads" }
 
     # Timeout: https://stackoverflow.com/a/59076067/4521646
     timeout-minutes: 35
@@ -78,48 +82,71 @@ jobs:
 
       - name: Install package & dependencies
         run: |
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+             brew install libomp
+          fi
           pip --version
+          pip install -U \
+            ${PIP_EXTRA_FLAG} torch torchvision torchaudio \
+            --index-url=${TORCH_URL}
           pip install -e . -U \
-            -r requirements/test.txt \
-            --find-links=${TORCH_URL} ${PIP_EXTRA_FLAG}
+            ${PIP_EXTRA_FLAG} -r requirements/test.txt
           pip list
         shell: bash
 
       - name: Testing Local
-        if: matrix.python-version == '3.10'
+        if: matrix.python-version == '3.10' && matrix.suite == 'core'
         run: |
           coverage run --source thunder -m \
             pytest thunder/tests/ \
               --ignore=thunder/tests/distributed \
+              --ignore=thunder/tests/test_ops.py \
+              --ignore=thunder/tests/test_grad.py \
               -v --datefmt="%Y%m%d-%H:%M:%S.%f" \
               --random-order-seed=$GITHUB_RUN_ID \
-              -n 2 --durations=250
+              -n 4 --durations=250
 
       - name: Testing Distributed
         # run all found tests in given past as standalone
-        if: matrix.python-version == '3.10' && runner.os == 'Linux'
+        if: matrix.python-version == '3.10' && runner.os == 'Linux' && matrix.suite == 'core'
         run: |
           pytest thunder/tests/distributed/ \
             -v --datefmt="%Y%m%d-%H:%M:%S.%f" \
             --random-order-seed=$GITHUB_RUN_ID \
             --durations=250
 
-      - name: Testing just a few
+      - name: Testing Ops
+        if: matrix.python-version == '3.10' && matrix.suite == 'ops' && runner.os != 'Windows'
+        run: |
+          coverage run --source thunder -m \
+            pytest thunder/tests/test_ops.py \
+              -v --datefmt="%Y%m%d-%H:%M:%S.%f" \
+              --random-order-seed=$GITHUB_RUN_ID \
+              -n 4 --durations=250
+
+      - name: Testing Grads
+        if: matrix.python-version == '3.10' && matrix.suite == 'grads' && runner.os != 'Windows'
+        run: |
+          coverage run --source thunder -m \
+            pytest thunder/tests/test_grad.py \
+              -v --datefmt="%Y%m%d-%H:%M:%S.%f" \
+              --random-order-seed=$GITHUB_RUN_ID \
+              -n 4 --durations=250
+
+      - name: Testing interpreter
         if: matrix.python-version == '3.11' || matrix.python-version == '3.12'
-        #continue-on-error: true
         run: |
           python -m pytest \
             thunder/tests/test_interpreter.py \
-            -v --durations=50 --cov=thunder
-          python -m pytest thunder/tests/test_jit_general.py -v --durations=50 --cov=thunder
-
+            thunder/tests/test_jit_general.py \
+            -v -n 4 --durations=50 --cov=thunder
       - name: Statistics
         run: |
           coverage report
           coverage xml
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           file: ./coverage.xml

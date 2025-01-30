@@ -1,23 +1,27 @@
-import sys
-import os
+from __future__ import annotations
+from collections import defaultdict, deque, UserDict
+from collections.abc import Callable, Hashable, Iterable, Iterator, Sequence, Mapping
 from enum import Enum
-from functools import reduce, wraps
-import itertools
-from itertools import chain
+from functools import reduce
 from numbers import Number
-from typing import Any, overload, Generic, Optional, TypeVar, TYPE_CHECKING
-from collections.abc import Callable
-from collections.abc import Hashable, Iterable, Iterator, Sequence
+from types import MappingProxyType
+from typing import overload, Generic, TypeVar, TYPE_CHECKING
+import itertools
+import os
 
 from typing_extensions import Self
+import torch
 
 import thunder.core.dtypes as dtypes
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
-from thunder.core.proxies import Proxy, NumberProxy, TensorProxy, variableify, CONSTRAINT
+from thunder.core.proxies import Proxy, NumberProxy, TensorProxy, variableify, CONSTRAINT, Variable
 from thunder.core.baseutils import *
 from thunder.core.codeutils import *
 from thunder.core.trace import TraceCtx
 import thunder.core.prims as prims
+
+if TYPE_CHECKING:
+    from typing import Any
 
 # This file defines utilities that can be used when defining primitive operations.
 
@@ -70,8 +74,6 @@ __all__ = [
     # Helpful classes
     "OrderedSet",
     "FrozenDict",
-    # Context-related functions and decorators
-    "langctx",
 ]
 
 T = TypeVar("T")
@@ -562,8 +564,12 @@ def same_shape(a: Sequence[int], b: Sequence[int], /) -> bool:
 
 
 # TODO: improve error message
-def check_same_shape(*args):
-    shapes = tuple(x.shape for x in args if isinstance(x, TensorProxy))
+# NOTE: the tensors in args have different shapes is only allowed if the tensor is a CPU scalar tensor and treat_cpu_scalar_tensors_as_numbers=True
+def check_same_shape(*args, treat_cpu_scalar_tensors_as_numbers=True):
+    if treat_cpu_scalar_tensors_as_numbers:
+        shapes = tuple(x.shape for x in args if isinstance(x, TensorProxy) and not is_cpu_scalar_tensor(x))
+    else:
+        shapes = tuple(x.shape for x in args if isinstance(x, TensorProxy))
     if len(shapes) > 1:
         shape = shapes[0]
         for othershape in shapes[1:]:
@@ -658,6 +664,13 @@ def check_no_duplicates(dims: Sequence):
     check(len(dims) == len(set(dims)), lambda: f"Duplicate value in list of dimensions {dims}!")
 
 
+def is_cpu_scalar_tensor(a: Any, /) -> bool:
+    """
+    Returns True if the input is a Thunder TensorProxy or torch.tensor and is a scalar tensor on the CPU.
+    """
+    return isinstance(a, (TensorProxyInterface, torch.Tensor)) and a.ndim == 0 and a.device.type == "cpu"
+
+
 #
 # Device-related functions
 #
@@ -665,9 +678,16 @@ def check_no_duplicates(dims: Sequence):
 
 # TODO: improve device handling by canonicalizing devices and expressing them per langctx
 # TODO: should the comparison between devices be ==?
-def check_same_device(*args):
-    devices = tuple(x.device for x in args if isinstance(x, TensorProxyInterface) and x.device.type != "meta")
-
+# NOTE: the tensors in args have different devices is only allowed if the tensor is a CPU scalar tensor and treat_cpu_scalar_tensors_as_numbers=True
+def check_same_device(*args, treat_cpu_scalar_tensors_as_numbers=True):
+    if treat_cpu_scalar_tensors_as_numbers:
+        devices = tuple(
+            x.device
+            for x in args
+            if isinstance(x, TensorProxyInterface) and x.device.type != "meta" and not is_cpu_scalar_tensor(x)
+        )
+    else:
+        devices = tuple(x.device for x in args if isinstance(x, TensorProxyInterface) and x.device.type != "meta")
     if len(devices) > 1:
         device = devices[0]
         for otherdevice in devices[1:]:
@@ -712,17 +732,17 @@ class _OrderedSet(Generic[T, T1], Iterable[T]):
         return len(self.d)
 
     # -
-    def __sub__(self, other: "_OrderedSet") -> Self:
+    def __sub__(self, other: _OrderedSet) -> Self:
         return self.__class__(k for k in self if k not in other)
 
-    def __and__(self, other: "_OrderedSet") -> Self:
+    def __and__(self, other: _OrderedSet) -> Self:
         return self.__class__(k for k in self if k in other)
 
-    def __or__(self, other: "_OrderedSet") -> Self:
+    def __or__(self, other: _OrderedSet) -> Self:
         return self.__class__(itertools.chain(self, other))
 
     # NOTE: actual set signature is (self, *others)
-    def difference(self, other: "_OrderedSet") -> Self:
+    def difference(self, other: _OrderedSet) -> Self:
         return self - other
 
     def add(self, x: T | T1):
@@ -736,7 +756,7 @@ class _OrderedSet(Generic[T, T1], Iterable[T]):
     def issubset(self, other):
         return all((e in other) for e in self)
 
-    def union(self, *others: "Sequence[_OrderedSet]") -> Self:
+    def union(self, *others: Sequence[_OrderedSet]) -> Self:
         return self.__class__(itertools.chain(self, *others))
 
     def update(self, x: Iterable[T | T1]) -> None:
@@ -774,7 +794,7 @@ class InferringDict(dict[T, T1]):
 if TYPE_CHECKING:
     _UserDictT = dict
 else:
-    _UserDictT = collections.UserDict
+    _UserDictT = UserDict
 
 
 class FrozenDict(_UserDictT[T, T1], Mapping[T, T1]):
@@ -982,8 +1002,9 @@ class ProxyDict:
         return str(self._dict)
 
 
-# NOTE That this pass does not assume that the bound symbols are in a reasonable order,
-#   but it does assume that each proxy is uniquely constructed once
+# NOTE That this pass does not assume that the bound symbols are in a reasonable order.
+#   For bound symbols with multiple producers, this pass returns the first producer of
+#   in order of the presented bound symbols
 # Returns a proxy -> producer mapping
 #   If _map_to_numbers is True then producers are represented by their position in the trace (their "line number")
 def producers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface], *, _map_to_numbers: bool = False) -> ProxyDict:
@@ -1003,6 +1024,10 @@ def producers(trace_or_bsyms: TraceCtx | list[BoundSymbolInterface], *, _map_to_
             continue
 
         for out in bsym.flat_proxy_outs:
+            # if a producer has already been traversed, skip
+            if producers.get(out, None) != None:
+                continue
+
             vout = variableify(out)
 
             # Checks if the proxy was also an input (in which case this is not its producers)
@@ -1072,7 +1097,8 @@ def find_producer_symbols(trace: TraceCtx, proxies: Sequence[Proxy], stop_proxie
         stop_proxies: proxies to stop at
 
     Returns:
-        tuple of symbols that produce the given proxies
+        tuple of symbols that produce the given proxies. In case of duplicate bound_symbols in trace, e.g. prims.shape.
+        The returned tuple would drop the duplicates and only preserve the first encounter.
 
     Example:
         >>> import torch
@@ -1103,11 +1129,23 @@ def find_producer_symbols(trace: TraceCtx, proxies: Sequence[Proxy], stop_proxie
         if p is not None:
             result.add(p)
             for arg in p.flat_args:
-                arg_name = arg.name if isinstance(arg, Proxy) else None
+                if not isinstance(arg, Proxy):
+                    continue
+                arg_name = arg.name
                 if arg_name not in map(lambda x: x.name, stop_proxies) and arg_name not in seen:
                     queue.append(arg)
                     seen.add(arg_name)
-    original_order = {bsym: i for i, bsym in enumerate(trace.bound_symbols)}
+    # original_order maps from bound_symbol to the index/order of its occurence in the trace. The order is
+    # used to sort producer bound symbols to preserve the correctness of data dependency.
+    original_order = dict()
+    for i, bsym in enumerate(trace.bound_symbols):
+        # Don't overwrite the order if it's already encountered. This is necessary for duplicate bsyms.
+        # e.g. duplicate shape queries. By preserving the smaller index, we ensure that the re-ordered
+        # shape queies would be placed before any consumers of its outputs, hence preserving the correctness
+        # of data dependency.
+        if bsym in original_order:
+            continue
+        original_order[bsym] = i
     return tuple(sorted(result, key=lambda x: original_order[x]))
 
 
@@ -1126,7 +1164,7 @@ def get_symbols_to_last_used_variables(symbols, ignore):
     ignore = (ignore,) if not isinstance(ignore, Sequence) else ignore
     ignore = tree_flatten(ignore)[0]
     variable_to_last_symbol = {}
-    symbol_to_last_variables = {}
+    symbol_to_last_variables = defaultdict(list)
 
     def _mark_last_use(symbol, variable):
         if variable in ignore:
@@ -1139,10 +1177,10 @@ def get_symbols_to_last_used_variables(symbols, ignore):
         # If this function is used in the combined nvfuser+torch executor, there are no symbols but regions.
         # Regions do not have args, kwargs
         if hasattr(symbol, "inputs"):
-            variables = tuple(symbol.inputs)
+            variables = tuple(symbol.inputs) + tuple(symbol.outputs)
         else:
-            variables = (symbol.args, symbol.kwargs)
-        tree_map(lambda x: _mark_last_use(symbol, x) if isinstance(x, trace.Variable) else None, variables)
+            variables = (symbol.flat_variableified_proxy_args) + tuple(symbol.flat_variableified_proxy_outs)
+        tree_map(lambda x: _mark_last_use(symbol, x) if isinstance(x, Variable) else None, variables)
     return symbol_to_last_variables
 
 
@@ -1171,3 +1209,40 @@ def make_hashable(a: Any, /) -> tuple | FrozenDict:
     if isinstance(a, dict):
         return FrozenDict(map(lambda item: (item[0], make_hashable(item[1])), a.items()))
     return id(a)
+
+
+class AutocastStack:
+    """
+    This class provides functionality to keep track of active
+    autocast state which can be triggered with `torch.autocast` context manager.
+    This is used to enable tracking the autocast state for a trace so that the rules
+    can be applied correctly within the active region.
+
+    Each `torch.autocast.__enter__` should be mapped to `push` with relevant state information
+    and corresponding `torch.autocast.__exit__` should be mapped to `pop`.
+    See - `autocast_enter` and `autocast_exit` to see how they use this stack.
+    """
+
+    def __init__(self):
+        self.stack = deque()
+
+    def push(self, device: str, dtype: dtypes.dtype | torch.dtype, enabled: bool):
+        self.stack.append((device, dtype, enabled))
+
+    def pop(self) -> None:
+        self.stack.pop()
+
+    def is_empty(self) -> bool:
+        return len(self.stack) == 0
+
+    def get_dtype_for_device_if_enabled(self, query_device_str: str):
+        for autocast_state in reversed(self.stack):
+            device, dtype, enabled = autocast_state
+            if device == query_device_str:
+                if enabled:
+                    return dtype
+                # Explicitly disabled with ctx manager i.e. torch.autocast("cuda", enabled=False)
+                return None
+
+        # Not found on the stack.
+        return None

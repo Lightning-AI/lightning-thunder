@@ -14,7 +14,6 @@ import torch
 from torch._dynamo import is_inductor_supported
 from torch.testing import assert_close
 
-from looseversion import LooseVersion
 from lightning_utilities.core.imports import package_available
 
 from thunder.core.pytree import tree_flatten, tree_unflatten, tree_map
@@ -26,6 +25,7 @@ import thunder.executors.triton_utils as triton_utils
 import thunder.core.utils as utils
 
 from thunder.core.trace import TraceCtx, detached_trace
+from thunder.dynamo import thunderfx
 
 import thunder
 
@@ -60,6 +60,19 @@ DISABLE_CUDA_TEST_INSTANTIATION: bool = (
     env_var_DISABLE_CUDA_TEST_INSTANTIATION == "true" or env_var_DISABLE_CUDA_TEST_INSTANTIATION == "1"
 )
 IS_WINDOWS = platform.system() == "Windows"
+
+
+def _bitsandbytes_available():
+    if not package_available("bitsandbytes"):
+        return False
+    try:
+        import bitsandbytes
+    except (ImportError, RuntimeError):
+        return False
+    return True
+
+
+BITSANDBYTES_AVAILABLE = _bitsandbytes_available()
 
 
 def version_between(version: str, *, min_ver: str | None = None, max_ver: str | None = None):
@@ -116,7 +129,7 @@ def assert_closer(*, reference, candidate, competitor, comparator):
             competitor_dist = torch.abs(ref - com)
             minimum_dist = torch.minimum(candidate_dist, competitor_dist)
 
-            signed_minimum_dist = torch.where(candidate_dist < 0, -minimum_dist, minimum_dist)
+            signed_minimum_dist = torch.where(ref > cand, -minimum_dist, minimum_dist)
             target = ref + signed_minimum_dist
 
             comparator(cand, target, check_dtype=False)
@@ -149,18 +162,6 @@ class TestExecutor:
         return []
 
     @singledispatchmethod
-    def make_callable_legacy(self, fn, **kwargs):
-        assert kwargs.pop("disable_preprocessing", True)
-        assert kwargs.pop("disable_torch_autograd_support", True)
-        return thunder.compile(
-            fn,
-            executors_list=self.executors_list(),
-            disable_preprocessing=True,
-            disable_torch_autograd_support=True,
-            **kwargs,
-        )
-
-    @singledispatchmethod
     def make_callable(self, fn, **kwargs):
         return thunder.jit(fn, executors=self.executors_list(), **kwargs)
 
@@ -191,7 +192,7 @@ class nvFuserTestExecutor(TestExecutor):
         return [executors.get_nvfuser_executor()]
 
     def version(self):
-        return executors.get_nvfuser_executor().version()
+        return executors.get_nvfuser_executor().version
 
 
 # TODO Convert to singletons or just add to executor logic
@@ -241,10 +242,27 @@ class TorchCompileTestExecutor(TestExecutor):
         return torch.__version__
 
 
+# This is a test executor that uses the ThunderCompiler with torch.compile to
+# compile the function. However, this executor is not used for all tests by
+# default (it's not part of the _all_test_executors list) because it might
+# increase the test runtime significantly. Instead, it's used for specific tests
+# that add it to the supported_executors list when needed. Thunder's end-to-end
+# tests (test_networks.py) use this executor to test the integration between
+# torch.compile and Thunder.
+class DynamoThunderTestExecutor(TestExecutor):
+    name = "DynamoThunder"
+    supported_devicetypes = (devices.DeviceType.CPU, devices.DeviceType.CUDA)
+    supported_dtypes = (datatypes.dtype,)
+
+    def make_callable(self, fn, **kwargs):
+        return thunderfx(fn, **kwargs)
+
+
 # TODO Refactor these executors into the actual executor (sub)modules
 TorchExecutor: TorchTestExecutor = TorchTestExecutor()
 TorchCompileCatExecutor: TorchCompileCatTestExecutor = TorchCompileCatTestExecutor()
 TorchCompileExecutor: TorchCompileTestExecutor = TorchCompileTestExecutor()
+DynamoThunderExecutor: DynamoThunderTestExecutor = DynamoThunderTestExecutor()
 nvFuserExecutor: None | nvFuserTestExecutor = None
 
 if NVFUSER_AVAILABLE:

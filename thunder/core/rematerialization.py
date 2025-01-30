@@ -1,21 +1,22 @@
 from dataclasses import dataclass, replace
 from functools import partial
 from itertools import chain, product, takewhile
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Union, Dict
 from collections.abc import Callable
 from collections.abc import Sequence
 from collections import defaultdict
 import time
 
-from igraph import Graph
+import networkx as nx
 
 from thunder.core import prims, utils
 from thunder.core.baseutils import BoundSymbolInterface, ProxyInterface
 from thunder.core.prims import PrimIDs
-from thunder.core.proxies import TensorProxy, variableify, NumberProxy
+from thunder.core.proxies import TensorProxy, variableify, NumberProxy, CollectionProxy, Proxy
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.symbol import has_tags
 from thunder.core.trace import from_trace, TraceCtx, TraceProvenance
+from thunder.core.transforms import bsym_list_to_dag, toposort_bsym_dag, TOPOSORT_ORDER
 from thunder.core.transform_common import dce, order_proxies
 from thunder.executors.passes import update_fusion_call_ctx
 
@@ -162,6 +163,11 @@ def apply_rematerialization_for_consumer(
         filter(lambda x: x.name not in map(lambda x: x.name, new_consumer_args), consumer.args)
     )
 
+    # In the case where there are no tensors to rematerialize it is
+    # possible to terminate early and return the consumer as it was.
+    if not rematerialized_inputs:
+        return consumer
+
     # Construct a temporary Trace object with subsymbols from the producer.
     trace = TraceCtx(None)
     trace.bound_symbols = producer.subsymbols
@@ -172,15 +178,19 @@ def apply_rematerialization_for_consumer(
     # Some recomputing_symbols might require producer's inputs, so we need to
     # add them to the consumer's inputs.
     # Probably find_min_cut should have returned this information.
-    all_args = tuple(
-        chain.from_iterable(
-            (x.name for x in bsym.flat_args if isinstance(x, ProxyInterface)) for bsym in new_subsymbols
-        )
-    )
+    all_args = set(chain.from_iterable((x.name for x in bsym.flat_proxy_args) for bsym in new_subsymbols))
+    all_outs = set(chain.from_iterable((x.name for x in bsym.flat_proxy_outs) for bsym in new_subsymbols))
     new_consumer_args += tuple(
-        x for x in producer.args if x.name in all_args and x.name not in (x.name for x in new_consumer_args)
+        x
+        for x in producer.args
+        if x.name in all_args and x.name not in (x.name for x in new_consumer_args) and x.name not in all_outs
     )
 
+    # The recomputing_symbols may originate from multiple producers.
+    # Directly adding these symbols at the beginning of the consumer can disrupt the topological order of subsymbols. To ensure
+    # correct execution order, we reorder the new_subsymbols here.
+    _, leaves = bsym_list_to_dag(list(new_subsymbols))
+    new_subsymbols = toposort_bsym_dag(leaves, TOPOSORT_ORDER.BOTTOM_UP)
     proxy_order = order_proxies(new_subsymbols)
     new_consumer_args = tuple(sorted(new_consumer_args, key=lambda x: proxy_order[x.name]))
     new_consumer = replace(consumer, args=new_consumer_args, subsymbols=new_subsymbols)
@@ -264,8 +274,8 @@ def find_cut(
     required_producer_vars = tuple(x for x in producer.args)
     required_producer_vars += tuple(x for x in external_producer_outputs)
 
-    # This is needed to avoid rematerializing random or reduction primitives.
-    tags = {prims.OpTags.REDUCTION_OP, prims.OpTags.RANDOM_OP}
+    # This is needed to avoid rematerializing random or expensive primitives.
+    tags = {prims.OpTags.REDUCTION_OP, prims.OpTags.RANDOM_OP, prims.OpTags.MATMUL_OP}
     required_producer_vars += tuple(
         chain.from_iterable((y for y in x.flat_outs) for x in producer.subsymbols if has_tags(x, tags))
     )
@@ -307,12 +317,9 @@ def find_cut(
 
     # Create a graph
     edges = []
-    name_to_id = {}
-    capacities = []
 
     def add_edge(src, dst, capacity):
-        edges.append((name_to_id.setdefault(src, len(name_to_id)), name_to_id.setdefault(dst, len(name_to_id))))
-        capacities.append(capacity)
+        edges.append((src, dst, {"capacity": capacity}))
 
     utils.check(
         len(required_consumer_vars) > 0,
@@ -364,23 +371,23 @@ def find_cut(
         for var in symbol.flat_proxy_outs:
             add_edges(var)
 
-    g = Graph(
-        n=len(name_to_id),
-        edges=edges,
-        directed=True,
-        edge_attrs={"capacity": capacities},
-    )
-    source = name_to_id["source"]
-    sink = name_to_id["sink"]
+    g = nx.DiGraph()
+    g.add_edges_from(edges)
 
-    id_to_name = dict(map(reversed, name_to_id.items()))
+    try:
+        _, (reachable, non_reachable) = nx.minimum_cut(g, "source", "sink")
+    except Exception:
+        raise RuntimeError(
+            "Failed to compute the min-cut on the graph due to a path with infinite capacity."
+            "Please report this error along with your function and relevant details at: https://github.com/Lightning-AI/lightning-thunder/issues/new"
+        )
 
-    g_edges = g.get_edgelist()
-    cut = g.mincut(source, sink, "capacity").cut
+    cut_edges = set()
+    for u, nbrs in ((n, g[n]) for n in reachable):
+        cut_edges.update((u, v) for v in nbrs if v in non_reachable)
+
     cut_nodes = set()
-    for cut_edge_id in cut:
-        u, v = g_edges[cut_edge_id]
-        node_in, node_out = id_to_name[u], id_to_name[v]
+    for node_in, node_out in cut_edges:
         if node_out == "sink":
             continue
         assert node_in.endswith("_in"), node_in
@@ -410,6 +417,15 @@ def rematerialize_all_gather(fw_trace: TraceCtx, bw_trace: TraceCtx) -> tuple[Tr
     waits = tuple(consumers[o][0] for o in all_gather_outputs)
     assert all(x.sym.id in (distPrimIDs.WAIT, wait_prim_impl.id) for x in waits)
     wait_outputs = tuple(chain.from_iterable((y for y in x.flat_proxy_outs) for x in waits))
+
+    new_required_for_backward_fw_to_bw_map, new_required_for_backward_bw_to_fw_map = (
+        match_fw_and_bw_saved_for_bw_proxies(fw_trace, bw_trace)
+    )
+
+    wait_outputs = tuple(
+        new_required_for_backward_fw_to_bw_map[a.name] if a.name in new_required_for_backward_fw_to_bw_map else a
+        for a in wait_outputs
+    )
 
     visited_wait_output = set()
     # map the output of the original waitop to the output of the new waitop
@@ -501,8 +517,47 @@ def rematerialize_all_gather(fw_trace: TraceCtx, bw_trace: TraceCtx) -> tuple[Tr
 
     new_fw_trace = from_trace(fw_trace)
     new_fw_trace.bound_symbols = list(fw_trace.bound_symbols)
+
+    new_required_for_backward = tuple(
+        new_required_for_backward_bw_to_fw_map[a.name] if a.name in new_required_for_backward_bw_to_fw_map else a
+        for a in new_required_for_backward
+    )
     _update_forward_with_new_saved_for_backward(new_fw_trace, new_required_for_backward)
     return new_fw_trace, new_bw_trace
+
+
+def match_fw_and_bw_saved_for_bw_proxies(
+    fw_trace: TraceCtx, bw_trace: TraceCtx
+) -> tuple[dict[str, Proxy], dict[str, Proxy]]:
+    """Outputs required for backward may have different names between forward and backward.
+    Args:
+        fw_trace: TraceCtx: Forward trace.
+        bw_trace: TraceCtx: Backward trace.
+
+    Returns:
+        new_required_for_bakward_fw_to_bw_map: Dict[str, Proxy]: mapping of bw names to forward proxies
+    """
+
+    old_saved_for_backward_fw = (*fw_trace.bound_symbols[-1].args[1][0], *fw_trace.bound_symbols[-1].args[1][1])
+    old_saved_for_backward_bw = []
+    for bsym in bw_trace.bound_symbols:
+        if bsym.sym.id == PrimIDs.UNPACK_SEQUENCE:
+            flattened_args = tree_flatten(bw_trace.args[1])[0]
+            proxy_names = {y.name for y in flattened_args if isinstance(y, ProxyInterface)}
+            if all(
+                not isinstance(out, CollectionProxy) and out.name not in proxy_names
+                for out in bsym.flat_outs
+                if out is not None
+            ):
+                old_saved_for_backward_bw += bsym.flat_outs
+    assert len(old_saved_for_backward_fw) == len(old_saved_for_backward_bw)
+    new_required_for_backward_bw_to_fw_map = {
+        x.name: y for x, y in zip(old_saved_for_backward_bw, old_saved_for_backward_fw) if x is not None
+    }
+    new_required_for_backward_fw_to_bw_map = {
+        y.name: x for x, y in zip(old_saved_for_backward_bw, old_saved_for_backward_fw) if x is not None
+    }
+    return new_required_for_backward_fw_to_bw_map, new_required_for_backward_bw_to_fw_map
 
 
 def rematerialize(trace: TraceCtx) -> TraceCtx:
@@ -584,21 +639,57 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
         _update_backward_with_new_saved_for_backward,
         _update_forward_with_new_saved_for_backward,
     )
+    from thunder.core.trace import tracectx
 
     def joint_fn(args, kwargs, cotangents):
         pass
 
     joint_extrace = TraceCtx(joint_fn)
     joint_extrace.names = set.union(fw_trace.names, bw_trace.names)
+    # name clash in args?
     joint_extrace.args = (fw_trace.args, fw_trace.kwargs, bw_trace.args[1])
     assert fw_trace.bound_symbols[-1].sym.id == PrimIDs.RETURN
     assert bw_trace.bound_symbols[-1].sym.id == PrimIDs.RETURN
     # Omit the last RETURN symbol
-    joint_extrace.bound_symbols = fw_trace.bound_symbols[:-1] + bw_trace.bound_symbols[:-1]
+    joint_extrace.bound_symbols = fw_trace.bound_symbols[:-1]
+
+    def apply_to_proxy_outputs_and_subsymbols(bsym, fn):
+        for p in bsym.flat_proxy_outs:
+            fn(p)
+        for subsym in bsym.subsymbols:
+            apply_to_proxy_outputs_and_subsymbols(subsym, fn)
+
+    swapmap = {}
+    skipmap = set()
+
+    def add_to_swapmap(p):
+        v = variableify(p)
+        if isinstance(p, TensorProxy) and v not in swapmap and p.name not in skipmap:
+            with tracectx(joint_extrace):
+                swapmap[v] = p.replace(name=f"bw_{p.name}")
+
+    for bsym in bw_trace.bound_symbols[:-1]:
+        if bsym.sym.id != PrimIDs.UNPACK_SEQUENCE:
+            # we want rename except the saved for backkwards tensors
+            apply_to_proxy_outputs_and_subsymbols(bsym, add_to_swapmap)
+        else:
+            for p in bsym.flat_proxy_outs:
+                skipmap.add(p.name)
+        joint_extrace.bound_symbols.append(bsym.from_bsym_swap_proxies(swapmap))
+
     # Add a new RETURN symbol
     joint_extrace.bound_symbols.append(
-        replace(fw_trace.bound_symbols[-1], args=(fw_trace.bound_symbols[-1].args[0], bw_trace.bound_symbols[-1].args))
+        replace(
+            fw_trace.bound_symbols[-1],
+            args=(
+                fw_trace.bound_symbols[-1].args[0],
+                tuple(
+                    bw_trace.bound_symbols[-1].from_bsym_swap_proxies(swapmap).args,
+                ),
+            ),
+        )
     )
+
     joint_extrace = rematerialize(joint_extrace)
 
     # We need to update "save_for_backward" sequence
@@ -634,7 +725,7 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
     new_bw_trace = from_trace(bw_trace)
     new_bw_trace.set_provenance(TraceProvenance("Rematerialization"))
     new_bw_trace.bound_symbols = new_bw_bsyms
-    new_bw_trace.bound_symbols.append(replace(bw_trace.bound_symbols[-1], args=bw_trace.bound_symbols[-1].args))
+    new_bw_trace.bound_symbols.append(bw_trace.bound_symbols[-1].from_bsym_swap_proxies(swapmap))
     _update_backward_with_new_saved_for_backward(new_bw_trace, new_required_for_backward)
 
     new_fw_trace = from_trace(fw_trace)
@@ -643,6 +734,12 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
         bsym for bsym in joint_extrace.bound_symbols[: len(fw_trace.bound_symbols) - 1] if bsym.sym.id != PrimIDs.DEL
     )
     new_fw_trace.bound_symbols.append(replace(fw_trace.bound_symbols[-1], args=fw_trace.bound_symbols[-1].args))
+
+    _, new_required_for_backward_bw_to_fw_map = match_fw_and_bw_saved_for_bw_proxies(fw_trace, bw_trace)
+    new_required_for_backward = tuple(
+        new_required_for_backward_bw_to_fw_map[a.name] if a.name in new_required_for_backward_bw_to_fw_map else a
+        for a in new_required_for_backward
+    )
     _update_forward_with_new_saved_for_backward(new_fw_trace, new_required_for_backward)
 
     # prims.python_return was updated and now DCE can remove the unused
@@ -653,11 +750,20 @@ def rematerialize_forward_and_backward(fw_trace: TraceCtx, bw_trace: TraceCtx) -
     # Update the call context
     new_fw_trace = update_fusion_call_ctx(new_fw_trace)
     new_bw_trace = update_fusion_call_ctx(new_bw_trace)
+
     return new_fw_trace, new_bw_trace
 
 
 def replace_uniform(trace: TraceCtx) -> TraceCtx:
     """For better rematerialization, replace the uniform operator with the stateless uniform_philox operator and manually update the RNG state."""
+    from thunder.core.compile_data import get_compile_option
+
+    disable_replace_uniform: None | bool = get_compile_option(
+        "disable_replace_uniform", "Disables the replace_uniform transform to avoid dropout rematerialization"
+    )
+    if disable_replace_uniform:
+        return trace
+
     start_time_ns = time.perf_counter_ns()
     from thunder.core.trace import VariableInterface
     from thunder.core.proxies import Proxy

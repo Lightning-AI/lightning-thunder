@@ -1,31 +1,50 @@
 from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
-from abc import ABC, abstractmethod
-from collections import defaultdict
+from abc import ABC
 from collections.abc import Sequence
-from collections import defaultdict
-from itertools import filterfalse, chain
+import dataclasses
+from itertools import filterfalse
 from functools import partial
 
 import thunder
 import thunder.core.prims as prims
-from thunder.core.baseutils import BoundSymbolInterface
+from thunder.core.baseutils import BoundSymbolInterface, NumberProxyInterface
 from thunder.core.proxies import Proxy, variableify, Variable, TensorProxy, unvariableify
 from thunder.core.pytree import tree_flatten, tree_iter, tree_map, tree_unflatten
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, has_tags
 from thunder.core.trace import from_trace, TraceProvenance, TraceCtx as Trace, tracectx
-from thunder.core.utils import ProxyDict, producers, check, consumers
+from thunder.core.utils import ProxyDict, producers, check
 
 if TYPE_CHECKING:
-    from thunder.core.proxies import ProxyInterface
-    from thunder.core.symbol import Symbol, VariableInterface
+    from numbers import Number
+    from typing import Any
+    from thunder.core.module import ThunderModule
 
 
 #
 # Common optimization and transform passes
 #
 # NOTE This file avoids transforms depending on passes, since passes depend on transforms
+@dataclasses.dataclass  # (frozen=True)
+class VJPDual:
+    """A pair of primal and saved information for backward (residuals).
+
+    Args:
+        primal (Union[Proxy, Number]): Primal value, i.e., the value being differentiated.
+        residuals (Tuple[Proxy, ...]): Residuals, i.e., the values that are
+            saved for the backward.
+
+    Yields:
+        Tuple[Variable, Tuple[Variable, ...], Callable]: Primal and residuals
+    """
+
+    primal: Proxy | Number
+    residuals: tuple[Proxy, ...]
+
+    def __iter__(self):
+        yield self.primal
+        yield self.residuals
 
 
 # Modifies an existing BoundSymbol, removing its "no-op" subsymbols (recursively) which perform no operations
@@ -35,7 +54,11 @@ def _remove_noop_subsymbols(bsym: BoundSymbol) -> None:
     for sbsym in bsym.subsymbols:
         if len(sbsym.subsymbols) == 0 and not sbsym.sym.is_prim:
             continue
-
+        # if all outputs are constants, we elmininate the subsymbol
+        if not has_tags(bsym, {prims.OpTags.DONT_DCE}) and not any(
+            o is not None for o in sbsym.flat_proxy_outs
+        ):  # is not None to avoid cast to bool
+            continue
         _remove_noop_subsymbols(sbsym)
         nsbsyms.append(sbsym)
 
@@ -86,6 +109,32 @@ def _inplace_copy_sanity_check(extrace: Trace):
 
             check(copy_to_arg, "'copy_to' argument")
             check(copy_to_out, "output")
+
+
+def remove_duplicate_number_proxies(bsyms: Sequence[BoundSymbol]) -> list[BoundSymbol]:
+    """This removes duplicate number proxies when they are returned multiple times.
+    The remaining DCE pass does not see them (because they often are in a tuple?).
+    In particular, proxies may be extracted multiple times when using the thunder.jit's
+    symbolic constraints mode.
+    """
+    seen = set()
+
+    def keep_or_swap(p):
+        if not isinstance(p, NumberProxyInterface):
+            return p
+        if p.name in seen:
+            return p.value  # don't make it a duplicate
+        seen.add(p.name)
+        return p
+
+    new_bsyms = []
+    for bsym in bsyms:
+        # This allows us to remove the redundant `prims.shape()` call in dce.
+        if all(map(lambda x: isinstance(x, NumberProxyInterface) and x.name in seen, bsym.flat_outs)):
+            continue
+        output = tree_map(keep_or_swap, bsym.output)
+        new_bsyms.append(bsym.from_bsym(output=output))
+    return new_bsyms
 
 
 # TODO This calls variableify(), but we could directly construct Variable objects instead, which might slightly
@@ -151,7 +200,11 @@ def dce(trace: Trace, needed_proxies: None | set[Variable] = None) -> Trace:
                 needed_proxies.add(variableify(x))
 
     dcetrace = from_trace(trace)
-    dcetrace.bound_symbols = list(reversed(dced))
+    dced_bound_symbols = list(reversed(dced))
+    # duplicate number proxies happen with the symbolic shapes and are
+    # not covered by the above (due to being in tuples?).
+    dced_bound_symbols = remove_duplicate_number_proxies(dced_bound_symbols)
+    dcetrace.bound_symbols = dced_bound_symbols
 
     end_time_ns = time.perf_counter_ns()
     elapsed_time_ns = end_time_ns - start_time_ns
@@ -346,13 +399,16 @@ class Transform(ABC):
         # default to noop
         return prologue_trace, computation_trace, epilogue_trace
 
-    def transform_module(self, model: thunder.ThunderModule):
+    def transform_module(self, model: ThunderModule) -> None:
         """Transforms the ThunderModule. This is executed once on application of the transform"""
         pass
 
     def transform_state_dict_for_submodule(
-        self, model: thunder.ThunderModule, submodule_name: str, state_dict: dict
-    ) -> dict:
+        self,
+        model: ThunderModule,
+        submodule_name: str,
+        state_dict: dict[str, Any],
+    ) -> dict[str, Any]:
         """
         Implement this to transform the state dict (mostly parameters and buffers) of a module, e.g. when loading
         from a state dict of the original model.
@@ -363,21 +419,23 @@ class Transform(ABC):
         """
         return state_dict
 
-    def transform_trace_additionally(self, computation_trace: Trace, **kwargs):
-        """
-        transform_trace_additionally enables transforming the computation trace before optimization pass.
-        Note that this transform is only applicable if autograd is disabled.
-
-        Please don't use this method in new implementations, we are working on removing it. Use transform_traces_pre_prologue instead.
-        """
-        return computation_trace
-
     def transform_trace_post_optimization(self, computation_trace: Trace, **kwargs):
         """
         transform_trace_post_optimization enables transforming computation trace after optimization pass.
         Note that this transform will also be applied to the backward trace if the the autograd transform was enabled.
         """
         return computation_trace
+
+    def reverse_transform_state_dict_for_submodule(
+        self,
+        model: ThunderModule,
+        submodule_name: str,
+        state_dict: dict[str, Any],
+    ) -> dict[str, Any]:
+        return state_dict
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__module__}.{self.__class__.__name__}()"
 
 
 def order_proxies(bsyms: Sequence[BoundSymbol]) -> dict[str, int]:
@@ -434,3 +492,41 @@ def canonicalize_proxies(bsyms: Sequence[BoundSymbol]) -> Sequence[BoundSymbol]:
         process_bound_symbols(bsyms, output)
 
     return output
+
+
+def wrap_return_value_together_with_arguments(trace: Trace) -> Trace:
+    last = trace.bound_symbols[-1]
+    assert last.sym.id == prims.PrimIDs.RETURN
+    flat_args, _ = tree_flatten((trace.args, trace.kwargs))
+    new_return_value = {"output": last.args[0], "flat_args": flat_args}
+    new_return_bsym = last.from_bsym(args=(new_return_value,))
+
+    new_trace = from_trace(trace)
+    new_trace.bound_symbols = trace.bound_symbols[:-1] + [new_return_bsym]
+    new_trace.set_provenance(TraceProvenance("Return arguments to track copies onto them"))
+    return new_trace
+
+
+def unwrap_return_value(trace: Trace) -> Trace:
+    last = trace.bound_symbols[-1]
+    assert last.sym.id == prims.PrimIDs.RETURN
+    new_return_bsym = last.from_bsym(args=(last.args[0]["output"],))
+
+    new_trace = from_trace(trace)
+    new_trace.bound_symbols = trace.bound_symbols[:-1] + [new_return_bsym]
+    new_trace.set_provenance(TraceProvenance("Unwrap the actual return value"))
+    return new_trace
+
+
+def remove_context_manager_prims_from_trace(trace: Trace) -> Trace:
+    def is_context_manager_prim(bsym):
+        # context manager prims would/should be explicitly tagged.
+        if bsym.sym.tags is None:
+            return False
+        return prims.OpTags.CTX_MANAGER_ENTER_EXIT_OP in bsym.sym.tags
+
+    filtered_bsyms = list(filterfalse(is_context_manager_prim, trace.bound_symbols))
+    new_trace = from_trace(trace)
+    new_trace.bound_symbols = filtered_bsyms
+    new_trace.set_provenance(TraceProvenance("Remove context manager prims"))
+    return new_trace

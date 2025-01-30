@@ -12,7 +12,6 @@ Compiling functions and modules
     :toctree: generated/
 
     jit
-    functional.jit
 
 
 Querying information on compiled functions and modules
@@ -22,6 +21,7 @@ Querying information on compiled functions and modules
 .. autosummary::
     :toctree: generated/
 
+    DebugOptions
     compile_data
     compile_stats
     last_traces
@@ -43,4 +43,4 @@ JITed Model wrapper
 
 .. autoclass:: ThunderModule
     :members: no_sync
-    :exclude-members: forward,load_state_dict,state_dict
+    :exclude-members: forward

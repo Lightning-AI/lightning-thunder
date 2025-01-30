@@ -1,20 +1,8 @@
+import thunder
 from thunder.core import utils
 from thunder.core import prims
-
-
-def get_orig_and_thunder_module_proxies_from_prologue(prologue_trace):
-    modules_and_thunder_modules = [
-        (bsym.args[0], bsym.output) for bsym in prologue_trace.bound_symbols if bsym.sym is prims.unpack_thunder_module
-    ]
-
-    if len(modules_and_thunder_modules) != 1:
-        raise NotImplementedError("cannot deal with modules other than the compiled module")
-
-    ((orig_module_proxy, thunder_module_proxy),) = modules_and_thunder_modules
-    if prologue_producers[orig_module_proxy].sym is not prims.unpack_function_obj:
-        raise NotImplementedError("original module does not match the compiled module")
-
-    return orig_module_proxy, thunder_module_proxy
+from thunder.core.trace import TraceCtx
+from thunder.core.pytree import tree_map
 
 
 def get_checks(prologue_trace):
@@ -48,3 +36,41 @@ def add_trace_output(trace, output, subindex: int | None = None):
         ret_args = (*ret_args[:subindex], (*ret_args[subindex], output), *ret_args[subindex + 1 :])
 
     ret_node.args = (ret_args,)
+
+
+def trace_with_replaced_proxy_metadata(trace: TraceCtx, proxy_replacement_metadata) -> TraceCtx:
+    t = TraceCtx(trace.fn, prologue=trace.prologue)
+
+    proxymap: dict[str, thunder.Proxy] = {}
+
+    def map_proxy(p):
+        if isinstance(p, thunder.Proxy):
+            return proxymap[p.name]
+        return p
+
+    def create_proxy(p):
+        if isinstance(p, thunder.Proxy):
+            if p.name in proxymap:  # happens with subsymbols
+                return proxymap[p.name]
+            with thunder.core.trace.tracectx(t):
+                np = p.replace(**proxy_replacement_metadata.get(p.name, {}))
+                proxymap[p.name] = np
+                return np
+        return p
+
+    def process_bound_symbols(src_bound_symbols, target_bound_symbols):
+        for bsym in src_bound_symbols:
+            new_args = tree_map(map_proxy, bsym.args)
+            new_kwargs = tree_map(map_proxy, bsym.kwargs)
+            new_output = tree_map(create_proxy, bsym.output)
+            new_bsym = bsym.from_bsym(output=new_output, args=new_args, kwargs=new_kwargs, subsymbols=[])
+            target_bound_symbols.append(new_bsym)
+            if len(bsym.subsymbols) > 0:
+                process_bound_symbols(bsym.subsymbols, new_bsym.subsymbols)
+
+    process_bound_symbols(trace.bound_symbols, t.bound_symbols)
+
+    t.args = tree_map(map_proxy, trace.args)
+    t.kwargs = tree_map(map_proxy, trace.kwargs)
+    t._siginfo = trace._siginfo
+    return t

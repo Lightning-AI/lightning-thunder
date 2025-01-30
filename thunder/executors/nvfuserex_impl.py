@@ -8,14 +8,16 @@ import os
 import time
 from copy import copy
 from itertools import chain, filterfalse
-from functools import partial
 import warnings
 
 from looseversion import LooseVersion
 import torch
+from torch import Tensor
 
 import thunder.core.dtypes as dtypes
 import thunder.torch as ltorch
+from thunder.torch import TensorLike
+
 from thunder.core import prims, utils
 from thunder.core.baseutils import BoundSymbolInterface
 from thunder.core.prims import PrimIDs
@@ -34,16 +36,29 @@ from thunder.core.rematerialization import rematerialize
 from thunder.core.utils import OrderedSet, check, check_same_dtype
 from thunder.core.trace import TraceCtx, from_trace, TraceProvenance
 from thunder.core.symbol import BoundSymbol, BoundSymbolRHS, Symbol, has_tags
-from thunder.core.devices import Device, DeviceType
+from thunder.core.devices import Device, DeviceType, cpu
 import thunder.core.codeutils as codeutils
 from thunder.core.codeutils import Printable
 from thunder.core.transform_common import dce, cse_single_bsym, replace_redundant_inputs, NON_FUNCTIONAL_OPS
-from thunder.core.profile import add_markers
+from thunder.core.profile import annotate_for_profile
 from thunder.core.compile_data import get_compile_option
 
-from thunder.executors.utils import Region
+from thunder.core.transforms import (
+    get_grad,
+    put_grads,
+)
+
+from thunder.executors.utils import (
+    Region,
+    _input_dtype_check_fused_scaled_dot_product_attention,
+    _input_shape_check_fused_scaled_dot_product_attention,
+    _fused_sdp_choice,
+    SpdaBackend,
+)
+
 from thunder.executors.passes import update_fusion_call_ctx
-from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor, add_default_executor
+from thunder.extend import FUEL_LEVEL, FusionExecutor, register_executor, add_default_executor, fuse_bound_symbols
+from thunder.executors.nvfuserex import nvfuser_version
 
 # NOTE This impl file is here because nvFuser may not be available, so it's imported conditionally
 #   by nvfuserex.py when nvFuser is available.
@@ -84,6 +99,17 @@ _lcdtype_to_nvdtype_map: dict[None | type | dtypes.dtype, DataType] = {
     # Null types
     None: DataType.Null,
 }
+
+
+_lcfp8_to_nvfp8_map: dict[dtypes.dtype, DataType] = {
+    dtypes.float8_e5m2: DataType.Float8_e5m2,
+    dtypes.float8_e5m2_: DataType.Float8_e5m2,
+    dtypes.float8_e4m3fn: DataType.Float8_e4m3fn,
+    dtypes.float8_e4m3fn_: DataType.Float8_e4m3fn,
+}
+
+
+_lcdtype_to_nvdtype_map.update(_lcfp8_to_nvfp8_map)
 
 
 def lcdtype_to_nvdtype(lcdtype: type | dtypes.dtype) -> DataType:
@@ -129,7 +155,14 @@ def is_supported_devicetype(devicetype: DeviceType) -> bool:
     return devicetype is DeviceType.CUDA
 
 
-_low_precision_floats = (dtypes.float16, dtypes.float16_, dtypes.bfloat16, dtypes.bfloat16_)
+_low_precision_floats = (dtypes.float16, dtypes.float16_, dtypes.bfloat16, dtypes.bfloat16_) + tuple(
+    _lcfp8_to_nvfp8_map.keys()
+)
+
+
+def device_supports_fp8() -> bool:
+    cuda_major, _ = torch.cuda.get_device_capability()
+    return cuda_major > 8
 
 
 def is_supported_dtype(dtype: type | dtypes.dtype, *, allow_low_precision_floats: bool = True) -> bool:
@@ -139,12 +172,12 @@ def is_supported_dtype(dtype: type | dtypes.dtype, *, allow_low_precision_floats
         if dtype in _low_precision_floats:
             return False
 
-    return dtype in _lcdtype_to_nvdtype_map
+    return dtype in _lcdtype_to_nvdtype_map and (device_supports_fp8() if dtype in _lcfp8_to_nvfp8_map else True)
 
 
 def is_supported_tensor(a: TensorProxy, *, allow_low_precision_floats: bool = True) -> bool:
     utils.check_type(a, TensorProxy)
-    devicetype_supported = a.device.devicetype is DeviceType.CUDA
+    devicetype_supported = a.device.devicetype is DeviceType.CUDA or utils.is_cpu_scalar_tensor(a)
     dtype_supported = is_supported_dtype(a.dtype)
 
     if not allow_low_precision_floats:
@@ -225,24 +258,32 @@ def create_fd(
                 python_type = y
                 nvdtype = lcdtype_to_nvdtype(python_type)
                 nv = fd.define_scalar(nvdtype)
+                lc_to_nv_map[x] = nv
             elif isinstance(x, TensorProxy):
                 utils.check_type(y, tuple)
                 symbolic_shape, contiguity, stride_order, dtype = y
                 nvdtype = lcdtype_to_nvdtype(dtypes.to_dtype(dtype))
+                is_cpu = x.device == cpu
                 nv = fd.define_tensor(
-                    shape=symbolic_shape, contiguity=contiguity, dtype=nvdtype, stride_order=stride_order
+                    shape=symbolic_shape, contiguity=contiguity, dtype=nvdtype, stride_order=stride_order, is_cpu=is_cpu
                 )
+                lc_to_nv_map[x] = nv
+
+                for idx, s in enumerate(x.shape):
+                    if isinstance(s, Proxy):
+                        lc_to_nv_map[s] = nv.size(idx)
             elif isinstance(x, TupleProxy):
                 # TODO: discuss the contract here on baked in number from a tuple
                 # TODO: validate x is a tuple of int
                 utils.check_type(y, type)
                 nv = fd.define_vector(len(x._value))
+                lc_to_nv_map[x] = nv
             elif isinstance(x, Proxy):
                 utils.check(False, lambda: f"Unsupported proxy type {type(x)} in fusion", exception_type=AssertionError)
             else:
                 nv = x
+                lc_to_nv_map[x] = nv
 
-            lc_to_nv_map[x] = nv
             return nv
 
         for pinp, inp in zip(sorted_unique_inputs, input_descriptors):
@@ -273,26 +314,60 @@ def create_fd(
     return fd
 
 
-def compute_symbolic_shape(shape: torch.Size | Sequence[int]) -> tuple[int, ...]:
+def compute_symbolic_shape(
+    proxy_shape: Sequence[int | NumberProxy], shape: torch.Size | Sequence[int]
+) -> tuple[int, ...]:
     """
     Computes the symbolic shape of a tensor using nvFuser's notion of a symbolic
-    shape, it's represented by 1s and -1s. 1s represent dimensions that are
-    known to be 1, and -1s represent dimensions that are not known to be 1.
+    shape:
+        -1s represent symbolic shape in nvfuser;
+        1s represent broadcast dimensions;
+        other value represent static shapes in program.
 
-    For example, the symbolic shape of a tensor with shape (1, 2, 3) is (1, -1, -1).
+    Since nvfuser specializes on size-1 dimension for broadcast, we cannot allow
+    all dimension to be dynamic. This function looks at TensorProxy.shape as
+    well as Tensor.shape, and it tries to translate that for nvfuser's
+    FusionDefinition:
+        1. if the Tensor.shape entry has value `1`, we translate it as a
+           constant `1`;
+        2. else:
+           2.1 if the corresponding proxy_shape entry is a NumberProxy, we mark
+               the dimension as dynamic `-1`,
+           2.2. otherwise, Tensor.shape is translated as a static shape.
 
     Args:
+        proxy_shape (Sequence[int | NumberProxy]]): The shape property of the
+        TensorProxy.
         shape (Union[torch.Size, Sequence[int]]): The shape of the tensor.
 
     Returns:
-        Tuple[int, ...]: The symbolic shape of the tensor.
+        Tuple[int, ...]: The shape of the tensor for FusionDefinition.
     """
-    return tuple(1 if l == 1 else -1 for l in shape)
+    nvf_shape = []
+    for p_l, l in zip(proxy_shape, shape):
+        # loudly raise exception when runtime shape violates proxy_shape in the
+        # trace, which indicates issues with the cache. This isn't necessarily
+        # an exception.
+        check(
+            isinstance(p_l, NumberProxy) or p_l == l,
+            lambda: f"inconsistent fusion definition with runtime shape {shape} and trace shape {proxy_shape}",
+            exception_type=AssertionError,
+        )
+
+        # broadcast is specialized in FusionDefinition, preserve it for correct broadcast semantics
+        if l == 1:
+            nvf_shape.append(l)
+        elif isinstance(p_l, NumberProxy):
+            nvf_shape.append(-1)
+        else:
+            nvf_shape.append(l)
+
+    return tuple(nvf_shape)
 
 
 def compute_contiguity(
     shape: torch.Size | Sequence[int], stride: Sequence[int]
-) -> tuple([tuple[bool, ...], tuple[int, ...]]):
+) -> tuple[tuple[bool, ...], tuple[int, ...]]:
     """
     Computes the contiguity and stride_order of a tensor using nvFuser's notion.
 
@@ -324,7 +399,7 @@ def compute_contiguity(
 
 @lru_cache(maxsize=2048)
 def compute_tensor_descriptor(
-    shape: torch.Size | Sequence[int], stride: Sequence[int]
+    proxy_shape: Sequence[int | NumberProxy], shape: torch.Size | Sequence[int], stride: Sequence[int]
 ) -> tuple[tuple[int, ...], tuple[bool, ...], tuple[int, ...]]:
     """
     Computes the symbolic shape, contiguity and stride_order of a tensor using
@@ -342,17 +417,14 @@ def compute_tensor_descriptor(
         Tuple[Tuple[int, ...], Tuple[bool, ...], Tuple[int, ...]]: The symbolic
         shape, contiguity and stride_order of the tensor.
     """
-    return compute_symbolic_shape(shape), *compute_contiguity(shape, stride)
+    return compute_symbolic_shape(proxy_shape, shape), *compute_contiguity(shape, stride)
 
 
-def get_tensor_descriptor(t: torch.Tensor) -> tuple[tuple[int, ...], tuple[bool, ...], tuple[int, ...]]:
-    return compute_tensor_descriptor(t.shape, t.stride())
-
-
-# TODO Inline the get_tensor_descriptor call
-def to_descriptors(args) -> tuple:
-    def to_descriptor(arg):
-        if isinstance(arg, Number):
+def to_descriptors(proxy_args, args) -> tuple:
+    def to_descriptor(proxy_arg, arg):
+        if isinstance(arg, Tensor):
+            return (*compute_tensor_descriptor(proxy_arg._shape, arg.shape, arg.stride()), arg.dtype)
+        elif isinstance(arg, Number):
             return type(arg)
         elif isinstance(arg, tuple):
             if len(arg) != 0:
@@ -363,12 +435,10 @@ def to_descriptors(args) -> tuple:
                     exception_type=AssertionError,
                 )
             return type(arg)
-        elif isinstance(arg, torch.Tensor):
-            return (*get_tensor_descriptor(arg), arg.dtype)
 
         raise ValueError(f"unrecognized type in arguments: {type(arg)}")
 
-    return tuple(to_descriptor(arg) for arg in args)
+    return tuple(to_descriptor(proxy_arg, arg) for proxy_arg, arg in zip(proxy_args, args))
 
 
 # TODO Consider making this just a function, because it's faster to call a function than a callable class
@@ -379,27 +449,55 @@ class FusionDefinitionWrapper:
     """
 
     get_fd: Callable[[tuple[type | tuple[tuple[int, ...], tuple[bool, ...], tuple[int, ...]], ...]], FusionDefinition]
+    to_descriptors: Callable
     name: str
     cache_info: None | Callable = None
     cache_clear: None | Callable = None
     last_used: None | FusionDefinition = None
     last_inputs: None | Sequence[tuple] = None
     store_inputs: bool = False
+    enable_options: None | list[str] = None
+    disable_options: None | list[str] = None
 
     def __call__(self, *args):
-        fd = self.get_fd(to_descriptors(args))
+        fd = self.get_fd(self.to_descriptors(args))
         self.last_used = fd
 
         if self.store_inputs:
             self.last_inputs = args
 
+        kwargs = {}
         # Set device if set in one of the "factory" methods like full, iota, or uniform
-        kwargs = {"device": fd._selected_device} if hasattr(fd, "_selected_device") else {}
-        with add_markers(self.name):
+        if hasattr(fd, "_selected_device"):
+            kwargs["device"] = fd._selected_device
+
+        if nvfuser_version() >= LooseVersion("0.2.23"):
+            # nvFuser expects empty list instead of None values.
+            kwargs["_enable_options"] = self.enable_options if self.enable_options is not None else []
+            kwargs["_disable_options"] = self.disable_options if self.disable_options is not None else []
+
+        elif self.enable_options or self.disable_options:
+            warnings.warn(
+                f"nv_enable_options/nv_disable_options require nvFuser version 0.2.23 and above, found version {nvfuser_version()}. These options will be ignored."
+            )
+
+        with annotate_for_profile(self.name):
             return fd.execute(args, **kwargs)
 
     def __repr__(self):
         return f"FusionDefinitionWrapper({self.name})"
+
+
+def all_tagged(bsym: BoundSymbol, tag: prims.OpTags) -> bool:
+    """:obj:`True` if `bsym` and its subsymbols all are tagged with ``tag``."""
+    if not has_tags(bsym, {tag}):
+        return False
+
+    for sbsym in bsym.subsymbols:
+        if not has_tags(sbsym, {tag}):
+            return False
+
+    return True
 
 
 # Group bookend meta operations into separate regions
@@ -438,20 +536,10 @@ def group_bookend_meta_ops(producers, consumers, region: Region) -> Mapping[str,
                     return False
         return True
 
-    def all_tagged(bsym: BoundSymbol, tags: set[prims.OpTags]) -> bool:
-        if not has_tags(bsym, tags):
-            return False
-
-        for sbsym in bsym.subsymbols:
-            if not has_tags(sbsym, tags):
-                return False
-
-        return True
-
     # traversing all bound_symbols in topo order
     for bsym in region.bound_symbols:
         # we look at meta operations that can be moved to the front
-        if all_tagged(bsym, {prims.OpTags.SHAPE_OP}) and can_move_to_front(bsym):
+        if all_tagged(bsym, prims.OpTags.SHAPE_OP) and can_move_to_front(bsym):
             # when we remove a node, we add all the bsym's flat_outs to region_inputs
             front_meta_cluster.append(bsym)
             for out in bsym.flat_outs:
@@ -462,7 +550,7 @@ def group_bookend_meta_ops(producers, consumers, region: Region) -> Mapping[str,
             middle_cluster.append(bsym)
     # traversing all bound_symbols in reverse topo order
     for bsym in reversed(copy(middle_cluster)):
-        if all_tagged(bsym, {prims.OpTags.SHAPE_OP}) and can_move_to_rear(bsym):
+        if all_tagged(bsym, prims.OpTags.SHAPE_OP) and can_move_to_rear(bsym):
             middle_cluster.remove(bsym)
             rear_meta_cluster.insert(0, bsym)
 
@@ -487,6 +575,10 @@ def create_fusion_definition_wrapper(
     store_inputs: None | bool = get_compile_option(
         "nv_store_fusion_inputs", "Allow nvFuser to store fusion inputs for repro."
     )
+    enable_options: None | list[str] = get_compile_option("nv_enable_options", "List of NVFUSER_ENABLE options to set.")
+    disable_options: None | list[str] = get_compile_option(
+        "nv_disable_options", "List of NVFUSER_DISABLE options to set."
+    )
 
     tensor_indices = []
     for idx, x in enumerate(sorted_unique_inputs):
@@ -501,7 +593,16 @@ def create_fusion_definition_wrapper(
         # A closure over local trace and region
         return create_fd(bsyms, input_descriptors, sorted_unique_inputs, sorted_unique_outputs)
 
-    fdw = FusionDefinitionWrapper(get_fd, name, get_fd.cache_info, get_fd.cache_clear, store_inputs=store_inputs)
+    fdw = FusionDefinitionWrapper(
+        get_fd,
+        partial(to_descriptors, sorted_unique_inputs),
+        name,
+        get_fd.cache_info,
+        get_fd.cache_clear,
+        store_inputs=store_inputs,
+        enable_options=enable_options,
+        disable_options=disable_options,
+    )
     return fdw
 
 
@@ -611,7 +712,7 @@ class nvFuserExecutor(FusionExecutor):
     def _dce_bsyms(self, input_list, output, bsyms: list[BoundSymbol]) -> list[BoundSymbol]:
         trace = TraceCtx(None)
         trace.bound_symbols = bsyms
-        bsyms.append(prims.python_return.bind(output, output=()))
+        bsyms.append(prims.python_return.bind(output, output=None))
         needed_proxies: set[Variable] = set()
         trace = dce(trace, needed_proxies)
         # update the input_list by removing the unused inputs
@@ -723,7 +824,7 @@ class nvFuserExecutor(FusionExecutor):
         return_bsym = cse_trace.bound_symbols[-1]
         assert return_bsym.sym.id == prims.PrimIDs.RETURN
         trace_output = tree_map(map_redundant, return_bsym.args)
-        cse_trace.bound_symbols[-1] = prims.python_return.bind(*trace_output, output=())
+        cse_trace.bound_symbols[-1] = prims.python_return.bind(*trace_output, output=None)
 
         end_time_ns = time.perf_counter_ns()
         elapsed_time_ns = end_time_ns - start_time_ns
@@ -745,26 +846,12 @@ class nvFuserExecutor(FusionExecutor):
         fusedtrace: TraceCtx = from_trace(trace)
 
         producers, consumers = utils.producers_and_consumers(trace)
-        from thunder.executors.data_dependent_partition import Node, fuse_bound_symbols
 
         fused_bsyms = []
 
-        # TODO has_cuda_input_or_output is too restrictive a check on what should be fused
-        # TODO check whether a function would output a CPU tensor? -- can nvFuser fuse such operations?
-        #   ex. device_put to a CPU device from a CUDA device
-        def _should_fuse(a: Node, b: Node):
-            def _can_fuse_node(n: Node):
-                # if already merged, then node can be fused
-                if len(n.group_bsyms) > 1:
-                    return True
-                bsym: BoundSymbol = n.group_bsyms[0]
-                can_fuse: bool = self.can_fuse(bsym)
-                cuda_in_or_out: bool = self.has_cuda_input_or_output(bsym)
-                return can_fuse and cuda_in_or_out
-
-            return _can_fuse_node(a) and _can_fuse_node(b)
-
-        bound_symbol_groups = fuse_bound_symbols(trace, _should_fuse)
+        bound_symbol_groups = fuse_bound_symbols(
+            trace, lambda bsym: self.can_fuse(bsym) and self.has_cuda_input_or_output(bsym)
+        )  # _should_fuse)
 
         # Counts how many fusions (per executor) have been constructed
         #   (Used to name fusions like nvFusion0, nvFusion1, ...)
@@ -788,15 +875,28 @@ the metadata operation is awkward enough to force the output tensor to be
 instantiated) this heuristic actually leads to worse code.
 """
             enable_bookend: None | bool = get_compile_option("nv_enable_bookend", bookend_help)
-            # Set default value.
             if enable_bookend is None:
-                enable_bookend = True
+                # Set the default value. Before 0.2.10, bookending was needed
+                # to hide https://github.com/NVIDIA/Fuser/issues/2395.
+                enable_bookend = nvfuser_version() < LooseVersion("0.2.10")
             assert isinstance(enable_bookend, bool)
 
             if enable_bookend:
                 bookend_result = group_bookend_meta_ops(producers, consumers, region)
             else:
                 bookend_result = {"front_bsyms": [], "fusion": region, "rear_bsyms": []}
+
+            nv_enable_shape_only_fusion: None | bool = get_compile_option(
+                "nv_enable_shape_only_fusion",
+                "Allow nvFuser to create Fusion with shape only operations. Defaults to False.",
+            )
+
+            if not nv_enable_shape_only_fusion:
+                # Don't fuse a region which has only Shape Operations.
+                all_shape_ops = all(map(lambda bsym: all_tagged(bsym, prims.OpTags.SHAPE_OP), bsyms))
+                if all_shape_ops:
+                    fused_bsyms.extend(bsyms)
+                    continue
 
             if len(bsyms) == 1:
                 bsym: BoundSymbol = bsyms[0]
@@ -852,8 +952,9 @@ ex = nvFuserExecutor()
 register_executor(ex)
 
 
-def register_supported(id: Hashable, translator: Callable, checker: Callable):
-    ex.register_supported(id, checker)
+def register_supported(sym_or_id: Hashable, translator: Callable, checker: Callable):
+    ex.register_supported(sym_or_id, checker)
+    id = sym_or_id.id if isinstance(sym_or_id, Symbol) else sym_or_id
     _translation_map[id] = translator
 
 
@@ -1070,8 +1171,12 @@ def broadcast_in_dim(
     a: TensorProxy, shape: list[int], broadcast_dimensions: list[int], *, fd: FusionDefinition, lc_to_nv_map: dict
 ) -> Any:
     nva = getnv(a, fd, lc_to_nv_map)
+    if any(map(lambda x: isinstance(x, NumberProxy), shape)):
+        nv_shape = getnv(shape, fd, lc_to_nv_map)
+    else:
+        nv_shape = shape
 
-    return fd.ops.broadcast_in_dim(nva, shape, broadcast_dimensions)
+    return fd.ops.broadcast_in_dim(nva, nv_shape, broadcast_dimensions)
 
 
 register_supported(PrimIDs.BROADCAST_IN_DIM, broadcast_in_dim, _broadcast_in_dim_check)
@@ -1154,9 +1259,12 @@ def _reshape_check(a: TensorProxy, shape: list[int]) -> bool:
     return is_supported_tensor(a)
 
 
-def reshape(a: TensorProxy, shape: list[int], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+def reshape(a: TensorProxy, shape: list[int, NumberProxy, ...], *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
     nv_a = getnv(a, fd, lc_to_nv_map)
-    nv_shape = getnv(shape, fd, lc_to_nv_map)
+    if any(map(lambda x: isinstance(x, NumberProxy), shape)):
+        nv_shape = getnv(shape, fd, lc_to_nv_map)
+    else:
+        nv_shape = shape
 
     return fd.ops.reshape(nv_a, nv_shape)
 
@@ -1607,6 +1715,14 @@ def trunc(a: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict) 
 register_supported(PrimIDs.TRUNC, trunc, _elementwise_unary_check)
 
 
+def clone(a: TensorProxy, *, fd: FusionDefinition, lc_to_nv_map: dict) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+
+    return fd.ops.set(nva)
+
+
+register_supported(PrimIDs.CLONE, clone, _elementwise_unary_check)
+
 #
 # Elementwise binary operations
 #
@@ -1802,15 +1918,27 @@ def sub(a: TensorProxy | Number, b: TensorProxy | Number, *, fd: FusionDefinitio
 
 register_supported(PrimIDs.SUB, sub, _elementwise_binary_check)
 
+
 #
-# Conditional operations
+# Elementwise ternary operations
 #
 
 
-# TODO Check supported dtypes
-# TODO Properly implement this check
-def _where_check(pred, a, b) -> bool:
-    return are_supported_tensors_or_numbers(pred, a, b)
+def _elementwise_ternary_check(a: Number | TensorProxy, b: Number | TensorProxy, c: Number | TensorProxy) -> bool:
+    return are_supported_tensors_or_numbers(a, b, c)
+
+
+def lerp(
+    start: TensorProxy, end: TensorProxy, weight: TensorProxy | Number, *, fd: FusionDefinition, lc_to_nv_map: dict
+) -> Any:
+    nv_start = getnv(start, fd, lc_to_nv_map)
+    nv_end = getnv(end, fd, lc_to_nv_map)
+    nv_weight = getnv(weight, fd, lc_to_nv_map)
+
+    return fd.ops.lerp(nv_start, nv_end, nv_weight)
+
+
+register_supported(PrimIDs.LERP, lerp, _elementwise_ternary_check)
 
 
 def where(
@@ -1828,7 +1956,7 @@ def where(
     return fd.ops.where(nvpred, nva, nvb)
 
 
-register_supported(PrimIDs.WHERE, where, _where_check)
+register_supported(PrimIDs.WHERE, where, _elementwise_ternary_check)
 
 #
 # Reduction operations
@@ -1974,6 +2102,8 @@ register_supported(PrimIDs.VAR_MEAN, var_mean, _var_mean_check)
 def _copy__check(
     copy_from: TensorProxy,
     copy_to: TensorProxy,
+    *,
+    grad_enabled: bool,
 ) -> bool:
     return are_supported_tensors(copy_from, copy_to)
 
@@ -1982,12 +2112,14 @@ def copy_(
     copy_from: TensorProxy,
     copy_to: TensorProxy,
     *,
+    grad_enabled: bool,
     fd: FusionDefinition,
     lc_to_nv_map: dict,
 ) -> Any:
     nvcopy_from = getnv(copy_from, fd, lc_to_nv_map)
     nvcopy_to = getnv(copy_to, fd, lc_to_nv_map)
-    fd.add_output(nvcopy_from, alias_input=nvcopy_to)
+    alias_output = fd.ops.set(nvcopy_from)
+    fd.add_output(alias_output, alias_input=nvcopy_to)
     return nvcopy_to
 
 
@@ -2208,3 +2340,304 @@ def matmul(
 
 
 register_supported(PrimIDs.MATMUL, matmul, _matmul_check)
+
+
+def _shape_check(
+    a: TensorProxy,
+) -> bool:
+    # TODO: currently we cannot support this yet. fusion_pass needs to be
+    # updated to ensure that the fused region consumes all NumberProxy within
+    # and not leak it out as a fusion output, since nvfuser cannot yet produce
+    # scalar outputs.
+    return False
+
+
+def shape(
+    a: TensorProxy,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
+    nva = getnv(a, fd, lc_to_nv_map)
+    ret = []
+    for i in range(a.ndim):
+        ret.append(fd.ops.size(nva, i))
+    return ret
+
+
+register_supported(PrimIDs.SHAPE, shape, _shape_check)
+
+
+# Registering SDPA operators for nvFuser
+# SDPA requires an execution and grad transform since the forward and backward passes are called through different implementations.
+# For both execution and grad transform, a new operator is registered with nvfuserex (ex.register_operator) and then added to the translation map (register_supported).
+# The operators are tagged with OpTag.RANDOM_OP to prevent rematerialization in backward pass.
+# Finally, the complete rule is registered through ex.register_supported, with the execution and grad transform wrapping around these operators.
+
+
+# SDPA Forward
+def _scaled_dot_product_flash_attention_forward_meta(
+    query: TensorLike,
+    key: TensorLike,
+    value: TensorLike,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    *,
+    scale: None | float = None,
+) -> tuple[TensorProxy, TensorProxy, int, int]:
+    # Reference metadata:
+    # * query (batch_size, num_heads, query_seq_len, E)
+    # * key (batch_size, num_heads, key_seq_len, E)
+    # * value (batch_size, num_heads, key_seq_len, Ev)
+    # * output (batch_size, num_heads, query_seq_len, Ev)
+
+    # at::_scaled_dot_product_flash_attention returns {output, log_sumexp, cum_seq_q, cum_seq_k, max_q, max_k, philox_seed, philox_offset, debug_attn_mask}.
+    # In nvFuser, we only save {output, log_sumexp, philox_seed/offset} for backward since the other variables are not required for non-nested input tensors.
+    # For non-nested tensor, cum_seq_q/k is undefined, max_q/k can be inferred from input size, and we set `return_debug_mask=False`, so `debug_attn_mask` is a 1D zero tensor.
+
+    batch_size, num_heads, query_seq_len, E = query.shape
+    key_seq_len = key.shape[2]
+
+    return (
+        output := TensorProxy(like=query, shape=(batch_size, num_heads, query_seq_len, E)),
+        log_sumexp := TensorProxy(
+            shape=(batch_size, num_heads, query_seq_len), dtype=dtypes.float32, device=query.device, requires_grad=False
+        ),
+        philox_seed := TensorProxy(shape=(), dtype=dtypes.int64, device=cpu, requires_grad=False),
+        philox_offset := TensorProxy(shape=(), dtype=dtypes.int64, device=cpu, requires_grad=False),
+    )
+
+
+def _scaled_dot_product_flash_attention_forward(
+    query: TensorProxy,
+    key: TensorProxy,
+    value: TensorProxy,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    *,
+    scale: None | float = None,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
+
+    inputs = [query, key, value, dropout_p, is_causal, scale]
+    nv_inputs = []
+    for inp in inputs:
+        nv_inp = getnv(inp, fd, lc_to_nv_map) if inp is not None else None
+        nv_inputs.append(nv_inp)
+
+    return fd.ops.sdpfa_fwd(*nv_inputs)
+
+
+nv_sdpfa_fwd = ex.register_operator(
+    "nv_sdpfa_fwd",
+    meta=_scaled_dot_product_flash_attention_forward_meta,
+    fn=_scaled_dot_product_flash_attention_forward,
+    tags=[prims.OpTags.RANDOM_OP],
+)
+
+register_supported(nv_sdpfa_fwd.id, _scaled_dot_product_flash_attention_forward, None)
+
+
+# SDPA Backward
+def _scaled_dot_product_flash_attention_backward_meta(
+    grad_out: TensorLike,
+    query: TensorLike,
+    key: TensorLike,
+    value: TensorLike,
+    out: TensorLike,
+    logsumexp: TensorLike,
+    dropout_p: float,
+    is_causal: bool,
+    philox_seed: TensorLike,
+    philox_offset: TensorLike,
+    *,
+    scale: None | float = None,
+) -> tuple[TensorProxy, TensorProxy, TensorProxy]:
+
+    batch_size, num_heads, query_seq_len, E = query.shape
+    key_seq_len = key.shape[2]
+
+    # Reference metadata:
+    # https://github.com/pytorch/pytorch/blob/f57b00704e498a676854a02974ca9e0c42188b23/torch/_meta_registrations.py#L5043-L5063
+    grad_query = TensorProxy(like=query, shape=(batch_size, num_heads, query_seq_len, E))
+    grad_key = TensorProxy(like=key, shape=(batch_size, num_heads, key_seq_len, E))
+    grad_value = TensorProxy(like=value, shape=(batch_size, num_heads, key_seq_len, E))
+    return (grad_query, grad_key, grad_value)
+
+
+def _scaled_dot_product_flash_attention_backward(
+    grad_out: TensorProxy,
+    query: TensorProxy,
+    key: TensorProxy,
+    value: TensorProxy,
+    out: TensorProxy,
+    logsumexp: TensorProxy,
+    dropout_p: float,
+    is_causal: bool,
+    philox_seed: TensorProxy,
+    philox_offset: TensorProxy,
+    *,
+    scale: None | float = None,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+
+    inputs = [grad_out, query, key, value, out, logsumexp, dropout_p, is_causal, philox_seed, philox_offset, scale]
+    nv_inputs = []
+    for inp in inputs:
+        nv_inp = getnv(inp, fd, lc_to_nv_map) if inp is not None else None
+        nv_inputs.append(nv_inp)
+
+    return fd.ops.sdpfa_bwd(*nv_inputs)
+
+
+nv_sdpfa_bwd = ex.register_operator(
+    "nv_sdpfa_bwd",
+    meta=_scaled_dot_product_flash_attention_backward_meta,
+    fn=_scaled_dot_product_flash_attention_backward,
+    tags=[prims.OpTags.RANDOM_OP],
+)
+
+register_supported(nv_sdpfa_bwd.id, _scaled_dot_product_flash_attention_backward, None)
+
+
+# Checker for SDPA
+def _scaled_dot_product_flash_attention_check(
+    query: Proxy,
+    key: Proxy,
+    value: Proxy,
+    attn_mask: Proxy | None,
+    dropout_p: float,
+    is_causal: bool,
+    *,
+    scale: None | float = None,
+) -> bool:
+
+    # fd.ops.sdpfa_fwd and fd.ops.sdpfa_bwd are adding in versions 0.2.9 and 0.2.10 respectively.
+    if nvfuser_version() < LooseVersion("0.2.10"):
+        return False
+
+    enable_sdpa: None | bool = get_compile_option("nv_enable_sdpa", "Enable nvFuser flash attention SDPA.")
+
+    if not enable_sdpa:
+        return False
+
+    # Flash attn does not support attn_mask currently.
+    if attn_mask is not None:
+        return False
+
+    if not are_supported_tensors(query, key, value):
+        return False
+
+    # FP64 is not supported by flash attention
+    supported_dtypes = (dtypes.float16, dtypes.bfloat16)
+    _input_dtype_check_fused_scaled_dot_product_attention(query, key, value, attn_mask := None, supported_dtypes)
+    _input_shape_check_fused_scaled_dot_product_attention(query, key, value, attn_mask := None)
+
+    # nvFuser only implements flash attention currently.
+    backend = _fused_sdp_choice(query, key, value, None, dropout_p, is_causal, scale)
+    return backend == SpdaBackend.FLASH_ATTENTION
+
+
+# SDPA execution_transform -- calls nv_sdpfa_fwd operator registered above
+def scaled_dot_product_flash_attention(
+    query: TensorProxy,
+    key: TensorProxy,
+    value: TensorProxy,
+    attn_mask: TensorProxy = None,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    *,
+    scale: None | float = None,
+):
+    (attn_output, logsumexp, philox_seed, philox_offset) = nv_sdpfa_fwd(
+        query, key, value, dropout_p, is_causal, scale=scale
+    )
+    return attn_output
+
+
+# SDPA grad_transform -- calls nv_sdpfa_fwd and nv_sdpfa_bwd registered above
+def scaled_dot_product_flash_attention_grad(
+    query: Proxy,
+    key: Proxy,
+    value: Proxy,
+    attn_mask: None | Proxy,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    *,
+    scale: None | float = None,
+):
+
+    (attn_output, logsumexp, philox_seed, philox_offset) = nv_sdpfa_fwd(
+        query, key, value, dropout_p, is_causal, scale=scale
+    )
+    grad_out = get_grad(attn_output)
+    grad_query, grad_key, grad_val = nv_sdpfa_bwd(
+        grad_out,
+        query,
+        key,
+        value,
+        attn_output,
+        logsumexp,
+        dropout_p,
+        is_causal,
+        philox_seed,
+        philox_offset,
+        scale=scale,
+    )
+    put_grads((query, key, value), (grad_query, grad_key, grad_val))
+    return attn_output
+
+
+# Register the complete rule for SDPA in nvfuser executor
+ex.register_supported(
+    ltorch.scaled_dot_product_attention,
+    checker=_scaled_dot_product_flash_attention_check,
+    execution_transform=scaled_dot_product_flash_attention,
+    grad_transform=scaled_dot_product_flash_attention_grad,
+)
+
+
+def _embedding_check(
+    input: TensorProxy,
+    weight: TensorProxy,
+    padding_idx: None | int,
+    max_norm: None | float,
+    norm_type: None | float,
+    scale_grad_by_freq: None | bool,
+    sparse: None | bool,
+) -> bool:
+    if nvfuser_version() < LooseVersion("0.2.25"):
+        return False
+    enable_embedding: None | bool = get_compile_option("nv_enable_embedding", "Enable nvFuser embedding.")
+    if not enable_embedding:
+        return False
+    # Verify input and weight are supported tensors.
+    if not are_supported_tensors(input, weight) or (weight.ndim != 2):
+        return False
+    return True
+
+
+def embedding(
+    input: TensorProxy,
+    weight: TensorProxy,
+    padding_idx: None | int = None,
+    max_norm: None | float = None,
+    norm_type: None | float = 2.0,
+    scale_grad_by_freq: None | bool = False,
+    sparse: None | bool = False,
+    *,
+    fd: FusionDefinition,
+    lc_to_nv_map: dict,
+) -> Any:
+    inputs = [input, weight, padding_idx, max_norm, norm_type, scale_grad_by_freq, sparse]
+    nv_inputs = []
+    for inp in inputs:
+        nv_inp = getnv(inp, fd, lc_to_nv_map) if inp is not None else None
+        nv_inputs.append(nv_inp)
+    return fd.ops.embedding_fwd(*nv_inputs)
+
+
+register_supported(PrimIDs.EMBEDDING, embedding, _embedding_check)
+register_supported(ltorch.embedding, embedding, _embedding_check)

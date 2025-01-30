@@ -1,22 +1,17 @@
-from functools import partial
 from typing import Any
-from collections.abc import Callable
 
 import torch
 
 from lightning_utilities.core.imports import package_available
 
 import thunder.torch as ltorch
+from thunder.core.devices import DeviceType, to_device
 from thunder.core.proxies import TensorProxy
-from thunder.core.symbol import Symbol
 from thunder.core.utils import check, same_shape
-from thunder.core.transforms import get_grad, put_grad, put_grads, mean_backward, restore_reduced_dims
+from thunder.core.transforms import get_grad, put_grad, mean_backward, restore_reduced_dims
+from thunder.core.compile_data import get_compile_option
 
-from thunder.extend import OperatorExecutor, register_executor
-
-__all__ = [
-    "apex_ex",
-]
+from thunder.executors.apexex import apex_ex
 
 APEX_CROSS_ENTROPY_AVAILABLE: bool = package_available("xentropy_cuda")
 
@@ -30,12 +25,7 @@ if APEX_CROSS_ENTROPY_AVAILABLE:
         APEX_CROSS_ENTROPY_AVAILABLE = False
 
 
-# TODO Does apex have a version this should use?
-apex_ex = OperatorExecutor("apex", version="0.1")
-register_executor(apex_ex)
-
-
-def apex_available() -> bool:
+def apex_entropy_available() -> bool:
     return APEX_CROSS_ENTROPY_AVAILABLE
 
 
@@ -150,6 +140,16 @@ def _cross_entropy_checker(
     reduction: str = "mean",
     label_smoothing: float = 0.0,
 ) -> bool:
+    use_apex_cross_entropy = get_compile_option(
+        "use_apex_cross_entropy", "Whether to enable `cross_entropy` from `apex_ex`. Defaults to `True`."
+    )
+    # We explicitly check for `False` as if the value is unspecified by user, `get_compile_option` returns `None` and `not None` is equal to True.
+    if use_apex_cross_entropy == False:  # User explicitly disabled this.
+        return False
+
+    if to_device(a.device).devicetype != DeviceType.CUDA and to_device(target.device).devicetype != DeviceType.CUDA:
+        return False
+
     probability_target: bool = same_shape(a.shape, target.shape)
     if probability_target or label_smoothing > 0.0:
         return False
@@ -243,10 +243,11 @@ def _apex_cross_entropy_grad(
     return fwd
 
 
-# Registers the implementation for torch.nn.functional.cross_entropy
-apex_ex.register_implementation(
-    ltorch.cross_entropy,
-    checker=_cross_entropy_checker,
-    execution_transform=_cross_entropy_transform,
-    grad_transform=_apex_cross_entropy_grad,
-)
+if apex_entropy_available():
+    # Registers the implementation for torch.nn.functional.cross_entropy
+    apex_ex.register_implementation(
+        ltorch.cross_entropy,
+        checker=_cross_entropy_checker,
+        execution_transform=_cross_entropy_transform,
+        grad_transform=_apex_cross_entropy_grad,
+    )

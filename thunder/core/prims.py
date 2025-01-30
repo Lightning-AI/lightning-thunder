@@ -128,7 +128,10 @@ class PrimIDs(Enum):
     UNPACK_THUNDER_MODULE = auto()
     CONSTRUCT_TUPLE = auto()
     PACK_BUFFER = auto()
+    PACK_ATTR = auto()
     PACK_SETITEM = auto()
+    DATACLASS_NEW = auto()
+    SHAPE = auto()
     # TODO: UNPACK_SET
     # Utility prims
     COMMENT = auto()
@@ -151,6 +154,7 @@ class PrimIDs(Enum):
     RANDN = auto()
     EMPTY = auto()
     TENSOR_FROM_SEQUENCE = auto()
+    CLONE = auto()
     # Probability distribution-related ops
     MULTINOMIAL = auto()
     GET_AND_UPDATE_RNG_STATE = auto()
@@ -164,6 +168,7 @@ class PrimIDs(Enum):
     TRANSPOSE = auto()
     UNFOLD = auto()
     VIEW = auto()
+    SHALLOW_COPY = auto()  # a view copy
     # Memory layout prims (Experimental)
     STRIDE_ORDER = auto()
     # Elementwise unary prims
@@ -231,7 +236,8 @@ class PrimIDs(Enum):
     REMAINDER = auto()
     SUB = auto()
     ZETA = auto()
-    # Conditional prims
+    # Elementwise ternary prims
+    LERP = auto()
     WHERE = auto()
     # Reduction prims
     AMAX = auto()
@@ -254,6 +260,7 @@ class PrimIDs(Enum):
     SCATTER_ADD = auto()
     TAKE = auto()
     TAKE_ALONG_AXIS = auto()
+    COPY_WITH_SETITEM = auto()
     # Linear algebra prims (Mostly experimental)
     MATMUL = auto()
     # NN prims (Experimental!)
@@ -277,11 +284,19 @@ class OpTags(Enum):
     SHAPE_OP = auto()
     REDUCTION_OP = auto()
     RANDOM_OP = auto()
+    MATMUL_OP = auto()
     # Ops that might cause a device sync
     DEVICE_SYNC_OP = auto()
     # Labels operations that should not be removed by the dead code elimination (DCE) pass
     DONT_DCE = auto()
     IN_PLACE = auto()
+    AUTO_REGISTERED = auto()
+    # Label for operations representing enter/exit of context managers.
+    CTX_MANAGER_ENTER_EXIT_OP = auto()
+    # Label to explicitly disable an operation from recomputing in backward - see function `recompute_saved_for_backward`.
+    DONT_RECOMPUTE_IN_BACKWARD = auto()
+    # Don't automatically tag operation to be recomputed in backward
+    DONT_AUTO_RECOMPUTE_IN_BACKWARD = auto()
 
 
 # TODO RC1 Document this function and describe the parts of a primitive
@@ -464,6 +479,8 @@ def _collectify(x: Any, *, name: str | None = None) -> Any:
         return x
     if baseutils.is_collection(x):
         return CollectionProxy(x, name=name)
+    if isinstance(x, slice):
+        return CollectionProxy((x.start, x.stop, x.step), name=name)
 
     return x
 
@@ -471,7 +488,7 @@ def _collectify(x: Any, *, name: str | None = None) -> Any:
 # TODO RC1 Align with ASSERT_TENSOR_METADATA
 # NOTE The device is stored as a string for easier, more readable comparisons
 def _check_tensor_shape_and_metadata_meta(
-    t: TensorProxy, shape: tuple[int, ...], device: str, dtype: torch.dtype, requires_grad: bool
+    t: TensorProxy, shape: tuple[int, NumberProxy, ...], device: str, dtype: torch.dtype, requires_grad: bool
 ) -> None:
     # Validates types
     baseutils.check_type(t, TensorProxy)
@@ -861,6 +878,10 @@ def unpack_sequence_printer(
     parts.append(f"= {call_str}")
 
     lines = _make_parts_into_line_or_lines(parts)
+    # Add info about the unpacked elements as comments
+    for out in out_printables:
+        details = _make_parts_into_line_or_lines([f"# {codeutils.prettyprint(out, with_type=True)}"])
+        lines.extend(details)
     return lines
 
 
@@ -1193,6 +1214,48 @@ pack_buffer = make_prim(
 )
 
 
+# NOTE PACK_ATTR is intended only to be bound to directly, and not called
+def pack_attr_meta(o: Any, key: Any, value: Any) -> Any:
+    raise NotImplementedError
+
+
+def pack_attr_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    utils.check(
+        len(arg_printables) == 3,
+        lambda: f"Expected three arguments for pack_attr but got {arg_printables}",
+        exception_type=AssertionError,
+    )
+    utils.check(
+        len(kwarg_printables) == 0,
+        lambda: f"Expected no kwargs for pack_attr but got {kwarg_printables}",
+        exception_type=AssertionError,
+    )
+
+    # Converts printables to strings
+    obj, key, value = arg_printables
+    obj_str = codeutils.prettyprint(obj)
+    key_str = key
+    value_str = codeutils.prettyprint(value)
+    return f"{obj_str}.{key_str} = {value_str}"
+
+
+def pack_attr_impl(o: Any, key: Any, v: Any) -> None:
+    o[key] = v
+    return None
+
+
+pack_attr = make_prim(
+    PrimIDs.PACK_ATTR,
+    "pack_attr",
+    meta=pack_attr_meta,
+    python_printer=pack_attr_printer,
+    python_impl=pack_attr_impl,
+    tags=(OpTags.DONT_DCE,),
+)
+
+
 # NOTE PACK_SETITEM is intended only to be bound to directly, and not called
 def pack_setitem_meta(o: Any, key: Any, value: Any) -> Any:
     raise NotImplementedError
@@ -1232,6 +1295,45 @@ pack_setitem = make_prim(
     python_printer=pack_setitem_printer,
     python_impl=pack_setitem_impl,
     tags=(OpTags.DONT_DCE,),
+)
+
+
+def python_dataclass_new_meta(typ, **kwargs):
+    # we are cheating here, but instantiating a dataclass can be wild. typ(**kwargs)
+    return AnyProxy(None)
+
+
+def python_dataclass_new_printer(
+    bsym: BoundSymbol, out_printables: Any, arg_printables: Sequence[Printable], kwarg_printables: dict[str, Printable]
+):
+    (typ,) = arg_printables
+    outstr = codeutils.prettyprint(out_printables, literals_as_underscores=True)
+    typ_str = codeutils._generate_dataclass_class_name(typ)
+    kwarg_str = ", ".join(f"{k}={codeutils.prettyprint(v)}" for k, v in kwarg_printables.items())
+    return f"{outstr} = {typ_str}({kwarg_str})"
+
+
+def python_dataclass_new_impl(typ, **kwargs):
+    return typ(**kwargs)
+
+
+python_dataclass_new = make_prim(
+    PrimIDs.DATACLASS_NEW,
+    "python_dataclass_new",
+    meta=python_dataclass_new_meta,
+    python_printer=python_dataclass_new_printer,
+    python_impl=python_dataclass_new_impl,
+)
+
+
+def shape_meta(t: TensorProxy) -> Sequence[int | NumberProxy]:
+    return t._shape
+
+
+shape = make_prim(
+    PrimIDs.SHAPE,
+    "shape",
+    meta=shape_meta,
 )
 
 
@@ -1633,8 +1735,8 @@ python_del = make_prim(
 )
 
 
-def _return_meta(*args) -> Any:
-    return args
+def _return_meta(*args) -> None:
+    return None
 
 
 def return_printer(
@@ -1642,7 +1744,7 @@ def return_printer(
 ):
     utils.check(
         len(kwarg_printables) == 0,
-        lambda: f"Expected no kwargs for del but got {kwarg_printables}",
+        lambda: f"Expected no kwargs for return but got {kwarg_printables}",
         exception_type=AssertionError,
     )
 
@@ -1655,9 +1757,8 @@ def return_printer(
     return f"return {arg_str}"
 
 
-# NOTE This wrapper for del is necessary because python_impl=del is invalid syntax (del is not a regular function)
-def _return_impl(*args) -> Any:
-    return args
+def _return_impl(*args) -> None:
+    return None
 
 
 python_return = make_prim(
@@ -1713,10 +1814,13 @@ def _put_grad_meta(grad_for: Number | NumberProxy | TensorProxy, grad: Number | 
     return None
 
 
+# PUT_GRAD is a sink node with side effects that updates Tensor.grad. It needs
+# DONT_DCE tag to avoid removal in DCE pass.
 put_grad = make_prim(
     PrimIDs.PUT_GRAD,
     "put_grad",
     meta=_put_grad_meta,
+    tags=(OpTags.DONT_DCE,),
 )
 
 #
@@ -2288,7 +2392,11 @@ def _elementwise_binary_meta_factory(
         # Checks same device
         utils.check_same_device(a, b)
 
-        tensor = a if isinstance(a, TensorProxy) else b
+        # If both inputs are tensors, choose the one that is not a CPU scalar tensor.
+        if isinstance(a, TensorProxy) and isinstance(b, TensorProxy):
+            tensor = a if (isinstance(a, TensorProxy) and not utils.is_cpu_scalar_tensor(a)) else b
+        else:
+            tensor = a if isinstance(a, TensorProxy) else b
         requires_grad = (isinstance(a, TensorProxy) and a.requires_grad) or (
             isinstance(b, TensorProxy) and b.requires_grad
         )
@@ -2541,8 +2649,36 @@ zeta = _make_elementwise_binary_prim(
 )
 
 #
-# Conditional prims
+# Elementwise ternary prims
 #
+
+
+def _lerp_meta(start: TensorProxy, end: TensorProxy, weight: Number | TensorProxy, /) -> TensorProxy:
+    utils.check_type(start, TensorProxy)
+    utils.check_type(end, TensorProxy)
+    utils.check_type(weight, (TensorProxy, Number, NumberProxy))
+
+    numbertype, dtype = utils.check_same_dtype(start, end, weight)
+
+    utils.check(numbertype is None or numbertype in fp_math_dtypes, lambda: f"Unsupported number type {numbertype}")
+    utils.check(dtype is None or dtype in fp_math_dtypes, lambda: f"Unsupported input dtype {dtype}")
+
+    utils.check_same_shape(start, end, weight)
+    utils.check_same_device(start, end, weight)
+
+    requires_grad = (
+        start.requires_grad or end.requires_grad or (isinstance(weight, TensorProxy) and weight.requires_grad)
+    )
+
+    return TensorProxy(like=start, dtype=dtype, requires_grad=requires_grad)
+
+
+lerp = make_prim(
+    PrimIDs.LERP,
+    "lerp",
+    method_name="lerp",
+    meta=_lerp_meta,
+)
 
 
 # TODO Restore Number x Number x Number support
@@ -2643,7 +2779,9 @@ exogenous_like = make_prim(
 #   Logically these tensors are constructed intermediate to a trace, so there's no mechanism for a user to
 #   extract their grad, but we could support compiling forward and backward and accessing grad attributes
 #   in the future
-def _full_meta(shape: Sequence[int], fill_value: Number, *, device: devices.Device, dtype: dtypes.dtype) -> TensorProxy:
+def _full_meta(
+    shape: tuple[int, ...], fill_value: Number, *, device: devices.Device, dtype: dtypes.dtype
+) -> TensorProxy:
     # Checks inputs
     utils.check_type(fill_value, (Number, NumberProxy))
 
@@ -2654,6 +2792,8 @@ def _full_meta(shape: Sequence[int], fill_value: Number, *, device: devices.Devi
         lambda: f"Can't safely cast fill_value of numbertype {fill_value_dtype} to dtype {dtype}",
     )
 
+    utils.check_type(shape, tuple)
+    utils.check_valid_shape(shape)
     return TensorProxy(shape=shape, device=device, dtype=dtype, requires_grad=False)
 
 
@@ -2738,6 +2878,7 @@ get_and_update_rng_state = make_prim(
     PrimIDs.GET_AND_UPDATE_RNG_STATE,
     "get_and_update_rng_state",
     meta=_get_and_update_rng_state_meta,
+    tags=(OpTags.RANDOM_OP,),  # RANDOM_OP here is a short hand for "uses / modifies the random state"
 )
 
 
@@ -2812,6 +2953,14 @@ def _empty_meta(
 
 
 empty = make_prim(PrimIDs.EMPTY, "empty", meta=_empty_meta)
+
+
+# TODO(crcrpar): Cover `memory_format` kwarg
+def _clone_meta(a: TensorProxy, **kwargs) -> TensorProxy:
+    return TensorProxy(like=a, requires_grad=a.requires_grad)
+
+
+clone = make_prim(PrimIDs.CLONE, "clone", meta=_clone_meta)
 
 
 # Prim to construct a Tensor from sequence/nested sequence of Numbers.
@@ -3095,7 +3244,7 @@ pad = make_prim(
 )
 
 
-def reshape_meta(a: TensorProxy, /, shape: tuple[int, ...]) -> TensorProxy:
+def reshape_meta(a: TensorProxy, /, shape: tuple[int, NumberProxy, ...]) -> TensorProxy:
     # Validates inputs
     utils.check_type(a, TensorProxy)
     utils.check_valid_shape(shape)
@@ -3321,6 +3470,14 @@ def take_along_axis_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> Ten
 take_along_axis = make_prim(PrimIDs.TAKE_ALONG_AXIS, "take_along_axis", meta=take_along_axis_meta)
 
 
+def copy_with_setitem_meta(a: TensorProxy, index, value: TensorProxy) -> TensorProxy:
+    # TODO: port checks from clang, currently there  because of the utilities they need
+    return TensorProxy(like=a)
+
+
+copy_with_setitem = make_prim(PrimIDs.COPY_WITH_SETITEM, "copy_with_setitem", meta=copy_with_setitem_meta)
+
+
 def gather_meta(a: TensorProxy, /, index: TensorProxy, dim: int) -> TensorProxy:
     utils.check_type(a, TensorProxy)
     utils.check_type(index, TensorProxy)
@@ -3470,6 +3627,13 @@ transpose = make_prim(PrimIDs.TRANSPOSE, "transpose", meta=transpose_meta, tags=
 view = make_prim(PrimIDs.VIEW, "view", meta=reshape_meta, tags=(OpTags.SHAPE_OP,))
 
 
+def shallow_copy_meta(a: TensorProxy, /) -> TensorProxy:
+    return TensorProxy(like=a)
+
+
+shallow_copy = make_prim(PrimIDs.SHALLOW_COPY, "shallow_copy", meta=shallow_copy_meta, tags=(OpTags.SHAPE_OP,))
+
+
 def unfold_meta(a: TensorProxy, /, dim: int, size: int, step: int) -> TensorProxy:
     dim = utils.canonicalize_dim(a.ndim, dim)
     max_size = 1 if a.ndim == 0 else a.shape[dim]
@@ -3505,7 +3669,7 @@ def stride_order_meta(a: TensorProxy, /, order: Sequence[int]) -> TensorProxy:
 # TODO Consider a more general stride manipulation primitive, like PyTorch's
 #   as_strided or set_strided operations
 # See clang.stride_order for this prim's documentation
-stride_order = make_prim(PrimIDs.STRIDE_ORDER, "stride_order", meta=stride_order_meta)
+stride_order = make_prim(PrimIDs.STRIDE_ORDER, "stride_order", meta=stride_order_meta, tags=(OpTags.SHAPE_OP,))
 
 #
 # Reduction prims
@@ -3697,7 +3861,9 @@ def linear_meta(a: TensorProxy, w: TensorProxy, bias: None | TensorProxy) -> Ten
     return TensorProxy(shape=out_shape, device=a.device, dtype=dtype, requires_grad=requires_grad)
 
 
-linear = make_prim(PrimIDs.LINEAR, "linear", meta=linear_meta)
+linear = make_prim(
+    PrimIDs.LINEAR, "linear", meta=linear_meta, tags=(OpTags.MATMUL_OP, OpTags.DONT_AUTO_RECOMPUTE_IN_BACKWARD)
+)
 
 
 def matmul_meta(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
@@ -3756,7 +3922,9 @@ def matmul_meta(a: TensorProxy, b: TensorProxy, /) -> TensorProxy:
     return TensorProxy(like=a, shape=shape)
 
 
-matmul = make_prim(PrimIDs.MATMUL, "matmul", meta=matmul_meta)
+matmul = make_prim(
+    PrimIDs.MATMUL, "matmul", meta=matmul_meta, tags=(OpTags.MATMUL_OP, OpTags.DONT_AUTO_RECOMPUTE_IN_BACKWARD)
+)
 
 #
 # NN prims
@@ -3950,6 +4118,8 @@ embedding_backward = make_prim(PrimIDs.EMBEDDING_BACKWARD, "embedding_backward",
 def copy__meta(
     copy_from: TensorProxy,
     copy_to: TensorProxy,
+    *,
+    grad_enabled: bool,
 ):
     utils.check_type(copy_from, TensorProxy)
     utils.check_type(copy_to, TensorProxy)

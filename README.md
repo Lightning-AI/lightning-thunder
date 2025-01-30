@@ -38,7 +38,7 @@ Thunder aims to be usable, understandable, and extensible.
 
 &#160;
 
-> \[!Note\]
+> [!Note]
 > Lightning Thunder is in alpha. Feel free to get involved, but expect a few bumps along the way.
 
 &#160;
@@ -67,19 +67,25 @@ Thunder also supports distributed strategies such as DDP and FSDP for training m
 
 ## Get started
 
-The easiest way to get started with Thunder, requiring no extra installations or setups, is by using our [Zero to Thunder Tutorial Studio](https://lightning.ai/lightning-ai/studios/zero-to-thunder-tutorial).
+The easiest way to get started with Thunder, requiring no extra installations or setups, is by using our [Zero to Thunder Tutorial Studio](https://lightning.ai/lightning-ai/studios/zero-to-thunder).
 
 &#160;
 
 ## Install Thunder
 
-To use Thunder on your local machine:
-
-- install [nvFuser](https://github.com/NVIDIA/Fuser) nightly and PyTorch nightly together as follows:
+Thunder is in alpha and the latest development is happening on the `main` branch. You can install the latest version of Thunder from the `main` branch as follows:
 
 ```bash
-# install nvFuser which installs the matching nightly PyTorch
-pip install --pre 'nvfuser-cu121[torch]' --extra-index-url https://pypi.nvidia.com
+pip install git+https://github.com/Lightning-AI/lightning-thunder.git@main
+```
+
+To achieve the best performance, you can install Thunder with the following additional dependencies:
+
+- install prerelease [nvFuser](https://github.com/NVIDIA/Fuser) built for PyTorch 2.5.1 as follows:
+
+```bash
+# install nvFuser built for the matching stable PyTorch
+pip install --pre nvfuser-cu121-torch25
 ```
 
 - install [cudnn](https://gitlab-master.nvidia.com/cudnn/cudnn_frontend) as follows:
@@ -89,32 +95,9 @@ pip install --pre 'nvfuser-cu121[torch]' --extra-index-url https://pypi.nvidia.c
 pip install nvidia-cudnn-frontend
 ```
 
-- Finally, install Thunder as follows:
-
-```
-# install thunder
-pip install lightning-thunder
-```
-
 <details>
   <summary>Advanced install options</summary>
     <!-- following section will be skipped from PyPI description -->
-
-&#160;
-
-### Install from main
-
-Alternatively, you can install the latest version of Thunder directly from this GitHub repository as follows:
-
-```
-# 1) Install nvFuser and PyTorch nightly dependencies:
-pip install --pre 'nvfuser-cu121[torch]' --extra-index-url https://pypi.nvidia.com
-```
-
-```bash
-# 2) Install Thunder itself
-pip install git+https://github.com/Lightning-AI/lightning-thunder.git
-```
 
 &#160;
 

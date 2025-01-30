@@ -6,11 +6,12 @@ Minimal dependencies
 
 Follow these instructions to install PyTorch, nvFuser, and finally Thunder.
 
-Install PyTorch and nvFuser with pip (command shown is for CUDA 12.1)::
+Install PyTorch and nvFuser with pip (command shown is for CUDA 12.1 and PyTorch 2.5.x)::
 
-  pip install --pre "nvfuser-cu121[torch]" --extra-index-url https://pypi.nvidia.com
+  pip install --pre nvfuser-cu121-torch25
 
-cu121 can be replaced with cu118 depending on your CUDA version.
+cu121 can be replaced with cu118 depending on your CUDA version. NVFuser builds typically support the latest point release of PyTorch stable versions.
+For torch 2.5, cu124 is also supported. For nightly versions and more detailed instructions, please see https://github.com/NVIDIA/Fuser/#installation
 
 You're all set with minimal dependencies, so you can follow `Install Thunder`_.
 

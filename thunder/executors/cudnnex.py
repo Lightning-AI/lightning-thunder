@@ -75,11 +75,11 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Union, Dict
 
-from thunder.core.langctxs import langctx
 import thunder.core.dtypes as dtypes
 from thunder.torch import TensorLike
 from thunder.core.compile_data import get_compile_option
 from thunder.core.proxies import Proxy, TensorProxy
+from thunder.core.prims import OpTags
 
 
 from thunder.core.transforms import (
@@ -426,6 +426,7 @@ cudnn_sdpa_fwd = cudnn_ex.register_operator(
     "cudnn_sdpa_fwd",
     meta=_cudnn_sdpa_forward_meta,
     fn=_cudnn_sdpa_fwd_impl,
+    tags=(OpTags.DONT_AUTO_RECOMPUTE_IN_BACKWARD,),
 )
 
 
@@ -725,7 +726,6 @@ cudnn_sdpa_bwd = cudnn_ex.register_operator(
 )
 
 
-@langctx("torch")
 def _cudnn_sdpa_fwd_wrapper(
     query: TensorProxy,
     key: TensorProxy,
@@ -741,7 +741,6 @@ def _cudnn_sdpa_fwd_wrapper(
     return output
 
 
-@langctx("torch")
 def _cudnn_sdpa_bwd_wrapper(
     query: TensorProxy,
     key: TensorProxy,

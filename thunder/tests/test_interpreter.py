@@ -678,6 +678,7 @@ def test_match_as(jit):
 def test_list(jit):
     def foo():
         l = [1, 2, 3]
+        l = l.copy()
         l[3:] = l[:2]
         l[0] = l[-1]
         del l[2]
@@ -777,6 +778,77 @@ def test_cross_function_exceptions(jit):
     assert cross_function_exceptions() == True
     jitting = True
     assert jit(cross_function_exceptions)() == True
+
+
+def test_stop_exception_no_leak(jit):
+
+    class Identity(torch.nn.Module):
+        def forward(self, x):
+            for p in self.parameters():
+                pass
+            return x
+
+    def foo():
+        model = thunder.jit(Identity())
+        x = torch.randn(16, 16)
+
+        model(x)
+
+        return weakref.ref(x)
+
+    weak_x = foo()
+
+    assert weak_x() is None
+
+
+def test_exception_no_leak(jit):
+
+    class Identity(torch.nn.Module):
+        @staticmethod
+        def raises():
+            raise RuntimeError("Exc")
+
+        def forward(self, x):
+            try:
+                self.raises()
+            except RuntimeError:
+                pass
+            return x
+
+    def foo():
+        model = thunder.jit(Identity())
+        x = torch.randn(16, 16)
+
+        model(x)
+
+        return weakref.ref(x)
+
+    weak_x = foo()
+
+    assert weak_x() is None
+
+
+def test_uncaught_exception_no_leak():
+
+    class Identity(torch.nn.Module):
+        def forward(self, x):
+            raise RuntimeError("FOOBAR")
+            return x
+
+    def main():
+        with torch.device("cpu"):
+            model = thunder.jit(Identity())
+            x = torch.randn(16, 16)
+
+        try:
+            model(x)
+        except:
+            pass
+        return weakref.ref(x)
+
+    weak_x = main()
+
+    assert weak_x() is None
 
 
 def test_walrus_operator(jit):
@@ -1618,6 +1690,42 @@ def test_unhashable_lookaside(jit):
         wr()
 
     jit(fn)()
+
+
+def test_zip_lookaside(jit):
+    import re
+
+    jitting = False
+
+    def foo(*a, strict=False):
+        return list(zip(*a, strict=strict))
+
+    jfoo = jit(foo)
+    jitting = False
+
+    res1 = foo([1, 2, 3], [4, 5, 6])
+    res2 = foo([1, 2, 3], [4, 5, 6], [7, 8, 9])
+    res3 = foo([1, 2], [4, 5, 6])
+    res4 = foo("abc", "xyz")
+    # , match="zip() argument 2 is longer than argument 1"
+
+    with pytest.raises(ValueError, match=re.escape("zip() argument 2 is longer than argument 1")):
+        res5 = foo([1, 2], [4, 5, 6], strict=True)
+
+    jitting = True
+    jres1 = jfoo([1, 2, 3], [4, 5, 6])
+    jres2 = jfoo([1, 2, 3], [4, 5, 6], [7, 8, 9])
+    jres3 = jfoo([1, 2], [4, 5, 6])
+    jres4 = jfoo("abc", "xyz")
+
+    # , match=" zip() argument 2 is longer than argument 1"
+    with pytest.raises(ValueError, match=re.escape("zip() argument 2 is longer than argument 1")):
+        jres5 = jfoo([1, 2], [4, 5, 6], strict=True)
+
+    assert res1 == jres1
+    assert res2 == jres2
+    assert res3 == jres3
+    assert res4 == jres4
 
 
 def test_enumerate_lookaside(jit):
@@ -3001,8 +3109,11 @@ def test_super(jit):
 
 
 def test_print_log_types(jit):
+    def one():
+        return 1
+
     def foo():
-        return 5
+        return 2 + one()
 
     jfoo = jit(foo, record_history=True)
     jfoo()
@@ -3012,10 +3123,26 @@ def test_print_log_types(jit):
     # print into string
     buf = io.StringIO()
     with redirect_stdout(buf):
-        print_interpreter_log(log, use_colors=False, indent=False)
+        # print_interpreter_log(log, use_colors=False, indent=False)
+        print_interpreter_log(log, use_colors=True)
     bufstr = buf.getvalue()
 
-    assert "Returning from call to test_print_log_types.<locals>.foo() with value of type int" in bufstr
+    from thunder.core.baseutils import init_colors
+
+    colors = init_colors(True)
+
+    assert f" {colors['YELLOW']}        return 2 + one()" in bufstr
+    assert f" {colors['MAGENTA']}Instruction('LOAD_DEREF', arg=0, argrepr='one')" in bufstr
+    assert (
+        f"  {colors['GREEN']}Interpreting call to test_print_log_types.<locals>.one() from test_print_log_types.<locals>.foo()"
+        in bufstr
+    )
+    assert (
+        f"  {colors['RED']}Returning from call to test_print_log_types.<locals>.one() with value of type int" in bufstr
+    )
+    assert (
+        f" {colors['RED']}Returning from call to test_print_log_types.<locals>.foo() with value of type int" in bufstr
+    )
 
 
 def test_is_jitting_with_raise(jit):
@@ -3324,6 +3451,33 @@ def test_class_setattr():
     assert A.FOO
 
 
+def test_setitem_setattr():
+    class A:
+        def __init__(self, l):
+            super().__setattr__("l", l)  # avoid hitting our setattr
+
+        def __setattr__(self, name, val):
+            self.l.append((name, val))
+            return (name, val)  # unexpected
+
+        def __setitem__(self, idx, val):
+            self.l.append((idx, val))
+            return (idx, val)  # unexpected
+
+    def foo():
+        l = []
+        a = A(l)
+        a.attr = 3
+        a[1] = 2
+        return l
+
+    jfoo = thunder.jit(foo)
+    res = jfoo()
+    expected = foo()
+
+    assert res == expected
+
+
 def test_freeing_of_tensors():
     # this guards against ref cycles preventing reeing of tensors
     # see https://github.com/Lightning-AI/lightning-thunder/issues/886
@@ -3348,3 +3502,17 @@ def test_freeing_of_tensors():
         foo(i)
 
     assert l == ["run 0", "free 0", "run 1", "free 1", "run 2", "free 2"]
+
+
+def test_tuple_mul():
+
+    def fn(x):
+        d = x.dim() + 3
+        return x.shape[0:2] + (1,) * d + x.shape[2:]
+
+    jfn = thunder.jit(fn)
+    x = torch.randn(2, 2, 3, 3)
+
+    res = jfn(x)
+    expected = fn(x)
+    assert_close(res, expected)

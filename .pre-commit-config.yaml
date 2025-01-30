@@ -8,7 +8,7 @@ ci:
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.6.0
+    rev: v5.0.0
     hooks:
       - id: end-of-file-fixer
       - id: trailing-whitespace
@@ -17,13 +17,13 @@ repos:
       - id: check-toml
       - id: check-json
       - id: check-added-large-files
-        args: ["--maxkb=300", "--enforce-all"]
+        args: ["--maxkb=400", "--enforce-all"]
         exclude: notebooks
       - id: check-docstring-first
       - id: detect-private-key
 
   - repo: https://github.com/asottile/pyupgrade
-    rev: v3.17.0
+    rev: v3.19.1
     hooks:
       - id: pyupgrade
         args: ["--py310-plus"]
@@ -31,21 +31,21 @@ repos:
         exclude: "examples|thunder/tests/test_interpreter.py|thunder/tests/test_jit_general.py"
 
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.3.0
+    rev: v2.4.0
     hooks:
       - id: codespell
         additional_dependencies: [tomli]
         #args: ["--write-changes"] # uncomment if you want to get automatic fixing
 
   - repo: https://github.com/psf/black
-    rev: 24.8.0
+    rev: 24.10.0
     hooks:
       - id: black
         name: Black code
         exclude: "examples"
 
   - repo: https://github.com/executablebooks/mdformat
-    rev: 0.7.17
+    rev: 0.7.21
     hooks:
       - id: mdformat
         additional_dependencies:
@@ -55,7 +55,7 @@ repos:
         exclude: "examples"
 
   - repo: https://github.com/sphinx-contrib/sphinx-lint
-    rev: v0.9.1
+    rev: v1.0.0
     hooks:
       - id: sphinx-lint
 
@@ -71,7 +71,7 @@ repos:
   #        args: ["--fix"]
 
   - repo: https://github.com/pre-commit/mirrors-prettier
-    rev: v3.1.0
+    rev: v4.0.0-alpha.8
     hooks:
       - id: prettier
         # https://prettier.io/docs/en/options.html#print-width

@@ -1,6 +1,8 @@
+from __future__ import annotations
 import os
 from contextvars import ContextVar
 from contextlib import contextmanager
+import pathlib
 from typing import Optional, Any, Tuple, Type, Dict, List, Union
 from collections.abc import Callable
 from collections.abc import Sequence, Hashable
@@ -13,7 +15,7 @@ from types import ModuleType
 import thunder
 import thunder.core.codeutils as codeutils
 import thunder.core.baseutils as baseutils
-from thunder.core.baseutils import ProxyInterface, BoundSymbolInterface
+from thunder.core.baseutils import ProxyInterface, BoundSymbolInterface, TagBase
 import thunder.core.devices as devices
 from thunder.core.pytree import tree_flatten, tree_unflatten
 from thunder.core.codeutils import ContextObject, get_source_line, Positions
@@ -35,6 +37,10 @@ class TraceProvenance:
         return f"# Constructed by {self.pss}"
 
 
+class TraceTag(TagBase):
+    pass
+
+
 # TODO Should traces be BoundSymbols?
 # TODO issue "Create a mechanism for freezing TraceCtx objects"
 #   Add validation that a constant is never assigned to / reassigned
@@ -44,7 +50,33 @@ class TraceProvenance:
 #   ... but maybe we still need the naming context?
 # TODO Allow the function signature to be modified by transforms
 class TraceCtx:
-    def __init__(self, fn: None | Callable = None, *, prologue=None, is_prologue: bool = False):
+    """Trace representing ``fn``.
+
+    Args:
+        fn: Callable to represent.
+
+    Keyword Args:
+        prologue: Prologue trace that verifies metadata of args and kwargs with real values.
+        is_prologue:
+
+    Attributes:
+        fn (Callable | None): Callable to represent. It's either a callable
+            written with pytorch functions or :class:`~torch.nn.Module`.
+        args (Any): Arguments of ``fn``. Elements are proxified, e.g., :class:`torch.Tensor` is converted to
+            :class:`~thunder.core.proxies.TensorProxy`.
+        kwargs (dict[str, Any]): Keyword arguments of ``fn``. Values are converted to
+            :class:`~thunder.core.proxies.Proxy` if possible.
+        bound_symbols (list[BoundSymbol]): Each :class:`~thunder.core.symbol.BoundSymbol` represents one line of trace.
+        scopes (list[list[BoundSymbol]]): In most cases, same as ``[self.bound_symbols]``.
+            Direct modification of this attribute would provide better flexibility to trace transformation
+            as in :func:`~thunder.core.transforms.insert_inplace` and :func:`~thunder.core.transforms.replace_inplace`.
+            Also
+            `[tutorial] How to Implement CPU Offloading as Trace Transform <https://lightning-thunder.readthedocs.io/en/latest/notebooks/writing_a_trace_transform_cpu_offloading.html>`_
+            would be a great read.
+
+    """
+
+    def __init__(self, fn: None | Callable = None, *, prologue: TraceCtx | None = None, is_prologue: bool = False):
         self.fn: None | Callable = fn
 
         self._prologue = prologue
@@ -53,8 +85,8 @@ class TraceCtx:
         self.args = None
         self.kwargs = {}
 
-        self.bound_symbols: list[BoundSymbolInterface] = []
-        self.scopes = [self.bound_symbols]
+        self._bound_symbols: list[BoundSymbolInterface] = []
+        self.scopes = [self._bound_symbols]
 
         self.name_ctr = 0
         self.obj_name_ctr = 0
@@ -87,6 +119,9 @@ class TraceCtx:
         # NOTE SigInfo is here because we only want to construct one SigInfo for the trace
         self._siginfo = None
 
+        # TraceTags
+        self._tags = set()
+
         # TODO Improve "freezing" traces
         self._complete = False
 
@@ -95,6 +130,20 @@ class TraceCtx:
         # This is a detail for enabling transformer_engine's autocast manager.
         # We only want the forward function to be called with ctx manager.
         self._include_te_fp8_autocast = False
+
+    @property
+    def bound_symbols(self) -> list[BoundSymbolInterface]:
+        return self._bound_symbols
+
+    @bound_symbols.setter
+    def bound_symbols(self, bsyms: list[BoundSymbolInterface]):
+        assert self.scopes[0] is self._bound_symbols
+        self._bound_symbols = bsyms
+        self.scopes[0] = bsyms
+
+    @property
+    def tags(self):
+        return self._tags
 
     @property
     def prologue(self):
@@ -172,7 +221,7 @@ class TraceCtx:
     #   just records the given name
     def make_name(self, name: str | None = None, *, prefix: str | None = None) -> str:
         if name is not None:
-            self.names.add(name)
+            self.add_name(name)
             return name
 
         return self._make_name(prefix=prefix)
@@ -209,8 +258,10 @@ class TraceCtx:
 
     def push_scope(self, scope: list) -> None:
         self.scopes.append(scope)
+        assert self.scopes[0] is self.bound_symbols
 
     def pop_scope(self) -> list:
+        assert self.scopes[0] is self.bound_symbols
         return self.scopes.pop()
 
     def peek_scope(self) -> list | None:
@@ -471,6 +522,11 @@ class TraceCtx:
     def __repr__(self) -> str:
         return self.python(print_depth=-1)
 
+    def save_trace(self, filename: str | os.PathLike) -> None:
+        filename = pathlib.Path(filename)
+        with open(filename, "w") as f:
+            f.write(str(self))
+
 
 # Constructs a new trace by shallow copying parts of an existing trace
 # NOTE Bound symbols and provenance are not copied
@@ -482,6 +538,9 @@ def from_trace(trace: TraceCtx) -> TraceCtx:
     t.name_ctr = trace.name_ctr
     t.obj_name_ctr = trace.obj_name_ctr
     t.names = trace.names
+    # This is a detail for enabling transformer_engine's autocast manager.
+    t._include_te_fp8_autocast = trace._include_te_fp8_autocast
+    t._tags = trace._tags.copy()
 
     t._siginfo = trace._siginfo
     return t

@@ -42,7 +42,7 @@ from types import (
     TracebackType,
 )
 
-from thunder.core.baseutils import Singleton, init_colors, extract_callable_name
+from thunder.core.baseutils import Singleton, init_colors, extract_callable_name, is_likely_from_collections_namedtuple
 from thunder.core.codeutils import Positions
 
 
@@ -64,9 +64,8 @@ from thunder.core.codeutils import Positions
 #   of where values originated. This mode is used by the general jit. This is done by
 #   wrapping all values in WrappedValues.
 #
-#   Both thunder.jit and thunder.functional.jit use extensions (in jit_ext.py) to
-#   create Thunder Programs. They use callbacks and additional lookasides to
-#   add their functionality.
+#   thunder.jit uses extensions (in jit_ext.py) to create Thunder Programs.
+#   They use callbacks and additional lookasides to add their functionality.
 #
 #   The Thunder program constructed has three parts, a "prologue trace", a
 #   "computation trace", and (optionally) an "epilogue trace". The prologue trace has
@@ -471,6 +470,7 @@ class LookasideLogItem(TypedDict):
 class CallLogItem(TypedDict):
     kind: Literal["InterpreterCall"]
     fn: str
+    fn_filename: str
     prev_frame: str
 
 
@@ -605,7 +605,7 @@ class InterpreterRuntimeCtx:
             pf = self._pop_frame_stack()
             assert pf is frame, "Frame stack inconsistency"
 
-    def get_current_user_source_location(self) -> tuple[str, Positions]:
+    def get_current_user_source_location(self) -> tuple[str, Positions | None] | tuple[None, None]:
         for frame in reversed(self.frame_stack):
             modname = unwrap(frame.globals).get("__name__", "")
             if modname not in ("thunder.core.interpreter", "thunder.core.jit_ext", "thunder.torch"):
@@ -627,14 +627,21 @@ class InterpreterRuntimeCtx:
         if not self._record_history:
             return self
 
-        frame: InterpreterFrame | None = self.peek_frame_stack()
+        prev_frame: InterpreterFrame | None = self.peek_frame_stack()
 
         # If frame is None, that means that this is the first call to _interpret_call, in _run_frame.
         # In that case we should also print out what line we're starting on, since
         # no line number changes have happened yet.
-        if frame is not None:
+        if prev_frame is not None:
+            ufn = unwrap(fn)
+            fn_filename = ufn.__code__.co_filename if hasattr(ufn, "__code__") else "<Unknown>"
             self.record(
-                {"kind": "InterpreterCall", "fn": extract_callable_name(unwrap(fn)), "prev_frame": frame.qualname}
+                {
+                    "kind": "InterpreterCall",
+                    "fn": extract_callable_name(ufn),
+                    "fn_filename": fn_filename,
+                    "prev_frame": prev_frame.qualname,
+                }
             )
         else:
             if hasattr(self._original_callsite, "positions"):
@@ -646,6 +653,7 @@ class InterpreterRuntimeCtx:
                 {
                     "kind": "InterpreterCall",
                     "fn": extract_callable_name(unwrap(fn)),
+                    "fn_filename": self._original_callsite.filename,
                     "prev_frame": self._original_callsite.function,
                 }
             )
@@ -677,7 +685,7 @@ class InterpreterRuntimeCtx:
         return self
 
     def record_position(
-        self, fn: Callable | CodeType, filename: str, position: Positions | None, /
+        self, fn: Callable | CodeType, filename: str | None, position: Positions | None, /
     ) -> InterpreterRuntimeCtx:
         if not self._record_history:
             return self
@@ -924,7 +932,9 @@ class PseudoInst(str, enum.Enum):
     SUPER = "SUPER"
     BUILTINS = "BUILTINS"
     STORE_SUBSCR = "STORE_SUBSCR"
+    STORE_ATTR = "STORE_ATTR"
     LIST_TO_TUPLE = "LIST_TO_TUPLE"
+    NEW = "NEW"
 
 
 @dataclasses.dataclass
@@ -1106,6 +1116,7 @@ class InterpreterStack:
 class InterpreterFrame:
     code: CodeType
     qualname: str
+    module: str
     globals: dict[str, Any] | WrappedValue
     # Name storage, for LOAD_NAME, STORE_NAME, and DELETE_NAME
     # TODO Is this the best way to model this?
@@ -1174,8 +1185,6 @@ class InterpreterFrame:
             return self.code._varname_from_oparg(idx)  # type: ignore
 
     def get_or_make_python_frame(self) -> FrameType:
-        def fn():
-            pass
 
         assert self.positions is not None
         lineno = self.positions.lineno
@@ -1183,31 +1192,48 @@ class InterpreterFrame:
             lineno = self.code.co_firstlineno
 
         rel_lineno = lineno - self.code.co_firstlineno + 1
+        filename = self.code.co_filename
+        firstlineno = self.code.co_firstlineno
+        name = self.code.co_name
+        qualname = self.qualname
 
-        # we prefer this code object over fn.__code__ to get the first lineno and the current lineno right,
-        # which the following does by inserting so many empty lines that relative to the start line
-        # the exception is raised at the right line
-        code = compile((rel_lineno - 1) * "\n" + "raise ValueError()", self.code.co_filename, "exec")
+        def get_frame(l, rel_lineno, filename, firstlineno, name, qualname):
+            def fn():
+                pass
 
-        replacements = dict(
-            co_filename=self.code.co_filename, co_firstlineno=self.code.co_firstlineno, co_name=self.code.co_name
-        )
+            # we prefer this code object over fn.__code__ to get the first lineno and the current lineno right,
+            # which the following does by inserting so many empty lines that relative to the start line
+            # the exception is raised at the right line
+            code = compile((rel_lineno - 1) * "\n" + "raise ValueError()", filename, "exec")
 
-        if hasattr(fn.__code__, "co_qualname"):
-            replacements["co_qualname"] = self.qualname
+            replacements = dict(co_filename=filename, co_firstlineno=firstlineno, co_name=name)
 
-        fn.__code__ = code.replace(**replacements)  # type: ignore (The replaced fields are the correct types)
+            if hasattr(fn.__code__, "co_qualname"):
+                replacements["co_qualname"] = qualname
 
-        try:
-            fn()
-            assert False, "Unreachable."
-        except ValueError as e:
-            tb = e.__traceback__
+            fn.__code__ = code.replace(**replacements)  # type: ignore (The replaced fields are the correct types)
 
-        assert tb is not None
-        while tb.tb_next is not None:
-            tb = tb.tb_next
-        return tb.tb_frame
+            try:
+                fn()
+                assert False, "Unreachable."
+            except ValueError as e:
+                tb = e.__traceback__
+
+            assert tb is not None
+            while tb.tb_next is not None:
+                tb = tb.tb_next
+            l.append(tb.tb_frame)
+
+        # we run the getting of the frame in a separate thread because
+        # we want to avoid having f_back pointing to the function
+        # handling the error
+        import _thread
+
+        result_container = []
+        _thread.start_new_thread(get_frame, (result_container, rel_lineno, filename, firstlineno, name, qualname))
+        while not result_container:
+            pass
+        return result_container[0]
 
 
 #
@@ -1326,7 +1352,12 @@ def is_jitting_with_raise():
 
     # Guard against opaque functions which interrupt jitting.
     if (ctx := get_interpretercompilectx_if_available()) is not None:
-        raise InterpreterError(f"Lookaside was not triggered, but there is an active compile context: {ctx}")
+        # nested try to delete ctx from locals
+        try:
+            raise InterpreterError(f"Lookaside was not triggered, but there is an active compile context: {ctx}")
+        except InterpreterError:
+            del ctx
+            raise
 
     return False
 
@@ -1390,6 +1421,47 @@ def _enumerate_lookaside(obj: Iterable, start: int = 0):
             n += 1
 
     return _interpret_call(impl, obj, wrap_const(start))
+
+
+def _zip_lookaside(*obj: Iterable, strict=False):
+
+    if not obj:
+        return
+
+    def zip(*obj, strict=False):
+        # zip('ABCD', 'xy') --> Ax By
+        sentinel = object()
+        iterators = [iter(it) for it in obj]
+        while iterators:
+            result = []
+            break_loop = False
+            for it in iterators:
+                elem = next(it, sentinel)
+                if elem is sentinel:
+                    if not strict:
+                        return
+                    else:
+                        break_loop = True
+                        break
+                result.append(elem)
+
+            if break_loop:
+                break
+
+            yield tuple(result)
+        if result:
+            i = len(result)
+            plural = " " if i == 1 else "s 1-"
+            msg = f"zip() argument {i+1} is shorter than argument{plural}{i}"
+            raise ValueError(msg)
+        sentinel = object()
+        for i, iterator in enumerate(iterators[1:], 1):
+            if next(iterator, sentinel) is not sentinel:
+                plural = " " if i == 1 else "s 1-"
+                msg = f"zip() argument {i+1} is longer than argument{plural}{i}"
+                raise ValueError(msg)
+
+    return _interpret_call(zip, *obj, strict=wrap_const(strict))
 
 
 @interpreter_needs_wrap
@@ -1463,8 +1535,12 @@ def eval_exec_helper(
         res = _interpret_call(set_builtins, globals, bd)
         assert res is not INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
+    module = runtimectx.peek_frame_stack().module
+
     # execed code has no LOCALSPLUS but only NAMES...
-    frame = InterpreterFrame(code=ucode, localsplus=[], globals=globals, names=locals, qualname="<string>")
+    frame = InterpreterFrame(
+        code=ucode, localsplus=[], globals=globals, names=locals, qualname="<string>", module=module
+    )
 
     if ucode.co_flags & (inspect.CO_GENERATOR | inspect.CO_COROUTINE | inspect.CO_ASYNC_GENERATOR):
         # we should split the preparation from _setup_frame_and_run_python_function
@@ -1475,8 +1551,9 @@ def eval_exec_helper(
     except Exception as e:
         # We need to cheat a bit to get a Python frame here...
         python_frame = frame.get_or_make_python_frame()
-        tb = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
-        raise e.with_traceback(tb)
+        e.__traceback__ = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
+        del e
+        raise  # re-raises e
 
     if mode == "eval":
         return res
@@ -1998,9 +2075,13 @@ def _functools_reduce_lookaside(
     return _interpret_call(impl, fn, iterable, initializer, null)
 
 
+class ThunderInterpreterObject:
+    pass
+
+
 # An iterator to be returned from Sequence.__iter__ lookasides below. This will be run in the interpreter
 # Note: this potentially might imitate a list_iterator / tuple_iterator more...
-class SequenceIter:
+class SequenceIter(ThunderInterpreterObject):
     def __init__(self, s, is_reversed=False):
         self.s = s
         self.next_pos = 0 if not is_reversed else len(s) - 1
@@ -2100,13 +2181,17 @@ class SequenceWrapperMethods(WrappedValue):
             l = []
             for _ in range(n):
                 l.extend(self)
-            return l
+            return type(self)(l)
 
         return _interpret_call(impl, self, n)
 
     def __rmul__(self, n, /):
         self.track_items()
-        return self.__mul__(n)
+
+        def impl(self, n):
+            return self.__mul__(n)
+
+        return _interpret_call(impl, self, n)
 
     def __len__(self):
         self.track_items()
@@ -2214,7 +2299,12 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
 
     def copy(self, /):
         self.track_items()
-        raise NotImplementedError("Sequence.copy, please file an issue")
+        assert type(self.item_wrappers) is list
+
+        def impl(self):
+            return type(self)(self)
+
+        return _interpret_call(impl, self)
 
     def extend(self, iterable, /):
         self.track_items()
@@ -2302,7 +2392,7 @@ class MutSequenceWrapperMethods(SequenceWrapperMethods):
         return wrap_const(None)
 
 
-class MappingKeysIterator(Iterator):
+class MappingKeysIterator(Iterator, ThunderInterpreterObject):
     # note: the __init__ will be executed by Python itself, and
     #       the caller needs to set up the wrapped_attribute for _mapping
     # The other methods are called through the interpreter mechanism.
@@ -2320,7 +2410,7 @@ class MappingKeysIterator(Iterator):
         return k
 
 
-class MappingKeysView:
+class MappingKeysView(ThunderInterpreterObject):
     def __init__(self, mapping):
         self._mapping = mapping
 
@@ -2350,7 +2440,7 @@ class MappingKeysView:
         return mapping_iter
 
 
-class MappingValuesIterator:
+class MappingValuesIterator(ThunderInterpreterObject):
     def __init__(self, mapping, is_reversed=False):
         self._mapping = mapping
         if is_reversed:
@@ -2365,7 +2455,7 @@ class MappingValuesIterator:
         return dict.__getitem__(self._mapping, next(self._key_iter))
 
 
-class MappingValuesWrapper:
+class MappingValuesWrapper(ThunderInterpreterObject):
     def __init__(self, mapping):
         self._mapping = mapping
 
@@ -2373,7 +2463,7 @@ class MappingValuesWrapper:
         return MappingValuesIterator(self._mapping)
 
 
-class MappingItemsIterator:
+class MappingItemsIterator(ThunderInterpreterObject):
     def __init__(self, mapping, is_reversed=False):
         self._mapping = mapping
         if is_reversed:
@@ -2389,7 +2479,7 @@ class MappingItemsIterator:
         return k, dict.__getitem__(self._mapping, k)
 
 
-class MappingItemsWrapper:
+class MappingItemsWrapper(ThunderInterpreterObject):
     def __init__(self, mapping):
         self._mapping = mapping
 
@@ -2401,7 +2491,7 @@ class MutMappingWrapperMethods(WrappedValue):
     def __new__(cls, /, *args, **kwds):
         uvalue = unwrap(cls)()
         # todo: for subclasses, better record the call to the constructor
-        return wrap_const(uvalue)
+        return wrap(uvalue, provenance=ProvenanceRecord(PseudoInst.NEW, inputs=[cls.provenance]))
 
     def __init__(self, *other, **kwds):
         MutMappingWrapperMethods.update(self, *other, **kwds)
@@ -2438,7 +2528,9 @@ class MutMappingWrapperMethods(WrappedValue):
         except Exception as e:
             return do_raise(e)
 
-        populate_single_dict_item_wrapper(uv, self, key.value)
+        from thunder.core.proxies import Proxy
+
+        populate_single_dict_item_wrapper(uv, self, key if isinstance(key.value, Proxy) else key.value)
         v = self.item_wrappers[key.value]
         assert uv is v.value or uv is v.original_value, f"value for {key.value} out of sync {uv} {v.value}"
         return v
@@ -2698,7 +2790,6 @@ def _type_call_lookaside(wrapped_typ, *args, **kwargs):
     obj = _interpret_call(typ.__new__, wrapped_typ, *args, **kwargs)
     if obj is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return obj
-
     wrapped_init = _interpret_call(getattr, obj, wrap_const("__init__"))
     assert not isinstance(wrapped_init, INTERPRETER_SIGNALS)
     populate_attribute_wrapper(wrapped_init, "__self__", obj)
@@ -2717,6 +2808,7 @@ _default_lookaside_map: dict[Callable, Callable] = {
     any: _any_lookaside,
     bool: _bool_lookaside,
     enumerate: _enumerate_lookaside,
+    zip: _zip_lookaside,
     exec: exec_lookaside,
     eval: eval_lookaside,
     getattr: _getattr_lookaside,
@@ -2771,16 +2863,6 @@ def _tuple_new_provenance_tracking_lookaside(cls, iterable=(), /):
                     return INTERPRETER_SIGNALS.EXCEPTION_RAISED
             else:
                 item_wrappers.append(wv)
-
-    def is_likely_from_collections_namedtuple(tuple_type):
-        from collections import namedtuple
-
-        # Check if tuple_type code object is coming from namedtuple
-        return (
-            hasattr(tuple_type, "__repr__")
-            and hasattr(tuple_type.__repr__, "__code__")
-            and tuple_type.__repr__.__code__ in namedtuple.__code__.co_consts
-        )
 
     # Construction of namedtuples may raise
     try:
@@ -2925,8 +3007,13 @@ class INTERPRETER_CALLBACKS(enum.Enum):
     #   The returned value is stored instead of the original value
     STORE_DEREF_CALLBACK = enum.auto()
 
+    # Called when storing into a local variable
+    #   (orig_value: Any | WrappedValue, name: str) -> Any
+    #   The returned value is stored instead of the original value
+    STORE_FAST_CALLBACK = enum.auto()
+
     # Called when a locals (in localsplus) is created
-    #   (name: str, value: Any, /) -> Any
+    #   (name: str, value: Any, /, *, module: str) -> Any
     #   The returned value is used in place of the original value
     LOCAL_CALLBACK = enum.auto()
 
@@ -3053,6 +3140,18 @@ def global_callback(
         return cb(orig_val, name)
 
 
+def store_fast_callback(value: Any, name: str) -> Any:
+    assert isinstance(name, str)
+
+    ctx: InterpreterCompileCtx = get_interpretercompilectx()
+    cb: None | Callable = ctx.callback(INTERPRETER_CALLBACKS.STORE_FAST_CALLBACK)
+
+    if cb is None:
+        return value
+
+    return cb(value, name)
+
+
 def store_deref_callback(value: Any, name: str, co_cellvars: tuple[str], co_freevars: tuple[str]) -> Any:
     assert isinstance(name, str)
     assert isinstance(co_cellvars, tuple)
@@ -3091,7 +3190,7 @@ def load_deref_callback(value: Any, name: str):
     return cb(value, name)
 
 
-def local_callback(name: str, value: Any, /) -> Any:
+def local_callback(name: str, value: Any, /, *, module: str) -> Any:
     assert isinstance(name, str)
 
     ctx: InterpreterCompileCtx = get_interpretercompilectx()
@@ -3100,7 +3199,7 @@ def local_callback(name: str, value: Any, /) -> Any:
     if cb is None:
         return value
 
-    return cb(name, value)
+    return cb(name, value, module=module)
 
 
 def check_and_append(stack, val):
@@ -4224,6 +4323,7 @@ def _for_iter_handler(
     if r is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         ctx = get_interpreterruntimectx()
         if isinstance(ctx.curexc, StopIteration):
+            ctx.curexc = None
             if sys.version_info >= (3, 12):
                 # 3.12 uses jumps relative to the next instruction offset and does not pop here
                 #      instead it pushes a fake value?!
@@ -4913,6 +5013,9 @@ def _make_cell_handler(inst: dis.Instruction, /, frame: InterpreterFrame, **kwar
     i: int = inst.arg
     assert i >= 0 and i < len(frame.localsplus)
     val = frame.localsplus[i]
+
+    if not isinstance(val, Py_NULL):
+        val = store_deref_callback(val, inst.argval, frame.code.co_cellvars, frame.code.co_freevars)
 
     if isinstance(val, Py_NULL):
         # empty local variable slots (Py_NULL()) produce an empty cell
@@ -5755,6 +5858,7 @@ def _store_attr_handler(
     res = _interpret_call(impl, tos, name, tos1)
     if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
         return res
+    # otherwise, the return value is discarded
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-STORE_DEREF
@@ -5847,6 +5951,9 @@ def _store_fast_handler(
     var_num: int = inst.arg
 
     name: str = co.co_varnames[var_num]
+
+    tos = store_fast_callback(tos, name)
+
     frame.localsplus[var_num] = tos
 
 
@@ -5878,7 +5985,10 @@ def _store_slice_handler(inst: dis.Instruction, /, stack: InterpreterStack, **kw
     def impl(container, start, end, values):
         return container.__setitem__(slice(start, end), values)
 
-    return _interpret_call_with_unwrapping(impl, container, start, end, values)
+    res = _interpret_call_with_unwrapping(impl, container, start, end, values)
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return res
+    # otherwise, the return value is discarded
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-STORE_SUBSCR
@@ -5891,7 +6001,10 @@ def _store_subscr_handler(inst: dis.Instruction, /, stack: InterpreterStack, **k
     def impl(tos, tos1, tos2):
         return tos1.__setitem__(tos, tos2)
 
-    return _interpret_call_with_unwrapping(impl, tos, tos1, tos2)
+    res = _interpret_call_with_unwrapping(impl, tos, tos1, tos2)
+    if res is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
+        return res
+    # otherwise, the return value is discarded
 
 
 # https://docs.python.org/3.10/library/dis.html#opcode-UNARY_INVERT
@@ -6203,14 +6316,24 @@ def make_generator(
                     res, status = _run_frame(frame, compilectx, runtimectx, send_value=send_value)
                 except Exception as e:
                     msg = f"Encountered exception {type(e).__name__}: {e}"
-                    raise InterpreterError(msg) from e
+                    # nested try ... raise to delete e from locals
+                    try:
+                        raise InterpreterError(msg) from e
+                    except InterpreterError:
+                        del e
+                        raise
                 if status is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                     e = runtimectx.curexc
                     assert isinstance(e, BaseException)
                     runtimectx.curexc = None
                     if isinstance(e, StopIteration):
                         return unwrap(e.value)
-                    raise e
+                    # nested try except to delete e from locals
+                    try:
+                        raise e
+                    except BaseException:
+                        del e
+                        raise
             if status == INTERPRETER_SIGNALS.RETURN_VALUE:
                 return  # TODO: should this return res?
             assert status == INTERPRETER_SIGNALS.YIELD_VALUE
@@ -6233,14 +6356,24 @@ def make_async_generator(
                     res, status = _run_frame(frame, compilectx, runtimectx, send_value=send_value)
                 except Exception as e:
                     msg = f"Encountered exception {type(e).__name__}: {e}"
-                    raise InterpreterError(msg) from e
+                    # nested try ... raise to delete e from locals
+                    try:
+                        raise InterpreterError(msg) from e
+                    except InterpreterError:
+                        del e
+                        raise
                 if status is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                     e = runtimectx.curexc
                     assert isinstance(e, BaseException)
                     runtimectx.curexc = None
                     if isinstance(e, StopIteration):
                         return
-                    raise e
+                    # nested try except to delete e from locals
+                    try:
+                        raise e
+                    except BaseException:
+                        del e
+                        raise
             if status == INTERPRETER_SIGNALS.RETURN_VALUE:
                 return  # TODO: should this return res?
             assert status == INTERPRETER_SIGNALS.YIELD_VALUE
@@ -6263,14 +6396,24 @@ def make_coroutine(
                     res, status = _run_frame(frame, compilectx, runtimectx, send_value=send_value)
                 except Exception as e:
                     msg = f"Encountered exception {type(e).__name__}: {e}"
-                    raise InterpreterError(msg) from e
+                    # nested try ... raise to delete e from locals
+                    try:
+                        raise InterpreterError(msg) from e
+                    except InterpreterError:
+                        del e
+                        raise
                 if status is INTERPRETER_SIGNALS.EXCEPTION_RAISED:
                     e = runtimectx.curexc
                     assert isinstance(e, BaseException)
                     runtimectx.curexc = None
                     if isinstance(e, StopIteration):
                         return unwrap(e.value)
-                    raise e
+                    # nested try except to delete e from locals
+                    try:
+                        raise e
+                    except BaseException:
+                        del e
+                        raise
             if status == INTERPRETER_SIGNALS.RETURN_VALUE:
                 return unwrap(res)
             assert status == INTERPRETER_SIGNALS.YIELD_VALUE
@@ -6654,6 +6797,7 @@ def _setup_frame_and_run_python_function(
 
     # And that's it! We have all local vars in locals_dict.
 
+    module: str = fn.__module__
     # in Python 3.10: local vars is (var_names, co_cellvars, co_freevars), also the cellvars/freevars are set up on call
     # in Python 3.11+, these are not separated and cells will be set up by the MAKE_CELL instruction
     # in Thunder, we adopt the Python 3.11 way of allocating a single array for all localplus vars,
@@ -6675,7 +6819,7 @@ def _setup_frame_and_run_python_function(
         assert len(code.co_varnames) == code.co_nlocals
         for n in code.co_varnames:
             local = locals_dict.get(n, Py_NULL())
-            local = local_callback(n, local)
+            local = local_callback(n, local, module=module)
             localsplus.append(local)
             # NOTE Updates locals_dict on Python 3.10, so co_cellvars has the same replacements
             #   as localsplus does (this is not necessary on Python 3.11, because there cellvars are
@@ -6696,7 +6840,7 @@ def _setup_frame_and_run_python_function(
         assert len(code.co_varnames) == code.co_nlocals
         for n in code.co_varnames:
             local = locals_dict.get(n, Py_NULL())
-            local = local_callback(n, local)
+            local = local_callback(n, local, module=module)
             localsplus.append(local)
         for n in code.co_cellvars:
             # those in locals_dict will use that index but will
@@ -6720,7 +6864,12 @@ def _setup_frame_and_run_python_function(
 
     # Creates the current ready to run stack frame for the current function
     frame = InterpreterFrame(
-        code=code, localsplus=localsplus, globals=frame_globals, names=wrap_const({}), qualname=fn.__qualname__
+        code=code,
+        localsplus=localsplus,
+        globals=frame_globals,
+        names=wrap_const({}),
+        qualname=fn.__qualname__,
+        module=module,
     )
 
     # Python 3.10 deals with creating the generator on call,
@@ -6738,8 +6887,9 @@ def _setup_frame_and_run_python_function(
     except Exception as e:
         # We need to cheat a bit to get a Python frame here...
         python_frame = frame.get_or_make_python_frame()
-        tb = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
-        raise e.with_traceback(tb)
+        e.__traceback__ = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
+        del e  # avoid memory leak
+        raise
     return res
 
 
@@ -6890,6 +7040,7 @@ def _run_frame(
                     tb = TracebackType(e.__traceback__, python_frame, python_frame.f_lasti, python_frame.f_lineno)
                     e = e.with_traceback(tb)
                     runtimectx.curexc = e
+                    del current_exception, python_frame, tb, e, runtimectx
                     return INTERPRETER_SIGNALS.EXCEPTION_RAISED, INTERPRETER_SIGNALS.EXCEPTION_RAISED
 
             # TODO Improve this error message
@@ -7014,6 +7165,7 @@ def interpret(
     callbacks: dict[INTERPRETER_CALLBACKS, Callable] = default_callbacks,
     debug_log: None | StringIO = None,
     with_provenance_tracking: bool = False,
+    unwrap_result: bool = True,
     uncacheable_classes: list[type] | None = None,
     record_history: bool = False,
 ) -> Callable:
@@ -7068,7 +7220,9 @@ def interpret(
                     populate_attribute_wrapper(wrapped_cell, "cell_contents", fn_wrapped)
 
                 interpretation_result: Any = _interpret_call(wrapped_fn_2, args, kwargs)
-                interpretation_result = unwrap(interpretation_result)
+                if unwrap_result:
+                    interpretation_result = unwrap(interpretation_result)
+
             except BaseException as e:
                 # TODO Highlight the portion of the line that originated the opcode on Python versions that include
                 #      the line offset information in the instruction
@@ -7076,7 +7230,12 @@ def interpret(
                 msg = (
                     f"Encountered exception {type(e).__name__}: {e} while tracing {fn}:{os.linesep}" f"{traceback_str}"
                 )
-                raise InterpreterError(msg) from e
+                # nested try ... raise to delete e from locals
+                try:
+                    raise InterpreterError(msg) from e
+                except InterpreterError:
+                    del e
+                    raise
 
             # NOTE: Wrapped functions are valid to assign new attributes to.
             fn_._last_interpreter_log = runtimectx.interp_log  # type: ignore
@@ -7085,7 +7244,12 @@ def interpret(
                 e = runtimectx.curexc
                 assert isinstance(e, BaseException), e
                 runtimectx.curexc = None
-                raise e
+                # The below is "raise e" but deleting e from the scope
+                try:
+                    raise e
+                except Exception:
+                    del e
+                    raise
 
             return interpretation_result
 
@@ -7113,6 +7277,10 @@ def print_interpreter_log(
 ) -> None:
     colors = init_colors(use_colors)
     interpreter_path = os.path.join("thunder", "core", "interpreter.py")
+    ext_path = os.path.join("thunder", "core", "jit_ext.py")
+
+    def is_internal(filename: str):
+        return (filename == "<Unknown>") or (interpreter_path in filename) or (ext_path in filename)
 
     c_indent = -1
     inside_inner_interpreter = False
@@ -7137,7 +7305,7 @@ def print_interpreter_log(
 
             case {"kind": "Line", "fn": fn, "filename": filename, "position": position}:
                 # LineLogItem
-                inside_inner_interpreter = interpreter_path in filename
+                inside_inner_interpreter = is_internal(filename)
                 if color_internals or not inside_inner_interpreter:
                     linecolor = colors["YELLOW"]
                 nl = os.linesep
@@ -7156,8 +7324,9 @@ def print_interpreter_log(
                     linestr = linestr[: -len(os.linesep)]
                 source_line = linestr
 
-            case {"kind": "InterpreterCall", "fn": fn, "prev_frame": prev_frame}:
+            case {"kind": "InterpreterCall", "fn": fn, "fn_filename": fn_filename, "prev_frame": prev_frame}:
                 # CallLogItem
+                inside_inner_interpreter = is_internal(fn_filename)
                 if color_internals or not inside_inner_interpreter:
                     linecolor = colors["GREEN"]
                 c_indent += 1

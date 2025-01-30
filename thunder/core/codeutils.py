@@ -1,25 +1,39 @@
-from types import CodeType, FunctionType, MethodType, EllipsisType
-from typing import List, Dict, Tuple, Set, Deque, Any, NamedTuple
-from numbers import Number
-from collections import deque
-from collections.abc import Mapping, Sequence, Iterable
-import inspect
-from inspect import Parameter
-import string
-import functools
+from __future__ import annotations
 from functools import partial
-import dis
-import linecache
+from inspect import Parameter
+from typing import TYPE_CHECKING, NamedTuple
 import dataclasses
-
-import torch
+import dis
+import functools
+import inspect
+import linecache
+import sys
 
 import thunder.core.baseutils as baseutils
 from thunder.core.baseutils import ProxyInterface, check
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
 from thunder.core.pytree import tree_flatten, tree_unflatten
-from thunder.core.baseutils import *
+
+if TYPE_CHECKING:
+    from typing import Any
+    from collections.abc import Callable, Sequence
+    from thunder.core.trace import TraceCtx
+
+
+__all__ = [
+    "ContextObject",
+    "SigInfo",
+    "get_siginfo",
+    "get_source_line",
+    "indent_string",
+    "is_literal",
+    "is_printable",
+    "is_simple_printable_collection",
+    "module_shortname",
+    "prettyprint",
+    "to_printable",
+]
 
 #
 # Functions related to analyzing and printing functions and arguments
@@ -65,8 +79,13 @@ def _generate_dataclass_class_name(x: object):
     # x is an instance of a Dataclass.
     # We generate a name for the Dataclass based on the package name and class name so that trace won't have problem
     # if there are conflicting names.
+
     assert dataclasses.is_dataclass(x)
-    name = (x.__class__.__module__ + "_" + x.__class__.__qualname__).replace(".", "_")
+    if isinstance(x, type):
+        cls = x
+    else:
+        cls = x.__class__
+    name = (cls.__module__ + "_" + cls.__qualname__).replace(".", "_")
     # Class could be a local class in which case it will have `<locals>` in it's module name.
     name = name.replace(">", "_").replace("<", "_")
     return name
@@ -78,7 +97,7 @@ def is_printable(x: Any) -> tuple[bool, None | tuple[str, Any]]:
 
     if isinstance(x, ContextObject):
         return True, None
-    if is_collection(x):
+    if baseutils.is_collection(x):
         # TODO RC1 Fix collection printing by testing if each item is printable and gathering the imports
         #   required (if any)
         flat, _ = tree_flatten(x)
@@ -96,7 +115,7 @@ def is_literal(x: Any) -> bool:
     if isinstance(x, (ContextObject, ProxyInterface)):
         return False
 
-    if is_collection(x):
+    if baseutils.is_collection(x):
         flat, _ = tree_flatten(x)
         for f in flat:
             if is_literal(f):
@@ -106,7 +125,7 @@ def is_literal(x: Any) -> bool:
     return True
 
 
-def _to_printable(tracectx: Optional, x: Any) -> tuple[Any, Optional[tuple[str, Any]]]:
+def _to_printable(tracectx: TraceCtx | None, x: Any) -> tuple[Any, tuple[str, Any] | None]:
     can_print, module_info = is_printable(x)
     if can_print:
         return x, module_info
@@ -123,11 +142,11 @@ def _to_printable(tracectx: Optional, x: Any) -> tuple[Any, Optional[tuple[str, 
 
 # TODO Improve type annotations
 def to_printable(
-    trace: Optional,
+    trace: TraceCtx | None,
     x: Any,
     *,
-    import_ctx: Optional[dict] = None,
-    object_ctx: Optional[dict] = None,
+    import_ctx: dict | None = None,
+    object_ctx: dict | None = None,
 ) -> Printable:
     # Short-circuits if x is a Proxy
     if isinstance(x, ProxyInterface):
@@ -135,12 +154,17 @@ def to_printable(
 
     if dataclasses.is_dataclass(x):
         # Add `class` to the object_ctx so that we can reuse it during the trace execution.
-        object_ctx[_generate_dataclass_class_name(x)] = x.__class__
+        if isinstance(x, type):  # dataclass type
+            cls = x
+        else:  # dataclass type instance
+            cls = x.__class__
+        object_ctx[_generate_dataclass_class_name(x)] = cls
         # Return the instance as printable object (as function `prettyprint` knows how to deal with it).
         return x
 
-    if is_collection(x):
-        flat, spec = tree_flatten(x)
+    if baseutils.is_collection(x):
+        # specify namespace="" to avoid flattening dataclasses
+        flat, spec = tree_flatten(x, namespace="")
         if flat and flat[0] is x:
             raise RuntimeError(f"Don't know how to flatten object of {type(x)}")
         printables = []
@@ -192,7 +216,7 @@ def prettyprint(
 
     m = partial(_qm, quote_markers=_quote_markers)
 
-    if literals_as_underscores and is_literal(x) and not is_collection(x):
+    if literals_as_underscores and is_literal(x) and not baseutils.is_collection(x):
         return m("_")
 
     if type(x) is str:
@@ -231,8 +255,9 @@ def prettyprint(
         call_repr_str = ",".join(call_repr)
         return m(f"{name}({call_repr_str})")
 
-    if is_collection(x):
-        flat, spec = tree_flatten(x)
+    if baseutils.is_collection(x):
+        # specify namespace="" to avoid flattening dataclasses
+        flat, spec = tree_flatten(x, namespace="")
         printed = tuple(
             prettyprint(x, with_type=False, literals_as_underscores=literals_as_underscores, _quote_markers=True)
             for x in flat
@@ -241,9 +266,11 @@ def prettyprint(
         unflattened_str = str(unflattened)
         # NOTE Collections of strings (so collections of names) print like this --
         #   ('a', 'b') -- but we want them to print like this -- (a, b) --
-        #   so this just removes all the single quotes -- this seems super hacky
+        #   so this just removes all the quotes -- this seems super hacky
         unflattened_str = unflattened_str.replace(f"{_quote_marker}'", "")
         unflattened_str = unflattened_str.replace(f"'{_quote_marker}", "")
+        unflattened_str = unflattened_str.replace(f'{_quote_marker}"', "")
+        unflattened_str = unflattened_str.replace(f'"{_quote_marker}', "")
         return unflattened_str
     if isinstance(x, dtypes.dtype):
         # str(x) -> thunder.dtypes.foo
@@ -256,7 +283,7 @@ def prettyprint(
         return m(f"{baseutils.print_type(x, with_quotes=False)}")
 
     # Handles objects that this doesn't know how to serialize as a string
-    return m(f"(object of type {print_type(type(x), with_quotes=False)})")
+    return m(f"(object of type {baseutils.print_type(type(x), with_quotes=False)})")
 
 
 # Use dis.Positions in 3.11+ and make it up in <3.11
@@ -298,7 +325,9 @@ class SigInfo:
     # TODO Print the original signature's type annotations
     # TODO Maybe be clear about what inputs are const and what aren't?
     # TODO Improve this signature's type annotations
-    def prettyprint(self, *, trace: Optional = None, import_ctx: Optional = None, object_ctx=None) -> str:
+    def prettyprint(
+        self, *, trace: TraceCtx | None = None, import_ctx: Any | None = None, object_ctx: Any | None = None
+    ) -> str:
         def _arg_printer(name: str, has_default: bool, default: Any = None) -> str:
             # NOTE In this case the argument has a default value, like 'a' in foo(a=5)
             if has_default:
@@ -334,6 +363,19 @@ class SigInfo:
         arg_str = ", ".join(args)
 
         return f"def {self.name}({arg_str}):"
+
+    @staticmethod
+    def from_name_and_args(name: str, args: Sequence[Any]):
+        si = SigInfo(name)
+        for a in args:
+            if isinstance(a, ProxyInterface):
+                si.args.append((a.name, None))
+            else:
+                from thunder.core.proxies import proxy
+
+                pa = proxy(a)
+                si.args.append((pa.name, None))
+        return si
 
 
 # Creates a SigInfo object from a function and the inputs to it

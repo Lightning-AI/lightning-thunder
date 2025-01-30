@@ -177,7 +177,6 @@ def test_parse_resnet18(executor, device, dtype, turn_off_tf32_and_set_seed, tra
         out1 = ref_model(x)
         out2 = jitted(x)
         torch.testing.assert_close(out1, out2)
-        # Backward fails with nvfuserExecutor, RuntimeError: Unsupported iterable object type for define_vector! Index:0
         # Numerical accuracy error when TorchExecutor, `train=True` and dtype is fp32.
         # with RTX6000 Ada and CUDA 12.3, I see somewhat huge error:
         # E   AssertionError: Tensor-likes are not close!
@@ -186,7 +185,7 @@ def test_parse_resnet18(executor, device, dtype, turn_off_tf32_and_set_seed, tra
         # E   Greatest absolute difference: 0.07035164535045624 at index (4, 1, 0, 3) (up to 1e-05 allowed)
         # E   Greatest relative difference: 343.7076110839844 at index (5, 0, 5, 4) (up to 1.3e-06 allowed)
         # E   The failure occurred for item [0]
-        if train and executor == TorchExecutor and dtype == thunder.float64:
+        if train and dtype == thunder.float64:
             torch_grads = torch.autograd.grad(out1, ref_model.parameters(), torch.ones_like(out1))
             thunder_grads = torch.autograd.grad(out2, jitted.parameters(), torch.ones_like(out2))
             torch.testing.assert_close(torch_grads, thunder_grads)
@@ -359,11 +358,30 @@ def test_multiple_inplace_to_args(executor, device, _):
     torch.testing.assert_close(actual, expected)
     torch.testing.assert_close(x, x_ref)
 
+    def f(a):
+        return a.exp_().sin_()
+
+    x = make_tensor((2, 2), device=device, dtype=torch.float32)
+    x_ref = x.clone().detach()
+    expected = f(x_ref)
+    jitted = executor.make_callable(f)
+    actual = jitted(x)
+    torch.testing.assert_close(actual, expected)
+    assert x.data_ptr() == actual.data_ptr()
+
 
 @instantiate(
     dtypes=NOTHING,
 )
 def test_multiple_views_before_inplace_to_base(executor, device, _):
+    from thunder.tests.framework import nvFuserTestExecutor
+
+    if type(executor) is nvFuserTestExecutor:
+        pytest.skip(
+            "nvFuser doesn't enforce the order between `z=x.view(-1)` and "
+            "`x.add_(1)`, so the behavior is undefined due to this "
+            "race condition. See https://github.com/NVIDIA/Fuser/issues/2839."
+        )
 
     # ref: https://github.com/pytorch/pytorch/blob/29e2e2a/test/test_functionalization.py#L159-L169
     def f(x):
@@ -452,6 +470,37 @@ def test_multiple_inplace_to_multiple_args(executor, device, _):
     torch.testing.assert_close(actual=z, expected=z_ref)
     torch.testing.assert_close(actual=xs, expected=xs_ref)
     torch.testing.assert_close(actual=ys, expected=ys_ref)
+
+
+@instantiate(
+    dtypes=NOTHING,
+)
+def test_inplace_to_tensors_with_grad(executor, device, _):
+    @torch.no_grad
+    def add_y(x, y):
+        return x.add_(y, alpha=0.1)
+
+    @torch.no_grad
+    def add_grad(x, y):
+        return x.add_(x.grad, alpha=0.1)
+
+    for f in (add_y, add_grad):
+        jitted_f = executor.make_callable(f)
+        x = make_tensor((2, 2), device=device, dtype=torch.float32, requires_grad=True)
+        x.grad = make_tensor((2, 2), device=device, dtype=torch.float32)
+        y = make_tensor((2, 2), device=device, dtype=torch.float32)
+
+        x_ref = x.clone().detach().requires_grad_(True)
+        x_ref.grad = x.grad.clone().detach()
+        y_ref = y.clone().detach()
+
+        res = jitted_f(x, y)
+        res_ref = f(x_ref, y_ref)
+
+        torch.testing.assert_close(x, x_ref)
+        torch.testing.assert_close(x.grad, x_ref.grad)
+        torch.testing.assert_close(y, y_ref)
+        torch.testing.assert_close(res, res_ref)
 
 
 @instantiate(
@@ -580,9 +629,9 @@ def test_inplace_copy_on_fusion_inputs_issue_791(executor, device, _):
     jitted = executor.make_callable(f)
     o = jitted(a, b, idx, src)
 
-    assert a.allclose(a_)
-    assert b.allclose(b_)
-    assert o.allclose(o_)
+    torch.testing.assert_close(a, a_)
+    torch.testing.assert_close(b, b_)
+    torch.testing.assert_close(o, o_)
 
 
 @instantiate(
@@ -672,3 +721,105 @@ def test_inplace_to_alias_func_args(executor, device, dtype):
     out, out_ref = jitted_f(a, b, a), f(a_ref, b_ref, a_ref)
     torch.testing.assert_close(out, out_ref)
     torch.testing.assert_close((a, b), (a_ref, b_ref))
+
+    def f(a):
+        return a.zero_()
+
+    a = make_tensor(shape, device=device, dtype=torch_dtype)
+    out_expected = torch.zeros_like(a)
+
+    jitted_f = executor.make_callable(f)
+    out = jitted_f(a)
+
+    torch.testing.assert_close(out, out_expected)
+
+
+@instantiate(dtypes=NOTHING)
+def test_reshape_flatten_error_out(executor, device, _):
+
+    def f(x):
+        y = x.reshape(6, 4)
+        y.add_(1)
+        return y
+
+    def g(x):
+        y = x.flatten()
+        y.add_(1)
+        return y
+
+    def h(x):
+        tmp = torch.randn((6, 4))
+        y = x.reshape_as(tmp)
+        y.add_(1)
+        return y
+
+    for fn in (f, g, h):
+        x = make_tensor((3, 2, 4), device=device, dtype=torch.float32)
+        jitted = executor.make_callable(fn)
+
+        with pytest.raises(NotImplementedError, match="in-place op of"):
+            jitted(x)
+
+    def f_with_clone(a):
+        y = x.reshape(6, 4)
+        z = y.clone()
+        z = z + 1
+        return z
+
+    x = make_tensor((3, 2, 4), device=device, dtype=torch.float32)
+    jitted = executor.make_callable(f_with_clone)
+    jitted(x)
+
+
+@instantiate(dtypes=NOTHING)
+def test_aliases_and_functionalizable_inplace(executor, device, _):
+
+    def f(a, x, y):
+        return a.exp().add_(x) + y.exp()
+
+    jitted = executor.make_callable(f)
+
+    x = make_tensor((2, 2), device=device, dtype=torch.float32)
+    a = x.clone()
+    y = x.view(1, 2, 2)
+
+    expected = f(a, x, y)
+    actual = jitted(a, x, y)
+    torch.testing.assert_close(actual, expected)
+
+
+# ref: https://github.com/Lightning-AI/lightning-thunder/issues/1236
+@instantiate(dtypes=NOTHING)
+def test_unused_view_input(executor, device, _):
+
+    def f(a, x, unused):
+        return a.exp().add_(x)
+
+    x = make_tensor((2, 2), device=device, dtype=torch.float32)
+    a = x.clone()
+    unused = x[0]
+
+    jitted = executor.make_callable(f)
+
+    expected = f(a, x, unused)
+    actual = jitted(a, x, unused)
+    torch.testing.assert_close(actual, expected)
+
+
+@instantiate(dtypes=NOTHING)
+def test_inplace_on_to(executor, device, _):
+
+    def f_self_result(a):
+        return a.to().sin_()
+
+    def f_copy(a):
+        return a.to(torch.float64).sin_()
+
+    for f in (f_self_result, f_copy):
+        x = make_tensor((2, 2), device=device, dtype=torch.float32)
+        x_ref = x.clone().detach()
+        jitted = executor.make_callable(f)
+        actual = jitted(x)
+        expected = f(x_ref)
+        torch.testing.assert_close(actual, expected)
+        torch.testing.assert_close(x, x_ref)

@@ -1,11 +1,13 @@
 from functools import partial
+from types import FunctionType
 import dataclasses
 
 import optree
 import torch
 import thunder.core.dtypes as dtypes
 import thunder.core.devices as devices
-from thunder.core.baseutils import ProxyInterface
+from thunder.core.baseutils import ProxyInterface, is_likely_from_collections_namedtuple
+from types import FunctionType
 
 OPTREE_NAMESPACE = "thunder"
 
@@ -20,10 +22,19 @@ optree.register_pytree_node(
 )
 
 
-def tree_flatten(args, namespace=""):
+optree.register_pytree_node(
+    slice,
+    lambda s: ([s.start, s.stop, s.step], None, None),
+    lambda _, children: slice(*children),
+    namespace=OPTREE_NAMESPACE,
+)
+
+
+def tree_flatten(args, namespace=OPTREE_NAMESPACE):
     if (
         type(args)
         not in {
+            FunctionType,
             dict,
             list,
             str,
@@ -47,8 +58,10 @@ def tree_flatten(args, namespace=""):
             # FakeTensor type is used for automatic registration of torch ops
             torch._subclasses.fake_tensor.FakeTensor,
             torch.device,
+            torch.autograd.function.FunctionCtx,
         }
         and not isinstance(args, (ProxyInterface))
+        and not is_likely_from_collections_namedtuple(args)
         and not dataclasses.is_dataclass(args)
         and not type(args).__module__.startswith("torch.return_types")
     ):
@@ -74,6 +87,8 @@ _registered_dataclasses = set()
 def register_pytree_node_dataclass(cls):
     # We don't use `dataclasses.asdict` as it recursively flattens all data classes (including
     # thunder internal ones like `VJPDual` (and also it is relatively slower as it calls copy.deepcopy()).
+    assert cls is not type
+
     def unpack(cls) -> dict:
         return {field.name: getattr(cls, field.name) for field in dataclasses.fields(cls)}
 
@@ -84,7 +99,7 @@ def register_pytree_node_dataclass(cls):
 
 
 def _maybe_register_dataclass(t):
-    if dataclasses.is_dataclass(t) and t.__class__ not in _registered_dataclasses:
+    if dataclasses.is_dataclass(t) and not isinstance(t, type) and t.__class__ not in _registered_dataclasses:
         return True
     return False
 
