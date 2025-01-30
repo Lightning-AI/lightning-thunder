@@ -37,7 +37,7 @@ if transformer_engine_available:
     transformer_engine_available = True
 except ImportError:
     transformer_engine_available = False
-    
+
 try:
     from torch.nn.attention import SDPBackend, sdpa_kernel
     sdpa_available = True
@@ -289,9 +289,9 @@ class Benchmark_litGPT:
         self.dump_thunder_traces = dump_thunder_traces
         self.dump_memory_snapshot = dump_memory_snapshot
         self.fp8_shard_intermediate_activation = fp8_shard_intermediate_activation
-        
+
         self.use_sdpa = use_sdpa
-        
+
         if self.use_sdpa and sdpa_available and self.compile not in ["eager", "inductor"]:
             warnings.warn(
                 "SDPA is enabled but the model is not compiled with eager or inductor. SDPA priority setting will be skipped."
@@ -836,7 +836,7 @@ def benchmark_main(return_metrics_as_json=False, json_path="", **kwargs) -> None
         kwargs = {}
         if LooseVersion(torch.__version__) >= LooseVersion("2.6.0"):
             kwargs['set_priority'] = True
-    
+
         attention_ctx = sdpa_kernel(backends, **kwargs)
 
     with attention_ctx:
