@@ -1181,14 +1181,21 @@ def test_enable_disable_options(executor, device: str, thunder_dtype: dtypes.dty
     dtypes=(thunder.float32,),
     devicetypes=(devices.DeviceType.CUDA,),
     executors=(nvFuserExecutor,),
+    decorators=(pytest.mark.parametrize("nv_enable_shape_only_fusion", [True, False, None]),),
 )
-def test_no_shape_only_fusion_region(executor, device: str, thunder_dtype: dtypes.dtype):
+def test_no_shape_only_fusion_region(
+    executor, device: str, thunder_dtype: dtypes.dtype, nv_enable_shape_only_fusion: bool
+):
     x = make_tensor(2, 2, 2, device=device, dtype=ltorch.to_torch_dtype(thunder_dtype))
 
     def fn(x):
         return x.view(4, -1).transpose(0, 1)
 
-    jfn = thunder.jit(fn)
+    if nv_enable_shape_only_fusion is None:
+        options_dict = {}
+    else:
+        options_dict = {"nv_enable_shape_only_fusion": nv_enable_shape_only_fusion}
+    jfn = thunder.jit(fn, **options_dict)
 
     expected = fn(x)
     actual = jfn(x)
@@ -1197,8 +1204,11 @@ def test_no_shape_only_fusion_region(executor, device: str, thunder_dtype: dtype
 
     fwd_trace = thunder.last_traces(jfn)[-1]
 
-    # Make sure there are no fusion symbols.
-    assert all(not bsym.sym.is_fusion for bsym in fwd_trace.bound_symbols)
+    if nv_enable_shape_only_fusion:
+        assert any(bsym.sym.is_fusion for bsym in fwd_trace.bound_symbols)
+    else:
+        # Make sure there are no fusion symbols.
+        assert all(not bsym.sym.is_fusion for bsym in fwd_trace.bound_symbols)
 
     # Verify that we create fusion even if we have a single compute op.
     def fn(x):
