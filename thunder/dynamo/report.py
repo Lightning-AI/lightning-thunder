@@ -154,9 +154,11 @@ def thunderfx_report(
 
             def print_sorted_memory_info(compute_t: str):
                 filtered_bench = [b for b in bench if compute_t in b["param"]]
-                filtered_bench_sorted = sorted(filtered_bench, key=lambda x: x["extra_info"]["max_allocated_memory_MB"])
+                filtered_bench_sorted = sorted(
+                    filtered_bench, key=lambda x: x["extra_info"].get("max_allocated_memory_MB", 0)
+                )
                 for bk in filtered_bench_sorted:
-                    print(f"{bk['name'].lstrip('test_')}: {bk['extra_info']['max_allocated_memory_MB']/1000} GB")
+                    print(f"{bk['name'].lstrip('test_')}: {bk['extra_info'].get('max_allocated_memory_MB', 0)/1000} GB")
                 print("\n")
 
             print_sorted_memory_info("forward")
