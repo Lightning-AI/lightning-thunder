@@ -104,7 +104,6 @@ class ThunderCompiler:
         reproducer_folder.mkdir(exist_ok=True, parents=True)
         thunder_options_str = thunder_options_to_str(self.thunder_options)
         thunder_ex_str = f"partial(thunder.jit, {thunder_options_str})" if thunder_options_str else "thunder.jit"
-        import_str = ["import thunder", "from functools import partial"]
 
         for graph_idx, subgraph_info in enumerate(self.subgraph_infos):
             thunder_module_names = []
@@ -123,6 +122,19 @@ class ThunderCompiler:
             result = FXReport(original_thunder_modules, thunder_module_names)
             split_reason_str = get_split_reasons_string(subgraph_info)
             for subgraph_idx, report in enumerate(result.fx_graph_reports):
+                has_cuda_args = any(
+                    hasattr(arg, "device") and arg.device.type == "cuda" for arg in example_inputs[subgraph_idx]
+                )
+                import_str = ["import thunder", "from functools import partial"]
+                if has_cuda_args:
+                    # Since Thunder compile options don't clearly indicate required imports,
+                    # we include commonly used transforms by default.
+                    import_str.extend(
+                        [
+                            "from thunder.transforms.cudagraph import CUDAGraphTransform",
+                            "from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform",
+                        ]
+                    )
                 if not use_pytest_benchmark:
                     report.write_repro(
                         reproducer_folder,
@@ -134,16 +146,13 @@ class ThunderCompiler:
                         extra_comment_str=split_reason_str,
                     )
                     continue
-                has_cuda_args = any(
-                    hasattr(arg, "device") and arg.device.type == "cuda" for arg in example_inputs[subgraph_idx]
-                )
+
                 executor_names_list = ["thunder", "torch_inductor", "eager"]
                 executors = [thunder_ex_str, "torch_inductor", "None"]
 
                 if has_cuda_args:
                     executor_names_list.append("thunder_cudagraph")
                     executors.append("partial(thunder.jit, transform=CUDAGraphTransform())")
-                    import_str.append("from thunder.transforms.cudagraph import CUDAGraphTransform")
 
                 report.write_benchmark_repro(
                     reproducer_folder,

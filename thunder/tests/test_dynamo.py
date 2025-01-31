@@ -1090,10 +1090,9 @@ def test_fxreport(executor, device: str, dtype: dtypes.dtype, use_benchmark, tmp
         r.write_eager_repro(tmp_path, use_benchmark=use_benchmark)
         r.write_thunder_repro(tmp_path, use_benchmark=use_benchmark)
         r.write_inductor_repro(tmp_path, use_benchmark=use_benchmark)
-        my_exe = "partial(thunder.jit, transforms=[NvtxProfileTransform()], executors=[pytorch_executor])"
+        my_exe = "partial(thunder.jit, executors=[pytorch_executor])"
         my_imports = [
             "import thunder",
-            "from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform",
             "from thunder import pytorch_executor",
             "from functools import partial",
         ]
