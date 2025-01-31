@@ -96,8 +96,7 @@ class ThunderCompiler:
         Args:
             reproducer_folder: The folder where the reproducer code will be written. Can be specified as an absolute or relative path.
             use_pytest_benchmark: Determines the type of script to create. When :obj:`False`, create a reproducer script.
-                Otherwise, creats a benchmark script to compare the reproducer's performance with other backends, including Torch eager, torch.compile,
-                and torch.compile with ``backend="eager"``.
+                Otherwise, creats a benchmark script to compare the reproducer's performance with other backends, including Torch eager, torch.compile.
         """
         if not self.subgraph_infos:
             raise TypeError(f"{self} doesn't seem to have been called yet.")
@@ -110,8 +109,7 @@ class ThunderCompiler:
             for node in subgraph_info.split_graph_module.graph.nodes:
                 target = node.target
                 if isinstance(target, str) and target.startswith("thunder_"):
-                    thunder_module_names.append(target)
-            thunder_module_names = [f"graph{graph_idx}_{name}" for name in thunder_module_names]
+                    thunder_module_names.append(f"graph{graph_idx}_{target}")
             original_thunder_modules = (
                 m
                 for m, compiled_m in subgraph_info.submodule_to_compiled_functions.items()
@@ -127,9 +125,8 @@ class ThunderCompiler:
                     report.write_repro(
                         reproducer_folder,
                         f"{report.graph_name}_repro.py",
-                        "thunder",
-                        import_str=["import thunder"],
                         executor_str="thunder.jit",
+                        import_str=["import thunder"],
                         serialize_inputs=serialize_inputs,
                         inputs=example_inputs[subgraph_idx],
                         extra_comment_str=split_reason_str,
@@ -160,8 +157,8 @@ class ThunderCompiler:
                     reproducer_folder,
                     f"{report.graph_name}_benchmark.py",
                     executor_names,
-                    import_str=import_str,
                     executor_str=executors,
+                    import_str=import_str,
                     serialize_inputs=serialize_inputs,
                     inputs=example_inputs[subgraph_idx],
                     extra_comment_str=split_reason_str,

@@ -1085,26 +1085,23 @@ def test_fxreport(executor, device: str, dtype: dtypes.dtype, use_benchmark, tmp
 
     x = torch.randn(4, 4, device=device, requires_grad=True)
     y = torch.randn(4, 4, device=device, requires_grad=True)
-    results = fx_report(foo, x, y)
+    results = fx_report(foo, x, y, compile_options={"dynamic": True})
     for r in results.fx_graph_reports:
         r.write_eager_repro(tmp_path, use_benchmark=use_benchmark)
         r.write_thunder_repro(tmp_path, use_benchmark=use_benchmark)
         r.write_inductor_repro(tmp_path, use_benchmark=use_benchmark)
-        my_exe = "partial(thunder.jit, transforms=[NvtxProfileTransform(),CUDAGraphTransform()], executors=[nvfuser_executor])"
+        my_exe = "partial(thunder.jit, transforms=[NvtxProfileTransform()], executors=[pytorch_executor])"
         my_imports = [
             "import thunder",
             "from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform",
-            "from thunder import nvfuser_executor",
-            "from thunder.transforms.cudagraph import CUDAGraphTransform",
+            "from thunder import pytorch_executor",
             "from functools import partial",
         ]
         if not use_benchmark:
-            r.write_repro(
-                tmp_path, f"{r.graph_name}_mythunder_repro.py", "mythunder", executor_str=my_exe, import_str=my_imports
-            )
+            r.write_repro(tmp_path, f"{r.graph_name}_mythunder_repro.py", executor_str=my_exe, import_str=my_imports)
         else:
             r.write_benchmark_repro(
-                tmp_path, f"{r.graph_name}_mythunder_benchmark.py", ["mythunder"], my_imports, executor_str=[my_exe]
+                tmp_path, f"{r.graph_name}_mythunder_benchmark.py", ["mythunder"], [my_exe], my_imports
             )
 
     def check(file_name, cmd):

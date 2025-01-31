@@ -146,7 +146,7 @@ def thunderfx_report(
             else:
                 print(f"{g_name}:\n{benchmark_result.stdout}\n")
 
-        print("Max allocated memory usage:")
+        print("Max allocated CUDA memory usage:")
         for tmp_json in benchmark_json_files:
             with open(tmp_json) as file:
                 data = json.load(file)
@@ -164,6 +164,11 @@ def thunderfx_report(
 
 
 class FXGraphReport:
+    """
+    Encapsulates an FX Graph module with metadata to aid in generating
+    reproduction and benchmarking scripts for various executors.
+    """
+
     def __init__(self, graph: torch.fx.GraphModule, graph_name: str):
         self.graph = graph
         self.graph_name = graph_name
@@ -179,7 +184,6 @@ class FXGraphReport:
                 folder,
                 f"{self.graph_name}_benchmark_eager.py",
                 ["eager"],
-                [],
                 executor_str=["None"],
                 serialize_inputs=serialize_inputs,
             )
@@ -187,7 +191,6 @@ class FXGraphReport:
             self.write_repro(
                 folder,
                 f"{self.graph_name}_repro_eager.py",
-                "eager",
                 executor_str="None",
                 serialize_inputs=serialize_inputs,
             )
@@ -200,16 +203,15 @@ class FXGraphReport:
                 folder,
                 f"{self.graph_name}_benchmark_thunder.py",
                 ["thunder"],
-                thunder_import_str,
                 [thunder_compile_str],
+                thunder_import_str,
             )
         else:
             self.write_repro(
                 folder,
                 f"{self.graph_name}_repro_thunder.py",
-                "thunder",
-                thunder_import_str,
                 thunder_compile_str,
+                thunder_import_str,
                 serialize_inputs,
             )
 
@@ -221,17 +223,16 @@ class FXGraphReport:
                 folder,
                 f"{self.graph_name}_benchmark_torchcompile.py",
                 ["torchcompile"],
+                [inductor_compile_str],
                 inductor_import_str,
-                ["torch_inductor"],
                 serialize_inputs,
             )
         else:
             self.write_repro(
                 folder,
                 f"{self.graph_name}_repro_torchcompile.py",
-                "torchcompile",
-                inductor_import_str,
                 inductor_compile_str,
+                inductor_import_str,
                 serialize_inputs,
             )
 
@@ -254,13 +255,38 @@ class FXGraphReport:
         self,
         folder: str | PathLike,
         file_name: str,
-        executor_name_str: list,
-        import_str: list,
-        executor_str: list,
+        executor_name_str: list[str],
+        executor_str: list[str],
+        import_str: list[str] = None,
         serialize_inputs: bool = False,
         inputs: Sequence[torch.Tensor | ExampleInputMetaData] = None,
         **kwargs,
-    ):
+    ) -> None:
+        """
+        Generates a benchmark reproduction script for a given FX graph module using various executors and writes it to the specified file.
+
+        Args:
+            folder (str | PathLike): The target directory where the script will be saved.
+            file_name (str): The name of the output script file.
+            executor_name_str (list[str]): A list of executor names to be used in the script.
+            executor_str (list[str]): A list of compilation commands to run the benchmark.
+                Each command should be applicable to the original model, e.g.,
+                ``compile_command(original_model)``.
+                Example values: ``"thunder.jit"`` or ``"partial(thunder.jit, executors=[nvfuser_executor])"``.
+            import_str (list[str], optional): A list of necessary import statements for the script.
+                For example, if using the ``nvfuser_executor``, include:
+                ``import_str=["from thunder import nvfuser_executor"]``.
+            serialize_inputs (bool, optional): Whether to serialize the inputs for reproducibility. Defaults to False.
+                If enabled, all inputs will be serialized into a single file: "{graph_name}_input.pt".
+            inputs (Sequence[torch.Tensor | ExampleInputMetaData], optional):
+                The input tensors or metadata for the FX graph module. Defaults to None.
+                If not provided, inputs will be inferred from the placeholders in the FX graph.
+            **kwargs: Additional arguments for customization.
+
+        Example:
+            See the example in :func:`fx_report`.
+        """
+
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
         if inputs == None:
@@ -271,7 +297,7 @@ class FXGraphReport:
         readable = textwrap.indent(_readable(self.graph, "DynamoModule", print_output=False), "    ")
         # The packages that are likely to be used by the code generated from the Torch GraphModule
         torch_import_str = "\n".join([v.import_str for v in torch.fx.graph._custom_builtins.values()])
-        import_str = "\n".join(import_str)
+        import_str = "" if import_str == None else "\n".join(import_str)
         input_str = textwrap.indent(self._get_input_str(folder, inputs, serialize_inputs), "    ")
         call_bench_str = f"benchmark_for_compute_type(compute_type, benchmark, compiled_model, inputs, {{}}, has_cuda={True if has_cuda_args else False})"
         compute_type_decorator = (
@@ -304,14 +330,33 @@ class FXGraphReport:
         self,
         folder: str | PathLike,
         file_name: str,
-        executor_name: str = "",
-        import_str: str = "",
-        executor_str: str = "",
-        # use_benchmark: bool = False,
+        executor_str: str,
+        import_str: list[str] = None,
         serialize_inputs: bool = False,
         inputs: Sequence[torch.Tensor | ExampleInputMetaData] = None,
         **kwargs,
-    ):
+    ) -> None:
+        """
+        Generates a reproduction script for a given FX graph module and writes it to a file.
+
+        Args:
+            folder (str | PathLike): The target directory where the script will be saved.
+            file_name (str): The name of the output script file.
+            executor_str (str): compilation commands to compile the graph. e.g.: ``"partial(thunder.jit, executors=[nvfuser_executor])"``
+            import_str (list[str], optional): A list of necessary import statements for the script.
+                For example, if using the ``nvfuser_executor``, include:
+                ``import_str=["from thunder import nvfuser_executor"]``.
+            serialize_inputs (bool, optional): Whether to serialize the inputs for reproducibility.
+                Defaults to False. If enabled, all inputs will be saved to a file named
+                "{graph_name}_input.pt".
+            inputs (Sequence[torch.Tensor | ExampleInputMetaData], optional):
+                The input tensors or metadata for the FX graph module. Defaults to None, in
+                which case the inputs will be inferred from the placeholders in the FX graph.
+            **kwargs: Additional arguments for customization.
+
+        Example:
+            See the example in :func:`fx_report`.
+        """
         folder = Path(folder)
         folder.mkdir(exist_ok=True, parents=True)
         if inputs == None:
@@ -320,7 +365,7 @@ class FXGraphReport:
         readable = textwrap.indent(_readable(self.graph, "DynamoModule", print_output=False), "    ")
         # The packages that are likely to be used by the code generated from the Torch GraphModule
         torch_import_str = "\n".join([v.import_str for v in torch.fx.graph._custom_builtins.values()])
-        import_str = "\n".join(import_str)
+        import_str = "" if import_str == None else "\n".join(import_str)
         input_str = textwrap.indent(self._get_input_str(folder, inputs, serialize_inputs), "    ")
         extra_comment_str = kwargs.get("extra_comment_str") if "extra_comment_str" in kwargs else ""
 
@@ -341,13 +386,61 @@ class FXGraphReport:
 
 
 class FXReport:
+    """
+    This class stores a list of FXGraphReport instances, each of which wraps an FX graph
+    module and provides methods to generate reproduction and benchmark scripts.
+    """
+
     def __init__(self, graphs: list[torch.fx.GraphModule], graph_names: list[str] = None):
         if graph_names is None:
             graph_names = [f"graph{idx}" for idx in range(len(graphs))]
         self.fx_graph_reports: list[FXGraphReport] = [FXGraphReport(g, name) for name, g in zip(graph_names, graphs)]
 
 
-def fx_report(fn: Callable, *args, **kwargs) -> FXReport:
+def fx_report(fn: Callable, *args, compile_options: dict = None, **kwargs) -> FXReport:
+    """
+    This function compiles a given function using :func:`torch.compile` with specified ``compile_options``,
+    and applies a custom backend that intercepts and collects FX graph modules during execution.
+    The function then returns an :class:`FXReport`, which contains utilities to generate
+    reproduction and benchmark scripts for each collected FX graph module.
+
+    Args:
+        fn (Callable): The function to be compiled and analyzed.
+        *args: Positional arguments of ``fn``.
+        compile_options(dict): the options that are passed to :func:`torch.compile`
+        **kwargs: Keyword arguments of ``fn``.
+
+    Example:
+        .. code-block:: python
+
+        import tempfile
+        from thunder.dynamo.report import fx_report
+
+        def model(x):
+            return x * 2
+
+        report = fx_report(model, compile_options={dynamic=False}, torch.tensor([1, 2, 3]))
+        print(len(report.fx_graph_reports))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for graph_report in report.fx_graph_reports:
+                graph_report.write_eager_repro(tmpdir)
+                graph_report.write_thunder_repro(tmpdir, use_benchmark=True)
+                graph_report.write_inductor_repro(tmpdir)
+
+                my_executor = "partial(thunder.jit, transforms=[NvtxProfileTransform()], executors=[nvfuser_executor])"
+                my_imports = [
+                    "import thunder",
+                    "from thunder.dev_utils.nvtx_profile_transform import NvtxProfileTransform",
+                    "from thunder import nvfuser_executor",
+                    "from functools import partial",
+                ]
+                graph_report.write_repro(
+                    tmp_path, f"{graph_report.graph_name}_mythunder_repro.py", executor_str=my_executor, import_str=my_imports
+                )
+                graph_report.write_benchmark_repro(
+                    tmp_path, f"{graph_report.graph_name}_mythunder_benchmark.py", executor_name_str=["mythunder"], executor_str=[my_executor], import_str=my_imports
+                )
+    """
     graphs = []
 
     def helper_backend(gm, example_inputs):
@@ -355,7 +448,9 @@ def fx_report(fn: Callable, *args, **kwargs) -> FXReport:
         graphs.append(gm)
         return gm.forward
 
-    compiled = torch.compile(fn, backend=helper_backend)
+    if compile_options is None:
+        compile_options = {}
+    compiled = torch.compile(fn, **compile_options, backend=helper_backend)
     compiled(*args, **kwargs)
 
     return FXReport(graphs)
