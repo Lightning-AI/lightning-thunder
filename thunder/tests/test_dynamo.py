@@ -1061,7 +1061,7 @@ def test_report(tmp_path, capsys):
     assert "Verifying consistency" in msg
     assert "Analyzing performance through benchmarking" in msg
     assert "The input callable can be successfully executed by ThunderFX." in msg
-    assert "Max allocated memory usage:" in msg
+    assert "Max allocated CUDA memory usage:" in msg
 
     with patch("torch.compile", side_effect=Exception("compilation raises exception")):
         thunderfx_report(foo, x, folder_path=tmp_path, check_consistency=False)

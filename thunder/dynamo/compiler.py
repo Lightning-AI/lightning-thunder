@@ -103,6 +103,8 @@ class ThunderCompiler:
         reproducer_folder = Path(reproducer_folder)
         reproducer_folder.mkdir(exist_ok=True, parents=True)
         thunder_options_str = thunder_options_to_str(self.thunder_options)
+        thunder_ex_str = f"partial(thunder.jit, {thunder_options_str})" if thunder_options_str else "thunder.jit"
+        import_str = ["import thunder", "from functools import partial"]
 
         for graph_idx, subgraph_info in enumerate(self.subgraph_infos):
             thunder_module_names = []
@@ -125,8 +127,8 @@ class ThunderCompiler:
                     report.write_repro(
                         reproducer_folder,
                         f"{report.graph_name}_repro.py",
-                        executor_str="thunder.jit",
-                        import_str=["import thunder"],
+                        executor_str=thunder_ex_str,
+                        import_str=import_str,
                         serialize_inputs=serialize_inputs,
                         inputs=example_inputs[subgraph_idx],
                         extra_comment_str=split_reason_str,
@@ -135,28 +137,18 @@ class ThunderCompiler:
                 has_cuda_args = any(
                     hasattr(arg, "device") and arg.device.type == "cuda" for arg in example_inputs[subgraph_idx]
                 )
-                executor_names_list = [
-                    "thunder",
-                    "torch_inductor",
-                    "eager",
-                ]
-                executors = [
-                    f"partial(thunder.jit, {thunder_options_str})",
-                    "torch_inductor",
-                    "None",
-                ]
-                import_str = ["from functools import partial", "import thunder"]
+                executor_names_list = ["thunder", "torch_inductor", "eager"]
+                executors = [thunder_ex_str, "torch_inductor", "None"]
 
                 if has_cuda_args:
                     executor_names_list.append("thunder_cudagraph")
                     executors.append("partial(thunder.jit, transform=CUDAGraphTransform())")
                     import_str.append("from thunder.transforms.cudagraph import CUDAGraphTransform")
 
-                executor_names = f"executor_names={executor_names_list}"
                 report.write_benchmark_repro(
                     reproducer_folder,
                     f"{report.graph_name}_benchmark.py",
-                    executor_names,
+                    executor_names_list,
                     executor_str=executors,
                     import_str=import_str,
                     serialize_inputs=serialize_inputs,

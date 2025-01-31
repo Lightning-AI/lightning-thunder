@@ -70,8 +70,8 @@ def thunderfx_report(
     folder_path: str | PathLike = "/tmp/thunderfx_report",
     check_consistency: bool = True,
     check_benchmark: bool = True,
-    save_consistency_inputs: bool = False,
-    save_benchmark_inputs: bool = False,
+    serialize_consistency_inputs: bool = False,
+    serialize_benchmark_inputs: bool = False,
     **kwargs,
 ):
     try:
@@ -99,7 +99,7 @@ def thunderfx_report(
         print("\nVerifying consistency between Thunder and Torch eager ...")
         consistency_folder = folder / "consistency"
         consistency_folder.mkdir(exist_ok=True)
-        compiled._backend.save_reproducer_to_folder(consistency_folder, serialize_inputs=save_consistency_inputs)
+        compiled._backend.save_reproducer_to_folder(consistency_folder, serialize_inputs=serialize_consistency_inputs)
         for file in consistency_folder.glob("*.py"):
             g_name = file.name.rstrip(".py")
             cmd = [sys.executable, folder / file, "--check_consistency=True", "--compute_type=forward+backward"]
@@ -116,7 +116,7 @@ def thunderfx_report(
         benchmark_folder = folder / "benchmark"
         benchmark_folder.mkdir(exist_ok=True)
         compiled._backend.save_reproducer_to_folder(
-            benchmark_folder, serialize_inputs=save_benchmark_inputs, use_pytest_benchmark=True
+            benchmark_folder, serialize_inputs=serialize_benchmark_inputs, use_pytest_benchmark=True
         )
 
         benchmark_json_files = []
@@ -416,12 +416,14 @@ def fx_report(fn: Callable, *args, compile_options: dict = None, **kwargs) -> FX
         .. code-block:: python
 
         import tempfile
+
+        import torch
         from thunder.dynamo.report import fx_report
 
         def model(x):
             return x * 2
 
-        report = fx_report(model, compile_options={dynamic=False}, torch.tensor([1, 2, 3]))
+        report = fx_report(model, torch.randn((2, 2), requires_grad=True, device="cuda"), compile_options={"dynamic": False})
         print(len(report.fx_graph_reports))
         with tempfile.TemporaryDirectory() as tmpdir:
             for graph_report in report.fx_graph_reports:
@@ -429,6 +431,7 @@ def fx_report(fn: Callable, *args, compile_options: dict = None, **kwargs) -> FX
                 graph_report.write_thunder_repro(tmpdir, use_benchmark=True)
                 graph_report.write_inductor_repro(tmpdir)
 
+                # Executes using the user-defined executor.
                 my_executor = "partial(thunder.jit, transforms=[NvtxProfileTransform()], executors=[nvfuser_executor])"
                 my_imports = [
                     "import thunder",
@@ -437,10 +440,14 @@ def fx_report(fn: Callable, *args, compile_options: dict = None, **kwargs) -> FX
                     "from functools import partial",
                 ]
                 graph_report.write_repro(
-                    tmp_path, f"{graph_report.graph_name}_mythunder_repro.py", executor_str=my_executor, import_str=my_imports
+                    tmpdir, f"{graph_report.graph_name}_mythunder_repro.py", executor_str=my_executor, import_str=my_imports
                 )
                 graph_report.write_benchmark_repro(
-                    tmp_path, f"{graph_report.graph_name}_mythunder_benchmark.py", executor_name_str=["mythunder"], executor_str=[my_executor], import_str=my_imports
+                    tmpdir,
+                    f"{graph_report.graph_name}_mythunder_benchmark.py",
+                    executor_name_str=["mythunder"],
+                    executor_str=[my_executor],
+                    import_str=my_imports,
                 )
     """
     graphs = []
