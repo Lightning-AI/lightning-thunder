@@ -1075,7 +1075,14 @@ def test_report(tmp_path, capsys):
 @instantiate(
     dtypes=NOTHING,
     executors=[DynamoThunderExecutor],
-    decorators=(pytest.mark.parametrize("use_benchmark", (True, False), ids=("benchmark", "repro")),),
+    decorators=(
+        pytest.mark.parametrize("use_benchmark", (True, False), ids=("benchmark", "repro")),
+        pytest.mark.xfail(
+            condition=IS_WINDOWS,
+            strict=True,
+            reason="torch.compile Windows support is still WIP - https://github.com/pytorch/pytorch/issues/122094",
+        ),
+    ),
 )
 def test_fxreport(executor, device: str, dtype: dtypes.dtype, use_benchmark, tmp_path):
     from thunder.dynamo.report import fx_report

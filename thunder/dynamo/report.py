@@ -102,7 +102,7 @@ def thunderfx_report(
         compiled._backend.save_reproducer_to_folder(consistency_folder, serialize_inputs=serialize_consistency_inputs)
         for file in consistency_folder.glob("*.py"):
             g_name = file.name.rstrip(".py")
-            cmd = [sys.executable, folder / file, "--check_consistency=True", "--compute_type=forward+backward"]
+            cmd = [sys.executable, file, "--check_consistency=True", "--compute_type=forward+backward"]
             consistency_result = subprocess.run(cmd, capture_output=True, text=True)
             if consistency_result.returncode:
                 error = consistency_result.stderr
@@ -127,7 +127,7 @@ def thunderfx_report(
                     sys.executable,
                     "-m",
                     "pytest",
-                    benchmark_folder / file,
+                    file,
                     "--benchmark-timer=torch.utils.benchmark.utils.timer.timer",
                     "--benchmark-warmup=on",
                     "--benchmark-group-by=param:compute_type",
@@ -140,9 +140,7 @@ def thunderfx_report(
             )
             g_name = file.name.rstrip(".py")
             if benchmark_result.returncode:
-                print(
-                    f"Failed to run the benchmarking script({benchmark_folder / file}), exception: {benchmark_result.stderr}"
-                )
+                print(f"Failed to run the benchmarking script({file}), exception: {benchmark_result.stderr}")
             else:
                 print(f"{g_name}:\n{benchmark_result.stdout}\n")
 
