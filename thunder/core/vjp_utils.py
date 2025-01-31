@@ -75,6 +75,8 @@ def make_aug_forward_and_backward(bsym: BoundSymbol) -> tuple[Callable, Callable
         return get_grad_bsym.output if get_grad_bsym is not None else None
 
     def find_backward_output(forward_input):
+        if isinstance(forward_input, TensorProxy) and not forward_input._requires_grad:
+            return None
         forward_input_consumers = consumers.get(forward_input, None)
         if forward_input_consumers is None or not forward_input_consumers:
             return None
