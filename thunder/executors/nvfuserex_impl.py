@@ -1953,7 +1953,11 @@ def where(
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
-    return fd.ops.where(nvpred, nva, nvb)
+    # Determines result dtype
+    numbertype, tensordtype = utils.check_same_dtype(a, b)
+    dtype = tensordtype if tensordtype is not None else numbertype
+
+    return fd.ops.cast(fd.ops.where(nvpred, nva, nvb), lcdtype_to_nvdtype(dtype))
 
 
 register_supported(PrimIDs.WHERE, where, _elementwise_ternary_check)
