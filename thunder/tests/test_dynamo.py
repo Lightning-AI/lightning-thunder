@@ -1117,7 +1117,7 @@ def test_fxreport(executor, device: str, dtype: dtypes.dtype, use_benchmark, tmp
 
     cmd = [sys.executable]
     if use_benchmark:
-        cmd = cmd + ["-m", "pytest", "--benchmark-warmup-iterations=5"]
+        cmd = cmd + ["-m", "pytest"]
     py_files = list(tmp_path.glob("*.py"))
     assert len(py_files) == 4
 

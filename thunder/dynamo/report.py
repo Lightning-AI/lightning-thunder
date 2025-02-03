@@ -396,6 +396,9 @@ class FXReport:
             graph_names = [f"graph{idx}" for idx in range(len(graphs))]
         self.fx_graph_reports: list[FXGraphReport] = [FXGraphReport(g, name) for name, g in zip(graph_names, graphs)]
 
+    def __str__(self):
+        return f"<FXReport with {len(self.fx_graph_reports)} FXGraphReports accessible via .fx_graph_reports>"
+
 
 def fx_report(fn: Callable, *args, compile_options: dict = None, **kwargs) -> FXReport:
     """
