@@ -2719,14 +2719,16 @@ def where_sample_generator(op, device, dtype, requires_grad, **kwargs):
         pred, a, b = make(pred_shape, dtype=torch.bool, requires_grad=False), make(a_shape), make(b_shape)
         yield SampleInput(pred, a, b)
 
-    # generate scalar inputs
-    dtypes = [float, int, bool, complex]
+    # NOTE: requires_grad needs tensor inputs on non-pred.
+    if not requires_grad:
+        # generate scalar inputs
+        dtypes = [float, int, bool, complex]
 
-    for dtype in dtypes:
-        pred = make([2, 3], dtype=torch.bool, requires_grad=False)
-        a = dtype(1.0)
-        b = dtype(0.0)
-        yield SampleInput(pred, a, b)
+        for dtype in dtypes:
+            pred = make([2, 3], dtype=torch.bool, requires_grad=False)
+            a = dtype(1.0)
+            b = dtype(0.0)
+            yield SampleInput(pred, a, b)
 
 
 def where_error_generator(op, device, dtype=torch.float32, **kwargs):
