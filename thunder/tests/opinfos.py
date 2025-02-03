@@ -2537,7 +2537,6 @@ div_opinfo = OpInfo(
     torch_reference=torch.div,
     test_directives=(
         # NOTE: PyTorch doesn't support boolean division
-        # TODO: fix dtype mismatch when using nvfuser executors
         DecorateInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
@@ -2548,7 +2547,7 @@ div_opinfo = OpInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
             executors=("nvfuser",),
-            dtypes=(datatypes.bool8,),
+            dtypes=(datatypes.bool8,, datatypes.float16),
         ),
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
     ),
@@ -2732,6 +2731,15 @@ def where_error_generator(op, device, dtype=torch.float32, **kwargs):
         err_msg,
     )
     yield (SampleInput(make(2, 1, 2)), NotImplementedError, err_msg)
+
+    # generate scalar inputs
+    dtypes = [float, int, bool, complex]
+
+    for dtype in dtypes:
+        pred = make([2, 3], dtype=torch.bool, requires_grad=False)
+        a = dtype(1.0)
+        b = dtype(0.0)
+        yield SampleInput(pred, a, b)
 
 
 where_opinfo = OpInfo(

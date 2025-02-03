@@ -1957,6 +1957,11 @@ def where(
     numbertype, tensordtype = utils.check_same_dtype(a, b)
     dtype = tensordtype if tensordtype is not None else numbertype
 
+    # NOTE: for scalar inputs, dtype mapping is different. e.g. float -> double. We convert dtypes to strong
+    # type if the output is supposed to be a tensor proxy
+    if any(map(lambda x: isinstance(x, TensorProxy), (pred, a, b))):
+        dtype = dtypes.to_strong_dtype(dtype)
+
     return fd.ops.cast(fd.ops.where(nvpred, nva, nvb), lcdtype_to_nvdtype(dtype))
 
 
