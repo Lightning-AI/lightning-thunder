@@ -1953,6 +1953,8 @@ def where(
     nva = getnv(a, fd, lc_to_nv_map)
     nvb = getnv(b, fd, lc_to_nv_map)
 
+    # explicit type promotion is necessary, since nvfuser can't do this properly with scalar inputs. See
+    # issue: https://github.com/NVIDIA/Fuser/issues/3816
     # Determines result dtype
     numbertype, tensordtype = utils.check_same_dtype(a, b)
     dtype = tensordtype if tensordtype is not None else numbertype
