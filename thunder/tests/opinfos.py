@@ -2547,7 +2547,7 @@ div_opinfo = OpInfo(
             pytest.mark.xfail,
             "test_core_vs_torch_consistency",
             executors=("nvfuser",),
-            dtypes=(datatypes.bool8,, datatypes.float16),
+            dtypes=(datatypes.bool8, datatypes.float16),
         ),
         DecorateInfo(pytest.mark.xfail, "test_vjp_correctness"),
     ),
